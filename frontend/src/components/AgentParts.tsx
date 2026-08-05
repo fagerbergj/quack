@@ -8,8 +8,8 @@ import 'highlight.js/styles/github-dark.css'
 import type { ComponentPropsWithoutRef } from 'react'
 import type { Element } from 'hast'
 import type { Activity, ToolCall } from './messageParts'
-import { agentLabel } from './messageParts'
-import { summarizeArgs, previewLine, toolFailed, copyPayload } from './toolFormat'
+import { agentLabel, liveStatusLine } from './messageParts'
+import { summarizeArgs, previewLine, toolFailed, copyPayload, toolActionLine } from './toolFormat'
 import { Expandable } from './Expandable'
 import { ToolCallView } from './ToolCallView'
 import { CopyButton } from './CopyButton'
@@ -151,6 +151,27 @@ export function ActivityList({ activity }: { activity: Activity[] }) {
           : <ToolBlock key={start + i} tool={a.tool} />
       ))}
     </>
+  )
+}
+
+// LiveStatusLine is the RUNNING substitute for ActivityList (#725): a full
+// activity list re-renders (markdown, Expandable, ToolCallView) on every
+// streamed SSE event, which is what locks the tab on a busy node. This only
+// ever renders two short lines - current thinking state + most recent tool
+// call - however long the run has been going or however much it's done.
+export function LiveStatusLine({ activity }: { activity: Activity[] }) {
+  const { thinking, tool } = liveStatusLine(activity)
+  if (!thinking && !tool) return null
+  return (
+    <div className="py-0.5 space-y-0.5 text-[11px] text-gray-400 dark:text-gray-500 not-prose">
+      {thinking && (
+        <div className="flex items-center gap-1.5 italic">
+          <Dots variant="compact" size="w-1 h-1" />
+          thinking
+        </div>
+      )}
+      {tool && <div className="truncate font-mono">{toolActionLine(tool.name, tool.args)}</div>}
+    </div>
   )
 }
 

@@ -136,3 +136,37 @@ describe('DagNode - judge verdict popup copy button (#426)', () => {
     expect(writeText).toHaveBeenCalledWith(verdict)
   })
 })
+
+// Regression (#725): a running node with a busy tool-calling agent used to
+// re-render its whole accumulated activity list on every streamed SSE event,
+// locking the tab. A running node must show only a compact status line.
+describe('DagNode - a running node collapses activity to a compact status line (#725)', () => {
+  const manyToolCalls: Activity[] = Array.from({ length: 30 }, (_, i) => ({
+    kind: 'tool' as const,
+    tool: { callId: `c${i}`, name: 'edit_file', args: { path: `app/src/File${i}.kt` }, result: { ok: true }, done: true },
+  }))
+  const runningOut = html(
+    { status: 'running', startedAt: 0 },
+    [{ runId: 'w', agent: 'code-implementer', stage: 'worker', done: false, activity: manyToolCalls }],
+    '',
+  )
+
+  it('shows only the most recent tool call, not all 30', () => {
+    expect(runningOut).toContain('editing app/src/File29.kt')
+    expect(runningOut).not.toContain('File0.kt')
+    expect(runningOut).not.toContain('File15.kt')
+  })
+
+  it('does not mount the full activity list (no windowed "earlier" toggle)', () => {
+    expect(runningOut).not.toContain('earlier')
+  })
+
+  it('a finished node keeps the full activity list reachable (windowed, not trimmed away)', () => {
+    const doneOut = html(
+      { status: 'done', startedAt: 0, finishedAt: 1000 },
+      [{ runId: 'w', agent: 'code-implementer', stage: 'worker', done: true, activity: manyToolCalls }],
+      '',
+    )
+    expect(doneOut).toContain('27 earlier')
+  })
+})

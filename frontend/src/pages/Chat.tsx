@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react'
 import { navigate, useChatId } from '../router'
 import { api, type ChatSummary } from '../api'
-import { AssistantText, ActivityList, BubbleHeader, Dots } from '../components/AgentParts'
+import { AssistantText, ActivityList, LiveStatusLine, BubbleHeader, Dots } from '../components/AgentParts'
 import { QuestionBubble } from '../components/QuestionBubble'
 import { DagView, DagBubbleHeader } from '../components/DagView'
 import { Composer } from '../components/Composer'
@@ -415,6 +415,17 @@ export default function Chat() {
             />
             {githubLink && <GitHubLink url={githubLink.url} repo={githubLink.repo} className="flex-shrink-0" />}
           </div>
+          {/* The live view only ever shows a compact status per node (#725) - this is
+              the escape hatch to the untrimmed event-by-event detail. */}
+          {activeChatId && (
+            <a
+              href={`/api/v1/chats/${activeChatId}/recording`}
+              className="flex-shrink-0 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+              title="Download this chat's full recording (every streamed event)"
+            >
+              ⬇ recording
+            </a>
+          )}
         </div>
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain px-6 py-6 space-y-6">
@@ -524,7 +535,7 @@ export default function Chat() {
                           </details>
                         ) : (
                           <div className="space-y-3">
-                            {orchActivity.length > 0 && <ActivityList activity={orchActivity} />}
+                            {orchActivity.length > 0 && <LiveStatusLine activity={orchActivity} />}
                             <DagView
                               dag={liveDag}
                               onCancelNode={handleCancelNode}
@@ -570,7 +581,7 @@ export default function Chat() {
                             status={streaming ? 'running' : 'done'}
                           />
                           {orchActivity.length > 0 && (
-                            <ActivityList activity={orchActivity} />
+                            streaming ? <LiveStatusLine activity={orchActivity} /> : <ActivityList activity={orchActivity} />
                           )}
                           {/* Running is conveyed by the header's pulsing StatusDot
                               (#416) - no separate spinner dot while text streams in. */}

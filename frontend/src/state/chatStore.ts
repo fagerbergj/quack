@@ -143,6 +143,7 @@ export class ChatStore {
   private reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>()  // chatID → pending reconnect
   private generations = new Map<string, number>()
   private onTitleCallbacks = new Map<string, (title: string) => void>()  // chatID → last submit()'s onTitle, reused by drainQueue
+  private notifyScheduled = new Set<string>()  // chatID → a coalesced notify is already queued for the next frame
 
   get(chatId: string): ChatState {
     return this.states.get(chatId) ?? EMPTY_STATE
@@ -903,10 +904,23 @@ export class ChatStore {
     this.notify(chatId)
   }
 
+  // notify is coalesced to at most once per animation frame: a busy node can
+  // emit thousands of SSE events/sec (token-level agent_thinking deltas), and
+  // a React re-render per event - not per frame - is what locks the tab (#725,
+  // measured: ~7s of pure re-render overhead for one node's real event volume).
+  // state itself is already up to date (write() is synchronous); this only
+  // throttles how often listeners are told to re-read it.
   private notify(chatId: string): void {
-    const set = this.listeners.get(chatId)
-    if (!set) return
-    for (const l of set) l()
+    if (this.notifyScheduled.has(chatId)) return
+    this.notifyScheduled.add(chatId)
+    const flush = () => {
+      this.notifyScheduled.delete(chatId)
+      const set = this.listeners.get(chatId)
+      if (!set) return
+      for (const l of set) l()
+    }
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(flush)
+    else setTimeout(flush, 16)
   }
 }
 

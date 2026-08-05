@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { AssistantText, ActivityList, AcpBadge, isAcpAgent } from './AgentParts'
+import { AssistantText, ActivityList, LiveStatusLine, AcpBadge, isAcpAgent } from './AgentParts'
 import { CopyButton } from './CopyButton'
 import { NodePopup } from './NodePopup'
 import { StatusDot } from './StatusDot'
@@ -249,7 +249,7 @@ const WorkerCard = memo(function WorkerCard({ runs, running }: { runs: AgentRun[
           <RunTimer run={timerRun} />
         </summary>
         <div className="px-4 pb-3">
-          <ActivityList activity={activity} />
+          {running ? <LiveStatusLine activity={activity} /> : <ActivityList activity={activity} />}
         </div>
       </details>
     </div>
@@ -330,7 +330,9 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
           <RunTimer run={run} />
         </summary>
         {run.activity.length > 0 && (
-          <div className="px-4 pb-3"><ActivityList activity={run.activity} /></div>
+          <div className="px-4 pb-3">
+            {running ? <LiveStatusLine activity={run.activity} /> : <ActivityList activity={run.activity} />}
+          </div>
         )}
       </details>
       {/* Verdict collapses to one line, like ThinkBlock - full reasoning opens
@@ -356,7 +358,9 @@ const RevisionCard = memo(function RevisionCard({ run, running }: { run: AgentRu
           <RunTimer run={run} />
         </summary>
         {run.activity.length > 0 && (
-          <div className="px-4 pb-3"><ActivityList activity={run.activity} /></div>
+          <div className="px-4 pb-3">
+            {running ? <LiveStatusLine activity={run.activity} /> : <ActivityList activity={run.activity} />}
+          </div>
         )}
       </details>
     </div>

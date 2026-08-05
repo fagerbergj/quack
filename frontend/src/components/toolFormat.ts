@@ -19,6 +19,23 @@ export function previewLine(text: string, max = 80): string {
   return oneLine.length > max ? oneLine.slice(0, max) + '…' : oneLine
 }
 
+// TOOL_VERBS labels the compact live-status line's tool call (#725) with a
+// present-participle verb; anything unmapped just shows its raw name.
+const TOOL_VERBS: Record<string, string> = {
+  edit_file: 'editing', write_file: 'writing', read_file: 'reading', delete_path: 'deleting',
+  run_command: 'running', list_dir: 'listing', glob: 'searching', grep: 'searching',
+  web_search: 'searching', web_fetch: 'fetching', git_commit: 'committing', git_diff: 'diffing',
+  git_push: 'pushing', git_log: 'reading', git_status: 'checking', git_branch: 'checking',
+}
+
+// toolActionLine is the one-line "<verb> <target>" summary of a tool call -
+// the live-status line's most-recent-tool-call display.
+export function toolActionLine(name: string, args: Record<string, unknown>): string {
+  const verb = TOOL_VERBS[name] ?? name
+  const target = summarizeArgs(args).replace(/^"|"$/g, '')
+  return target ? `${verb} ${target}` : verb
+}
+
 // toolFailed reports whether a completed tool call's result carries an error -
 // the compact summary line's status icon (✗ vs ✓, #385) keys off this rather
 // than any particular tool's own result shape.

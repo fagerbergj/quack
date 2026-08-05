@@ -165,6 +165,26 @@ function mapRun(runs: AgentRun[], runId: string, fn: (run: AgentRun) => AgentRun
   return found ? next : runs
 }
 
+// LiveStatus is a run's activity reduced to what's worth showing while it's
+// still RUNNING: whether the tail end is reasoning, and the most recent tool
+// call (independent of whether the tail is thinking again after it returned).
+export interface LiveStatus {
+  thinking: boolean
+  tool?: ToolCall
+}
+
+// liveStatusLine computes LiveStatus from a run's activity - the substitute
+// for rendering the full list while running (#725: re-rendering an
+// ever-growing activity list on every streamed token is what locks the tab).
+export function liveStatusLine(activity: Activity[]): LiveStatus {
+  let tool: ToolCall | undefined
+  for (let i = activity.length - 1; i >= 0; i--) {
+    const a = activity[i]
+    if (a.kind === 'tool') { tool = a.tool; break }
+  }
+  return { thinking: activity[activity.length - 1]?.kind === 'thinking', tool }
+}
+
 // showLiveSpinner decides whether the live (streaming) turn shows the "thinking"
 // dots: it's streaming and nothing visible has arrived yet. Keyed on VISIBLE
 // content (DAG, answer text, or visible activity) - NOT run count: the
