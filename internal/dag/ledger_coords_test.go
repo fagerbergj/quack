@@ -1,21 +1,13 @@
-// Package dag_test: this file needs BOTH the real dag.Executor/gate
-// machinery and the real internal/tools.Build - internal/tools already
-// imports internal/dag (execute.go, for dag.Plan/Node), so a same-package
-// (`package dag`) test file can't import internal/tools back without a
-// cycle (see ask_advisor_test.go's identical comment). An external test
-// package can import both.
+// Package dag_test: needs both the real dag.Executor/gate machinery and
+// internal/tools.Build; internal/tools already imports internal/dag, so a
+// same-package test can't import tools back without a cycle - only an
+// external test package can.
 //
-// Pins a real regression: a worker round's model/tool ledger events must
-// carry the node's coordinates (gen_ai.conversation.id/quack.node/
-// gen_ai.agent.name) through the ACTUAL production path (buildGateNodes →
-// vetting.RunGatedRefine, driven here via the same RunPlanAsGraph entry
-// point serve.go uses) - not just through a direct, single-package unit
-// test of tracedModel/emitTool in isolation. Before the fix (tracedModel/
-// emitTool.SetLedgerCoords + dag.newGatedNode's ledger.StampCoords call),
-// every worker-round chat/execute_tool event landed in the ledger's
-// "unscoped" bucket with no node/agent attribution at all, because
-// workflow.RunNode's dynamic-child scheduling does not propagate a
-// context.WithValue stamp down to the model/tool call underneath it.
+// Pins a real regression: workflow.RunNode's dynamic-child scheduling does
+// NOT propagate a context.WithValue stamp down to the model/tool call
+// underneath it, so worker-round ledger events lost node/agent attribution
+// until tracedModel/emitTool.SetLedgerCoords plus newGatedNode's
+// ledger.StampCoords carried coordinates through explicitly.
 package dag_test
 
 import (

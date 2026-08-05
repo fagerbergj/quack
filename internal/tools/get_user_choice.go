@@ -32,28 +32,18 @@ type getUserChoiceResult struct {
 	Status string `json:"status"`
 }
 
-// NewGetUserChoiceTool returns a long-running clarification tool: it presents a
-// set of options to the user and pauses the turn until the user chooses one.
+// NewGetUserChoiceTool returns a long-running clarification tool: it
+// presents options to the user and pauses the turn until they choose one.
+// A port of Python ADK's get_user_choice_tool - Go ADK has no native
+// equivalent (only RequireConfirmation, a typed approve/deny gate).
+// TODO: replace with the Go-native tool once ADK implements it, and drop
+// the orchestrator's hand-rolled resume plumbing.
 //
-// This is a faithful port of Python ADK's get_user_choice_tool
-// (google/adk/tools/get_user_choice_tool.py):
-//
-//	def get_user_choice(options: list[str], tool_context) -> Optional[str]:
-//	    """Provides the options to the user and asks them to choose one."""
-//	    tool_context.actions.skip_summarization = True
-//	    return None
-//	get_user_choice_tool = LongRunningFunctionTool(func=get_user_choice)
-//
-// Go ADK has no native equivalent (it ships RequireConfirmation - a typed
-// approve/deny gate - but no free-form/choice ask tool).
-// TODO: replace this port with the Go-native get_user_choice once ADK
-// implements it, and drop the orchestrator's hand-rolled resume plumbing.
-//
-// The handler returns a "pending" placeholder rather than None (Go has no
-// nil for a value return); SkipSummarization ends the turn so the model does
-// not narrate over the question. The actual choice arrives on the next turn as
-// a FunctionResponse with the same call ID - the framework does NOT re-invoke
-// this handler on resume.
+// The handler returns a "pending" placeholder (Go has no nil for a value
+// return); SkipSummarization ends the turn so the model doesn't narrate
+// over the question. The actual choice arrives on the next turn as a
+// FunctionResponse with the same call ID - the handler is NOT re-invoked
+// on resume.
 func NewGetUserChoiceTool() (tool.Tool, error) {
 	return functiontool.New[getUserChoiceArgs, getUserChoiceResult](
 		functiontool.Config{

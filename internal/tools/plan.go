@@ -33,33 +33,21 @@ type planResult struct {
 	Summary string `json:"summary"` // human-readable node list for the model
 }
 
-// NewPlanTool returns the plan tool. YOU (the orchestrator) author the DAG and
-// submit it as `nodes`; this tool validates it (known agents, unique ids,
-// acyclic, synthesizer hardened), caches it under a plan ID, and emits a dag_plan
-// SSE event so the frontend can render the graph before execution. The execute
-// tool then runs it by ID - the plan JSON is never copied between calls.
+// NewPlanTool returns the plan tool. YOU (the orchestrator) author the DAG
+// and submit it as `nodes`; this tool validates it, caches it under a plan
+// ID, and emits a dag_plan SSE event so the frontend can render the graph
+// before execution. The execute tool then runs it by ID.
 //
-// attachments are the current turn's media parts and history the prior turns;
-// both are stamped on the plan so every node sees them. message is the verbatim
-// user request, stamped so nodes get the full ask (not the orchestrator's
-// paraphrase). existingHeadRef is the VERIFIED PR head branch (from
-// tools.GitHubPRFromContext, resolved once by Orchestrator.Run - never model
-// output) - ANY plan bound to a real existing PR (review, fix, or implement
-// alike) has its Setup.WorkBranch forced to it and checked out as-is, never
-// branched fresh off base, overriding whatever the planner invented or
-// picked as a new-branch name (#520, #625). githubSetup is the deterministic
-// Setup for a GitHub-originated run (from tools.GitHubSetupFromContext) - when
-// non-nil it REPLACES whatever the planner declared wholesale, so a
+// existingHeadRef is the VERIFIED PR head branch (never model output) - any
+// plan bound to a real existing PR has its Setup.WorkBranch forced to it and
+// checked out as-is, overriding whatever the planner invented. githubSetup,
+// when non-nil, REPLACES whatever the planner declared wholesale, so a
 // GitHub-triggered plan never depends on the model getting repo/base_ref
-// right (#661); nil for a non-GitHub run, which keeps getting Setup from the
-// planner as before. grant is the trigger's computed permission set (#662,
-// nil for a non-GitHub turn) - stamped onto the plan as information for the
-// gate to enforce (vetting.commitDelivery); this tool never rejects a plan
-// over it. workerAsk and ciChecks are the consumer split (#664): workerAsk
-// ("" for a non-GitHub turn) replaces message as what every node's BACKGROUND
-// carries, dropping the orchestrator's evidence (full file list, CI/review
-// summaries) that a node has no use for; ciChecks hands a CI-fix run's
-// per-check annotation detail to whichever node's own task names that check.
+// right. grant is stamped onto the plan as information for the gate to
+// enforce; this tool never rejects a plan over it. workerAsk ("" for a
+// non-GitHub turn) replaces message as what every node's BACKGROUND
+// carries, dropping evidence a node has no use for; ciChecks hands a
+// CI-fix run's per-check detail to whichever node's task names that check.
 func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn, message string, existingHeadRef string, githubSetup *dag.Setup, grant *vetting.Grant, workerAsk string, ciChecks []dag.CICheck) (tool.Tool, error) {
 	checksDesc := "Checks are currently unavailable (workspace.check_commands is empty) - omit `checks`."
 	if cc := planner.CheckCommands(); len(cc) > 0 {

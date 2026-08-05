@@ -430,16 +430,11 @@ func TestAskAdvisor_MemoryAcrossHITLPauseResume(t *testing.T) {
 
 // ── A2A repro: production serves workers over A2A ───────────────────────────
 
-// TestAskAdvisor_OverA2A reproduces the LIVE failure (2026-07-09 22:29): in
-// production the worker is an A2A remote agent (internal/agent.Serve →
-// srv.Client()), so ask_advisor's handler executes inside the A2A SERVER's
-// runner - a different session (the A2A context session, AppName = the agent
-// name), whose events carry no NodeInfo and whose state has no gate-seeded
-// keys. Any identity mechanism that reads the calling runner's session/state/
-// path fails there deterministically. This test runs the full production
-// shape: gated node → A2A client → loopback A2A server → worker llmagent with
-// the REAL ask_advisor tool → judge-fail revision → second consult, and
-// asserts the mentor ran, was seeded, and remembered across rounds.
+// TestAskAdvisor_OverA2A reproduces production: the worker runs as an A2A
+// remote agent, so ask_advisor executes inside the A2A server's OWN session
+// (different AppName, no NodeInfo, no gate-seeded state) - any identity
+// mechanism reading the calling runner's session/state/path fails here.
+// Exercises the full shape end-to-end, including judge-fail revision.
 func TestAskAdvisor_OverA2A(t *testing.T) {
 	stub := &draftReviseStub{}
 	advisor := &recordingAdvisor{}

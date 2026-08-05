@@ -2,17 +2,11 @@ package dag
 
 import "testing"
 
-// A synthesizer is NOT always the terminal fan-in. research → synthesize → implement
-// is a perfectly good plan: the implementer depends ON the synthesizer.
-//
-// The hardening pass used to give every synthesizer an edge to EVERY other node -
-// including its own descendants - which manufactures a cycle. quack then rejected the
-// plan with "dag plan contains a cycle", blaming the orchestrator for a correct plan
-// that quack itself had just corrupted.
-//
-// Live failure (code-mode dogfood): 5 code-explorer nodes → synthesize-design →
-// implement-code-mode. The orchestrator produced exactly this, six times, and quack
-// rejected it every time.
+// A synthesizer is NOT always the terminal fan-in: research → synthesize →
+// implement is valid, with the implementer depending ON the synthesizer.
+// Regression: hardening used to give every synthesizer an edge to EVERY
+// other node, including its own descendants, manufacturing a cycle that
+// quack then rejected as the orchestrator's fault.
 func TestSynthesizerHardeningDoesNotCreateACycle(t *testing.T) {
 	agents := []AgentInfo{
 		{Name: "code-explorer"},

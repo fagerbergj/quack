@@ -84,13 +84,10 @@ func falsePositiveCandidate(pr GitHubPR, a correctReviewFindingArgs) (memory.Sco
 // NewCorrectReviewFindingTool builds the orchestrator's ONE write path from a
 // conversational turn into the shared CODING memory bucket: recording that a
 // review finding quack posted on THIS pull request was a false positive. pr
-// is resolved ONCE by the caller (Orchestrator.Run, via GitHubPRFromContext)
-// and closed over here - the tool never accepts owner/repo/pr_number as
-// arguments, so it can only ever write to the repo/PR the conversation is
-// actually on, regardless of what a hostile message asks for (#249 hardening:
-// this used to trust those fields from the model). Only registered by the
-// orchestrator when a verified GitHubPR is present, so a plain REST/MCP turn
-// (no PR context) never sees this tool at all.
+// is resolved ONCE by the caller and closed over here - the tool never
+// accepts owner/repo/pr_number as arguments, so it can only write to the
+// repo/PR the conversation is actually on, regardless of what a hostile
+// message asks for. Only registered when a verified GitHubPR is present.
 func NewCorrectReviewFindingTool(store *memory.Store, pr GitHubPR) (tool.Tool, error) {
 	return functiontool.New[correctReviewFindingArgs, string](
 		functiontool.Config{

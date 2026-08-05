@@ -10,20 +10,19 @@ import (
 	"time"
 )
 
-// SSRF protection. The web-researcher's `web_fetch` tool retrieves
-// user/agent-chosen URLs server-side, and the crawl4ai render backend fetches
-// URLs on our behalf too - both are SSRF vectors. We defend in two layers:
+// SSRF protection. web_fetch retrieves user/agent-chosen URLs server-side,
+// and crawl4ai fetches on our behalf too - both are SSRF vectors, defended
+// in two layers:
 //
-//  1. ValidateURL rejects non-http(s) schemes and literal addresses that resolve
-//     to private / loopback / link-local ranges (incl. the 169.254.169.254 cloud
+//  1. ValidateURL rejects non-http(s) schemes and literal addresses that
+//     resolve to private/loopback/link-local ranges (incl. the cloud
 //     metadata endpoint) before any request is made.
-//  2. GuardedClient re-checks the *actual resolved IP* at dial time, on the
-//     initial connection and on every redirect hop. Checking at dial time (not
-//     just parse time) defeats DNS rebinding, where a hostname resolves to a
-//     public IP at validation and a private one at connect.
+//  2. GuardedClient re-checks the actual resolved IP at dial time, on the
+//     initial connection and every redirect hop - checking at dial time
+//     (not just parse time) defeats DNS rebinding.
 //
-// Trusted internal backends (SearXNG, crawl4ai) live on private Docker IPs and
-// are reached with a *plain* client, not the guarded one.
+// Trusted internal backends (SearXNG, crawl4ai) live on private Docker IPs
+// and are reached with a plain client, not the guarded one.
 
 const maxRedirects = 10
 

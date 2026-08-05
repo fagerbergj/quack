@@ -70,19 +70,13 @@ func TestSafetyJudgeNoVerdictIsError(t *testing.T) {
 }
 
 // TestSafetyJudgeInstructionCalibration pins the system prompt's load-bearing
-// content in BOTH directions.
-//
-// The prompt used to tell the judge that "every path is confined to the agent's
-// workspace jail" and that "commands run argv-only with no shell", then told it
-// not to re-litigate the sandbox. Neither claim was ever true of a run_command
-// CHILD process (its arguments are path-checked by nothing; `sh -c "…"` trips no
-// metachar), so the one automated gate we have was calibrated to stand down on
-// exactly the class of operation it exists to catch. Those claims must never
-// come back - hence the must-NOT-contain half.
-//
-// The anti-over-denial calibration (live usage 2026-07-10: the judge denied
-// anything destructive-LOOKING) is kept, but only for what IS genuinely
-// confined: the task's own artifacts inside its own repo.
+// content in BOTH directions. Regression: the prompt used to claim paths
+// were jailed and commands ran "argv-only with no shell," neither ever true
+// of a run_command child - calibrating the one automated gate to stand down
+// on exactly what it exists to catch. Those claims must never come back
+// (the must-NOT-contain half). The anti-over-denial calibration (a judge
+// once denied anything destructive-LOOKING) stays, scoped to what IS
+// genuinely confined: the task's own artifacts inside its own repo.
 func TestSafetyJudgeInstructionCalibration(t *testing.T) {
 	for _, want := range []string{
 		// What actually holds - stated as narrowly as it is true.

@@ -173,16 +173,11 @@ func graphNodeNameFromPath(path string, known map[string]bool) string {
 	return ""
 }
 
-// RunPlanAsGraph runs a plan as a native first-class-node ADK graph under its own
-// runner: gated workers (and the synthesizer) are graph nodes, so ADK owns
-// concurrency, durable completed-node skip, and HITL parking. content is the
-// turn's trigger - the user message on a fresh run, or the adk_request_input
-// FunctionResponse on a resume (ADK reuses the paused invocation and re-enters
-// only the paused node; completed siblings skip). Node events stream through a
-// DagStream onto yield; nodeOutputs collects node ID → vetted answer.
-// resumeNodes, non-empty on a resume turn, scopes the DagStream's terminal sweep
-// to the paused nodes + their downstream (skipped siblings emit nothing this run
-// and must not be swept as failed).
+// RunPlanAsGraph runs a plan as a native first-class-node ADK graph, so ADK
+// owns concurrency, durable completed-node skip, and HITL parking. On a
+// resume, resumeNodes scopes the DagStream's terminal sweep to the paused
+// nodes plus their downstream - skipped siblings emit nothing this run and
+// must not be swept as failed.
 func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userID, chatID string, content *genai.Content, yield func(stream.SSEEvent, error) bool, nodeOutputs map[string]string, resumeNodes []string) (paused bool, err error) {
 	// An empty resumeNodes is exactly the fresh-run signal (every caller agrees:
 	// a resume always names the node(s) it's re-entering) - setup must run

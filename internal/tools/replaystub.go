@@ -17,15 +17,13 @@ import (
 // replayToolStub answers a tool call from a replay.Session instead of any
 // real backend - kind:replay's tool seam (Deps.Replayer). Build returns one
 // of these for every requested name instead of resolving the registry
-// constructor, so a replay run never constructs a real backend (no
-// searxng/crawl4ai/git dependency by construction) and never needs a clone
-// or toolchain for the gate's probes either - both simply have nothing to
-// reach. Guard/repeat/cancel wrapping is skipped for stubs (nothing live to
-// guard against or cancel).
+// constructor, so a replay run never constructs a real backend and never
+// needs a clone or toolchain for the gate's probes either. Guard/repeat/
+// cancel wrapping is skipped for stubs (nothing live to guard against).
 //
-// live (#605) is fork-replay's escape hatch, mirroring inference.
-// replayModel.live: nil in strict mode, where session.NextToolResult never
-// yields a *replay.ForkSignal (EnableFork was never called).
+// live is fork-replay's escape hatch, mirroring inference.replayModel.live:
+// nil in strict mode, where session.NextToolResult never yields a
+// *replay.ForkSignal (EnableFork was never called).
 type replayToolStub struct {
 	name    string
 	session *replay.Session

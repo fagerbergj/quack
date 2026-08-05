@@ -211,21 +211,15 @@ func gitBinaryPath() (string, error) {
 }
 
 // gitEnv builds the scrubbed environment for a git child process: no
-// terminal-prompt fallback (a hung askpass prompt would otherwise block the
-// server), no system/global gitconfig (hermetic - behavior never depends on
-// what's on the host), a minimal PATH (just enough to find git's own helper
-// binaries, e.g. git-remote-https), and HOME pinned to caps.HomeDir when set
-// (the isolated per-user home OUTSIDE any cloned repo - see workspace.Jail.
-// HomeDir), falling back to the repo dir itself only when unset. Pinning HOME
-// to the repo dir unconditionally was the live bug this closes: a global git
-// config/credential write (or a git hook shelling out to npm/pip) would land
-// straight inside the repo tree, right where `git add -A` could sweep it up.
-// When auth is non-nil, GIT_ASKPASS points at the workspace-root symlink back
-// to THIS quack binary (see GitAskpassLinkName - git execs the value DIRECTLY
-// as a single program path, so it must be a real executable, never
-// "<binary> <subcommand>"), and the username/token travel ONLY as env vars on
-// this one child process - never written to disk, never in a URL, never in
-// `ps` output for the long-lived server process.
+// terminal-prompt fallback (a hung askpass would block the server), no
+// system/global gitconfig (hermetic), a minimal PATH, and HOME pinned to
+// caps.HomeDir when set - OUTSIDE any cloned repo, so a global config write
+// or a hook shelling out can't land where `git add -A` would sweep it up -
+// falling back to the repo dir only when unset. When auth is non-nil,
+// GIT_ASKPASS points at the workspace-root symlink back to THIS binary (git
+// execs it DIRECTLY as a program path, never "<binary> <subcommand>"), and
+// the token travels ONLY as env vars on this one child process - never on
+// disk, in a URL, or in `ps` output.
 // gitChildPath mirrors workspace's childPath for git children: the fixed
 // minimal PATH plus the operator's workspace.exec_path extras (a git hook or
 // filter may legitimately need the configured toolchain).
@@ -493,17 +487,12 @@ const (
 
 // maxAddAllFiles is the bulk-commit sanity wall: a blind `git add -A` that
 // stages more files than this in one commit almost certainly swept in
-// something outside the intended change. Root cause of the live incident
-// this guards against: a hermetic child's $HOME was pinned to the task's own
-// cwd (the target repo), so `npm ci` wrote its cache directly into the repo
-// tree, and `git add -A` then staged 1,261 cache files alongside 8 real ones
-// in a single commit (see internal/workspace's HomeDir fix for the other half
-// of this - this wall is the deterministic backstop for whatever still slips
-// through, or a repo dirtied by something other than this run). Deliberately
-// a plain count, not judge/LLM guidance - the user's own framing draws this
-// line: commit NAME/message quality is judge territory (see agents/
-// code-implementer/rubric.md's commit_hygiene), but "did we just stage a
-// thousand files nobody asked for" is a fact a threshold answers directly.
+// something outside the intended change (e.g. a hermetic child's $HOME
+// pinned into the repo, so `npm ci` wrote its cache there too - see
+// workspace's HomeDir fix for the other half). Deliberately a plain count,
+// not judge/LLM guidance: commit message quality is judge territory, but
+// "did we just stage a thousand files nobody asked for" is a fact a
+// threshold answers directly.
 const maxAddAllFiles = 100
 
 // ---------------------------------------------------------------------------

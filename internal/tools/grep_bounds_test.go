@@ -9,18 +9,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// grep must be bounded in BYTES, not just in match count.
-//
-// The live failure (2026-07-13): a code-implementer grepped a repo that had been
-// built, and matched inside games_repo/.next/build/chunks/*.js.map. A minified bundle
-// is ONE line, so each "match" carried a quarter-megabyte of text; caps.MaxResults
-// (200 matches) bounded the count and nothing bounded the size. The tool returned a
-// 48 MB result, which sat in the session forever. The next request reached the
-// provider at 520,756 tokens against a 65,536-token window:
-//
-//	400 {"message":"request (520756 tokens) exceeds the available context size"}
-//
-// That is fatal - it killed two explorer nodes that had been running for hours.
+// grep must be bounded in BYTES, not just in match count (a live grep
+// returned 48 MB against a match cap - bound the bytes, not just the count).
 func TestGrepIsBoundedInBytes(t *testing.T) {
 	b, root := testBinding(t)
 

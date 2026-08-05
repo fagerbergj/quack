@@ -105,20 +105,12 @@ type RawNode struct {
 	Workdir string `json:"workdir,omitempty"`
 }
 
-// Build validates the submitted nodes into a Plan and stamps the turn context.
-// setup and delivery are the orchestrator's declared pre/post steps (nil when
-// the request has no GitHub repo involved) - Build only validates delivery's
-// kind deterministically; whether setup/delivery are the RIGHT declaration for
-// this request type is the plan judge's job (judgeRouting). message is the
-// verbatim user request, history the prior turns, attachments the current
-// media - all threaded to every node by the executor. ctx bounds the
-// (optional) plan-judge call and carries its ledger Coords (the caller
-// stamps ChatID - see tools.NewPlanTool's emitPlanEvent for the same
-// pattern). grant is the trigger's computed permission set (#662, nil for a
-// non-GitHub turn) - stamped onto the plan as information for the gate to
-// enforce; Build never rejects a node over it (see vetting.commitDelivery).
-// Returns an error (no silent fallback) so the orchestrator can fix and
-// re-submit.
+// Build validates the submitted nodes into a Plan and stamps the turn
+// context. Build only validates delivery's kind deterministically; whether
+// setup/delivery fit the request type is the plan judge's job (judgeRouting).
+// grant is stamped onto the plan as information for the gate to enforce -
+// Build never rejects a node over it (see vetting.commitDelivery). Returns
+// an error (no silent fallback) so the orchestrator can fix and re-submit.
 func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, delivery *Delivery, history []HistoryTurn, message string, attachments []*genai.Part, grant *vetting.Grant) (plan *Plan, err error) {
 	ctx, span := otelobs.Start(ctx, "plan")
 	defer func() { otelobs.End(span, err) }()
@@ -147,20 +139,15 @@ func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, deli
 	return plan, nil
 }
 
-// judgeRouting replaces the old regex routing backstop (checkImplementationRouting)
-// with a small rubric judged by the existing judge (vetting.PlanJudge): the
-// judge reads the proposed plan against the user's actual request and scores
-// its SHAPE - right terminal deliverable, addresses the ask, grounded, minimal
-// decomposition, verifiable - so intent comes from context rather than
-// verb/delivery-term string matching, which mis-fired on a plan-only run whose
-// injected acceptance text ("open a PR") described the EVENTUAL implementation,
-// not this request.
+// judgeRouting scores a plan's SHAPE against the user's actual request via
+// the judge (vetting.PlanJudge) - right terminal deliverable, addresses the
+// ask, grounded, minimal decomposition, verifiable - since verb/delivery-term
+// string matching mis-fired on requests whose injected acceptance text
+// described a later step, not the current one.
 //
-// Graceful degradation: judge==nil (judge stage disabled) or a judge call error
-// both ALLOW the plan rather than blocking it - a routing check must never wedge
-// a run on its own failure. Only an explicit reject from a judge that actually
-// ran turns into an error, so the orchestrator's existing re-plan loop is the
-// retry budget (same contract checkImplementationRouting had).
+// Graceful degradation: judge==nil or a judge call error both ALLOW the plan
+// rather than blocking it - only an explicit reject from a judge that
+// actually ran turns into an error, so re-planning stays the retry budget.
 func (p *Planner) judgeRouting(ctx context.Context, plan *Plan, message string) error {
 	if p.judge == nil {
 		return nil
@@ -209,18 +196,16 @@ func planSummary(p *Plan) string {
 	return sb.String()
 }
 
-// checkReviewFanout is the deterministic backstop for a large PR review planned as
-// a SINGLE code-reviewer node: the whole diff lands in one agent's context, which
-// churns compaction and re-diffs slowly (a +1271-line PR stalled 30+ min). When
-// the run message reports churn above reviewChurnThreshold and the plan has a
-// reviewer but NO explorer to spread the reading across, reject with a targeted
-// fix - slice the changed files into per-group explorers feeding the one reviewer.
-// Inert when the roster has no code-explorer, or when the plan already fans out.
+// checkReviewFanout is the deterministic backstop for a large PR review
+// planned as a SINGLE code-reviewer node: the whole diff in one agent's
+// context churns compaction and re-diffs slowly. When churn exceeds
+// reviewChurnThreshold and the plan has a reviewer but no explorer to spread
+// reading across, reject with a fix - fan the changed files into per-group
+// explorers feeding the one reviewer.
 //
-// Only called when the judge is disabled (see Build) - it counts the PR's TOTAL
-// churn from the run message with no view of the ASK's own scope, so a judge that
-// actually read the request is always the better call on whether a narrowly
-// scoped review legitimately stays one node.
+// Only active when the judge is disabled (see Build): it counts the PR's
+// TOTAL churn with no view of the ask's own scope, so a judge that read the
+// request is always the better call on whether a narrow review stays one node.
 func (p *Planner) checkReviewFanout(plan *Plan, message string) error {
 	hasExplorer := false
 	for _, a := range p.agents {
@@ -318,16 +303,13 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 	}
 
 	// Harden: a synthesizer depends on every non-synthesizer node that is NOT
-	// DOWNSTREAM OF IT. The orchestrator frequently omits some predecessors, which
-	// would let the synthesizer run before research finishes; fill the set in.
+	// DOWNSTREAM OF IT - the orchestrator frequently omits predecessors, which
+	// would let the synthesizer run before research finishes.
 	//
-	// The "not downstream of it" part is load-bearing. A synthesizer is not always
-	// the terminal fan-in: research → synthesize → implement is a perfectly good
-	// plan, and there the implementer depends ON the synthesizer. Blindly giving the
-	// synthesizer an edge to EVERY other node then points it at its own descendant
-	// and manufactures a cycle - which quack rejected as "dag plan contains a cycle",
-	// blaming the orchestrator for a correct plan we had just corrupted (live:
-	// 5 explorers → synthesize-design → implement-code-mode, rejected repeatedly).
+	// "Not downstream of it" is load-bearing: a synthesizer isn't always the
+	// terminal fan-in (research → synthesize → implement is valid, with the
+	// implementer depending ON the synthesizer), so blindly wiring every other
+	// node would point it at its own descendant and manufacture a cycle.
 	if len(plan.Nodes) > 1 {
 		hasSynth := false
 		for _, n := range plan.Nodes {

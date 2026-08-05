@@ -282,19 +282,13 @@ func TestSetupCloneAndBranchImplementStillCreatesFreshBranch(t *testing.T) {
 	}
 }
 
-// TestSetupThenPushPreservesExistingPRHeadCommit pins the invariant #625
-// exists to protect: a run bound to an existing PR branch must never rewrite
-// that branch's history - new commits land ON TOP of what was already there.
-// It reproduces the exact live failure (quack:fix on NightsOut#92 destroyed
-// commit 6abb8ef): setup with checkoutExistingHead=false (the pre-#625 bug -
-// any implementer node always got this) branches fresh off base, a worker
-// commits new-and-unrelated work on top, and PushBranch's required --force
-// (git.go: no remote-tracking ref in a fresh clone, so --force-with-lease is
-// unavailable) then overwrites the remote branch outright - the PR's real
-// commit (pr.txt) is gone. checkoutExistingHead=true (the fix, once
-// OverrideExistingPRHead recognizes the run is bound to a real head) fetches
-// and checks out that commit FIRST, so the same push is a fast-forward that
-// keeps it.
+// TestSetupThenPushPreservesExistingPRHeadCommit pins the invariant: a run
+// bound to an existing PR branch must never rewrite that branch's history -
+// new commits land ON TOP of what was already there. Without
+// checkoutExistingHead, an implementer branches fresh off base, commits
+// unrelated work, and PushBranch's required --force overwrites the remote
+// branch outright, destroying the PR's real commit. With it, setup fetches
+// and checks out that commit FIRST, so the push is a fast-forward.
 func TestSetupThenPushPreservesExistingPRHeadCommit(t *testing.T) {
 	requireGit(t)
 

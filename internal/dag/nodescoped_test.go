@@ -1,15 +1,11 @@
-// #609 regression: two DAG nodes running the SAME configured agent
-// concurrently must never share the mutable model/tool objects
-// SetLedgerCoords/ledger.StampCoords stamp coordinates onto (internal/
-// inference's tracedModel, internal/tools' emitTool) - a shared object races
-// the stamp and misattributes one node's ledger events to its sibling's
-// coordinates. buildGateNodes' nodeScopedWorker branch (graph.go) is the
-// fix: an agent that implements it gets a FRESH worker/model/tools built
-// per node (mirroring internal/serve's nativeAgent, nativeagent.go), never
-// looked up from the executor's shared models/toolsByAgent maps.
+// Two DAG nodes running the SAME configured agent concurrently must never
+// share the mutable model/tool objects SetLedgerCoords/ledger.StampCoords
+// stamp coordinates onto - a shared object races the stamp and misattributes
+// one node's ledger events to its sibling's coordinates. buildGateNodes'
+// nodeScopedWorker branch (graph.go) is the fix: an agent implementing it
+// gets a FRESH worker/model/tools built per node, never shared.
 //
-// This file drives that mechanism directly (not via internal/serve, which
-// would need a full config+bundle fixture) with a minimal nodeScopedWorker
+// This file drives that mechanism directly with a minimal nodeScopedWorker
 // double whose ForNode records every model/tools pair it builds.
 package dag_test
 
@@ -87,16 +83,11 @@ func (nsJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) i
 }
 
 // nodeScopedStub is a minimal nodeScopedWorker double for the SAME
-// configured agent used by several concurrent plan nodes. share, when true,
-// simulates the PRE-#609 shared-object bug: the MODEL and TOOLS (the two
-// objects SetLedgerCoords/ledger.StampCoords actually stamp) are built ONCE
-// and reused across every ForNode call - exactly like buildAgents' old
-// once-per-agent-name construction, which already gave every node a
-// DISTINCT client identity (the older nodeClient.ForNode) while still
-// routing every node's execution to that one shared model/tools pair
-// server-side. Kept here (not in production code) purely to prove this
-// test is sensitive to the regression it pins; see
-// TestNodeScopedWorker_SharedObjectMisattributes.
+// configured agent used by concurrent plan nodes. share=true simulates the
+// pre-fix shared-object bug: model and tools built ONCE and reused across
+// every ForNode call, even though each node still gets a distinct client
+// identity. Kept here only to prove this test is sensitive to the
+// regression it pins.
 type nodeScopedStub struct {
 	adkagent.Agent // a throwaway prototype (never Run - ForNode always wins)
 	share          bool

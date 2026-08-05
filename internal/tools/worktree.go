@@ -11,20 +11,17 @@ import (
 
 // SetupWorktree provisions ONE read-only qualifying node's (code-reviewer,
 // code-explorer) own git worktree, linked off the plan's shared setup clone
-// at parentDir (already resolved - see SetupClone) and checked out on branch
-// (workspace.WorktreeBranch(nodeID) - unique per node, so git's
-// same-branch-twice refusal never fires across siblings). nodeRelDir is
-// workspace-relative (jail.Resolve-ready), exactly like SetupClone's dir.
+// at parentDir and checked out on branch (workspace.WorktreeBranch(nodeID) -
+// unique per node, so git's same-branch-twice refusal never fires across
+// siblings).
 //
 // Idempotent: a resumed run re-entering the node finds its worktree already
-// registered (worktreeValid) and returns it unchanged, never re-linking or
-// resetting a worker's own in-progress files. A stale/partial leftover (a
-// crashed prior attempt) is cleared and reprovisioned, mirroring
-// setupCloneAndBranch's own idempotent-clean-then-create.
+// registered and returns it unchanged, never re-linking or resetting a
+// worker's own in-progress files. A stale/partial leftover is cleared and
+// reprovisioned.
 //
-// A gate-failed node's worktree is KEPT, not reaped - matching a gate-failed
-// node's plain directory today - so its contents stay inspectable; sweeping
-// abandoned worktrees is a workspace GC task's job, not this one's.
+// A gate-failed node's worktree is KEPT, not reaped, so its contents stay
+// inspectable; sweeping abandoned worktrees is a workspace GC task's job.
 func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, parentDir, nodeRelDir, branch string, caps workspace.Caps) (string, error) {
 	b := gitBinding{userID: userID, jail: jail, caps: caps}
 	b.chatID = chatID

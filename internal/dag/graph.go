@@ -26,29 +26,18 @@ const (
 	gateRoundsKey = "quack.gate_rounds/"
 )
 
-// nodeScopedWorker is implemented by a clientMap entry whose worker - and,
-// crucially, its BOUND model and tools - must be constructed fresh per DAG
-// node rather than shared across concurrent nodes running the same
-// configured agent (internal/serve's buildAgents, native agents only; an
-// ACP agent has no local model/tools to isolate - each round is already an
-// isolated subprocess).
+// nodeScopedWorker is implemented by a clientMap entry whose worker - and its
+// BOUND model and tools - must be constructed fresh per DAG node, not shared
+// across concurrent nodes on the same configured native agent (an ACP agent
+// needs no isolation; each round is already its own subprocess). A per-node
+// client identity alone isn't enough: SetLedgerCoords/StampCoords mutate a
+// coordinate field on the shared model/tool objects, so sibling nodes on the
+// same agent racing concurrently corrupt each other's coords.
 //
-// Why the model/tools need this and a ctx stamp doesn't suffice: SetLedgerCoords
-// (inference.tracedModel) and ledger.StampCoords mutate a coordinate field
-// shared by whichever object receives the calls - safe for ONE node using an
-// agent, unsafe the moment a SIBLING node using the SAME configured agent
-// runs concurrently and races the same setter (#609). A per-node CLIENT
-// identity alone (the OLDER agent.nodeClient.ForNode, still needed - see
-// below) fixes remoteagent's session-continuation bug but leaves the
-// underlying model/tool objects shared.
-//
-// release must be called exactly once, when the node's gated-refine loop
-// returns (success, empty, or paused) - regardless of outcome - to free
-// whatever construction opened (a fresh loopback A2A listener per node).
-// nodeKey mirrors agent.nodeClient.ForNode's own requirement: stable across
-// a node's judge/revise rounds and an ADK-native HITL pause/resume within
-// the SAME graph build (a user-initiated PauseNode is a fresh restart - a
-// fresh buildGateNodes call - so it gets a fresh nodeKey call for free).
+// release must be called exactly once, on any outcome of the node's
+// gated-refine loop, to free what construction opened (a per-node A2A
+// listener); nodeKey must stay stable across a node's judge/revise rounds and
+// an ADK-native HITL pause/resume within the same graph build.
 type nodeScopedWorker interface {
 	ForNode(nodeKey string) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, release func(), err error)
 }
@@ -176,16 +165,12 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			if release != nil {
 				defer release()
 			}
-			// Register a per-node control so CancelNode/PauseNode/QueueNodeMessage
-			// can reach THIS node while it runs (cooperative, at gate-stage
-			// boundaries), and atomically pick up any pending prompt edit for this
-			// not-yet-started node (SetNodeTaskOverride) in the SAME critical
-			// section as the registration - see runControls.registerAndTakeOverride.
-			// Keep ctrl a nil interface when controls are off - a typed-nil would
-			// panic in the gate's ctrl.Cancelled() check. effectiveNode carries the
-			// overridden task text (or node.Task unchanged) everywhere a node body
-			// would otherwise read node.Task: prompt construction, the advisor
-			// task, and cfg.Task (the deterministic delivery check).
+			// Register a per-node control (for CancelNode/PauseNode/QueueNodeMessage)
+			// and atomically pick up any pending task override - see
+			// runControls.registerAndTakeOverride. ctrl must stay a nil interface
+			// when controls are off; a typed-nil would panic the gate's
+			// ctrl.Cancelled() check. effectiveNode then carries the overridden
+			// task everywhere node.Task would otherwise be read.
 			var ctrl vetting.NodeControl
 			effectiveNode := node
 			if controls != nil {
@@ -204,16 +189,12 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			// input skeptically.
 			gateFailed := readGateFailed(ctx, node.DependsOn)
 			prompt := buildTask(plan, effectiveNode, upstream, gateFailed)
-			// Advisor-thread identity: stamp a per-node marker line into the worker's
-			// prompt - the ONE channel that reaches the ask_advisor tool even across
-			// the A2A hop (the tool executes in the A2A server's runner, where the
-			// calling node is otherwise invisible) - and register the node's task +
-			// rubric under the token so the tool seeds the mentor's session with the
-			// desired outcome on first consult. Trailing placement + last-match
-			// parsing keeps the token unambiguous even when foreign markers ride
-			// along (see vetting.AdvisorThreadMarker). Re-entering the node (HITL
-			// resume, retry) re-registers, so the deferred unregister can't strand a
-			// running consult. See vetting/advisor_thread.go.
+			// Advisor-thread identity: stamp a per-node marker into the worker's
+			// prompt - the ONE channel that reaches ask_advisor across the A2A hop,
+			// where the calling node is otherwise invisible - and register the
+			// task+rubric under it so the tool seeds the mentor's session on first
+			// consult. Trailing placement + last-match parsing keeps the token
+			// unambiguous alongside foreign markers (vetting.AdvisorThreadMarker).
 			token := vetting.AdvisorThreadToken(plan.ID, node.ID)
 			// The registration also carries THIS workflow session's coordinates +
 			// invocation so guard-ladder tools (internal/tools/guard.go) can scan
@@ -239,16 +220,12 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				task.AppName, task.UserID, task.SessionID = sess.AppName(), sess.UserID(), sess.ID()
 			}
 			// An external worker gets ONE per-node MCP surface (internal/acp) whose
-			// credential is a FRESH random secret - never the advisor-thread token
-			// above, which is derivable (planID+nodeID) and disclosed to sibling
-			// nodes via the prompt, so it must never double as a bearer credential
-			// handed to an untrusted external subprocess (see AdvisorTask.MemSecret).
-			// The session carries whichever tool buffers the node is entitled to:
-			//   - memory (load_memory/stage_memory, #344) for a memory participant;
-			//   - review (stage_review_comment/stage_review, #451) for a code-reviewer
-			//     node (structural - see vetting.Config.IsReviewer, #482);
-			//   - stage_pr for a WRITE worker at the terminal delivery node.
-			// Native agents have ADK-native equivalents, so both ride cfg.ExternalWorker.
+			// credential is a FRESH random secret - never the advisor-thread token,
+			// which is derivable and disclosed to siblings via the prompt, so it
+			// must never double as a bearer credential for an untrusted subprocess.
+			// The session carries only the tool buffers the node is entitled to:
+			// memory, review, or stage_pr for a terminal WRITE worker - native
+			// agents get ADK-native equivalents (both ride cfg.ExternalWorker).
 			memParticipant := cfg.ExternalWorker && cfg.CommitMemory && cfg.Memory != nil
 			reviewNode := cfg.ExternalWorker && cfg.ReadOnly && cfg.IsReviewer
 			// A WRITE worker at the chain's terminal delivery point (cfg.Deliver
