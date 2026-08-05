@@ -907,6 +907,10 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 	if c, ok := checksPassCriterionTraced(ctx, cfg); ok {
 		det["checks_pass"] = c
 	}
+	// Added test files that name no production identifier are vacuous by construction (#716).
+	if c, ok := vacuousTestsCriterion(cfg); ok {
+		det["no_vacuous_tests"] = c
+	}
 	// Mermaid validity: checked against answer and staged delivery bodies. Added only on failure.
 	if c, ok := mermaidCriterion(answer, act); ok {
 		det["mermaid_valid"] = c
