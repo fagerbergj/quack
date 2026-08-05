@@ -9,7 +9,7 @@
 
 import { str, num } from './toolFormat'
 
-export interface Comment {
+interface Comment {
   id?: string
   createdAt?: string
   author?: string
