@@ -441,6 +441,15 @@ func hasPartialFix(partialFixLabel string, names []string) bool {
 	return hasLabel(names, partialFixLabel)
 }
 
+// issueImplementDeliverable is the PR-implementing deliverable text, shared by
+// the label trigger and a comment classified/heuristically read as implement (#713).
+func issueImplementDeliverable(partialFixLabel string, labels []string, issueNumber int) string {
+	if hasPartialFix(partialFixLabel, labels) {
+		return "a pull request implementing the changes, without a Closes keyword (this is a partial fix)"
+	}
+	return fmt.Sprintf("a pull request implementing the approved plan, body containing `Closes #%d`", issueNumber)
+}
+
 // implementTask synthesizes the implement classification signal (fed to vetting.ImplementationIntent).
 func implementTask(p issuesPayload, labels []string, partialFixLabel string) string {
 	var b strings.Builder

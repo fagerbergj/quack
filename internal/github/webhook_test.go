@@ -1131,16 +1131,20 @@ func seedGC(snap Snapshot, excludeCommentID int64) githubContext {
 
 // fakeIntentClassifier is a fixed-verdict IntentClassifier double: tests set
 // verdict directly instead of tuning prose to trip a regex. errAlways
-// simulates the classifier failing outright. The two prompts it answers
-// (isWorkRequest's WORK/CONVERSATIONAL and classifyPRDeliverable's
-// REVIEW/COMMIT) are distinguished by content; deliverable/deliverableErr let
-// a test degrade that classifier independently of the work-request one.
+// simulates the classifier failing outright. The three prompts it answers
+// (isWorkRequest's WORK/CONVERSATIONAL, classifyPRDeliverable's
+// REVIEW/COMMIT, and classifyIssueDeliverable's IMPLEMENT/COMMENT) are
+// distinguished by content; deliverable/deliverableErr and
+// issueDeliverable/issueDeliverableErr let a test degrade one classifier
+// independently of the others.
 type fakeIntentClassifier struct {
-	verdict        string // "WORK" or "CONVERSATIONAL", or any other/blank to test the unparseable path
-	deliverable    string // "REVIEW" or "COMMIT", or any other/blank to test the unparseable path
-	errAlways      error
-	deliverableErr error
-	calls          int32
+	verdict             string // "WORK" or "CONVERSATIONAL", or any other/blank to test the unparseable path
+	deliverable         string // "REVIEW" or "COMMIT", or any other/blank to test the unparseable path
+	issueDeliverable    string // "IMPLEMENT" or "COMMENT", or any other/blank to test the unparseable path
+	errAlways           error
+	deliverableErr      error
+	issueDeliverableErr error
+	calls               int32
 }
 
 func (f *fakeIntentClassifier) Classify(_ context.Context, prompt string) (string, error) {
@@ -1153,6 +1157,12 @@ func (f *fakeIntentClassifier) Classify(_ context.Context, prompt string) (strin
 			return "", f.deliverableErr
 		}
 		return f.deliverable, nil
+	}
+	if strings.Contains(prompt, "IMPLEMENT or COMMENT") {
+		if f.issueDeliverableErr != nil {
+			return "", f.issueDeliverableErr
+		}
+		return f.issueDeliverable, nil
 	}
 	return f.verdict, nil
 }
@@ -1272,6 +1282,74 @@ func TestBuildEnvelopeDeliverableClassifierFailureFallsBack(t *testing.T) {
 	// failure must fall back to, not silently drop into panic or default-commit.
 	if !strings.Contains(env, "<deliverable>a review with inline comments and a verdict</deliverable>") {
 		t.Errorf("classifier failure should fall back to vetting.ImplementationIntent's reading:\n%s", env)
+	}
+}
+
+// TestBuildEnvelopeIssueDeliverableClassification pins #713: an issue comment
+// asking for implementation gets the PR deliverable when open_pr is granted
+// (quack:implement present), but the same comment without that grant stays
+// bounded to a plain reply - the label decides what's LEGAL, the message
+// decides what's ASKED.
+func TestBuildEnvelopeIssueDeliverableClassification(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	ext.SetIntentClassifier(&fakeIntentClassifier{issueDeliverable: "IMPLEMENT"})
+
+	var issue issueCommentPayload
+	if err := json.Unmarshal(issueCommentBody("@quack implement this and open the PR"), &issue); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	granted := vetting.Grant{OpenPR: true}
+	env := ext.buildEnvelope(context.Background(), issue, "implement this and open the PR", seedGC(Snapshot{}, 0), granted, "", nil)
+	if !strings.Contains(env, "a pull request implementing the approved plan") {
+		t.Errorf("implement request with open_pr granted should get the PR deliverable:\n%s", env)
+	}
+
+	// Same message, no quack:implement label: the grant bounds it back to a comment.
+	ungranted := ext.buildEnvelope(context.Background(), issue, "implement this and open the PR", seedGC(Snapshot{}, 0), vetting.Grant{}, "", nil)
+	if strings.Contains(ungranted, "a pull request implementing") {
+		t.Errorf("implement request WITHOUT open_pr granted must not surface the PR deliverable:\n%s", ungranted)
+	}
+	if !strings.Contains(ungranted, "an answer to their message") {
+		t.Errorf("ungranted implement request should fall back to the comment deliverable:\n%s", ungranted)
+	}
+
+	// A plain question with the label still present stays a comment - the
+	// classifier, not the grant alone, decides what was actually asked.
+	ext.SetIntentClassifier(&fakeIntentClassifier{issueDeliverable: "COMMENT"})
+	question := ext.buildEnvelope(context.Background(), issue, "what do you think the right approach is here?", seedGC(Snapshot{}, 0), granted, "", nil)
+	if !strings.Contains(question, "an answer to their message") {
+		t.Errorf("a plain question should stay a comment even with open_pr granted:\n%s", question)
+	}
+}
+
+// TestBuildEnvelopeIssueDeliverableClassifierFailureFallsBack pins #713's
+// robustness requirement: a classifier failure (error, timeout, or
+// unparseable answer) must fall back to vetting.ImplementationIntent's
+// wording heuristic, never straight to conversational - a cold classifier
+// silently downgrading an implementation request inverted a real run.
+func TestBuildEnvelopeIssueDeliverableClassifierFailureFallsBack(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	ext.SetIntentClassifier(&fakeIntentClassifier{issueDeliverableErr: errors.New("model unavailable")})
+	granted := vetting.Grant{OpenPR: true}
+
+	var issue issueCommentPayload
+	if err := json.Unmarshal(issueCommentBody("@quack implement this, commit it, and open a PR"), &issue); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// vetting.ImplementationIntent("implement this, commit it, and open a PR") is
+	// true (implement verb + delivery word) - the classifier failure must still
+	// land on the PR deliverable via the heuristic, not silently downgrade it.
+	env := ext.buildEnvelope(context.Background(), issue, "implement this, commit it, and open a PR", seedGC(Snapshot{}, 0), granted, "", nil)
+	if !strings.Contains(env, "a pull request implementing the approved plan") {
+		t.Errorf("classifier failure should fall back to vetting.ImplementationIntent's reading, not conversational:\n%s", env)
+	}
+
+	// A message with no delivery wording falls back to the heuristic's negative reading too.
+	plain := ext.buildEnvelope(context.Background(), issue, "what do you think?", seedGC(Snapshot{}, 0), granted, "", nil)
+	if !strings.Contains(plain, "an answer to their message") {
+		t.Errorf("classifier failure on a non-implement message should still fall back to the comment deliverable:\n%s", plain)
 	}
 }
 

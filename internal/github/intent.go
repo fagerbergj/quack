@@ -108,3 +108,44 @@ func (e *Extension) classifyPRDeliverable(ctx context.Context, task string, gran
 		return "", false
 	}
 }
+
+// implementPrompt: implement vs comment? Only reachable when the grant permits open_pr (#713).
+const implementPrompt = `You classify a single GitHub issue comment as IMPLEMENT or COMMENT.
+
+IMPLEMENT means the asker wants code written and a pull request opened now - e.g. "implement this", "go ahead and build it", "the deliverable is a pull request, not a plan", "commit and stage the PR".
+
+COMMENT means the asker wants a reply, discussion, or a plan - e.g. "what do you think", "can you clarify this", "draft a plan first", or a correction about a prior run.
+
+Reply with exactly one word: IMPLEMENT or COMMENT. No punctuation, no explanation.
+
+Message:
+%s`
+
+// classifyIssueDeliverable picks implement-vs-comment for an issue comment,
+// mirroring classifyPRDeliverable (#691) on the issue side (#713): a comment
+// is always a legal answer, but "implement" is legal only when the grant
+// carries open_pr (quack:implement) - the classifier picks within that bound.
+// ok=false falls back to vetting.ImplementationIntent's wording heuristic,
+// never straight to conversational (a cold/erroring classifier must not
+// silently invert an implementation request).
+func (e *Extension) classifyIssueDeliverable(ctx context.Context, task string, grant vetting.Grant) (kind string, ok bool) {
+	if !grant.OpenPR || e.intentClassifier == nil {
+		return "", false
+	}
+	ctx, cancel := context.WithTimeout(ctx, intentClassifierTimeout)
+	defer cancel()
+	answer, err := e.intentClassifier.Classify(ctx, fmt.Sprintf(implementPrompt, task))
+	if err != nil {
+		slog.Warn("github: issue deliverable classifier failed; falling back to the implement wording heuristic", "component", "github", "err", err)
+		return "", false
+	}
+	switch up := strings.ToUpper(strings.TrimSpace(answer)); {
+	case strings.Contains(up, "IMPLEMENT"):
+		return "implement", true
+	case strings.Contains(up, "COMMENT"):
+		return "comment", true
+	default:
+		slog.Warn("github: issue deliverable classifier returned an unparseable answer; falling back to the implement wording heuristic", "component", "github", "answer", answer)
+		return "", false
+	}
+}
