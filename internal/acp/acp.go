@@ -28,20 +28,20 @@ import (
 // Options configures one external ACP agent.
 type Options struct {
 	Command []string // argv to spawn, e.g. ["opencode", "acp"]
-	Env []string
+	Env     []string
 	Caps    workspace.Caps
 	ExtraRO []string
-	Home string
+	Home    string
 	// ponytail: computed once, not per round, so its date footer can go stale
 	// on a long-lived server; raise it to a func() string if that ever bites.
-	Preamble string
-	Jail   *workspace.Jail
-	UserID string
-	Worktree func(ctx context.Context, userID, chatID, parentNodeID, nodeID string) (dir string, err error)
-	StartTimeout time.Duration
-	IdleTimeout time.Duration
+	Preamble        string
+	Jail            *workspace.Jail
+	UserID          string
+	Worktree        func(ctx context.Context, userID, chatID, parentNodeID, nodeID string) (dir string, err error)
+	StartTimeout    time.Duration
+	IdleTimeout     time.Duration
 	PermissionJudge func(ctx context.Context, toolName, title string, input map[string]any) (allow bool, reason string)
-	Replay *replay.Session
+	Replay          *replay.Session
 }
 
 // Agent is an adkagent.Agent backed by an external ACP subprocess.
@@ -177,7 +177,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 	handshakeCtx, handshakeSpan := otelobs.Start(ctx, "acp.handshake", attribute.String("agent", a.name))
 	_ = handshakeCtx
 	initResp, err := h.conn.Initialize(ictx, sdk.InitializeRequest{
-		ProtocolVersion: sdk.ProtocolVersionNumber,
+		ProtocolVersion:    sdk.ProtocolVersionNumber,
 		ClientCapabilities: sdk.ClientCapabilities{},
 	})
 	if err != nil {

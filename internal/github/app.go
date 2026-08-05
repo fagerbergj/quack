@@ -1021,4 +1021,3 @@ func (a *App) reactToIssue(ctx context.Context, owner, repo string, number int, 
 	}
 	return out.ID, nil
 }
-

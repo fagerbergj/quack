@@ -234,7 +234,7 @@ type gitCloneResult struct {
 	Dir           string `json:"dir"`
 	Head          string `json:"head"`
 	DefaultBranch string `json:"default_branch"`
-	Cwd string `json:"cwd"`
+	Cwd           string `json:"cwd"`
 }
 
 // validateCloneURL: enforces https-only, rejects URLs with inline credentials.

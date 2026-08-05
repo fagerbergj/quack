@@ -60,12 +60,12 @@ type issueCommentPayload struct {
 	} `json:"installation"`
 
 	// Synthetic payload fields — not part of the GitHub webhook.
-	planOnly         bool   // label-driven plan: produce a plan, touch no code.
-	isLabelTrigger   bool   // label/pr_opened trigger vs @mention (T4 session reset).
-	deliverableHint  string // fixed deliverable for synthetic triggers (CI auto-heal, own-PR).
-	rawEvent         json.RawMessage // originating webhook JSON → envelope's <event> block.
-	eventName        string // originating webhook dotted name.
-	checkSHA         string // CI commit: dump check-runs.json. "" = plan/review/mention run.
+	planOnly        bool            // label-driven plan: produce a plan, touch no code.
+	isLabelTrigger  bool            // label/pr_opened trigger vs @mention (T4 session reset).
+	deliverableHint string          // fixed deliverable for synthetic triggers (CI auto-heal, own-PR).
+	rawEvent        json.RawMessage // originating webhook JSON → envelope's <event> block.
+	eventName       string          // originating webhook dotted name.
+	checkSHA        string          // CI commit: dump check-runs.json. "" = plan/review/mention run.
 }
 
 // issuesPayload is the issues webhook subset for the label-driven issue workflow.
@@ -1086,7 +1086,7 @@ type githubContext struct {
 	snap               Snapshot
 	delta              *Delta // nil on first load (#666), set on resume
 	firstLoad          bool
-	contextUnavailable bool   // fetchSnapshot's meta call failed — label-triggered work aborts (#467)
+	contextUnavailable bool             // fetchSnapshot's meta call failed — label-triggered work aborts (#467)
 	newCommits         []snapshotCommit // PR commits for incremental review scope; nil = review everything
 }
 

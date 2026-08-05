@@ -34,10 +34,10 @@ type ObservabilityConfig struct {
 }
 
 type RecordingConfig struct {
-	Enabled        *bool  `yaml:"enabled"`
-	Store          string `yaml:"store"`
-	RetentionDays  int    `yaml:"retention_days"`
-	CloneSnapshot  bool   `yaml:"clone_snapshot"`
+	Enabled       *bool  `yaml:"enabled"`
+	Store         string `yaml:"store"`
+	RetentionDays int    `yaml:"retention_days"`
+	CloneSnapshot bool   `yaml:"clone_snapshot"`
 }
 
 func (r RecordingConfig) IsEnabled(otelEnabled bool) bool {
@@ -93,17 +93,17 @@ type ExtensionsConfig struct {
 // GitHubExtensionConfig configures the GitHub App extension (internal/github).
 // Secrets (private_key, webhook_secret) must be ${VAR} env references in raw YAML.
 type GitHubExtensionConfig struct {
-	ClientID       string `yaml:"client_id"`
-	AppID          int64  `yaml:"app_id"`
-	PrivateKey     string `yaml:"private_key"`
-	PrivateKeyPath string `yaml:"private_key_path"`
-	WebhookSecret  string `yaml:"webhook_secret"`
-	Mention        string `yaml:"mention"`
-	Triggers        []string `yaml:"triggers"`
-	AutoReviewLabel string   `yaml:"auto_review_label"`
-	AllowedUsers    []string `yaml:"allowed_users"`
-	Labels          GitHubLabels `yaml:"labels"`
-	RunTimeoutMinutes int `yaml:"run_timeout_minutes"`
+	ClientID          string       `yaml:"client_id"`
+	AppID             int64        `yaml:"app_id"`
+	PrivateKey        string       `yaml:"private_key"`
+	PrivateKeyPath    string       `yaml:"private_key_path"`
+	WebhookSecret     string       `yaml:"webhook_secret"`
+	Mention           string       `yaml:"mention"`
+	Triggers          []string     `yaml:"triggers"`
+	AutoReviewLabel   string       `yaml:"auto_review_label"`
+	AllowedUsers      []string     `yaml:"allowed_users"`
+	Labels            GitHubLabels `yaml:"labels"`
+	RunTimeoutMinutes int          `yaml:"run_timeout_minutes"`
 }
 
 type GitHubLabels struct {
@@ -243,17 +243,17 @@ func (g GatesConfig) Enabled() bool {
 }
 
 type AgentConfig struct {
-	Bundle        string       `yaml:"bundle"`
-	Provider      string       `yaml:"provider"`
-	Model         string       `yaml:"model"`
-	ContextWindow int          `yaml:"context_window"`
-	Tools         []string     `yaml:"tools"`
-	Inputs        []string     `yaml:"inputs"`
-	Gated         *bool        `yaml:"gated"`
-	JudgeRounds   int          `yaml:"judge_rounds"`
-	Judge         *bool        `yaml:"judge"`
-	Memory        MemoryConfig `yaml:"memory"`
-	Skills        []string     `yaml:"skills"`
+	Bundle        string          `yaml:"bundle"`
+	Provider      string          `yaml:"provider"`
+	Model         string          `yaml:"model"`
+	ContextWindow int             `yaml:"context_window"`
+	Tools         []string        `yaml:"tools"`
+	Inputs        []string        `yaml:"inputs"`
+	Gated         *bool           `yaml:"gated"`
+	JudgeRounds   int             `yaml:"judge_rounds"`
+	Judge         *bool           `yaml:"judge"`
+	Memory        MemoryConfig    `yaml:"memory"`
+	Skills        []string        `yaml:"skills"`
 	Acp           *AcpAgentConfig `yaml:"acp"`
 }
 
@@ -296,10 +296,10 @@ func (t ToolConfig) APIKey() string {
 }
 
 type ProviderConfig struct {
-	Kind     string `yaml:"kind"`
-	Endpoint string `yaml:"endpoint"`
-	APIKey   string `yaml:"api_key"`
-	Bundle   string `yaml:"bundle"`
+	Kind     string          `yaml:"kind"`
+	Endpoint string          `yaml:"endpoint"`
+	APIKey   string          `yaml:"api_key"`
+	Bundle   string          `yaml:"bundle"`
 	ForkMode string          `yaml:"fork_mode"`
 	ForkFrom string          `yaml:"fork_from"`
 	Live     *ProviderConfig `yaml:"live"`

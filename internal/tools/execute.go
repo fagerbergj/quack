@@ -45,8 +45,8 @@ func NewExecuteTool(cache *PlanCache) (tool.Tool, error) {
 			}
 			tc.State().Set(ExecPlanKey, string(planJSON))
 			cache.SetSelected(a.PlanID)
-		// End the llmagent turn to prevent chattering over the streamed answer.
-		// ponytail: synthesizer node IS the loop-back. Add a caller-side knob when orchestrator needs to reshape.
+			// End the llmagent turn to prevent chattering over the streamed answer.
+			// ponytail: synthesizer node IS the loop-back. Add a caller-side knob when orchestrator needs to reshape.
 			tc.Actions().SkipSummarization = true
 			slog.Info("plan selected for execution", "component", "execute", "plan", a.PlanID)
 			return executeResult{Status: "delivered"}, nil

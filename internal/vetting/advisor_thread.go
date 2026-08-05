@@ -49,10 +49,10 @@ type AdvisorTask struct {
 
 // MemSession: ACP memory MCP resolution for one node.
 type MemSession struct {
-	Memory *memory.Store
-	Scope  memory.Scope
-	Staged *MemStage     // stage_memory buffer
-	Review *ReviewStage  // non-nil for review-delivery nodes
+	Memory  *memory.Store
+	Scope   memory.Scope
+	Staged  *MemStage    // stage_memory buffer
+	Review  *ReviewStage // non-nil for review-delivery nodes
 	PRStage *PRStage     // non-nil for implement-delivery nodes
 }
 
@@ -75,7 +75,7 @@ type ReviewStage struct {
 	body     string
 	set      bool
 	comments []StagedReviewComment
-	seq map[string]int // "path:line" → highest #n; stale ids error rather than resolving to wrong comment
+	seq      map[string]int // "path:line" → highest #n; stale ids error rather than resolving to wrong comment
 }
 
 func (s *ReviewStage) AddComment(path string, line int, body string) string {

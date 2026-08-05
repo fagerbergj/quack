@@ -39,17 +39,17 @@ const orchestratorName = "orchestrator"
 
 // Orchestrator: ADK llmagent that selects direct answer or plan + execute.
 type Orchestrator struct {
-	sessions  session.Service
-	model     model.LLM
-	sysPrompt string
-	planner   *dag.Planner
-	executor  *dag.Executor
-	skillTS   tool.Toolset
-	userMem   *memory.Store
-	taskMem   *memory.Store
-	memAgent  adkagent.Agent
+	sessions    session.Service
+	model       model.LLM
+	sysPrompt   string
+	planner     *dag.Planner
+	executor    *dag.Executor
+	skillTS     tool.Toolset
+	userMem     *memory.Store
+	taskMem     *memory.Store
+	memAgent    adkagent.Agent
 	runDeadline time.Duration
-	runSem    chan struct{}
+	runSem      chan struct{}
 	queuedChats sync.Map
 }
 
@@ -325,8 +325,8 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 		}
 
 		r, err := runner.New(runner.Config{
-			AppName: AppName,
-			Agent:   wf,
+			AppName:           AppName,
+			Agent:             wf,
 			SessionService:    conversationSessions{o.sessions},
 			MemoryService:     memSvc,
 			AutoCreateSession: true,

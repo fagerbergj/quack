@@ -97,7 +97,7 @@ func (g *guardedTool) Run(ctx agent.Context, args any) (map[string]any, error) {
 	if g.tier.Judge {
 		allow, reason, err := g.runSafetyJudge(ctx, m)
 		if err != nil {
-		// Fail closed: unavailable safety judge must never silently grant.
+			// Fail closed: unavailable safety judge must never silently grant.
 			slog.Warn("safety judge unavailable; failing closed", "component", "tools", "tool", g.Name(), "err", err)
 			return guardRefusal("safety check unavailable: " + err.Error()), nil
 		}

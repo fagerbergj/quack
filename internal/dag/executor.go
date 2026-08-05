@@ -348,8 +348,8 @@ func (s *dagStream) part(node, runID string, p *genai.Part) bool {
 		return true
 	}
 	switch {
-		case p.FunctionResponse != nil && stream.IsGateMarkerName(p.FunctionResponse.Name):
-			return true
+	case p.FunctionResponse != nil && stream.IsGateMarkerName(p.FunctionResponse.Name):
+		return true
 	case p.FunctionCall != nil:
 		if p.FunctionCall.Name == "transfer_to_agent" {
 			return true
@@ -535,7 +535,7 @@ func buildTask(plan Plan, node Node, upstream map[string]string, gateFailed map[
 	}
 	var sb strings.Builder
 	if background != "" {
-			sb.WriteString("BACKGROUND - the user's full request, verbatim. This is CONTEXT ONLY, so you " +
+		sb.WriteString("BACKGROUND - the user's full request, verbatim. This is CONTEXT ONLY, so you " +
 			"understand what the overall job is and how your piece fits. MOST OF IT IS NOT YOURS TO DO.\n\n")
 		sb.WriteString(background)
 		sb.WriteString("\n\n---\n\n")

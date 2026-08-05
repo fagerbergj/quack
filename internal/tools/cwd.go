@@ -54,7 +54,7 @@ func scopeFromContext(ctx agent.Context) (chatID, nodeDir string) {
 func jailPath(nodeDir, cwd, p string) string {
 	p = stripSandboxRoot(p)
 	if strings.HasPrefix(p, "/") {
-	// "/" is the root of the node's own workspace.
+		// "/" is the root of the node's own workspace.
 		return filepath.Join(nodeDir, strings.TrimPrefix(p, "/"))
 	}
 	return filepath.Join(nodeDir, joinCwd(cwd, p))

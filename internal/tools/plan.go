@@ -19,8 +19,8 @@ import (
 )
 
 type planArgs struct {
-	Nodes []dag.RawNode `json:"nodes"`
-	Setup *dag.Setup `json:"setup,omitempty" jsonschema:"the working clone + branch to provision before any node runs: {repo, base_ref, work_branch}"`
+	Nodes    []dag.RawNode `json:"nodes"`
+	Setup    *dag.Setup    `json:"setup,omitempty" jsonschema:"the working clone + branch to provision before any node runs: {repo, base_ref, work_branch}"`
 	Delivery *dag.Delivery `json:"delivery,omitempty" jsonschema:"how the gated result reaches GitHub, run after the trust gate: {kind: pull_request|review|comment}"`
 }
 

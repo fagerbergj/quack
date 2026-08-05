@@ -48,7 +48,7 @@ func checksPassCriterion(ctx context.Context, cfg Config) (criterionScore, bool)
 		if len(cfg.Checks) == 0 {
 			return skipChecks(ctx, skipReasonNoWorkspace) // nothing to derive from - not a failure
 		}
-	// Checks set but no workspace wired: fail closed (config bug).
+		// Checks set but no workspace wired: fail closed (config bug).
 		return criterionScore{Score: 0, Reason: "deterministic: this node has checks configured but no workspace is wired up (internal error - contact the operator)"}, true
 	}
 	dir, ok, err := checksDir(cfg)

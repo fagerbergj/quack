@@ -21,13 +21,13 @@ import (
 )
 
 const (
-	minUsefulText      = 200
-	maxFetchBytes      = 200_000
-	fetchHeadLines     = 120
-	fetchGrepMaxLines  = 120
+	minUsefulText       = 200
+	maxFetchBytes       = 200_000
+	fetchHeadLines      = 120
+	fetchGrepMaxLines   = 120
 	fetchReturnMaxBytes = 24_000
-	maxTokenChars      = 4_000
-	browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+	maxTokenChars       = 4_000
+	browserUA           = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
 		"(KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
 	fetchAccept = "text/markdown;q=1.0, text/html;q=0.9, text/plain;q=0.8, */*;q=0.1"
 )
@@ -39,7 +39,7 @@ var errCloudflareChallenge = errors.New("web_fetch: cloudflare challenge (cf-mit
 var dataURIRe = regexp.MustCompile(`data:[a-zA-Z0-9.+-]+/[a-zA-Z0-9.+-]+[;,][^\s)"'<>]*`)
 
 type fetchArgs struct {
-	URL string `json:"url"`
+	URL     string `json:"url"`
 	Pattern string `json:"pattern,omitempty"`
 	Offset  int    `json:"offset,omitempty"`
 }

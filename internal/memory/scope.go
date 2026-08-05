@@ -23,9 +23,9 @@ const (
 
 // Scope: caller's memory entitlement. Zero = nothing.
 type Scope struct {
-	Repo string
-	Role string
-	User string
+	Repo   string
+	Role   string
+	User   string
 	Legacy string
 }
 

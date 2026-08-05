@@ -13,7 +13,7 @@ import (
 // pathScrub: respells host paths in errors to the model's namespace.
 type pathScrub struct {
 	inner runnableTool
-	b fsBinding
+	b     fsBinding
 }
 
 // newPathScrub wraps inner; non-runnable tools pass through.

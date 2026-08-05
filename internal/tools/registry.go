@@ -29,14 +29,14 @@ type Deps struct {
 	Workspace       *workspace.Jail
 	WorkspaceUserID string
 	WorkspaceCaps   workspace.Caps
-	GitCredentials []GitCredential
-	GitTokenSource GitTokenSource
-	Guards         map[string]string
-	SafetyJudge    SafetyJudge
-	NodeCancelled  func(chatID, nodeID string) bool
-	ExtTools       map[string]tool.Tool
-	Replayer       *replay.Session
-	LedgerCoords   ledger.Coords
+	GitCredentials  []GitCredential
+	GitTokenSource  GitTokenSource
+	Guards          map[string]string
+	SafetyJudge     SafetyJudge
+	NodeCancelled   func(chatID, nodeID string) bool
+	ExtTools        map[string]tool.Tool
+	Replayer        *replay.Session
+	LedgerCoords    ledger.Coords
 }
 
 // constructor builds one tool from Deps.
@@ -50,10 +50,10 @@ var registry = map[string]constructor{
 	"stage_memory": newStageMemory,
 	"ask_user":     func(Deps) (tool.Tool, error) { return NewAskUserTool() },
 	"ask_advisor":  func(d Deps) (tool.Tool, error) { return NewAskAdvisorTool(d.Advisor, d.Sessions) },
-	"read_file": newReadFile,
-	"list_dir":  newListDir,
-	"glob":      newGlob,
-	"grep":      newGrep,
+	"read_file":    newReadFile,
+	"list_dir":     newListDir,
+	"glob":         newGlob,
+	"grep":         newGrep,
 }
 
 // Build: resolves tool names to ADK tools.

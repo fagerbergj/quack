@@ -4,20 +4,20 @@ import "time"
 
 // Caps bounds every workspace tool call. Read-shaped results truncate loudly.
 type Caps struct {
-	MaxReadBytes  int64
-	MaxWriteBytes int64
-	MaxResults    int
+	MaxReadBytes   int64
+	MaxWriteBytes  int64
+	MaxResults     int
 	MaxListEntries int
-	Timeout       time.Duration
+	Timeout        time.Duration
 	// ponytail: git predates this and keeps its own maxGitOutputBytes.
 	MaxOutputBytes int64
-	ExtraPath     []string
-	Env           map[string]string
-	HomeDir       string
-	WorkRoot      string
-	Sandbox       SandboxMode
-	Limits        Limits
-	ExtraRO       []string
+	ExtraPath      []string
+	Env            map[string]string
+	HomeDir        string
+	WorkRoot       string
+	Sandbox        SandboxMode
+	Limits         Limits
+	ExtraRO        []string
 }
 
 func DefaultCaps() Caps {

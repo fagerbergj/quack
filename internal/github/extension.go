@@ -43,18 +43,18 @@ type Runner interface {
 
 // Extension is the GitHub App extension: tools + git auth + inbound webhook.
 type Extension struct {
-	app             *App
-	secret          []byte
-	mention         string
-	triggers        map[string]bool
-	labels          config.GitHubLabels
-	allowedUsers    map[string]bool // lower-cased; empty = deny all human-invoked triggers
-	runner          Runner
-	store           *store.Store
-	hub             *stream.Hub
-	eventLog        *runlog.EventLog
-	inflight        sync.Map // sessionID → struct{}{}; dedup for concurrent triggers (#665, #668)
-	runTimeout      time.Duration
+	app              *App
+	secret           []byte
+	mention          string
+	triggers         map[string]bool
+	labels           config.GitHubLabels
+	allowedUsers     map[string]bool // lower-cased; empty = deny all human-invoked triggers
+	runner           Runner
+	store            *store.Store
+	hub              *stream.Hub
+	eventLog         *runlog.EventLog
+	inflight         sync.Map // sessionID → struct{}{}; dedup for concurrent triggers (#665, #668)
+	runTimeout       time.Duration
 	intentClassifier IntentClassifier // nil degrades to conversational
 	jail             *workspace.Jail  // nil skips context-dir writing
 	workspaceUserID  string

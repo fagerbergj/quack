@@ -57,7 +57,7 @@ func runDAGSubset(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow
 				}
 				mu.Unlock()
 
-			// WithUseSubBranch keeps concurrently re-run nodes' events branch-distinguishable.
+				// WithUseSubBranch keeps concurrently re-run nodes' events branch-distinguishable.
 				out, rerr := workflow.RunNode[string](ctx, gateNodes[nid], in, workflow.WithUseSubBranch())
 				if rerr != nil {
 					errs[i] = rerr

@@ -11,9 +11,9 @@ import (
 
 // crawl4ai settle-wait knobs: network-idle wait, settle delay, page timeout.
 const (
-	crawl4aiWaitUntil            = "networkidle"
-	crawl4aiSettleDelaySeconds   = 2.0
-	crawl4aiPageTimeoutMS        = 25000
+	crawl4aiWaitUntil          = "networkidle"
+	crawl4aiSettleDelaySeconds = 2.0
+	crawl4aiPageTimeoutMS      = 25000
 )
 
 // crawl4aiRenderer: crawl4ai adapter for PageRenderer port. Caller SSRF-validates first.

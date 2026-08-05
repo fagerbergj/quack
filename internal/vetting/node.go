@@ -45,6 +45,7 @@ type GateResult struct {
 var ErrNodeEmpty = errors.New("vetting: node produced no answer")
 
 var ErrNodePaused = errors.New("vetting: node paused")
+
 type NodeControl interface {
 	Cancelled() bool
 	Paused() bool
@@ -302,7 +303,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		if !resumed {
 			answer, err = runWorkerNodeTraced(ctx, nodeCtx, cfg, workerModel, workerNode, workerInput(prompt, attachments), "worker-r0"+sfx, "draft", promptEmit)
 			if err != nil {
-			// Log before returning (ADK swallows node errors into silent empty completion).
+				// Log before returning (ADK swallows node errors into silent empty completion).
 				log.Error("worker draft failed", "run", "worker-r0", "err", err)
 				return "", GateResult{}, err
 			}
@@ -614,7 +615,7 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 
 	dc := DeliveryContext{NodeID: nodeID, ChatID: cfg.ChatID, Items: sortedStagedDelivery(act.stagedDelivery), IssueNumber: act.prNumber, GatePassed: res.Passed, GateFeedback: res.Feedback}
 	if cfg.Setup != nil {
-	// Deliver on setup branch (worker's git-tracking ledger is off-limits for setup-provisioned workers).
+		// Deliver on setup branch (worker's git-tracking ledger is off-limits for setup-provisioned workers).
 		dc.Branch = cfg.Setup.WorkBranch
 		dc.CloneURL = cfg.Setup.Repo
 		if cfg.Workspace != nil {
@@ -1104,9 +1105,9 @@ func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity 
 
 // activityScanner: accumulates one worker's activity. Recorders reached from both session-event and replay paths.
 type activityScanner struct {
-	act     workerActivity
-	nodeDir string
-	curCwd      string // node-relative cwd ("" = node root)
+	act         workerActivity
+	nodeDir     string
+	curCwd      string          // node-relative cwd ("" = node root)
 	writtenSeen map[string]bool // dedup for written
 }
 

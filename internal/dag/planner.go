@@ -66,8 +66,8 @@ type RawNode struct {
 	Task      string   `json:"task"`
 	Rubric    string   `json:"rubric,omitempty"`
 	DependsOn []string `json:"depends_on"`
-	Checks []string `json:"checks,omitempty"`
-	Workdir string   `json:"workdir,omitempty"`
+	Checks    []string `json:"checks,omitempty"`
+	Workdir   string   `json:"workdir,omitempty"`
 }
 
 // Build: validates submitted nodes into a Plan and stamps turn context.

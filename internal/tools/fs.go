@@ -46,9 +46,9 @@ func truncateMiddle(s string, maxChars int) string {
 
 // fsBinding: (userID, jail, caps) triple closed over at construction for every fs tool.
 type fsBinding struct {
-	userID string
-	jail   *workspace.Jail
-	caps   workspace.Caps
+	userID  string
+	jail    *workspace.Jail
+	caps    workspace.Caps
 	cwd     string
 	chatID  string
 	nodeDir string
@@ -111,7 +111,7 @@ type readFileResult struct {
 	Content    string `json:"content"`
 	Truncated  bool   `json:"truncated"`
 	TotalLines int    `json:"total_lines"`
-	NextOffset int `json:"next_offset,omitempty"`
+	NextOffset int    `json:"next_offset,omitempty"`
 }
 
 func newReadFile(d Deps) (tool.Tool, error) {
@@ -214,7 +214,7 @@ type dirEntry struct {
 type listDirResult struct {
 	Entries   []dirEntry `json:"entries"`
 	Truncated bool       `json:"truncated"`
-	Cwd string `json:"cwd"`
+	Cwd       string     `json:"cwd"`
 }
 
 func newListDir(d Deps) (tool.Tool, error) {
@@ -313,7 +313,7 @@ type globArgs struct {
 type globResult struct {
 	Paths     []string `json:"paths"`
 	Truncated bool     `json:"truncated"`
-	Cwd string `json:"cwd"`
+	Cwd       string   `json:"cwd"`
 }
 
 func newGlob(d Deps) (tool.Tool, error) {
@@ -401,7 +401,7 @@ type grepMatch struct {
 type grepResult struct {
 	Matches   []grepMatch `json:"matches"`
 	Truncated bool        `json:"truncated"`
-	Cwd string `json:"cwd"`
+	Cwd       string      `json:"cwd"`
 }
 
 func newGrep(d Deps) (tool.Tool, error) {
@@ -455,7 +455,7 @@ func (b fsBinding) grep(a grepArgs) (grepResult, error) {
 			return nil
 		}
 		if d.IsDir() {
-		// Never descend into vendored/generated trees unless path targets one.
+			// Never descend into vendored/generated trees unless path targets one.
 			if p != base && workspace.SkipDir(d.Name()) {
 				return filepath.SkipDir
 			}

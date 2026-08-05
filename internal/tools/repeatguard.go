@@ -24,8 +24,8 @@ const repeatThreshold = 3
 // repeatStates: tracks last call fingerprint per session.
 // ponytail: entries never pruned - add if sessions number in the millions.
 type repeatStates struct {
-	mu   sync.Mutex
-	last map[string]*repeatState
+	mu    sync.Mutex
+	last  map[string]*repeatState
 	fails map[string]int
 }
 

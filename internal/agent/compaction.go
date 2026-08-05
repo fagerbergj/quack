@@ -34,8 +34,8 @@ const (
 	calibrationKey   = "quack.compaction.calibration"
 	overheadKey      = "quack.compaction.overhead"
 
-	minCalibrationRatio = defaultCalibrationRatio
-	maxCalibrationRatio = 8.0
+	minCalibrationRatio     = defaultCalibrationRatio
+	maxCalibrationRatio     = 8.0
 	defaultCalibrationRatio = 1.3
 )
 

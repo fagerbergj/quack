@@ -13,8 +13,8 @@ const ChoiceToolName = "get_user_choice"
 const ChoiceAnswerKey = "choice"
 
 type getUserChoiceArgs struct {
-	Question string `json:"question"`
-	Options []string `json:"options"`
+	Question string   `json:"question"`
+	Options  []string `json:"options"`
 }
 
 type getUserChoiceResult struct {

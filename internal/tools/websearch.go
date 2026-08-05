@@ -23,7 +23,7 @@ type SearchResult struct {
 // searchResponse: wraps hits in an object (ADK requires map result, not array).
 type searchResponse struct {
 	Results []SearchResult `json:"results"`
-	Note string `json:"note,omitempty"`
+	Note    string         `json:"note,omitempty"`
 }
 
 // newWebSearch: builds web_search over a config-selected backend.

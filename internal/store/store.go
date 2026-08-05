@@ -172,8 +172,8 @@ const orchestratorAuthor = "orchestrator"
 
 // Per-turn content extracted from a session's events.
 type turnGroup struct {
-	userText, asstText, asstThink string
-	toolCalls                     []ToolCallRecord
+	userText, asstText, asstThink                   string
+	toolCalls                                       []ToolCallRecord
 	promptTokens, completionTokens, reasoningTokens int32
 }
 

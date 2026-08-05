@@ -87,7 +87,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			if release != nil {
 				defer release()
 			}
-	var ctrl vetting.NodeControl
+			var ctrl vetting.NodeControl
 			effectiveNode := node
 			if controls != nil {
 				nc, override, ok := controls.registerAndTakeOverride(chatID, node.ID)
@@ -107,7 +107,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				Task: effectiveNode.Task, Rubric: node.Rubric, NodeID: node.ID,
 				WorkspaceNodeID: workspaceNodeID(plan, node),
 				WorktreeParent:  worktreeParentID(plan, node),
-				InvocationID:   ctx.InvocationID(),
+				InvocationID:    ctx.InvocationID(),
 			}
 			if sess := ctx.Session(); sess != nil {
 				task.AppName, task.UserID, task.SessionID = sess.AppName(), sess.UserID(), sess.ID()

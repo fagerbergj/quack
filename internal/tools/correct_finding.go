@@ -15,9 +15,9 @@ import (
 
 // GitHubPR: repo/PR the conversation is happening on.
 type GitHubPR struct {
-	Owner  string
-	Repo   string
-	Number int
+	Owner   string
+	Repo    string
+	Number  int
 	HeadRef string
 }
 

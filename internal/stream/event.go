@@ -65,9 +65,9 @@ const (
 // Delivery outcome values.
 const (
 	DeliveryOutcomeDelivered = "delivered"
-	DeliveryOutcomeDraft     = "draft"   // successful delivery, but gate verdict failed - opened as draft
+	DeliveryOutcomeDraft     = "draft" // successful delivery, but gate verdict failed - opened as draft
 	DeliveryOutcomeFailed    = "failed"
-	DeliveryOutcomeNone      = "none"    // judge passed but no delivery was recorded
+	DeliveryOutcomeNone      = "none" // judge passed but no delivery was recorded
 )
 
 // One server-sent event: name + JSON-serializable payload.

@@ -14,13 +14,13 @@ type HistoryTurn struct {
 
 // Plan: DAG of agent tasks. Setup/Delivery are pre/post steps executed by harness.
 type Plan struct {
-	ID          string
-	Nodes       []Node
-	UserMessage string
-	History     []HistoryTurn
-	Attachments []*genai.Part
-	Setup       *Setup
-	Delivery    *Delivery
+	ID               string
+	Nodes            []Node
+	UserMessage      string
+	History          []HistoryTurn
+	Attachments      []*genai.Part
+	Setup            *Setup
+	Delivery         *Delivery
 	Grant            *vetting.Grant
 	WorkerBackground string
 	CIChecks         []CICheck
@@ -52,8 +52,8 @@ type Node struct {
 	Task      string
 	Rubric    string
 	DependsOn []string
-	Checks  []string
-	Workdir string
+	Checks    []string
+	Workdir   string
 }
 
 // terminalIDs returns IDs of nodes no other node depends on.
