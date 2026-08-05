@@ -41,6 +41,23 @@ jobs:
           go-version-file: go.mod
       - run: test -z "$(gofmt -l internal cmd)"
 
+  deadcode:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      # Pinned to go.mod's toolchain: `@latest` alone builds against whatever the
+      # tool's own go.mod allows, which can lag and then refuse to analyze this repo.
+      - run: GOTOOLCHAIN=go1.26.5 go install golang.org/x/tools/cmd/deadcode@latest
+      # -test so test-only helpers don't false-positive as unreachable. Package
+      # patterns are explicit (not ./...) so a vendored JS package that happens to
+      # ship Go source (frontend/node_modules/flatted) never gets pulled in.
+      - run: test -z "$($(go env GOPATH)/bin/deadcode -test ./cmd/... ./internal/... .)"
+
   frontend-build:
     runs-on: ubuntu-latest
     steps:

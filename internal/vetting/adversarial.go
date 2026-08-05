@@ -93,8 +93,9 @@ func newSubmitSkepticVerdictTool(sink *skepticVerdict) (tool.Tool, error) {
 }
 
 // loadBearing reports whether a criterion is worth spending an adversarial
-// pass on: judge-authored (not one of foldDeterministic's own checks, which
-// are already ground truth - refuting code's own verdict is pointless) and
+// pass on: judge-authored (not one of computeDeterministicCriteria's own
+// checks, which are already ground truth - refuting code's own verdict is
+// pointless) and
 // currently PASSING (a criterion already scored below threshold is already
 // caught; the adversarial pass exists to catch a plausible-but-wrong PASS).
 func loadBearing(c criterionScore, threshold float64) bool {

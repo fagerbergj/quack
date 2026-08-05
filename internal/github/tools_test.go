@@ -180,32 +180,6 @@ func TestReactToComment(t *testing.T) {
 	}
 }
 
-// newFilesApp is newReviewApp with an arbitrary set of changed files (each
-// carrying samplePatch), for the path-normalisation cases.
-func newFilesApp(t *testing.T, filenames ...string) *App {
-	t.Helper()
-	files := make([]map[string]string, len(filenames))
-	for i, f := range filenames {
-		files[i] = map[string]string{"filename": f, "patch": samplePatch}
-	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/acme/widgets/pulls/7/files", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(files)
-	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-
-	keyPEM, _ := testKeyPEM(t)
-	app, err := NewApp("1", keyPEM)
-	if err != nil {
-		t.Fatalf("NewApp: %v", err)
-	}
-	app.apiBase = srv.URL
-	app.installs["acme/widgets"] = 1
-	app.tokens[1] = cachedToken{token: "ghs_x", expires: time.Now().Add(time.Hour)}
-	return app
-}
-
 // TestReviewToolsRegistered guards that all four review tools plus the existing
 // two are wired into Tools().
 func TestReviewToolsRegistered(t *testing.T) {
