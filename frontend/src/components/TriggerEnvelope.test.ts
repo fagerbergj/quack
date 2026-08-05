@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { parseEnvelope, commentsSummaryLabel, changedFilesSummaryLabel } from './envelope'
+import { parseEnvelope, commentsSummaryLabel, changedFilesSummaryLabel, accumulateComments, type EnvelopeBlock } from './envelope'
 import { TriggerMessage } from './TriggerEnvelope'
 
 // A full CI-fix envelope (design: .quack/trigger-prompts-v2.md, Step 6/7) -
@@ -107,6 +107,80 @@ describe('parseEnvelope', () => {
   })
 })
 
+// #730 fixtures: a seed turn (full snapshot, envelope.go's commentsBlock with
+// gh.delta == nil) followed by two resume deltas, mirroring a real
+// issue-comment back-and-forth across three triggers.
+const SEED_TURN = `<permissions>join_issue_conversation</permissions>
+<deliverable>an answer to their message</deliverable>
+<comments count="2">${JSON.stringify([
+  { id: 1, created_at: '2026-08-01T10:00:00Z', user: { login: 'alice' }, body: 'Alpha: first question' },
+  { id: 2, created_at: '2026-08-01T10:05:00Z', user: { login: 'bob' }, body: 'Bravo: second question' },
+])}</comments>`
+
+const TURN2_DELTA = `<permissions>join_issue_conversation</permissions>
+<deliverable>an answer to their message</deliverable>
+<comments new="1" edited="0" deleted="0">${JSON.stringify([
+  { id: 3, created_at: '2026-08-01T11:00:00Z', user: { login: 'carol' }, body: 'Charlie: follow-up', quack_status: 'new' },
+])}</comments>`
+
+const TURN3_DELTA = `<permissions>join_issue_conversation</permissions>
+<deliverable>an answer to their message</deliverable>
+<comments new="1" edited="0" deleted="0">${JSON.stringify([
+  { id: 4, created_at: '2026-08-01T12:00:00Z', user: { login: 'dave' }, body: 'Delta: another follow-up', quack_status: 'new' },
+])}</comments>`
+
+function commentsBlock(content: string) {
+  const b = parseEnvelope(content)!.find(b => b.kind === 'comments')
+  if (!b) throw new Error('fixture has no <comments> block')
+  return b as Extract<EnvelopeBlock, { kind: 'comments' }>
+}
+
+describe('accumulateComments', () => {
+  it('folds new deltas onto the seed in arrival order (test case 1)', () => {
+    const acc = accumulateComments([SEED_TURN, TURN2_DELTA], commentsBlock(TURN3_DELTA))
+    expect(acc.complete).toBe(true)
+    expect(acc.comments.map(c => c.body)).toEqual([
+      'Alpha: first question', 'Bravo: second question', 'Charlie: follow-up', 'Delta: another follow-up',
+    ])
+    // Turn 3's own collapsed header still reports just its own delta, not the total.
+    expect(commentsSummaryLabel(commentsBlock(TURN3_DELTA))).toBe('1 new, 0 edited, 0 deleted')
+  })
+
+  it('replaces an edited comment by id and drops a deleted one (test case 2)', () => {
+    const editAndDelete = `<permissions>p</permissions><deliverable>d</deliverable><comments new="0" edited="1" deleted="1">${JSON.stringify([
+      { id: 2, created_at: '2026-08-01T13:00:00Z', user: { login: 'bob' }, body: 'Bravo: revised', quack_status: 'edited' },
+      { id: 1, created_at: '2026-08-01T10:00:00Z', user: { login: 'alice' }, body: 'Alpha: first question', quack_status: 'deleted' },
+    ])}</comments>`
+    const acc = accumulateComments([SEED_TURN], commentsBlock(editAndDelete))
+    expect(acc.complete).toBe(true)
+    expect(acc.comments).toHaveLength(1)
+    expect(acc.comments[0]).toMatchObject({ id: '2', body: 'Bravo: revised' })
+  })
+
+  it('reports an incomplete view when no seed is visible (test case 3)', () => {
+    const acc = accumulateComments([], commentsBlock(TURN2_DELTA))
+    expect(acc.complete).toBe(false)
+    // What IS known is still surfaced - the incompleteness is a flag, not a blackout.
+    expect(acc.comments.map(c => c.body)).toEqual(['Charlie: follow-up'])
+  })
+
+  it('surfaces a deleted comment it never saw alive instead of dropping it (no seed in view)', () => {
+    const deleteOnly = `<permissions>p</permissions><deliverable>d</deliverable><comments new="0" edited="0" deleted="1">${JSON.stringify([
+      { id: 1, created_at: '2026-08-01T10:00:00Z', user: { login: 'alice' }, body: 'Alpha: first question', quack_status: 'deleted' },
+    ])}</comments>`
+    const acc = accumulateComments([], commentsBlock(deleteOnly))
+    expect(acc.complete).toBe(false)
+    expect(acc.comments).toHaveLength(1)
+    expect(acc.comments[0]).toMatchObject({ id: '1', quackStatus: 'deleted' })
+  })
+
+  it('stays complete and empty for a seed turn with zero comments', () => {
+    const emptySeed = `<permissions>p</permissions><deliverable>d</deliverable><comments count="0">[]</comments>`
+    const acc = accumulateComments([], commentsBlock(emptySeed))
+    expect(acc).toEqual({ comments: [], complete: true })
+  })
+})
+
 describe('TriggerMessage', () => {
   it('renders a full envelope with permissions/deliverable/title expanded and the rest collapsed', () => {
     const out = renderToStaticMarkup(createElement(TriggerMessage, { content: CI_FIX_ENVELOPE }))
@@ -140,6 +214,25 @@ describe('TriggerMessage', () => {
     expect(out).toContain('bg-blue-600')
     expect(out).toContain('Please add dark mode support.')
     expect(out).not.toContain('<details')
+  })
+
+  it('renders the accumulated comment history, not just this turn\'s own slice (#730)', () => {
+    const out = renderToStaticMarkup(createElement(TriggerMessage, { content: TURN3_DELTA, priorContents: [SEED_TURN, TURN2_DELTA] }))
+    // The header still reports this turn's own delta only.
+    expect(out).toContain('1 new, 0 edited, 0 deleted')
+    // But the body shows the whole folded history.
+    expect(out).toContain('Alpha: first question')
+    expect(out).toContain('Bravo: second question')
+    expect(out).toContain('Charlie: follow-up')
+    expect(out).toContain('Delta: another follow-up')
+    expect(out).not.toContain('Incomplete history')
+  })
+
+  it('renders an explicit incomplete-history notice when no seed is in the visible window (#730)', () => {
+    const out = renderToStaticMarkup(createElement(TriggerMessage, { content: TURN2_DELTA }))
+    expect(out).toContain('Incomplete history')
+    // The delta comment it DOES know about is still shown, just flagged.
+    expect(out).toContain('Charlie: follow-up')
   })
 
   it('a 40-comment thread stays collapsed by default, not blowing out message height', () => {

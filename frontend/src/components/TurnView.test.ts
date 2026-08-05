@@ -12,6 +12,7 @@ const baseProps = {
   isChoiceAnswer: false,
   submittingChoice: false,
   isCopied: false,
+  priorContents: [],
   onChoice: () => {},
   onCopy: () => {},
   onDownload: () => {},

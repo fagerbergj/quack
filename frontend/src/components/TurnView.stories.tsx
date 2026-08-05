@@ -45,6 +45,7 @@ const meta: Meta<typeof TurnView> = {
     isChoiceAnswer: false,
     submittingChoice: false,
     isCopied: false,
+    priorContents: [],
     onChoice: () => {},
     onCopy: () => alert('copied'),
     onDownload: () => alert('download'),

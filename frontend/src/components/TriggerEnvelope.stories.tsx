@@ -148,6 +148,74 @@ export const TruncatedTags: Story = {
   },
 }
 
+// #730: a resumed trigger whose <comments> section shows the ISSUE'S RUNNING
+// HISTORY (this turn's delta folded onto every earlier turn it was seeded
+// with), not just what this one trigger's envelope carried. The collapsed
+// header still reports this turn's own delta ("1 new, 0 edited, 0 deleted")
+// - open the section to see all four comments across three triggers.
+export const AccumulatedCommentHistory: Story = {
+  args: {
+    content: `<permissions>join_issue_conversation</permissions>
+<deliverable>an answer to their message, posted to the issue as a comment</deliverable>
+<issue number="88">
+  <title>Dark mode toggle flickers on first load</title>
+  <description>The toggle briefly shows the wrong state before settling on the persisted theme.</description>
+</issue>
+<comments new="1" edited="0" deleted="0">${JSON.stringify([
+      { id: 4, created_at: '2026-08-05T09:40:00Z', user: { login: 'dave' }, body: "One more thing - it's worse on Safari.", quack_status: 'new' },
+    ])}</comments>
+<event name="issue_comment.created">{"action":"created","comment":{"id":4}}</event>`,
+    priorContents: [
+      `<permissions>join_issue_conversation</permissions>
+<deliverable>an answer to their message</deliverable>
+<issue number="88"><title>Dark mode toggle flickers on first load</title><description>The toggle briefly shows the wrong state before settling on the persisted theme.</description></issue>
+<comments count="2">${JSON.stringify([
+        { id: 1, created_at: '2026-08-05T09:00:00Z', user: { login: 'alice' }, body: 'Repro: reload with system theme set to dark, watch the toggle flash light first.' },
+        { id: 2, created_at: '2026-08-05T09:10:00Z', user: { login: 'bob' }, body: 'Confirmed on Chrome and Firefox.' },
+      ])}</comments>`,
+      `<permissions>join_issue_conversation</permissions>
+<deliverable>an answer to their message</deliverable>
+<issue number="88"><title>Dark mode toggle flickers on first load</title><description>The toggle briefly shows the wrong state before settling on the persisted theme.</description></issue>
+<comments new="1" edited="0" deleted="0">${JSON.stringify([
+        { id: 3, created_at: '2026-08-05T09:25:00Z', user: { login: 'carol' }, body: 'Likely a hydration mismatch - the SSR shell renders before localStorage is read.', quack_status: 'new' },
+      ])}</comments>`,
+    ],
+  },
+}
+
+// #730: a chat opened after the run's context was reaped (or a rehydrated
+// store) - the earliest turn this client can see is ITSELF a delta, so there
+// is no seed to accumulate onto. The UI must say so rather than presenting
+// this one comment as if it were the issue's whole thread.
+export const IncompleteCommentHistory: Story = {
+  args: {
+    content: `<permissions>join_pr_conversation</permissions>
+<deliverable>a review of what is new since the last one</deliverable>
+<pull_request number="112"><title>Add retry backoff to the sync client</title><description>Adds capped exponential backoff around the sync client's retry loop.</description></pull_request>
+<comments new="1" edited="0" deleted="0">${JSON.stringify([
+      { id: 9, created_at: '2026-08-05T14:00:00Z', user: { login: 'erin' }, body: 'Can you also cap the jitter window? It can currently exceed the base delay.', quack_status: 'new' },
+    ])}</comments>
+<changed_files count="1" additions="12" deletions="3">${JSON.stringify([{ filename: 'internal/sync/retry.go', additions: 12, deletions: 3 }])}</changed_files>
+<event name="issue_comment.created">{"action":"created","comment":{"id":9}}</event>`,
+  },
+}
+
+// #730 empty state: a fresh issue's seed turn with no comments yet. The
+// section opens to a plain "no comments" line, not an empty list or a
+// misleading incomplete-history notice.
+export const EmptyCommentHistory: Story = {
+  args: {
+    content: `<permissions>join_issue_conversation</permissions>
+<deliverable>an implementation plan, posted to the issue as your answer text</deliverable>
+<issue number="120">
+  <title>Add CSV export to the reports page</title>
+  <description>Users want to download the current report view as a CSV file.</description>
+</issue>
+<comments count="0">[]</comments>
+<event name="issues.labeled">{"action":"labeled","label":{"name":"quack:plan"}}</event>`,
+  },
+}
+
 // Wide, unbroken content (a long nested file path, a JSON payload with a long
 // single-token value) must scroll inside its own container - never make the
 // page itself scroll sideways. Verified at a narrow (~380px) viewport too.

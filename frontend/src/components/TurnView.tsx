@@ -24,6 +24,10 @@ export interface TurnViewProps {
   isChoiceAnswer: boolean
   submittingChoice: boolean
   isCopied: boolean
+  // Earlier turns' raw envelope text, oldest first - threaded into TriggerMessage
+  // so a GitHub trigger's <comments> section can accumulate this turn's delta onto
+  // the running history instead of showing just this trigger's slice (#730).
+  priorContents: string[]
   onChoice: (option: string) => void
   onCopy: (key: string, text: string) => void
   onDownload: (text: string, idx: number) => void
@@ -33,7 +37,7 @@ export interface TurnViewProps {
 // this stops re-rendering (and re-parsing markdown/DAG) on every streaming token of
 // a later turn - the props only change for the one turn being copied/answered.
 export const TurnView = memo(function TurnView({
-  turn, idx, choiceAnswer, isChoiceAnswer, submittingChoice, isCopied, onChoice, onCopy, onDownload,
+  turn, idx, choiceAnswer, isChoiceAnswer, submittingChoice, isCopied, priorContents, onChoice, onCopy, onDownload,
 }: TurnViewProps) {
   const dagItem = dagFromTurn(turn)
   const dagState = dagItem ? dagTurnStateFromItem(dagItem) : undefined
@@ -57,7 +61,7 @@ export const TurnView = memo(function TurnView({
           turn has no typed message, just its synthesized task (rendered in
           the DAG bubble below), so there's nothing for this bubble to show. */}
       {!isChoiceAnswer && turn.input.content && (
-        <TriggerMessage content={turn.input.content} />
+        <TriggerMessage content={turn.input.content} priorContents={priorContents} />
       )}
       {/* Assistant response: DAG bubble → answer bubble, as siblings */}
       <div className="flex justify-start">

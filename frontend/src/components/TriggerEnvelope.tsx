@@ -6,6 +6,7 @@ import {
   parseEnvelope,
   commentsSummaryLabel,
   changedFilesSummaryLabel,
+  accumulateComments,
   type EnvelopeBlock,
 } from './envelope'
 
@@ -19,13 +20,24 @@ export * from './envelope'
 // else collapsed. `content` that doesn't parse as an envelope (a plain typed
 // message, or malformed input) renders exactly as it always has - the plain
 // blue bubble, never a blank message (#667).
-export function TriggerMessage({ content, attachments }: { content: string; attachments?: ReactNode }) {
+export function TriggerMessage({
+  content,
+  attachments,
+  priorContents = [],
+}: {
+  content: string
+  attachments?: ReactNode
+  // This chat's earlier turns' raw envelope text, oldest first - lets the
+  // <comments> section fold this turn's delta onto the running history
+  // instead of rendering just what this one trigger saw.
+  priorContents?: string[]
+}) {
   const blocks = useMemo(() => parseEnvelope(content), [content])
   if (blocks) {
     return (
       <div className="flex justify-end mb-3">
         <div className="max-w-3xl w-full ml-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tr-sm px-5 py-4 space-y-2.5">
-          {blocks.map((b, i) => <EnvelopeBlockView key={i} block={b} />)}
+          {blocks.map((b, i) => <EnvelopeBlockView key={i} block={b} priorContents={priorContents} />)}
         </div>
       </div>
     )
@@ -42,12 +54,12 @@ export function TriggerMessage({ content, attachments }: { content: string; atta
   )
 }
 
-function EnvelopeBlockView({ block }: { block: EnvelopeBlock }) {
+function EnvelopeBlockView({ block, priorContents }: { block: EnvelopeBlock; priorContents: string[] }) {
   switch (block.kind) {
     case 'permissions': return <InfoLine label="Permissions" text={block.text} />
     case 'deliverable': return <InfoLine label="Deliverable" text={block.text} />
     case 'ask': return <AskSection block={block} />
-    case 'comments': return <CommentsSection block={block} />
+    case 'comments': return <CommentsSection block={block} priorContents={priorContents} />
     case 'changed_files': return <ChangedFilesSection block={block} />
     case 'event': return <EventSection block={block} />
     case 'context': return <ContextSection block={block} />
@@ -132,32 +144,54 @@ function StatusBadge({ status }: { status: string }) {
   )
 }
 
-// CommentsSection - collapsed, header is the count or new/edited/deleted
-// delta; expands to the thread. Expandable caps the opened thread's height so
-// a 40-comment backlog doesn't wall off the message (#667 test case).
-function CommentsSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'comments' }> }) {
+// IncompleteHistoryNotice marks an accumulated comment list this client can't
+// vouch for as complete - no seed turn is visible (a rehydrated store, or a
+// chat opened after reaping), so what follows is only what's been captured
+// since, not the issue's whole thread.
+function IncompleteHistoryNotice() {
+  return (
+    <div className="mb-2 rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-2 py-1 text-[11px] text-amber-800 dark:text-amber-300">
+      Incomplete history - this client never saw the earlier comments, so the list below starts partway through the conversation.
+    </div>
+  )
+}
+
+// CommentsSection - the collapsed header always reports THIS turn's own
+// count/delta (what the model actually saw, per envelope.go's commentsBlock);
+// the expanded body renders the running history folded from this turn plus
+// every earlier turn's delta (new appends, edited replaces by id, deleted
+// removes - accumulateComments), not just this trigger's slice (#730).
+// Expandable caps the opened thread's height so a long backlog doesn't wall
+// off the message (#667 test case).
+function CommentsSection({ block, priorContents }: { block: Extract<EnvelopeBlock, { kind: 'comments' }>; priorContents: string[] }) {
+  const acc = useMemo(() => block.comments ? accumulateComments(priorContents, block) : undefined, [block, priorContents])
   return (
     <CollapsibleSection summary={commentsSummaryLabel(block)}>
-      {block.comments ? (
-        <Expandable maxHeight={360} fade="from-white dark:from-gray-800">
-          <ul className="space-y-3">
-            {block.comments.map((c, i) => (
-              <li
-                key={c.id ?? i}
-                className={`border-l-2 pl-3 ${c.quackStatus === 'deleted' ? 'border-red-300 dark:border-red-800' : 'border-gray-200 dark:border-gray-700'}`}
-              >
-                <div className="flex items-center gap-2 text-[11px] text-gray-400 dark:text-gray-500 mb-0.5">
-                  {c.author && <span className="font-medium text-gray-600 dark:text-gray-300">{c.author}</span>}
-                  {c.createdAt && <span>{formatTimestamp(c.createdAt)}</span>}
-                  {c.quackStatus && c.quackStatus !== 'new' && <StatusBadge status={c.quackStatus} />}
-                </div>
-                <div className={c.quackStatus === 'deleted' ? 'opacity-60 line-through decoration-red-400' : undefined}>
-                  <AssistantText text={c.body} />
-                </div>
-              </li>
-            ))}
-          </ul>
-        </Expandable>
+      {acc ? (
+        <>
+          {!acc.complete && <IncompleteHistoryNotice />}
+          {acc.comments.length > 0 ? (
+            <Expandable maxHeight={360} fade="from-white dark:from-gray-800">
+              <ul className="space-y-3">
+                {acc.comments.map((c, i) => (
+                  <li
+                    key={c.id ?? i}
+                    className={`border-l-2 pl-3 ${c.quackStatus === 'deleted' ? 'border-red-300 dark:border-red-800' : 'border-gray-200 dark:border-gray-700'}`}
+                  >
+                    <div className="flex items-center gap-2 text-[11px] text-gray-400 dark:text-gray-500 mb-0.5">
+                      {c.author && <span className="font-medium text-gray-600 dark:text-gray-300">{c.author}</span>}
+                      {c.createdAt && <span>{formatTimestamp(c.createdAt)}</span>}
+                      {c.quackStatus && c.quackStatus !== 'new' && <StatusBadge status={c.quackStatus} />}
+                    </div>
+                    <div className={c.quackStatus === 'deleted' ? 'opacity-60 line-through decoration-red-400' : undefined}>
+                      <AssistantText text={c.body} />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </Expandable>
+          ) : <span className="text-[11px] text-gray-400 dark:text-gray-500 italic">no comments</span>}
+        </>
       ) : <RawFallback text={block.raw} />}
     </CollapsibleSection>
   )
