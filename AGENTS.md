@@ -2,8 +2,6 @@
 
 This file provides guidance to AI coding agents working in this repository.
 
-> **Auto-generated code reference:** [`openwiki/`](openwiki/) is an LLM-generated wiki of the codebase - architecture, workflows, operations - refreshed from the code. Start there for a map of how a subsystem actually works; this file stays focused on the rules and the day-to-day commands.
-
 ## Hard Rules
 
 Never:

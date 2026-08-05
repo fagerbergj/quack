@@ -1,6 +1,6 @@
 # Documentation
 
-Setup and configuration guides for humans to use quack. For the auto-generated code reference (architecture, workflows, operations), see [`openwiki/`](../openwiki/) instead.
+Setup and configuration guides for humans to use quack. For how the code itself is put together, see [`AGENTS.md`](../AGENTS.md).
 
 - [`cli.md`](cli.md) - the CLI: every command, `-p`, exit codes.
 - [`ui.md`](ui.md) - the web SPA: what it does, running it, contributing to it.
