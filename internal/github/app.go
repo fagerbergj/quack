@@ -1,16 +1,11 @@
 // Package github is quack's GitHub App extension (see docs/extensions/github.md):
-// it authenticates as a GitHub App, exposes outbound tools (github_comment,
-// github_pull_request, the discussion tools github_list_pr_comments /
-// github_reply_to_review_comment / github_react_to_comment, and the
-// trust-gate-owned stage_pr / stage_review delivery) and a git-credential source
-// authed with the App's per-installation token, and mounts an inbound,
-// signature-verified webhook route that dispatches orchestrator runs on
+// authenticates as a GitHub App, exposes outbound tools (comments, PRs, review
+// discussion, gate-owned stage_pr/stage_review) plus a git-credential source,
+// and mounts a signature-verified webhook that dispatches orchestrator runs on
 // mentions, labels, and PR events.
 //
-// Auth is done with golang-jwt/jwt (RS256 App JWT) + stdlib net/http for the
-// REST calls, NOT go-github/ghinstallation: the flow is one signed JWT plus a
-// handful of REST endpoints, and those libraries are a large dependency to save
-// ~80 lines in a self-hosted binary.
+// Auth uses golang-jwt/jwt, not go-github/ghinstallation - one signed JWT plus
+// a handful of REST calls isn't worth a large dependency to save ~80 lines.
 package github
 
 import (
@@ -275,15 +270,10 @@ func isRetryableStatus(code int) bool {
 	return code == http.StatusTooManyRequests || code >= 500
 }
 
-// doJSON performs one authenticated REST call: marshals reqBody (nil ⇒ no body),
-// sets the Authorization + GitHub headers, and decodes a 2xx JSON response into
-// out (nil ⇒ discard). A non-2xx status is an error carrying GitHub's message.
-// authz is never logged.
-//
-// GET requests get a bounded retry (up to maxGETAttempts, exponential
-// backoff) on a transient failure - a 5xx/429 response or a connection/
-// timeout error - since a GET is idempotent and safe to repeat. Every other
-// method (POST/PATCH/PUT/DELETE) is tried exactly once: retrying a mutating
+// doJSON performs one authenticated REST call: marshals reqBody, sets auth +
+// GitHub headers, decodes a 2xx JSON response into out (authz is never
+// logged). GET gets a bounded retry on a transient failure since it's
+// idempotent; every other method is tried exactly once - retrying a mutating
 // call risks a duplicate (e.g. a comment posted twice).
 func (a *App) doJSON(ctx context.Context, method, path, authz string, reqBody, out any) error {
 	var bodyBytes []byte

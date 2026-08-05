@@ -646,19 +646,13 @@ func (a *App) openPullRequest(ctx context.Context, owner, repo, title, head, bas
 	return u, number, nil
 }
 
-// openOrUpdatePullRequest is the idempotent PR delivery: it opens a NEW
-// pull request for head only when GitHub has no OPEN one already; otherwise it
-// UPDATES the existing PR's title/body - "revise on re-run" instead of a
-// second PR. Labels are applied only on the first open (an update never risks
-// re-labeling). A failed existence check degrades to "open a new one" rather
-// than blocking delivery outright - GitHub itself still rejects a genuine
-// duplicate branch-to-PR mapping.
-// draft applies only on a fresh open: an EXISTING open PR keeps its state (the
-// REST API can't flip a PR to draft; the gate's caveat banner still rides the
-// updated body).
-// closesIssue only ever applies on the FRESH-open branch: an update means head
-// already had a PR (a fix/continuation of that same PR, never a new one closing
-// some other issue - #575).
+// openOrUpdatePullRequest is the idempotent PR delivery: opens a NEW PR for
+// head only when GitHub has no OPEN one already, else UPDATES the existing
+// PR's title/body. Labels apply only on first open. A failed existence check
+// degrades to "open a new one" rather than blocking - GitHub itself rejects a
+// genuine duplicate branch-to-PR mapping. draft and closesIssue apply only on
+// a fresh open: the REST API can't flip an existing PR to draft, and an
+// update means head already had a PR (never a new one closing another issue).
 func (a *App) openOrUpdatePullRequest(ctx context.Context, owner, repo, title, head, base, body string, labels []string, draft bool, closesIssue int) (url string, number int, err error) {
 	if num, _, ok, ferr := a.findOpenPR(ctx, owner, repo, head); ferr != nil {
 		slog.Warn("github: check for an existing open PR failed; opening a new one", "component", "github", "repo", owner+"/"+repo, "branch", head, "err", ferr)
@@ -694,17 +688,12 @@ func closesReferences(body string, issueNum int) bool {
 }
 
 // withClosesTrailer deterministically appends `Closes #N` to a freshly-opened
-// PR's body, rather than trusting the worker's prose to include it - the
-// model dropped it roughly one implement PR in three (#575). Left alone when:
-// issueNum is 0 (no originating issue - e.g. a UI-initiated run), the body
-// already references it, issueNum turns out to be a PULL REQUEST rather than
-// an issue (a PR-scoped chat id whose branch's original PR was closed/merged
-// takes the fresh-open path too - findOpenPR only rules out an OPEN PR on that
-// branch, not "this number is a PR at all" - closing another PR is never the
-// intent), or the issue currently carries the partial-fix label (a
-// maintainer's explicit "this PR does not close it" signal, which must never
-// be overridden). An issueMeta failure fails safe - no trailer, same as
-// today's behavior - rather than risk closing something against that signal.
+// PR's body, rather than trusting the worker's prose (the model dropped it
+// roughly one implement PR in three). Left alone when: issueNum is 0, the
+// body already references it, issueNum is actually a PR (not an issue), or
+// the issue carries the partial-fix label (a maintainer's explicit "this PR
+// does not close it" signal, never overridden). An issueMeta failure fails
+// safe - no trailer.
 func (a *App) withClosesTrailer(ctx context.Context, owner, repo string, issueNum int, body string) string {
 	if issueNum == 0 || closesReferences(body, issueNum) {
 		return body
@@ -721,23 +710,15 @@ func (a *App) withClosesTrailer(ctx context.Context, owner, repo string, issueNu
 	return strings.TrimRight(body, "\n") + fmt.Sprintf("\n\nCloses #%d\n", issueNum)
 }
 
-// Deliver is the vetting.DeliverFunc this extension provides (wired in
-// internal/serve): the ONE place, this whole extension, that pushes a branch
-// or posts anything to a triggering repo - called by commitDelivery
-// exactly once, only after a node's judge pass. It pushes dc.Branch
-// (transient, App-authed - see tools.PushBranch), then works the staged set in
-// order: opening a pull request first (so a staged review/comment on the SAME
-// run has something fresh to land on), then submitting the review, then
-// posting each comment. A later item's failure doesn't undo an earlier one's
-// success; every failure is collected and returned together so the caller's
-// one log line names all of them.
-//
-// jailRoot anchors the askpass symlink PushBranch needs (workspace.Jail.Root()).
-//
-// The returned []vetting.DeliveryItemOutcome is commitDelivery's per-item
-// `delivery_result` stream event source - this extension's OWN record of what
-// actually landed (a real PR/review url, or a real per-item error), never the
-// worker's self-report.
+// Deliver is the vetting.DeliverFunc this extension provides: the ONE place
+// that pushes a branch or posts anything to a triggering repo, called by
+// commitDelivery exactly once after a node's judge pass. It pushes dc.Branch,
+// then works the staged set in order - PR first (so a staged review/comment
+// has something fresh to land on), then review, then comments - collecting
+// every failure rather than undoing earlier successes. jailRoot anchors the
+// askpass symlink PushBranch needs. The returned outcomes are this
+// extension's OWN record of what landed, never the worker's self-report -
+// commitDelivery's per-item delivery_result source.
 func (a *App) Deliver(ctx context.Context, jailRoot string, dc vetting.DeliveryContext) (outcomes []vetting.DeliveryItemOutcome, err error) {
 	var detail deliveryOutcome
 	defer func() {
@@ -839,19 +820,15 @@ func itemOutcomesForPushFailure(dc vetting.DeliveryContext, err error) []vetting
 	return out
 }
 
-// validComments filters gate-parsed inline findings (vetting.ReviewComment) to
-// the ones anchorable in the PR's diff, normalising a clone-relative path to
-// its repo-relative form (resolvePath). A diff-fetch failure drops ALL inline
-// comments rather than the review: the summary body always carries the
-// findings text.
+// validComments filters gate-parsed inline findings to the ones anchorable in
+// the PR's diff, normalizing a clone-relative path to repo-relative. A
+// diff-fetch failure drops ALL inline comments, not the review - the summary
+// body always carries the findings text.
 //
-// It also drops exact-duplicate findings (same resolved path, line, and body -
-// #562). This is the natural place for that: it's the single choke point both
-// delivery call sites run through, and it runs AFTER path resolution, so two
-// findings staged against equivalent-but-differently-spelled paths (clone-
-// relative vs repo-relative) are recognised as the same finding. A dedupe at
-// stage time (ReviewStage.AddComment) would miss that case. Same-line
-// different-body findings are never collapsed - only a byte-identical repeat.
+// It also drops exact-duplicate findings (same resolved path, line, body) -
+// the single choke point both delivery call sites run through, AFTER path
+// resolution, so differently-spelled but equivalent paths dedupe correctly.
+// Same-line different-body findings are never collapsed.
 func (a *App) validComments(ctx context.Context, owner, repo string, number int, comments []vetting.ReviewComment) []reviewComment {
 	if len(comments) == 0 {
 		return nil

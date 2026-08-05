@@ -1,23 +1,13 @@
-// PR self-heal (#254, redesigned #656): quack:fix is a PERSISTENT capability
-// flag, not a one-shot trigger. While a PR carries it (or quack itself
-// authored the PR - "authorship IS the flag", #656), any CI/CD failure
-// dispatches a fix run on the PR's EXISTING session: quack continues with the
-// plan, prior work and diff context it already has, fixes on the PR's head
-// branch in the still-provisioned clone, and the trust gate's delivery spine
-// re-pushes the PR in place.
+// PR self-heal: quack:fix is a PERSISTENT capability flag (or quack itself
+// authored the PR - authorship IS the flag). While set, any CI/CD failure
+// dispatches a fix run on the PR's EXISTING session, on its head branch.
 //
-// The loop bound is the Forbidden section's ONE rule: ONE fix attempt per CI
-// failure. quack's own fix push re-runs CI, so the next failure webhook could
-// otherwise BE the retry, forever. autoHeal breaks that by checking who
-// authored the commit that just failed - but only once it has already
-// dispatched a fix for this PR before (a PR quack itself authored is entirely
-// quack's own commits from the start, so checking authorship on the very
-// FIRST failure would misread ordinary work as an already-failed fix and
-// never attempt one). Once a fix has been tried, a fresh failure on quack's
-// own commit can only be that fix's own CI run: it stops and waits for a
-// human, rather than counting attempts against a configurable ceiling - a new
-// failure caused by a HUMAN commit is always eligible again, with no label
-// churn and no counter to reset.
+// Loop bound: ONE fix attempt per CI failure - quack's own fix push re-runs
+// CI, so the next failure could otherwise BE the retry, forever. autoHeal
+// checks commit authorship to break this, but only AFTER dispatching a first
+// fix (checking on the very first failure would misread ordinary work as an
+// already-failed fix). Once tried, a fresh failure on quack's own commit
+// waits for a human; a HUMAN commit's failure is always eligible again.
 package github
 
 import (

@@ -108,18 +108,11 @@ func (j *Jail) HomeDir(userID string) (string, error) {
 	return home, nil
 }
 
-// NodeDir returns the working directory a DAG node's tools default to - ONE
-// component under the per-chat scope (<root>/<user>/<chat>/<nodeID>/) - or ""
-// when nodeID can't safely name one (an un-gated call, or a planner-authored id
-// with a separator: fall back to the chat root, exactly the pre-node behaviour,
-// rather than fail every path the node touches).
-//
-// This is the fix for a live correctness bug: a plan's nodes run CONCURRENTLY in
-// one chat, so with only the per-chat scope every node cloned into the same
-// directory - and an explorer node told to study OpenHands sat there reading
-// goose's source, because goose's clone was simply THERE. It is a DEFAULT, not a
-// wall: the "/"-prefixed escape hatch still addresses the chat root, so a
-// downstream node can deliberately reach an upstream node's clone.
+// NodeDir returns the working directory a DAG node's tools default to - one
+// component under the per-chat scope, or "" when nodeID can't safely name one
+// (falls back to the chat root). Concurrent nodes in one chat need separate
+// dirs or they collide on a shared clone; the "/"-prefixed escape hatch still
+// reaches the chat root for deliberate cross-node access.
 func NodeDir(nodeID string) string {
 	if !isSafePathComponent(nodeID) {
 		return ""
@@ -233,17 +226,10 @@ func (j *Jail) scopeRoot(userID, chatID string) (string, error) {
 }
 
 // Resolve is the ONE path-resolution function every filesystem/git tool uses:
-// it joins relPath under the (userID, chatID) scope root - <root>/<userID>/
-// <chatID>/ when chatID is set, else the per-user <root>/<userID>/ - cleans it,
-// resolves symlinks on the deepest existing ancestor, and verifies the result
-// is prefix-contained in that scope root. Absolute relPath, `..` escapes, and
-// symlinks pointing outside the scope all fail identically with ErrEscape - "no
-// exceptions" per the isolation design. A symlink that stays inside resolves and
-// works normally. userID is guarded first (ErrInvalidUserID) and a non-empty
-// chatID second (ErrInvalidChatID): both must be single path components, or the
-// scope root itself would relocate. chatID "" resolves the per-user root (the
-// backward-compatible fallback for a direct/un-gated call - see the per-chat
-// scoping in internal/tools).
+// it joins relPath under the (userID, chatID) scope root, resolves symlinks,
+// and verifies prefix-containment. Absolute relPath, `..`, and symlinks
+// pointing outside the scope all fail identically with ErrEscape - no
+// exceptions. chatID "" falls back to the per-user root.
 func (j *Jail) Resolve(userID, chatID, relPath string) (string, error) {
 	scopeRoot, err := j.scopeRoot(userID, chatID)
 	if err != nil {

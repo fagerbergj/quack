@@ -71,17 +71,11 @@ func isRepo(dir string) bool {
 	return err == nil
 }
 
-// RepoKey identifies the repository a chat is working in - the key of its shared
-// memory bucket (memory.Scope.Repo), so what one coding agent learns about a repo
-// is recalled by the next one working in the SAME repo.
-//
-// It is derived, not guessed: the chat's jail scope (<root>/<user>/<chat>/) is
-// searched for git repos and the single one found is identified by its `origin`
-// remote ("github.com/owner/repo" - host + path, normalized across ssh/https and a
-// .git suffix, so the same repo cloned either way is the same bucket). It returns ""
-// - no repo bucket, memories fall back to the role bucket - when there is no repo,
-// when there is more than one (ambiguous: don't guess), or when the single repo has
-// no origin remote (a local-only repo has no shareable identity).
+// RepoKey identifies the repository a chat is working in - the key of its
+// shared memory bucket (memory.Scope.Repo). Derived, not guessed: the chat's
+// jail scope is searched for git repos, and the single one found is keyed by
+// its normalized `origin` remote (host+path, ssh/https/.git folded together).
+// Returns "" (role bucket instead) when there's none, more than one, or no origin.
 func (j *Jail) RepoKey(userID, chatID string) string {
 	root, err := j.Resolve(userID, chatID, "")
 	if err != nil {

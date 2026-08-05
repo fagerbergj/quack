@@ -431,19 +431,14 @@ func reviewDeliverableText(gh githubContext) string {
 	return "a review with inline comments and a verdict"
 }
 
-// deliverableText classifies the run exactly as the old prose builder did -
-// planOnly / label-triggered implement / a plain issue mention / a PR
-// conversational follow-up (isWorkRequest, intent.go) - and states the ONE
-// thing this run is asked to produce. Permissions and the ask+event blocks
-// carry everything else; this never repeats them.
+// deliverableText classifies the run (planOnly / label-triggered implement /
+// issue mention / PR follow-up) and states the ONE thing this run is asked to
+// produce; permissions and the ask+event blocks carry everything else.
 //
-// A genuine PR work request (mentionIsWork) picks between review and commit
-// with classifyPRDeliverable (#689): the grant, not a regex, bounds the
-// choice, so an ungranted deliverable can never be picked. vetting.
-// ImplementationIntent is now only the FALLBACK for that choice - a grant
-// permitting neither, an unset/erroring/timed-out classifier, or an
-// unparseable answer - and stays the primary discriminator for every path
-// that was never a human mention at all (label triggers, synthetic hints).
+// A genuine PR work request picks between review and commit via
+// classifyPRDeliverable, bounded by the grant (not a regex). vetting.
+// ImplementationIntent is only the FALLBACK there - it stays primary for
+// every path that was never a human mention (label triggers, synthetic hints).
 func (e *Extension) deliverableText(ctx context.Context, p issueCommentPayload, task string, gh githubContext, grant vetting.Grant, isPR bool) string {
 	// A mention on a PR defaults to CONVERSATIONAL unless the classifier calls
 	// it a work request - fails safe to conversational, since a wrong WORK

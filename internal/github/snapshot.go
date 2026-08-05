@@ -341,16 +341,12 @@ func shortSHA(sha string) string {
 	return sha[:7]
 }
 
-// newCommitsAgainstBaseline returns the commits in `commits` whose patch-id
-// is NOT in `reviewed` - the review scope. Deliberately decoupled from
-// diffSnapshots' NewCommits (the general context delta, which advances on
-// EVERY dispatch, review or not): scoping a review off that would under-scope
-// it whenever a conversational dispatch landed between two reviews (it would
-// have already advanced the snapshot commits list past what was actually
-// reviewed). `reviewed` is the patch-id set from the last DELIVERED review
-// only (see the store's GithubReviewBaseline). A commit whose patch-id
-// couldn't be computed is conservatively treated as new - same policy as
-// diffSnapshots.
+// newCommitsAgainstBaseline returns the commits whose patch-id is NOT in
+// `reviewed` - the review scope. Deliberately decoupled from diffSnapshots'
+// NewCommits, which advances on EVERY dispatch and would under-scope a review
+// whenever a conversational dispatch landed in between. `reviewed` is the
+// patch-id set from the last DELIVERED review only; an uncomputable patch-id
+// is conservatively treated as new.
 func newCommitsAgainstBaseline(commits []snapshotCommit, reviewed map[string]bool) []snapshotCommit {
 	out := make([]snapshotCommit, 0, len(commits)) // non-nil even when empty: nil means "no baseline at all" (see reviewScope)
 	for _, c := range commits {

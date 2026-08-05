@@ -194,17 +194,11 @@ func setupLinkedWorktreeFixture(t *testing.T) (worktreeDir string) {
 	return worktreeDir
 }
 
-// TestSandboxLandlockLinkedWorktreeGitWorks is the worktree-isolation landlock verification:
-// a linked git worktree's OWN ".git" is a pointer file, not a directory - the
-// object database, refs, and per-worktree index/HEAD/logs it points at live
-// under the PARENT clone's ".git", entirely outside the worktree's own
-// directory. Without the extra grant (worktreeCommonGitDirs, wired into
-// landlockGrants) `git status`/`git log` inside it would fail "not a git
-// repository" (or worse) under landlock's deny-by-default - this proves they
-// succeed through the REAL production path (RunArgv -> childArgv's landlock
-// branch), exactly the path checksPassCriterion/gitprobe.go run a read-only
-// node's git commands through once workspaceNodeID resolves it into a
-// worktree (see dag.worktreeParentID).
+// TestSandboxLandlockLinkedWorktreeGitWorks pins that a linked worktree's git
+// commands work under landlock: its ".git" is a pointer file, with the object
+// db/refs/index living under the PARENT clone's ".git" outside the worktree
+// dir. Without the extra grant (worktreeCommonGitDirs) landlock's deny-by-
+// default breaks `git status`/`git log` with "not a git repository".
 func TestSandboxLandlockLinkedWorktreeGitWorks(t *testing.T) {
 	requireLandlock(t)
 	worktreeDir := setupLinkedWorktreeFixture(t)
