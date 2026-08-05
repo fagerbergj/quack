@@ -532,10 +532,21 @@ export class ChatStore {
   attach(chatId: string): void {
     if (this.isStreaming(chatId) || this.eventSources.has(chatId)) return
     const cur = this.get(chatId)
-    // The in-progress run is the latest seeded turn; lift it into `live` so the
-    // replayed events rebuild its DAG there (history renders only completed turns).
+    // The in-progress run is the latest seeded turn; lift it into `live`. Seed
+    // dag/text/runs from what GET /chats/{id} already persisted for it (#463) -
+    // the hub only publishes NEW events, so a client attaching after they've
+    // already fired would otherwise see nothing until the run's next event.
     const last = cur.turns[cur.turns.length - 1]
-    const live: LiveTurn = { id: last?.id ?? '', userText: last?.input.content ?? '', streaming: true, error: '', text: '', runs: [] }
+    const dagItem = last ? dagFromTurn(last) : undefined
+    const live: LiveTurn = {
+      id: last?.id ?? '',
+      userText: last?.input.content ?? '',
+      streaming: true,
+      error: '',
+      text: last ? textFromTurn(last) : '',
+      runs: last ? activityFromTurn(last) : [],
+      dag: dagItem ? dagTurnStateFromItem(dagItem) : undefined,
+    }
     this.write(chatId, { ...cur, turns: cur.turns.slice(0, -1), live })
 
     const generation = this.bumpGeneration(chatId)
@@ -914,6 +925,44 @@ export function dagFromTurn(turn: Turn): DagOutputItem | undefined {
     if (item.type === 'quack:dag') return item as DagOutputItem
   }
   return undefined
+}
+
+// dagTurnStateFromItem converts a persisted DagOutputItem into a DagTurnState
+// suitable for DagView. Runs/answers are empty (streaming content isn't persisted).
+// Shared by TurnView (completed turns) and attach() (snapshotting an in-progress one).
+export function dagTurnStateFromItem(item: DagOutputItem): DagTurnState {
+  const nodeStates: DagTurnState['nodeStates'] = {}
+  let startedAt: number | undefined
+  let finishedAt: number | undefined
+  for (const [id, ns] of Object.entries(item.node_states)) {
+    nodeStates[id] = {
+      status: ns.status as DagTurnState['nodeStates'][string]['status'],
+      outputPreview: ns.output_preview,
+      error: ns.error,
+      startedAt: ns.started_at_ms,
+      finishedAt: ns.finished_at_ms,
+      model: ns.model,
+      promptTokens: ns.prompt_tokens,
+      completionTokens: ns.completion_tokens,
+      totalTokens: ns.total_tokens,
+      finishReason: ns.finish_reason,
+      serverDurationMs: ns.server_duration_ms,
+    }
+    if (ns.started_at_ms != null)
+      startedAt = startedAt == null ? ns.started_at_ms : Math.min(startedAt, ns.started_at_ms)
+    if (ns.finished_at_ms != null)
+      finishedAt = finishedAt == null ? ns.finished_at_ms : Math.max(finishedAt, ns.finished_at_ms)
+  }
+  return {
+    planId: item.plan_id,
+    nodes: item.nodes,
+    edges: item.edges,
+    nodeStates,
+    nodeRuns: {},
+    nodeAnswer: {},
+    startedAt,
+    finishedAt,
+  }
 }
 
 // activityFromTurn reconstructs the orchestrator's persisted tool calls (the
