@@ -9,7 +9,7 @@
 
 import { str, num } from './toolFormat'
 
-interface Comment {
+export interface Comment {
   id?: string
   createdAt?: string
   author?: string
@@ -237,6 +237,70 @@ export function parseEnvelope(raw: string): EnvelopeBlock[] | null {
   } catch {
     return null
   }
+}
+
+type CommentsBlock = Extract<EnvelopeBlock, { kind: 'comments' }>
+
+// commentsBlockOf parses one turn's raw envelope content and returns its own
+// <comments> block, or undefined if the turn has none / isn't an envelope.
+function commentsBlockOf(content: string): CommentsBlock | undefined {
+  return parseEnvelope(content)?.find((b): b is CommentsBlock => b.kind === 'comments')
+}
+
+// isSeed reports whether a <comments> block is the full first-load snapshot
+// (envelope.go's commentsBlock: no new/edited/deleted attrs) rather than a
+// resume delta.
+function isSeed(b: CommentsBlock): boolean {
+  return b.added == null && b.edited == null && b.deleted == null
+}
+
+export interface AccumulatedComments {
+  comments: Comment[]
+  // False when the earliest turn this client can see is itself a delta (no
+  // seed in the visible window - a rehydrated store, or a chat opened after
+  // reaping) - the list below is everything captured so far, not the issue's
+  // whole history.
+  complete: boolean
+}
+
+// accumulateComments folds a chat's <comments> blocks (`priorContents` oldest
+// first, `current` last) into one running history, replaying the same
+// new/edited/deleted rule the server applied when it built each delta
+// (envelope.go's diffSnapshots) rather than re-sending anything to the model.
+export function accumulateComments(priorContents: string[], current: CommentsBlock): AccumulatedComments {
+  const blocks: CommentsBlock[] = []
+  for (const c of priorContents) {
+    const b = commentsBlockOf(c)
+    if (b) blocks.push(b)
+  }
+  blocks.push(current)
+
+  const byId = new Map<string, Comment>()
+  const order: string[] = []
+  let anonymous = 0
+  for (const b of blocks) {
+    for (const c of b.comments ?? []) {
+      const id = c.id ?? `_${anonymous++}`
+      if (c.quackStatus === 'deleted') {
+        // A comment already in the running history is removed outright. One
+        // this client never saw alive (its own removal is the first record of
+        // it - no seed in the visible window) is kept and marked deleted
+        // instead of silently vanishing: the incompleteness is what `complete`
+        // is for, not a reason to drop data this delta actually carried.
+        if (byId.has(id)) {
+          byId.delete(id)
+          order.splice(order.indexOf(id), 1)
+        } else {
+          byId.set(id, c)
+          order.push(id)
+        }
+        continue
+      }
+      if (!byId.has(id)) order.push(id)
+      byId.set(id, c)
+    }
+  }
+  return { comments: order.map(id => byId.get(id)!), complete: isSeed(blocks[0]) }
 }
 
 // commentsSummaryLabel is the collapsed header for a <comments> block: a plain

@@ -368,12 +368,19 @@ export default function Chat() {
     // This turn's input is itself the answer to the previous turn's clarification.
     const prev = arr[idx - 1]
     const isChoiceAnswer = prev ? pendingChoice(activityFromTurn(prev)) != null : false
-    return { turn, idx, choiceAnswer, isChoiceAnswer }
+    // Earlier turns' raw envelope text, oldest first - lets this turn's
+    // TriggerMessage fold a GitHub <comments> delta onto the running history (#730).
+    const priorContents = arr.slice(0, idx).map(t => t.input.content)
+    return { turn, idx, choiceAnswer, isChoiceAnswer, priorContents }
   }), [state.turns, liveUserText])
 
   // The live turn is a clarification answer when the last completed turn asked one.
   const lastTurn = state.turns[state.turns.length - 1]
   const liveIsChoiceAnswer = lastTurn ? pendingChoice(activityFromTurn(lastTurn)) != null : false
+
+  // Every completed turn's raw envelope text, oldest first - the live turn's
+  // <comments> section folds onto this the same way a persisted turn does (#730).
+  const livePriorContents = useMemo(() => state.turns.map(t => t.input.content), [state.turns])
 
   return (
     // overflow-hidden: the app owns ALL scrolling internally (messages pane,
@@ -440,7 +447,7 @@ export default function Chat() {
             </div>
           )}
 
-          {turnViews.map(({ turn, idx, choiceAnswer, isChoiceAnswer }) => (
+          {turnViews.map(({ turn, idx, choiceAnswer, isChoiceAnswer, priorContents }) => (
             <TurnView
               key={turn.id}
               turn={turn}
@@ -449,6 +456,7 @@ export default function Chat() {
               isChoiceAnswer={isChoiceAnswer}
               submittingChoice={submittingChoice}
               isCopied={copied === `turn-${turn.id}`}
+              priorContents={priorContents}
               onChoice={handleChoice}
               onCopy={handleCopy}
               onDownload={handleDownload}
@@ -511,6 +519,7 @@ export default function Chat() {
                   <TriggerMessage
                     content={live.userText}
                     attachments={<AttachmentPreviews previews={liveAttachmentPreviews} />}
+                    priorContents={livePriorContents}
                   />
                 )}
                 {/* Assistant response: DAG bubble → node question → answer bubble, as siblings */}
