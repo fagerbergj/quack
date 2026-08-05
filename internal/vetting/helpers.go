@@ -17,6 +17,11 @@ import (
 
 // Config carries per-agent trust-gate settings for RunGatedRefine and the judge.
 type Config struct {
+	// NodeBaseSHA is the clone's HEAD when THIS node started. Chained nodes share
+	// one clone, so diffing from the reflog's oldest entry shows every sibling's
+	// work too and the change-shape criteria fail on commits this node never made
+	// (#710). Empty ⇒ fall back to the reflog base (single-node plans, no clone).
+	NodeBaseSHA         string
 	DeterministicRounds int             // cheap citation/length check + revise cycles
 	JudgeRounds         int             // model-judge/revise rounds
 	Threshold           float64         // pass score in (0,1]

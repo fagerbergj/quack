@@ -94,9 +94,13 @@ func diffSince(cfg Config) (diff, base, head string) {
 		return "", "", ""
 	}
 	caps := checksCaps(cfg)
-	b, err := baseCommit(dir, caps)
-	if err != nil {
-		return "", "", ""
+	// This node's own starting point when we have it; the reflog base otherwise.
+	b := cfg.NodeBaseSHA
+	if b == "" {
+		var err error
+		if b, err = baseCommit(dir, caps); err != nil {
+			return "", "", ""
+		}
 	}
 	h := gitLine(dir, caps, "rev-parse", "HEAD")
 	if h == "" {
@@ -163,4 +167,18 @@ func short(sha string) string {
 		return sha[:12]
 	}
 	return sha
+}
+
+// cloneHeadSHA is the shared clone's HEAD right now - stamped once per node so
+// diffSince can scope its diff to what THIS node did (#710). "" when there is
+// no clone yet, which is the single-node/no-repo case diffSince falls back on.
+func cloneHeadSHA(cfg Config) string {
+	if cfg.Setup == nil || cfg.Workspace == nil {
+		return ""
+	}
+	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID))
+	if err != nil || !isDir(filepath.Join(dir, ".git")) {
+		return ""
+	}
+	return gitLine(dir, checksCaps(cfg), "rev-parse", "HEAD")
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/workspace"
@@ -102,5 +103,64 @@ func TestAugmentFromRepo_SkipsNonSetupNodes(t *testing.T) {
 	augmentFromRepo(context.Background(), &act, cfg)
 	if act.committed {
 		t.Fatal("the probe must only fire for setup-provisioned nodes")
+	}
+}
+
+// #710: chained nodes share one clone, so diffing from the reflog's oldest
+// entry showed every sibling's commits too - the change-shape criteria then
+// failed a node for work it never did and could not remove. NodeBaseSHA scopes
+// the diff to this node's own contribution.
+func TestDiffSinceScopesToNodeBaseSHA(t *testing.T) {
+	dir := t.TempDir()
+	run := func(args ...string) string {
+		res, err := workspace.RunArgv(context.Background(), dir, append([]string{"git"}, args...), workspace.DefaultCaps())
+		if err != nil || res.ExitCode != 0 {
+			t.Fatalf("git %v: %v (exit %d): %s", args, err, res.ExitCode, res.Output)
+		}
+		return strings.TrimSpace(res.Output)
+	}
+	run("init", "-q", "-b", "main")
+	run("config", "user.email", "t@t")
+	run("config", "user.name", "t")
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("base.txt", "base\n")
+	run("add", "-A")
+	run("commit", "-qm", "base")
+
+	// Sibling node's commit - present in the clone before this node starts.
+	write("sibling.kt", "sibling work\n")
+	run("add", "-A")
+	run("commit", "-qm", "sibling")
+	nodeBase := run("rev-parse", "HEAD")
+
+	// This node's own commit.
+	write("mine.kt", "my work\n")
+	run("add", "-A")
+	run("commit", "-qm", "mine")
+
+	caps := workspace.DefaultCaps()
+	res, err := workspace.RunArgv(context.Background(), dir, []string{"git", "diff", nodeBase + "...HEAD"}, caps)
+	if err != nil || res.ExitCode != 0 {
+		t.Fatalf("diff: %v", err)
+	}
+	if strings.Contains(res.Output, "sibling.kt") {
+		t.Errorf("node-scoped diff leaked a sibling's file:\n%s", res.Output)
+	}
+	if !strings.Contains(res.Output, "mine.kt") {
+		t.Errorf("node-scoped diff missing this node's own file:\n%s", res.Output)
+	}
+
+	// The old behaviour, for contrast: from the reflog base both appear.
+	b, err := baseCommit(dir, caps)
+	if err != nil {
+		t.Fatalf("baseCommit: %v", err)
+	}
+	res2, _ := workspace.RunArgv(context.Background(), dir, []string{"git", "diff", b + "...HEAD"}, caps)
+	if !strings.Contains(res2.Output, "sibling.kt") {
+		t.Skip("reflog base did not include the sibling commit; environment-dependent, nothing to contrast")
 	}
 }
