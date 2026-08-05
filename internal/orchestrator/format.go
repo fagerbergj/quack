@@ -18,17 +18,14 @@ import (
 )
 
 // needsFormatPass reports whether a plan's terminal output is raw specialist
-// text that never passed through a synthesizer - the case #430 found
-// inconsistent: the SAME request could come back as a formatted plan or a
-// bare exploration report purely on how the planner happened to word the
-// terminal node's task. The plan-work skill now guides the planner to add a
-// synthesizer whenever the deliverable's shape matters; this is the
-// orchestrator-side fallback for when it didn't (or couldn't, on a lone
-// node). Skipped when the plan already ends in a synthesizer (already
-// formatted, see agents/synthesizer/prompt.md) or declares a GitHub delivery
-// - there the terminal code-implementer/code-reviewer node stages its own
-// PR/review per-node (vetting.commitDelivery), and this chat text is not
-// the deliverable.
+// text that never passed through a synthesizer, so the same request could
+// come back formatted or as a bare report purely on planner wording. The
+// plan-work skill guides the planner to add a synthesizer when the
+// deliverable's shape matters; this is the orchestrator-side fallback for
+// when it didn't. Skipped when the plan already ends in a synthesizer, or
+// declares a GitHub delivery (there the terminal node stages its own
+// PR/review per-node via vetting.commitDelivery, and this chat text isn't
+// the deliverable).
 func needsFormatPass(plan dag.Plan) bool {
 	if plan.Delivery != nil {
 		return false

@@ -5,17 +5,15 @@
 //
 // One subprocess per worker round: spawn → initialize → session/new(cwd) →
 // session/prompt → stream updates → kill. Revise/continuation prompts are
-// self-contained by design (vetting.buildRevisionContent), so no state needs to
-// survive between rounds; the repo on disk is the shared substrate.
+// self-contained (vetting.buildRevisionContent), so no state survives between
+// rounds; the repo on disk is the shared substrate.
 // ponytail: process-per-round re-reads context each round - keep the process
 // alive per node (keyed like nodeClient.ForNode) if round startup ever matters.
 //
-// The agent yields ADK session events translated from ACP session/update
-// notifications, using QUACK's tool vocabulary (run_command, write_file,
-// read_file - see mapToolCall) so the existing DAG stream, the trust-gate
-// activity ledger (vetting.activityFromSessionAt) and the judge all keep
-// working with no knowledge of ACP. Chunk deltas ride Partial events (streamed,
-// never persisted); tool pairs and the final answer are durable events.
+// ACP session/update notifications translate to ADK session events using
+// QUACK's own tool vocabulary (run_command, write_file, read_file - see
+// mapToolCall), so the DAG stream, gate activity ledger, and judge all work
+// with no knowledge of ACP.
 package acp
 
 import (
@@ -165,26 +163,20 @@ func (a *Agent) RunNode(ctx adkagent.Context, nodeInput any) iter.Seq2[*session.
 // resolveNode derives the node's working directory, its memory-MCP
 // credential, and its GitHub context-dir grant from the advisor-thread
 // marker in the prompt - the ONE channel that carries (chat, workspace-node)
-// scope to a worker (the same one internal/tools uses). The setup clone
-// lands AT the node root (workspace.SetupCloneDir == NodeDir), so this dir
-// IS the repo for a setup-provisioned node. A read-only qualifying node
-// (at.WorktreeParent set - reviewer, explorer) gets its dir provisioned as a
-// linked git worktree of the parent clone instead (Options.Worktree) - the
-// worktree-per-node follow-up .quack/specs/sandbox-acp-landlock.md's "Out"
-// section named.
+// scope to a worker. The setup clone lands AT the node root
+// (workspace.SetupCloneDir == NodeDir); a read-only qualifying node
+// (at.WorktreeParent set) gets a linked git worktree of the parent clone
+// instead (Options.Worktree).
 //
-// memSecret rides this SAME lookup (AdvisorTask.MemSecret) but is looked up
-// in the SEPARATE memSessions registry when actually used (memoryMCPServers)
-// - the advisor-thread token itself must never double as the memory MCP
-// bearer credential; see vetting.AdvisorTask.MemSecret.
+// memSecret rides this SAME lookup but is looked up in the SEPARATE
+// memSessions registry when used (memoryMCPServers) - the advisor-thread
+// token itself must never double as the memory MCP bearer credential.
 //
 // ctxDir is the sibling context directory a GitHub-triggered run's dispatch
-// may have written (#659/#660, workspace.ContextDirScope) - derived from the
-// SAME (UserID, SessionID) coordinate the dispatch side resolves it under, so
-// no extra registry field is needed. "" (ignored error) for a non-GitHub
-// session, or one that never wrote one; round's sandbox grant uses
-// --ro-bind-try, so a "" or missing dir is silently skipped, never a hard
-// failure.
+// may have written (workspace.ContextDirScope), derived from the same
+// (UserID, SessionID) coordinate. "" for a non-GitHub session or one that
+// never wrote one; the sandbox grant uses --ro-bind-try, so a missing dir is
+// silently skipped, never a hard failure.
 func (a *Agent) resolveNode(ctx context.Context, prompt string) (cwd, memSecret, ctxDir string, err error) {
 	token, ok := vetting.ParseAdvisorThread(prompt)
 	if !ok {

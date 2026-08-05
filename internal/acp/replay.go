@@ -11,25 +11,16 @@ import (
 // replayAgentIO stands in for a real subprocess's stdin/stdout pipes when
 // Options.Replay is set (proc.go's startReplay). Read serves the recorded
 // AGENT→CLIENT frames verbatim, in order - the transcript IS the round's
-// response, independent of what quack writes back, since it was captured as
-// the agent's ACTUAL observed output for this exact recorded round.
+// response, independent of what quack writes back.
 //
-// Delivery is PACED behind Write, not dumped all at once: the recording only
-// preserves each direction's OWN internal order, not how sent and received
-// interleaved live, and a plain buffered reader that hands back everything
-// instantly races the connection's own read loop past EOF (closing the
-// connection) before the client has even issued Initialize. Releasing
-// received[i] only once at least min(i+1, len(sent)) requests have been
-// written mirrors the real protocol's own shape closely enough: each of
-// Initialize/NewSession/Prompt writes its request before awaiting a
-// response, so pacing 1 release per write never blocks a call waiting on
-// its OWN already-written request; once every request has been sent, the
-// rest (trailing notifications, the final response) streams straight
-// through with no further gate. Write only counts frames and errors once
-// the live round sends more than the recording did - a live request the
-// recording never answered, the ACP twin of replay.MissError's "extra"
-// class. As simple as replay-strict needs: sequence playback, no live
-// divergence branching (#604).
+// Delivery is PACED behind Write, not dumped all at once: a plain buffered
+// reader that hands back everything instantly races the connection's own
+// read loop past EOF before the client has even issued Initialize.
+// Releasing received[i] only once at least min(i+1, len(sent)) requests
+// have been written mirrors the real protocol's shape closely enough, since
+// each RPC writes its request before awaiting a response. Write only counts
+// frames/errors once the live round sends more than the recording did (the
+// ACP twin of replay.MissError's "extra" class).
 type replayAgentIO struct {
 	pr *io.PipeReader
 	pw *io.PipeWriter

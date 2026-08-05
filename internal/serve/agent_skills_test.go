@@ -9,17 +9,15 @@ import (
 
 var loadSkillRe = regexp.MustCompile(`load_skill\("([a-zA-Z0-9_-]+)"\)`)
 
-// Every skill an agent's prompt tells it to load MUST exist in the skill library we
-// actually ship (the embedded skills/ dir plus the vendored ponytail skills). A prompt
-// that names a skill we don't ship is not a harmless typo: the agent's FIRST action
-// fails, it retries, and it flails.
+// Every skill an agent's prompt tells it to load MUST exist in the skill
+// library we actually ship (embedded skills/ plus vendored ponytail skills).
+// A prompt naming an unshipped skill is not a harmless typo: the agent's
+// FIRST action fails, and it flails.
 //
-// The live failure this pins: agents/code-explorer/prompt.md opens with
-// `load_skill("research-git-repos")` - "first, before touching the repo" - but that
-// skill lived only in .agents/skills/ (quack's PROJECT skills, loadable only after an
-// agent cd's into the quack repo). The shipped library never had it. Every explorer
-// run therefore began by failing its own mandatory discipline, and a live code-mode
-// research run burned 76 failed filesystem calls groping around without it.
+// Regression: agents/code-explorer/prompt.md loaded a skill that only lived
+// in .agents/skills/ (project skills, loadable only after cd'ing into the
+// quack repo), never the shipped library - so every explorer run began by
+// failing its own mandatory discipline.
 func TestEveryAgentPromptSkillIsShipped(t *testing.T) {
 	root := repoRoot(t)
 

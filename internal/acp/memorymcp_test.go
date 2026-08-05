@@ -363,17 +363,14 @@ func TestMemoryMCPURL_LoopbackOnly(t *testing.T) {
 	}
 }
 
-// TestMemoryMCP_NamespaceIsSurfaceNeutral pins #558/#640: the shared per-node
-// server (memory + review + PR surfaces) advertises itself as "quackmcp" -
-// surface-neutral like #558 required (not "quack-memory": a review tool
-// should never read as a memory tool), and NOT bare "quack" (#628's choice):
-// opencode's own config names quack's LLM provider "quack" in the SAME
-// config (internal/serve's opencodeEnv), and a live ACP round driven for
-// #640 confirmed opencode never surfaced a single quack_* tool once the
-// server shared that name - "quackmcp" cannot collide with the provider ID.
-// Checks both names that matter: the server's own identity (the initialize
-// handshake) and the Name handed to opencode in session/new (memoryMCPServers
-// - the one that actually drives the tool prefix).
+// TestMemoryMCP_NamespaceIsSurfaceNeutral pins the shared per-node server's
+// name: "quackmcp" - surface-neutral (not "quack-memory", since it also
+// serves review/PR tools) and distinct from bare "quack" (opencode's own
+// config names quack's LLM provider "quack" in the same config, so a
+// collision there suppresses the tool prefix entirely). Checks both the
+// server's own identity (initialize handshake) and the Name handed to
+// opencode in session/new (memoryMCPServers - the one that drives the tool
+// prefix).
 func TestMemoryMCP_NamespaceIsSurfaceNeutral(t *testing.T) {
 	secret := mustMemSecret(t)
 	vetting.RegisterMemSession(secret, vetting.MemSession{Review: &vetting.ReviewStage{}, PRStage: &vetting.PRStage{}})

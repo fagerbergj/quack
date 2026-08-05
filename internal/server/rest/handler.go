@@ -1085,19 +1085,16 @@ func (h *Handler) toSummary(ctx context.Context, c store.Chat) schema.ChatSummar
 // chatStatus computes a chat's derived status plus its pending question (set
 // only for needs_input):
 //
-//   - queued - the orchestrator has admitted a run for this chat but it's
-//     still waiting on the max_active_runs slot. Checked BEFORE running: the
-//     hub's topic goes "active" at response_created, published before the
-//     slot is acquired, so hub.Active alone can't tell queued from executing.
-//   - running - the hub has a live run for this chat, and it's not (per the
-//     above) still queued.
-//   - needs_input - the chat's session history ends on an unanswered question.
-//     This MUST be (and is) the same scan the orchestrator's own resume path
-//     uses (orchestrator.LatestPendingQuestion over PriorEvents) - one place
-//     decides "is a question pending", so the API and the resume behavior can
-//     never disagree (see AGENTS.md's DRY requirement for chat status).
-//   - failed - the last turn's DAG has a failed node and no answer text
-//     followed it.
+//   - queued - admitted but still waiting on the max_active_runs slot.
+//     Checked BEFORE running: the hub's topic goes "active" at
+//     response_created, published before the slot is acquired, so hub.Active
+//     alone can't distinguish queued from executing.
+//   - running - the hub has a live run for this chat and it's not queued.
+//   - needs_input - session history ends on an unanswered question. MUST be
+//     the same scan the orchestrator's own resume path uses
+//     (orchestrator.LatestPendingQuestion over PriorEvents), so the API and
+//     resume behavior can never disagree.
+//   - failed - the last turn's DAG has a failed node and no answer followed.
 //   - idle - none of the above.
 func (h *Handler) chatStatus(ctx context.Context, chatID string, turns []store.TurnContent) (schema.ChatStatus, *string) {
 	if h.orch.Queued(chatID) {

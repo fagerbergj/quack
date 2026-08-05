@@ -112,21 +112,16 @@ func initMetrics(meter metric.Meter) error {
 	return nil
 }
 
-// RunStarted/RunFinished track quack.runs.active - a run that has ACQUIRED its
-// concurrency slot and is actually executing. RunQueued/RunUnqueued track
-// quack.runs.queued - a run admitted (its "run" span open) but still waiting
-// on max_active_runs. A run transits queued → active exactly once (or queued
-// → unqueued with no active, if cancelled before it acquires); the caller
-// (Orchestrator.Run) is responsible for calling exactly one matched pair from
-// each, on every exit path (error, cancel, panic-unwind).
+// RunStarted/RunFinished track quack.runs.active - a run that ACQUIRED its
+// concurrency slot and is executing. RunQueued/RunUnqueued track
+// quack.runs.queued - admitted but waiting on max_active_runs. The caller
+// (Orchestrator.Run) must call exactly one matched pair from each, on every
+// exit path (queued → active, or queued → unqueued if cancelled first).
 //
-// Neither pair can survive a hard process kill (container restart) mid-run:
-// the process that incremented the gauge never runs its decrement, and the
-// counter is orphaned high until the NEXT process starts fresh at 0. That is
-// inherent to an up/down counter across a restart, not a code bug - treat
-// quack.runs.active/quack.runs.queued/quack.nodes.active as advisory around a
-// deploy; the durable event log and Tempo traces are the source of truth for
-// what was actually in flight.
+// Neither pair survives a hard process kill mid-run - the counter is
+// orphaned high until the next process starts fresh at 0. Treat these gauges
+// as advisory around a deploy; the durable event log/traces are the source
+// of truth for what was in flight.
 func RunStarted() {
 	if m != nil {
 		m.runsActive.Add(context.Background(), 1)

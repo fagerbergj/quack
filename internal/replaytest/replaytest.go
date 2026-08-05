@@ -3,10 +3,9 @@
 // through replay-backed models and tool stubs, and returns the outcome
 // alongside the session's divergence report.
 //
-// Scope ceiling: this harness drives a single vetting.RunGatedRefine node,
-// not the full DAG (internal/dag) - wiring replay into the full orchestrator
-// is left as a follow-up. The replay ENGINE itself (replay.Session, the
-// kind:replay provider, the tool stubs, the divergence report) has no
+// Scope ceiling: drives a single vetting.RunGatedRefine node, not the full
+// DAG - wiring replay into the full orchestrator is a follow-up. The replay
+// ENGINE itself (replay.Session, tool stubs, divergence report) has no
 // dependency on which harness drives it.
 package replaytest
 

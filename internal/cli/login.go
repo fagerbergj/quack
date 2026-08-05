@@ -66,15 +66,13 @@ var openBrowser = func(url string) {
 // lands back on the listener. Stores the resulting tokens on the
 // already-registered server name so NewClient picks them up automatically.
 //
-// This replaces an earlier device authorization grant (RFC 8628) implementation.
-// Auth code + PKCE is the flow RFC 8252 actually recommends for a CLI/native
-// client, but it trades away the device grant's one real advantage: a
-// headless/SSH box with no local browser and no port the user's browser can
-// reach can't complete this flow the way it could poll through a device code.
+// A headless/SSH box with no local browser and no reachable port can't
+// complete this flow - only a device authorization grant (RFC 8628) could,
+// which this does not implement.
 //
 // Only public OIDC clients are supported (no client secret): PKCE is meant
-// for exactly this - a client that can't keep a secret - and it keeps the
-// stored registry free of anything more sensitive than the tokens themselves.
+// for exactly this, and it keeps the stored registry free of anything more
+// sensitive than the tokens themselves.
 func Login(ctx context.Context, out io.Writer, name, issuer, clientID string, scopes []string) error {
 	cc, err := LoadClient()
 	if err != nil {
@@ -210,23 +208,19 @@ func awaitCallback(ctx context.Context, listener net.Listener, state string, ann
 
 // ensureFreshToken returns ref's access token, refreshing it first (via the
 // OAuth2 token endpoint's refresh_token grant) and persisting the result if
-// it's at or near expiry. A ref with no stored auth returns "" (the caller
-// attaches no Authorization header - matching an unauthenticated server). A
-// ref whose token has no refresh_token and has expired is returned as-is;
-// the server will 401 it, which is the caller's signal to `server login`
-// again - there is nothing to refresh with.
+// it's at or near expiry. A ref with no stored auth returns "" (unauthenticated
+// server). A ref whose token has no refresh_token and has expired is returned
+// as-is; the server will 401 it, the caller's signal to `server login` again.
 //
-// Uses golang.org/x/oauth2's Config.TokenSource directly (the same
-// refresh_token-grant mechanism rp.RelyingParty wraps) rather than
+// Uses golang.org/x/oauth2's Config.TokenSource directly rather than
 // rp.RefreshTokens, which is generic over oidc.IDClaims for ID-token
 // verification this bearer-relaying CLI client has no use for.
 //
-// refreshMu serializes this across goroutines in one process (e.g. the TUI,
-// which can fire several client calls concurrently): without it, two callers
-// racing the same near-expiry token can each refresh independently, and an
-// IdP that rotates refresh tokens invalidates the first one as soon as the
-// second is consumed, failing whichever call loses the race. This does not
-// cover two separate `quack` process invocations racing the same file.
+// refreshMu serializes this across goroutines in one process: without it, two
+// callers racing the same near-expiry token can each refresh independently,
+// and an IdP that rotates refresh tokens invalidates the first as soon as the
+// second is consumed. Does not cover two separate `quack` process invocations
+// racing the same file.
 func ensureFreshToken(ctx context.Context, cc *ClientConfig, name string, ref ServerRef) (string, error) {
 	a := ref.Auth
 	if a == nil {

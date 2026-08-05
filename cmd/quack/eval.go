@@ -13,16 +13,11 @@ import (
 	"github.com/fagerbergj/quack/internal/serve"
 )
 
-// newEvalCmd: `quack eval <chat-id-or-bundle.zip> --model <name> [--role
-// coder|researcher|orch|all]` (#606) - re-run a recorded bundle's user
-// turns LIVE through a fresh in-process server built from the LOCAL
-// quack.yaml, with --role's model swapped in, then compare the fresh run's
-// judge scores against the recording's own. Unlike `quack replay`, nothing
-// here is a replay provider: every model/tool/agent call is live - eval
-// exists to test whether a DIFFERENT model does better or worse than what
-// was recorded, so a hermetic/stubbed run would defeat the point. Only the
-// recorded USER TURNS are consumed from the bundle (.quack/replay-log.md:
-// "eval mode consumes ONLY recorded user turns; everything runs live").
+// newEvalCmd re-runs a recorded bundle's user turns LIVE through a fresh
+// in-process server built from the LOCAL quack.yaml, with --role's model
+// swapped in, then compares the fresh run's judge scores against the
+// recording's own. Unlike `quack replay`, every model/tool/agent call is
+// live - only the recorded USER TURNS are consumed from the bundle.
 func newEvalCmd() *cobra.Command {
 	var model, role, sourceServer string
 	var asJSON bool

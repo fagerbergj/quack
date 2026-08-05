@@ -23,16 +23,15 @@ const redactedValue = "[REDACTED]"
 
 // Redact walks a decoded JSON value (the map[string]any/[]any/scalar shape
 // json.Unmarshal produces) and replaces every value keyed by a credential
-// name with a fixed placeholder, recursively. Keys are matched
-// case-insensitively; scalars and unrecognized keys pass through unchanged.
+// name with a fixed placeholder, recursively. Keys match case-insensitively;
+// scalars and unrecognized keys pass through unchanged.
 //
-// A string is also probed as JSON: every emission seam (inference/tools/acp)
-// hands the ledger complex payloads - tool arguments, ACP protocol frames -
-// pre-marshaled into ONE string attribute value, not a structured log.Value
-// tree, so a credential inside one of those blobs would otherwise sail past
-// the map/slice cases below untouched. A string that fails to parse (plain
-// text, not JSON) passes through unchanged - never re-marshaled, so it can't
-// pick up incidental formatting differences from a round trip.
+// A string is also probed as JSON: emission seams (inference/tools/acp) hand
+// the ledger complex payloads pre-marshaled into ONE string attribute, not a
+// structured log.Value tree, so a credential inside one of those blobs would
+// otherwise sail past the map/slice cases below untouched. A string that
+// fails to parse passes through unchanged - never re-marshaled, so it can't
+// pick up incidental round-trip formatting differences.
 func Redact(v any) any {
 	switch x := v.(type) {
 	case map[string]any:

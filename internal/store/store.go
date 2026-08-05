@@ -83,16 +83,14 @@ type GithubReviewBaseline struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// GithubFixState tracks the CI auto-heal loop bound (#254, redesigned #656)
-// for one PR chat. Durable on purpose: quack's own fix push re-runs CI and
-// the next failure arrives as a fresh webhook, possibly after a process
-// restart - in-memory state would reset and thrash forever. LastSHA dedups
-// multiple failing workflows on one head commit (CI usually runs several).
-// Stopped marks the ONE-attempt guard having tripped: the commit that just
-// failed CI was itself a fix quack pushed, so it stops rather than fix the
-// fix (see internal/github/cifix.go's autoHeal) - cleared the moment a NEW
-// (non-quack) commit fails, which is what re-arms auto-heal without needing
-// a human to re-apply anything.
+// GithubFixState tracks the CI auto-heal loop bound for one PR chat. Durable
+// on purpose: quack's own fix push re-runs CI and the next failure arrives as
+// a fresh webhook, possibly after a process restart - in-memory state would
+// reset and thrash forever. LastSHA dedups multiple failing workflows on one
+// head commit. Stopped marks the ONE-attempt guard having tripped: the
+// commit that just failed CI was itself a fix quack pushed, so it stops
+// rather than fix the fix (internal/github/cifix.go's autoHeal) - cleared
+// the moment a NEW (non-quack) commit fails, re-arming auto-heal.
 type GithubFixState struct {
 	ChatID    string    `gorm:"primaryKey;column:chat_id" json:"chat_id"`
 	LastSHA   string    `gorm:"column:last_sha" json:"last_sha"`
@@ -784,11 +782,10 @@ const staleNodeCeiling = 12 * time.Hour
 // written before InstanceID existed, (b) belongs to THIS Store's own
 // instance (a restart reconciling what it left mid-run last time), or (c)
 // has been untouched past staleNodeCeiling. It never touches a node another
-// live instance currently owns - #683: a read-only CLI subcommand sharing
-// the same database used to infer "orphaned" from status alone, which failed
-// a node a running server was actively updating. queued→failed and
+// live instance currently owns - inferring "orphaned" from status alone
+// would fail a node a running server is actively updating. queued→failed and
 // running→failed are both legal per dag.CanTransition; a bulk SQL UPDATE
-// can't invoke it per row, so the statuses are named via the dag constants
+// can't invoke it per row, so statuses are named via the dag constants
 // instead of literals to keep the one enum as the single source of truth.
 func (s *Store) FailStaleDagNodes(ctx context.Context) (int64, error) {
 	cutoff := time.Now().UTC().Add(-staleNodeCeiling)

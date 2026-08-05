@@ -279,16 +279,15 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		return nil, nil, "", fmt.Errorf("auth init failed: %w", err)
 	}
 
-	// OTel tracing/metrics (internal/otelobs), emission-only - Tempo/Grafana (the
-	// home-server monitoring stack) own trace/metric viewing, not quack itself.
-	// Set up FIRST - before any agent/session wiring - so every quack-authored
-	// span from here on is captured (ADK's OWN internal spans are NOT covered;
-	// see the KNOWN LIMITATION on otelobs.Providers). Disabled (otel.enabled:
-	// false) yields a no-op Providers; every otelobs call site stays safe to
-	// call unconditionally. ledgerStore is resolved ONCE here and reused by
-	// both the exporter and the retention sweep/fetch endpoint below - two
-	// FSStore instances over the same directory would defeat its single-writer
-	// mutex.
+	// OTel tracing/metrics (internal/otelobs), emission-only - Tempo/Grafana
+	// own trace/metric viewing, not quack itself. Set up FIRST - before any
+	// agent/session wiring - so every quack-authored span from here on is
+	// captured (ADK's OWN internal spans are NOT covered; see the KNOWN
+	// LIMITATION on otelobs.Providers). Disabled yields a no-op Providers, so
+	// every otelobs call site stays safe unconditionally. ledgerStore is
+	// resolved ONCE here and reused by the exporter and the retention
+	// sweep/fetch endpoint below - two FSStore instances over the same
+	// directory would defeat its single-writer mutex.
 	ledgerStore := ledgerStoreFromConfig(cfg)
 	_, otelShutdown, err := otelobs.Init(ctx, cfg.Observability, ledgerStore)
 	if err != nil {
@@ -390,25 +389,19 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	}
 
 	// Load skills once at startup. Skills resolve from disk in cwd first (live
-	// repo edits) then the embedded copy, so an installed binary works from any
-	// directory; the vendored dotagents library is resolved the same way, and
-	// ponytail (disk-only - see vendorSkillsDir) merges in when present.
-	// builtinSkillSrc is the raw
-	// built-in library (shipped + vendored) with no per-agent restriction - each
-	// agent gets its OWN load_skill/list_skills toolset scoped to its declared
-	// config.AgentConfig.Skills / OrchestratorConfig.Skills (buildAgents, and
-	// the orchestrator toolset built below), so an agent only sees the skills
-	// its role needs (internal/skillsource.Scoped). Project-aware wrapping (a
-	// cloned repo's own .agents/skills / .claude/skills, discovered in the jail
-	// per query) is applied AFTER scoping so project skills stay fully additive
-	// regardless of an agent's built-in scope, and built-in still wins any name
-	// collision (see internal/skillsource).
+	// repo edits), then the embedded copy, so an installed binary works from
+	// any directory; the vendored dotagents library resolves the same way, and
+	// ponytail (disk-only) merges in when present. builtinSkillSrc is the raw
+	// library with no per-agent restriction - each agent gets its own
+	// load_skill/list_skills toolset scoped to its declared Skills config
+	// (internal/skillsource.Scoped). Project-aware wrapping (a cloned repo's
+	// own .agents/skills / .claude/skills) is applied AFTER scoping so project
+	// skills stay additive regardless of an agent's built-in scope, and
+	// built-in wins any name collision.
 	//
-	// skillSrc/skillTS (unscoped, full library) stay around for: the judge
-	// (it reasons about principles across the whole library, not one worker's
-	// slice - see buildAgents) and the orchestrator's static frontmatter loads
-	// just below (those list a skill's description in the prompt; they don't
-	// grant load_skill access on their own).
+	// skillSrc/skillTS (unscoped, full library) stay around for the judge
+	// (reasons across the whole library, not one worker's slice) and the
+	// orchestrator's static frontmatter loads below.
 	builtinSkillSrc := newSkillSource(vendorSkillsDir)
 	skillSrc := skillsource.New(builtinSkillSrc, jail, localUserID)
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
@@ -1399,13 +1392,12 @@ func perAgentGateCfg(base vetting.Config, name string, ac config.AgentConfig, me
 // opencodeEnv generates OPENCODE_CONFIG_CONTENT for an ACP agent: its bound
 // provider/model as an opencode OpenAI-compatible provider, plus the headless
 // permission policy - everything allowed EXCEPT `git push` (delivery is
-// gate-owned: vetting.commitDelivery pushes and posts exactly once). Inert for
-// a non-opencode agent; an operator's acp.env entries are appended after this,
-// so an explicit override wins.
+// gate-owned). Inert for a non-opencode agent; an operator's acp.env entries
+// are appended after this, so an explicit override wins.
 // acpChildEnv merges workspace.env (deployment-wide) with an agent's own
-// acp.env (agentEnv wins on a shared key - more specific beats general) into
-// sorted KEY=VAL entries. A map merge, not duplicate env entries, so the
-// precedence doesn't depend on which duplicate a given exec/libc picks.
+// acp.env (agentEnv wins on a shared key) into sorted KEY=VAL entries. A map
+// merge, not duplicate env entries, so precedence doesn't depend on which
+// duplicate a given exec/libc picks.
 func acpChildEnv(workspaceEnv, agentEnv map[string]string) []string {
 	merged := make(map[string]string, len(workspaceEnv)+len(agentEnv))
 	maps.Copy(merged, workspaceEnv)
@@ -1435,22 +1427,19 @@ func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths [
 			"models":  m{ac.Model: modelCfg},
 		}},
 		"model": "quack/" + ac.Model,
-		// Every KNOWN ask class gets a deterministic config-side answer, so
-		// no ask crosses ACP in the common path - an ask would route to the
-		// safety judge (acp.Options.PermissionJudge), and on a 1-GPU deploy
-		// a mid-round judge call evicts the coder model (the per-step swap
-		// thrash class). The judge stays as the fallback for NOVEL asks only.
-		//   external_directory: the node's cwd is the boundary - a sibling
-		//     node's workspace is never legitimate; foreign repos get cloned
-		//     into cwd (deep-merged, so skills.paths allowances survive).
-		//   doom_loop: opencode's own stuck-detector asking "continue?" - no
-		//     is the loop-breaker semantics; the gate judges what came back.
+		// Every KNOWN ask class gets a deterministic config-side answer, so no
+		// ask crosses ACP in the common path - an ask would route to the safety
+		// judge (acp.Options.PermissionJudge), and on a 1-GPU deploy a mid-round
+		// judge call evicts the coder model. The judge stays as fallback for
+		// NOVEL asks only.
+		//   external_directory: the node's cwd is the boundary - foreign repos
+		//     get cloned into cwd instead (skills.paths allowances survive).
+		//   doom_loop: opencode's own stuck-detector - "no" is the
+		//     loop-breaker semantics; the gate judges what came back.
 		//   .env reads: secrets hygiene.
-		//   git clone / gh repo clone: the environment block (internal/acp's
-		//     environmentBlock) now tells the agent factually what's already
-		//     on disk, so cloning is both unnecessary and, if attempted,
-		//     almost always a second unwanted copy of the SAME repo landing
-		//     inside its own cwd.
+		//   git clone / gh repo clone: the environment block already tells the
+		//     agent what's on disk, so cloning is unnecessary and usually just
+		//     a second copy of the same repo landing inside its own cwd.
 		"permission": m{
 			"bash": m{
 				"git push": "deny", "git push *": "deny",

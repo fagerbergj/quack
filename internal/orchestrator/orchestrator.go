@@ -561,20 +561,18 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			return produced, false
 		}
 
-		// The orchestrator's own empty-turn recovery - the WORKER's (vetting's
-		// continuation loop, PR #186) one level up, and the same root cause: a
-		// reasoning model can spend its whole output budget thinking and end the
-		// invocation with EMPTY content - no plan call, no execute call, no text.
-		// ADK reports a clean finish, so quack took that for "the orchestrator is
-		// done" and the run simply stopped: no DAG, no answer, no log line, chat
-		// back to idle. "The model emitted text" is not a completion signal.
+		// The orchestrator's own empty-turn recovery - the same root cause as the
+		// WORKER's continuation loop, one level up: a reasoning model can spend
+		// its whole output budget thinking and end the invocation with EMPTY
+		// content (no plan call, no execute call, no text). ADK reports a clean
+		// finish, so "the model emitted text" is not a completion signal on its
+		// own.
 		//
-		// So: re-invoke it with a firm continuation directive, bounded by
-		// maxOrchestratorContinues. Each r.Run appends the directive to the chat
-		// session as a user event before the agent runs (Runner.appendMessageToSession),
-		// which is the ONLY delivery an llmagent reads - it rebuilds its request
-		// from Session().Events() and drops fresh UserContent handed to a node
-		// (see vetting.emitPrompt / [[adk-ignores-usercontent]]).
+		// Re-invoke with a firm continuation directive, bounded by
+		// maxOrchestratorContinues. r.Run appends the directive as a user event
+		// before the agent runs - the ONLY delivery an llmagent reads, since it
+		// rebuilds its request from Session().Events() and drops fresh
+		// UserContent handed to a node (see vetting.emitPrompt).
 		produced, stop := invoke(content)
 		for attempt := 1; !produced && !stop && attempt <= maxOrchestratorContinues; attempt++ {
 			slog.Warn("orchestrator turn produced no plan and no answer; continuing it",

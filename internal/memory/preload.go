@@ -22,16 +22,15 @@ They may be useful for answering the user's current query.
 %s
 </PAST_CONVERSATIONS>`
 
-// oncePreload is a drop-in for ADK's preloadmemorytool that recalls memory ONCE per
-// invocation - at the first model step - instead of on every step of the tool-call
-// loop. ADK documents preload as a turn-boundary action ("retrieve memory at the
-// beginning of each turn"), but the v1.4.0 flow runs every tool's ProcessRequest on
-// every runOneStep, so the stock tool re-searches and re-injects on each tool call.
-// Within one invocation the query (UserContent) is constant, so those repeats are
-// pure waste, and as the store grows, repeatedly injecting low-relevance hits risks
-// context rot. We inject the recalled block once; it stays in the system instruction
-// for the rest of the loop. Like ADK's version it is invisible to the model (adds no
-// function declaration) and routes through the runner's MemoryService via SearchMemory.
+// oncePreload is a drop-in for ADK's preloadmemorytool that recalls memory
+// ONCE per invocation - at the first model step - instead of on every step
+// of the tool-call loop. ADK documents preload as a turn-boundary action,
+// but the v1.4.0 flow runs every tool's ProcessRequest on every runOneStep,
+// so the stock tool re-searches and re-injects on each tool call. Within one
+// invocation the query is constant, so those repeats are pure waste and, as
+// the store grows, risk context rot from low-relevance hits. We inject the
+// recalled block once; it stays in the system instruction for the rest of
+// the loop, invisible to the model like ADK's version.
 type oncePreload struct{}
 
 // NewPreload returns a once-per-invocation preload-memory processor.

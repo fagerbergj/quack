@@ -17,11 +17,8 @@ import (
 //   - __sandbox-exec (workspace.RunSandboxExecIfInvoked): the Landlock shim.
 //   - GIT_ASKPASS (isGitAskpassInvocation): symlinks the test binary under the
 //     askpass link name and execs it exactly the way git execs $GIT_ASKPASS -
-//     direct program path, prompt as the single argument, no shell. Without
-//     this, tests could only call the answer function in-process and would
-//     never catch an unexecutable GIT_ASKPASS value (the exact live failure
-//     this guards: GIT_ASKPASS="<binary> git-askpass" made git look for a
-//     file literally named "quack git-askpass").
+//     direct program path, prompt as the single argument, no shell. Catches
+//     an unexecutable GIT_ASKPASS value that an in-process call would miss.
 func TestMain(m *testing.M) {
 	workspace.RunSandboxExecIfInvoked()
 	if isGitAskpassInvocation() {

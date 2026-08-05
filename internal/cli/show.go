@@ -157,15 +157,13 @@ func newFollowState() *followState {
 }
 
 // printLine renders one SSE event as a human-readable, line-oriented trace for
-// `chat show -f` (the TUI live view's replacement): "node r1 running", a terse
-// "tool: name(arg)" / "→ outcome" pair per tool call, one "thinking…" line per
-// reasoning block. The orchestrator's own top-level answer text is
-// deliberately NOT streamed here (unlike the old per-token print): narration
-// ahead of a tool call and the eventual final answer arrive on the same
-// channel, so printing tokens live has no way to "un-print" preamble once a
-// later tool call reveals it wasn't the answer (#387) - the final answer,
-// already reset per-tool-call by streamState (send.go), prints once via
-// Report at the end of RunChatShow instead.
+// `chat show -f`: "node r1 running", a terse "tool: name(arg)" / "→ outcome"
+// pair per tool call, one "thinking…" line per reasoning block. The
+// orchestrator's own top-level answer text is deliberately NOT streamed here:
+// narration ahead of a tool call and the eventual final answer arrive on the
+// same channel, so printing tokens live has no way to "un-print" preamble
+// once a later tool call reveals it wasn't the answer - the final answer
+// prints once via Report at the end of RunChatShow instead.
 func (f *followState) printLine(out io.Writer, ev SSEEvent) {
 	switch ev.Name {
 	case "node_start":

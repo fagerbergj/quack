@@ -300,17 +300,13 @@ type WorkspaceConfig struct {
 	ExecPath []string `yaml:"exec_path"`
 	// Env is EXTRA environment handed to every workspace child process (gate
 	// checks, git probes, run_command) AND the ACP coding-agent subprocess —
-	// the half exec_path doesn't cover: a toolchain that must be FOUND, not
-	// just be on PATH (JAVA_HOME for Gradle, ANDROID_HOME/ANDROID_SDK_ROOT for
-	// AGP, a GOROOT outside /usr). Deployment-wide; a matching key in an
-	// agent's own acp.env WINS (AcpAgentConfig.Env) — the agent-specific
-	// override is more specific. PATH and HOME are reserved (exec_path and the
-	// jail's isolated per-user home already own those) and rejected here.
-	// This is deployment config, not a secrets vault: values interpolate
-	// ${VAR} like the rest of quack.yaml, but anything actually sensitive
-	// belongs in a provider/tool's own auth block, not here. Under
-	// sandbox: bwrap, a directory an env value POINTS AT still needs its own
-	// exec_path entry to be bind-mounted into the child — see exec_path's doc.
+	// for a toolchain that must be FOUND, not just be on PATH (JAVA_HOME,
+	// ANDROID_HOME, a GOROOT outside /usr). Deployment-wide; a matching key in
+	// an agent's own acp.env WINS. PATH and HOME are reserved (exec_path and
+	// the jail's per-user home already own those) and rejected here. Not a
+	// secrets vault - values interpolate ${VAR}, but real secrets belong in a
+	// provider/tool's own auth block. Under sandbox: bwrap, a directory an env
+	// value POINTS AT still needs its own exec_path entry to be bind-mounted.
 	Env map[string]string `yaml:"env"`
 	// GitCredentials are deployment-level per-host HTTPS git credentials (one
 	// identity per host — a PAT, configured like every other secret). Empty
@@ -430,22 +426,20 @@ type DagConfig struct {
 	MaxActiveRuns int `yaml:"max_active_runs"`
 }
 
-// GatesConfig configures the trust gate that wraps every agent, each stage with
-// its own round budget (a stage with max_rounds 0 is skipped):
+// GatesConfig configures the trust gate that wraps every agent, each stage
+// with its own round budget (a stage with max_rounds 0 is skipped):
 //
-//   - deterministic_checks — free code checks (citation backing, length) that
-//     drive cheap targeted revisions before any expensive stage runs.
-//   - judge — an independent model scores the answer against the rubric and the
-//     worker revises on a fail.
+//   - deterministic_checks — free code checks (citation backing, length)
+//     driving cheap targeted revisions before any expensive stage runs.
+//   - judge — an independent model scores the answer against the rubric;
+//     the worker revises on a fail.
 //
-// The advisor (agents/advisor) is NOT a gate stage: it's the ask_advisor tool,
-// which a worker calls at its own discretion (see internal/tools/ask_advisor.go).
-// It reuses the judge's provider/model and is only registered on worker
-// bundles whose tools: list it when the judge is enabled — not a separate
-// gates.* toggle (see internal/serve's advisorAgent + resolveToolNames).
+// The advisor is NOT a gate stage: it's the ask_advisor tool, called at a
+// worker's own discretion, reusing the judge's provider/model - registered
+// only when the judge is enabled, not a separate gates.* toggle.
 //
-// The gate is optional: when no stage is active it is disabled and agents are
-// served unwrapped. constitution/rubric are shared by the advisor and judge.
+// The gate is optional: with no stage active, agents are served unwrapped.
+// constitution/rubric are shared by the advisor and judge.
 type GatesConfig struct {
 	ConstitutionPath    string      `yaml:"constitution_path"`    // global principles file (optional)
 	Constitution        string      `yaml:"constitution"`         // inline constitution (alternative to path)

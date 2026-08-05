@@ -11,13 +11,12 @@ import (
 // The retained tail must hold SEVERAL recent tool round-trips, not collapse
 // to one file at a time.
 //
-// THE ROOT CAUSE (code-mode dogfood, 2026-07-13): a fixed 8k-token preserve
-// cap (opencode's MAX_PRESERVE_RECENT_TOKENS, ported without opencode's
-// 200k+-context premise) left room for exactly one Go source file (~6-7k
-// tokens) in the tail, so every new read evicted the previous one and the
-// model reread the same file eight times. The ADK port replaces that
-// token-fraction cap with a count-based EventRetentionSize (default 20
-// request contents); this pins the same invariant against the new mechanism.
+// Root cause: a fixed 8k-token preserve cap (opencode's, ported without
+// opencode's 200k+-context premise) left room for exactly one Go source file
+// in the tail, so every new read evicted the previous one and the model kept
+// re-reading the same file. The port replaces that token-fraction cap with a
+// count-based EventRetentionSize; this pins the same invariant against the
+// new mechanism.
 func TestRetentionHoldsSeveralFilesNotJustOne(t *testing.T) {
 	llm := &fakeLLM{text: "## Goal\n- compacted"}
 	// threshold = 120_000 - 20_000 = 100_000: small enough to force

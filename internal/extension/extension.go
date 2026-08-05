@@ -1,15 +1,13 @@
 // Package extension is quack's seam for a bundled unit that contributes BOTH
-// directions of an integration behind ONE auth context it owns:
+// directions of an integration behind ONE auth context it owns: OUTBOUND
+// tools the agent calls (authed as the extension), and an INBOUND
+// webhook/callback route (RegisterRoutes) that dispatches runs on triggering
+// events.
 //
-//   - OUTBOUND - Tools the agent calls, authed as the extension (e.g. a GitHub
-//     App installation token): its capabilities to act on the external system.
-//   - INBOUND - a webhook/callback route (RegisterRoutes) that dispatches runs
-//     on triggering events.
-//
-// This is deliberately thin: one interface, wired at startup. There is no
-// plugin loader, marketplace, or dynamic discovery - the GitHub extension
-// (internal/github) is the only implementation today. Add a second by writing
-// another Extension and building it in internal/serve, nothing more.
+// Deliberately thin: one interface, wired at startup, no plugin loader or
+// dynamic discovery - the GitHub extension (internal/github) is the only
+// implementation today. Add a second by writing another Extension and
+// building it in internal/serve.
 package extension
 
 import (

@@ -8,41 +8,16 @@ import (
 )
 
 // conversationSessions is the session view the orchestrator's OWN llmagent
-// runner sees: every Get/Create returns a session whose Events() yields only
-// CONVERSATION events - user-authored turns and the orchestrator's own events
-// (its replies, its plan/execute/get_user_choice calls and their results, and
-// the persistAnswer-delivered plan answers). Everything the plan graph writes
-// into the same session (worker drafts and tool traffic, gate prompt-delivery
-// events, plan-wrapper structural events, A2A-relayed activity) is invisible
-// to the orchestrator's request builder.
+// runner sees: Events() yields only user- and orchestrator-authored events.
+// The plan graph runs in the SAME session (sessionID == chatID) and writes
+// worker drafts, gate prompts, and relay activity there too; ADK builds the
+// orchestrator's request straight from session history and, because its
+// branch filter passes anything on the orchestrator's own branch ("") plus
+// any branchless event, would otherwise convert all of that run-internal
+// traffic into "for context" text on every downstream turn.
 //
-// Why this exists: the orchestrator is pinned
-// Mode: ModeChat (the amnesia fix), so ADK builds its request from session
-// history - and the plan graph runs in the SAME session (sessionID ==
-// chatID). ADK's contents builder cannot exclude the run internals for us:
-//   - its branch filter (adk/v2 internal/llminternal/contents_processor.go:92
-//   - eventBelongsToBranch at :205-216) passes EVERY event when the
-//     requesting invocation's branch is "" - which the orchestrator's is -
-//     and also passes any BRANCHLESS event (session.NewEvent stamps no
-//     branch: session/session.go:226-233), which covers the gate's
-//     emitPrompt events among others;
-//   - events by OTHER authors are not dropped but CONVERTED
-//     (contents_processor.go:105-106 → ConvertForeignEvent at :558-593) into
-//     user-role "For context: [author] said/called/returned …" text - so one
-//     heavy coding run (file reads, command output, revise rounds) became
-//     ~110K tokens of foreign-event text in the next turn's request.
-//
-// This wrapper applies, at the source, the same author discipline
-// store.groupSessionEvents already uses for chat persistence: user +
-// orchestrator authors ARE the conversation; nothing else is. The delivered
-// answer survives because Run/resumeNodeRun/RetryNode persist it as an
-// orchestrator-authored event (persistAnswer) - the conversational record is
-// complete without any run-internal event.
-//
-// Scope: ONLY the phase-1 llmagent runner uses this view. The plan-graph,
-// retry, and resume runners - and every direct o.sessions read (PriorEvents,
-// pending-interrupt scans, the REST status handler) - stay on the raw
-// service: they legitimately need the run internals.
+// Only the phase-1 llmagent runner uses this view - plan-graph/retry/resume
+// runners read the raw session service; they need the internals.
 type conversationSessions struct {
 	session.Service
 }

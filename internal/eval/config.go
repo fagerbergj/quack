@@ -28,21 +28,16 @@ const (
 // what changed ("orchestrator" plus any agents: entries). It never touches
 // gates.judge.model/provider - an eval compares a swapped WORKER against the
 // SAME judge, so the judge must stay fixed for the two runs' scores to mean
-// anything - and it never touches a media/image agent (a hardware-bound
-// specialist outside this comparison's scope).
+// anything - and it never touches a media/image agent (outside this
+// comparison's scope).
 //
-// Role membership is structural, not name-listed, so a differently-shaped
-// quack.yaml still works:
-//   - "coder" is every agents: entry with an acp: block set - ALL code
-//     agents run external over ACP by construction (AGENTS.md); their model
-//     still binds through provider/model, injected into the subprocess via
-//     the generated OPENCODE_CONFIG_CONTENT (internal/serve's opencodeEnv) -
-//     so overriding AgentConfig.Model here is the whole fix, with no
-//     ACP-specific code path needed.
-//   - "researcher" is every OTHER agent that accepts only text input
-//     (excludes media/image readers, whose Inputs list is non-empty).
-//   - "orch" is the orchestrator's own top-level model, which lives outside
-//     the agents: map (OrchestratorConfig.Model).
+// Role membership is structural, not name-listed:
+//   - "coder" is every agents: entry with an acp: block set (all code agents
+//     run external over ACP); its model binds through the generated
+//     OPENCODE_CONFIG_CONTENT, so overriding AgentConfig.Model is the whole fix.
+//   - "researcher" is every OTHER text-only agent (excludes media/image
+//     readers).
+//   - "orch" is the orchestrator's own top-level model (OrchestratorConfig.Model).
 func OverrideModel(cfg *config.Config, role, model string) ([]string, error) {
 	switch role {
 	case RoleCoder, RoleResearcher, RoleOrch, RoleAll:
