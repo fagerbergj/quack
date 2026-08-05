@@ -178,15 +178,9 @@ func TestFoldDeterministicHardFailsUndeliveredNode(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// The review half of the same mechanism.
-//
-// Live e2e 2026-07-13: a code-reviewer node told to review a pull request and
-// post its findings produced a NON-EMPTY answer - a status update ("I hit
-// shallow-clone difficulties…") - and posted NOTHING: zero inline comments,
-// zero reviews on the PR. Because the answer wasn't empty and the task demanded
-// no commit/push, workIncomplete said "done", no continuation fired, and the
-// half-finished work went to the judge. Posting a review is mechanically
-// checkable, so it is checked mechanically.
+// The review half of the same mechanism: a non-empty answer (e.g. a status
+// update) with nothing posted used to read as "done" to workIncomplete, so
+// posting a review is checked mechanically too.
 // ---------------------------------------------------------------------------
 
 // reviewTask is the shape of the live task text.
@@ -370,15 +364,10 @@ func TestWorkIncompleteOnAnUnpostedReview(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// behaviour_verified: a code review must EXECUTE the change, not just read it.
-//
-// Live e2e 2026-07-13: given run_command + write_file, the code-reviewer wrote a
-// throwaway trace harness, ran it, and printed "Start Y: 285.0, Final Y after 30
-// frames: 285.0 → BUG CONFIRMED - bird Y NEVER CHANGES" - a show-stopper in a PR
-// that passed typecheck, lint and all 19 of its own unit tests (the tests assert
-// the same absent behaviour). On the NEXT run, same PR, it wrote no probe, read
-// the diff, and called the game "fully functional". Prompt guidance alone is a
-// coin flip; execution is now a deterministic requirement.
+// behaviour_verified: a code review must EXECUTE the change, not just read
+// it - reading alone once missed a bug a probe on an earlier run had caught.
+// Prompt guidance alone is a coin flip; execution is now a deterministic
+// requirement.
 // ---------------------------------------------------------------------------
 
 func TestBehaviourCriterionFailsOnAReadOnlyReview(t *testing.T) {

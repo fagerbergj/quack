@@ -18,23 +18,11 @@ import (
 // per check no matter how many revise rounds it burns.
 var baselineCache sync.Map // key: dir\x00sha\x00check → bool
 
-// failsAtBase reports whether check ALSO fails against the repo's BASE tree -
-// the pristine commit the worker cloned, before it touched anything.
-//
-// Why: a repo's derived checks can already fail on clean main (pre-existing
-// lint debt), and under weakest-link scoring that makes the gate unwinnable. A
-// node may only be failed for what its OWN change broke; a check that already
-// fails at base is repo debt, so we don't gate on it.
-//
-// The check is re-run in a DETACHED GIT WORKTREE of the base commit, never in
-// the worker's tree: no stash, no checkout, nothing that could lose the worker's
-// uncommitted work (the one catastrophic failure mode here). The worker's
-// node_modules is symlinked in so the re-run doesn't need a reinstall - and
-// doesn't fail with a missing-dependency 127 that would look like a
-// "pre-existing" failure.
-//
-// Conservative on error: if the base can't be determined or the check can't be
-// run there, we report false - the check keeps gating, exactly as before this fix.
+// failsAtBase reports whether check also fails on the repo's BASE tree, so
+// pre-existing repo debt doesn't count against the worker under weakest-link
+// scoring. Runs in a detached git worktree, never the worker's tree (avoids
+// losing uncommitted work); node_modules is symlinked in so a missing
+// dependency can't masquerade as debt. Conservative on error: still gates.
 func failsAtBase(dir, check string, caps workspace.Caps) bool {
 	base, err := baseCommit(dir, caps)
 	if err != nil {

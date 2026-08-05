@@ -5,20 +5,11 @@ import (
 	"testing"
 )
 
-// A read-only node must not be held to a delivery its own task never asked for.
-//
-// THE LIVE FAILURE (code-mode dogfood, 2026-07-13). Every node's worker prompt carries
-// the user's verbatim request as background (dag.buildTask). The request ended in
-// "commit on a branch named feat/code-mode, push it, and open a pull request". The
-// continuation loop tested completion against that whole PROMPT rather than the node's
-// own task - so a `code-explorer`, whose task is "clone goose and read how it exposes
-// tools" and which has NO commit or push tools at all, was judged incomplete on
-//
-//	committed=false pushed=false
-//
-// forever. It could never satisfy it. Every explorer ran the continuation loop to its
-// bound, reading for HOURS; across an entire evening of runs not ONE explorer node ever
-// finished or reached a judge round. The nodes weren't slow - they were unfinishable.
+// A read-only node must not be held to a delivery its own task never asked
+// for: the continuation loop once tested completion against the WHOLE worker
+// prompt (which carries the user's verbatim request as background) rather
+// than the node's own task, so a read-only explorer with no commit/push
+// tools was judged incomplete forever and never reached a judge round.
 func TestReadOnlyNodeIsNotHeldToTheUserRequestsDelivery(t *testing.T) {
 	// The node's OWN task: read-only. This is what cfg.Task carries.
 	const explorerTask = "Clone https://github.com/aaif-goose/goose (shallow) and read the ACTUAL SOURCE " +

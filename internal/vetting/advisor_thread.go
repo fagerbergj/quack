@@ -11,28 +11,11 @@ import (
 	"github.com/fagerbergj/quack/internal/memory"
 )
 
-// Advisor-thread identity: how a worker's ask_advisor tool knows WHICH node's
-// mentor conversation to continue.
-//
-// The tool's handler cannot derive the calling node from its own execution
-// context: production workers are served over A2A (internal/agent.Serve →
-// srv.Client()), so the handler runs inside the A2A SERVER's runner - a
-// separate session (the A2A context session, AppName = the agent's name, a
-// FRESH context per gate round) whose events carry no NodeInfo and whose
-// state has none of the gate's keys. Branch is no help either: inside a tool
-// call it is the worker's own run segment co-located ("worker@worker-r0", no
-// node) and empty on the A2A server. The one channel that reliably crosses
-// the A2A hop is the PROMPT - so the gate stamps a short marker line carrying
-// a per-node token into every worker prompt, and the tool parses it back out
-// of its UserContent. Deterministic and race-free: UserContent is fixed
-// before the model ever runs.
-//
-// The token doubles as the key into a process-local registry carrying the
-// node's task + acceptance rubric, which the tool uses to seed the mentor's
-// session on its first consult. Process-local is sound here for the same
-// reason the tool can hold the advisor agent at all: quack's A2A agents are
-// co-located in one process (see internal/agent's package doc). If agents are
-// ever promoted to standalone services, ask_advisor needs a rethink wholesale.
+// Advisor-thread identity: how ask_advisor finds its calling node. Over A2A
+// the tool runs in a separate, fresh-per-round session with no NodeInfo, so
+// the gate embeds a token in the prompt instead (UserContent is fixed before
+// the model runs). The token also keys a process-local task+rubric registry,
+// sound only while quack's A2A agents share one process.
 
 // advisorMarkerRe extracts the token from a marker line anywhere in the
 // prompt. Plan/node IDs are slugs; anything up to the closing "]]" is the
@@ -69,18 +52,11 @@ func ParseAdvisorThread(text string) (token string, ok bool) {
 	return ms[len(ms)-1][1], true
 }
 
-// AdvisorTask is what the mentor is told on first consult - the node's task
-// and its acceptance rubric (the desired outcome) - plus the WORKFLOW session
-// coordinates the guard ladder needs (internal/tools/guard.go): over the A2A
-// hop a guarded tool executes inside the A2A SERVER's runner, whose own
-// ctx.AppName()/UserID()/SessionID()/InvocationID() name the A2A context
-// session - a fresh, per-round session that holds NONE of the confirm
-// pause/resume events (adk_request_confirmation calls, the human's resume
-// FunctionResponse, GuardResolvedKey consumption markers all live in the
-// workflow/chat session). The gate registers these coordinates here (it runs
-// workflow-side and knows them), and the guard looks them up by the same
-// thread token to scan the RIGHT session. Registered identically for
-// co-located workers, so there is exactly one lookup path.
+// AdvisorTask seeds the mentor's first consult (task+rubric) and carries the
+// WORKFLOW session coordinates the guard ladder needs (internal/tools/guard.go):
+// over A2A a guarded tool's own ctx names a fresh per-round session with none
+// of the confirm pause/resume events, which live in the workflow session
+// instead - the gate registers those coordinates here, under the same token.
 type AdvisorTask struct {
 	Task   string
 	Rubric string
@@ -376,20 +352,11 @@ func MarkMemSessionConnected(secret string) {
 	memSessionsConnected.Store(secret, struct{}{})
 }
 
-// UnregisterMemSession removes a secret's entry - called the moment the gate
-// has drained its staging buffer (node.go) so a straggler MCP call arriving
-// after the node's own commit decision fails outright instead of writing into
-// a buffer nobody will ever drain again. Callers double as a backstop
-// (dag.buildGateNodes defers this on top of node.go's own explicit call, for
-// early-return paths that skip the drain point) - a no-op for an
-// empty/already-removed secret, INCLUDING the connected-check below, so the
-// backstop's redundant call never re-evaluates and can't produce a second,
-// misleading warning.
-//
-// Warns if the session was registered but MarkMemSessionConnected was never
-// called for it (#640): the surface was offered and negotiated but nothing
-// ever attached to it - the exact failure mode that survived a full day of
-// dogfooding because it looks identical to a working, unused surface.
+// UnregisterMemSession removes a secret's entry so a straggler MCP call after
+// the node's commit decision fails instead of writing into a dead buffer. A
+// no-op for an already-removed secret (safe for the deferred backstop call in
+// dag.buildGateNodes). Warns if registered but never connected - otherwise an
+// offered-but-unreachable surface looks identical to a working, unused one.
 func UnregisterMemSession(secret string) {
 	if secret == "" {
 		return

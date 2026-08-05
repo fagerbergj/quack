@@ -55,29 +55,11 @@ func skipChecks(ctx context.Context, reason string) (criterionScore, bool) {
 // caps the TOTAL check-output contribution.
 const maxCheckOutputChars = 2_000
 
-// checksPassCriterion is the GATE side of §4 (deterministic gates): it runs the
-// node's checks - cfg.Checks when the planner set them (an explicit override,
-// already plan-time validated argv-safe), else the checks DERIVED from the repo
-// on disk (deriveChecks) - via workspace.RunPipeline, argv-only and never a
-// shell (pipes are native; everything else a shell would interpret stays
-// unexpressible). This is deliberately NOT run_command's runner: `checks` is an
-// operator allowlist (MatchesCheckPrefix), and a prefix allowlist means nothing
-// if the suffix can open a shell - run_command hands its line to a real shell
-// instead (RunShell, #277). Stops at the first failure.
-//
-// Why derive: the planner authors the DAG BEFORE anything has looked at the
-// repo, so any checks it writes are guesses (`go build` for a JavaScript repo).
-// Check commands are a property of the REPO and are discovered from it here, at
-// gate time, once the worker has cloned it.
-//
-// Called from foldDeterministic (node.go) exactly like grounded_in_retrieval: a
-// failing check folds in as criterion `checks_pass` with Score 0 (weakest-link -
-// one failing check sinks the round on its own) and a Reason naming the command
-// plus a BOUNDED head of its output, so composeFeedback (node.go) carries the
-// actual compiler/test failure into the revise prompt without blowing its budget.
-// All checks passing scores 1. ok=false means the criterion does not apply at all
-// (no checks and nothing to derive them from) - the node is then untouched by it,
-// exactly as a research or synthesis node is.
+// checksPassCriterion runs cfg.Checks, or checks DERIVED from the repo on disk
+// when unset (the planner guesses before ever seeing the repo). Uses
+// workspace.RunPipeline - argv-only, never a shell, unlike run_command's
+// RunShell (a prefix allowlist means nothing once the suffix can open one).
+// Weakest-link: one failing check scores 0; ok=false when nothing applies.
 func checksPassCriterion(ctx context.Context, cfg Config) (criterionScore, bool) {
 	if len(cfg.Checks) == 0 && !cfg.DeriveChecks {
 		return skipChecks(ctx, skipReasonNotConfigured)
@@ -182,16 +164,11 @@ func boundCheckOutput(out string) string {
 		maxCheckOutputChars, len(out))
 }
 
-// checksCaps stamps the node's OWN directory onto the caps the checks run with,
-// so a sandboxed check child sees the workspace exactly where the worker's shell
-// and the fs tools see it: at workspace.SandboxWorkRoot, with the repo one level
-// under it. Without it the check's cwd would be mounted as the root, and a
-// compiler's absolute paths - which land verbatim in the revise feedback the
-// worker then reads - would name a THIRD spelling of the file it is being asked
-// to fix. One namespace means every child of a node speaks it.
-//
-// A node whose workspace dir does not exist (nothing was ever written) leaves
-// WorkRoot unset; childArgv falls back to the check's own cwd, exactly as before.
+// checksCaps stamps the node's own directory as WorkRoot, so a sandboxed
+// check child mounts the workspace exactly where the worker's shell and fs
+// tools see it - otherwise a compiler's absolute paths would name a THIRD
+// spelling of the file the revise feedback asks the worker to fix. Left
+// unset if the workspace dir was never written; childArgv falls back to cwd.
 func checksCaps(cfg Config) workspace.Caps {
 	caps := cfg.WorkspaceCaps
 	root, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.NodeDir(cfg.NodeID))
@@ -202,25 +179,11 @@ func checksCaps(cfg Config) workspace.Caps {
 	return caps
 }
 
-// checksDir returns the absolute directory a node's checks run in: the node's
-// Workdir when the planner set explicit Checks to run there, else - when checks
-// are being DERIVED - the ONE repo (a directory holding a .git) at or beneath the
-// node's Workdir (the workspace scope root when it set none). ok=false when no
-// single repo can be located: skip the checks rather than guess which of several
-// trees is "the" repo.
-//
-// The search matters: the planner may legitimately set no workdir, and the repo
-// usually sits one level down where git_clone put it - resolving a workdir is
-// not the same as FINDING the repo, so we find it (a scope-root fallback once
-// derived no checks at all and let non-compiling code pass).
-//
-// Workdir resolves against the node's OWN working dir first (<chat>/<node>/…,
-// where the node's git_clone landed its repo - exactly as the worker's own tools
-// resolve it), then against the chat scope root as a fallback (an un-gated node,
-// or a worker that used the "/" escape hatch to work at the root). Node-first is
-// what keeps a plan's CONCURRENT nodes from each seeing several repos - from the
-// chat root the search sees every node's clone, finds no single repo, and gates
-// nothing.
+// checksDir returns the directory a node's checks run in: the planner's
+// Workdir when Checks is explicit, else the ONE repo (dir holding .git),
+// found by searching the node's own dir first, then the chat scope root.
+// Node-first matters - from the chat root the search sees every CONCURRENT
+// node's clone, finds more than one repo, and skips checks entirely.
 func checksDir(cfg Config) (string, bool, error) {
 	// Workdir is documented as ignored when Checks is empty (dag.Node.Workdir,
 	// Config.Workdir) - the planner is told to set it only alongside explicit
@@ -280,18 +243,11 @@ var makeCheckTargets = []string{"build", "lint", "test"}
 // excluding variable assignments ("FOO := bar").
 var makeTargetRe = regexp.MustCompile(`(?m)^([A-Za-z0-9_./-]+)\s*:(?:[^=]|$)`)
 
-// deriveChecks reads dir - the repo the node worked in - and returns the repo's
-// OWN check commands, filtered by the configured workspace.check_commands
-// allowlist (the security boundary stays exactly where it was; an empty allowlist
-// means checks are disabled, so this returns nothing). UNION of every toolchain
-// present: package.json (its declared scripts) + go.mod + Makefile (its declared
-// targets), npm → go → make order - a repo with more than one stack gates on all
-// of them, not just the first found. Returning none is normal, not a failure: an
-// unrecognised repo simply gets no deterministic gate.
-//
-// they must never be excused via failsAtBase — formatting violations cannot
-// pre-exist in a shallow clone (see #585). The prefix is stripped before the
-// check actually runs.
+// deriveChecks reads dir - the repo the node worked in - and returns its OWN
+// check commands, filtered by the workspace.check_commands allowlist (empty
+// allowlist disables checks). UNION of every toolchain present, npm → go →
+// make order - not just the first found. Returning none is normal, not a
+// failure.
 func deriveChecks(dir string, allow []string) []string {
 	var cands []string
 	if fileExists(dir, "package.json") {

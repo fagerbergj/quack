@@ -21,24 +21,19 @@ import (
 // so replay's stream matching has an identity to key on (#604).
 const probeAugmentFromRepo = "augment_from_repo"
 
-// augmentFromRepo folds the clone's git state into a session-derived activity:
-// commits since the clone's base (baseCommit - the oldest HEAD reflog entry),
-// the changed paths (the judge's changed-file re-read + citation grounding),
-// the current branch, and - when the task demands a PR/push the worker had no
-// stage_pr tool to hand off - a synthesized staged PR from the commits
-// themselves, so commitDelivery still posts exactly once, gate-owned.
+// augmentFromRepo folds the clone's git state into a session-derived
+// activity: commits since the clone's base, changed paths, current branch,
+// and - when the task demands delivery but the worker had no stage_pr tool -
+// a synthesized staged PR, so commitDelivery still posts exactly once.
 //
 // ponytail: runs a few git subprocesses per activity() call (no caching) - the
 // probe fires only on setup-provisioned nodes with an empty ledger; memoise per
 // HEAD sha if it ever shows up in a profile.
 //
-// ctx carries this call's replay-ledger coordinates (ledger.Coords, stamped by
-// the caller - node.go's activity() closure) - the ONE execute_tool event this
-// function emits (via emitProbeEvent, deferred below) is what lets a recorded
-// ACP round's gate probe replay without a clone (#604). Only the guard clauses
-// below (node genuinely has nothing to probe) skip emission entirely; every
-// path that actually reaches the clone reports its outcome, even "no new
-// commits found".
+// ctx carries this call's replay-ledger coordinates - the one execute_tool
+// event this emits (emitProbeEvent, deferred below) is what lets a recorded
+// ACP round's gate probe replay without a clone. Only the early guard clauses
+// skip emission; every path that reaches the clone reports its outcome.
 func augmentFromRepo(ctx context.Context, act *workerActivity, cfg Config) {
 	// A read-only reviewer/explorer makes no commits; synthesizing disk state
 	// into a pull_request staging for it would push its (base-HEAD) branch and

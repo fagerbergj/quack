@@ -174,21 +174,11 @@ func countGuardResolutions(sess session.Session, invocationID, nodeID string) in
 	return n
 }
 
-// ConfirmDecision reports whether the CURRENT guarded-tool call (from
-// internal/tools/guard.go) is the resolution of a just-answered confirm
-// pause. A decision is PINNED to the exact operation the human saw: matched
-// is true only when an unconsumed resolved decision exists for this node
-// whose pinned tool name AND arguments (JSON-normalized deep equality - see
-// sameArgs) equal the incoming call's, in which case approved carries that
-// decision. A call under the same tool name but with DIFFERENT arguments
-// never consumes the approval (the human approved a specific operation, not
-// a blank check on the tool): matched is false and mismatched is true, so
-// the guard wrapper treats it as a brand-new proposal - fresh judge tier,
-// fresh confirmation whose hint notes the difference - while the original
-// approval stays available for a subsequent same-args call. Stateless:
-// everything is re-derived from session history each call, the same
-// discipline scanNodeAsks/hitlScan already use for ask_user - no separate
-// ledger, so it can never drift from what actually happened.
+// ConfirmDecision reports whether the CURRENT guarded-tool call is the
+// resolution of a just-answered confirm pause, PINNED to the exact tool +
+// args (sameArgs) the human saw - different args never consume the approval,
+// so the guard treats it as a new proposal. Stateless: re-derived from
+// session history each call, so it can never drift from what happened.
 func ConfirmDecision(sess session.Session, invocationID, nodeID, toolName string, args map[string]any) (approved, matched, mismatched bool) {
 	scan := scanNodeConfirms(sess, invocationID, nodeID)
 	consumed := countGuardResolutions(sess, invocationID, nodeID)

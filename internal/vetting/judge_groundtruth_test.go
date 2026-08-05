@@ -25,16 +25,11 @@ type jailedReadResult struct {
 	Error   string `json:"error,omitempty"`
 }
 
-// newJailedReadTool builds a read_file stand-in that resolves its path through
-// the SAME two-step scope derivation internal/tools' fs bindings use
-// (scopeFromContext → Jail.Resolve): the advisor-thread marker embedded in the
-// invocation's UserContent names the (chatID, nodeDir) the call runs under, via
-// the process-local registry the gate populates for the WORKER. This is a
-// package-local stand-in (not internal/tools' real fs binding - importing that
-// package here would cycle, since it already imports vetting for
-// ParseAdvisorThread/LookupAdvisorThread) that exercises the identical
-// resolution rule, proving whether the judge's tool calls land in the worker's
-// real clone dir without a separate clone.
+// newJailedReadTool builds a read_file stand-in that resolves its path
+// through the SAME two-step scope derivation internal/tools' fs bindings use
+// (scopeFromContext → Jail.Resolve) - package-local because importing
+// internal/tools here would cycle. Proves the judge's tool calls land in the
+// worker's real clone dir without a separate clone.
 func newJailedReadTool(t *testing.T, jail *workspace.Jail, userID string) tool.Tool {
 	t.Helper()
 	rt, err := functiontool.New[jailedReadArgs, jailedReadResult](

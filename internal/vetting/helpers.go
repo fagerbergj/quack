@@ -48,16 +48,11 @@ type Config struct {
 	// completion is review_posted / exploration, never delivery.
 	ReadOnly bool
 
-	// IsReviewer marks a node whose AGENT is dag's reviewerAgent (code-reviewer),
-	// stamped structurally by dag.buildGateNodes from node.AgentName - never from
-	// the task's wording. A code-reviewer node is a review-delivery node by
-	// construction: review-staging (minting stage_review/stage_review_comment),
-	// review_posted/behaviour_verified completion, and the answer-tail fallback
-	// (augmentFromAnswer) all key off this instead of a task-text regex, which
-	// used to leave the whole review-delivery path disabled for a task with no
-	// posting verb - e.g. the label-review default, "Review this pull request."
-	// (#482). A ReadOnly node whose task merely MENTIONS review stays false here,
-	// which is what keeps #471 (a spurious review staged off task text) fixed.
+	// IsReviewer marks a node whose AGENT is dag's reviewerAgent, stamped
+	// structurally by dag.buildGateNodes from node.AgentName - never from the
+	// task's wording. Review-staging, completion, and the answer-tail fallback
+	// all key off this field, not a task-text regex (which used to both miss
+	// verb-less tasks and false-positive on ones that merely mention "review").
 	IsReviewer bool
 
 	// Memory, when set, receives the agent's staged tradecraft on a judge pass
@@ -73,15 +68,10 @@ type Config struct {
 	MemoryRole string
 
 	// DeliverPromptEvent makes the gate write each worker prompt into the
-	// session as a gate-authored event right before the worker run (see
-	// emitPrompt). Set via PromptEventNeeded: true for REMOTE (A2A) workers,
-	// which build their outbound message from session events only and would
-	// otherwise never see their prompt; false for local llmagents, which take
-	// the RunNode input natively - for them the extra user-role event would be
-	// worse than redundant: a concurrent node's prompt event shifts a
-	// single-turn llmagent's "current turn" anchor, leaking one node's prompt
-	// into another's request (caught by
-	// TestAskAdvisor_ConcurrentNodesIsolatedThreads).
+	// session as a gate-authored event before the run (emitPrompt) - true for
+	// REMOTE (A2A) workers, which build their outbound message from session
+	// events only. False for local llmagents: the extra event would leak one
+	// concurrent node's prompt into another's "current turn".
 	DeliverPromptEvent bool
 
 	// Checks are per-node, orchestrator-set deterministic gate commands (§4 of
@@ -265,20 +255,11 @@ type DeliveryContext struct {
 	GateFeedback string
 }
 
-// DeliverFunc posts a node's FINAL staged delivery set to the outside world -
-// exactly once, when commitDelivery calls it (regardless of verdict - a caveat is attached on a fail). Errors
-// are logged by the caller, never fail the node: delivery is best-effort like
-// the memory-commit path, but unlike it, its failure is user-visible (the
-// extension's own dispatch path posts a failure comment - see
-// internal/github/webhook.go).
-//
-// The returned []DeliveryItemOutcome is what commitDelivery turns into
-// per-item `delivery_result` stream events - the extension's own record of
-// what each staged item actually produced (a real PR/review URL, or a
-// per-item error), not a self-report. May be shorter than dc.Items (e.g. the
-// branch push itself failed before any item was attempted) or empty (a
-// pre-Items failure) - commitDelivery falls back to one event per dc.Item
-// with the aggregate error when the extension reports nothing at all.
+// DeliverFunc posts a node's FINAL staged delivery set exactly once
+// (commitDelivery). Errors are logged by the caller, never fail the node -
+// best-effort like the memory-commit path, but user-visible on failure. The
+// returned []DeliveryItemOutcome is the extension's own record of outcomes,
+// not a self-report; commitDelivery fills gaps if it's short or empty.
 type DeliverFunc func(ctx context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error)
 
 // DeliveryItemOutcome is one staged item's ACTUAL delivery result, as the

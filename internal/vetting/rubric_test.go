@@ -7,16 +7,11 @@ import (
 	"testing"
 )
 
-// TestCleanOutputRubricCatchesDeliberation pins issue #301: every clean_output
-// criterion must fail visible deliberation (self-correction, an abandoned
-// draft, a snippet rewritten more than once), not just preamble/trailing
-// narration - the gap that let the #252 plan comment (three rewrites of the
-// same webhook.go snippet, narrated with "let me reconsider") pass unscored.
-// The judge itself is a live LLM call and can't run here, so this pins the
-// deterministic rubric text across the default rubric AND every bundle
-// override that defines clean_output. It globs rather than hardcoding the list,
-// so a NEW bundle rubric that adds clean_output without the deliberation
-// language fails this test instead of silently reopening the gap.
+// TestCleanOutputRubricCatchesDeliberation pins clean_output failing visible
+// deliberation (self-correction, an abandoned draft, a rewritten snippet),
+// not just preamble/trailing narration, across the default rubric and every
+// bundle override. Globbed rather than hardcoded, so a new bundle omitting
+// the language fails this test instead of silently reopening the gap.
 func TestCleanOutputRubricCatchesDeliberation(t *testing.T) {
 	rubrics := []string{"../../config/rubric.md"}
 	bundleRubrics, err := filepath.Glob("../../agents/*/rubric.md")
