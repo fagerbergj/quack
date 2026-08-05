@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -55,6 +56,15 @@ type NodeControl interface {
 const AskToolName = "ask_user"
 
 const memoryCommitTimeout = 3 * time.Minute
+
+// envScaffoldRe matches a leading opencode <env>...</env> preamble.
+var envScaffoldRe = regexp.MustCompile(`(?s)^\s*<env>.*?</env>\s*`)
+
+// stripLeadingEnvScaffold drops a leading <env> block so an answer that is
+// nothing but environment preamble reads as empty, not as real content (#709).
+func stripLeadingEnvScaffold(answer string) string {
+	return envScaffoldRe.ReplaceAllString(answer, "")
+}
 
 // hitlInterruptID: (invocation, node, round) is unique, so this is collision-free.
 func hitlInterruptID(nodeID string, round int) string {
@@ -352,7 +362,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				log.Error("writer recovery failed", "err", err)
 				return "", GateResult{}, err
 			}
-			if strings.TrimSpace(answer) == "" {
+			if strings.TrimSpace(stripLeadingEnvScaffold(answer)) == "" {
 				log.Error("worker produced NO answer; writer recovery also empty", "rounds", maxContinueRounds)
 				return "", GateResult{}, ErrNodeEmpty
 			}
@@ -395,7 +405,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 					break
 				}
 			}
-			if strings.TrimSpace(answer) == "" {
+			if strings.TrimSpace(stripLeadingEnvScaffold(answer)) == "" {
 				break // still nothing to judge after recovery
 			}
 			act := actFor(answer)
