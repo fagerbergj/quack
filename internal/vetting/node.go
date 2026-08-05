@@ -193,6 +193,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	}
 	// cfg is a per-call copy; stamping only reaches this node's judge rounds.
 	cfg.AdvisorToken = advisorToken
+	cfg.NodeBaseSHA = cloneHeadSHA(cfg)
 
 	// Memory recall for ACP workers; front-load into round-0 prompt.
 	if cfg.ExternalWorker && cfg.CommitMemory {
