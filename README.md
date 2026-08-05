@@ -77,7 +77,7 @@ flowchart TB
 ```
 
 - **Adversarial vetting** - continuation → deterministic checks → independent judge, cheapest-first, before a node's output flows downstream: [`docs/configuration/trust-gate.md`](docs/configuration/trust-gate.md).
-- **Orchestrator** - plan → execute → vet → synthesize, resumable after a crash: [`openwiki/workflows/dag-execution.md`](openwiki/workflows/dag-execution.md).
+- **Orchestrator** - plan → execute → vet → synthesize, resumable after a crash: [`AGENTS.md`](AGENTS.md#dag-execution-internaldag).
 - **Agents** - a declarative bundle (card + prompt), no code; native ADK agents or external ACP subprocesses for coding: [`docs/configuration/agents.md`](docs/configuration/agents.md).
 - **Memory** - only adversarially-vetted findings are committed durably (semantic + structured), so quack learns over time without trusting a worker's raw claim: [`docs/configuration/stores.md`](docs/configuration/stores.md).
 - **Models, tools, stores, auth, workspace sandboxing** - the full configuration reference: [`docs/configuration/`](docs/configuration/).
@@ -90,7 +90,6 @@ flowchart TB
 For more information on how to work with and configure Quack, see:
 
 - [`docs/`](docs/) - human-written setup and configuration guides: the CLI, the web SPA, the API surface, configuration (models, agents, the trust gate, stores, auth, workspace, deployment shapes, observability), the GitHub App, and the FAQ.
-- [`openwiki/`](openwiki/) - an auto-generated code reference (architecture, workflows, operations), refreshed from the code. Start here for "how does the code actually do X."
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) - the issue → plan → implement → review → merge loop, dev setup, CI/CD.
 - [`AGENTS.md`](AGENTS.md) - the agent/developer guide and hard rules.
 
