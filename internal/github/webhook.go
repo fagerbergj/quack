@@ -895,23 +895,25 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// Only post a summary when nothing was delivered — commitDelivery already posted the review/PR.
 	delivered := false
 	if d, ok := takeDeliveryDetail(sessionID); ok {
-		delivered = d.err == nil
 		if d.err != nil {
+			// A worker's own report can't be trusted here (#714) — it may claim success it never had.
 			slog.Error("github: staged delivery failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", d.err)
-		} else {
-			slog.Info("github: delivery verified against GitHub", "component", "github", "repo", owner+"/"+repo, "issue", number,
-				"pr_number", d.prNumber, "pr_url", d.prURL, "pushed_sha", d.pushedSHA)
-			// Advance the review baseline with a short-lived context (runCtx may be past deadline).
-			if d.reviewDelivered {
-				baselineCtx, baselineCancel := context.WithTimeout(context.Background(), 10*time.Second)
-				e.advanceReviewBaseline(baselineCtx, sessionID, gh.snap.Commits)
-				baselineCancel()
+			e.postDeliveryFailure(owner, repo, number, d)
+			return
+		}
+		delivered = true
+		slog.Info("github: delivery verified against GitHub", "component", "github", "repo", owner+"/"+repo, "issue", number,
+			"pr_number", d.prNumber, "pr_url", d.prURL, "pushed_sha", d.pushedSHA)
+		// Advance the review baseline with a short-lived context (runCtx may be past deadline).
+		if d.reviewDelivered {
+			baselineCtx, baselineCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			e.advanceReviewBaseline(baselineCtx, sessionID, gh.snap.Commits)
+			baselineCancel()
 
-				// Hook point for standing merge intent.
-				mergeCtx, mergeCancel := context.WithTimeout(context.Background(), mergeTimeout)
-				e.tryMergeStandingIntent(mergeCtx, owner, repo, number, sessionID, gh.snap.HeadSHA)
-				mergeCancel()
-			}
+			// Hook point for standing merge intent.
+			mergeCtx, mergeCancel := context.WithTimeout(context.Background(), mergeTimeout)
+			e.tryMergeStandingIntent(mergeCtx, owner, repo, number, sessionID, gh.snap.HeadSHA)
+			mergeCancel()
 		}
 	}
 	if delivered {
@@ -975,6 +977,19 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		return
 	}
 	slog.Info("github comment posted", "component", "github", "repo", owner+"/"+repo, "issue", number, "timed_out", timedOut)
+}
+
+// postDeliveryFailure reports a failed delivery on GitHub, so a pushed-but-unopened branch is recoverable by hand instead of sitting silently invisible (#714).
+func (e *Extension) postDeliveryFailure(owner, repo string, number int, d deliveryOutcome) {
+	msg := fmt.Sprintf("⚠️ delivery failed: %s", d.err)
+	if d.branch != "" {
+		msg += fmt.Sprintf("\n\nBranch `%s` was not delivered — recover it by hand.", d.branch)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := e.app.postIssueComment(ctx, owner, repo, number, msg); err != nil {
+		slog.Error("github: delivery-failure comment post failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
+	}
 }
 
 // reviseInvalidMermaid nudges the run once, then degrades if still invalid (never silently strips).

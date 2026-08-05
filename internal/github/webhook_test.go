@@ -55,6 +55,9 @@ type fakeRunner struct {
 	// a success; deliverErr (mutually exclusive) records a failure.
 	deliverOK  bool
 	deliverErr string
+	// deliverBranch, set alongside deliverErr, is the branch name a failure
+	// comment should surface (#714) so the work is recoverable by hand.
+	deliverBranch string
 	// deliverReview simulates a run that DELIVERED A REVIEW specifically
 	// (deliveryOutcome.reviewDelivered) - dispatch's ONLY trigger to advance
 	// the review baseline (#459's incremental-review fix). Independent of
@@ -112,7 +115,7 @@ func (f *fakeRunner) Run(ctx context.Context, _, sessionID, message string, _ []
 		} else if f.deliverOK {
 			recordDeliveryResult(sessionID, nil)
 		} else if f.deliverErr != "" {
-			recordDeliveryResult(sessionID, fmt.Errorf("%s", f.deliverErr))
+			recordDelivery(sessionID, deliveryOutcome{err: fmt.Errorf("%s", f.deliverErr), branch: f.deliverBranch})
 		}
 		select {
 		case f.gotMessage <- message:
@@ -858,14 +861,16 @@ func TestHandleWebhookSubmittedReviewSkipsSummaryComment(t *testing.T) {
 // A FAILED delivery must not count as delivered: a github_pull_request whose
 // result carries an error (e.g. the run was killed before the branch was pushed)
 // previously suppressed the summary/failure comment on the CALL alone - a silent
-// death with a "delivered" log line and nothing on GitHub (#286).
+// death with a "delivered" log line and nothing on GitHub (#286). It must also
+// NOT fall back to the worker's own self-reported answer, which can claim
+// success it never had (#714) - the comment must be the actual delivery error.
 func TestHandleWebhookFailedDeliveryStillComments(t *testing.T) {
 	posted := make(chan string, 1)
 	gh := stubGitHub(t, posted)
 	defer gh.Close()
 
 	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "partial progress",
-		judgePassed: true, deliverErr: "github_pull_request: branch not pushed"}
+		judgePassed: true, deliverErr: "github_pull_request: branch not pushed", deliverBranch: "quack/issue-66"}
 	ext := newTestExtensionWithTriggers(t, runner, gh.URL, []string{"mention"}, "")
 
 	rec := httptest.NewRecorder()
@@ -880,8 +885,14 @@ func TestHandleWebhookFailedDeliveryStillComments(t *testing.T) {
 	}
 	select {
 	case body := <-posted:
-		if !strings.Contains(body, "partial progress") {
-			t.Errorf("fallback comment = %q; want the run's answer", body)
+		if strings.Contains(body, "partial progress") {
+			t.Errorf("failure comment = %q; must not use the worker's own self-report", body)
+		}
+		if !strings.Contains(body, "branch not pushed") {
+			t.Errorf("failure comment = %q; want the delivery error", body)
+		}
+		if !strings.Contains(body, "quack/issue-66") {
+			t.Errorf("failure comment = %q; want the branch name so the work is recoverable", body)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no comment posted after a FAILED delivery - the silent-death bug")
