@@ -406,16 +406,6 @@ var sseReconnectDelay = func(attempt int) time.Duration {
 	return d
 }
 
-// Stream posts content to a chat and returns a channel of SSE events for the TUI
-// pump. The channel closes when the run ends (done) or ctx is cancelled. A
-// transport/HTTP error is delivered as a final SSEEvent{Name:"error"} so the UI
-// renders it uniformly rather than the caller having to handle two error paths.
-func (c *Client) Stream(ctx context.Context, chatID, content string) <-chan SSEEvent {
-	return c.streamChan(ctx, func(onEvent func(SSEEvent) error) error {
-		return c.SendMessage(ctx, chatID, content, onEvent)
-	})
-}
-
 // Subscribe attaches to a chat's live (or just-finished) run via the standalone
 // GET stream endpoint - for resuming a run started elsewhere, or by this client
 // before a reconnect. The hub replays the events so far, then tails live. Same

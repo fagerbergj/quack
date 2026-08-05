@@ -58,26 +58,6 @@ func newBareRepoFixture(t *testing.T) string {
 	return bare
 }
 
-// cloneIntoJail clones bare into the jail at relDir via runGit directly
-// (bypassing the git_clone TOOL's https-only enforcement - that's tested
-// separately; this is fixture setup for a local, no-network round trip).
-func cloneIntoJail(t *testing.T, b gitBinding, bare, relDir string) string {
-	t.Helper()
-	target, err := b.jail.Resolve(b.userID, "", relDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	userRoot, err := b.jail.Resolve(b.userID, "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(userRoot, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	runGitT(t, userRoot, "clone", "--quiet", bare, target)
-	return target
-}
-
 // ---------------------------------------------------------------------------
 // git_clone: https-only + credential-URL rejection (no network needed - both
 // are rejected before any git process runs).

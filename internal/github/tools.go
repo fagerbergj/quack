@@ -192,14 +192,6 @@ var reviewEvents = map[string]bool{"COMMENT": true, "REQUEST_CHANGES": true, "AP
 // (validComments): each finding is checked against the diff and dropped if
 // unanchorable - the summary body still carries its text.
 
-// sideOr returns the trimmed upper-cased s, or fallback when s is empty.
-func sideOr(s, fallback string) string {
-	if u := strings.ToUpper(strings.TrimSpace(s)); u != "" {
-		return u
-	}
-	return fallback
-}
-
 // resolvePath maps the agent's `path` onto a file in the PR diff. A PR diff
 // addresses files REPO-relative ("app/game.ts"), but the agent works inside a
 // clone directory in its workspace and naturally says "games/app/game.ts" - so

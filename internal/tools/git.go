@@ -352,17 +352,6 @@ func validateCloneURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-// defaultCloneDir derives a target directory name from a repo URL's last path
-// segment, stripping a trailing ".git".
-func defaultCloneDir(u *url.URL) string {
-	name := strings.TrimSuffix(strings.TrimSuffix(u.Path, "/"), ".git")
-	name = filepath.Base(name)
-	if name == "" || name == "." || name == "/" {
-		name = "repo"
-	}
-	return name
-}
-
 // cloneRepo is the clone itself, past git_clone's URL validation: resolve the
 // target through the jail, build the argv, run it. Split out so the clone path
 // is exercisable against a local (file://) remote in tests.
@@ -507,16 +496,6 @@ const maxAddAllFiles = 100
 // them. Force-push is unexpressible (no argv path ever adds --force); this is
 // the other half of "the one outward-facing, non-undoable operation" guard.
 var protectedBranches = map[string]bool{"main": true, "master": true}
-
-// gitRemoteURL reads the "origin" remote's URL - used both to pick a matching
-// credential and, implicitly, to confirm a remote is even configured.
-func gitRemoteURL(dir string, caps workspace.Caps) (string, error) {
-	out, _, err := runGit(context.Background(), dir, []string{"remote", "get-url", "origin"}, caps, nil)
-	if err != nil {
-		return "", fmt.Errorf("git: no \"origin\" remote configured: %w", err)
-	}
-	return strings.TrimSpace(out), nil
-}
 
 // PushBranch pushes branch from the local clone at dir to "origin", credential
 // injected via the SAME askpass mechanism the git tools use (never a URL, never
