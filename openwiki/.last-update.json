@@ -1,6 +1,6 @@
 {
-  "updatedAt": "2026-07-25T09:04:39.669Z",
+  "updatedAt": "2026-08-05T09:37:19.760Z",
   "command": "update",
-  "gitHead": "91520290561d9dbefab51f7dfb13628c1ed7e6d8",
+  "gitHead": "1730845efab3031fe5ece47bb136405f39a12fc3",
   "model": "qwen3.6-35b"
 }

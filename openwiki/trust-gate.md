@@ -1,3 +1,9 @@
+---
+type: "Reference"
+title: "Trust Gate"
+openwiki_generated: true
+---
+
 # Trust Gate
 
 Every node output passes through a **trust gate** before the DAG propagates its result. The gate runs a **generate → critique → revise → judge** loop to guard against confident-but-wrong output.

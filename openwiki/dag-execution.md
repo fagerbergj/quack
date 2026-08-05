@@ -1,3 +1,9 @@
+---
+type: "Reference"
+title: "DAG Execution"
+openwiki_generated: true
+---
+
 # DAG Execution
 
 Quack converts natural-language requests into a **Directed Acyclic Graph (DAG)** of agent tasks, executes them topologically, and returns vetted answers.

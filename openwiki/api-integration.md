@@ -1,3 +1,9 @@
+---
+type: "Reference"
+title: "API and Integrations"
+openwiki_generated: true
+---
+
 # API and Integrations
 
 Quack provides multiple interfaces: REST HTTP API, MCP, A2A, and webhook extensions.

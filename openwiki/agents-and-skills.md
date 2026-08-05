@@ -1,3 +1,9 @@
+---
+type: "Reference"
+title: "Agents and Skills"
+openwiki_generated: true
+---
+
 # Agents and Skills
 
 Quack uses a **specialist agent architecture**: each agent is designed for a specific task type, and they collaborate through a DAG orchestrated by the `orchestrator`.
