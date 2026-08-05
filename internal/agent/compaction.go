@@ -14,29 +14,24 @@ import (
 	"google.golang.org/genai"
 )
 
-// Context compaction runs as an ADK BeforeModelCallback (the only hook that sees
-// the assembled request), ported to ADK's own durable-event design (ADK Go
-// v2.0.0 ships no compaction itself; this follows adk-python's apps/compaction.py
-// + flows/llm_flows/contents.go, cross-checked against adk-js - see
-// docs/compaction-adk-port-plan.md).
+// Context compaction runs as an ADK BeforeModelCallback, ported to ADK's own
+// durable-event design (ADK Go v2.0.0 ships no compaction itself; see
+// docs/compaction-adk-port-plan.md for the port notes).
 //
-// When a request would overflow the window, the callback summarises the older
-// turns ONCE and appends the summary as a normal, durably-persisted session
-// event (author "model", a sentinel-prefixed text part). Every later request -
-// this one and every future turn, for every agent sharing the session - is
-// then handled by cheap VIEW-TIME FILTERING: drop everything between the task
-// (contents[0], always kept verbatim) and the LAST sentinel content. Raw
-// session events are NEVER deleted or mutated; only the per-request view
-// shrinks. This is what makes the prompt-cache prefix stable across turns,
-// unlike a per-request rewrite.
+// On overflow, the callback summarises the older turns ONCE and appends the
+// summary as a normal, durably-persisted session event (a sentinel-prefixed
+// text part). Every later request is then handled by cheap VIEW-TIME
+// FILTERING: drop everything between the task (contents[0]) and the LAST
+// sentinel. Raw session events are NEVER deleted or mutated, only the
+// per-request view shrinks - this is what keeps the prompt-cache prefix
+// stable across turns.
 //
-// Invariant: after compaction the model never sees a tool call whose result was
-// replaced by a placeholder - a turn is gone (folded into the summary) or intact.
-// (A hollowed-out result reads as deleted work, and the model just redoes the call.)
+// Invariant: the model never sees a tool call whose result was replaced by a
+// placeholder - a turn is gone (folded into the summary) or intact.
 //
-// Token counts are estimated as bytes/charsPerToken, then calibrated against the
-// provider's measured count from the previous turn - the raw estimate undercounts
-// code-dense content and can't see the system prompt + tool schemas.
+// Token counts are bytes/charsPerToken, calibrated against the provider's
+// measured count from the previous turn (the raw estimate undercounts
+// code-dense content and can't see the system prompt + tool schemas).
 const (
 	charsPerToken = 4
 

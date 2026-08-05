@@ -967,16 +967,12 @@ func parseXMLParams(body string) map[string]any {
 	return args
 }
 
-// reasoningToolCalls recovers tool calls that a model leaked as literal XML
-// instead of proper delta.tool_calls - Qwen3.x's <tool_call> wrapper
-// (llama.cpp#22684, closed not-planned - so the client must parse them) plus
-// the bare <function=…> form seen leaking straight into content (#427,
-// recurrence of #402). Handles, in order: Hermes JSON
-// (<tool_call>{...}</tool_call>), qwen's wrapped <function>/<parameter> form,
-// and the same form without the <tool_call> wrapper. Without this the agent
-// sees no tool call - either an empty answer (stalls the node) or the raw XML
-// shown to the user. Returns the parsed calls and the text with matched
-// blocks removed.
+// reasoningToolCalls recovers tool calls a model leaked as literal XML
+// instead of proper delta.tool_calls - Qwen3.x's <tool_call> wrapper and the
+// bare <function=…> form, both left for the client to parse. Handles, in
+// order: Hermes JSON, qwen's wrapped <function>/<parameter> form, and the
+// same form unwrapped. Without this the agent sees no tool call at all.
+// Returns the parsed calls and the text with matched blocks removed.
 func reasoningToolCalls(reasoning string) ([]*genai.FunctionCall, string) {
 	var calls []*genai.FunctionCall
 

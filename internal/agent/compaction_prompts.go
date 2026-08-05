@@ -2,24 +2,19 @@ package agent
 
 // The compaction prompts follow GOOSE, not opencode.
 //
-// quack's compaction was ported from sst/opencode, whose prune blanks an old
-// tool result in place and keeps the call
-// (packages/opencode/src/session/message-v2.ts:293 →
-// "[Old tool result content cleared]"; the marking happens in
-// packages/core/src/session/compaction.ts). opencode gets away with that because
-// it is usually driven by huge-context frontier models where prune rarely fires;
-// quack runs a 65k window on a local model, so it fired constantly and the agent
-// re-read the same file eight times. The stub is gone (see compaction.go).
+// opencode blanks an old tool result in place and keeps the call ("[Old tool
+// result content cleared]"), which works when a huge-context frontier model
+// rarely triggers prune. On quack's 65k local-model window it fired
+// constantly and the agent kept re-reading the same files. The stub is gone
+// (see compaction.go).
 //
-// goose (crates/goose/src/prompts/compaction.md, crates/goose/src/context_mgmt/mod.rs)
-// and OpenHands (sdk/context/condenser/llm_summarizing_condenser.py + its
-// summarizing_prompt.j2) both DROP the old turns and replace them with one
-// knowledge-dense summary. goose's prompt is explicitly a handoff to the agent
-// itself - "ALL TECHNICAL CONTENT", files viewed/edited with their code, errors
-// and fixes, pending tasks, and "it is OK to make it MUCH LONGER than a normal
-// summary". These prompts port that framing: the narrative sections stay terse,
-// but the file/code-state section is allowed to be long, because a summary that
-// drops what a file contained is exactly what makes the agent read it again.
+// goose and OpenHands instead DROP old turns and replace them with one
+// knowledge-dense summary, framed explicitly as a handoff to the agent
+// itself: "ALL TECHNICAL CONTENT" preserved, files/code state kept in full,
+// "OK to make it MUCH LONGER than a normal summary". These prompts follow
+// that framing - narrative sections stay terse, but file/code-state can run
+// long, since a summary that drops what a file contained just makes the
+// agent read it again.
 const compactionSystemPrompt = `You are compacting the context of a coding/research session.
 
 The conversation history you are given is being REMOVED from the agent's context and replaced by what you write. The only reader is THE AGENT ITSELF, continuing this same session - write a handoff to yourself, not a report for a human.

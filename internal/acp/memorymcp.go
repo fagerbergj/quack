@@ -15,20 +15,18 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// Package doc (see acp.go): the memory MCP surface (#344) is a SEPARATE, narrow
-// per-run server from quack's orchestrator MCP mount (/api/v1/mcp) - it exists
-// only to give an ACP subprocess an AGENTIC memory channel (query mid-task, stage
-// a candidate the moment it's learned) alongside the existing gate-side recall
-// (Store.Recall, front-loaded into the round-0 prompt) and answer-mined commit.
+// Package doc (see acp.go): the memory MCP surface is a SEPARATE, narrow
+// per-run server from quack's orchestrator MCP mount (/api/v1/mcp) - it gives
+// an ACP subprocess an AGENTIC memory channel (query mid-task, stage a
+// candidate the moment it's learned) alongside the gate-side recall and
+// answer-mined commit.
 //
-// Scoping is entirely server-side: session/new hands the round ONE url whose path
-// IS an unguessable per-node secret (vetting.NewMemSecret, minted fresh by
-// dag.newGatedNode - NOT the advisor-thread token: that token is derivable
-// (planID+nodeID) and a worker's own prompt discloses its running siblings' node
-// IDs, so it could let one node reach another's memory bucket). Every tool call
-// resolves the node's Store/Scope/staging buffer from that secret via
-// vetting.LookupMemSession - a registry SEPARATE from the advisor-thread one.
-// Nothing about scope ever rides a tool argument.
+// Scoping is entirely server-side: session/new hands the round ONE url whose
+// path IS an unguessable per-node secret (vetting.NewMemSecret) - NOT the
+// advisor-thread token, which is derivable (planID+nodeID) and would let one
+// node reach another's memory bucket. Every tool call resolves the node's
+// Store/Scope/staging buffer from that secret via vetting.LookupMemSession, a
+// SEPARATE registry. Nothing about scope ever rides a tool argument.
 
 // mcpServerName is the loopback server's advertised name (both here and in
 // memoryMCPServers' McpServer.Name) - opencode prefixes every tool it exposes

@@ -15,16 +15,14 @@ import (
 
 // replayModel answers GenerateContent from a loaded replay.Session instead
 // of a live endpoint - kind "replay" (NewModel). It resolves its stream from
-// the SAME ledger.Coords a live worker/judge round stamps onto ctx
-// (runWorkerNodeTraced / the gate's judge round), so no call site anywhere
-// else needs to know replay is active. A structural miss (replay.MissError)
-// is yielded as the call's own error - replay-strict never falls back to a
-// live call (.quack/replay-log.md).
+// the SAME ledger.Coords a live worker/judge round stamps onto ctx, so no
+// call site elsewhere needs to know replay is active. A structural miss
+// (replay.MissError) is yielded as the call's own error - replay-strict
+// never falls back to a live call.
 //
-// live (#605) is fork-replay's escape hatch: when the session hands back a
-// *replay.ForkSignal instead of a recorded response, the call is answered by
-// live instead - nil in strict mode (NewReplayModel), where a ForkSignal
-// never occurs (Session.EnableFork was never called).
+// live is fork-replay's escape hatch: when the session hands back a
+// *replay.ForkSignal instead of a recorded response, the call is answered
+// live instead - nil in strict mode, where a ForkSignal never occurs.
 type replayModel struct {
 	name    string
 	session *replay.Session

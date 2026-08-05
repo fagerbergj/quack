@@ -26,19 +26,19 @@ type Candidate struct {
 // nowRFC3339 lets tests stamp deterministically; defaults to time.Now.
 var nowRFC3339 = func() string { return time.Now().UTC().Format(time.RFC3339) }
 
-// Commit vets, extracts, and consolidates memories into this collection, routing
-// each one to the BUCKET it is about (see scope.go), and returns the number of
-// points written or updated. It is the single gated writer: the gate calls it on a
-// judge pass (staged tradecraft + the accepted answer); the orchestrator calls it
-// directly for user facts.
+// Commit vets, extracts, and consolidates memories into this collection,
+// routing each one to the BUCKET it is about (see scope.go), and returns the
+// number of points written or updated. It is the single gated writer: the
+// gate calls it on a judge pass; the orchestrator calls it directly for user
+// facts.
 //
-// Routing is explicit and cheap, never an LLM judgment: a staged candidate names its
-// bucket (stage_memory's `bucket` argument, in Metadata["bucket"]) and sc.writeBucket
-// resolves it to a key, degrading repo → role → user when the caller has no repo
-// context. The source answer's extraction goes to the caller's default bucket.
+// Routing is explicit and cheap, never an LLM judgment: a staged candidate
+// names its bucket (Metadata["bucket"]) and sc.writeBucket resolves it to a
+// key, degrading repo → role → user when the caller has no repo context. The
+// source answer's extraction goes to the caller's default bucket.
 //
-// Each bucket is consolidated separately (its own neighbours, its own reconcile
-// pass), because a memory only ever competes with others about the SAME subject.
+// Each bucket is consolidated separately, because a memory only ever
+// competes with others about the SAME subject.
 //
 // ponytail: per-(bucket, collection) commits can race - two parallel commits of
 // the same fact both ADD. Best-effort: the next commit's consolidation reconciles

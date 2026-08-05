@@ -103,15 +103,12 @@ func TestCase2_PromptEditTolerated(t *testing.T) {
 }
 
 // TestCase3_ExtraCallFailsLoudly: the gate demanding a higher score than
-// what was recorded forces a live round the recording never made (the
-// judge's recorded 0.9 no longer clears the raised threshold, so the gate
-// asks for a revise round the stream never recorded). Replay must fail at
-// the exact stream + position, with a near-miss diff, never a bare "not
-// found" - captured in the divergence report even though the gate's own
-// graceful-degradation design (revision-worker failure keeps the PRIOR
-// answer rather than aborting the node - internal/vetting/node.go) means
-// RunGatedRefine itself returns no error for this particular divergence
-// point; the report is what "fails loudly" here refers to.
+// what was recorded forces a live round the recording never made. Replay
+// must fail at the exact stream + position, with a near-miss diff, never a
+// bare "not found" - captured in the divergence report even though the
+// gate's own graceful-degradation design (a revision-worker failure keeps
+// the PRIOR answer rather than aborting the node) means RunGatedRefine
+// itself returns no error here; the report is what "fails loudly" refers to.
 func TestCase3_ExtraCallFailsLoudly(t *testing.T) {
 	bundle := buildFixtureBundle(t)
 

@@ -1,14 +1,10 @@
-// Package agent turns Quack's declarative agent bundles (an agent-card.json +
-// prompt.md plus a config binding for model and built-in tools) into running
-// ADK agents, and exposes each one over A2A so the orchestrator dispatches to it
-// as an A2A client.
+// Package agent turns declarative agent bundles (agent-card.json + prompt.md +
+// a config binding) into running ADK agents, each exposed over A2A so the
+// orchestrator dispatches to it as a client.
 //
-// A2A is the orchestrator↔agent protocol from the start. In M1 the agents are
-// co-located in the Quack process: each agent's A2A server binds an ephemeral
-// loopback port (127.0.0.1:0) and the orchestrator gets the resolved AgentCard
-// in-process, so there is no address configuration. Promoting an agent to a
-// standalone service later is a config swap (a stable address + the HTTP
-// AgentCardProvider), with no change to the agents themselves.
+// Agents are co-located in-process for now: each gets an ephemeral loopback
+// A2A server, so promoting one to a standalone service later is a config swap
+// (stable address + HTTP AgentCardProvider), not an agent-code change.
 package agent
 
 import (
@@ -56,15 +52,10 @@ type A2AServer struct {
 }
 
 // Serve starts an A2A server for ag on 127.0.0.1:<ephemeral> and returns it with
-// the published AgentCard. The agent's session state lives in the shared
-// (durable) session service, namespaced under its own app_id (ag.Name()) so it
-// stays separate from the orchestrator's "quack" sessions. This is what lets an
-// agent's A2A session - keyed by the contextID the orchestrator round-trips -
-// survive a process restart, so multi-turn dispatch keeps its context.
-// mem is the semantic-memory service made available to the agent's runtime (so
-// its preload_memory / load_memory tools resolve ctx.SearchMemory). Pass nil
-// when memory is disabled - the runner tolerates a nil MemoryService and the
-// agent simply carries no memory tools.
+// the published AgentCard. Session state lives in the shared durable session
+// service under ag.Name(), separate from the orchestrator's own sessions and
+// surviving a process restart for multi-turn dispatch. mem may be nil (memory
+// disabled); the runner tolerates a nil MemoryService.
 func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service) (*A2AServer, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -123,21 +114,15 @@ func buildSkills(ag adkagent.Agent) []a2a.AgentSkill {
 	return adka2a.BuildAgentSkills(ag)
 }
 
-// Client returns an ADK agent that dispatches to this server over A2A. Use it as
-// a sub-agent of the orchestrator; its Name matches the served agent's, so
-// transfer-to-agent targets it correctly.
+// Client returns an ADK agent that dispatches to this server over A2A, with
+// Name matching the served agent's so transfer-to-agent targets it correctly.
 //
-// The HTTP client has no hard timeout - context cancellation is the deadline.
-// The default a2aclient factory applies a 3-minute total-request timeout which
-// fires mid-judge on long vetting runs (worker + self-refine already consume
-// most of those 3 minutes before the judge even starts).
+// No hard HTTP timeout: context cancellation is the deadline. The default
+// a2aclient 3-minute timeout fires mid-judge on long vetting runs.
 //
-// RemoteTaskCleanupCallback is a no-op: co-located agents share the same
-// process context, so cancellation propagates naturally through the goroutine
-// tree without an explicit HTTP cancel request. The default cleanup sends a
-// CancelTask HTTP call that reliably times out (the A2A executor holds a
-// per-session lock while running), producing a spurious WARN on every client
-// disconnect.
+// RemoteTaskCleanupCallback is a no-op - co-located agents share process
+// context, so cancellation propagates without an HTTP cancel; the default
+// CancelTask call reliably times out under the executor's per-session lock.
 func (s *A2AServer) Client() (adkagent.Agent, error) {
 	base, err := s.clientNamed(s.Card.Name)
 	if err != nil {
@@ -156,41 +141,28 @@ type nodeClient struct {
 }
 
 // ForNode returns a client agent for the SAME A2A server whose LOCAL identity -
-// the Name ADK stamps as the Author of every event this client writes into the
-// shared plan session - is unique to nodeKey.
+// the Author ADK stamps on every event this client writes - is unique to nodeKey.
 //
-// Why: remoteagent decides which remote A2A session to CONTINUE by scanning the
-// local session backward for the first event whose Author == ctx.Agent().Name()
-// and reusing that event's A2A contextID (ADK v2.0.0
-// agent/remoteagent/v2/utils.go, toMissingRemoteSessionParts). Every plan node
-// shares ONE workflow session, so when several concurrent nodes run the SAME
-// agent, that author-keyed scan matches a SIBLING node's event and the node
-// adopts the sibling's remote session - inheriting its task and history (live:
-// five concurrent code-explorer nodes, and the OpenHands node cloned goose's
-// repo). It also truncates the node's own prompt out of the outbound message,
-// which is how two nodes lost their task entirely and asked the user which repo
-// to explore. This is an upstream ADK bug: the lookup keys on a name that is not
-// unique per invocation. A per-node client name is the client-side workaround -
-// the server (and its published AgentCard) stays ONE per agent.
+// Upstream ADK bug: remoteagent picks which remote session to CONTINUE by
+// scanning the shared plan session backward for the first event authored
+// ctx.Agent().Name() and reusing its contextID. Since concurrent nodes running
+// the same agent share one workflow session, that name-keyed scan can match a
+// SIBLING node's event, adopting its remote session (and truncating this node's
+// own prompt out of the message). A per-node client name is the workaround; the
+// server and its AgentCard stay ONE per agent.
 //
-// nodeKey must be STABLE for a node across its judge/revise rounds and across a
-// HITL pause/resume - that stability is what lets the node resume its own remote
-// session (multi-turn dispatch).
+// nodeKey must be STABLE across a node's judge/revise rounds and HITL
+// pause/resume so it can keep resuming its own remote session.
 func (c nodeClient) ForNode(nodeKey string) (adkagent.Agent, error) {
 	return c.srv.clientNamed(c.srv.Card.Name + "#" + nodeKey)
 }
 
 // ClientForNode is Client() with the per-node local CLIENT identity fix
-// (nodeClient.ForNode) already applied - the client a per-node-constructed
-// server (internal/serve's buildAgents, #609) should hand out, exactly like a
-// shared server's Client().ForNode(nodeKey) would. Needed even for an
-// otherwise-exclusive server: nodeClient.ForNode's doc comment explains the
-// bug (remoteagent matches a remote session to CONTINUE by scanning the
-// PLAN's shared workflow session, not this server, for an event authored by
-// the client's local Name) - that scan is keyed on the calling side's shared
-// session regardless of which server the call actually reaches, so two
-// sibling nodes sharing an unqualified local name can still cross-adopt each
-// other's remote session even when each talks to its own server.
+// (see nodeClient.ForNode) already applied - what a per-node-constructed
+// server should hand out. Needed even for an otherwise-exclusive server: the
+// scan nodeClient.ForNode works around is keyed on the CALLING side's shared
+// session, not this server, so two sibling nodes with an unqualified local
+// name can still cross-adopt each other's remote session.
 func (s *A2AServer) ClientForNode(nodeKey string) (adkagent.Agent, error) {
 	return s.clientNamed(s.Card.Name + "#" + nodeKey)
 }
@@ -218,24 +190,15 @@ func (s *A2AServer) clientNamed(name string) (adkagent.Agent, error) {
 }
 
 // scopedClient is the A2A client with ONE addition: it rebuilds the outbound
-// message's parts from the session events that belong to THIS invocation and
-// THIS branch, dropping a concurrently-running sibling node's events.
+// message's parts from session events belonging to THIS invocation and THIS
+// branch, dropping a concurrently-running sibling node's events.
 //
-// Why here and not in the part converter (where the branch filter used to live):
-// remoteagent's history sweep (toMissingRemoteSessionParts) hands FOREIGN-authored
-// events to the converter only AFTER re-wrapping them via presentAsUserMessage - a
-// synthetic event built with session.NewEvent, which carries NO Branch. By the time
-// the converter sees a sibling node's event its branch is gone, so a branch check
-// there cannot fire. Nor can a BeforeRequestCallback help: ADK's callback context
-// refuses Session() and Agent(). The client is the one seam that still sees BOTH
-// the assembled message AND the live InvocationContext (remoteagent passes its
-// InvocationContext straight into SendMessage/SendStreamingMessage).
-//
-// Live consequence of the gap: every plan node shares ONE workflow session, so a
-// concurrent sibling's gate prompt (the event that carries its TASK) and its
-// relayed tool activity were textified into this node's outbound message - "For
-// context: [quack-gate] said: Your task: <the sibling's task>" - and the OpenHands
-// explorer cloned goose's repo.
+// Why here and not in the part converter: remoteagent's history sweep
+// re-wraps foreign-authored events via presentAsUserMessage - a synthetic
+// event with NO Branch - before the converter ever sees them, so a branch
+// check there can't fire. A BeforeRequestCallback can't help either (ADK's
+// callback context refuses Session()/Agent()). The client is the one seam
+// that sees both the assembled message and the live InvocationContext.
 type scopedClient struct{ remoteagent.A2AClient }
 
 func (c scopedClient) SendMessage(ctx context.Context, req *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
@@ -334,54 +297,37 @@ func describeEvent(ev *session.Event) []*a2a.Part {
 }
 
 // sanitizeWorkflowPlumbingPart is a remoteagent.A2AConfig.GenAIPartConverter
-// that neutralizes a node-level HITL/confirm pause's own resume plumbing (a
-// workflow.WorkflowInputFunctionCallName "adk_request_input" FunctionCall or
-// FunctionResponse - see vetting/confirm.go's confirmInterruptID and
-// nativegraph.go's workflowInputResponses) before it crosses the A2A wire.
+// that neutralizes a node-level HITL/confirm pause's resume plumbing (a
+// workflow.WorkflowInputFunctionCallName FunctionCall/Response - see
+// vetting/confirm.go's confirmInterruptID and nativegraph.go's
+// workflowInputResponses) before it crosses the A2A wire.
 //
-// Root cause (live bug: an approved confirm/HITL decision resumed over A2A
-// never reached the worker - the node just went silently empty): remoteagent's
-// own history sweep (toMissingRemoteSessionParts) renders every event NOT
-// authored "user" or by the remote agent itself as descriptive text, but
-// passes a "user"-authored event through VERBATIM. The human's resume answer
-// IS delivered as a "user"-authored event (correctly - it is genuinely the
-// human's turn), while the ORIGINAL adk_request_input FunctionCall it answers
-// is authored by the plan-graph wrapper - neither "user" nor the remote agent
-// - so THAT event gets textified. The result: a raw FunctionResponse crosses
-// the wire with no FunctionCall anywhere in the swept history to pair it to.
-// The remote server's own content builder requires that pairing for the most
-// recent response and errors ("no function call event found for function
-// responses ids") when it can't find one; ADK's flow machinery swallows that
-// error into a silent empty completion rather than surfacing it, so the
-// worker never re-runs at all and the gate's empty-answer recovery kicks in
-// with no writer model configured.
+// Root cause: remoteagent's history sweep renders every non-user,
+// non-remote-agent event as descriptive text, but passes "user"-authored
+// events through VERBATIM. The human's resume answer is user-authored and
+// crosses raw, but the FunctionCall it answers is authored by the plan-graph
+// wrapper and gets textified - so a raw FunctionResponse arrives with no
+// paired FunctionCall, which the remote server's content builder requires;
+// ADK swallows that error into a silent empty completion instead of
+// surfacing it.
 //
-// Fix: recognize the same marker by FunctionCall/FunctionResponse Name and
-// render it as descriptive text ourselves - exactly what the sweep already
-// does for the request half of the pair - so no orphaned function part ever
-// reaches the wire. Only this session's SERIALIZED-FOR-A2A copy is affected;
-// the shared session quack's own gate scans (scanNodeConfirms/scanNodeAsks)
-// keeps the real FunctionCall/FunctionResponse events untouched.
+// Fix: recognize the same marker by Name and render it as descriptive text
+// ourselves, mirroring what the sweep already does for the request half.
+// Only this SERIALIZED-FOR-A2A copy is touched - the shared session's real
+// FunctionCall/FunctionResponse events (which the gate scans) stay intact.
 func sanitizeWorkflowPlumbingPart(ctx context.Context, adkEvent *session.Event, part *genai.Part) (*a2a.Part, error) {
 	if part == nil {
 		return nil, nil
 	}
-	// Branch hygiene: drop events that belong to a DIFFERENT branch of the
-	// shared workflow session. Every plan node runs in ONE session, and
-	// remoteagent's history sweep (toMissingRemoteSessionParts) sends the remote
-	// worker EVERY event since its own last response with NO branch filtering -
-	// so a concurrently-running sibling node's gate prompt, ask/confirm plumbing,
-	// and relayed worker activity would all be textified ("For context: …") into
-	// this node's outbound message: one node's task contaminating another's
-	// request (the A2A twin of the local-llmagent leak fixed by the worker-run
-	// isolation scope in vetting/node.go, and of the orchestrator-side leak
-	// fixed by orchestrator/sessionfilter.go). The converter is the one seam
-	// quack controls on this path, and ctx here is the remote agent's
-	// InvocationContext, which carries the current worker run's branch - apply
-	// ADK's own eventBelongsToBranch rule: keep branchless (invocation-shared)
-	// events, the current branch, and ancestors; drop everything else (sibling
-	// nodes, this node's own earlier runs - each run's gate prompt is
-	// self-contained, so nothing is lost).
+	// Branch hygiene: drop events from a DIFFERENT branch of the shared
+	// workflow session. remoteagent's history sweep sends the remote worker
+	// EVERY event since its own last response with no branch filtering, so a
+	// sibling node's gate prompt and relayed activity would otherwise
+	// contaminate this node's request (the A2A twin of the local-llmagent leak
+	// fixed in vetting/node.go, and the orchestrator-side leak fixed in
+	// orchestrator/sessionfilter.go). Apply ADK's own eventBelongsToBranch
+	// rule: keep branchless/current-branch/ancestor events, drop the rest -
+	// each run's gate prompt is self-contained, so nothing is lost.
 	if ic, ok := ctx.(interface{ Branch() string }); ok && !eventBelongsToBranch(ic.Branch(), adkEvent) {
 		return nil, nil
 	}
@@ -395,20 +341,14 @@ func sanitizeWorkflowPlumbingPart(ctx context.Context, adkEvent *session.Event, 
 	}
 }
 
-// eventBelongsToBranch REPRODUCES ADK's own branch-visibility rule, rule for
-// rule (adk/v2 internal/llminternal/contents_processor.go:205,
-// eventBelongsToBranch): an event is visible to the current branch when either
-// side is branchless, the branches match exactly, or the event's branch is a
-// dot-DELIMITED ancestor of the current one (the explicit "." is what stops
-// agent_0 from matching agent_00).
+// eventBelongsToBranch REPRODUCES ADK's own branch-visibility rule: an event
+// is visible when either side is branchless, the branches match exactly, or
+// the event's branch is a dot-DELIMITED ancestor of the current one (the "."
+// is what stops agent_0 from matching agent_00).
 //
-// This is ADK's intended design for parallel work - workflow/scheduler.go:288:
-// "Branch scopes LLM history visibility (via the flow processor's branch-prefix
-// filter) and gets stamped onto every emitted event when the node leaves
-// Event.Branch empty." ADK's LOCAL LLM flow implements it. ADK's A2A flow
-// (agent/remoteagent/v2/utils.go, toMissingRemoteSessionParts) does NOT - it
-// sweeps every event since the agent's own last response with no branch filter.
-// We deliberately apply ADK's semantics on the path where ADK forgot them.
+// ADK's LOCAL LLM flow implements this rule; its A2A flow does not - it sweeps
+// every event since the agent's own last response with no branch filter. We
+// deliberately apply ADK's own semantics on the path where ADK forgot them.
 func eventBelongsToBranch(invocationBranch string, ev *session.Event) bool {
 	if invocationBranch == "" || ev.Branch == "" || ev.Branch == invocationBranch {
 		return true

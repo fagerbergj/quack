@@ -6,23 +6,22 @@ import (
 )
 
 // Hub fans out a chat's SSE event stream to multiple subscribers, so a run
-// started on one device can be watched live from another. Events are keyed by
-// chat ID (one active run per chat). Each topic keeps a bounded replay buffer so
-// a late joiner - or a reconnecting client - gets the events so far, then the
-// live tail. In-memory and single-process: fine for the self-hosted instance;
-// behind multiple replicas this would need a shared bus (see configuration).
+// started on one device can be watched live from another. Events are keyed
+// by chat ID (one active run per chat). Each topic keeps a bounded replay
+// buffer so a late joiner or reconnecting client gets the events so far,
+// then the live tail. In-memory and single-process: fine for the self-hosted
+// instance; multiple replicas would need a shared bus.
 //
-// The hub is the live fan-out and the warm-path replay; durability across a
+// The hub is the live fan-out and warm-path replay; durability across a
 // restart is the DB-backed event log (store.ChatEvent), which the subscribe
-// handler falls back to when a topic is cold. Each event carries the per-chat Seq
-// the run loop assigned, so the live tail and the durable log share one numbering
-// (a reconnecting client resumes by Last-Event-ID).
+// handler falls back to when a topic is cold. Each event carries the
+// per-chat Seq the run loop assigned, so the live tail and durable log share
+// one numbering (a reconnecting client resumes by Last-Event-ID).
 //
-// The hub also carries the cancel-run registry: it's the one thing already
-// shared between every driver of a run (the REST handler AND the GitHub
-// webhook extension - see NewExtension), so registering cancel handles here
-// instead of in a per-driver map is what makes stop/DELETE reach a
-// GitHub-dispatched run too (#468).
+// The hub also carries the cancel-run registry: the one thing already shared
+// between every driver of a run (REST handler and the GitHub webhook
+// extension), so registering cancel handles here is what makes stop/DELETE
+// reach a GitHub-dispatched run too.
 type Hub struct {
 	mu     sync.Mutex
 	topics map[string]*topic

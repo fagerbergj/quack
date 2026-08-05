@@ -5,15 +5,11 @@ import "testing"
 // The provider's fixed overhead (system instruction + ~20 tool schemas) must be
 // modelled ADDITIVELY, never as a multiplier.
 //
-// The live failure: a code-explorer node's first turn carried a 728-character task
-// (~200 tokens estimated) while the provider billed ~6000 prompt tokens for the
-// system instruction and tool schemas. The old model learned measured/estimate ≈ 30,
-// clamped to the 8.0 ceiling, and then multiplied EVERY later turn by 8 - declaring a
-// genuinely ~7k-token request to be 56,344 tokens, roughly 49k of which never existed.
-// Compaction then found nothing it could free on a fresh session and shredded
-// contents[0]. The worker lost its task and woke up asking:
-//
-//	"Which repository would you like me to explore?"
+// Regression: a tiny first-turn task got billed with ~6000 tokens of fixed
+// overhead. Modelling that as a multiplier learned measured/estimate ≈ 30
+// (clamped to 8.0) and then multiplied EVERY later turn by 8, over-counting a
+// ~7k-token request as 56k. Compaction found nothing to free and shredded
+// contents[0], and the worker lost its task.
 func TestCalibrationDoesNotInflateSmallRequests(t *testing.T) {
 	const density = defaultCalibrationRatio
 

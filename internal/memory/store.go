@@ -1,14 +1,14 @@
-// Package memory is Quack's semantic-memory layer (M6) over a swappable vector
-// index (Qdrant for a server, or an embedded SQLite file for the no-docker path).
-// All the embed / bucket / recall / mem0-style consolidation logic lives on Store;
-// the backend is just storage, behind the index interface.
+// Package memory is Quack's semantic-memory layer (M6) over a swappable
+// vector index (Qdrant for a server, or an embedded SQLite file for the
+// no-docker path). All the embed / bucket / recall / mem0-style
+// consolidation logic lives on Store; the backend is just storage.
 //
-// Memory is SHARED and bucketed by SUBJECT (repo / role / user - see scope.go), not
-// siloed per agent. A caller reads and writes through a View: a Store bound to its
-// Scope, implementing ADK's memory.Service so the native preload_memory /
-// load_memory tools route through it via the runner's MemoryService. Whole-session
-// auto-write (AddSessionToMemory) is a deliberate no-op - writes go through the
-// explicit, gated commit path, never ADK's automatic ingestion.
+// Memory is SHARED and bucketed by SUBJECT (repo / role / user - see
+// scope.go), not siloed per agent. A caller reads and writes through a
+// View: a Store bound to its Scope, implementing ADK's memory.Service so
+// the native preload_memory / load_memory tools route through it.
+// Whole-session auto-write (AddSessionToMemory) is a deliberate no-op -
+// writes go through the explicit, gated commit path only.
 package memory
 
 import (

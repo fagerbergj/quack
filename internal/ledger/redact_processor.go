@@ -9,19 +9,16 @@ import (
 )
 
 // RedactingProcessor is a no-op sdklog.Processor whose only job is to
-// redact a record's attributes in place before any OTHER processor
-// observes it. Register it FIRST: the SDK invokes processors sequentially
-// in WithProcessor order and a processor may synchronously mutate the
-// record so the change is visible to the next one (sdklog.Processor.OnEmit's
-// own doc) - so every processor on the provider, the ledger exporter, an
-// OTLP exporter, anything added later, only ever sees redacted data. Without
-// this, a processor added alongside the ledger exporter (otlp_endpoint set)
-// would export raw, unredacted records straight past the ledger's own
-// redaction, which only guards the ledger's OWN write path.
+// redact a record's attributes in place before any OTHER processor observes
+// it. Register it FIRST: the SDK invokes processors sequentially in
+// WithProcessor order, and a processor may synchronously mutate the record
+// so the change is visible to the next one - so every processor on the
+// provider only ever sees redacted data. Without this, a processor added
+// alongside the ledger exporter would export raw, unredacted records past
+// the ledger's own redaction, which only guards the ledger's OWN write path.
 //
-// The ledger exporter keeps its own redaction too (defense in depth, and
-// the shape its JSONL write naturally wants); Redact is idempotent, so a
-// record that reaches it already-redacted is unchanged either way.
+// The ledger exporter keeps its own redaction too (defense in depth); Redact
+// is idempotent, so an already-redacted record is unchanged either way.
 type RedactingProcessor struct{}
 
 // NewRedactingProcessor returns a RedactingProcessor.

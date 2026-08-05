@@ -3,21 +3,17 @@
 // Every prompt has six layers, ordered from most stable (bottom, best for
 // prompt caching) to least stable (top):
 //
-//  1. Identity  - who this agent is (name + description)
-//  2. Capabilities - what it can do: tools and/or skills for a specialist
-//     agent (an ACP agent gets skills only - see Agent - and the orchestrator
-//     gets its agent roster plus skills; subagents are omitted from a
-//     specialist's own prompt because ADK injects them automatically via
-//     agentTransferInstructionTemplate)
-//  3. Behaviour - how it should behave (the agent's prompt.md, plus its
-//     memory.md when the agent is a memory participant)
+//  1. Identity - who this agent is (name + description)
+//  2. Capabilities - tools and/or skills (an ACP agent gets skills only; the
+//     orchestrator also gets its agent roster; subagents are omitted since
+//     ADK injects them automatically)
+//  3. Behaviour - the agent's prompt.md, plus memory.md when it's a memory
+//     participant
 //  4. Writing - the shared prose ruleset (writing.md), applied to every agent
-//  5. Grading - the trust-gate contract that actually applies to this agent
-//     (weakest-link threshold, retrieval/delivery requirements), sourced from
+//  5. Grading - the trust-gate contract for this agent, sourced from
 //     vetting.Config so no number is invented in a bundle's prompt.md
-//  6. Environment - contextual facts injected at startup (current date, and
-//     for a coding agent, the workspace/toolchain block - workspace.PromptBlock,
-//     #663)
+//  6. Environment - contextual facts injected at startup (date, and for a
+//     coding agent the workspace/toolchain block)
 package promptbuilder
 
 import (

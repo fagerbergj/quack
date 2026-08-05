@@ -27,10 +27,9 @@ type eventSpec struct {
 //	tool_call_update terminal  → durable FunctionCall+FunctionResponse pair (ledger + agent_tool_result)
 //	usage_update               → retained, stamped on the final answer event
 //
-// The durable pair is emitted only at the TERMINAL update because opencode
-// often delivers the interesting fields (the edit diff, the command output)
-// there, and the ledger reads args off the call part - an early call event
-// would freeze them half-empty.
+// The durable pair is emitted only at the TERMINAL update - opencode often
+// delivers the interesting fields (edit diff, command output) there, and an
+// early call event would freeze the ledger's args half-empty.
 type translator struct {
 	cwd     string
 	answer  strings.Builder

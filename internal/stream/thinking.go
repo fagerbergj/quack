@@ -10,20 +10,16 @@ const (
 	thinkClose = "</think>"
 )
 
-// StripThinking removes a model's reasoning block from text that is supposed to
-// hold only the final answer. It handles the two leak shapes we actually see
-// from qwen3.6 (per hermes-webui#2152):
+// StripThinking removes a model's reasoning block from text that should hold
+// only the final answer. Two leak shapes:
+//   - Closed: "<think>…</think>answer" (or a bare leading "</think>answer") -
+//     drop up to and including the first </think>.
+//   - UNCLOSED: "<think>…" with no </think> (budget hit, or stream ended
+//     mid-think) - everything from <think> on is reasoning, so drop it all;
+//     requiring a closing tag would leak the whole block.
 //
-//   - Closed block - "<think>…</think>answer" or a bare leading "</think>answer":
-//     drop everything up to and including the first </think>, keep the rest.
-//   - UNCLOSED block - "<think>…" with no </think> (the model hit its token /
-//     reasoning budget, or the stream ended, before closing): everything from
-//     <think> on is reasoning, so drop it. A strip that requires the closing tag
-//     (our old logic) would leak the whole block - this is the title-leak bug.
-//
-// Text with no reasoning markers is returned unchanged (only outer newlines
-// trimmed). When the answer was entirely an unclosed reasoning block, the result
-// is empty - callers treat that as "no answer" and recover.
+// No markers ⇒ returned unchanged. An entirely-unclosed answer becomes ""
+// - callers treat that as "no answer" and recover.
 func StripThinking(s string) string {
 	if i := strings.Index(s, thinkClose); i >= 0 {
 		return strings.TrimSpace(s[i+len(thinkClose):])

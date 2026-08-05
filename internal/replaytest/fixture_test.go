@@ -159,14 +159,12 @@ type searchResult struct {
 
 // newFixtureTool builds the ONE fake tool the fixture's worker uses,
 // wrapped through the real execute_tool emission seam
-// (tools.EmitWrapForTesting) so its recorded ledger entry is exactly what a
-// builtin tool's would be. coords is stamped directly (Deps.LedgerCoords'
-// testing twin) rather than left to ctx: workflow.RunNode's dynamic-child
-// scheduling doesn't propagate a context.WithValue stamp down to a tool
-// call any more than it does to the model call underneath the same round
-// (see inference.tracedModel.SetLedgerCoords) - and a tool, built once per
-// node before any round exists, has no per-round hook to begin with, so
-// this only ever carries node/agent (Round empty; see emitTool's doc).
+// (tools.EmitWrapForTesting) so its recorded ledger entry matches a builtin
+// tool's. coords is stamped directly (Deps.LedgerCoords' testing twin)
+// rather than left to ctx: workflow.RunNode's dynamic-child scheduling
+// doesn't propagate a context.WithValue stamp down to a tool call, and a
+// tool built once per node before any round exists has no per-round hook -
+// so this only ever carries node/agent (Round empty; see emitTool's doc).
 func newFixtureTool(t *testing.T, coords ledger.Coords) tool.Tool {
 	t.Helper()
 	ft, err := functiontool.New[searchArgs, searchResult](

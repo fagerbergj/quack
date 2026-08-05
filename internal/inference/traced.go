@@ -37,16 +37,15 @@ func TracedModelForTesting(m model.LLM, name string) model.LLM {
 }
 
 // SetLedgerCoords stamps the coordinates every SUBSEQUENT GenerateContent
-// call uses, taking precedence over whatever ctx carries. Needed because a
-// worker round runs through workflow.RunNode, whose dynamic-child scheduler
-// rebuilds the child's context from the context captured when the
-// ENCLOSING node was scheduled - a context.WithValue done inside the
-// node's own body (internal/vetting/node.go's ctx.WithAgentContext call)
-// never reaches the model underneath it. This mutable field sidesteps
-// that: it's the SAME Go object the agent calls directly, no ADK context
-// reconstruction in between. RunGatedRefine calls this once per round; a
-// model nobody calls it on just falls back to ctx (unaffected - the judge
-// round, which never crosses a RunNode boundary, already worked on ctx alone).
+// call uses, taking precedence over ctx. Needed because a worker round runs
+// through workflow.RunNode, whose dynamic-child scheduler rebuilds the
+// child's context from the context captured when the ENCLOSING node was
+// scheduled - a context.WithValue done inside the node's own body never
+// reaches the model underneath it. This mutable field sidesteps that: it's
+// the SAME Go object the agent calls directly, no ADK context reconstruction
+// in between. RunGatedRefine calls this once per round; a model nobody calls
+// it on falls back to ctx (the judge round, which never crosses a RunNode
+// boundary, already works on ctx alone).
 func (t *tracedModel) SetLedgerCoords(c ledger.Coords) {
 	t.mu.Lock()
 	t.coords = c

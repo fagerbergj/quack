@@ -13,30 +13,26 @@ import (
 )
 
 // Build turns a loaded bundle into a runnable ADK llmagent, given its model,
-// its selected built-in tools, optional ADK toolsets (e.g. SkillToolset), and
-// optional context-compaction settings. When compaction is enabled and the
-// model’s context window is known, a BeforeModelCallback summarises + drops the
-// session before each model call so long runs can't overflow the window.
-// memoryGuidance, when non-empty, is the bundle's memory.md appended to the
-// behaviour layer (M6) - passed only for memory-participating agents when the
-// feature is on, so it never dangles otherwise. skills is this agent's declared
-// skill scope (rendered so the model knows the names exist - see
-// promptbuilder.Agent); grading is the pre-rendered trust-gate contract
-// (promptbuilder.GradingFacts), "" for an ungated or judge-less agent.
+// selected built-in tools, optional ADK toolsets, and optional context-
+// compaction settings. When compaction is enabled and the model's context
+// window is known, a BeforeModelCallback summarises + drops the session
+// before each model call. memoryGuidance (bundle's memory.md, M6) is appended
+// to the behaviour layer only for memory-participating agents; skills is the
+// agent's declared skill scope (promptbuilder.Agent); grading is the
+// pre-rendered trust-gate contract (promptbuilder.GradingFacts), "" when
+// ungated or judge-less.
 func Build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, comp Compaction, memoryGuidance string, skills []*skill.Frontmatter, grading string) (adkagent.Agent, error) {
 	return build(b, m, tools, toolsets, comp, memoryGuidance, skills, grading, "")
 }
 
 // BuildChat is Build with the agent's delegation mode PINNED to ModeChat at
-// construction. Use it for agents that run as a runner's ROOT over a
-// multi-turn session (the advisor: internal/tools/ask_advisor.go spins a
-// runner per consult over ONE shared agent instance). Pinning matters beyond
-// semantics: runner.Run force-sets an unset mode to ModeChat with an
-// unsynchronized check-then-write on the shared agent - a data race when two
-// consults from concurrently-running nodes hit it at once. A pre-set mode
-// turns that write into a pure read. Workers keep Build's unset mode: wrapped
-// in a workflow AgentNode they default to single-turn task mode (prompt-only,
-// no session history), which is exactly what the gate wants.
+// construction, for agents that run as a runner's ROOT over a multi-turn
+// session (e.g. the advisor). Pinning matters beyond semantics: runner.Run
+// force-sets an unset mode to ModeChat with an unsynchronized check-then-write
+// on the shared agent - a data race when concurrent consults hit it at once.
+// A pre-set mode turns that write into a pure read. Workers keep Build's
+// unset mode, defaulting to single-turn task mode inside a workflow
+// AgentNode, which is what the gate wants.
 func BuildChat(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, comp Compaction, memoryGuidance string, skills []*skill.Frontmatter, grading string) (adkagent.Agent, error) {
 	return build(b, m, tools, toolsets, comp, memoryGuidance, skills, grading, llmagent.ModeChat)
 }

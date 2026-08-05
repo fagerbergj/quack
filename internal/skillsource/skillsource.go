@@ -1,32 +1,21 @@
 // Package skillsource makes an agent's skill library project-aware: on top of
-// the fixed built-in library (quack's shipped skills/ + the vendored ponytail
-// submodule), it ALSO surfaces the project-level skills a cloned repository
-// defines under its own .agents/skills/ and .claude/skills/ directories, so an
-// agent working in a repo can load_skill that repo's skills.
+// the fixed built-in library (quack's shipped skills/ + vendored ponytail),
+// it ALSO surfaces the project-level skills a cloned repo defines under its
+// own .agents/skills/ and .claude/skills/, so an agent working in a repo can
+// load_skill that repo's skills.
 //
-// The working repo is DYNAMIC - a per-user jailed clone the server never knew
-// about at startup - so this is a skill.Source that scans the jail's workspace
-// at QUERY time (not a fixed startup source). Two rules keep it safe and lazy:
+// The working repo is DYNAMIC - a per-user jailed clone unknown at startup -
+// so this is a skill.Source that scans the jail's workspace at QUERY time.
+// Two rules keep it safe: the built-in library ALWAYS wins a name collision
+// (a colliding project skill is silently HIDDEN, never an error - unlike a
+// static skill.NewMergedSource, where a duplicate is a startup failure); and
+// every path resolves THROUGH the jail (symlink-resolved, containment-checked).
 //
-//   - Precedence: the built-in library ALWAYS wins a name collision. A cloned
-//     (untrusted) repo must not be able to hijack a core skill like `plan-work`
-//     or `ponytail` by shadowing its name. Project skills are purely ADDITIVE -
-//     a colliding project skill is silently HIDDEN, never an error (unlike a
-//     static skill.NewMergedSource, where a duplicate name is a startup
-//     failure - the right loudness for a vendoring mistake, the wrong loudness
-//     for arbitrary repo contents).
-//   - Jail discipline: every path is resolved THROUGH the jail (symlink-
-//     resolved, containment-checked), so discovery only ever reads under the
-//     jailed workspace.
-//
-// Ceiling (ponytail): the source discovers project skills only in the
-// IMMEDIATE child repos of the jail root (<root>/<repo>/.agents|.claude/skills)
-// - the clone-and-work-in-it case. A repo cloned into a nested subdir, or a
-// monorepo's sub-project skills, are out of scope; add a bounded walk here if
-// that ever matters. And os.DirFS follows symlinks WITHIN a resolved skills
-// dir, so a fully hostile repo could symlink a skill file out of the jail; the
-// dir root is jail-contained, deeper per-file symlink hardening is deferred
-// (single-user, self-cloned workspace - low severity).
+// Ceiling: only IMMEDIATE child repos of the jail root are scanned (a nested
+// clone or monorepo sub-project is out of scope - add a bounded walk if that
+// matters). os.DirFS follows symlinks WITHIN a resolved skills dir, so a
+// hostile repo could symlink a file out of the jail; deeper per-file symlink
+// hardening is deferred (single-user, self-cloned workspace - low severity).
 package skillsource
 
 import (
@@ -146,18 +135,14 @@ func (t *tolerant) ListFrontmatters(ctx context.Context) ([]*skill.Frontmatter, 
 	return out, nil
 }
 
-// project builds a fresh source over ALL project skills currently in the jail.
-// Repos now live one level deeper - under each per-chat scope
-// (<root>/<user>/<chat>/<repo>) - but this source is the shared startup
-// skilltoolset singleton (list_skills/load_skill), built once and driven by a
-// plain context.Context, so it CANNOT recover the calling chat id the way the
-// workspace tools do (there is no advisor-thread marker on a context.Context).
-// It therefore walks BOTH levels: each per-chat scope dir, then each repo dir
-// within it. Skill names thus become visible across a single user's chats in
-// list_skills - read-only, single-user, acceptable; the `cd` tool's report
-// (ProjectSkills, threaded with the real chat id) is the per-chat-accurate
-// surface. Rebuilt per query so a repo cloned mid-run is picked up without
-// restart. Never errors: an unreadable root yields an empty source.
+// project builds a fresh source over ALL project skills currently in the
+// jail. Repos live one level deeper - under each per-chat scope
+// (<root>/<user>/<chat>/<repo>) - and this shared singleton is built once
+// over a plain context.Context with no way to recover the calling chat id,
+// so it walks BOTH levels. That makes skill names visible across a user's
+// chats in list_skills (read-only, acceptable); the `cd` tool's per-chat
+// ProjectSkills report is the accurate surface. Rebuilt per query; never
+// errors (an unreadable root yields an empty source).
 func (p *projectAware) project() skill.Source { return skill.NewMergedSource(p.sources()...) }
 
 // sources returns one tolerant source per project skills dir currently in the

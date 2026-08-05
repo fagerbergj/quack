@@ -68,13 +68,11 @@ func askTool(orch *orchestrator.Orchestrator) mcp.ToolHandlerFor[AskInput, any] 
 // *orchestrator.Orchestrator directly, so the MRTR round trip (ask, pause,
 // elicit, retry) is testable without a live Orchestrator.
 //
-// On a plain call, it runs the orchestrator and returns its answer, exactly as
-// before. If the orchestrator instead paused on a clarifying question (the same
-// needs_input check the REST status handler uses), it now returns that as an
-// MRTR input-required result instead of a bogus "done" with a partial answer:
-// clients that speak SEP-2322 retry with the elicited answer; clients that
-// don't get the SDK's built-in fallback (transparent elicitation) or, failing
-// that, the same "call ask again with session_id" pattern that already existed.
+// If the orchestrator paused on a clarifying question (the same needs_input
+// check the REST status handler uses), it returns an MRTR input-required
+// result instead of a bogus "done" with a partial answer: SEP-2322 clients
+// retry with the elicited answer; others fall back to the SDK's transparent
+// elicitation or "call ask again with session_id".
 func newAskHandler(
 	run func(ctx context.Context, sessionID, message string) iter.Seq2[stream.SSEEvent, error],
 	pending func(ctx context.Context, sessionID string) (orchestrator.PendingQuestion, bool),

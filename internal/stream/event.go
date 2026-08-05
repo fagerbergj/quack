@@ -1,20 +1,20 @@
-// Package stream defines Quack's wire-level event vocabulary and translates the
-// gate's ADK session-event stream into it. The vocabulary mirrors the frontend
-// contract in frontend/src/state/agentStream.ts and is shared by the REST and
-// MCP transports.
+// Package stream defines Quack's wire-level event vocabulary and translates
+// the gate's ADK session-event stream into it, mirroring the frontend
+// contract in frontend/src/state/agentStream.ts. Shared by REST and MCP.
 //
-// The model is flat and agent-centric: the DAG (dag_plan + node_* events) is the
-// static structure, and within each node the gate runs a SEQUENCE of agent
-// invocations ("runs") - the worker draft, optional self-refine, each judge
-// round, each revision. Every run is delimited by agent_start / agent_complete
-// and carries a run_id + stage; its activity (agent_thinking, agent_tool_call,
-// agent_tool_result, agent_token) references that run_id. The client groups runs
-// by node and pairs tools by call_id - no nesting heuristics.
+// The model is flat and agent-centric: the DAG (dag_plan + node_* events) is
+// the static structure, and within each node the gate runs a SEQUENCE of
+// agent invocations ("runs") - worker draft, optional self-refine, each
+// judge round, each revision. Every run is delimited by
+// agent_start/agent_complete and carries a run_id + stage; its activity
+// (agent_thinking, agent_tool_call, agent_tool_result, agent_token)
+// references that run_id. The client groups runs by node and pairs tools by
+// call_id - no nesting heuristics.
 //
 // Translation is stateful: the gate yields agent_start/agent_complete marker
-// FunctionResponse parts to delimit runs, and a per-node Translator tracks the
-// current run so the worker's passthrough activity is attributed to it. Token
-// usage is accumulated from the raw model events and reported on agent_complete.
+// FunctionResponse parts to delimit runs, and a per-node Translator tracks
+// the current run so passthrough activity attributes correctly. Token usage
+// accumulates from raw model events and reports on agent_complete.
 package stream
 
 import (

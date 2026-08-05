@@ -32,18 +32,15 @@ const ServiceName = "quack"
 const ChatIDKey = "chat_id"
 
 // Providers holds the process-wide OTel wiring: the tracer/meter providers,
-// also installed as the otel package globals via otel.SetTracerProvider/
-// SetMeterProvider. Emission-only - quack keeps no local trace/metric store
-// or read API of its own; Tempo/Grafana (the home-server monitoring stack,
-// staged behind otel.otlp_endpoint) own trace and metric viewing.
+// also installed as the otel package globals. Emission-only - quack keeps no
+// local trace/metric store; Tempo/Grafana own trace and metric viewing.
 //
 // KNOWN LIMITATION: ADK v2's own internal spans do NOT flow through this
-// provider. internal/telemetry (ADK) captures its tracer at package-init
-// time - `var tracer = otel.GetTracerProvider().Tracer(...)` - which runs
-// before Init below ever executes, so it is permanently bound to the SDK's
-// default no-op provider; ADK exposes no production API to rebind it (only
-// a test-only OverrideTracerForTesting). Every span in this package is
-// quack's own explicit instrumentation, not "free" ADK auto-instrumentation.
+// provider - internal/telemetry (ADK) captures its tracer at package-init
+// time, before Init below ever runs, so it stays bound to the SDK's default
+// no-op provider with no production API to rebind it. Every span in this
+// package is quack's own explicit instrumentation, not "free" ADK
+// auto-instrumentation.
 type Providers struct {
 	TracerProvider *sdktrace.TracerProvider
 	MeterProvider  *metric.MeterProvider
@@ -52,15 +49,12 @@ type Providers struct {
 
 // Init builds the tracer + meter + logger providers per cfg and installs the
 // tracer/meter as the otel package globals (the logger provider has no such
-// global in this SDK version - see Logger). Disabled (cfg.Otel.IsEnabled() ==
-// false) returns a no-op Providers so callers never need an `if enabled`
-// branch of their own - every otelobs.Start/Record*/EmitLog call below is a
-// cheap no-op against the SDK's default no-op providers. otlp_endpoint unset
-// ⇒ providers are built (spans/metrics/logs still recorded) but nothing is
-// EXPORTED anywhere - harmless, just inert; set it to actually ship to a
-// collector. The replay ledger (cfg.Recording) rides this SAME logger
-// provider, so it can only ever be active when otel itself is - see
-// config.RecordingConfig.IsEnabled.
+// global in this SDK version - see Logger). Disabled
+// (cfg.Otel.IsEnabled() == false) returns a no-op Providers, so every
+// otelobs.Start/Record*/EmitLog call is a cheap no-op - callers never need an
+// `if enabled` branch. otlp_endpoint unset ⇒ providers are built but nothing
+// is EXPORTED. The replay ledger (cfg.Recording) rides this SAME logger
+// provider, so it can only be active when otel itself is.
 func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledger.LedgerStore) (*Providers, func(context.Context) error, error) {
 	if !cfg.Otel.IsEnabled() {
 		return &Providers{}, func(context.Context) error { return nil }, nil
