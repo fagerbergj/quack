@@ -9,7 +9,7 @@
 
 import { str, num } from './toolFormat'
 
-export interface Comment {
+interface Comment {
   id?: string
   createdAt?: string
   author?: string
@@ -19,14 +19,14 @@ export interface Comment {
   quackStatus?: string
 }
 
-export interface ChangedFile {
+interface ChangedFile {
   filename: string
   additions?: number
   deletions?: number
   status?: string
 }
 
-export interface ContextFile {
+interface ContextFile {
   name: string
   endpoint: string
 }

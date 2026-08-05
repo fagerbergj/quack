@@ -2,7 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import { AttachmentStrip, type AttachmentItem } from './AttachmentUI'
 import type { QueuedTurn } from '../state/chatStore'
 
-export interface AttachmentPreview {
+interface AttachmentPreview {
   url: string
   mime: string
   name: string

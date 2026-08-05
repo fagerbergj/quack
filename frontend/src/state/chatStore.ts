@@ -54,7 +54,7 @@ export interface DagTurnState {
 }
 
 // LiveTurn is the in-progress / seeded state for one chat turn.
-export interface LiveTurn {
+interface LiveTurn {
   id: string             // turn ID (response_id) - empty string while streaming before first event
   userText: string
   dag?: DagTurnState

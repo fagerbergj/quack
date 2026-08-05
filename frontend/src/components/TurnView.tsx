@@ -16,7 +16,7 @@ export function visibleActivity(activity: Activity[]): Activity[] {
 
 // dagTurnStateFromItem converts a persisted DagOutputItem into a DagTurnState
 // suitable for DagView. Runs/answers are empty (streaming content isn't persisted).
-export function dagTurnStateFromItem(item: DagOutputItem): DagTurnState {
+function dagTurnStateFromItem(item: DagOutputItem): DagTurnState {
   const nodeStates: DagTurnState['nodeStates'] = {}
   let startedAt: number | undefined
   let finishedAt: number | undefined

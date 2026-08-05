@@ -168,7 +168,7 @@ React 19 + Vite + Tailwind CSS 4 + TanStack Query. State is in `src/state/`:
 - `agentStream.ts` - parses the SSE event stream and updates the store.
 - `ChatStoreProvider.tsx` - context provider.
 
-Components under `src/components/` have co-located Storybook stories (`.stories.tsx`) and vitest tests (`.test.ts`). MSW (`msw`) mocks the API in tests and Storybook.
+Components under `src/components/` have co-located Storybook stories (`.stories.tsx`) and vitest tests (`.test.ts`). Tests stub `global.fetch` directly with `vi.fn()`/`vi.stubGlobal`, not a mocking library.
 
 ### Stores
 
