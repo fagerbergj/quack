@@ -126,12 +126,16 @@ func vacuousTestsCriterion(cfg Config) (criterionScore, bool) {
 		if err != nil || !lang.hasTestDecl.Match(content) {
 			continue // unreadable, or no test declaration - e.g. a pure fixture/helper file
 		}
-		checkedFiles = append(checkedFiles, path)
 		idents, cached := prodCache[lang.name]
 		if !cached {
 			idents = productionIdentifiers(dir, lang)
 			prodCache[lang.name] = idents
 		}
+		if len(idents) == 0 {
+			continue // we found zero declarations for this language - a parse gap (shallow clone,
+			// unusual style, no prod files yet), not evidence the test is vacuous; don't guess
+		}
+		checkedFiles = append(checkedFiles, path)
 		if !referencesAny(content, idents) {
 			vacuous = append(vacuous, path)
 		}

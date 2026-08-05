@@ -170,6 +170,37 @@ func TestVacuousTestsCriterion_SkipsUnknownLanguage(t *testing.T) {
 	}
 }
 
+// Shallow-clone / unparseable-source case (blocking review comment on PR #721,
+// see issue #585 for the same failure mode in checksPassCriterion): if the repo
+// has NO production Go files the declaration regex can find anything in - e.g.
+// a shallow clone that never fetched them, or a language that legitimately has
+// only test files right now - productionIdentifiers comes back empty. That is
+// US failing to parse, not evidence the test is vacuous, so the file must PASS
+// even though its body never references anything (it can't, there IS nothing).
+func TestVacuousTestsCriterion_EmptyProductionIdentifiersSkipsRatherThanFails(t *testing.T) {
+	cfg, repo := clonedRepoConfig(t, nil, map[string]string{"go.mod": "module example.com/x\n\ngo 1.24\n"})
+	selfReferential := "package mathutil\n\n" +
+		"import \"testing\"\n\n" +
+		"func TestFakeAdd(t *testing.T) {\n" +
+		"\tcalled := false\n" +
+		"\tcb := func() { called = true }\n" +
+		"\tcb()\n" +
+		"\tif !called {\n" +
+		"\t\tt.Fatal(\"callback not called\")\n" +
+		"\t}\n" +
+		"}\n"
+	writeAndCommit(t, repo, map[string]string{"mathutil_fake_test.go": selfReferential})
+
+	got, ok := vacuousTestsCriterion(cfg)
+	if ok && got.Score == 0 {
+		t.Fatalf("no_vacuous_tests failed a test whose language has ZERO production identifiers in the repo - "+
+			"that's a parse gap, not a vacuous test: %s", got.Reason)
+	}
+	if ok && got.Score != 1 {
+		t.Errorf("Score = %v, want either skip (ok=false) or 1 - never 0 on an empty identifier set", got.Score)
+	}
+}
+
 // The issue scopes this check to ADDED test files only. A pre-existing test
 // file gutted down to a vacuous body in place (git status: modified, not
 // added) is out of scope - see issue #716's "REQUIRED FIX".
