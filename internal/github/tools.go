@@ -50,6 +50,7 @@ func takeDeliveryDetail(chatID string) (deliveryOutcome, bool) {
 // deliveryOutcome wraps a possibly-nil error and the GitHub state a successful delivery produced.
 type deliveryOutcome struct {
 	err       error
+	branch    string // for a failure comment, so the work is recoverable by hand (#714)
 	prNumber  int
 	prURL     string
 	pushedSHA string
@@ -596,7 +597,7 @@ func (a *App) withClosesTrailer(ctx context.Context, owner, repo string, issueNu
 // Deliver pushes the branch and delivers staged items (PR → review → comments).
 // Outcomes are this extension's own record, never the worker's self-report.
 func (a *App) Deliver(ctx context.Context, jailRoot string, dc vetting.DeliveryContext) (outcomes []vetting.DeliveryItemOutcome, err error) {
-	var detail deliveryOutcome
+	detail := deliveryOutcome{branch: dc.Branch}
 	defer func() {
 		detail.err = err
 		recordDelivery(dc.ChatID, detail)
