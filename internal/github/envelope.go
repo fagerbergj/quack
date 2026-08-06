@@ -357,7 +357,7 @@ func (e *Extension) deliverableText(ctx context.Context, p issueCommentPayload, 
 		return issueImplementDeliverable(e.labels.PartialFix, gh.snap.Labels, p.Issue.Number)
 	case !isPR && !p.isLabelTrigger:
 		// #713: a comment can ask for implementation too - the label only bounds whether it's a legal answer.
-		if kind, ok := e.classifyIssueDeliverable(ctx, task, grant); ok {
+		if kind, ok := e.classifyIssueDeliverableCached(ctx, p, task, grant); ok {
 			if kind == "implement" {
 				return issueImplementDeliverable(e.labels.PartialFix, gh.snap.Labels, p.Issue.Number)
 			}
