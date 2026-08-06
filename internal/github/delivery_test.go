@@ -189,6 +189,95 @@ func TestDeliverPushPartialUpdateOmitsTitleKey(t *testing.T) {
 	}
 }
 
+// TestDeliverPushWithNoTitleAndNoExistingPRFailsExplicitly closes a gap
+// openOrUpdatePullRequest had: a titleless stage_push falls through to
+// openPullRequest exactly like a legitimate new-PR run whenever no open PR
+// is found for the branch (e.g. it was closed between trigger and delivery)
+// - but a push run has no title to open one with. GitHub would 422 a
+// titleless PR; inventing a title is the exact fabrication #724 removed
+// stage_pr's compulsion to do. Delivery must refuse with a named cause
+// instead, and never call the create-PR endpoint.
+func TestDeliverPushWithNoTitleAndNoExistingPRFailsExplicitly(t *testing.T) {
+	var posted bool
+	app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls"):
+			io.WriteString(w, `[]`) // no open PR for this branch anymore
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls"):
+			posted = true
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			io.WriteString(w, `{"message":"Validation Failed"}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	dc := vetting.DeliveryContext{
+		GatePassed: true,
+		ChatID:     "chat-724-4",
+		CloneURL:   "https://github.com/acme/widgets.git",
+		Branch:     "feature",
+		Items:      []vetting.StagedDelivery{{Kind: "pull_request", TitleOmitted: true, BodyOmitted: true}},
+	}
+	outcomes, err := app.Deliver(context.Background(), t.TempDir(), dc)
+	if err == nil {
+		t.Fatal("Deliver: want an error - a titleless push with no PR to push onto has nothing to deliver")
+	}
+	if posted {
+		t.Error("must not attempt to open a new pull request with no title - GitHub would 422 it")
+	}
+	if len(outcomes) != 1 || outcomes[0].Error == "" {
+		t.Fatalf("outcomes = %+v, want a named error", outcomes)
+	}
+	if strings.Contains(outcomes[0].Error, "422") {
+		t.Errorf("outcomes[0].Error = %q, want the named cause, not an opaque 422", outcomes[0].Error)
+	}
+	if !strings.Contains(outcomes[0].Error, "no open pull request") {
+		t.Errorf("outcomes[0].Error = %q, want it to explain no open PR was found", outcomes[0].Error)
+	}
+}
+
+// TestDeliverPushWithNoTitleAndFailedLookupFailsExplicitly is the sibling
+// case: findOpenPR itself errors (a transient API blip) rather than cleanly
+// reporting no PR - same refusal, same no-POST guarantee.
+func TestDeliverPushWithNoTitleAndFailedLookupFailsExplicitly(t *testing.T) {
+	var posted bool
+	app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls"):
+			// Malformed body (object, not array): an immediate decode error, no retry.
+			io.WriteString(w, `{"not":"an array"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls"):
+			posted = true
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			io.WriteString(w, `{"message":"Validation Failed"}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	dc := vetting.DeliveryContext{
+		GatePassed: true,
+		ChatID:     "chat-724-5",
+		CloneURL:   "https://github.com/acme/widgets.git",
+		Branch:     "feature",
+		Items:      []vetting.StagedDelivery{{Kind: "pull_request", TitleOmitted: true, BodyOmitted: true}},
+	}
+	outcomes, err := app.Deliver(context.Background(), t.TempDir(), dc)
+	if err == nil {
+		t.Fatal("Deliver: want an error - the PR lookup failed and there's no title to fall back on")
+	}
+	if posted {
+		t.Error("must not attempt to open a new pull request with no title - GitHub would 422 it")
+	}
+	if len(outcomes) != 1 || outcomes[0].Error == "" {
+		t.Fatalf("outcomes = %+v, want a named error", outcomes)
+	}
+	if !strings.Contains(outcomes[0].Error, "checking for its open pull request failed") {
+		t.Errorf("outcomes[0].Error = %q, want it to name the lookup failure, not a generic delivery error", outcomes[0].Error)
+	}
+}
+
 // requireGitBinary skips a test when git isn't on PATH.
 func requireGitBinary(t *testing.T) {
 	t.Helper()

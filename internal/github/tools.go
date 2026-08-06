@@ -552,7 +552,8 @@ func (a *App) openPullRequest(ctx context.Context, owner, repo, title, head, bas
 // about that field (stage_push, #724) - an existing PR is left untouched
 // rather than PATCHed with an empty string.
 func (a *App) openOrUpdatePullRequest(ctx context.Context, owner, repo, title string, titleSet bool, head, base, body string, bodySet bool, labels []string, draft bool, closesIssue int) (url string, number int, err error) {
-	if num, foundURL, ok, ferr := a.findOpenPR(ctx, owner, repo, head); ferr != nil {
+	num, foundURL, ok, ferr := a.findOpenPR(ctx, owner, repo, head)
+	if ferr != nil {
 		slog.Warn("github: check for an existing open PR failed; opening a new one", "component", "github", "repo", owner+"/"+repo, "branch", head, "err", ferr)
 	} else if ok {
 		if !titleSet && !bodySet {
@@ -567,6 +568,16 @@ func (a *App) openOrUpdatePullRequest(ctx context.Context, owner, repo, title st
 		slog.Info("github: updated the existing open pull request instead of opening a duplicate",
 			"component", "github", "repo", owner+"/"+repo, "pr", num, "url", u)
 		return u, num, nil
+	}
+	// No open PR found for this branch (or the lookup itself failed) and the
+	// caller has no title to open one with (stage_push, #724) - refuse rather
+	// than open a titleless PR (GitHub 422s) or invent a title, which is the
+	// exact fabrication #724 removed stage_pr's compulsion to do.
+	if !titleSet {
+		if ferr != nil {
+			return "", 0, fmt.Errorf("github: delivery: staged a push with no title against branch %q, and checking for its open pull request failed: %w", head, ferr)
+		}
+		return "", 0, fmt.Errorf("github: delivery: staged a push with no title against branch %q, but no open pull request was found there - nothing to push onto", head)
 	}
 	body = a.withClosesTrailer(ctx, owner, repo, closesIssue, body)
 	return a.openPullRequest(ctx, owner, repo, title, head, base, body, labels, draft)
