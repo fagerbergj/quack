@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
-import { liveDagFinalText, chatGitHubLink, EditableChatTitle, shouldQueueSubmit } from './Chat'
+import { liveDagFinalText, chatGitHubLink, EditableChatTitle, shouldQueueSubmit, mergeChatsPage } from './Chat'
 import type { DagTurnState } from '../state/chatStore'
 import type { ChatSummary } from '../api'
 
@@ -173,5 +173,42 @@ describe('EditableChatTitle', () => {
 
     act(() => { host!.querySelector('h1')!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
     expect(host!.querySelector('input')).toBeNull()
+  })
+})
+
+// #736 follow-up: the 5s sidebar poll must never shorten the chat list. A
+// poll that re-requests "however many chats are loaded" comes back clamped
+// to the server's page cap once the user has paged past it (109 chats on
+// the live instance), and replacing the list with that shorter response
+// silently drops the tail. The fix is a poll that only ever fetches the
+// first page and merges it in, rather than requesting-and-replacing at the
+// loaded count.
+describe('mergeChatsPage - poll must never shorten the loaded list', () => {
+  it('keeps every already-loaded chat when the polled page is smaller than what is loaded', () => {
+    // Stands in for a sidebar paged past the server's page cap (100): the
+    // poll's response (one page) is necessarily shorter than what's on screen.
+    const existing = Array.from({ length: 109 }, (_, i) => chat({ id: `c${i}` }))
+    const page = existing.slice(0, 20)
+
+    const merged = mergeChatsPage(existing, page)
+
+    expect(merged.length).toBeGreaterThanOrEqual(existing.length)
+    for (const c of existing) {
+      expect(merged.some(m => m.id === c.id)).toBe(true)
+    }
+  })
+
+  it('updates a chat already in the list when it reappears in the polled page', () => {
+    const stale = chat({ id: 'c1', status: 'idle' })
+    const fresh = chat({ id: 'c1', status: 'running' })
+    const merged = mergeChatsPage([stale, chat({ id: 'c2' })], [fresh])
+
+    expect(merged).toHaveLength(2)
+    expect(merged.find(c => c.id === 'c1')?.status).toBe('running')
+  })
+
+  it('adds a chat from the polled page that was not already loaded', () => {
+    const merged = mergeChatsPage([chat({ id: 'c1' })], [chat({ id: 'c2' }), chat({ id: 'c1' })])
+    expect(merged.map(c => c.id).sort()).toEqual(['c1', 'c2'])
   })
 })

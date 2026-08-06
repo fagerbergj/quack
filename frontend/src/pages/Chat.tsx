@@ -29,6 +29,18 @@ export function shouldQueueSubmit(streaming: boolean): boolean {
   return streaming
 }
 
+// mergeChatsPage folds a freshly-polled page (server order: most-recently-
+// updated first) into the existing list without ever shortening it: a chat
+// in `page` replaces its stale copy (or is added if new); everything else in
+// `existing` - beyond what a bounded page can cover - is left untouched.
+// Safe to concatenate in this order: `page` is exactly the current top N by
+// updated_at, so nothing left in `existing` can outrank it (#736 - the poll
+// must never truncate a sidebar the user has paged past the page cap).
+export function mergeChatsPage(existing: ChatSummary[], page: ChatSummary[]): ChatSummary[] {
+  const pageIds = new Set(page.map(c => c.id))
+  return [...page, ...existing.filter(c => !pageIds.has(c.id))]
+}
+
 // chatGitHubLink (#382) extracts the header's back-link target from a chat's
 // summary: present only for a GitHub-originated chat (github_url set by the
 // webhook at dispatch time), null for a direct chat - so the header renders
@@ -108,10 +120,6 @@ export default function Chat() {
   // undefined once the last page has loaded.
   const [chatsNextCursor, setChatsNextCursor] = useState<string | undefined>(undefined)
   const [loadingMoreChats, setLoadingMoreChats] = useState(false)
-  // Lets the 5s poll re-request as many chats as are already loaded, instead
-  // of always re-requesting just the first page and silently collapsing a
-  // sidebar the user has paged further into.
-  const chatsCountRef = useRef(0)
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
   // Set once GET /chats/{id} has seeded this chat's turns - gates the status-
   // triggered re-attach below so it can never fire ahead of seed() (#463: the
@@ -144,8 +152,6 @@ export default function Chat() {
     setChatsNextCursor(result.next_cursor)
     return result.data
   }, [])
-
-  useEffect(() => { chatsCountRef.current = chats.length }, [chats])
 
   const loadMoreChats = useCallback(async () => {
     if (!chatsNextCursor || loadingMoreChats) return
@@ -210,15 +216,14 @@ export default function Chat() {
     let cancelled = false
     async function doPoll() {
       try {
-        // Re-request as many chats as are already loaded (not just the first
-        // page), so a sidebar the user has paged into doesn't collapse back
-        // to page 1 every 5s.
-        const limit = chatsCountRef.current || undefined
-        const result = await api.listChats(limit ? { limit } : undefined)
-        if (!cancelled) {
-          setChats(result.data)
-          setChatsNextCursor(result.next_cursor)
-        }
+        // Always just the first (default-size) page, merged into whatever's
+        // already loaded - never re-requested at the loaded count, which
+        // above the server's page cap would silently come back shorter than
+        // what's on screen (#736). Chats are updated_at-sorted, so anything
+        // that just changed is in this page regardless of how far the user
+        // has paged; the pagination cursor is left untouched here.
+        const result = await api.listChats()
+        if (!cancelled) setChats(prev => mergeChatsPage(prev, result.data))
       } catch { /* transient - next poll will retry */ }
     }
     loadChats().then(data => { if (!cancelled) setChats(data) })
