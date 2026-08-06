@@ -52,6 +52,7 @@ type Config struct {
 	Grant               *Grant         // permission set; nil = unrestricted
 	ExternalWorker      bool           // ACP-backed; gate supplements session ledger
 	Setup               *SetupBranch   // pre-cloned checkout; delivery on this branch
+	ExistingPR          bool           // run pushes onto an already-open PR; stage_push offered instead of stage_pr
 	Skeptic             SkepticFactory // adversarial verify; nil = disabled
 	SkepticRounds       int            // skeptics per finding; <= 0 = disabled
 }
@@ -64,14 +65,20 @@ type SetupBranch struct {
 
 // One item the worker staged for delivery. Branch filled by the gate.
 type StagedDelivery struct {
-	Kind      string // pull_request | review | comment
-	Branch    string
-	Title     string
-	Body      string
-	Event     string          // review verdict: approve | request_changes | comment
-	Slot      string          // comment target, for Kind == "comment"
-	Comments  []ReviewComment // inline findings
-	Recovered bool            // parsed from answer tail, not tool-staged
+	Kind   string // pull_request | review | comment
+	Branch string
+	Title  string
+	Body   string
+	// TitleOmitted/BodyOmitted: Kind pull_request via stage_push only - the agent
+	// didn't supply that field, so delivery must PATCH without the key rather
+	// than send an empty string (which would blank it on GitHub). Zero value
+	// (false) matches every other path, which always carries both fields.
+	TitleOmitted bool
+	BodyOmitted  bool
+	Event        string          // review verdict: approve | request_changes | comment
+	Slot         string          // comment target, for Kind == "comment"
+	Comments     []ReviewComment // inline findings
+	Recovered    bool            // parsed from answer tail, not tool-staged
 }
 
 // ReviewComment: one inline, line-anchored review finding.

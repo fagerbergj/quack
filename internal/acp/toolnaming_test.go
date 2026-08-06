@@ -135,3 +135,31 @@ func TestMCPToolNamesMatchTheLiveServer(t *testing.T) {
 		t.Fatalf("stage_pr call didn't land in the PR buffer: ok=%v %+v", ok, prd)
 	}
 }
+
+// hasToolName reports whether names (mcpToolNames' output - server-prefixed)
+// includes the given bare tool name.
+func hasToolName(names []string, bare string) bool {
+	for _, n := range names {
+		if n == mcpServerName+"_"+bare {
+			return true
+		}
+	}
+	return false
+}
+
+// TestMCPToolNames_SelectsPushForExistingPR pins #724: mcpToolNames names
+// exactly ONE of stage_pr/stage_push, keyed on MemSession.ExistingPR - never
+// both in the same round (the model is only ever offered the one that fits).
+func TestMCPToolNames_SelectsPushForExistingPR(t *testing.T) {
+	newPR := vetting.MemSession{PRStage: &vetting.PRStage{}}
+	names := mcpToolNames(newPR, true)
+	if !hasToolName(names, "stage_pr") || hasToolName(names, "stage_push") {
+		t.Errorf("new-PR session: names = %v, want stage_pr only", names)
+	}
+
+	existingPR := vetting.MemSession{PRStage: &vetting.PRStage{}, ExistingPR: true}
+	names = mcpToolNames(existingPR, true)
+	if !hasToolName(names, "stage_push") || hasToolName(names, "stage_pr") {
+		t.Errorf("existing-PR session: names = %v, want stage_push only", names)
+	}
+}

@@ -22,7 +22,7 @@ const prTask = "Add a Flappy Bird game to https://github.com/fagerbergj/games an
 func TestDeliveryCriterionFailsWhenNothingWasDelivered(t *testing.T) {
 	// The live ledger: files written, nothing committed or pushed.
 	act := workerActivity{written: []string{"games/app/games/flappy-bird/page.tsx"}}
-	got, ok := deliveryCriterion(prTask, act)
+	got, ok := deliveryCriterion(prTask, act, false)
 	if !ok {
 		t.Fatal("delivery_complete must apply to a task that demands a pull request")
 	}
@@ -42,7 +42,7 @@ func TestDeliveryCriterionPassesWhenCommittedAndPushed(t *testing.T) {
 		committed: true,
 		pushed:    true,
 	}
-	got, ok := deliveryCriterion(prTask, act)
+	got, ok := deliveryCriterion(prTask, act, false)
 	if !ok {
 		t.Fatal("delivery_complete must apply to a task that demands a pull request")
 	}
@@ -60,7 +60,7 @@ func TestDeliveryCriterionDoesNotFireOnResearchTask(t *testing.T) {
 		"Write a report on the project's branching conventions.", // impl verb + "branch", but no commit/push/PR demand
 	}
 	for _, task := range tasks {
-		if _, ok := deliveryCriterion(task, workerActivity{}); ok {
+		if _, ok := deliveryCriterion(task, workerActivity{}, false); ok {
 			t.Errorf("delivery_complete fired on a non-delivery task: %q", task)
 		}
 	}
@@ -77,7 +77,7 @@ func TestDeliveryCriterionFailsWhenCommitErrored(t *testing.T) {
 	if act.committed {
 		t.Fatal("activityFromSession recorded a FAILED git_commit as committed")
 	}
-	got, ok := deliveryCriterion(prTask, act)
+	got, ok := deliveryCriterion(prTask, act, false)
 	if !ok || got.Score != 0 {
 		t.Errorf("got %+v (applies=%v), want Score 0 - the commit failed, so nothing was delivered", got, ok)
 	}
@@ -106,7 +106,7 @@ func TestActivityFromSessionRecordsDelivery(t *testing.T) {
 // A missing push alone is named precisely - the feedback must be actionable.
 func TestDeliveryCriterionNamesOnlyWhatIsMissing(t *testing.T) {
 	act := workerActivity{committed: true}
-	got, _ := deliveryCriterion("Fix the flaky test and push the commit to the branch.", act)
+	got, _ := deliveryCriterion("Fix the flaky test and push the commit to the branch.", act, false)
 	if got.Score != 0 {
 		t.Fatalf("Score = %v, want 0 (nothing was pushed)", got.Score)
 	}
@@ -155,11 +155,33 @@ func TestImplementationIntent(t *testing.T) {
 	}
 }
 
+// TestDeliveryCriterionNamesTheOfferedTool pins #724: a run only ever has
+// stage_pr XOR stage_push (internal/acp/acp.go's mcpToolNames), so the
+// guidance text must name whichever one it actually has - never the other,
+// which the agent has no way to call.
+func TestDeliveryCriterionNamesTheOfferedTool(t *testing.T) {
+	got, ok := deliveryCriterion(prTask, workerActivity{committed: true}, false)
+	if !ok {
+		t.Fatal("delivery_complete must apply")
+	}
+	if !strings.Contains(got.Reason, "stage_pr") || strings.Contains(got.Reason, "stage_push") {
+		t.Errorf("new-PR run: Reason = %q, want stage_pr named and stage_push absent", got.Reason)
+	}
+
+	got, ok = deliveryCriterion(prTask, workerActivity{committed: true}, true)
+	if !ok {
+		t.Fatal("delivery_complete must apply")
+	}
+	if !strings.Contains(got.Reason, "stage_push") || strings.Contains(got.Reason, "stage_pr(") || strings.Contains(got.Reason, "`stage_pr`") {
+		t.Errorf("existing-PR run: Reason = %q, want stage_push named and stage_pr absent", got.Reason)
+	}
+}
+
 // The node-level delivery check keys off the NODE's task text, and a task that
 // directs a commit/push demands delivery on its own terms - the intent heuristic
 // must not be the only way in.
 func TestDeliveryCriterionAppliesToADirectedDeliveryTask(t *testing.T) {
-	if _, ok := deliveryCriterion("Commit on branch add-foo and open a PR.", workerActivity{}); !ok {
+	if _, ok := deliveryCriterion("Commit on branch add-foo and open a PR.", workerActivity{}, false); !ok {
 		t.Error("delivery_complete must apply to a task that directs a commit and a PR")
 	}
 }
@@ -340,10 +362,10 @@ func TestReadOnlyReviewerNotHeldToDelivery(t *testing.T) {
 	pollutedTask := "Review PR #5, and open a pull request is what it does - it will Add a Flappy Bird game. " +
 		"Read the diff and post inline review comments; submit the review."
 	act := workerActivity{reviewSubmitted: true, ranCommand: true}
-	if !workIncomplete("Reviewed.", pollutedTask, act, false, true) {
+	if !workIncomplete("Reviewed.", pollutedTask, act, false, true, false) {
 		t.Skip("polluted task no longer reads as implement-and-deliver; the ReadOnly guard would not fire")
 	}
-	if workIncomplete("Reviewed.", pollutedTask, act, true, true) {
+	if workIncomplete("Reviewed.", pollutedTask, act, true, true, false) {
 		t.Error("a read-only reviewer with a submitted review must be COMPLETE - delivery must not apply to an agent that cannot commit")
 	}
 }
@@ -352,13 +374,13 @@ func TestReadOnlyReviewerNotHeldToDelivery(t *testing.T) {
 // done - this is the exact live regression (a status update passed as an answer).
 func TestWorkIncompleteOnAnUnpostedReview(t *testing.T) {
 	statusUpdate := "I encountered technical difficulties with the shallow clone and could not complete the review."
-	if !workIncomplete(statusUpdate, reviewTask, workerActivity{}, false, true) {
+	if !workIncomplete(statusUpdate, reviewTask, workerActivity{}, false, true, false) {
 		t.Error("a non-empty answer that posted no review must be incomplete - the continuation loop has to re-invoke the reviewer with its tools")
 	}
-	if workIncomplete("Reviewed and requested changes.", reviewTask, workerActivity{reviewSubmitted: true, ranCommand: true}, false, true) {
+	if workIncomplete("Reviewed and requested changes.", reviewTask, workerActivity{reviewSubmitted: true, ranCommand: true}, false, true, false) {
 		t.Error("a submitted review is complete work")
 	}
-	if workIncomplete("Here's what I think of the code: …", "What do you think of this code?", workerActivity{}, false, false) {
+	if workIncomplete("Here's what I think of the code: …", "What do you think of this code?", workerActivity{}, false, false, false) {
 		t.Error("a prose task with a non-empty answer must not be held incomplete")
 	}
 }
@@ -388,7 +410,7 @@ func TestBehaviourCriterionFailsOnAReadOnlyReview(t *testing.T) {
 	if !strings.Contains(got.Reason, "EXECUTED") {
 		t.Errorf("Reason = %q, want it to say the change was never executed", got.Reason)
 	}
-	if !workIncomplete("The game is fully functional.", reviewTask, act, false, true) {
+	if !workIncomplete("The game is fully functional.", reviewTask, act, false, true, false) {
 		t.Error("a read-only review must be INCOMPLETE work - the continuation loop has to hand the reviewer its tools back")
 	}
 }
@@ -439,7 +461,7 @@ func TestBehaviourCriterionDoesNotFireOnProseTask(t *testing.T) {
 		if _, ok := behaviourCriterion(task, workerActivity{}, false); ok {
 			t.Errorf("behaviour_verified fired on a task with no code change to execute: %q", task)
 		}
-		if workIncomplete("…", task, workerActivity{}, false, false) {
+		if workIncomplete("…", task, workerActivity{}, false, false, false) {
 			t.Errorf("prose task held incomplete: %q", task)
 		}
 	}
@@ -459,7 +481,7 @@ func TestBehaviourCriterionExemptsADocsOnlyReview(t *testing.T) {
 	}
 	if workIncomplete("Docs look good.", reviewTask, workerActivity{
 		paths: act.paths, reviewSubmitted: true,
-	}, false, true) {
+	}, false, true, false) {
 		t.Error("a submitted docs-only review is complete work")
 	}
 }

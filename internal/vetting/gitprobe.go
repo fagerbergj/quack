@@ -61,7 +61,7 @@ func augmentFromRepo(ctx context.Context, act *workerActivity, cfg Config) {
 		short(head), len(changed))})
 	result = map[string]any{"committed": true, "branch": act.currentBranch, "files_changed": len(changed)}
 
-	// Delivery handoff for a terminal node with no stage_pr: stage the PR from commits.
+	// Delivery handoff for a terminal node with no stage_pr/stage_push call: stage the PR from commits.
 	if cfg.Deliver != nil {
 		if act.stagedDelivery == nil {
 			act.stagedDelivery = map[string]StagedDelivery{}
@@ -74,7 +74,7 @@ func augmentFromRepo(ctx context.Context, act *workerActivity, cfg Config) {
 				Kind:   "pull_request",
 				Branch: act.currentBranch,
 				Title:  title,
-				// Fallback body overridden by stage_pr via augmentFromPRStage.
+				// Fallback body overridden by stage_pr/stage_push via augmentFromPRStage.
 				Body: "Commits:\n" + body,
 			}
 		}

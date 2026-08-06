@@ -84,6 +84,111 @@ func TestDeliverPullRequestUpdatesExistingInsteadOfDuplicate(t *testing.T) {
 	}
 }
 
+// TestDeliverPushWithNothingToSayOmitsThePatch pins #724 test case 1: a
+// stage_push with no title/body must leave the existing PR completely
+// untouched - openOrUpdatePullRequest reuses findOpenPR's own url/number
+// instead of round-tripping a no-op PATCH, so no PATCH request happens at all.
+func TestDeliverPushWithNothingToSayOmitsThePatch(t *testing.T) {
+	var patched bool
+	app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls"):
+			io.WriteString(w, `[{"number":42,"html_url":"https://github.com/acme/widgets/pull/42"}]`)
+		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/pulls/42"):
+			patched = true
+			io.WriteString(w, `{"html_url":"https://github.com/acme/widgets/pull/42"}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	dc := vetting.DeliveryContext{
+		GatePassed: true,
+		ChatID:     "chat-724-1",
+		CloneURL:   "https://github.com/acme/widgets.git",
+		Branch:     "feature",
+		Items:      []vetting.StagedDelivery{{Kind: "pull_request", TitleOmitted: true, BodyOmitted: true}},
+	}
+	outcomes, err := app.Deliver(context.Background(), t.TempDir(), dc)
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if patched {
+		t.Error("stage_push with nothing to say must not PATCH the pull request at all")
+	}
+	if len(outcomes) != 1 || outcomes[0].Error != "" || outcomes[0].URL != "https://github.com/acme/widgets/pull/42" {
+		t.Errorf("outcomes = %+v, want a clean success against pull 42", outcomes)
+	}
+}
+
+// TestDeliverPushWithDeliberateUpdateAppliesBoth pins #724 test case 2:
+// stage_push(title, body) applies both fields.
+func TestDeliverPushWithDeliberateUpdateAppliesBoth(t *testing.T) {
+	var patchedBody map[string]any
+	app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls"):
+			io.WriteString(w, `[{"number":42,"html_url":"https://github.com/acme/widgets/pull/42"}]`)
+		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/pulls/42"):
+			data, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(data, &patchedBody)
+			io.WriteString(w, `{"html_url":"https://github.com/acme/widgets/pull/42"}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	dc := vetting.DeliveryContext{
+		GatePassed: true,
+		ChatID:     "chat-724-2",
+		CloneURL:   "https://github.com/acme/widgets.git",
+		Branch:     "feature",
+		Items:      []vetting.StagedDelivery{{Kind: "pull_request", Title: "fix: retry flaky upload", Body: "adds a backoff"}},
+	}
+	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if len(patchedBody) != 2 || patchedBody["title"] != "fix: retry flaky upload" || patchedBody["body"] != "adds a backoff" {
+		t.Errorf("PATCH body = %+v, want exactly title and body set", patchedBody)
+	}
+}
+
+// TestDeliverPushPartialUpdateOmitsTitleKey pins #724 test case 3: a
+// body-only stage_push must PATCH with no "title" key at all, not an empty
+// string - an empty string would blank the PR's real title on GitHub.
+func TestDeliverPushPartialUpdateOmitsTitleKey(t *testing.T) {
+	var patchedBody map[string]any
+	app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls"):
+			io.WriteString(w, `[{"number":42,"html_url":"https://github.com/acme/widgets/pull/42"}]`)
+		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/pulls/42"):
+			data, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(data, &patchedBody)
+			io.WriteString(w, `{"html_url":"https://github.com/acme/widgets/pull/42"}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	dc := vetting.DeliveryContext{
+		GatePassed: true,
+		ChatID:     "chat-724-3",
+		CloneURL:   "https://github.com/acme/widgets.git",
+		Branch:     "feature",
+		Items:      []vetting.StagedDelivery{{Kind: "pull_request", Body: "adds a backoff and jitter", TitleOmitted: true}},
+	}
+	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if _, hasTitle := patchedBody["title"]; hasTitle {
+		t.Errorf("PATCH body carried a title key for an omitted title: %+v", patchedBody)
+	}
+	if got, hasBody := patchedBody["body"]; !hasBody || got != "adds a backoff and jitter" {
+		t.Errorf("PATCH body missing/wrong body key: %+v", patchedBody)
+	}
+}
+
 // requireGitBinary skips a test when git isn't on PATH.
 func requireGitBinary(t *testing.T) {
 	t.Helper()

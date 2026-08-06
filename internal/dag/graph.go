@@ -71,6 +71,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		cfg.ChatID = chatID
 		if plan.Setup != nil && setupQualifyingAgent(node.AgentName) {
 			cfg.Setup = &vetting.SetupBranch{Repo: plan.Setup.Repo, WorkBranch: plan.Setup.WorkBranch}
+			cfg.ExistingPR = plan.Setup.CheckoutExistingHead
 			if nonTerminalRepoChainNode(plan, node) {
 				cfg.Deliver = nil
 			}
@@ -132,6 +133,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 					}
 					if prNode {
 						ms.PRStage = &vetting.PRStage{}
+						ms.ExistingPR = cfg.ExistingPR
 					}
 					vetting.RegisterMemSession(secret, ms)
 					defer vetting.UnregisterMemSession(secret)

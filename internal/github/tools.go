@@ -547,12 +547,20 @@ func (a *App) openPullRequest(ctx context.Context, owner, repo, title, head, bas
 	return u, number, nil
 }
 
-// openOrUpdatePullRequest opens or updates a PR idempotently. Labels only on first open.
-func (a *App) openOrUpdatePullRequest(ctx context.Context, owner, repo, title, head, base, body string, labels []string, draft bool, closesIssue int) (url string, number int, err error) {
-	if num, _, ok, ferr := a.findOpenPR(ctx, owner, repo, head); ferr != nil {
+// openOrUpdatePullRequest opens or updates a PR idempotently. Labels only on
+// first open. titleSet/bodySet false means the caller has nothing to say
+// about that field (stage_push, #724) - an existing PR is left untouched
+// rather than PATCHed with an empty string.
+func (a *App) openOrUpdatePullRequest(ctx context.Context, owner, repo, title string, titleSet bool, head, base, body string, bodySet bool, labels []string, draft bool, closesIssue int) (url string, number int, err error) {
+	if num, foundURL, ok, ferr := a.findOpenPR(ctx, owner, repo, head); ferr != nil {
 		slog.Warn("github: check for an existing open PR failed; opening a new one", "component", "github", "repo", owner+"/"+repo, "branch", head, "err", ferr)
 	} else if ok {
-		u, uerr := a.updatePullRequest(ctx, owner, repo, num, title, body)
+		if !titleSet && !bodySet {
+			slog.Info("github: pushed to the existing open pull request; nothing to update",
+				"component", "github", "repo", owner+"/"+repo, "pr", num, "url", foundURL)
+			return foundURL, num, nil
+		}
+		u, uerr := a.updatePullRequest(ctx, owner, repo, num, title, titleSet, body, bodySet)
 		if uerr != nil {
 			return "", 0, fmt.Errorf("update existing pull request #%d: %w", num, uerr)
 		}
@@ -760,8 +768,14 @@ func (a *App) deliverOne(ctx context.Context, owner, repo string, dc vetting.Del
 		if dc.Branch == "" {
 			return deliveryItemResult{}, fmt.Errorf("github: delivery: staged pull request %q has no branch to open it from", item.Title)
 		}
+		// item.Body is only wrapped with the gate caveat when it's actually going out - an
+		// omitted body (stage_push, #724) must reach updatePullRequest as "don't touch this key".
+		body := item.Body
+		if !item.BodyOmitted {
+			body = gateCaveat(dc, item.Body)
+		}
 		// Gate-failed → deliver as draft. issueNumber == closing target for a new PR (#575).
-		u, num, err := a.openOrUpdatePullRequest(ctx, owner, repo, item.Title, dc.Branch, "", gateCaveat(dc, item.Body), nil, !dc.GatePassed, dc.IssueNumber)
+		u, num, err := a.openOrUpdatePullRequest(ctx, owner, repo, item.Title, !item.TitleOmitted, dc.Branch, "", body, !item.BodyOmitted, nil, !dc.GatePassed, dc.IssueNumber)
 		if err != nil {
 			return deliveryItemResult{}, fmt.Errorf("github: delivery: open pull request: %w", err)
 		}

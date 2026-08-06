@@ -49,11 +49,12 @@ type AdvisorTask struct {
 
 // MemSession: ACP memory MCP resolution for one node.
 type MemSession struct {
-	Memory  *memory.Store
-	Scope   memory.Scope
-	Staged  *MemStage    // stage_memory buffer
-	Review  *ReviewStage // non-nil for review-delivery nodes
-	PRStage *PRStage     // non-nil for implement-delivery nodes
+	Memory     *memory.Store
+	Scope      memory.Scope
+	Staged     *MemStage    // stage_memory buffer
+	Review     *ReviewStage // non-nil for review-delivery nodes
+	PRStage    *PRStage     // non-nil for implement-delivery nodes
+	ExistingPR bool         // PRStage != nil and the run pushes onto an already-open PR - offer stage_push, not stage_pr
 }
 
 // MemStage: per-node staging buffer for stage_memory.
@@ -140,17 +141,36 @@ func (s *ReviewStage) Snapshot() (StagedDelivery, bool) {
 	}, true
 }
 
+// PRStage stages the pull-request delivery item, from either stage_pr (both
+// fields required - opens a new PR) or stage_push (both optional - pushes
+// onto one that's already open). Only one of the two is ever registered for
+// a given node (internal/acp/acp.go's mcpToolNames), so Set/SetPush are never
+// both called in the same run.
 type PRStage struct {
-	mu    sync.Mutex
-	title string
-	body  string
-	set   bool
+	mu           sync.Mutex
+	title        string
+	body         string
+	titleOmitted bool
+	bodyOmitted  bool
+	set          bool
 }
 
+// Set stages a full PR title+body (stage_pr - the caller already validated both non-empty).
 func (s *PRStage) Set(title, body string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.title, s.body, s.set = title, body, true
+	s.titleOmitted, s.bodyOmitted = false, false
+}
+
+// SetPush stages a push against an existing PR (stage_push); hasTitle/hasBody
+// false means the agent omitted that field - it stays untouched at delivery.
+func (s *PRStage) SetPush(title string, hasTitle bool, body string, hasBody bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.title, s.titleOmitted = title, !hasTitle
+	s.body, s.bodyOmitted = body, !hasBody
+	s.set = true
 }
 
 func (s *PRStage) Snapshot() (StagedDelivery, bool) {
@@ -159,7 +179,10 @@ func (s *PRStage) Snapshot() (StagedDelivery, bool) {
 	if !s.set {
 		return StagedDelivery{}, false
 	}
-	return StagedDelivery{Kind: "pull_request", Title: s.title, Body: s.body}, true
+	return StagedDelivery{
+		Kind: "pull_request", Title: s.title, Body: s.body,
+		TitleOmitted: s.titleOmitted, BodyOmitted: s.bodyOmitted,
+	}, true
 }
 
 func (s *MemStage) Add(c memory.Candidate) {
