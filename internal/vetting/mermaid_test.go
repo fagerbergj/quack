@@ -314,6 +314,136 @@ func TestFindInvalidMermaid_ClassDiagramNotePasses(t *testing.T) {
 	}
 }
 
+// #735: the real jison error for an unquoted paren must translate into a
+// message naming the "(" and the quoted fix, keep the diagram's own line 2
+// and caret column, and drop the grammar-internal Expecting-list noise.
+func TestMermaidError_UnquotedParenTranslated(t *testing.T) {
+	requireMermaidValidator(t)
+	got := mermaidError("flowchart TD\n  F[x] --> G[filterChats(chats, filterState)]")
+	if got == "" {
+		t.Fatal("want a parse error")
+	}
+	if strings.Contains(got, "DOUBLECIRCLEEND") {
+		t.Fatalf("err = %q, must not leak jison's Expecting-list noise", got)
+	}
+	if !strings.Contains(got, `"("`) {
+		t.Fatalf("err = %q, want it to name the unquoted \"(\"", got)
+	}
+	if !strings.Contains(got, "double quotes") {
+		t.Fatalf("err = %q, want a quoting fix hint", got)
+	}
+	if !strings.Contains(got, "diagram line 2") {
+		t.Fatalf("err = %q, want the diagram's own line 2 preserved", got)
+	}
+	if !strings.Contains(got, "^") {
+		t.Fatalf("err = %q, want the parser's caret preserved", got)
+	}
+}
+
+// translateMermaidError is a pure function - exercise the token map and the
+// fallback path directly, without shelling out to node.
+func TestTranslateMermaidError_KnownTokens(t *testing.T) {
+	cases := []struct {
+		token string
+		want  string
+	}{
+		{"PS", `"("`},
+		{"PE", `")"`},
+		{"SQS", `"["`},
+		{"DIAMOND_START", `"{"`},
+		{"DIAMOND_STOP", `"}"`},
+		{"PIPE", `"|"`},
+	}
+	for _, c := range cases {
+		t.Run(c.token, func(t *testing.T) {
+			raw := "Parse error on line 2:\n...G[label\n----------^\n" +
+				"Expecting 'SQE', 'DOUBLECIRCLEEND', got '" + c.token + "'"
+			got := translateMermaidError(raw)
+			if strings.Contains(got, "DOUBLECIRCLEEND") {
+				t.Fatalf("got %q, must drop the Expecting-list noise", got)
+			}
+			if !strings.Contains(got, c.want) {
+				t.Fatalf("got %q, want it to name %s", got, c.want)
+			}
+			if !strings.Contains(got, "diagram line 2, column 11") {
+				t.Fatalf("got %q, want the line/column preserved", got)
+			}
+		})
+	}
+}
+
+// An unmapped "got" token (or an error shape that isn't jison's structured
+// parse error at all) must still carry line/column, the excerpt, a generic
+// quoting hint, and the untranslated raw text - never a bare "invalid".
+func TestTranslateMermaidError_UnrecognizedTokenKeepsRawText(t *testing.T) {
+	raw := "Parse error on line 2:\n...bad arrow\n----------^\n" +
+		"Expecting '+', '-', '()', 'ACTOR', got 'INVALID'"
+	got := translateMermaidError(raw)
+	if !strings.Contains(got, "diagram line 2, column 11") {
+		t.Fatalf("got %q, want line/column preserved even when the token is unmapped", got)
+	}
+	if !strings.Contains(got, "...bad arrow") {
+		t.Fatalf("got %q, want the source excerpt preserved", got)
+	}
+	if !strings.Contains(got, "double quotes") {
+		t.Fatalf("got %q, want a generic quoting hint", got)
+	}
+	if !strings.Contains(got, raw) {
+		t.Fatalf("got %q, want the raw parser text preserved verbatim", got)
+	}
+}
+
+// A totally different error shape (no "Parse error on line" at all, e.g. a
+// missing diagram-type header) has no line/column to extract - it must still
+// return the raw text rather than a generic "invalid" with nothing to act on.
+func TestTranslateMermaidError_UnstructuredErrorKeepsRawText(t *testing.T) {
+	raw := "No diagram type detected matching given configuration for text: AAAA"
+	got := translateMermaidError(raw)
+	if !strings.Contains(got, raw) {
+		t.Fatalf("got %q, want the raw parser text preserved verbatim", got)
+	}
+	if !strings.Contains(got, "double quotes") {
+		t.Fatalf("got %q, want a generic quoting hint even with no structure to parse", got)
+	}
+}
+
+// #735: FormatMermaidNudgeBody is what github/webhook.go embeds in a
+// rendered GitHub comment - each issue's multi-line message must land inside
+// its own fenced block (github's markdown renderer preserves a fence
+// verbatim), not a "- " bullet, which would fold the caret line's leading
+// spaces and break the alignment.
+func TestFormatMermaidNudgeBody_PreservesCaretAlignment(t *testing.T) {
+	iss := mermaidIssue{line: 66, err: "parse error: diagram line 2, column 24:\n" +
+		"    ...e] --> G[filterChats(chats, filterState)\n" +
+		"    -----------------------^\n" +
+		`unquoted "(" inside a node label - mermaid treats it as ending the label there.`}
+	got := FormatMermaidNudgeBody([]mermaidIssue{iss})
+	if !strings.Contains(got, "```\n") {
+		t.Fatalf("got %q, want a fenced code block, not a bare bullet", got)
+	}
+	wantCaretLine := "    -----------------------^"
+	if !strings.Contains(got, "\n"+wantCaretLine+"\n") {
+		t.Fatalf("got %q, want the caret line's exact alignment preserved on its own line", got)
+	}
+	if strings.HasPrefix(got, "- ") {
+		t.Fatalf("got %q, must not be a markdown bullet (bare newlines break both the list and the caret)", got)
+	}
+}
+
+func TestFormatMermaidNudgeBody_MultipleIssuesEachGetOwnBlock(t *testing.T) {
+	issues := []mermaidIssue{
+		{line: 10, err: "parse error: first"},
+		{line: 20, err: "parse error: second"},
+	}
+	got := FormatMermaidNudgeBody(issues)
+	if n := strings.Count(got, "```"); n != 4 {
+		t.Fatalf("fence markers = %d, want 4 (2 per issue)", n)
+	}
+	if !strings.Contains(got, "line 10:") || !strings.Contains(got, "line 20:") {
+		t.Fatalf("got %q, want both issues' line headers", got)
+	}
+}
+
 // A node with no mermaid at all is untouched whether or not the validator is
 // available - and a node WITH a diagram derives nothing (no false failure)
 // rather than crash when the validator can't be found.
