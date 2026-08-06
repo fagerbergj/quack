@@ -554,7 +554,7 @@ func (a *App) openPullRequest(ctx context.Context, owner, repo, title, head, bas
 func (a *App) openOrUpdatePullRequest(ctx context.Context, owner, repo, title string, titleSet bool, head, base, body string, bodySet bool, labels []string, draft bool, closesIssue int) (url string, number int, err error) {
 	num, foundURL, ok, ferr := a.findOpenPR(ctx, owner, repo, head)
 	if ferr != nil {
-		slog.Warn("github: check for an existing open PR failed; opening a new one", "component", "github", "repo", owner+"/"+repo, "branch", head, "err", ferr)
+		slog.Warn("github: check for an existing open PR failed", "component", "github", "repo", owner+"/"+repo, "branch", head, "err", ferr)
 	} else if ok {
 		if !titleSet && !bodySet {
 			slog.Info("github: pushed to the existing open pull request; nothing to update",
