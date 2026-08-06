@@ -326,3 +326,30 @@ func TestToolOfferIsExclusive(t *testing.T) {
 		})
 	}
 }
+
+// TestPlanOnlyNodeOffersNoStagePRTool pins #739 test case 2 at the wire
+// level: a planOnly node's MemSession never carries a PRStage (dag's
+// newGatedNode only sets one when prNode is true - see
+// TestPlanOnlyOffersNoWritableNode in internal/dag), so the live MCP server
+// registers neither stage_pr nor stage_push for it - the same server
+// TestToolOfferIsExclusive above proves offers exactly one of them for a
+// writable node.
+func TestPlanOnlyNodeOffersNoStagePRTool(t *testing.T) {
+	secret := mustMemSecret(t)
+	vetting.RegisterMemSession(secret, vetting.MemSession{PRStage: nil})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	for _, tool := range res.Tools {
+		if tool.Name == "stage_pr" || tool.Name == "stage_push" {
+			t.Errorf("tools = %+v, a planOnly node's session (PRStage=nil) must never register %q", res.Tools, tool.Name)
+		}
+	}
+}

@@ -28,7 +28,7 @@ func (planToolCtx) ToolConfirmation() *toolconfirmation.ToolConfirmation { retur
 // #661 deterministic-setup tests below.
 func buildPlan(t *testing.T, planner *dag.Planner, cache *PlanCache, existingHeadRef string, githubSetup *dag.Setup, args map[string]any) dag.Plan {
 	t.Helper()
-	tl, err := NewPlanTool(planner, cache, nil, nil, "", existingHeadRef, githubSetup, nil, "", nil)
+	tl, err := NewPlanTool(planner, cache, nil, nil, "", existingHeadRef, githubSetup, nil, "", nil, false)
 	if err != nil {
 		t.Fatalf("NewPlanTool: %v", err)
 	}
@@ -52,6 +52,36 @@ func buildPlan(t *testing.T, planner *dag.Planner, cache *PlanCache, existingHea
 // code-implementer run - just enough to exercise Setup handling.
 func implementNode() []map[string]any {
 	return []map[string]any{{"id": "impl", "agent": "code-implementer", "task": "implement the feature", "depends_on": []string{}}}
+}
+
+// TestPlanToolStampsPlanOnly pins #739's plumbing half: the plan tool stamps
+// dag.Plan.PlanOnly from the harness-computed flag it's constructed with,
+// never from anything the model submits - the same way it already stamps
+// WorkerBackground/CIChecks. This is what carries the quack:plan label's
+// intent down to buildGateNodes, which is what actually enforces it.
+func TestPlanToolStampsPlanOnly(t *testing.T) {
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	cache := NewPlanCache()
+	tl, err := NewPlanTool(planner, cache, nil, nil, "", "", nil, nil, "", nil, true)
+	if err != nil {
+		t.Fatalf("NewPlanTool: %v", err)
+	}
+	rt, ok := tl.(runnableTool)
+	if !ok {
+		t.Fatalf("plan tool is not runnable")
+	}
+	res, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{"nodes": implementNode()})
+	if err != nil {
+		t.Fatalf("plan tool Run: %v", err)
+	}
+	planID, _ := res["plan_id"].(string)
+	p, ok := cache.Get(planID)
+	if !ok {
+		t.Fatalf("plan %q not found in cache", planID)
+	}
+	if !p.PlanOnly {
+		t.Error("p.PlanOnly = false, want true - the plan tool was constructed with planOnly=true")
+	}
 }
 
 // TestGitHubSetupOverridesPlannerSetupNoRoundTrip is issue #661's first test
@@ -133,7 +163,7 @@ func TestNonGitHubRunKeepsPlannerSetup(t *testing.T) {
 
 func TestNewPlanToolMetadata(t *testing.T) {
 	planner := dag.NewPlanner(nil, nil, nil)
-	tl, err := NewPlanTool(planner, NewPlanCache(), nil, nil, "", "", nil, nil, "", nil)
+	tl, err := NewPlanTool(planner, NewPlanCache(), nil, nil, "", "", nil, nil, "", nil, false)
 	if err != nil {
 		t.Fatalf("NewPlanTool error: %v", err)
 	}

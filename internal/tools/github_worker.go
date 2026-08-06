@@ -46,3 +46,21 @@ func CIChecksFromContext(ctx context.Context) []dag.CICheck {
 	c, _ := ctx.Value(ciChecksContextKey{}).([]dag.CICheck)
 	return c
 }
+
+type planOnlyContextKey struct{}
+
+// WithPlanOnly attaches whether this run's deliverable is planning-only
+// (#739) - the quack:plan label, never a model's own claim. dag.Plan.PlanOnly
+// carries it from there into buildGateNodes, which forces every node
+// read-only with no delivery target: the structural fix for a plan run whose
+// planner picks a writable agent.
+func WithPlanOnly(ctx context.Context, planOnly bool) context.Context {
+	return context.WithValue(ctx, planOnlyContextKey{}, planOnly)
+}
+
+// PlanOnlyFromContext reads back the flag WithPlanOnly attached. false (the
+// zero value) for anything but a quack:plan-labelled run.
+func PlanOnlyFromContext(ctx context.Context) bool {
+	v, _ := ctx.Value(planOnlyContextKey{}).(bool)
+	return v
+}
