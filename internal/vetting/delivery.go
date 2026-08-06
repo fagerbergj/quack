@@ -64,24 +64,40 @@ func hasStagedPR(act workerActivity) bool {
 	return ok
 }
 
-func deliveryCriterion(task string, act workerActivity) (criterionScore, bool) {
+// stageToolName: the delivery tool THIS run actually has - stage_pr opens a
+// new PR, stage_push hands off a commit to one that's already open. A run
+// only ever gets one of the two (internal/acp/acp.go's mcpToolNames), so the
+// guidance text must name whichever it was given, never the other (#724).
+func stageToolName(existingPR bool) string {
+	if existingPR {
+		return "stage_push"
+	}
+	return "stage_pr"
+}
+
+func deliveryCriterion(task string, act workerActivity, existingPR bool) (criterionScore, bool) {
 	d := demandedDelivery(task)
 	if !d.commit && !d.push {
 		return criterionScore{}, false
 	}
+	tool := stageToolName(existingPR)
 	var missing []string
 	if d.commit && !act.committed {
 		missing = append(missing, "no successful `git_commit`")
 	}
 	if d.push && !act.pushed && !hasStagedPR(act) {
-		missing = append(missing, "no successful `git_push` and no `stage_pr` call")
+		missing = append(missing, fmt.Sprintf("no successful `git_push` and no `%s` call", tool))
 	}
 	if len(missing) == 0 {
 		return criterionScore{Score: 1, Reason: "deterministic: the work was committed and pushed (or staged for delivery)"}, true
 	}
-	want := "commit your work, then call `stage_pr(title, body)` to hand off delivery - the gate pushes it after your answer passes"
+	want := fmt.Sprintf("commit your work, then call `%s` to hand off delivery - the gate pushes it after your answer passes", tool)
 	if d.pr {
-		want = "commit your work on the branch the task names, then call `stage_pr(title, body)` - the gate pushes the branch and opens the pull request after your answer passes (or push it and open the pull request with `github_pull_request` yourself, if you have that tool)"
+		if existingPR {
+			want = "commit your work on the branch the task names, then call `stage_push()` - title and body are optional, pass one only if you're deliberately changing it - the gate pushes the branch after your answer passes"
+		} else {
+			want = "commit your work on the branch the task names, then call `stage_pr(title, body)` - the gate pushes the branch and opens the pull request after your answer passes (or push it and open the pull request with `github_pull_request` yourself, if you have that tool)"
+		}
 	}
 	return criterionScore{Score: 0, Reason: fmt.Sprintf(
 		"deterministic: your task requires the work be delivered (%s), but the workspace ledger contains %s. "+
@@ -120,11 +136,11 @@ func reviewCriterion(task string, act workerActivity, isReviewer bool) (criterio
 }
 
 // workIncomplete: empty answer, undelivered task, unposted review, or unverified review (no run_command).
-func workIncomplete(answer, task string, act workerActivity, readOnly, isReviewer bool) bool {
+func workIncomplete(answer, task string, act workerActivity, readOnly, isReviewer, existingPR bool) bool {
 	if strings.TrimSpace(answer) == "" {
 		return true
 	}
-	for _, c := range incompleteCriteria(task, act, readOnly, isReviewer) {
+	for _, c := range incompleteCriteria(task, act, readOnly, isReviewer, existingPR) {
 		if c.Score < 1 {
 			return true
 		}
@@ -163,11 +179,11 @@ func behaviourCriterion(task string, act workerActivity, isReviewer bool) (crite
 }
 
 // incompleteCriteria: deterministic completion criteria shared by workIncomplete, foldDeterministic, and continuation prompt.
-func incompleteCriteria(task string, act workerActivity, readOnly, isReviewer bool) map[string]criterionScore {
+func incompleteCriteria(task string, act workerActivity, readOnly, isReviewer, existingPR bool) map[string]criterionScore {
 	out := map[string]criterionScore{}
 	// Read-only agents have no commit/push tools - skip delivery demand.
 	if !readOnly {
-		if c, ok := deliveryCriterion(task, act); ok {
+		if c, ok := deliveryCriterion(task, act, existingPR); ok {
 			out["delivery_complete"] = c
 		}
 	}

@@ -326,16 +326,16 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		}
 
 		// Continuation loop: tool-bearing turns until work is done (not until model emits text). Tested against cfg.Task.
-		if workIncomplete(answer, cfg.Task, actFor(answer), cfg.ReadOnly, cfg.IsReviewer) {
+		if workIncomplete(answer, cfg.Task, actFor(answer), cfg.ReadOnly, cfg.IsReviewer, cfg.ExistingPR) {
 			_, contSpan := otelobs.Start(nodeCtx, "gate.continuation",
 				attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID))
 			contAttempts := 0
-			for attempt := 1; attempt <= maxContinueRounds && workIncomplete(answer, cfg.Task, actFor(answer), cfg.ReadOnly, cfg.IsReviewer); attempt++ {
+			for attempt := 1; attempt <= maxContinueRounds && workIncomplete(answer, cfg.Task, actFor(answer), cfg.ReadOnly, cfg.IsReviewer, cfg.ExistingPR); attempt++ {
 				contAttempts = attempt
 				act := actFor(answer)
 				log.Warn("work not finished; continuing the worker with its tools",
 					"attempt", attempt, "empty", strings.TrimSpace(answer) == "", "committed", act.committed, "pushed", act.pushed)
-				answer, err = runWorkerNodeTraced(ctx, nodeCtx, cfg, workerModel, workerNode, buildContinuationPrompt(cfg.Task, act, cfg.Checks, cfg.ReadOnly, cfg.IsReviewer)+markerLine,
+				answer, err = runWorkerNodeTraced(ctx, nodeCtx, cfg, workerModel, workerNode, buildContinuationPrompt(cfg.Task, act, cfg.Checks, cfg.ReadOnly, cfg.IsReviewer, cfg.ExistingPR)+markerLine,
 					fmt.Sprintf("worker-cont%d%s", attempt, sfx), "continuation", promptEmit)
 				if err != nil {
 					log.Error("worker continuation failed", "attempt", attempt, "err", err)
@@ -918,7 +918,7 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 		det["no_dangling_deliverable_path"] = c
 	}
 	// Delivery: commit/push/PR must show in ledger; review must be submitted.
-	for name, c := range incompleteCriteria(cfg.Task, act, cfg.ReadOnly, cfg.IsReviewer) {
+	for name, c := range incompleteCriteria(cfg.Task, act, cfg.ReadOnly, cfg.IsReviewer, cfg.ExistingPR) {
 		det[name] = c
 	}
 	return det

@@ -64,7 +64,7 @@ func augmentFromReviewStage(act *workerActivity, advisorToken string) {
 	act.stagedDelivery["review"] = sd
 }
 
-// augmentFromPRStage folds stage_pr-staged PR over augmentFromRepo's fallback (keeps the disk-probe branch).
+// augmentFromPRStage folds a stage_pr/stage_push-staged PR over augmentFromRepo's fallback (keeps the disk-probe branch).
 func augmentFromPRStage(act *workerActivity, advisorToken string) {
 	if advisorToken == "" {
 		return

@@ -21,6 +21,7 @@ const (
 	toolUnstageReviewComment = "unstage_review_comment"
 	toolStageReview          = "stage_review"
 	toolStagePR              = "stage_pr"
+	toolStagePush            = "stage_push"
 )
 
 // stageReviewCommentInput is stage_review_comment's input: one inline finding.
@@ -155,6 +156,31 @@ func registerPRTool(srv *mcp.Server, pr *vetting.PRStage) {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "stage_pr needs a non-empty title and body"}}}, nil, nil
 		}
 		pr.Set(strings.TrimSpace(args.Title), strings.TrimSpace(args.Body))
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "staged"}}}, nil, nil
+	})
+}
+
+// stagePushInput is stage_push's input: title/body are OPTIONAL - this run is
+// pushing onto a PR that already exists, so it may have nothing to say about
+// either (issue #724: stage_pr's required fields forced the agent to invent
+// them, and the invented text then overwrote someone else's PR).
+type stagePushInput struct {
+	Title string `json:"title,omitempty" jsonschema:"optional: only pass this if you are deliberately changing the PR's title"`
+	Body  string `json:"body,omitempty" jsonschema:"optional: only pass this if you are deliberately changing the PR's description"`
+}
+
+// registerPushTool adds stage_push to a per-node server, landing the call in
+// PRStage. Registered INSTEAD of stage_pr (internal/acp/acp.go's mcpToolNames)
+// when the run targets a PR that already exists.
+func registerPushTool(srv *mcp.Server, pr *vetting.PRStage) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: toolStagePush,
+		Description: "Stage this push against the pull request that's already open on this branch. Call once, after committing; the gate pushes it after your work passes review. " +
+			"title and body are OPTIONAL - omit either (or both) to leave it exactly as it is; pass one only if you are deliberately changing it. You never push yourself.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, args stagePushInput) (*mcp.CallToolResult, any, error) {
+		title := strings.TrimSpace(args.Title)
+		body := strings.TrimSpace(args.Body)
+		pr.SetPush(title, title != "", body, body != "")
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "staged"}}}, nil, nil
 	})
 }

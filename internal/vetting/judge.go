@@ -848,7 +848,7 @@ func buildFinalizeContent(question *genai.Content, act workerActivity) *genai.Co
 const continuationMarker = "CONTINUE THE TASK - it is not finished."
 
 // buildContinuationPrompt: tool-bearing continuation directive (do the remaining work, not a write-up).
-func buildContinuationPrompt(task string, act workerActivity, checks []string, readOnly, isReviewer bool) string {
+func buildContinuationPrompt(task string, act workerActivity, checks []string, readOnly, isReviewer, existingPR bool) string {
 	var sb strings.Builder
 	sb.WriteString(continuationMarker + "\n\n" +
 		"Your last turn produced no answer, or produced an answer for work you have not actually delivered. " +
@@ -864,7 +864,7 @@ func buildContinuationPrompt(task string, act workerActivity, checks []string, r
 		sb.WriteString("Checks this node must pass: " + strings.Join(checks, ", ") + "\n\n")
 	}
 	var gaps []string
-	for _, c := range incompleteCriteria(task, act, readOnly, isReviewer) {
+	for _, c := range incompleteCriteria(task, act, readOnly, isReviewer, existingPR) {
 		if c.Score < 1 {
 			gaps = append(gaps, "Known gap: "+c.Reason+"\n\n")
 		}

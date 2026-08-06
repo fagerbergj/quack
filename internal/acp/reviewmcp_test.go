@@ -211,3 +211,118 @@ func TestReviewMCP_ListAndUnstageByID(t *testing.T) {
 		t.Fatal("retracting an id that was never issued must be a tool error")
 	}
 }
+
+// TestStagePR_RequiresBothFields pins the Forbidden clause of #724: stage_pr
+// keeps its required-fields contract (only stage_push's fields are optional),
+// and a rejected call must not land in the buffer.
+func TestStagePR_RequiresBothFields(t *testing.T) {
+	ctx := context.Background()
+	secret := mustMemSecret(t)
+	pr := &vetting.PRStage{}
+	vetting.RegisterMemSession(secret, vetting.MemSession{PRStage: pr})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "stage_pr", Arguments: map[string]any{"title": "", "body": "does the thing"}})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("stage_pr with an empty title must be a tool error")
+	}
+	if _, ok := pr.Snapshot(); ok {
+		t.Fatal("a rejected stage_pr call must not land in the buffer")
+	}
+}
+
+// TestStagePushMCP_OptionalFieldsOmitTheKey drives stage_push exactly as an
+// ACP implementer pushing onto an already-open PR does - #724 test cases 1-3:
+// a bare call, a deliberate full update, and a partial (body-only) update.
+func TestStagePushMCP_OptionalFieldsOmitTheKey(t *testing.T) {
+	ctx := context.Background()
+	secret := mustMemSecret(t)
+	pr := &vetting.PRStage{}
+	vetting.RegisterMemSession(secret, vetting.MemSession{PRStage: pr, ExistingPR: true})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	call := func(args map[string]any) {
+		t.Helper()
+		res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "stage_push", Arguments: args})
+		if err != nil {
+			t.Fatalf("CallTool stage_push: %v", err)
+		}
+		if res.IsError {
+			t.Fatalf("stage_push errored: %s", toolResultText(t, res))
+		}
+	}
+
+	// Test case 1: nothing to say - still satisfies delivery.
+	call(map[string]any{})
+	sd, ok := pr.Snapshot()
+	if !ok {
+		t.Fatal("a bare stage_push() call must still stage delivery")
+	}
+	if !sd.TitleOmitted || !sd.BodyOmitted {
+		t.Fatalf("bare stage_push: got %+v, want both fields omitted", sd)
+	}
+
+	// Test case 2: a deliberate full update.
+	call(map[string]any{"title": "fix: retry flaky upload", "body": "adds a backoff"})
+	sd, ok = pr.Snapshot()
+	if !ok || sd.TitleOmitted || sd.BodyOmitted || sd.Title != "fix: retry flaky upload" || sd.Body != "adds a backoff" {
+		t.Fatalf("stage_push(title, body): got %+v (ok=%v), want both applied", sd, ok)
+	}
+
+	// Test case 3: a partial update - body only, title stays untouched downstream.
+	call(map[string]any{"body": "adds a backoff and jitter"})
+	sd, ok = pr.Snapshot()
+	if !ok || !sd.TitleOmitted || sd.BodyOmitted || sd.Body != "adds a backoff and jitter" {
+		t.Fatalf("stage_push(body only): got %+v (ok=%v), want title omitted, body set", sd, ok)
+	}
+}
+
+// TestToolOfferIsExclusive pins #724 test case 5: a run is offered stage_pr
+// XOR stage_push, keyed on MemSession.ExistingPR, never both in one round.
+func TestToolOfferIsExclusive(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		existingPR  bool
+		want        string
+		mustNotHave string
+	}{
+		{"opens a new PR", false, "stage_pr", "stage_push"},
+		{"pushes onto an existing PR", true, "stage_push", "stage_pr"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			secret := mustMemSecret(t)
+			vetting.RegisterMemSession(secret, vetting.MemSession{PRStage: &vetting.PRStage{}, ExistingPR: tt.existingPR})
+			defer vetting.UnregisterMemSession(secret)
+
+			ts := httptest.NewServer(memoryMCPHandler())
+			t.Cleanup(func() { ts.Close() })
+			cs := connectMCP(t, ts, secret)
+
+			res, err := cs.ListTools(context.Background(), nil)
+			if err != nil {
+				t.Fatalf("ListTools: %v", err)
+			}
+			names := map[string]bool{}
+			for _, tool := range res.Tools {
+				names[tool.Name] = true
+			}
+			if !names[tt.want] {
+				t.Errorf("tools = %v, want %q registered", names, tt.want)
+			}
+			if names[tt.mustNotHave] {
+				t.Errorf("tools = %v, must NOT register %q in the same round", names, tt.mustNotHave)
+			}
+		})
+	}
+}

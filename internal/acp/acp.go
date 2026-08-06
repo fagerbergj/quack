@@ -297,7 +297,11 @@ func mcpToolNames(sess vetting.MemSession, offered bool) []string {
 		add(toolStageReview)
 	}
 	if sess.PRStage != nil {
-		add(toolStagePR)
+		if sess.ExistingPR {
+			add(toolStagePush)
+		} else {
+			add(toolStagePR)
+		}
 	}
 	return names
 }

@@ -327,7 +327,10 @@ func (a *App) findOpenPR(ctx context.Context, owner, repo, branch string) (numbe
 	return out[0].Number, out[0].HTMLURL, true, nil
 }
 
-func (a *App) updatePullRequest(ctx context.Context, owner, repo string, number int, title, bodyText string) (string, error) {
+// updatePullRequest PATCHes only the fields the caller actually supplied - an
+// omitted key leaves that field untouched on GitHub rather than blanking it
+// (#724: a push with nothing to say must not erase the PR's real title/body).
+func (a *App) updatePullRequest(ctx context.Context, owner, repo string, number int, title string, titleSet bool, bodyText string, bodySet bool) (string, error) {
 	tok, err := a.tokenForRepo(ctx, owner, repo)
 	if err != nil {
 		return "", err
@@ -336,7 +339,13 @@ func (a *App) updatePullRequest(ctx context.Context, owner, repo string, number 
 		HTMLURL string `json:"html_url"`
 	}
 	path := fmt.Sprintf("/repos/%s/%s/pulls/%d", owner, repo, number)
-	reqBody := map[string]string{"title": title, "body": bodyText}
+	reqBody := map[string]string{}
+	if titleSet {
+		reqBody["title"] = title
+	}
+	if bodySet {
+		reqBody["body"] = bodyText
+	}
 	if err := a.doJSON(ctx, http.MethodPatch, path, "token "+tok, reqBody, &out); err != nil {
 		return "", err
 	}
