@@ -151,6 +151,32 @@ func (e *Extension) classifyIssueDeliverable(ctx context.Context, task string, g
 	}
 }
 
+// issueDeliverableResult memoizes one classifyIssueDeliverable call (#731).
+type issueDeliverableResult struct {
+	kind string
+	ok   bool
+	done bool
+}
+
+// classifyIssueDeliverableCached calls classifyIssueDeliverable at most once
+// per dispatch: deliverableText (two callers) and deliverableIsPlan all need
+// this same answer for the same run, and a second live call could disagree
+// with the first, telling the worker to produce a plan while the tail
+// decides it wasn't one. p.issueDeliverableCache is nil for a caller that
+// invokes this outside a dispatch (e.g. a test calling buildEnvelope
+// directly) - falls back to one uncached call, preserving prior behaviour.
+func (e *Extension) classifyIssueDeliverableCached(ctx context.Context, p issueCommentPayload, task string, grant vetting.Grant) (kind string, ok bool) {
+	c := p.issueDeliverableCache
+	if c == nil {
+		return e.classifyIssueDeliverable(ctx, task, grant)
+	}
+	if !c.done {
+		c.kind, c.ok = e.classifyIssueDeliverable(ctx, task, grant)
+		c.done = true
+	}
+	return c.kind, c.ok
+}
+
 // planIntentRe: did the human's OWN request mention planning? Mirrors
 // vetting.ImplementationIntent's contract - read what was ASKED, never what
 // the model wrote back, so a rephrased answer can't silently change the
@@ -175,7 +201,7 @@ func (e *Extension) deliverableIsPlan(ctx context.Context, p issueCommentPayload
 	case !planIntentRe.MatchString(task):
 		return false
 	}
-	if kind, ok := e.classifyIssueDeliverable(ctx, task, grant); ok {
+	if kind, ok := e.classifyIssueDeliverableCached(ctx, p, task, grant); ok {
 		return kind != "implement"
 	}
 	return !(grant.OpenPR && vetting.ImplementationIntent(task))

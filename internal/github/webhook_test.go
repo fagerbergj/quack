@@ -2829,6 +2829,65 @@ func TestDispatchMarksCommentTriggeredPlan(t *testing.T) {
 	}
 }
 
+// TestDispatchClassifiesIssueDeliverableOnce pins the single-call property a
+// review of #731 caught: deliverableText (via buildEnvelope AND
+// buildWorkerAsk) and deliverableIsPlan all need classifyIssueDeliverable's
+// answer for the same run. Without memoization each calls the classifier
+// independently, and a live model can disagree with itself between calls -
+// the envelope telling the worker to produce a plan while the tail decides
+// it wasn't one and skips the marker. quack:implement is granted so the
+// classifier is actually consulted (never OpenPR-bounded away for free).
+func TestDispatchClassifiesIssueDeliverableOnce(t *testing.T) {
+	posted := make(chan string, 1)
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/installation"):
+			fmt.Fprint(w, `{"id":5}`)
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+		case strings.HasSuffix(r.URL.Path, "/app"):
+			fmt.Fprint(w, `{"slug":"quack"}`)
+		case strings.HasSuffix(r.URL.Path, "/reactions"):
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"id":1}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
+			fmt.Fprint(w, `[]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			body, _ := io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{}`)
+			posted <- string(body)
+		case isIssueMetaPath(r.URL.Path):
+			fmt.Fprint(w, `{"title":"Some issue","body":"","state":"open","labels":[{"name":"quack:implement"}]}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer gh.Close()
+
+	classifier := &fakeIntentClassifier{issueDeliverable: "COMMENT"}
+	runner := &fakeRunner{gotMessage: make(chan string, 1), answer: "## The Plan\n1. do the thing"}
+	ext := newTestExtension(t, runner, gh.URL)
+	ext.SetIntentClassifier(classifier)
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issue_comment", issueCommentBody("@quack plan this issue")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+	select {
+	case body := <-posted:
+		if !strings.Contains(body, "quack:delivery:plan") {
+			t.Errorf("plan comment = %q; want it to carry the plan delivery marker", body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no plan comment posted")
+	}
+	if calls := atomic.LoadInt32(&classifier.calls); calls != 1 {
+		t.Errorf("issue deliverable classifier called %d times; want exactly 1 - buildEnvelope, buildWorkerAsk, and the plan-marker decision must share one answer", calls)
+	}
+}
+
 // TestDispatchCollapsesPriorCommentTriggeredPlan pins #731 test case 2: two
 // successive comment-triggered plan runs - the first is minimized before the
 // second posts, exactly like the label-triggered case above.

@@ -66,6 +66,12 @@ type issueCommentPayload struct {
 	rawEvent        json.RawMessage // originating webhook JSON → envelope's <event> block.
 	eventName       string          // originating webhook dotted name.
 	checkSHA        string          // CI commit: dump check-runs.json. "" = plan/review/mention run.
+	// issueDeliverableCache memoizes classifyIssueDeliverable for one dispatch
+	// (#731): shared by pointer across every copy of p passed to
+	// buildEnvelope/buildWorkerAsk/deliverableIsPlan, so a live classifier
+	// call happens at most once regardless of how many of them need the
+	// answer. nil when a caller (e.g. a test) invokes one of those directly.
+	issueDeliverableCache *issueDeliverableResult
 }
 
 // issuesPayload is the issues webhook subset for the label-driven issue workflow.
@@ -809,6 +815,11 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		}
 	}
 	grant := computeGrant(e.labels, gh.snap.Labels, isPR, authored, gh.snap.Fork)
+
+	// Shares one classifyIssueDeliverable answer across every consumer below
+	// (#731) - buildEnvelope, buildWorkerAsk, and deliverableIsPlan must never
+	// see two different live classifications for the same run.
+	p.issueDeliverableCache = &issueDeliverableResult{}
 
 	// Computed once, reused by the tail (#731): whether this run's deliverable
 	// is a plan, regardless of which trigger asked for it.
