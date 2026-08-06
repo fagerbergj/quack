@@ -3,13 +3,57 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"sync/atomic"
 	"testing"
 
+	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/session"
+
+	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/store"
+	"github.com/fagerbergj/quack/internal/vetting"
 )
+
+// sessionGetSpy wraps a real session.Service but fails (and counts) any Get call - live
+// profiling on #738 found ListChats's old per-chat read wasn't a cheap row lookup, it was
+// orchestrator.PriorEvents -> ADK's databaseService.Get deserializing a chat's ENTIRE event
+// history, 109 times every 5s (81% of a 15s CPU profile, mostly encoding/json). A bounded
+// query count (below) would still pass if a single session load per request crept back in;
+// this asserts the stronger invariant that actually matters - ListChats never reads session
+// history at all.
+type sessionGetSpy struct {
+	session.Service
+	gets atomic.Int64
+}
+
+func (s *sessionGetSpy) Get(_ context.Context, req *session.GetRequest) (*session.GetResponse, error) {
+	s.gets.Add(1)
+	return nil, fmt.Errorf("unexpected session.Get(%s/%s): this path must never read session history (#738)", req.UserID, req.SessionID)
+}
+
+// newTestHandlerWithSessionSpy is newTestHandler with its session store swapped for a spy
+// that fails any Get, so a test can prove a handler path never touches session history.
+func newTestHandlerWithSessionSpy(t *testing.T) (*Handler, *sessionGetSpy) {
+	t.Helper()
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	spy := &sessionGetSpy{Service: st.Sessions}
+	st.Sessions = spy
+	ex := dag.NewExecutor(st.Sessions, map[string]adkagent.Agent{}, map[string]model.LLM{}, nil, nil,
+		func(string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
+	planner := dag.NewPlanner(nil, nil, nil)
+	orch := orchestrator.New(st.Sessions, stubModel{}, "You are a test duck.", planner, ex, nil, nil, nil)
+	return NewHandler(st, orch, nil, nil, nil, nil, "test"), spy
+}
 
 // listChatsQueries runs ListChats and returns how many SELECT queries it issued.
 func listChatsQueries(t *testing.T, h *Handler) int64 {
@@ -25,10 +69,12 @@ func listChatsQueries(t *testing.T, h *Handler) int64 {
 }
 
 // TestListChatsQueryCountBoundedByChatCount is #738 test 1: with 100+ chats stored,
-// ListChats issues a bounded number of queries that does not grow with chat count -
-// the N+1 the ponytail marker on the old ListChats named (one toSummary DB read per row).
+// ListChats issues a bounded number of queries that does not grow with chat count - the
+// N+1 the ponytail marker on the old ListChats named - and, the stronger claim the live
+// profile says actually matters, touches the ADK session store not at all (sessionGetSpy
+// above fails any Get; ListChats must never trigger one).
 func TestListChatsQueryCountBoundedByChatCount(t *testing.T) {
-	h := newTestHandler(t)
+	h, spy := newTestHandlerWithSessionSpy(t)
 	ctx := context.Background()
 
 	for range 5 {
@@ -50,6 +96,9 @@ func TestListChatsQueryCountBoundedByChatCount(t *testing.T) {
 	}
 	if large > 2 {
 		t.Errorf("queries for 155 chats = %d, want a small constant (1 chats read)", large)
+	}
+	if got := spy.gets.Load(); got != 0 {
+		t.Errorf("ListChats triggered %d session.Get call(s), want 0 - status must never read session history", got)
 	}
 }
 
