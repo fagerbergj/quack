@@ -19,6 +19,7 @@ import (
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/runlog"
+	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -890,6 +891,10 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// fuzzy mention-based heuristic above - only this drives node capability.
 	runCtx = tools.WithPlanOnly(runCtx, p.planOnly)
 	e.hub.RegisterRun(sessionID, turnID, cancelRun)
+	if e.store != nil {
+		// Marks the chat in-flight so a crash before stampRunOutcome runs is detectable (#738).
+		_ = e.store.MarkRunActive(runCtx, sessionID, turnID)
+	}
 	// Run stays inline (dispatch already is a goroutine). Deregister last.
 	defer e.hub.Close(sessionID)
 	defer func() {
@@ -907,7 +912,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	}
 	if pub != nil {
 		pub.Publish(stream.Done())
-		_ = e.store.Touch(runCtx, sessionID)
+		e.stampRunOutcome(runCtx, login, sessionID)
 	}
 
 	// Only post a summary when nothing was delivered — commitDelivery already posted the review/PR.
@@ -1125,6 +1130,27 @@ func (e *Extension) drive(ctx context.Context, uid, sessionID, message, owner, r
 		}
 	}
 	return planRan, judgePassed, paused, needsInput
+}
+
+// Mirrors orchestrator.AppName; this package doesn't import orchestrator for one string.
+const chatAppName = "quack"
+
+// stampRunOutcome persists a finished run's terminal status on the chat row so ListChats can
+// read it directly (#738), same rule internal/server/rest stamps for REST-driven runs
+// (store.DeriveTerminalStatus). Detached from parent so ctx cancellation (e.g. #468's
+// stop-button) can't also cancel the stamp write.
+func (e *Extension) stampRunOutcome(parent context.Context, uid, sessionID string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
+	defer cancel()
+	turns, err := e.store.GetTurnsWithContent(ctx, chatAppName, uid, sessionID)
+	if err != nil {
+		slog.Warn("github: stamp run outcome: turns load failed", "component", "github", "chat", sessionID, "err", err)
+	}
+	q, hasQ := e.runner.PendingQuestion(ctx, uid, sessionID)
+	status, question := store.DeriveTerminalStatus(turns, q, hasQ)
+	if err := e.store.StampRunOutcome(ctx, sessionID, status, question); err != nil {
+		slog.Warn("github: stamp run outcome failed", "component", "github", "chat", sessionID, "err", err)
+	}
 }
 
 // githubContext is the loaded GitHub state for one dispatch (#459).

@@ -671,6 +671,17 @@ func LatestPendingQuestion(events []*session.Event) (PendingQuestion, bool) {
 	return PendingQuestion{}, false
 }
 
+// PendingQuestion is LatestPendingQuestion over a session's prior events, exposed so callers
+// outside this package (e.g. the GitHub extension stamping a run's terminal status, #738)
+// don't need to reimplement the scan.
+func (o *Orchestrator) PendingQuestion(ctx context.Context, userID, sessionID string) (string, bool) {
+	pq, ok := LatestPendingQuestion(o.PriorEvents(ctx, userID, sessionID))
+	if !ok {
+		return "", false
+	}
+	return pq.Message, true
+}
+
 // LatestAnswer returns the final orchestrator-authored text persisted for a session.
 func (o *Orchestrator) LatestAnswer(ctx context.Context, userID, sessionID string) string {
 	var latest string

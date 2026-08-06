@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -13,7 +14,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -111,6 +111,13 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
+// ListChats is a single table read (#738: status is a stamp on the chat row - see
+// store.StampRunOutcome - plus cheap in-memory hub/queue checks, not a per-chat DB read).
+// It's also a conditional GET: an unchanged page costs a 304 with no body, so the SPA's
+// 5s poll is cheap on the wire when nothing changed (still no TTL - every poll reaches
+// this handler and revalidates against the live rows). The ETag is hashed from the
+// marshaled page body, which embeds NextPageToken, so it varies with page token and
+// limit as well as content - a stale ETag from a different page never reads as a match.
 func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request, params schema.ListChatsParams) {
 	limit := 0
 	if params.Limit != nil {
@@ -129,26 +136,36 @@ func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request, params schem
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
-	// Fan out status reads (serial took 3-4s for 15 chats).
-	// ponytail: still N+1 reads, just concurrent; the real fix is stamping the
-	// run outcome on the chat row at run END so list is one table read.
 	out := schema.ChatList{Data: make([]schema.ChatSummary, len(chats))}
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, 8)
 	for i, c := range chats {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			out.Data[i] = h.toSummary(r.Context(), c)
-		}()
+		out.Data[i] = h.toSummary(c)
 	}
-	wg.Wait()
 	if next != "" {
 		out.NextPageToken = &next
 	}
-	writeJSON(w, http.StatusOK, out)
+	body, err := json.Marshal(out)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
+	etag := weakETag(body)
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "no-cache")
+	if inm := r.Header.Get("If-None-Match"); inm != "" && inm == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
+// weakETag hashes an already-serialized body - cheap, and content (not metadata) is what
+// the client cares about matching (#738 test 5).
+func weakETag(body []byte) string {
+	sum := fnv.New64a()
+	_, _ = sum.Write(body)
+	return fmt.Sprintf(`W/"%x"`, sum.Sum64())
 }
 
 func (h *Handler) CreateChat(w http.ResponseWriter, r *http.Request) {
@@ -163,7 +180,7 @@ func (h *Handler) CreateChat(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, h.toSummary(r.Context(), *c))
+	writeJSON(w, http.StatusOK, h.toSummary(*c))
 }
 
 func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
@@ -286,7 +303,7 @@ func (h *Handler) UpdateChat(w http.ResponseWriter, r *http.Request, chatID sche
 		return
 	}
 	c.Title = title
-	writeJSON(w, http.StatusOK, h.toSummary(r.Context(), *c))
+	writeJSON(w, http.StatusOK, h.toSummary(*c))
 }
 
 func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
@@ -374,6 +391,8 @@ func (h *Handler) startRun(chatID, turnID, content string, attachments []*genai.
 	runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
 	// Registered synchronously so cancel can never miss the run.
 	h.hub.RegisterRun(chatID, turnID, cancelRun)
+	// Marks the chat in-flight so a crash before stampRunOutcome runs is detectable (#738).
+	_ = h.store.MarkRunActive(runCtx, chatID, turnID)
 	go func() {
 		// Close done LAST so the run is off the registry by the time viewers see the stream close.
 		defer h.hub.Close(chatID)
@@ -387,6 +406,8 @@ func (h *Handler) startRun(chatID, turnID, content string, attachments []*genai.
 
 // Drives the orchestrator and publishes the SSE stream to the hub and durable event log. No HTTP client dependency.
 func (h *Handler) runChat(runCtx context.Context, chatID, turnID, message string, attachments []*genai.Part) {
+	// Stamps the outcome on every exit path, including the error return below (#738).
+	defer h.stampRunOutcome(runCtx, chatID)
 	// Clear previous run's durable events so this run's seq starts at 1.
 	h.eventLog.Reset(runCtx, chatID)
 
@@ -455,7 +476,6 @@ func (h *Handler) runChat(runCtx context.Context, chatID, turnID, message string
 	if orchModel != "" && activePlanID == "" {
 		_ = h.store.SetTurnModel(runCtx, chatID, turnID, orchModel)
 	}
-	_ = h.store.Touch(runCtx, chatID)
 }
 
 // Cancels the chat's active run when response_id names it; stale ids 404.
@@ -657,11 +677,13 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 	go func() {
 		runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
 		h.hub.RegisterRun(chatID, dp.TurnID, cancelRun)
+		_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
 		defer func() {
 			cancelRun()
 			h.hub.UnregisterRun(chatID)
 		}()
 		defer h.hub.Close(chatID)
+		defer h.stampRunOutcome(runCtx, chatID)
 
 		h.eventLog.Reset(runCtx, chatID)
 		publish := runlog.NewPublisher(h.hub, h.eventLog, chatID).Publish
@@ -676,7 +698,6 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 			publish(ev)
 		}
 		publish(stream.Done())
-		_ = h.store.Touch(runCtx, chatID)
 	}()
 }
 
@@ -933,10 +954,12 @@ func float64Ptr(f float64) *float64 {
 	return &f
 }
 
-// Builds a ChatSummary with derived status. Loads turns itself (ponytail: batch only if list gets slow).
-func (h *Handler) toSummary(ctx context.Context, c store.Chat) schema.ChatSummary {
-	turns, _ := h.store.GetTurnsWithContent(ctx, orchestrator.AppName, store.SessionUserFor(c), c.ID)
-	status, pendingQuestion := h.chatStatus(ctx, c.ID, turns)
+// Builds a ChatSummary from the chat row alone: queued/running are cheap in-memory checks,
+// everything else is the stamp StampRunOutcome left at the last run's end - no turns/session
+// read per chat (#738; that per-chat read is what GetChat's chatStatus below still does,
+// which is fine there since GetChat already loads turns for the full detail body).
+func (h *Handler) toSummary(c store.Chat) schema.ChatSummary {
+	status, pendingQuestion := h.liveOrStampedStatus(c)
 	return schema.ChatSummary{
 		Id:              c.ID,
 		Title:           nonEmpty(c.Title),
@@ -950,8 +973,35 @@ func (h *Handler) toSummary(ctx context.Context, c store.Chat) schema.ChatSummar
 	}
 }
 
-// Computes a chat's derived status: queued (waiting on max_active_runs), running (hub has a live run),
-// needs_input (prior events end on an unanswered question), failed (last DAG node failed, no answer), or idle.
+// liveOrStampedStatus resolves queued/running live, else the chat row's stamped outcome.
+// A non-empty ActiveTurnID with no live signal means the run that set it died before
+// StampRunOutcome could clear it - report failed rather than trust a stale idle/needs_input
+// stamp from a run before that one (#738 test 3; single-instance Hub, see stream.NewHub).
+func (h *Handler) liveOrStampedStatus(c store.Chat) (schema.ChatStatus, *string) {
+	if h.orch.Queued(c.ID) {
+		return schema.ChatStatusQueued, nil
+	}
+	if h.hub.Active(c.ID) {
+		return schema.ChatStatusRunning, nil
+	}
+	if c.ActiveTurnID != "" {
+		return schema.ChatStatusFailed, nil
+	}
+	switch c.RunStatus {
+	case store.RunStatusNeedsInput:
+		q := c.PendingQuestion
+		return schema.ChatStatusNeedsInput, &q
+	case store.RunStatusFailed:
+		return schema.ChatStatusFailed, nil
+	default:
+		return schema.ChatStatusIdle, nil
+	}
+}
+
+// Computes a chat's LIVE derived status: queued (waiting on max_active_runs), running (hub
+// has a live run), needs_input (prior events end on an unanswered question), failed (last
+// DAG node failed, no answer), or idle. Used by GetChat, which loads turns regardless for
+// the detail body, so this per-chat computation costs nothing extra there.
 func (h *Handler) chatStatus(ctx context.Context, chatID string, turns []store.TurnContent) (schema.ChatStatus, *string) {
 	if h.orch.Queued(chatID) {
 		return schema.ChatStatusQueued, nil
@@ -959,26 +1009,39 @@ func (h *Handler) chatStatus(ctx context.Context, chatID string, turns []store.T
 	if h.hub.Active(chatID) {
 		return schema.ChatStatusRunning, nil
 	}
-	if pq, ok := orchestrator.LatestPendingQuestion(h.orch.PriorEvents(ctx, h.sessionUser(ctx, chatID), chatID)); ok {
-		q := pq.Message
-		return schema.ChatStatusNeedsInput, &q
-	}
-	if n := len(turns); n > 0 {
-		last := turns[n-1]
-		if strings.TrimSpace(last.AsstText) == "" && hasFailedNode(last.Nodes) {
-			return schema.ChatStatusFailed, nil
-		}
-	}
-	return schema.ChatStatusIdle, nil
+	return h.terminalStatus(ctx, chatID, turns)
 }
 
-func hasFailedNode(nodes []store.DagNode) bool {
-	for _, n := range nodes {
-		if n.Status == "failed" {
-			return true
-		}
+// terminalStatus is chatStatus without the live queued/running checks: the outcome a run
+// stamps on its chat row once it ends (#738).
+func (h *Handler) terminalStatus(ctx context.Context, chatID string, turns []store.TurnContent) (schema.ChatStatus, *string) {
+	q, hasQ := h.orch.PendingQuestion(ctx, h.sessionUser(ctx, chatID), chatID)
+	status, question := store.DeriveTerminalStatus(turns, q, hasQ)
+	if status == store.RunStatusNeedsInput {
+		return schema.ChatStatusNeedsInput, &question
 	}
-	return false
+	return schema.ChatStatus(status), nil
+}
+
+// stampRunOutcome persists a finished run's terminal status on the chat row so ListChats can
+// read it directly (#738). Call at every run-end path (defer, so it fires on error too) -
+// only a hard process crash skips it, and ActiveTurnID (MarkRunActive) covers that case.
+// Detached from parent so a mid-run cancel can't also cancel the stamp write.
+func (h *Handler) stampRunOutcome(parent context.Context, chatID string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
+	defer cancel()
+	turns, err := h.store.GetTurnsWithContent(ctx, orchestrator.AppName, h.sessionUser(ctx, chatID), chatID)
+	if err != nil {
+		slog.Warn("stamp run outcome: turns load failed", "component", "rest", "chat", chatID, "err", err)
+	}
+	status, pendingQuestion := h.terminalStatus(ctx, chatID, turns)
+	q := ""
+	if pendingQuestion != nil {
+		q = *pendingQuestion
+	}
+	if err := h.store.StampRunOutcome(ctx, chatID, string(status), q); err != nil {
+		slog.Warn("stamp run outcome failed", "component", "rest", "chat", chatID, "err", err)
+	}
 }
 
 func nonEmpty(s string) *string {
