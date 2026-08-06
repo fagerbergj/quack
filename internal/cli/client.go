@@ -62,24 +62,26 @@ func NewClient(ctx context.Context, override string) (*Client, error) {
 var ErrNotFound = errors.New("not found")
 
 // ListChats returns all chats (server orders most-recently-updated first),
-// paging through the server's cursor-paginated endpoint at its max page size.
+// paging through the server's paginated endpoint at its max page size. The
+// page token is opaque - passed back exactly as the server returned it,
+// never parsed or constructed.
 func (c *Client) ListChats(ctx context.Context) ([]schema.ChatSummary, error) {
 	var all []schema.ChatSummary
-	cursor := ""
+	pageToken := ""
 	for {
 		path := "/api/v1/chats?limit=100"
-		if cursor != "" {
-			path += "&cursor=" + url.QueryEscape(cursor)
+		if pageToken != "" {
+			path += "&page_token=" + url.QueryEscape(pageToken)
 		}
 		var out schema.ChatList
 		if err := c.getJSON(ctx, path, &out); err != nil {
 			return nil, err
 		}
 		all = append(all, out.Data...)
-		if out.NextCursor == nil || *out.NextCursor == "" {
+		if out.NextPageToken == nil || *out.NextPageToken == "" {
 			return all, nil
 		}
-		cursor = *out.NextCursor
+		pageToken = *out.NextPageToken
 	}
 }
 

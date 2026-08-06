@@ -46,14 +46,17 @@ func TestListChats_NoParams(t *testing.T) {
 	if len(out.Data) != 3 {
 		t.Fatalf("len(data) = %d, want 3", len(out.Data))
 	}
-	if out.NextCursor != nil {
-		t.Fatalf("next_cursor = %q, want absent (fewer chats than the default page size)", *out.NextCursor)
+	if out.NextPageToken != nil {
+		t.Fatalf("next_page_token = %q, want absent (fewer chats than the default page size)", *out.NextPageToken)
 	}
 }
 
-// TestListChats_LimitAndCursorPageThrough proves the query params reach the
-// store and a cursor from one response fetches the next page.
-func TestListChats_LimitAndCursorPageThrough(t *testing.T) {
+// TestListChats_PageTokenIsOpaqueRoundTrip proves the query params reach the
+// store AND that the page_token is genuinely opaque to the caller: this test
+// never decodes it, never inspects its shape, only ever passes back byte-for-
+// byte what the previous response gave it - exactly the contract a real
+// client follows - and pagination still lands on every chat exactly once.
+func TestListChats_PageTokenIsOpaqueRoundTrip(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
 	ids := map[string]bool{}
@@ -71,11 +74,13 @@ func TestListChats_LimitAndCursorPageThrough(t *testing.T) {
 	if len(page1.Data) != 2 {
 		t.Fatalf("page1 len = %d, want 2", len(page1.Data))
 	}
-	if page1.NextCursor == nil {
-		t.Fatal("page1.NextCursor is nil, want a next-page cursor (5 chats > limit 2)")
+	if page1.NextPageToken == nil {
+		t.Fatal("page1.NextPageToken is nil, want a next-page token (5 chats > limit 2)")
 	}
 
-	rec = getListChats(t, h, schema.ListChatsParams{Limit: &limit, Cursor: page1.NextCursor})
+	// The handler/store contract asks only that this exact string comes
+	// back unmodified - it is never parsed here.
+	rec = getListChats(t, h, schema.ListChatsParams{Limit: &limit, PageToken: page1.NextPageToken})
 	page2 := decodeChatList(t, rec)
 	if len(page2.Data) != 2 {
 		t.Fatalf("page2 len = %d, want 2", len(page2.Data))
@@ -93,12 +98,12 @@ func TestListChats_LimitAndCursorPageThrough(t *testing.T) {
 	}
 }
 
-// TestListChats_InvalidCursor400s: a cursor the store can't decode is a
-// client error, not a 500.
-func TestListChats_InvalidCursor400(t *testing.T) {
+// TestListChats_InvalidPageToken400: a page_token the store can't decode is
+// a client error, not a 500.
+func TestListChats_InvalidPageToken400(t *testing.T) {
 	h := newTestHandler(t)
-	bad := "not-a-valid-cursor!!"
-	rec := getListChats(t, h, schema.ListChatsParams{Cursor: &bad})
+	bad := "not-a-valid-token!!"
+	rec := getListChats(t, h, schema.ListChatsParams{PageToken: &bad})
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}

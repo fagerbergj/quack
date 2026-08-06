@@ -38,9 +38,10 @@ export type ChatDetail = ChatSummary & {
 export type ChatList = {
     data: Array<ChatSummary>;
     /**
-     * Pass as `cursor` to fetch the next page. Absent when this page is the last.
+     * Opaque token - pass as `page_token` to fetch the next page. Absent when this page is the last. Treat as an opaque string: never parse it.
+     *
      */
-    next_cursor?: string;
+    next_page_token?: string;
 };
 
 export type RecordingSummary = {
@@ -269,9 +270,10 @@ export type ListChatsData = {
          */
         limit?: number;
         /**
-         * Opaque pagination cursor from a previous response's `next_cursor`. Omit for the first page.
+         * Opaque continuation token from a previous response's `next_page_token`. Treat it as an opaque string: never parse or construct one, pass back exactly what was returned. Omit for the first page.
+         *
          */
-        cursor?: string;
+        page_token?: string;
     };
     url: '/api/v1/chats';
 };

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -35,7 +36,7 @@ func newTestStore(t *testing.T) *Store {
 }
 
 // Test case 1: default request with 30 chats stored returns the default page
-// size, not 30, and carries a next-page cursor.
+// size, not 30, and carries a next-page token.
 func TestListChatsDefaultPageSize(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
@@ -49,7 +50,7 @@ func TestListChatsDefaultPageSize(t *testing.T) {
 		t.Fatalf("len(chats) = %d, want default limit %d", len(chats), ChatsPageDefaultLimit)
 	}
 	if next == "" {
-		t.Fatal("next cursor empty, want a next-page signal (30 stored > default limit)")
+		t.Fatal("next page token empty, want a next-page signal (30 stored > default limit)")
 	}
 	// Most-recently-updated first.
 	for i := 1; i < len(chats); i++ {
@@ -60,16 +61,19 @@ func TestListChatsDefaultPageSize(t *testing.T) {
 }
 
 // Test case 2: paging through in fixed steps yields every chat exactly once.
+// The token is round-tripped as an opaque string - never decoded or
+// inspected by the caller - proving pagination doesn't secretly depend on
+// the caller understanding it.
 func TestListChatsPagingIsExhaustiveAndDedup(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	ids := seedChats(t, st, 37)
 
 	seen := map[string]int{}
-	cursor := ""
+	token := ""
 	pages := 0
 	for {
-		chats, next, err := st.ListChats(ctx, 10, cursor)
+		chats, next, err := st.ListChats(ctx, 10, token)
 		if err != nil {
 			t.Fatalf("ListChats: %v", err)
 		}
@@ -78,12 +82,12 @@ func TestListChatsPagingIsExhaustiveAndDedup(t *testing.T) {
 		}
 		pages++
 		if pages > 100 {
-			t.Fatal("did not terminate: possible cursor loop")
+			t.Fatal("did not terminate: possible page-token loop")
 		}
 		if next == "" {
 			break
 		}
-		cursor = next
+		token = next
 	}
 	if len(seen) != len(ids) {
 		t.Fatalf("saw %d distinct chats, want %d", len(seen), len(ids))
@@ -97,22 +101,22 @@ func TestListChatsPagingIsExhaustiveAndDedup(t *testing.T) {
 
 // Test case 3: a chat's updated_at changing mid-page (a run starting between
 // two page requests) must not skip or repeat a row - the reason to use a
-// keyset cursor instead of an offset.
-func TestListChatsCursorStableAcrossConcurrentUpdate(t *testing.T) {
+// keyset token instead of an offset.
+func TestListChatsTokenStableAcrossConcurrentUpdate(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	ids := seedChats(t, st, 5) // oldest..newest: ids[0]..ids[4]
 
 	// First page: newest 2 chats (ids[4], ids[3]).
-	page1, cursor, err := st.ListChats(ctx, 2, "")
+	page1, token, err := st.ListChats(ctx, 2, "")
 	if err != nil {
 		t.Fatalf("ListChats page1: %v", err)
 	}
 	if len(page1) != 2 || page1[0].ID != ids[4] || page1[1].ID != ids[3] {
 		t.Fatalf("page1 = %v, want [%s %s]", ids2(page1), ids[4], ids[3])
 	}
-	if cursor == "" {
-		t.Fatal("expected a next cursor after page1")
+	if token == "" {
+		t.Fatal("expected a next page token after page1")
 	}
 
 	// A run starts on the oldest chat (ids[0]), bumping it to "now" - past
@@ -122,11 +126,11 @@ func TestListChatsCursorStableAcrossConcurrentUpdate(t *testing.T) {
 		t.Fatalf("bump ids[0]: %v", err)
 	}
 
-	page2, _, err := st.ListChats(ctx, 2, cursor)
+	page2, _, err := st.ListChats(ctx, 2, token)
 	if err != nil {
 		t.Fatalf("ListChats page2: %v", err)
 	}
-	// ids[0] jumped above the cursor boundary captured at page1 and is
+	// ids[0] jumped above the token's boundary captured at page1 and is
 	// excluded from page2 (it would reappear at the top of a fresh page1,
 	// not retroactively inside an in-flight page walk). The remaining
 	// order (ids[2], ids[1]) must come through with no skip or repeat.
@@ -165,7 +169,36 @@ func TestListChatsFewerThanPageSize(t *testing.T) {
 		t.Fatalf("len(chats) = %d, want 3", len(chats))
 	}
 	if next != "" {
-		t.Fatalf("next cursor = %q, want empty (no more pages)", next)
+		t.Fatalf("next page token = %q, want empty (no more pages)", next)
+	}
+}
+
+// TestListChatsTokenIssuedForWrongSortRejected pins the contract: a token
+// carries the ordering it was issued under, and replaying it against a
+// different one is an error, never silently honored. chatsSort has exactly
+// one value today, so this is exercised by hand-forging a token under a
+// different (hypothetical) sort - the shape a future second ordering would
+// produce.
+func TestListChatsTokenIssuedForWrongSortRejected(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	seedChats(t, st, 5)
+
+	wrongSort := encodeChatsPageToken(chatsPageToken{Sort: "title_asc", ID: "chat-aa", UpdatedAt: time.Now()})
+	if _, _, err := st.ListChats(ctx, 0, wrongSort); !errors.Is(err, ErrInvalidPageToken) {
+		t.Fatalf("ListChats with a token issued for a different sort: err = %v, want ErrInvalidPageToken", err)
+	}
+}
+
+// TestListChatsMalformedTokenRejected: garbage in the page_token param is a
+// client error (ErrInvalidPageToken), not a panic or a silent first page.
+func TestListChatsMalformedTokenRejected(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	seedChats(t, st, 3)
+
+	if _, _, err := st.ListChats(ctx, 0, "not-a-valid-token!!"); !errors.Is(err, ErrInvalidPageToken) {
+		t.Fatalf("ListChats with a malformed token: err = %v, want ErrInvalidPageToken", err)
 	}
 }
 

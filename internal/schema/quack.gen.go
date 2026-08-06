@@ -237,8 +237,8 @@ type ChatDetail struct {
 type ChatList struct {
 	Data []ChatSummary `json:"data"`
 
-	// NextCursor Pass as `cursor` to fetch the next page. Absent when this page is the last.
-	NextCursor *string `json:"next_cursor,omitempty"`
+	// NextPageToken Opaque token - pass as `page_token` to fetch the next page. Absent when this page is the last. Treat as an opaque string: never parse it.
+	NextPageToken *string `json:"next_page_token,omitempty"`
 }
 
 // ChatStatus A chat's derived state: `queued` when a turn has been admitted but is waiting on the server's max_active_runs slot, `running` while a turn holds its slot and is actively streaming, `needs_input` when the last turn paused on an unanswered question (a mid-node ask, a guarded operation awaiting approve/deny - the workspace.guards confirm tier - or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
@@ -518,8 +518,8 @@ type ListChatsParams struct {
 	// Limit Max chats to return. Defaults to 20; capped at 100.
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 
-	// Cursor Opaque pagination cursor from a previous response's `next_cursor`. Omit for the first page.
-	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+	// PageToken Opaque continuation token from a previous response's `next_page_token`. Treat it as an opaque string: never parse or construct one, pass back exactly what was returned. Omit for the first page.
+	PageToken *string `form:"page_token,omitempty" json:"page_token,omitempty"`
 }
 
 // CreateChatJSONRequestBody defines body for CreateChat for application/json ContentType.
@@ -946,15 +946,15 @@ func (siw *ServerInterfaceWrapper) ListChats(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// ------------- Optional query parameter "cursor" -------------
+	// ------------- Optional query parameter "page_token" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "page_token", r.URL.Query(), &params.PageToken, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
 	if err != nil {
 		var requiredError *runtime.RequiredParameterError
 		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "page_token"})
 		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page_token", Err: err})
 		}
 		return
 	}

@@ -349,43 +349,59 @@ const ChatsPageDefaultLimit = 20
 // ChatsPageMaxLimit bounds limit regardless of what a caller requests.
 const ChatsPageMaxLimit = 100
 
-// ErrInvalidCursor is returned by ListChats when cursor doesn't decode.
-var ErrInvalidCursor = errors.New("invalid cursor")
+// ErrInvalidPageToken is returned by ListChats when the page token doesn't
+// decode, or was issued under a different ordering than it's being replayed
+// against (never silently honored under the wrong one).
+var ErrInvalidPageToken = errors.New("invalid page token")
 
-// chatCursor is a keyset position: the (updated_at, id) of the last chat on
-// the previous page. id breaks ties on updated_at and gives every chat a
-// stable position, which an offset can't: updated_at changes whenever a run
-// is active on that chat, so an offset would skip or repeat a row across two
-// requests straddling that change.
-type chatCursor struct {
-	UpdatedAt time.Time `json:"u"`
+// chatsSort names the ordering a page token was issued under. ListChats
+// supports exactly one ordering today; this exists so a future second
+// ordering gets its own value here instead of a token silently being
+// replayed against an ordering it wasn't issued for.
+type chatsSort string
+
+const chatsSortUpdatedAtDesc chatsSort = "updated_at_desc"
+
+// chatsPageToken is ListChats' opaque continuation token. The caller-visible
+// contract is just "an anchor under a named ordering": ID anchors it because
+// ID is immutable, unlike UpdatedAt, which churns under an active run.
+// UpdatedAt still rides along inside the token - resolving an ID anchor back
+// to its position in an updated_at-sorted list needs the value it was last
+// seen at, so the token carries it as its own implementation detail, not as
+// part of the contract a caller is meant to understand.
+type chatsPageToken struct {
+	Sort      chatsSort `json:"s"`
 	ID        string    `json:"i"`
+	UpdatedAt time.Time `json:"u"`
 }
 
-func encodeChatCursor(c chatCursor) string {
-	b, _ := json.Marshal(c)
+func encodeChatsPageToken(t chatsPageToken) string {
+	b, _ := json.Marshal(t)
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-func decodeChatCursor(s string) (chatCursor, error) {
-	var c chatCursor
+func decodeChatsPageToken(s string) (chatsPageToken, error) {
+	var t chatsPageToken
 	b, err := base64.RawURLEncoding.DecodeString(s)
 	if err != nil {
-		return c, fmt.Errorf("%w: %v", ErrInvalidCursor, err)
+		return t, fmt.Errorf("%w: %v", ErrInvalidPageToken, err)
 	}
-	if err := json.Unmarshal(b, &c); err != nil {
-		return c, fmt.Errorf("%w: %v", ErrInvalidCursor, err)
+	if err := json.Unmarshal(b, &t); err != nil {
+		return t, fmt.Errorf("%w: %v", ErrInvalidPageToken, err)
 	}
-	return c, nil
+	if t.Sort != chatsSortUpdatedAtDesc {
+		return t, fmt.Errorf("%w: issued for sort %q, not %q", ErrInvalidPageToken, t.Sort, chatsSortUpdatedAtDesc)
+	}
+	return t, nil
 }
 
 // ListChats returns up to limit chats, most-recently-updated first, starting
-// after cursor ("" for the first page). It returns the cursor for the next
-// page, or "" if this page was the last. limit <= 0 becomes
+// after pageToken ("" for the first page). It returns the opaque token for
+// the next page, or "" if this page was the last. limit <= 0 becomes
 // ChatsPageDefaultLimit; limit above ChatsPageMaxLimit is capped.
 //
-// This is keyset (not offset) pagination: see chatCursor.
-func (s *Store) ListChats(ctx context.Context, limit int, cursor string) ([]Chat, string, error) {
+// This is keyset (not offset) pagination: see chatsPageToken.
+func (s *Store) ListChats(ctx context.Context, limit int, pageToken string) ([]Chat, string, error) {
 	if limit <= 0 {
 		limit = ChatsPageDefaultLimit
 	} else if limit > ChatsPageMaxLimit {
@@ -393,12 +409,12 @@ func (s *Store) ListChats(ctx context.Context, limit int, cursor string) ([]Chat
 	}
 
 	q := s.db.WithContext(ctx).Order("updated_at desc, id desc").Limit(limit + 1)
-	if cursor != "" {
-		c, err := decodeChatCursor(cursor)
+	if pageToken != "" {
+		t, err := decodeChatsPageToken(pageToken)
 		if err != nil {
 			return nil, "", err
 		}
-		q = q.Where("updated_at < ? OR (updated_at = ? AND id < ?)", c.UpdatedAt, c.UpdatedAt, c.ID)
+		q = q.Where("updated_at < ? OR (updated_at = ? AND id < ?)", t.UpdatedAt, t.UpdatedAt, t.ID)
 	}
 
 	var chats []Chat
@@ -410,7 +426,7 @@ func (s *Store) ListChats(ctx context.Context, limit int, cursor string) ([]Chat
 	if len(chats) > limit {
 		chats = chats[:limit]
 		last := chats[limit-1]
-		next = encodeChatCursor(chatCursor{UpdatedAt: last.UpdatedAt, ID: last.ID})
+		next = encodeChatsPageToken(chatsPageToken{Sort: chatsSortUpdatedAtDesc, ID: last.ID, UpdatedAt: last.UpdatedAt})
 	}
 	return chats, next, nil
 }

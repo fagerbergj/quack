@@ -35,10 +35,13 @@ paths:
           description: Max chats to return. Defaults to 20; capped at 100.
           schema:
             type: integer
-        - name: cursor
+        - name: page_token
           in: query
           required: false
-          description: Opaque pagination cursor from a previous response's `next_cursor`. Omit for the first page.
+          description: >
+            Opaque continuation token from a previous response's `next_page_token`.
+            Treat it as an opaque string: never parse or construct one, pass back
+            exactly what was returned. Omit for the first page.
           schema:
             type: string
       responses:
@@ -583,9 +586,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ChatSummary"
-        next_cursor:
+        next_page_token:
           type: string
-          description: Pass as `cursor` to fetch the next page. Absent when this page is the last.
+          description: >
+            Opaque token - pass as `page_token` to fetch the next page. Absent when
+            this page is the last. Treat as an opaque string: never parse it.
 
     # -------------------------------------------------------------------------
     # Replay ledger

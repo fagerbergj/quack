@@ -25,7 +25,7 @@ export interface ChatListProps {
   onNewChat: () => void
   onDelete: (id: string, e: React.MouseEvent) => void
   onCloseMobile: () => void
-  // #736: the chat list is server-paginated - a `next_cursor` means more
+  // #736: the chat list is server-paginated - a `next_page_token` means more
   // chats exist beyond what's loaded.
   hasMoreChats?: boolean
   onLoadMoreChats?: () => void

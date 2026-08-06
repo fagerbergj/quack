@@ -116,13 +116,13 @@ func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request, params schem
 	if params.Limit != nil {
 		limit = *params.Limit
 	}
-	cursor := ""
-	if params.Cursor != nil {
-		cursor = *params.Cursor
+	pageToken := ""
+	if params.PageToken != nil {
+		pageToken = *params.PageToken
 	}
-	chats, next, err := h.store.ListChats(r.Context(), limit, cursor)
+	chats, next, err := h.store.ListChats(r.Context(), limit, pageToken)
 	if err != nil {
-		if errors.Is(err, store.ErrInvalidCursor) {
+		if errors.Is(err, store.ErrInvalidPageToken) {
 			httpError(w, http.StatusBadRequest, err)
 			return
 		}
@@ -146,7 +146,7 @@ func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request, params schem
 	}
 	wg.Wait()
 	if next != "" {
-		out.NextCursor = &next
+		out.NextPageToken = &next
 	}
 	writeJSON(w, http.StatusOK, out)
 }

@@ -116,9 +116,10 @@ export default function Chat() {
 
   const store = useChatStore()
   const [chats, setChats] = useState<ChatSummary[]>([])
-  // Cursor for the next page of chats (#736: the sidebar list is server-paginated).
-  // undefined once the last page has loaded.
-  const [chatsNextCursor, setChatsNextCursor] = useState<string | undefined>(undefined)
+  // Opaque continuation token for the next page of chats (#736: the sidebar
+  // list is server-paginated). undefined once the last page has loaded;
+  // never parsed here, only ever passed back to the server verbatim.
+  const [chatsNextPageToken, setChatsNextPageToken] = useState<string | undefined>(undefined)
   const [loadingMoreChats, setLoadingMoreChats] = useState(false)
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
   // Set once GET /chats/{id} has seeded this chat's turns - gates the status-
@@ -149,21 +150,21 @@ export default function Chat() {
   const loadChats = useCallback(async () => {
     const result = await api.listChats()
     setChats(result.data)
-    setChatsNextCursor(result.next_cursor)
+    setChatsNextPageToken(result.next_page_token)
     return result.data
   }, [])
 
   const loadMoreChats = useCallback(async () => {
-    if (!chatsNextCursor || loadingMoreChats) return
+    if (!chatsNextPageToken || loadingMoreChats) return
     setLoadingMoreChats(true)
     try {
-      const result = await api.listChats({ cursor: chatsNextCursor })
+      const result = await api.listChats({ page_token: chatsNextPageToken })
       setChats(prev => [...prev, ...result.data])
-      setChatsNextCursor(result.next_cursor)
+      setChatsNextPageToken(result.next_page_token)
     } finally {
       setLoadingMoreChats(false)
     }
-  }, [chatsNextCursor, loadingMoreChats])
+  }, [chatsNextPageToken, loadingMoreChats])
 
   useEffect(() => {
     loadChats().then(data => {
@@ -221,7 +222,7 @@ export default function Chat() {
         // above the server's page cap would silently come back shorter than
         // what's on screen (#736). Chats are updated_at-sorted, so anything
         // that just changed is in this page regardless of how far the user
-        // has paged; the pagination cursor is left untouched here.
+        // has paged; the pagination token is left untouched here.
         const result = await api.listChats()
         if (!cancelled) setChats(prev => mergeChatsPage(prev, result.data))
       } catch { /* transient - next poll will retry */ }
@@ -438,7 +439,7 @@ export default function Chat() {
         onNewChat={handleNewChat}
         onDelete={handleDeleteChat}
         onCloseMobile={() => setChatListOpen(false)}
-        hasMoreChats={chatsNextCursor !== undefined}
+        hasMoreChats={chatsNextPageToken !== undefined}
         onLoadMoreChats={loadMoreChats}
         loadingMoreChats={loadingMoreChats}
       />
