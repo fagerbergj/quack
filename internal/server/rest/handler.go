@@ -111,9 +111,21 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
-func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request) {
-	chats, err := h.store.ListChats(r.Context())
+func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request, params schema.ListChatsParams) {
+	limit := 0
+	if params.Limit != nil {
+		limit = *params.Limit
+	}
+	cursor := ""
+	if params.Cursor != nil {
+		cursor = *params.Cursor
+	}
+	chats, next, err := h.store.ListChats(r.Context(), limit, cursor)
 	if err != nil {
+		if errors.Is(err, store.ErrInvalidCursor) {
+			httpError(w, http.StatusBadRequest, err)
+			return
+		}
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -133,6 +145,9 @@ func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 	wg.Wait()
+	if next != "" {
+		out.NextCursor = &next
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 

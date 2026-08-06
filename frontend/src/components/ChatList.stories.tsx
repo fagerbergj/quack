@@ -100,6 +100,12 @@ export const StatusDots: Story = {
   },
 }
 
+// #736: a `next_cursor` from the server surfaces as a "Load more" row at the
+// bottom of the list.
+export const WithLoadMore: Story = {
+  args: { chats: CHATS, activeChatId: '2', hasMoreChats: true, onLoadMoreChats: () => alert('load more') },
+}
+
 // Opens the filter popover and selects the GitHub origin facet - only
 // GitHub-originated rows remain, and the funnel shows an active-filter badge.
 export const FilteredToGithub: Story = {

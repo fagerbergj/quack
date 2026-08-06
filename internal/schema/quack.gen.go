@@ -236,6 +236,9 @@ type ChatDetail struct {
 // ChatList defines model for ChatList.
 type ChatList struct {
 	Data []ChatSummary `json:"data"`
+
+	// NextCursor Pass as `cursor` to fetch the next page. Absent when this page is the last.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // ChatStatus A chat's derived state: `queued` when a turn has been admitted but is waiting on the server's max_active_runs slot, `running` while a turn holds its slot and is actively streaming, `needs_input` when the last turn paused on an unanswered question (a mid-node ask, a guarded operation awaiting approve/deny - the workspace.guards confirm tier - or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
@@ -510,6 +513,15 @@ type NodeID = string
 // ResponseID defines model for ResponseID.
 type ResponseID = string
 
+// ListChatsParams defines parameters for ListChats.
+type ListChatsParams struct {
+	// Limit Max chats to return. Defaults to 20; capped at 100.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque pagination cursor from a previous response's `next_cursor`. Omit for the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
 // CreateChatJSONRequestBody defines body for CreateChat for application/json ContentType.
 type CreateChatJSONRequestBody = CreateChatBody
 
@@ -746,7 +758,7 @@ func (t *OutputItem) UnmarshalJSON(b []byte) error {
 type ServerInterface interface {
 	// List chats
 	// (GET /api/v1/chats)
-	ListChats(w http.ResponseWriter, r *http.Request)
+	ListChats(w http.ResponseWriter, r *http.Request, params ListChatsParams)
 	// Create a chat
 	// (POST /api/v1/chats)
 	CreateChat(w http.ResponseWriter, r *http.Request)
@@ -803,7 +815,7 @@ type Unimplemented struct{}
 
 // List chats
 // (GET /api/v1/chats)
-func (_ Unimplemented) ListChats(w http.ResponseWriter, r *http.Request) {
+func (_ Unimplemented) ListChats(w http.ResponseWriter, r *http.Request, params ListChatsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -915,8 +927,40 @@ type MiddlewareFunc func(http.Handler) http.Handler
 // ListChats operation middleware
 func (siw *ServerInterfaceWrapper) ListChats(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListChatsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListChats(w, r)
+		siw.Handler.ListChats(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {

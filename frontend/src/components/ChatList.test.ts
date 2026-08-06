@@ -1,6 +1,10 @@
-import { describe, it, expect } from 'vitest'
+// @vitest-environment jsdom
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { act, createElement } from 'react'
+import { createRoot } from 'react-dom/client'
 import { filterChats } from '../lib/chatFilters'
 import { isGithubChat } from '../lib/github'
+import { ChatList } from './ChatList'
 import type { ChatSummary } from '../api'
 
 // No @testing-library/react in this repo - ChatList's filter/facet logic
@@ -49,5 +53,62 @@ describe('origin badge signal (isGithubChat)', () => {
   it('is true for the github row and false for the direct row', () => {
     expect(isGithubChat(CHATS[0])).toBe(false)
     expect(isGithubChat(CHATS[1])).toBe(true)
+  })
+})
+
+// #736: the sidebar is server-paginated - "Load more" only appears once the
+// parent signals a next page exists (hasMoreChats), and clicking it defers
+// to the parent's fetch (onLoadMoreChats), not a local re-fetch.
+describe('ChatList "Load more" affordance', () => {
+  let root: ReturnType<typeof createRoot> | undefined
+  let host: HTMLDivElement | undefined
+
+  afterEach(() => {
+    act(() => root?.unmount())
+    host?.remove()
+    root = undefined
+    host = undefined
+  })
+
+  function renderList(props: Partial<Parameters<typeof ChatList>[0]> = {}) {
+    // @ts-expect-error react act environment flag
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    act(() => {
+      root!.render(createElement(ChatList, {
+        chats: CHATS,
+        activeChatId: null,
+        open: true,
+        onSelect: () => {},
+        onNewChat: () => {},
+        onDelete: () => {},
+        onCloseMobile: () => {},
+        ...props,
+      }))
+    })
+  }
+
+  it('is absent when hasMoreChats is not set', () => {
+    renderList()
+    expect(host!.textContent).not.toContain('Load more')
+  })
+
+  it('appears and calls onLoadMoreChats on click when hasMoreChats is true', () => {
+    const onLoadMoreChats = vi.fn()
+    renderList({ hasMoreChats: true, onLoadMoreChats })
+
+    const button = Array.from(host!.querySelectorAll('button')).find(b => b.textContent === 'Load more')
+    expect(button).toBeTruthy()
+    act(() => { button!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    expect(onLoadMoreChats).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows a disabled loading state while loadingMoreChats is true', () => {
+    renderList({ hasMoreChats: true, loadingMoreChats: true })
+    const button = Array.from(host!.querySelectorAll('button')).find(b => b.textContent === 'Loading…')
+    expect(button).toBeTruthy()
+    expect(button!.disabled).toBe(true)
   })
 })

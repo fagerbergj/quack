@@ -37,6 +37,10 @@ export type ChatDetail = ChatSummary & {
 
 export type ChatList = {
     data: Array<ChatSummary>;
+    /**
+     * Pass as `cursor` to fetch the next page. Absent when this page is the last.
+     */
+    next_cursor?: string;
 };
 
 export type RecordingSummary = {
@@ -259,7 +263,16 @@ export type HealthCheckResponse = HealthCheckResponses[keyof HealthCheckResponse
 export type ListChatsData = {
     body?: never;
     path?: never;
-    query?: never;
+    query?: {
+        /**
+         * Max chats to return. Defaults to 20; capped at 100.
+         */
+        limit?: number;
+        /**
+         * Opaque pagination cursor from a previous response's `next_cursor`. Omit for the first page.
+         */
+        cursor?: string;
+    };
     url: '/api/v1/chats';
 };
 

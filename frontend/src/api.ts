@@ -29,7 +29,8 @@ function unwrap<T>(r: Result<T>): T {
 }
 
 export const api = {
-  listChats: async (): Promise<ChatList> => unwrap(await sdkListChats()),
+  listChats: async (opts?: { limit?: number; cursor?: string }): Promise<ChatList> =>
+    unwrap(await sdkListChats({ query: opts })),
 
   createChat: async (opts?: { system_prompt?: string }): Promise<ChatSummary> =>
     unwrap(await sdkCreateChat({ body: { system_prompt: opts?.system_prompt } })),

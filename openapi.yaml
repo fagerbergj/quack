@@ -28,6 +28,19 @@ paths:
     get:
       operationId: listChats
       summary: List chats
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Max chats to return. Defaults to 20; capped at 100.
+          schema:
+            type: integer
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque pagination cursor from a previous response's `next_cursor`. Omit for the first page.
+          schema:
+            type: string
       responses:
         "200":
           description: The chats
@@ -570,6 +583,9 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ChatSummary"
+        next_cursor:
+          type: string
+          description: Pass as `cursor` to fetch the next page. Absent when this page is the last.
 
     # -------------------------------------------------------------------------
     # Replay ledger

@@ -5,6 +5,8 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
@@ -341,13 +343,76 @@ func (s *Store) CreateChat(ctx context.Context, systemPrompt string) (*Chat, err
 	return c, nil
 }
 
-// ListChats returns all chats, most-recently-updated first.
-func (s *Store) ListChats(ctx context.Context) ([]Chat, error) {
-	var chats []Chat
-	if err := s.db.WithContext(ctx).Order("updated_at desc").Find(&chats).Error; err != nil {
-		return nil, err
+// ChatsPageDefaultLimit is used when a caller passes limit <= 0.
+const ChatsPageDefaultLimit = 20
+
+// ChatsPageMaxLimit bounds limit regardless of what a caller requests.
+const ChatsPageMaxLimit = 100
+
+// ErrInvalidCursor is returned by ListChats when cursor doesn't decode.
+var ErrInvalidCursor = errors.New("invalid cursor")
+
+// chatCursor is a keyset position: the (updated_at, id) of the last chat on
+// the previous page. id breaks ties on updated_at and gives every chat a
+// stable position, which an offset can't: updated_at changes whenever a run
+// is active on that chat, so an offset would skip or repeat a row across two
+// requests straddling that change.
+type chatCursor struct {
+	UpdatedAt time.Time `json:"u"`
+	ID        string    `json:"i"`
+}
+
+func encodeChatCursor(c chatCursor) string {
+	b, _ := json.Marshal(c)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func decodeChatCursor(s string) (chatCursor, error) {
+	var c chatCursor
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return c, fmt.Errorf("%w: %v", ErrInvalidCursor, err)
 	}
-	return chats, nil
+	if err := json.Unmarshal(b, &c); err != nil {
+		return c, fmt.Errorf("%w: %v", ErrInvalidCursor, err)
+	}
+	return c, nil
+}
+
+// ListChats returns up to limit chats, most-recently-updated first, starting
+// after cursor ("" for the first page). It returns the cursor for the next
+// page, or "" if this page was the last. limit <= 0 becomes
+// ChatsPageDefaultLimit; limit above ChatsPageMaxLimit is capped.
+//
+// This is keyset (not offset) pagination: see chatCursor.
+func (s *Store) ListChats(ctx context.Context, limit int, cursor string) ([]Chat, string, error) {
+	if limit <= 0 {
+		limit = ChatsPageDefaultLimit
+	} else if limit > ChatsPageMaxLimit {
+		limit = ChatsPageMaxLimit
+	}
+
+	q := s.db.WithContext(ctx).Order("updated_at desc, id desc").Limit(limit + 1)
+	if cursor != "" {
+		c, err := decodeChatCursor(cursor)
+		if err != nil {
+			return nil, "", err
+		}
+		q = q.Where("updated_at < ? OR (updated_at = ? AND id < ?)", c.UpdatedAt, c.UpdatedAt, c.ID)
+	}
+
+	var chats []Chat
+	if err := q.Find(&chats).Error; err != nil {
+		return nil, "", err
+	}
+
+	next := ""
+	if len(chats) > limit {
+		chats = chats[:limit]
+		last := chats[limit-1]
+		next = encodeChatCursor(chatCursor{UpdatedAt: last.UpdatedAt, ID: last.ID})
+	}
+	return chats, next, nil
 }
 
 // GetChat returns one chat, or (nil, nil) if it does not exist.

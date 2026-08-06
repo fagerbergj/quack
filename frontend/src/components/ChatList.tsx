@@ -25,9 +25,14 @@ export interface ChatListProps {
   onNewChat: () => void
   onDelete: (id: string, e: React.MouseEvent) => void
   onCloseMobile: () => void
+  // #736: the chat list is server-paginated - a `next_cursor` means more
+  // chats exist beyond what's loaded.
+  hasMoreChats?: boolean
+  onLoadMoreChats?: () => void
+  loadingMoreChats?: boolean
 }
 
-export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDelete, onCloseMobile }: ChatListProps) {
+export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDelete, onCloseMobile, hasMoreChats, onLoadMoreChats, loadingMoreChats }: ChatListProps) {
   const search = useSearch()
   const filterState = parseFilterState(search)
   const { q, selected } = filterState
@@ -150,6 +155,15 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
             </div>
           )
         })}
+        {hasMoreChats && (
+          <button
+            onClick={onLoadMoreChats}
+            disabled={loadingMoreChats}
+            className="w-full text-xs text-center py-2.5 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"
+          >
+            {loadingMoreChats ? 'Loading…' : 'Load more'}
+          </button>
+        )}
       </div>
     </div>
   )

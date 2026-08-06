@@ -12,6 +12,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,13 +61,26 @@ func NewClient(ctx context.Context, override string) (*Client, error) {
 // ErrNotFound is returned by client calls when the server responds 404.
 var ErrNotFound = errors.New("not found")
 
-// ListChats returns all chats (server orders most-recently-updated first).
+// ListChats returns all chats (server orders most-recently-updated first),
+// paging through the server's cursor-paginated endpoint at its max page size.
 func (c *Client) ListChats(ctx context.Context) ([]schema.ChatSummary, error) {
-	var out schema.ChatList
-	if err := c.getJSON(ctx, "/api/v1/chats", &out); err != nil {
-		return nil, err
+	var all []schema.ChatSummary
+	cursor := ""
+	for {
+		path := "/api/v1/chats?limit=100"
+		if cursor != "" {
+			path += "&cursor=" + url.QueryEscape(cursor)
+		}
+		var out schema.ChatList
+		if err := c.getJSON(ctx, path, &out); err != nil {
+			return nil, err
+		}
+		all = append(all, out.Data...)
+		if out.NextCursor == nil || *out.NextCursor == "" {
+			return all, nil
+		}
+		cursor = *out.NextCursor
 	}
-	return out.Data, nil
 }
 
 // ListRecordings returns every session the replay ledger has an entry for

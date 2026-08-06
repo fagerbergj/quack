@@ -104,6 +104,14 @@ export default function Chat() {
 
   const store = useChatStore()
   const [chats, setChats] = useState<ChatSummary[]>([])
+  // Cursor for the next page of chats (#736: the sidebar list is server-paginated).
+  // undefined once the last page has loaded.
+  const [chatsNextCursor, setChatsNextCursor] = useState<string | undefined>(undefined)
+  const [loadingMoreChats, setLoadingMoreChats] = useState(false)
+  // Lets the 5s poll re-request as many chats as are already loaded, instead
+  // of always re-requesting just the first page and silently collapsing a
+  // sidebar the user has paged further into.
+  const chatsCountRef = useRef(0)
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
   // Set once GET /chats/{id} has seeded this chat's turns - gates the status-
   // triggered re-attach below so it can never fire ahead of seed() (#463: the
@@ -133,8 +141,23 @@ export default function Chat() {
   const loadChats = useCallback(async () => {
     const result = await api.listChats()
     setChats(result.data)
+    setChatsNextCursor(result.next_cursor)
     return result.data
   }, [])
+
+  useEffect(() => { chatsCountRef.current = chats.length }, [chats])
+
+  const loadMoreChats = useCallback(async () => {
+    if (!chatsNextCursor || loadingMoreChats) return
+    setLoadingMoreChats(true)
+    try {
+      const result = await api.listChats({ cursor: chatsNextCursor })
+      setChats(prev => [...prev, ...result.data])
+      setChatsNextCursor(result.next_cursor)
+    } finally {
+      setLoadingMoreChats(false)
+    }
+  }, [chatsNextCursor, loadingMoreChats])
 
   useEffect(() => {
     loadChats().then(data => {
@@ -187,8 +210,15 @@ export default function Chat() {
     let cancelled = false
     async function doPoll() {
       try {
-        const result = await api.listChats()
-        if (!cancelled) setChats(result.data)
+        // Re-request as many chats as are already loaded (not just the first
+        // page), so a sidebar the user has paged into doesn't collapse back
+        // to page 1 every 5s.
+        const limit = chatsCountRef.current || undefined
+        const result = await api.listChats(limit ? { limit } : undefined)
+        if (!cancelled) {
+          setChats(result.data)
+          setChatsNextCursor(result.next_cursor)
+        }
       } catch { /* transient - next poll will retry */ }
     }
     loadChats().then(data => { if (!cancelled) setChats(data) })
@@ -403,6 +433,9 @@ export default function Chat() {
         onNewChat={handleNewChat}
         onDelete={handleDeleteChat}
         onCloseMobile={() => setChatListOpen(false)}
+        hasMoreChats={chatsNextCursor !== undefined}
+        onLoadMoreChats={loadMoreChats}
+        loadingMoreChats={loadingMoreChats}
       />
 
       <div className="flex flex-col flex-1 min-w-0">
