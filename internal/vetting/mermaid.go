@@ -19,6 +19,31 @@ import (
 // fenceOpenRe matches a fence-opening line (CommonMark: 3 leading spaces, 3+ backticks/tildes, optional info).
 var fenceOpenRe = regexp.MustCompile(`(?i)^( {0,3})(` + "`{3,}|~{3,}" + `)[ \t]*(\S*)`)
 
+// mermaidLineRe matches jison's fixed "Parse error on line N:" header - part
+// of jison's own generated-parser boilerplate, not mermaid's prose about the
+// diagram (#735).
+var mermaidLineRe = regexp.MustCompile(`^Parse error on line (\d+):$`)
+
+// mermaidGotTokenRe pulls the terminal jison actually saw out of its
+// "Expecting '...', got '<TOKEN>'" tail. That token is the signal; the
+// Expecting list is grammar-internal noise we deliberately drop.
+var mermaidGotTokenRe = regexp.MustCompile(`got '([^']*)'\s*$`)
+
+// mermaidLabelPunctuation maps a jison terminal to the unquoted character
+// that produced it, for the single family of errors this translates: a
+// punctuation character mermaid treats as a label terminator. Confirmed
+// against the live parser (each character here reproduced, and quoting the
+// label fixed, every case below) - not guessed from mermaid's grammar names.
+var mermaidLabelPunctuation = map[string]string{
+	"PS":            "(",
+	"PE":            ")",
+	"SQS":           "[",
+	"DIAMOND_START": "{",
+	"DIAMOND_STOP":  "}",
+	"PIPE":          "|",
+	"STR":           `"`,
+}
+
 // mermaidIssue: one invalid top-level ```mermaid block: line number + reason.
 type mermaidIssue struct {
 	line int
@@ -41,9 +66,28 @@ func FindInvalidMermaid(md string) []mermaidIssue {
 }
 
 // Feedback formats one issue as "line N: reason" - the shape mermaidCriterion
-// feeds the gate; github/webhook.go reuses it for the plan/research nudge.
+// feeds the gate.
 func (i mermaidIssue) Feedback() string {
 	return fmt.Sprintf("line %d: %s", i.line, i.err)
+}
+
+// FeedbackBlock renders one issue as a markdown fenced block: github/webhook.go's
+// revise nudge embeds this in a GitHub comment, where bare newlines inside a
+// "- " bullet break the list AND misalign the parser's caret (#735).
+func (i mermaidIssue) FeedbackBlock() string {
+	return fmt.Sprintf("line %d:\n```\n%s\n```", i.line, i.err)
+}
+
+// FormatMermaidNudgeBody joins each issue as its own fenced markdown block -
+// github/webhook.go's revise nudge embeds this in a GitHub comment, where a
+// "- " bullet list would break on the issues' embedded newlines and misalign
+// the parser's caret (#735).
+func FormatMermaidNudgeBody(issues []mermaidIssue) string {
+	blocks := make([]string, len(issues))
+	for i, iss := range issues {
+		blocks[i] = iss.FeedbackBlock()
+	}
+	return strings.Join(blocks, "\n\n")
 }
 
 // walkMermaidBlocks visits each top-level ```mermaid block with its body text.
@@ -170,9 +214,65 @@ func mermaidError(body string) string {
 		return fmt.Sprintf("the mermaid validator produced unreadable output: %s", out)
 	}
 	if !res.OK {
-		return "parse error: " + res.Error
+		return translateMermaidError(res.Error)
 	}
 	return ""
+}
+
+// translateMermaidError turns mermaid's raw jison parse error into a message
+// a worker can act on: keep the diagram's own line/column and source excerpt
+// (the caret genuinely points at the offending column), drop the
+// grammar-internal "Expecting '...'" token list, and translate the "got
+// '<TOKEN>'" terminal into a plain-language cause when it's a known
+// unquoted-punctuation case. Parses jison's fixed output structure, never
+// mermaid's English prose (#735) - that changes between mermaid versions,
+// the structure doesn't.
+func translateMermaidError(raw string) string {
+	lines := strings.Split(raw, "\n")
+	if len(lines) < 4 {
+		return unrecognizedMermaidError(raw)
+	}
+	m := mermaidLineRe.FindStringSubmatch(lines[0])
+	if m == nil {
+		return unrecognizedMermaidError(raw)
+	}
+	excerpt, caretLine := lines[1], lines[2]
+	caretIdx := strings.IndexByte(caretLine, '^')
+	if caretIdx < 0 || strings.Trim(caretLine[:caretIdx], "-") != "" {
+		return unrecognizedMermaidError(raw)
+	}
+	tail := strings.Join(lines[3:], "\n")
+
+	tok := mermaidGotTokenRe.FindStringSubmatch(tail)
+	if tok == nil {
+		return unrecognizedMermaidError(raw)
+	}
+	ch, known := mermaidLabelPunctuation[tok[1]]
+	if !known {
+		return unrecognizedMermaidError(raw)
+	}
+	return fmt.Sprintf(
+		"parse error: diagram line %s, column %d:\n    %s\n    %s\n"+
+			"unquoted %q inside a node label - mermaid treats it as ending the label there.\n"+
+			"Wrap the whole label in double quotes (e.g. G[\"...\"]) so %q is read as literal text.",
+		m[1], caretIdx+1, excerpt, caretLine, ch, ch)
+}
+
+// unrecognizedMermaidError is the fallback for any error shape or "got" token
+// translateMermaidError doesn't recognize: still names where it broke (when
+// jison's structure is present) and a generic quoting hint, and always keeps
+// the raw parser text - never swallowed into a generic message (#735).
+func unrecognizedMermaidError(raw string) string {
+	lines := strings.Split(raw, "\n")
+	var located string
+	if m := mermaidLineRe.FindStringSubmatch(lines[0]); m != nil && len(lines) >= 3 {
+		if caretIdx := strings.IndexByte(lines[2], '^'); caretIdx >= 0 {
+			located = fmt.Sprintf("diagram line %s, column %d:\n    %s\n    %s\n", m[1], caretIdx+1, lines[1], lines[2])
+		}
+	}
+	return "parse error: " + located +
+		"if a node label contains punctuation such as ( ) [ ] { } | \" , wrapping it in double quotes " +
+		"(e.g. G[\"...\"]) usually fixes it. Raw parser error:\n" + raw
 }
 
 // mermaidCriterion scans the answer and staged delivery bodies for invalid ```mermaid blocks.

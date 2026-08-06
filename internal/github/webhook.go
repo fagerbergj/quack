@@ -1019,9 +1019,13 @@ func (e *Extension) reviseInvalidMermaid(runCtx context.Context, uid, sessionID,
 	}
 	slog.Warn("github: plan/research answer has invalid mermaid; nudging one revise",
 		"component", "github", "repo", owner+"/"+repo, "issue", number, "issues", feedback)
+	// Each issue gets its own fenced block, not a "- " bullet: bare newlines
+	// inside a markdown list item break the list AND misalign the parser's
+	// caret (#735).
 	nudge := fmt.Sprintf(
-		"Your last answer contains invalid mermaid diagram(s) that GitHub cannot render:\n\n- %s\n\nFix each diagram so it parses, or remove it if it isn't essential, then repost your complete answer.",
-		strings.Join(feedback, "\n- "))
+		"Your last answer contains invalid mermaid diagram(s) that GitHub cannot render:\n\n%s\n\n"+
+			"Fix each diagram so it parses, or remove it if it isn't essential, then repost your complete answer.",
+		vetting.FormatMermaidNudgeBody(issues))
 	e.drive(runCtx, uid, sessionID, nudge, owner, repo, number, turnID, pub)
 	if revised := strings.TrimSpace(e.runner.LatestAnswer(runCtx, uid, sessionID)); revised != "" {
 		answer = revised
