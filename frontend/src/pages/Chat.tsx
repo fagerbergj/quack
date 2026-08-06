@@ -29,6 +29,18 @@ export function shouldQueueSubmit(streaming: boolean): boolean {
   return streaming
 }
 
+// mergeChatsPage folds a freshly-polled page (server order: most-recently-
+// updated first) into the existing list without ever shortening it: a chat
+// in `page` replaces its stale copy (or is added if new); everything else in
+// `existing` - beyond what a bounded page can cover - is left untouched.
+// Safe to concatenate in this order: `page` is exactly the current top N by
+// updated_at, so nothing left in `existing` can outrank it (#736 - the poll
+// must never truncate a sidebar the user has paged past the page cap).
+export function mergeChatsPage(existing: ChatSummary[], page: ChatSummary[]): ChatSummary[] {
+  const pageIds = new Set(page.map(c => c.id))
+  return [...page, ...existing.filter(c => !pageIds.has(c.id))]
+}
+
 // chatGitHubLink (#382) extracts the header's back-link target from a chat's
 // summary: present only for a GitHub-originated chat (github_url set by the
 // webhook at dispatch time), null for a direct chat - so the header renders
@@ -104,6 +116,11 @@ export default function Chat() {
 
   const store = useChatStore()
   const [chats, setChats] = useState<ChatSummary[]>([])
+  // Opaque continuation token for the next page of chats (#736: the sidebar
+  // list is server-paginated). undefined once the last page has loaded;
+  // never parsed here, only ever passed back to the server verbatim.
+  const [chatsNextPageToken, setChatsNextPageToken] = useState<string | undefined>(undefined)
+  const [loadingMoreChats, setLoadingMoreChats] = useState(false)
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
   // Set once GET /chats/{id} has seeded this chat's turns - gates the status-
   // triggered re-attach below so it can never fire ahead of seed() (#463: the
@@ -133,8 +150,21 @@ export default function Chat() {
   const loadChats = useCallback(async () => {
     const result = await api.listChats()
     setChats(result.data)
+    setChatsNextPageToken(result.next_page_token)
     return result.data
   }, [])
+
+  const loadMoreChats = useCallback(async () => {
+    if (!chatsNextPageToken || loadingMoreChats) return
+    setLoadingMoreChats(true)
+    try {
+      const result = await api.listChats({ page_token: chatsNextPageToken })
+      setChats(prev => [...prev, ...result.data])
+      setChatsNextPageToken(result.next_page_token)
+    } finally {
+      setLoadingMoreChats(false)
+    }
+  }, [chatsNextPageToken, loadingMoreChats])
 
   useEffect(() => {
     loadChats().then(data => {
@@ -187,8 +217,14 @@ export default function Chat() {
     let cancelled = false
     async function doPoll() {
       try {
+        // Always just the first (default-size) page, merged into whatever's
+        // already loaded - never re-requested at the loaded count, which
+        // above the server's page cap would silently come back shorter than
+        // what's on screen (#736). Chats are updated_at-sorted, so anything
+        // that just changed is in this page regardless of how far the user
+        // has paged; the pagination token is left untouched here.
         const result = await api.listChats()
-        if (!cancelled) setChats(result.data)
+        if (!cancelled) setChats(prev => mergeChatsPage(prev, result.data))
       } catch { /* transient - next poll will retry */ }
     }
     loadChats().then(data => { if (!cancelled) setChats(data) })
@@ -403,6 +439,9 @@ export default function Chat() {
         onNewChat={handleNewChat}
         onDelete={handleDeleteChat}
         onCloseMobile={() => setChatListOpen(false)}
+        hasMoreChats={chatsNextPageToken !== undefined}
+        onLoadMoreChats={loadMoreChats}
+        loadingMoreChats={loadingMoreChats}
       />
 
       <div className="flex flex-col flex-1 min-w-0">

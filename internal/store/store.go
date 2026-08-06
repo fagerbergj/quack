@@ -5,6 +5,8 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
@@ -341,13 +343,92 @@ func (s *Store) CreateChat(ctx context.Context, systemPrompt string) (*Chat, err
 	return c, nil
 }
 
-// ListChats returns all chats, most-recently-updated first.
-func (s *Store) ListChats(ctx context.Context) ([]Chat, error) {
-	var chats []Chat
-	if err := s.db.WithContext(ctx).Order("updated_at desc").Find(&chats).Error; err != nil {
-		return nil, err
+// ChatsPageDefaultLimit is used when a caller passes limit <= 0.
+const ChatsPageDefaultLimit = 20
+
+// ChatsPageMaxLimit bounds limit regardless of what a caller requests.
+const ChatsPageMaxLimit = 100
+
+// ErrInvalidPageToken is returned by ListChats when the page token doesn't
+// decode, or was issued under a different ordering than it's being replayed
+// against (never silently honored under the wrong one).
+var ErrInvalidPageToken = errors.New("invalid page token")
+
+// chatsSort names the ordering a page token was issued under. ListChats
+// supports exactly one ordering today; this exists so a future second
+// ordering gets its own value here instead of a token silently being
+// replayed against an ordering it wasn't issued for.
+type chatsSort string
+
+const chatsSortUpdatedAtDesc chatsSort = "updated_at_desc"
+
+// chatsPageToken is ListChats' opaque continuation token. The caller-visible
+// contract is just "an anchor under a named ordering": ID anchors it because
+// ID is immutable, unlike UpdatedAt, which churns under an active run.
+// UpdatedAt still rides along inside the token - resolving an ID anchor back
+// to its position in an updated_at-sorted list needs the value it was last
+// seen at, so the token carries it as its own implementation detail, not as
+// part of the contract a caller is meant to understand.
+type chatsPageToken struct {
+	Sort      chatsSort `json:"s"`
+	ID        string    `json:"i"`
+	UpdatedAt time.Time `json:"u"`
+}
+
+func encodeChatsPageToken(t chatsPageToken) string {
+	b, _ := json.Marshal(t)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func decodeChatsPageToken(s string) (chatsPageToken, error) {
+	var t chatsPageToken
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return t, fmt.Errorf("%w: %v", ErrInvalidPageToken, err)
 	}
-	return chats, nil
+	if err := json.Unmarshal(b, &t); err != nil {
+		return t, fmt.Errorf("%w: %v", ErrInvalidPageToken, err)
+	}
+	if t.Sort != chatsSortUpdatedAtDesc {
+		return t, fmt.Errorf("%w: issued for sort %q, not %q", ErrInvalidPageToken, t.Sort, chatsSortUpdatedAtDesc)
+	}
+	return t, nil
+}
+
+// ListChats returns up to limit chats, most-recently-updated first, starting
+// after pageToken ("" for the first page). It returns the opaque token for
+// the next page, or "" if this page was the last. limit <= 0 becomes
+// ChatsPageDefaultLimit; limit above ChatsPageMaxLimit is capped.
+//
+// This is keyset (not offset) pagination: see chatsPageToken.
+func (s *Store) ListChats(ctx context.Context, limit int, pageToken string) ([]Chat, string, error) {
+	if limit <= 0 {
+		limit = ChatsPageDefaultLimit
+	} else if limit > ChatsPageMaxLimit {
+		limit = ChatsPageMaxLimit
+	}
+
+	q := s.db.WithContext(ctx).Order("updated_at desc, id desc").Limit(limit + 1)
+	if pageToken != "" {
+		t, err := decodeChatsPageToken(pageToken)
+		if err != nil {
+			return nil, "", err
+		}
+		q = q.Where("updated_at < ? OR (updated_at = ? AND id < ?)", t.UpdatedAt, t.UpdatedAt, t.ID)
+	}
+
+	var chats []Chat
+	if err := q.Find(&chats).Error; err != nil {
+		return nil, "", err
+	}
+
+	next := ""
+	if len(chats) > limit {
+		chats = chats[:limit]
+		last := chats[limit-1]
+		next = encodeChatsPageToken(chatsPageToken{Sort: chatsSortUpdatedAtDesc, ID: last.ID, UpdatedAt: last.UpdatedAt})
+	}
+	return chats, next, nil
 }
 
 // GetChat returns one chat, or (nil, nil) if it does not exist.

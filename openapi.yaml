@@ -28,6 +28,22 @@ paths:
     get:
       operationId: listChats
       summary: List chats
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Max chats to return. Defaults to 20; capped at 100.
+          schema:
+            type: integer
+        - name: page_token
+          in: query
+          required: false
+          description: >
+            Opaque continuation token from a previous response's `next_page_token`.
+            Treat it as an opaque string: never parse or construct one, pass back
+            exactly what was returned. Omit for the first page.
+          schema:
+            type: string
       responses:
         "200":
           description: The chats
@@ -570,6 +586,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ChatSummary"
+        next_page_token:
+          type: string
+          description: >
+            Opaque token - pass as `page_token` to fetch the next page. Absent when
+            this page is the last. Treat as an opaque string: never parse it.
 
     # -------------------------------------------------------------------------
     # Replay ledger

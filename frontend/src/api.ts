@@ -29,7 +29,10 @@ function unwrap<T>(r: Result<T>): T {
 }
 
 export const api = {
-  listChats: async (): Promise<ChatList> => unwrap(await sdkListChats()),
+  // page_token is opaque - pass back exactly what a previous response's
+  // next_page_token gave, never parsed or constructed here.
+  listChats: async (opts?: { limit?: number; page_token?: string }): Promise<ChatList> =>
+    unwrap(await sdkListChats({ query: opts })),
 
   createChat: async (opts?: { system_prompt?: string }): Promise<ChatSummary> =>
     unwrap(await sdkCreateChat({ body: { system_prompt: opts?.system_prompt } })),
