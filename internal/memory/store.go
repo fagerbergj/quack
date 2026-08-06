@@ -167,9 +167,10 @@ func (s *Store) recall(ctx context.Context, buckets []string, query string) (*ad
 	return &adkmemory.SearchResponse{Memories: entries}, nil
 }
 
-// defaultListLimit caps an unbounded List/Search request so one caller can't
-// force a full-collection scan by omitting limit.
-const defaultListLimit = 50
+// DefaultListLimit caps an unbounded List/Search request so one caller can't
+// force a full-collection scan by omitting limit. Exported so the REST layer's
+// own default (the `limit` query param) stays the single source of truth.
+const DefaultListLimit = 50
 
 // ErrMemoryNotFound is returned by Forget when id names nothing in the index.
 var ErrMemoryNotFound = errors.New("memory: not found")
@@ -188,13 +189,13 @@ type Memory struct {
 }
 
 // List returns entries in the given buckets (every bucket if empty), newest
-// first, paged by offset/limit (limit<=0 defaults to defaultListLimit), plus
+// first, paged by offset/limit (limit<=0 defaults to DefaultListLimit), plus
 // the total count matching the same filter. Unlike Search/recall, this never
 // falls back to embedding search and never degrades on a failure - an
 // unreachable index is returned as an error, not an empty or partial result.
 func (s *Store) List(ctx context.Context, buckets []string, offset, limit int) ([]Memory, int, error) {
 	if limit <= 0 {
-		limit = defaultListLimit
+		limit = DefaultListLimit
 	}
 	if offset < 0 {
 		offset = 0
@@ -219,7 +220,7 @@ func (s *Store) Search(ctx context.Context, buckets []string, q string, limit in
 		return nil, fmt.Errorf("memory: search: empty query")
 	}
 	if limit <= 0 {
-		limit = defaultListLimit
+		limit = DefaultListLimit
 	}
 	vecs, err := s.embed(ctx, []string{q}, "explorer-search")
 	if err != nil {

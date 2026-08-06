@@ -34,7 +34,7 @@ func (h *Handler) ListMemories(w http.ResponseWriter, r *http.Request, params sc
 	if params.Bucket != nil && strings.TrimSpace(*params.Bucket) != "" {
 		buckets = []string{strings.TrimSpace(*params.Bucket)}
 	}
-	limit := 50
+	limit := memory.DefaultListLimit
 	if params.Limit != nil && *params.Limit > 0 {
 		limit = *params.Limit
 	}

@@ -29,12 +29,19 @@ export function useChatId(): string | undefined {
   return chatId
 }
 
-// The app's second page (#727): a plain prefix match, same spirit as
+// The app's second page (#727): a plain path match, same spirit as
 // readChatId - no route table, no dependency, just the one path this needs.
 export type Route = 'chat' | 'memory'
 
+// Pure (no window access) so it's directly testable - see router.test.ts.
+// Anchored to the full segment (/memory or /memory/...), not a bare prefix:
+// startsWith('/memory') would also match /memory-export.
+export function routeFor(pathname: string): Route {
+  return /^\/memory(\/|$)/.test(pathname) ? 'memory' : 'chat'
+}
+
 function readRoute(): Route {
-  return window.location.pathname.startsWith('/memory') ? 'memory' : 'chat'
+  return routeFor(window.location.pathname)
 }
 
 // Current top-level route from the URL; re-renders on navigate() and browser back/forward.
