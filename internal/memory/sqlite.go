@@ -84,6 +84,8 @@ func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32
 			Content:   r.Content,
 			Author:    r.Author,
 			Timestamp: r.Timestamp,
+			Kind:      r.Kind,
+			Scope:     r.Scope,
 			Score:     cosine(vec, bytesToVec(r.Vector)),
 		})
 	}
@@ -94,6 +96,40 @@ func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32
 		out = out[:k]
 	}
 	return out, nil
+}
+
+func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit int) ([]scored, error) {
+	q := x.db.WithContext(ctx).Where("collection = ?", x.coll)
+	if len(buckets) > 0 {
+		q = q.Where("scope IN ?", buckets)
+	}
+	// id DESC breaks timestamp ties deterministically, so paging never
+	// duplicates or drops a row across offset boundaries.
+	q = q.Order("timestamp DESC, id DESC").Offset(offset)
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	var rows []memoryRow
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("memory: sqlite list: %w", err)
+	}
+	out := make([]scored, len(rows))
+	for i, r := range rows {
+		out[i] = scored{ID: r.ID, Content: r.Content, Author: r.Author, Timestamp: r.Timestamp, Kind: r.Kind, Scope: r.Scope}
+	}
+	return out, nil
+}
+
+func (x *sqliteIndex) count(ctx context.Context, buckets []string) (int, error) {
+	q := x.db.WithContext(ctx).Model(&memoryRow{}).Where("collection = ?", x.coll)
+	if len(buckets) > 0 {
+		q = q.Where("scope IN ?", buckets)
+	}
+	var n int64
+	if err := q.Count(&n).Error; err != nil {
+		return 0, fmt.Errorf("memory: sqlite count: %w", err)
+	}
+	return int(n), nil
 }
 
 func (x *sqliteIndex) upsert(ctx context.Context, pts []point) error {
@@ -117,13 +153,17 @@ func (x *sqliteIndex) upsert(ctx context.Context, pts []point) error {
 	return nil
 }
 
-func (x *sqliteIndex) remove(ctx context.Context, ids []string) error {
-	if err := x.db.WithContext(ctx).
-		Where("collection = ? AND id IN ?", x.coll, ids).
-		Delete(&memoryRow{}).Error; err != nil {
-		return fmt.Errorf("memory: sqlite delete: %w", err)
+func (x *sqliteIndex) remove(ctx context.Context, ids []string) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
 	}
-	return nil
+	res := x.db.WithContext(ctx).
+		Where("collection = ? AND id IN ?", x.coll, ids).
+		Delete(&memoryRow{})
+	if res.Error != nil {
+		return 0, fmt.Errorf("memory: sqlite delete: %w", res.Error)
+	}
+	return int(res.RowsAffected), nil
 }
 
 // cosine is the cosine similarity of two equal-length vectors, in [-1, 1]; 0 for

@@ -340,6 +340,29 @@ type EditNodeTaskBody struct {
 // ItemStatus defines model for ItemStatus.
 type ItemStatus string
 
+// Memory defines model for Memory.
+type Memory struct {
+	Author string `json:"author"`
+
+	// Bucket repo:<name> / role:<coding|research> / user:<name>, or a legacy raw key.
+	Bucket  string `json:"bucket"`
+	Content string `json:"content"`
+	Id      string `json:"id"`
+	Kind    string `json:"kind"`
+
+	// Score Cosine similarity to the search query. Present only when the request set `q`; meaningless (omitted) for a plain listing.
+	Score     *float32  `json:"score,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// MemoryList defines model for MemoryList.
+type MemoryList struct {
+	Memories []Memory `json:"memories"`
+
+	// Total Total entries matching the filter (not just this page). With `q`, this is just len(memories) - search returns a ranked top-K, not a stable count.
+	Total int `json:"total"`
+}
+
 // MessageOutputItem defines model for MessageOutputItem.
 type MessageOutputItem struct {
 	Content []ContentPart         `json:"content"`
@@ -504,6 +527,9 @@ type Usage struct {
 // ChatID defines model for ChatID.
 type ChatID = string
 
+// MemoryID defines model for MemoryID.
+type MemoryID = string
+
 // MessageID defines model for MessageID.
 type MessageID = string
 
@@ -520,6 +546,19 @@ type ListChatsParams struct {
 
 	// PageToken Opaque continuation token from a previous response's `next_page_token`. Treat it as an opaque string: never parse or construct one, pass back exactly what was returned. Omit for the first page.
 	PageToken *string `form:"page_token,omitempty" json:"page_token,omitempty"`
+}
+
+// ListMemoriesParams defines parameters for ListMemories.
+type ListMemoriesParams struct {
+	// Bucket Restrict to one bucket (e.g. `repo:NightsOut`, `role:coding`, `user:jason`). Omitted lists/searches every bucket.
+	Bucket *string `form:"bucket,omitempty" json:"bucket,omitempty"`
+
+	// Q Run an embedding search instead of listing; matches then carry `score`.
+	Q     *string `form:"q,omitempty" json:"q,omitempty"`
+	Limit *int    `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Offset Ignored when `q` is set (search ranks by score, not a stable page).
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
 }
 
 // CreateChatJSONRequestBody defines body for CreateChat for application/json ContentType.
@@ -801,6 +840,12 @@ type ServerInterface interface {
 	// Subscribe to a chat's live response stream
 	// (GET /api/v1/chats/{chat_id}/stream)
 	SubscribeChatStream(w http.ResponseWriter, r *http.Request, chatId ChatID)
+	// Browse or search quack's semantic memory
+	// (GET /api/v1/memories)
+	ListMemories(w http.ResponseWriter, r *http.Request, params ListMemoriesParams)
+	// Forget one memory
+	// (DELETE /api/v1/memories/{memory_id})
+	DeleteMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryID)
 	// List recorded chat sessions
 	// (GET /api/v1/recordings)
 	ListRecordings(w http.ResponseWriter, r *http.Request)
@@ -900,6 +945,18 @@ func (_ Unimplemented) UpdateResponseStatus(w http.ResponseWriter, r *http.Reque
 // Subscribe to a chat's live response stream
 // (GET /api/v1/chats/{chat_id}/stream)
 func (_ Unimplemented) SubscribeChatStream(w http.ResponseWriter, r *http.Request, chatId ChatID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Browse or search quack's semantic memory
+// (GET /api/v1/memories)
+func (_ Unimplemented) ListMemories(w http.ResponseWriter, r *http.Request, params ListMemoriesParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Forget one memory
+// (DELETE /api/v1/memories/{memory_id})
+func (_ Unimplemented) DeleteMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1403,6 +1460,104 @@ func (siw *ServerInterfaceWrapper) SubscribeChatStream(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// ListMemories operation middleware
+func (siw *ServerInterfaceWrapper) ListMemories(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListMemoriesParams
+
+	// ------------- Optional query parameter "bucket" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "bucket", r.URL.Query(), &params.Bucket, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "bucket"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bucket", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListMemories(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteMemory operation middleware
+func (siw *ServerInterfaceWrapper) DeleteMemory(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "memory_id" -------------
+	var memoryId MemoryID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "memory_id", chi.URLParam(r, "memory_id"), &memoryId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "memory_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteMemory(w, r, memoryId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListRecordings operation middleware
 func (siw *ServerInterfaceWrapper) ListRecordings(w http.ResponseWriter, r *http.Request) {
 
@@ -1588,6 +1743,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/chats/{chat_id}/stream", wrapper.SubscribeChatStream)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/memories", wrapper.ListMemories)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/memories/{memory_id}", wrapper.DeleteMemory)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/recordings", wrapper.ListRecordings)

@@ -70,6 +70,14 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
           New Chat
         </button>
         <button
+          onClick={() => navigate('/memory')}
+          aria-label="Browse memory"
+          title="Browse memory"
+          className="flex-shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1.5 rounded border border-gray-300 dark:border-gray-600 transition-colors"
+        >
+          🧠
+        </button>
+        <button
           onClick={onCloseMobile}
           className="md:hidden text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1.5 rounded transition-colors"
           aria-label="Close chat list"

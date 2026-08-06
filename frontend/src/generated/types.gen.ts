@@ -44,6 +44,30 @@ export type ChatList = {
     next_page_token?: string;
 };
 
+export type Memory = {
+    id: string;
+    content: string;
+    /**
+     * repo:<name> / role:<coding|research> / user:<name>, or a legacy raw key.
+     */
+    bucket: string;
+    author: string;
+    timestamp: string;
+    kind: string;
+    /**
+     * Cosine similarity to the search query. Present only when the request set `q`; meaningless (omitted) for a plain listing.
+     */
+    score?: number;
+};
+
+export type MemoryList = {
+    memories: Array<Memory>;
+    /**
+     * Total entries matching the filter (not just this page). With `q`, this is just len(memories) - search returns a ranked top-K, not a stable count.
+     */
+    total: number;
+};
+
 export type RecordingSummary = {
     chat_id: string;
     size_bytes: number;
@@ -244,6 +268,8 @@ export type NodeId = string;
 export type MessageId = string;
 
 export type ResponseId = string;
+
+export type MemoryId = string;
 
 export type HealthCheckData = {
     body?: never;
@@ -660,3 +686,65 @@ export type UpdateResponseStatusResponses = {
 };
 
 export type UpdateResponseStatusResponse = UpdateResponseStatusResponses[keyof UpdateResponseStatusResponses];
+
+export type ListMemoriesData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Restrict to one bucket (e.g. `repo:NightsOut`, `role:coding`, `user:jason`). Omitted lists/searches every bucket.
+         */
+        bucket?: string;
+        /**
+         * Run an embedding search instead of listing; matches then carry `score`.
+         */
+        q?: string;
+        limit?: number;
+        /**
+         * Ignored when `q` is set (search ranks by score, not a stable page).
+         */
+        offset?: number;
+    };
+    url: '/api/v1/memories';
+};
+
+export type ListMemoriesErrors = {
+    /**
+     * The memory index is unreachable
+     */
+    500: unknown;
+};
+
+export type ListMemoriesResponses = {
+    /**
+     * The matching memories
+     */
+    200: MemoryList;
+};
+
+export type ListMemoriesResponse = ListMemoriesResponses[keyof ListMemoriesResponses];
+
+export type DeleteMemoryData = {
+    body?: never;
+    path: {
+        memory_id: string;
+    };
+    query?: never;
+    url: '/api/v1/memories/{memory_id}';
+};
+
+export type DeleteMemoryErrors = {
+    /**
+     * No such memory
+     */
+    404: unknown;
+};
+
+export type DeleteMemoryResponses = {
+    /**
+     * Forgotten
+     */
+    204: void;
+};
+
+export type DeleteMemoryResponse = DeleteMemoryResponses[keyof DeleteMemoryResponses];

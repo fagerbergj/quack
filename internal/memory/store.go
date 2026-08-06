@@ -3,6 +3,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -23,8 +24,14 @@ type index interface {
 	ensure(ctx context.Context, probeDim func() (int, error)) error
 	// query returns up to k points in any of the given buckets, nearest by cosine.
 	query(ctx context.Context, buckets []string, vec []float32, k int) ([]scored, error)
+	// list returns up to `limit` points in any of the given buckets (all buckets if
+	// empty), newest first by Timestamp, skipping `offset`. limit<=0 means no cap.
+	list(ctx context.Context, buckets []string, offset, limit int) ([]scored, error)
+	// count returns how many points match buckets (all buckets if empty).
+	count(ctx context.Context, buckets []string) (int, error)
 	upsert(ctx context.Context, pts []point) error
-	remove(ctx context.Context, ids []string) error
+	// remove deletes the named ids and reports how many actually existed.
+	remove(ctx context.Context, ids []string) (int, error)
 }
 
 // scored is one ranked memory.
@@ -33,6 +40,8 @@ type scored struct {
 	Content   string
 	Author    string
 	Timestamp string
+	Kind      string
+	Scope     string // the bucket this point is stored under
 	Score     float32
 }
 
@@ -156,6 +165,100 @@ func (s *Store) recall(ctx context.Context, buckets []string, query string) (*ad
 		"query", preview(query), "raw", len(pts), "top_score", topScore,
 		"min_score", s.minScore, "dropped", dropped, "hits", len(entries), "memories", previews)
 	return &adkmemory.SearchResponse{Memories: entries}, nil
+}
+
+// DefaultListLimit caps an unbounded List/Search request so one caller can't
+// force a full-collection scan by omitting limit. Exported so the REST layer's
+// own default (the `limit` query param) stays the single source of truth.
+const DefaultListLimit = 50
+
+// ErrMemoryNotFound is returned by Forget when id names nothing in the index.
+var ErrMemoryNotFound = errors.New("memory: not found")
+
+// Memory is one entry as the explorer (browse or search) sees it - the M6
+// storage-layer scored/point pair flattened to what a caller outside this
+// package needs. Score is meaningful only from Search; List leaves it zero.
+type Memory struct {
+	ID        string
+	Content   string
+	Bucket    string
+	Author    string
+	Timestamp string
+	Kind      string
+	Score     float32
+}
+
+// List returns entries in the given buckets (every bucket if empty), newest
+// first, paged by offset/limit (limit<=0 defaults to DefaultListLimit), plus
+// the total count matching the same filter. Unlike Search/recall, this never
+// falls back to embedding search and never degrades on a failure - an
+// unreachable index is returned as an error, not an empty or partial result.
+func (s *Store) List(ctx context.Context, buckets []string, offset, limit int) ([]Memory, int, error) {
+	if limit <= 0 {
+		limit = DefaultListLimit
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	pts, err := s.idx.list(ctx, buckets, offset, limit)
+	if err != nil {
+		return nil, 0, fmt.Errorf("memory: list %q: %w", s.coll, err)
+	}
+	total, err := s.idx.count(ctx, buckets)
+	if err != nil {
+		return nil, 0, fmt.Errorf("memory: count %q: %w", s.coll, err)
+	}
+	return toMemories(pts), total, nil
+}
+
+// Search embeds q and returns up to `limit` memories across buckets ranked by
+// cosine score, descending - "what would a run recall for this". Unlike the
+// ADK-facing recall path, an embed or index failure is returned, not swallowed.
+func (s *Store) Search(ctx context.Context, buckets []string, q string, limit int) ([]Memory, error) {
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return nil, fmt.Errorf("memory: search: empty query")
+	}
+	if limit <= 0 {
+		limit = DefaultListLimit
+	}
+	vecs, err := s.embed(ctx, []string{q}, "explorer-search")
+	if err != nil {
+		return nil, fmt.Errorf("memory: embed: %w", err)
+	}
+	if len(vecs) == 0 {
+		return nil, fmt.Errorf("memory: embed returned no vector")
+	}
+	pts, err := s.idx.query(ctx, buckets, vecs[0], limit)
+	if err != nil {
+		return nil, fmt.Errorf("memory: query %q: %w", s.coll, err)
+	}
+	return toMemories(pts), nil
+}
+
+// Forget deletes one memory by id - a real delete against the index, not a
+// tombstone. ErrMemoryNotFound if id isn't in the index.
+func (s *Store) Forget(ctx context.Context, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ErrMemoryNotFound
+	}
+	n, err := s.idx.remove(ctx, []string{id})
+	if err != nil {
+		return fmt.Errorf("memory: forget %q: %w", id, err)
+	}
+	if n == 0 {
+		return ErrMemoryNotFound
+	}
+	return nil
+}
+
+func toMemories(pts []scored) []Memory {
+	out := make([]Memory, len(pts))
+	for i, p := range pts {
+		out[i] = Memory{ID: p.ID, Content: p.Content, Bucket: p.Scope, Author: p.Author, Timestamp: p.Timestamp, Kind: p.Kind, Score: p.Score}
+	}
+	return out
 }
 
 // embed wraps the embedder with hot-path timing.

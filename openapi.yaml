@@ -491,6 +491,65 @@ paths:
         "404":
           description: This response is not the active run
 
+  /api/v1/memories:
+    get:
+      operationId: listMemories
+      summary: Browse or search quack's semantic memory
+      description: |
+        Without `q`: lists a bucket's entries verbatim, newest first - what
+        quack believes, not what it would recall for some query. An
+        unreachable index is a 500; it never silently falls back to search or
+        returns a partial result. With `q`: runs the same embedding search a
+        live run's recall would use, so the tab can answer "what would a run
+        recall for this?" - entries then carry `score`, ordered descending.
+      parameters:
+        - name: bucket
+          in: query
+          description: Restrict to one bucket (e.g. `repo:NightsOut`, `role:coding`, `user:jason`). Omitted lists/searches every bucket.
+          schema:
+            type: string
+        - name: q
+          in: query
+          description: Run an embedding search instead of listing; matches then carry `score`.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          description: Ignored when `q` is set (search ranks by score, not a stable page).
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: The matching memories
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryList"
+        "500":
+          description: The memory index is unreachable
+
+  /api/v1/memories/{memory_id}:
+    delete:
+      operationId: deleteMemory
+      summary: Forget one memory
+      description: |
+        A real delete against the vector index, not a tombstone - if a
+        forgotten fact gets re-learned by a later run's consolidation, that's
+        a separate concern (suppression), not this endpoint's job.
+      parameters:
+        - $ref: "#/components/parameters/MemoryID"
+      responses:
+        "204":
+          description: Forgotten
+        "404":
+          description: No such memory
+
 components:
   parameters:
     ChatID:
@@ -516,6 +575,13 @@ components:
 
     ResponseID:
       name: response_id
+      in: path
+      required: true
+      schema:
+        type: string
+
+    MemoryID:
+      name: memory_id
       in: path
       required: true
       schema:
@@ -591,6 +657,45 @@ components:
           description: >
             Opaque token - pass as `page_token` to fetch the next page. Absent when
             this page is the last. Treat as an opaque string: never parse it.
+
+    # -------------------------------------------------------------------------
+    # Semantic memory (the M6 explorer - browse what quack believes, and forget)
+    # -------------------------------------------------------------------------
+
+    Memory:
+      type: object
+      required: [id, content, bucket, author, timestamp, kind]
+      properties:
+        id:
+          type: string
+        content:
+          type: string
+        bucket:
+          type: string
+          description: repo:<name> / role:<coding|research> / user:<name>, or a legacy raw key.
+        author:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        kind:
+          type: string
+        score:
+          type: number
+          format: float
+          description: Cosine similarity to the search query. Present only when the request set `q`; meaningless (omitted) for a plain listing.
+
+    MemoryList:
+      type: object
+      required: [memories, total]
+      properties:
+        memories:
+          type: array
+          items:
+            $ref: "#/components/schemas/Memory"
+        total:
+          type: integer
+          description: Total entries matching the filter (not just this page). With `q`, this is just len(memories) - search returns a ranked top-K, not a stable count.
 
     # -------------------------------------------------------------------------
     # Replay ledger
