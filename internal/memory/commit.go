@@ -314,7 +314,7 @@ func (s *Store) apply(ctx context.Context, bucket, author string, ops []op, vali
 	}
 
 	if len(dels) > 0 {
-		if err := s.idx.remove(ctx, dels); err != nil {
+		if _, err := s.idx.remove(ctx, dels); err != nil {
 			return 0, err
 		}
 		count += len(dels)

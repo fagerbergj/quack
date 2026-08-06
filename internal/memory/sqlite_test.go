@@ -52,8 +52,8 @@ func TestSQLiteIndex(t *testing.T) {
 	}
 
 	// DELETE removes only the named id.
-	if err := s.idx.remove(ctx, []string{"a"}); err != nil {
-		t.Fatalf("remove: %v", err)
+	if n, err := s.idx.remove(ctx, []string{"a"}); err != nil || n != 1 {
+		t.Fatalf("remove: n=%d err=%v, want n=1 err=nil", n, err)
 	}
 	if got, _ = s.idx.query(ctx, []string{"x"}, []float32{1, 0, 0}, 5); len(got) != 2 {
 		t.Fatalf("after DELETE: %d rows, want 2", len(got))

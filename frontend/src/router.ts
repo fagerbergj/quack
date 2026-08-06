@@ -29,6 +29,25 @@ export function useChatId(): string | undefined {
   return chatId
 }
 
+// The app's second page (#727): a plain prefix match, same spirit as
+// readChatId - no route table, no dependency, just the one path this needs.
+export type Route = 'chat' | 'memory'
+
+function readRoute(): Route {
+  return window.location.pathname.startsWith('/memory') ? 'memory' : 'chat'
+}
+
+// Current top-level route from the URL; re-renders on navigate() and browser back/forward.
+export function useRoute(): Route {
+  const [route, setRoute] = useState(readRoute)
+  useEffect(() => {
+    const onPop = () => setRoute(readRoute())
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+  return route
+}
+
 // Current query string (e.g. "?q=foo&status=running"), the sidebar's filter
 // state; re-renders on navigate() and browser back/forward. Write with
 // navigate(pathname + '?' + qs, { replace: true }).

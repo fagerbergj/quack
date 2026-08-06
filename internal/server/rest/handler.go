@@ -22,6 +22,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/runlog"
@@ -57,14 +58,16 @@ type Handler struct {
 	eventLog     *runlog.EventLog   // durably persists the run stream, backing replay across restarts
 	ledgerStore  ledger.LedgerStore // replay ledger backend; nil ⇒ recording disabled, GetChatRecording 404s
 	quackVersion string             // build stamp, stamped into a recording bundle's manifest.json
+	taskMem      *memory.Store      // repo:/role: buckets; nil ⇒ task memory disabled
+	userMem      *memory.Store      // user: buckets; nil ⇒ user memory disabled
 }
 
-// NewHandler builds a REST handler. jail/hub/ledgerStore may be nil; hub defaults to a private hub.
-func NewHandler(s *store.Store, o *orchestrator.Orchestrator, titler model.LLM, jail *workspace.Jail, hub *stream.Hub, ledgerStore ledger.LedgerStore, quackVersion string) *Handler {
+// NewHandler builds a REST handler. jail/hub/ledgerStore/taskMem/userMem may be nil; hub defaults to a private hub.
+func NewHandler(s *store.Store, o *orchestrator.Orchestrator, titler model.LLM, jail *workspace.Jail, hub *stream.Hub, ledgerStore ledger.LedgerStore, quackVersion string, taskMem, userMem *memory.Store) *Handler {
 	if hub == nil {
 		hub = stream.NewHub()
 	}
-	return &Handler{store: s, orch: o, titler: titler, jail: jail, hub: hub, eventLog: runlog.NewEventLog(s), ledgerStore: ledgerStore, quackVersion: quackVersion}
+	return &Handler{store: s, orch: o, titler: titler, jail: jail, hub: hub, eventLog: runlog.NewEventLog(s), ledgerStore: ledgerStore, quackVersion: quackVersion, taskMem: taskMem, userMem: userMem}
 }
 
 func (h *Handler) generateTitle(ctx context.Context, chatID, firstMessage string) string {

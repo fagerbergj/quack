@@ -466,7 +466,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	}
 
 	handler = server.New(server.Options{
-		REST:       rest.NewHandler(st, orch, llm, jail, runHub, ledgerStore, Version),
+		REST:       rest.NewHandler(st, orch, llm, jail, runHub, ledgerStore, Version, taskStore, userStore),
 		MCP:        mcpserver.Handler(orch),
 		SPA:        spa,
 		Extensions: extensions,

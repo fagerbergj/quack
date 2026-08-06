@@ -9,11 +9,13 @@ import {
   deleteChat as sdkDeleteChat,
   updateChat as sdkUpdateChat,
   getResponse as sdkGetResponse,
+  listMemories as sdkListMemories,
+  deleteMemory as sdkDeleteMemory,
 } from './generated'
 
-export type { ChatSummary, ChatDetail, ChatList, Turn } from './generated'
+export type { ChatSummary, ChatDetail, ChatList, Turn, Memory, MemoryList } from './generated'
 
-import type { ChatSummary, ChatDetail, ChatList, Turn } from './generated'
+import type { ChatSummary, ChatDetail, ChatList, Turn, MemoryList } from './generated'
 
 type Result<T> = { data?: T; error?: unknown; response?: Response }
 
@@ -54,5 +56,15 @@ export const api = {
     const r = await sdkGetResponse({ path: { chat_id: chatId, response_id: responseId } })
     if (r.response?.status === 404) return null
     return unwrap(r)
+  },
+
+  listMemories: async (params: { bucket?: string; q?: string; limit?: number; offset?: number }): Promise<MemoryList> =>
+    unwrap(await sdkListMemories({ query: params })),
+
+  forgetMemory: async (id: string): Promise<void> => {
+    const r = await sdkDeleteMemory({ path: { memory_id: id } })
+    if (!r.response || !r.response.ok) {
+      throw new Error(`Forget failed (${r.response ? r.response.status : 'no response'})`)
+    }
   },
 }
