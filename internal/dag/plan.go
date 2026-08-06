@@ -24,6 +24,11 @@ type Plan struct {
 	Grant            *vetting.Grant
 	WorkerBackground string
 	CIChecks         []CICheck
+	// PlanOnly: this run's deliverable is a plan, not a change (#739). Stamped
+	// by the harness from the triggering label, never model-authored - forces
+	// every node read-only with no delivery target regardless of which agent
+	// the planner picked (buildGateNodes).
+	PlanOnly bool
 }
 
 // CICheck: one failing GitHub check, scoped per node.

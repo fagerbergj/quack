@@ -886,6 +886,9 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	// #664: workerAsk/ciChecks computed once above, never re-derived.
 	runCtx = tools.WithWorkerAsk(runCtx, workerAsk)
 	runCtx = tools.WithCIChecks(runCtx, ciChecks)
+	// planOnly is the quack:plan label itself (#739), narrower than isPlan's
+	// fuzzy mention-based heuristic above - only this drives node capability.
+	runCtx = tools.WithPlanOnly(runCtx, p.planOnly)
 	e.hub.RegisterRun(sessionID, turnID, cancelRun)
 	// Run stays inline (dispatch already is a goroutine). Deregister last.
 	defer e.hub.Close(sessionID)

@@ -56,29 +56,44 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		if err != nil {
 			return nil, nil, err
 		}
-		cfg := cfgFor(n.AgentName)
-		cfg.DeliverPromptEvent = vetting.PromptEventNeeded(worker)
 		node := n
-		cfg.Checks = node.Checks
-		cfg.Workdir = node.Workdir
-		cfg.NodeID = workspaceNodeID(plan, node)
-		cfg.Agent = node.AgentName
-		cfg.Grant = plan.Grant
-		// code-reviewer nodes are always review-delivery nodes by construction.
-		cfg.IsReviewer = node.AgentName == reviewerAgent
-		cfg.Task = node.Task
-		cfg.DeriveChecks = node.AgentName == implementerAgent
-		cfg.ChatID = chatID
-		if plan.Setup != nil && setupQualifyingAgent(node.AgentName) {
-			cfg.Setup = &vetting.SetupBranch{Repo: plan.Setup.Repo, WorkBranch: plan.Setup.WorkBranch}
-			cfg.ExistingPR = plan.Setup.CheckoutExistingHead
-			if nonTerminalRepoChainNode(plan, node) {
-				cfg.Deliver = nil
-			}
-		}
+		cfg := nodeGateConfig(plan, node, worker, cfgFor, chatID)
 		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release)
 	}
 	return nodesByID, subAgents, nil
+}
+
+// nodeGateConfig assembles one node's trust-gate config from the agent's base
+// config (cfgFor) plus the node's and plan's own facts. A planOnly plan
+// forces every node read-only with no delivery target here, in the one place
+// cfgFor's result is turned into a node's actual config - regardless of which
+// agent the planner picked (#739). Filtering by agent name would miss a
+// future writable agent; this keys on the capability fields themselves.
+func nodeGateConfig(plan Plan, node Node, worker adkagent.Agent, cfgFor func(string) vetting.Config, chatID string) vetting.Config {
+	cfg := cfgFor(node.AgentName)
+	cfg.DeliverPromptEvent = vetting.PromptEventNeeded(worker)
+	cfg.Checks = node.Checks
+	cfg.Workdir = node.Workdir
+	cfg.NodeID = workspaceNodeID(plan, node)
+	cfg.Agent = node.AgentName
+	cfg.Grant = plan.Grant
+	// code-reviewer nodes are always review-delivery nodes by construction.
+	cfg.IsReviewer = node.AgentName == reviewerAgent
+	cfg.Task = node.Task
+	cfg.DeriveChecks = node.AgentName == implementerAgent
+	cfg.ChatID = chatID
+	if plan.Setup != nil && setupQualifyingAgent(node.AgentName) {
+		cfg.Setup = &vetting.SetupBranch{Repo: plan.Setup.Repo, WorkBranch: plan.Setup.WorkBranch}
+		cfg.ExistingPR = plan.Setup.CheckoutExistingHead
+		if nonTerminalRepoChainNode(plan, node) {
+			cfg.Deliver = nil
+		}
+	}
+	if plan.PlanOnly {
+		cfg.ReadOnly = true
+		cfg.Deliver = nil
+	}
+	return cfg
 }
 
 // newGatedNode: assembles worker prompt, runs trust-gate refine loop.

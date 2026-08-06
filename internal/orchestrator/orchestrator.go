@@ -254,7 +254,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			githubSetup = &s
 		}
 		planTool, err := tools.NewPlanTool(o.planner, planCache, attachments, history, message, githubPR.HeadRef, githubSetup,
-			tools.GrantFromContext(ctx), tools.WorkerAskFromContext(ctx), tools.CIChecksFromContext(ctx))
+			tools.GrantFromContext(ctx), tools.WorkerAskFromContext(ctx), tools.CIChecksFromContext(ctx), tools.PlanOnlyFromContext(ctx))
 		if err != nil {
 			yield(stream.Errorf("orchestrator: plan tool: "+err.Error()), nil)
 			return
