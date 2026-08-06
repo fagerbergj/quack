@@ -39,6 +39,10 @@ type Runner interface {
 	LatestAnswer(ctx context.Context, userID, sessionID string) string
 	// ResetSession deletes history for a label-driven work request (T4 session hygiene).
 	ResetSession(ctx context.Context, userID, sessionID string) error
+	// PendingQuestion returns the latest unanswered question for the session, if any (a mid-node
+	// ask, a guarded op awaiting approve/deny, or a top-level clarification) - used to stamp a
+	// finished run's terminal status on its chat row (#738).
+	PendingQuestion(ctx context.Context, userID, sessionID string) (message string, ok bool)
 }
 
 // Extension is the GitHub App extension: tools + git auth + inbound webhook.

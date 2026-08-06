@@ -12,6 +12,7 @@ import (
 	"iter"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/glebarez/sqlite"
@@ -39,6 +40,15 @@ type Chat struct {
 	// ADK session identity (GitHub commenter's login for dispatched chats).
 	// Column is adk_session_user: session_user collides with Postgres' SESSION_USER.
 	SessionUser string `gorm:"column:adk_session_user" json:"session_user,omitempty"`
+	// RunStatus/PendingQuestion are the last run's terminal outcome (RunStatus* consts),
+	// stamped by StampRunOutcome so ListChats reads it instead of recomputing per chat (#738).
+	// Never "queued"/"running" - those stay live, in-memory-only signals.
+	RunStatus       string `json:"-"`
+	PendingQuestion string `json:"-"`
+	// ActiveTurnID is set by MarkRunActive when a run starts and cleared by StampRunOutcome
+	// when it ends cleanly. Left over (non-empty) with no live hub/queue signal means the run
+	// died before it could stamp an outcome - the read path's crash fallback (#738).
+	ActiveTurnID string `json:"-"`
 }
 
 // ChatTurn is one user→assistant exchange. Its ID is the response_id in the REST API.
@@ -266,7 +276,12 @@ type Store struct {
 	Sessions session.Service
 	// Identifies this store for node-ownership tracking (random per New, or overridden).
 	instanceID string
+	// Counts SELECT queries issued on db - test instrumentation for N+1 regressions (#738).
+	queryCount atomic.Int64
 }
+
+// QueryCount returns the number of SELECT queries issued so far. Test-only instrumentation.
+func (s *Store) QueryCount() int64 { return s.queryCount.Load() }
 
 // New opens the persistence store, runs migrations, and returns it.
 func New(kind, url string) (*Store, error) {
@@ -287,6 +302,12 @@ func New(kind, url string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	s := &Store{db: db}
+	if err := db.Callback().Query().After("gorm:query").Register("quack:count_queries", func(*gorm.DB) {
+		s.queryCount.Add(1)
+	}); err != nil {
+		return nil, err
+	}
 	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}, &GithubSnapshot{}, &GithubReviewBaseline{}, &GithubFixState{}, &GithubMergeIntent{}); err != nil {
 		return nil, err
 	}
@@ -297,7 +318,9 @@ func New(kind, url string) (*Store, error) {
 	if err := database.AutoMigrate(sessions); err != nil {
 		return nil, err
 	}
-	return &Store{db: db, Sessions: sessions, instanceID: uuid.NewString()}, nil
+	s.Sessions = sessions
+	s.instanceID = uuid.NewString()
+	return s, nil
 }
 
 // InstanceID identifies this Store for node-ownership tracking.
@@ -504,11 +527,6 @@ func (s *Store) DeleteChat(ctx context.Context, id string) error {
 			"component", "store", "chat", id, "err", err)
 	}
 	return nil
-}
-
-// Touch bumps a chat's updated_at to now.
-func (s *Store) Touch(ctx context.Context, id string) error {
-	return s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", id).Update("updated_at", time.Now().UTC()).Error
 }
 
 // SetChatGitHub upserts the originating GitHub repo/URL. Creates the row if missing

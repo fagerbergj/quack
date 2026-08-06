@@ -132,6 +132,10 @@ func (f *fakeRunner) Run(ctx context.Context, _, sessionID, message string, _ []
 
 func (f *fakeRunner) LatestAnswer(context.Context, string, string) string { return f.answer }
 
+func (f *fakeRunner) PendingQuestion(context.Context, string, string) (string, bool) {
+	return "", false
+}
+
 // planRunner is fakeRunner's dag_plan event with real DagPlanData (PlanID +
 // one node), needed to assert the plan actually gets mirrored into the store -
 // fakeRunner's zero-value Data can't round-trip through a real persist path.
@@ -154,6 +158,9 @@ func (f *planRunner) Run(_ context.Context, _, _, message string, _ []*genai.Par
 
 func (f *planRunner) LatestAnswer(context.Context, string, string) string { return f.answer }
 func (f *planRunner) ResetSession(context.Context, string, string) error  { return nil }
+func (f *planRunner) PendingQuestion(context.Context, string, string) (string, bool) {
+	return "", false
+}
 
 // stubGitHub serves the REST endpoints dispatch touches (installation resolve,
 // token mint, comment post) and signals postedComment when a comment lands.

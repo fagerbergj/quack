@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
-import { liveDagFinalText, chatGitHubLink, EditableChatTitle, shouldQueueSubmit, mergeChatsPage } from './Chat'
+import { liveDagFinalText, chatGitHubLink, EditableChatTitle, shouldQueueSubmit, mergeChatsPage, pollWhileVisible } from './Chat'
 import type { DagTurnState } from '../state/chatStore'
 import type { ChatSummary } from '../api'
 
@@ -64,6 +64,63 @@ describe('liveText selection (Chat.tsx local formula)', () => {
 
   it('falls back to top-level text when there is no DAG at all (plain orchestrator reply)', () => {
     expect(liveText(undefined, 'a direct reply')).toBe('a direct reply')
+  })
+})
+
+// #738 test 4: a hidden document does not issue poll requests; making it visible resumes
+// polling (immediately, not on the next interval tick).
+describe('pollWhileVisible - background-tab polling', () => {
+  function setHidden(hidden: boolean) {
+    Object.defineProperty(document, 'hidden', { value: hidden, configurable: true })
+  }
+
+  afterEach(() => {
+    vi.useRealTimers()
+    setHidden(false)
+  })
+
+  it('polls on the interval while the document is visible', () => {
+    vi.useFakeTimers()
+    setHidden(false)
+    const poll = vi.fn()
+    const stop = pollWhileVisible(poll, 1000)
+    vi.advanceTimersByTime(3000)
+    expect(poll).toHaveBeenCalledTimes(3)
+    stop()
+  })
+
+  it('issues no poll requests while the document is hidden', () => {
+    vi.useFakeTimers()
+    setHidden(true)
+    const poll = vi.fn()
+    const stop = pollWhileVisible(poll, 1000)
+    vi.advanceTimersByTime(5000)
+    expect(poll).not.toHaveBeenCalled()
+    stop()
+  })
+
+  it('resumes polling immediately when the document becomes visible again', () => {
+    vi.useFakeTimers()
+    setHidden(true)
+    const poll = vi.fn()
+    const stop = pollWhileVisible(poll, 1000)
+    vi.advanceTimersByTime(2000)
+    expect(poll).not.toHaveBeenCalled()
+
+    setHidden(false)
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(poll).toHaveBeenCalledTimes(1)
+    stop()
+  })
+
+  it('stops polling once the returned cleanup runs', () => {
+    vi.useFakeTimers()
+    setHidden(false)
+    const poll = vi.fn()
+    const stop = pollWhileVisible(poll, 1000)
+    stop()
+    vi.advanceTimersByTime(5000)
+    expect(poll).not.toHaveBeenCalled()
   })
 })
 

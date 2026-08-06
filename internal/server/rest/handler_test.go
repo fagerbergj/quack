@@ -126,7 +126,7 @@ func TestChatStatusIdle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
-	got := h.toSummary(ctx, *c)
+	got := h.toSummary(*c)
 	if got.Status != schema.ChatStatusIdle {
 		t.Errorf("status = %q, want idle", got.Status)
 	}
@@ -149,7 +149,7 @@ func TestToSummaryGithubFields(t *testing.T) {
 	if err != nil || c == nil {
 		t.Fatalf("GetChat: %+v err=%v", c, err)
 	}
-	got := h.toSummary(ctx, *c)
+	got := h.toSummary(*c)
 	if got.GithubUrl == nil || *got.GithubUrl != "https://github.com/acme/widget-app/pull/7" {
 		t.Errorf("github_url = %v, want the pull URL", got.GithubUrl)
 	}
@@ -161,7 +161,7 @@ func TestToSummaryGithubFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
-	got = h.toSummary(ctx, *plain)
+	got = h.toSummary(*plain)
 	if got.GithubUrl != nil || got.GithubRepo != nil {
 		t.Errorf("non-github chat should have nil github fields, got url=%v repo=%v", got.GithubUrl, got.GithubRepo)
 	}
@@ -180,16 +180,35 @@ func TestChatStatusRunning(t *testing.T) {
 	}
 	h.hub.Publish(c.ID, 1, stream.SSEEvent{Name: "node_start"})
 
-	got := h.toSummary(ctx, *c)
+	got := h.toSummary(*c)
 	if got.Status != schema.ChatStatusRunning {
 		t.Errorf("status = %q, want running", got.Status)
 	}
 }
 
+// getChatStatus round-trips through the real HTTP handler and unmarshals just
+// the derived-status fields tests care about.
+func getChatStatus(t *testing.T, h *Handler, chatID string) (schema.ChatStatus, *string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats/"+chatID, nil)
+	rec := httptest.NewRecorder()
+	h.GetChat(rec, req, chatID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GetChat status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var detail schema.ChatDetail
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	return detail.Status, detail.PendingQuestion
+}
+
 // TestChatStatusNeedsInput: a pending get_user_choice clarification in the
 // chat's session - the SAME scan Run's resume dispatch uses
 // (orchestrator.LatestPendingQuestion) - surfaces as needs_input with the
-// question text.
+// question text. GetChat derives this live (it loads turns for the detail body
+// regardless); toSummary's fast path only sees it once a run stamps it (#738,
+// see TestToSummaryReadsStampedOutcome).
 func TestChatStatusNeedsInput(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -222,17 +241,18 @@ func TestChatStatusNeedsInput(t *testing.T) {
 		t.Fatalf("AppendEvent: %v", err)
 	}
 
-	got := h.toSummary(ctx, *c)
-	if got.Status != schema.ChatStatusNeedsInput {
-		t.Fatalf("status = %q, want needs_input", got.Status)
+	status, pendingQuestion := getChatStatus(t, h, c.ID)
+	if status != schema.ChatStatusNeedsInput {
+		t.Fatalf("status = %q, want needs_input", status)
 	}
-	if got.PendingQuestion == nil || *got.PendingQuestion != "which Springfield?" {
-		t.Errorf("pending_question = %v, want %q", got.PendingQuestion, "which Springfield?")
+	if pendingQuestion == nil || *pendingQuestion != "which Springfield?" {
+		t.Errorf("pending_question = %v, want %q", pendingQuestion, "which Springfield?")
 	}
 }
 
 // TestChatStatusFailed: the last turn's DAG has a failed node and no assistant
-// text followed it.
+// text followed it. GetChat derives this live; toSummary's fast path only sees
+// it once a run stamps it (#738, see TestToSummaryReadsStampedOutcome).
 func TestChatStatusFailed(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -250,9 +270,9 @@ func TestChatStatusFailed(t *testing.T) {
 		t.Fatalf("UpsertDagNode: %v", err)
 	}
 
-	got := h.toSummary(ctx, *c)
-	if got.Status != schema.ChatStatusFailed {
-		t.Errorf("status = %q, want failed", got.Status)
+	status, _ := getChatStatus(t, h, c.ID)
+	if status != schema.ChatStatusFailed {
+		t.Errorf("status = %q, want failed", status)
 	}
 }
 

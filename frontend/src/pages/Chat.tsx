@@ -41,6 +41,22 @@ export function mergeChatsPage(existing: ChatSummary[], page: ChatSummary[]): Ch
   return [...page, ...existing.filter(c => !pageIds.has(c.id))]
 }
 
+// pollWhileVisible calls `poll` on an interval, but only while the document is visible - a
+// backgrounded tab has nothing to show, so it costs nothing (#738). Becoming visible again
+// fires `poll` immediately rather than waiting out the rest of the interval. Returns a
+// cleanup function that stops the interval and removes the listener.
+export function pollWhileVisible(poll: () => void, intervalMs: number): () => void {
+  function tick() {
+    if (!document.hidden) poll()
+  }
+  document.addEventListener('visibilitychange', tick)
+  const id = setInterval(tick, intervalMs)
+  return () => {
+    clearInterval(id)
+    document.removeEventListener('visibilitychange', tick)
+  }
+}
+
 // chatGitHubLink (#382) extracts the header's back-link target from a chat's
 // summary: present only for a GitHub-originated chat (github_url set by the
 // webhook at dispatch time), null for a direct chat - so the header renders
@@ -211,9 +227,11 @@ export default function Chat() {
     }
   }, [activeChatId])
 
-  // #499: poll the chat list so the sidebar stays current without a refresh.
+  // #499/#738: poll the chat list so the sidebar stays current without a refresh. Skipped
+  // while the tab is hidden (a backgrounded tab has nothing to show anyway) and resumed
+  // immediately on refocus rather than waiting out the interval - a GitHub-webhook-triggered
+  // run has no client action to hang off, so this stays a poll, not push-on-navigate.
   useEffect(() => {
-    const PollingIntervalMs = 5000
     let cancelled = false
     async function doPoll() {
       try {
@@ -228,10 +246,10 @@ export default function Chat() {
       } catch { /* transient - next poll will retry */ }
     }
     loadChats().then(data => { if (!cancelled) setChats(data) })
-    const id = setInterval(() => { void doPoll() }, PollingIntervalMs)
+    const stop = pollWhileVisible(() => { void doPoll() }, 5000)
     return () => {
       cancelled = true
-      clearInterval(id)
+      stop()
     }
   }, [loadChats])
 
