@@ -277,19 +277,16 @@ workspace:
 
   # sandbox: the OS boundary every run_command / gate-check CHILD PROCESS runs
   # inside. The jail above is a PATH CHECK on the tools - it never constrained a
-  # child process, only its cwd, so before this a child (any child: `sh -c` slips
-  # through the metachar filter untouched) could read ~/.ssh, ~/.aws, .env, and
-  # anything else the server's OS user can read.
+  # child process, only its cwd, so before this a child could read ~/.ssh,
+  # ~/.aws, .env, and anything else the server's OS user can read.
   #   bwrap (default) - bubblewrap namespace: the child's filesystem is a
   #     read-only system view plus exactly two writable paths (its own working
   #     directory and its isolated $HOME). Nothing else EXISTS in there. Needs
   #     no root and no daemon; install it (Debian/Ubuntu: `apt-get install
   #     bubblewrap`). If it isn't installed/usable, the server REFUSES TO START.
-  #     Because the namespace IS the wall, run_command runs its command line in a
+  #     A coding agent's own shell commands (ledgered as run_command) run in a
   #     REAL SHELL (/bin/sh -c) in here: pipes, redirects, globs, $(…) and &&
-  #     all work. The metachar filter is not applied on this path - it blocked no
-  #     attack (`sh -c` never contained one of those characters), it only made
-  #     agents write throwaway script files to route around it.
+  #     all work.
   #   landlock - a self-applied Landlock ruleset (no new namespace): the child
   #     restricts ITSELF then execs, so it works inside an unprivileged
   #     container where bwrap can't nest. Requires Linux kernel >= 6.2
@@ -299,8 +296,8 @@ workspace:
   #   none - children run with the server user's full filesystem authority.
   #     Logs a loud WARN at startup. Only sane when the whole server is already
   #     confined (a throwaway container/VM) or you trust the agents with that
-  #     account. With no OS boundary the habit guard is all there is, so THERE
-  #     run_command stays argv-only and still rejects & ; $ < > ` ( ).
+  #     account. With no OS boundary, nothing quack controls stands between a
+  #     coding agent's shell commands and that account's full reach.
   sandbox: landlock   # bwrap can't nest inside this unprivileged Docker container (nested
                       # mount-namespace denied); Landlock is a self-restriction, not a
                       # namespace construction, so it works here and IS an OS-enforced
@@ -370,8 +367,6 @@ workspace:
   #     username: x-access-token       # default; GitHub PATs use this
   #     token: ${QUACK_GITHUB_TOKEN}
 
-  # git_push gates the git_push tool - the one outward-facing, non-undoable
-  # git operation in the set. Off by default even with a credential configured.
   # Guard ladder (§4b): tool name -> none (default, unlisted) | judge |
   # confirm | judge+confirm. No entries by default since 0.6.0: the code agents
   # run as external ACP subprocesses (internal/acp), so the write-side

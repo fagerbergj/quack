@@ -539,33 +539,40 @@ everything sitting in the working tree.
 ### `task_completeness`
 
 The change is delivered as far as the task actually required - not just
-"code compiles and is committed locally" when the task implies more (pushing
-the branch, opening a PR, applying a change now rather than merely proposing
-it).
+"code compiles and is committed locally" when the task implies more (handing
+the work off for delivery, not merely describing it). A code-implementer
+never pushes or opens a pull request itself: it commits with its own git,
+then calls `stage_pr`/`stage_push` to hand delivery to the gate, which pushes
+the branch and opens/updates the PR only after the answer passes. Whether
+that hand-off call happened is a separate deterministic check elsewhere in
+the verdict (`delivery_complete`) - this criterion is about whether the CODE
+itself covers what the task asked, and whether the answer is honest about
+what it did.
 
 **Evaluation steps.**
 1. From the task description, decide what "done" means here: many tasks are
    genuinely satisfied by a local commit on a branch; others explicitly or
-   implicitly need a pushed branch or an opened PR ("open a PR for…", "ship
+   implicitly need the work handed off for delivery ("open a PR for…", "ship
    this", "push a fix").
-2. Check the workspace activity ledger for the operations that outward step
-   actually requires: a pushed branch needs a `git_push` entry (a
-   `git_commit` alone is not a push); an opened PR needs a `run_command`
-   entry that actually invoked the PR-creation command (e.g. `gh pr create`)
-   with a successful exit code - not just a claim in the answer text.
-3. An answer that honestly stops short and says why (e.g. "committed
-   locally; `git_push` is disabled in this deployment") is NOT a failure
-   here - score the delivery that was actually possible, and penalize only a
-   false claim of completion or an unexplained shortfall.
+2. When delivery was needed, check for a successful `git_commit` entry in the
+   workspace activity ledger - the disk-probed record of the commit an ACP
+   worker made with its own git (there is no separate "commit tool" call to
+   look for). Do not expect a `git_push` or PR-creation entry here: the gate
+   pushes and opens the PR after this round, never during it.
+3. Treat an answer that claims to have pushed, opened a PR, or merged as a
+   fabrication - a code-implementer has no tool that does any of those
+   itself. The honest claim is "committed and handed off for delivery";
+   anything stronger describes a capability it doesn't have.
 
 **Scoring bands.**
-- **7–10** - every delivery step the task required (and that was possible
-  given the worker's tools/permissions) actually happened, per the ledger.
-- **4–6** - the core code change landed, but one delivery step the task
-  plausibly needed (a push, a PR) is missing with no explanation.
-- **0–3** - the answer claims a delivery step (pushed, opened a PR, merged)
-  with no corresponding ledger entry, or stops at "wrote the code" when the
-  task clearly asked for it to be proposed or shipped.
+- **7–10** - the task's full scope is addressed in the change, and the
+  answer's delivery claims match what a code-implementer can actually do
+  (committed and handed off, not pushed or merged).
+- **4–6** - the core code change landed but the task's stated scope is only
+  partially covered, with no honest note about what's left.
+- **0–3** - the answer claims a delivery step it cannot perform itself
+  (pushed, opened a PR, merged) with no corresponding ledger entry, or stops
+  short of the code change the task actually asked for.
 
 ---
 
