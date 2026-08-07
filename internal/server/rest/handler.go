@@ -139,6 +139,19 @@ func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request, params schem
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
+	if params.ShowArchived != nil && *params.ShowArchived {
+		// Caller wants archived chats too - nothing to filter.
+	} else {
+		// Default: omit archived chats so the sidebar only shows active items.
+		unarchived := make([]store.Chat, 0, len(chats))
+		for _, c := range chats {
+			if !c.Archived {
+				unarchived = append(unarchived, c)
+			}
+		}
+		chats = unarchived
+	}
+
 	out := schema.ChatList{Data: make([]schema.ChatSummary, len(chats))}
 	for i, c := range chats {
 		out.Data[i] = h.toSummary(c)
@@ -280,17 +293,22 @@ func (h *Handler) GetChatRecording(w http.ResponseWriter, r *http.Request, chatI
 	}
 }
 
-// Partial update to a chat's mutable metadata (Title is the only settable field today).
+// Partial update to a chat's mutable metadata (title or archived flag). At least one must
+// be present. Only updating archived does not touch UpdatedAt so the list stays recency-ordered.
 func (h *Handler) UpdateChat(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
 	var body schema.UpdateChatBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	if body.Title == nil || strings.TrimSpace(*body.Title) == "" {
-		http.Error(w, "title is required", http.StatusBadRequest)
+
+	hasTitle := body.Title != nil && strings.TrimSpace(*body.Title) != ""
+	hasArchived := body.Archived != nil
+	if !hasTitle && !hasArchived {
+		http.Error(w, "at least one of title or archived must be provided", http.StatusBadRequest)
 		return
 	}
+
 	c, err := h.store.GetChat(r.Context(), chatID)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
@@ -300,12 +318,23 @@ func (h *Handler) UpdateChat(w http.ResponseWriter, r *http.Request, chatID sche
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	title := strings.TrimSpace(*body.Title)
-	if err := h.store.UpdateTitle(r.Context(), chatID, title); err != nil {
-		httpError(w, http.StatusInternalServerError, err)
-		return
+
+	if hasTitle {
+		title := strings.TrimSpace(*body.Title)
+		if err := h.store.UpdateTitle(r.Context(), chatID, title); err != nil {
+			httpError(w, http.StatusInternalServerError, err)
+			return
+		}
+		c.Title = title
 	}
-	c.Title = title
+	if hasArchived {
+		if err := h.store.ArchiveChat(r.Context(), chatID, *body.Archived); err != nil {
+			httpError(w, http.StatusInternalServerError, err)
+			return
+		}
+		c.Archived = *body.Archived
+	}
+
 	writeJSON(w, http.StatusOK, h.toSummary(*c))
 }
 
@@ -974,6 +1003,7 @@ func (h *Handler) toSummary(c store.Chat) schema.ChatSummary {
 		GithubUrl:       nonEmpty(c.GithubURL),
 		GithubRepo:      nonEmpty(c.GithubRepo),
 		GithubState:     stateVal(c.GithubState),
+		Archived:        boolPtr(c.Archived),
 	}
 }
 
