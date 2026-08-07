@@ -126,6 +126,15 @@ func emitPlanEvent(tc agent.Context, p *dag.Plan) {
 		otellog.String(otelobs.GenAIOperationName, otelobs.GenAIOperationPlan),
 		otellog.String(otelobs.GenAIWorkflowName, p.ID),
 	}
+	// The planner's actual ask - history/message/attachments Build stamped onto p - not a
+	// reconstruction from the plan it produced.
+	if b, err := json.Marshal(struct {
+		History     []dag.HistoryTurn `json:"history,omitempty"`
+		Message     string            `json:"message,omitempty"`
+		Attachments []*genai.Part     `json:"attachments,omitempty"`
+	}{p.History, p.UserMessage, p.Attachments}); err == nil {
+		attrs = append(attrs, otellog.String(otelobs.GenAIInputMessages, string(b)))
+	}
 	if b, err := json.Marshal(p); err == nil {
 		attrs = append(attrs, otellog.String(otelobs.GenAIOutputMessages, string(b)))
 	}

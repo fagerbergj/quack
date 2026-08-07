@@ -240,6 +240,45 @@ func TestEmitPlanEvent_ProducesWellFormedEvent(t *testing.T) {
 	}
 }
 
+// TestEmitPlanEvent_RecordsInputMessages is issue #635: replaying a planning
+// decision needs the ask alongside the plan it produced, not just the plan.
+// Asserts the real fields Planner.Build stamped onto the plan (History,
+// UserMessage) round-trip into gen_ai.input.messages - not a reconstruction
+// of the ask from the plan's nodes.
+func TestEmitPlanEvent_RecordsInputMessages(t *testing.T) {
+	capExp := &recordCapture{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
+	restore := otelobs.SetLoggerProviderForTesting(lp)
+	defer restore()
+
+	plan := &dag.Plan{
+		ID:          "plan-456",
+		Nodes:       []dag.Node{{ID: "impl", AgentName: "code-implementer"}},
+		History:     []dag.HistoryTurn{{Role: "user", Text: "earlier turn"}},
+		UserMessage: "fix the flaky test",
+	}
+	emitPlanEvent(newFakeCtx(), plan)
+
+	if len(capExp.records) != 1 {
+		t.Fatalf("got %d records, want 1", len(capExp.records))
+	}
+	var input string
+	capExp.records[0].WalkAttributes(func(kv otellog.KeyValue) bool {
+		if string(kv.Key) == "gen_ai.input.messages" {
+			input = kv.Value.AsString()
+		}
+		return true
+	})
+	if input == "" {
+		t.Fatal("gen_ai.input.messages missing")
+	}
+	for _, want := range []string{"earlier turn", "fix the flaky test"} {
+		if !strings.Contains(input, want) {
+			t.Errorf("gen_ai.input.messages = %q, want it to contain %q (the planner's real ask)", input, want)
+		}
+	}
+}
+
 // TestPlanEdges verifies the wire edge list is derived from each node's
 // DependsOn (From=dep, To=node), and a no-dependency node contributes nothing.
 func TestPlanEdges(t *testing.T) {
