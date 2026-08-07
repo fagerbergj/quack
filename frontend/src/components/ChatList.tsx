@@ -6,6 +6,26 @@ import { FilterPanel } from './FilterPanel'
 import { StatusDot } from './StatusDot'
 import { navigate, useSearch } from '../router'
 
+export function githubStateBadgeClass(state: string): string {
+  switch (state) {
+    case 'open': return 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400'
+    case 'closed': return 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
+    case 'merged': return 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400'
+    case 'draft': return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-500'
+    default: return ''
+  }
+}
+
+export function githubStateLabel(state: string): string {
+  const map: Record<string, string> = {
+    open: '◉ open',
+    closed: '✕ closed',
+    merged: '✓ merged',
+    draft: '⊘ draft',
+  }
+  return map[state] ?? ''
+}
+
 function relativeDate(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()
   const mins = Math.floor(diff / 60000)
@@ -151,6 +171,14 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
                   >
                     {ref.kind === 'pr' ? 'PR' : 'Issue'} #{ref.number}
                   </a>
+                )}
+                {s.github_state && (
+                  <span
+                    className={`flex-shrink-0 text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded ${githubStateBadgeClass(s.github_state)}`}
+                    title={s.github_state}
+                  >
+                    {githubStateLabel(s.github_state)}
+                  </span>
                 )}
               </div>
               <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{relativeDate(s.updated_at)}</span>

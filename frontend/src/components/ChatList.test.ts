@@ -2,9 +2,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
+
 import { filterChats } from '../lib/chatFilters'
 import { isGithubChat } from '../lib/github'
-import { ChatList } from './ChatList'
+import { ChatList, githubStateBadgeClass, githubStateLabel } from './ChatList'
 import type { ChatSummary } from '../api'
 
 // No @testing-library/react in this repo - ChatList's filter/facet logic
@@ -148,3 +149,100 @@ describe('ChatList "Load more" affordance', () => {
     expect(button!.disabled).toBe(true)
   })
 })
+
+describe('github_state badge', () => {
+  it.each([
+    { state: 'open', label: '◉ open', cls: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400' },
+    { state: 'closed', label: '✕ closed', cls: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' },
+    { state: 'merged', label: '✓ merged', cls: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400' },
+    { state: 'draft', label: '⊘ draft', cls: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-500' },
+  ])('renders correct class and label for state="$state"', ({ state, label, cls }) => {
+    expect(githubStateBadgeClass(state)).toBe(cls)
+    expect(githubStateLabel(state)).toBe(label)
+  })
+
+  it.each([
+    { input: 'open', expected: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400' },
+    { input: 'closed', expected: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' },
+    { input: 'merged', expected: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400' },
+    { input: 'draft', expected: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-500' },
+    { input: '', expected: '' },
+  ])('githubStateBadgeClass("$input") returns classes or empty', ({ input, expected }) => {
+    expect(githubStateBadgeClass(input)).toBe(expected)
+  })
+
+  it.each([
+    { input: 'open', expected: '◉ open' },
+    { input: 'closed', expected: '✕ closed' },
+    { input: 'merged', expected: '✓ merged' },
+    { input: 'draft', expected: '⊘ draft' },
+    { input: '', expected: '' },
+    { input: 'unknown', expected: '' },
+  ])('githubStateLabel("$input") returns label or empty string', ({ input, expected }) => {
+    expect(githubStateLabel(input)).toBe(expected)
+  })
+
+  let root: ReturnType<typeof createRoot> | undefined
+  let host: HTMLDivElement | undefined
+
+  afterEach(() => {
+    act(() => root?.unmount())
+    host?.remove()
+    root = undefined
+    host = undefined
+  })
+
+  function renderGithubChats(githubState: ChatSummary['github_state']) {
+    // @ts-expect-error react act environment flag
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    const githubChats: ChatSummary[] = [chat({ id: 'pr-1', title: 'PR chat', github_repo: 'acme/widget', github_url: 'https://github.com/acme/widget/pull/42', github_state: githubState })]
+    act(() => {
+      root!.render(createElement(ChatList, { chats: githubChats, activeChatId: null, open: true, onSelect: () => {}, onNewChat: () => {}, onDelete: () => {}, onCloseMobile: () => {} }))
+    })
+  }
+
+  it.each([
+    { state: 'open', expected: ['◉ open'] },
+    { state: 'closed', expected: ['✕ closed'] },
+    { state: 'merged', expected: ['✓ merged'] },
+    { state: 'draft', expected: ['⊘ draft'] },
+  ])('renders state badge text when github_state="$state"', ({ state, expected }) => {
+    renderGithubChats(state as ChatSummary['github_state'])
+    const allText = host!.textContent ?? ''
+    for (const t of expected) {
+      expect(allText).toContain(t)
+    }
+  })
+
+  it('does not render a badge when github_state is undefined', () => {
+    renderGithubChats(undefined)
+    expect(host!.textContent).not.toContain('◉ open')
+    expect(host!.textContent).not.toContain('✕ closed')
+    expect(host!.textContent).not.toContain('✓ merged')
+    expect(host!.textContent).not.toContain('⊘ draft')
+  })
+
+  it('does not render a badge when github_state is empty string', () => {
+    renderGithubChats('' as unknown as ChatSummary['github_state'])
+    expect(host!.textContent).not.toContain('◉ open')
+    expect(host!.textContent).not.toContain('✕ closed')
+  })
+
+  it('renders state badge alongside Issue/PR badge', () => {
+    renderGithubChats('merged')
+    const spans = host!.querySelectorAll('span[class*="rounded"]')
+    const badgeTexts: string[] = []
+    for (const s of spans) {
+      const t = (s as HTMLElement).textContent?.trim() ?? ''
+      if (t && ['◉ open', '✕ closed', '✓ merged', '⊘ draft'].includes(t)) {
+        badgeTexts.push(t)
+      }
+    }
+    expect(badgeTexts.length).toBe(1)
+    expect(badgeTexts[0]).toBe('✓ merged')
+  })
+})
+
