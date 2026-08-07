@@ -914,7 +914,7 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 		det["no_tool_call_syntax"] = c
 	}
 	// Answer-shape check: a pointer to a file this run wrote but never committed.
-	if c, ok := danglingDeliverablePathCriterion(answer, act); ok {
+	if c, ok := danglingDeliverablePathCriterion(answer, act, workspace.NodeDir(cfg.NodeID)); ok {
 		det["no_dangling_deliverable_path"] = c
 	}
 	// Delivery: commit/push/PR must show in ledger; review must be submitted.
