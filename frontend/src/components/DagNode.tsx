@@ -312,12 +312,23 @@ function NodeAnswer({ answer }: { answer: string }) {
   )
 }
 
+// judgeFailureHeading names the two ways a judge round ends without a verdict
+// (#779): "unavailable" - the judge model itself couldn't be reached;
+// "no_verdict" - it ran (read files, spent its turns) but never committed
+// one, which "unavailable" would misreport as an outage.
+function judgeFailureHeading(status?: string): string | null {
+  if (status === 'unavailable') return 'Judge unavailable'
+  if (status === 'no_verdict') return 'Judge did not reach a verdict'
+  return null
+}
+
 const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; running: boolean }) {
-  if (run.done && run.status === 'unavailable') {
+  const failureHeading = run.done ? judgeFailureHeading(run.status) : null
+  if (failureHeading) {
     return (
       <div className="border-t border-gray-100 dark:border-gray-700 px-4 py-2 bg-yellow-50 dark:bg-yellow-900/15">
         <span className="text-[10px] font-semibold text-yellow-700 dark:text-yellow-400 uppercase tracking-wide">
-          ⚠ Judge unavailable · round {run.round}
+          ⚠ {failureHeading} · round {run.round}
         </span>
         <div className="text-[11px] text-yellow-700 dark:text-yellow-400/90 mt-0.5">
           Answer surfaced without quality vetting - {run.reason}

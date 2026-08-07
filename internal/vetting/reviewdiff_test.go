@@ -19,7 +19,7 @@ func TestChangedFilesSection_ReviewNodeGetsDiff(t *testing.T) {
 	// A reviewer is read-only: it wrote nothing itself.
 	act := workerActivity{}
 
-	got := changedFilesSection(cfg, act)
+	got, _ := changedFilesSection(cfg, act)
 	if !strings.Contains(got, "DIFF UNDER REVIEW") {
 		t.Fatalf("missing diff header:\n%s", got)
 	}
@@ -38,7 +38,7 @@ func TestChangedFilesSection_ImplementNodeNeverGetsReviewHeader(t *testing.T) {
 	cfg.IsReviewer = false
 	act := workerActivity{written: []string{workspace.NodeDir("n1") + "/x.go"}}
 
-	got := changedFilesSection(cfg, act)
+	got, _ := changedFilesSection(cfg, act)
 	if strings.Contains(got, "DIFF UNDER REVIEW") {
 		t.Fatalf("implement node must not get the review-framed diff header:\n%s", got)
 	}
@@ -57,7 +57,7 @@ func TestChangedFilesSection_ImplementNodeGetsDiffAndContent(t *testing.T) {
 	cfg.IsReviewer = false
 	act := workerActivity{written: []string{workspace.NodeDir("n1") + "/x.go"}}
 
-	got := changedFilesSection(cfg, act)
+	got, _ := changedFilesSection(cfg, act)
 	if !strings.Contains(got, "ACTUAL DIFF THIS NODE PRODUCED") || !strings.Contains(got, "package x") {
 		t.Fatalf("missing the actual diff section:\n%s", got)
 	}
@@ -77,7 +77,7 @@ func TestChangedFilesSection_ImplementNodeNoCloneKeepsWrittenOnly(t *testing.T) 
 	cfg.Setup = nil
 	act := workerActivity{written: []string{workspace.NodeDir("n1") + "/x.go"}}
 
-	got := changedFilesSection(cfg, act)
+	got, _ := changedFilesSection(cfg, act)
 	if strings.Contains(got, "ACTUAL DIFF THIS NODE PRODUCED") {
 		t.Fatalf("no clone must yield no diff section:\n%s", got)
 	}
@@ -100,7 +100,7 @@ func TestChangedFilesSection_CarriesStagedVerdict(t *testing.T) {
 				"review": {Kind: "review", Event: event, Body: "looks good"},
 			}}
 
-			got := changedFilesSection(cfg, act)
+			got, _ := changedFilesSection(cfg, act)
 			want := "Staged review verdict: " + event
 			if !strings.Contains(got, want) {
 				t.Fatalf("missing %q in:\n%s", want, got)
@@ -118,7 +118,7 @@ func TestChangedFilesSection_CarriesStagedVerdict(t *testing.T) {
 	t.Run("unstaged", func(t *testing.T) {
 		cfg := probeRepo(t, true)
 		cfg.IsReviewer = true
-		got := changedFilesSection(cfg, workerActivity{})
+		got, _ := changedFilesSection(cfg, workerActivity{})
 		if strings.Contains(got, "Staged review verdict:") {
 			t.Fatalf("must not fabricate a verdict line when none is staged:\n%s", got)
 		}

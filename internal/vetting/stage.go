@@ -35,7 +35,8 @@ func startStageSpan(spanCtx context.Context, sink func(stream.SSEEvent), cfg Con
 
 // end closes the span and raises agent_complete from the same outcome data.
 // Score/passed are only set on the span for a scored (non-error) completion,
-// matching the SSE payload's own omission of them on an unavailable judge.
+// matching the SSE payload's own omission of them on a judge round that ended
+// without a verdict (Status non-empty - "unavailable" or "no_verdict").
 func (s *stageSpan) end(d stream.AgentCompleteData, err error) {
 	emitJudge(s.sink, s.nodeID, stream.SSEEvent{Name: stream.EventAgentComplete, Data: d})
 	if d.Status == "" {

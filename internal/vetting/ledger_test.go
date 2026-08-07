@@ -221,23 +221,62 @@ func TestBuildChangedFilesSectionReadsRealDisk(t *testing.T) {
 	}
 
 	act := workerActivity{written: []string{"repo/app/logic.ts"}}
-	got := buildChangedFilesSection(act, j, "u1", "")
+	got, cov := buildChangedFilesSection(act, j, "u1", "")
 	if !strings.Contains(got, "repo/app/logic.ts") || !strings.Contains(got, "real on-disk content") {
 		t.Errorf("section missing the real file content:\n%s", got)
 	}
 	if !strings.Contains(got, "ACTUAL CURRENT CONTENT") {
 		t.Errorf("section missing the header:\n%s", got)
 	}
+	if cov.truncated() {
+		t.Errorf("coverage = %+v, want not truncated - the one written file fit inside both caps", cov)
+	}
 	// No jail / no written files → no section (pure-research + unjailed paths).
-	if s := buildChangedFilesSection(act, nil, "u1", ""); s != "" {
+	if s, _ := buildChangedFilesSection(act, nil, "u1", ""); s != "" {
 		t.Errorf("nil jail should yield no section, got:\n%s", s)
 	}
-	if s := buildChangedFilesSection(workerActivity{}, j, "u1", ""); s != "" {
+	if s, _ := buildChangedFilesSection(workerActivity{}, j, "u1", ""); s != "" {
 		t.Errorf("no written files should yield no section, got:\n%s", s)
 	}
-	// A path that no longer exists on disk is skipped, not an error.
-	if s := buildChangedFilesSection(workerActivity{written: []string{"repo/gone.ts"}}, j, "u1", ""); s != "" {
+	// A path that no longer exists on disk is skipped, not an error - and not
+	// a truncation note either: the cap never fired, so nothing to disclose.
+	if s, cov := buildChangedFilesSection(workerActivity{written: []string{"repo/gone.ts"}}, j, "u1", ""); s != "" {
 		t.Errorf("unreadable path should be skipped, got:\n%s", s)
+	} else if cov.truncated() {
+		t.Errorf("coverage = %+v, want not truncated - a missing file is not a cap truncation", cov)
+	}
+}
+
+// TestBuildChangedFilesSectionCoverageOverCap is #779's test case 4: 18
+// changed files against the 12-file cap must report the count actually
+// scored alongside the count that existed, not silently drop the rest.
+func TestBuildChangedFilesSectionCoverageOverCap(t *testing.T) {
+	j, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := j.UserRoot("u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "repo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	written := make([]string, 0, 18)
+	for i := 0; i < 18; i++ {
+		name := fmt.Sprintf("repo/file%02d.go", i)
+		if err := os.WriteFile(filepath.Join(root, name), []byte("package repo\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		written = append(written, name)
+	}
+
+	_, cov := buildChangedFilesSection(workerActivity{written: written}, j, "u1", "")
+	if cov.Scored != maxChangedFiles || cov.Total != 18 {
+		t.Errorf("coverage = %+v, want Scored=%d Total=18", cov, maxChangedFiles)
+	}
+	if !cov.truncated() {
+		t.Error("coverage.truncated() = false, want true - 18 files exceeds the 12-file cap")
 	}
 }
 
@@ -265,11 +304,11 @@ func TestBuildChangedFilesSectionUsesPerChatScope(t *testing.T) {
 	act := workerActivity{written: []string{"repo/app/logic.ts"}}
 
 	// With the chat scope, the judge sees the real per-chat file.
-	if got := buildChangedFilesSection(act, j, "u1", chatID); !strings.Contains(got, "per-chat content") {
+	if got, _ := buildChangedFilesSection(act, j, "u1", chatID); !strings.Contains(got, "per-chat content") {
 		t.Errorf("per-chat section missing the real file content:\n%s", got)
 	}
 	// WITHOUT it (per-user root), the file isn't there - the fix would no-op.
-	if got := buildChangedFilesSection(act, j, "u1", ""); got != "" {
+	if got, _ := buildChangedFilesSection(act, j, "u1", ""); got != "" {
 		t.Errorf("per-user root must NOT find the per-chat file, got:\n%s", got)
 	}
 }
@@ -434,7 +473,7 @@ func TestJudgeRereadsFilesWrittenUnderTheNodeDir(t *testing.T) {
 	if len(act.written) != 1 || act.written[0] != nodeID+"/repo/logic.ts" {
 		t.Fatalf("written = %v, want [%s/repo/logic.ts]", act.written, nodeID)
 	}
-	if got := buildChangedFilesSection(act, j, "u1", chatID); !strings.Contains(got, "per-node content") {
+	if got, _ := buildChangedFilesSection(act, j, "u1", chatID); !strings.Contains(got, "per-node content") {
 		t.Errorf("judge must re-read the file the worker wrote under its node dir; got:\n%s", got)
 	}
 }

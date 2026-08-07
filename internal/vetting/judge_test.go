@@ -3,7 +3,10 @@ package vetting
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -13,6 +16,8 @@ import (
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // spyReadArgs/spyReadResult mirror read_file's minimal shape for a stub tool
@@ -486,4 +491,115 @@ func TestBuildJudgePrompt_NoKnownFailuresOmitsSection(t *testing.T) {
 	if withEmptyKnown != withoutArg {
 		t.Errorf("prompt changed even though nothing failed deterministically:\n--- want ---\n%s\n--- got ---\n%s", withoutArg, withEmptyKnown)
 	}
+}
+
+// stuckJudge always reads a file and never calls submit_verdict - the judge
+// RAN (it made tool calls, it spent turns) but never committed a verdict,
+// the stand-in for exhausting gates.judge.max_iterations (#779). Distinct
+// from flakyTransientJudge, which never runs at all.
+type stuckJudge struct{ calls int32 }
+
+func (j *stuckJudge) Name() string { return "stuck-judge" }
+
+func (j *stuckJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		atomic.AddInt32(&j.calls, 1)
+		yield(stubCall("read_file", map[string]any{"path": "game.go"}), nil)
+	}
+}
+
+// TestRunJudgeAgent_ExhaustedIterationsReturnsErrJudgeNoVerdict is issue #779's
+// test case 2: a judge that spends its whole iteration budget without ever
+// calling submit_verdict must fail with the distinct ErrJudgeNoVerdict
+// sentinel, not the same error shape a transport outage produces - node.go
+// tells the two apart with errors.Is, never by matching this error's text.
+func TestRunJudgeAgent_ExhaustedIterationsReturnsErrJudgeNoVerdict(t *testing.T) {
+	var reads int32
+	readTool := newSpyReadTool(t, "package x\n", &reads)
+	judge := &stuckJudge{}
+	factory := NewJudgeFactory(judge, []tool.Tool{readTool}, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 2}
+
+	_, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	if err == nil {
+		t.Fatal("runJudgeAgent: expected an error - the judge never called submit_verdict")
+	}
+	if !errors.Is(err, ErrJudgeNoVerdict) {
+		t.Errorf("err = %v, want errors.Is(err, ErrJudgeNoVerdict) - the judge ran (it read files), it just never reached a verdict", err)
+	}
+	if isTransientJudgeErr(err) {
+		t.Errorf("err = %v classified as transient/retryable, want the distinct no-verdict sentinel treated as permanent", err)
+	}
+	if atomic.LoadInt32(&judge.calls) < 2 {
+		t.Errorf("judge model called %d times, want it to have actually run multiple turns before giving up", judge.calls)
+	}
+}
+
+// changedFilesFixture builds a jail with n on-disk files under repo/, and a
+// Config/workerActivity pointing the judge at all of them.
+func changedFilesFixture(t *testing.T, n int) (Config, workerActivity) {
+	t.Helper()
+	jail, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := jail.UserRoot("u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "repo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	written := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("repo/file%02d.go", i)
+		if err := os.WriteFile(filepath.Join(root, name), []byte("package repo\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		written = append(written, name)
+	}
+	cfg := Config{Rubric: "score 0-10", Workspace: jail, WorkspaceUserID: "u1"}
+	return cfg, workerActivity{written: written}
+}
+
+// TestRunJudgeAgent_ChangedFilesCoverage is issue #779's test cases 3 and 4:
+// a changed-file set that fits inside maxChangedFiles produces a verdict with
+// no truncation note, and one that exceeds it (18 files against the 12-file
+// cap) carries the count the judge actually scored alongside the count that
+// existed - not indistinguishable from a fully-scored verdict.
+func TestRunJudgeAgent_ChangedFilesCoverage(t *testing.T) {
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+
+	t.Run("within caps: no truncation note", func(t *testing.T) {
+		cfg, act := changedFilesFixture(t, 5)
+		var prompt string
+		factory := NewJudgeFactory(recordingJudge{prompt: &prompt}, nil, nil)
+		v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", act, nil, func(*genai.Part) bool { return true })
+		if err != nil {
+			t.Fatalf("runJudgeAgent: %v", err)
+		}
+		if v.ChangedFilesScored != 5 || v.ChangedFilesTotal != 5 {
+			t.Errorf("verdict coverage = scored=%d total=%d, want 5/5", v.ChangedFilesScored, v.ChangedFilesTotal)
+		}
+		if strings.Contains(v.Feedback, "cap") {
+			t.Errorf("feedback = %q, want no truncation note - every file fit", v.Feedback)
+		}
+	})
+
+	t.Run("over the cap: verdict carries scored and total", func(t *testing.T) {
+		cfg, act := changedFilesFixture(t, 18)
+		var prompt string
+		factory := NewJudgeFactory(recordingJudge{prompt: &prompt}, nil, nil)
+		v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", act, nil, func(*genai.Part) bool { return true })
+		if err != nil {
+			t.Fatalf("runJudgeAgent: %v", err)
+		}
+		if v.ChangedFilesScored != maxChangedFiles || v.ChangedFilesTotal != 18 {
+			t.Errorf("verdict coverage = scored=%d total=%d, want %d/18", v.ChangedFilesScored, v.ChangedFilesTotal, maxChangedFiles)
+		}
+		if !strings.Contains(v.Feedback, fmt.Sprintf("%d", maxChangedFiles)) || !strings.Contains(v.Feedback, "18") {
+			t.Errorf("feedback = %q, want it to name both the scored and total file counts", v.Feedback)
+		}
+	})
 }

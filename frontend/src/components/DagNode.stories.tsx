@@ -141,6 +141,21 @@ export const JudgeUnavailable: Story = {
   },
 }
 
+// #779: the judge ran (spent its whole iteration budget) but never called
+// submit_verdict - distinct from JudgeUnavailable, which never ran at all.
+export const JudgeNoVerdict: Story = {
+  args: {
+    node: wrNode,
+    state: { status: 'done', startedAt: 0, finishedAt: 30_000, model: 'qwen3-30b-a3b', judgeRounds: 1, judgePassed: false },
+    runs: [
+      workerDone(researchActivity),
+      { runId: 'j1', agent: 'judge', stage: 'judge', round: 1, done: true, status: 'no_verdict', reason: 'vetting: judge ended without a verdict', activity: [] },
+    ],
+    answer: 'Best time: **May–September**.',
+    isFinal: false,
+  },
+}
+
 export const Truncated: Story = {
   args: {
     node: wrNode,

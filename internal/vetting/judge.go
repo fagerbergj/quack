@@ -91,6 +91,11 @@ type verdict struct {
 	Passed   bool                      `json:"passed"`
 	Feedback string                    `json:"feedback"`
 	Findings []findingVerdict          `json:"findings,omitempty"` // per-finding verification; "contradicted" folds into findingsGroundingCriterion
+
+	// ChangedFiles* are set from changedFilesCoverage after the round, not by
+	// the model - how much of the diff the judge actually saw (#779).
+	ChangedFilesScored int `json:"changed_files_scored,omitempty"`
+	ChangedFilesTotal  int `json:"changed_files_total,omitempty"`
 }
 
 // JudgeFactory: builds a fresh agentic judge per round, per-factory read-only tools, per-round readCounter.
@@ -212,20 +217,56 @@ const (
 	maxChangedFiles    = 12
 )
 
-// changedFilesSection: review nodes use clone diff; implement nodes use full content + diff.
-func changedFilesSection(cfg Config, act workerActivity) string {
-	if cfg.IsReviewer {
-		return reviewVerdictLine(act) + stagedFindingsSection(act) + buildReviewDiffSection(cfg)
+// changedFilesCoverage: how many of the worker's changed files the judge
+// prompt actually carried, so a verdict over a capped subset doesn't read the
+// same as one over the whole change (#779). Zero value means "not applicable"
+// (reviewer nodes diff the clone directly, not act.written).
+type changedFilesCoverage struct {
+	Scored int
+	Total  int
+	// Capped is true only when maxChangedFiles/changedFilesBudget cut the loop
+	// short - NOT when Scored<Total merely because an individual file failed to
+	// resolve/read (deleted-after-write etc.). Only the cap is "truncation";
+	// an unrelated missing file isn't, and must not raise the note.
+	Capped bool
+}
+
+// truncated reports whether the judge saw fewer files than existed BECAUSE of the cap.
+func (c changedFilesCoverage) truncated() bool {
+	return c.Capped
+}
+
+// applyChangedFilesCoverage records the coverage on the verdict and, only
+// when it actually cut something, appends a note to the feedback - never a
+// note when everything fit (#779).
+func applyChangedFilesCoverage(v verdict, cov changedFilesCoverage) verdict {
+	v.ChangedFilesScored, v.ChangedFilesTotal = cov.Scored, cov.Total
+	if !cov.truncated() {
+		return v
 	}
-	written := buildChangedFilesSection(act, cfg.Workspace, cfg.WorkspaceUserID, cfg.ChatID)
+	note := fmt.Sprintf("The judge scored %d of %d changed files - the rest didn't fit the judge's file/size cap and were not reviewed.", cov.Scored, cov.Total)
+	if strings.TrimSpace(v.Feedback) == "" {
+		v.Feedback = note
+	} else {
+		v.Feedback = v.Feedback + "\n\n" + note
+	}
+	return v
+}
+
+// changedFilesSection: review nodes use clone diff; implement nodes use full content + diff.
+func changedFilesSection(cfg Config, act workerActivity) (string, changedFilesCoverage) {
+	if cfg.IsReviewer {
+		return reviewVerdictLine(act) + stagedFindingsSection(act) + buildReviewDiffSection(cfg), changedFilesCoverage{}
+	}
+	written, coverage := buildChangedFilesSection(act, cfg.Workspace, cfg.WorkspaceUserID, cfg.ChatID)
 	diff := buildImplementDiffSection(cfg)
 	switch {
 	case diff == "":
-		return written
+		return written, coverage
 	case written == "":
-		return diff
+		return diff, coverage
 	default:
-		return diff + "\n\n" + written
+		return diff + "\n\n" + written, coverage
 	}
 }
 
@@ -239,15 +280,18 @@ func reviewVerdictLine(act workerActivity) string {
 }
 
 // buildChangedFilesSection: re-reads worker's files through same jail so judge scores real source, not self-report.
-func buildChangedFilesSection(act workerActivity, jail *workspace.Jail, userID, chatID string) string {
+// Also reports coverage: how many of act.written actually made it into the section.
+func buildChangedFilesSection(act workerActivity, jail *workspace.Jail, userID, chatID string) (string, changedFilesCoverage) {
 	if len(act.written) == 0 || jail == nil {
-		return ""
+		return "", changedFilesCoverage{}
 	}
 	var sb strings.Builder
 	total := 0
 	shown := 0
+	capped := false
 	for _, rel := range act.written {
 		if shown >= maxChangedFiles || total >= changedFilesBudget {
+			capped = true
 			break
 		}
 		abs, err := jail.Resolve(userID, chatID, rel)
@@ -271,7 +315,7 @@ func buildChangedFilesSection(act workerActivity, jail *workspace.Jail, userID, 
 		total += len(body)
 		shown++
 	}
-	return sb.String()
+	return sb.String(), changedFilesCoverage{Scored: shown, Total: len(act.written), Capped: capped}
 }
 
 const judgeCharsPerToken = 4 // bytes/4, same as compaction estimator
@@ -341,14 +385,19 @@ func isTransientJudgeErr(err error) bool {
 }
 
 // runJudgeAgent: budgets judge prompt, retries transient faults, falls back to one harder-clamped retry.
-func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer string, act workerActivity, det map[string]criterionScore, emit func(*genai.Part) bool) (verdict, error) {
-	changedFiles := changedFilesSection(cfg, act)
+// Named returns so the deferred coverage stamp is a single choke point across every exit (#779) instead of
+// duplicated at each return.
+func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer string, act workerActivity, det map[string]criterionScore, emit func(*genai.Part) bool) (v verdict, err error) {
+	changedFiles, coverage := changedFilesSection(cfg, act)
 	known := judgeKnownFailuresSection(det, cfg.Threshold)
 	fitted := fitJudgeAnswer(cfg, question, answer, changedFiles, known, act, 1.0)
+	defer func() {
+		if err == nil {
+			v = applyChangedFilesCoverage(v, coverage)
+		}
+	}()
 
-	var v verdict
 	var readc *readCounter
-	var err error
 	for attempt := 1; attempt <= judgeRetryAttempts; attempt++ {
 		v, readc, err = runJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, known, act, emit)
 		if err == nil || ctx.Err() != nil || !isTransientJudgeErr(err) || attempt == judgeRetryAttempts {
@@ -360,7 +409,8 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 		case <-timer.C:
 		case <-ctx.Done():
 			timer.Stop()
-			return verdict{}, ctx.Err()
+			v, err = verdict{}, ctx.Err()
+			return
 		}
 	}
 	if err == nil || ctx.Err() != nil {
@@ -375,18 +425,20 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 					slog.Warn("judge passed without reading the repo again; accepting the verdict",
 						"component", "vetting", "agent", cfg.Agent, "score", v2.Score)
 				}
-				return v2, nil
+				v, err = v2, nil
+				return
 			}
 			slog.Warn("re-judge failed; keeping the unread verdict", "component", "vetting", "err", err2)
 		}
-		return v, err
+		return
 	}
 	retryAnswer := fitJudgeAnswer(cfg, question, fitted, changedFiles, known, act, 0.5)
 	if retryAnswer == fitted {
-		return verdict{}, err // nothing left to shrink; the retry would repeat the same call
+		v = verdict{} // nothing left to shrink; the retry would repeat the same call
+		return
 	}
 	v, _, err = runJudgeRound(ctx, factory, cfg, question, retryAnswer, changedFiles, known, act, emit)
-	return v, err
+	return
 }
 
 // runJudgeRound: isolated agentic judge round (own runner + in-memory session). Falls back to text parsing.
@@ -485,8 +537,14 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	if v, perr := parseVerdict(accum.String()); perr == nil {
 		return v, reads, nil
 	}
-	return verdict{}, reads, fmt.Errorf("vetting: judge ended without a verdict")
+	return verdict{}, reads, ErrJudgeNoVerdict
 }
+
+// ErrJudgeNoVerdict: the judge model ran - read files, spent its iteration
+// budget - and never called submit_verdict. Distinct from a transport/model
+// failure (the judge was never reachable at all) so the caller can tell the
+// reader which one happened instead of calling both "unavailable" (#779).
+var ErrJudgeNoVerdict = errors.New("vetting: judge ended without a verdict")
 
 // markdownLinkRe extracts inline Markdown link targets - web URLs AND local
 // paths ([games-repo/app/games.ts](games-repo/app/games.ts)): repo-exploration

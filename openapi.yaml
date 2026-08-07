@@ -188,8 +188,10 @@ paths:
         (the final vetted answer is emitted with an empty `run_id` - it belongs to
         the node); `agent_complete` ({"node_id","run_id","stage",...}) closes a run
         with its stage-specific result - judge runs carry `score`/`passed`/
-        `feedback` (or `status:"unavailable"`+`reason` when the judge couldn't
-        run), model runs carry `finish_reason` + token usage.
+        `feedback` (or `status`+`reason` when no verdict was produced:
+        `status:"unavailable"` when the judge model itself couldn't be reached,
+        `status:"no_verdict"` when it ran but never committed a verdict), model
+        runs carry `finish_reason` + token usage.
 
         DAG events: `dag_plan` ({"plan_id","nodes","edges"}) signals a quack:dag
         output item has been added; `node_queued` ({"node_id"}), `node_start`
