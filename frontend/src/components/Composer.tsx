@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { AttachmentStrip, type AttachmentItem } from './AttachmentUI'
 import type { QueuedTurn } from '../state/chatStore'
 
@@ -6,6 +6,28 @@ interface AttachmentPreview {
   url: string
   mime: string
   name: string
+}
+
+// Below Tailwind's sm breakpoint (640px) - matches where the app's other
+// sm: utilities switch, and comfortably covers the 390px phones this was
+// found on.
+const NARROW_QUERY = '(max-width: 639px)'
+
+// The keyboard hint in the idle placeholder ("Enter to send, Shift+Enter for
+// newline") is meaningless on a touch device and, at phone widths, wraps to
+// a second line the fixed-height input clips (#759 item 2) - so it's dropped
+// below the breakpoint rather than fought with layout.
+function useNarrowViewport(): boolean {
+  const supported = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+  const [narrow, setNarrow] = useState(() => supported && window.matchMedia(NARROW_QUERY).matches)
+  useEffect(() => {
+    if (!supported) return
+    const mql = window.matchMedia(NARROW_QUERY)
+    const onChange = () => setNarrow(mql.matches)
+    mql.addEventListener('change', onChange)
+    return () => mql.removeEventListener('change', onChange)
+  }, [supported])
+  return narrow
 }
 
 export interface ComposerProps {
@@ -31,6 +53,7 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
   const [attachments, setAttachments] = useState<AttachmentItem[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const narrow = useNarrowViewport()
 
   // Auto-grow the textarea with its content (CSS field-sizing isn't in Firefox/
   // Safari yet). Reset to auto first so it shrinks back when the draft is cleared;
@@ -141,7 +164,7 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
             name="message"
             className="flex-1 rounded-xl border border-gray-300 dark:border-gray-600 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none max-h-48 disabled:opacity-50 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
             rows={1}
-            placeholder={disabled ? 'Select or start a chat first' : streaming ? 'Type a follow-up… (queues until the current response finishes)' : 'Ask something… (Enter to send, Shift+Enter for newline)'}
+            placeholder={disabled ? 'Select or start a chat first' : streaming ? 'Type a follow-up… (queues until the current response finishes)' : narrow ? 'Ask something…' : 'Ask something… (Enter to send, Shift+Enter for newline)'}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}

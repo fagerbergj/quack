@@ -39,19 +39,34 @@ describe('NavRail', () => {
     expect(host!.textContent).toContain('Memory')
   })
 
-  it('starts collapsed (icons only, no labels) when localStorage says so', () => {
+  it('starts fully collapsed (no rail, no icons, just the restore button) when localStorage says so', () => {
     localStorage.setItem('navRailCollapsed', '1')
     render()
     expect(host!.textContent).not.toContain('Chats')
     expect(host!.textContent).not.toContain('Memory')
+    expect(host!.querySelector('nav')).toBeNull()
+    const restore = Array.from(host!.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Expand navigation')
+    expect(restore).toBeTruthy()
+    expect(restore!.tagName).toBe('BUTTON')
   })
 
-  it('persists the collapsed choice to localStorage on toggle', () => {
+  it('persists the collapsed choice to localStorage on toggle, removing the rail from the layout', () => {
     render({ initialCollapsed: false })
     const toggle = Array.from(host!.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Collapse navigation')!
     act(() => { toggle.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
     expect(localStorage.getItem('navRailCollapsed')).toBe('1')
     expect(host!.textContent).not.toContain('Chats')
+    expect(host!.querySelector('nav')).toBeNull()
+  })
+
+  it('restore button re-expands the rail on click', () => {
+    localStorage.setItem('navRailCollapsed', '1')
+    render()
+    const restore = Array.from(host!.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Expand navigation')!
+    act(() => { restore.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    expect(localStorage.getItem('navRailCollapsed')).toBe('0')
+    expect(host!.textContent).toContain('Chats')
+    expect(host!.querySelector('nav')).not.toBeNull()
   })
 
   it('marks the active route via aria-current', () => {

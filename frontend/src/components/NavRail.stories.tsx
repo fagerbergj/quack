@@ -32,22 +32,25 @@ export const ExpandedOnMemory: Story = {
   ),
 }
 
-// Collapsed to icons only - the toggle at the bottom re-expands it.
+// Fully collapsed (#759 item 1): no rail, no icons - just the restore
+// button, a real focusable control with an accessible name, not a hover
+// zone. The 320px frame stands in for a narrow phone viewport: at that
+// width the restore button is the entire footprint the nav costs.
 export const Collapsed: Story = {
   args: { route: 'chat', initialCollapsed: true },
   render: args => (
-    <div className="h-96">
+    <div className="h-96 w-[320px] relative border border-dashed border-gray-300 dark:border-gray-600">
       <NavRail {...args} />
     </div>
   ),
 }
 
-// Clicking the collapse toggle flips the rail's width and persists the
-// choice to localStorage (test case 2: survives a reload).
+// Clicking the collapse toggle removes the rail entirely and persists the
+// choice to localStorage (test case 1: survives a reload).
 export const ToggleCollapse: Story = {
   args: { route: 'chat', initialCollapsed: false },
   render: args => (
-    <div className="h-96">
+    <div className="h-96 relative">
       <NavRail {...args} />
     </div>
   ),
@@ -56,6 +59,7 @@ export const ToggleCollapse: Story = {
     expect(canvas.getByText('Chats')).toBeInTheDocument()
     await userEvent.click(canvas.getByRole('button', { name: 'Collapse navigation' }))
     expect(canvas.queryByText('Chats')).not.toBeInTheDocument()
+    expect(canvas.getByRole('button', { name: 'Expand navigation' })).toBeInTheDocument()
     expect(localStorage.getItem('navRailCollapsed')).toBe('1')
   },
 }
