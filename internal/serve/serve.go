@@ -45,6 +45,7 @@ import (
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/otelobs"
+	"github.com/fagerbergj/quack/internal/plugin"
 	"github.com/fagerbergj/quack/internal/promptbuilder"
 	"github.com/fagerbergj/quack/internal/replay"
 	"github.com/fagerbergj/quack/internal/server"
@@ -61,23 +62,48 @@ import (
 // localUserID is the single-user identity every filesystem/git tool resolves against.
 const localUserID = "local"
 
-// vendorSkillsDir is the ponytail skill git submodule, merged as lower-priority source.
-const vendorSkillsDir = ".agents/vendor/ponytail/skills"
+// dotagentsEmbeddedSkills is the one plugin's skills/ subtree quack's own
+// go:embed (embed.go) bakes into the binary. buildFromConfig hard-requires
+// format-markdown and plan-work at startup, both shipped there, so a
+// standalone install with no repo checkout (bundledir's disk-then-embedded
+// resolution) must still be able to find them even though plugin discovery
+// is otherwise disk-only. No other plugin gets this - it's the only one
+// embedded.
+const dotagentsEmbeddedSkills = ".agents/vendor/dotagents/skills"
 
-// dotagentsSkillsDir is the general-purpose skill library submodule, also embedded.
-const dotagentsSkillsDir = ".agents/vendor/dotagents/skills"
+// newSkillSource builds the skill toolset Source from quack's own shipped
+// skills plus each configured plugin root's skills directory (internal/plugin
+// discovery), in order. dotagentsEmbeddedSkills then backfills any names
+// discovery didn't resolve from disk, so a standalone install with no repo
+// checkout still gets it - added by NAME, not unconditionally: MergedSource
+// errors on a skill defined by two sources at once, so a dotagents plugin
+// root that DID resolve from disk must never also get the embedded copy.
+func newSkillSource(pluginRoots []string) skill.Source {
+	sources := []skill.Source{skill.NewFileSystemSource(bundledir.SubFS("skills"))}
+	for _, dir := range plugin.ResolveSkillDirs(pluginRoots) {
+		sources = append(sources, skill.NewFileSystemSource(os.DirFS(dir)))
+	}
+	resolved := skill.NewMergedSource(sources...)
 
-// newSkillSource builds the skill toolset Source from shipped, vendored dotagents, and ponytail.
-func newSkillSource(vendorDir string) skill.Source {
-	sources := []skill.Source{
-		skill.NewFileSystemSource(bundledir.SubFS("skills")),
-		skill.NewFileSystemSource(bundledir.SubFS(dotagentsSkillsDir)),
+	have := map[string]bool{}
+	if fms, err := resolved.ListFrontmatters(context.Background()); err == nil {
+		for _, fm := range fms {
+			have[fm.Name] = true
+		}
 	}
-	if st, err := os.Stat(vendorDir); err == nil && st.IsDir() {
-		slog.Info("vendored skills merged into the skill library", "component", "startup", "dir", vendorDir)
-		sources = append(sources, skill.NewFileSystemSource(os.DirFS(vendorDir)))
+	fallback := skill.NewFileSystemSource(bundledir.SubFS(dotagentsEmbeddedSkills))
+	var backfill []string
+	if fms, err := fallback.ListFrontmatters(context.Background()); err == nil {
+		for _, fm := range fms {
+			if !have[fm.Name] {
+				backfill = append(backfill, fm.Name)
+			}
+		}
 	}
-	return skill.NewMergedSource(sources...)
+	if len(backfill) == 0 {
+		return resolved
+	}
+	return skill.NewMergedSource(resolved, skillsource.Scoped(fallback, backfill))
 }
 
 // ledgerStoreFromConfig resolves the replay ledger backend from stores, best-effort.
@@ -289,7 +315,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		slog.Info("github extension enabled", "component", "startup", "issuer", gh.Issuer(), "mention", gh.Mention)
 	}
 
-	builtinSkillSrc := newSkillSource(vendorSkillsDir)
+	builtinSkillSrc := newSkillSource(cfg.Skills.Plugins)
 	skillSrc := skillsource.New(builtinSkillSrc, jail, localUserID)
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
 	if err != nil {
@@ -742,7 +768,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			}
 			wsBlock := workspace.PromptBlock(workspaceCaps, cfg.Workspace.CheckCommands)
 			preamble := promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, nil, skillFms, behaviour, grading, wsBlock)
-			env := opencodeEnv(prov, ac, acpSkillPaths())
+			env := opencodeEnv(prov, ac, acpSkillPaths(cfg.Skills.Plugins))
 			env = append(env, acpChildEnv(cfg.Workspace.Env, ac.Acp.Env)...)
 			var permJudge func(ctx context.Context, toolName, title string, input map[string]any) (bool, string)
 			if safetyJudge != nil {
@@ -775,7 +801,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				Env:             env,
 				Replay:          acpReplay,
 				Caps:            workspaceCaps,
-				ExtraRO:         acpSkillPaths(),
+				ExtraRO:         acpSkillPaths(cfg.Skills.Plugins),
 				Home:            workspaceCaps.HomeDir,
 				Preamble:        preamble,
 				Jail:            jail,
@@ -1033,19 +1059,17 @@ func mcpServerName(raw string, i int) string {
 	return labels[0]
 }
 
-// acpSkillPaths collects on-disk skill roots for an ACP agent's skills.paths.
-func acpSkillPaths() []string {
+// acpSkillPaths collects on-disk skill roots for an ACP agent's skills.paths:
+// quack's own skills/, then each configured plugin's skills directory
+// (internal/plugin discovery), in order.
+func acpSkillPaths(pluginRoots []string) []string {
 	var out []string
-	for _, d := range []string{"skills", dotagentsSkillsDir, vendorSkillsDir} {
-		abs, err := filepath.Abs(d)
-		if err != nil {
-			continue
-		}
+	if abs, err := filepath.Abs("skills"); err == nil {
 		if st, err := os.Stat(abs); err == nil && st.IsDir() {
 			out = append(out, abs)
 		}
 	}
-	return out
+	return append(out, plugin.ResolveSkillDirs(pluginRoots)...)
 }
 
 // contentText flattens a content's text parts (for advisor-thread marker extraction).

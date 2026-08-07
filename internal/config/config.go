@@ -23,10 +23,21 @@ type Config struct {
 	Dag           DagConfig                 `yaml:"dag"`
 	Server        ServerConfig              `yaml:"server"`
 	Workspace     WorkspaceConfig           `yaml:"workspace"`
+	Skills        SkillsConfig              `yaml:"skills"`
 	Extensions    ExtensionsConfig          `yaml:"extensions"`
 	Observability ObservabilityConfig       `yaml:"observability"`
 	Auth          *InboundAuthConfig        `yaml:"auth"`
 }
+
+// SkillsConfig names skill-library plugin roots beyond quack's own shipped
+// skills/ - each resolved at startup via internal/plugin's Agent Plugins /
+// Codex discovery order. A root that fails to resolve is a startup warning,
+// never an error. Order is preserved and never deduped.
+type SkillsConfig struct {
+	Plugins []string `yaml:"plugins"`
+}
+
+var defaultSkillPlugins = []string{".agents/vendor/dotagents", ".agents/vendor/ponytail"}
 
 type ObservabilityConfig struct {
 	Otel      OtelConfig      `yaml:"otel"`
@@ -709,6 +720,9 @@ func (c *Config) validate() error {
 	}
 	if err := c.Workspace.applyDefaults(); err != nil {
 		return err
+	}
+	if c.Skills.Plugins == nil {
+		c.Skills.Plugins = append([]string{}, defaultSkillPlugins...)
 	}
 	if err := c.Extensions.GitHub.applyDefaults(); err != nil {
 		return err
