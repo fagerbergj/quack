@@ -59,7 +59,7 @@ func TestBuildAgents_ReplayProvider_NativeAgentToolsAreStubs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewJail: %v", err)
 	}
-	builtinSkillSrc := newSkillSource(vendorSkillsDir)
+	builtinSkillSrc := newSkillSource(nil)
 	skillSrc := skillsource.New(builtinSkillSrc, jail, localUserID)
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
 	if err != nil {

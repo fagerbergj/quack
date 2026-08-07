@@ -261,6 +261,20 @@ observability:
     retention_days: 30                   # whole-session GC by last-modified; not yet enforced
     clone_snapshot: false                 # opt-in git snapshot in the export bundle; not yet implemented
 
+# Skill-library plugin roots, beyond quack's own shipped skills/, merged into
+# both the native skill toolset and each ACP agent's opencode skills.paths.
+# Each root is resolved once at startup (internal/plugin) via: a root
+# plugin.json (Agent Plugins, https://agent-plugins.org/ - skills at the
+# conventional <root>/skills) else .codex-plugin/plugin.json (Codex - explicit
+# "skills" field) else skipped with a warning naming the root. A missing,
+# unreadable, or malformed plugin never fails startup - it just loses that
+# plugin's skills. Order is preserved and never deduped; own skills/ always
+# takes precedence, then each root below in listed order.
+skills:
+  plugins:
+    - .agents/vendor/dotagents   # general-purpose skills (git submodule)
+    - .agents/vendor/ponytail    # YAGNI/lazy-senior-dev discipline (git submodule; Codex format)
+
 # The agents' working disk (filesystem/git tools). One configured root; a
 # per-user jail lives under it (<root>/<user_id>/ - "local" today, the OIDC
 # subject later). Not bound to any agent's tools: list yet - see

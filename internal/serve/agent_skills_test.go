@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"testing"
+
+	"github.com/fagerbergj/quack/internal/plugin"
 )
 
 var loadSkillRe = regexp.MustCompile(`load_skill\("([a-zA-Z0-9_-]+)"\)`)
@@ -21,20 +23,23 @@ var loadSkillRe = regexp.MustCompile(`load_skill\("([a-zA-Z0-9_-]+)"\)`)
 func TestEveryAgentPromptSkillIsShipped(t *testing.T) {
 	root := repoRoot(t)
 
-	// The vendored ponytail skills are a git SUBMODULE (see .gitmodules and
-	// serve.go's vendorSkillsDir). CI and the Docker build initialise it; a plain
-	// `git worktree add` does not. Without it we cannot tell "the prompt names a
-	// skill we never ship" (a real bug) from "this checkout just hasn't inited the
-	// submodule" (a local artifact) - so skip rather than cry wolf at every dev.
-	vendor := filepath.Join(root, ".agents", "vendor", "ponytail", "skills")
-	if st, err := os.Stat(vendor); err != nil || !st.IsDir() {
-		t.Skip("vendored skills submodule not initialised (git submodule update --init); cannot verify vendored skill references")
+	// The vendored skills are git SUBMODULES (see .gitmodules and
+	// config/quack.yaml's skills.plugins, resolved via internal/plugin). CI and
+	// the Docker build initialise them; a plain `git worktree add` does not.
+	// Without them we cannot tell "the prompt names a skill we never ship" (a
+	// real bug) from "this checkout just hasn't inited the submodules" (a local
+	// artifact) - so skip rather than cry wolf at every dev.
+	vendorRoots := []string{
+		filepath.Join(root, ".agents", "vendor", "dotagents"),
+		filepath.Join(root, ".agents", "vendor", "ponytail"),
+	}
+	vendorDirs := plugin.ResolveSkillDirs(vendorRoots)
+	if len(vendorDirs) != len(vendorRoots) {
+		t.Skip("vendored skill plugins not initialised (git submodule update --init); cannot verify vendored skill references")
 	}
 
-	// dotagents needs no such skip: its embed (embed.go) already fails the
-	// build when the submodule is missing, so reaching this test implies it.
 	shipped := map[string]bool{}
-	for _, dir := range []string{filepath.Join(root, "skills"), filepath.Join(root, dotagentsSkillsDir), vendor} {
+	for _, dir := range append([]string{filepath.Join(root, "skills")}, vendorDirs...) {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
