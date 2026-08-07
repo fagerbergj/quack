@@ -214,6 +214,28 @@ func validateLocation(positions map[string]diffPositions, path string, line int,
 	return nil
 }
 
+// nearestCommentableLine finds the commentable line closest to target (ties
+// broken toward the lower line number, for determinism). ok is false when
+// lines is empty - the file has no commentable line at all (#694).
+func nearestCommentableLine(lines map[int]bool, target int) (nearest int, ok bool) {
+	bestDist := -1
+	nums := make([]int, 0, len(lines))
+	for n := range lines {
+		nums = append(nums, n)
+	}
+	sort.Ints(nums)
+	for _, n := range nums {
+		d := n - target
+		if d < 0 {
+			d = -d
+		}
+		if bestDist == -1 || d < bestDist {
+			nearest, bestDist = n, d
+		}
+	}
+	return nearest, bestDist != -1
+}
+
 // describeLines renders a sorted summary of commentable line numbers (capped).
 func describeLines(lines map[int]bool) string {
 	if len(lines) == 0 {
@@ -698,19 +720,24 @@ func itemOutcomesForPushFailure(dc vetting.DeliveryContext, err error) []vetting
 	return out
 }
 
-// validComments filters to anchorable findings, deduping exact duplicates.
-func (a *App) validComments(ctx context.Context, owner, repo string, number int, comments []vetting.ReviewComment) []reviewComment {
+// validComments splits staged findings into inline comments and unanchored
+// ones, never dropping a finding outright (#694). A finding on an uncommentable
+// line is re-anchored to the nearest commentable line in the same file, with
+// its true location stated in the body; a finding in a file with no
+// commentable line at all comes back unanchored, for the caller to fold into
+// the review body as a distinguishable item. Exact duplicates are deduped -
+// that's a presentation choice, not information loss.
+func (a *App) validComments(ctx context.Context, owner, repo string, number int, comments []vetting.ReviewComment) (inline []reviewComment, unanchored []vetting.ReviewComment) {
 	if len(comments) == 0 {
-		return nil
+		return nil, nil
 	}
 	positions, err := a.commentablePositions(ctx, owner, repo, number)
 	if err != nil {
-		slog.Warn("github: delivery: PR diff unavailable; posting the review without inline comments",
+		slog.Warn("github: delivery: PR diff unavailable; keeping findings unanchored in the review body instead of dropping them",
 			"component", "github", "repo", owner+"/"+repo, "pr", number, "err", err)
-		return nil
+		return nil, comments
 	}
 	seen := make(map[reviewComment]bool, len(comments))
-	out := make([]reviewComment, 0, len(comments))
 	for _, c := range comments {
 		path, rerr := resolvePath(positions, c.Path)
 		if rerr != nil {
@@ -718,21 +745,46 @@ func (a *App) validComments(ctx context.Context, owner, repo string, number int,
 				"component", "github", "path", c.Path, "err", rerr)
 			continue
 		}
-		if verr := validateLocation(positions, path, c.Line, "RIGHT"); verr != nil {
-			slog.Warn("github: delivery: dropping an inline finding with an uncommentable line",
-				"component", "github", "path", path, "line", c.Line, "err", verr)
-			continue
+		line, body := c.Line, c.Body
+		if verr := validateLocation(positions, path, line, "RIGHT"); verr != nil {
+			nearest, ok := nearestCommentableLine(positions[path].right, line)
+			if !ok {
+				slog.Info("github: delivery: file has no commentable line; keeping the finding unanchored in the review body",
+					"component", "github", "path", path, "line", line)
+				unanchored = append(unanchored, vetting.ReviewComment{Path: path, Line: line, Body: body})
+				continue
+			}
+			slog.Info("github: delivery: re-anchoring a finding off its uncommentable line to the nearest commentable one",
+				"component", "github", "path", path, "from_line", line, "to_line", nearest)
+			body = fmt.Sprintf("_(this concerns line %d - anchored here because GitHub does not allow an inline comment on line %d)_\n\n%s", line, line, body)
+			line = nearest
 		}
-		rc := reviewComment{Path: path, Line: c.Line, Body: c.Body}
+		rc := reviewComment{Path: path, Line: line, Body: body}
 		if seen[rc] {
 			slog.Warn("github: delivery: dropping an exact-duplicate inline finding",
-				"component", "github", "path", path, "line", c.Line)
+				"component", "github", "path", path, "line", line)
 			continue
 		}
 		seen[rc] = true
-		out = append(out, rc)
+		inline = append(inline, rc)
 	}
-	return out
+	return inline, unanchored
+}
+
+// renderUnanchoredFindings renders findings GitHub won't take an inline
+// comment on anywhere in their file as a distinguishable review-body block
+// (#694) - never merged into prose, so a later fix run can still see them as
+// located findings rather than sentences.
+func renderUnanchoredFindings(findings []vetting.ReviewComment) string {
+	if len(findings) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\n---\n\n**Unanchored findings** (GitHub would not accept an inline comment anywhere in these files):\n\n")
+	for _, f := range findings {
+		fmt.Fprintf(&b, "- `%s` line %d: %s\n", f.Path, f.Line, f.Body)
+	}
+	return b.String()
 }
 
 // prNumberFromChatID recovers the issue/PR number from a "github-<owner>-<repo>-<number>" chatID.
@@ -806,7 +858,8 @@ func (a *App) deliverOne(ctx context.Context, owner, repo string, dc vetting.Del
 				body := "_quack authored this PR, so GitHub won't let it record an approve or request-changes verdict - this review is a comment. A maintainer decides._\n\n" + vetting.StripVerdictTail(item.Body)
 				body += "\n\n" + deliveryMarker("review:"+verdict)
 				a.collapsePriorReviews(ctx, owner, repo, dc.IssueNumber) // superseded prior attempts
-				inline := a.validComments(ctx, owner, repo, dc.IssueNumber, item.Comments)
+				inline, unanchored := a.validComments(ctx, owner, repo, dc.IssueNumber, item.Comments)
+				body += renderUnanchoredFindings(unanchored)
 				res, err := a.submitReview(ctx, submitReviewArgs{Owner: owner, Repo: repo, PullNumber: dc.IssueNumber, Body: gateCaveat(dc, body), Event: "COMMENT", Comments: inline})
 				if err != nil {
 					return deliveryItemResult{}, fmt.Errorf("github: delivery: self-review: %w", err)
@@ -822,8 +875,9 @@ func (a *App) deliverOne(ctx context.Context, owner, repo string, dc vetting.Del
 		}
 		a.collapsePriorReviews(ctx, owner, repo, dc.IssueNumber) // superseded prior attempts
 		// Validate inline findings before submit — one bad anchor 422s the whole review.
-		inline := a.validComments(ctx, owner, repo, dc.IssueNumber, item.Comments)
-		res, err := a.submitReview(ctx, submitReviewArgs{Owner: owner, Repo: repo, PullNumber: dc.IssueNumber, Body: gateCaveat(dc, item.Body), Event: event, Comments: inline})
+		inline, unanchored := a.validComments(ctx, owner, repo, dc.IssueNumber, item.Comments)
+		body := item.Body + renderUnanchoredFindings(unanchored)
+		res, err := a.submitReview(ctx, submitReviewArgs{Owner: owner, Repo: repo, PullNumber: dc.IssueNumber, Body: gateCaveat(dc, body), Event: event, Comments: inline})
 		if err != nil {
 			return deliveryItemResult{}, fmt.Errorf("github: delivery: submit review: %w", err)
 		}
