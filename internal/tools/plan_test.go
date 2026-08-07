@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/base64"
 	"reflect"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
 	"google.golang.org/adk/v2/tool/toolconfirmation"
+	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/otelobs"
@@ -237,6 +239,53 @@ func TestEmitPlanEvent_ProducesWellFormedEvent(t *testing.T) {
 	}
 	if attrs["gen_ai.output.messages"].AsString() == "" {
 		t.Error("gen_ai.output.messages missing the marshaled plan")
+	}
+}
+
+// TestEmitPlanEvent_RecordsInputMessages is issue #635: replaying a planning
+// decision needs the ask alongside the plan it produced, not just the plan.
+// Asserts the real fields Planner.Build stamped onto the plan (History,
+// UserMessage) round-trip into gen_ai.input.messages - not a reconstruction
+// of the ask from the plan's nodes. Also covers an inline-data attachment
+// (e.g. an image on the planning turn): the input field must carry its mime
+// type, never its raw bytes - an oversized gen_ai.input.messages value risks
+// OTel silently dropping or truncating the whole attribute.
+func TestEmitPlanEvent_RecordsInputMessages(t *testing.T) {
+	capExp := &recordCapture{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
+	restore := otelobs.SetLoggerProviderForTesting(lp)
+	defer restore()
+
+	blobBytes := []byte("totally-secret-pixel-data")
+	plan := &dag.Plan{
+		ID:          "plan-456",
+		Nodes:       []dag.Node{{ID: "impl", AgentName: "code-implementer"}},
+		History:     []dag.HistoryTurn{{Role: "user", Text: "earlier turn"}},
+		UserMessage: "fix the flaky test",
+		Attachments: []*genai.Part{{InlineData: &genai.Blob{MIMEType: "image/png", Data: blobBytes}}},
+	}
+	emitPlanEvent(newFakeCtx(), plan)
+
+	if len(capExp.records) != 1 {
+		t.Fatalf("got %d records, want 1", len(capExp.records))
+	}
+	var input string
+	capExp.records[0].WalkAttributes(func(kv otellog.KeyValue) bool {
+		if string(kv.Key) == "gen_ai.input.messages" {
+			input = kv.Value.AsString()
+		}
+		return true
+	})
+	if input == "" {
+		t.Fatal("gen_ai.input.messages missing")
+	}
+	for _, want := range []string{"earlier turn", "fix the flaky test", "image/png"} {
+		if !strings.Contains(input, want) {
+			t.Errorf("gen_ai.input.messages = %q, want it to contain %q (the planner's real ask)", input, want)
+		}
+	}
+	if blob := base64.StdEncoding.EncodeToString(blobBytes); strings.Contains(input, blob) {
+		t.Errorf("gen_ai.input.messages = %q, leaked the attachment's raw bytes", input)
 	}
 }
 
