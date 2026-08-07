@@ -36,6 +36,9 @@ export const api = {
   listChats: async (opts?: { limit?: number; page_token?: string }): Promise<ChatList> =>
     unwrap(await sdkListChats({ query: opts })),
 
+  listChatsWithArchived: async (opts?: { limit?: number; page_token?: string; show_archived: boolean }): Promise<ChatList> =>
+    unwrap(await sdkListChats({ query: opts })),
+
   createChat: async (opts?: { system_prompt?: string }): Promise<ChatSummary> =>
     unwrap(await sdkCreateChat({ body: { system_prompt: opts?.system_prompt } })),
 
@@ -51,6 +54,9 @@ export const api = {
 
   renameChat: async (chatId: string, title: string): Promise<ChatSummary> =>
     unwrap(await sdkUpdateChat({ path: { chat_id: chatId }, body: { title } })),
+
+  archiveChat: async (chatId: string, archived: boolean): Promise<ChatSummary> =>
+    unwrap(await sdkUpdateChat({ path: { chat_id: chatId }, body: { archived } })),
 
   getResponse: async (chatId: string, responseId: string): Promise<Turn | null> => {
     const r = await sdkGetResponse({ path: { chat_id: chatId, response_id: responseId } })

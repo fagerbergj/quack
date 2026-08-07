@@ -401,3 +401,177 @@ func TestUpdateChat_NoSuchChat404(t *testing.T) {
 		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+// TestUpdateChat_ArchiveToggle: a PATCH with only archived=true archives the chat
+// and unarchiving (archived=false) reverses it. AtLeast one of title or archived must
+// be present so an empty body still 400s (already tested above).
+func TestUpdateChat_ArchiveToggle(t *testing.T) {
+	h := newTestHandler(t)
+	ctx := context.Background()
+	c, err := h.store.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+
+	trueVal := true
+	rec := patchUpdateChat(t, h, c.ID, schema.UpdateChatBody{Archived: &trueVal})
+	t.Logf("archive response body: %s", rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var got schema.ChatSummary
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Archived == nil || !*got.Archived {
+		t.Errorf("response Archived = %v, want true", got.Archived)
+	}
+
+	stored, err := h.store.GetChat(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("GetChat: %v", err)
+	}
+	if !stored.Archived {
+		t.Errorf("stored Archived = %v, want true", stored.Archived)
+	}
+
+	// Unarchive.
+	falseVal := false
+	rec = patchUpdateChat(t, h, c.ID, schema.UpdateChatBody{Archived: &falseVal})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unarchive status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	stored, err = h.store.GetChat(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("GetChat after unarchive: %v", err)
+	}
+	t.Logf("stored after unarchive: archived=%v", stored.Archived)
+	if stored.Archived {
+		t.Errorf("stored Archived after unarchive = true, want false")
+		return
+	}
+
+	// Reset got before re-unmarshalling so json.Unmarshal doesn't keep
+	// the old *bool(true) pointer when "archived" is absent from JSON.
+	var unarchivedGot schema.ChatSummary
+	if err := json.Unmarshal(rec.Body.Bytes(), &unarchivedGot); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if unarchivedGot.Archived != nil && *unarchivedGot.Archived {
+		t.Errorf("response Archived = %v, want false", *unarchivedGot.Archived)
+	}
+}
+
+// TestUpdateChat_ArchiveDoesNotTouchUpdatedAt: archiving a chat must not modify its
+// updated_at timestamp so that archive/unarchive doesn't reorder the recency-sorted list.
+func TestUpdateChat_ArchiveDoesNotTouchUpdatedAt(t *testing.T) {
+	h := newTestHandler(t)
+	ctx := context.Background()
+
+	c, err := h.store.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+
+	saved, _ := h.store.GetChat(ctx, c.ID)
+	beforeUnix := saved.UpdatedAt.Unix()
+
+	// Give the clock a moment to tick and also let any DB auto-timestamps settle.
+	time.Sleep(50 * time.Millisecond)
+
+	trueVal := true
+	rec := patchUpdateChat(t, h, c.ID, schema.UpdateChatBody{Archived: &trueVal})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	saved, err = h.store.GetChat(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("GetChat: %v", err)
+	}
+	if saved.Archived != true {
+		t.Errorf("stored Archived after archive call = false, want true")
+	}
+
+	if saved.UpdatedAt.Unix() != beforeUnix {
+		t.Errorf("updated_at Unix second after archive changed from %d to %d; want equal", beforeUnix, saved.UpdatedAt.Unix())
+	}
+
+	// Unarchive and verify UpdatedAt still unchanged.
+	falseVal := false
+	rec = patchUpdateChat(t, h, c.ID, schema.UpdateChatBody{Archived: &falseVal})
+
+	saved, err = h.store.GetChat(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("GetChat: %v", err)
+	}
+	if saved.Archived {
+		t.Errorf("stored Archived = true after unarchive; want false")
+	}
+	if saved.UpdatedAt.Unix() != beforeUnix {
+		t.Errorf("updated_at Unix second after unarchive changed from %d to %d; want equal", beforeUnix, saved.UpdatedAt.Unix())
+	}
+}
+
+// TestUpdateChat_ArchiveAndTitleTogether: updating both title and archived in one
+// PATCH should set the new title, toggle archived, and still NOT touch updated_at
+// because there's no title that would otherwise trigger it. (Archived wins: updateAt
+// is forced to false when hasArchived is true regardless of hasTitle.)
+func TestUpdateChat_ArchiveAndTitleTogether(t *testing.T) {
+	h := newTestHandler(t)
+	ctx := context.Background()
+
+	c, err := h.store.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+
+	newTitle := "new title"
+	trueVal := true
+	rec := patchUpdateChat(t, h, c.ID, schema.UpdateChatBody{Title: &newTitle, Archived: &trueVal})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	stored, _ := h.store.GetChat(ctx, c.ID)
+	if stored.Title != newTitle {
+		t.Errorf("stored Title = %q, want %q", stored.Title, newTitle)
+	}
+	if !stored.Archived {
+		t.Errorf("stored Archived = false, want true")
+	}
+}
+
+// TestUpdateChat_TitleOnlyStillTouchesUpdatedAt: title-only updates still update
+// updated_at as before (archive is the one that must not touch it).
+func TestUpdateChat_TitleOnlyStillTouchesUpdatedAt(t *testing.T) {
+	h := newTestHandler(t)
+	ctx := context.Background()
+
+	c, err := h.store.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+
+	var before time.Time
+	saved, _ := h.store.GetChat(ctx, c.ID)
+	before = saved.UpdatedAt
+
+	time.Sleep(10 * time.Millisecond)
+
+	newTitle := "updated title"
+	rec := patchUpdateChat(t, h, c.ID, schema.UpdateChatBody{Title: &newTitle})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	saved, err = h.store.GetChat(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("GetChat: %v", err)
+	}
+
+	if saved.UpdatedAt.Equal(before) {
+		t.Errorf("updated_at should have been touched by title change; before=%s after=%s", before.Format(time.RFC3339), saved.UpdatedAt.Format(time.RFC3339))
+	}
+}

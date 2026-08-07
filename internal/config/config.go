@@ -93,17 +93,18 @@ type ExtensionsConfig struct {
 // GitHubExtensionConfig configures the GitHub App extension (internal/github).
 // Secrets (private_key, webhook_secret) must be ${VAR} env references in raw YAML.
 type GitHubExtensionConfig struct {
-	ClientID          string       `yaml:"client_id"`
-	AppID             int64        `yaml:"app_id"`
-	PrivateKey        string       `yaml:"private_key"`
-	PrivateKeyPath    string       `yaml:"private_key_path"`
-	WebhookSecret     string       `yaml:"webhook_secret"`
-	Mention           string       `yaml:"mention"`
-	Triggers          []string     `yaml:"triggers"`
-	AutoReviewLabel   string       `yaml:"auto_review_label"`
-	AllowedUsers      []string     `yaml:"allowed_users"`
-	Labels            GitHubLabels `yaml:"labels"`
-	RunTimeoutMinutes int          `yaml:"run_timeout_minutes"`
+	ClientID           string       `yaml:"client_id"`
+	AppID              int64        `yaml:"app_id"`
+	PrivateKey         string       `yaml:"private_key"`
+	PrivateKeyPath     string       `yaml:"private_key_path"`
+	WebhookSecret      string       `yaml:"webhook_secret"`
+	Mention            string       `yaml:"mention"`
+	Triggers           []string     `yaml:"triggers"`
+	AutoReviewLabel    string       `yaml:"auto_review_label"`
+	AllowedUsers       []string     `yaml:"allowed_users"`
+	Labels             GitHubLabels `yaml:"labels"`
+	RunTimeoutMinutes  int          `yaml:"run_timeout_minutes"`
+	AutoArchiveOnMerge bool         `yaml:"auto_archive_on_merge"`
 }
 
 type GitHubLabels struct {

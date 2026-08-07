@@ -154,6 +154,9 @@ export default function Chat() {
   const [copied, setCopied] = useState<string | null>(null)
   const [submittingChoice, setSubmittingChoice] = useState(false)
   const [liveAttachmentPreviews, setLiveAttachmentPreviews] = useState<{url: string; mime: string; name: string}[]>([])
+  // #722: control whether archived chats are included in the sidebar list.
+  // Defaults to false — the collapsed Archived section refetches with true on expand.
+  const [showArchived, setShowArchived] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // Open a chat scrolled to the latest message (and snap down as turns complete),
@@ -165,23 +168,51 @@ export default function Chat() {
   }, [activeChatId, state.turns.length])
 
   const loadChats = useCallback(async () => {
-    const result = await api.listChats()
+    const result = showArchived
+      ? await api.listChatsWithArchived({ show_archived: true })
+      : await api.listChats()
     setChats(result.data)
     setChatsNextPageToken(result.next_page_token)
     return result.data
-  }, [])
+  }, [showArchived])
 
   const loadMoreChats = useCallback(async () => {
     if (!chatsNextPageToken || loadingMoreChats) return
     setLoadingMoreChats(true)
     try {
-      const result = await api.listChats({ page_token: chatsNextPageToken })
+      const result = showArchived
+        ? await api.listChatsWithArchived({ show_archived: true, page_token: chatsNextPageToken })
+        : await api.listChats({ page_token: chatsNextPageToken })
       setChats(prev => [...prev, ...result.data])
       setChatsNextPageToken(result.next_page_token)
     } finally {
       setLoadingMoreChats(false)
     }
-  }, [chatsNextPageToken, loadingMoreChats])
+  }, [chatsNextPageToken, loadingMoreChats, showArchived])
+
+  // Refetch when the archived expand toggle changes so the list updates
+  // with or without archived chats (#722).
+  useEffect(() => {
+    void loadChats()
+  }, [showArchived, loadChats])
+
+  const handleArchiveChat = useCallback(async (chatId: string) => {
+    const existing = chats.find(c => c.id === chatId)
+    if (!existing) return
+    const newArchived = !existing.archived
+
+    setChats(prev => prev.map(c =>
+      c.id === chatId ? { ...c, archived: newArchived } : c
+    ))
+
+    try {
+      await api.archiveChat(chatId, newArchived)
+    } catch {
+      setChats(prev => prev.map(c =>
+        c.id === chatId ? { ...c, archived: !newArchived } : c
+      ))
+    }
+  }, [chats])
 
   useEffect(() => {
     loadChats().then(data => {
@@ -228,9 +259,9 @@ export default function Chat() {
     }
   }, [activeChatId])
 
-  // #499/#738: poll the chat list so the sidebar stays current without a refresh. Skipped
+ // #499/#738: poll the chat list so the sidebar stays current without a refresh. Skipped
   // while the tab is hidden (a backgrounded tab has nothing to show anyway) and resumed
-  // immediately on refocus rather than waiting out the interval - a GitHub-webhook-triggered
+  // immediately on refocus rather than waiting out the rest of the interval - a GitHub-webhook-triggered
   // run has no client action to hang off, so this stays a poll, not push-on-navigate.
   useEffect(() => {
     let cancelled = false
@@ -242,7 +273,9 @@ export default function Chat() {
         // what's on screen (#736). Chats are updated_at-sorted, so anything
         // that just changed is in this page regardless of how far the user
         // has paged; the pagination token is left untouched here.
-        const result = await api.listChats()
+        const result = showArchived
+          ? await api.listChatsWithArchived({ show_archived: true })
+          : await api.listChats()
         if (!cancelled) setChats(prev => mergeChatsPage(prev, result.data))
       } catch { /* transient - next poll will retry */ }
     }
@@ -252,7 +285,7 @@ export default function Chat() {
       cancelled = true
       stop()
     }
-  }, [loadChats])
+  }, [loadChats, showArchived])
 
   // #463: when a run goes active on an already-open chat (e.g. GitHub webhook
   // dispatched while the user views this chat), re-fire attach so the SSE
@@ -461,6 +494,9 @@ export default function Chat() {
         hasMoreChats={chatsNextPageToken !== undefined}
         onLoadMoreChats={loadMoreChats}
         loadingMoreChats={loadingMoreChats}
+        onArchive={handleArchiveChat}
+        onUnarchive={handleArchiveChat}
+        onShowArchived={() => setShowArchived(true)}
       />
 
       <div className="flex flex-col flex-1 min-w-0">

@@ -108,3 +108,59 @@ func TestListChats_InvalidPageToken400(t *testing.T) {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+// TestListChats_ExcludeArchivedByDefault: archived chats are omitted from the list
+// unless show_archived=true. This keeps the sidebar focused on active items.
+func TestListChats_ExcludeArchivedByDefault(t *testing.T) {
+	h := newTestHandler(t)
+	ctx := context.Background()
+
+	// Create 2 normal and 1 archived chat.
+	cNormal1, _ := h.store.CreateChat(ctx, "")
+	_ = cNormal1 // used implicitly as a row; ids below verify filtering.
+	cNormal2, _ := h.store.CreateChat(ctx, "")
+	_ = cNormal2
+	cArchived, err := h.store.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	h.store.ArchiveChat(ctx, cArchived.ID, true)
+
+	// Default (nil showArchived): should return 2 chats.
+	rec := getListChats(t, h, schema.ListChatsParams{})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("default status = %d, want 200", rec.Code)
+	}
+	out := decodeChatList(t, rec)
+	if len(out.Data) != 2 {
+		t.Fatalf("default len(data) = %d, want 2 (archived excluded)", len(out.Data))
+	}
+	for _, c := range out.Data {
+		if c.Id == cArchived.ID {
+			t.Errorf("archived chat %s present in default list", c.Id)
+		}
+	}
+
+	// show_archived=true: should return all 3.
+	trueVal := true
+	rec = getListChats(t, h, schema.ListChatsParams{ShowArchived: &trueVal})
+	out = decodeChatList(t, rec)
+	if len(out.Data) != 3 {
+		t.Fatalf("showArchived=true len(data) = %d, want 3", len(out.Data))
+	}
+
+	// show_archived=false: should also exclude archived.
+	falseVal := false
+	rec = getListChats(t, h, schema.ListChatsParams{ShowArchived: &falseVal})
+	out = decodeChatList(t, rec)
+	if len(out.Data) != 2 {
+		t.Fatalf("showArchived=false len(data) = %d, want 2", len(out.Data))
+	}
+
+	// Verify all returned chats have archived field omitted or false.
+	for _, c := range out.Data {
+		if c.Archived != nil && *c.Archived {
+			t.Errorf("archived chat should not appear when showArchived=false")
+		}
+	}
+}
