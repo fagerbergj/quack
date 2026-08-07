@@ -317,6 +317,137 @@ func TestRunGatedRefine_ChecksSkipReasonEmptyWhenChecksRan(t *testing.T) {
 	}
 }
 
+// TestComposeFeedbackDeterministicOnlyLeadsAndScopesJudgeNotes (#791 case 1): a
+// verdict where only a deterministic criterion failed puts that failure first,
+// then the judge's (otherwise unqualified) notes, labelled as covering only
+// what the judge was actually asked to score.
+func TestComposeFeedbackDeterministicOnlyLeadsAndScopesJudgeNotes(t *testing.T) {
+	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 1.0}}, Feedback: "The implementation is excellent."}
+	det := map[string]criterionScore{"delivery_complete": {Score: 0, Reason: "deterministic: no commit found in the ledger"}}
+	merged := mergeDeterministic(v, det)
+
+	got := composeFeedback(merged, 0.7)
+
+	detIdx := strings.Index(got, "Deterministic check failures")
+	feedbackIdx := strings.Index(got, "The implementation is excellent.")
+	if detIdx == -1 {
+		t.Fatalf("composeFeedback = %q, want a deterministic-failures header", got)
+	}
+	if feedbackIdx == -1 || feedbackIdx < detIdx {
+		t.Errorf("composeFeedback = %q, want the deterministic failures BEFORE the judge's notes", got)
+	}
+	if !strings.Contains(got, "delivery_complete: deterministic: no commit found in the ledger") {
+		t.Errorf("composeFeedback = %q, want the failing criterion's reason", got)
+	}
+	if !strings.Contains(got, "remaining criteria") {
+		t.Errorf("composeFeedback = %q, want the judge's notes labelled as scoped to the remaining criteria", got)
+	}
+}
+
+// TestComposeFeedbackJudgeOnlyDoesNotLabelDeterministic (#791 case 2): a judge-scored
+// criterion below threshold must never be printed under a "deterministic" heading -
+// it is an opinion, not a decided, code-owned fact.
+func TestComposeFeedbackJudgeOnlyDoesNotLabelDeterministic(t *testing.T) {
+	v := verdict{
+		Criteria: map[string]criterionScore{"accuracy": {Score: 0.3, Reason: "the analysis misses the caching layer"}},
+		Feedback: "needs more depth",
+	}
+	got := composeFeedback(v, 0.7)
+	if strings.Contains(got, "Deterministic") {
+		t.Errorf("composeFeedback = %q, must not label a judge-scored criterion as deterministic", got)
+	}
+	if !strings.Contains(got, "accuracy: the analysis misses the caching layer") {
+		t.Errorf("composeFeedback = %q, want the failing criterion's reason", got)
+	}
+	if !strings.Contains(got, "needs more depth") {
+		t.Errorf("composeFeedback = %q, want the judge's own feedback", got)
+	}
+}
+
+// TestComposeFeedbackBothKindsEachOwnHeadingNoDuplicates (#791 case 3): with both a
+// deterministic and a judge-scored criterion failing, each is printed under its own
+// heading and every criterion appears exactly once.
+func TestComposeFeedbackBothKindsEachOwnHeadingNoDuplicates(t *testing.T) {
+	v := verdict{
+		Criteria: map[string]criterionScore{"accuracy": {Score: 0.3, Reason: "shallow analysis"}},
+		Feedback: "judge notes",
+	}
+	det := map[string]criterionScore{"checks_pass": {Score: 0, Reason: "deterministic: go test ./... failed"}}
+	merged := mergeDeterministic(v, det)
+
+	got := composeFeedback(merged, 0.7)
+
+	if !strings.Contains(got, "Deterministic check failures") {
+		t.Errorf("composeFeedback = %q, want a deterministic-failures heading", got)
+	}
+	if !strings.Contains(got, "Other criteria the judge scored below threshold") {
+		t.Errorf("composeFeedback = %q, want a separate heading for the judge-scored failure", got)
+	}
+	for _, want := range []string{"checks_pass: deterministic: go test ./... failed", "accuracy: shallow analysis"} {
+		if n := strings.Count(got, want); n != 1 {
+			t.Errorf("composeFeedback contains %q %d times, want exactly 1: %q", want, n, got)
+		}
+	}
+}
+
+// TestComposeFeedbackPassingUnchanged (#791 case 4): a passing verdict's feedback
+// is returned unchanged - no grouping/labelling machinery kicks in.
+func TestComposeFeedbackPassingUnchanged(t *testing.T) {
+	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.95}}, Feedback: "all good"}
+	if got := composeFeedback(v, 0.7); got != "all good" {
+		t.Errorf("composeFeedback = %q, want unchanged judge feedback %q", got, "all good")
+	}
+}
+
+// TestComposeFeedbackScoreUnchanged (#791 case 5): composeFeedback only reformats
+// text - mergeDeterministic's weakest-link score must be identical whether the
+// failure is deterministic-only, judge-only, both, or neither.
+func TestComposeFeedbackScoreUnchanged(t *testing.T) {
+	cases := []struct {
+		name      string
+		v         verdict
+		det       map[string]criterionScore
+		wantScore float64
+	}{
+		{
+			name:      "deterministic only",
+			v:         verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 1.0}}},
+			det:       map[string]criterionScore{"delivery_complete": {Score: 0}},
+			wantScore: 0,
+		},
+		{
+			name:      "judge only",
+			v:         verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.3}}},
+			wantScore: 0.3,
+		},
+		{
+			name:      "both",
+			v:         verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.3}}},
+			det:       map[string]criterionScore{"checks_pass": {Score: 0}},
+			wantScore: 0,
+		},
+		{
+			name:      "passing",
+			v:         verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.95}}},
+			det:       map[string]criterionScore{"checks_pass": {Score: 1}},
+			wantScore: 0.95,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			merged := mergeDeterministic(tc.v, tc.det)
+			if merged.Score != tc.wantScore {
+				t.Errorf("Score = %v, want %v (composeFeedback grouping must not move the score)", merged.Score, tc.wantScore)
+			}
+			// composeFeedback itself must never touch the score.
+			composeFeedback(merged, 0.7)
+			if merged.Score != tc.wantScore {
+				t.Errorf("Score after composeFeedback = %v, want unchanged %v", merged.Score, tc.wantScore)
+			}
+		})
+	}
+}
+
 // TestGateReattachesAdvisorMarkerOnRevise pins the workspace-scope fix: a revise
 // round builds a fresh prompt from cfg.Task and would drop the advisor-thread
 // marker that carries the worker's per-node clone/cwd scope - so the marker must

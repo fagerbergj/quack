@@ -83,6 +83,10 @@ func judgeBehaviour(hasReadTools, hasSkills bool) string {
 type criterionScore struct {
 	Reason string  `json:"reason,omitempty"`
 	Score  float64 `json:"score"`
+	// Deterministic marks a code-owned criterion (set by mergeDeterministic from
+	// computeDeterministicCriteria's provenance, never by the judge) - json:"-" so
+	// it never appears in the judge's tool schema or gets round-tripped from its output.
+	Deterministic bool `json:"-"`
 }
 
 // verdict: structured round score. Score is lowest criterion (weakest-link).

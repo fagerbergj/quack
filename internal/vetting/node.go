@@ -967,11 +967,15 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 }
 
 // mergeDeterministic: folds deterministic criteria into verdict and re-aggregates.
+// Stamps Deterministic here (not in computeDeterministicCriteria) since det's
+// keys are exactly the code-owned set - composeFeedback reads it to tell a
+// code-owned failure from a judge-scored one (#791).
 func mergeDeterministic(v verdict, det map[string]criterionScore) verdict {
 	if v.Criteria == nil {
 		v.Criteria = map[string]criterionScore{}
 	}
 	for name, c := range det {
+		c.Deterministic = true
 		v.Criteria[name] = c
 	}
 	return aggregateVerdict(v)
@@ -1003,29 +1007,56 @@ func resolveCiteCloneRoots(cfg Config, act workerActivity) []string {
 }
 
 // composeFeedback: merges judge feedback with below-threshold criterion reasons for the revise prompt.
+// Deterministic (code-owned) and judge-scored failures are kept in separate,
+// separately-labelled groups - a code-owned failure has one correct fix, a low
+// judge score is arguable, and collapsing them into one "deterministic" list
+// misrepresents the judge's opinion as a decided fact (#791). Deterministic
+// failures lead, since they are decided; the judge's notes are not.
 func composeFeedback(v verdict, threshold float64) string {
-	var extra []string
+	var detFails, judgeFails []string
 	for name, c := range v.Criteria {
-		if c.Score < threshold && strings.TrimSpace(c.Reason) != "" {
-			extra = append(extra, fmt.Sprintf("- %s: %s", name, c.Reason))
+		if c.Score >= threshold || strings.TrimSpace(c.Reason) == "" {
+			continue
+		}
+		line := fmt.Sprintf("- %s: %s", name, c.Reason)
+		if c.Deterministic {
+			detFails = append(detFails, line)
+		} else {
+			judgeFails = append(judgeFails, line)
 		}
 	}
+	sort.Strings(detFails) // stable order across runs (map iteration is random)
+	sort.Strings(judgeFails)
 	findingsFeedback := composeFindingsFeedback(v.Findings)
-	if len(extra) == 0 && findingsFeedback == "" {
+	if len(detFails) == 0 && len(judgeFails) == 0 && findingsFeedback == "" {
 		return v.Feedback
 	}
-	sort.Strings(extra) // stable order across runs (map iteration is random)
 	var sb strings.Builder
-	if strings.TrimSpace(v.Feedback) != "" {
-		sb.WriteString(v.Feedback)
-		sb.WriteString("\n\n")
+	if len(detFails) > 0 {
+		sb.WriteString("Deterministic check failures (code-owned, already decided - fix these):\n")
+		sb.WriteString(strings.Join(detFails, "\n"))
 	}
-	if len(extra) > 0 {
-		sb.WriteString("Deterministic check failures:\n")
-		sb.WriteString(strings.Join(extra, "\n"))
+	if fb := strings.TrimSpace(v.Feedback); fb != "" {
+		if sb.Len() > 0 {
+			sb.WriteString("\n\n")
+		}
+		// Only scoped when a deterministic failure exists: the judge was told (judgeKnownFailuresHeader)
+		// to exclude these from its scoring, so its otherwise-unqualified praise would read as a
+		// contradiction of the failures printed above it without this label.
+		if len(detFails) > 0 {
+			sb.WriteString("Judge's assessment of the remaining criteria (the deterministic failures above were excluded from its scoring):\n")
+		}
+		sb.WriteString(fb)
+	}
+	if len(judgeFails) > 0 {
+		if sb.Len() > 0 {
+			sb.WriteString("\n\n")
+		}
+		sb.WriteString("Other criteria the judge scored below threshold:\n")
+		sb.WriteString(strings.Join(judgeFails, "\n"))
 	}
 	if findingsFeedback != "" {
-		if len(extra) > 0 {
+		if sb.Len() > 0 {
 			sb.WriteString("\n\n")
 		}
 		sb.WriteString(findingsFeedback)
