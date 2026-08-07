@@ -576,3 +576,40 @@ func TestGateCaveat(t *testing.T) {
 		t.Errorf("banner must precede the original body; got %q", got)
 	}
 }
+
+// TestGateCaveatChecksSkipNote pins #780 test case 1: a node that PASSED the
+// gate but ran no build/test check gets a plain NOTE - not a warning about
+// the code - in its delivered PR body, carrying the skip reason verbatim.
+func TestGateCaveatChecksSkipNote(t *testing.T) {
+	body := "## What\nadds a thing"
+	note := "quack did not run a build/test check on this change (skip_reason: unsupported_build_system)."
+	got := gateCaveat(vetting.DeliveryContext{GatePassed: true, ChecksSkipNote: note}, body)
+	if !strings.Contains(got, "[!NOTE]") {
+		t.Errorf("a passing gate with a checks-skip note must prepend a NOTE banner; got %q", got)
+	}
+	if strings.Contains(got, "[!WARNING]") || strings.Contains(got, "did NOT pass") {
+		t.Errorf("the note must not read as a gate-failure warning about the code; got %q", got)
+	}
+	if !strings.Contains(got, "unsupported_build_system") {
+		t.Errorf("note must carry the exact skip reason; got %q", got)
+	}
+	if !strings.HasSuffix(got, body) {
+		t.Errorf("note must precede the original body; got %q", got)
+	}
+}
+
+// TestGateCaveatFailingNodeIgnoresChecksSkipNote pins #780 test case 3: a
+// failing node's existing warning banner is unchanged by ChecksSkipNote -
+// this feature adds a case for a passing node, it does not reword the one
+// that already works.
+func TestGateCaveatFailingNodeIgnoresChecksSkipNote(t *testing.T) {
+	body := "## What\nadds a thing"
+	dc := vetting.DeliveryContext{GatePassed: false, GateFeedback: "tests fail", ChecksSkipNote: "unsupported_build_system"}
+	got := gateCaveat(dc, body)
+	if strings.Contains(got, "[!NOTE]") || strings.Contains(got, "unsupported_build_system") {
+		t.Errorf("a failing node's banner must ignore ChecksSkipNote entirely; got %q", got)
+	}
+	if !strings.Contains(got, "[!WARNING]") || !strings.Contains(got, "did NOT pass") || !strings.Contains(got, "tests fail") {
+		t.Errorf("the existing failing-gate banner must be unchanged; got %q", got)
+	}
+}

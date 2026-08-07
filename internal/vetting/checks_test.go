@@ -413,3 +413,70 @@ func TestUnsupportedBuildSystemIsNamed(t *testing.T) {
 		t.Errorf("empty dir named %q - a repo with no build system must stay quiet", got)
 	}
 }
+
+// TestChecksSkipNote_OnlyChangePropertiesEarnANote pins the #780 scope call:
+// no_repo/no_checks_derived/unsupported_build_system are properties of the
+// change (quack couldn't verify it) and earn a note; not_configured/
+// no_workspace are operator config states and stay silent.
+func TestChecksSkipNote_OnlyChangePropertiesEarnANote(t *testing.T) {
+	cases := map[string]bool{
+		skipReasonNotConfigured:    false,
+		skipReasonNoWorkspace:      false,
+		skipReasonNoRepo:           true,
+		skipReasonNoChecksDerived:  true,
+		skipReasonUnsupportedBuild: true,
+	}
+	for reason, wantNote := range cases {
+		got := checksSkipNote(reason)
+		if (got != "") != wantNote {
+			t.Errorf("checksSkipNote(%q) = %q, want non-empty=%v", reason, got, wantNote)
+		}
+		if wantNote && !strings.Contains(got, reason) {
+			t.Errorf("checksSkipNote(%q) = %q, want it to carry the exact skip_reason string", reason, got)
+		}
+	}
+	if got := checksSkipNote("not_a_real_reason"); got != "" {
+		t.Errorf("checksSkipNote of an unrecognised reason = %q, want empty (fail closed to silence)", got)
+	}
+}
+
+// TestChecksSkipReason_SameStringAsSpanAndMetric pins #780 test case 4: the
+// reason skipChecks hands to the span attribute (a stand-in for the
+// otelobs.RecordChecksSkipped metric label - both are set from the same
+// `reason` argument) is the identical string checksSkipNote puts in front of
+// a reader, so the log, the metric, and the PR agree.
+func TestChecksSkipReason_SameStringAsSpanAndMetric(t *testing.T) {
+	exp := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp))
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	defer otel.SetTracerProvider(prev)
+
+	cfg, root := scopeCfg(t, "", "cargo")
+	mkRepo(t, root, map[string]string{"Cargo.toml": "[package]\nname = \"x\"\n"})
+
+	got, ok := checksPassCriterionTraced(context.Background(), cfg)
+	if ok {
+		t.Fatal("checks_pass should not apply - Cargo.toml has no derivable check")
+	}
+
+	spans := exp.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("got %d exported spans, want 1", len(spans))
+	}
+	var spanReason string
+	for _, a := range spans[0].Attributes {
+		if string(a.Key) == "skip_reason" {
+			spanReason = a.Value.AsString()
+		}
+	}
+	if spanReason != skipReasonUnsupportedBuild {
+		t.Fatalf("span skip_reason = %q, want %q", spanReason, skipReasonUnsupportedBuild)
+	}
+	if got.Reason != spanReason {
+		t.Fatalf("criterionScore.Reason = %q, want the same string the span/metric recorded (%q)", got.Reason, spanReason)
+	}
+	if note := checksSkipNote(got.Reason); !strings.Contains(note, spanReason) {
+		t.Errorf("PR note %q does not carry the exact skip_reason string %q", note, spanReason)
+	}
+}

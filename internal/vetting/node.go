@@ -41,6 +41,10 @@ type GateResult struct {
 	Score    float64
 	Feedback string
 	Rounds   int
+	// ChecksSkipReason: raw skipChecks reason ("" if checks ran, or ran but
+	// were never computed - e.g. no judge round). Filtered/worded for
+	// display by checksSkipNote before it reaches the delivered artifact.
+	ChecksSkipReason string
 }
 
 var ErrNodeEmpty = errors.New("vetting: node produced no answer")
@@ -408,6 +412,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 
 		// Judge/revise loop: judge, fold deterministic criteria, revise on fail.
 		var res GateResult
+		var checksSkipReason string // last computeDeterministicCriteria skip reason; attached to res below (#780)
 		queuedText := ""
 		// JudgeRounds counts revisions: round r judges, on fail revises (N rounds = N revisions / N+1 judgments).
 		for round := 1; judge != nil && cfg.JudgeRounds > 0 && round <= cfg.JudgeRounds+1; round++ {
@@ -433,7 +438,10 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			// Replay-ledger coords for judge round (via context.WithValue, not adkagent.Context).
 			ledgerCtx := ledger.WithCoords(ctx, ledger.Coords{ChatID: cfg.ChatID, Node: nodeID, Agent: "judge", Round: runID})
 			// Compute deterministic criteria before judge runs.
-			det := computeDeterministicCriteria(judgeCtx, answer, act, cfg)
+			det, skip := computeDeterministicCriteria(judgeCtx, answer, act, cfg)
+			if skip != "" {
+				checksSkipReason = skip
+			}
 			v, jerr := runJudgeAgent(ledgerCtx, judge, cfg, question, answer, act, det, judgePartEmitter(sink, nodeID, runID))
 			if jerr != nil {
 				// Judge failure means answer goes out unvetted - loud ERROR, not Warn.
@@ -503,6 +511,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				}
 			}
 		}
+		res.ChecksSkipReason = checksSkipReason
 		if res.Passed {
 			commitMemoryOnPass(ctx, nodeCtx, cfg, nodeID, answer, act.staged)
 		}
@@ -643,7 +652,10 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	defer span.End()
 	traceID := otelobs.TraceIDOf(spanCtx)
 
-	dc := DeliveryContext{NodeID: nodeID, ChatID: cfg.ChatID, Items: sortedStagedDelivery(act.stagedDelivery), IssueNumber: act.prNumber, GatePassed: res.Passed, GateFeedback: res.Feedback}
+	dc := DeliveryContext{
+		NodeID: nodeID, ChatID: cfg.ChatID, Items: sortedStagedDelivery(act.stagedDelivery), IssueNumber: act.prNumber,
+		GatePassed: res.Passed, GateFeedback: res.Feedback, ChecksSkipNote: checksSkipNote(res.ChecksSkipReason),
+	}
 	if cfg.Setup != nil {
 		// Deliver on setup branch (worker's git-tracking ledger is off-limits for setup-provisioned workers).
 		dc.Branch = cfg.Setup.WorkBranch
@@ -904,8 +916,10 @@ func judgePartEmitter(sink func(stream.SSEEvent), nodeID, runID string) func(*ge
 }
 
 // computeDeterministicCriteria: computes code-owned criteria before judge runs.
-func computeDeterministicCriteria(ctx context.Context, answer string, act workerActivity, cfg Config) map[string]criterionScore {
-	det := map[string]criterionScore{}
+// checksSkipReason is the raw checksPassCriterion skip reason ("" if checks
+// ran), for the caller to attach to GateResult (#780).
+func computeDeterministicCriteria(ctx context.Context, answer string, act workerActivity, cfg Config) (det map[string]criterionScore, checksSkipReason string) {
+	det = map[string]criterionScore{}
 	if ls := lengthScore(answer); ls < 1.0 {
 		det["sufficient_length"] = criterionScore{Score: ls, Reason: fmt.Sprintf("deterministic: %d chars", len(strings.TrimSpace(answer)))}
 	}
@@ -925,6 +939,8 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 	// Deterministic gate checks: planner's checks or derived from repo.
 	if c, ok := checksPassCriterionTraced(ctx, cfg); ok {
 		det["checks_pass"] = c
+	} else {
+		checksSkipReason = c.Reason
 	}
 	// Added test files that name no production identifier are vacuous by construction (#716).
 	if c, ok := vacuousTestsCriterion(cfg); ok {
@@ -946,7 +962,7 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 	for name, c := range incompleteCriteria(cfg.Task, act, cfg.ReadOnly, cfg.Deliver != nil, cfg.IsReviewer, cfg.ExistingPR) {
 		det[name] = c
 	}
-	return det
+	return det, checksSkipReason
 }
 
 // mergeDeterministic: folds deterministic criteria into verdict and re-aggregates.
@@ -962,7 +978,8 @@ func mergeDeterministic(v verdict, det map[string]criterionScore) verdict {
 
 // foldDeterministic: compute then merge in one step.
 func foldDeterministic(ctx context.Context, v verdict, answer string, act workerActivity, cfg Config) verdict {
-	return mergeDeterministic(v, computeDeterministicCriteria(ctx, answer, act, cfg))
+	det, _ := computeDeterministicCriteria(ctx, answer, act, cfg)
+	return mergeDeterministic(v, det)
 }
 
 // resolveCiteCloneRoots: resolves clone dir roots for citationScore disk verification.

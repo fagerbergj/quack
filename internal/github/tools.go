@@ -810,10 +810,17 @@ type deliveryItemResult struct {
 }
 
 // deliverOne posts one staged item past Deliver's push.
-// gateCaveat prepends a warning banner when the trust gate did not pass.
+// gateCaveat prepends a caveat banner: a WARNING when the trust gate did not
+// pass, or - on a node that DID pass - a plain NOTE when no build/test check
+// ran, so a passing PR on an unchecked build system doesn't read the same as
+// one that compiled clean (#780).
 func gateCaveat(dc vetting.DeliveryContext, body string) string {
 	if dc.GatePassed {
-		return body
+		if dc.ChecksSkipNote == "" {
+			return body
+		}
+		note := "> [!NOTE]\n> " + strings.ReplaceAll(dc.ChecksSkipNote, "\n", "\n> ") + "\n\n---\n\n"
+		return note + body
 	}
 	fb := strings.TrimSpace(dc.GateFeedback)
 	if fb == "" {
