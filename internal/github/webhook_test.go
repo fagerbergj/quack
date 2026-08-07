@@ -1170,26 +1170,35 @@ func seedGC(snap Snapshot, excludeCommentID int64) githubContext {
 
 // fakeIntentClassifier is a fixed-verdict IntentClassifier double: tests set
 // verdict directly instead of tuning prose to trip a regex. errAlways
-// simulates the classifier failing outright. The three prompts it answers
+// simulates the classifier failing outright. The four prompts it answers
 // (isWorkRequest's WORK/CONVERSATIONAL, classifyPRDeliverable's
-// REVIEW/COMMIT, and classifyIssueDeliverable's IMPLEMENT/COMMENT) are
-// distinguished by content; deliverable/deliverableErr and
-// issueDeliverable/issueDeliverableErr let a test degrade one classifier
+// REVIEW/COMMIT, classifyGrantedPRDeliverable's REPLY/REVIEW/COMMIT (#760),
+// and classifyIssueDeliverable's IMPLEMENT/COMMENT) are distinguished by
+// content; deliverable/deliverableErr, grantedDeliverable/grantedDeliverableErr,
+// and issueDeliverable/issueDeliverableErr let a test degrade one classifier
 // independently of the others.
 type fakeIntentClassifier struct {
-	verdict             string // "WORK" or "CONVERSATIONAL", or any other/blank to test the unparseable path
-	deliverable         string // "REVIEW" or "COMMIT", or any other/blank to test the unparseable path
-	issueDeliverable    string // "IMPLEMENT" or "COMMENT", or any other/blank to test the unparseable path
-	errAlways           error
-	deliverableErr      error
-	issueDeliverableErr error
-	calls               int32
+	verdict               string // "WORK" or "CONVERSATIONAL", or any other/blank to test the unparseable path
+	deliverable           string // "REVIEW" or "COMMIT", or any other/blank to test the unparseable path
+	grantedDeliverable    string // "REPLY", "REVIEW", or "COMMIT", or any other/blank to test the unparseable path
+	issueDeliverable      string // "IMPLEMENT" or "COMMENT", or any other/blank to test the unparseable path
+	errAlways             error
+	deliverableErr        error
+	grantedDeliverableErr error
+	issueDeliverableErr   error
+	calls                 int32
 }
 
 func (f *fakeIntentClassifier) Classify(_ context.Context, prompt string) (string, error) {
 	atomic.AddInt32(&f.calls, 1)
 	if f.errAlways != nil {
 		return "", f.errAlways
+	}
+	if strings.Contains(prompt, "REPLY, REVIEW, or COMMIT") {
+		if f.grantedDeliverableErr != nil {
+			return "", f.grantedDeliverableErr
+		}
+		return f.grantedDeliverable, nil
 	}
 	if strings.Contains(prompt, "REVIEW or COMMIT") {
 		if f.deliverableErr != nil {
@@ -1250,13 +1259,13 @@ func TestBuildEnvelopeDeliverableClassification(t *testing.T) {
 // TestBuildEnvelopeDeliverableClassifierResolvesFindingsAddress pins #689's
 // exact production failure: "please address these findings" has no delivery
 // word and its impl verb isn't clause-initial, so
-// vetting.ImplementationIntent misreads it as review-only. With both
-// post_review and push_commits_to_pr granted (the real ledger's permission
-// set) the classifier - not the regex - picks the deliverable, and gets this
-// one right.
+// vetting.ImplementationIntent misreads it as review-only. With
+// push_commits_to_pr granted (the real ledger's permission set),
+// classifyGrantedPRDeliverable (#760) - not the regex - picks the
+// deliverable, and gets this one right.
 func TestBuildEnvelopeDeliverableClassifierResolvesFindingsAddress(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
-	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "WORK", deliverable: "COMMIT"})
+	ext.SetIntentClassifier(&fakeIntentClassifier{grantedDeliverable: "COMMIT"})
 	grant := vetting.Grant{PRScoped: true, PostReview: true, PushCommitsToPR: true}
 
 	var pr issueCommentPayload
@@ -1269,7 +1278,7 @@ func TestBuildEnvelopeDeliverableClassifierResolvesFindingsAddress(t *testing.T)
 	}
 
 	// Same grant, a genuine review ask still gets the review deliverable.
-	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "WORK", deliverable: "REVIEW"})
+	ext.SetIntentClassifier(&fakeIntentClassifier{grantedDeliverable: "REVIEW"})
 	revEnv := ext.buildEnvelope(context.Background(), pr, "take another look at the auth changes", seedGC(Snapshot{IsPR: true}, 0), grant, "", nil)
 	if !strings.Contains(revEnv, "<deliverable>a review with inline comments and a verdict</deliverable>") {
 		t.Errorf("a genuine review ask should still get the review deliverable:\n%s", revEnv)
@@ -1305,11 +1314,13 @@ func TestBuildEnvelopeDeliverableBoundedBySoleGrant(t *testing.T) {
 // a classifier error (or timeout, same path) falls back to
 // vetting.ImplementationIntent, exactly as if no classifier were wired at
 // all - a hung/erroring model must not stall or corrupt the deliverable
-// choice.
+// choice. Uses post_review-only (PushCommitsToPR false) so this still
+// exercises the original classifyPRDeliverable fallback - the
+// push_commits_to_pr-granted path has its own failure-mode test below (#760).
 func TestBuildEnvelopeDeliverableClassifierFailureFallsBack(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
 	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "WORK", deliverableErr: errors.New("model unavailable")})
-	grant := vetting.Grant{PRScoped: true, PostReview: true, PushCommitsToPR: true}
+	grant := vetting.Grant{PRScoped: true, PostReview: true, PushCommitsToPR: false}
 
 	var pr issueCommentPayload
 	if err := json.Unmarshal(pullCommentBody("@quack please address these findings"), &pr); err != nil {
@@ -1321,6 +1332,95 @@ func TestBuildEnvelopeDeliverableClassifierFailureFallsBack(t *testing.T) {
 	// failure must fall back to, not silently drop into panic or default-commit.
 	if !strings.Contains(env, "<deliverable>a review with inline comments and a verdict</deliverable>") {
 		t.Errorf("classifier failure should fall back to vetting.ImplementationIntent's reading:\n%s", env)
+	}
+}
+
+// TestBuildEnvelopeGrantedPRChangeRequestClassifiesAsCommit pins #760 test
+// case 1: home-server#3, a quack-authored PR with join_pr_conversation +
+// push_commits_to_pr, got a comment naming three numbered defects with the
+// exact replacement values and "Pick one and say which" - an unambiguous
+// change request. The old two-step gate (isWorkRequest's WORK/CONVERSATIONAL,
+// asked before ever consulting the grant) misread it as a correction and
+// returned the reply deliverable; the run then promised a fix it was
+// structurally forbidden to make. classifyGrantedPRDeliverable replaces that
+// gate for any PR the grant already lets quack push to, going straight to
+// what the comment asks for.
+func TestBuildEnvelopeGrantedPRChangeRequestClassifiesAsCommit(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	ext.SetIntentClassifier(&fakeIntentClassifier{grantedDeliverable: "COMMIT"})
+	grant := vetting.Grant{PRScoped: true, JoinPRConversation: true, PushCommitsToPR: true}
+
+	task := "1. EMBEDDING_MODEL should be qwen3-embed, not text-embedding-3-small. " +
+		"2. GENERATOR_MODEL should be qwen3.5-9b. 3. The volume paths are wrong. " +
+		"Pick one and say which. Do not silently ship a config that indexes three repos while the plan says six."
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody(task), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	env := ext.buildEnvelope(context.Background(), pr, task, seedGC(Snapshot{IsPR: true}, 0), grant, "", nil)
+	if !strings.Contains(env, "<deliverable>a commit addressing the requested change</deliverable>") {
+		t.Errorf("a numbered change request on a push-granted PR should classify as commit, not reply:\n%s", env)
+	}
+}
+
+// TestBuildEnvelopeGrantedPRQuestionStaysReply pins #760 test case 2, the
+// regression guard: "why did you vendor this instead of pulling the image?"
+// appeared earlier in home-server#3's own history and was answered correctly
+// as a comment. The push_commits_to_pr grant must not, by itself, turn every
+// comment on the PR into a commit - a genuine question still gets a reply.
+func TestBuildEnvelopeGrantedPRQuestionStaysReply(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	ext.SetIntentClassifier(&fakeIntentClassifier{grantedDeliverable: "REPLY"})
+	grant := vetting.Grant{PRScoped: true, JoinPRConversation: true, PushCommitsToPR: true}
+
+	task := "why did you vendor this instead of pulling the image?"
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody(task), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	env := ext.buildEnvelope(context.Background(), pr, task, seedGC(Snapshot{IsPR: true}, 0), grant, "", nil)
+	if !strings.Contains(env, "<deliverable>a reply to their message") {
+		t.Errorf("a genuine question on a push-granted PR must stay a reply, not regress to commit:\n%s", env)
+	}
+}
+
+// TestBuildEnvelopeGrantedPRDeliverableFailsSafeToReply pins the fail-safe
+// direction for #760's new gate: with no coarse WORK/CONVERSATIONAL call
+// ahead of it anymore, a classifier failure here has no other signal to fall
+// back on, so it must fail toward reply - never guess commit - mirroring
+// isWorkRequest's own "fails safe to conversational" contract.
+func TestBuildEnvelopeGrantedPRDeliverableFailsSafeToReply(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	ext.SetIntentClassifier(&fakeIntentClassifier{grantedDeliverableErr: errors.New("model unavailable")})
+	grant := vetting.Grant{PRScoped: true, JoinPRConversation: true, PushCommitsToPR: true}
+
+	task := "please address these findings"
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody(task), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	env := ext.buildEnvelope(context.Background(), pr, task, seedGC(Snapshot{IsPR: true}, 0), grant, "", nil)
+	if !strings.Contains(env, "<deliverable>a reply to their message") {
+		t.Errorf("a classifier failure on a push-granted PR must fail safe to reply, not guess commit:\n%s", env)
+	}
+}
+
+// TestBuildEnvelopeGrantedPRDeliverableIgnoresUngrantedReview pins that a
+// live COMMIT/REVIEW answer never surfaces an ungranted deliverable: REVIEW
+// without post_review degrades to reply rather than escalating to commit.
+func TestBuildEnvelopeGrantedPRDeliverableIgnoresUngrantedReview(t *testing.T) {
+	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
+	ext.SetIntentClassifier(&fakeIntentClassifier{grantedDeliverable: "REVIEW"})
+	grant := vetting.Grant{PRScoped: true, JoinPRConversation: true, PushCommitsToPR: true} // no post_review
+
+	task := "take another look at the auth changes"
+	var pr issueCommentPayload
+	if err := json.Unmarshal(pullCommentBody(task), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	env := ext.buildEnvelope(context.Background(), pr, task, seedGC(Snapshot{IsPR: true}, 0), grant, "", nil)
+	if !strings.Contains(env, "<deliverable>a reply to their message") {
+		t.Errorf("a review verdict without post_review must degrade to reply, not surface an ungranted review deliverable:\n%s", env)
 	}
 }
 

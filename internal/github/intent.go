@@ -58,54 +58,66 @@ func (e *Extension) isWorkRequest(ctx context.Context, task string) bool {
 	}
 }
 
-// deliverablePrompt: review vs commit? Only reachable when grant permits both (#689).
-const deliverablePrompt = `You classify a single GitHub PR comment as REVIEW or COMMIT.
+// classifyPRDeliverable resolves review-vs-nothing for a PR mention when the grant does NOT
+// carry push_commits_to_pr (that case runs through classifyGrantedPRDeliverable instead - #760,
+// which also retired this function's old COMMIT branch: with no push permission "commit" was
+// never a legal answer here, so the remaining question is bounded entirely by post_review and
+// decided from the grant alone - no model call needed, ctx/task kept for a stable signature
+// alongside classifyGrantedPRDeliverable/classifyIssueDeliverable).
+func (e *Extension) classifyPRDeliverable(_ context.Context, _ string, grant vetting.Grant) (kind string, ok bool) {
+	if grant.PostReview {
+		return "review", true
+	}
+	return "", false
+}
+
+// grantedPRPrompt: reply, review, or commit? Only reachable when the grant already carries
+// push_commits_to_pr (#760) - the permission question is answered deterministically by the
+// grant, so this asks only what the comment wants, never whether quack may act.
+const grantedPRPrompt = `You classify a single GitHub pull request comment as REPLY, REVIEW, or COMMIT.
+
+REPLY means the asker wants a response, clarification, or discussion right now - a question, an FYI, or feedback about something already said that does not end in an ask to act on it.
 
 REVIEW means the asker wants the code assessed - e.g. "review this", "take another look", "double check the auth path".
 
-COMMIT means the asker wants a code change made and delivered - e.g. "fix this", "address these findings", "make sure that's valid, then fix it", "implement what we discussed". A request to verify findings before acting is still COMMIT if it ends in an ask to act on them.
+COMMIT means the asker wants a specific code change made and pushed now - e.g. "fix this", "change X to Y", a one-line "use qwen3-embed instead", or a numbered list of defects with the exact replacement values to use. A comment that also corrects something said earlier is still COMMIT, not just REPLY, if it ends in a specific requested change.
 
-Reply with exactly one word: REVIEW or COMMIT. No punctuation, no explanation.
+Reply with exactly one word: REPLY, REVIEW, or COMMIT. No punctuation, no explanation.
 
 Message:
 %s`
 
-// classifyPRDeliverable picks which of the grant's permitted PR deliverables
-// (review, commit) a message is asking for, in place of vetting.
-// ImplementationIntent's regex guess. ok=false falls back to that regex
-// (grant permits neither, classifier failed, or unparseable answer).
-// When the grant permits only ONE, that's the answer by construction - no
-// model call needed, but logged anyway (Debug) since the grant decided.
-func (e *Extension) classifyPRDeliverable(ctx context.Context, task string, grant vetting.Grant) (kind string, ok bool) {
-	canReview, canCommit := grant.PostReview, grant.PushCommitsToPR
-	switch {
-	case canReview && !canCommit:
-		slog.Debug("github: PR deliverable bounded to the sole granted option", "component", "github", "kind", "review")
-		return "review", true
-	case canCommit && !canReview:
-		slog.Debug("github: PR deliverable bounded to the sole granted option", "component", "github", "kind", "commit")
-		return "commit", true
-	case !canReview && !canCommit:
-		return "", false
-	}
-
+// classifyGrantedPRDeliverable picks reply vs review vs commit for a PR comment when the grant
+// already carries push_commits_to_pr (#760): computeGrant already decided, from labels and
+// authorship, that quack MAY push here - unlike isWorkRequest/classifyPRDeliverable below, this
+// never asks a model to re-derive that permission, only what the comment is asking for. REPLY is
+// always legal; REVIEW is legal only when the grant also carries post_review. ok=false
+// (classifier nil/erroring/unparseable) leaves the caller to fail safe to reply - never guess
+// commit. A live answer that names an ungranted option (REVIEW without post_review) degrades to
+// reply rather than being discarded outright, so a real ask for engagement isn't silently dropped.
+func (e *Extension) classifyGrantedPRDeliverable(ctx context.Context, task string, grant vetting.Grant) (kind string, ok bool) {
 	if e.intentClassifier == nil {
 		return "", false
 	}
 	ctx, cancel := context.WithTimeout(ctx, intentClassifierTimeout)
 	defer cancel()
-	answer, err := e.intentClassifier.Classify(ctx, fmt.Sprintf(deliverablePrompt, task))
+	answer, err := e.intentClassifier.Classify(ctx, fmt.Sprintf(grantedPRPrompt, task))
 	if err != nil {
-		slog.Warn("github: deliverable classifier failed; falling back to the implement/review wording heuristic", "component", "github", "err", err)
+		slog.Warn("github: granted-PR deliverable classifier failed; falling back to reply", "component", "github", "err", err)
 		return "", false
 	}
 	switch up := strings.ToUpper(strings.TrimSpace(answer)); {
 	case strings.Contains(up, "COMMIT"):
 		return "commit", true
 	case strings.Contains(up, "REVIEW"):
-		return "review", true
+		if grant.PostReview {
+			return "review", true
+		}
+		return "reply", true // review asked for but not granted here - never escalate to commit instead
+	case strings.Contains(up, "REPLY"):
+		return "reply", true
 	default:
-		slog.Warn("github: deliverable classifier returned an unparseable answer; falling back to the implement/review wording heuristic", "component", "github", "answer", answer)
+		slog.Warn("github: granted-PR deliverable classifier returned an unparseable answer; falling back to reply", "component", "github", "answer", answer)
 		return "", false
 	}
 }

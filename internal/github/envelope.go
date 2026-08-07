@@ -341,11 +341,31 @@ func reviewDeliverableText(gh githubContext) string {
 	return "a review with inline comments and a verdict"
 }
 
+// replyDeliverable: the <deliverable> text for a run whose only legal output is a reply.
+const replyDeliverable = "a reply to their message, posted as a comment - no new work unless they explicitly ask for it"
+
 // deliverableText classifies the run and states what it produces. Applies classifier or falls back to ImplementationIntent.
 func (e *Extension) deliverableText(ctx context.Context, p issueCommentPayload, task string, gh githubContext, grant vetting.Grant, isPR bool) string {
 	mentionIsWork := isPR && !p.isLabelTrigger && p.deliverableHint == ""
+
+	// #760: a comment on a PR quack can already push to has its permission question
+	// answered deterministically by computeGrant (labels/authorship) - the generic
+	// WORK/CONVERSATIONAL gate below was being asked to re-derive that MAY, and misread a
+	// message that both corrected something said earlier and asked for a specific change
+	// (home-server#3). Go straight to what the comment is asking for, bounded by the grant.
+	if mentionIsWork && grant.PushCommitsToPR {
+		if kind, ok := e.classifyGrantedPRDeliverable(ctx, task, grant); ok {
+			switch kind {
+			case "commit":
+				return "a commit addressing the requested change"
+			case "review":
+				return reviewDeliverableText(gh)
+			}
+		}
+		return replyDeliverable
+	}
 	if mentionIsWork && !e.isWorkRequest(ctx, task) {
-		return "a reply to their message, posted as a comment - no new work unless they explicitly ask for it"
+		return replyDeliverable
 	}
 
 	issueCommentDeliverable := "an answer to their message, posted to the issue as a comment - a revised plan if one is already under discussion"
