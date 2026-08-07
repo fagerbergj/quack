@@ -57,11 +57,12 @@ type Extension struct {
 	store            *store.Store
 	hub              *stream.Hub
 	eventLog         *runlog.EventLog
-	inflight         sync.Map // sessionID → struct{}{}; dedup for concurrent triggers (#665, #668)
-	runTimeout       time.Duration
-	intentClassifier IntentClassifier // nil degrades to conversational
-	jail             *workspace.Jail  // nil skips context-dir writing
-	workspaceUserID  string
+	inflight           sync.Map // sessionID → struct{}{}; dedup for concurrent triggers (#665, #668)
+	runTimeout         time.Duration
+	autoArchiveOnMerge bool
+	intentClassifier   IntentClassifier // nil degrades to conversational
+	jail               *workspace.Jail  // nil skips context-dir writing
+	workspaceUserID    string
 }
 
 // SetIntentClassifier wires the mention intent classifier for the envelope builder. Optional.
@@ -123,17 +124,18 @@ func NewExtension(app *App, cfg config.GitHubExtensionConfig, runner Runner, st 
 		allowedUsers[strings.ToLower(u)] = true
 	}
 	return &Extension{
-		app:          app,
-		secret:       []byte(cfg.WebhookSecret),
-		mention:      cfg.Mention,
-		triggers:     triggers,
-		labels:       labels,
-		allowedUsers: allowedUsers,
-		runner:       runner,
-		store:        st,
-		hub:          hub,
-		eventLog:     eventLog,
-		runTimeout:   runTimeout,
+		app:              app,
+		secret:           []byte(cfg.WebhookSecret),
+		mention:          cfg.Mention,
+		triggers:         triggers,
+		labels:           labels,
+		allowedUsers:     allowedUsers,
+		runner:           runner,
+		store:            st,
+		hub:              hub,
+		eventLog:         eventLog,
+		runTimeout:       runTimeout,
+		autoArchiveOnMerge: cfg.AutoArchiveOnMerge,
 	}
 }
 

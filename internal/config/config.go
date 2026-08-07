@@ -103,7 +103,8 @@ type GitHubExtensionConfig struct {
 	AutoReviewLabel   string       `yaml:"auto_review_label"`
 	AllowedUsers      []string     `yaml:"allowed_users"`
 	Labels            GitHubLabels `yaml:"labels"`
-	RunTimeoutMinutes int          `yaml:"run_timeout_minutes"`
+	RunTimeoutMinutes   int  `yaml:"run_timeout_minutes"`
+	AutoArchiveOnMerge  bool `yaml:"auto_archive_on_merge"`
 }
 
 type GitHubLabels struct {

@@ -523,6 +523,11 @@ func (e *Extension) mergeIfApproved(p pullRequestPayload, rawBody []byte) {
 			return
 		}
 		slog.Info("github pr merged", "component", "github", "repo", owner+"/"+repo, "pr", number, "user", p.Sender.Login)
+		if e.autoArchiveOnMerge && e.store != nil {
+			if derr := e.store.ArchiveChat(ctx, sessionID, true); derr != nil {
+				slog.Warn("github: auto-archive on merge failed", "component", "github", "repo", owner+"/"+repo, "pr", number, "session", sessionID, "err", derr)
+			}
+		}
 		if e.store != nil {
 			if derr := e.store.DeleteGithubMergeIntent(ctx, sessionID); derr != nil {
 				slog.Warn("github: stale merge-intent cleanup failed", "component", "github", "repo", owner+"/"+repo, "pr", number, "err", derr)
@@ -660,6 +665,11 @@ func (e *Extension) tryMergeStandingIntent(ctx context.Context, owner, repo stri
 		return
 	}
 	slog.Info("github pr merged", "component", "github", "repo", owner+"/"+repo, "pr", number, "user", intent.RequestedBy)
+	if e.autoArchiveOnMerge && e.store != nil {
+		if derr := e.store.ArchiveChat(ctx, sessionID, true); derr != nil {
+			slog.Warn("github: auto-archive on merge failed", "component", "github", "repo", owner+"/"+repo, "pr", number, "session", sessionID, "err", derr)
+		}
+	}
 	// Clear the intent BEFORE announcing the merge: once the comment is visible
 	// the intent must already be gone, not racing whoever reads it next.
 	if derr := e.store.DeleteGithubMergeIntent(ctx, sessionID); derr != nil {
