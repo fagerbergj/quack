@@ -184,14 +184,25 @@ func cloneHeadSHA(cfg Config) string {
 	return gitLine(dir, checksCaps(cfg), "rev-parse", "HEAD")
 }
 
+// commitHygieneOffTaskCeiling: code-implementer's commit_hygiene criterion
+// scores below this (normalised) when a commit swept in files with no
+// connection to the task - the contamination band, distinct from a merely
+// thin commit message or an incomplete-but-on-task round (#762).
+const commitHygieneOffTaskCeiling = 0.4
+
 // resetCloneToNodeBase discards everything the just-rejected round committed,
-// before the worker is re-prompted to revise (#762). A rejected round's
-// commits are otherwise invisible to per-round scoring - by construction the
-// LATER, passing round looks clean - so the only way to keep them off the
-// branch a passing round delivers is to make sure they're gone before that
-// round even starts. Base-SHA only: never inspects what changed, only where
-// to rewind to.
-func resetCloneToNodeBase(cfg Config) {
+// before the worker is re-prompted to revise - but only when commit_hygiene
+// says that round swept in off-task work (#762). An ordinary incomplete or
+// wrong round keeps its commits: its code is largely right, and revise is
+// expected to build on it, not redo it from scratch. Keyed on the judge's
+// criterion score, never on reading commits/diffs for topicality; a rubric
+// that doesn't name commit_hygiene gets no reset, failing open rather than
+// guessing from something else.
+func resetCloneToNodeBase(cfg Config, v verdict) {
+	cs, ok := v.Criteria["commit_hygiene"]
+	if !ok || cs.Score >= commitHygieneOffTaskCeiling {
+		return
+	}
 	if cfg.ReadOnly || cfg.Setup == nil || cfg.Workspace == nil || cfg.NodeBaseSHA == "" {
 		return
 	}

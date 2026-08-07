@@ -165,9 +165,18 @@ func TestDiffSinceScopesToNodeBaseSHA(t *testing.T) {
 	}
 }
 
+// lowCommitHygiene: a verdict shaped like the judge's real #762 output - the
+// off-task-commit signal resetCloneToNodeBase keys on.
+func lowCommitHygiene() verdict {
+	return verdict{Criteria: map[string]criterionScore{
+		"commit_hygiene": {Score: 0.0, Reason: "the commit swept in files with no plausible connection to the task"},
+	}}
+}
+
 // #762 test case 3: resetCloneToNodeBase is computed purely from
-// cfg.NodeBaseSHA - it must undo a rejected round's commit(s) regardless of
-// what they contain, never by reading commit messages or diffs for topicality.
+// cfg.NodeBaseSHA plus the judge's commit_hygiene score - it must undo a
+// rejected round's commit(s) regardless of what they contain, never by
+// reading commit messages or diffs itself for topicality.
 func TestResetCloneToNodeBase_RewindsToStampedSHA(t *testing.T) {
 	cfg := probeRepo(t, false) // base commit + empty work branch, nothing committed yet
 	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID))
@@ -191,7 +200,7 @@ func TestResetCloneToNodeBase_RewindsToStampedSHA(t *testing.T) {
 	run("add", "-A")
 	run("commit", "-q", "-m", "totally unrelated work")
 
-	resetCloneToNodeBase(cfg)
+	resetCloneToNodeBase(cfg, lowCommitHygiene())
 
 	head := gitLine(dir, workspace.DefaultCaps(), "rev-parse", "HEAD")
 	if head != cfg.NodeBaseSHA {
@@ -203,7 +212,10 @@ func TestResetCloneToNodeBase_RewindsToStampedSHA(t *testing.T) {
 }
 
 // resetCloneToNodeBase must no-op (never touch the clone) when there's nothing
-// safe to reset against: a read-only node, no clone, or no stamped base.
+// safe to reset against: a read-only node, no clone, no stamped base, no
+// commit_hygiene criterion at all, or a commit_hygiene score that isn't in
+// the off-task band - an ordinary incomplete/wrong round must keep its
+// commits so the next round builds on them.
 func TestResetCloneToNodeBase_NoopsWithoutABase(t *testing.T) {
 	cfg := probeRepo(t, true)
 	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID))
@@ -213,13 +225,21 @@ func TestResetCloneToNodeBase_NoopsWithoutABase(t *testing.T) {
 	cfg.NodeBaseSHA = cloneHeadSHA(cfg) // stamped AFTER the one commit - i.e. HEAD already
 	headBefore := gitLine(dir, workspace.DefaultCaps(), "rev-parse", "HEAD")
 
-	for name, c := range map[string]Config{
-		"read-only":   {ReadOnly: true, Setup: cfg.Setup, Workspace: cfg.Workspace, WorkspaceUserID: cfg.WorkspaceUserID, ChatID: cfg.ChatID, NodeID: cfg.NodeID, NodeBaseSHA: cfg.NodeBaseSHA},
-		"no setup":    {Setup: nil, Workspace: cfg.Workspace, WorkspaceUserID: cfg.WorkspaceUserID, ChatID: cfg.ChatID, NodeID: cfg.NodeID, NodeBaseSHA: cfg.NodeBaseSHA},
-		"no base sha": {Setup: cfg.Setup, Workspace: cfg.Workspace, WorkspaceUserID: cfg.WorkspaceUserID, ChatID: cfg.ChatID, NodeID: cfg.NodeID, NodeBaseSHA: ""},
+	okHygiene := verdict{Criteria: map[string]criterionScore{"commit_hygiene": {Score: 0.9}}}
+	noHygieneCriterion := verdict{Criteria: map[string]criterionScore{"task_completeness": {Score: 0.2}}}
+
+	for name, tc := range map[string]struct {
+		cfg Config
+		v   verdict
+	}{
+		"read-only":                   {Config{ReadOnly: true, Setup: cfg.Setup, Workspace: cfg.Workspace, WorkspaceUserID: cfg.WorkspaceUserID, ChatID: cfg.ChatID, NodeID: cfg.NodeID, NodeBaseSHA: cfg.NodeBaseSHA}, lowCommitHygiene()},
+		"no setup":                    {Config{Setup: nil, Workspace: cfg.Workspace, WorkspaceUserID: cfg.WorkspaceUserID, ChatID: cfg.ChatID, NodeID: cfg.NodeID, NodeBaseSHA: cfg.NodeBaseSHA}, lowCommitHygiene()},
+		"no base sha":                 {Config{Setup: cfg.Setup, Workspace: cfg.Workspace, WorkspaceUserID: cfg.WorkspaceUserID, ChatID: cfg.ChatID, NodeID: cfg.NodeID, NodeBaseSHA: ""}, lowCommitHygiene()},
+		"no commit_hygiene criterion": {Config{Setup: cfg.Setup, Workspace: cfg.Workspace, WorkspaceUserID: cfg.WorkspaceUserID, ChatID: cfg.ChatID, NodeID: cfg.NodeID, NodeBaseSHA: cfg.NodeBaseSHA}, noHygieneCriterion},
+		"commit_hygiene not off-task": {Config{Setup: cfg.Setup, Workspace: cfg.Workspace, WorkspaceUserID: cfg.WorkspaceUserID, ChatID: cfg.ChatID, NodeID: cfg.NodeID, NodeBaseSHA: cfg.NodeBaseSHA}, okHygiene},
 	} {
 		t.Run(name, func(t *testing.T) {
-			resetCloneToNodeBase(c)
+			resetCloneToNodeBase(tc.cfg, tc.v)
 			if head := gitLine(dir, workspace.DefaultCaps(), "rev-parse", "HEAD"); head != headBefore {
 				t.Fatalf("HEAD moved from %s to %s - resetCloneToNodeBase must no-op here", headBefore, head)
 			}

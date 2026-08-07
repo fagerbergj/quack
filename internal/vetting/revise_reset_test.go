@@ -213,6 +213,86 @@ func TestGate2_NormalRunDeliversOnlyItsOwnCommits(t *testing.T) {
 	}
 }
 
+// incompleteOnTaskStub commits real, on-task work in the draft round that the
+// judge rejects for being short of the task (missing .dockerignore, say) -
+// commit_hygiene itself scores fine. The revise round adds a SECOND file/commit
+// rather than redoing the first, the way an ACP worker naturally continues
+// when its own prior commit is still sitting in the clone.
+type incompleteOnTaskStub struct {
+	t      *testing.T
+	dir    string
+	git    func(args ...string)
+	judgeN int
+}
+
+func (m *incompleteOnTaskStub) Name() string { return "incomplete-on-task-stub" }
+
+func (m *incompleteOnTaskStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if stubHasTool(req, submitVerdictTool) {
+			m.judgeN++
+			if m.judgeN == 1 {
+				yield(stubCall(submitVerdictTool, map[string]any{
+					"criteria": map[string]any{
+						"commit_hygiene":    map[string]any{"score": 0.9, "reason": "well-scoped commit, on task"},
+						"task_completeness": map[string]any{"score": 0.3, "reason": "missing .dockerignore"},
+					},
+					"score": 0.3, "feedback": "add the .dockerignore too",
+				}), nil)
+				return
+			}
+			yield(stubCall(submitVerdictTool, map[string]any{
+				"criteria": map[string]any{"task_completeness": map[string]any{"score": 1.0, "reason": "complete now"}},
+				"score":    0.95, "feedback": "",
+			}), nil)
+			return
+		}
+		if strings.Contains(stubAllText(req), "Reviewer feedback to address") {
+			writeFile(m.t, filepath.Join(m.dir, ".dockerignore"), "node_modules\n")
+			m.git("add", "-A")
+			m.git("commit", "-q", "-m", "Add .dockerignore")
+			yield(stubText("Added the missing .dockerignore."), nil)
+			return
+		}
+		writeFile(m.t, filepath.Join(m.dir, "publish.yml"), "name: publish\n")
+		m.git("add", "-A")
+		m.git("commit", "-q", "-m", "Add CD publishing to GHCR")
+		yield(stubText("Added the CD workflow publishing to GHCR."), nil)
+	}
+}
+
+// TestGate4_IncompleteButOnTaskRoundIsNotReset: the fourth case the
+// coordinator asked for on top of the issue's three - a round rejected for
+// being INCOMPLETE, not off-task, must keep its commit so the revise round
+// builds on it. This fails before the commit_hygiene keying: an unconditional
+// reset on every judge failure wipes the draft's "Add CD publishing to GHCR"
+// commit right along with the (nonexistent, here) contamination.
+func TestGate4_IncompleteButOnTaskRoundIsNotReset(t *testing.T) {
+	cfg, dir := strayCommitTestRepo(t)
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(cmd.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	stub := &incompleteOnTaskStub{t: t, dir: dir, git: git}
+	runStrayCommitGate(t, stub, cfg)
+
+	res, err := workspace.RunArgv(context.Background(), dir, []string{"git", "log", "--format=%s", "main..quack/work"}, workspace.DefaultCaps())
+	if err != nil || res.ExitCode != 0 {
+		t.Fatalf("git log: %v (exit %d): %s", err, res.ExitCode, res.Output)
+	}
+	got := res.Output
+	if !strings.Contains(got, "Add CD publishing to GHCR") {
+		t.Fatalf("the rejected-but-on-task draft commit was wiped, not built on:\n%s", got)
+	}
+	if !strings.Contains(got, "Add .dockerignore") {
+		t.Fatalf("the revise round's own commit is missing:\n%s", got)
+	}
+}
+
 // cleanPassStub commits the real task once and passes the judge immediately -
 // the ordinary, uncontaminated single-round case.
 type cleanPassStub struct {
