@@ -50,6 +50,9 @@ type Chat struct {
 	// when it ends cleanly. Left over (non-empty) with no live hub/queue signal means the run
 	// died before it could stamp an outcome - the read path's crash fallback (#738).
 	ActiveTurnID string `json:"-"`
+	// Archived hides the chat from the main list by default (toggled by the user or auto-archived
+	// on PR merge when config AutoArchiveOnMerge is enabled; untouched by archive ops).
+	Archived bool `gorm:"column:archived;default:false" json:"archived"`
 }
 
 // ChatTurn is one user→assistant exchange. Its ID is the response_id in the REST API.
@@ -643,6 +646,13 @@ func (s *Store) DeleteGithubMergeIntent(ctx context.Context, chatID string) erro
 // UpdateTitle sets the human-readable title for a chat.
 func (s *Store) UpdateTitle(ctx context.Context, id, title string) error {
 	return s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", id).Update("title", title).Error
+}
+
+// ArchiveChat toggles the archived flag on a chat.
+// Archiving never touches UpdatedAt so that archive/unarchive doesn't reorder
+// the recency-sorted chat list.
+func (s *Store) ArchiveChat(ctx context.Context, id string, archived bool) error {
+	return s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", id).Update("archived", archived).Error
 }
 
 // SaveTurn persists a new turn at the next available sequence position.
