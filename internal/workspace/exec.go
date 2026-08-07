@@ -274,7 +274,24 @@ func RunArgv(ctx context.Context, dir string, argv []string, caps Caps) (ExecRes
 			return ExecResult{ExitCode: exitCode, Output: out}, fmt.Errorf("workspace: run %v: %w", argv, runErr)
 		}
 	}
-	return ExecResult{ExitCode: exitCode, Output: out}, nil
+	return ExecResult{ExitCode: exitCode, Output: out + fileSizeLimitNote(cmd.ProcessState, caps.Limits)}, nil
+}
+
+// fileSizeLimitNote names workspace.limits when SIGXFSZ killed the child - a
+// bare "signal: file size limit exceeded" reads as the command's own fault
+// (#798, where a limit quack imposed cost four bisect cycles to attribute).
+// Only FSIZE is detectable: exceeding RLIMIT_AS fails an allocation INSIDE the
+// child with ENOMEM, so it surfaces as whatever that child makes of it.
+func fileSizeLimitNote(st *os.ProcessState, lim Limits) string {
+	if st == nil || lim.FileSizeMB <= 0 {
+		return ""
+	}
+	ws, ok := st.Sys().(syscall.WaitStatus)
+	if !ok || !ws.Signaled() || ws.Signal() != syscall.SIGXFSZ {
+		return ""
+	}
+	return fmt.Sprintf("\n[workspace: killed by SIGXFSZ - it tried to write a file larger than "+
+		"workspace.limits.max_file_size_mb (%dMB). Raise that limit or have the command write less.]", lim.FileSizeMB)
 }
 
 // RunPipeline executes argv stages with real pipes. Exit code is pipefail: last non-zero stage.
@@ -342,8 +359,8 @@ func RunPipeline(ctx context.Context, dir string, stages [][]string, caps Caps) 
 		}
 		if code != 0 {
 			exitCode = code // pipefail: last non-zero wins
-			failNotes = append(failNotes, fmt.Sprintf("[pipeline] stage %d of %d (%s) exited %d",
-				i+1, len(cmds), strings.Join(stages[i], " "), code))
+			failNotes = append(failNotes, fmt.Sprintf("[pipeline] stage %d of %d (%s) exited %d%s",
+				i+1, len(cmds), strings.Join(stages[i], " "), code, fileSizeLimitNote(cmd.ProcessState, caps.Limits)))
 		}
 	}
 
