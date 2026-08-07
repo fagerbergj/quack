@@ -51,3 +51,39 @@ describe('Composer idle placeholder', () => {
     expect(ta.placeholder).toBe('Ask something…')
   })
 })
+
+describe('Composer streaming placeholder', () => {
+  let root: ReturnType<typeof createRoot> | undefined
+  let host: HTMLDivElement | undefined
+
+  afterEach(() => {
+    act(() => root?.unmount())
+    host?.remove()
+    root = undefined
+    host = undefined
+    vi.unstubAllGlobals()
+  })
+
+  function render() {
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    act(() => {
+      root!.render(createElement(Composer, { disabled: false, streaming: true, onSubmit: () => {}, onStop: () => {} }))
+    })
+  }
+
+  it('keeps the queuing explanation at normal widths', () => {
+    mockMatchMedia(false)
+    render()
+    const ta = host!.querySelector('textarea')!
+    expect(ta.placeholder).toBe('Type a follow-up… (queues until the current response finishes)')
+  })
+
+  it('drops the queuing explanation below the narrow breakpoint, same as the idle placeholder', () => {
+    mockMatchMedia(true)
+    render()
+    const ta = host!.querySelector('textarea')!
+    expect(ta.placeholder).toBe('Type a follow-up…')
+  })
+})

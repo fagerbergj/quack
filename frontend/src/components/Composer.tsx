@@ -13,10 +13,10 @@ interface AttachmentPreview {
 // found on.
 const NARROW_QUERY = '(max-width: 639px)'
 
-// The keyboard hint in the idle placeholder ("Enter to send, Shift+Enter for
-// newline") is meaningless on a touch device and, at phone widths, wraps to
-// a second line the fixed-height input clips (#759 item 2) - so it's dropped
-// below the breakpoint rather than fought with layout.
+// The parenthetical on both the idle and streaming placeholders is
+// meaningless on a touch device and, at phone widths, wraps to a second line
+// the fixed-height input clips (#759 item 2) - so it's dropped below the
+// breakpoint rather than fought with layout.
 function useNarrowViewport(): boolean {
   const supported = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
   const [narrow, setNarrow] = useState(() => supported && window.matchMedia(NARROW_QUERY).matches)
@@ -28,6 +28,12 @@ function useNarrowViewport(): boolean {
     return () => mql.removeEventListener('change', onChange)
   }, [supported])
   return narrow
+}
+
+function placeholderFor(disabled: boolean, streaming: boolean, narrow: boolean): string {
+  if (disabled) return 'Select or start a chat first'
+  if (streaming) return narrow ? 'Type a follow-up…' : 'Type a follow-up… (queues until the current response finishes)'
+  return narrow ? 'Ask something…' : 'Ask something… (Enter to send, Shift+Enter for newline)'
 }
 
 export interface ComposerProps {
@@ -162,9 +168,14 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
             ref={textareaRef}
             id="composer-input"
             name="message"
-            className="flex-1 rounded-xl border border-gray-300 dark:border-gray-600 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none max-h-48 disabled:opacity-50 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
+            // placeholder:truncate is the layout-proof half of #759 item 2: the
+            // narrow-viewport text above is the common case, but this is what
+            // stops any placeholder from ever wrapping into a clipped second
+            // line, at any width - e.g. mid-stream, when Stop+Queue also
+            // compete for the row's space.
+            className="flex-1 min-w-0 rounded-xl border border-gray-300 dark:border-gray-600 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none max-h-48 disabled:opacity-50 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400 placeholder:truncate"
             rows={1}
-            placeholder={disabled ? 'Select or start a chat first' : streaming ? 'Type a follow-up… (queues until the current response finishes)' : narrow ? 'Ask something…' : 'Ask something… (Enter to send, Shift+Enter for newline)'}
+            placeholder={placeholderFor(disabled, streaming, narrow)}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
