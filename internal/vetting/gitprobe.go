@@ -4,6 +4,7 @@ package vetting
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 
@@ -181,4 +182,41 @@ func cloneHeadSHA(cfg Config) string {
 		return ""
 	}
 	return gitLine(dir, checksCaps(cfg), "rev-parse", "HEAD")
+}
+
+// commitHygieneOffTaskCeiling: code-implementer's commit_hygiene criterion
+// scores below this (normalised) when a commit swept in files with no
+// connection to the task - the contamination band, distinct from a merely
+// thin commit message or an incomplete-but-on-task round (#762).
+const commitHygieneOffTaskCeiling = 0.4
+
+// resetCloneToNodeBase discards everything the just-rejected round committed,
+// before the worker is re-prompted to revise - but only when commit_hygiene
+// says that round swept in off-task work (#762). An ordinary incomplete or
+// wrong round keeps its commits: its code is largely right, and revise is
+// expected to build on it, not redo it from scratch. Keyed on the judge's
+// criterion score, never on reading commits/diffs for topicality; a rubric
+// that doesn't name commit_hygiene gets no reset, failing open rather than
+// guessing from something else.
+func resetCloneToNodeBase(cfg Config, v verdict) {
+	cs, ok := v.Criteria["commit_hygiene"]
+	if !ok || cs.Score >= commitHygieneOffTaskCeiling {
+		return
+	}
+	if cfg.ReadOnly || cfg.Setup == nil || cfg.Workspace == nil || cfg.NodeBaseSHA == "" {
+		return
+	}
+	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID))
+	if err != nil || !isDir(filepath.Join(dir, ".git")) {
+		return
+	}
+	caps := checksCaps(cfg)
+	if res, err := workspace.RunArgv(context.Background(), dir, []string{"git", "reset", "--hard", cfg.NodeBaseSHA}, caps); err != nil || res.ExitCode != 0 {
+		slog.Warn("could not reset the clone before revising; the rejected round's commits may survive to delivery",
+			"component", "vetting", "node", cfg.NodeID, "base", cfg.NodeBaseSHA, "err", err)
+		return
+	}
+	if res, err := workspace.RunArgv(context.Background(), dir, []string{"git", "clean", "-fdq"}, caps); err != nil || res.ExitCode != 0 {
+		slog.Warn("could not clean untracked files left by the rejected round", "component", "vetting", "node", cfg.NodeID, "err", err)
+	}
 }
