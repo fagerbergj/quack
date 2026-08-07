@@ -116,6 +116,29 @@ func planEdges(nodes []dag.Node) []stream.DagEdgeDef {
 	return edges
 }
 
+// attachmentMeta is an input attachment's identifying shape, never its bytes -
+// an oversized gen_ai.input.messages attribute gets silently dropped or
+// truncated, which would lose the whole input field.
+type attachmentMeta struct {
+	MIMEType string `json:"mime_type,omitempty"`
+	Bytes    int    `json:"bytes,omitempty"`
+}
+
+// summarizeAttachments: strips a plan's attachments down to attachmentMeta, index-aligned.
+func summarizeAttachments(parts []*genai.Part) []attachmentMeta {
+	if len(parts) == 0 {
+		return nil
+	}
+	out := make([]attachmentMeta, len(parts))
+	for i, part := range parts {
+		if part == nil || part.InlineData == nil {
+			continue
+		}
+		out[i] = attachmentMeta{MIMEType: part.InlineData.MIMEType, Bytes: len(part.InlineData.Data)}
+	}
+	return out
+}
+
 // emitPlanEvent: records a gen_ai "plan" ledger event.
 func emitPlanEvent(tc agent.Context, p *dag.Plan) {
 	if !otelobs.LoggingEnabled("quack.planner") {
@@ -131,8 +154,8 @@ func emitPlanEvent(tc agent.Context, p *dag.Plan) {
 	if b, err := json.Marshal(struct {
 		History     []dag.HistoryTurn `json:"history,omitempty"`
 		Message     string            `json:"message,omitempty"`
-		Attachments []*genai.Part     `json:"attachments,omitempty"`
-	}{p.History, p.UserMessage, p.Attachments}); err == nil {
+		Attachments []attachmentMeta  `json:"attachments,omitempty"`
+	}{p.History, p.UserMessage, summarizeAttachments(p.Attachments)}); err == nil {
 		attrs = append(attrs, otellog.String(otelobs.GenAIInputMessages, string(b)))
 	}
 	if b, err := json.Marshal(p); err == nil {
