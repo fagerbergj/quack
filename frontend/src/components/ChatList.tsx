@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react'
 import type { ChatSummary } from '../api'
 import { isGithubChat, parseGithubRef } from '../lib/github'
 import { computeFacets, filterChats, parseFilterState, serializeFilterState, type SelectedFacets } from '../lib/chatFilters'
@@ -51,9 +52,112 @@ export interface ChatListProps {
   hasMoreChats?: boolean
   onLoadMoreChats?: () => void
   loadingMoreChats?: boolean
+  onArchive?: (chatId: string) => void
+  onUnarchive?: (chatId: string) => void
 }
 
-export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDelete, onCloseMobile, hasMoreChats, onLoadMoreChats, loadingMoreChats }: ChatListProps) {
+// ChatRow renders a single chat row; `archived` controls whether an archive/unarchive
+// toggle appears (only shown for archived rows). Reusable by both the active groups
+// and the collapsed archived section.
+function ChatRow({
+  s,
+  activeChatId,
+  onSelect,
+  onDelete,
+  archived,
+  onArchive,
+  onUnarchive,
+}: {
+  s: ChatSummary
+  activeChatId: string | null
+  onSelect: (id: string) => void
+  onDelete: (id: string, e: React.MouseEvent) => void
+  archived?: boolean
+  onArchive?: (chatId: string) => void
+  onUnarchive?: (chatId: string) => void
+}) {
+  const ref = parseGithubRef(s)
+
+  return (
+    <div
+      className={`group relative flex flex-col px-3 py-2.5 cursor-pointer border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${activeChatId === s.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''}`}
+      onClick={() => onSelect(s.id)}
+    >
+      <span title={s.title || 'New chat'} className="flex items-center pr-6">
+        <StatusDot status={s.status} className="mr-1.5" variant="chat" />
+        <span className={`text-sm truncate block ${activeChatId === s.id ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-100'}`}>
+          {s.title || 'New chat'}
+        </span>
+      </span>
+      {/* Badge row below the title: always rendered so every row reserves
+          the same vertical space and stays aligned. Repo/Issue/PR badges
+          link out to GitHub - filtering by repo/type lives in the FilterPanel. */}
+      <div className="flex items-center gap-1 h-4 mt-0.5 pr-6">
+        {isGithubChat(s) && ref && (
+          <a
+            href={`https://github.com/${ref.repo}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+            title={ref.repo}
+            className={`flex-shrink-0 max-w-[7rem] truncate text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded hover:underline ${paletteClasses(ref.repo)}`}
+          >
+            {ref.repo.slice(ref.repo.indexOf('/') + 1)}
+          </a>
+        )}
+        {ref && s.github_url && (
+          <a
+            href={s.github_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+            title={ref.kind === 'pr' ? `Pull request #${ref.number}` : `Issue #${ref.number}`}
+            className="flex-shrink-0 text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
+          >
+            {ref.kind === 'pr' ? 'PR' : 'Issue'} #{ref.number}
+          </a>
+        )}
+        {s.github_state && (
+          <span
+            className={`flex-shrink-0 text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded ${githubStateBadgeClass(s.github_state)}`}
+            title={s.github_state}
+          >
+            {githubStateLabel(s.github_state)}
+          </span>
+        )}
+      </div>
+      <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{relativeDate(s.updated_at)}</span>
+      {/* Archive/unarchive toggle for archived rows when callbacks are provided. */}
+      {archived && onUnarchive && (
+        <button
+          onClick={e => { e.stopPropagation(); onUnarchive(s.id) }}
+          className="mt-1 text-[9px] font-medium text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors uppercase tracking-wide"
+          aria-label="Unarchive chat"
+        >
+          Unarchive
+        </button>
+      )}
+      {onArchive && !archived && (
+        <button
+          onClick={e => { e.stopPropagation(); onArchive(s.id) }}
+          className="mt-1 text-[9px] font-medium text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors uppercase tracking-wide"
+          aria-label="Archive chat"
+        >
+          Archive
+        </button>
+      )}
+      <button
+        onClick={e => onDelete(s.id, e)}
+        aria-label="Delete chat"
+        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity p-1 rounded"
+      >
+        ×
+      </button>
+    </div>
+  )
+}
+
+export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDelete, onCloseMobile, hasMoreChats, onLoadMoreChats, loadingMoreChats, onArchive, onUnarchive }: ChatListProps) {
   const search = useSearch()
   const filterState = parseFilterState(search)
   const { q, selected } = filterState
@@ -72,6 +176,27 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
 
   const facets = computeFacets(chats)
   const filtered = filterChats(chats, filterState)
+
+  // #722 group the sidebar by run state: running/queued first (no header),
+  // active chats below, archived in a collapsed section at bottom. Empty
+  // groups render nothing. Archived toggle must NOT update UpdatedAt so
+  // archiving never re-orders the list.
+  const [archivedExpanded, setArchivedExpanded] = useState(false)
+
+  const runningQueued = useMemo<ChatSummary[]>(() => {
+    return filtered.filter(c => c.archived !== true && (c.status === 'running' || c.status === 'queued'))
+  }, [filtered])
+
+  const active = useMemo<ChatSummary[]>(() => {
+    return filtered.filter(c => c.archived !== true && c.status !== 'running' && c.status !== 'queued')
+  }, [filtered])
+
+  const archived = useMemo<ChatSummary[]>(() => {
+    const found = filtered.filter(c => c.archived === true)
+    // Sort by updated_at desc when showing all archived.
+    return [...found].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+  }, [filtered])
+
 
   return (
     <div className={`
@@ -115,83 +240,38 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
         />
       </div>
       <div className="flex-1 overflow-y-auto overscroll-contain">
-        {chats.length === 0 && (
+        {(runningQueued.length === 0 && active.length === 0 && archived.length === 0) && chats.length === 0 && (
           <div className="text-xs text-gray-400 dark:text-gray-500 text-center py-6 px-3">No conversations yet</div>
         )}
-        {chats.length > 0 && filtered.length === 0 && (
+        {(runningQueued.length === 0 && active.length === 0 && archived.length === 0) && chats.length > 0 && (
           <div className="text-xs text-gray-400 dark:text-gray-500 text-center py-6 px-3">No matches</div>
         )}
-        {filtered.map(s => {
-          const ref = parseGithubRef(s)
-          return (
-            <div
-              key={s.id}
-              onClick={() => onSelect(s.id)}
-              className={`group relative flex flex-col px-3 py-2.5 cursor-pointer border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${activeChatId === s.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''}`}
+
+        {/* Active groups: running/queued then idle — empty groups render nothing */}
+        {runningQueued.map(s => (
+          <ChatRow key={s.id} s={s} activeChatId={activeChatId} onSelect={onSelect} onDelete={onDelete} onArchive={onArchive} />
+        ))}
+        {active.map(s => (
+          <ChatRow key={s.id} s={s} activeChatId={activeChatId} onSelect={onSelect} onDelete={onDelete} onArchive={onArchive} />
+        ))}
+
+        {/* Archived section: collapsed by default, expands to show archived rows */}
+        {archived.length > 0 && (
+          <div>
+            <button
+              onClick={() => setArchivedExpanded(prev => !prev)}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors border-t border-gray-200 dark:border-gray-700"
+              aria-expanded={archivedExpanded}
             >
-              <span title={s.title || 'New chat'} className="flex items-center pr-6">
-                <StatusDot status={s.status} className="mr-1.5" variant="chat" />
-                <span className={`text-sm truncate block ${activeChatId === s.id ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-100'}`}>
-                  {s.title || 'New chat'}
-                </span>
-              </span>
-              {/* Badge row below the title: always rendered (even with no badges)
-                  so every row reserves the same vertical space and stays aligned.
-                  Repo/Issue/PR badges link out to GitHub - filtering by repo/type
-                  lives entirely in the FilterPanel popover, not on the badges. */}
-              <div className="flex items-center gap-1 h-4 mt-0.5 pr-6">
-                {isGithubChat(s) && ref && (
-                  <a
-                    href={`https://github.com/${ref.repo}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={e => e.stopPropagation()}
-                    // Owner is dropped from the visible text (#759 item 4) - every
-                    // chat here is fagerbergj/…, so it's dead weight that only
-                    // truncates the part that varies. Full "owner/name" still
-                    // lives in the title attribute for the day that's not true.
-                    title={ref.repo}
-                    // #746 item 10: a deterministic (hashed, not assignment-order)
-                    // colour per repo, so it's the same colour every reload and
-                    // across every chat - always paired with the repo NAME text,
-                    // never colour alone.
-                    className={`flex-shrink-0 max-w-[7rem] truncate text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded hover:underline ${paletteClasses(ref.repo)}`}
-                  >
-                    {ref.repo.slice(ref.repo.indexOf('/') + 1)}
-                  </a>
-                )}
-                {ref && s.github_url && (
-                  <a
-                    href={s.github_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={e => e.stopPropagation()}
-                    title={ref.kind === 'pr' ? `Pull request #${ref.number}` : `Issue #${ref.number}`}
-                    className="flex-shrink-0 text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
-                  >
-                    {ref.kind === 'pr' ? 'PR' : 'Issue'} #{ref.number}
-                  </a>
-                )}
-                {s.github_state && (
-                  <span
-                    className={`flex-shrink-0 text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded ${githubStateBadgeClass(s.github_state)}`}
-                    title={s.github_state}
-                  >
-                    {githubStateLabel(s.github_state)}
-                  </span>
-                )}
-              </div>
-              <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{relativeDate(s.updated_at)}</span>
-              <button
-                onClick={e => onDelete(s.id, e)}
-                aria-label="Delete chat"
-                className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity p-1 rounded"
-              >
-                ×
-              </button>
-            </div>
-          )
-        })}
+              <span className={`transition-transform inline-block ${archivedExpanded ? 'rotate-90' : ''}`}>›</span>
+              Archived ({archived.length})
+            </button>
+            {archivedExpanded && archived.map(s => (
+              <ChatRow key={s.id} s={s} activeChatId={activeChatId} onSelect={onSelect} onDelete={onDelete} onUnarchive={onUnarchive} archived />
+            ))}
+          </div>
+        )}
+
         {hasMoreChats && (
           <button
             onClick={onLoadMoreChats}
