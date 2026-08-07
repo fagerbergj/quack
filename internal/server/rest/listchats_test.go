@@ -164,12 +164,3 @@ func TestListChats_ExcludeArchivedByDefault(t *testing.T) {
 		}
 	}
 }
-
-func decodeChatSummary(t *testing.T, rec *httptest.ResponseRecorder) schema.ChatSummary {
-	t.Helper()
-	var out schema.ChatSummary
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatalf("decode ChatSummary: %v", err)
-	}
-	return out
-}

@@ -47,16 +47,16 @@ type Runner interface {
 
 // Extension is the GitHub App extension: tools + git auth + inbound webhook.
 type Extension struct {
-	app              *App
-	secret           []byte
-	mention          string
-	triggers         map[string]bool
-	labels           config.GitHubLabels
-	allowedUsers     map[string]bool // lower-cased; empty = deny all human-invoked triggers
-	runner           Runner
-	store            *store.Store
-	hub              *stream.Hub
-	eventLog         *runlog.EventLog
+	app                *App
+	secret             []byte
+	mention            string
+	triggers           map[string]bool
+	labels             config.GitHubLabels
+	allowedUsers       map[string]bool // lower-cased; empty = deny all human-invoked triggers
+	runner             Runner
+	store              *store.Store
+	hub                *stream.Hub
+	eventLog           *runlog.EventLog
 	inflight           sync.Map // sessionID → struct{}{}; dedup for concurrent triggers (#665, #668)
 	runTimeout         time.Duration
 	autoArchiveOnMerge bool
@@ -124,17 +124,17 @@ func NewExtension(app *App, cfg config.GitHubExtensionConfig, runner Runner, st 
 		allowedUsers[strings.ToLower(u)] = true
 	}
 	return &Extension{
-		app:              app,
-		secret:           []byte(cfg.WebhookSecret),
-		mention:          cfg.Mention,
-		triggers:         triggers,
-		labels:           labels,
-		allowedUsers:     allowedUsers,
-		runner:           runner,
-		store:            st,
-		hub:              hub,
-		eventLog:         eventLog,
-		runTimeout:       runTimeout,
+		app:                app,
+		secret:             []byte(cfg.WebhookSecret),
+		mention:            cfg.Mention,
+		triggers:           triggers,
+		labels:             labels,
+		allowedUsers:       allowedUsers,
+		runner:             runner,
+		store:              st,
+		hub:                hub,
+		eventLog:           eventLog,
+		runTimeout:         runTimeout,
 		autoArchiveOnMerge: cfg.AutoArchiveOnMerge,
 	}
 }
