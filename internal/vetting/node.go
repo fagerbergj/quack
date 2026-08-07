@@ -907,7 +907,8 @@ func judgePartEmitter(sink func(stream.SSEEvent), nodeID, runID string) func(*ge
 func computeDeterministicCriteria(ctx context.Context, answer string, act workerActivity, cfg Config) map[string]criterionScore {
 	det := map[string]criterionScore{}
 	if ls := lengthScore(answer); ls < 1.0 {
-		det["sufficient_length"] = criterionScore{Score: ls, Reason: fmt.Sprintf("deterministic: %d chars", len(strings.TrimSpace(answer)))}
+		det["sufficient_length"] = criterionScore{Score: ls, Reason: fmt.Sprintf(
+			"deterministic: %d chars, need at least %d (non-empty)", len(strings.TrimSpace(answer)), minAnswerChars)}
 	}
 	// Zero-retrieval answers are ungrounded (model memory or unverifiable citations). Clone/file reads count as retrieval.
 	if cfg.RequireRetrieval && len(act.fetched) == 0 && len(act.seen) == 0 && len(act.clonedRepos) == 0 && len(act.paths) == 0 {
@@ -920,7 +921,7 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 			"the answer's findings are not grounded in anything actually read; explore the clone (read_file/grep) before reporting"}
 	}
 	if cs, details, hasCites := citationScore(answer, act, resolveCiteCloneRoots(cfg, act)); hasCites {
-		det["cites_sources"] = criterionScore{Score: cs, Reason: fmt.Sprintf("deterministic: %d cited link(s), mean backing %.2f", len(details), cs)}
+		det["cites_sources"] = criterionScore{Score: cs, Reason: citeReason(cs, details)}
 	}
 	// Deterministic gate checks: planner's checks or derived from repo.
 	if c, ok := checksPassCriterionTraced(ctx, cfg); ok {

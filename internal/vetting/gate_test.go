@@ -2,6 +2,7 @@ package vetting
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,6 +80,82 @@ func TestCitationScoreLayers(t *testing.T) {
 	wantMean := (1.0 + 0.75 + 0.5 + 0.25 + 0.0) / 5
 	if score != wantMean {
 		t.Errorf("mean score = %.3f, want %.3f", score, wantMean)
+	}
+}
+
+// TestCiteReasonNamesUnretrievedLinks is issue #789 test cases 1 and 2: an
+// answer citing one fetched and two never-retrieved URLs must name both
+// unretrieved ones in the reason, and must NOT name the fetched (passing) one.
+func TestCiteReasonNamesUnretrievedLinks(t *testing.T) {
+	answer := strings.Join([]string{
+		"[a](https://ex.com/fetched)",
+		"[b](https://nowhere.com/never-retrieved-1)",
+		"[c](https://elsewhere.com/never-retrieved-2)",
+	}, " ")
+	act := workerActivity{fetched: map[string]fetchRecord{"https://ex.com/fetched": {}}}
+	score, details, ok := citationScore(answer, act, nil)
+	if !ok {
+		t.Fatal("citationScore ok=false, want true")
+	}
+	reason := citeReason(score, details)
+	for _, want := range []string{"https://nowhere.com/never-retrieved-1", "https://elsewhere.com/never-retrieved-2"} {
+		if !strings.Contains(reason, want) {
+			t.Errorf("reason missing unretrieved link %q: %q", want, reason)
+		}
+	}
+	if strings.Contains(reason, "https://ex.com/fetched") {
+		t.Errorf("reason names the fetched (passing) link - a passing item is noise: %q", reason)
+	}
+}
+
+// TestCiteReasonScoreUnchanged is issue #789 test case 3: adding detail to
+// the reason must never move citationScore's own score.
+func TestCiteReasonScoreUnchanged(t *testing.T) {
+	answer := strings.Join([]string{
+		"[a](https://ex.com/fetched)",
+		"[b](https://nowhere.com/never-retrieved-1)",
+		"[c](https://elsewhere.com/never-retrieved-2)",
+	}, " ")
+	act := workerActivity{fetched: map[string]fetchRecord{"https://ex.com/fetched": {}}}
+	score, details, ok := citationScore(answer, act, nil)
+	if !ok {
+		t.Fatal("citationScore ok=false, want true")
+	}
+	_ = citeReason(score, details) // building the reason must be read-only over score
+	if wantScore := (1.0 + 0.0 + 0.0) / 3; score != wantScore {
+		t.Errorf("score = %.3f, want %.3f - citeReason must not perturb citationScore's contract", score, wantScore)
+	}
+	det := computeDeterministicCriteria(t.Context(), answer, act, Config{})
+	if det["cites_sources"].Score != score {
+		t.Errorf("cites_sources score = %.3f, want %.3f (identical to citationScore's own output)", det["cites_sources"].Score, score)
+	}
+}
+
+// TestCiteReasonBoundsLongList is issue #789 test case 4: many unbacked URLs
+// must not each get a line - the reason bounds the list and states the elided count.
+func TestCiteReasonBoundsLongList(t *testing.T) {
+	var links []string
+	for i := 0; i < 40; i++ {
+		links = append(links, fmt.Sprintf("[l%d](https://unbacked-%d.example.com/x)", i, i))
+	}
+	answer := strings.Join(links, " ")
+	// citationScore requires some retrieval activity to engage at all - a
+	// fetch unrelated to any of the 40 cited links keeps all 40 unbacked.
+	act := workerActivity{fetched: map[string]fetchRecord{"https://other.example.com/unrelated": {}}}
+	score, details, ok := citationScore(answer, act, nil)
+	if !ok {
+		t.Fatal("citationScore ok=false, want true")
+	}
+	if len(details) != 40 {
+		t.Fatalf("details has %d entries, want 40", len(details))
+	}
+	reason := citeReason(score, details)
+	if got := strings.Count(reason, "unbacked-"); got != maxCiteReasonLinks {
+		t.Errorf("reason names %d links, want bounded to %d", got, maxCiteReasonLinks)
+	}
+	wantElided := fmt.Sprintf("%d more elided", 40-maxCiteReasonLinks)
+	if !strings.Contains(reason, wantElided) {
+		t.Errorf("reason missing elided count %q: %q", wantElided, reason)
 	}
 }
 
@@ -329,6 +406,26 @@ func TestLengthScore(t *testing.T) {
 		if got := lengthScore(c.in); got != c.want {
 			t.Errorf("lengthScore(%q) = %.1f, want %.1f", c.in, got, c.want)
 		}
+	}
+}
+
+// TestSufficientLengthReasonStatesActualAndRequired is issue #789 test case
+// 5: an empty answer's sufficient_length reason states both the actual
+// length and the length that would pass, not just a bare char count.
+func TestSufficientLengthReasonStatesActualAndRequired(t *testing.T) {
+	det := computeDeterministicCriteria(t.Context(), "   ", workerActivity{}, Config{})
+	c, ok := det["sufficient_length"]
+	if !ok {
+		t.Fatal("sufficient_length missing for an empty answer")
+	}
+	if !strings.Contains(c.Reason, "0 chars") {
+		t.Errorf("reason missing actual length: %q", c.Reason)
+	}
+	if !strings.Contains(c.Reason, fmt.Sprintf("%d", minAnswerChars)) {
+		t.Errorf("reason missing the passing threshold (%d): %q", minAnswerChars, c.Reason)
+	}
+	if c.Score != 0.0 {
+		t.Errorf("score = %.1f, want 0.0 (lengthScore unchanged)", c.Score)
 	}
 }
 
