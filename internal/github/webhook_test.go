@@ -313,7 +313,8 @@ func TestHandleWebhookPROpenedTrigger(t *testing.T) {
 					t.Fatal("pr_opened trigger did not dispatch a run")
 				}
 			} else {
-				time.Sleep(50 * time.Millisecond)
+				// fires is computed synchronously in handlePullRequest before any
+				// goroutine is spawned - the decision is already final here.
 				if atomic.LoadInt32(&runner.calls) != 0 {
 					t.Error("pr_opened should not fire when only mention is configured")
 				}
@@ -355,7 +356,8 @@ func TestHandleWebhookLabelTrigger(t *testing.T) {
 					t.Fatal("label trigger did not dispatch a run")
 				}
 			} else {
-				time.Sleep(50 * time.Millisecond)
+				// fires is computed synchronously in handlePullRequest before any
+				// goroutine is spawned - the decision is already final here.
 				if atomic.LoadInt32(&runner.calls) != 0 {
 					t.Errorf("%s: should not have dispatched a run", tt.name)
 				}
@@ -419,7 +421,8 @@ func TestHandleWebhookMentionRespectsTriggerSet(t *testing.T) {
 					t.Fatal("mention trigger did not dispatch a run")
 				}
 			} else {
-				time.Sleep(50 * time.Millisecond)
+				// triggerTask checks e.triggers["mention"] synchronously before any
+				// goroutine is spawned - the decision is already final here.
 				if atomic.LoadInt32(&runner.calls) != 0 {
 					t.Error("mention should not fire when not in the trigger set")
 				}
@@ -561,9 +564,12 @@ func TestHandleWebhookRequestChangesIgnoresOtherPRs(t *testing.T) {
 			if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
 				t.Fatalf("status = %d", rec.Code)
 			}
-			time.Sleep(150 * time.Millisecond)
-			if atomic.LoadInt32(&runner.calls) != 0 {
+			// Authorship resolves async (an HTTP round trip); bound the wait and
+			// fail immediately if it fires.
+			select {
+			case <-runner.gotMessage:
 				t.Error("must not engage")
+			case <-time.After(150 * time.Millisecond):
 			}
 		})
 	}
@@ -923,6 +929,22 @@ func waitInflightClear(t *testing.T, ext *Extension, sessionID string) {
 	t.Fatalf("inflight claim for %s never cleared", sessionID)
 }
 
+// staysAt polls got() every 5ms across dur, failing the instant it leaves
+// want - bound-proves a negative when nothing will ever signal completion.
+func staysAt(t *testing.T, dur time.Duration, want int32, got func() int32) {
+	t.Helper()
+	deadline := time.Now().Add(dur)
+	for {
+		if v := got(); v != want {
+			t.Fatalf("value = %d during the wait window; want it to stay %d", v, want)
+		}
+		if time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func TestDispatchSerializesSameSession(t *testing.T) {
 	posted := make(chan string, 2)
 	gh := stubGitHub(t, posted)
@@ -945,10 +967,8 @@ func TestDispatchSerializesSameSession(t *testing.T) {
 	for atomic.LoadInt32(&runner.calls) < 1 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
-	time.Sleep(150 * time.Millisecond) // give the deduplicated goroutine time to ack
-	if got := atomic.LoadInt32(&runner.calls); got != 1 {
-		t.Fatalf("runner.calls = %d while the first run holds the inflight guard; want 1 (the second must be deduped)", got)
-	}
+	// Run() itself is blocked on f.block, so it can't signal completion - poll instead.
+	staysAt(t, 150*time.Millisecond, 1, func() int32 { return atomic.LoadInt32(&runner.calls) })
 
 	close(runner.block) // let the first finish
 
@@ -996,7 +1016,7 @@ func TestHandleWebhookNoMentionIsNoop(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d; want 200", rec.Code)
 	}
-	time.Sleep(50 * time.Millisecond)
+	// triggerTask decides synchronously, before any goroutine is spawned.
 	if atomic.LoadInt32(&runner.calls) != 0 {
 		t.Error("orchestrator should not run without a mention")
 	}
@@ -1011,7 +1031,8 @@ func TestHandleWebhookUnhandledEventIsNoop(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d; want 200", rec.Code)
 	}
-	time.Sleep(50 * time.Millisecond)
+	// handleWebhook's default case decides synchronously, before any goroutine
+	// is spawned.
 	if atomic.LoadInt32(&runner.calls) != 0 {
 		t.Error("orchestrator should not run for an unhandled event")
 	}
@@ -1031,7 +1052,7 @@ func TestHandleWebhookBadSignature(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d; want 401", rec.Code)
 	}
-	time.Sleep(50 * time.Millisecond)
+	// verifySignature is checked synchronously before any goroutine is spawned.
 	if atomic.LoadInt32(&runner.calls) != 0 {
 		t.Error("a bad signature must not trigger a run")
 	}
@@ -1809,12 +1830,9 @@ func TestDispatchFirstLoadSeedsThenResumeInjectsDelta(t *testing.T) {
 		t.Errorf("first (seed) dispatch missing the issue body:\n%s", firstMsg)
 	}
 
-	// Wait for dispatch #1 to finish posting its answer so the inflight entry is cleaned up.
-	select {
-	case <-posted:
-	default:
-		time.Sleep(500 * time.Millisecond) // give it a moment if posted wasn't buffered yet
-	}
+	// Wait for dispatch #1 to fully finish (not just post) so the inflight entry
+	// is cleaned up before dispatch #2, or #2 races the release and gets deduped.
+	waitInflightClear(t, ext, "github-acme-widgets-7")
 
 	// A new comment lands on GitHub between runs.
 	commentsJSON.Store(`[
@@ -2041,13 +2059,16 @@ func TestReviewBaselineDecoupledFromGeneralSnapshot(t *testing.T) {
 		if rec.Code != http.StatusAccepted {
 			t.Fatalf("dispatch status = %d; want 202 (task=%q)", rec.Code, task)
 		}
+		var msg string
 		select {
-		case msg := <-runner.gotMessage:
-			return msg
+		case msg = <-runner.gotMessage:
 		case <-time.After(2 * time.Second):
 			t.Fatalf("dispatch never reached the orchestrator (task=%q)", task)
-			return ""
 		}
+		// gotMessage fires mid-dispatch, before it persists the snapshot/baseline
+		// the NEXT call reads - wait for the whole dispatch to finish, not just this.
+		waitInflightClear(t, ext, "github-acme-widgets-7")
+		return msg
 	}
 
 	// 1. First review ever: full review (no baseline yet), and it DELIVERS -
@@ -2192,7 +2213,7 @@ func TestHandleWebhookBotCommentIgnored(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 no-op ack", rec.Code)
 	}
-	time.Sleep(50 * time.Millisecond)
+	// The bot-suffix check is synchronous, before any goroutine is spawned.
 	if atomic.LoadInt32(&runner.calls) != 0 {
 		t.Error("a bot-authored mention must not dispatch a run")
 	}
@@ -2252,7 +2273,7 @@ func TestHandleWebhookInvokerAllowlist(t *testing.T) {
 					t.Fatal("allowed invoker did not dispatch a run")
 				}
 			} else {
-				time.Sleep(50 * time.Millisecond)
+				// isInvokerAllowed is checked synchronously before any goroutine is spawned.
 				if atomic.LoadInt32(&runner.calls) != 0 {
 					t.Errorf("%s: must not dispatch a run", tt.name)
 				}
@@ -2289,7 +2310,8 @@ func TestHandleWebhookIssueLabelRespectsAllowlist(t *testing.T) {
 	if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	time.Sleep(50 * time.Millisecond)
+	// isInvokerAllowed is checked synchronously in handleIssues before any
+	// goroutine is spawned.
 	if atomic.LoadInt32(&runner.calls) != 0 {
 		t.Error("issue-labeled sender not in allowed_users must not dispatch")
 	}
@@ -2324,7 +2346,7 @@ func TestHandleWebhookMergeLabelRespectsAllowlist(t *testing.T) {
 	if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	time.Sleep(50 * time.Millisecond)
+	// isInvokerAllowed is checked synchronously before any goroutine is spawned.
 	select {
 	case <-merged:
 		t.Error("merge-label sender not in allowed_users must not authorize a merge")
@@ -2399,7 +2421,8 @@ func TestHandleWebhookIssuePlanLabel(t *testing.T) {
 			}
 
 			if !tt.wantRun {
-				time.Sleep(50 * time.Millisecond)
+				// The label/sender/trigger filters in handleIssues all decide
+				// synchronously, before any goroutine is spawned.
 				if atomic.LoadInt32(&runner.calls) != 0 {
 					t.Error("issues event should not have dispatched a run")
 				}
@@ -2473,7 +2496,8 @@ func TestHandleWebhookIssueOpenedNoOp(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 no-op ack", rec.Code)
 	}
-	time.Sleep(50 * time.Millisecond)
+	// The action=="labeled" filter is checked synchronously before any
+	// goroutine is spawned.
 	if atomic.LoadInt32(&runner.calls) != 0 {
 		t.Error("issues opened should not dispatch a run")
 	}
@@ -2505,7 +2529,8 @@ func TestHandleWebhookIssueImplementLabel(t *testing.T) {
 				t.Fatalf("status = %d", rec.Code)
 			}
 			if !tt.wantRun {
-				time.Sleep(50 * time.Millisecond)
+				// The label/trigger filters in handleIssues decide synchronously,
+				// before any goroutine is spawned.
 				if atomic.LoadInt32(&runner.calls) != 0 {
 					t.Error("issues event should not have dispatched a run")
 				}
@@ -3417,7 +3442,8 @@ func TestHandleWebhookMergeLabel(t *testing.T) {
 					t.Fatal("expected a merge PUT")
 				}
 			} else {
-				time.Sleep(50 * time.Millisecond)
+				// mergePR always runs before comment() - the wait above (or, with no
+				// comment, the synchronous gate in handlePullRequest) already settles this.
 				select {
 				case <-merged:
 					t.Error("merge must not have been called")
@@ -3535,7 +3561,8 @@ func TestHandleWebhookMergeLabelWaitsForInFlightReview(t *testing.T) {
 		t.Fatalf("GetGithubMergeIntent = %+v, %v; want a recorded intent", intent, err)
 	}
 	close(runner.block) // release the blocked run
-	time.Sleep(50 * time.Millisecond)
+	// Let it fully finish before the test ends, or it races defer gh.Close().
+	waitInflightClear(t, ext, "github-acme-widgets-7")
 	if got := atomic.LoadInt32(&runner.calls); got != 1 {
 		t.Errorf("runner.calls = %d; want 1 (the label must not dispatch a second review while one is in flight)", got)
 	}
@@ -4057,18 +4084,11 @@ func TestDispatchDedupNearSimultaneousVerifiesTheInflightGuard(t *testing.T) {
 		t.Fatalf("second dispatch status = %d; want 202 (handler acks even if deduped)", rec2.Code)
 	}
 
-	// Wait a moment for the ackDedup goroutine to fire on the stub server.
-	time.Sleep(200 * time.Millisecond)
-
-	// Now let the first dispatch complete. After it finishes, its defer should
-	// delete the inflight entry, allowing a third dispatch to proceed.
-	close(dr.fakeRunner.block)
-
-	// Drain: should contain exactly ONE sessionID (the first dispatch that ran).
+	// The winner pushes into runCalls as soon as Run() is entered, before it
+	// ever reaches dr.block - drain that expected first entry.
 	firstSession := ""
 	select {
-	case sid := <-dr.runCalls:
-		firstSession = sid
+	case firstSession = <-dr.runCalls:
 	case <-time.After(2 * time.Second):
 		t.Fatal("no Run() call recorded")
 	}
@@ -4076,11 +4096,17 @@ func TestDispatchDedupNearSimultaneousVerifiesTheInflightGuard(t *testing.T) {
 		t.Errorf("expected sessionID %q, got %q", "github-acme-widgets-7", firstSession)
 	}
 
+	// A wrongly-undeduped second dispatch would also reach Run() well before
+	// it could ever hit dr.block - catch it here if it happens.
 	select {
-	case <-dr.runCalls:
-		t.Fatal("second concurrent trigger on same sessionID should have been deduplicated by LoadOrStore")
-	default:
+	case sid := <-dr.runCalls:
+		t.Fatalf("second concurrent trigger on same sessionID should have been deduplicated by LoadOrStore: sid=%q", sid)
+	case <-time.After(200 * time.Millisecond):
 	}
+
+	// Now let the first dispatch complete. After it finishes, its defer should
+	// delete the inflight entry, allowing a third dispatch to proceed.
+	close(dr.fakeRunner.block)
 
 	// Let the first dispatch finish and observe it posting. Then verify that a
 	// third dispatch (after the run completes) succeeds - inflight entry was cleaned up.
@@ -4113,6 +4139,8 @@ func TestDispatchDedupNearSimultaneousVerifiesTheInflightGuard(t *testing.T) {
 	if got := atomic.LoadInt32(&dr.calls); got != 2 {
 		t.Errorf("runner calls = %d, want 2 (first + third; second was deduplicated)", got)
 	}
+	// Let the third dispatch finish before defer gh.Close() runs, or it races it.
+	waitInflightClear(t, ext, "github-acme-widgets-7")
 }
 
 // TestDispatchDedupDifferentSessionsAllowsConcurrent verifies that dispatches on
