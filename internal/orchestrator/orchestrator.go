@@ -414,17 +414,20 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			return
 		}
 
-		// Planning exhausted without an acceptable plan is a FAILED run, not an answer
-		// (#693): the model's own text at this point may just be narrating the plan
-		// judge's internal rejection reason back at the user. Never surface that text -
-		// post the fixed notice and leave the reason in the logs/ledger (already written
-		// by judgeRouting). A pending clarifying question is a legitimate reason to stop
-		// without a plan, so it's excluded here, not treated as exhaustion.
+		// Planning that EXHAUSTS its rejection budget without an acceptable plan is a
+		// FAILED run, not an answer (#693): the model's own text at this point may just
+		// be narrating the plan judge's internal rejection reason back at the user. A
+		// single rejection is normal iteration - the model may correctly pivot to a
+		// direct answer instead of retrying (a reply-only deliverable the orchestrator
+		// over-eagerly tried to plan for, #760/home-server#3) - so only repeated
+		// rejections count as exhaustion; this must never be decided by inspecting the
+		// answer text itself. A pending clarifying question is also a legitimate reason
+		// to stop without a plan.
 		if _, selected := planCache.Selected(); !selected {
-			if reason, rejected := planCache.Rejected(); rejected {
+			if count, reason := planCache.Rejections(); count >= minRejectionsForExhaustion {
 				if _, hasPending := o.PendingQuestion(ctx, userID, sessionID); !hasPending {
-					slog.Error("planning exhausted without an acceptable plan; suppressing the judge's internal rejection text from the reply",
-						"component", "orchestrator", "chat", sessionID, "reason", reason)
+					slog.Error("planning exhausted its rejection budget without an acceptable plan; suppressing the judge's internal rejection text from the reply",
+						"component", "orchestrator", "chat", sessionID, "rejections", count, "reason", reason)
 					safeYield(stream.Errorf(planExhaustedNotice), nil)
 					o.persistAnswer(ctx, userID, sessionID, planExhaustedNotice)
 					yield(stream.Done(), nil)
@@ -460,6 +463,12 @@ const continuationMarker = "CONTINUE - your last turn produced no plan and no an
 // never produced an acceptable plan (#693). Never build this from the plan
 // judge's own reason - that text is internal machinery talk, not an answer.
 const planExhaustedNotice = "I could not produce a workable plan for this request."
+
+// minRejectionsForExhaustion: rejections at or above this count mean the model
+// kept retrying and failing (NightsOut#97 saw four) - below it, a single
+// rejection followed by an answer is the model correctly pivoting away from a
+// plan it didn't need (#760), not exhaustion.
+const minRejectionsForExhaustion = 2
 
 func continuationContent() *genai.Content {
 	return &genai.Content{Role: "user", Parts: []*genai.Part{{Text: continuationMarker + "\n\n" +

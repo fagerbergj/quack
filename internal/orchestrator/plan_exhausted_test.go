@@ -87,6 +87,60 @@ func TestOrchestrator_PlanExhausted_PostsFixedNoticeNotJudgeReason(t *testing.T)
 	}
 }
 
+// TestOrchestrator_PlanRejectedOnce_ThenAnswers_PivotDelivered pins #760/
+// home-server#3: a reply-only request where the orchestrator over-eagerly
+// tries to plan, the judge correctly rejects the plan for exceeding the
+// deliverable, and the model then pivots to answering the question directly.
+// One rejection is not exhaustion - the model's real answer must be delivered
+// verbatim, not replaced by the fixed notice.
+func TestOrchestrator_PlanRejectedOnce_ThenAnswers_PivotDelivered(t *testing.T) {
+	const pivotAnswer = "The off-by-one is in the loop bound on line 42."
+	stub := &orchStub{replies: []*model.LLMResponse{
+		planCall(), // rejected: this deliverable is reply-only, not a plan
+		stubText(pivotAnswer),
+	}}
+	o := newTestOrchWithJudge(t, stub, rejectAlwaysJudge("this deliverable is reply-only; drop the plan"))
+
+	evs := runTurn(t, o, "why does this loop miss the last element?")
+
+	if hasEvent(evs, stream.EventError) {
+		t.Errorf("a single rejection followed by a real answer must not surface an error; events=%v", evs)
+	}
+	if answer := o.LatestAnswer(context.Background(), "u", "chat"); answer != pivotAnswer {
+		t.Errorf("answer = %q, want the model's own pivot answer %q delivered verbatim", answer, pivotAnswer)
+	}
+}
+
+// TestOrchestrator_RejectionDoesNotLeakAcrossTurns proves PlanCache (built
+// fresh per Run() call, tools.NewPlanCache in orchestrator.go) does not carry
+// a rejection recorded in one turn into the next: turn one exhausts (2
+// rejections, fixed notice), turn two in the SAME session answers directly
+// with no plan attempt at all and must deliver normally, not be treated as
+// exhausted leftover from turn one.
+func TestOrchestrator_RejectionDoesNotLeakAcrossTurns(t *testing.T) {
+	const turnTwoAnswer = "Turn two: a plain answer, no plan involved."
+	stub := &orchStub{replies: []*model.LLMResponse{
+		planCall(), // turn 1: rejected
+		planCall(), // turn 1: rejected again -> exhausted
+		stubText("turn 1 give-up narration"),
+		stubText(turnTwoAnswer), // turn 2: direct answer, plan tool never called
+	}}
+	o := newTestOrchWithJudge(t, stub, rejectAlwaysJudge("no terminal node"))
+
+	runTurn(t, o, "turn one: build me a plan")
+	if answer := o.LatestAnswer(context.Background(), "u", "chat"); answer != planExhaustedNotice {
+		t.Fatalf("turn 1 answer = %q, want the fixed notice %q (setup for this test)", answer, planExhaustedNotice)
+	}
+
+	evs := runTurn(t, o, "turn two: unrelated question")
+	if hasEvent(evs, stream.EventError) {
+		t.Errorf("turn two produced no rejection of its own; it must not inherit turn one's exhaustion; events=%v", evs)
+	}
+	if answer := o.LatestAnswer(context.Background(), "u", "chat"); answer != turnTwoAnswer {
+		t.Errorf("turn 2 answer = %q, want %q - a prior turn's rejections must not leak into a new turn's PlanCache", answer, turnTwoAnswer)
+	}
+}
+
 // TestOrchestrator_PlanRejectedThenAccepted_NotTreatedAsExhausted: a plan
 // rejected once and then accepted on retry must deliver normally - a single
 // rejection along the way is not "exhausted", it's iteration working as
