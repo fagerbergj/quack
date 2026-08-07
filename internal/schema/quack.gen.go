@@ -29,6 +29,30 @@ func (e AgentActivityOutputItemType) Valid() bool {
 	}
 }
 
+// Defines values for ChatDetailGithubState.
+const (
+	ChatDetailGithubStateClosed ChatDetailGithubState = "closed"
+	ChatDetailGithubStateDraft  ChatDetailGithubState = "draft"
+	ChatDetailGithubStateMerged ChatDetailGithubState = "merged"
+	ChatDetailGithubStateOpen   ChatDetailGithubState = "open"
+)
+
+// Valid indicates whether the value is a known member of the ChatDetailGithubState enum.
+func (e ChatDetailGithubState) Valid() bool {
+	switch e {
+	case ChatDetailGithubStateClosed:
+		return true
+	case ChatDetailGithubStateDraft:
+		return true
+	case ChatDetailGithubStateMerged:
+		return true
+	case ChatDetailGithubStateOpen:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ChatStatus.
 const (
 	ChatStatusFailed     ChatStatus = "failed"
@@ -50,6 +74,30 @@ func (e ChatStatus) Valid() bool {
 	case ChatStatusQueued:
 		return true
 	case ChatStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ChatSummaryGithubState.
+const (
+	ChatSummaryGithubStateClosed ChatSummaryGithubState = "closed"
+	ChatSummaryGithubStateDraft  ChatSummaryGithubState = "draft"
+	ChatSummaryGithubStateMerged ChatSummaryGithubState = "merged"
+	ChatSummaryGithubStateOpen   ChatSummaryGithubState = "open"
+)
+
+// Valid indicates whether the value is a known member of the ChatSummaryGithubState enum.
+func (e ChatSummaryGithubState) Valid() bool {
+	switch e {
+	case ChatSummaryGithubStateClosed:
+		return true
+	case ChatSummaryGithubStateDraft:
+		return true
+	case ChatSummaryGithubStateMerged:
+		return true
+	case ChatSummaryGithubStateOpen:
 		return true
 	default:
 		return false
@@ -218,6 +266,9 @@ type ChatDetail struct {
 	// GithubRepo `<owner>/<repo>` of the originating GitHub issue/PR, present only for GitHub-originated chats.
 	GithubRepo *string `json:"github_repo,omitempty"`
 
+	// GithubState Current state of the originating GitHub issue/PR. Only set when quack has observed the resource at dispatch time; absent otherwise.
+	GithubState *ChatDetailGithubState `json:"github_state,omitempty"`
+
 	// GithubUrl Web URL of the originating GitHub issue/PR, present only for GitHub-originated chats.
 	GithubUrl *string `json:"github_url,omitempty"`
 	Id        string  `json:"id"`
@@ -232,6 +283,9 @@ type ChatDetail struct {
 	Turns        []Turn     `json:"turns"`
 	UpdatedAt    time.Time  `json:"updated_at"`
 }
+
+// ChatDetailGithubState Current state of the originating GitHub issue/PR. Only set when quack has observed the resource at dispatch time; absent otherwise.
+type ChatDetailGithubState string
 
 // ChatList defines model for ChatList.
 type ChatList struct {
@@ -251,6 +305,9 @@ type ChatSummary struct {
 	// GithubRepo `<owner>/<repo>` of the originating GitHub issue/PR, present only for GitHub-originated chats.
 	GithubRepo *string `json:"github_repo,omitempty"`
 
+	// GithubState Current state of the originating GitHub issue/PR. Only set when quack has observed the resource at dispatch time; absent otherwise.
+	GithubState *ChatSummaryGithubState `json:"github_state,omitempty"`
+
 	// GithubUrl Web URL of the originating GitHub issue/PR, present only for GitHub-originated chats.
 	GithubUrl *string `json:"github_url,omitempty"`
 	Id        string  `json:"id"`
@@ -264,6 +321,9 @@ type ChatSummary struct {
 	Title        *string    `json:"title,omitempty"`
 	UpdatedAt    time.Time  `json:"updated_at"`
 }
+
+// ChatSummaryGithubState Current state of the originating GitHub issue/PR. Only set when quack has observed the resource at dispatch time; absent otherwise.
+type ChatSummaryGithubState string
 
 // ContentPart defines model for ContentPart.
 type ContentPart struct {

@@ -35,8 +35,9 @@ type Chat struct {
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 	// Set only for GitHub-originated chats (id github-<owner>-<repo>-<number>).
-	GithubRepo string `json:"github_repo,omitempty"`
-	GithubURL  string `json:"github_url,omitempty"`
+	GithubRepo  string `json:"github_repo,omitempty"`
+	GithubURL   string `json:"github_url,omitempty"`
+	GithubState string `json:"github_state,omitempty"`
 	// ADK session identity (GitHub commenter's login for dispatched chats).
 	// Column is adk_session_user: session_user collides with Postgres' SESSION_USER.
 	SessionUser string `gorm:"column:adk_session_user" json:"session_user,omitempty"`
@@ -529,14 +530,14 @@ func (s *Store) DeleteChat(ctx context.Context, id string) error {
 	return nil
 }
 
-// SetChatGitHub upserts the originating GitHub repo/URL. Creates the row if missing
+// SetChatGitHub upserts the originating GitHub repo/URL/state. Creates the row if missing
 // (webhook may fire before chat exists). SessionUser fixed at creation.
-func (s *Store) SetChatGitHub(ctx context.Context, id, repo, url, sessionUser string) error {
+func (s *Store) SetChatGitHub(ctx context.Context, id, repo, url, state, sessionUser string) error {
 	now := time.Now().UTC()
-	c := &Chat{ID: id, CreatedAt: now, UpdatedAt: now, GithubRepo: repo, GithubURL: url, SessionUser: sessionUser}
+	c := &Chat{ID: id, CreatedAt: now, UpdatedAt: now, GithubRepo: repo, GithubURL: url, GithubState: state, SessionUser: sessionUser}
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"github_repo", "github_url", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"github_repo", "github_url", "github_state", "updated_at"}),
 	}).Create(c).Error
 }
 
