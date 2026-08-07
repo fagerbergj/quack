@@ -72,9 +72,9 @@ describe('DagNode - deterministic-retry continuation merges into one feed', () =
     { runId: 'worker-cont1', agent: 'web-researcher', stage: 'worker', done: true, activity: retryActivity },
   ], 'the answer')
 
-  it('shows ONE merged step count across both worker runs, not two separate blocks', () => {
-    expect(out).toContain('2 steps')
-    expect(out).not.toContain('1 step<')
+  it('shows ONE merged tool-call count across both worker runs, not two separate blocks', () => {
+    expect(out).toContain('2 tool calls')
+    expect(out).not.toContain('1 tool call<')
   })
 
   it('a judge-triggered revise round still gets its own labeled block', () => {
@@ -84,7 +84,33 @@ describe('DagNode - deterministic-retry continuation merges into one feed', () =
       { runId: 'worker-r1', agent: 'web-researcher', stage: 'revise', round: 1, done: true, activity: retryActivity },
     ], 'the answer')
     expect(withRevise).toContain('Revised')
-    expect(withRevise).toContain('1 step')
+    expect(withRevise).toContain('1 tool call')
+  })
+})
+
+// #746 item 4: only tool calls count as "steps" - a node with pure reasoning
+// (no tool calls) shows no count at all, never a misleading "0 tool calls".
+describe('DagNode - tool-call count excludes thinking traces (#746 item 4)', () => {
+  it('counts only tool-kind activity, not thinking traces', () => {
+    const mixed: Activity[] = [
+      { kind: 'thinking', text: 'reasoning one' },
+      { kind: 'tool', tool: { callId: 'c1', name: 'web_search', args: { query: 'x' }, result: {}, done: true } },
+      { kind: 'thinking', text: 'reasoning two' },
+      { kind: 'tool', tool: { callId: 'c2', name: 'web_fetch', args: { url: 'x' }, result: {}, done: true } },
+    ]
+    const out = html({ status: 'done', startedAt: 0, finishedAt: 1000 }, [
+      { runId: 'w', agent: 'web-researcher', stage: 'worker', done: true, activity: mixed },
+    ], 'the answer')
+    expect(out).toContain('2 tool calls')
+  })
+
+  it('shows no count for a node with only thinking, no tool calls', () => {
+    const thinkingOnly: Activity[] = [{ kind: 'thinking', text: 'just reasoning, no tools' }]
+    const out = html({ status: 'done', startedAt: 0, finishedAt: 1000 }, [
+      { runId: 'w', agent: 'web-researcher', stage: 'worker', done: true, activity: thinkingOnly },
+    ], 'the answer')
+    expect(out).not.toContain('tool call')
+    expect(out).not.toContain('0 tool')
   })
 })
 

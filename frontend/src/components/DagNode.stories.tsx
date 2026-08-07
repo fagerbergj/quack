@@ -425,9 +425,9 @@ export const AnswerPopup: Story = {
 // A mechanical deterministic-check retry (the gate's continuation loop handing
 // the worker another tool-bearing round after e.g. a failed `go test`) is a
 // SEPARATE run under the hood but renders as ONE continuous activity feed -
-// not a second "1 step" block - because it isn't a meaningful stage boundary
-// the way a judge-triggered revise is. Regression guard for the render-level
-// grouping in groupWorkerRuns (DagNode.tsx).
+// not a second "1 tool call" block - because it isn't a meaningful stage
+// boundary the way a judge-triggered revise is. Regression guard for the
+// render-level grouping in groupWorkerRuns (DagNode.tsx).
 export const DeterministicRetryOneFeed: Story = {
   args: {
     node: wrNode,
@@ -449,7 +449,7 @@ export const DeterministicRetryOneFeed: Story = {
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    // One merged "N steps" summary, not two separate worker cards.
-    await canvas.findByText('4 steps')
+    // One merged "N tool calls" summary, not two separate worker cards.
+    await canvas.findByText('3 tool calls')
   },
 }

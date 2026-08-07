@@ -106,8 +106,17 @@ export function appendRunThinking(runs: AgentRun[], runId: string, text: string)
 }
 
 // appendRunToolCall adds a pending tool call to a run (mutated in place, see above).
+// An ACP call re-announces itself under the SAME call_id once its kind/args
+// resolve (translate.go emits the pending call, then pairs the resolved one) -
+// update that row in place rather than pushing a second, since the eventual
+// result only ever fills the most recent match, orphaning the first (#746).
 export function appendRunToolCall(runs: AgentRun[], runId: string, callId: string, name: string, args: Record<string, unknown>): AgentRun[] {
   return mapRun(runs, runId, run => {
+    const idx = callId === '' ? -1 : run.activity.findIndex(a => a.kind === 'tool' && !a.tool.done && a.tool.callId === callId)
+    if (idx >= 0) {
+      run.activity[idx] = { kind: 'tool', tool: { callId, name, args, done: false } }
+      return { ...run }
+    }
     run.activity.push({ kind: 'tool', tool: { callId, name, args, done: false } })
     return { ...run }
   })

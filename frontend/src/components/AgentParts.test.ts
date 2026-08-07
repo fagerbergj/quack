@@ -132,18 +132,13 @@ describe('run-model reducers', () => {
   })
 })
 
-// #435 - Chrome DevTools flagged 177 instances of an interactive element
-// nested inside a `<summary>` on a live chat page; every collapsed tool
-// call's copy button was the source. The button now sits outside the
-// `<summary>`, as a sibling positioned over its corner.
-describe('ToolBlock - copy button is not nested inside <summary> (#435)', () => {
+// #746 item 6 - tool rows dropped their copy button as noise (the row still
+// expands to ToolCallView's full detail on click).
+describe('ToolBlock - no copy button (#746 item 6)', () => {
   const tool: ToolCall = { callId: 'c1', name: 'run_command', args: { command: 'go test ./...' }, result: { exit_code: 0 }, done: true }
 
-  it('renders the copy button as a sibling of <details>, never inside <summary>', () => {
+  it('renders no button at all', () => {
     const out = renderToStaticMarkup(createElement(ToolBlock, { tool }))
-    const summaryMatch = out.match(/<summary[^>]*>.*?<\/summary>/s)
-    expect(summaryMatch).not.toBeNull()
-    expect(summaryMatch![0]).not.toContain('<button')
-    expect(out).toContain('Copy tool call JSON')
+    expect(out).not.toContain('<button')
   })
 })
