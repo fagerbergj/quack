@@ -62,19 +62,27 @@ The answer addresses every distinct part of the original question, drawing on al
 
 ---
 
-### `citation_preservation`
+### `cites_sources`
 
-Every significant claim must carry an inline citation linking to its source URL. The synthesizer is expected to preserve links from the research it receives - not to generate new ones.
+Every significant claim carries an inline citation to the source that backs it. The synthesizer doesn't create sources - it preserves the citations the research it received already carried, in whichever form that research used. Two forms are followable and count equally:
+
+- a web URL, as an inline Markdown link (`[source text](https://exact-url)`);
+- a repo-relative code citation, either `<repo>@path/to/file.go` (optionally `:start-end`) - the form code-explorer nodes hand it - or `[label](path/to/file.go#L42)`.
+
+Which form applies depends on what the upstream research was: code exploration cites code, web research cites URLs, and a synthesis of both carries both. Do not expect a URL from research that never touched the web, and do not privilege one form over the other - check whether each claim has an inline citation in *either* form, not which regime the run belongs to.
+
+Source names alone ("the code shows…", "According to Wikipedia…") do not count - a name cannot be followed, only a link or a path can. Whether a cited link/path actually resolves (a URL was fetched, or a code path was read) is checked separately by deterministic code and can override this score; here, judge only whether claims carry an inline citation in one of the two forms.
 
 **Evaluation steps.**
 1. Count the answer's non-trivial factual claims.
-2. Count how many carry an inline, followable URL (not just a source name).
-3. Score the proportion that are linked.
+2. For each, check whether it carries an inline citation - a followable URL or a repo-relative code reference - next to the claim, not deferred to a Sources block.
+3. A Sources/References block does not, by itself, back a claim it isn't attached to - a placeholder or unlinked entry there does not rescue an uncited claim.
+4. Score the proportion of claims that carry an inline citation in either form.
 
 **Scoring bands.**
-- **7–10** - every non-trivial claim has an inline URL.
-- **4–6** - URLs for most claims; a few are unreferenced.
-- **0–3** - no inline URLs, or only source names without links.
+- **7–10** - every non-trivial claim carries an inline citation, in whichever form (URL or code) its research used.
+- **4–6** - most claims cited; a few are unreferenced.
+- **0–3** - no inline citations in either form, or only source names / a Sources block with nothing inline to back the claims.
 
 ---
 
