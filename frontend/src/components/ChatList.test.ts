@@ -56,6 +56,42 @@ describe('origin badge signal (isGithubChat)', () => {
   })
 })
 
+// #759 item 4: the repo badge drops the owner (identical on every row here)
+// and keeps just the name - the owner is still available in the title
+// attribute for the day a chat's repo isn't fagerbergj's.
+describe('repo badge text', () => {
+  let root: ReturnType<typeof createRoot> | undefined
+  let host: HTMLDivElement | undefined
+
+  afterEach(() => {
+    act(() => root?.unmount())
+    host?.remove()
+    root = undefined
+    host = undefined
+  })
+
+  it('shows only the repo name, with the full owner/name in the title', () => {
+    // @ts-expect-error react act environment flag
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    act(() => {
+      root!.render(createElement(ChatList, {
+        chats: CHATS,
+        activeChatId: null,
+        open: true,
+        onSelect: () => {},
+        onNewChat: () => {},
+        onDelete: () => {},
+        onCloseMobile: () => {},
+      }))
+    })
+    const badge = host!.querySelector('a[title="acme/widget"]')
+    expect(badge?.textContent).toBe('widget')
+  })
+})
+
 // #736: the sidebar is server-paginated - "Load more" only appears once the
 // parent signals a next page exists (hasMoreChats), and clicking it defers
 // to the parent's fetch (onLoadMoreChats), not a local re-fetch.

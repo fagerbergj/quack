@@ -126,6 +126,10 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={e => e.stopPropagation()}
+                    // Owner is dropped from the visible text (#759 item 4) - every
+                    // chat here is fagerbergj/…, so it's dead weight that only
+                    // truncates the part that varies. Full "owner/name" still
+                    // lives in the title attribute for the day that's not true.
                     title={ref.repo}
                     // #746 item 10: a deterministic (hashed, not assignment-order)
                     // colour per repo, so it's the same colour every reload and
@@ -133,7 +137,7 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
                     // never colour alone.
                     className={`flex-shrink-0 max-w-[7rem] truncate text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded hover:underline ${paletteClasses(ref.repo)}`}
                   >
-                    {ref.repo}
+                    {ref.repo.slice(ref.repo.indexOf('/') + 1)}
                   </a>
                 )}
                 {ref && s.github_url && (

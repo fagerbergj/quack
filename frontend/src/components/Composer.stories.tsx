@@ -58,3 +58,15 @@ export const MobileViewport: Story = {
     </div>
   )],
 }
+
+// Same regression check, streaming: Stop+Queue crowd the row and shrink the
+// textarea further than the idle case does - the tightest width the
+// placeholder has to fit in (#759 item 2).
+export const MobileViewportStreaming: Story = {
+  args: { disabled: false, streaming: true },
+  decorators: [Story => (
+    <div className="w-[390px] h-[700px] mx-auto flex flex-col justify-end overflow-hidden border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900">
+      <Story />
+    </div>
+  )],
+}

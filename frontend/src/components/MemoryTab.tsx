@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useLayoutEffect, useRef } from 'react'
 import { api, type Memory } from '../api'
 import { MemoryTimeline } from './MemoryTimeline'
 import { MemorySortFilter, type MemorySort } from './MemorySortFilter'
@@ -39,6 +39,14 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
   const [knownBuckets, setKnownBuckets] = useState<Set<string>>(
     () => new Set((initialState?.memories ?? []).map(m => m.bucket)),
   )
+  // The pagination footer is a normal flex sibling below the scroll area, not
+  // an overlay - but on short viewports (#759 item 3) the last row can land
+  // flush against it with no breathing room, reading as clipped. Padding the
+  // scroll area by the footer's own measured height (never a guessed pixel
+  // value, so it survives a font-size change) gives the last row room to
+  // clear it once scrolled fully into view.
+  const footerRef = useRef<HTMLDivElement>(null)
+  const [footerHeight, setFooterHeight] = useState(0)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -84,6 +92,18 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
   const hasMore = !searching && offset + memories.length < total
   const sortedMemories = useMemo(() => sortMemories(memories, sort), [memories, sort])
   const bucketOptions = useMemo(() => Array.from(knownBuckets).sort(), [knownBuckets])
+  const showFooter = !loading && !error && !searching && total > 0
+
+  useLayoutEffect(() => {
+    const el = footerRef.current
+    if (!el) { setFooterHeight(0); return }
+    const measure = () => setFooterHeight(el.getBoundingClientRect().height)
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [showFooter])
 
   return (
     <div className="flex flex-col h-full">
@@ -105,7 +125,7 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
         />
       </div>
 
-      <div className="flex-1 overflow-y-auto overscroll-contain">
+      <div className="flex-1 overflow-y-auto overscroll-contain" style={showFooter ? { paddingBottom: footerHeight } : undefined}>
         {loading && (
           <div className="text-center text-gray-400 dark:text-gray-500 text-sm py-10">Loading…</div>
         )}
@@ -124,8 +144,8 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
         )}
       </div>
 
-      {!loading && !error && !searching && total > 0 && (
-        <div className="p-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+      {showFooter && (
+        <div ref={footerRef} className="p-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
           <span>{offset + 1}–{offset + memories.length} of {total}</span>
           <div className="flex gap-2">
             <button
