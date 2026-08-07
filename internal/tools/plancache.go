@@ -8,10 +8,12 @@ import (
 
 // PlanCache holds plans by ID so execute can reference them losslessly.
 type PlanCache struct {
-	mu        sync.Mutex
-	plans     map[string]dag.Plan
-	delivered string
-	selected  string
+	mu             sync.Mutex
+	plans          map[string]dag.Plan
+	delivered      string
+	selected       string
+	rejected       bool
+	rejectedReason string
 }
 
 // NewPlanCache returns an empty cache.
@@ -59,6 +61,24 @@ func (c *PlanCache) Get(id string) (dag.Plan, bool) {
 	defer c.mu.Unlock()
 	p, ok := c.plans[id]
 	return p, ok
+}
+
+// RecordRejection notes that the plan judge declined a proposed plan this turn -
+// distinguishes "planning was attempted and never accepted" (a failed run, #693)
+// from "no plan was needed" (a normal direct answer).
+func (c *PlanCache) RecordRejection(reason string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.rejected = true
+	c.rejectedReason = reason
+}
+
+// Rejected reports whether any plan-judge rejection occurred this turn, and its
+// (last) reason - for the caller's own failure signaling, never for the reply.
+func (c *PlanCache) Rejected() (reason string, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.rejectedReason, c.rejected
 }
 
 // Pending reports whether a plan was created but never executed.

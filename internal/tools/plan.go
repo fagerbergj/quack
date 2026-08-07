@@ -2,6 +2,7 @@ package tools
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -68,6 +69,10 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 			planCtx := ledger.WithCoords(tc, ledger.Coords{ChatID: tc.SessionID()})
 			p, err := planner.Build(planCtx, a.Nodes, a.Setup, a.Delivery, history, message, attachments, grant)
 			if err != nil {
+				var rejected *dag.PlanRejectedError
+				if errors.As(err, &rejected) {
+					cache.RecordRejection(rejected.Reason)
+				}
 				return planResult{}, fmt.Errorf("plan: %w", err)
 			}
 			// GitHub already told us repo/base_ref/branch - never trust the planner's guess.

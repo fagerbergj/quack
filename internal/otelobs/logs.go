@@ -53,6 +53,9 @@ const (
 
 	// GenAIOperationPlan - "plan" has no registered semconv enum.
 	GenAIOperationPlan = "plan"
+	// GenAIOperationPlanRejected - the plan judge declined a proposed plan (#693);
+	// the ledger record of a rejection reason that must never reach the user reply.
+	GenAIOperationPlanRejected = "plan_rejected"
 
 	quackNodeKey  = "quack.node"
 	quackRoundKey = "quack.round"
