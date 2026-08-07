@@ -446,6 +446,10 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			if res.Passed || round > cfg.JudgeRounds {
 				break
 			}
+			// #762: the round that just failed may have committed work the task
+			// never asked for. Undo it before the worker gets another try, so a
+			// later round that passes can only ever deliver its own commits.
+			resetCloneToNodeBase(cfg)
 			revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, feedback, act, citationOnlyFailure(v, cfg.Threshold))) + markerLine
 			revised, rerr := runWorkerNodeTraced(ctx, nodeCtx, cfg, workerModel, workerNode, revisePrompt, fmt.Sprintf("worker-r%d%s", round, sfx), "revise", promptEmit)
 			if rerr != nil {

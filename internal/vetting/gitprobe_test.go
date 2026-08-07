@@ -164,3 +164,65 @@ func TestDiffSinceScopesToNodeBaseSHA(t *testing.T) {
 		t.Skip("reflog base did not include the sibling commit; environment-dependent, nothing to contrast")
 	}
 }
+
+// #762 test case 3: resetCloneToNodeBase is computed purely from
+// cfg.NodeBaseSHA - it must undo a rejected round's commit(s) regardless of
+// what they contain, never by reading commit messages or diffs for topicality.
+func TestResetCloneToNodeBase_RewindsToStampedSHA(t *testing.T) {
+	cfg := probeRepo(t, false) // base commit + empty work branch, nothing committed yet
+	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.NodeBaseSHA = cloneHeadSHA(cfg)
+
+	// The rejected round's own commit - resetCloneToNodeBase never looks at
+	// its message or diff, only at cfg.NodeBaseSHA.
+	writeFile(t, filepath.Join(dir, "unrelated.go"), "package whatever")
+	run := func(args ...string) {
+		t.Helper()
+		res, err := workspace.RunArgv(context.Background(), dir, append([]string{"git"}, args...), workspace.DefaultCaps())
+		if err != nil || res.ExitCode != 0 {
+			t.Fatalf("git %v: %v (exit %d): %s", args, err, res.ExitCode, res.Output)
+		}
+	}
+	run("config", "user.email", "t@t")
+	run("config", "user.name", "t")
+	run("add", "-A")
+	run("commit", "-q", "-m", "totally unrelated work")
+
+	resetCloneToNodeBase(cfg)
+
+	head := gitLine(dir, workspace.DefaultCaps(), "rev-parse", "HEAD")
+	if head != cfg.NodeBaseSHA {
+		t.Fatalf("HEAD = %s, want cfg.NodeBaseSHA %s (reset must land exactly on the stamped base)", head, cfg.NodeBaseSHA)
+	}
+	if fileExists(dir, "unrelated.go") {
+		t.Fatal("the rejected round's file survived the reset")
+	}
+}
+
+// resetCloneToNodeBase must no-op (never touch the clone) when there's nothing
+// safe to reset against: a read-only node, no clone, or no stamped base.
+func TestResetCloneToNodeBase_NoopsWithoutABase(t *testing.T) {
+	cfg := probeRepo(t, true)
+	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.NodeBaseSHA = cloneHeadSHA(cfg) // stamped AFTER the one commit - i.e. HEAD already
+	headBefore := gitLine(dir, workspace.DefaultCaps(), "rev-parse", "HEAD")
+
+	for name, c := range map[string]Config{
+		"read-only":   {ReadOnly: true, Setup: cfg.Setup, Workspace: cfg.Workspace, WorkspaceUserID: cfg.WorkspaceUserID, ChatID: cfg.ChatID, NodeID: cfg.NodeID, NodeBaseSHA: cfg.NodeBaseSHA},
+		"no setup":    {Setup: nil, Workspace: cfg.Workspace, WorkspaceUserID: cfg.WorkspaceUserID, ChatID: cfg.ChatID, NodeID: cfg.NodeID, NodeBaseSHA: cfg.NodeBaseSHA},
+		"no base sha": {Setup: cfg.Setup, Workspace: cfg.Workspace, WorkspaceUserID: cfg.WorkspaceUserID, ChatID: cfg.ChatID, NodeID: cfg.NodeID, NodeBaseSHA: ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resetCloneToNodeBase(c)
+			if head := gitLine(dir, workspace.DefaultCaps(), "rev-parse", "HEAD"); head != headBefore {
+				t.Fatalf("HEAD moved from %s to %s - resetCloneToNodeBase must no-op here", headBefore, head)
+			}
+		})
+	}
+}

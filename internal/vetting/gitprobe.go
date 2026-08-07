@@ -4,6 +4,7 @@ package vetting
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 
@@ -181,4 +182,30 @@ func cloneHeadSHA(cfg Config) string {
 		return ""
 	}
 	return gitLine(dir, checksCaps(cfg), "rev-parse", "HEAD")
+}
+
+// resetCloneToNodeBase discards everything the just-rejected round committed,
+// before the worker is re-prompted to revise (#762). A rejected round's
+// commits are otherwise invisible to per-round scoring - by construction the
+// LATER, passing round looks clean - so the only way to keep them off the
+// branch a passing round delivers is to make sure they're gone before that
+// round even starts. Base-SHA only: never inspects what changed, only where
+// to rewind to.
+func resetCloneToNodeBase(cfg Config) {
+	if cfg.ReadOnly || cfg.Setup == nil || cfg.Workspace == nil || cfg.NodeBaseSHA == "" {
+		return
+	}
+	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID))
+	if err != nil || !isDir(filepath.Join(dir, ".git")) {
+		return
+	}
+	caps := checksCaps(cfg)
+	if res, err := workspace.RunArgv(context.Background(), dir, []string{"git", "reset", "--hard", cfg.NodeBaseSHA}, caps); err != nil || res.ExitCode != 0 {
+		slog.Warn("could not reset the clone before revising; the rejected round's commits may survive to delivery",
+			"component", "vetting", "node", cfg.NodeID, "base", cfg.NodeBaseSHA, "err", err)
+		return
+	}
+	if res, err := workspace.RunArgv(context.Background(), dir, []string{"git", "clean", "-fdq"}, caps); err != nil || res.ExitCode != 0 {
+		slog.Warn("could not clean untracked files left by the rejected round", "component", "vetting", "node", cfg.NodeID, "err", err)
+	}
 }
