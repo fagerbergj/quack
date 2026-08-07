@@ -160,9 +160,10 @@ func TestWorkflowRunAutoHealEligibility(t *testing.T) {
 					t.Fatal("auto-heal did not dispatch a fix run")
 				}
 			} else {
-				time.Sleep(150 * time.Millisecond)
-				if atomic.LoadInt32(&runner.calls) != 0 {
+				select {
+				case <-runner.gotMessage:
 					t.Error("auto-heal must not dispatch when ineligible")
+				case <-time.After(150 * time.Millisecond):
 				}
 			}
 		})
@@ -201,7 +202,7 @@ func TestWorkflowRunIgnored(t *testing.T) {
 			if rec.Code != tt.wantAck {
 				t.Fatalf("status = %d; want %d", rec.Code, tt.wantAck)
 			}
-			time.Sleep(100 * time.Millisecond)
+			// Filtered in handleWorkflowRun before autoHeal is ever spawned.
 			if atomic.LoadInt32(&runner.calls) != 0 {
 				t.Error("no fix run should dispatch")
 			}
@@ -282,7 +283,7 @@ func TestAutoHealOneAttemptGuard(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("no stop comment posted")
 	}
-	time.Sleep(100 * time.Millisecond)
+	// The stop comment's branch returns right after posting it - beginFix is unreachable from there.
 	if atomic.LoadInt32(&runner.calls) != 0 {
 		t.Error("must not dispatch a second fix for its own failing commit")
 	}
@@ -298,14 +299,13 @@ func TestAutoHealOneAttemptGuard(t *testing.T) {
 	ext2 := newFixExtension(t, runner2, gh.URL, st, "ci_fix")
 	rec2 := httptest.NewRecorder()
 	ext2.handleWebhook(rec2, signedRequest("workflow_run", workflowRunBody("completed", "failure", "sha2", 7)))
-	time.Sleep(150 * time.Millisecond)
-	if atomic.LoadInt32(&runner2.calls) != 0 {
-		t.Error("stopped state must survive a restart; no run may dispatch")
-	}
 	select {
+	case <-runner2.gotMessage:
+		t.Error("stopped state must survive a restart; no run may dispatch")
 	case c := <-posted:
 		t.Errorf("stopped auto-heal posted a second comment for the same commit: %q", c)
-	default:
+	case <-time.After(150 * time.Millisecond):
+		// silent dedup, as expected
 	}
 
 	// A NEW commit (a human's, not quack's) fails - auto-heal resumes with no
@@ -441,14 +441,13 @@ func TestFixLabelApplied(t *testing.T) {
 		if rec.Code != http.StatusAccepted {
 			t.Fatalf("status = %d; want 202", rec.Code)
 		}
-		time.Sleep(150 * time.Millisecond)
-		if atomic.LoadInt32(&runner.calls) != 0 {
-			t.Error("no run should dispatch when nothing is failing (#655)")
-		}
 		select {
+		case <-runner.gotMessage:
+			t.Error("no run should dispatch when nothing is failing (#655)")
 		case c := <-posted:
 			t.Errorf("no comment should be posted on a green PR: %q", c)
-		default:
+		case <-time.After(150 * time.Millisecond):
+			// armed and silent, as expected
 		}
 	})
 
@@ -464,7 +463,8 @@ func TestFixLabelApplied(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d; want 200 no-op", rec.Code)
 		}
-		time.Sleep(100 * time.Millisecond)
+		// isInvokerAllowed is checked synchronously in handlePullRequest before any
+		// goroutine is spawned - the decision is already final here.
 		if atomic.LoadInt32(&runner.calls) != 0 {
 			t.Error("non-allowlisted sender must not dispatch")
 		}
