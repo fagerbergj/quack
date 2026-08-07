@@ -42,19 +42,21 @@ type procHandle struct {
 
 // wrappedArgv is the subprocess argv actually exec'd: a.opts.Command wrapped
 // through the SAME sandbox seam every other child runs inside
-// (workspace.WrapArgv) - RW is cwd's own scope (the node dir), RO adds the
-// skill paths opencode needs to read (ExtraRO) on top of the caps' own system
-// + exec_path grants. bwrap/none pass Command through unchanged today (see
-// WrapArgv's doc).
-func (a *Agent) wrappedArgv(cwd string, extraRO []string) []string {
-	return workspace.WrapArgv(cwd, a.opts.Command, a.opts.Caps, append(append([]string{}, a.opts.ExtraRO...), extraRO...), nil)
+// (workspace.WrapArgv) - RW (or RO, per caps.ReadOnly - #754) is cwd's own
+// scope (the node dir), RO adds the skill paths opencode needs to read
+// (ExtraRO) on top of the caps' own system + exec_path grants. bwrap/none
+// pass Command through unchanged today (see WrapArgv's doc).
+func (a *Agent) wrappedArgv(cwd string, extraRO []string, caps workspace.Caps) []string {
+	return workspace.WrapArgv(cwd, a.opts.Command, caps, append(append([]string{}, a.opts.ExtraRO...), extraRO...), nil)
 }
 
 // spawnEnv is the subprocess environment: PATH is HERMETIC in every sandbox
 // mode (workspace.ChildPath - the same fixed PATH the gate's own children
 // get), never the server's ambient PATH - the toolchain the agent needs to
 // RUN is covered by Caps.ExtraPath + the system dirs already in ChildPath, so
-// ambient added no reach a leak couldn't also use.
+// ambient added no reach a leak couldn't also use. Caps.ReadOnly plays no
+// part here - PATH/TMPDIR/JVM options don't depend on it - so this still
+// reads the agent's static opts.Caps rather than a per-round override.
 func (a *Agent) spawnEnv() []string {
 	env := []string{
 		"PATH=" + workspace.ChildPath(a.opts.Caps),
@@ -77,22 +79,22 @@ func (a *Agent) spawnEnv() []string {
 // SAME real-subprocess path a never-replayed round takes, so "live" for ACP
 // needs no separate delegate object, only the opts every round already
 // carries (Command, Env, Caps, ...).
-func (a *Agent) start(ctx context.Context, cwd string, extraRO []string) (*procHandle, error) {
+func (a *Agent) start(ctx context.Context, cwd string, extraRO []string, caps workspace.Caps) (*procHandle, error) {
 	if a.opts.Replay != nil {
 		h, err := a.startReplay(ctx)
 		var fs *replay.ForkSignal
 		if errors.As(err, &fs) {
 			a.log.Info("acp round forked to live", "reason", fs.Reason, "stream", fs.Stream.String())
-			return a.startLive(ctx, cwd, extraRO)
+			return a.startLive(ctx, cwd, extraRO, caps)
 		}
 		return h, err
 	}
-	return a.startLive(ctx, cwd, extraRO)
+	return a.startLive(ctx, cwd, extraRO, caps)
 }
 
 // startLive spawns a real opencode subprocess and wires the ACP connection -
 // the only path before #605 added fork-replay's live fallback.
-func (a *Agent) startLive(ctx context.Context, cwd string, extraRO []string) (*procHandle, error) {
+func (a *Agent) startLive(ctx context.Context, cwd string, extraRO []string, caps workspace.Caps) (*procHandle, error) {
 	h := &procHandle{
 		updates:  make(chan sdk.SessionUpdate, 64),
 		stop:     make(chan struct{}),
@@ -100,7 +102,7 @@ func (a *Agent) startLive(ctx context.Context, cwd string, extraRO []string) (*p
 		sent:     &teeBuffer{},
 		received: &teeBuffer{},
 	}
-	argv := a.wrappedArgv(cwd, extraRO)
+	argv := a.wrappedArgv(cwd, extraRO, caps)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = cwd
 	cmd.Env = a.spawnEnv()
