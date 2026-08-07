@@ -223,10 +223,13 @@ func TestPullRequestAndSubmitReviewAreNotModelTools(t *testing.T) {
 
 // validComments is the delivery-time replacement for the draft tools' per-add
 // validation: gate-parsed inline findings are anchored against the PR diff, a
-// clone-relative path is normalised to its repo-relative form, and anything
-// unanchorable is DROPPED (the summary body still carries the finding) instead
-// of 422-ing the whole review.
-func TestValidCommentsNormalisesAndDrops(t *testing.T) {
+// clone-relative path is normalised to its repo-relative form, and a finding
+// on an uncommentable line is RE-ANCHORED to the nearest commentable line in
+// the same file, with its true location stated in the body, instead of being
+// dropped (#694). Only a finding whose path never resolves to a changed file
+// at all is dropped - that's a different failure (the reviewer named a file
+// not in this diff), not location loss.
+func TestValidCommentsNormalisesAndReanchors(t *testing.T) {
 	app := newReviewApp(t, nil)
 	in := []vetting.ReviewComment{
 		{Path: "auth.go", Line: 42, Body: "exact path, commentable line"},
@@ -234,14 +237,74 @@ func TestValidCommentsNormalisesAndDrops(t *testing.T) {
 		{Path: "auth.go", Line: 999, Body: "uncommentable line"},
 		{Path: "nope.go", Line: 42, Body: "not a changed file"},
 	}
-	got := app.validComments(context.Background(), "acme", "widgets", 7, in)
-	if len(got) != 2 {
-		t.Fatalf("validComments kept %d, want 2: %+v", len(got), got)
+	inline, unanchored := app.validComments(context.Background(), "acme", "widgets", 7, in)
+	if len(inline) != 3 {
+		t.Fatalf("validComments kept %d inline, want 3 (nope.go dropped, the other three survive): %+v", len(inline), inline)
 	}
-	for _, c := range got {
-		if c.Path != "auth.go" || c.Line != 42 {
-			t.Errorf("comment not normalised to auth.go:42: %+v", c)
+	if len(unanchored) != 0 {
+		t.Fatalf("validComments left %d unanchored, want 0 (auth.go has commentable lines to re-anchor onto): %+v", len(unanchored), unanchored)
+	}
+	var reanchored *reviewComment
+	for i := range inline {
+		if inline[i].Path != "auth.go" {
+			t.Errorf("comment not normalised to auth.go: %+v", inline[i])
 		}
+		if inline[i].Body == "uncommentable line" || strings.Contains(inline[i].Body, "line 999") {
+			reanchored = &inline[i]
+		}
+	}
+	if reanchored == nil {
+		t.Fatalf("the uncommentable-line finding should have survived, re-anchored: %+v", inline)
+	}
+	if reanchored.Line != 43 {
+		t.Errorf("re-anchored line = %d, want 43 (nearest commentable line to 999 in auth.go)", reanchored.Line)
+	}
+	if !strings.Contains(reanchored.Body, "line 999") {
+		t.Errorf("re-anchored body doesn't state the true location: %q", reanchored.Body)
+	}
+}
+
+// TestValidCommentsUnanchoredWhenFileHasNoCommentableLine pins #694's second
+// case: a finding staged against a file whose diff hunk is a pure deletion
+// (zero commentable RIGHT lines anywhere) can't be re-anchored at all, so it
+// comes back as an unanchored finding for the caller to fold into the review
+// body, instead of vanishing.
+func TestValidCommentsUnanchoredWhenFileHasNoCommentableLine(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/acme/widgets/pulls/7/files", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]string{
+			{"filename": "deleted.go", "patch": "@@ -10,3 +10,0 @@\n-a\n-b\n-c"},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	keyPEM, _ := testKeyPEM(t)
+	app, err := NewApp("1", keyPEM)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	app.apiBase = srv.URL
+	app.installs["acme/widgets"] = 1
+	app.tokens[1] = cachedToken{token: "ghs_x", expires: time.Now().Add(time.Hour)}
+
+	in := []vetting.ReviewComment{{Path: "deleted.go", Line: 50, Body: "double instantiation causes deletions not to reflect in the list"}}
+	inline, unanchored := app.validComments(context.Background(), "acme", "widgets", 7, in)
+	if len(inline) != 0 {
+		t.Fatalf("validComments kept %d inline, want 0 (deleted.go has no commentable RIGHT line): %+v", len(inline), inline)
+	}
+	if len(unanchored) != 1 {
+		t.Fatalf("validComments left %d unanchored, want 1: %+v", len(unanchored), unanchored)
+	}
+	if unanchored[0].Path != "deleted.go" || unanchored[0].Line != 50 || unanchored[0].Body != "double instantiation causes deletions not to reflect in the list" {
+		t.Errorf("unanchored finding lost its identity: %+v", unanchored[0])
+	}
+
+	rendered := renderUnanchoredFindings(unanchored)
+	if !strings.Contains(rendered, "deleted.go") || !strings.Contains(rendered, "line 50") {
+		t.Errorf("rendered block doesn't identify the finding's true location: %q", rendered)
+	}
+	if !strings.Contains(rendered, "double instantiation") {
+		t.Errorf("rendered block dropped the finding text: %q", rendered)
 	}
 }
 
@@ -255,9 +318,12 @@ func TestValidCommentsDropsExactDuplicates(t *testing.T) {
 		{Path: "auth.go", Line: 42, Body: "blocking: nil deref"}, // exact repeat
 		{Path: "auth.go", Line: 42, Body: "suggestion: extract helper"},
 	}
-	got := app.validComments(context.Background(), "acme", "widgets", 7, in)
+	got, unanchored := app.validComments(context.Background(), "acme", "widgets", 7, in)
 	if len(got) != 2 {
 		t.Fatalf("validComments kept %d, want 2 (one exact dup dropped): %+v", len(got), got)
+	}
+	if len(unanchored) != 0 {
+		t.Fatalf("validComments left %d unanchored, want 0: %+v", len(unanchored), unanchored)
 	}
 	bodies := map[string]bool{}
 	for _, c := range got {
@@ -279,9 +345,12 @@ func TestValidCommentsDropsDuplicatesAcrossPathSpellings(t *testing.T) {
 		{Path: "auth.go", Line: 42, Body: "blocking: nil deref"},
 		{Path: "widgets/auth.go", Line: 42, Body: "blocking: nil deref"},
 	}
-	got := app.validComments(context.Background(), "acme", "widgets", 7, in)
+	got, unanchored := app.validComments(context.Background(), "acme", "widgets", 7, in)
 	if len(got) != 1 {
 		t.Fatalf("validComments kept %d, want 1 (cross-spelling dup dropped): %+v", len(got), got)
+	}
+	if len(unanchored) != 0 {
+		t.Fatalf("validComments left %d unanchored, want 0: %+v", len(unanchored), unanchored)
 	}
 }
 

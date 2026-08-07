@@ -778,6 +778,132 @@ func TestDeliverReviewInlineCommentsAndChatIDPR(t *testing.T) {
 	}
 }
 
+// TestDeliverReviewReanchorsUncommentableFinding reproduces #694 end to end:
+// NightsOut#97's judge-flagged BLOCKING finding cited ManageDBActivity.kt:50,
+// a line outside the diff (context, not changed) that GitHub refuses inline
+// comments on. It must land as a real inline comment on the nearest
+// commentable line - the same discrete, GET /pulls/{n}/comments-visible form
+// as every anchored finding - not survive only as a body sentence, so a later
+// fix run finds it at the same rate as the six anchored nits it did address.
+func TestDeliverReviewReanchorsUncommentableFinding(t *testing.T) {
+	var reviewBody []byte
+	app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/app"):
+			io.WriteString(w, `{"slug":"quack"}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/7"):
+			io.WriteString(w, `{"user":{"login":"alice"}}`)
+		case strings.HasSuffix(r.URL.Path, "/pulls/7/files"):
+			// ManageDBActivity.kt: lines 12-20 changed; line 50 is context, outside the diff.
+			io.WriteString(w, `[{"filename":"manageDB/ManageDBActivity.kt","patch":"@@ -12,4 +12,9 @@\n context\n+added1\n+added2\n+added3\n+added4\n+added5\n+added6\n+added7\n context"}]`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/reviews"):
+			io.WriteString(w, `[]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls/7/reviews"):
+			reviewBody, _ = io.ReadAll(r.Body)
+			io.WriteString(w, `{"id":9,"html_url":"https://github.com/acme/widgets/pull/7#pullrequestreview-9"}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	dc := vetting.DeliveryContext{
+		GatePassed: true, ChatID: "chat-reanchor", CloneURL: "https://github.com/acme/widgets.git", IssueNumber: 7,
+		Items: []vetting.StagedDelivery{{
+			Kind: "review", Event: "request_changes", Body: "one blocker",
+			Comments: []vetting.ReviewComment{{
+				Path: "manageDB/ManageDBActivity.kt", Line: 50,
+				Body: "double ViewModel instantiation causes deletions not to reflect in the list",
+			}},
+		}},
+	}
+	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	var posted struct {
+		Body     string `json:"body"`
+		Comments []struct {
+			Path string `json:"path"`
+			Line int    `json:"line"`
+			Body string `json:"body"`
+		} `json:"comments"`
+	}
+	if err := json.Unmarshal(reviewBody, &posted); err != nil {
+		t.Fatal(err)
+	}
+	if len(posted.Comments) != 1 {
+		t.Fatalf("the blocking finding must survive as an inline comment, re-anchored: %s", reviewBody)
+	}
+	c := posted.Comments[0]
+	if c.Path != "manageDB/ManageDBActivity.kt" {
+		t.Errorf("comment path = %q", c.Path)
+	}
+	if c.Line == 50 {
+		t.Errorf("line 50 is not commentable - GitHub would 422 this")
+	}
+	if !strings.Contains(c.Body, "line 50") {
+		t.Errorf("re-anchored comment doesn't state its true location: %q", c.Body)
+	}
+	if !strings.Contains(c.Body, "double ViewModel instantiation") {
+		t.Errorf("re-anchored comment lost the finding text: %q", c.Body)
+	}
+}
+
+// TestDeliverReviewKeepsUnanchorableFindingInBody pins #694's second case: a
+// finding staged against a file whose diff hunk is pure deletion (no
+// commentable RIGHT line at all) can't be re-anchored anywhere, so it must
+// still reach the review body as a distinguishable, located item - not
+// dropped, and not folded silently into prose.
+func TestDeliverReviewKeepsUnanchorableFindingInBody(t *testing.T) {
+	var reviewBody []byte
+	app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/app"):
+			io.WriteString(w, `{"slug":"quack"}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/7"):
+			io.WriteString(w, `{"user":{"login":"alice"}}`)
+		case strings.HasSuffix(r.URL.Path, "/pulls/7/files"):
+			io.WriteString(w, `[{"filename":"dead.go","patch":"@@ -10,3 +10,0 @@\n-a\n-b\n-c"}]`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/reviews"):
+			io.WriteString(w, `[]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls/7/reviews"):
+			reviewBody, _ = io.ReadAll(r.Body)
+			io.WriteString(w, `{"id":9,"html_url":"https://github.com/acme/widgets/pull/7#pullrequestreview-9"}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	dc := vetting.DeliveryContext{
+		GatePassed: true, ChatID: "chat-unanchorable", CloneURL: "https://github.com/acme/widgets.git", IssueNumber: 7,
+		Items: []vetting.StagedDelivery{{
+			Kind: "review", Event: "request_changes", Body: "one blocker",
+			Comments: []vetting.ReviewComment{{Path: "dead.go", Line: 15, Body: "removed code still referenced elsewhere"}},
+		}},
+	}
+	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	var posted struct {
+		Body     string     `json:"body"`
+		Comments []struct{} `json:"comments"`
+	}
+	if err := json.Unmarshal(reviewBody, &posted); err != nil {
+		t.Fatal(err)
+	}
+	if len(posted.Comments) != 0 {
+		t.Fatalf("dead.go has no commentable line - nothing should post inline: %s", reviewBody)
+	}
+	if !strings.Contains(posted.Body, "one blocker") {
+		t.Fatalf("review body lost its own summary: %q", posted.Body)
+	}
+	if !strings.Contains(posted.Body, "dead.go") || !strings.Contains(posted.Body, "line 15") {
+		t.Fatalf("review body doesn't identify the unanchored finding's true location: %q", posted.Body)
+	}
+	if !strings.Contains(posted.Body, "removed code still referenced elsewhere") {
+		t.Fatalf("review body lost the unanchored finding text: %q", posted.Body)
+	}
+}
+
 // TestDeliverReviewNeverPushesBranch pins #452: a review-only delivery whose
 // context carries a Branch + CloneDir (a setup-provisioned reviewer node always
 // does) must NOT push - a review lands on the existing PR via the API. Before
