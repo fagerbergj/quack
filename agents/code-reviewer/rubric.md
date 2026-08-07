@@ -102,46 +102,33 @@ review.
 
 ---
 
-### `correct_prioritization`
+### `severity_grounded`
 
-Findings are weighted by impact on codebase health - correctness, security,
-and tests above readability, and readability above style/naming - and each
-finding's severity label (`blocking:` / `suggestion:` / `nit:`) matches its
-true severity.
+Every severity label rests on something objective, and the review says what.
+A finding supported only by the reviewer's preference is a `nit:`, however strongly it is argued.
 
-**Evaluation steps.**
-1. Check whether the highest-impact findings lead and the trivial ones are
-   marked as trivial.
-2. Check each severity label: is a real bug/security flaw labeled `blocking:`,
-   and is a preference/typo labeled `nit:` or `suggestion:`?
+`blocking:` requires one of five anchors:
+**defect** (concrete inputs or state produce wrong output, a crash, or data loss),
+**security**,
+**design** (a NAMED principle violated, not "I'd have done it differently"),
+**scope** (the change does what its task never asked for),
+or **tests** (new behaviour with no test, or a test that passes while what it claims to cover is broken).
 
-**Scoring bands.**
-- **7–10** - impactful findings are foregrounded and labeled by true severity.
-- **4–6** - mostly right, but one finding is mis-weighted (a real issue soft-
-  pedaled, or a minor one over-weighted).
-- **0–3** - priorities are inverted: style dominates while correctness/security
-  is buried or unlabeled.
-
----
-
-### `nits_dont_block`
-
-Trivial, preference-based findings do not block the merge. `blocking:` is
-reserved for genuine defects (bugs, security, missing tests, major design
-flaws); style and preference are never a blocking verdict.
+Score whether each label is *supported*, not whether you would have chosen it.
+Two reviewers can reasonably weigh the same finding differently; neither may block on taste.
+The style guide and the linter are the authority on style, and out-of-scope observations belong in their own issue rather than gating this change.
 
 **Evaluation steps.**
-1. List everything the review marks blocking (or makes a request-changes
-   verdict hinge on).
-2. Check each is a genuine defect, not a stylistic or personal preference the
-   author could reasonably decline.
+1. For each `blocking:` finding, name which of the five anchors it claims, then open the code and check the anchor actually holds.
+   An anchor asserted but not borne out by the code means the label is wrong, however serious the finding sounds.
+2. For each `suggestion:`/`nit:`, check it is not one of the five mislabelled downward.
+   A defect soft-pedalled into a suggestion is the more damaging error, because it ships.
+3. Check nothing gates the merge on preference: is any `blocking:` finding one the author could reasonably decline at no objective cost?
 
 **Scoring bands.**
-- **7–10** - only real defects block; nits and preferences are explicitly
-  non-blocking.
-- **4–6** - one borderline-preference item is treated as blocking.
-- **0–3** - the review blocks the merge on style, naming, or personal
-  preference (bikeshedding as a gate).
+- **7–10** - every label carries a supported anchor; nothing blocks on taste.
+- **4–6** - one label unsupported, or one defect soft-pedalled below `blocking:`, or one preference treated as blocking.
+- **0–3** - labels are preference-driven, or a defect/security finding is labelled below `blocking:` while style gates the merge.
 
 ---
 
@@ -215,13 +202,11 @@ is a fifteen-second takeaway that does NOT repeat the verdict.
 **Evaluation steps.**
 1. Check the review opens with a high-level summary and groups findings by
    severity rather than scattering them.
-2. Read the staged verdict provided to you and check it is present, and
-   consistent with the findings (blocking issues ⇒ `request_changes`; none ⇒
-   `approve`, nits okay).
-3. A clean change (no `blocking:` findings) must resolve to `approve` - not a
-   bare `comment` used as a way to avoid committing to a verdict. No staged
-   verdict at all is the actual failure here, not a summary that omits the
-   word "verdict".
+2. Read the staged verdict provided to you and check it is present and consistent with the findings.
+   Three verdicts, three levels of confidence: any surviving `blocking:` ⇒ `request_changes`; else any unresolved `question:` ⇒ `comment`; else ⇒ `approve`, nits and suggestions okay.
+3. `comment` is legitimate ONLY when an unresolved `question:` stands, or the review states verification it could not finish.
+   A question withholds approval without demanding a change - the reviewer works from a bounded context, so not understanding something is at least as likely to mean it is missing a file as it is to mean the code is wrong.
+   What fails here is a bare `comment` used to avoid committing to a verdict with nothing unresolved behind it, or no staged verdict at all.
 4. Cross-check every finding's OWN severity label against the overall
    verdict - the two must tell the same story. A finding labeled `blocking:`
    (with or without a category tag like `blocking (security):`) sitting
