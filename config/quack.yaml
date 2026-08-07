@@ -317,7 +317,10 @@ workspace:
                       # namespace construction, so it works here and IS an OS-enforced
                       # boundary (unlike `none`, which relied on the container alone).
 
-  # Per-child resource limits (rlimits). A runaway build (`npm ci` on a hostile
+  # Per-child resource limits (rlimits) for the gate's own one-shot children -
+  # NOT the ACP agent subprocess, which runs with no ceiling (#798: a fixed
+  # FSIZE cannot bound a process whose DB grows across every run).
+  # A runaway build (`npm ci` on a hostile
   # repo, a test that allocates without bound) must not be able to take the host
   # down with it. 0 = inherit the server's limit.
   limits:

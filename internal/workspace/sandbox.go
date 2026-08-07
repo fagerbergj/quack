@@ -515,11 +515,15 @@ func ChildPath(caps Caps) string {
 }
 
 // WrapArgv: the ONE seam for callers outside RunArgv/newChildCmd (e.g. ACP).
-// Applies caps.Limits the same way landlockArgv does (#646): the agent
-// subprocess is long-lived, not a one-shot check, but it's the one process
-// that actually runs arbitrary repo build commands, so it gets the SAME
-// RLIMIT_AS/RLIMIT_FSIZE ceiling rather than a bespoke one - #647's
-// JAVA_TOOL_OPTIONS sizing already assumed this limit applied here.
+// Deliberately does NOT apply caps.Limits (#798, reverting #646): a one-shot
+// check's ceilings do not transfer to a long-lived agent process. Measured on
+// the live deployment, EACH limit alone stopped opencode reaching its first
+// ACP message - RLIMIT_FSIZE 1024MB against an opencode.db already at 1.27GB
+// (a WAL checkpoint extends the file, so EFBIG), and RLIMIT_AS 8192MB against
+// a V8 process that reserves a huge virtual region before it runs anything.
+// Both surfaced as the same opaque SQLite error. Any fixed FSIZE is a date
+// rather than a bound while the agent's DB grows, so this seam grants no
+// ceiling at all and the container's own quota is the boundary here.
 // ponytail: bwrap returns argv unchanged - landlock is what containers use.
 func WrapArgv(dir string, argv []string, caps Caps, extraRO, extraRW []string) []string {
 	if len(argv) == 0 || caps.Sandbox != SandboxLandlock {
@@ -531,7 +535,7 @@ func WrapArgv(dir string, argv []string, caps Caps, extraRO, extraRW []string) [
 	rw, ro := landlockGrants(dir, caps)
 	rw = append(rw, extraRW...)
 	ro = append(ro, extraRO...)
-	return assembleSandboxExec(rw, ro, withLimits(argv, caps.Limits, false))
+	return assembleSandboxExec(rw, ro, argv)
 }
 
 var warnReadOnlyUnenforcedOnce sync.Once

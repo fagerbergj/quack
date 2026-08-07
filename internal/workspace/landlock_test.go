@@ -336,23 +336,40 @@ func TestWrapArgvLandlockIncludesExtraGrants(t *testing.T) {
 	}
 }
 
-// TestWrapArgvLandlockCarriesLimits (#646): the ACP subprocess wrap path must
-// apply workspace.limits the same way landlockArgv does for gate checks/git/
-// run_command - before this, the long-lived agent process (and anything it
-// spawns, e.g. a build) was the one child in the tree with no RLIMIT_AS/
-// RLIMIT_FSIZE ceiling.
-func TestWrapArgvLandlockCarriesLimits(t *testing.T) {
-	if _, err := exec.LookPath("prlimit"); err != nil {
-		t.Skipf("SKIPPING rlimit test: prlimit(1) not installed (%v)", err)
-	}
+// TestWrapArgvLandlockCarriesNoLimits (#798, reverting #646): the ACP wrap path
+// must NOT carry rlimits. On the live deployment each limit alone stopped
+// opencode before its first ACP message - FSIZE 1024MB against a 1.27GB
+// opencode.db, and AS 8192MB against V8's startup reservation - both reported
+// as the same opaque "Failed query: PRAGMA wal_checkpoint(PASSIVE)". This
+// asserts the absence so the next edit to WrapArgv can't silently restore it.
+func TestWrapArgvLandlockCarriesNoLimits(t *testing.T) {
 	dir := t.TempDir()
 	argv := []string{"opencode", "acp"}
 	caps := Caps{Sandbox: SandboxLandlock, Limits: Limits{AddressSpaceMB: 8192, FileSizeMB: 1024}}
 	got := WrapArgv(dir, argv, caps, nil, nil)
 	joined := strings.Join(got, " ")
-	for _, want := range []string{"--as=8589934592", "--fsize=1073741824", "opencode acp"} {
+	for _, bad := range []string{"prlimit", "--as=", "--fsize="} {
+		if strings.Contains(joined, bad) {
+			t.Errorf("WrapArgv carries %q; the agent subprocess must run with no rlimit ceiling (#798)\ngot: %v", bad, got)
+		}
+	}
+	if !strings.Contains(joined, "opencode acp") {
+		t.Errorf("WrapArgv dropped the command: %v", got)
+	}
+}
+
+// TestLandlockArgvStillCarriesLimits pins the other half of #798: the gate's
+// own one-shot children keep their ceilings. A per-command FSIZE is correct
+// there - it bounds one build, not a process whose DB grows across every run.
+func TestLandlockArgvStillCarriesLimits(t *testing.T) {
+	if _, err := exec.LookPath("prlimit"); err != nil {
+		t.Skipf("SKIPPING rlimit test: prlimit(1) not installed (%v)", err)
+	}
+	caps := Caps{Sandbox: SandboxLandlock, Limits: Limits{AddressSpaceMB: 8192, FileSizeMB: 1024}}
+	joined := strings.Join(landlockArgv(t.TempDir(), []string{"go", "build", "./..."}, caps), " ")
+	for _, want := range []string{"--as=8589934592", "--fsize=1073741824", "go build ./..."} {
 		if !strings.Contains(joined, want) {
-			t.Errorf("WrapArgv(landlock, limits) = %v, missing %q", got, want)
+			t.Errorf("landlockArgv(check) = %q, missing %q", joined, want)
 		}
 	}
 }
