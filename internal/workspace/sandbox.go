@@ -53,7 +53,8 @@ type Limits struct {
 func ResolveSandbox(mode SandboxMode) (SandboxMode, error) {
 	switch mode {
 	case SandboxNone:
-		slog.Warn("workspace sandbox is OFF (workspace.sandbox: none): every run_command and gate-check child process "+
+		slog.Warn("workspace sandbox is OFF (workspace.sandbox: none): every child process a worker or the gate spawns "+
+			"(a coding agent's own shell commands, ledgered as run_command, and the gate's own check commands) "+
 			"runs as the server's OS user with that user's FULL filesystem authority - it can read ~/.ssh, ~/.aws, "+
 			"~/.config/gh, .env and anything else that account can read, whatever the path jail says. The jail confines "+
 			"the TOOLS' paths, not a child process. Only run agents you would trust with that account.",
