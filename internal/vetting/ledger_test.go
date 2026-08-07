@@ -228,7 +228,7 @@ func TestBuildChangedFilesSectionReadsRealDisk(t *testing.T) {
 	if !strings.Contains(got, "ACTUAL CURRENT CONTENT") {
 		t.Errorf("section missing the header:\n%s", got)
 	}
-	if cov.truncated() {
+	if cov.Capped {
 		t.Errorf("coverage = %+v, want not truncated - the one written file fit inside both caps", cov)
 	}
 	// No jail / no written files → no section (pure-research + unjailed paths).
@@ -242,7 +242,7 @@ func TestBuildChangedFilesSectionReadsRealDisk(t *testing.T) {
 	// a truncation note either: the cap never fired, so nothing to disclose.
 	if s, cov := buildChangedFilesSection(workerActivity{written: []string{"repo/gone.ts"}}, j, "u1", ""); s != "" {
 		t.Errorf("unreadable path should be skipped, got:\n%s", s)
-	} else if cov.truncated() {
+	} else if cov.Capped {
 		t.Errorf("coverage = %+v, want not truncated - a missing file is not a cap truncation", cov)
 	}
 }
@@ -275,8 +275,8 @@ func TestBuildChangedFilesSectionCoverageOverCap(t *testing.T) {
 	if cov.Scored != maxChangedFiles || cov.Total != 18 {
 		t.Errorf("coverage = %+v, want Scored=%d Total=18", cov, maxChangedFiles)
 	}
-	if !cov.truncated() {
-		t.Error("coverage.truncated() = false, want true - 18 files exceeds the 12-file cap")
+	if !cov.Capped {
+		t.Error("coverage.Capped = false, want true - 18 files exceeds the 12-file cap")
 	}
 }
 

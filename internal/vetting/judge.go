@@ -231,17 +231,12 @@ type changedFilesCoverage struct {
 	Capped bool
 }
 
-// truncated reports whether the judge saw fewer files than existed BECAUSE of the cap.
-func (c changedFilesCoverage) truncated() bool {
-	return c.Capped
-}
-
 // applyChangedFilesCoverage records the coverage on the verdict and, only
 // when it actually cut something, appends a note to the feedback - never a
 // note when everything fit (#779).
 func applyChangedFilesCoverage(v verdict, cov changedFilesCoverage) verdict {
 	v.ChangedFilesScored, v.ChangedFilesTotal = cov.Scored, cov.Total
-	if !cov.truncated() {
+	if !cov.Capped {
 		return v
 	}
 	note := fmt.Sprintf("The judge scored %d of %d changed files - the rest didn't fit the judge's file/size cap and were not reviewed.", cov.Scored, cov.Total)
