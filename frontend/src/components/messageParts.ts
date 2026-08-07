@@ -48,7 +48,7 @@ export interface AgentRun {
   score?: number       // judge
   passed?: boolean     // judge
   feedback?: string    // judge
-  status?: string      // '' ok | 'unavailable'
+  status?: string      // '' ok | 'unavailable' (judge unreachable) | 'no_verdict' (judge ran, never committed one)
   reason?: string
   finishReason?: string // worker
   model?: string

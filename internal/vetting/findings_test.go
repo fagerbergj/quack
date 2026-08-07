@@ -324,7 +324,7 @@ func TestChangedFilesSection_IncludesNumberedFindingsAndVerdict(t *testing.T) {
 		}},
 	}}
 
-	got := changedFilesSection(cfg, act)
+	got, _ := changedFilesSection(cfg, act)
 	if !strings.Contains(got, "Staged review verdict: approve") {
 		t.Fatalf("missing the staged overall verdict:\n%s", got)
 	}

@@ -47,6 +47,24 @@ var ErrNodeEmpty = errors.New("vetting: node produced no answer")
 
 var ErrNodePaused = errors.New("vetting: node paused")
 
+// judgeStatusUnavailable/judgeStatusNoVerdict: agent_complete Status values for
+// a judge round that ended without a verdict - "" means scored normally.
+const (
+	judgeStatusUnavailable = "unavailable"
+	judgeStatusNoVerdict   = "no_verdict"
+)
+
+// judgeFailureFeedback distinguishes a judge that never got to run (transport/model
+// outage) from one that ran and simply never committed a verdict (ErrJudgeNoVerdict) -
+// judge.go is the only place that knows which happened, so it returns a typed
+// sentinel rather than this checking the error string (#779).
+func judgeFailureFeedback(jerr error) (status, feedback string) {
+	if errors.Is(jerr, ErrJudgeNoVerdict) {
+		return judgeStatusNoVerdict, "quack's judge ran but exhausted its iteration budget without reaching a verdict, so this answer could not be scored: " + jerr.Error()
+	}
+	return judgeStatusUnavailable, "quack's judge was unavailable, so this answer could not be scored: " + jerr.Error()
+}
+
 type NodeControl interface {
 	Cancelled() bool
 	Paused() bool
@@ -420,10 +438,11 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			if jerr != nil {
 				// Judge failure means answer goes out unvetted - loud ERROR, not Warn.
 				log.Error("judge failed; surfacing answer unvetted", "round", round, "err", jerr)
-				jspan.end(stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Status: "unavailable", Reason: jerr.Error()}, jerr)
+				status, feedback := judgeFailureFeedback(jerr)
+				jspan.end(stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Status: status, Reason: jerr.Error()}, jerr)
 				otelobs.RecordJudgeUnavailable(cfg.Agent)
 				// Fail closed but fall through to deliver-with-caveat (only that path writes the review verdict marker).
-				res = GateResult{Score: 0, Passed: false, Feedback: "quack's judge was unavailable, so this answer could not be scored: " + jerr.Error(), Rounds: round}
+				res = GateResult{Score: 0, Passed: false, Feedback: feedback, Rounds: round}
 				break
 			}
 			// Adversarial verify: load-bearing passing criteria get refuted by independent skeptics.

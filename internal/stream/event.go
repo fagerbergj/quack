@@ -137,7 +137,7 @@ type AgentCompleteData struct {
 	Passed   bool    `json:"passed,omitempty"`   // judge
 	Feedback string  `json:"feedback,omitempty"` // judge
 
-	Status string `json:"status,omitempty"` // "" ok | "unavailable"
+	Status string `json:"status,omitempty"` // "" ok | "unavailable" (judge unreachable) | "no_verdict" (judge ran, never committed one)
 	Reason string `json:"reason,omitempty"`
 }
 

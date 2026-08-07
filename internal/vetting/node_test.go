@@ -3,6 +3,7 @@ package vetting
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/runner"
 	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 )
@@ -555,5 +557,96 @@ func TestGatedWorkerNode_JudgeErrorFailsClosed(t *testing.T) {
 	}
 	if res.Score != 0 {
 		t.Errorf("GateResult.Score = %v, want 0 (no verdict was ever produced)", res.Score)
+	}
+	// #779 test case 1: a genuine transport/model failure keeps the existing
+	// "unavailable" wording unchanged.
+	if !strings.Contains(res.Feedback, "unavailable") {
+		t.Errorf("GateResult.Feedback = %q, want it to still say the judge was unavailable - this is a real outage", res.Feedback)
+	}
+}
+
+// TestGatedWorkerNode_JudgeNoVerdictFailsClosed is issue #779's test case 2:
+// a judge that RAN (read a file, spent its turns) but never called
+// submit_verdict must still fail closed like TestGatedWorkerNode_JudgeErrorFailsClosed,
+// but the feedback must say the judge ran and did not reach a verdict - never
+// the "unavailable" wording, which is false here.
+func TestGatedWorkerNode_JudgeNoVerdictFailsClosed(t *testing.T) {
+	stub := &stubModel{}
+	worker, err := llmagent.New(llmagent.Config{
+		Name: "web-researcher", Model: stub, Description: "researcher",
+		Instruction: "Answer the question.",
+	})
+	if err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+	var reads int32
+	readTool := newSpyReadTool(t, "some file body", &reads)
+	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score the answer 0-10", JudgeMaxIterations: 2}
+	var res GateResult
+	node, err := newTestGatedNodeCapture("researcher-gate", worker, stub,
+		NewJudgeFactory(&stuckJudge{}, []tool.Tool{readTool}, nil), cfg, &res)
+	if err != nil {
+		t.Fatalf("node: %v", err)
+	}
+	root, err := workflowagent.New(workflowagent.Config{
+		Name:      "root",
+		SubAgents: []adkagent.Agent{worker},
+		Edges:     workflow.Chain(workflow.Start, node),
+	})
+	if err != nil {
+		t.Fatalf("root: %v", err)
+	}
+	r, err := runner.New(runner.Config{
+		AppName: "test", Agent: root,
+		SessionService: session.InMemoryService(), AutoCreateSession: true,
+	})
+	if err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "What is the capital of France?"}}}
+	for _, err := range r.Run(t.Context(), "u", "s", task, adkagent.RunConfig{}) {
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	}
+
+	if res.Passed {
+		t.Errorf("GateResult.Passed = true after the judge never reached a verdict - must fail closed, never pass")
+	}
+	if strings.Contains(res.Feedback, "unavailable") {
+		t.Errorf("GateResult.Feedback = %q, want no \"unavailable\" wording - the judge ran, it just never committed a verdict", res.Feedback)
+	}
+	if !strings.Contains(res.Feedback, "verdict") {
+		t.Errorf("GateResult.Feedback = %q, want it to say the judge ran without reaching a verdict", res.Feedback)
+	}
+}
+
+// TestJudgeFailureFeedback pins the two agent_complete Status values #779
+// distinguishes: a transport/model error keeps status="unavailable" and its
+// wording unchanged (test case 1); ErrJudgeNoVerdict gets its own status and
+// never claims unavailability (test case 2). judge.go returns a typed
+// sentinel specifically so this switches on errors.Is, never the error string.
+func TestJudgeFailureFeedback(t *testing.T) {
+	status, feedback := judgeFailureFeedback(errors.New("dial tcp: connection refused"))
+	if status != judgeStatusUnavailable {
+		t.Errorf("status = %q, want %q for a genuine transport failure", status, judgeStatusUnavailable)
+	}
+	if !strings.Contains(feedback, "unavailable") {
+		t.Errorf("feedback = %q, want the existing unavailable wording", feedback)
+	}
+
+	status, feedback = judgeFailureFeedback(ErrJudgeNoVerdict)
+	if status != judgeStatusNoVerdict || status == judgeStatusUnavailable {
+		t.Errorf("status = %q, want %q and distinct from %q", status, judgeStatusNoVerdict, judgeStatusUnavailable)
+	}
+	if strings.Contains(feedback, "unavailable") {
+		t.Errorf("feedback = %q, must not claim the judge was unavailable - it ran", feedback)
+	}
+
+	// Wrapped errors still resolve via errors.Is, not string matching.
+	wrapped := fmt.Errorf("vetting: judge round: %w", ErrJudgeNoVerdict)
+	if status, _ := judgeFailureFeedback(wrapped); status != judgeStatusNoVerdict {
+		t.Errorf("status = %q for a wrapped ErrJudgeNoVerdict, want %q", status, judgeStatusNoVerdict)
 	}
 }
