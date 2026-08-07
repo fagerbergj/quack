@@ -99,6 +99,11 @@ type DeliveryContext struct {
 	IssueNumber  int    // PR number for review/comment targets
 	GatePassed   bool   // false = attach caveat
 	GateFeedback string // feedback for caveat when GatePassed is false
+	// ChecksSkipNote: non-empty when GatePassed but no build/test check ran
+	// for a reason worth telling the reader (#780). Already worded for
+	// display; "" means say nothing (checks ran, or the reason is operator
+	// config, not a property of the change).
+	ChecksSkipNote string
 }
 
 // DeliverFunc: posts final staged delivery. Errors logged, never fail the node.

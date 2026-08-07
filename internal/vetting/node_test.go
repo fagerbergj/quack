@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -210,6 +212,108 @@ func TestMergeDeterministic_WeakestLinkUnchanged(t *testing.T) {
 	}
 	if got.Criteria["accuracy"].Score != 0.95 || got.Criteria["clarity"].Score != 0.9 {
 		t.Errorf("judge criteria altered by the merge: %+v", got.Criteria)
+	}
+}
+
+// stubPassJudge always submits a high score with no per-criterion detail - a
+// judge stub for tests that only care whether the GATE passes, not why.
+type stubPassJudge struct{}
+
+func (stubPassJudge) Name() string { return "stub-pass-judge" }
+
+func (stubPassJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		yield(stubCall(submitVerdictTool, map[string]any{"score": 0.95, "feedback": "looks solid"}), nil)
+	}
+}
+
+// runGatedRefineOnce drives one RunGatedRefine round through the real ADK
+// runner (stubPassJudge, a fixed-answer worker) and returns the captured
+// GateResult - shared harness for the #780 checks-skip-reason tests below.
+func runGatedRefineOnce(t *testing.T, cfg Config, answer string) GateResult {
+	t.Helper()
+	worker, err := llmagent.New(llmagent.Config{
+		Name: "code-implementer", Model: stubFixedAnswerModel{text: answer},
+		Description: "implementer", Instruction: "Do the task.",
+	})
+	if err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+	var res GateResult
+	node, err := newTestGatedNodeCapture("impl-gate", worker, stubFixedAnswerModel{}, NewJudgeFactory(stubPassJudge{}, nil, nil), cfg, &res)
+	if err != nil {
+		t.Fatalf("node: %v", err)
+	}
+	root, err := workflowagent.New(workflowagent.Config{
+		Name: "root", SubAgents: []adkagent.Agent{worker}, Edges: workflow.Chain(workflow.Start, node),
+	})
+	if err != nil {
+		t.Fatalf("root: %v", err)
+	}
+	r, err := runner.New(runner.Config{AppName: "test", Agent: root, SessionService: session.InMemoryService(), AutoCreateSession: true})
+	if err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	for _, err := range r.Run(t.Context(), "u", "s", task, adkagent.RunConfig{}) {
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	}
+	return res
+}
+
+// TestRunGatedRefine_ChecksSkipReasonSurfacesOnPassingUnsupportedBuild pins
+// #780 test case 1: a node on a repo quack can't derive checks for still
+// PASSES the gate (an unsupported build system is not a change failure), and
+// GateResult carries why - the value that reaches the delivered artifact.
+func TestRunGatedRefine_ChecksSkipReasonSurfacesOnPassingUnsupportedBuild(t *testing.T) {
+	cfg, root := scopeCfg(t, "", "cargo")
+	if err := os.WriteFile(filepath.Join(root, "Cargo.toml"), []byte("[package]\nname = \"x\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg.JudgeRounds = 1
+	cfg.Threshold = 0.7
+	cfg.Rubric = "score the answer 0-10"
+
+	res := runGatedRefineOnce(t, cfg, "Implemented the feature; this answer is long enough to clear the length check comfortably.")
+
+	if !res.Passed {
+		t.Fatalf("gate should pass (an unsupported build system is not a change failure): %+v", res)
+	}
+	if res.ChecksSkipReason != skipReasonUnsupportedBuild {
+		t.Errorf("ChecksSkipReason = %q, want %q", res.ChecksSkipReason, skipReasonUnsupportedBuild)
+	}
+}
+
+// TestRunGatedRefine_ChecksSkipReasonEmptyWhenChecksRan pins #780 test case
+// 2: a node whose derived checks actually ran and passed carries no skip
+// reason - a clean run says nothing extra.
+func TestRunGatedRefine_ChecksSkipReasonEmptyWhenChecksRan(t *testing.T) {
+	cfg, root := scopeCfg(t, "", "go", "gofmt")
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/x\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package x\n\nfunc F() int { return 1 }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg.JudgeRounds = 1
+	cfg.Threshold = 0.7
+	cfg.Rubric = "score the answer 0-10"
+
+	res := runGatedRefineOnce(t, cfg, "Implemented the feature; this answer is long enough to clear the length check comfortably.")
+
+	if !res.Passed {
+		t.Fatalf("gate should pass (checks compile clean): %+v", res)
+	}
+	if res.ChecksSkipReason != "" {
+		t.Errorf("ChecksSkipReason = %q, want empty - the checks ran, a clean run says nothing extra", res.ChecksSkipReason)
 	}
 }
 
