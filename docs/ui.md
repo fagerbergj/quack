@@ -18,8 +18,11 @@ Everything the [CLI](cli.md) can, graphically:
 
 ## Auth
 
-The SPA authenticates the same way any REST client does - see [`docs/api.md`](api.md#auth) and [`docs/configuration/auth.md`](configuration/auth.md). Behind a trusted gateway (forward-auth), it never runs its own login flow; identity arrives via the configured `trusted_headers`.
+The SPA authenticates the same way any REST client does - see [`docs/api.md`](api.md#auth) and [`docs/configuration/auth.md`](configuration/auth.md).
+Behind a trusted gateway (forward-auth), it never runs its own login flow; identity arrives via the configured `trusted_headers`.
 
 ## Contributing to it
 
-State lives in `frontend/src/state/` (`chatStore.ts`, `agentStream.ts` parsing the SSE stream, `ChatStoreProvider.tsx`). Components under `frontend/src/components/` are co-located with Storybook stories and vitest tests. The `frontend-design` skill covers the re-render-isolation and streaming-chat patterns this UI relies on - load it before restyling or extending anything under `frontend/src/`.
+State lives in `frontend/src/state/` (`chatStore.ts`, `agentStream.ts` parsing the SSE stream, `ChatStoreProvider.tsx`).
+Components under `frontend/src/components/` are co-located with Storybook stories and vitest tests.
+The `frontend-design` skill covers the re-render-isolation and streaming-chat patterns this UI relies on - load it before restyling or extending anything under `frontend/src/`.

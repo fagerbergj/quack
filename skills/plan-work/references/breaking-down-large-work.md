@@ -2,25 +2,30 @@
 
 Load this when a single coding request is **large or multi-phase** and the split into nodes isn't obvious - a whole app or game, a feature touching several layers, several distinct mechanics/screens, or a migration across many files. It gives you a decision procedure for turning one big request into a correct DAG of `code-implementer` (and, when live facts are genuinely needed, `web-researcher`) nodes.
 
-The core shift: decompose by **shippable capability**, not by technical layer. A node should be a vertical slice a user could see working, not a horizontal fragment (the "model" of everything, then the "API" of everything). See §4.
+The core shift: decompose by **shippable capability**, not by technical layer.
+A node should be a vertical slice a user could see working, not a horizontal fragment (the "model" of everything, then the "API" of everything).
+See §4.
 
 ---
 
 ## 1. Find the seams before you split
 
-Cut where coupling is naturally low and cohesion high. Look for seams in this order of preference:
+Cut where coupling is naturally low and cohesion high.
+Look for seams in this order of preference:
 
 - **Feature / user-action seams (preferred).** Each distinct thing the user can *do* - *create comment*, *move character*, *process payment* - is one complete, testable capability, and a natural node boundary. [Atomic Task Design](https://codesignal.com/learn/courses/task-decomposition-execution-with-claude-code/lessons/atomic-task-design)
 - **Domain / bounded-context seams.** Isolate by business capability; each context owns its own data model and state, so it makes a clean independent node. [Stacked Pull Requests](https://www.michaelagreiler.com/stacked-pull-requests/)
 - **Data seams.** API boundaries, a schema/migration change, a config file - points where data enters or leaves the system delineate sequential phases. [Atomic Task Design](https://codesignal.com/learn/courses/task-decomposition-execution-with-claude-code/lessons/atomic-task-design)
 
-**Separate the bootstrap phase.** Scaffolding, shared types, CI/lint/test setup, a common base interface - this foundational work is inherently horizontal and every feature depends on it. Pull it into its own upstream node (the first wave); don't smear it across the feature nodes. [Work Breakdown Structure](https://en.wikipedia.org/wiki/Work_breakdown_structure)
+**Separate the bootstrap phase.** Scaffolding, shared types, CI/lint/test setup, a common base interface - this foundational work is inherently horizontal and every feature depends on it.
+Pull it into its own upstream node (the first wave); don't smear it across the feature nodes. [Work Breakdown Structure](https://en.wikipedia.org/wiki/Work_breakdown_structure)
 
 ---
 
 ## 2. Size each node to one coherent unit
 
-Aim for the atomic sweet spot: big enough to deliver something demonstrable, small enough to implement and verify cleanly. Size against what the REQUEST asks for, not the repo's total size - a request already narrowed to a specific fix, file, or check stays that size regardless of how large the surrounding codebase is (same rule as SKILL.md's "Reviewing a PR" - ask-scope first, size heuristics second).
+Aim for the atomic sweet spot: big enough to deliver something demonstrable, small enough to implement and verify cleanly.
+Size against what the REQUEST asks for, not the repo's total size - a request already narrowed to a specific fix, file, or check stays that size regardless of how large the surrounding codebase is (same rule as SKILL.md's "Reviewing a PR" - ask-scope first, size heuristics second).
 
 - **Shippability is the real test.** A node is correctly sized if its output can compile, pass its tests, and stand on its own without breaking the build. If it can't be shown working at the end of the run, it's either too small (a layer fragment) or sliced wrong. [Stacked Pull Requests](https://www.michaelagreiler.com/stacked-pull-requests/)
 - **Rough upper bound.** Changesets past ~**400 lines** degrade review quality and hide defects; treat a node whose task clearly implies more than that as a candidate to split along a feature seam. [Pull Request Size Matters](https://bssw.io/items/pull-request-size-matters)
@@ -47,9 +52,12 @@ Wire `depends_on` from real data/contract dependencies, then let independent nod
 
 ## 4. Multi-phase / multi-component: vertical slices, not horizontal layers
 
-**Vertical slice (default).** One capability end-to-end through every layer it needs (data → logic → API → tests → UI). It delivers demonstrable value, exercises the whole path early, and matches WBS "work packages are deliverables, not activities". Prefer this for anything user-facing. [Atomic Task Design](https://codesignal.com/learn/courses/task-decomposition-execution-with-claude-code/lessons/atomic-task-design) · [Work Breakdown Structure](https://en.wikipedia.org/wiki/Work_breakdown_structure)
+**Vertical slice (default).** One capability end-to-end through every layer it needs (data → logic → API → tests → UI).
+It delivers demonstrable value, exercises the whole path early, and matches WBS "work packages are deliverables, not activities".
+Prefer this for anything user-facing. [Atomic Task Design](https://codesignal.com/learn/courses/task-decomposition-execution-with-claude-code/lessons/atomic-task-design) · [Work Breakdown Structure](https://en.wikipedia.org/wiki/Work_breakdown_structure)
 
-**Horizontal slice (the exception).** One layer across the whole app before the next. Only justified for: foundational platform work that must precede all features (the bootstrap node), a large migration/refactor where the whole codebase changes at once, or defining a shared interface that genuinely decouples many downstream nodes. [Pull Request Size Matters](https://bssw.io/items/pull-request-size-matters)
+**Horizontal slice (the exception).** One layer across the whole app before the next.
+Only justified for: foundational platform work that must precede all features (the bootstrap node), a large migration/refactor where the whole codebase changes at once, or defining a shared interface that genuinely decouples many downstream nodes. [Pull Request Size Matters](https://bssw.io/items/pull-request-size-matters)
 
 **Many components (a game with several mechanics, a dashboard of screens):**
 
@@ -75,7 +83,8 @@ A shared foundation (game loop, shared types, scaffold) is the wave-0 node every
 
 ## When to split understanding from implementation
 
-A `code-implementer` node already researches inline - it clones the repo into its own session and is told to study conventions and find a sibling feature before writing (see SKILL.md, "Write the implement node's task as research → plan → implement"). So the **default is ONE node**, understanding folded into its task - do NOT add a separate explorer node for a focused change in a conventional repo; that just makes the implementer re-learn context the feeder already paid for.
+A `code-implementer` node already researches inline - it clones the repo into its own session and is told to study conventions and find a sibling feature before writing (see SKILL.md, "Write the implement node's task as research → plan → implement").
+So the **default is ONE node**, understanding folded into its task - do NOT add a separate explorer node for a focused change in a conventional repo; that just makes the implementer re-learn context the feeder already paid for.
 
 Split a standalone `code-explorer` feeder node → `code-implementer` only when **understanding the codebase is substantial work in its own right**, i.e.:
 
@@ -100,4 +109,5 @@ When you do split, the explorer's report (structure, the sibling feature's full 
 
 ---
 
-*Grounded in a quack research synthesis on task decomposition. Sources: [Atomic Task Design (CodeSignal)](https://codesignal.com/learn/courses/task-decomposition-execution-with-claude-code/lessons/atomic-task-design), [Stacked Pull Requests (Greiler)](https://www.michaelagreiler.com/stacked-pull-requests/), [Pull Request Size Matters (BSSw)](https://bssw.io/items/pull-request-size-matters), [SPOQ (arXiv 2606.03115)](https://arxiv.org/html/2606.03115v1), [AI Development Patterns (Duvall)](https://github.com/PaulDuvall/ai-development-patterns), [Work Breakdown Structure (Wikipedia)](https://en.wikipedia.org/wiki/Work_breakdown_structure).*
+*Grounded in a quack research synthesis on task decomposition.
+Sources: [Atomic Task Design (CodeSignal)](https://codesignal.com/learn/courses/task-decomposition-execution-with-claude-code/lessons/atomic-task-design), [Stacked Pull Requests (Greiler)](https://www.michaelagreiler.com/stacked-pull-requests/), [Pull Request Size Matters (BSSw)](https://bssw.io/items/pull-request-size-matters), [SPOQ (arXiv 2606.03115)](https://arxiv.org/html/2606.03115v1), [AI Development Patterns (Duvall)](https://github.com/PaulDuvall/ai-development-patterns), [Work Breakdown Structure (Wikipedia)](https://en.wikipedia.org/wiki/Work_breakdown_structure).*

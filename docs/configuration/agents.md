@@ -1,6 +1,7 @@
 # Agents
 
-An agent is a **bundle** on disk plus a binding in `config/quack.yaml`. Adding or changing an agent is editing files, not recompiling — see `agent.LoadBundle` / `agent.Build`.
+An agent is a **bundle** on disk plus a binding in `config/quack.yaml`.
+Adding or changing an agent is editing files, not recompiling — see `agent.LoadBundle` / `agent.Build`.
 
 ## Bundles
 
@@ -42,7 +43,8 @@ quack runs two different kinds of worker:
 
 `agents/advisor` is also a native bundle but isn't bound through the `agents:` map like the others: `internal/serve/serve.go` loads it once at startup, tool-less, bound to the judge's model (not its own), and wires it in as the backing agent for the `ask_advisor` tool a gated worker calls mid-run — it's never dispatched as a node in its own right. See [trust-gate.md](trust-gate.md#the-advisor-is-not-a-gate-stage).
 
-**ACP agents** — `code-implementer`, `code-reviewer`, `code-explorer` — are EXTERNAL subprocesses speaking the [Agent Client Protocol](https://agentclientprotocol.com) (`opencode acp` by default). They carry an `acp:` block instead of a `tools:` list:
+**ACP agents** — `code-implementer`, `code-reviewer`, `code-explorer` — are EXTERNAL subprocesses speaking the [Agent Client Protocol](https://agentclientprotocol.com) (`opencode acp` by default).
+They carry an `acp:` block instead of a `tools:` list:
 
 ```yaml
 code-implementer:

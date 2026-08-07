@@ -51,9 +51,11 @@ huh.NewForm(huh.NewGroup(field("Judge", &judge))).Run()
 huh.NewForm(huh.NewGroup(field("Embed", &embed))).Run()
 ```
 
-**The dependency cut is about I/O, not answers.** A form's *fields* are fixed up front, but a group's *visibility* is not - `Group.WithHideFunc(func() bool {...})` re-evaluates live as the user navigates, reading the bound values of earlier fields. So a section gated on an earlier **answer** (store questions gated on the features multi-select; the memory store gated on whether an embed model was chosen) belongs in the **same** form via `WithHideFunc` - keeping back-nav intact. (See idiom #6.)
+**The dependency cut is about I/O, not answers.** A form's *fields* are fixed up front, but a group's *visibility* is not - `Group.WithHideFunc(func() bool {...})` re-evaluates live as the user navigates, reading the bound values of earlier fields.
+So a section gated on an earlier **answer** (store questions gated on the features multi-select; the memory store gated on whether an embed model was chosen) belongs in the **same** form via `WithHideFunc` - keeping back-nav intact. (See idiom #6.)
 
-You only need a *second* form when a section depends on **I/O** that must happen between sections - e.g. `quack server init` fetches `/models` from the endpoint before it can offer models as select options. That fetch can't run mid-form, so the provider form runs first, then the fetch, then one big form for everything else. Accept the single back-nav wall there; it falls on a natural break (re-entering the endpoint *should* re-fetch). Earlier guidance here said any answer-dependency forces a second form - that was wrong; only an I/O-dependency does.
+You only need a *second* form when a section depends on **I/O** that must happen between sections - e.g. `quack server init` fetches `/models` from the endpoint before it can offer models as select options.
+That fetch can't run mid-form, so the provider form runs first, then the fetch, then one big form for everything else. Accept the single back-nav wall there; it falls on a natural break (re-entering the endpoint *should* re-fetch). Earlier guidance here said any answer-dependency forces a second form - that was wrong; only an I/O-dependency does.
 
 ### 2. Group `.Title()` + `.Description()` = section headers
 
@@ -83,7 +85,9 @@ huh.NewForm(
 
 ### 4. End with a confirm group - live summary, and *honor* the value
 
-A wizard should review before it writes. End with a `Note` summary + a `huh.NewConfirm()` gate **in the same group** - separate groups put the answers and the Yes/No on two different screens. A `Note` is non-interactive, so navigation skips it and lands on the confirm; both render on one page.
+A wizard should review before it writes.
+End with a `Note` summary + a `huh.NewConfirm()` gate **in the same group** - separate groups put the answers and the Yes/No on two different screens.
+A `Note` is non-interactive, so navigation skips it and lands on the confirm; both render on one page.
 
 Two things the first cut got wrong:
 
@@ -103,7 +107,9 @@ if !ok { fmt.Println("Aborted - nothing written."); return nil }
 
 ### 5. Conditional sections without leaving the form (`WithHideFunc`)
 
-`Group.WithHideFunc(func() bool {...})` is how a section appears/disappears based on an earlier answer *inside the same form* - the fix for the "second form per dependency" mistake (idiom #1). The func runs on every navigation; return `true` to hide. Read the **live** bound values, not a snapshot.
+`Group.WithHideFunc(func() bool {...})` is how a section appears/disappears based on an earlier answer *inside the same form* - the fix for the "second form per dependency" mistake (idiom #1).
+The func runs on every navigation; return `true` to hide.
+Read the **live** bound values, not a snapshot.
 
 ```go
 memory := storeGroup(...).WithHideFunc(func() bool { return a.EmbedModel == "" })          // no embedder → no memory store
@@ -117,7 +123,9 @@ Two things to know:
 
 ### 6. Theme it (one helper, applied to every form)
 
-Build the theme once (`huh.ThemeBase()` + accent overrides) and route every form through a `runForm` helper so the look is consistent. See `references/theme.md` for the full rubber-duck theme + the `runForm` wrapper. Keep the default theme if there's no brand call - a custom theme is taste + risk (ANSI in golden tests).
+Build the theme once (`huh.ThemeBase()` + accent overrides) and route every form through a `runForm` helper so the look is consistent.
+See `references/theme.md` for the full rubber-duck theme + the `runForm` wrapper.
+Keep the default theme if there's no brand call - a custom theme is taste + risk (ANSI in golden tests).
 
 **`ThemeBase()` leaves `Group.Title`/`Group.Description` unstyled.** Unlike `ThemeCharm` (and the other stock themes), `ThemeBase` never assigns `t.Group.Title`/`t.Group.Description` - they're a zero style, so group *section headers* render blank even though field titles (which use `t.Focused.Title`) look fine. If you build on `ThemeBase` and your `.Title()` on a group shows nothing, set `t.Group.Title` and `t.Group.Description` explicitly. (Setting `t.Focused.Title` does **not** flow through - `ThemeCharm` copies Focused→Group by value at the end of its setup, so a later override of Focused doesn't update Group.)
 

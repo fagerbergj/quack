@@ -1,12 +1,15 @@
 # huh-wizard - theme recipe
 
-The rubber-duck theme + the `runForm` wrapper. v1 (`github.com/charmbracelet/huh v1.0.0`). Adapt, don't drop in blind. For the form patterns, see `forms.md`.
+The rubber-duck theme + the `runForm` wrapper. v1 (`github.com/charmbracelet/huh v1.0.0`).
+Adapt, don't drop in blind. For the form patterns, see `forms.md`.
 
 ---
 
 ## The theme (rubber-duck, on `huh.ThemeBase()`)
 
-`internal/wizard/theme.go`. Build once, route every form through `runForm`. Start from `ThemeBase()` so layout/spacing stay conventional and only the accent colors move.
+`internal/wizard/theme.go`.
+Build once, route every form through `runForm`.
+Start from `ThemeBase()` so layout/spacing stay conventional and only the accent colors move.
 
 ```go
 package wizard

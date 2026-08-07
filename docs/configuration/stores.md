@@ -34,7 +34,8 @@ session:
 
 ## Vector
 
-Backs semantic memory / RAG recall. A vector store carries extra fields a relational store ignores:
+Backs semantic memory / RAG recall.
+A vector store carries extra fields a relational store ignores:
 
 - `embedder` - provider + model used to vectorize text.
 - `consolidation` - provider + model for the ADD/UPDATE/DELETE/NOOP consolidation decision (quack reuses the judge model here, since it's already warm).
@@ -69,4 +70,5 @@ tools:
     collection: user_memory
 ```
 
-The store supplies the adapter and connection; the tool may override `collection` / `schema` / `top_k` / `min_score` for its own namespace. See [agents.md](agents.md) for which agents bind `stage_memory` (task memory) and the orchestrator's `commit_memory` (user memory).
+The store supplies the adapter and connection; the tool may override `collection` / `schema` / `top_k` / `min_score` for its own namespace.
+See [agents.md](agents.md) for which agents bind `stage_memory` (task memory) and the orchestrator's `commit_memory` (user memory).

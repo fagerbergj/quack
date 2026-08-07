@@ -1,22 +1,16 @@
 # Code-reviewer scoring rubric
 
-This overrides the default rubric (`config/rubric.md`) for `code-reviewer`. It
-scores the quality of a REVIEW, not the quality of the code being reviewed:
-did the review catch the change's real problems, weight them by impact, stay
-constructive and actionable, keep nits from blocking, and verify claims rather
-than assert them.
+This overrides the default rubric (`config/rubric.md`) for `code-reviewer`.
+It scores the quality of a REVIEW, not the quality of the code being reviewed: did the review catch the change's real problems, weight them by impact, stay constructive and actionable, keep nits from blocking, and verify claims rather than assert them.
 
-Score the **review the worker produced** - its findings, their severity
-labels, and its verdict. When you have read-only workspace tools (read_file,
-list_dir, glob, grep) and the reviewed change is in the workspace, OPEN the
-files the review discusses and check its findings against what the code
-actually contains - do not take the review's word for the code's behavior. A
-review of a small, clean change that correctly finds little and approves is
-not "shallow"; a short accurate review is the target outcome.
+Score the **review the worker produced** - its findings, their severity labels, and its verdict.
+When you have read-only workspace tools (read_file, list_dir, glob, grep) and the reviewed change is in the workspace, OPEN the files the review discusses and check its findings against what the code actually contains - do not take the review's word for the code's behavior.
+A review of a small, clean change that correctly finds little and approves is not "shallow"; a short accurate review is the target outcome.
 
 ## How to score (G-Eval)
 
-Work through the criteria **in order**. For each one:
+Work through the criteria **in order**.
+For each one:
 
 1. Read its definition and **evaluation steps**.
 2. Reason in one or two sentences about how the review performs against those
@@ -40,15 +34,11 @@ Work through the criteria **in order**. For each one:
 - **1** - failed badly; actively wrong on this dimension.
 - **0** - total failure, or what this criterion asks for is entirely absent.
 
-**Choosing within a band:** pick the higher number when the criterion is met
-more completely; the lower when it only just clears the band. Do not default
-to 0, 5, or 10.
+**Choosing within a band:** pick the higher number when the criterion is met more completely; the lower when it only just clears the band.
+Do not default to 0, 5, or 10.
 
-**The workspace activity ledger.** Your prompt contains a "Workspace activity"
-section: the read-only fs/git operations the reviewer ACTUALLY performed,
-reconstructed from its session by code - not from its narration. It is ground
-truth. `read_file`/`git_diff` entries carry a content sample; use them to
-spot-check whether a finding refers to code the reviewer actually looked at.
+**The workspace activity ledger.** Your prompt contains a "Workspace activity" section: the read-only fs/git operations the reviewer ACTUALLY performed, reconstructed from its session by code - not from its narration.
+It is ground truth. `read_file`/`git_diff` entries carry a content sample; use them to spot-check whether a finding refers to code the reviewer actually looked at.
 
 ---
 
@@ -81,10 +71,7 @@ citation.
 
 ### `catches_real_issues`
 
-The review surfaces the change's actual defects - the correctness, security,
-and missing-test problems that matter - rather than only cosmetic ones. Judge
-against what the change actually contains, not against an imagined ideal
-review.
+The review surfaces the change's actual defects - the correctness, security, and missing-test problems that matter - rather than only cosmetic ones. Judge against what the change actually contains, not against an imagined ideal review.
 
 **Evaluation steps.**
 1. From the diff, identify the genuine problems in the change (bugs, unhandled
@@ -104,10 +91,7 @@ review.
 
 ### `correct_prioritization`
 
-Findings are weighted by impact on codebase health - correctness, security,
-and tests above readability, and readability above style/naming - and each
-finding's severity label (`blocking:` / `suggestion:` / `nit:`) matches its
-true severity.
+Findings are weighted by impact on codebase health - correctness, security, and tests above readability, and readability above style/naming - and each finding's severity label (`blocking:` / `suggestion:` / `nit:`) matches its true severity.
 
 **Evaluation steps.**
 1. Check whether the highest-impact findings lead and the trivial ones are
@@ -126,9 +110,7 @@ true severity.
 
 ### `nits_dont_block`
 
-Trivial, preference-based findings do not block the merge. `blocking:` is
-reserved for genuine defects (bugs, security, missing tests, major design
-flaws); style and preference are never a blocking verdict.
+Trivial, preference-based findings do not block the merge. `blocking:` is reserved for genuine defects (bugs, security, missing tests, major design flaws); style and preference are never a blocking verdict.
 
 **Evaluation steps.**
 1. List everything the review marks blocking (or makes a request-changes
@@ -147,11 +129,7 @@ flaws); style and preference are never a blocking verdict.
 
 ### `constructive_actionable`
 
-The review critiques the work, not the developer; explains the *why* behind
-each finding so it's actionable; and includes at least one sincere piece of
-praise. Language is plain and respectful - no sarcasm, hyperbole, or
-diminishing words. A finding that proposes a SPECIFIC code change is only
-actionable if it shows that code, not just describes it.
+The review critiques the work, not the developer; explains the *why* behind each finding so it's actionable; and includes at least one sincere piece of praise. Language is plain and respectful - no sarcasm, hyperbole, or diminishing words. A finding that proposes a SPECIFIC code change is only actionable if it shows that code, not just describes it.
 
 **Evaluation steps.**
 1. Check the tone targets the code, not the author, and avoids "just"/"always"
@@ -181,9 +159,7 @@ actionable if it shows that code, not just describes it.
 
 ### `verification_over_assertion`
 
-The review verified the change's claims rather than trusting them - it checked
-whether the code does what its description says and whether the tests would
-actually fail if the code were broken, instead of rubber-stamping.
+The review verified the change's claims rather than trusting them - it checked whether the code does what its description says and whether the tests would actually fail if the code were broken, instead of rubber-stamping.
 
 **Evaluation steps.**
 1. Check whether the review engaged with the change's stated intent and
@@ -203,14 +179,9 @@ actually fail if the code were broken, instead of rubber-stamping.
 
 ### `structured_verdict`
 
-The review is delivered in a usable shape - a summary, then findings grouped
-by severity (blocking → suggestions → nits → praise) - and carries a clear,
-consistent verdict. The verdict is STRUCTURED DATA, not prose: the reviewer
-stages it via `stage_review`'s `event` (or the answer's `VERDICT:` tail), and
-your prompt surfaces the resolved value as "Staged review verdict: <event>"
-when one is staged. Score presence and consistency of THAT, never whether the
-summary restates it in words - the reviewer is deliberately told the summary
-is a fifteen-second takeaway that does NOT repeat the verdict.
+The review is delivered in a usable shape - a summary, then findings grouped by severity (blocking → suggestions → nits → praise) - and carries a clear, consistent verdict.
+The verdict is STRUCTURED DATA, not prose: the reviewer stages it via `stage_review`'s `event` (or the answer's `VERDICT:` tail), and your prompt surfaces the resolved value as "Staged review verdict: <event>" when one is staged.
+Score presence and consistency of THAT, never whether the summary restates it in words - the reviewer is deliberately told the summary is a fifteen-second takeaway that does NOT repeat the verdict.
 
 **Evaluation steps.**
 1. Check the review opens with a high-level summary and groups findings by
@@ -248,9 +219,7 @@ is a fifteen-second takeaway that does NOT repeat the verdict.
 
 ### `signal_over_noise`
 
-The review reads as findings for a human deciding whether to merge, not a
-transcript of the reviewer's own process - and it never turns an
-environment-specific failure into a code-quality concern.
+The review reads as findings for a human deciding whether to merge, not a transcript of the reviewer's own process - and it never turns an environment-specific failure into a code-quality concern.
 
 **Evaluation steps.**
 1. Check the visible body (outside any collapsed `<details>` block) for
@@ -276,13 +245,9 @@ environment-specific failure into a code-quality concern.
 
 ## Aggregation
 
-Each criterion is an **independent requirement**, scored 0–10 and normalised
-to 0.0–1.0 (divide by 10). The overall score is the **lowest** criterion - the
-binding constraint (weakest-link gating). There is **no averaging and no
-caps**: one fatal failure (a fabricated finding, a missed central bug, blocking
-the merge on a nit) sinks the review on its own. The gate passes only when
-**every** criterion clears the threshold.
+Each criterion is an **independent requirement**, scored 0–10 and normalised to 0.0–1.0 (divide by 10).
+The overall score is the **lowest** criterion - the binding constraint (weakest-link gating).
+There is **no averaging and no caps**: one fatal failure (a fabricated finding, a missed central bug, blocking the merge on a nit) sinks the review on its own.
+The gate passes only when **every** criterion clears the threshold.
 
-`feedback` must name the lowest-scoring criterion/criteria and what concretely
-would fix them - point at the specific finding (or the missing one), not a
-restatement of the criterion - so the next revision can act on it directly.
+`feedback` must name the lowest-scoring criterion/criteria and what concretely would fix them - point at the specific finding (or the missing one), not a restatement of the criterion - so the next revision can act on it directly.

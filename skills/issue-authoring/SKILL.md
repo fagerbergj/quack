@@ -8,15 +8,19 @@ description: >
 
 # Issue Authoring
 
-An issue exists to **hand off a well-scoped unit of work** - to a human or to `quack:plan`. A vague wishlist gets re-triaged before anyone can start; a problem statement backed by `file:line` evidence gets planned in one pass.
+An issue exists to **hand off a well-scoped unit of work** - to a human or to `quack:plan`.
+A vague wishlist gets re-triaged before anyone can start; a problem statement backed by `file:line` evidence gets planned in one pass.
 
 ## Problem first, not a solution wishlist
 
-Open with `## Problem`: the concrete symptom or gap, one paragraph. Not "we should add X" - say what's broken or missing and how you noticed. The solution (if you have one) goes in a later section (`Desired` / `Design` / `Fix shape`) - never replace the problem statement with it.
+Open with `## Problem`: the concrete symptom or gap, one paragraph.
+Not "we should add X" - say what's broken or missing and how you noticed. The solution (if you have one) goes in a later section (`Desired` / `Design` / `Fix shape`) - never replace the problem statement with it.
 
 ## Verified context over guesses
 
-Add `## Verified context`: what you actually confirmed by reading the code, each claim anchored to `file:line`. Do the surface-level investigation before filing - grep for the mechanism, read the function, check whether the gap is real - rather than transcribing a hunch. State findings as fact ("X does Y at `foo.go:42`"), not "I think" or "probably".
+Add `## Verified context`: what you actually confirmed by reading the code, each claim anchored to `file:line`.
+Do the surface-level investigation before filing - grep for the mechanism, read the function, check whether the gap is real - rather than transcribing a hunch.
+State findings as fact ("X does Y at `foo.go:42`"), not "I think" or "probably".
 
 If something is still unknown, say so explicitly and keep it separate from what's verified - e.g. "Verified: the frontend has no code path for this (grepped `github_url` in `Chat.tsx`, no hits). Not verified: whether the CLI has the same gap - didn't check `internal/cli/`." Never let an unverified guess read like a verified fact.
 
@@ -26,7 +30,8 @@ State what's in and explicitly out. For anything with a real failure mode (data 
 
 ## Separate code from config/deploy
 
-Before filing as a code bug, check whether the actual cause is infrastructure - a proxy timeout, an env var, a Docker/compose setting, a missing secret. If the fix is in `docker-compose.yml`, a deploy script, or a runtime env, say so and flag it for ops instead of describing it as an application bug; don't send an implementer hunting through Go/TS source for a problem that isn't there.
+Before filing as a code bug, check whether the actual cause is infrastructure - a proxy timeout, an env var, a Docker/compose setting, a missing secret.
+If the fix is in `docker-compose.yml`, a deploy script, or a runtime env, say so and flag it for ops instead of describing it as an application bug; don't send an implementer hunting through Go/TS source for a problem that isn't there.
 
 ## Both surfaces
 
@@ -34,7 +39,8 @@ If quack has both a web UI and a CLI, check whether the bug or gap applies to on
 
 ## Acceptance
 
-Concrete and testable - a reviewer should be able to check each line off without asking you what you meant. For anything touching code, end with the standard bar:
+Concrete and testable - a reviewer should be able to check each line off without asking you what you meant.
+For anything touching code, end with the standard bar:
 
 ```
 `go test ./...`, `npm test`, vet, fmt green.
@@ -49,7 +55,8 @@ Every issue gets exactly one `priority:*` and one `complexity:*`, plus whatever 
 
 ## Prose style
 
-Concrete over generic, no ceremony. Say what you found, not that you "looked into it." Cite the line, don't describe the neighborhood. Skip throat-clearing ("As part of this effort...") and skip filler sections that don't apply to this issue - a two-line bug report keeps only Problem + Verified context + Acceptance.
+Concrete over generic, no ceremony.
+Say what you found, not that you "looked into it." Cite the line, don't describe the neighborhood. Skip throat-clearing ("As part of this effort...") and skip filler sections that don't apply to this issue - a two-line bug report keeps only Problem + Verified context + Acceptance.
 
 ## Good vs weak
 

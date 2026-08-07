@@ -1,27 +1,15 @@
 # Code-explorer scoring rubric
 
-This overrides the default rubric (`config/rubric.md`) for `code-explorer`. It
-grades an **exploration**, not a piece of web research: the explorer's job is to
-read a codebase and report an accurate, useful understanding of it, and its
-"sources" are the FILES it actually read - not web pages. So this rubric grades
-code-grounding, accuracy, coverage, and usefulness to a downstream implementer.
-It deliberately does **not** carry the web-researcher rubric's web-URL
-`cites_sources` or web-retrieval `grounded_in_retrieval` criteria - a codebase
-explorer that never touches the web is doing exactly its job, and must not be
-penalised for the absence of web citations.
+This overrides the default rubric (`config/rubric.md`) for `code-explorer`.
+It grades an **exploration**, not a piece of web research: the explorer's job is to read a codebase and report an accurate, useful understanding of it, and its "sources" are the FILES it actually read - not web pages. So this rubric grades code-grounding, accuracy, coverage, and usefulness to a downstream implementer. It deliberately does **not** carry the web-researcher rubric's web-URL `cites_sources` or web-retrieval `grounded_in_retrieval` criteria - a codebase explorer that never touches the web is doing exactly its job, and must not be penalised for the absence of web citations.
 
-Score the **understanding the answer conveys**, grounded in what the worker
-actually read. When you have read-only workspace tools (read_file, list_dir,
-glob, grep) and a clone is available, OPEN a few of the files the answer
-describes and check the description against what they actually contain - do not
-take the answer's word for how the code works. Keep the bar FAIR: this is
-exploration, not exhaustive documentation. A tight, accurate answer to a
-narrow question ("where is X implemented?") should score high near-trivially;
-depth is expected only in proportion to what was asked.
+Score the **understanding the answer conveys**, grounded in what the worker actually read.
+When you have read-only workspace tools (read_file, list_dir, glob, grep) and a clone is available, OPEN a few of the files the answer describes and check the description against what they actually contain - do not take the answer's word for how the code works. Keep the bar FAIR: this is exploration, not exhaustive documentation. A tight, accurate answer to a narrow question ("where is X implemented?") should score high near-trivially; depth is expected only in proportion to what was asked.
 
 ## How to score (G-Eval)
 
-Work through the criteria **in order**. For each one:
+Work through the criteria **in order**.
+For each one:
 
 1. Read its definition and **evaluation steps**.
 2. Reason in one or two sentences about how the answer performs against those
@@ -36,9 +24,8 @@ earn no credit.
 
 ### The 0–10 scale
 
-The same scale applies to every criterion. The per-criterion **scoring bands**
-below tell you what "met", "partially met", and "failed" mean *for that
-criterion*; this scale tells you which number within those ranges to pick.
+The same scale applies to every criterion.
+The per-criterion **scoring bands** below tell you what "met", "partially met", and "failed" mean *for that criterion*; this scale tells you which number within those ranges to pick.
 
 - **10** - flawless on this criterion; you can find nothing to fault.
 - **9** - met; only a trivial, cosmetic nitpick.
@@ -56,37 +43,22 @@ criterion*; this scale tells you which number within those ranges to pick.
 - **1** - failed badly; actively wrong on this dimension.
 - **0** - total failure, or the thing this criterion asks for is entirely absent.
 
-**Choosing within a band:** pick the higher number when the criterion is met
-more completely or the flaw is more trivial; the lower number when it only just
-clears the band. Do not default to 0, 5, or 10 - if the answer sits between two
-levels, choose the one whose description fits the dominant impression.
+**Choosing within a band:** pick the higher number when the criterion is met more completely or the flaw is more trivial; the lower number when it only just clears the band.
+Do not default to 0, 5, or 10 - if the answer sits between two levels, choose the one whose description fits the dominant impression.
 
-**The workspace activity ledger.** Your prompt contains a "Workspace activity"
-section: the fs/git operations the worker ACTUALLY performed, reconstructed from
-its session by code - not from its narration. It is ground truth. A file the
-answer claims to describe that has no `read_file` entry was not read, no matter
-how confidently it is described; `read_file` entries carry a content sample -
-use it to spot-check quoted or paraphrased file content.
+**The workspace activity ledger.** Your prompt contains a "Workspace activity" section: the fs/git operations the worker ACTUALLY performed, reconstructed from its session by code - not from its narration.
+It is ground truth.
+A file the answer claims to describe that has no `read_file` entry was not read, no matter how confidently it is described; `read_file` entries carry a content sample - use it to spot-check quoted or paraphrased file content.
 
 ---
 
 ### `grounded_in_code`
 
-Every claim the answer makes about the code - what a function does, how a
-convention works, that module A calls module B, where X lives - traces to a file
-the worker actually read this session (a `read_file`, or a file under a
-`git_clone`'d repo it explored). This is the code-grounding criterion; it
-replaces the web-researcher's URL-citation check. General knowledge, prior
-training, or inference from a filename does **not** count as grounding - the
-whole point of an explorer is that it *looked*.
+Every claim the answer makes about the code - what a function does, how a convention works, that module A calls module B, where X lives - traces to a file the worker actually read this session (a `read_file`, or a file under a `git_clone`'d repo it explored). This is the code-grounding criterion; it replaces the web-researcher's URL-citation check. General knowledge, prior training, or inference from a filename does **not** count as grounding - the whole point of an explorer is that it *looked*.
 
-Judge grounding by whether each non-trivial claim is backed by a file in the
-ledger and, where the answer cites `<repo>@<path>`, whether that path was
-actually read. Do **NOT** lower this score merely because a described API or
-pattern is unfamiliar to you - an explorer reads code you cannot see. Lower it
-when a claim about the code has no read behind it (an assertion about a file the
-ledger shows was never opened) or when a quote/paraphrase contradicts the read
-sample.
+Judge grounding by whether each non-trivial claim is backed by a file in the ledger and, where the answer cites `<repo>@<path>`, whether that path was actually read.
+Do **NOT** lower this score merely because a described API or pattern is unfamiliar to you - an explorer reads code you cannot see.
+Lower it when a claim about the code has no read behind it (an assertion about a file the ledger shows was never opened) or when a quote/paraphrase contradicts the read sample.
 
 **Evaluation steps.**
 1. List the answer's non-trivial claims about the code.
@@ -111,14 +83,12 @@ sample.
 
 ### `accurate`
 
-The understanding matches what the code actually does. No misrepresentation, no
-plausible-but-wrong description, no guessing dressed as fact. This is the
-correctness of the exploration: a confident description that gets the behavior,
-control flow, or structure wrong actively misleads a downstream implementer and
-is worse than a hedged one.
+The understanding matches what the code actually does.
+No misrepresentation, no plausible-but-wrong description, no guessing dressed as fact.
+This is the correctness of the exploration: a confident description that gets the behavior, control flow, or structure wrong actively misleads a downstream implementer and is worse than a hedged one.
 
-When you can, open a file the answer describes and compare. Weight the load-
-bearing claims - the ones an implementer would act on - most heavily.
+When you can, open a file the answer describes and compare.
+Weight the load- bearing claims - the ones an implementer would act on - most heavily.
 
 **Evaluation steps.**
 1. Identify the answer's factual claims about behavior, structure, and
@@ -141,9 +111,7 @@ bearing claims - the ones an implementer would act on - most heavily.
 
 ### `answers_the_task`
 
-The response covers what was actually asked - the specific structure, the named
-convention, how the requested feature works - at a depth useful for the task,
-not a related-but-different tour of the repo.
+The response covers what was actually asked - the specific structure, the named convention, how the requested feature works - at a depth useful for the task, not a related-but-different tour of the repo.
 
 **Evaluation steps.**
 1. Decompose the request into its distinct asks (the specific thing to explain,
@@ -152,17 +120,7 @@ not a related-but-different tour of the repo.
 3. Note any silent narrowing, topic drift, or a generic repo overview
    substituted for the specific question asked.
 
-**A well-evidenced NEGATIVE result answers the task.** Sometimes the thing the
-explorer was sent to read is genuinely not in any source it can reach - it's a
-hosted service, an unreleased product, a design published only as a blog post, or
-it lives in a dependency rather than the repo. An explorer that establishes this,
-names what it searched (repos, paths, patterns), reports what it *did* find and
-what that thing actually is (a feature flag is not an implementation), and says
-where the real answer likely lives, has done its job **completely**. Score it on
-the quality of that evidence, exactly as you would a positive finding - do NOT
-mark it down for "not answering", and do NOT reward an explorer that kept cloning
-speculative repositories instead of reporting the dead end. The explorer has no
-web tools; "go and search the web" was never an option available to it.
+**A well-evidenced NEGATIVE result answers the task.** Sometimes the thing the explorer was sent to read is genuinely not in any source it can reach - it's a hosted service, an unreleased product, a design published only as a blog post, or it lives in a dependency rather than the repo. An explorer that establishes this, names what it searched (repos, paths, patterns), reports what it *did* find and what that thing actually is (a feature flag is not an implementation), and says where the real answer likely lives, has done its job **completely**. Score it on the quality of that evidence, exactly as you would a positive finding - do NOT mark it down for "not answering", and do NOT reward an explorer that kept cloning speculative repositories instead of reporting the dead end. The explorer has no web tools; "go and search the web" was never an option available to it.
 
 **Scoring bands.**
 - **7–10** - addresses the request completely, at a depth proportionate to what
@@ -178,11 +136,7 @@ web tools; "go and search the web" was never an option available to it.
 
 ### `clear_and_actionable`
 
-The understanding is organized and precise enough for a downstream implementer
-to act on: exact file/path/symbol references (not vague gestures like "somewhere
-in the server layer"), a structure that leads the reader through the answer, and
-enough specificity that the reader knows which files they'd touch and which
-patterns they'd follow.
+The understanding is organized and precise enough for a downstream implementer to act on: exact file/path/symbol references (not vague gestures like "somewhere in the server layer"), a structure that leads the reader through the answer, and enough specificity that the reader knows which files they'd touch and which patterns they'd follow.
 
 **Evaluation steps.**
 1. Check that key claims name specific files/paths/symbols rather than gesturing
@@ -206,12 +160,9 @@ patterns they'd follow.
 
 ## Aggregation
 
-Each criterion is an **independent requirement**, scored 0–10 and normalised to
-0.0–1.0 (divide by 10). The overall score is the **lowest** criterion - the
-binding constraint (weakest-link gating). There is **no averaging and no caps**:
-a single failing criterion sinks the answer on its own rather than being
-averaged away by strong scores elsewhere, and a strong dimension never excuses a
-weak one. The gate passes only when **every** criterion clears the threshold.
+Each criterion is an **independent requirement**, scored 0–10 and normalised to 0.0–1.0 (divide by 10).
+The overall score is the **lowest** criterion - the binding constraint (weakest-link gating).
+There is **no averaging and no caps**: a single failing criterion sinks the answer on its own rather than being averaged away by strong scores elsewhere, and a strong dimension never excuses a weak one.
+The gate passes only when **every** criterion clears the threshold.
 
-`feedback` must name the lowest-scoring criterion/criteria and what concretely
-would fix them so the next revision can act on it.
+`feedback` must name the lowest-scoring criterion/criteria and what concretely would fix them so the next revision can act on it.

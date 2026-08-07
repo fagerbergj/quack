@@ -23,9 +23,11 @@ This is what `quack chat` / `quack chat node` ([`cli.md`](cli.md)) and the [web 
 
 ## Streaming
 
-`POST .../responses` and `GET .../stream` both emit `text/event-stream`: `event: <name>` followed by `data: <json>`. The DAG (`dag_plan` + `node_*` events) is the static structure; within a node, the trust gate runs a sequence of agent invocations ("runs") - the worker draft, each judge round, each revision - each delimited by `agent_start`/`agent_complete` and carrying a `run_id` + `stage` (`worker`/`judge`/`revise`).
+`POST .../responses` and `GET .../stream` both emit `text/event-stream`: `event: <name>` followed by `data: <json>`.
+The DAG (`dag_plan` + `node_*` events) is the static structure; within a node, the trust gate runs a sequence of agent invocations ("runs") - the worker draft, each judge round, each revision - each delimited by `agent_start`/`agent_complete` and carrying a `run_id` + `stage` (`worker`/`judge`/`revise`).
 
-Event names: `response_created`, `agent_start`, `agent_thinking`, `agent_tool_call`, `agent_tool_result`, `agent_token`, `agent_complete`, `dag_plan`, `node_queued`, `node_start`, `node_done`, `node_failed`, `node_cancelled`, `node_needs_input`, `node_paused`, `node_steered`, `delivery_result`, `chat_title`, `done`, `error`. Full shapes are on `sendChatMessage`'s description and `x-sse-events` in `openapi.yaml`.
+Event names: `response_created`, `agent_start`, `agent_thinking`, `agent_tool_call`, `agent_tool_result`, `agent_token`, `agent_complete`, `dag_plan`, `node_queued`, `node_start`, `node_done`, `node_failed`, `node_cancelled`, `node_needs_input`, `node_paused`, `node_steered`, `delivery_result`, `chat_title`, `done`, `error`.
+Full shapes are on `sendChatMessage`'s description and `x-sse-events` in `openapi.yaml`.
 
 ## MCP
 
@@ -33,11 +35,14 @@ Mounted at `/api/v1/mcp` (Streamable HTTP, `internal/server/mcp`) - this is how 
 
 ## A2A - internal, not a client-facing face
 
-A2A is currently an **internal** orchestrator↔agent protocol, not something an outside client talks to. Each agent bundle runs its own A2A server on an ephemeral loopback port (`internal/agent/a2a.go`); the orchestrator is an A2A client to its own agents, in-process today and promotable to a standalone address later with no change to the agents themselves. There's no public A2A endpoint.
+A2A is currently an **internal** orchestrator↔agent protocol, not something an outside client talks to.
+Each agent bundle runs its own A2A server on an ephemeral loopback port (`internal/agent/a2a.go`); the orchestrator is an A2A client to its own agents, in-process today and promotable to a standalone address later with no change to the agents themselves.
+There's no public A2A endpoint.
 
 ## GitHub App
 
-A fourth client sits in front of the REST API over its own webhook, not one of the above: the [GitHub App](extensions/github.md). It drives runs via the `quack:plan` / `quack:implement` / `quack:review` / `quack:merge` / `quack:fix` label workflow, `/quack` mentions, and (on PRs it authored itself) review engagement with no label at all - replying on the issue/PR when the run completes.
+A fourth client sits in front of the REST API over its own webhook, not one of the above: the [GitHub App](extensions/github.md).
+It drives runs via the `quack:plan` / `quack:implement` / `quack:review` / `quack:merge` / `quack:fix` label workflow, `/quack` mentions, and (on PRs it authored itself) review engagement with no label at all - replying on the issue/PR when the run completes.
 
 ## Auth
 

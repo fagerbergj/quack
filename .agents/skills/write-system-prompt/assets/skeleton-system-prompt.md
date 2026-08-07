@@ -1,6 +1,7 @@
 # System Prompt Skeleton
 
-> Fill in the bracketed sections. Delete any section you don't need. Keep total length under 800 words.
+> Fill in the bracketed sections.
+Delete any section you don't need. Keep total length under 800 words.
 
 ---
 

@@ -74,7 +74,8 @@ CI checks: `go vet`, `go test ./...`, `gofmt -l`, `tsc --noEmit`, `eslint`, `npm
 
 ### Go module
 
-Module path: `github.com/fagerbergj/quack`. The binary entrypoint is `cmd/quack/main.go`.
+Module path: `github.com/fagerbergj/quack`.
+The binary entrypoint is `cmd/quack/main.go`.
 
 ### Request lifecycle
 
@@ -112,11 +113,13 @@ Ground-truth probes for external (ACP) workers: `augmentFromRepo` (gitprobe.go) 
 
 A GitHub webhook dispatch (`webhook.go`) computes that `vetting.Grant` once, from the labels currently on the issue/PR, PR authorship, and a fork check (`grant.go` - `computeGrant`), then builds a structured envelope (`envelope.go`) instead of a hand-assembled paragraph: `<permissions>`, `<deliverable>`, hoisted `<issue>`/`<pull_request>` (title + description), `<comments>` (full on first load, new/edited/deleted delta on resume), `<changed_files>` on a PR, the triggering `<event>` (GitHub's own webhook JSON filtered by a fixed drop-list - `node_id`, every `*_url`, `avatar_url`, `reactions` - never renamed or reshaped), and a `<context dir>` pointer. `buildEnvelope` is what the orchestrator sees; `buildWorkerAsk` is the narrower ask-only slice (`dag.Plan.WorkerBackground`) each DAG node gets instead, so a node's own task isn't crowded out by planning-scale evidence it has no use for.
 
-`<context dir>` names a sibling directory of the provisioned clone (`contextdir.go` - `WriteContextDir`) holding the untruncated GitHub API responses the envelope only summarizes: `issue.json`, `comments.json`, `pull.json`, `files.json`, `commits.json`, `reviews.json`, `review-comments.json`, `check-runs.json`/`annotations-*.json`, `linked-issue-*.json`, `timeline.json`. Sandboxed children get it mounted read-only via `Caps.ExtraRO`.
+`<context dir>` names a sibling directory of the provisioned clone (`contextdir.go` - `WriteContextDir`) holding the untruncated GitHub API responses the envelope only summarizes: `issue.json`, `comments.json`, `pull.json`, `files.json`, `commits.json`, `reviews.json`, `review-comments.json`, `check-runs.json`/`annotations-*.json`, `linked-issue-*.json`, `timeline.json`.
+Sandboxed children get it mounted read-only via `Caps.ExtraRO`.
 
 ### Agents: external ACP subprocesses + native bundles (`internal/acp/`, `internal/agent/`, `agents/`)
 
-ALL code agents (code-implementer, code-reviewer, code-explorer) run as EXTERNAL subprocesses speaking the Agent Client Protocol (`internal/acp`) - `opencode acp` by default, spawned per worker round, model bound via generated `OPENCODE_CONFIG_CONTENT`, `git push` denied, quack's skill library injected via opencode `skills.paths`. They have NO quack tools; the gate's probes read their work off the clone/answer. Configured per agent with `acp: {command, env, read_only}`.
+ALL code agents (code-implementer, code-reviewer, code-explorer) run as EXTERNAL subprocesses speaking the Agent Client Protocol (`internal/acp`) - `opencode acp` by default, spawned per worker round, model bound via generated `OPENCODE_CONFIG_CONTENT`, `git push` denied, quack's skill library injected via opencode `skills.paths`. They have NO quack tools; the gate's probes read their work off the clone/answer.
+Configured per agent with `acp: {command, env, read_only}`.
 
 Native (llmagent) bundles remain for the non-code agents (web-researcher, synthesizer, media/image readers, advisor, orchestrator):
 
@@ -128,15 +131,19 @@ agents/<name>/
   memory.md         # optional: "what to remember" guidance (M6), native agents only
 ```
 
-`agent.LoadBundle` reads the bundle; `agent.Build` turns a native one into an LLM agent. The config (`config/quack.yaml`) binds a model (and, for native agents, a tool list) to each bundle.
+`agent.LoadBundle` reads the bundle; `agent.Build` turns a native one into an LLM agent.
+The config (`config/quack.yaml`) binds a model (and, for native agents, a tool list) to each bundle.
 
 ### Inference (`internal/inference/`)
 
-`inference.NewModel(providerConfig, modelName)` is the single factory for `model.LLM`. Only `kind: "openai"` is implemented (any OpenAI-compatible endpoint). Adding a new provider kind is localized to `factory.go`.
+`inference.NewModel(providerConfig, modelName)` is the single factory for `model.LLM`.
+Only `kind: "openai"` is implemented (any OpenAI-compatible endpoint).
+Adding a new provider kind is localized to `factory.go`.
 
 ### Streaming (`internal/stream/`)
 
-`stream.SSEEvent` is the wire-level vocabulary shared by REST, MCP, and A2A. The key event sequence within a node:
+`stream.SSEEvent` is the wire-level vocabulary shared by REST, MCP, and A2A.
+The key event sequence within a node:
 
 ```text
 dag_plan → node_queued → node_start
@@ -149,7 +156,9 @@ dag_plan → node_queued → node_start
 done
 ```
 
-`stream.Translator` converts raw ADK session events into this vocabulary. The `stage` field on `agent_start`/`agent_complete` (`worker`, `judge`, `revise`) lets the frontend group runs inside a node. A worker's `ask_advisor` consults (internal/tools/ask_advisor.go) are NOT a separate stage - they surface as ordinary `agent_tool_call`/`agent_tool_result` activity within the worker's own run.
+`stream.Translator` converts raw ADK session events into this vocabulary.
+The `stage` field on `agent_start`/`agent_complete` (`worker`, `judge`, `revise`) lets the frontend group runs inside a node.
+A worker's `ask_advisor` consults (internal/tools/ask_advisor.go) are NOT a separate stage - they surface as ordinary `agent_tool_call`/`agent_tool_result` activity within the worker's own run.
 
 ### HTTP server (`internal/server/`)
 
@@ -160,7 +169,8 @@ done
 
 ### Frontend (`frontend/`)
 
-React 19 + Vite + Tailwind CSS 4 + TanStack Query. State is in `src/state/`:
+React 19 + Vite + Tailwind CSS 4 + TanStack Query.
+State is in `src/state/`:
 
 - `chatStore.ts` - Zustand-like store for chat sessions and messages.
 - `agentStream.ts` - parses the SSE event stream and updates the store.

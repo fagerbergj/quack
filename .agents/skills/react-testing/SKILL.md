@@ -17,9 +17,13 @@ license: MIT
 
 ## Overview
 
-Decision-level guidance for testing React the way users actually use it. The guiding rule: **the more your tests resemble how the software is used, the more confidence they give** ([Kent C. Dodds](https://kentcdodds.com/blog/write-tests)). Invest most in integration-level tests; test behaviour, not internals.
+Decision-level guidance for testing React the way users actually use it.
+The guiding rule: **the more your tests resemble how the software is used, the more confidence they give** ([Kent C. Dodds](https://kentcdodds.com/blog/write-tests)).
+Invest most in integration-level tests; test behaviour, not internals.
 
-Code templates and the full tables live in `references/recipes.md`. Config, parallelism, and coverage live in `references/ci-and-tooling.md`. Visual/a11y/perf live in `references/advanced.md`.
+Code templates and the full tables live in `references/recipes.md`.
+Config, parallelism, and coverage live in `references/ci-and-tooling.md`.
+Visual/a11y/perf live in `references/advanced.md`.
 
 quack's frontend already uses **Vitest + RTL + MSW** - match that grain before adding deps.
 
@@ -46,7 +50,8 @@ quack's frontend already uses **Vitest + RTL + MSW** - match that grain before a
 
 ## Query priority (memorize this order)
 
-`getByRole` → `getByLabelText` → `getByPlaceholderText` → `getByText` → `getByDisplayValue` → `getByAltText` → `getByTestId` (last resort). Variant by intent:
+`getByRole` → `getByLabelText` → `getByPlaceholderText` → `getByText` → `getByDisplayValue` → `getByAltText` → `getByTestId` (last resort).
+Variant by intent:
 
 - **`getBy*`** - element you expect present (throws if missing = useful signal).
 - **`queryBy*`** - asserting absence (returns `null`).

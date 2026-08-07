@@ -1,12 +1,14 @@
 # Deployment shapes
 
-`server.topology` (see [index.md](index.md)) is the one knob that picks how far you scale: the same config shape works whether the stores are none, containerized, or already running elsewhere. Three full worked examples live in [`examples/`](examples/) — each is a complete, runnable `quack.yaml`, not a snippet.
+`server.topology` (see [index.md](index.md)) is the one knob that picks how far you scale: the same config shape works whether the stores are none, containerized, or already running elsewhere.
+Three full worked examples live in [`examples/`](examples/) — each is a complete, runnable `quack.yaml`, not a snippet.
 
 ## 1. Fully local, no containers
 
 [`examples/local-cli.yaml`](examples/local-cli.yaml) — the fastest way in, see the [Quickstart](../../README.md#quickstart). `server.topology: embedded` uses sqlite for the relational store and there's no qdrant store at all, so memory stays disabled and nothing needs a container. One agent (`web-researcher`) plus the `synthesizer`, keyless web tools, no coding agents.
 
-`quack init` writes something close to this when you pick "Local" and leave the optional features off. Good for trying quack out or single-user local use; no Postgres, no qdrant, no Docker.
+`quack init` writes something close to this when you pick "Local" and leave the optional features off.
+Good for trying quack out or single-user local use; no Postgres, no qdrant, no Docker.
 
 ```bash
 ./quack server run --config docs/configuration/examples/local-cli.yaml
@@ -23,7 +25,8 @@ docker compose up --build
 
 This is the middle ground: full feature set, memory included, still a single `docker compose up`.
 
-`server.topology: managed` is the same idea without `docker-compose.yml`: `quack server run` brings up just the Postgres + qdrant containers itself (an embedded compose file) and tears them down on `quack server stop`. Reach for it if you want the containerized stores without hand-rolling compose.
+`server.topology: managed` is the same idea without `docker-compose.yml`: `quack server run` brings up just the Postgres + qdrant containers itself (an embedded compose file) and tears them down on `quack server stop`.
+Reach for it if you want the containerized stores without hand-rolling compose.
 
 ## 3. Remote server, full-featured
 

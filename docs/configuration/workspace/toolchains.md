@@ -1,12 +1,14 @@
 # Setting up toolchains
 
-The runtime image ships **Go and Node only** — enough for the trust gate's deterministic checks to `go build` or `npm test` what a code-implementer writes (see the [`Dockerfile`](../../../Dockerfile)). Any other language has to be supplied at the workspace level; baking every possible toolchain into the image doesn't scale. The baked Go/Node stay the default either way — a workspace toolchain supplements or overrides them, it doesn't replace them.
+The runtime image ships **Go and Node only** — enough for the trust gate's deterministic checks to `go build` or `npm test` what a code-implementer writes (see the [`Dockerfile`](../../../Dockerfile)). Any other language has to be supplied at the workspace level; baking every possible toolchain into the image doesn't scale.
+The baked Go/Node stay the default either way — a workspace toolchain supplements or overrides them, it doesn't replace them.
 
 ## How `exec_path` and `env` work
 
 `exec_path` puts directories on the `PATH` every `run_command`/check/git child sees — and, under `sandbox: bwrap`, into the child's *filesystem*. `env` hands those same children, plus the ACP coding-agent subprocess (`opencode`), extra environment variables. Toolchains routinely need both: `PATH` alone finds `javac`, but Gradle also needs `JAVA_HOME`, and the Android Gradle Plugin needs `ANDROID_HOME` — a directory to look things up *in*, not a command to run.
 
-**Precedence.** `workspace.env` is deployment-wide. An agent's own `acp: {env: ...}` (see [agents.md](../agents.md)) is more specific and wins on a shared key — e.g. one code-implementer pinned to a different JDK than the deployment default. `PATH` and `HOME` are reserved in `workspace.env`: they have dedicated knobs (`exec_path`, and the jail's isolated per-user home), and setting them here is a startup error rather than a silent override.
+**Precedence.** `workspace.env` is deployment-wide.
+An agent's own `acp: {env: ...}` (see [agents.md](../agents.md)) is more specific and wins on a shared key — e.g. one code-implementer pinned to a different JDK than the deployment default. `PATH` and `HOME` are reserved in `workspace.env`: they have dedicated knobs (`exec_path`, and the jail's isolated per-user home), and setting them here is a startup error rather than a silent override.
 
 **Under `sandbox: bwrap`**, a directory an `env` value *points at* must be independently reachable inside the sandbox's mount namespace, or the toolchain "exists" by env var but not on disk (`JAVA_HOME` set, but `$JAVA_HOME/bin/java: No such file or directory`). `exec_path` entries are bind-mounted read-only verbatim, so list the toolchain root itself, not just its `bin/`, whenever `env` points at it. This is not a secrets mechanism: values interpolate `${VAR}` like the rest of the config, but an actual credential belongs in a provider or tool's own `auth:` block.
 
@@ -48,7 +50,8 @@ docker run --rm --user 65532 -v quack-toolchains:/toolchains debian:bookworm-sli
   /toolchains/jdk21/bin/java -version
 ```
 
-> **Gotcha:** piping `docker run` into `head` or `tail` can SIGPIPE the image pull and silently abort the copy, leaving a half-populated volume. Redirect to a file instead.
+> **Gotcha:** piping `docker run` into `head` or `tail` can SIGPIPE the image pull and silently abort the copy, leaving a half-populated volume.
+Redirect to a file instead.
 
 ## Java and Android
 
@@ -85,7 +88,8 @@ workspace:
     GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.java.installations.paths=/toolchains/jdk17,/toolchains/jdk21,/toolchains/jdk25"
 ```
 
-That works from Gradle 6.7 onward. Below that, `JAVA_HOME` is the only lever.
+That works from Gradle 6.7 onward.
+Below that, `JAVA_HOME` is the only lever.
 
 ## Go
 
@@ -100,13 +104,15 @@ workspace:
     GOROOT: /toolchains/go1.25.0
 ```
 
-List the SDK root as well as its `bin/`. Under `sandbox: bwrap`, `exec_path` entries are what get bind-mounted into the child's namespace, so binding only `bin/` leaves the compiler present but its `src/` and `pkg/` missing — the toolchain then fails with `cannot find GOROOT` rather than "not found", which reads like a corrupt install.
+List the SDK root as well as its `bin/`.
+Under `sandbox: bwrap`, `exec_path` entries are what get bind-mounted into the child's namespace, so binding only `bin/` leaves the compiler present but its `src/` and `pkg/` missing — the toolchain then fails with `cannot find GOROOT` rather than "not found", which reads like a corrupt install.
 
 `GOPATH`/`GOCACHE` need no special handling: they default under `$HOME`, and unlike the JVM, Go honours it.
 
 ## Verifying
 
-Config that loads is not config that works. Run the project's own test command in the container, with the same environment a gate check gets:
+Config that loads is not config that works.
+Run the project's own test command in the container, with the same environment a gate check gets:
 
 ```bash
 docker exec -e JAVA_HOME=/toolchains/jdk21 \
@@ -118,6 +124,9 @@ docker exec -e JAVA_HOME=/toolchains/jdk21 \
               cd /workspace/local/<chat-id>/quack-shared-repo && ./gradlew testDebugUnitTest'
 ```
 
-Check the config parses too — `quack server validate <path>` loads it without starting the server. Note that it will *not* catch a misspelled or renamed key: unknown YAML keys are currently ignored rather than rejected ([#560](https://github.com/fagerbergj/quack/issues/560)), so a stale key silently disables whatever it configured.
+Check the config parses too — `quack server validate <path>` loads it without starting the server.
+Note that it will *not* catch a misspelled or renamed key: unknown YAML keys are currently ignored rather than rejected ([#560](https://github.com/fagerbergj/quack/issues/560)), so a stale key silently disables whatever it configured.
 
-Finally, watch `quack.gate.checks.skipped` after enabling a new toolchain. A `no_checks_derived` reason means the gate found the repo but recognised nothing to run — usually the build command is missing from `check_commands`. Checks are derived for **implementer nodes only**, so review and explorer nodes reporting `not_configured` is expected, not a misconfiguration.
+Finally, watch `quack.gate.checks.skipped` after enabling a new toolchain.
+A `no_checks_derived` reason means the gate found the repo but recognised nothing to run — usually the build command is missing from `check_commands`.
+Checks are derived for **implementer nodes only**, so review and explorer nodes reporting `not_configured` is expected, not a misconfiguration.

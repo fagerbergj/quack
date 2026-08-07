@@ -1,6 +1,7 @@
 # Go Logging Recipes (log/slog)
 
-Concrete code for the decisions in `SKILL.md`. Copy and adapt; don't re-derive.
+Concrete code for the decisions in `SKILL.md`.
+Copy and adapt; don't re-derive.
 
 ## 1. Handler setup (quack: `cmd/server/main.go`)
 
@@ -24,11 +25,13 @@ func setupLogging() {
 
 `SetDefault` also reroutes any stray stdlib `log.*` (and ADK's) through this handler.
 
-**Runtime re-leveling (not currently used):** swap the fixed level for a `*slog.LevelVar` and expose `level.Set(slog.LevelDebug)` via a signal/admin endpoint. Add only when restart-to-change is actually too slow - quack uses the env var.
+**Runtime re-leveling (not currently used):** swap the fixed level for a `*slog.LevelVar` and expose `level.Set(slog.LevelDebug)` via a signal/admin endpoint.
+Add only when restart-to-change is actually too slow - quack uses the env var.
 
 ## 2. Fatal - main only
 
-slog has no Fatal (it would skip deferred cleanup below `main`). One helper:
+slog has no Fatal (it would skip deferred cleanup below `main`).
+One helper:
 
 ```go
 // fatal logs at Error and exits - slog has no Fatal of its own.
@@ -42,7 +45,8 @@ Below `main`, **return** the error instead (`return fmt.Errorf("config: %w", err
 
 ## 3. Per-instance logger field (objects with stable identity)
 
-For a struct built per unit of work whose logs all share identity attrs (the vetting gate, built per worker). Set it in the **constructor** (runtime → after `SetDefault`, so it binds the real handler):
+For a struct built per unit of work whose logs all share identity attrs (the vetting gate, built per worker).
+Set it in the **constructor** (runtime → after `SetDefault`, so it binds the real handler):
 
 ```go
 type gate struct {
@@ -61,7 +65,8 @@ func NewGatedAgent(worker adkagent.Agent, /* … */) (*GatedAgent, error) {
 g.log.Debug("judge round done", "round", round, "dur", time.Since(tj), "score", v.Score, "passed", passed)
 ```
 
-Do **not** do this as a package-level `var` - see the init-order gotcha in `SKILL.md`. Package-level or one-off sites pass `component` inline: `slog.Info("node done", "component", "dag", "node", id, …)`.
+Do **not** do this as a package-level `var` - see the init-order gotcha in `SKILL.md`.
+Package-level or one-off sites pass `component` inline: `slog.Info("node done", "component", "dag", "node", id, …)`.
 
 ## 4. Bridge a third-party logger (GORM) through slog
 
@@ -80,7 +85,8 @@ gormCfg := &gorm.Config{Logger: logger.New(
 
 ## 5. Secret / PII redaction
 
-Quack is self-hosted with no compliance mandate today, so redaction is light - but never log passwords, API keys, tokens, session cookies, connection strings, or raw user PII. Mechanisms, in order of preference:
+Quack is self-hosted with no compliance mandate today, so redaction is light - but never log passwords, API keys, tokens, session cookies, connection strings, or raw user PII.
+Mechanisms, in order of preference:
 
 **a. `LogValuer` on a distinct type** - best for a known sensitive value:
 
@@ -89,7 +95,8 @@ type APIToken string
 func (t APIToken) LogValue() slog.Value { return slog.StringValue("[REDACTED]") }
 ```
 
-⚠️ **Bypassed on struct fields reached via reflection.** Logging a whole struct that *contains* an `APIToken` field still leaks it. Either don't log whole structs, or use (b)/(c).
+⚠️ **Bypassed on struct fields reached via reflection.** Logging a whole struct that *contains* an `APIToken` field still leaks it.
+Either don't log whole structs, or use (b)/(c).
 
 **b. `ReplaceAttr` deny-list at the handler** - catches by key regardless of nesting:
 
@@ -105,7 +112,8 @@ opts := &slog.HandlerOptions{
 }
 ```
 
-**c. `github.com/m-mizutani/masq`** - hooks `ReplaceAttr` for automatic *deep* redaction of nested struct fields by type, struct tag, or field name. Reach for it only if structs with secrets are genuinely being logged; a new dependency is otherwise YAGNI for this repo.
+**c. `github.com/m-mizutani/masq`** - hooks `ReplaceAttr` for automatic *deep* redaction of nested struct fields by type, struct tag, or field name.
+Reach for it only if structs with secrets are genuinely being logged; a new dependency is otherwise YAGNI for this repo.
 
 ## 6. Request correlation (child logger + context) - pattern for HTTP-scoped work
 
@@ -125,7 +133,8 @@ func logOf(ctx context.Context) *slog.Logger {
 }
 ```
 
-Always pass `context.Context` into spawned goroutines so they inherit the same `request_id`/trace. When an OTel handler lands (M12), switch hot-path calls to the `*Context` variants (`logger.InfoContext(ctx, …)`) so the handler can pull span IDs - until then plain calls are correct, since no handler reads the context.
+Always pass `context.Context` into spawned goroutines so they inherit the same `request_id`/trace.
+When an OTel handler lands (M12), switch hot-path calls to the `*Context` variants (`logger.InfoContext(ctx, …)`) so the handler can pull span IDs - until then plain calls are correct, since no handler reads the context.
 
 ## 7. Canonical log line (one dense summary per request)
 

@@ -8,7 +8,8 @@ description: >
 
 # Plan Work
 
-You turn a user request into the MINIMAL DAG of agent tasks that fully answers it, then submit it to the `plan` tool as `nodes`. Pick agents by their exact names from the **Agents** list in your system prompt.
+You turn a user request into the MINIMAL DAG of agent tasks that fully answers it, then submit it to the `plan` tool as `nodes`.
+Pick agents by their exact names from the **Agents** list in your system prompt.
 
 **Before submitting, ask this of your own plan: if it runs exactly as written, does it hand back what the request asked to receive?** Name the artifact the request wants, find the node whose own task text actually produces it, and check that node is the plan's TERMINAL (last, undepended-on) node. A terminal node tasked to "explore", "investigate", or "produce a report/findings/analysis" never satisfies a request whose deliverable is a plan, a review, or shipped code, no matter how thorough - exploration may only be a prerequisite feeding the node that produces the real artifact (a live failure: a single `code-explorer` node tasked to "produce a detailed report" was submitted, and accepted, for a request asking for an implementation plan - approach, files to change, how to verify). The reverse fails too: a plan that stops at exploring or reviewing when the request asked for shipped code. The plan judge (`internal/vetting/plan_judge.go`) asks this same question independently before your plan runs - a plan that fails it comes back rejected, wasting a re-plan round, so check it yourself first.
 
@@ -29,39 +30,55 @@ The table below is a shortcut for common shapes, not a substitute for the check 
 | Add/implement a feature AND deliver it | a chain of `code-implementer` nodes, one per independent goal-scoped portion (ONE node for a single coherent change) - each clones/commits locally; the plan itself declares `setup` + `delivery` (see Implement-and-deliver, Decomposing implementation, Declare setup + delivery) |
 | Research several projects, THEN design, THEN implement and deliver (a multi-phase request) | ONE DAG spanning ALL the phases: one `code-explorer` per project → (optionally ONE `synthesizer`) → a `code-implementer` chain (terminal). See Multi-phase requests |
 
-**When to add a synthesizer.** The `synthesizer` organizes the output of the plan's other node(s) into ONE deliverable that actually answers the user's question - its output is delivered to the user AS-IS, with no further formatting pass. Add a terminal `synthesizer` (`depends_on` the plan's other nodes) whenever the plan's final shape matters and isn't already guaranteed by a single node's own job:
+**When to add a synthesizer.** The `synthesizer` organizes the output of the plan's other node(s) into ONE deliverable that actually answers the user's question - its output is delivered to the user AS-IS, with no further formatting pass.
+Add a terminal `synthesizer` (`depends_on` the plan's other nodes) whenever the plan's final shape matters and isn't already guaranteed by a single node's own job:
 
 - Two or more research/exploration nodes whose findings must read as one answer - the `synthesizer` merges them; without it, only the LAST node's raw output ships, and the others are silently dropped from the delivered answer.
 - A plan whose deliverable is a structured write-up derived FROM exploration - a plan, a design doc, a comparison, a recommendation - even when only ONE feeder node runs. A bare `code-explorer`/`web-researcher` node is judged on exploration accuracy, not on producing a phased plan; whether its raw report happens to read as a plan depends on how you worded its task, which is not a decision the synthesizer should be left to gamble on. Route explore → synthesizer instead, and give the synthesizer's task the actual shape you want ("write a phased implementation plan from the exploration findings below, with a diagram where it clarifies the design").
 
 Skip it when a single node's own output IS the deliverable verbatim and needs no recombination or reshaping - a one-shot factual answer, a `code-implementer`'s committed change (delivered as a PR, not as chat text), or a `code-reviewer`'s posted review.
 
-**Multi-phase requests.** A request whose phases are spelled out ("research A, B and C by reading their source; synthesize a design; then implement it and open a PR") is **one plan, not one plan per phase**. Plan the whole job in a single DAG: the research nodes are FEEDER steps and the terminal node(s) are the `code-implementer` chain that commits the work - the plan's declared `delivery` is what opens the PR, after review.
+**Multi-phase requests.** A request whose phases are spelled out ("research A, B and C by reading their source; synthesize a design; then implement it and open a PR") is **one plan, not one plan per phase**.
+Plan the whole job in a single DAG: the research nodes are FEEDER steps and the terminal node(s) are the `code-implementer` chain that commits the work - the plan's declared `delivery` is what opens the PR, after review.
 
-Do NOT plan only the first phase and stop. There is no "come back and plan the rest later" - the plan you author is the whole job. A plan of research nodes for a request that ends in "open a pull request" will be REJECTED (the terminal deliverable must be a `code-implementer` node), and re-authoring it with *more research nodes* wastes turns: the missing node is the implementer.
+Do NOT plan only the first phase and stop.
+There is no "come back and plan the rest later" - the plan you author is the whole job.
+A plan of research nodes for a request that ends in "open a pull request" will be REJECTED (the terminal deliverable must be a `code-implementer` node), and re-authoring it with *more research nodes* wastes turns: the missing node is the implementer.
 
-**A `code-explorer` can only read source it can CLONE. It has no web tools.** So it can only be sent after something that actually lives in a public repository. If what the request asks about is a hosted service, a product feature, an unreleased or beta capability, or a design that exists only in a blog post or an announcement - there is no source to read, and a `code-explorer` pointed at it cannot succeed no matter how long it runs. It will clone speculative repositories and grep them blind until it is killed. That is a routing error, not an agent failure.
+**A `code-explorer` can only read source it can CLONE.
+It has no web tools.** So it can only be sent after something that actually lives in a public repository.
+If what the request asks about is a hosted service, a product feature, an unreleased or beta capability, or a design that exists only in a blog post or an announcement - there is no source to read, and a `code-explorer` pointed at it cannot succeed no matter how long it runs.
+It will clone speculative repositories and grep them blind until it is killed.
+That is a routing error, not an agent failure.
 
-Route those to `web-researcher`, which has the tools for it. Reach for `code-explorer` only when you can name the repository whose source holds the answer. When you're not sure whether a thing is in public source (a vendor's internal implementation, say), send BOTH: a `web-researcher` for what is written about it, and a `code-explorer` only for the repository that genuinely exists (an explorer once burned its whole run searching public repos for a server-side implementation that was never in them).
+Route those to `web-researcher`, which has the tools for it.
+Reach for `code-explorer` only when you can name the repository whose source holds the answer.
+When you're not sure whether a thing is in public source (a vendor's internal implementation, say), send BOTH: a `web-researcher` for what is written about it, and a `code-explorer` only for the repository that genuinely exists (an explorer once burned its whole run searching public repos for a server-side implementation that was never in them).
 
-Route by what the node must DO, not by topic: any node that must change code or commit is `code-implementer` work - never `web-researcher`, which cannot commit and whose vetting expects web citations. A coding request may still take an upstream `web-researcher` node when live web facts are genuinely needed first.
+Route by what the node must DO, not by topic: any node that must change code or commit is `code-implementer` work - never `web-researcher`, which cannot commit and whose vetting expects web citations.
+A coding request may still take an upstream `web-researcher` node when live web facts are genuinely needed first.
 
 A node that must **understand a codebase** (explore/analyze a repo's structure, conventions, or how something is implemented - read-only, no edits) is `code-explorer` work, NOT `web-researcher`: the explorer's sources are the files it reads (cited `<repo>@<path>`), and it's judged on exploration quality - code-grounding, accuracy, usefulness - not on web citations. Routing repo-understanding to `web-researcher` fails it against a web-citation rubric it can never satisfy. (For a single-repo *coding* task, still prefer folding "understand the repo" INTO the `code-implementer`'s own task rather than a separate node - see Implement-and-deliver below; reach for a standalone `code-explorer` node when understanding the repo IS the deliverable, or when several downstream nodes share the same repo understanding.)
 
 ## Reviewing a PR
 
-A PR review is read-only: the terminal node POSTS the review (inline comments + a verdict) and NEVER commits or pushes. How many nodes depends on the diff - the run message gives you the changed-files list up front, so size the review before any node clones.
+A PR review is read-only: the terminal node POSTS the review (inline comments + a verdict) and NEVER commits or pushes.
+How many nodes depends on the diff - the run message gives you the changed-files list up front, so size the review before any node clones.
 
-**Size against what the ASK covers, not the whole PR.** When the request itself narrows scope - "verify commit X resolves the finding", "re-check these three threads", "just look at the auth changes" - plan to THAT scope. The size rules below describe the diff the ASK implies, never a license to expand a narrow ask into a full review because the PR itself is large: a scoped ask stays ONE `code-reviewer` node even on an 800+ line PR.
+**Size against what the ASK covers, not the whole PR.** When the request itself narrows scope - "verify commit X resolves the finding", "re-check these three threads", "just look at the auth changes" - plan to THAT scope.
+The size rules below describe the diff the ASK implies, never a license to expand a narrow ask into a full review because the PR itself is large: a scoped ask stays ONE `code-reviewer` node even on an 800+ line PR.
 
 - **Small or cohesive change** (one package, a handful of related files, roughly UNDER ~800 changed lines): ONE `code-reviewer` node does the whole job - clone, check out the PR head, read the diff, post the review. Do not fan out a trivial diff.
 - **Large change - multi-area OR high-churn** (several packages/subsystems, OR roughly OVER ~800 changed lines even in one directory): one `code-explorer` per slice of the diff → ONE terminal `code-reviewer`. The explorers gather findings in parallel; the reviewer validates and posts. A single reviewer node CHOKES on a large diff (it stalls on compaction and re-reads) - the run message's changed-files list carries each file's `(+add/-del)` churn, so size the review from it and slice a big PR into groups of ~300 changed lines each, one explorer per group.
 
-**Slice by cohesion, not by count.** Group the changed files along natural boundaries - a package, a subsystem, a layer. Files that must be understood together stay in one explorer (a handler and its test; an interface and its implementations). CAP the fan-out: a 200-file PR is ~4 slices by subsystem, not 200 nodes.
+**Slice by cohesion, not by count.** Group the changed files along natural boundaries - a package, a subsystem, a layer.
+Files that must be understood together stay in one explorer (a handler and its test; an interface and its implementations).
+CAP the fan-out: a 200-file PR is ~4 slices by subsystem, not 200 nodes.
 
 **Each `code-explorer` gathers findings only - it MUST NOT post.** Its task names its slice: "Review these files in PR #N: `<paths>`. Check out the PR head branch, read their diff plus enough surrounding code to judge correctness, and report findings as {file, line, severity, issue, why}. Do not stray outside your slice; do not post anything." It is judged as exploration (did it find real issues?), not as a review.
 
-**The terminal `code-reviewer` is the ONLY node that posts.** It depends on all the explorers, VALIDATES each pooled finding against the actual diff (path+line must be in it), drops duplicates and false positives, then posts one `github_add_review_comment` per survivor and finishes with `github_submit_review` (a summary body + an APPROVE / REQUEST_CHANGES / COMMENT verdict). Only this node carries the "post the review" completion criterion - an explorer that produced findings has done its job.
+**The terminal `code-reviewer` is the ONLY node that posts.** It depends on all the explorers, VALIDATES each pooled finding against the actual diff (path+line must be in it), drops duplicates and false positives, then posts one `github_add_review_comment` per survivor and finishes with `github_submit_review` (a summary body + an APPROVE / REQUEST_CHANGES / COMMENT verdict).
+Only this node carries the "post the review" completion criterion - an explorer that produced findings has done its job.
 
 Carry the run message's changed-files list into each explorer's task (its slice) and the existing discussion into the reviewer's task (so it does not repeat prior findings). A node that only fetches the diff or lists comments is NOT a real node - that context is already in the run message; fold it into the reviewer's own work.
 
@@ -90,9 +107,11 @@ Worked example - input: *"Add a Flappy Bird game to repo R and open it as a PR; 
 | A portion you can't state as ONE sentence goal ("implement the backend, add the frontend, wire up auth, and write docs") | split further - that is at least two portions, maybe more |
 | A portion that's unusually large or tangled even though its goal sounds singular | treat the size/complexity as a SIGNAL to look again - if it can't be reviewed and tested as one coherent unit, it's probably more than one goal; split it. Size (e.g. "touches five subsystems") is a proxy for this, not a hard limit - a big-but-simple mechanical change can still be one node |
 
-Never plan ONE monolithic `code-implementer` node for a feature with several independent goals - it blows its own context (compaction thrash, loops that never finish) and produces one unreviewable mega-diff. Chain nodes with `depends_on` instead: each stays small enough to hold its single goal, review its own diff, and run its own checks; node N's task can reference what node N-1 built (its commit is now in the shared clone) without repeating it.
+Never plan ONE monolithic `code-implementer` node for a feature with several independent goals - it blows its own context (compaction thrash, loops that never finish) and produces one unreviewable mega-diff.
+Chain nodes with `depends_on` instead: each stays small enough to hold its single goal, review its own diff, and run its own checks; node N's task can reference what node N-1 built (its commit is now in the shared clone) without repeating it.
 
-**Gut check before submitting: could this node ship, be reviewed, and be tested on its own, independent of any sibling node's goal?** If the honest answer is "only alongside node X" because they're really one goal cut in half (e.g. "write the function" as one node and "write its tests" as another, or "implement" / "verify checks pass" / "commit" split by ACTIVITY rather than by portion), merge them. A split is only correct when each side is independently reviewable and independently shippable - never when the split exists solely to separate implementation from its own verification or its own commit.
+**Gut check before submitting: could this node ship, be reviewed, and be tested on its own, independent of any sibling node's goal?** If the honest answer is "only alongside node X" because they're really one goal cut in half (e.g. "write the function" as one node and "write its tests" as another, or "implement" / "verify checks pass" / "commit" split by ACTIVITY rather than by portion), merge them.
+A split is only correct when each side is independently reviewable and independently shippable - never when the split exists solely to separate implementation from its own verification or its own commit.
 
 ## Declare setup + delivery
 
@@ -106,7 +125,8 @@ Any plan whose deliverable touches a GitHub repo (implement, review, or a repo-s
 | Plan-only / research request scoped to a repo | usually omitted (nothing is committed) | `"comment"` |
 | No GitHub repo involved at all (general chat/research) | omit | omit |
 
-Set `delivery.title`/`delivery.body` to the PR title/body, the review summary, or the comment text as appropriate - see the `pr-authoring` skill for writing a good PR title/body before you fill these in. A fix's `delivery.kind` is still `"pull_request"` - delivery UPDATES the existing open PR for that branch, it never opens a second one.
+Set `delivery.title`/`delivery.body` to the PR title/body, the review summary, or the comment text as appropriate - see the `pr-authoring` skill for writing a good PR title/body before you fill these in.
+A fix's `delivery.kind` is still `"pull_request"` - delivery UPDATES the existing open PR for that branch, it never opens a second one.
 
 ### Write the implement node's task as research → plan → implement
 
@@ -120,7 +140,8 @@ Keep this as task *wording*, not extra nodes. The default is still ONE `code-imp
 
 ## Carry the user's CONSTRAINTS into the node's task - a constraint you drop is a constraint that is never honoured
 
-A node acts on **its own task**, which you write. The user's verbatim request is given to it only as BACKGROUND, explicitly marked as mostly other nodes' work (that framing is what stops a node wandering off and doing a sibling's job). So the node will follow *your paraphrase*, not the user's words.
+A node acts on **its own task**, which you write.
+The user's verbatim request is given to it only as BACKGROUND, explicitly marked as mostly other nodes' work (that framing is what stops a node wandering off and doing a sibling's job). So the node will follow *your paraphrase*, not the user's words.
 
 Which means: **every explicit instruction the user gave about HOW the work must be done has to survive into the task you write, or it will not happen.** These are not decoration - the user said them for a reason, and they are the first thing a paraphrase loses:
 
@@ -155,7 +176,9 @@ Work through these in order:
 
 `checks` are commands the trust gate runs against a `code-implementer` node's work after each draft - a failing check hard-fails vetting and its real compiler/test output feeds the revise prompt, so the implementer iterates against actual failures, not a reviewer's paraphrase.
 
-**`checks` are OPTIONAL, and you should almost always omit them.** Check commands are a property of the REPO - and you have NOT seen the repo when you author the plan. Guessing them produces nonsense (`go build` for a JavaScript repo; `npx tsc` for a repo whose typecheck is `next build`). So don't guess: the trust gate **derives** a code node's checks from the repo itself once the node has cloned it - reading the repo's OWN `package.json` scripts (`npm run build`/`lint`/`test`), or its `go.mod` (`go build ./...`, `go vet ./...`, `go test ./...`), or its `Makefile` targets - and runs only the ones the deployment allows.
+**`checks` are OPTIONAL, and you should almost always omit them.** Check commands are a property of the REPO - and you have NOT seen the repo when you author the plan.
+Guessing them produces nonsense (`go build` for a JavaScript repo; `npx tsc` for a repo whose typecheck is `next build`).
+So don't guess: the trust gate **derives** a code node's checks from the repo itself once the node has cloned it - reading the repo's OWN `package.json` scripts (`npm run build`/`lint`/`test`), or its `go.mod` (`go build ./...`, `go vet ./...`, `go test ./...`), or its `Makefile` targets - and runs only the ones the deployment allows.
 
 Rules:
 
@@ -177,4 +200,6 @@ The chosen node receives the actual file bytes; write its task as a specific ins
 
 ## Submitting
 
-Call `plan` with `nodes`, each `{id, agent, task, depends_on: [...]}` (optional `rubric`; optional `checks` + `workdir` on a code node - see Code checks), plus `setup`/`delivery` when the plan touches a GitHub repo (see Declare setup + delivery). The tool validates and returns a `plan_id` and a summary - review it, then pass `plan_id` to `execute`. If validation fails, fix the nodes and call again.
+Call `plan` with `nodes`, each `{id, agent, task, depends_on: [...]}` (optional `rubric`; optional `checks` + `workdir` on a code node - see Code checks), plus `setup`/`delivery` when the plan touches a GitHub repo (see Declare setup + delivery).
+The tool validates and returns a `plan_id` and a summary - review it, then pass `plan_id` to `execute`.
+If validation fails, fix the nodes and call again.

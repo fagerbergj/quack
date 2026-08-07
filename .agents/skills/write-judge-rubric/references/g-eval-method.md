@@ -6,15 +6,20 @@ Load this file when writing evaluation steps for G-Eval rubrics, or when decidin
 
 ## What G-Eval Is
 
-G-Eval (Liu et al., EMNLP 2023) is a form-filling LLM-as-a-judge framework. The judge receives a criterion definition, auto-generated chain-of-thought evaluation steps, and the output to score, then fills in a structured form with an integer score. Scores are derived from the model's token log-probabilities (probability-weighted scoring) rather than the sampled integer - this prevents score clustering and captures finer quality distinctions, especially important for smaller judge models.
+G-Eval (Liu et al., EMNLP 2023) is a form-filling LLM-as-a-judge framework.
+The judge receives a criterion definition, auto-generated chain-of-thought evaluation steps, and the output to score, then fills in a structured form with an integer score.
+Scores are derived from the model's token log-probabilities (probability-weighted scoring) rather than the sampled integer - this prevents score clustering and captures finer quality distinctions, especially important for smaller judge models.
 
 ---
 
 ## Why Evaluation Steps Matter
 
-Removing CoT evaluation steps drops Spearman correlation with human judgments from **0.514 → 0.500** on summarization. The effect is larger on smaller models: GPT-3.5 drops from **0.401 → 0.346** without CoT. Always include explicit, ordered evaluation steps before scoring.
+Removing CoT evaluation steps drops Spearman correlation with human judgments from **0.514 → 0.500** on summarization.
+The effect is larger on smaller models: GPT-3.5 drops from **0.401 → 0.346** without CoT.
+Always include explicit, ordered evaluation steps before scoring.
 
-Auto-generation: prompt the judge with the criterion definition and ask it to generate evaluation steps. Review, refine, then promote to fixed steps for reproducible runs - fixed steps are preferred over re-generating each time.
+Auto-generation: prompt the judge with the criterion definition and ask it to generate evaluation steps.
+Review, refine, then promote to fixed steps for reproducible runs - fixed steps are preferred over re-generating each time.
 
 ---
 
@@ -36,7 +41,8 @@ Evaluation Form (scores ONLY):
 - {criterion_name}:
 ```
 
-The judge outputs a score (or score + brief reason), not free-form text. The gate reads the log-probabilities of the candidate tokens (1–10) and computes a weighted average - not a hard discrete selection.
+The judge outputs a score (or score + brief reason), not free-form text.
+The gate reads the log-probabilities of the candidate tokens (1–10) and computes a weighted average - not a hard discrete selection.
 
 ---
 
@@ -48,7 +54,8 @@ The judge outputs a score (or score + brief reason), not free-form text. The gat
 | **Holistic** | Single aggregate score | Simple pass/fail tasks where decomposition adds no signal |
 | **Atomic** | Binary proposition checklist | When each criterion is a yes/no fact-check |
 
-G-Eval defaults to analytic. The rubric files in this repo use analytic rubrics.
+G-Eval defaults to analytic.
+The rubric files in this repo use analytic rubrics.
 
 ---
 
@@ -65,13 +72,17 @@ Most criteria in this repo are Task-Grounded or Behavior-Grounded. Knowledge-Gro
 
 ## Scoring Bands vs. the 0–10 Scale
 
-The 0–10 scale (10 = flawless, 7 = lowest passing, 0 = total failure) is fixed and shared across all criteria. The per-criterion **scoring bands** tell the judge what "met / partially met / failed" means for that specific criterion - they map observable conditions to the three ranges (7–10, 4–6, 0–3), not to individual integers. The judge then picks the integer within the range using the global scale.
+The 0–10 scale (10 = flawless, 7 = lowest passing, 0 = total failure) is fixed and shared across all criteria.
+The per-criterion **scoring bands** tell the judge what "met / partially met / failed" means for that specific criterion - they map observable conditions to the three ranges (7–10, 4–6, 0–3), not to individual integers.
+The judge then picks the integer within the range using the global scale.
 
 ---
 
 ## Threshold
 
-The gate in this repo uses **threshold 0.6** (= score 6 on the 0–10 scale, normalised). The rubric files set **7 as the lowest passing score** in the scale description, which aligns to 0.7 after normalisation - slightly above the gate threshold, giving a small margin. Do not change the scale's "lowest passing score" annotation without also reviewing the gate threshold in `config/quack.yaml`.
+The gate in this repo uses **threshold 0.6** (= score 6 on the 0–10 scale, normalised).
+The rubric files set **7 as the lowest passing score** in the scale description, which aligns to 0.7 after normalisation - slightly above the gate threshold, giving a small margin.
+Do not change the scale's "lowest passing score" annotation without also reviewing the gate threshold in `config/quack.yaml`.
 
 ---
 

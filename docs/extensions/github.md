@@ -1,6 +1,7 @@
 # GitHub extension
 
-Quack can run as a **GitHub App**. Installed on a repo, it turns labels and `/quack` comments into orchestrator runs, and replies on the issue or PR - posting plans, opening PRs, and leaving reviews as itself.
+Quack can run as a **GitHub App**.
+Installed on a repo, it turns labels and `/quack` comments into orchestrator runs, and replies on the issue or PR - posting plans, opening PRs, and leaving reviews as itself.
 
 The whole loop, driven by a label:
 
@@ -35,23 +36,28 @@ or by mentioning it in a comment:
 
 Every label handler reacts with 👀 the instant it fires, before the run even starts.
 
-**`/quack <request>`, at the START of a line,** is the conversational path - free-form, for anything that doesn't fit a label: "review this PR", "what did you mean by that finding?", "fix the typo in the README". The token must open a line (leading whitespace is fine); it does not match inside a sentence, and it does not match a quoted `> /quack …` reply, so replying to an earlier mention never re-fires it. A mention on a PR that isn't asking for work (a question, a clarification) is answered directly from the conversation so far; it never re-triggers a review. A mention that does ask for review or code changes runs the same way a label would.
+**`/quack <request>`, at the START of a line,** is the conversational path - free-form, for anything that doesn't fit a label: "review this PR", "what did you mean by that finding?", "fix the typo in the README". The token must open a line (leading whitespace is fine); it does not match inside a sentence, and it does not match a quoted `> /quack …` reply, so replying to an earlier mention never re-fires it. A mention on a PR that isn't asking for work (a question, a clarification) is answered directly from the conversation so far; it never re-triggers a review.
+A mention that does ask for review or code changes runs the same way a label would.
 
 **Authorship is the flag on PRs quack opened itself.** No label is needed: quack replies on its own PRs, and a `request_changes` review on one it authored engages it to address the findings - the same "keep it green" treatment `quack:fix` gives a labeled PR, just triggered by having written the PR rather than by a label.
 
-Every path shares one session per issue/PR thread, so context (a plan, a prior review) carries forward regardless of which trigger drove which step. Only one run is ever in flight per thread - a trigger that arrives mid-run is deduplicated with a 👀 rather than started concurrently.
+Every path shares one session per issue/PR thread, so context (a plan, a prior review) carries forward regardless of which trigger drove which step.
+Only one run is ever in flight per thread - a trigger that arrives mid-run is deduplicated with a 👀 rather than started concurrently.
 
 ### CI auto-heal (`quack:fix`)
 
-While a PR carries `quack:fix` - or quack itself authored the PR - any CI/CD failure dispatches a fix run on the PR's existing session: it diagnoses the failing checks, makes the smallest fix, and the trust gate re-pushes the PR in place. **One fix attempt per failure**: if quack's own fix push also fails CI, it stops and comments why instead of trying again - the guard checks whether the commit that just failed CI is one quack itself made (every quack commit carries a fixed system identity), not a counter, so a later failure caused by a genuinely new (human) commit heals again with no relabeling and nothing to reset. Re-applying `quack:fix` clears a prior stop and, if CI is currently failing, fixes it right away.
+While a PR carries `quack:fix` - or quack itself authored the PR - any CI/CD failure dispatches a fix run on the PR's existing session: it diagnoses the failing checks, makes the smallest fix, and the trust gate re-pushes the PR in place. **One fix attempt per failure**: if quack's own fix push also fails CI, it stops and comments why instead of trying again - the guard checks whether the commit that just failed CI is one quack itself made (every quack commit carries a fixed system identity), not a counter, so a later failure caused by a genuinely new (human) commit heals again with no relabeling and nothing to reset.
+Re-applying `quack:fix` clears a prior stop and, if CI is currently failing, fixes it right away.
 
 ### What a triggered run sees
 
 Every dispatch builds a structured envelope, not a hand-assembled paragraph: `<permissions>` (this run's grant, below), `<deliverable>` (the one thing this run should produce), the hoisted `<issue>`/`<pull_request>` title and description, `<comments>` (every comment on first load, only what's new, edited, or deleted since the last dispatch on resume), `<changed_files>` on a PR (name/additions/deletions - no patches; agents read those off the clone), and the triggering `<event>` - GitHub's own webhook JSON, filtered by a fixed drop-list (`node_id`, every `*_url`, `avatar_url`, `reactions`) and nothing else: fields are dropped, never renamed or reshaped, so the model sees the same GitHub shape it's seen a million times in training.
 
-A `<context dir>` in the envelope points at a directory, sibling to the working clone, of the untruncated GitHub API responses the envelope itself only summarizes or caps: `issue.json`, `comments.json`, `pull.json`, `files.json`, `commits.json`, `reviews.json`, `review-comments.json`, `check-runs.json` (plus `annotations-*.json` for any failing check, on a CI-triggered run), `linked-issue-*.json`, `timeline.json`. Sandboxed agents get it mounted read-only.
+A `<context dir>` in the envelope points at a directory, sibling to the working clone, of the untruncated GitHub API responses the envelope itself only summarizes or caps: `issue.json`, `comments.json`, `pull.json`, `files.json`, `commits.json`, `reviews.json`, `review-comments.json`, `check-runs.json` (plus `annotations-*.json` for any failing check, on a CI-triggered run), `linked-issue-*.json`, `timeline.json`.
+Sandboxed agents get it mounted read-only.
 
-The orchestrator gets the full envelope above. A plan's individual nodes get a narrower ask-only slice instead - permissions, deliverable, the hoisted title/description, comments, and (on a CI-fix run) that node's own failing-check detail - never the full file list or the raw event, so a node's own task isn't crowded out by planning-scale evidence it has no use for.
+The orchestrator gets the full envelope above.
+A plan's individual nodes get a narrower ask-only slice instead - permissions, deliverable, the hoisted title/description, comments, and (on a CI-fix run) that node's own failing-check detail - never the full file list or the raw event, so a node's own task isn't crowded out by planning-scale evidence it has no use for.
 
 ### Permissions (the grant)
 
@@ -68,7 +74,8 @@ FINDINGS:
 - other/file.ts:7: another finding
 ```
 
-Quack's trust gate parses that tail (`internal/vetting/answerreview.go`) into a native GitHub review - inline comments anchored to file and line, plus a summary and verdict - and posts it exactly once, after the gate passes. If the gate doesn't pass, nothing is posted from that round. A reviewer answer with no verdict at all still posts as a plain comment-review rather than looping forever waiting for a tail that will never come.
+Quack's trust gate parses that tail (`internal/vetting/answerreview.go`) into a native GitHub review - inline comments anchored to file and line, plus a summary and verdict - and posts it exactly once, after the gate passes. If the gate doesn't pass, nothing is posted from that round.
+A reviewer answer with no verdict at all still posts as a plain comment-review rather than looping forever waiting for a tail that will never come.
 
 One wrinkle: GitHub won't let quack formally approve or request changes on a PR it authored itself (self-review, 422). When that happens, quack's review posts as a `COMMENT`-event review instead - still with real inline comments - and carries the actual verdict in a hidden marker in the review body. `quack:merge` reads that marker (falling back to a formal review state when quack didn't author the PR) to decide whether it's allowed to merge.
 
@@ -102,15 +109,19 @@ Under **Subscribe to events**, check: **Issue comment**, **Issues**, **Pull requ
 
 ### 4. Generate the private key
 
-App page → **Private keys → Generate a private key**. A `.pem` downloads. Keep it secret.
+App page → **Private keys → Generate a private key**.
+A `.pem` downloads.
+Keep it secret.
 
 ### 5. Install the App
 
-App page → **Install App** → pick the account/org → choose the target repos. Note the **Client ID** (`Iv23li…`) on the App page → *About* - that's the recommended JWT issuer (the numeric App ID also works).
+App page → **Install App** → pick the account/org → choose the target repos.
+Note the **Client ID** (`Iv23li…`) on the App page → *About* - that's the recommended JWT issuer (the numeric App ID also works).
 
 ### 6. Configure quack
 
-Add an `extensions.github` block to `quack.yaml`. Secrets are `${ENV}` references - a literal is a startup error:
+Add an `extensions.github` block to `quack.yaml`.
+Secrets are `${ENV}` references - a literal is a startup error:
 
 ```yaml
 extensions:
@@ -148,13 +159,15 @@ export QUACK_GITHUB_PRIVATE_KEY="$(cat quack-github.pem)"
 
 The App's client secret is **not** used - quack authenticates as the App by signing a JWT with the private key, not via OAuth.
 
-The installation token doubles as quack's git credential: when a tool clones or pushes a `github.com` URL and no static credential matches, the extension mints a short-lived token for that repo's installation automatically (never written to disk, never in a URL). A static PAT (`workspace.git_credentials`) still works and wins if both are configured.
+The installation token doubles as quack's git credential: when a tool clones or pushes a `github.com` URL and no static credential matches, the extension mints a short-lived token for that repo's installation automatically (never written to disk, never in a URL).
+A static PAT (`workspace.git_credentials`) still works and wins if both are configured.
 
 When `extensions.github` is absent, the extension isn't built at all - no tools, and `/api/v1/github/webhook` returns `404`.
 
 ### 7. Expose the endpoint
 
-`/api/v1/github/webhook` must be reachable from GitHub over HTTPS. In production, terminate TLS at a reverse proxy in front of quack.
+`/api/v1/github/webhook` must be reachable from GitHub over HTTPS.
+In production, terminate TLS at a reverse proxy in front of quack.
 
 **Local development** - forward GitHub's webhooks to your machine:
 
@@ -180,7 +193,8 @@ A `401` in GitHub's *Recent Deliveries* (App → *Advanced*) means the `webhook_
 
 ## Non-interactive guard policy
 
-A webhook-driven run has no human at a terminal, so it can never clear a `confirm`-tier guard - it pauses (`node_needs_input`) and ends without performing that operation, rather than hanging forever. Quack's shipped default puts `git_push` on `judge+confirm`. For the App to push branches and open PRs autonomously, drop it to `judge`:
+A webhook-driven run has no human at a terminal, so it can never clear a `confirm`-tier guard - it pauses (`node_needs_input`) and ends without performing that operation, rather than hanging forever.
+Quack's shipped default puts `git_push` on `judge+confirm`. For the App to push branches and open PRs autonomously, drop it to `judge`:
 
 ```yaml
 workspace:
@@ -189,7 +203,8 @@ workspace:
     git_push: judge   # was judge+confirm - the human tier can't run in a webhook
 ```
 
-With `judge`, the independent judge model is the only safety check on a push. Surfacing a paused confirmation as a GitHub comment and resuming when a maintainer replies is a possible future improvement, not built today.
+With `judge`, the independent judge model is the only safety check on a push.
+Surfacing a paused confirmation as a GitHub comment and resuming when a maintainer replies is a possible future improvement, not built today.
 
 ## Security
 

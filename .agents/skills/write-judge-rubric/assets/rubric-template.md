@@ -8,7 +8,8 @@
 
 ## How to score
 
-Work through the criteria **in order**. For each one:
+Work through the criteria **in order**.
+For each one:
 
 1. Read its definition and **evaluation steps**.
 2. Reason in one or two sentences about how the answer performs against those steps - cite the specific passage or omission that drives your score.
@@ -30,13 +31,16 @@ Score **substance, not style**: length, fluency, and confident phrasing earn no 
 - **1** - failed badly; actively wrong on this dimension.
 - **0** - total failure, or what this criterion asks for is entirely absent.
 
-**Choosing within a band:** pick the higher number when the criterion is met more completely or the flaw is more trivial; the lower number when it only just clears the band. Do not default to 0, 5, or 10.
+**Choosing within a band:** pick the higher number when the criterion is met more completely or the flaw is more trivial; the lower number when it only just clears the band.
+Do not default to 0, 5, or 10.
 
 ---
 
 ### `criterion_name`
 
-[Description: what this criterion is measuring. State what counts and what does not. Include the key caveat inline if short.]
+[Description: what this criterion is measuring.
+State what counts and what does not.
+Include the key caveat inline if short.]
 
 [Caveat block if needed - e.g. stale knowledge, no retrieval log, no audio, deterministic override.]
 
@@ -68,6 +72,9 @@ Score **substance, not style**: length, fluency, and confident phrasing earn no 
 
 ## Aggregation
 
-Each criterion is an **independent requirement**, scored 0–10 and normalised to 0.0–1.0 (divide by 10). The overall score is the **lowest** criterion - the binding constraint (weakest-link gating). There is **no averaging and no caps**: one failing criterion sinks the answer on its own rather than being averaged away by strong scores elsewhere. The gate passes only when **every** criterion clears the threshold.
+Each criterion is an **independent requirement**, scored 0–10 and normalised to 0.0–1.0 (divide by 10).
+The overall score is the **lowest** criterion - the binding constraint (weakest-link gating).
+There is **no averaging and no caps**: one failing criterion sinks the answer on its own rather than being averaged away by strong scores elsewhere.
+The gate passes only when **every** criterion clears the threshold.
 
 `feedback` must name the lowest-scoring criterion/criteria and what concretely would fix them so the next revision can act on it.

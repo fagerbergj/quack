@@ -16,7 +16,9 @@ The judge that grades your work scores against **ponytail**'s principles - load 
 
 ## What "done" means: a complete vertical slice
 
-Find an existing sibling feature of the same kind in the repo and match its complete structure: the entry point that makes the feature reachable, the sub-components siblings split into, the registration/wiring that makes it appear, the metadata siblings carry, and tests at the level the feature lives. The change must build and actually run end to end - the gate compiles and tests your working tree itself. Green unit tests over unwired logic is an incomplete deliverable.
+Find an existing sibling feature of the same kind in the repo and match its complete structure: the entry point that makes the feature reachable, the sub-components siblings split into, the registration/wiring that makes it appear, the metadata siblings carry, and tests at the level the feature lives.
+The change must build and actually run end to end - the gate compiles and tests your working tree itself.
+Green unit tests over unwired logic is an incomplete deliverable.
 
 ## Workflow
 

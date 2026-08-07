@@ -79,7 +79,8 @@ test: {
 }
 ```
 
-**Jest:** default `maxWorkers` = logical CPUs, isolated process per file. Sharding (Jest 28+) splits across CI machines: `jest --ci --shard=1/4`.
+**Jest:** default `maxWorkers` = logical CPUs, isolated process per file.
+Sharding (Jest 28+) splits across CI machines: `jest --ci --shard=1/4`.
 
 ## Coverage targets (industry baseline)
 
@@ -90,4 +91,5 @@ test: {
 | Functions | 80%+ |
 | Lines | 80%+ |
 
-Threshold breach → exit code 1 → CI fails. Report `lcov`; integrate Codecov/Coveralls + PR comments.
+Threshold breach → exit code 1 → CI fails.
+Report `lcov`; integrate Codecov/Coveralls + PR comments.

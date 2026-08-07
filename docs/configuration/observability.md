@@ -1,6 +1,7 @@
 # Observability
 
-Quack emits traces and metrics via OTel (`internal/otelobs`) but keeps no local store or read API of its own — Tempo/Grafana (or whatever your OTLP collector feeds) own viewing. Emission and export are two separate knobs:
+Quack emits traces and metrics via OTel (`internal/otelobs`) but keeps no local store or read API of its own — Tempo/Grafana (or whatever your OTLP collector feeds) own viewing.
+Emission and export are two separate knobs:
 
 ```yaml
 observability:
@@ -10,9 +11,11 @@ observability:
     sample: 1.0                                # trace sample ratio in (0,1]
 ```
 
-`enabled: false` swaps in the SDK's no-op providers, so every `otelobs.Start`/`Record*` call in the code stays a cheap no-op with no `if enabled` branch at any call site. `otlp_endpoint` unset means spans are still recorded and metrics still accumulate in-process — they're just never shipped anywhere. Set it to actually export (e.g. `http://otel-collector:4318`).
+`enabled: false` swaps in the SDK's no-op providers, so every `otelobs.Start`/`Record*` call in the code stays a cheap no-op with no `if enabled` branch at any call site. `otlp_endpoint` unset means spans are still recorded and metrics still accumulate in-process — they're just never shipped anywhere.
+Set it to actually export (e.g. `http://otel-collector:4318`).
 
-**ADK's own spans come along for free.** ADK v2 takes its tracer from the *global* provider at package-init time (`otel.GetTracerProvider().Tracer("gcp.vertex.agent", …)`), and OpenTelemetry's global package exists precisely to survive that ordering: `otel.SetTracerProvider` walks every tracer handed out earlier and rebinds it to the real provider. So ADK's instrumentation lands in the same OTLP stream as quack's, correlated inside the same trace — a single run carries both:
+**ADK's own spans come along for free.** ADK v2 takes its tracer from the *global* provider at package-init time (`otel.GetTracerProvider().Tracer("gcp.vertex.agent", …)`), and OpenTelemetry's global package exists precisely to survive that ordering: `otel.SetTracerProvider` walks every tracer handed out earlier and rebinds it to the real provider.
+So ADK's instrumentation lands in the same OTLP stream as quack's, correlated inside the same trace — a single run carries both:
 
 ```text
 scope=github.com/fagerbergj/quack   quack.run
@@ -21,11 +24,13 @@ scope=gcp.vertex.agent              invoke_workflow orchestrator-workflow
                                     generate_content qwen3.6-35b
 ```
 
-ADK's spans carry GenAI semantic-convention attributes (model, token usage), so they're worth querying by their `gcp.vertex.agent` scope rather than filtering to `quack.*` only. ADK emits **spans only** — it registers no metric instruments, so every metric below is quack's own. (ADK also ships a `telemetry/setup_otel.go` helper that builds its *own* SDK provider; quack does not use it, which is what keeps everything on one provider.)
+ADK's spans carry GenAI semantic-convention attributes (model, token usage), so they're worth querying by their `gcp.vertex.agent` scope rather than filtering to `quack.*` only.
+ADK emits **spans only** — it registers no metric instruments, so every metric below is quack's own. (ADK also ships a `telemetry/setup_otel.go` helper that builds its *own* SDK provider; quack does not use it, which is what keeps everything on one provider.)
 
 ## Traces
 
-Quack's own spans are named `quack.<name>` (ADK's, above, are not). The vocabulary:
+Quack's own spans are named `quack.<name>` (ADK's, above, are not).
+The vocabulary:
 
 | Span | Covers |
 | --- | --- |
@@ -72,7 +77,8 @@ The active/queued/in-flight gauges (`quack.runs.active`, `quack.runs.queued`, `q
 
 ## Replay ledger
 
-Three seams emit one `gen_ai.*` OTel log event per call — `inference.NewModel` (`chat`), `tools.Build` (`execute_tool`), and the ACP subprocess connection (`invoke_agent`, the full teed protocol conversation) — plus the judge emits one `gen_ai.evaluation.result` per rubric criterion. Every event carries `gen_ai.conversation.id` (the chat id) and the two custom `quack.node`/`quack.round` attributes, stamped once by the vetting gate and read back via `internal/ledger`'s context carrier.
+Three seams emit one `gen_ai.*` OTel log event per call — `inference.NewModel` (`chat`), `tools.Build` (`execute_tool`), and the ACP subprocess connection (`invoke_agent`, the full teed protocol conversation) — plus the judge emits one `gen_ai.evaluation.result` per rubric criterion.
+Every event carries `gen_ai.conversation.id` (the chat id) and the two custom `quack.node`/`quack.round` attributes, stamped once by the vetting gate and read back via `internal/ledger`'s context carrier.
 
 ```yaml
 stores:

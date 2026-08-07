@@ -1,18 +1,23 @@
 # Image reader rubric
 
-The image reader transcribes or extracts text from attached images - handwriting, dense documents, small or degraded print. It has no retrieval tools; everything must come from the attached image. The independent judge evaluates each answer by scoring the criteria below - each on a **0–10 integer scale** - reasoning explicitly before assigning each score.
+The image reader transcribes or extracts text from attached images - handwriting, dense documents, small or degraded print.
+It has no retrieval tools; everything must come from the attached image.
+The independent judge evaluates each answer by scoring the criteria below - each on a **0–10 integer scale** - reasoning explicitly before assigning each score.
 
 ## Judge capabilities
 
-**Images:** The judge receives the original image alongside the answer and can directly compare claims against the source. Evaluate all criteria by inspecting the image directly.
+**Images:** The judge receives the original image alongside the answer and can directly compare claims against the source.
+Evaluate all criteria by inspecting the image directly.
 
-This agent is image-only. If an audio file appears, treat the answer as unanswerable and score `answers_question` at 0.
+This agent is image-only.
+If an audio file appears, treat the answer as unanswerable and score `answers_question` at 0.
 
 ---
 
 ## How to score (G-Eval)
 
-Work through the criteria **in order**. For each one:
+Work through the criteria **in order**.
+For each one:
 
 1. Read its definition and **evaluation steps**.
 2. Reason in one or two sentences about how the answer performs against those steps - cite the specific passage or omission that drives your score.
@@ -22,7 +27,8 @@ Score **substance, not style**: a long, fluent, confident-sounding answer is not
 
 ### The 0–10 scale
 
-The same scale applies to every criterion. The per-criterion **scoring bands** tell you what "met", "partially met", and "failed" mean *for that criterion*; this scale tells you which number within those ranges to pick.
+The same scale applies to every criterion.
+The per-criterion **scoring bands** tell you what "met", "partially met", and "failed" mean *for that criterion*; this scale tells you which number within those ranges to pick.
 
 - **10** - flawless on this criterion; you can find nothing to fault.
 - **9** - met; only a trivial, cosmetic nitpick.
@@ -36,13 +42,15 @@ The same scale applies to every criterion. The per-criterion **scoring bands** t
 - **1** - failed badly; actively wrong on this dimension.
 - **0** - total failure, or the thing this criterion asks for is entirely absent.
 
-**Choosing within a band:** pick the higher number when the criterion is met more completely or the flaw is more trivial; the lower number when it only just clears the band. Do not default to 0, 5, or 10 - if the answer sits between two levels, choose the one whose description fits the dominant impression.
+**Choosing within a band:** pick the higher number when the criterion is met more completely or the flaw is more trivial; the lower number when it only just clears the band.
+Do not default to 0, 5, or 10 - if the answer sits between two levels, choose the one whose description fits the dominant impression.
 
 ---
 
 ### `faithful`
 
-Every statement in the answer traces to something visibly present in the image. Over-inference - drawing conclusions the image does not support - fails this criterion, even when no specific detail is fabricated.
+Every statement in the answer traces to something visibly present in the image.
+Over-inference - drawing conclusions the image does not support - fails this criterion, even when no specific detail is fabricated.
 
 **Evaluation steps.**
 1. Inspect the image directly. Identify every claim in the answer (transcribed text, described objects, layout, relationships).
@@ -50,7 +58,8 @@ Every statement in the answer traces to something visibly present in the image. 
 3. Check whether genuinely illegible text is flagged or given as a best-guess (acceptable) versus confidently asserted as exact (not acceptable).
 4. Score the proportion of claims that are directly traceable to what you can see.
 
-**Stale-knowledge caveat:** the agent may transcribe proper nouns, technical terms, or names that appear in the image but are unfamiliar to you. Do not flag a transcribed word as hallucinated merely because you do not recognise it - only flag it if the image clearly shows different text.
+**Stale-knowledge caveat:** the agent may transcribe proper nouns, technical terms, or names that appear in the image but are unfamiliar to you.
+Do not flag a transcribed word as hallucinated merely because you do not recognise it - only flag it if the image clearly shows different text.
 
 **Scoring bands.**
 - **7–10** - essentially every claim is traceable to the image; uncertain or unclear items are flagged or qualified.
@@ -63,7 +72,9 @@ Every statement in the answer traces to something visibly present in the image. 
 
 The answer contains no detail invented from the model's training knowledge - no specific name, number, date, or quoted phrase stated confidently that is not present in the image. This criterion targets commission errors: things added that were not there, not omissions.
 
-Do **not** score a transcribed proper noun as hallucinated merely because you do not recognise it. A name or term unfamiliar to you may be exactly what the image contains. A specific is suspect only when the answer is internally inconsistent, or when it asserts a detail with no hedge in a context where it could not have been read from the image.
+Do **not** score a transcribed proper noun as hallucinated merely because you do not recognise it.
+A name or term unfamiliar to you may be exactly what the image contains.
+A specific is suspect only when the answer is internally inconsistent, or when it asserts a detail with no hedge in a context where it could not have been read from the image.
 
 **Evaluation steps.**
 1. List every named entity, number, or quoted phrase in the answer.
@@ -79,7 +90,8 @@ Do **not** score a transcribed proper noun as hallucinated merely because you do
 
 ### `completeness`
 
-The answer captures all significant text and content in the image - it does not silently omit sections, labels, or passages. This criterion is distinct from `faithful`: `faithful` asks whether stated claims are supported; `completeness` asks whether important content was missed.
+The answer captures all significant text and content in the image - it does not silently omit sections, labels, or passages.
+This criterion is distinct from `faithful`: `faithful` asks whether stated claims are supported; `completeness` asks whether important content was missed.
 
 **Evaluation steps.**
 1. Scan the image for distinct text regions, labels, and content sections.
@@ -112,7 +124,8 @@ The response addresses exactly what the user asked, in full - not a related-but-
 
 ### `clean_output`
 
-The response is ONLY the answer - it begins directly and ends with it. No preamble ("I can see…", "Let me analyse…"), no process narration, no meta-commentary about image quality or the agent's capabilities. This includes mid-body deliberation: visible self-correction ("Actually, let me reconsider…"), an abandoned or superseded draft left in place, or the same conclusion written out more than once on the way to a final version.
+The response is ONLY the answer - it begins directly and ends with it.
+No preamble ("I can see…", "Let me analyse…"), no process narration, no meta-commentary about image quality or the agent's capabilities. This includes mid-body deliberation: visible self-correction ("Actually, let me reconsider…"), an abandoned or superseded draft left in place, or the same conclusion written out more than once on the way to a final version.
 
 **Evaluation steps.**
 1. Read the first sentence: does the answer begin directly, or with a preamble?
@@ -129,12 +142,16 @@ The response is ONLY the answer - it begins directly and ends with it. No preamb
 
 ## No-text handling
 
-If the image contains no legible text and the answer honestly states this (e.g. "No text is visible in this image"), do not penalise `completeness`. Score `completeness` on whether the disclosure is accurate and the description of what IS visible is reasonable. Score `answers_question` on whether the honest disclosure is an appropriate response to the request.
+If the image contains no legible text and the answer honestly states this (e.g. "No text is visible in this image"), do not penalise `completeness`.
+Score `completeness` on whether the disclosure is accurate and the description of what IS visible is reasonable.
+Score `answers_question` on whether the honest disclosure is an appropriate response to the request.
 
 ---
 
 ## Aggregation
 
-Each criterion is an **independent requirement**, scored 0–10 and normalised to 0.0–1.0 (divide by 10). The overall score is the **lowest** criterion - the binding constraint (weakest-link gating). There is **no averaging and no caps**: a single failing criterion sinks the answer on its own.
+Each criterion is an **independent requirement**, scored 0–10 and normalised to 0.0–1.0 (divide by 10).
+The overall score is the **lowest** criterion - the binding constraint (weakest-link gating).
+There is **no averaging and no caps**: a single failing criterion sinks the answer on its own.
 
 `feedback` must name the lowest-scoring criterion/criteria and what concretely would fix them so the next revision can act on it.

@@ -1,6 +1,8 @@
 # CLI
 
-`quack` is a one-binary CLI and server. There is no TUI: `-p`, `chat send`, and `chat show` are the interface, and their pause/failure exit codes (`0` answered, `1` failed, `2` paused on a question) make them pipeable and scriptable. Every command also runs against a running server over HTTP + SSE (`--server`, or the active one from `quack server add`/`use`) - there's nothing local-only about it except `server run` itself.
+`quack` is a one-binary CLI and server.
+There is no TUI: `-p`, `chat send`, and `chat show` are the interface, and their pause/failure exit codes (`0` answered, `1` failed, `2` paused on a question) make them pipeable and scriptable.
+Every command also runs against a running server over HTTP + SSE (`--server`, or the active one from `quack server add`/`use`) - there's nothing local-only about it except `server run` itself.
 
 Every command has its own `--help`; this page is the map.
 
@@ -17,7 +19,8 @@ Once logged in, `quack chat`/`quack api`/`-p` attach the stored access token to 
 
 ## Running the server
 
-`quack server run` runs the REST + MCP API and the embedded SPA in the foreground (`--config`, `--port`). See [deployment shapes](configuration/deployment.md) for the local-vs-Docker-vs-remote options.
+`quack server run` runs the REST + MCP API and the embedded SPA in the foreground (`--config`, `--port`).
+See [deployment shapes](configuration/deployment.md) for the local-vs-Docker-vs-remote options.
 
 ## One-shot prompts
 
@@ -25,7 +28,8 @@ Once logged in, `quack chat`/`quack api`/`-p` attach the stored access token to 
 quack -p "Research the best time to visit Dublin"
 ```
 
-Prints the answer and exits. Flags: `--events` (also print the pipeline trace - plan, node lifecycle - to stderr), `--attach` (attach a file, e.g. an image, repeatable), `--json` (one JSON result object instead of plain text).
+Prints the answer and exits.
+Flags: `--events` (also print the pipeline trace - plan, node lifecycle - to stderr), `--attach` (attach a file, e.g. an image, repeatable), `--json` (one JSON result object instead of plain text).
 
 ## Chats
 
@@ -58,4 +62,6 @@ Mid-run control over one node in the active DAG (`quack chat node <verb> <chat-i
 
 ## Raw API access
 
-`quack api [method] <path>` is a `gh api`-style passthrough to the REST API - `quack api /health`, `quack api POST /api/v1/chats -d '{"system_prompt":"..."}'`, `-d @body.json` or `-d -` for stdin. Targets the active server (or `--server`); with neither configured, it runs the duck in-process. See [`docs/api.md`](api.md) for the full REST/MCP/A2A surface this rides on.
+`quack api [method] <path>` is a `gh api`-style passthrough to the REST API - `quack api /health`, `quack api POST /api/v1/chats -d '{"system_prompt":"..."}'`, `-d @body.json` or `-d -` for stdin.
+Targets the active server (or `--server`); with neither configured, it runs the duck in-process.
+See [`docs/api.md`](api.md) for the full REST/MCP/A2A surface this rides on.

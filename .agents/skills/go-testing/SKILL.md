@@ -21,7 +21,10 @@ metadata:
 
 ## Overview
 
-Test Go with the standard library first. `go test` is the only runner; `testing`, `net/http/httptest`, and interface injection cover ~95% of cases. Reach for a third-party package only when it earns its place (`require` vs `assert`, golden files, gomock call-order assertions). This skill is the decision layer - which test shape, what to mock, real DB vs fake. Concrete patterns are inline below.
+Test Go with the standard library first. `go test` is the only runner; `testing`, `net/http/httptest`, and interface injection cover ~95% of cases.
+Reach for a third-party package only when it earns its place (`require` vs `assert`, golden files, gomock call-order assertions).
+This skill is the decision layer - which test shape, what to mock, real DB vs fake.
+Concrete patterns are inline below.
 
 ## When to Use
 
@@ -39,7 +42,10 @@ Test Go with the standard library first. `go test` is the only runner; `testing`
 
 ### 1. Default shape: table-driven + subtests
 
-One `TestXxx(*testing.T)` per behavior; a `[]struct` of cases iterated with `t.Run(tt.name, ...)`. Each case is **named** so failures point at the exact row. Add `t.Parallel()` inside the subtest only when cases share no state. Prefer an external test package (`package foo_test`) to test the public API.
+One `TestXxx(*testing.T)` per behavior; a `[]struct` of cases iterated with `t.Run(tt.name, ...)`.
+Each case is **named** so failures point at the exact row.
+Add `t.Parallel()` inside the subtest only when cases share no state.
+Prefer an external test package (`package foo_test`) to test the public API.
 
 ```go
 for _, tt := range tests {
@@ -62,11 +68,13 @@ for _, tt := range tests {
 
 ### 3. Middleware: isolate, then compose
 
-Test the middleware alone against a stub `next` handler (table of header/status cases), **then** once as part of the full chain to catch ordering bugs. Both, not one.
+Test the middleware alone against a stub `next` handler (table of header/status cases), **then** once as part of the full chain to catch ordering bugs.
+Both, not one.
 
 ### 4. Mocking: interfaces + function fields first
 
-Accept interfaces, not concrete types. The stdlib-only mock is a struct of function fields:
+Accept interfaces, not concrete types.
+The stdlib-only mock is a struct of function fields:
 
 ```go
 type MockUserService struct {
@@ -78,7 +86,8 @@ func (m *MockUserService) GetUserByID(id string) (*User, error) {
 }
 ```
 
-Zero deps, sufficient for most cases. Escalate only when justified:
+Zero deps, sufficient for most cases.
+Escalate only when justified:
 - **`gomock`/`mockgen`** - when you must assert call *order*/counts on generated, type-safe mocks.
 - **`mockery`** - simpler CLI generation from interfaces.
 - **`testify`** - `require` (halt on failed precondition) vs `assert` (collect failures), or golden-file comparisons. Lean stdlib otherwise.
@@ -86,7 +95,8 @@ Zero deps, sufficient for most cases. Escalate only when justified:
 
 ### 5. Database: real over sqlmock
 
-Prefer **Testcontainers for Go** (real `postgres:16-alpine` in Docker) over `sqlmock` - sqlmock hides constraint violations, JSON operators, and transaction isolation. `defer container.Terminate(ctx)`, pull the conn string, point the repo at it. Gate these behind the integration split (section 8).
+Prefer **Testcontainers for Go** (real `postgres:16-alpine` in Docker) over `sqlmock` - sqlmock hides constraint violations, JSON operators, and transaction isolation. `defer container.Terminate(ctx)`, pull the conn string, point the repo at it.
+Gate these behind the integration split (section 8).
 
 ### 6. Benchmarks: Go 1.24+ `b.Loop()`
 
@@ -102,7 +112,8 @@ func BenchmarkHandler(b *testing.B) {
 }
 ```
 
-`b.Loop()` prevents dead-code elimination and auto-excludes setup before the loop - no `ResetTimer`/ `StopTimer` needed. Run `go test -bench=. -benchmem`; `-count` to average, `-cpu` for parallelism.
+`b.Loop()` prevents dead-code elimination and auto-excludes setup before the loop - no `ResetTimer`/ `StopTimer` needed.
+Run `go test -bench=. -benchmem`; `-count` to average, `-cpu` for parallelism.
 
 ### 7. TUIs: Bubble Tea
 

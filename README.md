@@ -1,12 +1,15 @@
 # Quack
 
-**Quack** is my own **local LLM helper** - able to handle day-to-day tasks without my constant involvement or hand-holding. The name fits the design: it's the rubber duck that *talks back* (it answers), and whose agents *talk back to each other* (adversarial vetting) before any answer is trusted.
+**Quack** is my own **local LLM helper** - able to handle day-to-day tasks without my constant involvement or hand-holding.
+The name fits the design: it's the rubber duck that *talks back* (it answers), and whose agents *talk back to each other* (adversarial vetting) before any answer is trusted.
 
 ## Philosophy
 
-Quack's bet: a handful of **minimally-scoped agents**, each narrow enough to reason about, **adversarially vetted** against each other, beats trusting one big model to get it right on the first try. A request is decomposed into a DAG of small, single-purpose agents; every agent's output has to survive an independent judge - genuinely different weights, scoring against concrete, per-task criteria - before it counts. The goal is a system that's greater than the sum of its (deliberately small) parts.
+Quack's bet: a handful of **minimally-scoped agents**, each narrow enough to reason about, **adversarially vetted** against each other, beats trusting one big model to get it right on the first try. A request is decomposed into a DAG of small, single-purpose agents; every agent's output has to survive an independent judge - genuinely different weights, scoring against concrete, per-task criteria - before it counts.
+The goal is a system that's greater than the sum of its (deliberately small) parts.
 
-My motivation for building it this way: getting more real use out of smaller open-source models running locally, where no single model can be trusted by default. That constraint shaped the design, but it doesn't require open or local models. An API-backed model slots into the same provider config as anything self-hosted, worker or judge alike.
+My motivation for building it this way: getting more real use out of smaller open-source models running locally, where no single model can be trusted by default.
+That constraint shaped the design, but it doesn't require open or local models. An API-backed model slots into the same provider config as anything self-hosted, worker or judge alike.
 
 ## Quickstart
 
@@ -39,7 +42,8 @@ This is the "fully local, no containers" shape (sqlite, no qdrant). For the Dock
 
 ## Architecture
 
-Quack is a Go monorepo built on **[Google ADK for Go][adk]**. Clients hand it a request through a gateway, and from there the **orchestrator** plans a DAG of agents that runs as one native ADK graph, every node wrapped in quack's own **trust gate** before its output counts. It all sits on pluggable model providers and data stores. Runs happen in the background, stream their progress, and survive a restart.
+Quack is a Go monorepo built on **[Google ADK for Go][adk]**.
+Clients hand it a request through a gateway, and from there the **orchestrator** plans a DAG of agents that runs as one native ADK graph, every node wrapped in quack's own **trust gate** before its output counts. It all sits on pluggable model providers and data stores. Runs happen in the background, stream their progress, and survive a restart.
 
 ```mermaid
 flowchart TB

@@ -81,4 +81,6 @@ it('passes a11y after interaction', async () => {
 
 ## Flaky async tests
 
-Rarely random - deterministic, rooted in implicit shared state. Fix with proper async waits (`findBy*`/`waitFor`), provider/module isolation, and avoiding leaked singletons across files (see `pool`/`isolate` in `ci-and-tooling.md`). Never `setTimeout`/fake timers for async UI.
+Rarely random - deterministic, rooted in implicit shared state.
+Fix with proper async waits (`findBy*`/`waitFor`), provider/module isolation, and avoiding leaked singletons across files (see `pool`/`isolate` in `ci-and-tooling.md`).
+Never `setTimeout`/fake timers for async UI.

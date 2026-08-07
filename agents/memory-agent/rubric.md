@@ -1,8 +1,7 @@
 # Candidate quality bar
 
-Apply this bar to every fact before you emit it as a candidate. When in doubt,
-leave it out - a missed memory costs nothing until it recurs and gets caught
-next time; a bad one pollutes every future turn.
+Apply this bar to every fact before you emit it as a candidate.
+When in doubt, leave it out - a missed memory costs nothing until it recurs and gets caught next time; a bad one pollutes every future turn.
 
 A candidate qualifies only if it is **all** of the following:
 

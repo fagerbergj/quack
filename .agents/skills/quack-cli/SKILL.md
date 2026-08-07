@@ -46,7 +46,8 @@ How quack's terminal client is built and why. One multi-call `quack` binary (cob
 | Wizard forms | **`charmbracelet/huh`** | The `server init` wizard (select/confirm/input). Don't build a form loop by hand. |
 | Command tree | **`spf13/cobra`** | 3-level tree (`quack chat node steer`) + `gh api`-style passthrough. |
 
-**Rejected (and why):** tview / gocui (imperative window model, fights the streaming reducer; gocui unmaintained), termui (unmaintained 2019), gotui (young, dashboard-shaped, not chat), go-prompt (line-prompt only, no full screen). stdlib `flag` is the laziness floor but has no ergonomic nested subcommands - cobra earns its one dependency here. Match the existing stack; do not add another.
+**Rejected (and why):** tview / gocui (imperative window model, fights the streaming reducer; gocui unmaintained), termui (unmaintained 2019), gotui (young, dashboard-shaped, not chat), go-prompt (line-prompt only, no full screen). stdlib `flag` is the laziness floor but has no ergonomic nested subcommands - cobra earns its one dependency here.
+Match the existing stack; do not add another.
 
 ## Where code lives
 
@@ -72,7 +73,8 @@ Mirror the frontend's split (logic separate from rendering, client separate from
 
 ## CLI conventions (house style)
 
-Follow the cross-tool consensus (clig.dev, POSIX utility conventions, Heroku/Atlassian/Microsoft). The rulings that bind quack - most are already in the cobra wiring, so *preserve* them:
+Follow the cross-tool consensus (clig.dev, POSIX utility conventions, Heroku/Atlassian/Microsoft).
+The rulings that bind quack - most are already in the cobra wiring, so *preserve* them:
 
 - **Flags label options; a positional arg names the subject.** Options are named flags (`--server`, `-p`); the *primary subject* (a chat id, a node id) is positional - `quack chat delete <id>`, `quack chat node steer <node> <msg>`. This is the `gh`/`docker` balance, **not** "flags for everything." Give every flag a short alias where one is idiomatic (`-p`).
 - **Names: lowercase, kebab-case, consistent number.** `chat node steer`, never `chatNodeSteer` or `steer-chat`. Don't mix singular/plural across related flags (`--source` *and* `--sources`).

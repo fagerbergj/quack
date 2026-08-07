@@ -1,23 +1,15 @@
 # Code-implementer scoring rubric
 
 This overrides the default rubric (`config/rubric.md`) for `code-implementer`.
-It operationalises the constitution for CODE rather than prose: the criteria
-below are drawn from the researched maintainability/scalability/readability
-literature (`.quack/code-quality-research.md`) plus a first-class **ponytail**
-section - minimalism, YAGNI-as-defect, and diff discipline are scored exactly
-like any other quality dimension, not treated as a style preference.
+It operationalises the constitution for CODE rather than prose: the criteria below are drawn from the researched maintainability/scalability/readability literature (`.quack/code-quality-research.md`) plus a first-class **ponytail** section - minimalism, YAGNI-as-defect, and diff discipline are scored exactly like any other quality dimension, not treated as a style preference.
 
-Score the **diff and the resulting code**, not the commit message or the
-worker's narration. When you have read-only workspace tools (read_file,
-list_dir, glob, grep), OPEN the files the worker touched and ground every
-quality score in what they actually contain - do not infer code quality from
-the answer's description of it. When the task is a small, targeted fix, most
-criteria below should score high near-trivially - a tiny correct diff is not
-"under-engineered," it is the target outcome.
+Score the **diff and the resulting code**, not the commit message or the worker's narration. When you have read-only workspace tools (read_file, list_dir, glob, grep), OPEN the files the worker touched and ground every quality score in what they actually contain - do not infer code quality from the answer's description of it.
+When the task is a small, targeted fix, most criteria below should score high near-trivially - a tiny correct diff is not "under-engineered," it is the target outcome.
 
 ## How to score (G-Eval)
 
-Work through the criteria **in order**. For each one:
+Work through the criteria **in order**.
+For each one:
 
 1. Read its definition and **evaluation steps**.
 2. Reason in one or two sentences about how the change performs against those
@@ -33,10 +25,8 @@ job, all else equal.
 
 ### The 0–10 scale
 
-The same scale applies to every criterion. The per-criterion **scoring
-bands** below tell you what "met", "partially met", and "failed" mean *for
-that criterion*; this scale tells you which number within those ranges to
-pick.
+The same scale applies to every criterion.
+The per-criterion **scoring bands** below tell you what "met", "partially met", and "failed" mean *for that criterion*; this scale tells you which number within those ranges to pick.
 
 - **10** - flawless on this criterion; nothing to fault.
 - **9** - met; only a trivial, cosmetic nitpick.
@@ -51,34 +41,21 @@ pick.
 - **1** - failed badly; actively wrong on this dimension.
 - **0** - total failure, or what this criterion asks for is entirely absent.
 
-**Choosing within a band:** pick the higher number when the criterion is met
-more completely or the flaw is more trivial; the lower number when it only
-just clears the band. Do not default to 0, 5, or 10.
+**Choosing within a band:** pick the higher number when the criterion is met more completely or the flaw is more trivial; the lower number when it only just clears the band.
+Do not default to 0, 5, or 10.
 
-**A note on `checks_pass`.** A deterministic criterion named `checks_pass` may
-already appear in the verdict, set by code (not by you) from actually running
-the plan node's configured build/test commands. Do not duplicate that
-judgment here - if you can see the change compiles and its tests describe
-real behavior, that is enough context for the criteria below; you are not
-re-running the test suite.
+**A note on `checks_pass`.** A deterministic criterion named `checks_pass` may already appear in the verdict, set by code (not by you) from actually running the plan node's configured build/test commands. Do not duplicate that judgment here - if you can see the change compiles and its tests describe real behavior, that is enough context for the criteria below; you are not re-running the test suite.
 
-**The workspace activity ledger.** Your prompt contains a "Workspace activity"
-section: the fs/git/run_command operations the worker ACTUALLY
-performed, reconstructed from its session by code - not from its narration.
-It is ground truth. An operation or outcome the answer asserts that is not
-in the ledger did not happen, no matter how confidently it is described.
-`read_file` entries carry a content sample - use it to spot-check quoted
-file content the same way you would a fetched page.
+**The workspace activity ledger.** Your prompt contains a "Workspace activity" section: the fs/git/run_command operations the worker ACTUALLY performed, reconstructed from its session by code - not from its narration.
+It is ground truth.
+An operation or outcome the answer asserts that is not in the ledger did not happen, no matter how confidently it is described. `read_file` entries carry a content sample - use it to spot-check quoted file content the same way you would a fetched page.
 
 ---
 
 ### `claims_match_activity`
 
-Every operation and outcome the answer asserts - a commit made, a branch
-created, a file written or edited, tests/checks run, file contents quoted or
-paraphrased - is present in the workspace activity ledger. This is the
-fabrication check for CODE work: an answer that narrates work it never
-performed is worse than an answer that honestly reports being blocked.
+Every operation and outcome the answer asserts - a commit made, a branch created, a file written or edited, tests/checks run, file contents quoted or paraphrased - is present in the workspace activity ledger.
+This is the fabrication check for CODE work: an answer that narrates work it never performed is worse than an answer that honestly reports being blocked.
 
 **Evaluation steps.**
 1. List every operation/outcome the answer asserts happened (committed,
@@ -109,10 +86,7 @@ performed is worse than an answer that honestly reports being blocked.
 
 ### `deep_modules`
 
-The change's public surface (new/changed function signatures, exported
-types, config keys) is small relative to the complexity it hides. A shallow
-module with a large API forces every caller to manage complexity that should
-have stayed internal.
+The change's public surface (new/changed function signatures, exported types, config keys) is small relative to the complexity it hides. A shallow module with a large API forces every caller to manage complexity that should have stayed internal.
 
 **Evaluation steps.**
 1. List any new or changed public functions/types/parameters.
@@ -131,12 +105,7 @@ have stayed internal.
 
 ### `change_amplification`
 
-A single logical requirement change is implemented in one place, not
-scattered across many unrelated files. (*Threshold: touching more than ~4
-files for one conceptual change is a signal to look for a missing
-abstraction boundary - but a genuinely repo-wide rename or a config value
-threaded through several layers is not a violation just for touching many
-files; judge whether the SAME concept had to be re-expressed in each one.*)
+A single logical requirement change is implemented in one place, not scattered across many unrelated files. (*Threshold: touching more than ~4 files for one conceptual change is a signal to look for a missing abstraction boundary - but a genuinely repo-wide rename or a config value threaded through several layers is not a violation just for touching many files; judge whether the SAME concept had to be re-expressed in each one.*)
 
 **Evaluation steps.**
 1. Identify the single requirement the task describes.
@@ -157,12 +126,8 @@ files; judge whether the SAME concept had to be re-expressed in each one.*)
 
 ### `complexity_ceiling`
 
-New or changed functions stay within a sane complexity budget: **cyclomatic
-complexity (McCabe) should not exceed 10**, and **cognitive complexity
-(nesting/branching a reader must hold in mind) should not exceed 15**. Both
-are about the same underlying risk - a function too easy to get subtly
-wrong when modified - measured two different ways (path count vs. nesting
-penalty).
+New or changed functions stay within a sane complexity budget: **cyclomatic complexity (McCabe) should not exceed 10**, and **cognitive complexity (nesting/branching a reader must hold in mind) should not exceed 15**.
+Both are about the same underlying risk - a function too easy to get subtly wrong when modified - measured two different ways (path count vs. nesting penalty).
 
 **Evaluation steps.**
 1. For each new/changed function, estimate its branch/loop count (McCabe)
@@ -183,10 +148,7 @@ penalty).
 
 ### `fan_in_fan_out`
 
-A changed module's fan-out (how many other modules it depends on) doesn't
-balloon relative to its fan-in (how many depend on it). *(Threshold:
-fan-out > 6 for a single function/module, absent it being an internal
-framework/orchestration utility, is a flag.)*
+A changed module's fan-out (how many other modules it depends on) doesn't balloon relative to its fan-in (how many depend on it). *(Threshold: fan-out > 6 for a single function/module, absent it being an internal framework/orchestration utility, is a flag.)*
 
 **Evaluation steps.**
 1. Count the distinct packages/modules a new or changed function calls into.
@@ -204,9 +166,7 @@ framework/orchestration utility, is a flag.)*
 
 ### `cohesion`
 
-Within a changed type/module, the methods/functions operate on the same
-underlying data - the change doesn't bolt an unrelated responsibility onto
-an existing type or file.
+Within a changed type/module, the methods/functions operate on the same underlying data - the change doesn't bolt an unrelated responsibility onto an existing type or file.
 
 **Evaluation steps.**
 1. For any type/file the change adds methods or fields to, check whether the
@@ -225,10 +185,7 @@ an existing type or file.
 
 ### `parameter_hygiene`
 
-Function signatures stay short (*threshold: >4 parameters is a flag*), and
-no parameter is a pure pass-through - threaded through an intermediate
-function only to be forwarded, unused, to something further down the call
-chain.
+Function signatures stay short (*threshold: >4 parameters is a flag*), and no parameter is a pure pass-through - threaded through an intermediate function only to be forwarded, unused, to something further down the call chain.
 
 **Evaluation steps.**
 1. Check any new/changed signature's parameter count.
@@ -247,11 +204,7 @@ chain.
 
 ### `delegation_depth`
 
-The change doesn't introduce a new function/class whose body is just a
-one-line call to another function (a decorator or adapter with no logic of
-its own) unless it's genuinely earning its keep (e.g. an interface boundary
-a test needs, or a documented seam for a near-term extension point that
-already has a concrete consumer).
+The change doesn't introduce a new function/class whose body is just a one-line call to another function (a decorator or adapter with no logic of its own) unless it's genuinely earning its keep (e.g. an interface boundary a test needs, or a documented seam for a near-term extension point that already has a concrete consumer).
 
 **Evaluation steps.**
 1. List any new function/method the change adds.
@@ -272,10 +225,7 @@ already has a concrete consumer).
 
 ### `interface_segregation`
 
-A changed or new interface/exported struct isn't a large, monolithic grab
-bag forcing a consumer to depend on methods it never calls. *(Threshold:
->10 public methods on one interface/type that a single consumer doesn't all
-use is a flag.)*
+A changed or new interface/exported struct isn't a large, monolithic grab bag forcing a consumer to depend on methods it never calls. *(Threshold: >10 public methods on one interface/type that a single consumer doesn't all use is a flag.)*
 
 **Evaluation steps.**
 1. For any interface or exported type the change adds to or creates, count
@@ -293,11 +243,8 @@ use is a flag.)*
 
 ### `sloc_limits`
 
-Changed/new functions stay under roughly **40 lines**; changed/new files
-stay under roughly **800 lines**. These are guidelines for "does a reviewer
-have to scroll back and forth to hold this in mind," not hard walls - a
-table-driven function or a generated-style block that's mechanically
-repetitive is not the same defect as genuinely tangled long logic.
+Changed/new functions stay under roughly **40 lines**; changed/new files stay under roughly **800 lines**.
+These are guidelines for "does a reviewer have to scroll back and forth to hold this in mind," not hard walls - a table-driven function or a generated-style block that's mechanically repetitive is not the same defect as genuinely tangled long logic.
 
 **Evaluation steps.**
 1. Estimate the line count of any new/changed function and any file grown
@@ -317,9 +264,7 @@ repetitive is not the same defect as genuinely tangled long logic.
 
 ### `naming_and_comments`
 
-Identifiers communicate intent without being unwieldy, and comments explain
-**why** (business constraint, historical reason, non-obvious tradeoff) -
-never restate **what** the next line already says.
+Identifiers communicate intent without being unwieldy, and comments explain **why** (business constraint, historical reason, non-obvious tradeoff) - never restate **what** the next line already says.
 
 **Evaluation steps.**
 1. Scan new/changed identifiers for vague names (`processData`, `doStuff`,
@@ -339,10 +284,7 @@ never restate **what** the next line already says.
 
 ### `explicit_interfaces`
 
-A public function's signature alone (types, parameter names - no body, no
-doc comment needed) makes it obvious what valid arguments look like and
-what it returns. Avoid generic `any`/`interface{}`/untyped-map parameters
-where a concrete type would do the same job.
+A public function's signature alone (types, parameter names - no body, no doc comment needed) makes it obvious what valid arguments look like and what it returns. Avoid generic `any`/`interface{}`/untyped-map parameters where a concrete type would do the same job.
 
 **Evaluation steps.**
 1. Read each new/changed public signature as if seeing only the signature.
@@ -363,11 +305,7 @@ where a concrete type would do the same job.
 
 ### `error_handling`
 
-Edge cases that can be handled safely inline are - the change doesn't wrap
-a trivial, always-recoverable case in exception/error-boilerplate that
-obscures the happy path (e.g. a `try/catch` around one call whose only
-handler does `return false`, when the callee could simply return that
-directly).
+Edge cases that can be handled safely inline are - the change doesn't wrap a trivial, always-recoverable case in exception/error-boilerplate that obscures the happy path (e.g. a `try/catch` around one call whose only handler does `return false`, when the callee could simply return that directly).
 
 **Evaluation steps.**
 1. Look for new error/exception handling blocks.
@@ -387,20 +325,11 @@ directly).
 
 ## Ponytail - minimalism as a first-class defect category
 
-These criteria operationalise the ponytail discipline the implementer itself
-works under (the vendored `ponytail` skill - `.agents/vendor/ponytail`, which
-the worker loads before writing code) into this rubric's 0–10 scoring
-contract. They are not softer than the ones above; a violation here is
-scored exactly like a correctness or structure defect, because unnecessary
-code is a maintenance liability the same way a bug is.
+These criteria operationalise the ponytail discipline the implementer itself works under (the vendored `ponytail` skill - `.agents/vendor/ponytail`, which the worker loads before writing code) into this rubric's 0–10 scoring contract. They are not softer than the ones above; a violation here is scored exactly like a correctness or structure defect, because unnecessary code is a maintenance liability the same way a bug is.
 
 ### `yagni_speculative_generality`
 
-*(Combines the research literature's YAGNI criterion with ponytail's
-"question whether it needs to exist" principle - they are the same defect
-seen from two angles.)* No interface, config knob, parameter, or code path
-exists to serve a hypothetical future use case rather than this task's
-actual, concrete requirement.
+*(Combines the research literature's YAGNI criterion with ponytail's "question whether it needs to exist" principle - they are the same defect seen from two angles.)* No interface, config knob, parameter, or code path exists to serve a hypothetical future use case rather than this task's actual, concrete requirement.
 
 **Evaluation steps.**
 1. Audit every new abstraction (interface, base type, parameterized
@@ -420,10 +349,7 @@ actual, concrete requirement.
 
 ### `native_first`
 
-The change reaches for the standard library and the platform's native
-features before a third-party dependency, and before hand-rolled code that
-duplicates either. A new dependency is added only when the standard library
-and the platform genuinely can't do the job.
+The change reaches for the standard library and the platform's native features before a third-party dependency, and before hand-rolled code that duplicates either. A new dependency is added only when the standard library and the platform genuinely can't do the job.
 
 **Evaluation steps.**
 1. List any new import, especially any new third-party dependency
@@ -446,9 +372,7 @@ and the platform genuinely can't do the job.
 
 ### `diff_minimality`
 
-The diff is the shortest one that correctly and completely satisfies the
-task - no unrelated refactors, renames, formatting-only churn, or
-"while I'm here" cleanups bundled in alongside the actual fix.
+The diff is the shortest one that correctly and completely satisfies the task - no unrelated refactors, renames, formatting-only churn, or "while I'm here" cleanups bundled in alongside the actual fix.
 
 **Evaluation steps.**
 1. Identify which parts of the diff are required by the stated task.
@@ -466,10 +390,8 @@ task - no unrelated refactors, renames, formatting-only churn, or
 
 ### `deletion_over_addition`
 
-When a correct fix could be achieved either by adding code or by removing
-code (dead branches, an unused parameter, a redundant check, a needless
-wrapper), the change prefers removal. The change doesn't leave dead code,
-commented-out code, or now-unreachable branches behind.
+When a correct fix could be achieved either by adding code or by removing code (dead branches, an unused parameter, a redundant check, a needless wrapper), the change prefers removal.
+The change doesn't leave dead code, commented-out code, or now-unreachable branches behind.
 
 **Evaluation steps.**
 1. Check whether the task or the surrounding code offered an opportunity to
@@ -490,21 +412,14 @@ commented-out code, or now-unreachable branches behind.
 
 ## Delivery - does the change actually land, and land legibly
 
-The criteria above score the code itself. These two score the OUTWARD-FACING
-half of the job: whether the change was delivered the way the task needed,
-and whether a human reading the git history later can tell what happened and
-why. Judge substance over form here too - a scrappy but accurate branch name
-and commit message beat a slick one that oversells the change. Naming
-conventions are guidance, not a fixed format: don't penalize a
-repo-appropriate style choice (e.g. a repo with no `feat:`/`fix:` convention
-doesn't need one invented) as long as the message is genuinely descriptive of
-what changed and why.
+The criteria above score the code itself.
+These two score the OUTWARD-FACING half of the job: whether the change was delivered the way the task needed, and whether a human reading the git history later can tell what happened and why.
+Judge substance over form here too - a scrappy but accurate branch name and commit message beat a slick one that oversells the change.
+Naming conventions are guidance, not a fixed format: don't penalize a repo-appropriate style choice (e.g. a repo with no `feat:`/`fix:` convention doesn't need one invented) as long as the message is genuinely descriptive of what changed and why.
 
 ### `commit_hygiene`
 
-The branch name and commit message(s) are specific to THIS change, and the
-commit is scoped to what the task actually needed - not a blind sweep of
-everything sitting in the working tree.
+The branch name and commit message(s) are specific to THIS change, and the commit is scoped to what the task actually needed - not a blind sweep of everything sitting in the working tree.
 
 **Evaluation steps.**
 1. Check the branch name (from the `git_branch`/`git_commit` ledger entries):
@@ -538,10 +453,7 @@ everything sitting in the working tree.
 
 ### `task_completeness`
 
-The change is delivered as far as the task actually required - not just
-"code compiles and is committed locally" when the task implies more (pushing
-the branch, opening a PR, applying a change now rather than merely proposing
-it).
+The change is delivered as far as the task actually required - not just "code compiles and is committed locally" when the task implies more (pushing the branch, opening a PR, applying a change now rather than merely proposing it).
 
 **Evaluation steps.**
 1. From the task description, decide what "done" means here: many tasks are
@@ -571,16 +483,8 @@ it).
 
 ## Aggregation
 
-Each criterion is an **independent requirement**, scored 0–10 and
-normalised to 0.0–1.0 (divide by 10). The overall score is the **lowest**
-criterion - the binding constraint (weakest-link gating). There is **no
-averaging and no caps**: one fatal failure (a 500-line function, a
-dependency added to duplicate `strings.TrimSpace`, an interface built for a
-consumer that doesn't exist) sinks the change on its own rather than being
-averaged away by strong scores elsewhere. The gate passes only when
-**every** criterion clears the threshold.
+Each criterion is an **independent requirement**, scored 0–10 and normalised to 0.0–1.0 (divide by 10).
+The overall score is the **lowest** criterion - the binding constraint (weakest-link gating).
+There is **no averaging and no caps**: one fatal failure (a 500-line function, a dependency added to duplicate `strings.TrimSpace`, an interface built for a consumer that doesn't exist) sinks the change on its own rather than being averaged away by strong scores elsewhere. The gate passes only when **every** criterion clears the threshold.
 
-`feedback` must name the lowest-scoring criterion/criteria and what
-concretely would fix them - point at the specific function, file, or line
-behavior, not a general restatement of the criterion's definition - so the
-next revision can act on it directly.
+`feedback` must name the lowest-scoring criterion/criteria and what concretely would fix them - point at the specific function, file, or line behavior, not a general restatement of the criterion's definition - so the next revision can act on it directly.

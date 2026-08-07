@@ -25,7 +25,8 @@ Small `.txt` files are injected at runtime based on session state, not baked int
 
 ## Plugin Hooks
 
-A plugin hook (`experimental.chat.system.transform`) allows plugins to mutate the system array. Safety fallback restores original if the result is empty [source](https://gist.github.com/rmk40/cde7a98c1c90614a27478216cc01551f).
+A plugin hook (`experimental.chat.system.transform`) allows plugins to mutate the system array.
+Safety fallback restores original if the result is empty [source](https://gist.github.com/rmk40/cde7a98c1c90614a27478216cc01551f).
 
 ## Cache Optimization
 

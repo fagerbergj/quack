@@ -1,12 +1,14 @@
 # huh-wizard - form recipes
 
-Copy-ready form skeletons for the decisions in `SKILL.md`. v1 (`github.com/charmbracelet/huh v1.0.0`). Adapt, don't drop in blind. For the rubber-duck theme + `runForm` wrapper, see `theme.md`.
+Copy-ready form skeletons for the decisions in `SKILL.md`. v1 (`github.com/charmbracelet/huh v1.0.0`).
+Adapt, don't drop in blind. For the rubber-duck theme + `runForm` wrapper, see `theme.md`.
 
 ---
 
 ## The two-form shape (one I/O break, everything else merged)
 
-`server init` is **two** forms: the provider (which yields the endpoint), then - after the `/models` fetch - one big form for models + features + stores + review. The fetch is the only reason to split; see SKILL idiom #1.
+`server init` is **two** forms: the provider (which yields the endpoint), then - after the `/models` fetch - one big form for models + features + stores + review.
+The fetch is the only reason to split; see SKILL idiom #1.
 
 ```go
 func ServerInit(ctx context.Context, outPath string, force bool) error {
@@ -74,7 +76,8 @@ func selectOrInput(manual bool, opts []huh.Option[string], val *string) huh.Fiel
 
 ## Conditional store groups (`WithHideFunc`, same form)
 
-Sections gated on an earlier answer stay in the form and hide themselves - no second form, back-nav intact. Gate the *emit* on the same flags so a hidden group's default never lands in the output.
+Sections gated on an earlier answer stay in the form and hide themselves - no second form, back-nav intact.
+Gate the *emit* on the same flags so a hidden group's default never lands in the output.
 
 Give **every** group a `.Title()` - it's the section header. A conditional group with only field titles reads as headerless next to the ones that have a header. `storeGroup` sets the group title to the store name and uses generic field titles ("Backend"/"URL") so the name isn't printed twice.
 
@@ -103,11 +106,14 @@ func storeGroup(title string, kinds []string, kind, url *string, defKind string)
 }
 ```
 
-**A field default that tracks another field's selection** = `PlaceholderFunc(fn, binding)`. huh hashes the binding *by value* (via `hashstructure`, which dereferences pointers), so passing the `*string` you bound to the select re-runs the func whenever the selected kind changes. There's no `ValueFunc`, so the pattern is: leave the value blank, show the live default as the *placeholder*, and have the consumer treat blank as "use the default for this kind" (here `cli.DefaultBackendURL` is the single source of truth for both the placeholder and the emitter). Accepting the default is then just pressing enter.
+**A field default that tracks another field's selection** = `PlaceholderFunc(fn, binding)`. huh hashes the binding *by value* (via `hashstructure`, which dereferences pointers), so passing the `*string` you bound to the select re-runs the func whenever the selected kind changes. There's no `ValueFunc`, so the pattern is: leave the value blank, show the live default as the *placeholder*, and have the consumer treat blank as "use the default for this kind" (here `cli.DefaultBackendURL` is the single source of truth for both the placeholder and the emitter).
+Accepting the default is then just pressing enter.
 
 ## The final review/confirm gate (one screen, live summary, honored confirm)
 
-Note + Confirm in **one group** → the summary and the Yes/No render together (separate groups = two screens). The `Note` is non-interactive so navigation skips to the confirm. `Note.DescriptionFunc` recomputes after a back-up-and-edit; the static `Description(string)` would show stale values. And `ok` must be **checked** by the caller - `Confirm` only records it.
+Note + Confirm in **one group** → the summary and the Yes/No render together (separate groups = two screens).
+The `Note` is non-interactive so navigation skips to the confirm. `Note.DescriptionFunc` recomputes after a back-up-and-edit; the static `Description(string)` would show stale values.
+And `ok` must be **checked** by the caller - `Confirm` only records it.
 
 ```go
 func reviewGroup(a *cli.InitAnswers, feats *[]string, outPath string, ok *bool) *huh.Group {

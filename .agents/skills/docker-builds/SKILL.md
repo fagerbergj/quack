@@ -36,13 +36,15 @@ How quack's container build is structured and why. One multi-stage `Dockerfile` 
 
 ## The two goals
 
-**1. Fast builds - maximise cache hits, do redundant work once.**
+**1.
+Fast builds - maximise cache hits, do redundant work once.**
 
 - **Order layers least- → most-frequently-changed.** Dependency manifests + install (`package.json`/`go.mod` → `npm ci`/`go mod download`) come *before* `COPY . .`, so editing source doesn't reinstall dependencies. This is already correct in the Dockerfile - preserve it.
 - **BuildKit cache mounts** (`--mount=type=cache`) persist a package manager's *download* cache across builds without committing it to a layer. Quack mounts `/root/.npm` (npm), `/go/pkg/mod` (go mod), and `/root/.cache/go-build` (go build). Add one when a `RUN` re-downloads/re-compiles the same artifacts every build.
 - **Multi-stage parallelism** - independent stages (the `frontend` and `backend` stages) build concurrently under BuildKit. Keep stages independent where possible.
 
-**2. Small, safe images - ship only the binary, run unprivileged.**
+**2.
+Small, safe images - ship only the binary, run unprivileged.**
 
 - **Multi-stage discards build tooling.** The final stage `COPY --from`s only the compiled artifacts; node, the Go toolchain, and all caches stay in earlier stages. This is the #1 size lever and is already in place.
 - **Distroless + non-root.** The runtime is `gcr.io/distroless/static-debian12:nonroot` - no shell, no package manager, runs as UID 65532. Safe because the server writes nothing to disk at runtime (state → Postgres) and binds the unprivileged port 8080.

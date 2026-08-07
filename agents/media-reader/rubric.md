@@ -1,12 +1,17 @@
 # Media reader rubric
 
-The media reader extracts, transcribes, or describes content from attached images and audio. It has no retrieval tools - everything must come from the attached media. The independent judge evaluates each answer by scoring the criteria below - each on a **0–10 integer scale** - reasoning explicitly before assigning each score.
+The media reader extracts, transcribes, or describes content from attached images and audio.
+It has no retrieval tools - everything must come from the attached media.
+The independent judge evaluates each answer by scoring the criteria below - each on a **0–10 integer scale** - reasoning explicitly before assigning each score.
 
 ## Judge capabilities
 
-**Images:** The judge receives the original image alongside the answer and can directly compare claims against the source. Evaluate `faithful` and `no_hallucination` by inspecting the image directly.
+**Images:** The judge receives the original image alongside the answer and can directly compare claims against the source.
+Evaluate `faithful` and `no_hallucination` by inspecting the image directly.
 
-**Audio:** The judge cannot hear audio. For audio-only inputs, evaluate `faithful` and `no_hallucination` by checking whether the answer hedges appropriately, flags uncertain passages, and avoids confident assertion of specifics (names, numbers, quoted phrases) that cannot be verified. Do **not** penalise an answer merely because you cannot personally confirm a transcribed detail - the absence of your perception is not evidence of fabrication.
+**Audio:** The judge cannot hear audio.
+For audio-only inputs, evaluate `faithful` and `no_hallucination` by checking whether the answer hedges appropriately, flags uncertain passages, and avoids confident assertion of specifics (names, numbers, quoted phrases) that cannot be verified.
+Do **not** penalise an answer merely because you cannot personally confirm a transcribed detail - the absence of your perception is not evidence of fabrication.
 
 When the input contains both an image and audio (e.g. a screenshot paired with a transcript), apply direct image verification to visual claims and hedging-based evaluation to audio-derived claims.
 
@@ -14,7 +19,8 @@ When the input contains both an image and audio (e.g. a screenshot paired with a
 
 ## How to score (G-Eval)
 
-Work through the criteria **in order**. For each one:
+Work through the criteria **in order**.
+For each one:
 
 1. Read its definition and **evaluation steps**.
 2. Reason in one or two sentences about how the answer performs against those steps - cite the specific passage or omission that drives your score.
@@ -24,7 +30,8 @@ Score **substance, not style**: a long, fluent, confident-sounding answer is not
 
 ### The 0–10 scale
 
-The same scale applies to every criterion. The per-criterion **scoring bands** tell you what "met", "partially met", and "failed" mean *for that criterion*; this scale tells you which number within those ranges to pick.
+The same scale applies to every criterion.
+The per-criterion **scoring bands** tell you what "met", "partially met", and "failed" mean *for that criterion*; this scale tells you which number within those ranges to pick.
 
 - **10** - flawless on this criterion; you can find nothing to fault.
 - **9** - met; only a trivial, cosmetic nitpick.
@@ -38,13 +45,15 @@ The same scale applies to every criterion. The per-criterion **scoring bands** t
 - **1** - failed badly; actively wrong on this dimension.
 - **0** - total failure, or the thing this criterion asks for is entirely absent.
 
-**Choosing within a band:** pick the higher number when the criterion is met more completely or the flaw is more trivial; the lower number when it only just clears the band. Do not default to 0, 5, or 10 - if the answer sits between two levels, choose the one whose description fits the dominant impression.
+**Choosing within a band:** pick the higher number when the criterion is met more completely or the flaw is more trivial; the lower number when it only just clears the band.
+Do not default to 0, 5, or 10 - if the answer sits between two levels, choose the one whose description fits the dominant impression.
 
 ---
 
 ### `faithful`
 
-Every statement in the answer traces to something visibly or audibly present in the media. Over-inference - drawing conclusions the media does not support - fails this criterion, even when no specific detail is fabricated.
+Every statement in the answer traces to something visibly or audibly present in the media.
+Over-inference - drawing conclusions the media does not support - fails this criterion, even when no specific detail is fabricated.
 
 **Evaluation steps - image input (you can see the image).**
 1. Inspect the image directly. Identify every claim in the answer (described objects, text, layout, relationships).
@@ -69,7 +78,9 @@ Every statement in the answer traces to something visibly or audibly present in 
 
 The answer contains no detail invented from the model's training knowledge - no specific name, number, date, or quoted phrase stated confidently that is not present in the media. This criterion targets commission errors: things added that were not there, not omissions.
 
-Do **not** score a proper noun as hallucinated merely because you do not recognise it. A name or term you are unfamiliar with may be exactly what the media contains. A specific is suspect only when the answer's own text is internally inconsistent, or when the model asserts it with no hedge in a context where it could not have read it from the media.
+Do **not** score a proper noun as hallucinated merely because you do not recognise it.
+A name or term you are unfamiliar with may be exactly what the media contains.
+A specific is suspect only when the answer's own text is internally inconsistent, or when the model asserts it with no hedge in a context where it could not have read it from the media.
 
 **Evaluation steps - image input (you can see the image).**
 1. List every named entity, number, or quoted phrase in the answer.
@@ -106,7 +117,8 @@ The response addresses exactly what the user asked, in full - not a related-but-
 
 ### `internally_consistent`
 
-The answer does not contradict itself, and its conclusions follow from the content it presents. This criterion is about self-contradiction - not about faithfulness to the media (which `faithful` covers).
+The answer does not contradict itself, and its conclusions follow from the content it presents.
+This criterion is about self-contradiction - not about faithfulness to the media (which `faithful` covers).
 
 **Evaluation steps.**
 1. Check for self-contradiction: a claim in one section undercut by a claim in another.
@@ -122,7 +134,8 @@ The answer does not contradict itself, and its conclusions follow from the conte
 
 ### `clean_output`
 
-The response is ONLY the answer - it begins directly with the answer and ends with it. No preamble ("I can see…", "Let me analyse…"), no process narration, no meta-commentary about the media format or the agent's capabilities. This includes mid-body deliberation: visible self-correction ("Actually, let me reconsider…"), an abandoned or superseded draft left in place, or the same conclusion written out more than once on the way to a final version.
+The response is ONLY the answer - it begins directly with the answer and ends with it.
+No preamble ("I can see…", "Let me analyse…"), no process narration, no meta-commentary about the media format or the agent's capabilities. This includes mid-body deliberation: visible self-correction ("Actually, let me reconsider…"), an abandoned or superseded draft left in place, or the same conclusion written out more than once on the way to a final version.
 
 **Evaluation steps.**
 1. Read the first sentence: does the answer begin directly, or with a preamble?
@@ -139,6 +152,8 @@ The response is ONLY the answer - it begins directly with the answer and ends wi
 
 ## Aggregation
 
-Each criterion is an **independent requirement**, scored 0–10 and normalised to 0.0–1.0 (divide by 10). The overall score is the **lowest** criterion - the binding constraint (weakest-link gating). There is **no averaging and no caps**: a single failing criterion sinks the answer on its own.
+Each criterion is an **independent requirement**, scored 0–10 and normalised to 0.0–1.0 (divide by 10).
+The overall score is the **lowest** criterion - the binding constraint (weakest-link gating).
+There is **no averaging and no caps**: a single failing criterion sinks the answer on its own.
 
 `feedback` must name the lowest-scoring criterion/criteria and what concretely would fix them so the next revision can act on it.

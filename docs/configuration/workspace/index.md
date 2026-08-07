@@ -67,7 +67,8 @@ workspace:
 
 `git_credentials` is deployment-level, one HTTPS identity per host. `token` must be an `${VAR}` reference in the raw YAML - a literal here is a startup error, checked on the raw file text before `${VAR}` expansion, so it can't slip through as a "just for now" secret. Never put a credential in a clone URL; `git_clone` rejects that outright.
 
-`git_push` gates the one outward-facing, non-undoable git operation. Even when `true`, `git_push` can never force-push (unexpressible - no argv path ever adds `--force`) and refuses `main`/`master`.
+`git_push` gates the one outward-facing, non-undoable git operation.
+Even when `true`, `git_push` can never force-push (unexpressible - no argv path ever adds `--force`) and refuses `main`/`master`.
 
 ## The guard ladder
 
@@ -89,4 +90,7 @@ quack's shipped defaults guard `delete_path: judge`, `git_rebase: judge`, `git_p
 
 ### A webhook / autonomous deployment must drop `git_push` off `confirm`
 
-The `confirm` tier pauses the run for a *human* to approve or deny. A webhook-triggered run - `quack:implement` on an issue, an auto-review on PR open - has no human sitting in the loop to answer that pause; a `confirm`-gated `git_push` in that path would just hang forever. That's why delivery in the ACP world is gate-owned rather than tool-gated: the trust gate decides whether the work is good enough to push, and a gate-failed PR opens as a draft instead of pausing for a confirmation nobody's there to give. If you do re-introduce a `confirm`-tiered tool into an autonomous path, make sure something on that path can actually answer the pause, or budget for the run timing out.
+The `confirm` tier pauses the run for a *human* to approve or deny.
+A webhook-triggered run - `quack:implement` on an issue, an auto-review on PR open - has no human sitting in the loop to answer that pause; a `confirm`-gated `git_push` in that path would just hang forever.
+That's why delivery in the ACP world is gate-owned rather than tool-gated: the trust gate decides whether the work is good enough to push, and a gate-failed PR opens as a draft instead of pausing for a confirmation nobody's there to give.
+If you do re-introduce a `confirm`-tiered tool into an autonomous path, make sure something on that path can actually answer the pause, or budget for the run timing out.

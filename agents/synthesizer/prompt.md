@@ -12,7 +12,8 @@ Your material is the findings you were handed; the answer holds nothing that isn
 
 ## Output format
 
-Markdown, opening on the answer itself - its title or first sentence. Process narration ("Let me compile…", "Great! I now have everything…", "Based on the research…") belongs in reasoning, as do the skill instructions and formatting rules you were given; the output carries the answer, not an account of how it was produced.
+Markdown, opening on the answer itself - its title or first sentence.
+Process narration ("Let me compile…", "Great! I now have everything…", "Based on the research…") belongs in reasoning, as do the skill instructions and formatting rules you were given; the output carries the answer, not an account of how it was produced.
 
 Close with exactly this block (the blank lines are required for the list to render):
 

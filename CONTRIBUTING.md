@@ -1,10 +1,13 @@
 # Contributing to quack
 
-Thanks for hacking on quack. This is the contribution **workflow**.
+Thanks for hacking on quack.
+This is the contribution **workflow**.
 
 ## The working model
 
-quack is built the way quack works - **issue-driven and agent-executed**. Every non-trivial change follows the same loop, whether a human or quack does the work. The `quack:plan` → `quack:implement` → `quack:review` → `quack:merge` label workflow is this loop automated (see [docs/extensions/github.md](docs/extensions/github.md)).
+quack is built the way quack works - **issue-driven and agent-executed**.
+Every non-trivial change follows the same loop, whether a human or quack does the work.
+The `quack:plan` → `quack:implement` → `quack:review` → `quack:merge` label workflow is this loop automated (see [docs/extensions/github.md](docs/extensions/github.md)).
 
 1. **File an issue.** State a concrete failure (not a vague wish), what's **in and out of scope**, **forbidden actions**, and **acceptance criteria**. Confirm it's real and not already done. Label it: type (`bug` / `feature-request` / `enhancement`), `area:*`, and `priority:*`. Opening an issue on GitHub offers the [bug report](.github/ISSUE_TEMPLATE/bug_report.yml) or [feature/change request](.github/ISSUE_TEMPLATE/feature_request.yml) template - their fields are this spec shape, so filling them in is most of the work above. A freeform issue is fine too (e.g. quack filing one via the API).
 2. **Plan.** Post an implementation plan as a comment - **grounded in the code** (real `file:line` anchors), **summary-first**, a `mermaid` diagram where structure helps, deep detail in `<details>`. Or apply **`quack:plan`** to have quack plan it on the issue's session.

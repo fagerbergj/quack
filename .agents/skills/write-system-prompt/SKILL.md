@@ -43,7 +43,8 @@ metadata:
 
 ## Step 2 - Seven-Section Template
 
-Every production prompt follows this structure. Use `assets/skeleton-system-prompt.md` as a clean fill-in copy.
+Every production prompt follows this structure.
+Use `assets/skeleton-system-prompt.md` as a clean fill-in copy.
 
 ```markdown
 ### 1. ROLE / IDENTITY
@@ -85,17 +86,32 @@ When uncertain, ask at most 2 clarifying questions before proceeding.
 
 ## Step 3 - Design Principles
 
-**A. Front-load critical rules.** LLMs bias toward the peripheries of a prompt - the very start and end. Put safety constraints and must-follow rules at both ends, never buried in the middle. (Source: HumanLayer CLAUDE.md analysis)
+**A.
+Front-load critical rules.** LLMs bias toward the peripheries of a prompt - the very start and end.
+Put safety constraints and must-follow rules at both ends, never buried in the middle. (Source: HumanLayer CLAUDE.md analysis)
 
-**B. Fewer, better instructions.** Frontier thinking models follow ~150–200 instructions reliably; smaller models degrade exponentially past ~50. Instruction-following quality weakens *uniformly* as count grows - not just for newer rules. Keep core prompts under 50 instructions; use progressive disclosure for the rest.
+**B.
+Fewer, better instructions.** Frontier thinking models follow ~150–200 instructions reliably; smaller models degrade exponentially past ~50.
+Instruction-following quality weakens *uniformly* as count grows - not just for newer rules.
+Keep core prompts under 50 instructions; use progressive disclosure for the rest.
 
-**C. Progressive disclosure.** Core prompt holds universal rules only. Task-specific and project-specific guidance lives in separate files the agent is told to read before acting. Target under 300 lines for `CLAUDE.md`/`AGENTS.md`. (Source: HumanLayer context engineering research)
+**C.
+Progressive disclosure.** Core prompt holds universal rules only.
+Task-specific and project-specific guidance lives in separate files the agent is told to read before acting.
+Target under 300 lines for `CLAUDE.md`/`AGENTS.md`. (Source: HumanLayer context engineering research)
 
-**D. Provider-specific tuning.** Claude: numbered lists, explicit always/never. GPT: detailed planning, self-correction loops. Gemini: explicit step-by-step reasoning. Multi-model targets should be provider-agnostic. See `references/opencode-patterns.md` for OpenCode's per-provider file approach.
+**D.
+Provider-specific tuning.** Claude: numbered lists, explicit always/never.
+GPT: detailed planning, self-correction loops.
+Gemini: explicit step-by-step reasoning.
+Multi-model targets should be provider-agnostic.
+See `references/opencode-patterns.md` for OpenCode's per-provider file approach.
 
-**E. Negative constraints outperform positive ones.** "No silent defaults - fail loudly on missing config" prevents more bugs than "handle configuration carefully." See `references/lean-prompts-benchmarks.md` for the 4000→350-word experiment showing how bloat causes instruction-following collapse.
+**E.
+Negative constraints outperform positive ones.** "No silent defaults - fail loudly on missing config" prevents more bugs than "handle configuration carefully." See `references/lean-prompts-benchmarks.md` for the 4000→350-word experiment showing how bloat causes instruction-following collapse.
 
-**F. Constraints must be atomic and testable.** "Never write to system directories" passes; "Be safe with file operations" fails - a model can't self-check against a vague rule.
+**F.
+Constraints must be atomic and testable.** "Never write to system directories" passes; "Be safe with file operations" fails - a model can't self-check against a vague rule.
 
 ## Step 4 - Tool Declarations
 
@@ -112,4 +128,5 @@ Treat prompts as code: change one section at a time, test with adversarial input
 
 ---
 
-*Sources: OpenCode prompt architecture (`anomalyco/opencode`), HumanLayer CLAUDE.md analysis, Agent Skills spec (`agentskills.io/specification`), community lean-prompt benchmarks. Details in `references/`.*
+*Sources: OpenCode prompt architecture (`anomalyco/opencode`), HumanLayer CLAUDE.md analysis, Agent Skills spec (`agentskills.io/specification`), community lean-prompt benchmarks.
+Details in `references/`.*

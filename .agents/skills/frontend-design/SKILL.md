@@ -35,7 +35,9 @@ How to make changes to quack's chat frontend that fit its grain: lean stack, str
 
 ## The stack (constraints)
 
-**React 19 + Vite + Tailwind CSS 4 + TanStack Query + react-markdown.** All components are custom Tailwind - **no shadcn / Radix / Mantine**, no virtualization lib, no Zustand/Jotai. State is in `frontend/src/state/`: `chatStore.ts` is a plain `Map`-backed store with a `subscribe` seam; `agentStream.ts` parses the SSE event vocabulary. **Match this** - do not add a component or state library for a single widget. Reach for the laziest rung that holds (native CSS → existing dep → a few lines) before a new dependency.
+**React 19 + Vite + Tailwind CSS 4 + TanStack Query + react-markdown.** All components are custom Tailwind - **no shadcn / Radix / Mantine**, no virtualization lib, no Zustand/Jotai.
+State is in `frontend/src/state/`: `chatStore.ts` is a plain `Map`-backed store with a `subscribe` seam; `agentStream.ts` parses the SSE event vocabulary. **Match this** - do not add a component or state library for a single widget.
+Reach for the laziest rung that holds (native CSS → existing dep → a few lines) before a new dependency.
 
 ## Core principles
 
@@ -74,7 +76,8 @@ Do the change → run the CI gate → fix → repeat until clean:
 cd frontend && npx tsc --noEmit && npx eslint src/ && npm test && npm run build
 ```
 
-Then confirm behaviour in `npm run dev` (and `npm run storybook` for new stories): typing stays smooth in a long chat, the spinner shows instantly on a follow-up message, code blocks highlight and copy. Watch the `npm run build` output for CSS warnings (see the `*/`-in-comment gotcha).
+Then confirm behaviour in `npm run dev` (and `npm run storybook` for new stories): typing stays smooth in a long chat, the spinner shows instantly on a follow-up message, code blocks highlight and copy.
+Watch the `npm run build` output for CSS warnings (see the `*/`-in-comment gotcha).
 
 ## Resources
 

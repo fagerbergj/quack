@@ -1,6 +1,7 @@
 # Trust gate
 
-Limited local models bluff, so nothing a node's worker produces is trusted by default. Every gated agent's output passes through `vetting.RunGatedRefine` (`internal/vetting/node.go`) before it flows downstream. The gate runs cheapest-first, each stage bounded by its own round budget - a stage with `max_rounds: 0` is skipped entirely:
+Limited local models bluff, so nothing a node's worker produces is trusted by default. Every gated agent's output passes through `vetting.RunGatedRefine` (`internal/vetting/node.go`) before it flows downstream.
+The gate runs cheapest-first, each stage bounded by its own round budget - a stage with `max_rounds: 0` is skipped entirely:
 
 ```yaml
 gates:
@@ -40,7 +41,8 @@ A separate, independently-configured model scores the answer G-Eval style agains
 
 `rubric_path` is the default scoring guide; an agent's own bundle can override it with a `rubric.md` sitting next to its `prompt.md` (see [agents.md](agents.md)). `constitution_path` is the fixed, standing set of principles layered under every rubric - grounded claims, no fabrication - that no per-node rubric can remove.
 
-The judge needs concrete criteria to score against, and a vague rubric makes a small judge wander. So the **planner writes a per-node rubric when it builds the DAG** - it already defines the task, and "done" is the other half:
+The judge needs concrete criteria to score against, and a vague rubric makes a small judge wander.
+So the **planner writes a per-node rubric when it builds the DAG** - it already defines the task, and "done" is the other half:
 
 ```yaml
 node:
@@ -55,10 +57,13 @@ Independence still holds: the planner writes the rubric, a different model does 
 
 ## The advisor is not a gate stage
 
-`agents/advisor` isn't one of the stages above - it's the `ask_advisor` *tool*, which a worker calls at its own discretion mid-run. It reuses the judge's provider/model and is only wired onto a worker's tool list when the judge is enabled (leaving `gates.judge.model` empty turns off both the judge and `ask_advisor` together).
+`agents/advisor` isn't one of the stages above - it's the `ask_advisor` *tool*, which a worker calls at its own discretion mid-run.
+It reuses the judge's provider/model and is only wired onto a worker's tool list when the judge is enabled (leaving `gates.judge.model` empty turns off both the judge and `ask_advisor` together).
 
 ## Delivery
 
-For a code-implementer node, the gate - not the worker - owns delivery: `commitDelivery` pushes the work branch and opens the PR exactly once, after the gate is satisfied. A gate-failed node still opens its PR, but as a draft, so a human reviewer can see what was attempted without it looking like a finished, self-approved change.
+For a code-implementer node, the gate - not the worker - owns delivery: `commitDelivery` pushes the work branch and opens the PR exactly once, after the gate is satisfied.
+A gate-failed node still opens its PR, but as a draft, so a human reviewer can see what was attempted without it looking like a finished, self-approved change.
 
-On a GitHub-triggered run, `commitDelivery` is also where the trigger's computed permission grant (see [extensions/github.md](../extensions/github.md#permissions-the-grant)) is actually enforced: it's the one place a run can reach GitHub at all, so a staged item outside the grant - a review on a run never granted `post_review`, say - is refused there regardless of what the plan declared or the worker staged. The refusal is loud: logged at error level and reported as a failed delivery, never a silent drop.
+On a GitHub-triggered run, `commitDelivery` is also where the trigger's computed permission grant (see [extensions/github.md](../extensions/github.md#permissions-the-grant)) is actually enforced: it's the one place a run can reach GitHub at all, so a staged item outside the grant - a review on a run never granted `post_review`, say - is refused there regardless of what the plan declared or the worker staged.
+The refusal is loud: logged at error level and reported as a failed delivery, never a silent drop.

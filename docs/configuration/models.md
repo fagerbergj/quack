@@ -2,7 +2,8 @@
 
 ## Providers
 
-A provider is a named inference backend. `kind` picks the API protocol; the endpoint picks the actual server. Only `openai` is implemented today (any OpenAI-compatible endpoint) - `internal/inference.NewModel` is the single factory, so adding a new `kind` is localized to `internal/inference/factory.go`.
+A provider is a named inference backend. `kind` picks the API protocol; the endpoint picks the actual server.
+Only `openai` is implemented today (any OpenAI-compatible endpoint) - `internal/inference.NewModel` is the single factory, so adding a new `kind` is localized to `internal/inference/factory.go`.
 
 ```yaml
 providers:
@@ -26,11 +27,13 @@ agents:
     context_window: 65536
 ```
 
-There's no shared "default model" block - each agent's `model` is usually just an `${ENV}` reference, and the fallback lives in the env var itself: `code-implementer` and `code-reviewer` both read `${QUACK_CODER_MODEL}`, which falls back to `QUACK_RESEARCHER_MODEL` when unset (see [index.md](index.md#key-environment-variables)). That's the only chained fallback quack implements; every other agent's model is set directly or left unset (a startup error - `config.validate` rejects an agent with an empty model).
+There's no shared "default model" block - each agent's `model` is usually just an `${ENV}` reference, and the fallback lives in the env var itself: `code-implementer` and `code-reviewer` both read `${QUACK_CODER_MODEL}`, which falls back to `QUACK_RESEARCHER_MODEL` when unset (see [index.md](index.md#key-environment-variables)).
+That's the only chained fallback quack implements; every other agent's model is set directly or left unset (a startup error - `config.validate` rejects an agent with an empty model).
 
 `context_window` isn't just documentation: it bounds automatic context compaction (`session.compaction`) and the judge's own prompt budgeting (`gates.judge.context_window`).
 
 ## The judge is a separate model
 
-`gates.judge` (see [trust-gate.md](trust-gate.md)) names its own `provider` + `model`, independent of any worker's. That's deliberate - the trust gate's whole premise is that a genuinely different model catches blind spots a worker can't see in its own output. Reusing the worker's model for the judge would collapse that independence.
+`gates.judge` (see [trust-gate.md](trust-gate.md)) names its own `provider` + `model`, independent of any worker's. That's deliberate - the trust gate's whole premise is that a genuinely different model catches blind spots a worker can't see in its own output.
+Reusing the worker's model for the judge would collapse that independence.
 

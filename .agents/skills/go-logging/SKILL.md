@@ -38,14 +38,17 @@ How to log in quack's Go backend: which level, whether to log at all, what attri
 
 ## The two rules that matter most
 
-**1. Log-or-return - never both.** An error is either *handled* or *propagated*, not both:
+**1.
+Log-or-return - never both.** An error is either *handled* or *propagated*, not both:
 
 - **Low layers** (services, repos, tool/model clients): `return err`, wrapping at package boundaries with `fmt.Errorf("query users: %w", err)`. **Do not log.** One short context phrase per wrap - no stacked "failed to … failed to …".
 - **Handling boundary** (HTTP handler, `main`, or a point that *recovers* - swallows the error and continues with a fallback): log it **once**, with the error as an `"err"` attribute.
 
   Logging at every layer turns one failure into a wall of duplicate lines that hide the root cause.
 
-**2. Reserve Error for the exceptional.** Most failures that the code recovers from are `Warn`, not `Error`. Use the matrix:
+**2.
+Reserve Error for the exceptional.** Most failures that the code recovers from are `Warn`, not `Error`.
+Use the matrix:
 
 | Level | Use for | Quack examples |
 |---|---|---|

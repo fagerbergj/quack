@@ -13,7 +13,9 @@ description: >
 
 # Present GitHub work: summary-first, deep on demand
 
-A maintainer reads GitHub comments in a feed, at speed. A wall of prose gets skimmed and the real design decision gets missed. This skill is about **content depth AND layout** - do not skip the diagrams to save time; a diagram is often the fastest way to say the thing correctly.
+A maintainer reads GitHub comments in a feed, at speed.
+A wall of prose gets skimmed and the real design decision gets missed.
+This skill is about **content depth AND layout** - do not skip the diagrams to save time; a diagram is often the fastest way to say the thing correctly.
 
 ## Structure, in order
 
@@ -104,7 +106,8 @@ sequenceDiagram
 > The ERD above only covers the two new columns; existing tables are unchanged.
 ```
 
-Supported alert types: `NOTE`, `TIP`, `IMPORTANT`, `WARNING`, `CAUTION`. Use at most one or two per comment - reserve them for things that change what the reader does next, not routine information.
+Supported alert types: `NOTE`, `TIP`, `IMPORTANT`, `WARNING`, `CAUTION`.
+Use at most one or two per comment - reserve them for things that change what the reader does next, not routine information.
 
 ## Gotchas
 

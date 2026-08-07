@@ -1,6 +1,8 @@
 # Auth
 
-Quack's inbound request auth (`internal/auth`) gates the API surface - the generated REST routes and the MCP mount (`/api/v1/mcp`) - but never `/health` or the embedded SPA's static files. The `auth:` config section is entirely optional: absent, as it is by default, nothing is enforced and every request is open. That matches the state of the codebase before this feature existed, so an unconfigured deployment sees no behavior change.
+Quack's inbound request auth (`internal/auth`) gates the API surface - the generated REST routes and the MCP mount (`/api/v1/mcp`) - but never `/health` or the embedded SPA's static files.
+The `auth:` config section is entirely optional: absent, as it is by default, nothing is enforced and every request is open.
+That matches the state of the codebase before this feature existed, so an unconfigured deployment sees no behavior change.
 
 ```yaml
 auth:
@@ -13,7 +15,8 @@ auth:
     groups: X-authentik-groups
 ```
 
-Present, `auth:` needs at least one of the two sub-blocks below - `config.Load` rejects a present-but-empty `auth:` section at startup. Configuring only one is normal; both together is also valid (see precedence).
+Present, `auth:` needs at least one of the two sub-blocks below - `config.Load` rejects a present-but-empty `auth:` section at startup.
+Configuring only one is normal; both together is also valid (see precedence).
 
 ## Direct clients: OIDC bearer tokens
 
@@ -68,7 +71,9 @@ One deliberate addition on top of the library: `rp.NewRemoteKeySet` fetches the 
 
 The CLI is also a zitadel/oidc client - but as an actual relying party this time, since it's a real user logging in against a browser-facing IdP. `quack server login <name> --issuer <url> --client-id <id>` runs the OAuth 2.0 **authorization code flow with PKCE** (RFC 6749 + RFC 7636), the RFC 8252 native-app pattern, via `pkg/client/rp`'s `NewRelyingPartyOIDC`, `AuthURL`, and `CodeExchange`: it binds a loopback listener on an ephemeral port to stand in for the redirect URI, opens the authorize URL in a browser (also printed, as a fallback), and waits for the redirect to land back on the listener before exchanging the code (PKCE-verified) for an access + refresh token pair.
 
-This replaced an earlier device authorization grant (RFC 8628) implementation. Auth code + PKCE is the flow RFC 8252 actually recommends for a CLI/native client, but it trades away the device grant's one real advantage: it needs a browser and a port reachable from that browser on the machine running `quack`, so it does **not** work over a headless/SSH session with no local browser - the device grant's actual use case. Only public OIDC clients are supported (no client secret): PKCE is meant for exactly that client shape, and it means the CLI never has a secret to protect.
+This replaced an earlier device authorization grant (RFC 8628) implementation.
+Auth code + PKCE is the flow RFC 8252 actually recommends for a CLI/native client, but it trades away the device grant's one real advantage: it needs a browser and a port reachable from that browser on the machine running `quack`, so it does **not** work over a headless/SSH session with no local browser - the device grant's actual use case.
+Only public OIDC clients are supported (no client secret): PKCE is meant for exactly that client shape, and it means the CLI never has a secret to protect.
 
 **Register a loopback redirect URI on the IdP client.** This flow needs one and the device grant did not, so it's a new setup step — if you configured a client for the old flow, the first `quack server login` after upgrading fails with an `invalid redirect_uri` error from the IdP until you add it. The CLI redirects to `http://127.0.0.1:<port>/callback`, and the port is **ephemeral per login** (a fresh one each time), so the client has to accept a variable port on the `127.0.0.1` loopback host. [RFC 8252 §7.3](https://datatracker.ietf.org/doc/html/rfc8252#section-7.3) says IdPs *should* ignore the port for loopback redirects, but not all do: Keycloak, Authentik, and Auth0 each want the pattern registered explicitly (commonly `http://127.0.0.1:*/callback`), and some reject wildcards outright. Register whatever loopback form your IdP accepts.
 

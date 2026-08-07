@@ -16,7 +16,8 @@ license: MIT
 
 ## When NOT to Use
 
-If you need to teach the agent *how to approach* a domain - workflows, conventions, decision criteria, domain knowledge - write a skill instead using `write-agent-skill`. Tools are the agent's hands; skills are its training. See `references/tool-vs-skill.md` for the decision matrix.
+If you need to teach the agent *how to approach* a domain - workflows, conventions, decision criteria, domain knowledge - write a skill instead using `write-agent-skill`.
+Tools are the agent's hands; skills are its training. See `references/tool-vs-skill.md` for the decision matrix.
 
 ## Checklist (validate before shipping)
 
@@ -47,7 +48,9 @@ Before designing the tool:
 
 ## Phase 2 - Name and Description
 
-**Naming:** `snake_case` always. One concern per tool - `delete_file` not `manage_file`. Group related tools under a consistent namespace prefix (`github_search_issues`, `github_create_pr`).
+**Naming:** `snake_case` always.
+One concern per tool - `delete_file` not `manage_file`.
+Group related tools under a consistent namespace prefix (`github_search_issues`, `github_create_pr`).
 
 **Description formula:**
 
@@ -59,7 +62,8 @@ Do NOT use to <what it must not do>.
 
 The "Do NOT use" line is not optional for tools that could be misapplied - Anthropic's internal evaluations found explicit negative constraints significantly improve invocation accuracy.
 
-Keep descriptions under ~200 words. Include:
+Keep descriptions under ~200 words.
+Include:
 - Hard limits (row caps, timeout, size limits)
 - Required preconditions ("only call after confirming the user's destination and party size")
 - Format restrictions on inputs
@@ -106,7 +110,8 @@ Every tool response is the agent's next context. Design it to be:
 
 ## Phase 6 - Adding a Builtin Tool to This Repo
 
-Builtin tools live in `internal/tools/`. To add one:
+Builtin tools live in `internal/tools/`.
+To add one:
 
 1. Create `internal/tools/<name>.go` implementing the ADK `tool.Tool` interface. See `internal/tools/fetch.go` or `internal/tools/websearch.go` for the pattern.
 2. Register the tool in `internal/tools/registry.go`.
@@ -118,9 +123,13 @@ Side-effecting tools should set the appropriate flag so the orchestrator can rou
 
 ### Portability rule (mandatory for external-backed tools)
 
-A builtin tool that talks to external software (a search engine, a render service, a vector store, a full-text index, a blob store) **must not** hardcode that backend. Define a small **port** (interface) the tool depends on, put each concrete backend in its own **adapter**, and select the adapter with a **kind** factory driven by config - so swapping the backend is a config change plus one new adapter, never a rewrite of the tool. Empty kind defaults to the one implemented adapter, so existing config keeps working.
+A builtin tool that talks to external software (a search engine, a render service, a vector store, a full-text index, a blob store) **must not** hardcode that backend.
+Define a small **port** (interface) the tool depends on, put each concrete backend in its own **adapter**, and select the adapter with a **kind** factory driven by config - so swapping the backend is a config change plus one new adapter, never a rewrite of the tool.
+Empty kind defaults to the one implemented adapter, so existing config keeps working.
 
-The web tools are the reference implementation: `WebSearcher` / `PageRenderer` ports + `newWebSearcher` / `newPageRenderer` factories in `internal/tools/backends.go`, with the SearXNG and crawl4ai adapters in `internal/tools/{searxng,crawl4ai}.go`. The pattern mirrors `inference.NewModel` (provider `kind` → adapter). This keeps the generic logic (SSRF guard, result shaping, html→markdown) in the tool and the swappable part behind the port.
+The web tools are the reference implementation: `WebSearcher` / `PageRenderer` ports + `newWebSearcher` / `newPageRenderer` factories in `internal/tools/backends.go`, with the SearXNG and crawl4ai adapters in `internal/tools/{searxng,crawl4ai}.go`.
+The pattern mirrors `inference.NewModel` (provider `kind` → adapter).
+This keeps the generic logic (SSRF guard, result shaping, html→markdown) in the tool and the swappable part behind the port.
 
 ---
 

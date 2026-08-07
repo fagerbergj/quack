@@ -17,8 +17,7 @@ A community member tested shortening two default OpenCode prompts and reported s
 
 ### Root Cause Identified
 
-The original prompts were described as:
-> "very bloated. They contain duplicates and unnecessary examples… contradict the OpenAI prompt cookbook and sound like a mother telling a 17-year-old how (not) to behave. And the 17-year-old can't follow because of information over-poisoning."
+The original prompts were described as: > "very bloated. They contain duplicates and unnecessary examples… contradict the OpenAI prompt cookbook and sound like a mother telling a 17-year-old how (not) to behave. And the 17-year-old can't follow because of information over-poisoning."
 
 ### The Working Prompt (350 Words)
 

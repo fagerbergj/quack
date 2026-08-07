@@ -1,12 +1,15 @@
 # Quack CLI/TUI - implementation recipes
 
-Copy-ready skeletons for the decisions in `SKILL.md`. Read the matching section when you implement that piece. These are scaffolds to adapt, not drop-in final code.
+Copy-ready skeletons for the decisions in `SKILL.md`.
+Read the matching section when you implement that piece.
+These are scaffolds to adapt, not drop-in final code.
 
 ---
 
 ## 1. The Bubble Tea model (Init / Update / View)
 
-`internal/tui/chat.go`. `Update` is a pure reducer - every branch returns a new model and maybe a `tea.Cmd`. No I/O in the body.
+`internal/tui/chat.go`. `Update` is a pure reducer - every branch returns a new model and maybe a `tea.Cmd`.
+No I/O in the body.
 
 ```go
 package tui
@@ -81,13 +84,15 @@ func waitForEvent(sub <-chan stream.Event) tea.Cmd {
 }
 ```
 
-The client (`internal/cli`) owns the actual `http.Client` + SSE parse, decoding the wire vocabulary into `stream.Event` and pushing onto `sub`. The TUI never touches `net/http`.
+The client (`internal/cli`) owns the actual `http.Client` + SSE parse, decoding the wire vocabulary into `stream.Event` and pushing onto `sub`.
+The TUI never touches `net/http`.
 
 ---
 
 ## 3. Tier-1 reducer test (no framework - the workhorse)
 
-`internal/tui/chat_test.go`. Pure `Update`, so just feed msgs and assert.
+`internal/tui/chat_test.go`.
+Pure `Update`, so just feed msgs and assert.
 
 ```go
 func TestUpdate_DoneStopsStreaming(t *testing.T) {
@@ -116,7 +121,8 @@ Assert on the returned `cmd`'s presence/type, not by executing it (executing it 
 
 ## 4. Tier-2 golden render test (teatest - keep few)
 
-`internal/tui/chat_golden_test.go`. Fixed term size or the golden is nondeterministic.
+`internal/tui/chat_golden_test.go`.
+Fixed term size or the golden is nondeterministic.
 
 ```go
 import "github.com/charmbracelet/x/exp/teatest"
@@ -139,7 +145,8 @@ Regenerate after an intended visual change: `go test -run TUI -update ./internal
 
 ## 5. The `server init` wizard (Huh) - test the YAML, not the keystrokes (principle 5)
 
-`internal/cli/init.go`. Huh owns the form; your code maps answers → config.
+`internal/cli/init.go`.
+Huh owns the form; your code maps answers → config.
 
 ```go
 import "github.com/charmbracelet/huh"
@@ -180,7 +187,8 @@ func TestConfigFor_Embedded(t *testing.T) {
 
 ## 6. Print mode - no TUI, no ANSI when piped (principle 4)
 
-`internal/cli/print.go`. Plain stdout; never starts a `tea.Program`.
+`internal/cli/print.go`.
+Plain stdout; never starts a `tea.Program`.
 
 ```go
 func Print(ctx context.Context, c *Client, prompt string) error {
@@ -206,7 +214,8 @@ Color: rely on Lipgloss/`NO_COLOR` auto-detect for any styled bits, but the vali
 
 ## 7. cobra wiring - thin commands (principle 6, gotcha 7)
 
-`cmd/quack/main.go`. Commands parse + dispatch; logic lives in `internal/cli`/`internal/tui`.
+`cmd/quack/main.go`.
+Commands parse + dispatch; logic lives in `internal/cli`/`internal/tui`.
 
 ```go
 func main() {
@@ -227,7 +236,8 @@ func main() {
 }
 ```
 
-Each `cmdX()` returns a `*cobra.Command` whose `RunE` does one thing: build a `cli.Client`, call the one shared action func (the same func the in-TUI slash-command calls), print/stream the result. Keep the business logic out of `RunE` so it's unit-testable without cobra.
+Each `cmdX()` returns a `*cobra.Command` whose `RunE` does one thing: build a `cli.Client`, call the one shared action func (the same func the in-TUI slash-command calls), print/stream the result.
+Keep the business logic out of `RunE` so it's unit-testable without cobra.
 
 ---
 

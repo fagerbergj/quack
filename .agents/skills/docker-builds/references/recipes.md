@@ -1,6 +1,7 @@
 # Docker Recipes (quack)
 
-Concrete code for the decisions in `SKILL.md`. Copy and adapt; don't re-derive.
+Concrete code for the decisions in `SKILL.md`.
+Copy and adapt; don't re-derive.
 
 ## 1. Multi-stage Dockerfile with cache mounts (the live shape)
 
@@ -80,7 +81,8 @@ These are intentionally NOT in quack's compose today (single-host dev stack). Ea
 
 ### Readiness gating - *add when first requests flakily fail because a backend isn't ready*
 
-`depends_on: condition: service_started` only waits for the container to *start*. For real readiness, give the dependency a healthcheck and depend on `service_healthy`:
+`depends_on: condition: service_started` only waits for the container to *start*.
+For real readiness, give the dependency a healthcheck and depend on `service_healthy`:
 
 ```yaml
   crawl4ai:
@@ -121,7 +123,8 @@ networks:
 
 ### Compose secrets - *add when a real secret must not sit in the env/compose file*
 
-The local Postgres password is `quack/quack` by design (throwaway). For a real secret:
+The local Postgres password is `quack/quack` by design (throwaway).
+For a real secret:
 
 ```yaml
   app:
@@ -165,7 +168,8 @@ FROM searxng/searxng:latest@sha256:abc123…
 
 ## 5. CI/CD build (live) - `.github/workflows/ci.yaml` + `cd.yaml`
 
-CI builds the image on every PR (no push); CD publishes to GHCR on a `v*.*.*` tag. Both use the GitHub Actions BuildKit cache (`type=gha`), which is wiped-per-run-proof and zero-config:
+CI builds the image on every PR (no push); CD publishes to GHCR on a `v*.*.*` tag.
+Both use the GitHub Actions BuildKit cache (`type=gha`), which is wiped-per-run-proof and zero-config:
 
 ```yaml
 # ci.yaml - validate the build, don't push
@@ -194,13 +198,15 @@ CI builds the image on every PR (no push); CD publishes to GHCR on a `v*.*.*` ta
     cache-to: type=gha,mode=max
 ```
 
-Cut a release: `git tag v1.2.3 && git push origin v1.2.3`. `latest` moves only on tags, never on a push to main. Next steps if needed: a Trivy scan job (`aquasecurity/trivy-action`, upload SARIF) and cosign keyless signing (`sigstore/cosign-installer` + `id-token: write`).
+Cut a release: `git tag v1.2.3 && git push origin v1.2.3`. `latest` moves only on tags, never on a push to main.
+Next steps if needed: a Trivy scan job (`aquasecurity/trivy-action`, upload SARIF) and cosign keyless signing (`sigstore/cosign-installer` + `id-token: write`).
 
 For a non-GitHub runner, `type=registry` cache is the portable equivalent: `--cache-to type=registry,ref=<reg>/quack-cache:build --cache-from type=registry,ref=<reg>/quack-cache:build`.
 
 ## 6. Build secrets - *add when a build step needs a credential*
 
-Never `ARG SECRET` (it lands in image history). Mount it instead - not committed, not cached:
+Never `ARG SECRET` (it lands in image history).
+Mount it instead - not committed, not cached:
 
 ```dockerfile
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc npm ci

@@ -6,9 +6,12 @@ Load this file when deciding whether to implement a tool or a skill.
 
 ## The Core Distinction
 
-**A tool** is an executable function with typed inputs, outputs, and side effects. When an agent calls a tool, something happens: a database gets queried, an API gets hit, a file gets written. Tools are the agent's **hands**.
+**A tool** is an executable function with typed inputs, outputs, and side effects.
+When an agent calls a tool, something happens: a database gets queried, an API gets hit, a file gets written.
+Tools are the agent's **hands**.
 
-**A skill** is packaged domain expertise encoded as instructions, templates, and scripts. Skills don't execute code directly - they shape how the agent thinks and approaches problems. Skills are the agent's **training**.
+**A skill** is packaged domain expertise encoded as instructions, templates, and scripts.
+Skills don't execute code directly - they shape how the agent thinks and approaches problems. Skills are the agent's **training**.
 
 ---
 

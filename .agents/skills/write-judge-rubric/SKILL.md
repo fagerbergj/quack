@@ -42,10 +42,15 @@ Before writing:
 Each criterion has five parts:
 
 ### 1. Name
-A short code identifier in `snake_case`. The judge model calls this out by name in its feedback, and the gate matches it to the verdict structure. Keep it stable - renaming breaks existing verdict records.
+A short code identifier in `snake_case`.
+The judge model calls this out by name in its feedback, and the gate matches it to the verdict structure.
+Keep it stable - renaming breaks existing verdict records.
 
 ### 2. Description
-What the criterion is measuring, in a single tight paragraph. State what counts and what does not. Include the most important caveat inline if it is short (e.g., "Judge grounding by whether a claim carries an inline citation - NOT by whether you personally believe the cited fact"). For longer caveats, add a separate block after the description.
+What the criterion is measuring, in a single tight paragraph.
+State what counts and what does not.
+Include the most important caveat inline if it is short (e.g., "Judge grounding by whether a claim carries an inline citation - NOT by whether you personally believe the cited fact").
+For longer caveats, add a separate block after the description.
 
 ### 3. Caveats
 Include whenever the judge's own knowledge, capabilities, or tendencies could mislead it:
@@ -55,7 +60,10 @@ Include whenever the judge's own knowledge, capabilities, or tendencies could mi
 - **Deterministic override:** if a criterion's score will be overridden by deterministic code (e.g., citation backing), say so explicitly so the judge does not waste reasoning on it.
 
 ### 4. Evaluation Steps
-Ordered, concrete sub-instructions the judge follows before assigning a score. This is the CoT layer - it forces deliberate reasoning rather than a snap judgment. Each step should be a specific action ("List the answer's non-trivial factual claims", "Check whether each claim carries an inline citation"). See `references/g-eval-method.md` for why evaluation steps matter and how to generate them.
+Ordered, concrete sub-instructions the judge follows before assigning a score.
+This is the CoT layer - it forces deliberate reasoning rather than a snap judgment.
+Each step should be a specific action ("List the answer's non-trivial factual claims", "Check whether each claim carries an inline citation").
+See `references/g-eval-method.md` for why evaluation steps matter and how to generate them.
 
 For agents with multiple input modalities (image + audio), write separate step blocks per modality.
 
@@ -74,7 +82,9 @@ Each band must describe **observable, specific conditions** - not "good", "okay"
 These sections appear in every rubric, unchanged:
 
 ### The 0–10 scale block
-Copy the standard scale from `assets/rubric-template.md`. The scoring bands in each criterion tell the judge what "met", "partially met", and "failed" mean for *that criterion*; the scale tells it which integer to pick within those ranges. Never alter the scale between rubrics - inconsistency breaks the gate's normalisation.
+Copy the standard scale from `assets/rubric-template.md`.
+The scoring bands in each criterion tell the judge what "met", "partially met", and "failed" mean for *that criterion*; the scale tells it which integer to pick within those ranges.
+Never alter the scale between rubrics - inconsistency breaks the gate's normalisation.
 
 ### Aggregation block
 Always end the rubric with:
@@ -93,7 +103,8 @@ Add these between the criteria and the aggregation block when relevant:
 
 **Date-awareness** (retrieval agents with `current_date` tool): if the answer's searches are scoped to a wrong year, treat as a `grounded` failure (mis-scoped retrieval), not `no_fabrication`.
 
-**Judge capabilities** (media agents): state explicitly what the judge can and cannot perceive - it can see attached images, it cannot hear audio. This determines which evaluation-step block applies per criterion.
+**Judge capabilities** (media agents): state explicitly what the judge can and cannot perceive - it can see attached images, it cannot hear audio.
+This determines which evaluation-step block applies per criterion.
 
 ---
 
