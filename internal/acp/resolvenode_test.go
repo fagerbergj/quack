@@ -28,7 +28,7 @@ func TestResolveNodeWorktreeParentInvokesWorktreeHook(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	cwd, _, _, err := a.resolveNode(context.Background(), "review the PR\n\n"+vetting.AdvisorThreadMarker(token))
+	cwd, _, _, _, err := a.resolveNode(context.Background(), "review the PR\n\n"+vetting.AdvisorThreadMarker(token))
 	if err != nil {
 		t.Fatalf("resolveNode: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestResolveNodeWorktreeParentWithoutHookErrors(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	_, _, _, err := a.resolveNode(context.Background(), "review\n\n"+vetting.AdvisorThreadMarker(token))
+	_, _, _, _, err := a.resolveNode(context.Background(), "review\n\n"+vetting.AdvisorThreadMarker(token))
 	if err == nil {
 		t.Fatal("resolveNode: want an error - the node needs a worktree but none is configured")
 	}
@@ -75,7 +75,7 @@ func TestResolveNodeNonWorktreeNodeUsesJail(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	cwd, _, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
+	cwd, _, _, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
 	if err != nil {
 		t.Fatalf("resolveNode: %v", err)
 	}
@@ -85,6 +85,33 @@ func TestResolveNodeNonWorktreeNodeUsesJail(t *testing.T) {
 	}
 	if cwd != want {
 		t.Errorf("cwd = %q, want the jail-resolved node dir %q", cwd, want)
+	}
+}
+
+// TestResolveNodeReturnsAdvisorTaskReadOnly is #754's acp-side pin:
+// resolveNode surfaces THIS node's AdvisorTask.ReadOnly (set per-run by
+// dag.nodeGateConfig, not the agent's static config) so runPrompt can build
+// per-round Caps with it - the seam a planOnly run's dynamic override needs.
+func TestResolveNodeReturnsAdvisorTaskReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	jail, err := workspace.NewJail(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{opts: Options{UserID: "u1", Jail: jail}}
+	for _, want := range []bool{true, false} {
+		token := vetting.AdvisorThreadToken("plan-1", "impl1")
+		vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
+			NodeID: "impl1", WorkspaceNodeID: "impl1", SessionID: "chat1", ReadOnly: want,
+		})
+		_, _, _, got, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
+		vetting.UnregisterAdvisorThread(token)
+		if err != nil {
+			t.Fatalf("resolveNode: %v", err)
+		}
+		if got != want {
+			t.Errorf("resolveNode readOnly = %v, want %v", got, want)
+		}
 	}
 }
 
@@ -105,7 +132,7 @@ func TestResolveNodeGrantsContextDir(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	_, _, ctxDir, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
+	_, _, ctxDir, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
 	if err != nil {
 		t.Fatalf("resolveNode: %v", err)
 	}
@@ -134,7 +161,7 @@ func TestResolveNodeNoJailNoContextDir(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	_, _, ctxDir, err := a.resolveNode(context.Background(), "review\n\n"+vetting.AdvisorThreadMarker(token))
+	_, _, ctxDir, _, err := a.resolveNode(context.Background(), "review\n\n"+vetting.AdvisorThreadMarker(token))
 	if err != nil {
 		t.Fatalf("resolveNode: %v", err)
 	}

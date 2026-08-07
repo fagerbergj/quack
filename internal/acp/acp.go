@@ -94,27 +94,27 @@ func (a *Agent) RunNode(ctx adkagent.Context, nodeInput any) iter.Seq2[*session.
 // and GitHub context-dir grant from the advisor-thread marker in the prompt.
 // memSecret is resolved separately in the memSessions registry - the
 // advisor-thread token never doubles as the MCP bearer credential.
-func (a *Agent) resolveNode(ctx context.Context, prompt string) (cwd, memSecret, ctxDir string, err error) {
+func (a *Agent) resolveNode(ctx context.Context, prompt string) (cwd, memSecret, ctxDir string, readOnly bool, err error) {
 	token, ok := vetting.ParseAdvisorThread(prompt)
 	if !ok {
-		return "", "", "", errors.New("acp: prompt carries no workspace-scope marker (is this agent running outside the gate?)")
+		return "", "", "", false, errors.New("acp: prompt carries no workspace-scope marker (is this agent running outside the gate?)")
 	}
 	at, ok := vetting.LookupAdvisorThread(token)
 	if !ok {
-		return "", "", "", fmt.Errorf("acp: advisor thread %q not registered", token)
+		return "", "", "", false, fmt.Errorf("acp: advisor thread %q not registered", token)
 	}
 	if a.opts.Jail != nil {
 		ctxDir, _ = a.opts.Jail.Resolve(a.opts.UserID, at.SessionID, workspace.ContextDirScope)
 	}
 	if at.WorktreeParent != "" {
 		if a.opts.Worktree == nil {
-			return "", "", "", fmt.Errorf("acp: node %q needs a git worktree but no worktree executor is configured", at.NodeID)
+			return "", "", "", false, fmt.Errorf("acp: node %q needs a git worktree but no worktree executor is configured", at.NodeID)
 		}
 		cwd, err = a.opts.Worktree(ctx, a.opts.UserID, at.SessionID, at.WorktreeParent, at.WorkspaceNodeID)
-		return cwd, at.MemSecret, ctxDir, err
+		return cwd, at.MemSecret, ctxDir, at.ReadOnly, err
 	}
 	cwd, err = a.opts.Jail.EnsureDir(a.opts.UserID, at.SessionID, workspace.NodeDir(at.WorkspaceNodeID))
-	return cwd, at.MemSecret, ctxDir, err
+	return cwd, at.MemSecret, ctxDir, at.ReadOnly, err
 }
 
 // runPrompt is one full round: spawn, handshake, prompt, stream translation, shutdown.
@@ -124,12 +124,17 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 			yield(nil, errors.New("acp: empty prompt"))
 			return
 		}
-		cwd, memSecret, ctxDir, err := a.resolveNode(ctx, prompt)
+		cwd, memSecret, ctxDir, readOnly, err := a.resolveNode(ctx, prompt)
 		if err != nil {
 			yield(nil, err)
 			return
 		}
-		outbound := environmentBlock(ctx, cwd, a.opts.Caps) + "\n\n" + prompt
+		// caps.ReadOnly comes from THIS node's advisor task, not the agent's
+		// static config - a planOnly run forces it true per-node (#754/#739)
+		// regardless of what the agent is normally configured for.
+		caps := a.opts.Caps
+		caps.ReadOnly = readOnly
+		outbound := environmentBlock(ctx, cwd, caps) + "\n\n" + prompt
 		if a.opts.Preamble != "" {
 			outbound = a.opts.Preamble + "\n\n" + outbound
 		}
@@ -138,7 +143,7 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 			extraRO = []string{ctxDir}
 		}
 		stopped := false
-		err = a.round(ctx, cwd, memSecret, extraRO, outbound, func(spec eventSpec) bool {
+		err = a.round(ctx, cwd, memSecret, extraRO, caps, outbound, func(spec eventSpec) bool {
 			if !yield(a.newEvent(ctx, spec), nil) {
 				stopped = true
 				return false
@@ -158,13 +163,16 @@ type promptDone struct {
 }
 
 // round drives one subprocess round. Separated from runPrompt for testability.
-func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []string, outbound string, emit func(eventSpec) bool) (err error) {
+// caps is the node's EFFECTIVE caps (ReadOnly already resolved by the
+// caller) - the one thing that can legitimately differ per round for an
+// otherwise-static agent (#754).
+func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []string, caps workspace.Caps, outbound string, emit func(eventSpec) bool) (err error) {
 	ctx, roundSpan := otelobs.Start(ctx, "acp.round", attribute.String("agent", a.name), attribute.String("cwd", cwd))
 	defer func() { otelobs.End(roundSpan, err) }()
 
 	spawnCtx, spawnSpan := otelobs.Start(ctx, "acp.spawn", attribute.String("agent", a.name))
 	_ = spawnCtx
-	h, err := a.start(ctx, cwd, extraRO)
+	h, err := a.start(ctx, cwd, extraRO, caps)
 	otelobs.End(spawnSpan, err)
 	if err != nil {
 		return err

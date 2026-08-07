@@ -138,12 +138,16 @@ func childArgv(dir, bin string, argv []string, caps Caps) []string {
 	if work == "" || !isDir(work) {
 		work = dir
 	}
-	args = append(args, "--bind", work, SandboxWorkRoot)
+	bindFlag := "--bind"
+	if caps.ReadOnly {
+		bindFlag = "--ro-bind"
+	}
+	args = append(args, bindFlag, work, SandboxWorkRoot)
 	chdir := SandboxWorkRoot
 	if rel, ok := relUnder(work, dir); ok {
 		chdir = filepath.Join(SandboxWorkRoot, rel)
 	} else {
-		args = append(args, "--bind", dir, dir)
+		args = append(args, bindFlag, dir, dir)
 		chdir = dir
 	}
 	if caps.HomeDir != "" && caps.HomeDir != dir {
@@ -362,12 +366,19 @@ func landlockGrants(dir string, caps Caps) (rw, ro []string) {
 	if work == "" || !isDir(work) {
 		work = dir
 	}
-	rw = append(rw, work)
+	// #754: a read-only agent's own working tree is granted RO, not RW - the
+	// enforcement a prompt claim alone can't give.
+	ownPaths := []string{work}
 	if _, ok := relUnder(work, dir); !ok {
 		// dir lies outside the node's own workspace (the gate's baseline
 		// worktree is the only caller this happens for) - grant it directly,
 		// mirroring bwrap's childArgv "outside cwd" branch.
-		rw = append(rw, dir)
+		ownPaths = append(ownPaths, dir)
+	}
+	if caps.ReadOnly {
+		ro = append(ro, ownPaths...)
+	} else {
+		rw = append(rw, ownPaths...)
 	}
 	if caps.HomeDir != "" && caps.HomeDir != work {
 		rw = append(rw, caps.HomeDir)
@@ -506,12 +517,31 @@ func ChildPath(caps Caps) string {
 // ponytail: bwrap returns argv unchanged - landlock is what containers use.
 func WrapArgv(dir string, argv []string, caps Caps, extraRO, extraRW []string) []string {
 	if len(argv) == 0 || caps.Sandbox != SandboxLandlock {
+		if caps.ReadOnly {
+			warnReadOnlyUnenforced(caps.Sandbox)
+		}
 		return argv
 	}
 	rw, ro := landlockGrants(dir, caps)
 	rw = append(rw, extraRW...)
 	ro = append(ro, extraRO...)
 	return assembleSandboxExec(rw, ro, argv)
+}
+
+var warnReadOnlyUnenforcedOnce sync.Once
+
+// warnReadOnlyUnenforced (#754): a read_only agent's own subprocess (the ACP
+// path WrapArgv wraps) only gets a real RO mount under landlock - sandbox:
+// none has no boundary at all, and bwrap never wraps this path at all (see
+// internal/acp's wrappedArgv doc - a ceiling from #579, not new here).
+// Degrade and say so once, rather than silently leaving the flag as a
+// prompt-only claim.
+func warnReadOnlyUnenforced(mode SandboxMode) {
+	warnReadOnlyUnenforcedOnce.Do(func() {
+		slog.Warn("read_only agent's own working directory is NOT read-only enforced at the OS level in this sandbox mode "+
+			"(WrapArgv only mounts it RO under landlock); the agent could write there - only its prompt says not to. "+
+			"Set workspace.sandbox: landlock to enforce it.", "component", "workspace", "sandbox", mode)
+	})
 }
 
 // Linked-worktree grants: a linked worktree's .git is a pointer file; objects/refs live under the parent clone.

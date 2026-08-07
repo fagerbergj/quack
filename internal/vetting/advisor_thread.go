@@ -40,6 +40,7 @@ type AdvisorTask struct {
 	NodeID          string // for cancel/steer controls
 	WorkspaceNodeID string // fs/git tool scope; shared across setup chain
 	WorktreeParent  string // setup clone's scope for worktree nodes
+	ReadOnly        bool   // this node's effective vetting.Config.ReadOnly (#754: sandbox grant, not just prompt)
 	AppName         string
 	UserID          string
 	SessionID       string

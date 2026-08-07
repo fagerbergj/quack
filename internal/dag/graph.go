@@ -123,6 +123,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				Task: effectiveNode.Task, Rubric: node.Rubric, NodeID: node.ID,
 				WorkspaceNodeID: workspaceNodeID(plan, node),
 				WorktreeParent:  worktreeParentID(plan, node),
+				ReadOnly:        cfg.ReadOnly,
 				InvocationID:    ctx.InvocationID(),
 			}
 			if sess := ctx.Session(); sess != nil {
