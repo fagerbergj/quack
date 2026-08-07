@@ -24,6 +24,11 @@ import (
 // rather than hand a tool-less writer the job of summarizing half-finished work.
 // The same applies to a worker whose task demanded a commit/push it never made.
 
+// noopDeliver stands in for a node with a real delivery target; these
+// continuation tests only assert on worker/writer call counts, never on
+// what actually got delivered.
+func noopDeliver(context.Context, DeliveryContext) ([]DeliveryItemOutcome, error) { return nil, nil }
+
 type contStub struct {
 	workerCalls  int
 	writerCalls  int
@@ -160,7 +165,8 @@ const implTask = "Add a game to the repo, commit it, push the branch and open a 
 // its half-finished work with the tool-less writer.
 func TestEmptyDraft_ContinuesWorkerWithTools(t *testing.T) {
 	stub := &contStub{}
-	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score 0-10", DeliverPromptEvent: true}
+	// A node with a delivery target (Deliver set) - the demand in implTask applies to it.
+	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score 0-10", DeliverPromptEvent: true, Deliver: noopDeliver}
 	answer, prompts := runContGate(t, stub, cfg, implTask)
 
 	if stub.writerCalls != 0 {
@@ -279,7 +285,8 @@ func TestUndeliveredDraft_ContinuesWorker(t *testing.T) {
 	// it. It is deliberately NOT read off the worker prompt: that prompt also carries the
 	// user's verbatim request as background, and keying on it held every read-only
 	// explorer in the plan to a commit it could never make (see explorer_completion_test).
-	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score 0-10", Task: implTask}
+	// A node with a delivery target (Deliver set) - the demand in implTask applies to it.
+	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score 0-10", Task: implTask, Deliver: noopDeliver}
 	runContGate(t, stub, cfg, implTask)
 
 	if stub.workerCalls < 2 {

@@ -136,11 +136,11 @@ func reviewCriterion(task string, act workerActivity, isReviewer bool) (criterio
 }
 
 // workIncomplete: empty answer, undelivered task, unposted review, or unverified review (no run_command).
-func workIncomplete(answer, task string, act workerActivity, readOnly, isReviewer, existingPR bool) bool {
+func workIncomplete(answer, task string, act workerActivity, readOnly, hasDeliverTarget, isReviewer, existingPR bool) bool {
 	if strings.TrimSpace(answer) == "" {
 		return true
 	}
-	for _, c := range incompleteCriteria(task, act, readOnly, isReviewer, existingPR) {
+	for _, c := range incompleteCriteria(task, act, readOnly, hasDeliverTarget, isReviewer, existingPR) {
 		if c.Score < 1 {
 			return true
 		}
@@ -179,10 +179,11 @@ func behaviourCriterion(task string, act workerActivity, isReviewer bool) (crite
 }
 
 // incompleteCriteria: deterministic completion criteria shared by workIncomplete, foldDeterministic, and continuation prompt.
-func incompleteCriteria(task string, act workerActivity, readOnly, isReviewer, existingPR bool) map[string]criterionScore {
+func incompleteCriteria(task string, act workerActivity, readOnly, hasDeliverTarget, isReviewer, existingPR bool) map[string]criterionScore {
 	out := map[string]criterionScore{}
-	// Read-only agents have no commit/push tools - skip delivery demand.
-	if !readOnly {
+	// Read-only agents have no commit/push tools; a node with no delivery target
+	// (a non-terminal repo-chain node) has no staging tool either - skip either way.
+	if !readOnly && hasDeliverTarget {
 		if c, ok := deliveryCriterion(task, act, existingPR); ok {
 			out["delivery_complete"] = c
 		}
