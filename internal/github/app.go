@@ -831,6 +831,8 @@ type prMeta struct {
 	Title   string
 	Body    string
 	State   string
+	Draft   bool
+	Merged  bool
 	Labels  []string
 	Fork    bool // head repo differs from base — cannot push to fork branches (#662)
 }
@@ -841,10 +843,12 @@ func (a *App) pullMeta(ctx context.Context, owner, repo string, number int) (prM
 		return prMeta{}, err
 	}
 	var out struct {
-		Title string `json:"title"`
-		Body  string `json:"body"`
-		State string `json:"state"`
-		Head  struct {
+		Title    string     `json:"title"`
+		Body     string     `json:"body"`
+		State    string     `json:"state"`
+		Draft    bool       `json:"draft"`
+		MergedAt *time.Time `json:"merged_at"`
+		Head     struct {
 			Ref  string `json:"ref"`
 			SHA  string `json:"sha"`
 			Repo struct {
@@ -871,7 +875,8 @@ func (a *App) pullMeta(ctx context.Context, owner, repo string, number int) (prM
 	}
 	return prMeta{
 		HeadRef: out.Head.Ref, HeadSHA: out.Head.SHA, BaseRef: out.Base.Ref,
-		Title: out.Title, Body: out.Body, State: out.State, Labels: labels,
+		Title: out.Title, Body: out.Body, State: out.State, Draft: out.Draft,
+		Merged: out.MergedAt != nil, Labels: labels,
 		Fork: out.Head.Repo.FullName != out.Base.Repo.FullName,
 	}, nil
 }

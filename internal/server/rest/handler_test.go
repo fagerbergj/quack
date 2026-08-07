@@ -28,10 +28,10 @@ func TestSessionUser(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
 
-	if err := h.store.SetChatGitHub(ctx, "github-acme-widget-app-7", "acme/widget-app", "https://github.com/acme/widget-app/pull/7", "alice"); err != nil {
+	if err := h.store.SetChatGitHub(ctx, "github-acme-widget-app-7", "acme/widget-app", "https://github.com/acme/widget-app/pull/7", "", "alice"); err != nil {
 		t.Fatalf("SetChatGitHub: %v", err)
 	}
-	if err := h.store.SetChatGitHub(ctx, "github-acme-widget-app-8", "acme/widget-app", "https://github.com/acme/widget-app/pull/8", ""); err != nil {
+	if err := h.store.SetChatGitHub(ctx, "github-acme-widget-app-8", "acme/widget-app", "https://github.com/acme/widget-app/pull/8", "", ""); err != nil {
 		t.Fatalf("SetChatGitHub: %v", err)
 	}
 
@@ -60,7 +60,7 @@ func TestGetChat_GithubSessionUser(t *testing.T) {
 
 	const chatID = "github-acme-widget-app-7"
 	const login = "alice"
-	if err := h.store.SetChatGitHub(ctx, chatID, "acme/widget-app", "https://github.com/acme/widget-app/pull/7", login); err != nil {
+	if err := h.store.SetChatGitHub(ctx, chatID, "acme/widget-app", "https://github.com/acme/widget-app/pull/7", "", login); err != nil {
 		t.Fatalf("SetChatGitHub: %v", err)
 	}
 	if err := h.store.SaveTurn(ctx, chatID, "t1"); err != nil {
@@ -142,7 +142,7 @@ func TestToSummaryGithubFields(t *testing.T) {
 	ctx := context.Background()
 
 	id := "github-acme-widget-app-7"
-	if err := h.store.SetChatGitHub(ctx, id, "acme/widget-app", "https://github.com/acme/widget-app/pull/7", "alice"); err != nil {
+	if err := h.store.SetChatGitHub(ctx, id, "acme/widget-app", "https://github.com/acme/widget-app/pull/7", "", "alice"); err != nil {
 		t.Fatalf("SetChatGitHub: %v", err)
 	}
 	c, err := h.store.GetChat(ctx, id)

@@ -131,7 +131,7 @@ func TestSetChatGitHub(t *testing.T) {
 	ctx := context.Background()
 
 	id := "github-acme-widget-app-42"
-	if err := st.SetChatGitHub(ctx, id, "acme/widget-app", "https://github.com/acme/widget-app/issues/42", "alice"); err != nil {
+	if err := st.SetChatGitHub(ctx, id, "acme/widget-app", "https://github.com/acme/widget-app/issues/42", "", "alice"); err != nil {
 		t.Fatalf("SetChatGitHub (create): %v", err)
 	}
 	got, err := st.GetChat(ctx, id)
@@ -148,7 +148,7 @@ func TestSetChatGitHub(t *testing.T) {
 	// Second call (row now exists, different commenter) must update the
 	// github fields in place, not error/duplicate - and must NOT move
 	// SessionUser off the login the existing session was written under.
-	if err := st.SetChatGitHub(ctx, id, "acme/widget-app", "https://github.com/acme/widget-app/pull/42", "bob"); err != nil {
+	if err := st.SetChatGitHub(ctx, id, "acme/widget-app", "https://github.com/acme/widget-app/pull/42", "", "bob"); err != nil {
 		t.Fatalf("SetChatGitHub (update): %v", err)
 	}
 	got, err = st.GetChat(ctx, id)
@@ -459,7 +459,7 @@ func TestDeleteChat_ReapsSession(t *testing.T) {
 	ctx := context.Background()
 
 	const chatID = "github-acme-widget-app-9"
-	if err := st.SetChatGitHub(ctx, chatID, "acme/widget-app", "https://github.com/acme/widget-app/pull/9", ""); err != nil {
+	if err := st.SetChatGitHub(ctx, chatID, "acme/widget-app", "https://github.com/acme/widget-app/pull/9", "", ""); err != nil {
 		t.Fatalf("SetChatGitHub: %v", err)
 	}
 	if err := st.SaveTurn(ctx, chatID, "t1"); err != nil {
@@ -518,7 +518,7 @@ func TestSessionUserForChat_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	const chatID = "github-acme-widget-app-11"
-	if err := st.SetChatGitHub(ctx, chatID, "acme/widget-app", "https://github.com/acme/widget-app/pull/11", "alice"); err != nil {
+	if err := st.SetChatGitHub(ctx, chatID, "acme/widget-app", "https://github.com/acme/widget-app/pull/11", "", "alice"); err != nil {
 		t.Fatalf("SetChatGitHub: %v", err)
 	}
 	if got := st.SessionUserForChat(ctx, chatID); got != "alice" {
@@ -543,7 +543,7 @@ func TestSessionUserForChat_RoundTrip(t *testing.T) {
 
 	// Older chat, no recorded SessionUser: falls back to id-shape default.
 	const oldChatID = "github-acme-widget-app-12"
-	if err := st.SetChatGitHub(ctx, oldChatID, "acme/widget-app", "https://github.com/acme/widget-app/pull/12", ""); err != nil {
+	if err := st.SetChatGitHub(ctx, oldChatID, "acme/widget-app", "https://github.com/acme/widget-app/pull/12", "", ""); err != nil {
 		t.Fatalf("SetChatGitHub: %v", err)
 	}
 	if got := st.SessionUserForChat(ctx, oldChatID); got != "github" {

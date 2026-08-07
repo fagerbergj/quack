@@ -29,6 +29,10 @@ export type ChatSummary = {
      * `<owner>/<repo>` of the originating GitHub issue/PR, present only for GitHub-originated chats.
      */
     github_repo?: string;
+    /**
+     * Current state of the originating GitHub issue/PR. Only set when quack has observed the resource at dispatch time; absent otherwise.
+     */
+    github_state?: 'open' | 'closed' | 'merged' | 'draft';
 };
 
 export type ChatDetail = ChatSummary & {

@@ -56,6 +56,8 @@ type Snapshot struct {
 	Title    string            `json:"title"`
 	Body     string            `json:"body"`
 	State    string            `json:"state"`
+	Merged   bool              `json:"merged,omitempty"`
+	Draft    bool              `json:"draft,omitempty"`
 	Labels   []string          `json:"labels,omitempty"`
 	Comments []snapshotComment `json:"comments,omitempty"`
 	IsPR     bool              `json:"is_pr,omitempty"`
@@ -87,7 +89,8 @@ func (e *Extension) fetchSnapshot(ctx context.Context, owner, repo string, numbe
 		if err != nil {
 			return snap, fmt.Errorf("github: pullMeta: %w", err)
 		}
-		snap.Title, snap.Body, snap.State, snap.Labels = m.Title, m.Body, m.State, m.Labels
+		snap.Title, snap.Body, snap.State, snap.Draft, snap.Merged = m.Title, m.Body, m.State, m.Draft, m.Merged
+		snap.Labels = m.Labels
 		snap.HeadRef, snap.HeadSHA, snap.BaseRef = m.HeadRef, m.HeadSHA, m.BaseRef
 		snap.Fork = m.Fork
 	} else {

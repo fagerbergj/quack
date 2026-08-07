@@ -632,6 +632,10 @@ components:
         github_repo:
           type: string
           description: "`<owner>/<repo>` of the originating GitHub issue/PR, present only for GitHub-originated chats."
+        github_state:
+          type: string
+          enum: [open, closed, merged, draft]
+          description: "Current state of the originating GitHub issue/PR. Only set when quack has observed the resource at dispatch time; absent otherwise."
 
     ChatDetail:
       allOf:

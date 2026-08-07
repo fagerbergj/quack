@@ -45,6 +45,7 @@ type issueCommentPayload struct {
 		Number int    `json:"number"`
 		Title  string `json:"title"`
 		Body   string `json:"body"`
+		State  string `json:"state"`
 		// Present only when the issue is a PR.
 		PullRequest *struct{} `json:"pull_request"`
 	} `json:"issue"`
@@ -82,6 +83,7 @@ type issuesPayload struct {
 		Number int    `json:"number"`
 		Title  string `json:"title"`
 		Body   string `json:"body"`
+		State  string `json:"state"`
 		// Present when the "issue" is actually a PR.
 		PullRequest *struct{} `json:"pull_request"`
 	} `json:"issue"`
@@ -106,13 +108,16 @@ type issuesPayload struct {
 
 // pullRequestPayload is the PR webhook subset for opened/labeled actions.
 type pullRequestPayload struct {
-	Action      string `json:"action"`
-	Number      int    `json:"number"`
+	Action      string     `json:"action"`
+	Number      int        `json:"number"`
+	Draft       bool       `json:"draft"`
+	MergedAt    *time.Time `json:"merged_at"`
 	PullRequest struct {
 		Title string `json:"title"`
 		Head  struct {
 			SHA string `json:"sha"`
 		} `json:"head"`
+		State string `json:"state"`
 	} `json:"pull_request"`
 	Label struct {
 		Name string `json:"name"` // present on the "labeled" action
@@ -775,7 +780,19 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 
 	defer e.inflight.Delete(sessionID)
 
-	e.persistGithubLink(ctx, sessionID, login, owner, repo, number, p.Issue.PullRequest != nil)
+	isPR := p.Issue.PullRequest != nil
+
+	// Fetch GitHub state early so we can persist the upstream state (state/merged/draft) alongside
+	// the link. loadGithubContext hits issueMeta/pullMeta which already extract these fields.
+	gh := e.loadGithubContext(ctx, sessionID, owner, repo, number, isPR, p.Comment.ID, false)
+
+	state := gh.snap.State
+	if isPR && gh.snap.Merged {
+		state = "merged"
+	} else if isPR && gh.snap.Draft {
+		state = "draft"
+	}
+	e.persistGithubLink(ctx, sessionID, login, owner, repo, number, isPR, state)
 	e.ensureTitle(ctx, sessionID, p, task)
 
 	// Label-driven work starts a fresh session — must not inherit prior events.
@@ -787,8 +804,10 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		}
 	}
 
-	// Fetch, diff, and persist the GitHub state (#459).
-	gh := e.loadGithubContext(ctx, sessionID, owner, repo, number, p.Issue.PullRequest != nil, p.Comment.ID, resetSession)
+	// Re-fetch context after resetting (label path needs fresh state).
+	if resetSession {
+		gh = e.loadGithubContext(ctx, sessionID, owner, repo, number, isPR, p.Comment.ID, true)
+	}
 
 	// Never run a label-triggered work request blind — #467 failure mode.
 	if p.isLabelTrigger && gh.contextUnavailable {
@@ -802,8 +821,6 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		abortCancel()
 		return
 	}
-
-	isPR := p.Issue.PullRequest != nil
 
 	// Compute permission grant once — authorship-check failure denies rather than grants.
 	authored := false
@@ -1051,8 +1068,8 @@ func (e *Extension) reviseInvalidMermaid(runCtx context.Context, uid, sessionID,
 	return answer
 }
 
-// persistGithubLink stores the issue/PR URL on the session's chat row. Best-effort.
-func (e *Extension) persistGithubLink(ctx context.Context, sessionID, login, owner, repo string, number int, isPR bool) {
+// persistGithubLink stores the issue/PR URL and state on the session's chat row. Best-effort.
+func (e *Extension) persistGithubLink(ctx context.Context, sessionID, login, owner, repo string, number int, isPR bool, state string) {
 	if e.store == nil {
 		return
 	}
@@ -1061,7 +1078,7 @@ func (e *Extension) persistGithubLink(ctx context.Context, sessionID, login, own
 		kind = "pull"
 	}
 	url := fmt.Sprintf("https://github.com/%s/%s/%s/%d", owner, repo, kind, number)
-	if err := e.store.SetChatGitHub(ctx, sessionID, owner+"/"+repo, url, login); err != nil {
+	if err := e.store.SetChatGitHub(ctx, sessionID, owner+"/"+repo, url, state, login); err != nil {
 		slog.Warn("github: persist chat link failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
 	}
 }

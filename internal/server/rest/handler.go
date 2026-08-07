@@ -973,6 +973,7 @@ func (h *Handler) toSummary(c store.Chat) schema.ChatSummary {
 		PendingQuestion: pendingQuestion,
 		GithubUrl:       nonEmpty(c.GithubURL),
 		GithubRepo:      nonEmpty(c.GithubRepo),
+		GithubState:     stateVal(c.GithubState),
 	}
 }
 
@@ -1052,6 +1053,14 @@ func nonEmpty(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+func stateVal(s string) *schema.ChatSummaryGithubState {
+	if s == "" {
+		return nil
+	}
+	v := schema.ChatSummaryGithubState(s)
+	return &v
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
