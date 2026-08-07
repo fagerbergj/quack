@@ -105,21 +105,54 @@ func TestNewSkillSourceMissingPluginRoot(t *testing.T) {
 	}
 }
 
-// TestNewSkillSourceNoPluginsConfigured proves the zero-plugins case: only
-// quack's own shipped skills resolve, no plugin skills, no error. Unlike the
-// old hardcoded wiring, dotagents is now an ordinary plugin root (see
-// config/quack.yaml's skills.plugins) - it has no special embedded-fallback
-// treatment inside newSkillSource, so it doesn't resolve when not configured.
+// TestNewSkillSourceNoPluginsConfigured proves the zero-plugins case: quack's
+// own shipped skills resolve, and so does format-markdown - dotagents'
+// go:embed'd copy (dotagentsEmbeddedSkills) fills in whenever plugin
+// discovery didn't find it on disk, regardless of what's configured. ponytail
+// has no such fallback and stays absent.
 func TestNewSkillSourceNoPluginsConfigured(t *testing.T) {
 	src := newSkillSource(nil)
 	ctx := context.Background()
 	if _, err := src.LoadFrontmatter(ctx, "plan-work"); err != nil {
 		t.Errorf("LoadFrontmatter(plan-work) via quack's own shipped skills: %v", err)
 	}
-	if _, err := src.LoadFrontmatter(ctx, "format-markdown"); err == nil {
-		t.Error("LoadFrontmatter(format-markdown): want not-found - dotagents is a plugin root, and none is configured here")
+	if _, err := src.LoadFrontmatter(ctx, "format-markdown"); err != nil {
+		t.Errorf("LoadFrontmatter(format-markdown) via embedded dotagents fallback: %v", err)
 	}
 	if _, err := src.LoadFrontmatter(ctx, "ponytail"); err == nil {
 		t.Error("LoadFrontmatter(ponytail): want not-found without any plugin roots configured")
+	}
+}
+
+// TestNewSkillSourceDotagentsMissingOnDisk pins the regression a reviewer
+// caught: dotagents configured as a plugin root but not checked out on disk
+// (a standalone install outside any repo checkout, or a worktree that
+// skipped `git submodule update --init`) must still resolve
+// format-markdown/plan-work - buildFromConfig hard-fails startup without
+// them, and before dotagentsEmbeddedSkills existed, losing disk access to
+// dotagents meant losing the server entirely, not just a skill.
+func TestNewSkillSourceDotagentsMissingOnDisk(t *testing.T) {
+	src := newSkillSource([]string{filepath.Join(t.TempDir(), "does-not-exist")})
+	ctx := context.Background()
+	for _, name := range []string{"format-markdown", "plan-work"} {
+		if _, err := src.LoadFrontmatter(ctx, name); err != nil {
+			t.Errorf("LoadFrontmatter(%q) via embedded dotagents fallback: %v", name, err)
+		}
+	}
+}
+
+// TestNewSkillSourceDotagentsOnDiskNoDuplicate proves the embedded fallback
+// is suppressed once dotagents already resolved via plugin discovery -
+// MergedSource.ListFrontmatters errors on a skill name defined by two
+// sources at once (ErrDuplicateSkill), so double-adding it here would break
+// every normal startup instead of only protecting the missing-disk case.
+func TestNewSkillSourceDotagentsOnDiskNoDuplicate(t *testing.T) {
+	dotagents := "../../.agents/vendor/dotagents"
+	if st, err := os.Stat(dotagents + "/skills"); err != nil || !st.IsDir() {
+		t.Skip("vendored dotagents submodule not initialised (git submodule update --init)")
+	}
+	src := newSkillSource([]string{dotagents})
+	if _, err := src.ListFrontmatters(context.Background()); err != nil {
+		t.Fatalf("ListFrontmatters: %v (embedded fallback likely double-added dotagents)", err)
 	}
 }

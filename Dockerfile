@@ -105,10 +105,12 @@ COPY agents/ /agents/
 COPY skills/ /skills/
 # Vendored skill libraries (git submodules under .agents/vendor: dotagents -
 # the general-purpose skills, incl. startup-required format-markdown - and
-# ponytail), merged into the skill toolset via relative paths against CWD /
-# (internal/serve's newSkillSource). dotagents is also embedded in the binary,
-# so only ponytail is lost if a submodule isn't initialized in the build
-# context - build with `git submodule update --init` to include everything.
+# ponytail), resolved as plugin roots (config/quack.yaml's skills.plugins,
+# internal/plugin discovery) against CWD / and merged into the skill toolset
+# (internal/serve's newSkillSource). dotagents' skills/ is also go:embed'd
+# into the binary (embed.go), so only ponytail is lost if a submodule isn't
+# initialized in the build context - build with `git submodule update --init`
+# to include everything.
 COPY .agents/ /.agents/
 ENV QUACK_CONFIG=/config/quack.yaml
 USER nonroot

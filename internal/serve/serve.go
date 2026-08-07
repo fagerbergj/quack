@@ -62,15 +62,48 @@ import (
 // localUserID is the single-user identity every filesystem/git tool resolves against.
 const localUserID = "local"
 
+// dotagentsEmbeddedSkills is the one plugin's skills/ subtree quack's own
+// go:embed (embed.go) bakes into the binary. buildFromConfig hard-requires
+// format-markdown and plan-work at startup, both shipped there, so a
+// standalone install with no repo checkout (bundledir's disk-then-embedded
+// resolution) must still be able to find them even though plugin discovery
+// is otherwise disk-only. No other plugin gets this - it's the only one
+// embedded.
+const dotagentsEmbeddedSkills = ".agents/vendor/dotagents/skills"
+
 // newSkillSource builds the skill toolset Source from quack's own shipped
 // skills plus each configured plugin root's skills directory (internal/plugin
-// discovery), in order.
+// discovery), in order. dotagentsEmbeddedSkills then backfills any names
+// discovery didn't resolve from disk, so a standalone install with no repo
+// checkout still gets it - added by NAME, not unconditionally: MergedSource
+// errors on a skill defined by two sources at once, so a dotagents plugin
+// root that DID resolve from disk must never also get the embedded copy.
 func newSkillSource(pluginRoots []string) skill.Source {
 	sources := []skill.Source{skill.NewFileSystemSource(bundledir.SubFS("skills"))}
 	for _, dir := range plugin.ResolveSkillDirs(pluginRoots) {
 		sources = append(sources, skill.NewFileSystemSource(os.DirFS(dir)))
 	}
-	return skill.NewMergedSource(sources...)
+	resolved := skill.NewMergedSource(sources...)
+
+	have := map[string]bool{}
+	if fms, err := resolved.ListFrontmatters(context.Background()); err == nil {
+		for _, fm := range fms {
+			have[fm.Name] = true
+		}
+	}
+	fallback := skill.NewFileSystemSource(bundledir.SubFS(dotagentsEmbeddedSkills))
+	var backfill []string
+	if fms, err := fallback.ListFrontmatters(context.Background()); err == nil {
+		for _, fm := range fms {
+			if !have[fm.Name] {
+				backfill = append(backfill, fm.Name)
+			}
+		}
+	}
+	if len(backfill) == 0 {
+		return resolved
+	}
+	return skill.NewMergedSource(resolved, skillsource.Scoped(fallback, backfill))
 }
 
 // ledgerStoreFromConfig resolves the replay ledger backend from stores, best-effort.
