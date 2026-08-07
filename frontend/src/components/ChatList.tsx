@@ -54,6 +54,9 @@ export interface ChatListProps {
   loadingMoreChats?: boolean
   onArchive?: (chatId: string) => void
   onUnarchive?: (chatId: string) => void
+  // #722: fired when the collapsed Archived section expand button is clicked -
+  // tells the parent to refetch with showArchived=true so archived chats load.
+  onShowArchived?: () => void
 }
 
 // ChatRow renders a single chat row; `archived` controls whether an archive/unarchive
@@ -157,7 +160,7 @@ function ChatRow({
   )
 }
 
-export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDelete, onCloseMobile, hasMoreChats, onLoadMoreChats, loadingMoreChats, onArchive, onUnarchive }: ChatListProps) {
+export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDelete, onCloseMobile, hasMoreChats, onLoadMoreChats, loadingMoreChats, onArchive, onUnarchive, onShowArchived }: ChatListProps) {
   const search = useSearch()
   const filterState = parseFilterState(search)
   const { q, selected } = filterState
@@ -259,7 +262,7 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
         {archived.length > 0 && (
           <div>
             <button
-              onClick={() => setArchivedExpanded(prev => !prev)}
+              onClick={() => { setArchivedExpanded(prev => !prev); onShowArchived?.() }}
               className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors border-t border-gray-200 dark:border-gray-700"
               aria-expanded={archivedExpanded}
             >
