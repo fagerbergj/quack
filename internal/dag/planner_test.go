@@ -7,8 +7,25 @@ import (
 	"strings"
 	"testing"
 
+	otellog "go.opentelemetry.io/otel/log"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
+
+	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
+
+// captureLogExporter records every emitted log record - a test-only sdklog.Exporter,
+// mirrors internal/vetting's captureEvalExporter for the same reason (no shared
+// export - each package's test double stays local to that package).
+type captureLogExporter struct{ records []sdklog.Record }
+
+func (c *captureLogExporter) Export(_ context.Context, records []sdklog.Record) error {
+	c.records = append(c.records, records...)
+	return nil
+}
+func (c *captureLogExporter) Shutdown(context.Context) error   { return nil }
+func (c *captureLogExporter) ForceFlush(context.Context) error { return nil }
 
 func testPlanner(checkCommands ...string) *Planner {
 	return NewPlanner([]AgentInfo{
@@ -308,6 +325,75 @@ func TestJudgeRoutingDegradesGracefullyOnJudgeError(t *testing.T) {
 	}
 	if *calls != 1 {
 		t.Fatalf("judge calls = %d, want 1", *calls)
+	}
+}
+
+// TestJudgeRoutingRejectionErrorTypeCarriesReason pins #693's plumbing: a
+// rejection is a typed *PlanRejectedError (not a bare fmt.Errorf), so a caller
+// can distinguish "the plan judge rejected this" from any other Build failure
+// without parsing error text.
+func TestJudgeRoutingRejectionErrorTypeCarriesReason(t *testing.T) {
+	reason := "add a terminal node that actually writes the plan"
+	judge, _, _, _ := fakePlanJudge(false, reason, nil)
+	p := NewPlanner([]AgentInfo{{Name: "web-researcher"}}, nil, judge)
+	_, err := p.Build(context.Background(), []RawNode{
+		{ID: "explore", Agent: "web-researcher", Task: "Analyze the repo."},
+	}, nil, nil, nil, "Write a plan.", nil, nil)
+	var rejected *PlanRejectedError
+	if !errors.As(err, &rejected) {
+		t.Fatalf("Build error = %v (%T), want a *PlanRejectedError", err, err)
+	}
+	if rejected.Reason != reason {
+		t.Errorf("PlanRejectedError.Reason = %q, want %q", rejected.Reason, reason)
+	}
+}
+
+// TestJudgeRoutingRejection_EmitsLedgerEventPerRejection pins #693 test case 2:
+// every plan-judge rejection - not just the last one - is recorded to the
+// ledger with the judge's reason verbatim, independent of whatever the
+// orchestrator eventually does with (or without) the plan.
+func TestJudgeRoutingRejection_EmitsLedgerEventPerRejection(t *testing.T) {
+	capExp := &captureLogExporter{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
+	restore := otelobs.SetLoggerProviderForTesting(lp)
+	defer restore()
+
+	reasons := []string{"reason one: add a terminal node", "reason two: still no terminal node"}
+	for _, reason := range reasons {
+		judge, _, _, _ := fakePlanJudge(false, reason, nil)
+		p := NewPlanner([]AgentInfo{{Name: "web-researcher"}}, nil, judge)
+		ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "chat-693"})
+		_, err := p.Build(ctx, []RawNode{
+			{ID: "explore", Agent: "web-researcher", Task: "Analyze the repo."},
+		}, nil, nil, nil, "Write a plan.", nil, nil)
+		if err == nil {
+			t.Fatalf("Build: expected rejection for reason %q", reason)
+		}
+	}
+
+	var gotReasons []string
+	for _, r := range capExp.records {
+		var operation, explain string
+		r.WalkAttributes(func(kv otellog.KeyValue) bool {
+			switch kv.Key {
+			case otelobs.GenAIOperationName:
+				operation = kv.Value.AsString()
+			case otelobs.GenAIEvaluationExplain:
+				explain = kv.Value.AsString()
+			}
+			return true
+		})
+		if operation == otelobs.GenAIOperationPlanRejected {
+			gotReasons = append(gotReasons, explain)
+		}
+	}
+	if len(gotReasons) != len(reasons) {
+		t.Fatalf("ledger recorded %d plan_rejected events (%v), want %d (one per rejection)", len(gotReasons), gotReasons, len(reasons))
+	}
+	for i, reason := range reasons {
+		if gotReasons[i] != reason {
+			t.Errorf("ledger event %d reason = %q, want %q", i, gotReasons[i], reason)
+		}
 	}
 }
 

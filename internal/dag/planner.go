@@ -10,12 +10,25 @@ import (
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
+	otellog "go.opentelemetry.io/otel/log"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
+
+// PlanRejectedError: the plan judge declined a proposed plan. Reason is the
+// judge's own internal text - callers must never surface it as a user-facing
+// answer (#693); it belongs in logs and the ledger, which judgeRouting already
+// writes it to.
+type PlanRejectedError struct {
+	Reason string
+}
+
+func (e *PlanRejectedError) Error() string {
+	return fmt.Sprintf("this plan was rejected: %s\nFix the nodes and call plan again.", e.Reason)
+}
 
 const implementerAgent = "code-implementer"
 const reviewerAgent = "code-reviewer"
@@ -113,7 +126,21 @@ func (p *Planner) judgeRouting(ctx context.Context, plan *Plan, message string) 
 		return nil
 	}
 	slog.Warn("plan rejected by plan judge", "component", "planner", "reason", reason, "message", message)
-	return fmt.Errorf("this plan was rejected: %s\nFix the nodes and call plan again.", reason)
+	emitPlanRejectedEvent(ctx, plan, reason)
+	return &PlanRejectedError{Reason: reason}
+}
+
+// emitPlanRejectedEvent: records the judge's rejection reason to the ledger, verbatim -
+// the durable trail for a rejection whose text must never reach the user-facing reply (#693).
+func emitPlanRejectedEvent(ctx context.Context, plan *Plan, reason string) {
+	if !otelobs.LoggingEnabled("quack.planner") {
+		return
+	}
+	otelobs.EmitLog(ctx, "quack.planner", "",
+		otellog.String(otelobs.GenAIOperationName, otelobs.GenAIOperationPlanRejected),
+		otellog.String(otelobs.GenAIWorkflowName, plan.ID),
+		otellog.String(otelobs.GenAIEvaluationExplain, reason),
+	)
 }
 
 // planSummary: renders the plan for the plan judge.
