@@ -514,6 +514,11 @@ func ChildPath(caps Caps) string {
 }
 
 // WrapArgv: the ONE seam for callers outside RunArgv/newChildCmd (e.g. ACP).
+// Applies caps.Limits the same way landlockArgv does (#646): the agent
+// subprocess is long-lived, not a one-shot check, but it's the one process
+// that actually runs arbitrary repo build commands, so it gets the SAME
+// RLIMIT_AS/RLIMIT_FSIZE ceiling rather than a bespoke one - #647's
+// JAVA_TOOL_OPTIONS sizing already assumed this limit applied here.
 // ponytail: bwrap returns argv unchanged - landlock is what containers use.
 func WrapArgv(dir string, argv []string, caps Caps, extraRO, extraRW []string) []string {
 	if len(argv) == 0 || caps.Sandbox != SandboxLandlock {
@@ -525,7 +530,7 @@ func WrapArgv(dir string, argv []string, caps Caps, extraRO, extraRW []string) [
 	rw, ro := landlockGrants(dir, caps)
 	rw = append(rw, extraRW...)
 	ro = append(ro, extraRO...)
-	return assembleSandboxExec(rw, ro, argv)
+	return assembleSandboxExec(rw, ro, withLimits(argv, caps.Limits, false))
 }
 
 var warnReadOnlyUnenforcedOnce sync.Once

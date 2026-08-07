@@ -336,6 +336,27 @@ func TestWrapArgvLandlockIncludesExtraGrants(t *testing.T) {
 	}
 }
 
+// TestWrapArgvLandlockCarriesLimits (#646): the ACP subprocess wrap path must
+// apply workspace.limits the same way landlockArgv does for gate checks/git/
+// run_command - before this, the long-lived agent process (and anything it
+// spawns, e.g. a build) was the one child in the tree with no RLIMIT_AS/
+// RLIMIT_FSIZE ceiling.
+func TestWrapArgvLandlockCarriesLimits(t *testing.T) {
+	if _, err := exec.LookPath("prlimit"); err != nil {
+		t.Skipf("SKIPPING rlimit test: prlimit(1) not installed (%v)", err)
+	}
+	dir := t.TempDir()
+	argv := []string{"opencode", "acp"}
+	caps := Caps{Sandbox: SandboxLandlock, Limits: Limits{AddressSpaceMB: 8192, FileSizeMB: 1024}}
+	got := WrapArgv(dir, argv, caps, nil, nil)
+	joined := strings.Join(got, " ")
+	for _, want := range []string{"--as=8589934592", "--fsize=1073741824", "opencode acp"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("WrapArgv(landlock, limits) = %v, missing %q", got, want)
+		}
+	}
+}
+
 // TestLandlockGrantsIncludesCapsExtraRO is a pure computation check (no
 // Landlock kernel support needed): Caps.ExtraRO (#660's hook for a GitHub
 // context dir sibling to the node's own WorkRoot) lands in the read-only
