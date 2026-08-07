@@ -752,6 +752,40 @@ type citationDetail struct {
 	score float64
 }
 
+// maxCiteReasonLinks bounds unbacked links named in a cites_sources reason -
+// a forty-link answer must not produce forty lines of feedback (#789).
+const maxCiteReasonLinks = 10
+
+// citeReason names the specific links that scored below full backing, so the
+// worker can re-fetch exactly those instead of guessing from a mean score.
+// Read-only over score/details - does not touch citationScore's own contract.
+func citeReason(score float64, details []citationDetail) string {
+	reason := fmt.Sprintf("deterministic: %d cited link(s), mean backing %.2f", len(details), score)
+	var unbacked []citationDetail
+	for _, d := range details {
+		if d.score < 1.0 {
+			unbacked = append(unbacked, d)
+		}
+	}
+	if len(unbacked) == 0 {
+		return reason
+	}
+	elided := 0
+	if len(unbacked) > maxCiteReasonLinks {
+		elided = len(unbacked) - maxCiteReasonLinks
+		unbacked = unbacked[:maxCiteReasonLinks]
+	}
+	parts := make([]string, len(unbacked))
+	for i, d := range unbacked {
+		parts[i] = fmt.Sprintf("%s (%.2f)", d.url, d.score)
+	}
+	reason += " - not fully backed: " + strings.Join(parts, ", ")
+	if elided > 0 {
+		reason += fmt.Sprintf(" (and %d more elided)", elided)
+	}
+	return reason
+}
+
 // normalizeURL: lowercases scheme+host, drops fragment, trims trailing slash.
 func normalizeURL(raw string) (norm, host string) {
 	raw = strings.TrimSpace(raw)
@@ -783,6 +817,9 @@ func normalizedSets(urls []string) (urlSet, hostSet map[string]bool) {
 	}
 	return urlSet, hostSet
 }
+
+// minAnswerChars: lengthScore's only threshold - anything non-empty passes.
+const minAnswerChars = 1
 
 // lengthScore: 0.0 for empty answer, 1.0 otherwise. Deliberately minimal to avoid penalizing concise answers.
 func lengthScore(answer string) float64 {
