@@ -190,12 +190,68 @@ func TestDeliveryCriterionAppliesToADirectedDeliveryTask(t *testing.T) {
 // (wrongly) loves the answer cannot pass the node anyway (weakest-link).
 func TestFoldDeterministicHardFailsUndeliveredNode(t *testing.T) {
 	v := verdict{Score: 0.7, Criteria: map[string]criterionScore{"task_completeness": {Score: 0.7}}}
-	got := foldDeterministic(context.Background(), v, strings.Repeat("the game is done. ", 40), workerActivity{written: []string{"a.ts"}}, Config{Task: prTask})
+	// A terminal node: it has a delivery target, so the demand still applies.
+	deliver := func(context.Context, DeliveryContext) ([]DeliveryItemOutcome, error) { return nil, nil }
+	got := foldDeterministic(context.Background(), v, strings.Repeat("the game is done. ", 40), workerActivity{written: []string{"a.ts"}}, Config{Task: prTask, Deliver: deliver})
 	if c, ok := got.Criteria["delivery_complete"]; !ok || c.Score != 0 {
 		t.Fatalf("delivery_complete = %+v (present=%v), want a hard 0", c, ok)
 	}
 	if got.Score >= 0.6 {
 		t.Errorf("verdict score = %v, want a weakest-link fail below any threshold", got.Score)
+	}
+}
+
+// Regression (#764, live on quack#723): a non-terminal repo-chain node has no
+// delivery target (dag/graph.go clears cfg.Deliver for it) but is not
+// read-only either - it writes code. The old guard only checked ReadOnly, so
+// this node fell into a delivery_complete criterion it structurally could not
+// satisfy (no stage_pr/stage_push tool was ever offered) and burned every
+// revise round on a task-level PR demand that wasn't its job to fulfil.
+func TestIncompleteCriteria_NonTerminalChainNodeSkipsDeliveryDemand(t *testing.T) {
+	act := workerActivity{written: []string{"a.ts"}, committed: true}
+	crit := incompleteCriteria(prTask, act, false /* not read-only */, false /* no delivery target */, false, false)
+	if _, ok := crit["delivery_complete"]; ok {
+		t.Errorf("delivery_complete = %+v, want it absent - this node has no delivery target to be scored against", crit["delivery_complete"])
+	}
+}
+
+// The counterpart: a TERMINAL node (Deliver set) with the identical task text
+// still gets the criterion, and still fails when nothing was staged - only
+// the delivery-target fact changes the outcome, never the task wording.
+func TestIncompleteCriteria_TerminalNodeStillDemandsDelivery(t *testing.T) {
+	act := workerActivity{written: []string{"a.ts"}}
+	crit := incompleteCriteria(prTask, act, false, true /* has a delivery target */, false, false)
+	c, ok := crit["delivery_complete"]
+	if !ok {
+		t.Fatal("delivery_complete must apply to a terminal node with a delivery target")
+	}
+	if c.Score != 0 {
+		t.Errorf("Score = %v, want 0 - nothing was committed or pushed", c.Score)
+	}
+}
+
+// A read-only node is unchanged by the delivery-target fact - it was already
+// skipped on ReadOnly alone, and stays skipped whether or not Deliver is set.
+func TestIncompleteCriteria_ReadOnlyNodeUnaffectedByDeliverTarget(t *testing.T) {
+	act := workerActivity{}
+	for _, hasTarget := range []bool{true, false} {
+		crit := incompleteCriteria(prTask, act, true /* read-only */, hasTarget, false, false)
+		if _, ok := crit["delivery_complete"]; ok {
+			t.Errorf("hasDeliverTarget=%v: delivery_complete fired on a read-only node", hasTarget)
+		}
+	}
+}
+
+// Regression (#764, TC4): the continuation loop (workIncomplete) must not
+// burn rounds re-asking a non-terminal node to deliver work it has no tool
+// to deliver - the live log showed exactly this: "work not finished;
+// continuing the worker with its tools ... committed=true pushed=false" on
+// a node with no delivery target.
+func TestWorkIncomplete_NonTerminalChainNodeNotHeldToDelivery(t *testing.T) {
+	act := workerActivity{written: []string{"a.ts"}, committed: true}
+	answer := "I implemented the change and committed it. This node does not deliver; a later node in the chain does."
+	if workIncomplete(answer, prTask, act, false /* not read-only */, false /* no delivery target */, false, false) {
+		t.Error("a non-terminal chain node must not be held incomplete solely for undelivered work it has no tool to deliver")
 	}
 }
 
@@ -362,10 +418,10 @@ func TestReadOnlyReviewerNotHeldToDelivery(t *testing.T) {
 	pollutedTask := "Review PR #5, and open a pull request is what it does - it will Add a Flappy Bird game. " +
 		"Read the diff and post inline review comments; submit the review."
 	act := workerActivity{reviewSubmitted: true, ranCommand: true}
-	if !workIncomplete("Reviewed.", pollutedTask, act, false, true, false) {
+	if !workIncomplete("Reviewed.", pollutedTask, act, false, true, true, false) {
 		t.Skip("polluted task no longer reads as implement-and-deliver; the ReadOnly guard would not fire")
 	}
-	if workIncomplete("Reviewed.", pollutedTask, act, true, true, false) {
+	if workIncomplete("Reviewed.", pollutedTask, act, true, true, true, false) {
 		t.Error("a read-only reviewer with a submitted review must be COMPLETE - delivery must not apply to an agent that cannot commit")
 	}
 }
@@ -374,13 +430,13 @@ func TestReadOnlyReviewerNotHeldToDelivery(t *testing.T) {
 // done - this is the exact live regression (a status update passed as an answer).
 func TestWorkIncompleteOnAnUnpostedReview(t *testing.T) {
 	statusUpdate := "I encountered technical difficulties with the shallow clone and could not complete the review."
-	if !workIncomplete(statusUpdate, reviewTask, workerActivity{}, false, true, false) {
+	if !workIncomplete(statusUpdate, reviewTask, workerActivity{}, false, true, true, false) {
 		t.Error("a non-empty answer that posted no review must be incomplete - the continuation loop has to re-invoke the reviewer with its tools")
 	}
-	if workIncomplete("Reviewed and requested changes.", reviewTask, workerActivity{reviewSubmitted: true, ranCommand: true}, false, true, false) {
+	if workIncomplete("Reviewed and requested changes.", reviewTask, workerActivity{reviewSubmitted: true, ranCommand: true}, false, true, true, false) {
 		t.Error("a submitted review is complete work")
 	}
-	if workIncomplete("Here's what I think of the code: …", "What do you think of this code?", workerActivity{}, false, false, false) {
+	if workIncomplete("Here's what I think of the code: …", "What do you think of this code?", workerActivity{}, false, true, false, false) {
 		t.Error("a prose task with a non-empty answer must not be held incomplete")
 	}
 }
@@ -410,7 +466,7 @@ func TestBehaviourCriterionFailsOnAReadOnlyReview(t *testing.T) {
 	if !strings.Contains(got.Reason, "EXECUTED") {
 		t.Errorf("Reason = %q, want it to say the change was never executed", got.Reason)
 	}
-	if !workIncomplete("The game is fully functional.", reviewTask, act, false, true, false) {
+	if !workIncomplete("The game is fully functional.", reviewTask, act, false, true, true, false) {
 		t.Error("a read-only review must be INCOMPLETE work - the continuation loop has to hand the reviewer its tools back")
 	}
 }
@@ -461,7 +517,7 @@ func TestBehaviourCriterionDoesNotFireOnProseTask(t *testing.T) {
 		if _, ok := behaviourCriterion(task, workerActivity{}, false); ok {
 			t.Errorf("behaviour_verified fired on a task with no code change to execute: %q", task)
 		}
-		if workIncomplete("…", task, workerActivity{}, false, false, false) {
+		if workIncomplete("…", task, workerActivity{}, false, true, false, false) {
 			t.Errorf("prose task held incomplete: %q", task)
 		}
 	}
@@ -481,7 +537,7 @@ func TestBehaviourCriterionExemptsADocsOnlyReview(t *testing.T) {
 	}
 	if workIncomplete("Docs look good.", reviewTask, workerActivity{
 		paths: act.paths, reviewSubmitted: true,
-	}, false, true, false) {
+	}, false, true, true, false) {
 		t.Error("a submitted docs-only review is complete work")
 	}
 }
