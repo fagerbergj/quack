@@ -33,6 +33,10 @@ export type ChatSummary = {
      * Current state of the originating GitHub issue/PR. Only set when quack has observed the resource at dispatch time; absent otherwise.
      */
     github_state?: 'open' | 'closed' | 'merged' | 'draft';
+    /**
+     * True if the chat is archived and hidden from the main list by default.
+     */
+    archived?: boolean;
 };
 
 export type ChatDetail = ChatSummary & {
@@ -131,7 +135,14 @@ export type EditNodeTaskBody = {
 };
 
 export type UpdateChatBody = {
+    /**
+     * New title for the chat. Omit to leave unchanged.
+     */
     title?: string;
+    /**
+     * Toggle archive. True = archive, False = unarchive. Omit to leave unchanged.
+     */
+    archived?: boolean;
 };
 
 /**
@@ -304,6 +315,10 @@ export type ListChatsData = {
          *
          */
         page_token?: string;
+        /**
+         * When false (default), omit archived chats. When true, include them all.
+         */
+        show_archived?: boolean;
     };
     url: '/api/v1/chats';
 };

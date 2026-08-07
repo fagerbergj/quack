@@ -261,6 +261,8 @@ type AgentActivityOutputItemType string
 
 // ChatDetail defines model for ChatDetail.
 type ChatDetail struct {
+	// Archived True if the chat is archived and hidden from the main list by default.
+	Archived  *bool     `json:"archived,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 
 	// GithubRepo `<owner>/<repo>` of the originating GitHub issue/PR, present only for GitHub-originated chats.
@@ -300,6 +302,8 @@ type ChatStatus string
 
 // ChatSummary defines model for ChatSummary.
 type ChatSummary struct {
+	// Archived True if the chat is archived and hidden from the main list by default.
+	Archived  *bool     `json:"archived,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 
 	// GithubRepo `<owner>/<repo>` of the originating GitHub issue/PR, present only for GitHub-originated chats.
@@ -575,6 +579,10 @@ type TurnInputRole string
 
 // UpdateChatBody defines model for UpdateChatBody.
 type UpdateChatBody struct {
+	// Archived Toggle archive. True = archive, False = unarchive. Omit to leave unchanged.
+	Archived *bool `json:"archived,omitempty"`
+
+	// Title New title for the chat. Omit to leave unchanged.
 	Title *string `json:"title,omitempty"`
 }
 
@@ -606,6 +614,9 @@ type ListChatsParams struct {
 
 	// PageToken Opaque continuation token from a previous response's `next_page_token`. Treat it as an opaque string: never parse or construct one, pass back exactly what was returned. Omit for the first page.
 	PageToken *string `form:"page_token,omitempty" json:"page_token,omitempty"`
+
+	// ShowArchived When false (default), omit archived chats. When true, include them all.
+	ShowArchived *bool `form:"show_archived,omitempty" json:"show_archived,omitempty"`
 }
 
 // ListMemoriesParams defines parameters for ListMemories.
@@ -1072,6 +1083,19 @@ func (siw *ServerInterfaceWrapper) ListChats(w http.ResponseWriter, r *http.Requ
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "page_token"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page_token", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "show_archived" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "show_archived", r.URL.Query(), &params.ShowArchived, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "show_archived"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "show_archived", Err: err})
 		}
 		return
 	}

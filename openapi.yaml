@@ -44,6 +44,13 @@ paths:
             exactly what was returned. Omit for the first page.
           schema:
             type: string
+        - name: show_archived
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: When false (default), omit archived chats. When true, include them all.
       responses:
         "200":
           description: The chats
@@ -636,6 +643,9 @@ components:
           type: string
           enum: [open, closed, merged, draft]
           description: "Current state of the originating GitHub issue/PR. Only set when quack has observed the resource at dispatch time; absent otherwise."
+        archived:
+          type: boolean
+          description: True if the chat is archived and hidden from the main list by default.
 
     ChatDetail:
       allOf:
@@ -803,6 +813,10 @@ components:
       properties:
         title:
           type: string
+          description: New title for the chat. Omit to leave unchanged.
+        archived:
+          type: boolean
+          description: Toggle archive. True = archive, False = unarchive. Omit to leave unchanged.
 
     ResponseStatus:
       type: string
