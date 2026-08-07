@@ -136,16 +136,19 @@ The style guide and the linter are the authority on style, and out-of-scope obse
 
 The review critiques the work, not the developer; explains the *why* behind
 each finding so it's actionable; and includes at least one sincere piece of
-praise. Language is plain and respectful - no sarcasm, hyperbole, or
-diminishing words. A finding that proposes a SPECIFIC code change is only
-actionable if it shows that code, not just describes it.
+praise in the summary. Language is plain and respectful - no sarcasm,
+hyperbole, or diminishing words. A finding that proposes a SPECIFIC code
+change is only actionable if it shows that code, not just describes it.
 
 **Evaluation steps.**
 1. Check the tone targets the code, not the author, and avoids "just"/"always"
    /"obviously"-style diminishment.
 2. Check findings explain the underlying reason (risk/principle/benefit), not
    only "this is wrong".
-3. Check for at least one genuine `praise:`.
+3. Check the summary - `stage_review`'s body, or the reply text ahead of the
+   fallback `VERDICT:`/`FINDINGS:` tail - for at least one genuine, sincere
+   sentence of praise. There is no `praise:` label; the prompt reserves
+   praise for the summary.
 4. For each finding that proposes a specific code change (a rename, an
    extraction, a different implementation - anything more concrete than "this
    could be cleaner"), check whether it supplies that code in a fenced code
@@ -190,10 +193,11 @@ actually fail if the code were broken, instead of rubber-stamping.
 
 ### `structured_verdict`
 
-The review is delivered in a usable shape - a summary, then findings grouped
-by severity (blocking → suggestions → nits → praise) - and carries a clear,
-consistent verdict. The verdict is STRUCTURED DATA, not prose: the reviewer
-stages it via `stage_review`'s `event` (or the answer's `VERDICT:` tail), and
+The review is delivered in a usable shape - a summary (praise belongs only
+here), then findings grouped by severity (blocking → suggestions → nits) -
+and carries a clear, consistent verdict. The verdict is STRUCTURED DATA, not
+prose: the reviewer stages it via `stage_review`'s `event` (or the answer's
+`VERDICT:` tail), and
 your prompt surfaces the resolved value as "Staged review verdict: <event>"
 when one is staged. Score presence and consistency of THAT, never whether the
 summary restates it in words - the reviewer is deliberately told the summary
