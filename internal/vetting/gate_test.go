@@ -125,7 +125,7 @@ func TestCiteReasonScoreUnchanged(t *testing.T) {
 	if wantScore := (1.0 + 0.0 + 0.0) / 3; score != wantScore {
 		t.Errorf("score = %.3f, want %.3f - citeReason must not perturb citationScore's contract", score, wantScore)
 	}
-	det := computeDeterministicCriteria(t.Context(), answer, act, Config{})
+	det, _ := computeDeterministicCriteria(t.Context(), answer, act, Config{})
 	if det["cites_sources"].Score != score {
 		t.Errorf("cites_sources score = %.3f, want %.3f (identical to citationScore's own output)", det["cites_sources"].Score, score)
 	}
@@ -413,7 +413,7 @@ func TestLengthScore(t *testing.T) {
 // 5: an empty answer's sufficient_length reason states both the actual
 // length and the length that would pass, not just a bare char count.
 func TestSufficientLengthReasonStatesActualAndRequired(t *testing.T) {
-	det := computeDeterministicCriteria(t.Context(), "   ", workerActivity{}, Config{})
+	det, _ := computeDeterministicCriteria(t.Context(), "   ", workerActivity{}, Config{})
 	c, ok := det["sufficient_length"]
 	if !ok {
 		t.Fatal("sufficient_length missing for an empty answer")
