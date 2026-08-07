@@ -113,7 +113,10 @@ function formatTimestamp(iso: string): string {
 }
 
 // AskSection - <issue>/<pull_request>: title as a heading, description as
-// markdown. Always visible (not collapsible) - it's the thing being worked on.
+// markdown. Always visible (not collapsible) - it's the thing being worked
+// on - but a long description is height-locked (#746 item 8): a short one
+// renders whole with no control, a long one collapses to its first lines
+// with a Show more toggle, so it can't push everything else off screen.
 function AskSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'ask' }> }) {
   return (
     <div>
@@ -121,7 +124,11 @@ function AskSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'ask' }> 
         {block.number && <span className="text-gray-400 dark:text-gray-500 font-normal mr-1">#{block.number}</span>}
         {block.title || '(untitled)'}
       </h3>
-      {block.description && <AssistantText text={block.description} />}
+      {block.description && (
+        <Expandable maxHeight={140} fade="from-white dark:from-gray-800">
+          <AssistantText text={block.description} />
+        </Expandable>
+      )}
     </div>
   )
 }
@@ -221,14 +228,43 @@ function ChangedFilesSection({ block }: { block: Extract<EnvelopeBlock, { kind: 
   )
 }
 
-// EventSection - collapsed, header is the event name; expands to
-// pretty-printed JSON. Routed through AssistantText's own ```json fence so it
-// gets the same rehype-highlight syntax colouring as any other code block,
-// rather than a second highlighter.
+// topLevelFields pulls the event JSON's own top-level PRIMITIVE fields
+// (skipping nested objects/arrays, which stay in the full JSON body below) -
+// #746 item 9: a wide pane rendering one "key: value" per line wastes the
+// width it has; a grid puts related fields side by side instead.
+function topLevelFields(pretty: string | null): [string, string][] {
+  if (!pretty) return []
+  try {
+    const obj: unknown = JSON.parse(pretty)
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return []
+    return Object.entries(obj as Record<string, unknown>)
+      .filter(([, v]) => v == null || typeof v !== 'object')
+      .map(([k, v]) => [k, String(v)])
+  } catch {
+    return []
+  }
+}
+
+// EventSection - collapsed, header is the event name; expands to the
+// top-level fields as a responsive grid (#746 item 9), then the full
+// pretty-printed JSON below for anything nested. The JSON is routed through
+// AssistantText's own ```json fence so it gets the same rehype-highlight
+// syntax colouring as any other code block, rather than a second highlighter.
 function EventSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'event' }> }) {
   const body = block.pretty ?? block.raw
+  const fields = topLevelFields(block.pretty)
   return (
     <CollapsibleSection summary={<code className="font-mono">{block.name ?? 'event'}</code>}>
+      {fields.length > 0 && (
+        <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1.5 mb-2 not-prose">
+          {fields.map(([k, v]) => (
+            <div key={k} className="min-w-0">
+              <dt className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500">{k}</dt>
+              <dd className="text-[11px] font-mono text-gray-700 dark:text-gray-200 truncate" title={v}>{v}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
       <Expandable maxHeight={320} fade="from-white dark:from-gray-800">
         <AssistantText text={'```json\n' + body + '\n```'} />
       </Expandable>

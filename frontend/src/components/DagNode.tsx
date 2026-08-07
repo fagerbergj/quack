@@ -172,11 +172,15 @@ function ContentPopup({ title, text, onClose }: { title: string; text: string; o
             ✕
           </button>
         </div>
-        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">{title}</span>
+        <div className="group/verdict relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
+          <span className="block mb-2 text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">{title}</span>
+          {/* #746 item 7 - hidden until THIS block (not some unrelated
+              ancestor - a NAMED group, since the popup nests inside
+              DagNode's own `.group` card) is hovered/focused, aligned to the
+              block's own px-5/py-4 padding rather than a separate header row. */}
+          <span className="absolute top-4 right-5 opacity-0 group-hover/verdict:opacity-100 group-focus-within/verdict:opacity-100 transition-opacity">
             <CopyButton text={text} label={`Copy ${title.toLowerCase()}`} />
-          </div>
+          </span>
           <AssistantText text={text} />
         </div>
       </div>
@@ -236,15 +240,22 @@ const WorkerCard = memo(function WorkerCard({ runs, running }: { runs: AgentRun[
   const startedAt = runs.find(r => r.startedAt != null)?.startedAt
   const durationMs = running ? undefined : runs.reduce((sum, r) => sum + (r.durationMs ?? 0), 0)
   const timerRun: AgentRun = { ...runs[runs.length - 1], startedAt, durationMs, model, done: !running }
+  // #746 item 4: count only tool calls - a thinking trace isn't a "step" a
+  // reader can point to. A node with pure reasoning and no tool calls shows
+  // no count at all rather than a misleading "0 tool calls".
+  const toolCount = activity.filter(a => a.kind === 'tool').length
   return (
     <div className="border-t border-gray-100 dark:border-gray-700">
       <details open={running} className="not-prose">
         <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2">
-          {/* Step count (grows live); "running" is already the node header's
-              pulsing status dot + the timer - no separate spinner dot here. */}
-          <span className="text-xs text-gray-400 dark:text-gray-500">
-            {`${activity.length} step${activity.length === 1 ? '' : 's'}`}
-          </span>
+          {/* Tool-call count (grows live); "running" is already the node
+              header's pulsing status dot + the timer - no separate spinner
+              dot here. */}
+          {toolCount > 0 && (
+            <span className="text-xs text-gray-400 dark:text-gray-500">
+              {`${toolCount} tool call${toolCount === 1 ? '' : 's'}`}
+            </span>
+          )}
           <RunModel run={timerRun} />
           <RunTimer run={timerRun} />
         </summary>

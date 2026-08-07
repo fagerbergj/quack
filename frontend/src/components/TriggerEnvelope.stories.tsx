@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import { within, userEvent } from 'storybook/test'
 import { TriggerMessage } from './TriggerEnvelope'
 
 const meta: Meta<typeof TriggerMessage> = {
@@ -117,6 +118,37 @@ export const InvalidEventJson: Story = {
     content: `<permissions>join_issue_conversation</permissions>
 <deliverable>an answer to their message, posted to the issue as a comment</deliverable>
 <event name="issue_comment.created">{not valid json at all</event>`,
+  },
+}
+
+// #746 item 9: the event section's TOP-LEVEL primitive fields render as a
+// responsive grid above the full JSON, using the wide pane's width instead of
+// one "key: value" per line - the full payload (with its nested objects) is
+// still there below, just no longer the only view.
+export const EventFieldsGrid: Story = {
+  args: {
+    content: `<permissions>join_pr_conversation</permissions>
+<deliverable>a review with inline comments and a verdict</deliverable>
+<pull_request number="55"><title>Add retry backoff</title><description>Adds exponential backoff to the retry loop.</description></pull_request>
+<event name="pull_request.synchronize">{"action":"synchronize","number":55,"before":"a1b2c3d","after":"e4f5a6b","sender_login":"fagerbergj","repository_full_name":"fagerbergj/quack"}</event>`,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByText('pull_request.synchronize'))
+  },
+}
+
+// #746 item 8: a long issue/PR description collapses to its first lines with
+// a Show more control (a short one, see CiFix above, gets no control at all).
+export const LongDescriptionCollapses: Story = {
+  args: {
+    content: `<permissions>join_issue_conversation</permissions>
+<deliverable>an implementation plan, posted to the issue as your answer text</deliverable>
+<issue number="88">
+  <title>Add offline queueing for outbound webhooks</title>
+  <description>${'Outbound webhook deliveries currently fail hard the instant the receiving endpoint is unreachable, dropping the event on the floor with only a log line to show for it. '.repeat(6)}</description>
+</issue>
+<event name="issues.labeled">{"action":"labeled"}</event>`,
   },
 }
 

@@ -13,6 +13,7 @@ import { pendingChoice, showLiveSpinner } from '../components/messageParts'
 import { AttachmentPreviews } from '../components/AttachmentUI'
 import { GitHubLink } from '../components/GitHubLink'
 import { TriggerMessage } from '../components/TriggerEnvelope'
+import { ChatMenu } from '../components/ChatMenu'
 
 // liveDagFinalText extracts the answer from the terminal node's accumulated answer.
 // This IS the DAG turn's answer - never mix in the orchestrator's own top-level
@@ -479,17 +480,10 @@ export default function Chat() {
             />
             {githubLink && <GitHubLink url={githubLink.url} repo={githubLink.repo} className="flex-shrink-0" />}
           </div>
-          {/* The live view only ever shows a compact status per node (#725) - this is
-              the escape hatch to the untrimmed event-by-event detail. */}
-          {activeChatId && (
-            <a
-              href={`/api/v1/chats/${activeChatId}/recording`}
-              className="flex-shrink-0 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-              title="Download this chat's full recording (every streamed event)"
-            >
-              ⬇ recording
-            </a>
-          )}
+          {/* Per-chat actions (#746 items 2/3): Download Logs is the escape
+              hatch to the untrimmed event-by-event recording - relabelled and
+              moved from a standing header link into the ⋯ overflow menu. */}
+          {activeChatId && <ChatMenu chatId={activeChatId} />}
         </div>
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain px-6 py-6 space-y-6">

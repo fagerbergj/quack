@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { within, userEvent, expect, waitFor } from 'storybook/test'
+import { within, expect, waitFor } from 'storybook/test'
 import { ActivityList, AssistantText, BubbleHeader, LiveStatusLine } from './AgentParts'
 import type { Activity } from './messageParts'
 
@@ -90,34 +90,16 @@ export const ThinkBlockIcon: Story = {
   },
 }
 
-// Every tool call carries a small copy-JSON button (✎ → ✓ on click) in its
-// collapsed summary line - the escape hatch for whatever a rendered view
-// doesn't show nicely. Click it here (clipboard writes are inert in a
-// sandboxed Storybook iframe, but the ✓ flash still confirms the click fired).
-export const CopyButtonOnToolCall: Story = {
-  args: {
-    activity: [
-      { kind: 'tool', tool: { callId: 'c1', name: 'run_command', done: true, args: { command: 'go test ./...' }, result: { exit_code: 0, output: 'ok' } } },
-    ],
-  },
-}
-
-// #435 - the copy button sits in a sibling row over the summary's corner,
-// not nested inside the `<summary>` (invalid HTML, breaks keyboard use):
-// clicking it copies without toggling the collapsed tool block open.
-export const CopyButtonDoesNotToggleSummary: Story = {
+// #746 item 6 - tool rows no longer carry a copy button (dropped as noise);
+// the row itself still expands to ToolCallView's full detail on click.
+export const ToolCallNoCopyButton: Story = {
   args: {
     activity: [
       { kind: 'tool', tool: { callId: 'c1', name: 'run_command', done: true, args: { command: 'go test ./...' }, result: { exit_code: 0, output: 'ok' } } },
     ],
   },
   play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement)
-    const summary = canvasElement.querySelector('summary')!
-    expect(summary.querySelector('button')).toBeNull()
-    const details = canvasElement.querySelector('details')!
-    await userEvent.click(canvas.getByLabelText('Copy tool call JSON'))
-    expect(details.open).toBe(false)
+    expect(canvasElement.querySelector('button[aria-label^="Copy"]')).toBeNull()
   },
 }
 
@@ -165,6 +147,35 @@ It coalesces rapid calls into the trailing one.`
 // with a hover Copy button (CopyablePre). Hover the block to reveal Copy.
 export const WithCodeBlock: Story = {
   render: () => <AssistantText text={CODE_ANSWER} />,
+}
+
+// #746 item 16 - a single-backtick span should render as a small inline code
+// span (Tailwind Typography's `code` styling), distinct from the fenced block
+// above. Pins the regression: mixes inline code with prose, and follows it
+// with a fenced block on the same page so the two can be compared directly.
+const INLINE_CODE_ANSWER = `Set \`QUACK_LOG_LEVEL\` to \`debug\` in the environment, then restart with \`make docker-up\`. The default is \`info\`.
+
+\`\`\`bash
+QUACK_LOG_LEVEL=debug make docker-up
+\`\`\``
+
+export const WithInlineCode: Story = {
+  render: () => <AssistantText text={INLINE_CODE_ANSWER} />,
+}
+
+// #746 item 16's actual root cause: not a CSS override (the 3 candidates the
+// issue named were all ruled out) but a CommonMark parsing quirk - a bare
+// backtick used as punctuation earlier in the paragraph defeats the greedy
+// backtick-pairing that inline code spans rely on, so `QUACK_LOG_LEVEL` below
+// would render as literal scrambled text without src/lib/backticks.ts's fix.
+export const InlineCodeAfterStrayBacktick: Story = {
+  render: () => <AssistantText text={"Don't use a bare ` unless needed. Instead set `QUACK_LOG_LEVEL` to `debug`."} />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const code = canvas.getByText('QUACK_LOG_LEVEL')
+    expect(code.tagName).toBe('CODE')
+    expect(canvas.getByText('debug').tagName).toBe('CODE')
+  },
 }
 
 // A complete ```mermaid block (closing fence has arrived) renders as an SVG

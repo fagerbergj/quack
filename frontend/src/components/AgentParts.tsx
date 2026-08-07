@@ -9,10 +9,10 @@ import type { ComponentPropsWithoutRef } from 'react'
 import type { Element } from 'hast'
 import type { Activity, ToolCall } from './messageParts'
 import { agentLabel, liveStatusLine } from './messageParts'
-import { summarizeArgs, previewLine, toolFailed, copyPayload, toolActionLine } from './toolFormat'
+import { summarizeArgs, previewLine, toolFailed, toolActionLine } from './toolFormat'
+import { escapeUnmatchedBackticks } from '../lib/backticks'
 import { Expandable } from './Expandable'
 import { ToolCallView } from './ToolCallView'
-import { CopyButton } from './CopyButton'
 import { CopyablePre } from './CopyablePre'
 import { MermaidDiagram } from './MermaidDiagram'
 import { isTrailingMermaidFenceOpen } from './mermaidSource'
@@ -82,8 +82,14 @@ function hastText(node: Element | undefined): string {
 // against `isTrailingMermaidFenceOpen(text)` (computed once per text change,
 // not per keystroke) gives a stable answer without depending on render order.
 export function AssistantText({ text }: { text: string }) {
-  const trailingOpen = useMemo(() => isTrailingMermaidFenceOpen(text), [text])
-  const docEnd = useMemo(() => text.replace(/\s+$/, '').length, [text])
+  // #746 item 16: a stray punctuation backtick earlier in the text can defeat
+  // CommonMark's greedy backtick pairing for every inline code span after it -
+  // fix that before parsing, never inside a fenced block. Offsets below are
+  // derived from THIS fixed string (what's actually handed to ReactMarkdown),
+  // not the original, since escaping shifts everything after it.
+  const fixed = useMemo(() => escapeUnmatchedBackticks(text), [text])
+  const trailingOpen = useMemo(() => isTrailingMermaidFenceOpen(fixed), [fixed])
+  const docEnd = useMemo(() => fixed.replace(/\s+$/, '').length, [fixed])
   const components = useMemo(() => ({
     pre: (props: ComponentPropsWithoutRef<'pre'> & { node?: Element }) => {
       const { node, children, ...rest } = props
@@ -101,7 +107,7 @@ export function AssistantText({ text }: { text: string }) {
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSchema], rehypeHighlight]}
         components={components}
-      >{text}</ReactMarkdown>
+      >{fixed}</ReactMarkdown>
     </div>
   )
 }
@@ -248,7 +254,7 @@ export function ToolBlock({ tool }: { tool: ToolCall }) {
   return (
     <div className="relative my-0.5 not-prose">
       <details className="group">
-        <summary className="cursor-pointer select-none flex items-center gap-1.5 py-0.5 pr-6 text-[11px]">
+        <summary className="cursor-pointer select-none flex items-center gap-1.5 py-0.5 text-[11px]">
           <ToolStatusIcon tool={tool} />
          <code className="font-mono text-gray-600 dark:text-gray-300 shrink-0">{tool.name}</code>
            {argSummary && <span className="text-gray-400 dark:text-gray-500 truncate">{argSummary}</span>}
@@ -257,9 +263,6 @@ export function ToolBlock({ tool }: { tool: ToolCall }) {
           <ToolCallView tool={tool} />
         </div>
       </details>
-      <span className="absolute right-0 top-0.5 shrink-0">
-        <CopyButton text={copyPayload(tool.args, tool.result, tool.done)} label="Copy tool call JSON" />
-      </span>
     </div>
   )
 }

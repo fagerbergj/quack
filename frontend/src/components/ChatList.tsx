@@ -1,6 +1,7 @@
 import type { ChatSummary } from '../api'
 import { isGithubChat, parseGithubRef } from '../lib/github'
 import { computeFacets, filterChats, parseFilterState, serializeFilterState, type SelectedFacets } from '../lib/chatFilters'
+import { paletteClasses } from '../lib/colorHash'
 import { FilterPanel } from './FilterPanel'
 import { StatusDot } from './StatusDot'
 import { navigate, useSearch } from '../router'
@@ -70,14 +71,6 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
           New Chat
         </button>
         <button
-          onClick={() => navigate('/memory')}
-          aria-label="Browse memory"
-          title="Browse memory"
-          className="flex-shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1.5 rounded border border-gray-300 dark:border-gray-600 transition-colors"
-        >
-          🧠
-        </button>
-        <button
           onClick={onCloseMobile}
           className="md:hidden text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1.5 rounded transition-colors"
           aria-label="Close chat list"
@@ -134,7 +127,11 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
                     rel="noopener noreferrer"
                     onClick={e => e.stopPropagation()}
                     title={ref.repo}
-                    className="flex-shrink-0 max-w-[7rem] truncate text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
+                    // #746 item 10: a deterministic (hashed, not assignment-order)
+                    // colour per repo, so it's the same colour every reload and
+                    // across every chat - always paired with the repo NAME text,
+                    // never colour alone.
+                    className={`flex-shrink-0 max-w-[7rem] truncate text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded hover:underline ${paletteClasses(ref.repo)}`}
                   >
                     {ref.repo}
                   </a>

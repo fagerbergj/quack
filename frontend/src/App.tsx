@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import Chat from './pages/Chat'
 import Memory from './pages/Memory'
+import { NavRail } from './components/NavRail'
 import { useRoute } from './router'
 
 export default function App() {
@@ -21,11 +22,16 @@ export default function App() {
     // bar/toolbar) covers part of the screen - pinning the composer at the
     // bottom of a too-tall box puts it underneath that chrome. 100dvh
     // tracks the real visible viewport instead.
-    <div className="h-dvh flex flex-col">
-      {/* Two pages: Chat (default, /chat/:chatId + the sidebar's filter query
-          params) and Memory (/memory - #727). Both routed by src/router.ts's
-          plain path matcher, no router dependency. */}
-      {route === 'memory' ? <Memory /> : <Chat />}
+    <div className="h-dvh flex">
+      {/* Persistent left rail (#746 item 1): Chats/Memory as peers, outside
+          the page switch below so it's common to both routes. */}
+      <NavRail route={route} />
+      <div className="flex-1 min-w-0 h-full flex flex-col overflow-hidden">
+        {/* Two pages: Chat (default, /chat/:chatId + the sidebar's filter query
+            params) and Memory (/memory - #727). Both routed by src/router.ts's
+            plain path matcher, no router dependency. */}
+        {route === 'memory' ? <Memory /> : <Chat />}
+      </div>
     </div>
   )
 }
