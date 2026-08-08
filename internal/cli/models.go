@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/fagerbergj/quack/internal/httpx"
 )
 
 // ListModels queries {endpoint}/models and returns the model IDs, sorted. Works
@@ -23,7 +25,7 @@ func ListModels(ctx context.Context, endpoint, apiKey string) ([]string, error) 
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 10 * time.Second, Transport: httpx.NewTransport(nil)}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("contact %s: %w", ep, err)

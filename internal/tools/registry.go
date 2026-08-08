@@ -11,6 +11,7 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
 
+	"github.com/fagerbergj/quack/internal/httpx"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/replay"
 	"github.com/fagerbergj/quack/internal/workspace"
@@ -72,7 +73,7 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 		return newReplayStubsWithLive(names, d.Replayer, d.LedgerCoords, liveTools), nil
 	}
 	if d.Client == nil {
-		d.Client = &http.Client{Timeout: 30 * time.Second}
+		d.Client = &http.Client{Timeout: 30 * time.Second, Transport: httpx.NewTransport(nil)}
 	}
 	if d.Guarded == nil {
 		d.Guarded = GuardedClient()

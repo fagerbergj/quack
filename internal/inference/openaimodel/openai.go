@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"net/http"
 	"regexp"
 	"sort"
 	"strings"
@@ -22,6 +23,8 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/httpx"
 )
 
 var _ model.LLM = &OpenAIModel{}
@@ -40,6 +43,7 @@ func NewOpenAIModel(modelName, endpoint, apiKey string) *OpenAIModel {
 	client := openai.NewClient(
 		option.WithBaseURL(endpoint),
 		option.WithAPIKey(apiKey),
+		option.WithHTTPClient(&http.Client{Transport: httpx.NewTransport(nil)}),
 	)
 	return &OpenAIModel{
 		client:    client,
@@ -77,7 +81,9 @@ func (o *OpenAIModel) Embed(ctx context.Context, texts []string) ([][]float32, e
 	if len(texts) == 0 {
 		return nil, nil
 	}
-	resp, err := o.client.Embeddings.New(ctx, openai.EmbeddingNewParams{
+	// Regenerating an embedding has no externally-visible side effect (unlike
+	// a GitHub comment/merge), so a retry-after-server-fault is safe here.
+	resp, err := o.client.Embeddings.New(httpx.WithIdempotent(ctx), openai.EmbeddingNewParams{
 		Model: openai.EmbeddingModel(o.ModelName),
 		Input: openai.EmbeddingNewParamsInputUnion{OfArrayOfStrings: texts},
 	})
@@ -118,7 +124,9 @@ func (o *OpenAIModel) generate(ctx context.Context, req *model.LLMRequest) iter.
 			return
 		}
 
-		resp, err := o.client.Chat.Completions.New(ctx, openaiReq)
+		// A completion has no externally-visible side effect until quack acts on
+		// it, so retrying a fault (e.g. a 502 mid model-swap, #572) is safe.
+		resp, err := o.client.Chat.Completions.New(httpx.WithIdempotent(ctx), openaiReq)
 		if err != nil {
 			yield(nil, o.apiErr(ctx, "generate", err))
 			return
@@ -145,7 +153,7 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 			IncludeUsage: openai.Bool(true),
 		}
 
-		stream := o.client.Chat.Completions.NewStreaming(ctx, openaiReq)
+		stream := o.client.Chat.Completions.NewStreaming(httpx.WithIdempotent(ctx), openaiReq)
 		defer stream.Close()
 
 		aggregatedContent := &genai.Content{

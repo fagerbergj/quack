@@ -193,48 +193,38 @@ func (a *App) fetchAllPages(ctx context.Context, firstPath, authz string, cap in
 	return items, false, nil
 }
 
-// doPagedGET performs one authenticated GET and returns the next page URL from the Link header.
+// doPagedGET performs one authenticated GET and returns the next page URL
+// from the Link header; retry happens transparently inside a.http's
+// transport (see internal/httpx).
 func (a *App) doPagedGET(ctx context.Context, pathOrURL, authz string, out any) (string, error) {
 	url := pathOrURL
 	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
 		url = a.apiBase + pathOrURL
 	}
-	var lastErr error
-	for attempt := 1; attempt <= maxGETAttempts; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return "", fmt.Errorf("github: build request: %w", err)
-		}
-		req.Header.Set("Authorization", authz)
-		req.Header.Set("Accept", "application/vnd.github+json")
-		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-
-		resp, err := a.http.Do(req)
-		if err != nil {
-			lastErr = fmt.Errorf("github: GET %s: %w", url, err)
-			if attempt < maxGETAttempts && retryAfterErr(ctx, attempt) {
-				continue
-			}
-			return "", lastErr
-		}
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-		link := resp.Header.Get("Link")
-		resp.Body.Close()
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			lastErr = fmt.Errorf("github: GET %s: status %d: %s", url, resp.StatusCode, strings.TrimSpace(string(data)))
-			if isRetryableStatus(resp.StatusCode) && attempt < maxGETAttempts && retryAfterErr(ctx, attempt) {
-				continue
-			}
-			return "", lastErr
-		}
-		if len(data) > 0 {
-			if err := json.Unmarshal(data, out); err != nil {
-				return "", fmt.Errorf("github: decode GET %s response: %w", url, err)
-			}
-		}
-		return nextLink(link), nil
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("github: build request: %w", err)
 	}
-	return "", lastErr
+	req.Header.Set("Authorization", authz)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := a.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("github: GET %s: %w", url, err)
+	}
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+	link := resp.Header.Get("Link")
+	resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("github: GET %s: status %d: %s", url, resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, out); err != nil {
+			return "", fmt.Errorf("github: decode GET %s response: %w", url, err)
+		}
+	}
+	return nextLink(link), nil
 }
 
 var linkNextRe = regexp.MustCompile(`<([^>]+)>;\s*rel="next"`)

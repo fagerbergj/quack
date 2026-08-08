@@ -12,15 +12,18 @@ import (
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 
 	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/httpx"
 )
 
-// discoveryTimeout bounds a single attempt at fetching the discovery
-// document and JWKS - a hung IdP must not hang server boot indefinitely.
+// discoveryTimeout bounds the whole startup probe (discovery + JWKS fetch,
+// including the shared transport's own retries) - a hung IdP must not hang
+// server boot indefinitely.
 const discoveryTimeout = 10 * time.Second
 
-// oidcProbeAttempts + oidcProbeBackoff: a transient IdP blip (a rolling
-// deploy landing mid-startup-probe, say) gets a couple of retries instead of
-// hard-failing on the first bad request. This only widens the window - once
+// oidcProbeAttempts + oidcProbeBackoff configure the shared resilient
+// transport's retry: a transient IdP blip (a rolling deploy landing
+// mid-startup-probe, say) gets a couple of retries instead of hard-failing
+// on the first bad request. This only widens the window - once
 // oidcProbeAttempts is exhausted, a genuinely unreachable or misconfigured
 // issuer still fails startup; it never falls back to running open.
 // oidcProbeBackoff is a var so tests don't have to wait out real backoff.
@@ -43,26 +46,23 @@ type oidcVerifier struct {
 // newOIDCVerifier resolves the signing-key source - jwks_url if the config
 // overrides discovery, else <issuer>/.well-known/openid-configuration's
 // jwks_uri (via client.Discover, which also rejects a discovery doc whose own
-// "issuer" doesn't match cfg.Issuer) - and probes it, retrying up to
-// oidcProbeAttempts times on failure. rp.NewRemoteKeySet itself fetches
+// "issuer" doesn't match cfg.Issuer) - and probes it. Both are GETs, so the
+// shared transport (internal/httpx) retries a transient failure up to
+// oidcProbeAttempts times on its own; this fold-in replaces what used to be
+// a hand-rolled outer retry loop here. rp.NewRemoteKeySet itself fetches
 // lazily on first use with its own background-refreshed cache; the
 // synchronous probe here exists only to preserve the fail-fast startup
 // contract: a bad/unreachable issuer or JWKS is a startup error, not a
 // silent 401 factory discovered on the first request.
 func newOIDCVerifier(cfg *config.OIDCConfig) (*oidcVerifier, error) {
-	httpClient := &http.Client{Timeout: discoveryTimeout}
-
-	var jwksURL string
-	var err error
-	for attempt := 1; attempt <= oidcProbeAttempts; attempt++ {
-		jwksURL, err = discoverAndProbeJWKS(cfg, httpClient)
-		if err == nil {
-			break
-		}
-		if attempt < oidcProbeAttempts {
-			time.Sleep(oidcProbeBackoff * time.Duration(attempt))
-		}
+	httpClient := &http.Client{
+		Timeout: discoveryTimeout,
+		Transport: httpx.NewTransport(nil,
+			httpx.WithMaxAttempts(oidcProbeAttempts),
+			httpx.WithBaseDelay(oidcProbeBackoff)),
 	}
+
+	jwksURL, err := discoverAndProbeJWKS(cfg, httpClient)
 	if err != nil {
 		return nil, err
 	}

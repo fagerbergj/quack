@@ -23,6 +23,8 @@ import (
 	adka2a "google.golang.org/adk/v2/server/adka2a/v2"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/workflow"
+
+	"github.com/fagerbergj/quack/internal/httpx"
 )
 
 // invokePath is where each agent's A2A JSON-RPC endpoint is mounted.
@@ -123,7 +125,7 @@ func (s *A2AServer) ClientForNode(nodeKey string) (adkagent.Agent, error) {
 // clientNamed builds a remote agent for this server under the given local name.
 func (s *A2AServer) clientNamed(name string) (adkagent.Agent, error) {
 	factory := a2aclient.NewFactory(
-		a2aclient.WithJSONRPCTransport(&http.Client{}),
+		a2aclient.WithJSONRPCTransport(&http.Client{Transport: httpx.NewTransport(nil)}),
 	)
 	base := remoteagent.NewA2AClientProvider(factory)
 	return remoteagent.NewA2A(remoteagent.A2AConfig{
