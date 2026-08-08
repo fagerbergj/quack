@@ -271,7 +271,7 @@ func anyChatActiveForUser(jail *Jail, userID string, isActive ActiveChatFunc) bo
 	}
 	entries, err := os.ReadDir(userRoot)
 	if err != nil {
-		return false
+		return true // can't enumerate chats, so can't prove none is live
 	}
 	for _, e := range entries {
 		if !e.IsDir() || e.Name() == homeDirName {
