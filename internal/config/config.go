@@ -155,6 +155,7 @@ const (
 	defaultGCChatTTLHours          = 168
 	defaultGCScratchTTLHours       = 6
 	defaultGCIntervalHours         = 1
+	defaultGCHomeMaxMB             = 500
 )
 
 var defaultCheckCommands = []string{"go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make", "gofmt", "npx prettier", "./gradlew"}
@@ -181,6 +182,10 @@ type WorkspaceGCConfig struct {
 	ChatTTLHours    int   `yaml:"chat_ttl_hours"`
 	ScratchTTLHours int   `yaml:"scratch_ttl_hours"`
 	IntervalHours   int   `yaml:"interval_hours"`
+	// HomeMaxMB bounds the ACP agent's shared $HOME (opencode.db, snapshot,
+	// tool-output, log) - the one directory nothing else ever collects. Reset
+	// whole, only when none of the user's chats have a round in flight.
+	HomeMaxMB int `yaml:"home_max_mb"`
 }
 
 func (g WorkspaceGCConfig) IsEnabled() bool { return g.Enabled == nil || *g.Enabled }
@@ -897,8 +902,14 @@ func (w *WorkspaceConfig) applyDefaults() error {
 	if w.GC.IntervalHours == 0 {
 		w.GC.IntervalHours = defaultGCIntervalHours
 	}
+	if w.GC.HomeMaxMB == 0 {
+		w.GC.HomeMaxMB = defaultGCHomeMaxMB
+	}
 	if w.GC.ChatTTLHours < 0 || w.GC.ScratchTTLHours < 0 || w.GC.IntervalHours < 0 {
 		return fmt.Errorf("config: workspace.gc hours must be >= 0")
+	}
+	if w.GC.HomeMaxMB < 0 {
+		return fmt.Errorf("config: workspace.gc.home_max_mb must be >= 0")
 	}
 	for i, gc := range w.GitCredentials {
 		if strings.TrimSpace(gc.Host) == "" {

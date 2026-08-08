@@ -12,13 +12,16 @@ import (
 // baselineTempPrefix mirrors vetting's os.MkdirTemp("", "quack-base-") prefix.
 const baselineTempPrefix = "quack-base-"
 
-// GCConfig is the periodic reaper's tunables. TTL-based, not quota-based.
+// GCConfig is the periodic reaper's tunables. TTL-based for chats/scratch;
+// HomeMaxBytes is quota-based (the agent home has no per-entry idle time to
+// expire - it is one shared directory for the whole user).
 type GCConfig struct {
 	Enabled bool
-	// ChatTTL/ScratchTTL <= 0 skip that sweep class entirely.
-	ChatTTL    time.Duration
-	ScratchTTL time.Duration
-	Interval   time.Duration
+	// ChatTTL/ScratchTTL/HomeMaxBytes <= 0 skip that sweep class entirely.
+	ChatTTL      time.Duration
+	ScratchTTL   time.Duration
+	HomeMaxBytes int64
+	Interval     time.Duration
 }
 
 // ActiveChatFunc reports whether chatID has a run in flight. nil skips every chat.
@@ -31,10 +34,13 @@ type WorktreePruner func(ctx context.Context, dir string) error
 type GCResult struct {
 	ChatsRemoved   int
 	ScratchRemoved int
+	HomeReset      int
 	BytesReclaimed int64
 }
 
-func (r GCResult) empty() bool { return r.ChatsRemoved == 0 && r.ScratchRemoved == 0 }
+func (r GCResult) empty() bool {
+	return r.ChatsRemoved == 0 && r.ScratchRemoved == 0 && r.HomeReset == 0
+}
 
 // RunGC sweeps once immediately, then on cfg.Interval, until ctx is cancelled.
 func RunGC(ctx context.Context, jail *Jail, cfg GCConfig, isActive ActiveChatFunc, prune WorktreePruner) {
@@ -66,10 +72,11 @@ func sweepAndLog(ctx context.Context, jail *Jail, cfg GCConfig, isActive ActiveC
 	}
 	slog.Info("workspace gc: swept", "component", "workspace",
 		"chats_removed", res.ChatsRemoved, "scratch_removed", res.ScratchRemoved,
-		"bytes_reclaimed", res.BytesReclaimed)
+		"home_reset", res.HomeReset, "bytes_reclaimed", res.BytesReclaimed)
 }
 
-// Sweep runs one GC pass: idle chat scopes, then scratch (baseline worktrees + .quack-home/tmp).
+// Sweep runs one GC pass: idle chat scopes, then scratch (baseline worktrees
+// + .quack-home/tmp), then the agent home quota.
 func Sweep(ctx context.Context, jail *Jail, cfg GCConfig, isActive ActiveChatFunc, prune WorktreePruner) GCResult {
 	var res GCResult
 	if cfg.ChatTTL > 0 {
@@ -83,6 +90,11 @@ func Sweep(ctx context.Context, jail *Jail, cfg GCConfig, isActive ActiveChatFun
 		res.BytesReclaimed += b
 		n, b = sweepHomeTmp(cfg.ScratchTTL, jail)
 		res.ScratchRemoved += n
+		res.BytesReclaimed += b
+	}
+	if cfg.HomeMaxBytes > 0 {
+		n, b := sweepAgentHome(ctx, jail, cfg.HomeMaxBytes, isActive)
+		res.HomeReset += n
 		res.BytesReclaimed += b
 	}
 	return res
@@ -203,6 +215,82 @@ func sweepHomeTmp(ttl time.Duration, jail *Jail) (removed int, bytes int64) {
 		}
 	}
 	return removed, bytes
+}
+
+// sweepAgentHome resets a user's ACP agent home (opencode.db, snapshot,
+// tool-output, log - opencode's private state, never quack's own) whole once
+// it exceeds maxBytes. The home is shared across every one of the user's
+// chats, so it has no TTL of its own; instead this only fires when
+// anyChatActiveForUser proves none of them has a round in flight, the same
+// isActive signal sweepChatScopes trusts to protect a live chat's clone.
+func sweepAgentHome(ctx context.Context, jail *Jail, maxBytes int64, isActive ActiveChatFunc) (reset int, bytes int64) {
+	userEntries, err := os.ReadDir(jail.Root())
+	if err != nil {
+		slog.Warn("workspace gc: list jail root failed", "component", "workspace", "err", err)
+		return 0, 0
+	}
+	for _, ue := range userEntries {
+		if ctx.Err() != nil {
+			return reset, bytes
+		}
+		if !ue.IsDir() {
+			continue
+		}
+		userID := ue.Name()
+		if anyChatActiveForUser(jail, userID, isActive) {
+			continue
+		}
+		home, err := jail.HomeDir(userID)
+		if err != nil {
+			continue
+		}
+		sz := dirSize(home)
+		if sz < maxBytes {
+			continue
+		}
+		if err := resetHomeDir(home); err != nil {
+			slog.Warn("workspace gc: reset agent home failed", "component", "workspace", "user", userID, "err", err)
+			continue
+		}
+		reset++
+		bytes += sz
+	}
+	return reset, bytes
+}
+
+// anyChatActiveForUser reports whether any of userID's known chats has a run
+// in flight. A nil isActive fails closed (treated as active - can't prove
+// otherwise), matching sweepChatScopes.
+func anyChatActiveForUser(jail *Jail, userID string, isActive ActiveChatFunc) bool {
+	if isActive == nil {
+		return true
+	}
+	userRoot, err := jail.UserRoot(userID)
+	if err != nil {
+		return true
+	}
+	entries, err := os.ReadDir(userRoot)
+	if err != nil {
+		return true // can't enumerate chats, so can't prove none is live
+	}
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == homeDirName {
+			continue
+		}
+		if isActive(e.Name()) {
+			return true
+		}
+	}
+	return false
+}
+
+// resetHomeDir empties home in one shot - opencode.db's schema is not ours,
+// so we reclaim the whole opaque directory rather than edit inside it.
+func resetHomeDir(home string) error {
+	if err := os.RemoveAll(home); err != nil {
+		return err
+	}
+	return os.MkdirAll(home, 0o700)
 }
 
 // pruneWorktreesUnder detaches linked worktrees before root removal. No-op when prune is nil.

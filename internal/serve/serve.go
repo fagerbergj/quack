@@ -510,10 +510,11 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		HomeDir:   gcHomeDir,
 	}
 	gcCfg := workspace.GCConfig{
-		Enabled:    cfg.Workspace.GC.IsEnabled(),
-		ChatTTL:    time.Duration(cfg.Workspace.GC.ChatTTLHours) * time.Hour,
-		ScratchTTL: time.Duration(cfg.Workspace.GC.ScratchTTLHours) * time.Hour,
-		Interval:   time.Duration(cfg.Workspace.GC.IntervalHours) * time.Hour,
+		Enabled:      cfg.Workspace.GC.IsEnabled(),
+		ChatTTL:      time.Duration(cfg.Workspace.GC.ChatTTLHours) * time.Hour,
+		ScratchTTL:   time.Duration(cfg.Workspace.GC.ScratchTTLHours) * time.Hour,
+		HomeMaxBytes: int64(cfg.Workspace.GC.HomeMaxMB) * 1024 * 1024,
+		Interval:     time.Duration(cfg.Workspace.GC.IntervalHours) * time.Hour,
 	}
 	go workspace.RunGC(ctx, jail, gcCfg, runHub.HasRegisteredRun, func(pctx context.Context, dir string) error {
 		return tools.PruneWorktree(pctx, dir, gcCaps)
