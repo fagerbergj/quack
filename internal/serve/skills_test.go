@@ -4,9 +4,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
+
+	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/workflowcatalog"
 )
 
 // TestSkillsLoad guards against a skill in THIS repo whose SKILL.md frontmatter
@@ -154,5 +158,44 @@ func TestNewSkillSourceDotagentsOnDiskNoDuplicate(t *testing.T) {
 	src := newSkillSource([]string{dotagents})
 	if _, err := src.ListFrontmatters(context.Background()); err != nil {
 		t.Fatalf("ListFrontmatters: %v (embedded fallback likely double-added dotagents)", err)
+	}
+}
+
+// TestWorkflowCatalogNoShapesIsByteIdentical is issue #805 test case 2, at
+// the full wiring level (real shipped skills/plan-work/SKILL.md through
+// newSkillSource): a deployment with no custom shapes must get the exact
+// same plan-work instructions as before the extension point existed.
+func TestWorkflowCatalogNoShapesIsByteIdentical(t *testing.T) {
+	src := newSkillSource(nil)
+	want, err := src.LoadInstructions(context.Background(), "plan-work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped := workflowcatalog.Wrap(src, workflowcatalog.FromConfig(nil, "rev"))
+	got, err := wrapped.LoadInstructions(context.Background(), "plan-work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Error("plan-work instructions changed with zero configured workflow shapes")
+	}
+}
+
+// TestWorkflowCatalogComposesIntoRealSkill is issue #805 test case 1 against
+// the real shipped skill: a configured shape lands in the same table
+// load_skill("plan-work") returns to the orchestrator.
+func TestWorkflowCatalogComposesIntoRealSkill(t *testing.T) {
+	src := newSkillSource(nil)
+	shapes := workflowcatalog.FromConfig([]config.WorkflowShape{{
+		Name: "document-ingest", Trigger: "Ingest a new document into the knowledge base",
+		Agents: []string{"document-classifier"},
+		Shape:  "ONE `document-classifier` node (terminal - files the document in the KB)",
+	}}, "rev")
+	got, err := workflowcatalog.Wrap(src, shapes).LoadInstructions(context.Background(), "plan-work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "| Ingest a new document into the knowledge base | ONE `document-classifier` node (terminal - files the document in the KB) |") {
+		t.Errorf("composed plan-work instructions missing the custom shape's row:\n%s", got)
 	}
 }

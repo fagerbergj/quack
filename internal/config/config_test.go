@@ -1587,3 +1587,96 @@ orchestrator: { provider: default, model: ${QUACK_ORCH_MODEL} }
 		t.Errorf("Store(ledger2).Root = %q, want %q", s.Root, defaultLedgerRoot)
 	}
 }
+
+// workflowAgentConfig is a minimal agents: block a workflow shape's agents
+// list can reference.
+const workflowAgentConfig = `
+agents:
+  document-classifier:
+    bundle: agents/document-classifier
+    provider: default
+    model: m
+`
+
+// TestWorkflowShapeValidIsComposable pins issue #805 test case 1's config
+// side: a well-formed shape naming a configured agent survives validation,
+// carrying provenance (operator source, config revision, approved).
+func TestWorkflowShapeValidIsComposable(t *testing.T) {
+	c, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
+skills:
+  workflows:
+    - name: document-ingest
+      trigger: "Ingest a new document into the knowledge base"
+      agents: [document-classifier]
+      shape: "ONE `+"`document-classifier`"+` node (terminal - classifies and files the document)"
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(c.Skills.Workflows) != 1 {
+		t.Fatalf("Skills.Workflows = %+v, want 1 entry", c.Skills.Workflows)
+	}
+	w := c.Skills.Workflows[0]
+	if w.Name != "document-ingest" || len(w.Agents) != 1 || w.Agents[0] != "document-classifier" {
+		t.Errorf("workflow shape = %+v", w)
+	}
+	if c.Revision == "" {
+		t.Error("Revision is empty; workflow shape provenance needs a config revision")
+	}
+}
+
+// TestWorkflowShapeMissingAgentFailsStartup is issue #805 test case 3: a
+// shape naming an agent that isn't configured must fail loudly at startup,
+// naming both the shape and the missing agent - never silently produce a
+// plan the executor can't run.
+func TestWorkflowShapeMissingAgentFailsStartup(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+`
+skills:
+  workflows:
+    - name: document-ingest
+      trigger: "Ingest a new document into the knowledge base"
+      agents: [document-classifier]
+      shape: "ONE `+"`document-classifier`"+` node (terminal)"
+`))
+	if err == nil {
+		t.Fatal("expected an error for a workflow shape naming an unconfigured agent")
+	}
+	if !strings.Contains(err.Error(), "document-ingest") || !strings.Contains(err.Error(), "document-classifier") {
+		t.Errorf("error = %q, want it to name both the shape and the missing agent", err)
+	}
+}
+
+// TestWorkflowShapeMalformedIsSkipped is issue #805 test case 4: a malformed
+// shape (missing a required field) is dropped with a warning, never fails
+// startup, and a well-formed shape alongside it still loads.
+func TestWorkflowShapeMalformedIsSkipped(t *testing.T) {
+	c, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
+skills:
+  workflows:
+    - name: broken
+      trigger: "Missing a shape"
+      agents: [document-classifier]
+    - name: document-ingest
+      trigger: "Ingest a new document into the knowledge base"
+      agents: [document-classifier]
+      shape: "ONE `+"`document-classifier`"+` node (terminal)"
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(c.Skills.Workflows) != 1 || c.Skills.Workflows[0].Name != "document-ingest" {
+		t.Errorf("Skills.Workflows = %+v, want only the well-formed shape", c.Skills.Workflows)
+	}
+}
+
+// TestWorkflowShapesDefaultEmpty pins the regression guard's config side: no
+// workflows: key at all parses to an empty slice, not an error.
+func TestWorkflowShapesDefaultEmpty(t *testing.T) {
+	c, err := Load(writeTemp(t, baseConfig))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(c.Skills.Workflows) != 0 {
+		t.Errorf("Skills.Workflows = %+v, want empty", c.Skills.Workflows)
+	}
+}

@@ -274,6 +274,10 @@ skills:
   plugins:
     - .agents/vendor/dotagents   # general-purpose skills (git submodule)
     - .agents/vendor/ponytail    # YAGNI/lazy-senior-dev discipline (git submodule; Codex format)
+  # workflows: teach plan-work's "Common workflows" table a deployment-specific
+  # DAG shape (e.g. a document-ingest pipeline) without forking the skill - see
+  # docs/configuration/agents.md#extending-the-workflow-catalog for the schema
+  # and an example. Empty by default: the shipped table is unchanged.
 
 # The agents' working disk (filesystem/git tools). One configured root; a
 # per-user jail lives under it (<root>/<user_id>/ - "local" today, the OIDC
