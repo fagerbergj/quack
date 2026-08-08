@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"syscall"
 	"time"
+
+	"github.com/fagerbergj/quack/internal/httpx"
 )
 
 // SSRF protection: ValidateURL rejects blocked schemes/addresses; GuardedClient re-checks at dial time (defeats DNS rebinding).
@@ -98,7 +100,7 @@ func GuardedClient() *http.Client {
 		ForceAttemptHTTP2:     true,
 	}
 	return &http.Client{
-		Transport: transport,
+		Transport: httpx.NewTransport(transport),
 		Timeout:   30 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= maxRedirects {

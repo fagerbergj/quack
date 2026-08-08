@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/fagerbergj/quack/internal/httpx"
 )
 
 const defaultAPIBase = "https://api.github.com"
@@ -68,7 +70,7 @@ func NewApp(issuer, pemKey string) (*App, error) {
 		issuer:          issuer,
 		key:             key,
 		apiBase:         defaultAPIBase,
-		http:            &http.Client{Timeout: 20 * time.Second},
+		http:            &http.Client{Timeout: 20 * time.Second, Transport: httpx.NewTransport(nil)},
 		tokens:          map[int64]cachedToken{},
 		installs:        map[string]int64{},
 		noInstall:       map[string]struct{}{},
@@ -192,82 +194,44 @@ func (a *App) tokenForRepo(ctx context.Context, owner, repo string) (string, err
 	return a.InstallationToken(ctx, id)
 }
 
-const maxGETAttempts = 3
-const retryBaseDelay = 200 * time.Millisecond
-
-func isRetryableStatus(code int) bool {
-	return code == http.StatusTooManyRequests || code >= 500
-}
-
+// doJSON issues one request; retry (GET only, on 429/5xx/connection faults)
+// happens transparently inside a.http's transport - see internal/httpx.
 func (a *App) doJSON(ctx context.Context, method, path, authz string, reqBody, out any) error {
-	var bodyBytes []byte
+	var body io.Reader
 	if reqBody != nil {
 		b, err := json.Marshal(reqBody)
 		if err != nil {
 			return fmt.Errorf("github: marshal request: %w", err)
 		}
-		bodyBytes = b
+		body = bytes.NewReader(b)
 	}
 
-	attempts := 1
-	if method == http.MethodGet {
-		attempts = maxGETAttempts
+	req, err := http.NewRequestWithContext(ctx, method, a.apiBase+path, body)
+	if err != nil {
+		return fmt.Errorf("github: build request: %w", err)
+	}
+	req.Header.Set("Authorization", authz)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 
-	var lastErr error
-	for attempt := 1; attempt <= attempts; attempt++ {
-		var body io.Reader
-		if bodyBytes != nil {
-			body = bytes.NewReader(bodyBytes)
-		}
-		req, err := http.NewRequestWithContext(ctx, method, a.apiBase+path, body)
-		if err != nil {
-			return fmt.Errorf("github: build request: %w", err)
-		}
-		req.Header.Set("Authorization", authz)
-		req.Header.Set("Accept", "application/vnd.github+json")
-		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-		if bodyBytes != nil {
-			req.Header.Set("Content-Type", "application/json")
-		}
-
-		resp, err := a.http.Do(req)
-		if err != nil {
-			lastErr = fmt.Errorf("github: %s %s: %w", method, path, err)
-			if attempt < attempts && retryAfterErr(ctx, attempt) {
-				continue
-			}
-			return lastErr
-		}
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		resp.Body.Close()
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			lastErr = fmt.Errorf("github: %s %s: status %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(data)))
-			if isRetryableStatus(resp.StatusCode) && attempt < attempts && retryAfterErr(ctx, attempt) {
-				continue
-			}
-			return lastErr
-		}
-		if out != nil && len(data) > 0 {
-			if err := json.Unmarshal(data, out); err != nil {
-				return fmt.Errorf("github: decode %s %s response: %w", method, path, err)
-			}
-		}
-		return nil
+	resp, err := a.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("github: %s %s: %w", method, path, err)
 	}
-	return lastErr
-}
-
-func retryAfterErr(ctx context.Context, attempt int) bool {
-	d := retryBaseDelay * time.Duration(1<<uint(attempt-1))
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-t.C:
-		return true
-	case <-ctx.Done():
-		return false
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("github: %s %s: status %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(data)))
 	}
+	if out != nil && len(data) > 0 {
+		if err := json.Unmarshal(data, out); err != nil {
+			return fmt.Errorf("github: decode %s %s response: %w", method, path, err)
+		}
+	}
+	return nil
 }
 
 func (a *App) postIssueComment(ctx context.Context, owner, repo string, number int, bodyText string) error {

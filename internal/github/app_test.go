@@ -17,6 +17,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/fagerbergj/quack/internal/httpx"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
@@ -296,9 +297,17 @@ func TestLastReviewedSHANoPriorReview(t *testing.T) {
 	}
 }
 
+// fastResilientClient is a resilient http.Client tuned for tests: same
+// method-aware policy as production (internal/httpx), just without the real
+// backoff delay.
+func fastResilientClient() *http.Client {
+	return &http.Client{Transport: httpx.NewTransport(nil, httpx.WithBaseDelay(time.Millisecond), httpx.WithMaxDelay(5*time.Millisecond))}
+}
+
 // TestDoJSONRetriesGETOn503 pins #467's fix: a GET that hits a transient 503
 // (GitHub's "no server available") succeeds on retry instead of failing the
-// whole call.
+// whole call. The retry itself now lives in the shared httpx transport - see
+// internal/httpx for the method-aware policy this pins at the App level.
 func TestDoJSONRetriesGETOn503(t *testing.T) {
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -310,7 +319,7 @@ func TestDoJSONRetriesGETOn503(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	app := &App{apiBase: srv.URL, http: srv.Client()}
+	app := &App{apiBase: srv.URL, http: fastResilientClient()}
 	var out struct {
 		OK bool `json:"ok"`
 	}
@@ -336,56 +345,13 @@ func TestDoJSONDoesNotRetryPOST(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	app := &App{apiBase: srv.URL, http: srv.Client()}
+	app := &App{apiBase: srv.URL, http: fastResilientClient()}
 	err := app.doJSON(context.Background(), http.MethodPost, "/whatever", "token x", map[string]string{"body": "hi"}, nil)
 	if err == nil {
 		t.Fatal("doJSON: expected error, got nil")
 	}
 	if got := atomic.LoadInt32(&hits); got != 1 {
 		t.Errorf("server hit %d times; want 1 (POST must not be retried)", got)
-	}
-}
-
-// TestIsRetryableStatus pins the retry predicate directly: only 429/5xx are
-// retryable, never a 4xx (client error, retrying it would just repeat a
-// request that will never succeed).
-func TestIsRetryableStatus(t *testing.T) {
-	tests := []struct {
-		code int
-		want bool
-	}{
-		{http.StatusOK, false},
-		{http.StatusNotFound, false},
-		{http.StatusUnprocessableEntity, false},
-		{http.StatusTooManyRequests, true},
-		{http.StatusInternalServerError, true},
-		{http.StatusBadGateway, true},
-		{http.StatusServiceUnavailable, true},
-	}
-	for _, tt := range tests {
-		if got := isRetryableStatus(tt.code); got != tt.want {
-			t.Errorf("isRetryableStatus(%d) = %v; want %v", tt.code, got, tt.want)
-		}
-	}
-}
-
-// TestDoJSONGETExhaustsRetriesThenFails pins the bound: a persistently
-// failing GET gives up after maxGETAttempts, not forever.
-func TestDoJSONGETExhaustsRetriesThenFails(t *testing.T) {
-	var hits int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&hits, 1)
-		http.Error(w, `{"message":"down"}`, http.StatusServiceUnavailable)
-	}))
-	defer srv.Close()
-
-	app := &App{apiBase: srv.URL, http: srv.Client()}
-	err := app.doJSON(context.Background(), http.MethodGet, "/whatever", "token x", nil, nil)
-	if err == nil {
-		t.Fatal("doJSON: expected error, got nil")
-	}
-	if got := atomic.LoadInt32(&hits); got != maxGETAttempts {
-		t.Errorf("server hit %d times; want %d (maxGETAttempts)", got, maxGETAttempts)
 	}
 }
 

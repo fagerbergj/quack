@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fagerbergj/quack/internal/httpx"
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
@@ -42,14 +43,14 @@ func NewClient(ctx context.Context, override string) (*Client, error) {
 		return nil, err
 	}
 	url := strings.TrimRight(cc.ActiveURL(override), "/")
-	httpClient := &http.Client{}
+	httpClient := &http.Client{Transport: httpx.NewTransport(nil)}
 	if name, ref, ok := cc.findByURL(url); ok && ref.Auth != nil {
 		token, err := ensureFreshToken(ctx, cc, name, ref)
 		if err != nil {
 			return nil, err
 		}
 		if token != "" {
-			httpClient.Transport = &bearerTransport{token: token}
+			httpClient.Transport = &bearerTransport{token: token, base: httpClient.Transport}
 		}
 	}
 	return &Client{
