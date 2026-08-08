@@ -56,6 +56,7 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/vetting"
+	"github.com/fagerbergj/quack/internal/workflowcatalog"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -316,6 +317,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	}
 
 	builtinSkillSrc := newSkillSource(cfg.Skills.Plugins)
+	builtinSkillSrc = workflowcatalog.Wrap(builtinSkillSrc, workflowcatalog.FromConfig(cfg.Skills.Workflows, cfg.Revision))
 	skillSrc := skillsource.New(builtinSkillSrc, jail, localUserID)
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
 	if err != nil {

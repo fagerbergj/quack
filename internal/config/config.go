@@ -3,6 +3,8 @@ package config
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"os"
@@ -27,6 +29,10 @@ type Config struct {
 	Extensions    ExtensionsConfig          `yaml:"extensions"`
 	Observability ObservabilityConfig       `yaml:"observability"`
 	Auth          *InboundAuthConfig        `yaml:"auth"`
+	// Revision identifies the loaded config's content (sha256 of the raw file,
+	// short form) - a deployment-authored workflow shape's provenance stamps
+	// this as its version, so a shape changes version only when quack.yaml does.
+	Revision string `yaml:"-"`
 }
 
 // SkillsConfig names skill-library plugin roots beyond quack's own shipped
@@ -34,7 +40,47 @@ type Config struct {
 // Codex discovery order. A root that fails to resolve is a startup warning,
 // never an error. Order is preserved and never deduped.
 type SkillsConfig struct {
-	Plugins []string `yaml:"plugins"`
+	Plugins   []string        `yaml:"plugins"`
+	Workflows []WorkflowShape `yaml:"workflows"`
+}
+
+// WorkflowShape teaches plan-work's "Common workflows" table a deployment-
+// specific DAG shape (issue #805) - a house-standard node chain (document
+// ingestion, reMarkable notes, ...) that isn't in the shipped catalog.
+// Trigger and Shape render as the table's two columns verbatim; Agents is
+// the subset of that prose the config layer can actually validate.
+type WorkflowShape struct {
+	Name    string   `yaml:"name"`    // short id for logs/warnings; also the future storage key (#806)
+	Trigger string   `yaml:"trigger"` // "Request" column - when this shape applies
+	Shape   string   `yaml:"shape"`   // "DAG shape" column - node chain + what the terminal node produces
+	Agents  []string `yaml:"agents"`  // every agent name Shape mentions, checked against Agents below
+}
+
+// validateWorkflows drops structurally incomplete shapes with a warning
+// (test case 4: never takes down planning) but hard-fails the whole config
+// when a structurally valid shape names an agent that isn't configured (test
+// case 3: never let a plan reach a node the executor can't run).
+func (c *Config) validateWorkflows() error {
+	valid := make([]WorkflowShape, 0, len(c.Skills.Workflows))
+	for i, w := range c.Skills.Workflows {
+		id := w.Name
+		if id == "" {
+			id = fmt.Sprintf("workflows[%d]", i)
+		}
+		if w.Name == "" || w.Trigger == "" || w.Shape == "" || len(w.Agents) == 0 {
+			slog.Warn("config: skipping malformed workflow shape (needs name, trigger, shape, and at least one agent); catalog composition continues",
+				"component", "config", "shape", id)
+			continue
+		}
+		for _, a := range w.Agents {
+			if _, ok := c.Agents[a]; !ok {
+				return fmt.Errorf("config: workflow shape %q names agent %q which is not configured under agents", w.Name, a)
+			}
+		}
+		valid = append(valid, w)
+	}
+	c.Skills.Workflows = valid
+	return nil
 }
 
 var defaultSkillPlugins = []string{".agents/vendor/dotagents", ".agents/vendor/ponytail"}
@@ -528,6 +574,8 @@ func Load(path string) (*Config, error) {
 	if err := dec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("parse config %q: %w", path, err)
 	}
+	sum := sha256.Sum256(raw)
+	c.Revision = hex.EncodeToString(sum[:])[:12]
 	if err := c.validate(); err != nil {
 		return nil, err
 	}
@@ -728,6 +776,9 @@ func (c *Config) validate() error {
 	}
 	if c.Skills.Plugins == nil {
 		c.Skills.Plugins = append([]string{}, defaultSkillPlugins...)
+	}
+	if err := c.validateWorkflows(); err != nil {
+		return err
 	}
 	if err := c.Extensions.GitHub.applyDefaults(); err != nil {
 		return err

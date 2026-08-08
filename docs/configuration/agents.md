@@ -85,3 +85,26 @@ This is the orchestrator's own fixed list, not the full builtin tool registry (`
 ## Skills vs. tools
 
 The card's `skills` are what the planner sees and routes on - capability-level, honest promises about what the agent as a whole can do. `tools:` in config is what the agent can actually call. They're deliberately decoupled: a translator agent might have a skill ("translate") backed by nothing but its model and prompt, no tools at all.
+
+## Extending the workflow catalog
+
+`skills/plan-work/SKILL.md` opens with a "Common workflows" table mapping request shapes ("Single information topic", "Write/fix/refactor code in a repo", ...) to DAG shapes - it's the first thing the planner matches a request against. A deployment running agents the shipped table doesn't know about (a document-ingest pipeline, a reMarkable-notes agent, any house-standard node chain) teaches the planner that shape via `skills.workflows` in `config/quack.yaml`, without forking the skill:
+
+```yaml
+skills:
+  workflows:
+    - name: document-ingest
+      trigger: "Ingest a new document (email, upload, or scanned page) into the knowledge base"
+      agents: [document-classifier, document-indexer]
+      shape: "ONE `document-classifier` node → ONE `document-indexer` node (terminal - writes the classified document to the KB, the artifact the request asked for)"
+```
+
+This renders as a new row directly beneath the shipped table, so the planner still reads ONE table:
+
+| Request | DAG shape |
+| --- | --- |
+| Ingest a new document (email, upload, or scanned page) into the knowledge base | ONE `document-classifier` node → ONE `document-indexer` node (terminal - writes the classified document to the KB, the artifact the request asked for) |
+
+Each shape needs all four fields - `name` (a short id, also the future storage key), `trigger` and `shape` (the table's two columns), and `agents` (every agent name `shape` mentions). A shape missing any of them is dropped with a startup warning naming it; the rest of the catalog still loads. A shape naming an agent that isn't configured under `agents:` fails startup outright, naming both the shape and the missing agent - a plan the executor can't run must never ship. A shape whose `trigger` collides with an existing row (shipped or an earlier custom one) is refused with a warning rather than composed - precedence goes to whichever loaded first, never to "whichever the model reads".
+
+Composition happens once, at server startup, from `internal/workflowcatalog` - the planner always sees the same deterministic table, not a per-plan lookup that can fail or drift mid-run. A deployment with no `skills.workflows` gets `skills/plan-work/SKILL.md` completely unchanged.
