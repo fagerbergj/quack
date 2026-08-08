@@ -1,7 +1,10 @@
 package workspace
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -147,6 +150,158 @@ func TestSweepHomeTmpTTLBoundaryLeavesCachesAlone(t *testing.T) {
 	}
 	if _, err := os.Stat(cache); err != nil {
 		t.Errorf("a cache entry must never be swept: %v", err)
+	}
+}
+
+// growHome writes an n-byte file into the user's agent home, simulating
+// opencode.db/snapshot/tool-output growth from a completed round.
+func growHome(t *testing.T, jail *Jail, userID, name string, n int) {
+	t.Helper()
+	home, err := jail.HomeDir(userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, name), make([]byte, n), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSweepAgentHomeResetsPastQuotaWhenIdle is issue #800 test case 1 (the
+// reclaimed half): a home over HomeMaxBytes with no chat in flight is reset
+// whole - never edited, the directory is gone and recreated empty.
+func TestSweepAgentHomeResetsPastQuotaWhenIdle(t *testing.T) {
+	jail := newTestJail(t)
+	growHome(t, jail, "alice", "opencode.db", 100)
+
+	res := Sweep(context.Background(), jail, GCConfig{HomeMaxBytes: 50}, never, nil)
+	if res.HomeReset != 1 {
+		t.Fatalf("HomeReset = %d, want 1", res.HomeReset)
+	}
+	if res.BytesReclaimed != 100 {
+		t.Fatalf("BytesReclaimed = %d, want 100", res.BytesReclaimed)
+	}
+	home, err := jail.HomeDir("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "opencode.db")); !os.IsNotExist(err) {
+		t.Errorf("opencode.db should have been reclaimed, stat err = %v", err)
+	}
+}
+
+// TestSweepAgentHomeSkipsLiveChat is issue #800 test case 1 (the live half):
+// the SAME isActive signal that protects a live chat's clone in
+// sweepChatScopes must also keep the shared home untouched while that chat
+// has a round in flight, even though it's well past HomeMaxBytes.
+func TestSweepAgentHomeSkipsLiveChat(t *testing.T) {
+	jail := newTestJail(t)
+	growHome(t, jail, "alice", "opencode.db", 100)
+	touch(t, filepath.Join(jail.Root(), "alice", "live-chat", "repo", "README.md"), time.Now())
+
+	isActive := func(chatID string) bool { return chatID == "live-chat" }
+	res := Sweep(context.Background(), jail, GCConfig{HomeMaxBytes: 50}, isActive, nil)
+	if res.HomeReset != 0 {
+		t.Fatalf("HomeReset = %d, want 0 (a chat has a run in flight)", res.HomeReset)
+	}
+	home, err := jail.HomeDir("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "opencode.db")); err != nil {
+		t.Errorf("a live user's agent home must never be reaped: %v", err)
+	}
+}
+
+// TestSweepAgentHomeNilActiveFailsClosed mirrors
+// TestSweepChatScopesNilActiveSkipsAll: with no way to prove any chat
+// inactive, the reaper must not touch the shared home either.
+func TestSweepAgentHomeNilActiveFailsClosed(t *testing.T) {
+	jail := newTestJail(t)
+	growHome(t, jail, "alice", "opencode.db", 100)
+
+	res := Sweep(context.Background(), jail, GCConfig{HomeMaxBytes: 50}, nil, nil)
+	if res.HomeReset != 0 {
+		t.Fatalf("HomeReset = %d, want 0 (nil isActive must fail closed)", res.HomeReset)
+	}
+}
+
+// TestSweepAgentHomeBelowQuotaLeavesItAlone is the TTL-boundary analogue for
+// a quota basis: a home under HomeMaxBytes survives untouched.
+func TestSweepAgentHomeBelowQuotaLeavesItAlone(t *testing.T) {
+	jail := newTestJail(t)
+	growHome(t, jail, "alice", "opencode.db", 10)
+
+	res := Sweep(context.Background(), jail, GCConfig{HomeMaxBytes: 50}, never, nil)
+	if res.HomeReset != 0 {
+		t.Fatalf("HomeReset = %d, want 0 (home is under quota)", res.HomeReset)
+	}
+}
+
+// TestSweepAgentHomeResetStaysUsable is issue #800 test case 2: a run whose
+// agent home was reclaimed must still start and complete. HomeDir's own
+// MkdirAll makes this true by construction - prove it survives a reset.
+func TestSweepAgentHomeResetStaysUsable(t *testing.T) {
+	jail := newTestJail(t)
+	growHome(t, jail, "alice", "opencode.db", 100)
+
+	res := Sweep(context.Background(), jail, GCConfig{HomeMaxBytes: 50}, never, nil)
+	if res.HomeReset != 1 {
+		t.Fatalf("HomeReset = %d, want 1", res.HomeReset)
+	}
+	home, err := jail.HomeDir("alice")
+	if err != nil {
+		t.Fatalf("HomeDir after reset: %v", err)
+	}
+	probe := filepath.Join(home, "opencode.db")
+	if err := os.WriteFile(probe, []byte("fresh round"), 0o600); err != nil {
+		t.Fatalf("a run reusing the reclaimed home could not write to it: %v", err)
+	}
+}
+
+// TestSweepAgentHomeBoundsGrowthAcrossManySweeps is issue #800 test case 3:
+// however many idle rounds accumulate state, the home is never left more than
+// one round's worth of growth (deltaBytes) over HomeMaxBytes, unattended,
+// across many sweep cycles - not just a single before/after snapshot.
+func TestSweepAgentHomeBoundsGrowthAcrossManySweeps(t *testing.T) {
+	jail := newTestJail(t)
+	const maxBytes = 1000
+	const deltaBytes = 200
+	cfg := GCConfig{HomeMaxBytes: maxBytes}
+
+	for round := 0; round < 50; round++ {
+		growHome(t, jail, "alice", fmt.Sprintf("round-file-%d", round), deltaBytes)
+		res := Sweep(context.Background(), jail, cfg, never, nil)
+		home, err := jail.HomeDir("alice")
+		if err != nil {
+			t.Fatal(err)
+		}
+		sz := dirSize(home)
+		if sz > maxBytes+deltaBytes {
+			t.Fatalf("round %d: agent home grew to %d bytes (reset this pass: %v), want <= %d",
+				round, sz, res.HomeReset == 1, maxBytes+deltaBytes)
+		}
+	}
+}
+
+// TestSweepAgentHomeLogsWhatWasFreed is issue #800 test case 4: a reset must
+// be distinguishable in the logs from a run failure - Info level, naming the
+// user and the bytes freed, not just "something happened".
+func TestSweepAgentHomeLogsWhatWasFreed(t *testing.T) {
+	jail := newTestJail(t)
+	growHome(t, jail, "alice", "opencode.db", 100)
+
+	var buf bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	sweepAndLog(context.Background(), jail, GCConfig{HomeMaxBytes: 50}, never, nil)
+	slog.SetDefault(restore)
+
+	out := buf.String()
+	if !strings.Contains(out, "level=INFO") {
+		t.Errorf("expected an INFO log for a reclaim, got: %s", out)
+	}
+	if !strings.Contains(out, "home_reset=1") || !strings.Contains(out, "bytes_reclaimed=100") {
+		t.Errorf("expected the log to name what was freed (home_reset, bytes_reclaimed), got: %s", out)
 	}
 }
 

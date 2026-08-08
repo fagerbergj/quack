@@ -708,6 +708,9 @@ func TestWorkspaceGCDefaults(t *testing.T) {
 	if gc.IntervalHours != 1 {
 		t.Errorf("IntervalHours = %d, want 1", gc.IntervalHours)
 	}
+	if gc.HomeMaxMB != 500 {
+		t.Errorf("HomeMaxMB = %d, want 500", gc.HomeMaxMB)
+	}
 }
 
 // TestWorkspaceGCOverrides proves every gc: field round-trips, and that
@@ -720,6 +723,7 @@ workspace:
     chat_ttl_hours: 24
     scratch_ttl_hours: 2
     interval_hours: 4
+    home_max_mb: 100
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -737,6 +741,9 @@ workspace:
 	if gc.IntervalHours != 4 {
 		t.Errorf("IntervalHours = %d, want 4", gc.IntervalHours)
 	}
+	if gc.HomeMaxMB != 100 {
+		t.Errorf("HomeMaxMB = %d, want 100", gc.HomeMaxMB)
+	}
 }
 
 // TestWorkspaceGCRejectsNegativeHours: a negative TTL/interval is a config
@@ -750,6 +757,19 @@ workspace:
 `))
 	if err == nil {
 		t.Fatal("expected error for a negative workspace.gc TTL")
+	}
+}
+
+// TestWorkspaceGCRejectsNegativeHomeMaxMB: same "0 means default, negative
+// means error" contract as the TTL fields, applied to the quota field.
+func TestWorkspaceGCRejectsNegativeHomeMaxMB(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+`
+workspace:
+  gc:
+    home_max_mb: -1
+`))
+	if err == nil {
+		t.Fatal("expected error for a negative workspace.gc.home_max_mb")
 	}
 }
 
