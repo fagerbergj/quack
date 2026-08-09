@@ -44,13 +44,28 @@ paths:
             exactly what was returned. Omit for the first page.
           schema:
             type: string
-        - name: show_archived
+        - name: status
           in: query
           required: false
           schema:
+            type: string
+            enum: [active, archived, all]
+            default: active
+          description: >
+            Which chats to return: `active` (default, excludes archived),
+            `archived` (only archived), or `all`. Supersedes `show_archived`;
+            if both are given, `status` wins. Each value pages independently -
+            a page_token is only valid against the status it was issued for.
+        - name: show_archived
+          in: query
+          required: false
+          deprecated: true
+          schema:
             type: boolean
             default: false
-          description: When false (default), omit archived chats. When true, include them all.
+          description: >
+            Deprecated, use `status`. Ignored when `status` is given.
+            Otherwise: false (default) behaves as `status=active`, true as `status=all`.
       responses:
         "200":
           description: The chats

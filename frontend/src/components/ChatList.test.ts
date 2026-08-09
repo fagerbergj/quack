@@ -261,6 +261,8 @@ describe('ChatRow trash button (archive vs. hard delete)', () => {
     vi.restoreAllMocks()
   })
 
+  // #809: the active list never carries archived rows, so an archived fixture
+  // is passed via archivedChats (the section's own server-scoped list), not chats.
   function renderList(chats: ChatSummary[], props: Partial<Parameters<typeof ChatList>[0]> = {}) {
     // @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -306,7 +308,7 @@ describe('ChatRow trash button (archive vs. hard delete)', () => {
   it('on an archived row, permanently deletes after confirmation', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const onDelete = vi.fn()
-    renderList([chat({ id: 'a2', title: 'Archived chat', archived: true })], { onDelete })
+    renderList([], { onDelete, archivedChats: [chat({ id: 'a2', title: 'Archived chat', archived: true })] })
     expandArchived()
 
     const trash = host!.querySelector('button[aria-label="Delete chat permanently"]')
@@ -320,7 +322,7 @@ describe('ChatRow trash button (archive vs. hard delete)', () => {
   it('on an archived row, does nothing if the confirmation is dismissed', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false)
     const onDelete = vi.fn()
-    renderList([chat({ id: 'a3', archived: true })], { onDelete })
+    renderList([], { onDelete, archivedChats: [chat({ id: 'a3', archived: true })] })
     expandArchived()
 
     click(host!.querySelector('button[aria-label="Delete chat permanently"]'))
@@ -329,10 +331,9 @@ describe('ChatRow trash button (archive vs. hard delete)', () => {
   })
 
   it('the aria-label/title differ between an active row and an archived row', () => {
-    renderList([
-      chat({ id: 'a4', title: 'Active' }),
-      chat({ id: 'a5', title: 'Archived', archived: true }),
-    ])
+    renderList([chat({ id: 'a4', title: 'Active' })], {
+      archivedChats: [chat({ id: 'a5', title: 'Archived', archived: true })],
+    })
     expandArchived()
 
     const archiveBtn = host!.querySelector('button[aria-label="Archive chat"]')
@@ -345,7 +346,7 @@ describe('ChatRow trash button (archive vs. hard delete)', () => {
 
   it('an archived row shows a Restore control that unarchives', () => {
     const onUnarchive = vi.fn()
-    renderList([chat({ id: 'a6', archived: true })], { onUnarchive })
+    renderList([], { onUnarchive, archivedChats: [chat({ id: 'a6', archived: true })] })
     expandArchived()
 
     const restore = host!.querySelector('button[aria-label="Unarchive chat"]')
@@ -358,6 +359,68 @@ describe('ChatRow trash button (archive vs. hard delete)', () => {
   it('an active row has no Restore control', () => {
     renderList([chat({ id: 'a7' })])
     expect(host!.querySelector('button[aria-label="Unarchive chat"]')).toBeNull()
+  })
+})
+
+// #809 test case 5: the sidebar's initial load never fetches archived chats -
+// archivedChats starts undefined/unfetched, and only expanding the Archived
+// section triggers the parent's own fetch for it.
+describe('Archived section fetches its own list only on expand', () => {
+  let root: ReturnType<typeof createRoot> | undefined
+  let host: HTMLDivElement | undefined
+
+  afterEach(() => {
+    act(() => root?.unmount())
+    host?.remove()
+    root = undefined
+    host = undefined
+  })
+
+  function renderList(props: Partial<Parameters<typeof ChatList>[0]> = {}) {
+    // @ts-expect-error react act environment flag
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    act(() => {
+      root!.render(createElement(ChatList, {
+        chats: [chat({ id: 'c1' })],
+        activeChatId: null,
+        open: true,
+        onSelect: () => {},
+        onNewChat: () => {},
+        onDelete: () => {},
+        onCloseMobile: () => {},
+        ...props,
+      }))
+    })
+  }
+
+  it('does not call onExpandArchived on initial render', () => {
+    const onExpandArchived = vi.fn()
+    renderList({ onExpandArchived })
+    expect(onExpandArchived).not.toHaveBeenCalled()
+  })
+
+  it('calls onExpandArchived exactly once when the Archived section is expanded', () => {
+    const onExpandArchived = vi.fn()
+    renderList({ onExpandArchived })
+
+    const btn = Array.from(host!.querySelectorAll('button')).find(b => b.textContent?.includes('Archived'))
+    act(() => { btn!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+
+    expect(onExpandArchived).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not call onExpandArchived again when collapsing', () => {
+    const onExpandArchived = vi.fn()
+    renderList({ onExpandArchived })
+
+    const btn = Array.from(host!.querySelectorAll('button')).find(b => b.textContent?.includes('Archived'))
+    act(() => { btn!.dispatchEvent(new MouseEvent('click', { bubbles: true })) }) // expand
+    act(() => { btn!.dispatchEvent(new MouseEvent('click', { bubbles: true })) }) // collapse
+
+    expect(onExpandArchived).toHaveBeenCalledTimes(1)
   })
 })
 

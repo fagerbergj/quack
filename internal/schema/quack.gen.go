@@ -248,6 +248,27 @@ func (e TurnInputRole) Valid() bool {
 	}
 }
 
+// Defines values for ListChatsParamsStatus.
+const (
+	Active   ListChatsParamsStatus = "active"
+	All      ListChatsParamsStatus = "all"
+	Archived ListChatsParamsStatus = "archived"
+)
+
+// Valid indicates whether the value is a known member of the ListChatsParamsStatus enum.
+func (e ListChatsParamsStatus) Valid() bool {
+	switch e {
+	case Active:
+		return true
+	case All:
+		return true
+	case Archived:
+		return true
+	default:
+		return false
+	}
+}
+
 // AgentActivityOutputItem defines model for AgentActivityOutputItem.
 type AgentActivityOutputItem struct {
 	Id        string                      `json:"id"`
@@ -615,9 +636,15 @@ type ListChatsParams struct {
 	// PageToken Opaque continuation token from a previous response's `next_page_token`. Treat it as an opaque string: never parse or construct one, pass back exactly what was returned. Omit for the first page.
 	PageToken *string `form:"page_token,omitempty" json:"page_token,omitempty"`
 
-	// ShowArchived When false (default), omit archived chats. When true, include them all.
+	// Status Which chats to return: `active` (default, excludes archived), `archived` (only archived), or `all`. Supersedes `show_archived`; if both are given, `status` wins. Each value pages independently - a page_token is only valid against the status it was issued for.
+	Status *ListChatsParamsStatus `form:"status,omitempty" json:"status,omitempty"`
+
+	// ShowArchived Deprecated, use `status`. Ignored when `status` is given. Otherwise: false (default) behaves as `status=active`, true as `status=all`.
 	ShowArchived *bool `form:"show_archived,omitempty" json:"show_archived,omitempty"`
 }
+
+// ListChatsParamsStatus defines parameters for ListChats.
+type ListChatsParamsStatus string
 
 // ListMemoriesParams defines parameters for ListMemories.
 type ListMemoriesParams struct {
@@ -1083,6 +1110,19 @@ func (siw *ServerInterfaceWrapper) ListChats(w http.ResponseWriter, r *http.Requ
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "page_token"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page_token", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "status" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "status", r.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "status"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "status", Err: err})
 		}
 		return
 	}

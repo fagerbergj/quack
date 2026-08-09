@@ -316,7 +316,15 @@ export type ListChatsData = {
          */
         page_token?: string;
         /**
-         * When false (default), omit archived chats. When true, include them all.
+         * Which chats to return: `active` (default, excludes archived), `archived` (only archived), or `all`. Supersedes `show_archived`; if both are given, `status` wins. Each value pages independently - a page_token is only valid against the status it was issued for.
+         *
+         */
+        status?: 'active' | 'archived' | 'all';
+        /**
+         * Deprecated, use `status`. Ignored when `status` is given. Otherwise: false (default) behaves as `status=active`, true as `status=all`.
+         *
+         *
+         * @deprecated
          */
         show_archived?: boolean;
     };

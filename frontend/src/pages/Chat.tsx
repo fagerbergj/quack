@@ -138,6 +138,11 @@ export default function Chat() {
   // never parsed here, only ever passed back to the server verbatim.
   const [chatsNextPageToken, setChatsNextPageToken] = useState<string | undefined>(undefined)
   const [loadingMoreChats, setLoadingMoreChats] = useState(false)
+  // #809: the Archived section's own status=archived list - undefined until
+  // the section is first expanded, so the initial load never fetches it.
+  const [archivedChats, setArchivedChats] = useState<ChatSummary[] | undefined>(undefined)
+  const [archivedNextPageToken, setArchivedNextPageToken] = useState<string | undefined>(undefined)
+  const [loadingMoreArchivedChats, setLoadingMoreArchivedChats] = useState(false)
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
   // Set once GET /chats/{id} has seeded this chat's turns - gates the status-
   // triggered re-attach below so it can never fire ahead of seed() (#463: the
@@ -154,9 +159,6 @@ export default function Chat() {
   const [copied, setCopied] = useState<string | null>(null)
   const [submittingChoice, setSubmittingChoice] = useState(false)
   const [liveAttachmentPreviews, setLiveAttachmentPreviews] = useState<{url: string; mime: string; name: string}[]>([])
-  // #722: control whether archived chats are included in the sidebar list.
-  // Defaults to false — the collapsed Archived section refetches with true on expand.
-  const [showArchived, setShowArchived] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // Open a chat scrolled to the latest message (and snap down as turns complete),
@@ -167,52 +169,77 @@ export default function Chat() {
     if (el) el.scrollTop = el.scrollHeight
   }, [activeChatId, state.turns.length])
 
+  // #809: status defaults to active server-side - the active list never carries archived rows.
   const loadChats = useCallback(async () => {
-    const result = showArchived
-      ? await api.listChatsWithArchived({ show_archived: true })
-      : await api.listChats()
+    const result = await api.listChats()
     setChats(result.data)
     setChatsNextPageToken(result.next_page_token)
     return result.data
-  }, [showArchived])
+  }, [])
 
   const loadMoreChats = useCallback(async () => {
     if (!chatsNextPageToken || loadingMoreChats) return
     setLoadingMoreChats(true)
     try {
-      const result = showArchived
-        ? await api.listChatsWithArchived({ show_archived: true, page_token: chatsNextPageToken })
-        : await api.listChats({ page_token: chatsNextPageToken })
+      const result = await api.listChats({ page_token: chatsNextPageToken })
       setChats(prev => [...prev, ...result.data])
       setChatsNextPageToken(result.next_page_token)
     } finally {
       setLoadingMoreChats(false)
     }
-  }, [chatsNextPageToken, loadingMoreChats, showArchived])
+  }, [chatsNextPageToken, loadingMoreChats])
 
-  // Refetch when the archived expand toggle changes so the list updates
-  // with or without archived chats (#722).
-  useEffect(() => {
-    void loadChats()
-  }, [showArchived, loadChats])
+  // #809: the Archived section's own status=archived page, fetched only once
+  // (handleExpandArchived below), independently of the active list's cursor.
+  const loadArchivedChats = useCallback(async () => {
+    const result = await api.listChats({ status: 'archived' })
+    setArchivedChats(result.data)
+    setArchivedNextPageToken(result.next_page_token)
+  }, [])
 
+  const loadMoreArchivedChats = useCallback(async () => {
+    if (!archivedNextPageToken || loadingMoreArchivedChats) return
+    setLoadingMoreArchivedChats(true)
+    try {
+      const result = await api.listChats({ status: 'archived', page_token: archivedNextPageToken })
+      setArchivedChats(prev => [...(prev ?? []), ...result.data])
+      setArchivedNextPageToken(result.next_page_token)
+    } finally {
+      setLoadingMoreArchivedChats(false)
+    }
+  }, [archivedNextPageToken, loadingMoreArchivedChats])
+
+  // Fires on first (and only first) expand of the Archived section - archivedChats
+  // staying undefined is how ChatList knows not to have fetched it yet.
+  const handleExpandArchived = useCallback(() => {
+    if (archivedChats === undefined) void loadArchivedChats()
+  }, [archivedChats, loadArchivedChats])
+
+  // #809: chats and archivedChats are disjoint server-scoped lists now, so
+  // archiving/unarchiving moves a chat between them instead of flipping a
+  // flag in place - it belongs to the other scope now.
   const handleArchiveChat = useCallback(async (chatId: string) => {
-    const existing = chats.find(c => c.id === chatId)
+    const existing = chats.find(c => c.id === chatId) ?? archivedChats?.find(c => c.id === chatId)
     if (!existing) return
     const newArchived = !existing.archived
 
-    setChats(prev => prev.map(c =>
-      c.id === chatId ? { ...c, archived: newArchived } : c
-    ))
+    function move(item: ChatSummary, archived: boolean) {
+      if (archived) {
+        setChats(prev => prev.filter(c => c.id !== chatId))
+        setArchivedChats(prev => [item, ...(prev ?? [])])
+      } else {
+        setArchivedChats(prev => prev?.filter(c => c.id !== chatId))
+        setChats(prev => [item, ...prev])
+      }
+    }
+    move({ ...existing, archived: newArchived }, newArchived)
 
     try {
       await api.archiveChat(chatId, newArchived)
     } catch {
-      setChats(prev => prev.map(c =>
-        c.id === chatId ? { ...c, archived: !newArchived } : c
-      ))
+      move(existing, !newArchived) // revert to the original scope
     }
-  }, [chats])
+  }, [chats, archivedChats])
 
   useEffect(() => {
     loadChats().then(data => {
@@ -272,10 +299,9 @@ export default function Chat() {
         // above the server's page cap would silently come back shorter than
         // what's on screen (#736). Chats are updated_at-sorted, so anything
         // that just changed is in this page regardless of how far the user
-        // has paged; the pagination token is left untouched here.
-        const result = showArchived
-          ? await api.listChatsWithArchived({ show_archived: true })
-          : await api.listChats()
+        // has paged; the pagination token is left untouched here. Active
+        // scope only (#809) - the Archived section isn't live-polled.
+        const result = await api.listChats()
         if (!cancelled) setChats(prev => mergeChatsPage(prev, result.data))
       } catch { /* transient - next poll will retry */ }
     }
@@ -285,7 +311,7 @@ export default function Chat() {
       cancelled = true
       stop()
     }
-  }, [loadChats, showArchived])
+  }, [loadChats])
 
   // #463: when a run goes active on an already-open chat (e.g. GitHub webhook
   // dispatched while the user views this chat), re-fire attach so the SSE
@@ -327,6 +353,7 @@ export default function Chat() {
     await api.deleteChat(id)
     store.clear(id)
     setChats(prev => prev.filter(s => s.id !== id))
+    setArchivedChats(prev => prev?.filter(s => s.id !== id))
     if (activeChatId === id) {
       const remaining = chats.filter(s => s.id !== id)
       if (remaining.length > 0) {
@@ -498,7 +525,11 @@ export default function Chat() {
         // only fires onArchive from an active row / onUnarchive from an archived one.
         onArchive={handleArchiveChat}
         onUnarchive={handleArchiveChat}
-        onShowArchived={() => setShowArchived(true)}
+        archivedChats={archivedChats}
+        hasMoreArchivedChats={archivedNextPageToken !== undefined}
+        onLoadMoreArchivedChats={loadMoreArchivedChats}
+        loadingMoreArchivedChats={loadingMoreArchivedChats}
+        onExpandArchived={handleExpandArchived}
       />
 
       <div className="flex flex-col flex-1 min-w-0">

@@ -40,6 +40,8 @@ function relativeDate(iso: string): string {
 }
 
 export interface ChatListProps {
+  // #809: server-scoped to active chats only (status=active) - never carries
+  // archived rows, so this list and archivedChats page independently.
   chats: ChatSummary[]
   activeChatId: string | null
   open: boolean
@@ -54,9 +56,15 @@ export interface ChatListProps {
   loadingMoreChats?: boolean
   onArchive?: (chatId: string) => void
   onUnarchive?: (chatId: string) => void
-  // #722: fired when the collapsed Archived section expand button is clicked -
-  // tells the parent to refetch with showArchived=true so archived chats load.
-  onShowArchived?: () => void
+  // #809: the Archived section's own scoped (status=archived) list, fetched
+  // only once the section is first expanded - absent/undefined means not yet loaded.
+  archivedChats?: ChatSummary[]
+  hasMoreArchivedChats?: boolean
+  onLoadMoreArchivedChats?: () => void
+  loadingMoreArchivedChats?: boolean
+  // Fired the moment the Archived section expands (not on collapse) - tells
+  // the parent to fetch archivedChats if it hasn't already.
+  onExpandArchived?: () => void
 }
 
 // ChatRow renders a single chat row. The × is a two-stage trash: on an active
@@ -167,7 +175,7 @@ function ChatRow({
   )
 }
 
-export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDelete, onCloseMobile, hasMoreChats, onLoadMoreChats, loadingMoreChats, onArchive, onUnarchive, onShowArchived }: ChatListProps) {
+export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDelete, onCloseMobile, hasMoreChats, onLoadMoreChats, loadingMoreChats, onArchive, onUnarchive, archivedChats, hasMoreArchivedChats, onLoadMoreArchivedChats, loadingMoreArchivedChats, onExpandArchived }: ChatListProps) {
   const search = useSearch()
   const filterState = parseFilterState(search)
   const { q, selected } = filterState
@@ -189,23 +197,28 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
 
   // #722 group the sidebar by run state: running/queued first (no header),
   // active chats below, archived in a collapsed section at bottom. Empty
-  // groups render nothing. Archived toggle must NOT update UpdatedAt so
-  // archiving never re-orders the list.
+  // groups render nothing.
   const [archivedExpanded, setArchivedExpanded] = useState(false)
 
+  function toggleArchived() {
+    setArchivedExpanded(prev => {
+      const next = !prev
+      if (next) onExpandArchived?.() // #809: fetch archived on expand only, never on collapse
+      return next
+    })
+  }
+
   const runningQueued = useMemo<ChatSummary[]>(() => {
-    return filtered.filter(c => c.archived !== true && (c.status === 'running' || c.status === 'queued'))
+    return filtered.filter(c => c.status === 'running' || c.status === 'queued')
   }, [filtered])
 
   const active = useMemo<ChatSummary[]>(() => {
-    return filtered.filter(c => c.archived !== true && c.status !== 'running' && c.status !== 'queued')
+    return filtered.filter(c => c.status !== 'running' && c.status !== 'queued')
   }, [filtered])
 
-  const archived = useMemo<ChatSummary[]>(() => {
-    const found = filtered.filter(c => c.archived === true)
-    // Sort by updated_at desc when showing all archived.
-    return [...found].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
-  }, [filtered])
+  // #809: archivedChats is server-scoped (status=archived) already - no
+  // client-side archived filter or re-sort needed, just the shared search/facet filter.
+  const archived = filterChats(archivedChats ?? [], filterState)
 
 
   return (
@@ -265,22 +278,39 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
           <ChatRow key={s.id} s={s} activeChatId={activeChatId} onSelect={onSelect} onDelete={onDelete} onArchive={onArchive} />
         ))}
 
-        {/* Archived section: collapsed by default, expands to show archived rows */}
-        {archived.length > 0 && (
-          <div>
-            <button
-              onClick={() => { setArchivedExpanded(prev => !prev); onShowArchived?.() }}
-              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors border-t border-gray-200 dark:border-gray-700"
-              aria-expanded={archivedExpanded}
-            >
-              <span className={`transition-transform inline-block ${archivedExpanded ? 'rotate-90' : ''}`}>›</span>
-              Archived ({archived.length})
-            </button>
-            {archivedExpanded && archived.map(s => (
-              <ChatRow key={s.id} s={s} activeChatId={activeChatId} onSelect={onSelect} onDelete={onDelete} onUnarchive={onUnarchive} archived />
-            ))}
-          </div>
-        )}
+        {/* Archived section: collapsed by default. Always rendered (not gated
+            on archived.length) so it's discoverable before its own list has
+            ever been fetched - #809 loads it lazily on first expand. */}
+        <div>
+          <button
+            onClick={toggleArchived}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors border-t border-gray-200 dark:border-gray-700"
+            aria-expanded={archivedExpanded}
+          >
+            <span className={`transition-transform inline-block ${archivedExpanded ? 'rotate-90' : ''}`}>›</span>
+            Archived{archivedChats !== undefined ? ` (${archived.length})` : ''}
+          </button>
+          {archivedExpanded && (
+            <>
+              {archived.length === 0 && (
+                <div className="text-xs text-gray-400 dark:text-gray-500 text-center py-3 px-3">No archived chats</div>
+              )}
+              {archived.map(s => (
+                <ChatRow key={s.id} s={s} activeChatId={activeChatId} onSelect={onSelect} onDelete={onDelete} onUnarchive={onUnarchive} archived />
+              ))}
+              {hasMoreArchivedChats && (
+                <button
+                  onClick={onLoadMoreArchivedChats}
+                  disabled={loadingMoreArchivedChats}
+                  aria-label="Load more archived chats"
+                  className="w-full text-xs text-center py-2.5 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"
+                >
+                  {loadingMoreArchivedChats ? 'Loading…' : 'Load more'}
+                </button>
+              )}
+            </>
+          )}
+        </div>
 
         {hasMoreChats && (
           <button
