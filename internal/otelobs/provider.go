@@ -3,6 +3,7 @@ package otelobs
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -38,6 +39,24 @@ type Providers struct {
 }
 
 // Init builds tracer+meter+logger providers and installs globals; disabled returns no-ops.
+
+// signalURL pins the signal path instead of leaving it to the exporter's
+// default. otlp*http 1.45 stopped appending it to a path-less endpoint and
+// posts to / instead, which loses telemetry silently - and the deployed
+// endpoint is path-less (http://otel-collector:4318). An endpoint that already
+// names a path is left alone.
+func signalURL(endpoint, path string) string {
+	trimmed := strings.TrimRight(endpoint, "/")
+	if i := strings.Index(trimmed, "://"); i >= 0 {
+		if strings.Contains(trimmed[i+3:], "/") {
+			return endpoint
+		}
+	} else if strings.Contains(trimmed, "/") {
+		return endpoint
+	}
+	return trimmed + path
+}
+
 func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledger.LedgerStore) (*Providers, func(context.Context) error, error) {
 	if !cfg.Otel.IsEnabled() {
 		return &Providers{}, func(context.Context) error { return nil }, nil
@@ -57,7 +76,7 @@ func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledge
 	mpOpts := []metric.Option{metric.WithResource(res)}
 	var shutdowns []func(context.Context) error
 	if cfg.Otel.OTLPEndpoint != "" {
-		texp, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(cfg.Otel.OTLPEndpoint))
+		texp, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(signalURL(cfg.Otel.OTLPEndpoint, "/v1/traces")))
 		if err != nil {
 			return nil, nil, fmt.Errorf("otelobs: otlp trace exporter: %w", err)
 		}
@@ -65,7 +84,7 @@ func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledge
 		tpOpts = append(tpOpts, sdktrace.WithSpanProcessor(bsp))
 		shutdowns = append(shutdowns, bsp.Shutdown)
 
-		mexp, err := otlpmetrichttp.New(ctx, otlpmetrichttp.WithEndpointURL(cfg.Otel.OTLPEndpoint))
+		mexp, err := otlpmetrichttp.New(ctx, otlpmetrichttp.WithEndpointURL(signalURL(cfg.Otel.OTLPEndpoint, "/v1/metrics")))
 		if err != nil {
 			return nil, nil, fmt.Errorf("otelobs: otlp metric exporter: %w", err)
 		}
