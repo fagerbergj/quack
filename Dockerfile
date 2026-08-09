@@ -108,6 +108,8 @@ COPY skills/ /skills/
 # Skill-library plugins, resolved as plugin roots against CWD / (config's
 # skills.plugins). From the builder: the context has no vendor trees.
 COPY --from=backend /app/.agents/ /.agents/
+# The startup refresh re-runs this against the pins in .agents/vendor.
+COPY scripts/plugins.sh /scripts/plugins.sh
 ENV QUACK_CONFIG=/config/quack.yaml
 USER nonroot
 EXPOSE 8080
