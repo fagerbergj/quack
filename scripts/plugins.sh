@@ -34,7 +34,7 @@ while IFS=$'\t' read -r name url ref path; do
   fi
 
   tmp=$(mktemp -d)
-  if ! git clone --quiet "$url" "$tmp/c" 2>/dev/null; then
+  if ! git clone --quiet --filter=blob:none "$url" "$tmp/c" 2>/dev/null; then
     rm -rf "$tmp"
     if [[ -d $path ]]; then
       echo "$name: clone failed, keeping the tree already on disk" >&2
