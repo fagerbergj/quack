@@ -246,3 +246,118 @@ describe('github_state badge', () => {
   })
 })
 
+// The × is a two-stage trash: archive on an active row, hard-delete on an
+// archived one. This is the regression guard - a mis-wiring here would
+// silently hard-delete an active chat on a single click.
+describe('ChatRow trash button (archive vs. hard delete)', () => {
+  let root: ReturnType<typeof createRoot> | undefined
+  let host: HTMLDivElement | undefined
+
+  afterEach(() => {
+    act(() => root?.unmount())
+    host?.remove()
+    root = undefined
+    host = undefined
+    vi.restoreAllMocks()
+  })
+
+  function renderList(chats: ChatSummary[], props: Partial<Parameters<typeof ChatList>[0]> = {}) {
+    // @ts-expect-error react act environment flag
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    act(() => {
+      root!.render(createElement(ChatList, {
+        chats,
+        activeChatId: null,
+        open: true,
+        onSelect: () => {},
+        onNewChat: () => {},
+        onDelete: () => {},
+        onCloseMobile: () => {},
+        ...props,
+      }))
+    })
+  }
+
+  function expandArchived() {
+    const btn = Array.from(host!.querySelectorAll('button')).find(b => b.textContent?.includes('Archived'))
+    act(() => { btn!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+  }
+
+  function click(el: Element | null | undefined) {
+    act(() => { el!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+  }
+
+  it('on an active row, archives and does NOT delete', () => {
+    const onArchive = vi.fn()
+    const onDelete = vi.fn()
+    renderList([chat({ id: 'a1', title: 'Active chat' })], { onArchive, onDelete })
+
+    const trash = host!.querySelector('button[aria-label="Archive chat"]')
+    expect(trash).toBeTruthy()
+    click(trash)
+
+    expect(onArchive).toHaveBeenCalledWith('a1')
+    expect(onDelete).not.toHaveBeenCalled()
+  })
+
+  it('on an archived row, permanently deletes after confirmation', () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const onDelete = vi.fn()
+    renderList([chat({ id: 'a2', title: 'Archived chat', archived: true })], { onDelete })
+    expandArchived()
+
+    const trash = host!.querySelector('button[aria-label="Delete chat permanently"]')
+    expect(trash).toBeTruthy()
+    click(trash)
+
+    expect(window.confirm).toHaveBeenCalledOnce()
+    expect(onDelete).toHaveBeenCalledWith('a2', expect.anything())
+  })
+
+  it('on an archived row, does nothing if the confirmation is dismissed', () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const onDelete = vi.fn()
+    renderList([chat({ id: 'a3', archived: true })], { onDelete })
+    expandArchived()
+
+    click(host!.querySelector('button[aria-label="Delete chat permanently"]'))
+
+    expect(onDelete).not.toHaveBeenCalled()
+  })
+
+  it('the aria-label/title differ between an active row and an archived row', () => {
+    renderList([
+      chat({ id: 'a4', title: 'Active' }),
+      chat({ id: 'a5', title: 'Archived', archived: true }),
+    ])
+    expandArchived()
+
+    const archiveBtn = host!.querySelector('button[aria-label="Archive chat"]')
+    const deleteBtn = host!.querySelector('button[aria-label="Delete chat permanently"]')
+    expect(archiveBtn).toBeTruthy()
+    expect(deleteBtn).toBeTruthy()
+    expect(archiveBtn!.getAttribute('title')).toBe('Archive chat')
+    expect(deleteBtn!.getAttribute('title')).toBe('Delete chat permanently')
+  })
+
+  it('an archived row shows a Restore control that unarchives', () => {
+    const onUnarchive = vi.fn()
+    renderList([chat({ id: 'a6', archived: true })], { onUnarchive })
+    expandArchived()
+
+    const restore = host!.querySelector('button[aria-label="Unarchive chat"]')
+    expect(restore).toBeTruthy()
+    click(restore)
+
+    expect(onUnarchive).toHaveBeenCalledWith('a6')
+  })
+
+  it('an active row has no Restore control', () => {
+    renderList([chat({ id: 'a7' })])
+    expect(host!.querySelector('button[aria-label="Unarchive chat"]')).toBeNull()
+  })
+})
+

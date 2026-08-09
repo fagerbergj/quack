@@ -59,9 +59,9 @@ export interface ChatListProps {
   onShowArchived?: () => void
 }
 
-// ChatRow renders a single chat row; `archived` controls whether an archive/unarchive
-// toggle appears (only shown for archived rows). Reusable by both the active groups
-// and the collapsed archived section.
+// ChatRow renders a single chat row. The × is a two-stage trash: on an active
+// row it archives, on an archived row it hard-deletes; `archived` also gates
+// the Restore control. Reusable by both the active groups and the archived section.
 function ChatRow({
   s,
   activeChatId,
@@ -80,6 +80,19 @@ function ChatRow({
   onUnarchive?: (chatId: string) => void
 }) {
   const ref = parseGithubRef(s)
+
+  // The × is a two-stage trash: archive first (reversible), hard-delete second.
+  // Only the irreversible path needs a confirm.
+  function handleTrashClick(e: React.MouseEvent) {
+    e.stopPropagation()
+    if (archived) {
+      if (window.confirm(`Permanently delete "${s.title || 'New chat'}"? This can't be undone.`)) {
+        onDelete(s.id, e)
+      }
+      return
+    }
+    onArchive?.(s.id)
+  }
 
   return (
     <div
@@ -130,28 +143,22 @@ function ChatRow({
         )}
       </div>
       <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{relativeDate(s.updated_at)}</span>
-      {/* Archive/unarchive toggle for archived rows when callbacks are provided. */}
+      {/* Archived rows get a real restore control (not hover-only, not tiny text) -
+          it's the only way back once a chat has left the active list. */}
       {archived && onUnarchive && (
         <button
           onClick={e => { e.stopPropagation(); onUnarchive(s.id) }}
-          className="mt-1 text-[9px] font-medium text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors uppercase tracking-wide"
           aria-label="Unarchive chat"
+          title="Unarchive chat"
+          className="mt-1.5 self-start inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-blue-100 dark:hover:bg-blue-900/40 hover:text-blue-700 dark:hover:text-blue-400 transition-colors"
         >
-          Unarchive
-        </button>
-      )}
-      {onArchive && !archived && (
-        <button
-          onClick={e => { e.stopPropagation(); onArchive(s.id) }}
-          className="mt-1 text-[9px] font-medium text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors uppercase tracking-wide"
-          aria-label="Archive chat"
-        >
-          Archive
+          <span aria-hidden="true">↺</span> Restore
         </button>
       )}
       <button
-        onClick={e => onDelete(s.id, e)}
-        aria-label="Delete chat"
+        onClick={handleTrashClick}
+        aria-label={archived ? 'Delete chat permanently' : 'Archive chat'}
+        title={archived ? 'Delete chat permanently' : 'Archive chat'}
         className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity p-1 rounded"
       >
         ×

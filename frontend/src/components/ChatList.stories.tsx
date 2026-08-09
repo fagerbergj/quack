@@ -4,8 +4,8 @@ import { ChatList } from './ChatList'
 import type { ChatSummary } from '../api'
 
 const now = '2026-06-18T12:00:00Z'
-function chat(id: string, title: string, status: ChatSummary['status'] = 'idle'): ChatSummary {
-  return { id, title, system_prompt: '', created_at: now, updated_at: now, status }
+function chat(id: string, title: string, status: ChatSummary['status'] = 'idle', archived?: boolean): ChatSummary {
+  return { id, title, system_prompt: '', created_at: now, updated_at: now, status, archived }
 }
 
 function githubChat(
@@ -54,6 +54,8 @@ const meta: Meta<typeof ChatList> = {
     onNewChat: () => alert('new chat'),
     onDelete: (id: string) => alert(`delete ${id}`),
     onCloseMobile: () => {},
+    onArchive: (id: string) => alert(`archive ${id}`),
+    onUnarchive: (id: string) => alert(`unarchive ${id}`),
   },
   decorators: [Story => <div className="h-[28rem] flex"><Story /></div>],
 }
@@ -125,5 +127,24 @@ export const FilteredToRepo: Story = {
     const canvas = within(canvasElement)
     await userEvent.click(canvas.getByRole('button', { name: 'Filter chats' }))
     await userEvent.click(canvas.getByRole('checkbox', { name: /^fagerbergj\/quack/ }))
+  },
+}
+
+// Expands the collapsed Archived section: each row gets a real Restore
+// pill (icon + label, not 9px text) plus the same × as active rows - hover
+// it here and its label swaps to "Delete chat permanently" since it now
+// hard-deletes instead of archiving.
+export const WithArchivedChats: Story = {
+  args: {
+    chats: [
+      chat('active-1', 'Current project notes'),
+      chat('archived-1', 'Old debugging session', 'idle', true),
+      chat('archived-2', 'Abandoned experiment', 'idle', true),
+    ],
+    activeChatId: null,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: /^Archived/ }))
   },
 }
