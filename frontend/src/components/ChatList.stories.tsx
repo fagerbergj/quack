@@ -131,10 +131,11 @@ export const FilteredToRepo: Story = {
   },
 }
 
-// Expands the collapsed Archived section: each row gets a real Restore
-// pill (icon + label, not 9px text) plus the same × as active rows - hover
-// it here and its label swaps to "Delete chat permanently" since it now
-// hard-deletes instead of archiving.
+// Expands the collapsed Archived section: each row gets a "⋮" overflow trigger
+// (Restore lives inside it) top-right, next to the same × as active rows - both
+// are hover-only and absolutely positioned, so the row height matches an active
+// row's exactly. Hover a row here to reveal them; × swaps its label to "Delete
+// chat permanently" since it now hard-deletes instead of archiving.
 export const WithArchivedChats: Story = {
   args: {
     chats: [chat('active-1', 'Current project notes')],
@@ -149,5 +150,20 @@ export const WithArchivedChats: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     await userEvent.click(canvas.getByRole('button', { name: /^Archived/ }))
+  },
+}
+
+// Opens an archived row's overflow menu to reveal the Restore action. Hovering
+// first isn't needed for the click itself, but mirrors how a user reaches it.
+export const ArchivedRowOverflowMenu: Story = {
+  args: {
+    chats: [],
+    archivedChats: [chat('archived-1', 'Old debugging session', 'idle', true)],
+    activeChatId: null,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: /^Archived/ }))
+    await userEvent.click(canvas.getByRole('button', { name: 'Row actions' }))
   },
 }
