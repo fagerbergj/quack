@@ -103,14 +103,11 @@ COPY config/ /config/
 COPY agents/ /agents/
 # Orchestrator skill bundles (SKILL.md directories), read at startup.
 COPY skills/ /skills/
-# Vendored skill libraries (git submodules under .agents/vendor: dotagents -
-# the general-purpose skills, incl. startup-required format-markdown - and
-# ponytail), resolved as plugin roots (config/quack.yaml's skills.plugins,
-# internal/plugin discovery) against CWD / and merged into the skill toolset
-# (internal/serve's newSkillSource). dotagents' skills/ is also go:embed'd
-# into the binary (embed.go), so only ponytail is lost if a submodule isn't
-# initialized in the build context - build with `git submodule update --init`
-# to include everything.
+# Vendored skill libraries under .agents/vendor (dotagents - the general-purpose
+# skills, incl. startup-required format-markdown - and ponytail), resolved as
+# plugin roots (config/quack.yaml's skills.plugins, internal/plugin discovery)
+# against CWD / and merged into the skill toolset (internal/serve's
+# newSkillSource). In-tree, so the build context always has them.
 COPY .agents/ /.agents/
 ENV QUACK_CONFIG=/config/quack.yaml
 USER nonroot

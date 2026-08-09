@@ -15,7 +15,7 @@ import (
 // stage_review), never the prefixed one - a prefixed reference means either a
 // stale doc or a server rename nobody updated the prompts for. Vendored and
 // generated trees are skipped: they never hand-carry a tool name, and walking
-// them (submodules, the embedded SPA client) is pure waste.
+// them (vendored plugins, the embedded SPA client) is pure waste.
 func TestNoStaleMemoryPrefixedToolNames(t *testing.T) {
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {

@@ -17,7 +17,7 @@ The per-step craft lives in loadable skills - `plan-work`, `develop-feature`, `f
 
 ## Development setup
 
-- **Cloning** - use `git clone --recursive` (or `git submodule update --init` after a plain clone). The code-implementer's coding-discipline skills are a vendored git submodule at `.agents/vendor/ponytail`, merged into the runtime skill library when present. Without it the server still runs; those skills are just unavailable.
+- **Cloning** - a plain `git clone` is enough. The skill libraries under `.agents/vendor` (dotagents, ponytail) are vendored in-tree, not submodules; `.agents/vendor/plugins.yaml` records where each came from and `make sync-plugins` updates them.
 - **Go** - module `github.com/fagerbergj/quack`; server entrypoint `cmd/quack/main.go`.
 - **Frontend** - `cd frontend && npm install`, then `npm run dev` (hot reload on :5173).
 - **Full build** - `make build` (compiles the frontend and embeds `dist` into the binary).

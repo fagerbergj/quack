@@ -1,6 +1,0 @@
-[submodule ".agents/vendor/ponytail"]
-	path = .agents/vendor/ponytail
-	url = https://github.com/DietrichGebert/ponytail
-[submodule ".agents/vendor/dotagents"]
-	path = .agents/vendor/dotagents
-	url = https://github.com/fagerbergj/dotagents

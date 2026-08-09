@@ -38,7 +38,7 @@ func TestSkillsLoad(t *testing.T) {
 }
 
 // writeVendorSkill lays down one SKILL.md under dir/<name>/ in the exact
-// layout the ponytail submodule's skills/ dir ships (and the shipped skills/
+// layout the vendored ponytail skills/ dir ships (and the shipped skills/
 // library uses).
 func writeVendorSkill(t *testing.T, dir, name, description string) {
 	t.Helper()
@@ -99,9 +99,9 @@ func TestNewSkillSourceMergesVendoredSkills(t *testing.T) {
 }
 
 // TestNewSkillSourceMissingPluginRoot proves the Forbidden-section contract:
-// a configured plugin root that doesn't exist on disk (submodule not
-// initialised) never fails the run - it's just absent from the merged
-// source, and quack's own shipped skills still resolve.
+// a configured plugin root that doesn't exist on disk (an operator pointing
+// skills.plugins at a path they never created) never fails the run - it's
+// just absent from the merged source, and quack's own shipped skills resolve.
 func TestNewSkillSourceMissingPluginRoot(t *testing.T) {
 	src := newSkillSource([]string{filepath.Join(t.TempDir(), "does-not-exist")})
 	if _, err := src.LoadFrontmatter(context.Background(), "plan-work"); err != nil {
@@ -130,8 +130,8 @@ func TestNewSkillSourceNoPluginsConfigured(t *testing.T) {
 
 // TestNewSkillSourceDotagentsMissingOnDisk pins the regression a reviewer
 // caught: dotagents configured as a plugin root but not checked out on disk
-// (a standalone install outside any repo checkout, or a worktree that
-// skipped `git submodule update --init`) must still resolve
+// (a standalone install outside any repo checkout, where /.agents was not
+// mounted) must still resolve
 // format-markdown/plan-work - buildFromConfig hard-fails startup without
 // them, and before dotagentsEmbeddedSkills existed, losing disk access to
 // dotagents meant losing the server entirely, not just a skill.
@@ -153,7 +153,7 @@ func TestNewSkillSourceDotagentsMissingOnDisk(t *testing.T) {
 func TestNewSkillSourceDotagentsOnDiskNoDuplicate(t *testing.T) {
 	dotagents := "../../.agents/vendor/dotagents"
 	if st, err := os.Stat(dotagents + "/skills"); err != nil || !st.IsDir() {
-		t.Skip("vendored dotagents submodule not initialised (git submodule update --init)")
+		t.Fatalf("vendored dotagents skills missing at %s/skills", dotagents)
 	}
 	src := newSkillSource([]string{dotagents})
 	if _, err := src.ListFrontmatters(context.Background()); err != nil {

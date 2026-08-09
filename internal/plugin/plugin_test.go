@@ -140,15 +140,14 @@ func TestResolveSkillDirs_PreservesOrder(t *testing.T) {
 
 // Test 6 (DECIDED): ponytail's real checkout resolves, through the Codex
 // branch, to the same skill set .agents/vendor/ponytail/skills yields today -
-// pinning the migration as behaviour-preserving. Skipped (not failed) if the
-// submodule isn't initialised in this checkout, exactly like the existing
-// TestEveryAgentPromptSkillIsShipped convention.
+// pinning the migration as behaviour-preserving. The tree is vendored in-tree,
+// so a missing skills/ dir is a real breakage, not an uninitialised checkout.
 func TestResolveSkillDirs_PonytailRealCheckout(t *testing.T) {
 	root := repoRoot(t)
 	ponytail := filepath.Join(root, ".agents", "vendor", "ponytail")
 	wantDir := filepath.Join(ponytail, "skills")
 	if st, err := os.Stat(wantDir); err != nil || !st.IsDir() {
-		t.Skip("vendored ponytail submodule not initialised (git submodule update --init); cannot pin its resolution")
+		t.Fatalf("vendored ponytail skills missing at %s: %v", wantDir, err)
 	}
 	if _, err := os.Stat(filepath.Join(ponytail, "plugin.json")); err == nil {
 		t.Fatal("ponytail now ships a root plugin.json; this test must move to branch 1 and stop asserting branch 2")
