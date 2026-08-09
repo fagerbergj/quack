@@ -720,16 +720,6 @@ func (s *Store) ListTurns(ctx context.Context, chatID string) ([]ChatTurn, error
 	return turns, err
 }
 
-// GetTurn returns one turn by ID, or (nil, nil) if not found.
-func (s *Store) GetTurn(ctx context.Context, chatID, turnID string) (*ChatTurn, error) {
-	var t ChatTurn
-	err := s.db.WithContext(ctx).Where("id = ? AND chat_id = ?", turnID, chatID).First(&t).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	return &t, err
-}
-
 // SaveDagPlan persists a DAG plan linked to a turn.
 func (s *Store) SaveDagPlan(ctx context.Context, chatID, planID, turnID, planJSON string) error {
 	now := time.Now().UTC()

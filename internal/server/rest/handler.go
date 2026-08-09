@@ -245,7 +245,7 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 	status, pendingQuestion := h.chatStatus(r.Context(), chatID, turns)
 	detail := schema.ChatDetail{
 		Id:              c.ID,
-		Title:           nonEmpty(c.Title),
+		Title:           strPtr(c.Title),
 		SystemPrompt:    c.SystemPrompt,
 		CreatedAt:       c.CreatedAt,
 		UpdatedAt:       c.UpdatedAt,
@@ -1022,14 +1022,14 @@ func (h *Handler) toSummary(c store.Chat) schema.ChatSummary {
 	status, pendingQuestion := h.liveOrStampedStatus(c)
 	return schema.ChatSummary{
 		Id:              c.ID,
-		Title:           nonEmpty(c.Title),
+		Title:           strPtr(c.Title),
 		SystemPrompt:    c.SystemPrompt,
 		CreatedAt:       c.CreatedAt,
 		UpdatedAt:       c.UpdatedAt,
 		Status:          status,
 		PendingQuestion: pendingQuestion,
-		GithubUrl:       nonEmpty(c.GithubURL),
-		GithubRepo:      nonEmpty(c.GithubRepo),
+		GithubUrl:       strPtr(c.GithubURL),
+		GithubRepo:      strPtr(c.GithubRepo),
 		GithubState:     stateVal(c.GithubState),
 		Archived:        boolPtr(c.Archived),
 	}
@@ -1104,13 +1104,6 @@ func (h *Handler) stampRunOutcome(parent context.Context, chatID string) {
 	if err := h.store.StampRunOutcome(ctx, chatID, string(status), q); err != nil {
 		slog.Warn("stamp run outcome failed", "component", "rest", "chat", chatID, "err", err)
 	}
-}
-
-func nonEmpty(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
 }
 
 func stateVal(s string) *schema.ChatSummaryGithubState {

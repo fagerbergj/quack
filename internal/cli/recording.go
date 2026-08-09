@@ -50,19 +50,14 @@ func RunRecordingExport(ctx context.Context, out io.Writer, server, chatID, outF
 	if outFile == "" {
 		outFile = chatID + ".zip"
 	}
-	f, err := os.Create(outFile)
+	body, err := c.FetchRecording(ctx, chatID)
 	if err != nil {
-		return fmt.Errorf("create %s: %w", outFile, err)
-	}
-	if err := c.DownloadRecording(ctx, chatID, f); err != nil {
-		f.Close()
-		os.Remove(outFile)
 		if errors.Is(err, ErrNotFound) {
 			return fmt.Errorf("no recording for chat %s (never recorded, already GC'd by retention, or recording disabled)", chatID)
 		}
 		return err
 	}
-	if err := f.Close(); err != nil {
+	if err := os.WriteFile(outFile, body, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", outFile, err)
 	}
 	fmt.Fprintln(out, outFile)

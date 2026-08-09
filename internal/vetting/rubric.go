@@ -1,7 +1,9 @@
 package vetting
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 
@@ -81,7 +83,7 @@ func LoadBundleRubric(bundleDir string) (string, error) {
 	raw, err := bundledir.ReadFile(bundledir.PathJoin(bundleDir, "rubric.md"))
 	if err != nil {
 		// Absent on both disk and embedded ⇒ no per-agent rubric (not an error).
-		if isNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return "", nil
 		}
 		return "", fmt.Errorf("vetting: read bundle rubric %q: %w", bundleDir, err)
@@ -91,9 +93,4 @@ func LoadBundleRubric(bundleDir string) (string, error) {
 		return "", nil // treat empty as absent
 	}
 	return r, nil
-}
-
-// isNotExist reports whether err is a not-exist error from either os or embed.
-func isNotExist(err error) bool {
-	return err != nil && (strings.Contains(err.Error(), "no such file") || strings.Contains(err.Error(), "does not exist"))
 }

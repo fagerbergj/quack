@@ -18,7 +18,6 @@ type snapshotComment struct {
 	Body      string `json:"body"`
 	User      string `json:"user"`
 	CreatedAt string `json:"created_at,omitempty"`
-	UpdatedAt string `json:"updated_at,omitempty"`
 	// Hidden: minimized comment (TODO: always false, needs GraphQL). Left as a seam.
 	Hidden bool `json:"hidden,omitempty"`
 }
@@ -106,7 +105,7 @@ func (e *Extension) fetchSnapshot(ctx context.Context, owner, repo string, numbe
 	} else {
 		snap.Comments = make([]snapshotComment, 0, len(comments))
 		for _, c := range comments {
-			snap.Comments = append(snap.Comments, snapshotComment{ID: c.ID, NodeID: c.NodeID, Body: c.Body, User: c.User, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt})
+			snap.Comments = append(snap.Comments, snapshotComment{ID: c.ID, NodeID: c.NodeID, Body: c.Body, User: c.User, CreatedAt: c.CreatedAt})
 		}
 	}
 

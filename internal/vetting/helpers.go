@@ -130,14 +130,10 @@ const maxContinueRounds = 4
 
 const fetchSampleBytes = 300 // bytes of fetched content per URL for judge spot-checking
 
-type fetchRecord struct {
-	sample string
-}
-
 // workerActivity: worker's retrieval and workspace operations from session events.
 type workerActivity struct {
 	searches  []string
-	fetched   map[string]fetchRecord
+	fetched   map[string]struct{}
 	seen      map[string]string
 	staged    []memory.Candidate
 	workspace []wsOp
@@ -150,7 +146,6 @@ type workerActivity struct {
 
 	committed bool
 	pushed    bool
-	prOpened  bool
 
 	reviewCommented bool
 	reviewSubmitted bool

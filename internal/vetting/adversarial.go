@@ -85,7 +85,7 @@ func buildSkepticPrompt(criterion string, c criterionScore, question *genai.Cont
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Finding to refute - criterion %q, scored %.0f/10 as PASSING by the primary judge, reasoning:\n%s\n\n", criterion, c.Score*10, strings.TrimSpace(c.Reason))
 	sb.WriteString("Original question:\n")
-	sb.WriteString(boundExcerpt(questionText(question), maxOriginalQuestionChars))
+	sb.WriteString(boundExcerpt(contentPlainText(question), maxOriginalQuestionChars))
 	sb.WriteString("\n\nAnswer being evaluated:\n")
 	sb.WriteString(boundExcerpt(answer, maxPreviousAnswerChars))
 	if ws := buildWorkspaceSection(act); ws != "" {

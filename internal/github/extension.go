@@ -144,10 +144,6 @@ func (e *Extension) isInvokerAllowed(login string) bool {
 	return e.allowedUsers[strings.ToLower(login)]
 }
 
-// App exposes the underlying auth as a git-credential source.
-func (e *Extension) App() *App { return e.app }
-
-func (e *Extension) Name() string       { return "github" }
 func (e *Extension) Tools() []tool.Tool { return e.app.Tools() }
 
 // RegisterRoutes mounts the inbound webhook receiver.

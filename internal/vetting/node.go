@@ -1110,7 +1110,7 @@ func activityFromSession(sess session.Session) workerActivity {
 // activityFromSessionAt: replays worker's session inside nodeDir. Paths come back chat-relative.
 func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity {
 	s := &activityScanner{
-		act:         workerActivity{fetched: map[string]fetchRecord{}, seen: map[string]string{}, paths: map[string]bool{}},
+		act:         workerActivity{fetched: map[string]struct{}{}, seen: map[string]string{}, paths: map[string]bool{}},
 		nodeDir:     nodeDir,
 		writtenSeen: map[string]bool{},
 	}
@@ -1228,7 +1228,7 @@ func (s *activityScanner) recordSearch(args map[string]any) {
 
 func (s *activityScanner) recordFetch(url string, resp map[string]any) {
 	if result, ok := resp["result"].(string); ok && strings.TrimSpace(result) != "" {
-		s.act.fetched[url] = fetchRecord{sample: strings.TrimSpace(trimToSample(result))}
+		s.act.fetched[url] = struct{}{}
 	}
 }
 
@@ -1257,8 +1257,6 @@ func (s *activityScanner) recordWorkspace(name string, args, resp map[string]any
 		s.act.committed = true
 	case "git_push":
 		s.act.pushed = true
-	case "github_pull_request":
-		s.act.prOpened = true
 	case "github_add_review_comment":
 		s.act.reviewCommented = true
 		s.recordPRNumber(args)

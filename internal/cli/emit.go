@@ -77,14 +77,14 @@ func EmitServerConfig(a InitAnswers) string {
 		researcherTools += ", stage_memory"
 	}
 	researcherTools += "]"
-	emitAgent(&b, "web-researcher", a.MainModel, 65536, researcherTools, a)
-	emitAgent(&b, "synthesizer", a.MainModel, 65536, "[]", a)
+	emitAgent(&b, "web-researcher", a.MainModel, 65536, researcherTools)
+	emitAgent(&b, "synthesizer", a.MainModel, 65536, "[]")
 	if a.AudioModel != "" {
-		emitAgent(&b, "media-reader", a.AudioModel, 32768, "[]", a)
+		emitAgent(&b, "media-reader", a.AudioModel, 32768, "[]")
 		b.WriteString("    inputs: [text, image, audio]\n")
 	}
 	if a.VisionModel != "" {
-		emitAgent(&b, "image-reader", a.VisionModel, 32768, "[]", a)
+		emitAgent(&b, "image-reader", a.VisionModel, 32768, "[]")
 		b.WriteString("    inputs: [text, image]\n")
 	}
 	if a.Coding {
@@ -144,11 +144,11 @@ func emitCodingAgents(b *strings.Builder, a InitAnswers) {
 	}
 	reviewer += "]"
 
-	emitAgent(b, "code-implementer", model, 65536, implementer, a)
+	emitAgent(b, "code-implementer", model, 65536, implementer)
 	b.WriteString("    judge_rounds: 8   # coding converges via the judge+revise grind\n")
-	emitAgent(b, "code-explorer", model, 65536, explorer, a)
+	emitAgent(b, "code-explorer", model, 65536, explorer)
 	b.WriteString("    judge_rounds: 2\n")
-	emitAgent(b, "code-reviewer", model, 65536, reviewer, a)
+	emitAgent(b, "code-reviewer", model, 65536, reviewer)
 	b.WriteString("    judge_rounds: 2\n")
 }
 
@@ -212,7 +212,7 @@ func emitOrchTools(b *strings.Builder, a InitAnswers) {
 	fmt.Fprintf(b, "  tools: [%s]\n", strings.Join(tools, ", "))
 }
 
-func emitAgent(b *strings.Builder, name, model string, ctx int, tools string, _ InitAnswers) {
+func emitAgent(b *strings.Builder, name, model string, ctx int, tools string) {
 	fmt.Fprintf(b, "  %s:\n    bundle: agents/%s\n    provider: default\n    model: %s\n    context_window: %d\n    tools: %s\n",
 		name, name, model, ctx, tools)
 }

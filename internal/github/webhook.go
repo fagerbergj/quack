@@ -108,10 +108,8 @@ type issuesPayload struct {
 
 // pullRequestPayload is the PR webhook subset for opened/labeled actions.
 type pullRequestPayload struct {
-	Action      string     `json:"action"`
-	Number      int        `json:"number"`
-	Draft       bool       `json:"draft"`
-	MergedAt    *time.Time `json:"merged_at"`
+	Action      string `json:"action"`
+	Number      int    `json:"number"`
 	PullRequest struct {
 		Title string `json:"title"`
 		Head  struct {

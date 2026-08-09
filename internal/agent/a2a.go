@@ -30,11 +30,6 @@ import (
 // invokePath is where each agent's A2A JSON-RPC endpoint is mounted.
 const invokePath = "/invoke"
 
-// agentWithWorker: wrapper agents that publish inner worker's skills.
-type agentWithWorker interface {
-	Worker() adkagent.Agent
-}
-
 // A2AServer: co-located A2A server for one ADK agent.
 type A2AServer struct {
 	// Published AgentCard with loopback URL.
@@ -88,11 +83,8 @@ func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service) (
 // Close stops the A2A server's listener.
 func (s *A2AServer) Close() error { return s.listener.Close() }
 
-// buildSkills returns the A2A skills for ag, using the wrapped worker's skills if present.
+// buildSkills returns the A2A skills for ag.
 func buildSkills(ag adkagent.Agent) []a2a.AgentSkill {
-	if w, ok := ag.(agentWithWorker); ok {
-		return adka2a.BuildAgentSkills(w.Worker())
-	}
 	return adka2a.BuildAgentSkills(ag)
 }
 

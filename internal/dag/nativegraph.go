@@ -161,7 +161,7 @@ func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userI
 			return false, fmt.Errorf("dag: plan setup: %w", serr)
 		}
 	}
-	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.toolsByAgent, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID,
+	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID,
 		func(nodeID string, score float64, passed bool, rounds int) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds)
 		})

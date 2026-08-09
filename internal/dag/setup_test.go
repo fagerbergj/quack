@@ -361,7 +361,7 @@ func TestRunPlanAsGraph_FailingSetupAbortsBeforeAnyNodeRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{implementerAgent: ag}, map[string]model.LLM{implementerAgent: stub}, nil,
+	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{implementerAgent: ag}, map[string]model.LLM{implementerAgent: stub},
 		vetting.NewJudgeFactory(stub, nil, nil), func(string) vetting.Config { return vetting.Config{} }, nil)
 	wantErr := errors.New("clone denied")
 	ex.SetSetup(func(context.Context, string, string, string, Setup) error { return wantErr })
@@ -398,7 +398,7 @@ func TestRunPlanAsGraph_RunsSetupOnceNotOnResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{implementerAgent: ag}, map[string]model.LLM{implementerAgent: stub}, nil,
+	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{implementerAgent: ag}, map[string]model.LLM{implementerAgent: stub},
 		vetting.NewJudgeFactory(stub, nil, nil), func(string) vetting.Config { return vetting.Config{} }, nil)
 	var setupCalls int32Counter
 	ex.SetSetup(func(context.Context, string, string, string, Setup) error {

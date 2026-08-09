@@ -317,8 +317,6 @@ func gitHeadInfo(dir string, caps workspace.Caps) (head, branch string, err erro
 	return head, branch, nil
 }
 
-// git_checkout
-
 // validateRef: rejects refs starting with "-" (flag smuggling).
 func validateRef(ref, tool string) error {
 	ref = strings.TrimSpace(ref)
@@ -331,32 +329,11 @@ func validateRef(ref, tool string) error {
 	return nil
 }
 
-// git_status
-
-// git_diff
-
-// git_log
-
-// ASCII unit/record separators for git log fields.
-const (
-	gitLogFieldSep  = "\x1f"
-	gitLogRecordSep = "\x1e"
-)
-
-// git_commit
-
 // System identity for all quack commits. Exported for internal/github.
 const (
 	GitCommitAuthorName  = "quack"
 	GitCommitAuthorEmail = "agent@quack.local"
 )
-
-// Bulk-commit sanity wall.
-const maxAddAllFiles = 100
-
-// git_branch
-
-// git_push
 
 // Branches agents can never push to. --force is unexpressible.
 var protectedBranches = map[string]bool{"main": true, "master": true}

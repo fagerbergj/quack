@@ -183,15 +183,15 @@ func TestDiffSnapshotsCommentLifecycle(t *testing.T) {
 	old := Snapshot{
 		Title: "Old title", State: "open", Labels: []string{"bug"},
 		Comments: []snapshotComment{
-			{ID: 1, User: "alice", Body: "first", UpdatedAt: "t0"},
-			{ID: 2, User: "bob", Body: "will be deleted", UpdatedAt: "t0"},
+			{ID: 1, User: "alice", Body: "first"},
+			{ID: 2, User: "bob", Body: "will be deleted"},
 		},
 	}
 	cur := Snapshot{
 		Title: "New title", State: "closed", Labels: []string{"bug", "priority:high"},
 		Comments: []snapshotComment{
-			{ID: 1, User: "alice", Body: "first - edited", UpdatedAt: "t1"},
-			{ID: 3, User: "carol", Body: "brand new", UpdatedAt: "t1"},
+			{ID: 1, User: "alice", Body: "first - edited"},
+			{ID: 3, User: "carol", Body: "brand new"},
 		},
 	}
 	d := diffSnapshots(old, cur, 0)

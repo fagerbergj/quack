@@ -339,7 +339,7 @@ providers:
   default: { kind: openai, endpoint: http://x }
 stores:
   base: { kind: postgres, url: pg }
-  doc:  { extends: base, schema: documents }
+  doc:  { extends: base, collection: documents }
 session: { store: base }
 orchestrator: { provider: default, model: m }
 `))
@@ -353,8 +353,8 @@ orchestrator: { provider: default, model: m }
 	if doc.Kind != "postgres" || doc.URL != "pg" {
 		t.Errorf("doc did not inherit connection: %+v", doc)
 	}
-	if doc.Schema != "documents" {
-		t.Errorf("doc.Schema = %q, want override", doc.Schema)
+	if doc.Collection != "documents" {
+		t.Errorf("doc.Collection = %q, want override", doc.Collection)
 	}
 }
 

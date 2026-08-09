@@ -100,12 +100,12 @@ func (a *App) writeObject(ctx context.Context, dir, name, authz, path string) js
 	return raw
 }
 
-// writeList fetches a list endpoint to exhaustion and writes it. Returns items for caller inspection.
-func (a *App) writeList(ctx context.Context, dir, name, authz, firstPath string, cap int, capNote string) []json.RawMessage {
+// writeList fetches a list endpoint to exhaustion and writes it.
+func (a *App) writeList(ctx context.Context, dir, name, authz, firstPath string, cap int, capNote string) {
 	items, truncated, err := a.fetchAllPages(ctx, firstPath, authz, cap)
 	if err != nil {
 		slog.Warn("github: context dir: fetch failed; skipping", "component", "github", "file", name, "err", err)
-		return nil
+		return
 	}
 	if items == nil {
 		items = []json.RawMessage{}
@@ -116,9 +116,7 @@ func (a *App) writeList(ctx context.Context, dir, name, authz, firstPath string,
 	}
 	if err := writeIndentedValue(filepath.Join(dir, name), payload); err != nil {
 		slog.Warn("github: context dir: write failed; skipping", "component", "github", "file", name, "err", err)
-		return nil
 	}
-	return items
 }
 
 type checkRunSummary struct {
