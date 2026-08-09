@@ -174,7 +174,7 @@ func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Con
 			"research node that committed no code has not failed; that was never its job.")
 	}
 	sb.WriteString("\n\nUser's question:\n")
-	sb.WriteString(questionText(question))
+	sb.WriteString(contentPlainText(question))
 	if ws := buildWorkspaceSection(act); ws != "" {
 		sb.WriteString("\n\n")
 		sb.WriteString(ws)
@@ -916,7 +916,7 @@ func buildRevisionContent(constitution string, question *genai.Content, answer, 
 		sb.WriteString("\n")
 	}
 	sb.WriteString("Original question:\n")
-	sb.WriteString(boundExcerpt(questionText(question), maxOriginalQuestionChars))
+	sb.WriteString(boundExcerpt(contentPlainText(question), maxOriginalQuestionChars))
 	sb.WriteString("\n\nYour previous answer:\n")
 	sb.WriteString(boundExcerpt(answer, maxPreviousAnswerChars))
 	return &genai.Content{Role: "user", Parts: []*genai.Part{{Text: sb.String()}}}
@@ -935,7 +935,7 @@ func buildFinalizeContent(question *genai.Content, act workerActivity) *genai.Co
 		sb.WriteString("\n")
 	}
 	sb.WriteString("Question:\n")
-	sb.WriteString(boundExcerpt(questionText(question), maxOriginalQuestionChars))
+	sb.WriteString(boundExcerpt(contentPlainText(question), maxOriginalQuestionChars))
 	return &genai.Content{Role: "user", Parts: []*genai.Part{{Text: sb.String()}}}
 }
 
@@ -1095,20 +1095,6 @@ func parseVerdict(raw string) (verdict, error) {
 
 	normalizeScale(&v)
 	return aggregateVerdict(v), nil
-}
-
-// questionText: extracts question text from invocation content.
-func questionText(c *genai.Content) string {
-	if c == nil {
-		return ""
-	}
-	var b strings.Builder
-	for _, p := range c.Parts {
-		if p != nil && p.Text != "" {
-			b.WriteString(p.Text)
-		}
-	}
-	return b.String()
 }
 
 // runWriterFresh: recovers empty worker draft via tool-less writer in a fresh runner (re-invoking worker loses finalize prompt).

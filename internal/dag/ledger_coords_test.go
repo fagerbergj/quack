@@ -58,6 +58,19 @@ func ledgerAttrsOf(r sdklog.Record) map[string]string {
 	return out
 }
 
+// lcScopedAgent is a minimal nodeScopedWorker double: ForNode returns the
+// same worker/model/tools it was built with, so buildGateNodes' scoped path
+// (the one production always takes) is what stamps ledger coords here too.
+type lcScopedAgent struct {
+	adkagent.Agent
+	model model.LLM
+	tools []tool.Tool
+}
+
+func (a lcScopedAgent) ForNode(string) (adkagent.Agent, model.LLM, []tool.Tool, func(), error) {
+	return a.Agent, a.model, a.tools, func() {}, nil
+}
+
 // ledgerCoordsStub calls current_date once, answers, and passes the judge
 // immediately (JudgeRounds:1, first verdict scores 0.9) - the shortest
 // path that still produces one chat AND one execute_tool event. Local
@@ -154,10 +167,14 @@ func TestRunPlanAsGraph_LedgerCoordsReachModelAndTool(t *testing.T) {
 		t.Fatalf("llmagent.New: %v", err)
 	}
 
+	// Production always dispatches through a nodeScopedWorker (nativeAgent's
+	// ForNode) so ledger.StampCoords reaches the tools actually invoked;
+	// mirror that here rather than relying on the plain agent.
+	scoped := lcScopedAgent{Agent: worker, model: workerModel, tools: builtins}
+
 	ex := dag.NewExecutor(session.InMemoryService(),
-		map[string]adkagent.Agent{"w": worker},
+		map[string]adkagent.Agent{"w": scoped},
 		map[string]model.LLM{"w": workerModel},
-		map[string][]tool.Tool{"w": builtins},
 		vetting.NewJudgeFactory(workerModel, nil, nil),
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} },
 		nil)

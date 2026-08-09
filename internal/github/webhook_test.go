@@ -50,7 +50,7 @@ type fakeRunner struct {
 	// (see takeDeliveryResult).
 	judgePassed bool
 	// deliverOK/deliverErr simulate the trust gate's own commitDelivery
-	// having ALREADY run and recorded its outcome (recordDeliveryResult) - the
+	// having ALREADY run and recorded its outcome (recordDelivery) - the
 	// authoritative signal dispatch prefers over judgePassed. deliverOK records
 	// a success; deliverErr (mutually exclusive) records a failure.
 	deliverOK  bool
@@ -113,7 +113,7 @@ func (f *fakeRunner) Run(ctx context.Context, _, sessionID, message string, _ []
 		if f.deliverReview {
 			recordDelivery(sessionID, deliveryOutcome{reviewDelivered: true})
 		} else if f.deliverOK {
-			recordDeliveryResult(sessionID, nil)
+			recordDelivery(sessionID, deliveryOutcome{})
 		} else if f.deliverErr != "" {
 			recordDelivery(sessionID, deliveryOutcome{err: fmt.Errorf("%s", f.deliverErr), branch: f.deliverBranch})
 		}

@@ -254,7 +254,6 @@ var validGuardTiers = map[string]bool{"none": true, "judge": true, "confirm": tr
 
 type SessionConfig struct {
 	Store      string           `yaml:"store"`
-	Schema     string           `yaml:"schema"`
 	Compaction CompactionConfig `yaml:"compaction"`
 }
 
@@ -339,7 +338,6 @@ type ToolConfig struct {
 	Auth       *AuthConfig `yaml:"auth"`
 	Store      string      `yaml:"store"`
 	Collection string      `yaml:"collection"`
-	Schema     string      `yaml:"schema"`
 	TopK       int         `yaml:"top_k"`
 	MinScore   *float32    `yaml:"min_score"`
 }
@@ -376,7 +374,6 @@ type StoreConfig struct {
 	Consolidation *ProviderModel `yaml:"consolidation"`
 	TopK          int            `yaml:"top_k"`
 	MinScore      *float32       `yaml:"min_score"`
-	Schema        string         `yaml:"schema"`
 	Collection    string         `yaml:"collection"`
 	Root          string         `yaml:"root"`
 }
@@ -471,9 +468,6 @@ func mergeStore(parent, child StoreConfig) StoreConfig {
 	}
 	if child.MinScore != nil {
 		out.MinScore = child.MinScore
-	}
-	if child.Schema != "" {
-		out.Schema = child.Schema
 	}
 	if child.Collection != "" {
 		out.Collection = child.Collection

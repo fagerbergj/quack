@@ -103,40 +103,6 @@ func TestGitCloneAcceptsPlainHTTPS(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Round trip: clone (via runGit fixture) -> status -> edit -> commit -> diff,
-// all inside a temp jail, no network.
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// git_commit's bulk-commit sanity wall (maxAddAllFiles): the deterministic
-// guard against a blind `add_all` sweeping in garbage - the live incident
-// this closes staged 1,261 npm-cache files alongside 8 real ones in one
-// commit (see internal/workspace's HomeDir isolation fix for the OTHER half).
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Two users' jails: same relative path, fully independent contents.
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// git_push guard matrix: disabled -> error; main -> rejected; no credential
-// -> error.
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// git_pull / git_rebase conflict -> auto-abort, repo state unchanged,
-// conflicts listed.
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// git_worktree_create / git_worktree_remove, including dirty-refuse.
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// git_branch
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // gitEnv / GIT_ASKPASS injection shape
 // ---------------------------------------------------------------------------
 

@@ -457,7 +457,7 @@ func TestOverBudgetCheckIsCalibrated(t *testing.T) {
 	if llm.calls != 1 {
 		t.Fatalf("calibrated over-budget request did not summarise (calls=%d)", llm.calls)
 	}
-	if got := calibrated(estimateTokens(req.Contents), calibrationRatio(ctx), 0); got > 60_000 {
+	if got := calibrated(estimateTokens(req.Contents), defaultCalibrationRatio, 0); got > 60_000 {
 		t.Fatalf("request still over budget after compaction: calibrated %d > 60000", got)
 	}
 }
@@ -493,30 +493,6 @@ func TestSummaryCarriesCodeKnowledge(t *testing.T) {
 	}
 	if got := req.Contents[idx].Parts[0].Text; !strings.Contains(got, "Your context was compacted") {
 		t.Fatalf("model not told its context was compacted: %q", got)
-	}
-}
-
-// Regression for the ratio=1 death spiral (live failure 2026-07-12): a turn
-// whose measured prompt tokens land AT OR BELOW the raw bytes/4 estimate (prose
-// the provider tokenizes more efficiently than 4 chars/token) must not drag the
-// trusted calibration below the first-turn safety default. Before the fix the
-// floor was 1.0, so such a turn stored 1.0 and every later code-dense revise
-// round undercounted (the estimate can't see the system prompt + tool schemas)
-// and 400'd. The floor is now pinned to defaultCalibrationRatio.
-func TestCalibrationNeverBelowDefault(t *testing.T) {
-	ctx := newFakeCtx()
-	if err := ctx.state.Set(estimateKey, 10_000); err != nil {
-		t.Fatal(err)
-	}
-	// measured (9_000) < estimate (10_000) ⇒ raw ratio 0.9.
-	recordUsage()(ctx, &model.LLMResponse{
-		UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 9_000},
-	}, nil)
-	if got := calibrationRatio(ctx); got < defaultCalibrationRatio {
-		t.Fatalf("degenerate measured≤estimate turn trusted ratio %v, below the safety default %v (the ratio=1 anomaly)", got, defaultCalibrationRatio)
-	}
-	if minCalibrationRatio != defaultCalibrationRatio {
-		t.Fatalf("floor (%v) must equal the default (%v) so no measurement drops below the safety margin", minCalibrationRatio, defaultCalibrationRatio)
 	}
 }
 
@@ -570,9 +546,6 @@ func TestTruncateOversizedHead(t *testing.T) {
 // a comfortably under-budget request is still a pure no-op.
 func TestCalibrationDefaultBeforeMeasurement(t *testing.T) {
 	ctx := newFakeCtx()
-	if got := calibrationRatio(ctx); got != defaultCalibrationRatio {
-		t.Fatalf("calibrationRatio before measurement = %v; want default %v", got, defaultCalibrationRatio)
-	}
 	llm := &fakeLLM{text: "S"}
 	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: 1_000_000, Enabled: true})
 	req := &model.LLMRequest{Contents: []*genai.Content{textContent(genai.RoleUser, "task")}}

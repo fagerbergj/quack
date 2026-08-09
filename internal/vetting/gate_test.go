@@ -53,7 +53,7 @@ func TestCitationScoreLayers(t *testing.T) {
 		"[e](https://nowhere.com/made-up)",   // never seen
 	}, " ")
 	act := workerActivity{
-		fetched: map[string]fetchRecord{"https://ex.com/fetched-page": {}},
+		fetched: map[string]struct{}{"https://ex.com/fetched-page": {}},
 		seen:    map[string]string{"https://srch.com/exact-result": "snip"},
 	}
 
@@ -92,7 +92,7 @@ func TestCiteReasonNamesUnretrievedLinks(t *testing.T) {
 		"[b](https://nowhere.com/never-retrieved-1)",
 		"[c](https://elsewhere.com/never-retrieved-2)",
 	}, " ")
-	act := workerActivity{fetched: map[string]fetchRecord{"https://ex.com/fetched": {}}}
+	act := workerActivity{fetched: map[string]struct{}{"https://ex.com/fetched": {}}}
 	score, details, ok := citationScore(answer, act, nil)
 	if !ok {
 		t.Fatal("citationScore ok=false, want true")
@@ -116,7 +116,7 @@ func TestCiteReasonScoreUnchanged(t *testing.T) {
 		"[b](https://nowhere.com/never-retrieved-1)",
 		"[c](https://elsewhere.com/never-retrieved-2)",
 	}, " ")
-	act := workerActivity{fetched: map[string]fetchRecord{"https://ex.com/fetched": {}}}
+	act := workerActivity{fetched: map[string]struct{}{"https://ex.com/fetched": {}}}
 	score, details, ok := citationScore(answer, act, nil)
 	if !ok {
 		t.Fatal("citationScore ok=false, want true")
@@ -141,7 +141,7 @@ func TestCiteReasonBoundsLongList(t *testing.T) {
 	answer := strings.Join(links, " ")
 	// citationScore requires some retrieval activity to engage at all - a
 	// fetch unrelated to any of the 40 cited links keeps all 40 unbacked.
-	act := workerActivity{fetched: map[string]fetchRecord{"https://other.example.com/unrelated": {}}}
+	act := workerActivity{fetched: map[string]struct{}{"https://other.example.com/unrelated": {}}}
 	score, details, ok := citationScore(answer, act, nil)
 	if !ok {
 		t.Fatal("citationScore ok=false, want true")
@@ -163,7 +163,7 @@ func TestCitationScoreNormalizesAnchorsAndSlashes(t *testing.T) {
 	// Cited URL differs from the fetched one only by a trailing slash and a #anchor
 	// and host casing - should still score a 1.0 exact-fetch match.
 	answer := "See [x](https://Ex.com/Page/#section)."
-	act := workerActivity{fetched: map[string]fetchRecord{"https://ex.com/Page": {}}}
+	act := workerActivity{fetched: map[string]struct{}{"https://ex.com/Page": {}}}
 	score, _, ok := citationScore(answer, act, nil)
 	if !ok || score != 1.0 {
 		t.Errorf("score=%.2f ok=%v, want 1.0 true (anchor/slash/case normalized)", score, ok)

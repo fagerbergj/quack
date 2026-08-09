@@ -22,8 +22,6 @@ import (
 // on the main router (mirroring how the MCP handler is mounted in
 // internal/server/router.go).
 type Extension interface {
-	// Name identifies the extension in logs (e.g. "github").
-	Name() string
 	// Tools are the outbound capabilities, authed via the extension's own auth
 	// context. Empty is valid (an inbound-only extension).
 	Tools() []tool.Tool

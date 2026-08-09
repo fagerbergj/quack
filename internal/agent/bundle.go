@@ -2,7 +2,9 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
 
 	"github.com/fagerbergj/quack/internal/bundledir"
@@ -67,15 +69,10 @@ func LoadBundle(dir string) (*Bundle, error) {
 func LoadBundleMemory(dir string) (string, error) {
 	raw, err := bundledir.ReadFile(bundledir.PathJoin(dir, memoryFile))
 	if err != nil {
-		if isNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return "", nil
 		}
 		return "", fmt.Errorf("agent bundle %q: read %s: %w", dir, memoryFile, err)
 	}
 	return strings.TrimSpace(string(raw)), nil
-}
-
-// isNotExist reports whether err is a not-exist error from either os or embed.
-func isNotExist(err error) bool {
-	return err != nil && (strings.Contains(err.Error(), "no such file") || strings.Contains(err.Error(), "does not exist"))
 }

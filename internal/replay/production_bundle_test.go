@@ -64,7 +64,7 @@ func newOrchForTest(t *testing.T, m model.LLM) *orchestrator.Orchestrator {
 	sessions := session.InMemoryService()
 	ex := dag.NewExecutor(sessions,
 		map[string]adkagent.Agent{"web-researcher": worker},
-		map[string]model.LLM{"web-researcher": m}, nil,
+		map[string]model.LLM{"web-researcher": m},
 		vetting.NewJudgeFactory(m, nil, nil),
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher", Description: "researches the web"}}, nil, nil)

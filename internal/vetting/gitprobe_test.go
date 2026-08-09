@@ -62,7 +62,7 @@ func writeFile(t *testing.T, path, content string) {
 
 func TestAugmentFromRepo_ReadsCommitsOffDisk(t *testing.T) {
 	cfg := probeRepo(t, true)
-	act := workerActivity{fetched: map[string]fetchRecord{}, seen: map[string]string{}, paths: map[string]bool{}}
+	act := workerActivity{fetched: map[string]struct{}{}, seen: map[string]string{}, paths: map[string]bool{}}
 	augmentFromRepo(context.Background(), &act, cfg)
 
 	if !act.committed {
@@ -89,7 +89,7 @@ func TestAugmentFromRepo_ReadsCommitsOffDisk(t *testing.T) {
 
 func TestAugmentFromRepo_NoCommitsNoChange(t *testing.T) {
 	cfg := probeRepo(t, false)
-	act := workerActivity{fetched: map[string]fetchRecord{}, seen: map[string]string{}, paths: map[string]bool{}}
+	act := workerActivity{fetched: map[string]struct{}{}, seen: map[string]string{}, paths: map[string]bool{}}
 	augmentFromRepo(context.Background(), &act, cfg)
 	if act.committed || len(act.written) != 0 || len(act.stagedDelivery) != 0 {
 		t.Fatalf("clean branch must change nothing: %+v", act)
@@ -99,7 +99,7 @@ func TestAugmentFromRepo_NoCommitsNoChange(t *testing.T) {
 func TestAugmentFromRepo_SkipsNonSetupNodes(t *testing.T) {
 	cfg := probeRepo(t, true)
 	cfg.Setup = nil
-	act := workerActivity{fetched: map[string]fetchRecord{}, seen: map[string]string{}, paths: map[string]bool{}}
+	act := workerActivity{fetched: map[string]struct{}{}, seen: map[string]string{}, paths: map[string]bool{}}
 	augmentFromRepo(context.Background(), &act, cfg)
 	if act.committed {
 		t.Fatal("the probe must only fire for setup-provisioned nodes")

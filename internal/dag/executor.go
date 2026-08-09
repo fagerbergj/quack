@@ -11,7 +11,6 @@ import (
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
-	"google.golang.org/adk/v2/tool"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/stream"
@@ -20,16 +19,15 @@ import (
 
 // Executor runs a Plan as an ADK v2 graph workflow.
 type Executor struct {
-	sessions     session.Service
-	agents       map[string]adkagent.Agent
-	models       map[string]model.LLM
-	toolsByAgent map[string][]tool.Tool
-	judge        vetting.JudgeFactory
-	cfgFor       func(agentName string) vetting.Config
-	mediaAgents  map[string]bool
-	controls     *runControls
-	maxActive    int
-	setupFn      SetupFunc
+	sessions    session.Service
+	agents      map[string]adkagent.Agent
+	models      map[string]model.LLM
+	judge       vetting.JudgeFactory
+	cfgFor      func(agentName string) vetting.Config
+	mediaAgents map[string]bool
+	controls    *runControls
+	maxActive   int
+	setupFn     SetupFunc
 
 	gateResults sync.Map
 }
@@ -138,7 +136,7 @@ func (s *DagStream) Finish() {
 
 // RetryPlanInNode: re-runs target node + descendants with seeded outputs.
 func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, nodeID string, seeded map[string]string) (map[string]string, error) {
-	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.toolsByAgent, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID,
+	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID,
 		func(nodeID string, score float64, passed bool, rounds int) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds)
 		})
@@ -149,8 +147,8 @@ func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, node
 }
 
 // NewExecutor: returns a graph Executor.
-func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, models map[string]model.LLM, toolsByAgent map[string][]tool.Tool, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool) *Executor {
-	return &Executor{sessions: sessions, agents: agents, models: models, toolsByAgent: toolsByAgent, judge: judge, cfgFor: cfgFor, mediaAgents: mediaAgents, controls: newRunControls(), maxActive: 2}
+func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool) *Executor {
+	return &Executor{sessions: sessions, agents: agents, models: models, judge: judge, cfgFor: cfgFor, mediaAgents: mediaAgents, controls: newRunControls(), maxActive: 2}
 }
 
 // gateScore: node's trust-gate result.

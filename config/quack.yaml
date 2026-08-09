@@ -33,7 +33,6 @@ stores:
 # which operates over that session history.
 session:
   store: default_postgres
-  schema: sessions                # reserved: ADK's session service exposes no schema param yet
   compaction:
     enabled: ${QUACK_COMPACTION_ENABLED}  # unset ⇒ false
     provider: default

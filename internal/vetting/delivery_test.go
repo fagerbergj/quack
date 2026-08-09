@@ -93,8 +93,8 @@ func TestActivityFromSessionRecordsDelivery(t *testing.T) {
 		fnCall("3", "github_pull_request", map[string]any{"owner": "fagerbergj", "repo": "games", "title": "Add Flappy Bird", "head": "add-flappy-bird-quack-v4"}),
 		fnResp("3", "github_pull_request", map[string]any{"url": "https://github.com/fagerbergj/games/pull/7"}),
 	))
-	if !act.committed || !act.pushed || !act.prOpened {
-		t.Errorf("committed=%v pushed=%v prOpened=%v, want all true", act.committed, act.pushed, act.prOpened)
+	if !act.committed || !act.pushed {
+		t.Errorf("committed=%v pushed=%v, want all true", act.committed, act.pushed)
 	}
 	// The PR call also belongs in the ledger the judge sees (its URL is exactly
 	// the kind of outcome an answer claims).

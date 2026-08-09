@@ -393,10 +393,7 @@ func (e *Extension) deliverableText(ctx context.Context, p issueCommentPayload, 
 	}
 
 	if mentionIsWork {
-		if kind, ok := e.classifyPRDeliverable(ctx, task, grant); ok {
-			if kind == "commit" {
-				return "a commit addressing the requested change"
-			}
+		if _, ok := e.classifyPRDeliverable(ctx, task, grant); ok {
 			return reviewDeliverableText(gh)
 		}
 	}

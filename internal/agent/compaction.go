@@ -31,11 +31,8 @@ const (
 
 	measuredInputKey = "quack.compaction.measured_input"
 	estimateKey      = "quack.compaction.last_estimate"
-	calibrationKey   = "quack.compaction.calibration"
 	overheadKey      = "quack.compaction.overhead"
 
-	minCalibrationRatio     = defaultCalibrationRatio
-	maxCalibrationRatio     = 8.0
 	defaultCalibrationRatio = 1.3
 )
 
@@ -123,7 +120,7 @@ func enforceBudget(ctx adkagent.Context, c Compaction, threshold, retention int,
 
 // fits reports whether contents is within threshold using calibrated estimates.
 func fits(ctx adkagent.Context, threshold int, contents []*genai.Content) bool {
-	ratio := calibrationRatio(ctx)
+	ratio := defaultCalibrationRatio
 	overhead := intState(ctx, overheadKey)
 	return measuredInput(ctx) < threshold && calibrated(estimateTokens(contents), ratio, overhead) <= threshold
 }
@@ -145,7 +142,7 @@ func backstop(ctx adkagent.Context, req *model.LLMRequest, threshold int) {
 	if len(req.Contents) == 0 {
 		return
 	}
-	ratio := calibrationRatio(ctx)
+	ratio := defaultCalibrationRatio
 	overhead := intState(ctx, overheadKey)
 
 	if head := calibrated(estimateTokens(req.Contents[:1]), ratio, overhead); head > threshold {
@@ -485,26 +482,6 @@ func recordUsage() llmagent.AfterModelCallback {
 
 // measuredInput returns the last provider-reported prompt-token count.
 func measuredInput(ctx adkagent.Context) int { return intState(ctx, measuredInputKey) }
-
-// calibrationRatio returns the measured/estimated prompt-token ratio, clamped.
-func calibrationRatio(ctx adkagent.Context) float64 {
-	v, err := ctx.State().Get(calibrationKey)
-	if err != nil {
-		return defaultCalibrationRatio
-	}
-	switch r := v.(type) {
-	case float64:
-		return clampRatio(r)
-	case int: // tolerate an int round-trip, as intState does
-		return clampRatio(float64(r))
-	default:
-		return defaultCalibrationRatio
-	}
-}
-
-func clampRatio(r float64) float64 {
-	return min(max(r, minCalibrationRatio), maxCalibrationRatio)
-}
 
 // calibrated scales a raw estimate into approximate real prompt tokens.
 // Overhead is additive (system + tool schemas), not a multiplier.

@@ -86,17 +86,12 @@ func TestBuildAgents_ReplayProvider_NativeAgentToolsAreStubs(t *testing.T) {
 	}
 
 	var setupFn dag.SetupFunc
-	clientMap, _, _, servers, nodeServers, _, _, _, _, err := buildAgents(cfg, session.InMemoryService(), skillTS, builtinSkillSrc, newScopedSkillTS,
+	clientMap, _, nodeServers, _, _, _, _, err := buildAgents(cfg, session.InMemoryService(), skillTS, builtinSkillSrc, newScopedSkillTS,
 		nil, nil, jail, nil, nil, nil, nil, &setupFn)
 	if err != nil {
 		t.Fatalf("buildAgents: %v", err)
 	}
-	defer func() {
-		for _, s := range servers {
-			_ = s.Close()
-		}
-		nodeServers.closeAll()
-	}()
+	defer nodeServers.closeAll()
 
 	na, ok := clientMap["tester"].(nativeAgent)
 	if !ok {

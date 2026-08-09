@@ -92,7 +92,7 @@ func TestRunPlanAsGraph_HITLPauseResume(t *testing.T) {
 		return a
 	}
 	ex := NewExecutor(session.InMemoryService(),
-		map[string]adkagent.Agent{"blk1": mk("blk1"), "blk2": mk("blk2"), "synthesizer": mk("synthesizer")}, nil, nil,
+		map[string]adkagent.Agent{"blk1": mk("blk1"), "blk2": mk("blk2"), "synthesizer": mk("synthesizer")}, nil,
 		vetting.NewJudgeFactory(stub, nil, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	plan := Plan{ID: "p", UserMessage: "go", Nodes: []Node{
 		{ID: "n1", AgentName: "blk1", Task: "ASK-TASK"},

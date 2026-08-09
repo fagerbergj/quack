@@ -39,9 +39,7 @@ type App struct {
 	slug      string
 
 	reviewMu sync.Mutex
-	drafts   map[string][]reviewComment
 	diffs    map[string]cachedDiff
-	// ponytail: use GitHub's native "pending review" if drafts ever need to outlive a single run.
 }
 
 type cachedToken struct {

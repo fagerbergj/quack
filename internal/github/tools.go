@@ -26,10 +26,6 @@ import (
 // Process-local; read-and-cleared once by the dispatch that caused it.
 var deliveryResults sync.Map // chatID → deliveryOutcome
 
-func recordDeliveryResult(chatID string, err error) {
-	recordDelivery(chatID, deliveryOutcome{err: err})
-}
-
 // recordDelivery includes the verified GitHub state (PR number/url, pushed SHA).
 func recordDelivery(chatID string, o deliveryOutcome) {
 	if chatID == "" {
@@ -138,12 +134,9 @@ func (a *App) commentTool() tool.Tool {
 
 // reviewComment is one inline PR review comment. Matches GitHub's reviews-API shape.
 type reviewComment struct {
-	Path      string `json:"path"`
-	Line      int    `json:"line"`
-	Side      string `json:"side,omitempty"`
-	StartLine int    `json:"start_line,omitempty"`
-	StartSide string `json:"start_side,omitempty"`
-	Body      string `json:"body"`
+	Path string `json:"path"`
+	Line int    `json:"line"`
+	Body string `json:"body"`
 }
 
 // reviewEvents are the verdicts GitHub's reviews API accepts.

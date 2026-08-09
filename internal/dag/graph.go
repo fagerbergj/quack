@@ -28,7 +28,7 @@ type nodeScopedWorker interface {
 }
 
 // buildGateNodes: one gated node per plan node.
-func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, toolsByAgent map[string][]tool.Tool, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int)) (map[string]workflow.Node, []adkagent.Agent, error) {
+func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int)) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
@@ -43,7 +43,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		}
 		worker := ag
 		workerModel := models[n.AgentName]
-		workerTools := toolsByAgent[n.AgentName]
+		var workerTools []tool.Tool
 		var release func()
 		if scoped, ok := ag.(nodeScopedWorker); ok {
 			w, m, wt, rel, err := scoped.ForNode(plan.ID + ":" + n.ID)

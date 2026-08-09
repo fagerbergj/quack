@@ -3,6 +3,7 @@ package dag
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"strings"
 	"sync"
 	"time"
 )
@@ -57,11 +58,7 @@ func (c *nodeControl) TakeQueued() string {
 		return ""
 	}
 	c.drained = append(c.drained, out)
-	s := out[0]
-	for _, more := range out[1:] {
-		s += "\n\n" + more
-	}
-	return s
+	return strings.Join(out, "\n\n")
 }
 
 // drainedGeneration returns the Nth drain's guidance text (1-based).
@@ -71,12 +68,7 @@ func (c *nodeControl) drainedGeneration(n int) string {
 	if n < 1 || n > len(c.drained) {
 		return ""
 	}
-	out := c.drained[n-1]
-	s := out[0]
-	for _, more := range out[1:] {
-		s += "\n\n" + more
-	}
-	return s
+	return strings.Join(c.drained[n-1], "\n\n")
 }
 
 func (c *nodeControl) markCancelled() {

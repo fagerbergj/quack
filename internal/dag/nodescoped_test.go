@@ -159,7 +159,7 @@ func runTwoConcurrentNodes(t *testing.T, stub *nodeScopedStub) []string {
 	}
 
 	ex := dag.NewExecutor(session.InMemoryService(),
-		map[string]adkagent.Agent{"w": stub, "synth": synth}, nil, nil,
+		map[string]adkagent.Agent{"w": stub, "synth": synth}, nil,
 		vetting.NewJudgeFactory(nsJudge{}, nil, nil),
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 
