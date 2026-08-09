@@ -42,6 +42,24 @@ export function mergeChatsPage(existing: ChatSummary[], page: ChatSummary[]): Ch
   return [...page, ...existing.filter(c => !pageIds.has(c.id))]
 }
 
+// pollPageExcludingPending drops ids from a freshly-polled active page before it reaches
+// mergeChatsPage. Without this, a status=active poll GET in flight when the user archives
+// the open chat can resolve after the optimistic removal but still list the chat as
+// active (the server hadn't processed the archive PATCH yet when it served the GET) -
+// mergeChatsPage trusts `page` unconditionally, so that stale entry undoes the archive.
+export function pollPageExcludingPending(page: ChatSummary[], pendingIds: Set<string>): ChatSummary[] {
+  return pendingIds.size === 0 ? page : page.filter(c => !pendingIds.has(c.id))
+}
+
+// nextArchivedChats computes the Archived section's list after an archive/unarchive move.
+// Archiving into an unloaded section (`current === undefined`) must not seed it - that
+// would flip archivedChats from undefined to a partial list, and undefined is exactly how
+// handleExpandArchived knows the real first page still needs to be fetched (#809).
+export function nextArchivedChats(current: ChatSummary[] | undefined, item: ChatSummary, archived: boolean): ChatSummary[] | undefined {
+  if (archived) return current === undefined ? undefined : [item, ...current]
+  return current?.filter(c => c.id !== item.id)
+}
+
 // pollWhileVisible calls `poll` on an interval, but only while the document is visible - a
 // backgrounded tab has nothing to show, so it costs nothing (#738). Becoming visible again
 // fires `poll` immediately rather than waiting out the rest of the interval. Returns a
@@ -143,6 +161,9 @@ export default function Chat() {
   const [archivedChats, setArchivedChats] = useState<ChatSummary[] | undefined>(undefined)
   const [archivedNextPageToken, setArchivedNextPageToken] = useState<string | undefined>(undefined)
   const [loadingMoreArchivedChats, setLoadingMoreArchivedChats] = useState(false)
+  // Ids this client just optimistically archived: guards the poll below from
+  // resurrecting one via a stale in-flight GET that raced the archive PATCH.
+  const archivingIdsRef = useRef<Set<string>>(new Set())
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
   // Set once GET /chats/{id} has seeded this chat's turns - gates the status-
   // triggered re-attach below so it can never fire ahead of seed() (#463: the
@@ -226,18 +247,20 @@ export default function Chat() {
     function move(item: ChatSummary, archived: boolean) {
       if (archived) {
         setChats(prev => prev.filter(c => c.id !== chatId))
-        setArchivedChats(prev => [item, ...(prev ?? [])])
       } else {
-        setArchivedChats(prev => prev?.filter(c => c.id !== chatId))
         setChats(prev => [item, ...prev])
       }
+      setArchivedChats(prev => nextArchivedChats(prev, item, archived))
     }
+    if (newArchived) archivingIdsRef.current.add(chatId)
     move({ ...existing, archived: newArchived }, newArchived)
 
     try {
       await api.archiveChat(chatId, newArchived)
     } catch {
       move(existing, !newArchived) // revert to the original scope
+    } finally {
+      if (newArchived) archivingIdsRef.current.delete(chatId)
     }
   }, [chats, archivedChats])
 
@@ -302,7 +325,8 @@ export default function Chat() {
         // has paged; the pagination token is left untouched here. Active
         // scope only (#809) - the Archived section isn't live-polled.
         const result = await api.listChats({ status: ['active'] })
-        if (!cancelled) setChats(prev => mergeChatsPage(prev, result.data))
+        // Exclude ids this client is mid-archive on - see pollPageExcludingPending.
+        if (!cancelled) setChats(prev => mergeChatsPage(prev, pollPageExcludingPending(result.data, archivingIdsRef.current)))
       } catch { /* transient - next poll will retry */ }
     }
     loadChats().then(data => { if (!cancelled) setChats(data) })

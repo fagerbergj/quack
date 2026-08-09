@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChatSummary } from '../api'
 import { isGithubChat, parseGithubRef } from '../lib/github'
 import { computeFacets, filterChats, parseFilterState, serializeFilterState, type SelectedFacets } from '../lib/chatFilters'
@@ -88,6 +88,19 @@ function ChatRow({
   onUnarchive?: (chatId: string) => void
 }) {
   const ref = parseGithubRef(s)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  // Close on an outside click - blur alone misses a mouse click that never
+  // focuses anything inside the menu.
+  useEffect(() => {
+    if (!menuOpen) return
+    function onDocMouseDown(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDocMouseDown)
+    return () => document.removeEventListener('mousedown', onDocMouseDown)
+  }, [menuOpen])
 
   // The × is a two-stage trash: archive first (reversible), hard-delete second.
   // Only the irreversible path needs a confirm.
@@ -107,7 +120,7 @@ function ChatRow({
       className={`group relative flex flex-col px-3 py-2.5 cursor-pointer border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${activeChatId === s.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''}`}
       onClick={() => onSelect(s.id)}
     >
-      <span title={s.title || 'New chat'} className="flex items-center pr-6">
+      <span title={s.title || 'New chat'} className={`flex items-center ${archived ? 'pr-14' : 'pr-6'}`}>
         <StatusDot status={s.status} className="mr-1.5" variant="chat" />
         <span className={`text-sm truncate block ${activeChatId === s.id ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-100'}`}>
           {s.title || 'New chat'}
@@ -151,23 +164,51 @@ function ChatRow({
         )}
       </div>
       <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{relativeDate(s.updated_at)}</span>
-      {/* Archived rows get a real restore control (not hover-only, not tiny text) -
-          it's the only way back once a chat has left the active list. */}
+      {/* Archived rows get an overflow menu for Restore - the only way back once a
+          chat has left the active list. Absolutely positioned in the top-right
+          corner alongside ×, NOT in flow, so it never grows the row's height.
+          Hover-only like ×, but stays visible while its own menu is open. */}
       {archived && onUnarchive && (
-        <button
-          onClick={e => { e.stopPropagation(); onUnarchive(s.id) }}
-          aria-label="Unarchive chat"
-          title="Unarchive chat"
-          className="mt-1.5 self-start inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-blue-100 dark:hover:bg-blue-900/40 hover:text-blue-700 dark:hover:text-blue-400 transition-colors"
+        <div
+          ref={menuRef}
+          className="absolute right-8 top-2"
+          onBlur={e => {
+            if (!menuRef.current?.contains(e.relatedTarget as Node)) setMenuOpen(false)
+          }}
         >
-          <span aria-hidden="true">↺</span> Restore
-        </button>
+          <button
+            onClick={e => { e.stopPropagation(); setMenuOpen(o => !o) }}
+            aria-label="Row actions"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            title="Row actions"
+            className={`inline-flex items-center justify-center w-6 h-6 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-opacity ${menuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+          >
+            ⋮
+          </button>
+          {menuOpen && (
+            <div
+              role="menu"
+              className="absolute right-0 top-full mt-1 z-10 min-w-[8rem] rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1"
+            >
+              <button
+                role="menuitem"
+                onClick={e => { e.stopPropagation(); setMenuOpen(false); onUnarchive(s.id) }}
+                aria-label="Unarchive chat"
+                title="Unarchive chat"
+                className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-blue-50 dark:hover:bg-blue-900/40 hover:text-blue-700 dark:hover:text-blue-400 transition-colors"
+              >
+                <span aria-hidden="true">↺</span> Restore
+              </button>
+            </div>
+          )}
+        </div>
       )}
       <button
         onClick={handleTrashClick}
         aria-label={archived ? 'Delete chat permanently' : 'Archive chat'}
         title={archived ? 'Delete chat permanently' : 'Archive chat'}
-        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity p-1 rounded"
+        className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity p-1 rounded"
       >
         ×
       </button>

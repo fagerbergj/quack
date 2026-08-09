@@ -344,11 +344,16 @@ describe('ChatRow trash button (archive vs. hard delete)', () => {
     expect(deleteBtn!.getAttribute('title')).toBe('Delete chat permanently')
   })
 
-  it('an archived row shows a Restore control that unarchives', () => {
+  it('an archived row exposes Restore through its overflow menu', () => {
     const onUnarchive = vi.fn()
     renderList([], { onUnarchive, archivedChats: [chat({ id: 'a6', archived: true })] })
     expandArchived()
 
+    const overflow = host!.querySelector('button[aria-label="Row actions"]')
+    expect(overflow).toBeTruthy()
+    expect(host!.querySelector('button[aria-label="Unarchive chat"]')).toBeNull() // menu closed
+
+    click(overflow)
     const restore = host!.querySelector('button[aria-label="Unarchive chat"]')
     expect(restore).toBeTruthy()
     click(restore)
@@ -356,9 +361,45 @@ describe('ChatRow trash button (archive vs. hard delete)', () => {
     expect(onUnarchive).toHaveBeenCalledWith('a6')
   })
 
-  it('an active row has no Restore control', () => {
-    renderList([chat({ id: 'a7' })])
+  it('closes the overflow menu after Restore is clicked', () => {
+    renderList([], { onUnarchive: vi.fn(), archivedChats: [chat({ id: 'a8', archived: true })] })
+    expandArchived()
+    click(host!.querySelector('button[aria-label="Row actions"]'))
+    click(host!.querySelector('button[aria-label="Unarchive chat"]'))
+
     expect(host!.querySelector('button[aria-label="Unarchive chat"]')).toBeNull()
+  })
+
+  it('closes the overflow menu on an outside click', () => {
+    renderList([], { onUnarchive: vi.fn(), archivedChats: [chat({ id: 'a9', archived: true })] })
+    expandArchived()
+    click(host!.querySelector('button[aria-label="Row actions"]'))
+    expect(host!.querySelector('button[aria-label="Unarchive chat"]')).toBeTruthy()
+
+    act(() => { document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })) })
+    expect(host!.querySelector('button[aria-label="Unarchive chat"]')).toBeNull()
+  })
+
+  it('an active row has no overflow menu or Restore control', () => {
+    renderList([chat({ id: 'a7' })])
+    expect(host!.querySelector('button[aria-label="Row actions"]')).toBeNull()
+    expect(host!.querySelector('button[aria-label="Unarchive chat"]')).toBeNull()
+  })
+
+  // Both sit top-right, out of flow (absolute), and hover-only - a regression here
+  // would either grow the row's height or leave a control visible at rest.
+  it('the overflow trigger uses the vertical-ellipsis glyph and is hover-only, like ×', () => {
+    renderList([], { onUnarchive: vi.fn(), archivedChats: [chat({ id: 'a10', archived: true })] })
+    expandArchived()
+
+    const overflow = host!.querySelector('button[aria-label="Row actions"]')
+    const trash = host!.querySelector('button[aria-label="Delete chat permanently"]')
+    expect(overflow?.textContent).toBe('⋮')
+    expect(overflow?.className).toEqual(expect.stringContaining('opacity-0'))
+    expect(overflow?.className).toEqual(expect.stringContaining('group-hover:opacity-100'))
+    expect(overflow?.parentElement?.className).toEqual(expect.stringContaining('absolute')) // the wrapper, not the button, is positioned
+    expect(trash?.className).toEqual(expect.stringContaining('opacity-0'))
+    expect(trash?.className).toEqual(expect.stringContaining('group-hover:opacity-100'))
   })
 })
 

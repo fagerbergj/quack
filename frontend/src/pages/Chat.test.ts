@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
-import { liveDagFinalText, chatGitHubLink, EditableChatTitle, shouldQueueSubmit, mergeChatsPage, pollWhileVisible } from './Chat'
+import { liveDagFinalText, chatGitHubLink, EditableChatTitle, shouldQueueSubmit, mergeChatsPage, pollWhileVisible, pollPageExcludingPending, nextArchivedChats } from './Chat'
 import type { DagTurnState } from '../state/chatStore'
 import type { ChatSummary } from '../api'
 
@@ -267,5 +267,56 @@ describe('mergeChatsPage - poll must never shorten the loaded list', () => {
   it('adds a chat from the polled page that was not already loaded', () => {
     const merged = mergeChatsPage([chat({ id: 'c1' })], [chat({ id: 'c2' }), chat({ id: 'c1' })])
     expect(merged.map(c => c.id).sort()).toEqual(['c1', 'c2'])
+  })
+
+  // Root cause: mergeChatsPage trusts `page` unconditionally (by design - that's
+  // what lets a real status change win). A status=active poll GET that was in
+  // flight when the user archived the open chat can still resolve with the
+  // chat listed as active (server hadn't processed the PATCH yet when the GET
+  // was served) - merged straight in, this undoes the optimistic removal. The
+  // fix is pollPageExcludingPending, applied to the page before it ever reaches
+  // mergeChatsPage - this is exactly what Chat.tsx's poll effect now does.
+  it('a stale in-flight poll page no longer resurrects a chat just optimistically archived', () => {
+    const afterOptimisticArchive = [chat({ id: 'c2' })] // c1 removed locally by handleArchiveChat
+    const staleActivePage = [chat({ id: 'c1' }), chat({ id: 'c2' })] // server hadn't caught up yet
+    const pendingArchiveIds = new Set(['c1'])
+    const merged = mergeChatsPage(afterOptimisticArchive, pollPageExcludingPending(staleActivePage, pendingArchiveIds))
+    expect(merged.some(c => c.id === 'c1')).toBe(false)
+  })
+})
+
+describe('pollPageExcludingPending', () => {
+  it('drops ids in pendingIds from the page', () => {
+    const page = [chat({ id: 'c1' }), chat({ id: 'c2' })]
+    expect(pollPageExcludingPending(page, new Set(['c1'])).map(c => c.id)).toEqual(['c2'])
+  })
+
+  it('is a no-op when pendingIds is empty', () => {
+    const page = [chat({ id: 'c1' }), chat({ id: 'c2' })]
+    expect(pollPageExcludingPending(page, new Set())).toBe(page)
+  })
+})
+
+// #809 follow-up: archiving a chat before the Archived section has ever been expanded
+// must not seed archivedChats - that flips it from undefined (unfetched) to a partial
+// list, so handleExpandArchived's `archivedChats === undefined` check never fires and
+// the section's real first page (which would include the newly archived chat) never loads.
+describe('nextArchivedChats - archive/unarchive transitions', () => {
+  it('leaves archivedChats undefined when archiving before the section has ever loaded', () => {
+    expect(nextArchivedChats(undefined, chat({ id: 'c1' }), true)).toBeUndefined()
+  })
+
+  it('prepends when archiving into an already-loaded list', () => {
+    const result = nextArchivedChats([chat({ id: 'c2' })], chat({ id: 'c1' }), true)
+    expect(result?.map(c => c.id)).toEqual(['c1', 'c2'])
+  })
+
+  it('removes the chat when unarchiving from a loaded list', () => {
+    const result = nextArchivedChats([chat({ id: 'c1' }), chat({ id: 'c2' })], chat({ id: 'c1' }), false)
+    expect(result?.map(c => c.id)).toEqual(['c2'])
+  })
+
+  it('is a no-op unarchiving against an unloaded (undefined) list', () => {
+    expect(nextArchivedChats(undefined, chat({ id: 'c1' }), false)).toBeUndefined()
   })
 })
