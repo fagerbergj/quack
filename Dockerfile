@@ -33,6 +33,8 @@ COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
 COPY --from=frontend /app/frontend/dist ./internal/serve/web/dist
+# Not in git and go:embed needs them, so fetch before building.
+RUN ./scripts/plugins.sh
 # -trimpath + -ldflags="-s -w": strip local paths and the symbol/DWARF tables
 # (smaller, reproducible binary). Module + build caches are mounted, not embedded.
 RUN --mount=type=cache,target=/go/pkg/mod \
@@ -103,12 +105,9 @@ COPY config/ /config/
 COPY agents/ /agents/
 # Orchestrator skill bundles (SKILL.md directories), read at startup.
 COPY skills/ /skills/
-# Vendored skill libraries under .agents/vendor (dotagents - the general-purpose
-# skills, incl. startup-required format-markdown - and ponytail), resolved as
-# plugin roots (config/quack.yaml's skills.plugins, internal/plugin discovery)
-# against CWD / and merged into the skill toolset (internal/serve's
-# newSkillSource). In-tree, so the build context always has them.
-COPY .agents/ /.agents/
+# Skill-library plugins, resolved as plugin roots against CWD / (config's
+# skills.plugins). From the builder: the context has no vendor trees.
+COPY --from=backend /app/.agents/ /.agents/
 ENV QUACK_CONFIG=/config/quack.yaml
 USER nonroot
 EXPOSE 8080

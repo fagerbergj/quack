@@ -1,15 +1,6 @@
-# Upstream sources for the vendored skill-library plugins alongside this file.
-#
-# The checked-in trees ARE the build input - go:embed and the Docker build read
-# them directly, so a plain clone builds offline with no fetch step. This file
-# only records where each tree came from, for `make sync-plugins`.
-#
-# `ref` is the upstream commit a tree was last synced from. A tree may have
-# local edits on top of it; sync-plugins refuses to overwrite those unless
-# FORCE=1, so record local changes upstream rather than re-syncing over them.
-#
-# Shape is parsed by scripts/sync-plugins.sh - keep the four keys, one plugin
-# per list entry, values unquoted.
+# Skill-library plugins. Trees are not in git; `make plugins` fetches them here.
+# A commit ref keeps a deploy from silently changing how agents plan - use a
+# branch name to float instead. Shape is parsed by scripts/plugins.sh.
 plugins:
   - name: dotagents
     url: https://github.com/fagerbergj/dotagents

@@ -31,3 +31,7 @@ storybook-static
 
 # Local working docs (spec/spike notes) - not part of the repo
 .quack/
+
+# Skill-library plugin trees: fetched by scripts/plugins.sh (make plugins),
+# pinned in .agents/vendor/plugins.yaml. Not committed.
+.agents/vendor/*/

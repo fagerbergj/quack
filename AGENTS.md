@@ -19,10 +19,14 @@ Always:
 ## Commands
 
 ```bash
+# One-time after cloning: the plugin trees are not in git and embed.go embeds
+# them, so a bare `go build`/`go test` fails until this has run.
+make plugins
+
 # Build (compiles frontend first, embeds dist into binary)
 make build
 
-# Run Go tests
+# Run Go tests (make test runs `make plugins` first)
 go test ./...
 
 # One-time: internal/vetting's mermaid tests shell out to scripts/mermaid-validate.mjs.
