@@ -494,6 +494,8 @@ export default function Chat() {
         hasMoreChats={chatsNextPageToken !== undefined}
         onLoadMoreChats={loadMoreChats}
         loadingMoreChats={loadingMoreChats}
+        // Safe to share: handleArchiveChat toggles off current state, and ChatRow
+        // only fires onArchive from an active row / onUnarchive from an archived one.
         onArchive={handleArchiveChat}
         onUnarchive={handleArchiveChat}
         onShowArchived={() => setShowArchived(true)}
