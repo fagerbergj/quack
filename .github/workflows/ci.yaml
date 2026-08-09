@@ -25,6 +25,8 @@ jobs:
           cache-dependency-path: scripts/package-lock.json
       - run: npm ci
         working-directory: scripts
+      - name: fetch skill plugins (not in git; go:embed needs them)
+        run: ./scripts/plugins.sh
       - run: go vet ./...
       - run: go test ./...
 
@@ -46,6 +48,8 @@ jobs:
           go-version-file: go.mod
       # Pinned to go.mod's toolchain: `@latest` alone builds against whatever the
       # tool's own go.mod allows, which can lag and then refuse to analyze this repo.
+      - name: fetch skill plugins (not in git; go:embed needs them)
+        run: ./scripts/plugins.sh
       - run: GOTOOLCHAIN=go1.26.5 go install golang.org/x/tools/cmd/deadcode@latest
       # -test so test-only helpers don't false-positive as unreachable. Package
       # patterns are explicit (not ./...) so a vendored JS package that happens to

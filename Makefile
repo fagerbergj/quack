@@ -1,9 +1,18 @@
-.PHONY: build run test vet fmt generate frontend-build sync-plugins docker-up docker-down clean
+.PHONY: build run test vet fmt generate frontend-build plugins plugins-update docker-up docker-down clean
 
 BINARY := quack
 
+## plugins: fetch the skill-library plugin trees pinned in .agents/vendor/plugins.yaml
+## (not in git; go:embed needs them present, so build/test/run depend on this)
+plugins:
+	./scripts/plugins.sh $(PLUGIN)
+
+## plugins-update: move each plugin's pin to its upstream HEAD
+plugins-update:
+	./scripts/plugins.sh --update $(PLUGIN)
+
 ## build: build the frontend, embed it, and compile the server
-build: frontend-build
+build: plugins frontend-build
 	go build -o $(BINARY) ./cmd/quack
 
 ## frontend-build: build the SPA into the server's embed dir
@@ -18,7 +27,7 @@ run: build
 	./$(BINARY) --config config/quack.yaml
 
 ## test: run Go tests
-test:
+test: plugins
 	go test ./...
 
 ## vet: go vet
@@ -32,10 +41,6 @@ fmt:
 ## generate: regenerate Go + TS code from openapi.yaml
 generate:
 	./scripts/generate.sh
-
-## sync-plugins: update the vendored skill plugins in .agents/vendor from upstream
-sync-plugins:
-	./scripts/sync-plugins.sh $(PLUGIN)
 
 ## docker-up: start the full stack (app + self-contained Postgres)
 docker-up:
