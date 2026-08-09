@@ -56,6 +56,7 @@ const meta: Meta<typeof ChatList> = {
     onCloseMobile: () => {},
     onArchive: (id: string) => alert(`archive ${id}`),
     onUnarchive: (id: string) => alert(`unarchive ${id}`),
+    onExpandArchived: () => {},
   },
   decorators: [Story => <div className="h-[28rem] flex"><Story /></div>],
 }
@@ -136,8 +137,10 @@ export const FilteredToRepo: Story = {
 // hard-deletes instead of archiving.
 export const WithArchivedChats: Story = {
   args: {
-    chats: [
-      chat('active-1', 'Current project notes'),
+    chats: [chat('active-1', 'Current project notes')],
+    // #809: archivedChats is the section's own already-loaded list here -
+    // in the app it stays undefined until the section is first expanded.
+    archivedChats: [
       chat('archived-1', 'Old debugging session', 'idle', true),
       chat('archived-2', 'Abandoned experiment', 'idle', true),
     ],

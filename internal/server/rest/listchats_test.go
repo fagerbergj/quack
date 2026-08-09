@@ -164,3 +164,159 @@ func TestListChats_ExcludeArchivedByDefault(t *testing.T) {
 		}
 	}
 }
+
+// TestListChats_StatusArchivedReturnsOnlyArchived is #809 test case 3 at the
+// REST layer: status=archived returns only archived chats.
+func TestListChats_StatusArchivedReturnsOnlyArchived(t *testing.T) {
+	h := newTestHandler(t)
+	ctx := context.Background()
+
+	if _, err := h.store.CreateChat(ctx, ""); err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	cArchived, err := h.store.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	h.store.ArchiveChat(ctx, cArchived.ID, true)
+
+	status := []schema.ListChatsParamsStatus{schema.Archived}
+	rec := getListChats(t, h, schema.ListChatsParams{Status: &status})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	out := decodeChatList(t, rec)
+	if len(out.Data) != 1 || out.Data[0].Id != cArchived.ID {
+		t.Fatalf("status=archived data = %v, want exactly [%s]", out.Data, cArchived.ID)
+	}
+}
+
+// TestListChats_StatusActiveAndArchivedReturnsBoth: selecting both statuses
+// is how a caller now asks for everything - there is no separate "all" value.
+func TestListChats_StatusActiveAndArchivedReturnsBoth(t *testing.T) {
+	h := newTestHandler(t)
+	ctx := context.Background()
+
+	if _, err := h.store.CreateChat(ctx, ""); err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	cArchived, err := h.store.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	h.store.ArchiveChat(ctx, cArchived.ID, true)
+
+	status := []schema.ListChatsParamsStatus{schema.Active, schema.Archived}
+	rec := getListChats(t, h, schema.ListChatsParams{Status: &status})
+	out := decodeChatList(t, rec)
+	if len(out.Data) != 2 {
+		t.Fatalf("status=[active,archived] len(data) = %d, want 2", len(out.Data))
+	}
+}
+
+// TestListChats_StatusEmptyArray400: an explicitly empty status selection is
+// a client error, not "everything" - ask for both statuses for that.
+func TestListChats_StatusEmptyArray400(t *testing.T) {
+	h := newTestHandler(t)
+	status := []schema.ListChatsParamsStatus{}
+	rec := getListChats(t, h, schema.ListChatsParams{Status: &status})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestListChats_StatusOverridesShowArchived: status wins when both are given
+// - the reconciliation the PR states explicitly.
+func TestListChats_StatusOverridesShowArchived(t *testing.T) {
+	h := newTestHandler(t)
+	ctx := context.Background()
+
+	cArchived, err := h.store.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	h.store.ArchiveChat(ctx, cArchived.ID, true)
+
+	status := []schema.ListChatsParamsStatus{schema.Archived}
+	falseVal := false // show_archived=false would normally mean active-only
+	rec := getListChats(t, h, schema.ListChatsParams{Status: &status, ShowArchived: &falseVal})
+	out := decodeChatList(t, rec)
+	if len(out.Data) != 1 || out.Data[0].Id != cArchived.ID {
+		t.Fatalf("status=archived (with show_archived=false) data = %v, want exactly [%s]", out.Data, cArchived.ID)
+	}
+}
+
+// TestListChats_TokenScopeMismatch400 is #809 test case 4 at the REST layer:
+// a page_token issued for one status selection, replayed against another, is
+// a 400 - never a silently mixed page.
+func TestListChats_TokenScopeMismatch400(t *testing.T) {
+	h := newTestHandler(t)
+	ctx := context.Background()
+	for i := 0; i < 2; i++ {
+		if _, err := h.store.CreateChat(ctx, ""); err != nil {
+			t.Fatalf("CreateChat: %v", err)
+		}
+	}
+
+	limit := 1
+	rec := getListChats(t, h, schema.ListChatsParams{Limit: &limit})
+	page1 := decodeChatList(t, rec)
+	if page1.NextPageToken == nil {
+		t.Fatal("expected a next page token (2 chats > limit 1)")
+	}
+
+	status := []schema.ListChatsParamsStatus{schema.Archived}
+	rec = getListChats(t, h, schema.ListChatsParams{Limit: &limit, PageToken: page1.NextPageToken, Status: &status})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("replaying an active-scope token against status=archived: status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestListChats_StatusOrderInvariant is the coordinator-requested regression:
+// ?status=active&status=archived and the reverse order must mint the
+// identical page token and page the identical rows - the multi-select
+// collapses to two flags, so list order carries no meaning.
+func TestListChats_StatusOrderInvariant(t *testing.T) {
+	h := newTestHandler(t)
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		if _, err := h.store.CreateChat(ctx, ""); err != nil {
+			t.Fatalf("CreateChat: %v", err)
+		}
+	}
+	cArchived, err := h.store.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	h.store.ArchiveChat(ctx, cArchived.ID, true)
+
+	limit := 2
+	forward := []schema.ListChatsParamsStatus{schema.Active, schema.Archived}
+	reverse := []schema.ListChatsParamsStatus{schema.Archived, schema.Active}
+
+	recA := getListChats(t, h, schema.ListChatsParams{Limit: &limit, Status: &forward})
+	pageA := decodeChatList(t, recA)
+	recB := getListChats(t, h, schema.ListChatsParams{Limit: &limit, Status: &reverse})
+	pageB := decodeChatList(t, recB)
+
+	if len(pageA.Data) != len(pageB.Data) {
+		t.Fatalf("page lengths differ: forward=%d reverse=%d", len(pageA.Data), len(pageB.Data))
+	}
+	for i := range pageA.Data {
+		if pageA.Data[i].Id != pageB.Data[i].Id {
+			t.Fatalf("page contents differ at %d: forward=%s reverse=%s", i, pageA.Data[i].Id, pageB.Data[i].Id)
+		}
+	}
+	if (pageA.NextPageToken == nil) != (pageB.NextPageToken == nil) {
+		t.Fatalf("next_page_token presence differs: forward=%v reverse=%v", pageA.NextPageToken, pageB.NextPageToken)
+	}
+	if pageA.NextPageToken != nil && *pageA.NextPageToken != *pageB.NextPageToken {
+		t.Fatalf("next_page_token differs by status order: forward=%q reverse=%q", *pageA.NextPageToken, *pageB.NextPageToken)
+	}
+
+	// The two tokens must also be interchangeable against each other's request.
+	recC := getListChats(t, h, schema.ListChatsParams{Limit: &limit, PageToken: pageA.NextPageToken, Status: &reverse})
+	if recC.Code != http.StatusOK {
+		t.Fatalf("forward-issued token replayed against reverse-order status: status = %d, want 200; body=%s", recC.Code, recC.Body.String())
+	}
+}

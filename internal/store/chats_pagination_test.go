@@ -26,6 +26,25 @@ func seedChats(t *testing.T, st *Store, n int) []string {
 	return ids
 }
 
+// seedChatsScoped is seedChats plus an explicit archived flag per row, letting
+// a fixture interleave archived and active rows in updated_at order - the
+// shape that filtering archived out of an already-fetched page corrupts.
+// Returns ids oldest-to-newest.
+func seedChatsScoped(t *testing.T, st *Store, archived []bool) []string {
+	t.Helper()
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	ids := make([]string, len(archived))
+	for i, a := range archived {
+		id := "chat-" + string(rune('a'+i/26)) + string(rune('a'+i%26))
+		ts := base.Add(time.Duration(i) * time.Minute)
+		if err := st.db.Create(&Chat{ID: id, CreatedAt: ts, UpdatedAt: ts, Archived: a}).Error; err != nil {
+			t.Fatalf("seed chat %d: %v", i, err)
+		}
+		ids[i] = id
+	}
+	return ids
+}
+
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
@@ -42,7 +61,7 @@ func TestListChatsDefaultPageSize(t *testing.T) {
 	ctx := context.Background()
 	seedChats(t, st, 30)
 
-	chats, next, err := st.ListChats(ctx, 0, "")
+	chats, next, err := st.ListChats(ctx, 0, "", ChatsScope{Active: true})
 	if err != nil {
 		t.Fatalf("ListChats: %v", err)
 	}
@@ -73,7 +92,7 @@ func TestListChatsPagingIsExhaustiveAndDedup(t *testing.T) {
 	token := ""
 	pages := 0
 	for {
-		chats, next, err := st.ListChats(ctx, 10, token)
+		chats, next, err := st.ListChats(ctx, 10, token, ChatsScope{Active: true})
 		if err != nil {
 			t.Fatalf("ListChats: %v", err)
 		}
@@ -108,7 +127,7 @@ func TestListChatsTokenStableAcrossConcurrentUpdate(t *testing.T) {
 	ids := seedChats(t, st, 5) // oldest..newest: ids[0]..ids[4]
 
 	// First page: newest 2 chats (ids[4], ids[3]).
-	page1, token, err := st.ListChats(ctx, 2, "")
+	page1, token, err := st.ListChats(ctx, 2, "", ChatsScope{Active: true})
 	if err != nil {
 		t.Fatalf("ListChats page1: %v", err)
 	}
@@ -126,7 +145,7 @@ func TestListChatsTokenStableAcrossConcurrentUpdate(t *testing.T) {
 		t.Fatalf("bump ids[0]: %v", err)
 	}
 
-	page2, _, err := st.ListChats(ctx, 2, token)
+	page2, _, err := st.ListChats(ctx, 2, token, ChatsScope{Active: true})
 	if err != nil {
 		t.Fatalf("ListChats page2: %v", err)
 	}
@@ -145,7 +164,7 @@ func TestListChatsNoParams(t *testing.T) {
 	ctx := context.Background()
 	seedChats(t, st, 3)
 
-	chats, _, err := st.ListChats(ctx, 0, "")
+	chats, _, err := st.ListChats(ctx, 0, "", ChatsScope{Active: true})
 	if err != nil {
 		t.Fatalf("ListChats: %v", err)
 	}
@@ -161,7 +180,7 @@ func TestListChatsFewerThanPageSize(t *testing.T) {
 	ctx := context.Background()
 	seedChats(t, st, 3)
 
-	chats, next, err := st.ListChats(ctx, 20, "")
+	chats, next, err := st.ListChats(ctx, 20, "", ChatsScope{Active: true})
 	if err != nil {
 		t.Fatalf("ListChats: %v", err)
 	}
@@ -185,7 +204,7 @@ func TestListChatsTokenIssuedForWrongSortRejected(t *testing.T) {
 	seedChats(t, st, 5)
 
 	wrongSort := encodeChatsPageToken(chatsPageToken{Sort: "title_asc", ID: "chat-aa", UpdatedAt: time.Now()})
-	if _, _, err := st.ListChats(ctx, 0, wrongSort); !errors.Is(err, ErrInvalidPageToken) {
+	if _, _, err := st.ListChats(ctx, 0, wrongSort, ChatsScope{Active: true}); !errors.Is(err, ErrInvalidPageToken) {
 		t.Fatalf("ListChats with a token issued for a different sort: err = %v, want ErrInvalidPageToken", err)
 	}
 }
@@ -197,8 +216,174 @@ func TestListChatsMalformedTokenRejected(t *testing.T) {
 	ctx := context.Background()
 	seedChats(t, st, 3)
 
-	if _, _, err := st.ListChats(ctx, 0, "not-a-valid-token!!"); !errors.Is(err, ErrInvalidPageToken) {
+	if _, _, err := st.ListChats(ctx, 0, "not-a-valid-token!!", ChatsScope{Active: true}); !errors.Is(err, ErrInvalidPageToken) {
 		t.Fatalf("ListChats with a malformed token: err = %v, want ErrInvalidPageToken", err)
+	}
+}
+
+// #809 test case 1: with archived chats present, a default-scope page of
+// limit N returns N active chats, not N-minus-however-many-were-archived.
+func TestListChatsScopeActiveReturnsFullPageDespiteArchived(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	// 5 active, 3 archived, interleaved - a page of 3 must still be 3 active rows.
+	seedChatsScoped(t, st, []bool{false, true, false, true, false, true, false, false})
+
+	chats, next, err := st.ListChats(ctx, 3, "", ChatsScope{Active: true})
+	if err != nil {
+		t.Fatalf("ListChats: %v", err)
+	}
+	if len(chats) != 3 {
+		t.Fatalf("len(chats) = %d, want 3 (a full page of active rows, not fewer)", len(chats))
+	}
+	for _, c := range chats {
+		if c.Archived {
+			t.Fatalf("archived chat %s present in an active-scope page", c.ID)
+		}
+	}
+	if next == "" {
+		t.Fatal("next page token empty, want a next-page signal (5 active > page size 3)")
+	}
+}
+
+// #809 test case 2 (the one that matters): archived and active rows interleave
+// in updated_at order - a fixture with archived rows clustered at one end
+// would pass even with the old bug, since it never had to skip past a
+// discarded archived row mid-page. Paging the active scope to exhaustion must
+// see every active chat exactly once and no archived chat at all.
+func TestListChatsScopeActiveNeverSkipsOrRepeatsAcrossInterleavedArchived(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	pattern := []bool{false, true, true, false, true, false, false, true, false, true, false, false, true}
+	ids := seedChatsScoped(t, st, pattern)
+
+	wantActive := map[string]bool{}
+	for i, a := range pattern {
+		if !a {
+			wantActive[ids[i]] = true
+		}
+	}
+
+	seen := map[string]int{}
+	token := ""
+	pages := 0
+	for {
+		chats, next, err := st.ListChats(ctx, 3, token, ChatsScope{Active: true})
+		if err != nil {
+			t.Fatalf("ListChats: %v", err)
+		}
+		for _, c := range chats {
+			if c.Archived {
+				t.Fatalf("archived chat %s returned from an active-scope page", c.ID)
+			}
+			seen[c.ID]++
+		}
+		pages++
+		if pages > 100 {
+			t.Fatal("did not terminate: possible page-token loop")
+		}
+		if next == "" {
+			break
+		}
+		token = next
+	}
+	if len(seen) != len(wantActive) {
+		t.Fatalf("saw %d distinct active chats, want %d", len(seen), len(wantActive))
+	}
+	for id, n := range seen {
+		if !wantActive[id] {
+			t.Fatalf("chat %s is not active but was returned", id)
+		}
+		if n != 1 {
+			t.Fatalf("chat %s seen %d times, want exactly 1", id, n)
+		}
+	}
+}
+
+// #809 test case 3: an archived-scope request returns only archived chats and
+// pages independently of the active cursor (a fresh token walk, not sharing
+// position with an active-scope walk over the same interleaved fixture).
+func TestListChatsScopeArchivedPagesIndependently(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	pattern := []bool{false, true, true, false, true, false, true}
+	ids := seedChatsScoped(t, st, pattern)
+
+	wantArchived := map[string]bool{}
+	for i, a := range pattern {
+		if a {
+			wantArchived[ids[i]] = true
+		}
+	}
+
+	seen := map[string]int{}
+	token := ""
+	for {
+		chats, next, err := st.ListChats(ctx, 2, token, ChatsScope{Archived: true})
+		if err != nil {
+			t.Fatalf("ListChats: %v", err)
+		}
+		for _, c := range chats {
+			if !c.Archived {
+				t.Fatalf("active chat %s returned from an archived-scope page", c.ID)
+			}
+			seen[c.ID]++
+		}
+		if next == "" {
+			break
+		}
+		token = next
+	}
+	if len(seen) != len(wantArchived) {
+		t.Fatalf("saw %d distinct archived chats, want %d", len(seen), len(wantArchived))
+	}
+	for id, n := range seen {
+		if n != 1 {
+			t.Fatalf("chat %s seen %d times, want exactly 1", id, n)
+		}
+	}
+}
+
+// #809 test case 4: a token issued for one scope, replayed against another,
+// is rejected (ErrInvalidPageToken) rather than silently producing a page
+// that mixes rows from both scopes.
+func TestListChatsScopeMismatchRejected(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	seedChatsScoped(t, st, []bool{false, true, false, true, false})
+
+	_, activeToken, err := st.ListChats(ctx, 1, "", ChatsScope{Active: true})
+	if err != nil {
+		t.Fatalf("ListChats (active): %v", err)
+	}
+	if activeToken == "" {
+		t.Fatal("expected a next page token for the active scope")
+	}
+
+	if _, _, err := st.ListChats(ctx, 1, activeToken, ChatsScope{Archived: true}); !errors.Is(err, ErrInvalidPageToken) {
+		t.Fatalf("ListChats replaying an active-scope token against archived scope: err = %v, want ErrInvalidPageToken", err)
+	}
+	if _, _, err := st.ListChats(ctx, 1, activeToken, ChatsScope{Active: true, Archived: true}); !errors.Is(err, ErrInvalidPageToken) {
+		t.Fatalf("ListChats replaying an active-scope token against all scope: err = %v, want ErrInvalidPageToken", err)
+	}
+}
+
+// TestListChatsTokenWithoutScopeDefaultsToActive pins the old-token decision:
+// a token minted before scoping existed (zero-value Scope) is treated as
+// {Active: true}, the pre-#809 default, rather than rejected outright - a
+// cursor a client is already holding does not 500 on the next release.
+func TestListChatsTokenWithoutScopeDefaultsToActive(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	seedChatsScoped(t, st, []bool{false, true, false})
+
+	legacyToken := encodeChatsPageToken(chatsPageToken{Sort: chatsSortUpdatedAtDesc, ID: "chat-aa", UpdatedAt: time.Now()})
+
+	if _, _, err := st.ListChats(ctx, 1, legacyToken, ChatsScope{Active: true}); err != nil {
+		t.Fatalf("legacy (scopeless) token against active scope: %v, want success", err)
+	}
+	if _, _, err := st.ListChats(ctx, 1, legacyToken, ChatsScope{Archived: true}); !errors.Is(err, ErrInvalidPageToken) {
+		t.Fatalf("legacy (scopeless) token against archived scope: err = %v, want ErrInvalidPageToken", err)
 	}
 }
 

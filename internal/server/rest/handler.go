@@ -114,6 +114,41 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
+// errInvalidStatus is chatsScopeFor's client-error sentinel: an explicitly
+// empty or unrecognized status selection is a 400, never silently
+// "everything" and never a 500.
+var errInvalidStatus = errors.New("invalid status")
+
+// chatsScopeFor reconciles status (the current API, repeatable/multi-select)
+// with the deprecated show_archived bool: status wins when given; otherwise
+// show_archived=true maps to {active,archived} and false/absent to {active},
+// its pre-#809 behavior. Order in the status list is irrelevant - it's
+// collapsed into two flags, so ?status=active&status=archived and the
+// reverse order produce the identical scope (and page token).
+func chatsScopeFor(params schema.ListChatsParams) (store.ChatsScope, error) {
+	if params.Status != nil {
+		if len(*params.Status) == 0 {
+			return store.ChatsScope{}, fmt.Errorf("%w: status must not be empty", errInvalidStatus)
+		}
+		var scope store.ChatsScope
+		for _, st := range *params.Status {
+			switch st {
+			case schema.Active:
+				scope.Active = true
+			case schema.Archived:
+				scope.Archived = true
+			default:
+				return store.ChatsScope{}, fmt.Errorf("%w: %q", errInvalidStatus, st)
+			}
+		}
+		return scope, nil
+	}
+	if params.ShowArchived != nil && *params.ShowArchived {
+		return store.ChatsScope{Active: true, Archived: true}, nil
+	}
+	return store.ChatsScope{Active: true}, nil
+}
+
 // ListChats is a single table read (#738: status is a stamp on the chat row - see
 // store.StampRunOutcome - plus cheap in-memory hub/queue checks, not a per-chat DB read).
 // It's also a conditional GET: an unchanged page costs a 304 with no body, so the SPA's
@@ -130,7 +165,12 @@ func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request, params schem
 	if params.PageToken != nil {
 		pageToken = *params.PageToken
 	}
-	chats, next, err := h.store.ListChats(r.Context(), limit, pageToken)
+	scope, err := chatsScopeFor(params)
+	if err != nil {
+		httpError(w, http.StatusBadRequest, err)
+		return
+	}
+	chats, next, err := h.store.ListChats(r.Context(), limit, pageToken, scope)
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidPageToken) {
 			httpError(w, http.StatusBadRequest, err)
@@ -138,18 +178,6 @@ func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request, params schem
 		}
 		httpError(w, http.StatusInternalServerError, err)
 		return
-	}
-	if params.ShowArchived != nil && *params.ShowArchived {
-		// Caller wants archived chats too - nothing to filter.
-	} else {
-		// Default: omit archived chats so the sidebar only shows active items.
-		unarchived := make([]store.Chat, 0, len(chats))
-		for _, c := range chats {
-			if !c.Archived {
-				unarchived = append(unarchived, c)
-			}
-		}
-		chats = unarchived
 	}
 
 	out := schema.ChatList{Data: make([]schema.ChatSummary, len(chats))}

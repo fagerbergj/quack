@@ -377,8 +377,8 @@ const ChatsPageDefaultLimit = 20
 const ChatsPageMaxLimit = 100
 
 // ErrInvalidPageToken is returned by ListChats when the page token doesn't
-// decode, or was issued under a different ordering than it's being replayed
-// against (never silently honored under the wrong one).
+// decode, or was issued under a different ordering or scope than it's being
+// replayed against (never silently honored under the wrong one).
 var ErrInvalidPageToken = errors.New("invalid page token")
 
 // chatsSort names the ordering a page token was issued under. ListChats
@@ -389,17 +389,32 @@ type chatsSort string
 
 const chatsSortUpdatedAtDesc chatsSort = "updated_at_desc"
 
+// ChatsScope selects which chats ListChats considers, pushed into the SQL
+// predicate so a page never fetches rows the caller can't see. Two
+// independent flags, not a 3-valued enum - "all" was never a chat status,
+// just "don't filter". The zero value (both false) defaults to Active-only.
+// Both true means no archived predicate at all (not archived IN (true,false)),
+// so the planner sees a plain scan.
+type ChatsScope struct {
+	Active   bool `json:"a"`
+	Archived bool `json:"r"`
+}
+
 // chatsPageToken is ListChats' opaque continuation token. The caller-visible
-// contract is just "an anchor under a named ordering": ID anchors it because
-// ID is immutable, unlike UpdatedAt, which churns under an active run.
-// UpdatedAt still rides along inside the token - resolving an ID anchor back
-// to its position in an updated_at-sorted list needs the value it was last
-// seen at, so the token carries it as its own implementation detail, not as
-// part of the contract a caller is meant to understand.
+// contract is just "an anchor under a named ordering and scope": ID anchors
+// it because ID is immutable, unlike UpdatedAt, which churns under an active
+// run. UpdatedAt still rides along inside the token - resolving an ID anchor
+// back to its position in an updated_at-sorted list needs the value it was
+// last seen at, so the token carries it as its own implementation detail,
+// not as part of the contract a caller is meant to understand. Scope is a
+// struct of independent flags rather than an ordered list, so encoding it is
+// inherently canonical - {active,archived} and {archived,active} collapse to
+// the identical Go value (and therefore identical JSON) with no sort step.
 type chatsPageToken struct {
-	Sort      chatsSort `json:"s"`
-	ID        string    `json:"i"`
-	UpdatedAt time.Time `json:"u"`
+	Sort      chatsSort  `json:"s"`
+	Scope     ChatsScope `json:"sc"`
+	ID        string     `json:"i"`
+	UpdatedAt time.Time  `json:"u"`
 }
 
 func encodeChatsPageToken(t chatsPageToken) string {
@@ -407,7 +422,11 @@ func encodeChatsPageToken(t chatsPageToken) string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-func decodeChatsPageToken(s string) (chatsPageToken, error) {
+// decodeChatsPageToken validates the token was issued for the sort and scope
+// it's being replayed against. A token minted before scoping existed carries
+// a zero-value Scope ({false false}) - treated as {Active: true}, the
+// pre-existing default behavior, rather than rejected outright.
+func decodeChatsPageToken(s string, scope ChatsScope) (chatsPageToken, error) {
 	var t chatsPageToken
 	b, err := base64.RawURLEncoding.DecodeString(s)
 	if err != nil {
@@ -419,25 +438,47 @@ func decodeChatsPageToken(s string) (chatsPageToken, error) {
 	if t.Sort != chatsSortUpdatedAtDesc {
 		return t, fmt.Errorf("%w: issued for sort %q, not %q", ErrInvalidPageToken, t.Sort, chatsSortUpdatedAtDesc)
 	}
+	tokenScope := t.Scope
+	if !tokenScope.Active && !tokenScope.Archived {
+		tokenScope = ChatsScope{Active: true}
+	}
+	if tokenScope != scope {
+		return t, fmt.Errorf("%w: issued for scope %+v, not %+v", ErrInvalidPageToken, tokenScope, scope)
+	}
 	return t, nil
 }
 
-// ListChats returns up to limit chats, most-recently-updated first, starting
-// after pageToken ("" for the first page). It returns the opaque token for
-// the next page, or "" if this page was the last. limit <= 0 becomes
-// ChatsPageDefaultLimit; limit above ChatsPageMaxLimit is capped.
+// ListChats returns up to limit chats within scope, most-recently-updated
+// first, starting after pageToken ("" for the first page). It returns the
+// opaque token for the next page, or "" if this page was the last. limit <= 0
+// becomes ChatsPageDefaultLimit; limit above ChatsPageMaxLimit is capped.
+// The zero-value scope (both flags false) defaults to {Active: true}.
 //
-// This is keyset (not offset) pagination: see chatsPageToken.
-func (s *Store) ListChats(ctx context.Context, limit int, pageToken string) ([]Chat, string, error) {
+// This is keyset (not offset) pagination: see chatsPageToken. The scope
+// predicate is applied in SQL, not filtered from an already-fetched page, so
+// a page always returns exactly limit rows (or fewer only at the true end of
+// that scope) and the cursor never advances past a row the caller never saw.
+func (s *Store) ListChats(ctx context.Context, limit int, pageToken string, scope ChatsScope) ([]Chat, string, error) {
 	if limit <= 0 {
 		limit = ChatsPageDefaultLimit
 	} else if limit > ChatsPageMaxLimit {
 		limit = ChatsPageMaxLimit
 	}
+	if !scope.Active && !scope.Archived {
+		scope.Active = true
+	}
 
 	q := s.db.WithContext(ctx).Order("updated_at desc, id desc").Limit(limit + 1)
+	switch {
+	case scope.Active && scope.Archived:
+		// No predicate - both archived and active rows.
+	case scope.Active:
+		q = q.Where("archived = ?", false)
+	case scope.Archived:
+		q = q.Where("archived = ?", true)
+	}
 	if pageToken != "" {
-		t, err := decodeChatsPageToken(pageToken)
+		t, err := decodeChatsPageToken(pageToken, scope)
 		if err != nil {
 			return nil, "", err
 		}
@@ -453,7 +494,7 @@ func (s *Store) ListChats(ctx context.Context, limit int, pageToken string) ([]C
 	if len(chats) > limit {
 		chats = chats[:limit]
 		last := chats[limit-1]
-		next = encodeChatsPageToken(chatsPageToken{Sort: chatsSortUpdatedAtDesc, ID: last.ID, UpdatedAt: last.UpdatedAt})
+		next = encodeChatsPageToken(chatsPageToken{Sort: chatsSortUpdatedAtDesc, Scope: scope, ID: last.ID, UpdatedAt: last.UpdatedAt})
 	}
 	return chats, next, nil
 }
