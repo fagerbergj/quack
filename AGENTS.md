@@ -2,6 +2,8 @@
 
 This file provides guidance to AI coding agents working in this repository.
 
+`AGENTS.md.local` (untracked, present only on the maintainer's machine) holds the host-specific deployment process: how to reach the server, the release and deploy commands, and the ones that look right but fail. Read it before deploying, restarting llm-swap, or reindexing deepwiki - do not reconstruct those steps from this file.
+
 ## Hard Rules
 
 Never:
