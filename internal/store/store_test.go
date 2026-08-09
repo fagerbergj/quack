@@ -32,7 +32,7 @@ func TestSQLiteStoreRoundTrip(t *testing.T) {
 	if got, err := st.GetChat(ctx, c.ID); err != nil || got.ID != c.ID || got.SystemPrompt != "sys" {
 		t.Fatalf("GetChat: %+v err=%v", got, err)
 	}
-	if chats, _, err := st.ListChats(ctx, 0, "", ChatsScopeActive); err != nil || len(chats) != 1 {
+	if chats, _, err := st.ListChats(ctx, 0, "", ChatsScope{Active: true}); err != nil || len(chats) != 1 {
 		t.Fatalf("ListChats: %d err=%v", len(chats), err)
 	}
 
@@ -158,7 +158,7 @@ func TestSetChatGitHub(t *testing.T) {
 	if got.SessionUser != "alice" {
 		t.Fatalf("SessionUser after update = %q, want unchanged %q", got.SessionUser, "alice")
 	}
-	if chats, _, err := st.ListChats(ctx, 0, "", ChatsScopeActive); err != nil || len(chats) != 1 {
+	if chats, _, err := st.ListChats(ctx, 0, "", ChatsScope{Active: true}); err != nil || len(chats) != 1 {
 		t.Fatalf("ListChats: %d err=%v (update must not create a duplicate row)", len(chats), err)
 	}
 }

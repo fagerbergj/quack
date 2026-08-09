@@ -114,24 +114,39 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
-// chatsScopeFor reconciles status (the current API) with the deprecated
-// show_archived bool: status wins when given; otherwise show_archived=true
-// maps to "all" and false/absent to "active", its pre-#809 behavior.
-func chatsScopeFor(params schema.ListChatsParams) store.ChatsScope {
+// errInvalidStatus is chatsScopeFor's client-error sentinel: an explicitly
+// empty or unrecognized status selection is a 400, never silently
+// "everything" and never a 500.
+var errInvalidStatus = errors.New("invalid status")
+
+// chatsScopeFor reconciles status (the current API, repeatable/multi-select)
+// with the deprecated show_archived bool: status wins when given; otherwise
+// show_archived=true maps to {active,archived} and false/absent to {active},
+// its pre-#809 behavior. Order in the status list is irrelevant - it's
+// collapsed into two flags, so ?status=active&status=archived and the
+// reverse order produce the identical scope (and page token).
+func chatsScopeFor(params schema.ListChatsParams) (store.ChatsScope, error) {
 	if params.Status != nil {
-		switch *params.Status {
-		case schema.Archived:
-			return store.ChatsScopeArchived
-		case schema.All:
-			return store.ChatsScopeAll
-		default:
-			return store.ChatsScopeActive
+		if len(*params.Status) == 0 {
+			return store.ChatsScope{}, fmt.Errorf("%w: status must not be empty", errInvalidStatus)
 		}
+		var scope store.ChatsScope
+		for _, st := range *params.Status {
+			switch st {
+			case schema.Active:
+				scope.Active = true
+			case schema.Archived:
+				scope.Archived = true
+			default:
+				return store.ChatsScope{}, fmt.Errorf("%w: %q", errInvalidStatus, st)
+			}
+		}
+		return scope, nil
 	}
 	if params.ShowArchived != nil && *params.ShowArchived {
-		return store.ChatsScopeAll
+		return store.ChatsScope{Active: true, Archived: true}, nil
 	}
-	return store.ChatsScopeActive
+	return store.ChatsScope{Active: true}, nil
 }
 
 // ListChats is a single table read (#738: status is a stamp on the chat row - see
@@ -150,7 +165,12 @@ func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request, params schem
 	if params.PageToken != nil {
 		pageToken = *params.PageToken
 	}
-	chats, next, err := h.store.ListChats(r.Context(), limit, pageToken, chatsScopeFor(params))
+	scope, err := chatsScopeFor(params)
+	if err != nil {
+		httpError(w, http.StatusBadRequest, err)
+		return
+	}
+	chats, next, err := h.store.ListChats(r.Context(), limit, pageToken, scope)
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidPageToken) {
 			httpError(w, http.StatusBadRequest, err)

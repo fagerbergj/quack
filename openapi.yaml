@@ -47,15 +47,23 @@ paths:
         - name: status
           in: query
           required: false
+          style: form
+          explode: true
           schema:
-            type: string
-            enum: [active, archived, all]
-            default: active
+            type: array
+            items:
+              type: string
+              enum: [active, archived]
+            default: [active]
+            minItems: 1
           description: >
-            Which chats to return: `active` (default, excludes archived),
-            `archived` (only archived), or `all`. Supersedes `show_archived`;
-            if both are given, `status` wins. Each value pages independently -
-            a page_token is only valid against the status it was issued for.
+            Which chat statuses to return - repeatable (`?status=active&status=archived`).
+            Defaults to `[active]` (excludes archived) when omitted. An
+            explicitly empty selection is a 400, not "everything" - ask for
+            both statuses to get everything. Supersedes `show_archived`; if
+            both are given, `status` wins. Each distinct combination of
+            statuses pages independently - a page_token is only valid against
+            the combination it was issued for.
         - name: show_archived
           in: query
           required: false
@@ -65,7 +73,8 @@ paths:
             default: false
           description: >
             Deprecated, use `status`. Ignored when `status` is given.
-            Otherwise: false (default) behaves as `status=active`, true as `status=all`.
+            Otherwise: false (default) behaves as `status=active`, true as
+            `status=active&status=archived`.
       responses:
         "200":
           description: The chats

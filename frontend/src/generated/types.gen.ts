@@ -316,12 +316,12 @@ export type ListChatsData = {
          */
         page_token?: string;
         /**
-         * Which chats to return: `active` (default, excludes archived), `archived` (only archived), or `all`. Supersedes `show_archived`; if both are given, `status` wins. Each value pages independently - a page_token is only valid against the status it was issued for.
+         * Which chat statuses to return - repeatable (`?status=active&status=archived`). Defaults to `[active]` (excludes archived) when omitted. An explicitly empty selection is a 400, not "everything" - ask for both statuses to get everything. Supersedes `show_archived`; if both are given, `status` wins. Each distinct combination of statuses pages independently - a page_token is only valid against the combination it was issued for.
          *
          */
-        status?: 'active' | 'archived' | 'all';
+        status?: Array<'active' | 'archived'>;
         /**
-         * Deprecated, use `status`. Ignored when `status` is given. Otherwise: false (default) behaves as `status=active`, true as `status=all`.
+         * Deprecated, use `status`. Ignored when `status` is given. Otherwise: false (default) behaves as `status=active`, true as `status=active&status=archived`.
          *
          *
          * @deprecated

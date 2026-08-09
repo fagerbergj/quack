@@ -390,14 +390,15 @@ type chatsSort string
 const chatsSortUpdatedAtDesc chatsSort = "updated_at_desc"
 
 // ChatsScope selects which chats ListChats considers, pushed into the SQL
-// predicate so a page never fetches rows the caller can't see.
-type ChatsScope string
-
-const (
-	ChatsScopeActive   ChatsScope = "active"
-	ChatsScopeArchived ChatsScope = "archived"
-	ChatsScopeAll      ChatsScope = "all"
-)
+// predicate so a page never fetches rows the caller can't see. Two
+// independent flags, not a 3-valued enum - "all" was never a chat status,
+// just "don't filter". The zero value (both false) defaults to Active-only.
+// Both true means no archived predicate at all (not archived IN (true,false)),
+// so the planner sees a plain scan.
+type ChatsScope struct {
+	Active   bool `json:"a"`
+	Archived bool `json:"r"`
+}
 
 // chatsPageToken is ListChats' opaque continuation token. The caller-visible
 // contract is just "an anchor under a named ordering and scope": ID anchors
@@ -405,7 +406,10 @@ const (
 // run. UpdatedAt still rides along inside the token - resolving an ID anchor
 // back to its position in an updated_at-sorted list needs the value it was
 // last seen at, so the token carries it as its own implementation detail,
-// not as part of the contract a caller is meant to understand.
+// not as part of the contract a caller is meant to understand. Scope is a
+// struct of independent flags rather than an ordered list, so encoding it is
+// inherently canonical - {active,archived} and {archived,active} collapse to
+// the identical Go value (and therefore identical JSON) with no sort step.
 type chatsPageToken struct {
 	Sort      chatsSort  `json:"s"`
 	Scope     ChatsScope `json:"sc"`
@@ -420,8 +424,8 @@ func encodeChatsPageToken(t chatsPageToken) string {
 
 // decodeChatsPageToken validates the token was issued for the sort and scope
 // it's being replayed against. A token minted before scoping existed carries
-// no Scope ("") - treated as ChatsScopeActive, the pre-existing default
-// behavior, rather than rejected outright.
+// a zero-value Scope ({false false}) - treated as {Active: true}, the
+// pre-existing default behavior, rather than rejected outright.
 func decodeChatsPageToken(s string, scope ChatsScope) (chatsPageToken, error) {
 	var t chatsPageToken
 	b, err := base64.RawURLEncoding.DecodeString(s)
@@ -435,11 +439,11 @@ func decodeChatsPageToken(s string, scope ChatsScope) (chatsPageToken, error) {
 		return t, fmt.Errorf("%w: issued for sort %q, not %q", ErrInvalidPageToken, t.Sort, chatsSortUpdatedAtDesc)
 	}
 	tokenScope := t.Scope
-	if tokenScope == "" {
-		tokenScope = ChatsScopeActive
+	if !tokenScope.Active && !tokenScope.Archived {
+		tokenScope = ChatsScope{Active: true}
 	}
 	if tokenScope != scope {
-		return t, fmt.Errorf("%w: issued for scope %q, not %q", ErrInvalidPageToken, tokenScope, scope)
+		return t, fmt.Errorf("%w: issued for scope %+v, not %+v", ErrInvalidPageToken, tokenScope, scope)
 	}
 	return t, nil
 }
@@ -448,7 +452,7 @@ func decodeChatsPageToken(s string, scope ChatsScope) (chatsPageToken, error) {
 // first, starting after pageToken ("" for the first page). It returns the
 // opaque token for the next page, or "" if this page was the last. limit <= 0
 // becomes ChatsPageDefaultLimit; limit above ChatsPageMaxLimit is capped.
-// scope "" defaults to ChatsScopeActive.
+// The zero-value scope (both flags false) defaults to {Active: true}.
 //
 // This is keyset (not offset) pagination: see chatsPageToken. The scope
 // predicate is applied in SQL, not filtered from an already-fetched page, so
@@ -460,20 +464,18 @@ func (s *Store) ListChats(ctx context.Context, limit int, pageToken string, scop
 	} else if limit > ChatsPageMaxLimit {
 		limit = ChatsPageMaxLimit
 	}
-	if scope == "" {
-		scope = ChatsScopeActive
+	if !scope.Active && !scope.Archived {
+		scope.Active = true
 	}
 
 	q := s.db.WithContext(ctx).Order("updated_at desc, id desc").Limit(limit + 1)
-	switch scope {
-	case ChatsScopeActive:
-		q = q.Where("archived = ?", false)
-	case ChatsScopeArchived:
-		q = q.Where("archived = ?", true)
-	case ChatsScopeAll:
+	switch {
+	case scope.Active && scope.Archived:
 		// No predicate - both archived and active rows.
-	default:
-		return nil, "", fmt.Errorf("store: unknown chats scope %q", scope)
+	case scope.Active:
+		q = q.Where("archived = ?", false)
+	case scope.Archived:
+		q = q.Where("archived = ?", true)
 	}
 	if pageToken != "" {
 		t, err := decodeChatsPageToken(pageToken, scope)

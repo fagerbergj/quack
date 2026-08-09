@@ -169,9 +169,9 @@ export default function Chat() {
     if (el) el.scrollTop = el.scrollHeight
   }, [activeChatId, state.turns.length])
 
-  // #809: status defaults to active server-side - the active list never carries archived rows.
+  // #809: the active list only ever asks for status=active - never carries archived rows.
   const loadChats = useCallback(async () => {
-    const result = await api.listChats()
+    const result = await api.listChats({ status: ['active'] })
     setChats(result.data)
     setChatsNextPageToken(result.next_page_token)
     return result.data
@@ -181,7 +181,7 @@ export default function Chat() {
     if (!chatsNextPageToken || loadingMoreChats) return
     setLoadingMoreChats(true)
     try {
-      const result = await api.listChats({ page_token: chatsNextPageToken })
+      const result = await api.listChats({ status: ['active'], page_token: chatsNextPageToken })
       setChats(prev => [...prev, ...result.data])
       setChatsNextPageToken(result.next_page_token)
     } finally {
@@ -192,7 +192,7 @@ export default function Chat() {
   // #809: the Archived section's own status=archived page, fetched only once
   // (handleExpandArchived below), independently of the active list's cursor.
   const loadArchivedChats = useCallback(async () => {
-    const result = await api.listChats({ status: 'archived' })
+    const result = await api.listChats({ status: ['archived'] })
     setArchivedChats(result.data)
     setArchivedNextPageToken(result.next_page_token)
   }, [])
@@ -201,7 +201,7 @@ export default function Chat() {
     if (!archivedNextPageToken || loadingMoreArchivedChats) return
     setLoadingMoreArchivedChats(true)
     try {
-      const result = await api.listChats({ status: 'archived', page_token: archivedNextPageToken })
+      const result = await api.listChats({ status: ['archived'], page_token: archivedNextPageToken })
       setArchivedChats(prev => [...(prev ?? []), ...result.data])
       setArchivedNextPageToken(result.next_page_token)
     } finally {
@@ -301,7 +301,7 @@ export default function Chat() {
         // that just changed is in this page regardless of how far the user
         // has paged; the pagination token is left untouched here. Active
         // scope only (#809) - the Archived section isn't live-polled.
-        const result = await api.listChats()
+        const result = await api.listChats({ status: ['active'] })
         if (!cancelled) setChats(prev => mergeChatsPage(prev, result.data))
       } catch { /* transient - next poll will retry */ }
     }

@@ -251,7 +251,6 @@ func (e TurnInputRole) Valid() bool {
 // Defines values for ListChatsParamsStatus.
 const (
 	Active   ListChatsParamsStatus = "active"
-	All      ListChatsParamsStatus = "all"
 	Archived ListChatsParamsStatus = "archived"
 )
 
@@ -259,8 +258,6 @@ const (
 func (e ListChatsParamsStatus) Valid() bool {
 	switch e {
 	case Active:
-		return true
-	case All:
 		return true
 	case Archived:
 		return true
@@ -636,10 +633,10 @@ type ListChatsParams struct {
 	// PageToken Opaque continuation token from a previous response's `next_page_token`. Treat it as an opaque string: never parse or construct one, pass back exactly what was returned. Omit for the first page.
 	PageToken *string `form:"page_token,omitempty" json:"page_token,omitempty"`
 
-	// Status Which chats to return: `active` (default, excludes archived), `archived` (only archived), or `all`. Supersedes `show_archived`; if both are given, `status` wins. Each value pages independently - a page_token is only valid against the status it was issued for.
-	Status *ListChatsParamsStatus `form:"status,omitempty" json:"status,omitempty"`
+	// Status Which chat statuses to return - repeatable (`?status=active&status=archived`). Defaults to `[active]` (excludes archived) when omitted. An explicitly empty selection is a 400, not "everything" - ask for both statuses to get everything. Supersedes `show_archived`; if both are given, `status` wins. Each distinct combination of statuses pages independently - a page_token is only valid against the combination it was issued for.
+	Status *[]ListChatsParamsStatus `form:"status,omitempty" json:"status,omitempty"`
 
-	// ShowArchived Deprecated, use `status`. Ignored when `status` is given. Otherwise: false (default) behaves as `status=active`, true as `status=all`.
+	// ShowArchived Deprecated, use `status`. Ignored when `status` is given. Otherwise: false (default) behaves as `status=active`, true as `status=active&status=archived`.
 	ShowArchived *bool `form:"show_archived,omitempty" json:"show_archived,omitempty"`
 }
 
@@ -1116,7 +1113,7 @@ func (siw *ServerInterfaceWrapper) ListChats(w http.ResponseWriter, r *http.Requ
 
 	// ------------- Optional query parameter "status" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "status", r.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "status", r.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
 	if err != nil {
 		var requiredError *runtime.RequiredParameterError
 		if errors.As(err, &requiredError) {

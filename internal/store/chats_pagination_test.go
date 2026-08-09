@@ -61,7 +61,7 @@ func TestListChatsDefaultPageSize(t *testing.T) {
 	ctx := context.Background()
 	seedChats(t, st, 30)
 
-	chats, next, err := st.ListChats(ctx, 0, "", ChatsScopeActive)
+	chats, next, err := st.ListChats(ctx, 0, "", ChatsScope{Active: true})
 	if err != nil {
 		t.Fatalf("ListChats: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestListChatsPagingIsExhaustiveAndDedup(t *testing.T) {
 	token := ""
 	pages := 0
 	for {
-		chats, next, err := st.ListChats(ctx, 10, token, ChatsScopeActive)
+		chats, next, err := st.ListChats(ctx, 10, token, ChatsScope{Active: true})
 		if err != nil {
 			t.Fatalf("ListChats: %v", err)
 		}
@@ -127,7 +127,7 @@ func TestListChatsTokenStableAcrossConcurrentUpdate(t *testing.T) {
 	ids := seedChats(t, st, 5) // oldest..newest: ids[0]..ids[4]
 
 	// First page: newest 2 chats (ids[4], ids[3]).
-	page1, token, err := st.ListChats(ctx, 2, "", ChatsScopeActive)
+	page1, token, err := st.ListChats(ctx, 2, "", ChatsScope{Active: true})
 	if err != nil {
 		t.Fatalf("ListChats page1: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestListChatsTokenStableAcrossConcurrentUpdate(t *testing.T) {
 		t.Fatalf("bump ids[0]: %v", err)
 	}
 
-	page2, _, err := st.ListChats(ctx, 2, token, ChatsScopeActive)
+	page2, _, err := st.ListChats(ctx, 2, token, ChatsScope{Active: true})
 	if err != nil {
 		t.Fatalf("ListChats page2: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestListChatsNoParams(t *testing.T) {
 	ctx := context.Background()
 	seedChats(t, st, 3)
 
-	chats, _, err := st.ListChats(ctx, 0, "", ChatsScopeActive)
+	chats, _, err := st.ListChats(ctx, 0, "", ChatsScope{Active: true})
 	if err != nil {
 		t.Fatalf("ListChats: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestListChatsFewerThanPageSize(t *testing.T) {
 	ctx := context.Background()
 	seedChats(t, st, 3)
 
-	chats, next, err := st.ListChats(ctx, 20, "", ChatsScopeActive)
+	chats, next, err := st.ListChats(ctx, 20, "", ChatsScope{Active: true})
 	if err != nil {
 		t.Fatalf("ListChats: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestListChatsTokenIssuedForWrongSortRejected(t *testing.T) {
 	seedChats(t, st, 5)
 
 	wrongSort := encodeChatsPageToken(chatsPageToken{Sort: "title_asc", ID: "chat-aa", UpdatedAt: time.Now()})
-	if _, _, err := st.ListChats(ctx, 0, wrongSort, ChatsScopeActive); !errors.Is(err, ErrInvalidPageToken) {
+	if _, _, err := st.ListChats(ctx, 0, wrongSort, ChatsScope{Active: true}); !errors.Is(err, ErrInvalidPageToken) {
 		t.Fatalf("ListChats with a token issued for a different sort: err = %v, want ErrInvalidPageToken", err)
 	}
 }
@@ -216,7 +216,7 @@ func TestListChatsMalformedTokenRejected(t *testing.T) {
 	ctx := context.Background()
 	seedChats(t, st, 3)
 
-	if _, _, err := st.ListChats(ctx, 0, "not-a-valid-token!!", ChatsScopeActive); !errors.Is(err, ErrInvalidPageToken) {
+	if _, _, err := st.ListChats(ctx, 0, "not-a-valid-token!!", ChatsScope{Active: true}); !errors.Is(err, ErrInvalidPageToken) {
 		t.Fatalf("ListChats with a malformed token: err = %v, want ErrInvalidPageToken", err)
 	}
 }
@@ -229,7 +229,7 @@ func TestListChatsScopeActiveReturnsFullPageDespiteArchived(t *testing.T) {
 	// 5 active, 3 archived, interleaved - a page of 3 must still be 3 active rows.
 	seedChatsScoped(t, st, []bool{false, true, false, true, false, true, false, false})
 
-	chats, next, err := st.ListChats(ctx, 3, "", ChatsScopeActive)
+	chats, next, err := st.ListChats(ctx, 3, "", ChatsScope{Active: true})
 	if err != nil {
 		t.Fatalf("ListChats: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestListChatsScopeActiveNeverSkipsOrRepeatsAcrossInterleavedArchived(t *tes
 	token := ""
 	pages := 0
 	for {
-		chats, next, err := st.ListChats(ctx, 3, token, ChatsScopeActive)
+		chats, next, err := st.ListChats(ctx, 3, token, ChatsScope{Active: true})
 		if err != nil {
 			t.Fatalf("ListChats: %v", err)
 		}
@@ -319,7 +319,7 @@ func TestListChatsScopeArchivedPagesIndependently(t *testing.T) {
 	seen := map[string]int{}
 	token := ""
 	for {
-		chats, next, err := st.ListChats(ctx, 2, token, ChatsScopeArchived)
+		chats, next, err := st.ListChats(ctx, 2, token, ChatsScope{Archived: true})
 		if err != nil {
 			t.Fatalf("ListChats: %v", err)
 		}
@@ -352,7 +352,7 @@ func TestListChatsScopeMismatchRejected(t *testing.T) {
 	ctx := context.Background()
 	seedChatsScoped(t, st, []bool{false, true, false, true, false})
 
-	_, activeToken, err := st.ListChats(ctx, 1, "", ChatsScopeActive)
+	_, activeToken, err := st.ListChats(ctx, 1, "", ChatsScope{Active: true})
 	if err != nil {
 		t.Fatalf("ListChats (active): %v", err)
 	}
@@ -360,18 +360,18 @@ func TestListChatsScopeMismatchRejected(t *testing.T) {
 		t.Fatal("expected a next page token for the active scope")
 	}
 
-	if _, _, err := st.ListChats(ctx, 1, activeToken, ChatsScopeArchived); !errors.Is(err, ErrInvalidPageToken) {
+	if _, _, err := st.ListChats(ctx, 1, activeToken, ChatsScope{Archived: true}); !errors.Is(err, ErrInvalidPageToken) {
 		t.Fatalf("ListChats replaying an active-scope token against archived scope: err = %v, want ErrInvalidPageToken", err)
 	}
-	if _, _, err := st.ListChats(ctx, 1, activeToken, ChatsScopeAll); !errors.Is(err, ErrInvalidPageToken) {
+	if _, _, err := st.ListChats(ctx, 1, activeToken, ChatsScope{Active: true, Archived: true}); !errors.Is(err, ErrInvalidPageToken) {
 		t.Fatalf("ListChats replaying an active-scope token against all scope: err = %v, want ErrInvalidPageToken", err)
 	}
 }
 
 // TestListChatsTokenWithoutScopeDefaultsToActive pins the old-token decision:
-// a token minted before scoping existed (no Scope field) is treated as
-// ChatsScopeActive - the pre-#809 default - rather than rejected outright, so
-// a cursor a client is already holding does not 500 on the next release.
+// a token minted before scoping existed (zero-value Scope) is treated as
+// {Active: true}, the pre-#809 default, rather than rejected outright - a
+// cursor a client is already holding does not 500 on the next release.
 func TestListChatsTokenWithoutScopeDefaultsToActive(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
@@ -379,10 +379,10 @@ func TestListChatsTokenWithoutScopeDefaultsToActive(t *testing.T) {
 
 	legacyToken := encodeChatsPageToken(chatsPageToken{Sort: chatsSortUpdatedAtDesc, ID: "chat-aa", UpdatedAt: time.Now()})
 
-	if _, _, err := st.ListChats(ctx, 1, legacyToken, ChatsScopeActive); err != nil {
+	if _, _, err := st.ListChats(ctx, 1, legacyToken, ChatsScope{Active: true}); err != nil {
 		t.Fatalf("legacy (scopeless) token against active scope: %v, want success", err)
 	}
-	if _, _, err := st.ListChats(ctx, 1, legacyToken, ChatsScopeArchived); !errors.Is(err, ErrInvalidPageToken) {
+	if _, _, err := st.ListChats(ctx, 1, legacyToken, ChatsScope{Archived: true}); !errors.Is(err, ErrInvalidPageToken) {
 		t.Fatalf("legacy (scopeless) token against archived scope: err = %v, want ErrInvalidPageToken", err)
 	}
 }

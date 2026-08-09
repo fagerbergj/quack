@@ -32,10 +32,11 @@ function unwrap<T>(r: Result<T>): T {
 
 export const api = {
   // page_token is opaque - pass back exactly what a previous response's
-  // next_page_token gave, never parsed or constructed here. status scopes
-  // the page (default "active"); a token is only valid against the status
-  // it was issued for, so switching status starts a fresh page walk.
-  listChats: async (opts?: { limit?: number; page_token?: string; status?: 'active' | 'archived' | 'all' }): Promise<ChatList> =>
+  // next_page_token gave, never parsed or constructed here. status is a
+  // multi-select (default ['active']); order doesn't matter, but a token is
+  // only valid against the exact status set it was issued for, so switching
+  // it starts a fresh page walk. An explicitly empty array is a 400.
+  listChats: async (opts?: { limit?: number; page_token?: string; status?: Array<'active' | 'archived'> }): Promise<ChatList> =>
     unwrap(await sdkListChats({ query: opts })),
 
   createChat: async (opts?: { system_prompt?: string }): Promise<ChatSummary> =>
