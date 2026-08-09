@@ -1,0 +1,21 @@
+# Upstream sources for the vendored skill-library plugins alongside this file.
+#
+# The checked-in trees ARE the build input - go:embed and the Docker build read
+# them directly, so a plain clone builds offline with no fetch step. This file
+# only records where each tree came from, for `make sync-plugins`.
+#
+# `ref` is the upstream commit a tree was last synced from. A tree may have
+# local edits on top of it; sync-plugins refuses to overwrite those unless
+# FORCE=1, so record local changes upstream rather than re-syncing over them.
+#
+# Shape is parsed by scripts/sync-plugins.sh - keep the four keys, one plugin
+# per list entry, values unquoted.
+plugins:
+  - name: dotagents
+    url: https://github.com/fagerbergj/dotagents
+    ref: 82059690739e6f80c916044d1900cdd50f11c97d
+    path: .agents/vendor/dotagents
+  - name: ponytail
+    url: https://github.com/DietrichGebert/ponytail
+    ref: adad50d9b393926b2dd5ed7225dcb1848b9df408
+    path: .agents/vendor/ponytail

@@ -1,8 +1,8 @@
 // Package plugin discovers skill libraries packaged per the Agent Plugins
 // standard (https://agent-plugins.org/) or its Codex predecessor, so quack
-// reads a vendored plugin's layout instead of hardcoding it. Distribution
-// stays whatever the caller already uses (a git submodule today) - this
-// package only resolves an on-disk root to its skills directory.
+// reads a vendored plugin's layout instead of hardcoding it. Distribution is
+// out of scope (trees are vendored in-tree, see .agents/vendor/plugins.yaml) -
+// this package only resolves an on-disk root to its skills directory.
 package plugin
 
 import (

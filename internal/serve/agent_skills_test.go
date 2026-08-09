@@ -23,20 +23,20 @@ var loadSkillRe = regexp.MustCompile(`load_skill\("([a-zA-Z0-9_-]+)"\)`)
 func TestEveryAgentPromptSkillIsShipped(t *testing.T) {
 	root := repoRoot(t)
 
-	// The vendored skills are git SUBMODULES (see .gitmodules and
-	// config/quack.yaml's skills.plugins, resolved via internal/plugin). CI and
-	// the Docker build initialise them; a plain `git worktree add` does not.
-	// Without them we cannot tell "the prompt names a skill we never ship" (a
-	// real bug) from "this checkout just hasn't inited the submodules" (a local
-	// artifact) - so skip rather than cry wolf at every dev.
-	vendorRoots := []string{
-		filepath.Join(root, ".agents", "vendor", "dotagents"),
-		filepath.Join(root, ".agents", "vendor", "ponytail"),
+	// Mirror what actually reaches an agent (internal/serve's newSkillSource):
+	// quack's own skills/, plus plugin-resolved roots, plus dotagents' skills/
+	// directly - dotagents ships no plugin manifest, so it reaches the runtime
+	// via the embedded fallback (dotagentsEmbeddedSkills), not discovery.
+	//
+	// The trees are in-tree, so an unresolvable root is a real breakage. This
+	// used to t.Skip unless BOTH roots resolved, which never happened even with
+	// submodules initialised - so this check has never actually run.
+	ponytail := filepath.Join(root, ".agents", "vendor", "ponytail")
+	vendorDirs := plugin.ResolveSkillDirs([]string{ponytail})
+	if len(vendorDirs) != 1 {
+		t.Fatalf("vendored ponytail plugin did not resolve at %s", ponytail)
 	}
-	vendorDirs := plugin.ResolveSkillDirs(vendorRoots)
-	if len(vendorDirs) != len(vendorRoots) {
-		t.Skip("vendored skill plugins not initialised (git submodule update --init); cannot verify vendored skill references")
-	}
+	vendorDirs = append(vendorDirs, filepath.Join(root, dotagentsEmbeddedSkills))
 
 	shipped := map[string]bool{}
 	for _, dir := range append([]string{filepath.Join(root, "skills")}, vendorDirs...) {

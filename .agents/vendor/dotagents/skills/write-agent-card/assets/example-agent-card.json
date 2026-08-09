@@ -1,0 +1,71 @@
+{
+  "name": "CodeReview Sentinel",
+  "description": "An AI-powered code review agent that analyzes pull requests for security vulnerabilities, performance anti-patterns, and style guideline violations across Python, TypeScript, and Go codebases. Integrates with GitHub and GitLab.",
+  "version": "1.4.2",
+  "provider": {
+    "organization": "Sentinel Labs Inc.",
+    "url": "https://sentinellabs.dev"
+  },
+  "documentationUrl": "https://docs.sentinellabs.dev/api",
+  "iconUrl": "https://cdn.sentinellabs.dev/assets/icon-512.png",
+  "supportedInterfaces": [
+    {
+      "url": "https://api.sentinellabs.dev/a2a/v1",
+      "protocolBinding": "JSONRPC",
+      "protocolVersion": "1.0"
+    }
+  ],
+  "capabilities": {
+    "streaming": true,
+    "pushNotifications": true,
+    "stateTransitionHistory": false
+  },
+  "securitySchemes": {
+    "bearerAuth": {
+      "type": "http",
+      "scheme": "bearer",
+      "bearerFormat": "JWT"
+    }
+  },
+  "defaultInputModes": ["application/json"],
+  "defaultOutputModes": ["application/json", "text/plain"],
+  "skills": [
+    {
+      "id": "pr-security-audit",
+      "name": "Pull Request Security Audit",
+      "description": "Analyzes a pull request's diff for security vulnerabilities including SQL injection, XSS, hardcoded secrets, and unsafe deserialization. Triggers on requests involving code review, security audit, or vulnerability scanning.",
+      "tags": ["security", "code-review", "vulnerability", "sdlc"],
+      "examples": [
+        "Review this PR for security issues - https://github.com/org/repo/pull/142",
+        "Scan the diff in /path/to/diff.json for hardcoded secrets or SQL injection patterns",
+        "Does this code have any XSS vulnerabilities?"
+      ],
+      "inputModes": ["application/json"],
+      "outputModes": ["application/json"]
+    },
+    {
+      "id": "style-lint",
+      "name": "Style Guide Compliance Check",
+      "description": "Checks code against organizational style guides (PEP 8, Airbnb TS, Uber Go). Reports violations with suggested fixes. Triggers on style review or lint requests.",
+      "tags": ["code-review", "style", "linting", "quality"],
+      "examples": [
+        "Check this file for PEP 8 compliance",
+        "Run the Airbnb TypeScript style guide check on src/components/"
+      ],
+      "inputModes": ["text/plain", "application/json"],
+      "outputModes": ["application/json"]
+    },
+    {
+      "id": "performance-analyze",
+      "name": "Performance Pattern Analyzer",
+      "description": "Identifies performance anti-patterns in code diffs: N+1 queries, missing indexes, inefficient string concatenation, excessive allocations. Triggers on performance review requests.",
+      "tags": ["performance", "code-review", "optimization"],
+      "examples": [
+        "Is there an N+1 query problem in this diff?",
+        "Check for O(n²) patterns in the new algorithms"
+      ],
+      "inputModes": ["application/json"],
+      "outputModes": ["application/json"]
+    }
+  ]
+}

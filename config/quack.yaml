@@ -272,8 +272,8 @@ observability:
 # takes precedence, then each root below in listed order.
 skills:
   plugins:
-    - .agents/vendor/dotagents   # general-purpose skills (git submodule)
-    - .agents/vendor/ponytail    # YAGNI/lazy-senior-dev discipline (git submodule; Codex format)
+    - .agents/vendor/dotagents   # general-purpose skills (vendored)
+    - .agents/vendor/ponytail    # YAGNI/lazy-senior-dev discipline (vendored; Codex format)
   # workflows: teach plan-work's "Common workflows" table a deployment-specific
   # DAG shape (e.g. a document-ingest pipeline) without forking the skill - see
   # docs/configuration/agents.md#extending-the-workflow-catalog for the schema

@@ -1,4 +1,4 @@
-.PHONY: build run test vet fmt generate frontend-build docker-up docker-down clean
+.PHONY: build run test vet fmt generate frontend-build sync-plugins docker-up docker-down clean
 
 BINARY := quack
 
@@ -32,6 +32,10 @@ fmt:
 ## generate: regenerate Go + TS code from openapi.yaml
 generate:
 	./scripts/generate.sh
+
+## sync-plugins: update the vendored skill plugins in .agents/vendor from upstream
+sync-plugins:
+	./scripts/sync-plugins.sh $(PLUGIN)
 
 ## docker-up: start the full stack (app + self-contained Postgres)
 docker-up:
