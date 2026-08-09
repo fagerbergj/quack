@@ -815,6 +815,7 @@ func emitPrompt(ctx adkagent.Context, emit func(*session.Event) error, input any
 	}
 	ev := session.NewEvent(ctx, ctx.InvocationID())
 	ev.Author = gatePromptAuthor
+	ev.Branch = ctx.Branch()
 	switch v := input.(type) {
 	case string:
 		ev.Content = &genai.Content{Role: "user", Parts: []*genai.Part{{Text: v}}}

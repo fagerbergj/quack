@@ -150,7 +150,10 @@ func (c scopedClient) SendStreamingMessage(ctx context.Context, req *a2a.SendMes
 	return c.A2AClient.SendStreamingMessage(ctx, req)
 }
 
-// scopeMessage rewrites req's parts in place, scoped to invocation + branch.
+// scopeMessage rewrites req's parts in place, scoped to invocation + branch,
+// and clears its task/context IDs when ADK's own resume scan (branch-blind)
+// crossed into a sibling node's event to get them - leaves them alone
+// otherwise, since a HITL resume derives its own IDs a different way.
 func scopeMessage(ctx context.Context, req *a2a.SendMessageRequest) {
 	ic, ok := ctx.(adkagent.InvocationContext)
 	if !ok || req == nil || req.Message == nil || ic.Session() == nil {
@@ -161,6 +164,9 @@ func scopeMessage(ctx context.Context, req *a2a.SendMessageRequest) {
 	for i := events.Len() - 1; i >= 0; i-- {
 		if ev := events.At(i); ev != nil && ev.Author == ic.Agent().Name() {
 			start = i + 1
+			if !eventBelongsToBranch(ic.Branch(), ev) {
+				req.Message.TaskID, req.Message.ContextID = "", ""
+			}
 			break
 		}
 	}
