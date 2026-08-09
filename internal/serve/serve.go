@@ -72,6 +72,14 @@ const localUserID = "local"
 // embedded.
 const dotagentsEmbeddedSkills = ".agents/vendor/dotagents/skills"
 
+// Where the plugin pins and their fetcher live, relative to CWD (/ in the
+// image, the repo root in a dev run). Absent in a standalone install, which
+// then reports on-disk revisions only.
+const (
+	pluginManifestPath = ".agents/vendor/plugins.yaml"
+	pluginFetchScript  = "scripts/plugins.sh"
+)
+
 // newSkillSource builds the skill toolset Source from quack's own shipped
 // skills plus each configured plugin root's skills directory (internal/plugin
 // discovery), in order. dotagentsEmbeddedSkills then backfills any names
@@ -314,6 +322,14 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		extTools = githubApp.Tools()
 		gitTokenSource = githubApp
 		slog.Info("github extension enabled", "component", "startup", "issuer", gh.Issuer(), "mention", gh.Mention)
+	}
+
+	// Bring the plugin trees to their pinned refs before anything reads them,
+	// and log what we actually got - skills change how every agent plans, so
+	// the revision belongs in the startup record.
+	pluginRevs := plugin.Refresh(pluginManifestPath, pluginFetchScript)
+	if len(pluginRevs) > 0 {
+		slog.Info("skill plugins resolved", "component", "startup", "revisions", plugin.Summary(pluginRevs))
 	}
 
 	builtinSkillSrc := newSkillSource(cfg.Skills.Plugins)
