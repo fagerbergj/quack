@@ -8,6 +8,7 @@ import (
 	"github.com/fagerbergj/quack/internal/auth"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/server"
+	"github.com/fagerbergj/quack/internal/server/adkdebug"
 	"github.com/fagerbergj/quack/internal/server/rest"
 )
 
@@ -121,6 +122,53 @@ func TestRouterMCPOpenWhenAuthUnconfigured(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || rec.Body.String() != "mcp" {
 		t.Errorf("got %d %q, want 200 mcp", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRouterADKDebugGatedWhenAuthConfigured(t *testing.T) {
+	a, err := auth.New(&config.InboundAuthConfig{
+		TrustedHeaders: &config.TrustedHeadersConfig{User: "X-authentik-username"},
+	})
+	if err != nil {
+		t.Fatalf("auth.New: %v", err)
+	}
+	h := server.New(server.Options{
+		REST:     &rest.Handler{},
+		Auth:     a,
+		ADKDebug: stubHandler("adkdebug"),
+	})
+
+	tests := []struct {
+		name     string
+		header   string
+		wantCode int
+	}{
+		{name: "no identity -> unauthorized", wantCode: http.StatusUnauthorized},
+		{name: "trusted header -> reaches adkdebug", header: "jason", wantCode: http.StatusOK},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, adkdebug.MountPath+"/api/list-apps", nil)
+			if tt.header != "" {
+				req.Header.Set("X-authentik-username", tt.header)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != tt.wantCode {
+				t.Errorf("status = %d, want %d", rec.Code, tt.wantCode)
+			}
+		})
+	}
+}
+
+func TestRouterADKDebugAbsentByDefault(t *testing.T) {
+	h := server.New(server.Options{REST: &rest.Handler{}})
+
+	req := httptest.NewRequest(http.MethodGet, adkdebug.MountPath+"/api/list-apps", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code == http.StatusOK {
+		t.Errorf("ADKDebug unset (default) should not be reachable, got 200")
 	}
 }
 

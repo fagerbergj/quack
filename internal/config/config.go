@@ -88,6 +88,10 @@ var defaultSkillPlugins = []string{".agents/vendor/dotagents", ".agents/vendor/p
 type ObservabilityConfig struct {
 	Otel      OtelConfig      `yaml:"otel"`
 	Recording RecordingConfig `yaml:"recording"`
+	// ADKDebug mounts ADK's REST debug console at /debug/adk. DANGER: /run,
+	// /run_sse and /run_live execute any loaded agent WITHOUT the trust gate -
+	// protected only by quack's auth + this flag. MUST stay off in production.
+	ADKDebug bool `yaml:"adk_debug"`
 }
 
 type RecordingConfig struct {

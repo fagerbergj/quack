@@ -14,6 +14,7 @@ import (
 	"github.com/fagerbergj/quack/internal/auth"
 	"github.com/fagerbergj/quack/internal/extension"
 	"github.com/fagerbergj/quack/internal/schema"
+	"github.com/fagerbergj/quack/internal/server/adkdebug"
 	"github.com/fagerbergj/quack/internal/server/rest"
 )
 
@@ -27,6 +28,10 @@ type Options struct {
 	SPA        fs.FS                 // optional embedded frontend dist
 	Extensions []extension.Extension // optional inbound routes (e.g. GitHub webhook)
 	Auth       *auth.Auth            // optional inbound auth (nil = disabled, open)
+	// ADKDebug is adkdebug.Mount.Handler, gated by config observability.adk_debug
+	// (default off). It runs agents ungated (see adkdebug package doc) - mounted
+	// INSIDE the auth group deliberately, never as an unauthenticated extension.
+	ADKDebug http.Handler
 }
 
 // New builds the HTTP handler.
@@ -42,6 +47,10 @@ func New(opts Options) http.Handler {
 		if opts.MCP != nil {
 			r.Handle(MCPPath, opts.MCP)
 			r.Handle(MCPPath+"/*", opts.MCP)
+		}
+
+		if opts.ADKDebug != nil {
+			r.Mount(adkdebug.MountPath, http.StripPrefix(adkdebug.MountPath, opts.ADKDebug))
 		}
 
 		schema.HandlerFromMux(opts.REST, r)

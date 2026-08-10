@@ -17,6 +17,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/jsonschema-go v0.4.3
 	github.com/google/uuid v1.6.0
+	github.com/gorilla/mux v1.8.1
 	github.com/landlock-lsm/go-landlock v0.9.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/oapi-codegen/runtime v1.6.0
@@ -46,9 +47,11 @@ require (
 	cloud.google.com/go v0.123.0 // indirect
 	cloud.google.com/go/auth v0.20.0 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
+	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.33.0 // indirect
 	github.com/JohannesKaufmann/dom v0.3.1 // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
+	github.com/awalterschulze/gographviz v2.0.3+incompatible // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/catppuccin/go v0.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -74,6 +77,7 @@ require (
 	github.com/gorilla/securecookie v1.1.2 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
+	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
@@ -86,6 +90,7 @@ require (
 	github.com/mattn/go-localereader v0.0.1 // indirect
 	github.com/mattn/go-runewidth v0.0.23 // indirect
 	github.com/mitchellh/hashstructure/v2 v2.0.2 // indirect
+	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/muesli/termenv v0.16.0 // indirect
@@ -104,6 +109,7 @@ require (
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/zitadel/schema v1.3.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
+	go.opentelemetry.io/contrib/detectors/gcp v1.44.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.68.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.44.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect

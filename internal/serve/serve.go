@@ -49,6 +49,7 @@ import (
 	"github.com/fagerbergj/quack/internal/promptbuilder"
 	"github.com/fagerbergj/quack/internal/replay"
 	"github.com/fagerbergj/quack/internal/server"
+	"github.com/fagerbergj/quack/internal/server/adkdebug"
 	mcpserver "github.com/fagerbergj/quack/internal/server/mcp"
 	"github.com/fagerbergj/quack/internal/server/rest"
 	"github.com/fagerbergj/quack/internal/skillsource"
@@ -250,7 +251,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	}
 
 	ledgerStore := ledgerStoreFromConfig(cfg)
-	_, otelShutdown, err := otelobs.Init(ctx, cfg.Observability, ledgerStore)
+	otelProviders, otelShutdown, err := otelobs.Init(ctx, cfg.Observability, ledgerStore)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("otel init failed: %w", err)
 	}
@@ -506,12 +507,29 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		extensions = append(extensions, ghExt)
 	}
 
+	var adkDebugHandler http.Handler
+	if cfg.Observability.ADKDebug {
+		if mount, derr := adkdebug.New(st.Sessions, clientMap, nil); derr != nil {
+			slog.Warn("adk debug mount failed; disabled", "component", "startup", "err", derr)
+		} else {
+			if otelProviders.TracerProvider != nil {
+				otelProviders.TracerProvider.RegisterSpanProcessor(mount.SpanProcessor())
+			} else {
+				slog.Warn("adk debug mount enabled but otel is disabled; /debug/trace will stay empty", "component", "startup")
+			}
+			adkDebugHandler = mount.Handler
+			slog.Warn("ADK debug surface mounted - runs agents WITHOUT quack's trust gate; dev/trusted use only",
+				"component", "startup", "path", adkdebug.MountPath)
+		}
+	}
+
 	handler = server.New(server.Options{
 		REST:       rest.NewHandler(st, orch, llm, jail, runHub, ledgerStore, Version, taskStore, userStore),
 		MCP:        mcpserver.Handler(orch),
 		SPA:        spa,
 		Extensions: extensions,
 		Auth:       authMW,
+		ADKDebug:   adkDebugHandler,
 	})
 
 	gcHomeDir, err := jail.HomeDir(localUserID)
