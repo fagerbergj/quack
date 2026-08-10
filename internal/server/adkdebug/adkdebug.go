@@ -9,7 +9,6 @@ import (
 	"sort"
 
 	"github.com/gorilla/mux"
-	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -41,11 +40,9 @@ type Mount struct {
 	srv *adkrest.Server
 }
 
-// SpanProcessor/LogProcessor feed ADK's in-memory /debug/trace store; register
-// them on the live TracerProvider/LoggerProvider for it to populate -
-// unregistered, the mount still serves but /debug/trace stays empty.
+// SpanProcessor feeds ADK's in-memory /debug/trace store; register it on the
+// live TracerProvider. (No log twin: sdklog processors are constructor-only.)
 func (m *Mount) SpanProcessor() sdktrace.SpanProcessor { return m.srv.SpanProcessor() }
-func (m *Mount) LogProcessor() sdklog.Processor        { return m.srv.LogProcessor() }
 
 // New builds Mount. agents seeds the AgentLoader; which one becomes "root"
 // doesn't matter, no adkrest controller distinguishes it from the rest.
