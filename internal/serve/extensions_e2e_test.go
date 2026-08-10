@@ -1,0 +1,468 @@
+package serve
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"iter"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/model"
+	"google.golang.org/genai"
+	"gopkg.in/yaml.v3"
+
+	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+
+	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/orchestrator"
+	"github.com/fagerbergj/quack/internal/server"
+	"github.com/fagerbergj/quack/internal/server/rest"
+	"github.com/fagerbergj/quack/internal/store"
+	"github.com/fagerbergj/quack/internal/stream"
+	"github.com/fagerbergj/quack/internal/vetting"
+)
+
+// directAnswerModel is a minimal model.LLM that answers with plain text and
+// no tool calls, so the orchestrator's top-level llmagent completes without
+// touching plan/execute - the same shape as rest.stubModel, reused here
+// because the dispatch loop only needs to prove it reached a real Answer.
+type directAnswerModel struct{}
+
+func (directAnswerModel) Name() string { return "direct-answer-stub" }
+
+func (directAnswerModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		yield(&model.LLMResponse{
+			Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: "quack quack"}}},
+			FinishReason: genai.FinishReasonStop,
+			TurnComplete: true,
+		}, nil)
+	}
+}
+
+// newExtTestStack builds a real (sqlite) store + a stub-model orchestrator -
+// enough to drive a full dispatch without a live LLM - and stores it into
+// orchRef the same way buildFromConfig does once the orchestrator exists.
+func newExtTestStack(t *testing.T) (*store.Store, *orchestrator.Orchestrator, *stream.Hub) {
+	t.Helper()
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	ex := dag.NewExecutor(st.Sessions, map[string]adkagent.Agent{}, map[string]model.LLM{}, nil,
+		func(string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
+	planner := dag.NewPlanner(nil, nil, nil)
+	orch := orchestrator.New(st.Sessions, directAnswerModel{}, "You are a test duck.", planner, ex, nil, nil, nil)
+	return st, orch, stream.NewHub()
+}
+
+// noopModulesConfig parses an extensions: block through the REAL inline-map
+// path (config.ExtensionsConfig's yaml tag), so the test exercises the same
+// opaque-node shape production config.Load produces.
+func noopModulesConfig(t *testing.T, workspaceRoot string, yamlBlock string) *config.Config {
+	t.Helper()
+	var ext config.ExtensionsConfig
+	if err := yaml.Unmarshal([]byte(yamlBlock), &ext); err != nil {
+		t.Fatalf("parse extensions block: %v", err)
+	}
+	return &config.Config{Extensions: ext, Workspace: config.WorkspaceConfig{Root: workspaceRoot}}
+}
+
+// waitRunSettled blocks until chatID's background run goroutine has stamped
+// a terminal outcome - the last durable write driveExtensionRun makes before
+// returning. Callers use this to fully drain one dispatch's goroutine before
+// firing another, so two runs' event-log writes never race each other (and
+// leak past their test into whichever runs next in the same process).
+func waitRunSettled(t *testing.T, st *store.Store, chatID string) {
+	t.Helper()
+	waitUntil(t, 5*time.Second, func() bool {
+		c, _ := st.GetChat(context.Background(), chatID)
+		return c != nil && c.RunStatus != ""
+	})
+}
+
+func waitUntil(t *testing.T, timeout time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		if cond() {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("condition not met within %s", timeout)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestSDKExtensionDispatchLoop is the spec's phase-2 loop-proof test: it
+// configures noop, dispatches over real HTTP against a stub-model
+// orchestrator, and asserts the run lands as a normal chat+turn and that
+// /status only advances once RunEnded actually fires.
+func TestSDKExtensionDispatchLoop(t *testing.T) {
+	st, orch, hub := newExtTestStack(t)
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+
+	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  greeting: e2e\n")
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef)
+	if err != nil {
+		t.Fatalf("buildSDKExtensions: %v", err)
+	}
+	if len(sdkExts) != 1 || sdkExts[0].name != "noop" {
+		t.Fatalf("sdkExts = %+v, want one noop extension", sdkExts)
+	}
+
+	h := server.New(server.Options{
+		REST:          &rest.Handler{},
+		SDKExtensions: sdkExtensionMounts(sdkExts),
+	})
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	resp, err := http.Post(ts.URL+"/noop/dispatch", "text/plain", strings.NewReader("hello from the e2e test"))
+	if err != nil {
+		t.Fatalf("POST /noop/dispatch: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("dispatch status = %d, want %d", resp.StatusCode, http.StatusAccepted)
+	}
+
+	// (b) /status only counts a run once RunEnded fires - proof the whole
+	// register -> route -> dispatch -> run -> RunEnded loop completed, not
+	// just that the HTTP call was accepted.
+	getStatus := func() map[string]any {
+		r, err := http.Get(ts.URL + "/noop/status")
+		if err != nil {
+			t.Fatalf("GET /status: %v", err)
+		}
+		defer r.Body.Close()
+		body, _ := io.ReadAll(r.Body)
+		var out map[string]any
+		if err := json.Unmarshal(body, &out); err != nil {
+			t.Fatalf("decode status: %v (body=%s)", err, body)
+		}
+		return out
+	}
+	waitUntil(t, 5*time.Second, func() bool {
+		return getStatus()["dispatches"] == float64(1)
+	})
+
+	// (a) the run appears as a normal chat with a turn, namespaced as
+	// ext:<extension>:<LocalID> so it can never collide with another
+	// extension's or a user's chat.
+	ctx := context.Background()
+	chats, _, err := st.ListChats(ctx, 10, "", store.ChatsScope{Active: true})
+	if err != nil {
+		t.Fatalf("ListChats: %v", err)
+	}
+	var chatID string
+	for _, c := range chats {
+		if strings.HasPrefix(c.ID, "ext:noop:noop-") {
+			chatID = c.ID
+		}
+	}
+	if chatID == "" {
+		t.Fatalf("no ext:noop:noop-* chat found among %d chats", len(chats))
+	}
+	turns, err := st.ListTurns(ctx, chatID)
+	if err != nil {
+		t.Fatalf("ListTurns: %v", err)
+	}
+	if len(turns) != 1 {
+		t.Fatalf("turns for %s = %d, want 1", chatID, len(turns))
+	}
+	c, err := st.GetChat(ctx, chatID)
+	if err != nil || c == nil {
+		t.Fatalf("GetChat(%s) = %v, %v", chatID, c, err)
+	}
+	if c.Title != "noop test" {
+		t.Errorf("chat title = %q, want origin label %q", c.Title, "noop test")
+	}
+}
+
+// (c) An unconfigured noop registers no routes at all - 404, not a
+// dormant-but-mounted handler.
+func TestSDKExtensionUnconfiguredExtensionRegistersNoRoutes(t *testing.T) {
+	st, orch, hub := newExtTestStack(t)
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+
+	cfg := &config.Config{Workspace: config.WorkspaceConfig{Root: t.TempDir()}}
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef)
+	if err != nil {
+		t.Fatalf("buildSDKExtensions: %v", err)
+	}
+	if len(sdkExts) != 0 {
+		t.Fatalf("sdkExts = %+v, want none (vanilla config)", sdkExts)
+	}
+
+	h := server.New(server.Options{REST: &rest.Handler{}, SDKExtensions: sdkExtensionMounts(sdkExts)})
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/noop/status")
+	if err != nil {
+		t.Fatalf("GET /noop/status: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want %d (extension never mounted)", resp.StatusCode, http.StatusNotFound)
+	}
+}
+
+// (d) extensions: naming an extension that isn't compiled in fails startup loudly.
+func TestSDKExtensionUnknownNameFailsStartup(t *testing.T) {
+	st, orch, hub := newExtTestStack(t)
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+
+	cfg := noopModulesConfig(t, t.TempDir(), "bogus-extension:\n  key: value\n")
+	_, err := buildSDKExtensions(cfg, st, hub, &orchRef)
+	if err == nil {
+		t.Fatal("expected an error for an unconfigured/uncompiled extension name")
+	}
+	if !strings.Contains(err.Error(), "bogus-extension") {
+		t.Errorf("err = %v, want it to name the offending extension", err)
+	}
+}
+
+// enabled: false leaves a configured-and-compiled extension dormant, exactly
+// like an absent block - no construction, no routes.
+func TestSDKExtensionDisabledStaysDormant(t *testing.T) {
+	st, orch, hub := newExtTestStack(t)
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+
+	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  enabled: false\n  greeting: e2e\n")
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef)
+	if err != nil {
+		t.Fatalf("buildSDKExtensions: %v", err)
+	}
+	if len(sdkExts) != 0 {
+		t.Fatalf("sdkExts = %+v, want none (enabled: false)", sdkExts)
+	}
+
+	h := server.New(server.Options{REST: &rest.Handler{}, SDKExtensions: sdkExtensionMounts(sdkExts)})
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/noop/status")
+	if err != nil {
+		t.Fatalf("GET /noop/status: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want %d (disabled extension never mounted)", resp.StatusCode, http.StatusNotFound)
+	}
+}
+
+// data_dir overrides Host.DataDir's default; the default (<workspace>/extensions/<name>)
+// must never get created when an override is given.
+func TestSDKExtensionDataDirOverrideUsed(t *testing.T) {
+	st, orch, hub := newExtTestStack(t)
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+
+	workspaceRoot := t.TempDir()
+	customDataDir := filepath.Join(t.TempDir(), "custom-noop-data")
+	cfg := noopModulesConfig(t, workspaceRoot, "noop:\n  data_dir: "+customDataDir+"\n")
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef)
+	if err != nil {
+		t.Fatalf("buildSDKExtensions: %v", err)
+	}
+	if len(sdkExts) != 1 {
+		t.Fatalf("sdkExts = %+v, want one noop extension", sdkExts)
+	}
+	if _, err := os.Stat(customDataDir); err != nil {
+		t.Errorf("data_dir override %s not created: %v", customDataDir, err)
+	}
+	defaultDataDir := filepath.Join(workspaceRoot, "extensions", "noop")
+	if _, err := os.Stat(defaultDataDir); err == nil {
+		t.Errorf("default data dir %s should not exist when data_dir is overridden", defaultDataDir)
+	}
+}
+
+// The reserved base-config keys (enabled, data_dir) must not break an
+// extension's own yaml.Unmarshal of the same raw bytes - noop only knows
+// "greeting", and yaml tolerates unknown fields by default.
+func TestSDKExtensionReservedKeysToleratedByExtensionConfig(t *testing.T) {
+	st, orch, hub := newExtTestStack(t)
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+
+	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  enabled: true\n  data_dir: \"\"\n  greeting: still works\n")
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef)
+	if err != nil {
+		t.Fatalf("buildSDKExtensions: %v", err)
+	}
+	if len(sdkExts) != 1 || sdkExts[0].name != "noop" {
+		t.Fatalf("sdkExts = %+v, want one noop extension", sdkExts)
+	}
+}
+
+// A registered+configured extension whose name collides with a reserved
+// route fails startup loudly, naming both the extension and the collision.
+func TestSDKExtensionReservedNameCollisionFailsStartup(t *testing.T) {
+	st, orch, hub := newExtTestStack(t)
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+
+	extsdk.Register("chat", func(extsdk.Host, []byte) (extsdk.Extension, error) {
+		t.Fatal("factory must never be called for a reserved-name collision")
+		return nil, nil
+	})
+
+	cfg := noopModulesConfig(t, t.TempDir(), "chat:\n  key: value\n")
+	_, err := buildSDKExtensions(cfg, st, hub, &orchRef)
+	if err == nil {
+		t.Fatal("expected an error for an extension name colliding with a reserved route")
+	}
+	if !strings.Contains(err.Error(), "chat") {
+		t.Errorf("err = %v, want it to name the extension", err)
+	}
+	if !strings.Contains(err.Error(), "reserved") {
+		t.Errorf("err = %v, want it to name the reserved-route collision", err)
+	}
+}
+
+// (e) dispatching twice to the same LocalID appends a second turn to the
+// same chat rather than starting a new one - exercised directly against the
+// dispatch adapter (newExtDispatch) since noop's own dispatch policy always
+// mints a fresh id, but quack's LocalID-reuse contract is what's under test.
+func TestSDKExtensionRedispatchSameChatIDAppendsTurn(t *testing.T) {
+	st, orch, hub := newExtTestStack(t)
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+
+	var extHolder atomic.Pointer[extsdk.Extension]
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil)
+
+	const localID = "redispatch-fixture"
+	const chatID = "ext:noop:" + localID
+	req := extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID}, Ask: extsdk.Ask{Message: "first turn"}}
+	if err := dispatch(context.Background(), req); err != nil {
+		t.Fatalf("first dispatch: %v", err)
+	}
+	// Drain the first run fully before firing the second - two overlapping
+	// runs on the same chat would race each other's event-log writes.
+	waitRunSettled(t, st, chatID)
+
+	req.Ask.Message = "second turn"
+	if err := dispatch(context.Background(), req); err != nil {
+		t.Fatalf("second dispatch: %v", err)
+	}
+	waitRunSettled(t, st, chatID)
+
+	ctx := context.Background()
+	turns, err := st.ListTurns(ctx, chatID)
+	if err != nil {
+		t.Fatalf("ListTurns: %v", err)
+	}
+	if len(turns) != 2 {
+		t.Fatalf("turns for %s = %d, want 2", chatID, len(turns))
+	}
+	chats, _, err := st.ListChats(ctx, 10, "", store.ChatsScope{Active: true})
+	if err != nil {
+		t.Fatalf("ListChats: %v", err)
+	}
+	count := 0
+	for _, c := range chats {
+		if c.ID == chatID {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("chat rows for %s = %d, want exactly 1 (re-dispatch must append, not duplicate)", chatID, count)
+	}
+}
+
+// (f) an unknown Workflow name fails the dispatch call itself, before any
+// chat row is created - never a silent hint the planner might ignore.
+func TestSDKExtensionUnknownWorkflowErrorsCreatesNoChat(t *testing.T) {
+	st, orch, hub := newExtTestStack(t)
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+
+	var extHolder atomic.Pointer[extsdk.Extension]
+	workflowNames := map[string]bool{"document-ingest": true}
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, workflowNames)
+
+	const localID = "unknown-workflow-fixture"
+	const chatID = "ext:noop:" + localID
+	req := extsdk.DispatchRequest{
+		Chat: extsdk.ChatRef{LocalID: localID},
+		Ask:  extsdk.Ask{Message: "hello"},
+		Run:  extsdk.RunConfig{Workflow: "bogus-shape"},
+	}
+	if err := dispatch(context.Background(), req); err == nil {
+		t.Fatal("expected an error for an unknown workflow name")
+	} else if !strings.Contains(err.Error(), "bogus-shape") {
+		t.Errorf("err = %v, want it to name the offending workflow", err)
+	}
+
+	ctx := context.Background()
+	c, err := st.GetChat(ctx, chatID)
+	if err != nil {
+		t.Fatalf("GetChat: %v", err)
+	}
+	if c != nil {
+		t.Fatalf("GetChat(%s) = %+v, want no chat created", chatID, c)
+	}
+}
+
+// TestSDKExtensionDispatchPreservesTraceContinuity pins the design doc's OTel
+// test case: Dispatch must preserve the caller's context so the extension's
+// inbound span parents the whole run trace, not start a disconnected one.
+func TestSDKExtensionDispatchPreservesTraceContinuity(t *testing.T) {
+	exp := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp))
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	defer otel.SetTracerProvider(prev)
+
+	st, orch, hub := newExtTestStack(t)
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+	var extHolder atomic.Pointer[extsdk.Extension]
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil)
+
+	ctx, inboundSpan := tp.Tracer("quack-ext-test").Start(context.Background(), "inbound")
+	wantTraceID := inboundSpan.SpanContext().TraceID()
+	inboundSpan.End()
+
+	const localID = "trace-fixture"
+	const chatID = "ext:noop:" + localID
+	req := extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID}, Ask: extsdk.Ask{Message: "hi"}}
+	if err := dispatch(ctx, req); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	waitRunSettled(t, st, chatID)
+
+	found := false
+	for _, s := range exp.GetSpans() {
+		if s.Name != "quack.run" {
+			continue
+		}
+		found = true
+		if got := s.SpanContext.TraceID(); got != wantTraceID {
+			t.Errorf("run span trace id = %s, want %s (caller's context should parent the run)", got, wantTraceID)
+		}
+	}
+	if !found {
+		t.Fatal("no quack.run span exported")
+	}
+}

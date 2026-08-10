@@ -155,8 +155,12 @@ func (o *OtelConfig) applyDefaults() error {
 	return nil
 }
 
+// ExtensionsConfig is the extensions: block. GitHub is typed and strict;
+// Modules catches every other top-level key opaquely (internal/serve resolves
+// each against sdk.Registered() and hands the raw node to its Factory).
 type ExtensionsConfig struct {
-	GitHub *GitHubExtensionConfig `yaml:"github"`
+	GitHub  *GitHubExtensionConfig `yaml:"github"`
+	Modules map[string]yaml.Node   `yaml:",inline"`
 }
 
 // GitHubExtensionConfig configures the GitHub App extension (internal/github).

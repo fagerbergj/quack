@@ -11,6 +11,8 @@ require (
 	github.com/charmbracelet/huh v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/coder/acp-go-sdk v0.13.5
+	github.com/fagerbergj/quack-extensions/noop v0.2.0
+	github.com/fagerbergj/quack-extensions/sdk v0.2.2
 	github.com/glebarez/sqlite v1.11.0
 	github.com/go-chi/chi/v5 v5.3.1
 	github.com/go-jose/go-jose/v4 v4.1.4

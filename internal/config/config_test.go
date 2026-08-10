@@ -1190,6 +1190,54 @@ extensions:
 	}
 }
 
+// An unrecognized top-level key under extensions: must pass strict parsing
+// as a raw node (issue #275) - internal/serve resolves it against
+// sdk.Registered() later, config never interprets it.
+func TestExtensionsModulesPassThroughOpaquely(t *testing.T) {
+	c, err := Load(writeTemp(t, baseConfig+`
+extensions:
+  noop:
+    greeting: hi there
+`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	node, ok := c.Extensions.Modules["noop"]
+	if !ok {
+		t.Fatal("extensions.noop not captured in Modules")
+	}
+	var got struct {
+		Greeting string `yaml:"greeting"`
+	}
+	if err := node.Decode(&got); err != nil {
+		t.Fatalf("decode captured node: %v", err)
+	}
+	if got.Greeting != "hi there" {
+		t.Errorf("greeting = %q, want %q", got.Greeting, "hi there")
+	}
+}
+
+// TestExtensionsGitHubStaysStrictAlongsideModules pins that adding the
+// inline Modules catch-all didn't loosen validation on the typed github
+// block - an unknown field there must still be rejected.
+func TestExtensionsGitHubStaysStrictAlongsideModules(t *testing.T) {
+	t.Setenv("QUACK_GH_KEY", "pem")
+	t.Setenv("QUACK_GH_SECRET", "s3cret")
+	_, err := Load(writeTemp(t, baseConfig+`
+extensions:
+  github:
+    app_id: 1
+    private_key: ${QUACK_GH_KEY}
+    webhook_secret: ${QUACK_GH_SECRET}
+    bogus_field: true
+  noop:
+    greeting: hi
+`))
+	if err == nil {
+		t.Fatal("expected an error for an unknown field under extensions.github")
+	}
+}
+
 func TestLoadGatesDefaultsAndDisabled(t *testing.T) {
 	// No gates block ⇒ vetting disabled, config still valid.
 	c, err := Load(writeTemp(t, baseConfig))

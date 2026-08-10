@@ -326,6 +326,25 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		slog.Info("github extension enabled", "component", "startup", "issuer", gh.Issuer(), "mention", gh.Mention)
 	}
 
+	// runHub is needed by the SDK extensions built below (Dispatch fans a
+	// run's events through it) as well as REST and the GitHub extension later.
+	runHub := stream.NewHub()
+
+	// orchRef is resolved after orch is built further down - an SDK
+	// extension's Dispatch may not fire until long after construction, but
+	// its Tools() are needed now to fold into extTools before buildAgents.
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	sdkExts, err := buildSDKExtensions(cfg, st, runHub, &orchRef)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	extTools = append(extTools, sdkExtensionTools(sdkExts)...)
+	cleanups = append(cleanups, func() {
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stopCancel()
+		stopSDKExtensions(stopCtx, sdkExts)
+	})
+
 	// Bring the plugin trees to their pinned refs before anything reads them,
 	// and log what we actually got - skills change how every agent plans, so
 	// the revision belongs in the startup record.
@@ -487,6 +506,10 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if gh := cfg.Extensions.GitHub; gh != nil && gh.RunTimeoutMinutes > 0 {
 		orch.SetRunDeadline(time.Duration(gh.RunTimeoutMinutes) * time.Minute)
 	}
+	orchRef.Store(orch)
+	if err := startSDKExtensions(ctx, sdkExts); err != nil {
+		return nil, nil, "", fmt.Errorf("sdk extensions start failed: %w", err)
+	}
 
 	if userStore != nil && cfg.Orchestrator.UserMemoryHook.Enabled {
 		if memAgent, err := buildUserMemoryHookAgent(cfg.Orchestrator.UserMemoryHook, cfg); err != nil {
@@ -501,8 +524,6 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("embed SPA fs failed: %w", err)
 	}
-
-	runHub := stream.NewHub()
 
 	var extensions []extension.Extension
 	if githubApp != nil {
@@ -531,12 +552,13 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	}
 
 	handler = server.New(server.Options{
-		REST:       rest.NewHandler(st, orch, llm, jail, runHub, ledgerStore, Version, taskStore, userStore),
-		MCP:        mcpserver.Handler(orch),
-		SPA:        spa,
-		Extensions: extensions,
-		Auth:       authMW,
-		ADKDebug:   adkDebugHandler,
+		REST:          rest.NewHandler(st, orch, llm, jail, runHub, ledgerStore, Version, taskStore, userStore),
+		MCP:           mcpserver.Handler(orch),
+		SPA:           spa,
+		Extensions:    extensions,
+		SDKExtensions: sdkExtensionMounts(sdkExts),
+		Auth:          authMW,
+		ADKDebug:      adkDebugHandler,
 	})
 
 	gcHomeDir, err := jail.HomeDir(localUserID)

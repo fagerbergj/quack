@@ -23,15 +23,27 @@ const MCPPath = "/api/v1/mcp"
 
 // Options configure the router.
 type Options struct {
-	REST       *rest.Handler
-	MCP        http.Handler          // optional Streamable-HTTP MCP handler
-	SPA        fs.FS                 // optional embedded frontend dist
-	Extensions []extension.Extension // optional inbound routes (e.g. GitHub webhook)
-	Auth       *auth.Auth            // optional inbound auth (nil = disabled, open)
+	REST          *rest.Handler
+	MCP           http.Handler          // optional Streamable-HTTP MCP handler
+	SPA           fs.FS                 // optional embedded frontend dist
+	Extensions    []extension.Extension // optional inbound routes (e.g. GitHub webhook)
+	SDKExtensions []SDKExtensionMount   // optional quack-extensions SDK modules, mounted at /<name>
+	Auth          *auth.Auth            // optional inbound auth (nil = disabled, open)
 	// ADKDebug is adkdebug.Mount.Handler, gated by config observability.adk_debug
 	// (default off). It runs agents ungated (see adkdebug package doc) - mounted
 	// INSIDE the auth group deliberately, never as an unauthenticated extension.
 	ADKDebug http.Handler
+}
+
+// SDKExtensionMount is one quack-extensions SDK module's route registration,
+// mounted at /<name>/: an authed router (session auth) and a public one
+// (webhook-class) - mirrors sdk.Extension.RegisterRoutes so serve can pass it
+// straight through. Name must pass ValidateExtensionName before it reaches
+// here - the caller (internal/serve) is expected to check at startup, not
+// this constructor.
+type SDKExtensionMount struct {
+	Name           string
+	RegisterRoutes func(authed, public chi.Router)
 }
 
 // New builds the HTTP handler.
@@ -59,6 +71,17 @@ func New(opts Options) http.Handler {
 	// Extension webhooks outside the auth group - they authenticate via their own signatures.
 	for _, ext := range opts.Extensions {
 		ext.RegisterRoutes(r)
+	}
+
+	// ONE mount per extension: authed routes go through a middleware-wrapped
+	// view of the same router, avoiding a duplicate-mount conflict with public.
+	// Mounted at the bare name, not a shared /ext/ prefix - ValidateExtensionName
+	// is what keeps a name from shadowing the SPA/API surface below.
+	for _, m := range opts.SDKExtensions {
+		combined := chi.NewRouter()
+		authed := combined.With(requireAuthExceptHealth(opts.Auth))
+		m.RegisterRoutes(authed, combined)
+		r.Mount("/"+m.Name, combined)
 	}
 
 	// Unmatched /api/ paths 404 (JSON); everything else serves the SPA so client-side routing works.

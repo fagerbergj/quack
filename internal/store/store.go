@@ -53,6 +53,9 @@ type Chat struct {
 	// Archived hides the chat from the main list by default (toggled by the user or auto-archived
 	// on PR merge when config AutoArchiveOnMerge is enabled; untouched by archive ops).
 	Archived bool `gorm:"column:archived;default:false" json:"archived"`
+	// Origin is an extension-set sdk.ChatOrigin, marshaled opaquely (#275). Not yet
+	// API-exposed - ChatSummary.origin is a follow-up once the SPA renders it generically.
+	Origin string `json:"-"`
 }
 
 // ChatTurn is one user→assistant exchange. Its ID is the response_id in the REST API.
@@ -582,6 +585,18 @@ func (s *Store) SetChatGitHub(ctx context.Context, id, repo, url, state, session
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "id"}},
 		DoUpdates: clause.AssignmentColumns([]string{"github_repo", "github_url", "github_state", "updated_at"}),
+	}).Create(c).Error
+}
+
+// SetChatOrigin upserts an extension-dispatched chat's SessionUser and Origin
+// JSON. Creates the row if missing (dispatch may arrive before any chat
+// exists) - SessionUser is fixed at creation, same rule as SetChatGitHub.
+func (s *Store) SetChatOrigin(ctx context.Context, id, sessionUser, originJSON string) error {
+	now := time.Now().UTC()
+	c := &Chat{ID: id, CreatedAt: now, UpdatedAt: now, SessionUser: sessionUser, Origin: originJSON}
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"origin", "updated_at"}),
 	}).Create(c).Error
 }
 
