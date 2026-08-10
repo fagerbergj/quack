@@ -29,6 +29,7 @@ type Config struct {
 	Extensions    ExtensionsConfig          `yaml:"extensions"`
 	Observability ObservabilityConfig       `yaml:"observability"`
 	Auth          *InboundAuthConfig        `yaml:"auth"`
+	Artifacts     ArtifactsConfig           `yaml:"artifacts"`
 	// Revision identifies the loaded config's content (sha256 of the raw file,
 	// short form) - a deployment-authored workflow shape's provenance stamps
 	// this as its version, so a shape changes version only when quack.yaml does.
@@ -88,6 +89,10 @@ var defaultSkillPlugins = []string{".agents/vendor/dotagents", ".agents/vendor/p
 type ObservabilityConfig struct {
 	Otel      OtelConfig      `yaml:"otel"`
 	Recording RecordingConfig `yaml:"recording"`
+	// ADKDebug mounts ADK's REST debug console at /debug/adk. DANGER: /run,
+	// /run_sse and /run_live execute any loaded agent WITHOUT the trust gate -
+	// protected only by quack's auth + this flag. MUST stay off in production.
+	ADKDebug bool `yaml:"adk_debug"`
 }
 
 type RecordingConfig struct {
@@ -105,6 +110,13 @@ func (r RecordingConfig) IsEnabled(otelEnabled bool) bool {
 		return true
 	}
 	return *r.Enabled
+}
+
+// ArtifactsConfig turns on ADK's artifact.Service for the DAG executor's
+// runner (see dag.Executor.SetArtifacts). In-memory only - a restart loses
+// everything saved, so this is a spike-grade toggle, not a durability guarantee.
+type ArtifactsConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 type InboundAuthConfig struct {

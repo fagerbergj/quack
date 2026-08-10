@@ -259,6 +259,16 @@ observability:
     store: default_ledger
     retention_days: 30                   # whole-session GC by last-modified; not yet enforced
     clone_snapshot: false                 # opt-in git snapshot in the export bundle; not yet implemented
+  # Mounts ADK's REST debug console at /debug/adk. DANGER: /run, /run_sse
+  # and /run_live execute any loaded agent WITHOUT the trust gate - protected
+  # only by quack's auth + this flag. MUST stay off in production.
+  adk_debug: false
+
+# Backs adkagent.Context.Artifacts() per DAG node - see dag.Executor.
+# SetArtifacts for the known chat-attachment reroute limitation. Intended
+# consumer: reMarkable's document flow (docs/design/extension-modules.md, #819).
+artifacts:
+  enabled: false
 
 # Skill-library plugin roots, beyond quack's own shipped skills/, merged into
 # both the native skill toolset and each ACP agent's opencode skills.paths.

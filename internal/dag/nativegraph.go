@@ -185,7 +185,7 @@ func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userI
 	if err != nil {
 		return false, fmt.Errorf("dag: plan wrapper: %w", err)
 	}
-	r, err := runner.New(runner.Config{AppName: appName, Agent: wrapper, SessionService: e.sessions, AutoCreateSession: true})
+	r, err := runner.New(runner.Config{AppName: appName, Agent: wrapper, SessionService: e.sessions, ArtifactService: e.artifacts, AutoCreateSession: true})
 	if err != nil {
 		return false, fmt.Errorf("dag: plan graph runner: %w", err)
 	}
