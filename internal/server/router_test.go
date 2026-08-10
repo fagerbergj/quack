@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/fagerbergj/quack/internal/auth"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/server"
@@ -169,6 +171,34 @@ func TestRouterADKDebugAbsentByDefault(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code == http.StatusOK {
 		t.Errorf("ADKDebug unset (default) should not be reachable, got 200")
+	}
+}
+
+// TestRouterMountsSDKExtensionAtBareName pins the route shape Jason asked
+// for: an SDK extension mounts at its bare name, not a shared /ext/ prefix.
+func TestRouterMountsSDKExtensionAtBareName(t *testing.T) {
+	h := server.New(server.Options{
+		REST: &rest.Handler{},
+		SDKExtensions: []server.SDKExtensionMount{{
+			Name: "noop",
+			RegisterRoutes: func(authed, public chi.Router) {
+				public.Get("/status", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+			},
+		}},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/noop/status", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("GET /noop/status = %d, want 200 (bare-name mount)", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/ext/noop/status", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code == http.StatusOK {
+		t.Errorf("GET /ext/noop/status = %d, want it NOT mounted under the old /ext/ prefix", rec.Code)
 	}
 }
 

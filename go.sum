@@ -86,6 +86,10 @@ github.com/fagerbergj/quack-extensions/sdk v0.1.0 h1:/ZptSE5vRpMwAe+DhcI/pjtmFpP
 github.com/fagerbergj/quack-extensions/sdk v0.1.0/go.mod h1:wpN/ol73BthR5eJ6rlgSFrgVaqyiF5jX/Y8chjfSv6Q=
 github.com/fagerbergj/quack-extensions/sdk v0.2.0 h1:bYnWXyNiO8m60W5yXwYbOTg5GUQuDEYcpAtLRrMeG0Q=
 github.com/fagerbergj/quack-extensions/sdk v0.2.0/go.mod h1:wpN/ol73BthR5eJ6rlgSFrgVaqyiF5jX/Y8chjfSv6Q=
+github.com/fagerbergj/quack-extensions/sdk v0.2.1 h1:1QoipD2WmIkm8wtIgrxoSxw8pYxEYAMeqq9SIGRjQRw=
+github.com/fagerbergj/quack-extensions/sdk v0.2.1/go.mod h1:fp+3J6PT73ww7q73Zu4uaOCihbsihnarw+YT8F//GCI=
+github.com/fagerbergj/quack-extensions/sdk v0.2.2 h1:bxi4luR7ilLjIOCkYInkk/BWdK9Mxucmzlwp5sqO+3w=
+github.com/fagerbergj/quack-extensions/sdk v0.2.2/go.mod h1:fp+3J6PT73ww7q73Zu4uaOCihbsihnarw+YT8F//GCI=
 github.com/felixge/httpsnoop v1.0.4 h1:NFTV2Zj1bL4mc9sqWACXbQFVBBg2W3GPvqp8/ESS2Wg=
 github.com/felixge/httpsnoop v1.0.4/go.mod h1:m8KPJKqk1gH5J9DgRY2ASl2lWCfGKXixSwevea8zH2U=
 github.com/glebarez/go-sqlite v1.21.2 h1:3a6LFC4sKahUunAmynQKLZceZCOzUthkRkEAl9gAXWo=

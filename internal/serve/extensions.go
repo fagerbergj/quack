@@ -41,7 +41,8 @@ type builtSDKExtension struct {
 // buildSDKExtensions constructs every configured module named under
 // extensions: that is also compiled in (sdk.Registered(), populated by
 // extensions_registry.go's blank imports). A configured name absent from the
-// registry fails startup loudly; a registered module absent from config
+// registry, or one that fails ValidateExtensionName, fails startup loudly; a
+// registered module absent from config, or configured with enabled: false,
 // stays dormant - never constructed (design doc "Model"). orchRef is read
 // lazily by the returned extensions' Dispatch closures: it isn't resolved
 // until the caller Stores the orchestrator, built later in buildFromConfig.
@@ -66,12 +67,30 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, or
 			sort.Strings(known)
 			return nil, fmt.Errorf("config: extensions.%s is not a compiled extension (compiled: %s)", name, strings.Join(known, ", "))
 		}
+		// Only a name that will actually be mounted needs to be route-safe -
+		// a compiled-but-unconfigured module never reaches this check.
+		if err := server.ValidateExtensionName(name); err != nil {
+			return nil, fmt.Errorf("config: extensions.%s: %w", name, err)
+		}
 		node := cfg.Extensions.Modules[name]
 		raw, err := yaml.Marshal(&node)
 		if err != nil {
 			return nil, fmt.Errorf("extensions.%s: re-marshal config: %w", name, err)
 		}
-		dataDir := filepath.Join(cfg.Workspace.Root, "extensions", name)
+
+		var base extsdk.BaseConfig
+		if err := yaml.Unmarshal(raw, &base); err != nil {
+			return nil, fmt.Errorf("extensions.%s: parse base config: %w", name, err)
+		}
+		if base.Enabled != nil && !*base.Enabled {
+			slog.Info("sdk extension disabled by config; staying dormant", "component", "startup", "extension", name)
+			continue
+		}
+
+		dataDir := base.DataDir
+		if dataDir == "" {
+			dataDir = filepath.Join(cfg.Workspace.Root, "extensions", name)
+		}
 		if err := os.MkdirAll(dataDir, 0o755); err != nil {
 			return nil, fmt.Errorf("extensions.%s: data dir: %w", name, err)
 		}

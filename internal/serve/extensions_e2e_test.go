@@ -7,6 +7,7 @@ import (
 	"iter"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -131,9 +132,9 @@ func TestSDKExtensionDispatchLoop(t *testing.T) {
 	ts := httptest.NewServer(h)
 	defer ts.Close()
 
-	resp, err := http.Post(ts.URL+"/ext/noop/dispatch", "text/plain", strings.NewReader("hello from the e2e test"))
+	resp, err := http.Post(ts.URL+"/noop/dispatch", "text/plain", strings.NewReader("hello from the e2e test"))
 	if err != nil {
-		t.Fatalf("POST /ext/noop/dispatch: %v", err)
+		t.Fatalf("POST /noop/dispatch: %v", err)
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusAccepted {
@@ -144,7 +145,7 @@ func TestSDKExtensionDispatchLoop(t *testing.T) {
 	// register -> route -> dispatch -> run -> RunEnded loop completed, not
 	// just that the HTTP call was accepted.
 	getStatus := func() map[string]any {
-		r, err := http.Get(ts.URL + "/ext/noop/status")
+		r, err := http.Get(ts.URL + "/noop/status")
 		if err != nil {
 			t.Fatalf("GET /status: %v", err)
 		}
@@ -213,9 +214,9 @@ func TestSDKExtensionUnconfiguredExtensionRegistersNoRoutes(t *testing.T) {
 	ts := httptest.NewServer(h)
 	defer ts.Close()
 
-	resp, err := http.Get(ts.URL + "/ext/noop/status")
+	resp, err := http.Get(ts.URL + "/noop/status")
 	if err != nil {
-		t.Fatalf("GET /ext/noop/status: %v", err)
+		t.Fatalf("GET /noop/status: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
@@ -236,6 +237,105 @@ func TestSDKExtensionUnknownNameFailsStartup(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "bogus-extension") {
 		t.Errorf("err = %v, want it to name the offending extension", err)
+	}
+}
+
+// enabled: false leaves a configured-and-compiled extension dormant, exactly
+// like an absent block - no construction, no routes.
+func TestSDKExtensionDisabledStaysDormant(t *testing.T) {
+	st, orch, hub := newExtTestStack(t)
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+
+	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  enabled: false\n  greeting: e2e\n")
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef)
+	if err != nil {
+		t.Fatalf("buildSDKExtensions: %v", err)
+	}
+	if len(sdkExts) != 0 {
+		t.Fatalf("sdkExts = %+v, want none (enabled: false)", sdkExts)
+	}
+
+	h := server.New(server.Options{REST: &rest.Handler{}, SDKExtensions: sdkExtensionMounts(sdkExts)})
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/noop/status")
+	if err != nil {
+		t.Fatalf("GET /noop/status: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want %d (disabled extension never mounted)", resp.StatusCode, http.StatusNotFound)
+	}
+}
+
+// data_dir overrides Host.DataDir's default; the default (<workspace>/extensions/<name>)
+// must never get created when an override is given.
+func TestSDKExtensionDataDirOverrideUsed(t *testing.T) {
+	st, orch, hub := newExtTestStack(t)
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+
+	workspaceRoot := t.TempDir()
+	customDataDir := filepath.Join(t.TempDir(), "custom-noop-data")
+	cfg := noopModulesConfig(t, workspaceRoot, "noop:\n  data_dir: "+customDataDir+"\n")
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef)
+	if err != nil {
+		t.Fatalf("buildSDKExtensions: %v", err)
+	}
+	if len(sdkExts) != 1 {
+		t.Fatalf("sdkExts = %+v, want one noop extension", sdkExts)
+	}
+	if _, err := os.Stat(customDataDir); err != nil {
+		t.Errorf("data_dir override %s not created: %v", customDataDir, err)
+	}
+	defaultDataDir := filepath.Join(workspaceRoot, "extensions", "noop")
+	if _, err := os.Stat(defaultDataDir); err == nil {
+		t.Errorf("default data dir %s should not exist when data_dir is overridden", defaultDataDir)
+	}
+}
+
+// The reserved base-config keys (enabled, data_dir) must not break an
+// extension's own yaml.Unmarshal of the same raw bytes - noop only knows
+// "greeting", and yaml tolerates unknown fields by default.
+func TestSDKExtensionReservedKeysToleratedByExtensionConfig(t *testing.T) {
+	st, orch, hub := newExtTestStack(t)
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+
+	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  enabled: true\n  data_dir: \"\"\n  greeting: still works\n")
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef)
+	if err != nil {
+		t.Fatalf("buildSDKExtensions: %v", err)
+	}
+	if len(sdkExts) != 1 || sdkExts[0].name != "noop" {
+		t.Fatalf("sdkExts = %+v, want one noop extension", sdkExts)
+	}
+}
+
+// A registered+configured extension whose name collides with a reserved
+// route fails startup loudly, naming both the extension and the collision.
+func TestSDKExtensionReservedNameCollisionFailsStartup(t *testing.T) {
+	st, orch, hub := newExtTestStack(t)
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+
+	extsdk.Register("chat", func(extsdk.Host, []byte) (extsdk.Extension, error) {
+		t.Fatal("factory must never be called for a reserved-name collision")
+		return nil, nil
+	})
+
+	cfg := noopModulesConfig(t, t.TempDir(), "chat:\n  key: value\n")
+	_, err := buildSDKExtensions(cfg, st, hub, &orchRef)
+	if err == nil {
+		t.Fatal("expected an error for an extension name colliding with a reserved route")
+	}
+	if !strings.Contains(err.Error(), "chat") {
+		t.Errorf("err = %v, want it to name the extension", err)
+	}
+	if !strings.Contains(err.Error(), "reserved") {
+		t.Errorf("err = %v, want it to name the reserved-route collision", err)
 	}
 }
 
