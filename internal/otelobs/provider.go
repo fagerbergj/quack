@@ -31,7 +31,8 @@ const ServiceName = "quack"
 const ChatIDKey = "chat_id"
 
 // Providers holds the process-wide OTel wiring; emission-only - Grafana owns viewing.
-// KNOWN LIMITATION: ADK's own internal spans do not flow through this provider.
+// ADK's internal spans DO flow through it (the global TracerProvider delegates). The
+// real gap is upstream: Runner.Run never opens its own span (runner.go:184).
 type Providers struct {
 	TracerProvider *sdktrace.TracerProvider
 	MeterProvider  *metric.MeterProvider
