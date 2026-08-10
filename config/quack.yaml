@@ -264,6 +264,12 @@ observability:
   # only by quack's auth + this flag. MUST stay off in production.
   adk_debug: false
 
+# Backs adkagent.Context.Artifacts() per DAG node - see dag.Executor.
+# SetArtifacts for the known chat-attachment reroute limitation. Intended
+# consumer: reMarkable's document flow (docs/design/extension-modules.md, #819).
+artifacts:
+  enabled: false
+
 # Skill-library plugin roots, beyond quack's own shipped skills/, merged into
 # both the native skill toolset and each ACP agent's opencode skills.paths.
 # Each root is resolved once at startup (internal/plugin) via: a root

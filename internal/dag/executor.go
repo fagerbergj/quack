@@ -9,6 +9,7 @@ import (
 	"time"
 
 	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
@@ -28,6 +29,7 @@ type Executor struct {
 	controls    *runControls
 	maxActive   int
 	setupFn     SetupFunc
+	artifacts   artifact.Service // nil unless config artifacts.enabled
 
 	gateResults sync.Map
 }
@@ -38,6 +40,11 @@ func (e *Executor) SetMaxActive(n int) {
 		e.maxActive = n
 	}
 }
+
+// SetArtifacts wires an artifact.Service into the plan graph's runner,
+// reachable from every node via adkagent.Context.Artifacts(). Does NOT
+// reroute node attachments off inline session bytes - see workerInput.
+func (e *Executor) SetArtifacts(svc artifact.Service) { e.artifacts = svc }
 
 // ResetNodeCancels: clears user-cancelled node flags for the next turn.
 func (e *Executor) ResetNodeCancels(chatID string) { e.controls.resetCancelled(chatID) }

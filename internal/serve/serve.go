@@ -23,6 +23,7 @@ import (
 	"time"
 
 	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/artifact"
 	adkmemory "google.golang.org/adk/v2/memory"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
@@ -469,11 +470,17 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		return nil, nil, "", fmt.Errorf("orchestrator skills toolset init failed: %w", err)
 	}
 
+	var artifactSvc artifact.Service
+	if cfg.Artifacts.Enabled {
+		artifactSvc = artifact.InMemoryService()
+	}
+
 	planner := dag.NewPlanner(agentInfos, cfg.Workspace.CheckCommands, planJudge)
 	cfgFor := func(name string) vetting.Config { return gateCfgs[name] }
 	executor := dag.NewExecutor(st.Sessions, clientMap, modelMap, judgeFactory, cfgFor, mediaAgents)
 	executor.SetMaxActive(cfg.Dag.MaxActiveNodes)
 	executor.SetSetup(setupFn)
+	executor.SetArtifacts(artifactSvc)
 	executorRef.Store(executor)
 	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
 	orch.SetMaxActiveRuns(cfg.Dag.MaxActiveRuns)
@@ -509,7 +516,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 
 	var adkDebugHandler http.Handler
 	if cfg.Observability.ADKDebug {
-		if mount, derr := adkdebug.New(st.Sessions, clientMap, nil); derr != nil {
+		if mount, derr := adkdebug.New(st.Sessions, clientMap, artifactSvc); derr != nil {
 			slog.Warn("adk debug mount failed; disabled", "component", "startup", "err", derr)
 		} else {
 			if otelProviders.TracerProvider != nil {
