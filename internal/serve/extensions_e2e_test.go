@@ -160,7 +160,9 @@ func TestSDKExtensionDispatchLoop(t *testing.T) {
 		return getStatus()["dispatches"] == float64(1)
 	})
 
-	// (a) the run appears as a normal chat with a turn.
+	// (a) the run appears as a normal chat with a turn, namespaced as
+	// ext:<extension>:<LocalID> so it can never collide with another
+	// extension's or a user's chat.
 	ctx := context.Background()
 	chats, _, err := st.ListChats(ctx, 10, "", store.ChatsScope{Active: true})
 	if err != nil {
@@ -168,12 +170,12 @@ func TestSDKExtensionDispatchLoop(t *testing.T) {
 	}
 	var chatID string
 	for _, c := range chats {
-		if strings.HasPrefix(c.ID, "noop-") {
+		if strings.HasPrefix(c.ID, "ext:noop:noop-") {
 			chatID = c.ID
 		}
 	}
 	if chatID == "" {
-		t.Fatalf("no noop-* chat found among %d chats", len(chats))
+		t.Fatalf("no ext:noop:noop-* chat found among %d chats", len(chats))
 	}
 	turns, err := st.ListTurns(ctx, chatID)
 	if err != nil {
@@ -237,20 +239,21 @@ func TestSDKExtensionUnknownNameFailsStartup(t *testing.T) {
 	}
 }
 
-// (e) dispatching twice to the same ChatID appends a second turn to the same
-// chat rather than starting a new one - exercised directly against the
+// (e) dispatching twice to the same LocalID appends a second turn to the
+// same chat rather than starting a new one - exercised directly against the
 // dispatch adapter (newExtDispatch) since noop's own dispatch policy always
-// mints a fresh id, but quack's ChatID-reuse contract is what's under test.
+// mints a fresh id, but quack's LocalID-reuse contract is what's under test.
 func TestSDKExtensionRedispatchSameChatIDAppendsTurn(t *testing.T) {
 	st, orch, hub := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 
 	var extHolder atomic.Pointer[extsdk.Extension]
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil)
 
-	const chatID = "noop-redispatch-fixture"
-	req := extsdk.DispatchRequest{ChatID: chatID, Message: "first turn"}
+	const localID = "redispatch-fixture"
+	const chatID = "ext:noop:" + localID
+	req := extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID}, Ask: extsdk.Ask{Message: "first turn"}}
 	if err := dispatch(context.Background(), req); err != nil {
 		t.Fatalf("first dispatch: %v", err)
 	}
@@ -258,7 +261,7 @@ func TestSDKExtensionRedispatchSameChatIDAppendsTurn(t *testing.T) {
 	// runs on the same chat would race each other's event-log writes.
 	waitRunSettled(t, st, chatID)
 
-	req.Message = "second turn"
+	req.Ask.Message = "second turn"
 	if err := dispatch(context.Background(), req); err != nil {
 		t.Fatalf("second dispatch: %v", err)
 	}
@@ -287,6 +290,40 @@ func TestSDKExtensionRedispatchSameChatIDAppendsTurn(t *testing.T) {
 	}
 }
 
+// (f) an unknown Workflow name fails the dispatch call itself, before any
+// chat row is created - never a silent hint the planner might ignore.
+func TestSDKExtensionUnknownWorkflowErrorsCreatesNoChat(t *testing.T) {
+	st, orch, hub := newExtTestStack(t)
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+
+	var extHolder atomic.Pointer[extsdk.Extension]
+	workflowNames := map[string]bool{"document-ingest": true}
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, workflowNames)
+
+	const localID = "unknown-workflow-fixture"
+	const chatID = "ext:noop:" + localID
+	req := extsdk.DispatchRequest{
+		Chat: extsdk.ChatRef{LocalID: localID},
+		Ask:  extsdk.Ask{Message: "hello"},
+		Run:  extsdk.RunConfig{Workflow: "bogus-shape"},
+	}
+	if err := dispatch(context.Background(), req); err == nil {
+		t.Fatal("expected an error for an unknown workflow name")
+	} else if !strings.Contains(err.Error(), "bogus-shape") {
+		t.Errorf("err = %v, want it to name the offending workflow", err)
+	}
+
+	ctx := context.Background()
+	c, err := st.GetChat(ctx, chatID)
+	if err != nil {
+		t.Fatalf("GetChat: %v", err)
+	}
+	if c != nil {
+		t.Fatalf("GetChat(%s) = %+v, want no chat created", chatID, c)
+	}
+}
+
 // TestSDKExtensionDispatchPreservesTraceContinuity pins the design doc's OTel
 // test case: Dispatch must preserve the caller's context so the extension's
 // inbound span parents the whole run trace, not start a disconnected one.
@@ -301,14 +338,16 @@ func TestSDKExtensionDispatchPreservesTraceContinuity(t *testing.T) {
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 	var extHolder atomic.Pointer[extsdk.Extension]
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil)
 
 	ctx, inboundSpan := tp.Tracer("quack-ext-test").Start(context.Background(), "inbound")
 	wantTraceID := inboundSpan.SpanContext().TraceID()
 	inboundSpan.End()
 
-	const chatID = "noop-trace-fixture"
-	if err := dispatch(ctx, extsdk.DispatchRequest{ChatID: chatID, Message: "hi"}); err != nil {
+	const localID = "trace-fixture"
+	const chatID = "ext:noop:" + localID
+	req := extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID}, Ask: extsdk.Ask{Message: "hi"}}
+	if err := dispatch(ctx, req); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
 	waitRunSettled(t, st, chatID)

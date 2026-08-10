@@ -24,6 +24,7 @@ import (
 	"github.com/fagerbergj/quack/internal/server"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
+	"github.com/fagerbergj/quack/internal/workflowcatalog"
 )
 
 // extRunUserID distinguishes extension-dispatched sessions from local UI and
@@ -52,6 +53,8 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, or
 	}
 	sort.Strings(names)
 
+	workflowNames := catalogNames(cfg)
+
 	built := make([]builtSDKExtension, 0, len(names))
 	for _, name := range names {
 		factory, ok := factories[name]
@@ -75,7 +78,7 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, or
 
 		var extHolder atomic.Pointer[extsdk.Extension]
 		host := extsdk.Host{
-			Dispatch: newExtDispatch(name, orchRef, st, hub, &extHolder),
+			Dispatch: newExtDispatch(name, orchRef, st, hub, &extHolder, workflowNames),
 			Log:      slog.Default().With("component", "ext."+name),
 			DataDir:  dataDir,
 		}
@@ -88,6 +91,19 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, or
 		slog.Info("sdk extension enabled", "component", "startup", "extension", name)
 	}
 	return built, nil
+}
+
+// catalogNames is the set of workflow-catalog shape names a dispatch's
+// Run.Workflow may reference: config-defined shapes only (#807) - the
+// built-in "Common workflows" table's rows describe a request shape, not a
+// callable name.
+func catalogNames(cfg *config.Config) map[string]bool {
+	shapes := workflowcatalog.FromConfig(cfg.Skills.Workflows, cfg.Revision)
+	names := make(map[string]bool, len(shapes))
+	for _, s := range shapes {
+		names[s.Name] = true
+	}
+	return names
 }
 
 // startSDKExtensions calls Start on every extension implementing
@@ -144,37 +160,55 @@ func sdkExtensionTools(exts []builtSDKExtension) []tool.Tool {
 // The prep (chat row, turn) is synchronous and fast; the run itself happens
 // in a goroutine, so Dispatch returns before the run completes - RunObserver
 // is how a caller learns it finished.
-func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrator], st *store.Store, hub *stream.Hub, extHolder *atomic.Pointer[extsdk.Extension]) extsdk.DispatchFunc {
+//
+// Ask.NodeContext, Ask.ContextItems, Run.Setup, Run.ReadOnly, and
+// Delivery.AllowedKinds have no consumer here yet - they await quack-core's
+// Grant/CICheck generalization and the GitHub migration that's the real
+// consumer of a pre-provisioned clone and node-scoped context.
+func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrator], st *store.Store, hub *stream.Hub, extHolder *atomic.Pointer[extsdk.Extension], workflowNames map[string]bool) extsdk.DispatchFunc {
 	return func(ctx context.Context, req extsdk.DispatchRequest) error {
-		if req.ChatID == "" {
-			return fmt.Errorf("extensions.%s: dispatch requires a ChatID", name)
+		if req.Chat.LocalID == "" {
+			return fmt.Errorf("extensions.%s: dispatch requires Chat.LocalID", name)
+		}
+		if req.Run.Workflow != "" && !workflowNames[req.Run.Workflow] {
+			return fmt.Errorf("extensions.%s: workflow %q is not in the configured workflow catalog", name, req.Run.Workflow)
 		}
 		orch := orchRef.Load()
 		if orch == nil {
 			return fmt.Errorf("extensions.%s: orchestrator not ready", name)
 		}
-		userID := req.User
+		// Namespaced so two extensions (or an extension and a user chat)
+		// can never collide on the same global chat id.
+		chatID := fmt.Sprintf("ext:%s:%s", name, req.Chat.LocalID)
+		userID := req.Chat.User
 		if userID == "" {
 			userID = extRunUserID
 		}
 
-		originJSON := ""
-		if req.Origin != nil {
-			if b, err := json.Marshal(req.Origin); err == nil {
-				originJSON = string(b)
-			}
-		}
 		// Detach from the HTTP request's lifecycle (the run outlives the
 		// handler) while keeping the caller's trace, so the extension's
 		// inbound span still parents the whole run's spans.
 		runCtx := context.WithoutCancel(ctx)
-		if err := st.SetChatOrigin(runCtx, req.ChatID, userID, originJSON); err != nil {
+
+		if req.Chat.ResetHistory {
+			if err := orch.ResetSession(runCtx, userID, chatID); err != nil {
+				return fmt.Errorf("extensions.%s: reset history: %w", name, err)
+			}
+		}
+
+		originJSON := ""
+		if req.Chat.Origin != nil {
+			if b, err := json.Marshal(req.Chat.Origin); err == nil {
+				originJSON = string(b)
+			}
+		}
+		if err := st.SetChatOrigin(runCtx, chatID, userID, originJSON); err != nil {
 			return fmt.Errorf("extensions.%s: chat setup: %w", name, err)
 		}
-		ensureExtChatTitle(runCtx, st, req.ChatID, req.Origin)
+		ensureExtChatTitle(runCtx, st, chatID, req.Chat.Title, req.Chat.Origin)
 
-		attachments := make([]*genai.Part, 0, len(req.Attachments))
-		for _, a := range req.Attachments {
+		attachments := make([]*genai.Part, 0, len(req.Ask.Attachments))
+		for _, a := range req.Ask.Attachments {
 			mime := a.MIME
 			if mime == "" {
 				mime = "application/octet-stream"
@@ -183,41 +217,44 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		}
 
 		turnID := uuid.NewString()
-		if err := st.SaveTurn(runCtx, req.ChatID, turnID); err != nil {
-			slog.Warn("extension dispatch: save turn failed", "component", "ext."+name, "chat", req.ChatID, "err", err)
+		if err := st.SaveTurn(runCtx, chatID, turnID); err != nil {
+			slog.Warn("extension dispatch: save turn failed", "component", "ext."+name, "chat", chatID, "err", err)
 		}
 
-		go driveExtensionRun(runCtx, name, orch, st, hub, extHolder, userID, req.ChatID, turnID, composeDispatchMessage(req), attachments)
+		go driveExtensionRun(runCtx, name, orch, st, hub, extHolder, userID, chatID, turnID, composeDispatchMessage(req), attachments)
 		return nil
 	}
 }
 
-// composeDispatchMessage folds Background and Workflow into Message. Workflow
+// composeDispatchMessage folds the Workflow hint into Ask.Message. Workflow
 // is a hint, not a binding: the planner is one LLM call that reads the
 // workflow-catalog table itself (internal/workflowcatalog) - there is no
-// programmatic shape selector today, so naming one here only nudges that call.
+// programmatic shape selector today, so naming one here only nudges that
+// call. By the time this runs, Workflow has already been validated against
+// the catalog (or is empty).
 func composeDispatchMessage(req extsdk.DispatchRequest) string {
-	msg := req.Message
-	if req.Workflow != "" {
-		msg = fmt.Sprintf("Use the %q workflow shape from the workflow catalog (plan-work's Common workflows table) if one is configured with that name.\n\n%s", req.Workflow, msg)
-	}
-	if req.Background != "" {
-		msg = req.Background + "\n\n---\n\n" + msg
+	msg := req.Ask.Message
+	if req.Run.Workflow != "" {
+		msg = fmt.Sprintf("Use the %q workflow shape from the workflow catalog (plan-work's Common workflows table) if one is configured with that name.\n\n%s", req.Run.Workflow, msg)
 	}
 	return msg
 }
 
-// ensureExtChatTitle sets a fresh chat's title from Origin.Label, mirroring
-// internal/github's ensureTitle - never overwrites a title already set.
-func ensureExtChatTitle(ctx context.Context, st *store.Store, chatID string, origin *extsdk.ChatOrigin) {
-	if origin == nil || origin.Label == "" {
+// ensureExtChatTitle sets a fresh chat's title - an explicit Chat.Title if
+// given, else Origin.Label - mirroring internal/github's ensureTitle; never
+// overwrites a title already set.
+func ensureExtChatTitle(ctx context.Context, st *store.Store, chatID, title string, origin *extsdk.ChatOrigin) {
+	if title == "" && origin != nil {
+		title = origin.Label
+	}
+	if title == "" {
 		return
 	}
 	c, err := st.GetChat(ctx, chatID)
 	if err != nil || c == nil || c.Title != "" {
 		return
 	}
-	_ = st.UpdateTitle(ctx, chatID, origin.Label)
+	_ = st.UpdateTitle(ctx, chatID, title)
 }
 
 // driveExtensionRun runs one dispatched turn to completion, mirroring
@@ -240,6 +277,7 @@ func driveExtensionRun(ctx context.Context, name string, orch *orchestrator.Orch
 	pub.Publish(stream.ResponseCreated(turnID))
 
 	var activePlanID string
+	var needsInput stream.NodeNeedsInputData
 	for ev, err := range orch.Run(runCtx, userID, chatID, message, attachments) {
 		if err != nil {
 			slog.Warn("extension run error", "component", "ext."+name, "chat", chatID, "err", err)
@@ -253,22 +291,29 @@ func driveExtensionRun(ctx context.Context, name string, orch *orchestrator.Orch
 		} else if activePlanID != "" {
 			runlog.PersistNodeEvent(st, activePlanID, ev)
 		}
+		if ev.Name == stream.EventNodeNeedsInput {
+			if d, ok := ev.Data.(stream.NodeNeedsInputData); ok {
+				needsInput = d
+			}
+		}
 		pub.Publish(ev)
 	}
 	pub.Publish(stream.Done())
 
-	status := stampExtRunOutcome(runCtx, orch, st, userID, chatID)
+	outcome := buildExtRunOutcome(runCtx, orch, st, userID, chatID, activePlanID != "", needsInput)
 	if p := extHolder.Load(); p != nil {
 		if obs, ok := (*p).(extsdk.RunObserver); ok {
-			obs.RunEnded(chatID, status)
+			obs.RunEnded(chatID, outcome)
 		}
 	}
 }
 
-// stampExtRunOutcome mirrors rest.Handler.stampRunOutcome / github's
-// stampRunOutcome (#738's terminal-status rule), returning the sdk.RunStatus
-// RunObserver expects.
-func stampExtRunOutcome(parent context.Context, orch *orchestrator.Orchestrator, st *store.Store, userID, chatID string) extsdk.RunStatus {
+// buildExtRunOutcome mirrors rest.Handler.stampRunOutcome / github's
+// stampRunOutcome (#738's terminal-status rule) and additionally builds the
+// RunOutcome RunObserver expects. TimedOut always reports false: extension
+// dispatch has no per-run deadline wired yet (only the GitHub webhook path
+// sets one) - that lands with the GitHub migration.
+func buildExtRunOutcome(parent context.Context, orch *orchestrator.Orchestrator, st *store.Store, userID, chatID string, planRan bool, needsInput stream.NodeNeedsInputData) extsdk.RunOutcome {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 	defer cancel()
 	turns, err := st.GetTurnsWithContent(ctx, orchestrator.AppName, userID, chatID)
@@ -280,12 +325,17 @@ func stampExtRunOutcome(parent context.Context, orch *orchestrator.Orchestrator,
 	if err := st.StampRunOutcome(ctx, chatID, status, question); err != nil {
 		slog.Warn("extension: stamp run outcome failed", "component", "serve", "chat", chatID, "err", err)
 	}
+
+	out := extsdk.RunOutcome{PlanRan: planRan, Answer: strings.TrimSpace(orch.LatestAnswer(ctx, userID, chatID))}
 	switch status {
 	case store.RunStatusFailed:
-		return extsdk.RunFailed
+		out.Status = extsdk.RunFailed
 	case store.RunStatusNeedsInput:
-		return extsdk.RunNeedsInput
+		out.Status = extsdk.RunNeedsInput
+		out.Question = question
+		out.NodeID = needsInput.NodeID
 	default:
-		return extsdk.RunDone
+		out.Status = extsdk.RunDone
 	}
+	return out
 }
