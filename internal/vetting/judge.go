@@ -561,6 +561,7 @@ var codeCiteRe = regexp.MustCompile(`\b([\w.-]+)@([\w.-]+(?:/[\w.-]+)+)(?::(\d+(
 
 // citationScore: deterministic grade per cited link. Web URLs against session ledger; local code citations against clone on disk.
 // Web layers: fetched=1.00, under cloned repo=1.00, searched=0.75, same host fetched=0.50, same host searched=0.25, neither=0.00.
+// Worker-facing meaning of these tiers lives in citeReasonLegend below - keep the two in sync.
 func citationScore(answer string, act workerActivity, cloneRoots []string) (score float64, details []citationDetail, ok bool) {
 	if len(act.fetched) == 0 && len(act.seen) == 0 && len(act.clonedRepos) == 0 && len(cloneRoots) == 0 {
 		return 0, nil, false
@@ -761,9 +762,12 @@ type citationDetail struct {
 // a forty-link answer must not produce forty lines of feedback (#789).
 const maxCiteReasonLinks = 10
 
-// citeReason names the specific links that scored below full backing, so the
-// worker can re-fetch exactly those instead of guessing from a mean score.
-// Read-only over score/details - does not touch citationScore's own contract.
+// citeReasonLegend: what each citationScore tier (~line 563) means and the
+// remedy, for a revising worker with no other context.
+const citeReasonLegend = "backing tiers: 1.0=fetched/on-clone (trust it), 0.75=seen in search results only (fetch to confirm before keeping), 0.5/0.25=same host but exact page never seen (likely invented - re-find or drop), 0=never seen anywhere (fabricated - drop it). Score is the mean across all cited links, so one weak link among many matters less than an isolated one."
+
+// citeReason names the links that scored below full backing, worst first, so
+// the worker fixes the most-damning ones first if the list gets capped.
 func citeReason(score float64, details []citationDetail) string {
 	reason := fmt.Sprintf("deterministic: %d cited link(s), mean backing %.2f", len(details), score)
 	var unbacked []citationDetail
@@ -775,6 +779,8 @@ func citeReason(score float64, details []citationDetail) string {
 	if len(unbacked) == 0 {
 		return reason
 	}
+	// Worst-first (stable) so the cap below elides the least-bad links, not the most-damning ones.
+	sort.SliceStable(unbacked, func(i, j int) bool { return unbacked[i].score < unbacked[j].score })
 	elided := 0
 	if len(unbacked) > maxCiteReasonLinks {
 		elided = len(unbacked) - maxCiteReasonLinks
@@ -788,6 +794,7 @@ func citeReason(score float64, details []citationDetail) string {
 	if elided > 0 {
 		reason += fmt.Sprintf(" (and %d more elided)", elided)
 	}
+	reason += " " + citeReasonLegend
 	return reason
 }
 
