@@ -39,8 +39,6 @@ import (
 	"github.com/fagerbergj/quack/internal/bundledir"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
-	"github.com/fagerbergj/quack/internal/extension"
-	"github.com/fagerbergj/quack/internal/github"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
@@ -328,37 +326,39 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		return nil, nil, "", fmt.Errorf("inference model init failed: %w", err)
 	}
 
-	var githubApp *github.App
-	var extTools []tool.Tool
-	var gitTokenSource tools.GitTokenSource
-	if gh := cfg.Extensions.GitHub; gh != nil {
-		pem, kerr := github.LoadPrivateKey(gh.PrivateKey, gh.PrivateKeyPath)
-		if kerr != nil {
-			return nil, nil, "", kerr
-		}
-		githubApp, err = github.NewApp(gh.Issuer(), pem)
-		if err != nil {
-			return nil, nil, "", fmt.Errorf("github extension init failed: %w", err)
-		}
-		githubApp.SetPartialFixLabel(gh.Labels.PartialFix)
-		extTools = githubApp.Tools()
-		gitTokenSource = githubApp
-		slog.Info("github extension enabled", "component", "startup", "issuer", gh.Issuer(), "mention", gh.Mention)
-	}
-
 	// runHub is needed by the SDK extensions built below (Dispatch fans a
-	// run's events through it) as well as REST and the GitHub extension later.
+	// run's events through it) as well as REST.
 	runHub := stream.NewHub()
 
-	// orchRef is resolved after orch is built further down - an SDK
-	// extension's Dispatch may not fire until long after construction, but
-	// its Tools() are needed now to fold into extTools before buildAgents.
+	// orchRef/judgeModelRef are resolved further down - an SDK extension's
+	// Dispatch/Classify may not fire until long after construction, but its
+	// Tools() are needed now to fold into extTools before buildAgents (which
+	// is also what actually builds the judge model judgeModelRef will hold).
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
-	sdkExts, err := buildSDKExtensions(cfg, st, runHub, &orchRef, artifacts)
+	var judgeModelRef atomic.Pointer[model.LLM]
+	sdkExts, err := buildSDKExtensions(cfg, st, runHub, &orchRef, artifacts, jail, &judgeModelRef)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	extTools = append(extTools, sdkExtensionTools(sdkExts)...)
+	extTools := sdkExtensionTools(sdkExts)
+
+	// The SDK inverse interfaces' first real consumer: whichever compiled,
+	// configured module implements them (github, today) supplies quack's
+	// push credential and delivery target - detected the same way
+	// Starter/Stopper are, not hardcoded to one extension's name.
+	gitCredSrc, gitCredSrcName := findGitCredentialSource(sdkExts)
+	deliverer, delivererName := findDeliverer(sdkExts)
+	var gitTokenSource tools.GitTokenSource
+	if gitCredSrc != nil {
+		gitTokenSource = sdkGitCredentialAdapter{src: gitCredSrc}
+		slog.Info("extension supplies git credentials", "component", "startup", "extension", gitCredSrcName)
+	}
+	var deliver vetting.DeliverFunc
+	if deliverer != nil {
+		deliver = sdkDeliverAdapter{deliverer: deliverer}.Deliver
+		slog.Info("extension supplies delivery", "component", "startup", "extension", delivererName)
+	}
+
 	cleanups = append(cleanups, func() {
 		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer stopCancel()
@@ -447,14 +447,13 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		return ex != nil && ex.NodeCancelled(chatID, nodeID)
 	}
 
-	var deliver vetting.DeliverFunc
-	if githubApp != nil {
-		deliver = githubApp.Deliver
-	}
 	var setupFn dag.SetupFunc
 	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(cfg, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, deliver, nodeCancelled, &setupFn, artifacts)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("agent build failed: %w", err)
+	}
+	if judgeModel != nil {
+		judgeModelRef.Store(&judgeModel)
 	}
 	cleanups = append(cleanups, func() {
 		nodeServers.closeAll()
@@ -516,9 +515,6 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	executorRef.Store(executor)
 	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
 	orch.SetMaxActiveRuns(cfg.Dag.MaxActiveRuns)
-	if gh := cfg.Extensions.GitHub; gh != nil && gh.RunTimeoutMinutes > 0 {
-		orch.SetRunDeadline(time.Duration(gh.RunTimeoutMinutes) * time.Minute)
-	}
 	orchRef.Store(orch)
 	if err := startSDKExtensions(ctx, sdkExts); err != nil {
 		return nil, nil, "", fmt.Errorf("sdk extensions start failed: %w", err)
@@ -536,16 +532,6 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	spa, err := fs.Sub(webDist, "web/dist")
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("embed SPA fs failed: %w", err)
-	}
-
-	var extensions []extension.Extension
-	if githubApp != nil {
-		ghExt := github.NewExtension(githubApp, *cfg.Extensions.GitHub, orch, st, runHub)
-		if judgeModel != nil {
-			ghExt.SetIntentClassifier(&modelIntentClassifier{model: judgeModel})
-		}
-		ghExt.SetJail(jail, localUserID)
-		extensions = append(extensions, ghExt)
 	}
 
 	var adkDebugHandler http.Handler
@@ -568,7 +554,6 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		REST:          rest.NewHandler(st, orch, llm, jail, runHub, ledgerStore, Version, taskStore, userStore, artifacts, extensionDescriptors(sdkExts)),
 		MCP:           mcpserver.Handler(orch),
 		SPA:           spa,
-		Extensions:    extensions,
 		SDKExtensions: sdkExtensionMounts(sdkExts),
 		Auth:          authMW,
 		ADKDebug:      adkDebugHandler,

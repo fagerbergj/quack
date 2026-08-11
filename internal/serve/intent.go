@@ -8,20 +8,16 @@ import (
 	"google.golang.org/genai"
 )
 
-// modelIntentClassifier adapts a model.LLM to github.IntentClassifier: one
-// prompt in, the model's raw text out. Backed by the SAME judge model the
-// trust gate already runs (gates.judge) - it's deliberately co-resident with
+// classifyWithModel is one free-text model round trip: prompt in, the
+// model's raw text out. Backs Host.Classify, bound to the SAME judge model
+// the trust gate already runs (gates.judge) - deliberately co-resident with
 // the workers on this deployment, so classification costs no model swap.
-type modelIntentClassifier struct {
-	model model.LLM
-}
-
-func (c *modelIntentClassifier) Classify(ctx context.Context, prompt string) (string, error) {
+func classifyWithModel(ctx context.Context, m model.LLM, prompt string) (string, error) {
 	req := &model.LLMRequest{
 		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: prompt}}}},
 	}
 	var out strings.Builder
-	for resp, err := range c.model.GenerateContent(ctx, req, false) {
+	for resp, err := range m.GenerateContent(ctx, req, false) {
 		if err != nil {
 			return "", err
 		}

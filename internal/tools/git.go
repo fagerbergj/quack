@@ -329,7 +329,7 @@ func validateRef(ref, tool string) error {
 	return nil
 }
 
-// System identity for all quack commits. Exported for internal/github.
+// System identity for all quack commits. Exported for quack-extensions/github's own-commit detection.
 const (
 	GitCommitAuthorName  = "quack"
 	GitCommitAuthorEmail = "agent@quack.local"

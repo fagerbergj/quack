@@ -12,7 +12,6 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/fagerbergj/quack/internal/auth"
-	"github.com/fagerbergj/quack/internal/extension"
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/server/adkdebug"
 	"github.com/fagerbergj/quack/internal/server/rest"
@@ -24,11 +23,10 @@ const MCPPath = "/api/v1/mcp"
 // Options configure the router.
 type Options struct {
 	REST          *rest.Handler
-	MCP           http.Handler          // optional Streamable-HTTP MCP handler
-	SPA           fs.FS                 // optional embedded frontend dist
-	Extensions    []extension.Extension // optional inbound routes (e.g. GitHub webhook)
-	SDKExtensions []SDKExtensionMount   // optional quack-extensions SDK modules, mounted at /<name>
-	Auth          *auth.Auth            // optional inbound auth (nil = disabled, open)
+	MCP           http.Handler        // optional Streamable-HTTP MCP handler
+	SPA           fs.FS               // optional embedded frontend dist
+	SDKExtensions []SDKExtensionMount // optional quack-extensions SDK modules, mounted at /<name>
+	Auth          *auth.Auth          // optional inbound auth (nil = disabled, open)
 	// ADKDebug is adkdebug.Mount.Handler, gated by config observability.adk_debug
 	// (default off). It runs agents ungated (see adkdebug package doc) - mounted
 	// INSIDE the auth group deliberately, never as an unauthenticated extension.
@@ -67,11 +65,6 @@ func New(opts Options) http.Handler {
 
 		schema.HandlerFromMux(opts.REST, r)
 	})
-
-	// Extension webhooks outside the auth group - they authenticate via their own signatures.
-	for _, ext := range opts.Extensions {
-		ext.RegisterRoutes(r)
-	}
 
 	// ONE mount per extension: authed routes go through a middleware-wrapped
 	// view of the same router, avoiding a duplicate-mount conflict with public.
