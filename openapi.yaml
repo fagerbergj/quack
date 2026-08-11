@@ -11,11 +11,19 @@ info:
 servers:
   - url: /
 
+# internal/auth.Middleware: trusted header wins if present, else a verified
+# OIDC bearer token - either alone satisfies a request, not both.
+security:
+  - bearerAuth: []
+  - trustedHeader: []
+
 paths:
   /health:
     get:
       operationId: healthCheck
       summary: Liveness check
+      # Liveness probe; requireAuthExceptHealth always lets it through unauthenticated.
+      security: []
       responses:
         "200":
           description: OK
@@ -1242,3 +1250,29 @@ components:
           format: double
         judge_passed:
           type: boolean
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        OIDC bearer token, verified against the configured issuer/audience
+        (internal/auth.newOIDCVerifier). Enabled only when the deployment sets
+        auth.oidc in config/quack.yaml; unconfigured, no request satisfies
+        this scheme and trustedHeader (or nothing, if auth is off entirely)
+        governs instead.
+
+    trustedHeader:
+      type: apiKey
+      in: header
+      name: X-Authentik-Username
+      description: >
+        A forward-auth gateway's already-authenticated-user header
+        (internal/auth.Auth.trustedIdentity) - present and non-empty is
+        trusted outright, taking priority over bearerAuth per request. The
+        header NAME is deployment-configured
+        (auth.trusted_headers.user in config/quack.yaml, plus an optional
+        auth.trusted_headers.groups); X-Authentik-Username is this
+        description's example value, not a fixed contract - swap it for
+        whatever header your gateway actually sets.

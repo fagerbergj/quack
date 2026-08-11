@@ -4,6 +4,7 @@
 package schema
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/oapi-codegen/runtime"
+)
+
+const (
+	BearerAuthScopes    bearerAuthContextKey    = "bearerAuth.Scopes"
+	TrustedHeaderScopes trustedHeaderContextKey = "trustedHeader.Scopes"
 )
 
 // Defines values for AgentActivityOutputItemType.
@@ -639,6 +645,12 @@ type NodeID = string
 // ResponseID defines model for ResponseID.
 type ResponseID = string
 
+// bearerAuthContextKey is the context key for bearerAuth security scheme
+type bearerAuthContextKey string
+
+// trustedHeaderContextKey is the context key for trustedHeader security scheme
+type trustedHeaderContextKey string
+
 // ListChatsParams defines parameters for ListChats.
 type ListChatsParams struct {
 	// Limit Max chats to return. Defaults to 20; capped at 100.
@@ -1099,6 +1111,14 @@ func (siw *ServerInterfaceWrapper) ListChats(w http.ResponseWriter, r *http.Requ
 	var err error
 	_ = err
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ListChatsParams
 
@@ -1189,6 +1209,14 @@ func (siw *ServerInterfaceWrapper) ListChats(w http.ResponseWriter, r *http.Requ
 // CreateChat operation middleware
 func (siw *ServerInterfaceWrapper) CreateChat(w http.ResponseWriter, r *http.Request) {
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateChat(w, r)
 	}))
@@ -1214,6 +1242,14 @@ func (siw *ServerInterfaceWrapper) DeleteChat(w http.ResponseWriter, r *http.Req
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
 		return
 	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteChat(w, r, chatId)
@@ -1241,6 +1277,14 @@ func (siw *ServerInterfaceWrapper) GetChat(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetChat(w, r, chatId)
 	}))
@@ -1266,6 +1310,14 @@ func (siw *ServerInterfaceWrapper) UpdateChat(w http.ResponseWriter, r *http.Req
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
 		return
 	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateChat(w, r, chatId)
@@ -1302,6 +1354,14 @@ func (siw *ServerInterfaceWrapper) EditNodeTask(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.EditNodeTask(w, r, chatId, nodeId)
 	}))
@@ -1336,6 +1396,14 @@ func (siw *ServerInterfaceWrapper) QueueNodeMessage(w http.ResponseWriter, r *ht
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "node_id", Err: err})
 		return
 	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.QueueNodeMessage(w, r, chatId, nodeId)
@@ -1381,6 +1449,14 @@ func (siw *ServerInterfaceWrapper) RemoveQueuedMessage(w http.ResponseWriter, r 
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RemoveQueuedMessage(w, r, chatId, nodeId, messageId)
 	}))
@@ -1425,6 +1501,14 @@ func (siw *ServerInterfaceWrapper) EditQueuedMessage(w http.ResponseWriter, r *h
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.EditQueuedMessage(w, r, chatId, nodeId, messageId)
 	}))
@@ -1460,6 +1544,14 @@ func (siw *ServerInterfaceWrapper) UpdateNodeStatus(w http.ResponseWriter, r *ht
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateNodeStatus(w, r, chatId, nodeId)
 	}))
@@ -1486,6 +1578,14 @@ func (siw *ServerInterfaceWrapper) GetChatRecording(w http.ResponseWriter, r *ht
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetChatRecording(w, r, chatId)
 	}))
@@ -1511,6 +1611,14 @@ func (siw *ServerInterfaceWrapper) SendChatMessage(w http.ResponseWriter, r *htt
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
 		return
 	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SendChatMessage(w, r, chatId)
@@ -1547,6 +1655,14 @@ func (siw *ServerInterfaceWrapper) GetResponse(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetResponse(w, r, chatId, responseId)
 	}))
@@ -1582,6 +1698,14 @@ func (siw *ServerInterfaceWrapper) UpdateResponseStatus(w http.ResponseWriter, r
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateResponseStatus(w, r, chatId, responseId)
 	}))
@@ -1608,6 +1732,14 @@ func (siw *ServerInterfaceWrapper) SubscribeChatStream(w http.ResponseWriter, r 
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SubscribeChatStream(w, r, chatId)
 	}))
@@ -1624,6 +1756,14 @@ func (siw *ServerInterfaceWrapper) ListMemories(w http.ResponseWriter, r *http.R
 
 	var err error
 	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ListMemoriesParams
@@ -1706,6 +1846,14 @@ func (siw *ServerInterfaceWrapper) DeleteMemory(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteMemory(w, r, memoryId)
 	}))
@@ -1719,6 +1867,14 @@ func (siw *ServerInterfaceWrapper) DeleteMemory(w http.ResponseWriter, r *http.R
 
 // ListRecordings operation middleware
 func (siw *ServerInterfaceWrapper) ListRecordings(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListRecordings(w, r)
