@@ -3,8 +3,6 @@ package dag
 
 import (
 	"google.golang.org/genai"
-
-	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 type HistoryTurn struct {
@@ -14,16 +12,19 @@ type HistoryTurn struct {
 
 // Plan: DAG of agent tasks. Setup/Delivery are pre/post steps executed by harness.
 type Plan struct {
-	ID               string
-	Nodes            []Node
-	UserMessage      string
-	History          []HistoryTurn
-	Attachments      []*genai.Part
-	Setup            *Setup
-	Delivery         *Delivery
-	Grant            *vetting.Grant
-	WorkerBackground string
-	CIChecks         []CICheck
+	ID          string
+	Nodes       []Node
+	UserMessage string
+	History     []HistoryTurn
+	Attachments []*genai.Part
+	Setup       *Setup
+	Delivery    *Delivery
+	// AllowedDeliveryKinds: nil = unrestricted (no trigger governs this run);
+	// non-nil (including empty) restricts staged delivery to exactly these
+	// kinds - see vetting.Config.AllowedDeliveryKinds, the same sentinel.
+	AllowedDeliveryKinds []string
+	WorkerBackground     string
+	ContextItems         []ContextItem
 	// PlanOnly: this run's deliverable is a plan, not a change (#739). Stamped
 	// by the harness from the triggering label, never model-authored - forces
 	// every node read-only with no delivery target regardless of which agent
@@ -31,8 +32,9 @@ type Plan struct {
 	PlanOnly bool
 }
 
-// CICheck: one failing GitHub check, scoped per node.
-type CICheck struct {
+// ContextItem: name-keyed detail injected into any node whose task names it
+// (e.g. one failing CI check, scoped to the node fixing it).
+type ContextItem struct {
 	Name   string
 	Detail string
 }

@@ -28,6 +28,7 @@ import (
 	"github.com/fagerbergj/quack/internal/server"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
+	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/workflowcatalog"
 )
 
@@ -171,10 +172,9 @@ func sdkExtensionTools(exts []builtSDKExtension) []tool.Tool {
 // in a goroutine, so Dispatch returns before the run completes - RunObserver
 // is how a caller learns it finished.
 //
-// Ask.NodeContext, Ask.ContextItems, Run.Setup, Run.ReadOnly, and
-// Delivery.AllowedKinds have no consumer here yet - they await quack-core's
-// Grant/CICheck generalization and the GitHub migration that's the real
-// consumer of a pre-provisioned clone and node-scoped context.
+// Ask.NodeContext, Ask.ContextItems, Run.Setup, and Run.ReadOnly have no
+// consumer here yet - they await the GitHub migration, the real consumer of
+// a pre-provisioned clone and node-scoped context.
 func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrator], st *store.Store, hub *stream.Hub, extHolder *atomic.Pointer[extsdk.Extension], shapes []workflowcatalog.Shape, artifacts *store.TurnAwareService) extsdk.DispatchFunc {
 	return func(ctx context.Context, req extsdk.DispatchRequest) error {
 		if req.Chat.LocalID == "" {
@@ -204,6 +204,7 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		// handler) while keeping the caller's trace, so the extension's
 		// inbound span still parents the whole run's spans.
 		runCtx := context.WithoutCancel(ctx)
+		allowedKinds := deliveryKindStrings(req.Delivery.AllowedKinds)
 
 		if req.Chat.ResetHistory {
 			if err := orch.ResetSession(runCtx, userID, chatID); err != nil {
@@ -250,7 +251,7 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		// build the Plan now, synchronously, so a malformed binding is a hard
 		// dispatch error - never a silent fallback to the unshaped hint path.
 		if nodes, bound := workflowcatalog.Bind(shape, req.Ask.Message); bound {
-			plan, err := orch.BuildBoundPlan(runCtx, nodes, req.Ask.Message, attachments)
+			plan, err := orch.BuildBoundPlan(runCtx, nodes, req.Ask.Message, attachments, allowedKinds)
 			if err != nil {
 				return fmt.Errorf("extensions.%s: workflow %q bound plan: %w", name, req.Run.Workflow, err)
 			}
@@ -258,9 +259,27 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 			return nil
 		}
 
+		// The unshaped/hint path reaches the planner's own LLM turn (plan
+		// tool), which reads the allowlist back off ctx - see
+		// tools.AllowedDeliveryKindsFromContext.
+		runCtx = tools.WithAllowedDeliveryKinds(runCtx, allowedKinds)
 		go driveExtensionRun(runCtx, name, orch, st, hub, extHolder, userID, chatID, turnID, composeDispatchMessage(req), attachments)
 		return nil
 	}
+}
+
+// deliveryKindStrings converts the SDK's typed delivery-kind list to the
+// bare-string vocabulary vetting.Config.AllowedDeliveryKinds and dag.Plan
+// share; nil stays nil (unrestricted - see AllowedDeliveryKinds' own doc).
+func deliveryKindStrings(kinds []extsdk.DeliveryKind) []string {
+	if kinds == nil {
+		return nil
+	}
+	out := make([]string, len(kinds))
+	for i, k := range kinds {
+		out[i] = string(k)
+	}
+	return out
 }
 
 // saveExtAttachment mirrors rest.Handler.saveAttachment: durably store the

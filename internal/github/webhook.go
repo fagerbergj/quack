@@ -840,7 +840,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 			authored = a
 		}
 	}
-	grant := computeGrant(e.labels, gh.snap.Labels, isPR, authored, gh.snap.Fork)
+	allowedKinds := computeGrant(e.labels, gh.snap.Labels, isPR, authored, gh.snap.Fork)
 
 	// Shares one classifyIssueDeliverable answer across every consumer below
 	// (#731) - buildEnvelope, buildWorkerAsk, and deliverableIsPlan must never
@@ -849,7 +849,7 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 
 	// Computed once, reused by the tail (#731): whether this run's deliverable
 	// is a plan, regardless of which trigger asked for it.
-	isPlan := e.deliverableIsPlan(ctx, p, task, grant, isPR)
+	isPlan := e.deliverableIsPlan(ctx, p, task, allowedKinds, isPR)
 
 	// Context directory (#659/#660): best-effort, skipped when no jail wired.
 	var ctxDir string
@@ -870,16 +870,16 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		}
 	}
 
-	message := e.buildEnvelope(ctx, p, task, gh, grant, ctxDir, ctxFiles)
+	message := e.buildEnvelope(ctx, p, task, gh, allowedKinds, ctxDir, ctxFiles)
 	// #664 consumer split: nodes get the ask-only text, never the orchestrator's evidence.
-	workerAsk := e.buildWorkerAsk(ctx, p, task, gh, grant, ctxDir)
-	var ciChecks []dag.CICheck
+	workerAsk := e.buildWorkerAsk(ctx, p, task, gh, allowedKinds, ctxDir)
+	var contextItems []dag.ContextItem
 	if p.checkSHA != "" {
 		if checks, cerr := e.failingChecks(ctx, owner, repo, p.checkSHA); cerr != nil {
 			slog.Warn("github: CI-check fetch for node-scoped detail failed; nodes get none", "component", "github",
 				"repo", owner+"/"+repo, "issue", number, "err", cerr)
 		} else {
-			ciChecks = ciChecksForNodes(checks)
+			contextItems = ciChecksForNodes(checks)
 		}
 	}
 
@@ -907,11 +907,11 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	if isPR {
 		runCtx = tools.WithGitHubPR(runCtx, owner, repo, number, gh.snap.HeadRef)
 	}
-	// grant computed once above; planner and gate trust the same value.
-	runCtx = tools.WithGrant(runCtx, grant)
-	// #664: workerAsk/ciChecks computed once above, never re-derived.
+	// allowedKinds computed once above; planner and gate trust the same value.
+	runCtx = tools.WithAllowedDeliveryKinds(runCtx, allowedKinds)
+	// #664: workerAsk/contextItems computed once above, never re-derived.
 	runCtx = tools.WithWorkerAsk(runCtx, workerAsk)
-	runCtx = tools.WithCIChecks(runCtx, ciChecks)
+	runCtx = tools.WithContextItems(runCtx, contextItems)
 	// planOnly is the quack:plan label itself (#739), narrower than isPlan's
 	// fuzzy mention-based heuristic above - only this drives node capability.
 	runCtx = tools.WithPlanOnly(runCtx, p.planOnly)

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -680,7 +681,7 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	// Mermaid validity is checked by mermaidCriterion before this point.
 
 	// Permission boundary: drop ungranted items before they reach cfg.Deliver. Refusals are loud, never silent.
-	if allowed, refused, reasons := partitionByGrant(dc.Items, cfg.Grant); len(refused) > 0 {
+	if allowed, refused, reasons := partitionByAllowedKinds(dc.Items, cfg.AllowedDeliveryKinds); len(refused) > 0 {
 		for i, item := range refused {
 			slog.Error("delivery refused: ungranted kind", "component", "vetting",
 				"node", nodeID, "kind", item.Kind, "reason", reasons[i])
@@ -751,14 +752,15 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	slog.Info("delivery committed", "component", "vetting", "node", nodeID, "count", len(dc.Items))
 }
 
-// partitionByGrant: splits staged items by grant permission. nil grant permits everything.
-func partitionByGrant(items []StagedDelivery, g *Grant) (allowed, refused []StagedDelivery, reasons []string) {
+// partitionByAllowedKinds: splits staged items by the delivery-kind
+// allowlist. nil allowedKinds permits everything.
+func partitionByAllowedKinds(items []StagedDelivery, allowedKinds []string) (allowed, refused []StagedDelivery, reasons []string) {
 	for _, item := range items {
-		if ok, reason := g.allows(item.Kind); ok {
+		if allowedKinds == nil || slices.Contains(allowedKinds, item.Kind) {
 			allowed = append(allowed, item)
 		} else {
 			refused = append(refused, item)
-			reasons = append(reasons, reason)
+			reasons = append(reasons, fmt.Sprintf("delivery kind %q not in allowed set", item.Kind))
 		}
 	}
 	return allowed, refused, reasons

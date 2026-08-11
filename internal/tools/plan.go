@@ -16,7 +16,6 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/stream"
-	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 type planArgs struct {
@@ -31,7 +30,7 @@ type planResult struct {
 }
 
 // NewPlanTool: validates and caches a DAG plan, emits dag_plan SSE event.
-func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn, message string, existingHeadRef string, githubSetup *dag.Setup, grant *vetting.Grant, workerAsk string, ciChecks []dag.CICheck, planOnly bool) (tool.Tool, error) {
+func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn, message string, existingHeadRef string, githubSetup *dag.Setup, allowedKinds []string, workerAsk string, contextItems []dag.ContextItem, planOnly bool) (tool.Tool, error) {
 	checksDesc := "Checks are currently unavailable (workspace.check_commands is empty) - omit `checks`."
 	if cc := planner.CheckCommands(); len(cc) > 0 {
 		checksDesc = fmt.Sprintf("`checks` are OPTIONAL - you have NOT seen the repo yet, so do NOT guess its "+
@@ -67,7 +66,7 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 		func(tc agent.Context, a planArgs) (planResult, error) {
 			// ChatID-only Coords: plan judge's chat call files under this chat.
 			planCtx := ledger.WithCoords(tc, ledger.Coords{ChatID: tc.SessionID()})
-			p, err := planner.Build(planCtx, a.Nodes, a.Setup, a.Delivery, history, message, attachments, grant)
+			p, err := planner.Build(planCtx, a.Nodes, a.Setup, a.Delivery, history, message, attachments, allowedKinds)
 			if err != nil {
 				var rejected *dag.PlanRejectedError
 				if errors.As(err, &rejected) {
@@ -80,9 +79,9 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 				setup := *githubSetup
 				p.Setup = &setup
 			}
-			// Nodes get the ask-only background and per-check CI detail.
+			// Nodes get the ask-only background and per-node context detail.
 			p.WorkerBackground = workerAsk
-			p.CIChecks = ciChecks
+			p.ContextItems = contextItems
 			p.PlanOnly = planOnly
 			if err := dag.OverrideExistingPRHead(p, existingHeadRef); err != nil {
 				return planResult{}, fmt.Errorf("plan: %w", err)

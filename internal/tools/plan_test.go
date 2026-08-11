@@ -59,7 +59,7 @@ func implementNode() []map[string]any {
 // TestPlanToolStampsPlanOnly pins #739's plumbing half: the plan tool stamps
 // dag.Plan.PlanOnly from the harness-computed flag it's constructed with,
 // never from anything the model submits - the same way it already stamps
-// WorkerBackground/CIChecks. This is what carries the quack:plan label's
+// WorkerBackground/ContextItems. This is what carries the quack:plan label's
 // intent down to buildGateNodes, which is what actually enforces it.
 func TestPlanToolStampsPlanOnly(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)

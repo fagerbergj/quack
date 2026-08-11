@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // TestBuildEnvelopeLargeIssueBodyReachesIntact pins #666's test case 1: a
@@ -22,7 +20,7 @@ func TestBuildEnvelopeLargeIssueBodyReachesIntact(t *testing.T) {
 	issue.Issue.Number = 42
 	issue.Repository.Name, issue.Repository.Owner.Login = "widgets", "acme"
 
-	env := ext.buildEnvelope(context.Background(), issue, "add a feature", seedGC(Snapshot{Body: body}, 0), vetting.Grant{}, "", nil)
+	env := ext.buildEnvelope(context.Background(), issue, "add a feature", seedGC(Snapshot{Body: body}, 0), nil, "", nil)
 
 	if !strings.Contains(env, body) {
 		t.Fatalf("12000-char issue body did not reach the envelope intact:\n%s", truncateForLog(env))
@@ -41,7 +39,7 @@ func TestBuildEnvelopeTruncatesOversizedDescription(t *testing.T) {
 	var issue issueCommentPayload
 	issue.Issue.Number = 7
 
-	env := ext.buildEnvelope(context.Background(), issue, "task", seedGC(Snapshot{Body: body}, 0), vetting.Grant{}, "", nil)
+	env := ext.buildEnvelope(context.Background(), issue, "task", seedGC(Snapshot{Body: body}, 0), nil, "", nil)
 
 	if !strings.Contains(env, "TRUNCATED") {
 		t.Errorf("an oversized description should be marked truncated:\n%s", truncateForLog(env))
@@ -65,7 +63,7 @@ func TestBuildEnvelopeTruncatesOversizedPRDescription(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	env := ext.buildEnvelope(context.Background(), pr, "review this", seedGC(Snapshot{IsPR: true, Body: body}, 0), vetting.Grant{}, "", nil)
+	env := ext.buildEnvelope(context.Background(), pr, "review this", seedGC(Snapshot{IsPR: true, Body: body}, 0), nil, "", nil)
 
 	if !strings.Contains(env, "pull.json") {
 		t.Errorf("a truncated PR description should point at pull.json:\n%s", truncateForLog(env))
@@ -86,7 +84,7 @@ func TestBuildEnvelopeCommentDeletionVisibleInDelta(t *testing.T) {
 	var issue issueCommentPayload
 	issue.Issue.Number = 7
 
-	env := ext.buildEnvelope(context.Background(), issue, "what changed?", gh, vetting.Grant{}, "", nil)
+	env := ext.buildEnvelope(context.Background(), issue, "what changed?", gh, nil, "", nil)
 
 	if !strings.Contains(env, `deleted="1"`) {
 		t.Errorf("envelope missing the deleted=1 comment-delta marker:\n%s", truncateForLog(env))
@@ -109,14 +107,14 @@ func TestBuildEnvelopeTitleChangeMarking(t *testing.T) {
 	changed := diffSnapshots(old, cur, 0)
 	gh := githubContext{snap: cur, delta: &changed}
 
-	env := ext.buildEnvelope(context.Background(), issue, "task", gh, vetting.Grant{}, "", nil)
+	env := ext.buildEnvelope(context.Background(), issue, "task", gh, nil, "", nil)
 	if !strings.Contains(env, `New title (changed from "Old title")`) {
 		t.Errorf("a changed title should be marked and quote the old value:\n%s", truncateForLog(env))
 	}
 
 	unchanged := diffSnapshots(cur, cur, 0)
 	ghSame := githubContext{snap: cur, delta: &unchanged}
-	envSame := ext.buildEnvelope(context.Background(), issue, "task", ghSame, vetting.Grant{}, "", nil)
+	envSame := ext.buildEnvelope(context.Background(), issue, "task", ghSame, nil, "", nil)
 	if strings.Contains(envSame, "changed from") {
 		t.Errorf("an unchanged title should not be marked changed:\n%s", truncateForLog(envSame))
 	}
@@ -185,48 +183,45 @@ func TestFilterGitHubJSONUnknownFieldSurvives(t *testing.T) {
 	}
 }
 
-// TestPermissionsTextMatchesGrant pins that <permissions> states EXACTLY the
-// vocabulary Grant.allows checks (internal/vetting/grant.go) - the same
-// tokens, so the envelope and enforcement can never name two different
-// things.
-func TestPermissionsTextMatchesGrant(t *testing.T) {
+// TestPermissionsTextJoinsAllowedKinds pins that <permissions> states EXACTLY
+// the run's allowed delivery kinds - the same closed vocabulary staged
+// delivery and the trust gate's allowlist use, so the envelope and
+// enforcement can never name two different things.
+func TestPermissionsTextJoinsAllowedKinds(t *testing.T) {
 	for _, tt := range []struct {
-		name string
-		g    vetting.Grant
-		want string
+		name  string
+		kinds []string
+		want  string
 	}{
-		{"review-only", vetting.Grant{PostReview: true, JoinPRConversation: true}, "post_review, join_pr_conversation"},
-		{"issue-plan", vetting.Grant{JoinIssueConversation: true}, "join_issue_conversation"},
-		{"fix", vetting.Grant{PushCommitsToPR: true, JoinPRConversation: true}, "join_pr_conversation, push_commits_to_pr"},
-		{"none", vetting.Grant{}, ""},
+		{"review-only", []string{"review", "comment"}, "review, comment"},
+		{"issue-plan", []string{"comment"}, "comment"},
+		{"fix", []string{"comment", "pull_request"}, "comment, pull_request"},
+		{"none", nil, ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := permissionsText(tt.g); got != tt.want {
-				t.Errorf("permissionsText(%+v) = %q, want %q", tt.g, got, tt.want)
+			if got := permissionsText(tt.kinds); got != tt.want {
+				t.Errorf("permissionsText(%v) = %q, want %q", tt.kinds, got, tt.want)
 			}
 		})
 	}
 }
 
 // TestBuildEnvelopeReviewOnlyPermissionsNeverNameStagePR pins #659's test
-// case 3: the envelope for a review-only run never grants open_pr /
-// push_commits_to_pr - permissions state only what THIS run is allowed, not
-// what a broader trigger on the same thread might be.
+// case 3: the envelope for a review-only run never grants the pull_request
+// kind - permissions state only what THIS run is allowed, not what a broader
+// trigger on the same thread might be.
 func TestBuildEnvelopeReviewOnlyPermissionsNeverNameStagePR(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
-	grant := vetting.Grant{PRScoped: true, PostReview: true, JoinPRConversation: true}
+	allowedKinds := []string{"review", "comment"} // PR-scoped: post_review + join_pr_conversation, no push
 	var pr issueCommentPayload
 	if err := json.Unmarshal(pullCommentBody("unused"), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	pr.isLabelTrigger = true
 
-	env := ext.buildEnvelope(context.Background(), pr, autoReviewTask, seedGC(Snapshot{IsPR: true}, 0), grant, "", nil)
-	if strings.Contains(env, "open_pr") || strings.Contains(env, "push_commits_to_pr") {
-		t.Errorf("review-only envelope must not grant PR-staging permissions:\n%s", truncateForLog(env))
-	}
-	if !strings.Contains(env, "post_review") {
-		t.Errorf("review-only envelope missing its own granted permission:\n%s", truncateForLog(env))
+	env := ext.buildEnvelope(context.Background(), pr, autoReviewTask, seedGC(Snapshot{IsPR: true}, 0), allowedKinds, "", nil)
+	if !strings.Contains(env, "<permissions>review, comment</permissions>") {
+		t.Errorf("review-only envelope must state exactly its granted kinds, not stage a PR:\n%s", truncateForLog(env))
 	}
 }
 
@@ -246,7 +241,7 @@ func TestBuildEnvelopeContextBlockListsWrittenFiles(t *testing.T) {
 	issue.Issue.Number = 7
 
 	files := contextDirFiles(dir, "acme", "widgets", 7, "")
-	env := ext.buildEnvelope(context.Background(), issue, "task", seedGC(Snapshot{}, 0), vetting.Grant{}, dir, files)
+	env := ext.buildEnvelope(context.Background(), issue, "task", seedGC(Snapshot{}, 0), nil, dir, files)
 
 	if !strings.Contains(env, fmt.Sprintf("<context dir=%q>", dir)) {
 		t.Errorf("envelope missing the context dir attribute:\n%s", truncateForLog(env))
@@ -266,7 +261,7 @@ func TestBuildEnvelopeNoContextBlockWithoutDir(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
 	var issue issueCommentPayload
 	issue.Issue.Number = 7
-	env := ext.buildEnvelope(context.Background(), issue, "task", seedGC(Snapshot{}, 0), vetting.Grant{}, "", nil)
+	env := ext.buildEnvelope(context.Background(), issue, "task", seedGC(Snapshot{}, 0), nil, "", nil)
 	if strings.Contains(env, "<context") {
 		t.Errorf("envelope should have no <context> block when ctxDir is empty:\n%s", truncateForLog(env))
 	}
@@ -289,7 +284,7 @@ func TestBuildEnvelopeFortyFilePRHasChurnAndFullListNoContentButFullDescription(
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	env := ext.buildEnvelope(context.Background(), pr, "review this", seedGC(Snapshot{IsPR: true, Body: body, Files: files}, 0), vetting.Grant{}, "", nil)
+	env := ext.buildEnvelope(context.Background(), pr, "review this", seedGC(Snapshot{IsPR: true, Body: body, Files: files}, 0), nil, "", nil)
 
 	if !strings.Contains(env, `<changed_files count="40" additions="400" deletions="200">`) {
 		t.Errorf("envelope missing the churn summary for a 40-file PR:\n%s", truncateForLog(env))
@@ -315,9 +310,9 @@ func TestBuildWorkerAskOmitsEvidenceKeepsAsk(t *testing.T) {
 	if err := json.Unmarshal(pullCommentBody("review this"), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	grant := vetting.Grant{PostReview: true, JoinPRConversation: true}
+	allowedKinds := []string{"review", "comment"} // PR-scoped: post_review + join_pr_conversation
 
-	ask := ext.buildWorkerAsk(context.Background(), pr, "review this", seedGC(Snapshot{IsPR: true, Body: body, Files: files}, 0), grant, "")
+	ask := ext.buildWorkerAsk(context.Background(), pr, "review this", seedGC(Snapshot{IsPR: true, Body: body, Files: files}, 0), allowedKinds, "")
 
 	if strings.Contains(ask, "changed_files") {
 		t.Errorf("worker ask must not carry the orchestrator's changed_files evidence:\n%s", truncateForLog(ask))
@@ -325,7 +320,7 @@ func TestBuildWorkerAskOmitsEvidenceKeepsAsk(t *testing.T) {
 	if !strings.Contains(ask, body) {
 		t.Errorf("worker ask missing the full description:\n%s", truncateForLog(ask))
 	}
-	if !strings.Contains(ask, "post_review") {
+	if !strings.Contains(ask, "<permissions>review, comment</permissions>") {
 		t.Errorf("worker ask missing its permissions:\n%s", truncateForLog(ask))
 	}
 }
@@ -396,10 +391,10 @@ func TestNoTriggerOutputNamesSkillOrToolMechanics(t *testing.T) {
 	}
 
 	cases := map[string]string{
-		"plan-only":      ext.buildEnvelope(context.Background(), planOnly, "plan it", seedGC(Snapshot{}, 0), vetting.Grant{}, "", nil),
-		"implement":      ext.buildEnvelope(context.Background(), implement, "implement it", seedGC(Snapshot{}, 0), vetting.Grant{}, "", nil),
-		"review-only":    ext.buildEnvelope(context.Background(), pr, "please review this PR", seedGC(Snapshot{IsPR: true, HeadRef: "x"}, 0), vetting.Grant{}, "", nil),
-		"conversational": ext.buildEnvelope(context.Background(), issue, "what changed?", seedGC(Snapshot{}, 0), vetting.Grant{}, "", nil),
+		"plan-only":      ext.buildEnvelope(context.Background(), planOnly, "plan it", seedGC(Snapshot{}, 0), nil, "", nil),
+		"implement":      ext.buildEnvelope(context.Background(), implement, "implement it", seedGC(Snapshot{}, 0), nil, "", nil),
+		"review-only":    ext.buildEnvelope(context.Background(), pr, "please review this PR", seedGC(Snapshot{IsPR: true, HeadRef: "x"}, 0), nil, "", nil),
+		"conversational": ext.buildEnvelope(context.Background(), issue, "what changed?", seedGC(Snapshot{}, 0), nil, "", nil),
 	}
 	for name, env := range cases {
 		for _, banned := range []string{"present-coding-plan", "stage_pr", "stage_review", "github_add_review_comment"} {

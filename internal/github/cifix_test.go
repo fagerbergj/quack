@@ -471,11 +471,11 @@ func TestFixLabelApplied(t *testing.T) {
 	})
 }
 
-// TestWorkflowRunAttachesWorkerAskAndCIChecks pins #664: a CI-fix run's
+// TestWorkflowRunAttachesWorkerAskAndContextItems pins #664: a CI-fix run's
 // context carries the ask-only worker background (never the orchestrator's
 // own evidence) and the ONE failing check's own annotation detail - go-test
-// fails, lint is green, so exactly one CICheck should reach the plan tool.
-func TestWorkflowRunAttachesWorkerAskAndCIChecks(t *testing.T) {
+// fails, lint is green, so exactly one ContextItem should reach the plan tool.
+func TestWorkflowRunAttachesWorkerAskAndContextItems(t *testing.T) {
 	posted := make(chan string, 4)
 	gh := stubFixGitHubFull(t, posted, []string{"quack:fix"}, true, "", "someone-else")
 	defer gh.Close()
@@ -504,14 +504,14 @@ func TestWorkflowRunAttachesWorkerAskAndCIChecks(t *testing.T) {
 		t.Errorf("worker ask missing the PR ask:\n%s", ask)
 	}
 
-	checks := tools.CIChecksFromContext(runCtx)
+	checks := tools.ContextItemsFromContext(runCtx)
 	if len(checks) != 1 {
-		t.Fatalf("CIChecks = %d entries, want exactly the one failing check (go-test; lint is green)", len(checks))
+		t.Fatalf("ContextItems = %d entries, want exactly the one failing check (go-test; lint is green)", len(checks))
 	}
 	if checks[0].Name != "go-test" {
-		t.Errorf("CIChecks[0].Name = %q, want go-test", checks[0].Name)
+		t.Errorf("ContextItems[0].Name = %q, want go-test", checks[0].Name)
 	}
 	if !strings.Contains(checks[0].Detail, "TestFoo failed") {
-		t.Errorf("CIChecks[0].Detail missing the check's own annotation:\n%s", checks[0].Detail)
+		t.Errorf("ContextItems[0].Detail missing the check's own annotation:\n%s", checks[0].Detail)
 	}
 }

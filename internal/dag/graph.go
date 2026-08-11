@@ -76,7 +76,7 @@ func nodeGateConfig(plan Plan, node Node, worker adkagent.Agent, cfgFor func(str
 	cfg.Workdir = node.Workdir
 	cfg.NodeID = workspaceNodeID(plan, node)
 	cfg.Agent = node.AgentName
-	cfg.Grant = plan.Grant
+	cfg.AllowedDeliveryKinds = plan.AllowedDeliveryKinds
 	// code-reviewer nodes are always review-delivery nodes by construction.
 	cfg.IsReviewer = node.AgentName == reviewerAgent
 	cfg.Task = node.Task
