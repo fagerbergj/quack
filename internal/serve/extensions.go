@@ -25,6 +25,7 @@ import (
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/runlog"
+	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/server"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
@@ -41,6 +42,11 @@ const extRunUserID = "ext"
 type builtSDKExtension struct {
 	name string
 	ext  extsdk.Extension
+	// title/href come from the module's optional sdk.UI descriptor, captured
+	// once at build time; both empty when the module implements no UI (the
+	// SPA nav then lists it name-only).
+	title string
+	href  string
 }
 
 // buildSDKExtensions constructs every configured module named under
@@ -111,7 +117,12 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, or
 			return nil, fmt.Errorf("extensions.%s: factory: %w", name, err)
 		}
 		extHolder.Store(&ext)
-		built = append(built, builtSDKExtension{name: name, ext: ext})
+		b := builtSDKExtension{name: name, ext: ext}
+		if ui, ok := ext.(extsdk.UI); ok {
+			d := ui.UI()
+			b.title, b.href = d.Title, d.Href
+		}
+		built = append(built, b)
 		slog.Info("sdk extension enabled", "component", "startup", "extension", name)
 	}
 	return built, nil
@@ -153,6 +164,23 @@ func sdkExtensionMounts(exts []builtSDKExtension) []server.SDKExtensionMount {
 	out := make([]server.SDKExtensionMount, 0, len(exts))
 	for _, e := range exts {
 		out = append(out, server.SDKExtensionMount{Name: e.name, RegisterRoutes: e.ext.RegisterRoutes})
+	}
+	return out
+}
+
+// extensionDescriptors adapts built extensions onto the GET /api/v1/extensions
+// response shape - name-only unless the module implements sdk.UI.
+func extensionDescriptors(exts []builtSDKExtension) []schema.ExtensionInfo {
+	out := make([]schema.ExtensionInfo, 0, len(exts))
+	for _, e := range exts {
+		info := schema.ExtensionInfo{Name: e.name}
+		if e.title != "" {
+			info.Title = &e.title
+		}
+		if e.href != "" {
+			info.Href = &e.href
+		}
+		out = append(out, info)
 	}
 	return out
 }

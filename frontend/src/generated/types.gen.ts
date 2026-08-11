@@ -10,6 +10,53 @@ export type ClientOptions = {
  */
 export type ChatStatus = 'queued' | 'running' | 'needs_input' | 'failed' | 'idle';
 
+/**
+ * Generic provenance for an extension-dispatched chat: how the SPA should present and group it, without the SPA knowing which extension produced it. Server-stamped only - an extension can set this only via Dispatch, never through a writable API.
+ *
+ */
+export type ChatOrigin = {
+    /**
+     * Registration name of the extension that dispatched this chat, e.g. "remarkable".
+     */
+    extension: string;
+    /**
+     * Display handle, e.g. a document title or "owner/repo#42".
+     */
+    label: string;
+    /**
+     * Grouping category, e.g. "document", "pr".
+     */
+    kind?: string;
+    /**
+     * The chat subject's one navigable link.
+     */
+    href?: string;
+    /**
+     * Optional short status chip, e.g. "draft".
+     */
+    badge?: string;
+    /**
+     * Extra grouping dimensions beyond kind - repo, state, tags, whatever the extension's domain needs - keyed for grouping (the sidebar renders one labeled section per key) and slice-valued because a single chat can carry several values on one dimension.
+     *
+     */
+    labels?: {
+        [key: string]: Array<{
+            /**
+             * Raw value; what matching/counting keys on.
+             */
+            value: string;
+            /**
+             * Display text; falls back to value when absent.
+             */
+            display?: string;
+            /**
+             * Optional link-out for this value.
+             */
+            href?: string;
+        }>;
+    };
+};
+
 export type ChatSummary = {
     id: string;
     title?: string;
@@ -37,6 +84,7 @@ export type ChatSummary = {
      * True if the chat is archived and hidden from the main list by default.
      */
     archived?: boolean;
+    origin?: ChatOrigin;
 };
 
 export type ChatDetail = ChatSummary & {
@@ -89,6 +137,41 @@ export type RecordingSummary = {
 
 export type RecordingList = {
     data: Array<RecordingSummary>;
+};
+
+export type ExtensionInfo = {
+    /**
+     * Registration name of the extension.
+     */
+    name: string;
+    /**
+     * Display title for the nav entry; absent when the extension implements no UI descriptor.
+     */
+    title?: string;
+    /**
+     * Same-origin relative reference into the extension's own routes; absent when the extension implements no UI descriptor.
+     */
+    href?: string;
+};
+
+export type ArtifactRevisionInfo = {
+    revision: number;
+    /**
+     * The turn that created this revision. Absent if unknown.
+     */
+    turn_id?: string;
+    mime_type: string;
+    size: number;
+    created_at?: string;
+};
+
+export type ArtifactSummary = {
+    name: string;
+    revisions: Array<ArtifactRevisionInfo>;
+};
+
+export type ArtifactList = {
+    data: Array<ArtifactSummary>;
 };
 
 export type CreateChatBody = {
@@ -304,6 +387,8 @@ export type ResponseId = string;
 
 export type MemoryId = string;
 
+export type ArtifactName = string;
+
 export type HealthCheckData = {
     body?: never;
     path?: never;
@@ -462,6 +547,22 @@ export type UpdateChatResponses = {
 
 export type UpdateChatResponse = UpdateChatResponses[keyof UpdateChatResponses];
 
+export type ListExtensionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/extensions';
+};
+
+export type ListExtensionsResponses = {
+    /**
+     * The enabled extensions
+     */
+    200: Array<ExtensionInfo>;
+};
+
+export type ListExtensionsResponse = ListExtensionsResponses[keyof ListExtensionsResponses];
+
 export type ListRecordingsData = {
     body?: never;
     path?: never;
@@ -513,6 +614,66 @@ export type GetChatRecordingResponses = {
 };
 
 export type GetChatRecordingResponse = GetChatRecordingResponses[keyof GetChatRecordingResponses];
+
+export type ListChatArtifactsData = {
+    body?: never;
+    path: {
+        chat_id: string;
+    };
+    query?: never;
+    url: '/api/v1/chats/{chat_id}/artifacts';
+};
+
+export type ListChatArtifactsErrors = {
+    /**
+     * No such chat
+     */
+    404: ErrorResponse;
+};
+
+export type ListChatArtifactsError = ListChatArtifactsErrors[keyof ListChatArtifactsErrors];
+
+export type ListChatArtifactsResponses = {
+    /**
+     * The chat's artifacts
+     */
+    200: ArtifactList;
+};
+
+export type ListChatArtifactsResponse = ListChatArtifactsResponses[keyof ListChatArtifactsResponses];
+
+export type GetChatArtifactData = {
+    body?: never;
+    path: {
+        chat_id: string;
+        artifact_name: string;
+    };
+    query?: {
+        /**
+         * Which revision to fetch. Defaults to the latest.
+         */
+        revision?: number;
+    };
+    url: '/api/v1/chats/{chat_id}/artifacts/{artifact_name}';
+};
+
+export type GetChatArtifactErrors = {
+    /**
+     * No such chat, artifact, or revision
+     */
+    404: ErrorResponse;
+};
+
+export type GetChatArtifactError = GetChatArtifactErrors[keyof GetChatArtifactErrors];
+
+export type GetChatArtifactResponses = {
+    /**
+     * The artifact bytes
+     */
+    200: Blob | File;
+};
+
+export type GetChatArtifactResponse = GetChatArtifactResponses[keyof GetChatArtifactResponses];
 
 export type SendChatMessageData = {
     body: SendMessageBody;

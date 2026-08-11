@@ -176,6 +176,32 @@ func (w *TurnAwareService) RevisionsByTurn(ctx context.Context, appName, userID,
 
 var _ turnRevisionLister = (*gormArtifactService)(nil)
 
+// sessionArtifactLister is implemented by gormArtifactService; not by
+// artifact.InMemoryService(), which tracks no session-wide revision history.
+type sessionArtifactLister interface {
+	ListForSession(ctx context.Context, appName, userID, sessionID string) ([]ArtifactSummary, error)
+}
+
+// ListForSession lists every artifact visible to a session (including
+// user-scoped ones), each with its full revision history, or nil for a
+// backend with no such history.
+func (w *TurnAwareService) ListForSession(ctx context.Context, appName, userID, sessionID string) ([]ArtifactSummary, error) {
+	l, ok := w.Service.(sessionArtifactLister)
+	if !ok {
+		return nil, nil
+	}
+	return l.ListForSession(ctx, appName, userID, sessionID)
+}
+
+var _ sessionArtifactLister = (*gormArtifactService)(nil)
+
+// ArtifactSummary groups one name's revisions, oldest first - the shape the
+// artifacts API lists per chat.
+type ArtifactSummary struct {
+	Name      string             `json:"name"`
+	Revisions []ArtifactRevision `json:"revisions"`
+}
+
 // ArtifactRevision is one revision's metadata, without payload bytes - the
 // shape the future artifacts API needs.
 type ArtifactRevision struct {
@@ -317,6 +343,28 @@ func (s *gormArtifactService) List(ctx context.Context, req *artifact.ListReques
 		return nil, err
 	}
 	return &artifact.ListResponse{FileNames: names}, nil
+}
+
+// ListForSession lists every artifact visible to the session (same
+// session-or-user-scoped rule as List), each with its full revision
+// history in ascending revision order - the artifacts API's list shape.
+func (s *gormArtifactService) ListForSession(ctx context.Context, appName, userID, sessionID string) ([]ArtifactSummary, error) {
+	var rows []Artifact
+	if err := s.db.WithContext(ctx).
+		Where("app_name = ? AND user_id = ? AND session_id IN ?", appName, userID, []string{sessionID, userScopedArtifactKey}).
+		Order("name ASC, revision ASC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	summaries := make([]ArtifactSummary, 0)
+	for _, a := range rows {
+		rev := ArtifactRevision{Name: a.Name, Revision: a.Revision, MimeType: a.MimeType, Size: a.Size, TurnID: a.TurnID, CreatedAt: a.CreatedAt}
+		if n := len(summaries); n > 0 && summaries[n-1].Name == a.Name {
+			summaries[n-1].Revisions = append(summaries[n-1].Revisions, rev)
+			continue
+		}
+		summaries = append(summaries, ArtifactSummary{Name: a.Name, Revisions: []ArtifactRevision{rev}})
+	}
+	return summaries, nil
 }
 
 // Versions implements [artifact.Service] and errors if no versions are found.

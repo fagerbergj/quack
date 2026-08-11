@@ -194,6 +194,27 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/extensions:
+    get:
+      operationId: listExtensions
+      summary: List enabled extensions for SPA nav
+      description: >
+        Every enabled quack-extensions SDK module, name-only unless it
+        implements the SDK's optional UI descriptor (`sdk.UI`). `href` is a
+        same-origin relative reference into the extension's own routes
+        (e.g. `/remarkable/review`), never an absolute URL. Same auth as the
+        rest of /api/v1 - this reveals which extensions are enabled, no more
+        sensitive than the config file itself.
+      responses:
+        "200":
+          description: The enabled extensions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ExtensionInfo"
+
   /api/v1/recordings:
     get:
       operationId: listRecordings
@@ -245,6 +266,70 @@ paths:
                 format: binary
         "404":
           description: No recording exists for this chat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/chats/{chat_id}/artifacts:
+    get:
+      operationId: listChatArtifacts
+      summary: List a chat's artifacts
+      description: >
+        Every artifact name visible to this chat, each with its full
+        revision history (oldest first) - the durable store behind
+        historical attachment viewing, the reMarkable review page fetching
+        the scan under review, and replay debugging. Nested under chats so
+        chat access is artifact access - no new authz surface. Read-only:
+        bytes enter only via dispatch/run-start, never through this API;
+        lifecycle rides chat deletion. Deliberately unpaginated: bounded per
+        chat, not an open-ended table (mirrors /api/v1/recordings).
+      parameters:
+        - $ref: "#/components/parameters/ChatID"
+      responses:
+        "200":
+          description: The chat's artifacts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArtifactList"
+        "404":
+          description: No such chat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/chats/{chat_id}/artifacts/{artifact_name}:
+    get:
+      operationId: getChatArtifact
+      summary: Download one artifact revision's bytes
+      description: >
+        Latest revision by default; pass `?revision=n` for an older one.
+        Security: `Content-Disposition` defaults to `attachment`; only an
+        allowlisted set of image MIME types render inline
+        (`Content-Disposition: inline`) - SVG is deliberately NOT on that
+        list (same-origin stored-XSS via an SVG "image" is the trap this
+        guards against, so anything HTML-capable stays a forced download).
+      parameters:
+        - $ref: "#/components/parameters/ChatID"
+        - $ref: "#/components/parameters/ArtifactName"
+        - name: revision
+          in: query
+          required: false
+          description: Which revision to fetch. Defaults to the latest.
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: The artifact bytes
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: No such chat, artifact, or revision
           content:
             application/json:
               schema:
@@ -764,6 +849,13 @@ components:
       schema:
         type: string
 
+    ArtifactName:
+      name: artifact_name
+      in: path
+      required: true
+      schema:
+        type: string
+
   schemas:
 
     # -------------------------------------------------------------------------
@@ -781,6 +873,53 @@ components:
         or a top-level clarification), `failed` when the last turn's DAG has a
         failed node and no answer text followed, else `idle`.
       enum: [queued, running, needs_input, failed, idle]
+
+    ChatOrigin:
+      type: object
+      description: >
+        Generic provenance for an extension-dispatched chat: how the SPA
+        should present and group it, without the SPA knowing which
+        extension produced it. Server-stamped only - an extension can set
+        this only via Dispatch, never through a writable API.
+      required: [extension, label]
+      properties:
+        extension:
+          type: string
+          description: Registration name of the extension that dispatched this chat, e.g. "remarkable".
+        label:
+          type: string
+          description: Display handle, e.g. a document title or "owner/repo#42".
+        kind:
+          type: string
+          description: Grouping category, e.g. "document", "pr".
+        href:
+          type: string
+          description: The chat subject's one navigable link.
+        badge:
+          type: string
+          description: Optional short status chip, e.g. "draft".
+        labels:
+          type: object
+          description: >
+            Extra grouping dimensions beyond kind - repo, state, tags,
+            whatever the extension's domain needs - keyed for grouping (the
+            sidebar renders one labeled section per key) and slice-valued
+            because a single chat can carry several values on one dimension.
+          additionalProperties:
+            type: array
+            items:
+              type: object
+              required: [value]
+              properties:
+                value:
+                  type: string
+                  description: Raw value; what matching/counting keys on.
+                display:
+                  type: string
+                  description: Display text; falls back to value when absent.
+                href:
+                  type: string
+                  description: Optional link-out for this value.
 
     ChatSummary:
       type: object
@@ -816,6 +955,8 @@ components:
         archived:
           type: boolean
           description: True if the chat is archived and hidden from the main list by default.
+        origin:
+          $ref: "#/components/schemas/ChatOrigin"
 
     ChatDetail:
       allOf:
@@ -912,6 +1053,67 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/RecordingSummary"
+
+    # -------------------------------------------------------------------------
+    # Extensions
+    # -------------------------------------------------------------------------
+
+    ExtensionInfo:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: Registration name of the extension.
+        title:
+          type: string
+          description: Display title for the nav entry; absent when the extension implements no UI descriptor.
+        href:
+          type: string
+          description: Same-origin relative reference into the extension's own routes; absent when the extension implements no UI descriptor.
+
+    # -------------------------------------------------------------------------
+    # Artifacts (chat-scoped, read-only)
+    # -------------------------------------------------------------------------
+
+    ArtifactRevisionInfo:
+      type: object
+      required: [revision, mime_type, size]
+      properties:
+        revision:
+          type: integer
+          format: int64
+        turn_id:
+          type: string
+          description: The turn that created this revision. Absent if unknown.
+        mime_type:
+          type: string
+        size:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+
+    ArtifactSummary:
+      type: object
+      required: [name, revisions]
+      properties:
+        name:
+          type: string
+        revisions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ArtifactRevisionInfo"
+
+    ArtifactList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ArtifactSummary"
 
     CreateChatBody:
       type: object

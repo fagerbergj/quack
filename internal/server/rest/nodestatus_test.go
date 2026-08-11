@@ -69,7 +69,7 @@ func newTestHandlerWithModel(t *testing.T, m model.LLM) *Handler {
 		t.Fatalf("RowArtifactService: %v", err)
 	}
 	st.SetArtifactService(artifacts)
-	return NewHandler(st, orch, nil, nil, nil, nil, "test", nil, nil, store.NewTurnAwareService(artifacts))
+	return NewHandler(st, orch, nil, nil, nil, nil, "test", nil, nil, store.NewTurnAwareService(artifacts), nil)
 }
 
 // mustCreateChat inserts a real chat row and returns its (store-minted) id -

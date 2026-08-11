@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, DeleteMemoryData, DeleteMemoryErrors, DeleteMemoryResponses, EditNodeTaskData, EditNodeTaskErrors, EditNodeTaskResponses, EditQueuedMessageData, EditQueuedMessageErrors, EditQueuedMessageResponses, GetChatData, GetChatErrors, GetChatRecordingData, GetChatRecordingErrors, GetChatRecordingResponses, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsErrors, ListChatsResponses, ListMemoriesData, ListMemoriesErrors, ListMemoriesResponses, ListRecordingsData, ListRecordingsErrors, ListRecordingsResponses, QueueNodeMessageData, QueueNodeMessageErrors, QueueNodeMessageResponses, RemoveQueuedMessageData, RemoveQueuedMessageErrors, RemoveQueuedMessageResponses, SendChatMessageData, SendChatMessageErrors, SendChatMessageResponse, SendChatMessageResponses, SubscribeChatStreamData, SubscribeChatStreamErrors, SubscribeChatStreamResponse, SubscribeChatStreamResponses, UpdateChatData, UpdateChatErrors, UpdateChatResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses } from './types.gen';
+import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, DeleteMemoryData, DeleteMemoryErrors, DeleteMemoryResponses, EditNodeTaskData, EditNodeTaskErrors, EditNodeTaskResponses, EditQueuedMessageData, EditQueuedMessageErrors, EditQueuedMessageResponses, GetChatArtifactData, GetChatArtifactErrors, GetChatArtifactResponses, GetChatData, GetChatErrors, GetChatRecordingData, GetChatRecordingErrors, GetChatRecordingResponses, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatArtifactsData, ListChatArtifactsErrors, ListChatArtifactsResponses, ListChatsData, ListChatsErrors, ListChatsResponses, ListExtensionsData, ListExtensionsResponses, ListMemoriesData, ListMemoriesErrors, ListMemoriesResponses, ListRecordingsData, ListRecordingsErrors, ListRecordingsResponses, QueueNodeMessageData, QueueNodeMessageErrors, QueueNodeMessageResponses, RemoveQueuedMessageData, RemoveQueuedMessageErrors, RemoveQueuedMessageResponses, SendChatMessageData, SendChatMessageErrors, SendChatMessageResponse, SendChatMessageResponses, SubscribeChatStreamData, SubscribeChatStreamErrors, SubscribeChatStreamResponse, SubscribeChatStreamResponses, UpdateChatData, UpdateChatErrors, UpdateChatResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -86,6 +86,18 @@ export const updateChat = <ThrowOnError extends boolean = false>(options: Option
 });
 
 /**
+ * List enabled extensions for SPA nav
+ *
+ * Every enabled quack-extensions SDK module, name-only unless it implements the SDK's optional UI descriptor (`sdk.UI`). `href` is a same-origin relative reference into the extension's own routes (e.g. `/remarkable/review`), never an absolute URL. Same auth as the rest of /api/v1 - this reveals which extensions are enabled, no more sensitive than the config file itself.
+ *
+ */
+export const listExtensions = <ThrowOnError extends boolean = false>(options?: Options<ListExtensionsData, ThrowOnError>): RequestResult<ListExtensionsResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ListExtensionsResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/extensions',
+    ...options
+});
+
+/**
  * List recorded chat sessions
  *
  * Every session the replay ledger has an entry for (internal/ledger's
@@ -119,6 +131,30 @@ export const listRecordings = <ThrowOnError extends boolean = false>(options?: O
 export const getChatRecording = <ThrowOnError extends boolean = false>(options: Options<GetChatRecordingData, ThrowOnError>): RequestResult<GetChatRecordingResponses, GetChatRecordingErrors, ThrowOnError> => (options.client ?? client).get<GetChatRecordingResponses, GetChatRecordingErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
     url: '/api/v1/chats/{chat_id}/recording',
+    ...options
+});
+
+/**
+ * List a chat's artifacts
+ *
+ * Every artifact name visible to this chat, each with its full revision history (oldest first) - the durable store behind historical attachment viewing, the reMarkable review page fetching the scan under review, and replay debugging. Nested under chats so chat access is artifact access - no new authz surface. Read-only: bytes enter only via dispatch/run-start, never through this API; lifecycle rides chat deletion. Deliberately unpaginated: bounded per chat, not an open-ended table (mirrors /api/v1/recordings).
+ *
+ */
+export const listChatArtifacts = <ThrowOnError extends boolean = false>(options: Options<ListChatArtifactsData, ThrowOnError>): RequestResult<ListChatArtifactsResponses, ListChatArtifactsErrors, ThrowOnError> => (options.client ?? client).get<ListChatArtifactsResponses, ListChatArtifactsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/chats/{chat_id}/artifacts',
+    ...options
+});
+
+/**
+ * Download one artifact revision's bytes
+ *
+ * Latest revision by default; pass `?revision=n` for an older one. Security: `Content-Disposition` defaults to `attachment`; only an allowlisted set of image MIME types render inline (`Content-Disposition: inline`) - SVG is deliberately NOT on that list (same-origin stored-XSS via an SVG "image" is the trap this guards against, so anything HTML-capable stays a forced download).
+ *
+ */
+export const getChatArtifact = <ThrowOnError extends boolean = false>(options: Options<GetChatArtifactData, ThrowOnError>): RequestResult<GetChatArtifactResponses, GetChatArtifactErrors, ThrowOnError> => (options.client ?? client).get<GetChatArtifactResponses, GetChatArtifactErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/chats/{chat_id}/artifacts/{artifact_name}',
     ...options
 });
 

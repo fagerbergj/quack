@@ -283,6 +283,28 @@ type AgentActivityOutputItem struct {
 // AgentActivityOutputItemType defines model for AgentActivityOutputItem.Type.
 type AgentActivityOutputItemType string
 
+// ArtifactList defines model for ArtifactList.
+type ArtifactList struct {
+	Data []ArtifactSummary `json:"data"`
+}
+
+// ArtifactRevisionInfo defines model for ArtifactRevisionInfo.
+type ArtifactRevisionInfo struct {
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+	MimeType  string     `json:"mime_type"`
+	Revision  int64      `json:"revision"`
+	Size      int64      `json:"size"`
+
+	// TurnId The turn that created this revision. Absent if unknown.
+	TurnId *string `json:"turn_id,omitempty"`
+}
+
+// ArtifactSummary defines model for ArtifactSummary.
+type ArtifactSummary struct {
+	Name      string                 `json:"name"`
+	Revisions []ArtifactRevisionInfo `json:"revisions"`
+}
+
 // ChatDetail defines model for ChatDetail.
 type ChatDetail struct {
 	// Archived True if the chat is archived and hidden from the main list by default.
@@ -298,6 +320,9 @@ type ChatDetail struct {
 	// GithubUrl Web URL of the originating GitHub issue/PR, present only for GitHub-originated chats.
 	GithubUrl *string `json:"github_url,omitempty"`
 	Id        string  `json:"id"`
+
+	// Origin Generic provenance for an extension-dispatched chat: how the SPA should present and group it, without the SPA knowing which extension produced it. Server-stamped only - an extension can set this only via Dispatch, never through a writable API.
+	Origin *ChatOrigin `json:"origin,omitempty"`
 
 	// PendingQuestion The unanswered question blocking the chat, present only when status is `needs_input`.
 	PendingQuestion *string `json:"pending_question,omitempty"`
@@ -321,6 +346,36 @@ type ChatList struct {
 	NextPageToken *string `json:"next_page_token,omitempty"`
 }
 
+// ChatOrigin Generic provenance for an extension-dispatched chat: how the SPA should present and group it, without the SPA knowing which extension produced it. Server-stamped only - an extension can set this only via Dispatch, never through a writable API.
+type ChatOrigin struct {
+	// Badge Optional short status chip, e.g. "draft".
+	Badge *string `json:"badge,omitempty"`
+
+	// Extension Registration name of the extension that dispatched this chat, e.g. "remarkable".
+	Extension string `json:"extension"`
+
+	// Href The chat subject's one navigable link.
+	Href *string `json:"href,omitempty"`
+
+	// Kind Grouping category, e.g. "document", "pr".
+	Kind *string `json:"kind,omitempty"`
+
+	// Label Display handle, e.g. a document title or "owner/repo#42".
+	Label string `json:"label"`
+
+	// Labels Extra grouping dimensions beyond kind - repo, state, tags, whatever the extension's domain needs - keyed for grouping (the sidebar renders one labeled section per key) and slice-valued because a single chat can carry several values on one dimension.
+	Labels *map[string][]struct {
+		// Display Display text; falls back to value when absent.
+		Display *string `json:"display,omitempty"`
+
+		// Href Optional link-out for this value.
+		Href *string `json:"href,omitempty"`
+
+		// Value Raw value; what matching/counting keys on.
+		Value string `json:"value"`
+	} `json:"labels,omitempty"`
+}
+
 // ChatStatus A chat's derived state: `queued` when a turn has been admitted but is waiting on the server's max_active_runs slot, `running` while a turn holds its slot and is actively streaming, `needs_input` when the last turn paused on an unanswered question (a mid-node ask, a guarded operation awaiting approve/deny - the workspace.guards confirm tier - or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
 type ChatStatus string
 
@@ -339,6 +394,9 @@ type ChatSummary struct {
 	// GithubUrl Web URL of the originating GitHub issue/PR, present only for GitHub-originated chats.
 	GithubUrl *string `json:"github_url,omitempty"`
 	Id        string  `json:"id"`
+
+	// Origin Generic provenance for an extension-dispatched chat: how the SPA should present and group it, without the SPA knowing which extension produced it. Server-stamped only - an extension can set this only via Dispatch, never through a writable API.
+	Origin *ChatOrigin `json:"origin,omitempty"`
 
 	// PendingQuestion The unanswered question blocking the chat, present only when status is `needs_input`.
 	PendingQuestion *string `json:"pending_question,omitempty"`
@@ -432,6 +490,18 @@ type ErrorResponse struct {
 
 	// Error Human-readable summary of what went wrong.
 	Error string `json:"error"`
+}
+
+// ExtensionInfo defines model for ExtensionInfo.
+type ExtensionInfo struct {
+	// Href Same-origin relative reference into the extension's own routes; absent when the extension implements no UI descriptor.
+	Href *string `json:"href,omitempty"`
+
+	// Name Registration name of the extension.
+	Name string `json:"name"`
+
+	// Title Display title for the nav entry; absent when the extension implements no UI descriptor.
+	Title *string `json:"title,omitempty"`
 }
 
 // ItemStatus defines model for ItemStatus.
@@ -633,6 +703,9 @@ type Usage struct {
 	OutputTokens *int `json:"output_tokens,omitempty"`
 }
 
+// ArtifactName defines model for ArtifactName.
+type ArtifactName = string
+
 // ChatID defines model for ChatID.
 type ChatID = string
 
@@ -674,6 +747,12 @@ type ListChatsParams struct {
 
 // ListChatsParamsStatus defines parameters for ListChats.
 type ListChatsParamsStatus string
+
+// GetChatArtifactParams defines parameters for GetChatArtifact.
+type GetChatArtifactParams struct {
+	// Revision Which revision to fetch. Defaults to the latest.
+	Revision *int `form:"revision,omitempty" json:"revision,omitempty"`
+}
 
 // ListMemoriesParams defines parameters for ListMemories.
 type ListMemoriesParams struct {
@@ -939,6 +1018,12 @@ type ServerInterface interface {
 	// Update a chat's mutable fields
 	// (PATCH /api/v1/chats/{chat_id})
 	UpdateChat(w http.ResponseWriter, r *http.Request, chatId ChatID)
+	// List a chat's artifacts
+	// (GET /api/v1/chats/{chat_id}/artifacts)
+	ListChatArtifacts(w http.ResponseWriter, r *http.Request, chatId ChatID)
+	// Download one artifact revision's bytes
+	// (GET /api/v1/chats/{chat_id}/artifacts/{artifact_name})
+	GetChatArtifact(w http.ResponseWriter, r *http.Request, chatId ChatID, artifactName ArtifactName, params GetChatArtifactParams)
 	// Edit a not-yet-started node's prompt
 	// (PATCH /api/v1/chats/{chat_id}/nodes/{node_id})
 	EditNodeTask(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
@@ -969,6 +1054,9 @@ type ServerInterface interface {
 	// Subscribe to a chat's live response stream
 	// (GET /api/v1/chats/{chat_id}/stream)
 	SubscribeChatStream(w http.ResponseWriter, r *http.Request, chatId ChatID)
+	// List enabled extensions for SPA nav
+	// (GET /api/v1/extensions)
+	ListExtensions(w http.ResponseWriter, r *http.Request)
 	// Browse or search quack's semantic memory
 	// (GET /api/v1/memories)
 	ListMemories(w http.ResponseWriter, r *http.Request, params ListMemoriesParams)
@@ -1014,6 +1102,18 @@ func (_ Unimplemented) GetChat(w http.ResponseWriter, r *http.Request, chatId Ch
 // Update a chat's mutable fields
 // (PATCH /api/v1/chats/{chat_id})
 func (_ Unimplemented) UpdateChat(w http.ResponseWriter, r *http.Request, chatId ChatID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// List a chat's artifacts
+// (GET /api/v1/chats/{chat_id}/artifacts)
+func (_ Unimplemented) ListChatArtifacts(w http.ResponseWriter, r *http.Request, chatId ChatID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Download one artifact revision's bytes
+// (GET /api/v1/chats/{chat_id}/artifacts/{artifact_name})
+func (_ Unimplemented) GetChatArtifact(w http.ResponseWriter, r *http.Request, chatId ChatID, artifactName ArtifactName, params GetChatArtifactParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1074,6 +1174,12 @@ func (_ Unimplemented) UpdateResponseStatus(w http.ResponseWriter, r *http.Reque
 // Subscribe to a chat's live response stream
 // (GET /api/v1/chats/{chat_id}/stream)
 func (_ Unimplemented) SubscribeChatStream(w http.ResponseWriter, r *http.Request, chatId ChatID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// List enabled extensions for SPA nav
+// (GET /api/v1/extensions)
+func (_ Unimplemented) ListExtensions(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1326,6 +1432,99 @@ func (siw *ServerInterfaceWrapper) UpdateChat(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateChat(w, r, chatId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListChatArtifacts operation middleware
+func (siw *ServerInterfaceWrapper) ListChatArtifacts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chat_id" -------------
+	var chatId ChatID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chat_id", chi.URLParam(r, "chat_id"), &chatId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListChatArtifacts(w, r, chatId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetChatArtifact operation middleware
+func (siw *ServerInterfaceWrapper) GetChatArtifact(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chat_id" -------------
+	var chatId ChatID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chat_id", chi.URLParam(r, "chat_id"), &chatId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "artifact_name" -------------
+	var artifactName ArtifactName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "artifact_name", chi.URLParam(r, "artifact_name"), &artifactName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "artifact_name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetChatArtifactParams
+
+	// ------------- Optional query parameter "revision" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "revision", r.URL.Query(), &params.Revision, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "revision"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "revision", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetChatArtifact(w, r, chatId, artifactName, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1756,6 +1955,28 @@ func (siw *ServerInterfaceWrapper) SubscribeChatStream(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// ListExtensions operation middleware
+func (siw *ServerInterfaceWrapper) ListExtensions(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListExtensions(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListMemories operation middleware
 func (siw *ServerInterfaceWrapper) ListMemories(w http.ResponseWriter, r *http.Request) {
 
@@ -2035,6 +2256,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Patch(options.BaseURL+"/api/v1/chats/{chat_id}", wrapper.UpdateChat)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/chats/{chat_id}/artifacts", wrapper.ListChatArtifacts)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/chats/{chat_id}/artifacts/{artifact_name}", wrapper.GetChatArtifact)
+	})
+	r.Group(func(r chi.Router) {
 		r.Patch(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}", wrapper.EditNodeTask)
 	})
 	r.Group(func(r chi.Router) {
@@ -2063,6 +2290,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/chats/{chat_id}/stream", wrapper.SubscribeChatStream)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/extensions", wrapper.ListExtensions)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/memories", wrapper.ListMemories)
