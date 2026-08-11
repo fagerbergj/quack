@@ -106,10 +106,14 @@ github.com/ebitengine/purego v0.10.1 h1:dewVBCBT2GaMu1SrNTYxQhgQBethzfhiwvZiLGP/
 github.com/ebitengine/purego v0.10.1/go.mod h1:iIjxzd6CiRiOG0UyXP+V1+jWqUXVjPKLAI0mRfJZTmQ=
 github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f h1:Y/CXytFA4m6baUTXGLOoWe4PQhGxaX0KpnayAqC48p4=
 github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f/go.mod h1:vw97MGsxSvLiUE2X8qFplwetxpGLQrlU1Q9AUEIzCaM=
+github.com/fagerbergj/quack-extensions/github v0.1.0 h1:dHqsd/oJnXRAWR0SBNkeFap/UKYWBvMJpyMERN410X8=
+github.com/fagerbergj/quack-extensions/github v0.1.0/go.mod h1:kmH0Yz1z6trZrrGSe5FF37GCUEMuQ6kVMz+Dk7R/owA=
 github.com/fagerbergj/quack-extensions/noop v0.2.0 h1:Or3gYcjGMP/tPzzgemUX11jwHMfTrGG4AXJO/ILmPEc=
 github.com/fagerbergj/quack-extensions/noop v0.2.0/go.mod h1:IxUsCKZGXXSNwyYwkSLtbM9FW6vQhnyGUgoQ6omRB60=
 github.com/fagerbergj/quack-extensions/remarkable v0.1.1 h1:CrPRUCRVptHR87o+VBSYR2NxaWKWOIiZMcaDbd0oOLw=
 github.com/fagerbergj/quack-extensions/remarkable v0.1.1/go.mod h1:i0AqOLF3PueQ5V5nQZqxsQPlS5MvhSWuvImNQXs6w6A=
+github.com/fagerbergj/quack-extensions/sdk v0.3.0 h1:mJ6h+xC2Bzol5QREL1vVrDBQz0CRqIwjQM2TiORAO1w=
+github.com/fagerbergj/quack-extensions/sdk v0.3.0/go.mod h1:fp+3J6PT73ww7q73Zu4uaOCihbsihnarw+YT8F//GCI=
 github.com/felixge/httpsnoop v1.1.0 h1:3YtUj32ZZkqZtt3sZZsClsymw/QDuVfpNhoA31zeORc=
 github.com/felixge/httpsnoop v1.1.0/go.mod h1:Zqxgdd+1Rkcz8euOqdr7lqgCRJztwr5hp9vDSi5UZCE=
 github.com/glebarez/go-sqlite v1.21.2 h1:3a6LFC4sKahUunAmynQKLZceZCOzUthkRkEAl9gAXWo=

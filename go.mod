@@ -177,10 +177,3 @@ require (
 	rsc.io/omap v1.2.0 // indirect
 	rsc.io/ordered v1.1.1 // indirect
 )
-
-// Development-only: neither tag exists yet (sdk v0.3.0, github v0.1.0 land
-// together once quack-extensions PR review lands). Remove before merge.
-replace (
-	github.com/fagerbergj/quack-extensions/github => /home/jason/workspace/quack-extensions/github
-	github.com/fagerbergj/quack-extensions/sdk => /home/jason/workspace/quack-extensions/sdk
-)
