@@ -794,7 +794,7 @@ func citeReason(score float64, details []citationDetail) string {
 	if elided > 0 {
 		reason += fmt.Sprintf(" (and %d more elided)", elided)
 	}
-	reason += " " + citeReasonLegend
+	reason += ". " + citeReasonLegend
 	return reason
 }
 
