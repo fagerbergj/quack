@@ -74,6 +74,11 @@ export type MemoryList = {
      * Total entries matching the filter (not just this page). With `q`, this is just len(memories) - search returns a ranked top-K, not a stable count.
      */
     total: number;
+    /**
+     * Opaque token - pass as `page_token` to fetch the next page. Absent when this page is the last, or the request set `q`. Treat as an opaque string: never parse it.
+     *
+     */
+    next_page_token?: string;
 };
 
 export type RecordingSummary = {
@@ -154,8 +159,21 @@ export type ResponseStatusUpdateBody = {
     status: ResponseStatus;
 };
 
-export type TransitionError = {
+export type ErrorResponse = {
+    /**
+     * Human-readable summary of what went wrong.
+     */
     error: string;
+    /**
+     * Optional additional context (e.g. which field failed validation).
+     */
+    detail?: string;
+};
+
+/**
+ * An illegal node-status transition - ErrorResponse refined with the node's current status and its legal targets.
+ */
+export type TransitionError = ErrorResponse & {
     current: NodeStatus;
     allowed: Array<NodeStatus>;
 };
@@ -304,6 +322,13 @@ export type HealthCheckResponse = HealthCheckResponses[keyof HealthCheckResponse
 
 export type ListChatsData = {
     body?: never;
+    headers?: {
+        /**
+         * An ETag from a previous response to this exact page (same limit, page_token, and status selection). A match short-circuits to a bodyless 304.
+         *
+         */
+        'If-None-Match'?: string;
+    };
     path?: never;
     query?: {
         /**
@@ -330,6 +355,15 @@ export type ListChatsData = {
     };
     url: '/api/v1/chats';
 };
+
+export type ListChatsErrors = {
+    /**
+     * An explicitly empty status selection, or an invalid page_token
+     */
+    400: ErrorResponse;
+};
+
+export type ListChatsError = ListChatsErrors[keyof ListChatsErrors];
 
 export type ListChatsResponses = {
     /**
@@ -387,8 +421,10 @@ export type GetChatErrors = {
     /**
      * Not found
      */
-    404: unknown;
+    404: ErrorResponse;
 };
+
+export type GetChatError = GetChatErrors[keyof GetChatErrors];
 
 export type GetChatResponses = {
     /**
@@ -412,8 +448,10 @@ export type UpdateChatErrors = {
     /**
      * No such chat
      */
-    404: unknown;
+    404: ErrorResponse;
 };
+
+export type UpdateChatError = UpdateChatErrors[keyof UpdateChatErrors];
 
 export type UpdateChatResponses = {
     /**
@@ -435,8 +473,10 @@ export type ListRecordingsErrors = {
     /**
      * Recording is not enabled
      */
-    404: unknown;
+    404: ErrorResponse;
 };
+
+export type ListRecordingsError = ListRecordingsErrors[keyof ListRecordingsErrors];
 
 export type ListRecordingsResponses = {
     /**
@@ -460,8 +500,10 @@ export type GetChatRecordingErrors = {
     /**
      * No recording exists for this chat
      */
-    404: unknown;
+    404: ErrorResponse;
 };
+
+export type GetChatRecordingError = GetChatRecordingErrors[keyof GetChatRecordingErrors];
 
 export type GetChatRecordingResponses = {
     /**
@@ -480,6 +522,15 @@ export type SendChatMessageData = {
     query?: never;
     url: '/api/v1/chats/{chat_id}/responses';
 };
+
+export type SendChatMessageErrors = {
+    /**
+     * No such chat
+     */
+    404: ErrorResponse;
+};
+
+export type SendChatMessageError = SendChatMessageErrors[keyof SendChatMessageErrors];
 
 export type SendChatMessageResponses = {
     /**
@@ -504,8 +555,10 @@ export type GetResponseErrors = {
     /**
      * Not found
      */
-    404: unknown;
+    404: ErrorResponse;
 };
+
+export type GetResponseError = GetResponseErrors[keyof GetResponseErrors];
 
 export type GetResponseResponses = {
     /**
@@ -524,6 +577,15 @@ export type SubscribeChatStreamData = {
     query?: never;
     url: '/api/v1/chats/{chat_id}/stream';
 };
+
+export type SubscribeChatStreamErrors = {
+    /**
+     * No such chat
+     */
+    404: ErrorResponse;
+};
+
+export type SubscribeChatStreamError = SubscribeChatStreamErrors[keyof SubscribeChatStreamErrors];
 
 export type SubscribeChatStreamResponses = {
     /**
@@ -548,11 +610,11 @@ export type UpdateNodeStatusErrors = {
     /**
      * Bad request
      */
-    400: unknown;
+    400: ErrorResponse;
     /**
      * No such node
      */
-    404: unknown;
+    404: ErrorResponse;
     /**
      * Illegal transition; body names the allowed target statuses for the node's current status
      */
@@ -584,12 +646,14 @@ export type EditNodeTaskErrors = {
     /**
      * No such node
      */
-    404: unknown;
+    404: ErrorResponse;
     /**
      * The node has already started; its prompt is immutable
      */
-    409: unknown;
+    409: ErrorResponse;
 };
+
+export type EditNodeTaskError = EditNodeTaskErrors[keyof EditNodeTaskErrors];
 
 export type EditNodeTaskResponses = {
     /**
@@ -612,8 +676,10 @@ export type QueueNodeMessageErrors = {
     /**
      * No such node, or the node isn't running right now
      */
-    404: unknown;
+    404: ErrorResponse;
 };
+
+export type QueueNodeMessageError = QueueNodeMessageErrors[keyof QueueNodeMessageErrors];
 
 export type QueueNodeMessageResponses = {
     /**
@@ -639,12 +705,14 @@ export type RemoveQueuedMessageErrors = {
     /**
      * No such queued message
      */
-    404: unknown;
+    404: ErrorResponse;
     /**
      * Already delivered; immutable
      */
-    409: unknown;
+    409: ErrorResponse;
 };
+
+export type RemoveQueuedMessageError = RemoveQueuedMessageErrors[keyof RemoveQueuedMessageErrors];
 
 export type RemoveQueuedMessageResponses = {
     /**
@@ -670,12 +738,14 @@ export type EditQueuedMessageErrors = {
     /**
      * No such queued message
      */
-    404: unknown;
+    404: ErrorResponse;
     /**
      * Already delivered; immutable
      */
-    409: unknown;
+    409: ErrorResponse;
 };
+
+export type EditQueuedMessageError = EditQueuedMessageErrors[keyof EditQueuedMessageErrors];
 
 export type EditQueuedMessageResponses = {
     /**
@@ -698,12 +768,14 @@ export type UpdateResponseStatusErrors = {
     /**
      * Bad request (unsupported target status)
      */
-    400: unknown;
+    400: ErrorResponse;
     /**
      * This response is not the active run
      */
-    404: unknown;
+    404: ErrorResponse;
 };
+
+export type UpdateResponseStatusError = UpdateResponseStatusErrors[keyof UpdateResponseStatusErrors];
 
 export type UpdateResponseStatusResponses = {
     /**
@@ -726,21 +798,31 @@ export type ListMemoriesData = {
          * Run an embedding search instead of listing; matches then carry `score`.
          */
         q?: string;
+        /**
+         * Max memories to return. Defaults to 50; capped at 200.
+         */
         limit?: number;
         /**
-         * Ignored when `q` is set (search ranks by score, not a stable page).
+         * Opaque continuation token from a previous response's `next_page_token`. Treat it as an opaque string: never parse or construct one, pass back exactly what was returned. Omit for the first page. Ignored when `q` is set (search ranks by score, not a stable page). Only valid against the exact `bucket` filter it was issued for.
+         *
          */
-        offset?: number;
+        page_token?: string;
     };
     url: '/api/v1/memories';
 };
 
 export type ListMemoriesErrors = {
     /**
+     * Malformed page_token, or one issued for a different bucket filter
+     */
+    400: ErrorResponse;
+    /**
      * The memory index is unreachable
      */
-    500: unknown;
+    500: ErrorResponse;
 };
+
+export type ListMemoriesError = ListMemoriesErrors[keyof ListMemoriesErrors];
 
 export type ListMemoriesResponses = {
     /**
@@ -764,8 +846,10 @@ export type DeleteMemoryErrors = {
     /**
      * No such memory
      */
-    404: unknown;
+    404: ErrorResponse;
 };
+
+export type DeleteMemoryError = DeleteMemoryErrors[keyof DeleteMemoryErrors];
 
 export type DeleteMemoryResponses = {
     /**

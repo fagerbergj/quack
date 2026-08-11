@@ -27,7 +27,13 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
   const [bucket, setBucket] = useState('')
   const [q, setQ] = useState('')
   const [sort, setSort] = useState<MemorySort>('newest')
-  const [offset, setOffset] = useState(0)
+  // page_token is opaque (never parsed/constructed) - pageTokens[i] is the
+  // token that fetched page i (pageTokens[0] is undefined: first page).
+  // Going back replays a token this component already received, going
+  // forward stores the next one the server just gave it.
+  const [pageIndex, setPageIndex] = useState(0)
+  const [pageTokens, setPageTokens] = useState<(string | undefined)[]>([undefined])
+  const [nextPageToken, setNextPageToken] = useState<string | undefined>(undefined)
   const [memories, setMemories] = useState<Memory[]>(initialState?.memories ?? [])
   const [total, setTotal] = useState(initialState?.total ?? 0)
   const [loading, setLoading] = useState(initialState === undefined)
@@ -56,10 +62,11 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
         bucket: bucket.trim() || undefined,
         q: q.trim() || undefined,
         limit: PAGE_SIZE,
-        offset,
+        page_token: pageTokens[pageIndex],
       })
       setMemories(result.memories)
       setTotal(result.total)
+      setNextPageToken(result.next_page_token)
       setKnownBuckets(prev => {
         const next = new Set(prev)
         for (const m of result.memories) next.add(m.bucket)
@@ -70,7 +77,7 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
     } finally {
       setLoading(false)
     }
-  }, [bucket, q, offset])
+  }, [bucket, q, pageIndex, pageTokens])
 
   useEffect(() => {
     if (initialState !== undefined) return // story/test seam: static demo state, no live fetch
@@ -83,13 +90,34 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
     setTotal(t => Math.max(0, t - 1))
   }
 
+  function resetPaging() {
+    setPageIndex(0)
+    setPageTokens([undefined])
+  }
+
   function handleBucketChange(next: string) {
     setBucket(next)
-    setOffset(0)
+    resetPaging()
+  }
+
+  function handlePrevPage() {
+    setPageIndex(i => Math.max(0, i - 1))
+  }
+
+  function handleNextPage() {
+    if (!nextPageToken) return
+    setPageTokens(prev => {
+      const next = [...prev]
+      next[pageIndex + 1] = nextPageToken
+      return next
+    })
+    setPageIndex(i => i + 1)
   }
 
   const searching = q.trim() !== ''
-  const hasMore = !searching && offset + memories.length < total
+  const hasMore = !searching && !!nextPageToken
+  const rangeStart = pageIndex * PAGE_SIZE + 1
+  const rangeEnd = pageIndex * PAGE_SIZE + memories.length
   const sortedMemories = useMemo(() => sortMemories(memories, sort), [memories, sort])
   const bucketOptions = useMemo(() => Array.from(knownBuckets).sort(), [knownBuckets])
   const showFooter = !loading && !error && !searching && total > 0
@@ -111,7 +139,7 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
         <input
           type="search"
           value={q}
-          onChange={e => { setQ(e.target.value); setOffset(0) }}
+          onChange={e => { setQ(e.target.value); resetPaging() }}
           placeholder="Search — what would a run recall for this?"
           aria-label="Search memories"
           className="flex-1 min-w-0 rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
@@ -146,17 +174,17 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
 
       {showFooter && (
         <div ref={footerRef} className="p-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-          <span>{offset + 1}–{offset + memories.length} of {total}</span>
+          <span>{rangeStart}–{rangeEnd} of {total}</span>
           <div className="flex gap-2">
             <button
-              onClick={() => setOffset(o => Math.max(0, o - PAGE_SIZE))}
-              disabled={offset === 0}
+              onClick={handlePrevPage}
+              disabled={pageIndex === 0}
               className="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
             >
               Prev
             </button>
             <button
-              onClick={() => setOffset(o => o + PAGE_SIZE)}
+              onClick={handleNextPage}
               disabled={!hasMore}
               className="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
             >

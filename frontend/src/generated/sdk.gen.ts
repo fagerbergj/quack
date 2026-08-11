@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, DeleteMemoryData, DeleteMemoryErrors, DeleteMemoryResponses, EditNodeTaskData, EditNodeTaskErrors, EditNodeTaskResponses, EditQueuedMessageData, EditQueuedMessageErrors, EditQueuedMessageResponses, GetChatData, GetChatErrors, GetChatRecordingData, GetChatRecordingErrors, GetChatRecordingResponses, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsResponses, ListMemoriesData, ListMemoriesErrors, ListMemoriesResponses, ListRecordingsData, ListRecordingsErrors, ListRecordingsResponses, QueueNodeMessageData, QueueNodeMessageErrors, QueueNodeMessageResponses, RemoveQueuedMessageData, RemoveQueuedMessageErrors, RemoveQueuedMessageResponses, SendChatMessageData, SendChatMessageResponse, SendChatMessageResponses, SubscribeChatStreamData, SubscribeChatStreamResponse, SubscribeChatStreamResponses, UpdateChatData, UpdateChatErrors, UpdateChatResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses } from './types.gen';
+import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, DeleteMemoryData, DeleteMemoryErrors, DeleteMemoryResponses, EditNodeTaskData, EditNodeTaskErrors, EditNodeTaskResponses, EditQueuedMessageData, EditQueuedMessageErrors, EditQueuedMessageResponses, GetChatData, GetChatErrors, GetChatRecordingData, GetChatRecordingErrors, GetChatRecordingResponses, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatsData, ListChatsErrors, ListChatsResponses, ListMemoriesData, ListMemoriesErrors, ListMemoriesResponses, ListRecordingsData, ListRecordingsErrors, ListRecordingsResponses, QueueNodeMessageData, QueueNodeMessageErrors, QueueNodeMessageResponses, RemoveQueuedMessageData, RemoveQueuedMessageErrors, RemoveQueuedMessageResponses, SendChatMessageData, SendChatMessageErrors, SendChatMessageResponse, SendChatMessageResponses, SubscribeChatStreamData, SubscribeChatStreamErrors, SubscribeChatStreamResponse, SubscribeChatStreamResponses, UpdateChatData, UpdateChatErrors, UpdateChatResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -25,13 +25,21 @@ export const healthCheck = <ThrowOnError extends boolean = false>(options?: Opti
 
 /**
  * List chats
+ *
+ * A conditional GET: the 200 body's content hash is returned as an `ETag` (weak, `W/"..."`, varying with page content, next_page_token, and effectively limit/page_token/status since those change the content). Send it back as `If-None-Match` on a later poll of the exact same page to get a bodyless 304 when nothing changed - there is no separate cache TTL, so every poll still reaches the server and revalidates against the live rows.
+ *
  */
-export const listChats = <ThrowOnError extends boolean = false>(options?: Options<ListChatsData, ThrowOnError>): RequestResult<ListChatsResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ListChatsResponses, unknown, ThrowOnError>({ url: '/api/v1/chats', ...options });
+export const listChats = <ThrowOnError extends boolean = false>(options?: Options<ListChatsData, ThrowOnError>): RequestResult<ListChatsResponses, ListChatsErrors, ThrowOnError> => (options?.client ?? client).get<ListChatsResponses, ListChatsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/chats',
+    ...options
+});
 
 /**
  * Create a chat
  */
 export const createChat = <ThrowOnError extends boolean = false>(options?: Options<CreateChatData, ThrowOnError>): RequestResult<CreateChatResponses, unknown, ThrowOnError> => (options?.client ?? client).post<CreateChatResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
     url: '/api/v1/chats',
     ...options,
     headers: {
@@ -43,12 +51,20 @@ export const createChat = <ThrowOnError extends boolean = false>(options?: Optio
 /**
  * Delete a chat
  */
-export const deleteChat = <ThrowOnError extends boolean = false>(options: Options<DeleteChatData, ThrowOnError>): RequestResult<DeleteChatResponses, unknown, ThrowOnError> => (options.client ?? client).delete<DeleteChatResponses, unknown, ThrowOnError>({ url: '/api/v1/chats/{chat_id}', ...options });
+export const deleteChat = <ThrowOnError extends boolean = false>(options: Options<DeleteChatData, ThrowOnError>): RequestResult<DeleteChatResponses, unknown, ThrowOnError> => (options.client ?? client).delete<DeleteChatResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/chats/{chat_id}',
+    ...options
+});
 
 /**
  * Get a chat with its turns
  */
-export const getChat = <ThrowOnError extends boolean = false>(options: Options<GetChatData, ThrowOnError>): RequestResult<GetChatResponses, GetChatErrors, ThrowOnError> => (options.client ?? client).get<GetChatResponses, GetChatErrors, ThrowOnError>({ url: '/api/v1/chats/{chat_id}', ...options });
+export const getChat = <ThrowOnError extends boolean = false>(options: Options<GetChatData, ThrowOnError>): RequestResult<GetChatResponses, GetChatErrors, ThrowOnError> => (options.client ?? client).get<GetChatResponses, GetChatErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/chats/{chat_id}',
+    ...options
+});
 
 /**
  * Update a chat's mutable fields
@@ -60,6 +76,7 @@ export const getChat = <ThrowOnError extends boolean = false>(options: Options<G
  *
  */
 export const updateChat = <ThrowOnError extends boolean = false>(options: Options<UpdateChatData, ThrowOnError>): RequestResult<UpdateChatResponses, UpdateChatErrors, ThrowOnError> => (options.client ?? client).patch<UpdateChatResponses, UpdateChatErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
     url: '/api/v1/chats/{chat_id}',
     ...options,
     headers: {
@@ -75,10 +92,17 @@ export const updateChat = <ThrowOnError extends boolean = false>(options: Option
  * `LedgerStore.List`), backing `quack recording list`/export. 200 with
  * an empty array when recording is enabled but nothing has been
  * recorded yet; 404 when recording is disabled entirely - same
- * disabled signal as `getChatRecording`.
+ * disabled signal as `getChatRecording`. Deliberately unpaginated: one
+ * entry per recorded session, bounded by the ledger's own retention_days
+ * GC, not an open-ended table - unlike /chats it has no realistic path
+ * to needing a page_token.
  *
  */
-export const listRecordings = <ThrowOnError extends boolean = false>(options?: Options<ListRecordingsData, ThrowOnError>): RequestResult<ListRecordingsResponses, ListRecordingsErrors, ThrowOnError> => (options?.client ?? client).get<ListRecordingsResponses, ListRecordingsErrors, ThrowOnError>({ url: '/api/v1/recordings', ...options });
+export const listRecordings = <ThrowOnError extends boolean = false>(options?: Options<ListRecordingsData, ThrowOnError>): RequestResult<ListRecordingsResponses, ListRecordingsErrors, ThrowOnError> => (options?.client ?? client).get<ListRecordingsResponses, ListRecordingsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/recordings',
+    ...options
+});
 
 /**
  * Download a chat's replay-ledger recording bundle
@@ -92,7 +116,11 @@ export const listRecordings = <ThrowOnError extends boolean = false>(options?: O
  * recorded, already GC'd by retention, or recording disabled).
  *
  */
-export const getChatRecording = <ThrowOnError extends boolean = false>(options: Options<GetChatRecordingData, ThrowOnError>): RequestResult<GetChatRecordingResponses, GetChatRecordingErrors, ThrowOnError> => (options.client ?? client).get<GetChatRecordingResponses, GetChatRecordingErrors, ThrowOnError>({ url: '/api/v1/chats/{chat_id}/recording', ...options });
+export const getChatRecording = <ThrowOnError extends boolean = false>(options: Options<GetChatRecordingData, ThrowOnError>): RequestResult<GetChatRecordingResponses, GetChatRecordingErrors, ThrowOnError> => (options.client ?? client).get<GetChatRecordingResponses, GetChatRecordingErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/chats/{chat_id}/recording',
+    ...options
+});
 
 /**
  * Send a message and stream the response
@@ -150,8 +178,12 @@ export const getChatRecording = <ThrowOnError extends boolean = false>(options: 
  * ({"title"}) is sent once the title is generated; `done` ({}) terminates
  * the stream; `error` ({"error"}) signals failure.
  *
+ * A `chat_id` naming no chat is validated BEFORE the stream opens - a
+ * clean 404, never an in-stream `error` event.
+ *
  */
-export const sendChatMessage = <ThrowOnError extends boolean = false>(options: Options<SendChatMessageData, ThrowOnError, SendChatMessageResponse>): Promise<ServerSentEventsResult<SendChatMessageResponses>> => (options.client ?? client).sse.post<SendChatMessageResponses, unknown, ThrowOnError>({
+export const sendChatMessage = <ThrowOnError extends boolean = false>(options: Options<SendChatMessageData, ThrowOnError, SendChatMessageResponse>): Promise<ServerSentEventsResult<SendChatMessageResponses>> => (options.client ?? client).sse.post<SendChatMessageResponses, SendChatMessageErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
     url: '/api/v1/chats/{chat_id}/responses',
     ...options,
     headers: {
@@ -168,7 +200,11 @@ export const sendChatMessage = <ThrowOnError extends boolean = false>(options: O
  * without reloading the full chat.
  *
  */
-export const getResponse = <ThrowOnError extends boolean = false>(options: Options<GetResponseData, ThrowOnError>): RequestResult<GetResponseResponses, GetResponseErrors, ThrowOnError> => (options.client ?? client).get<GetResponseResponses, GetResponseErrors, ThrowOnError>({ url: '/api/v1/chats/{chat_id}/responses/{response_id}', ...options });
+export const getResponse = <ThrowOnError extends boolean = false>(options: Options<GetResponseData, ThrowOnError>): RequestResult<GetResponseResponses, GetResponseErrors, ThrowOnError> => (options.client ?? client).get<GetResponseResponses, GetResponseErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/chats/{chat_id}/responses/{response_id}',
+    ...options
+});
 
 /**
  * Subscribe to a chat's live response stream
@@ -179,8 +215,15 @@ export const getResponse = <ThrowOnError extends boolean = false>(options: Optio
  * active, replays the most recent completed run. Reconnect-safe via the
  * replay buffer.
  *
+ * A `chat_id` naming no chat is validated BEFORE the stream opens - a
+ * clean 404, never an in-stream `error` event.
+ *
  */
-export const subscribeChatStream = <ThrowOnError extends boolean = false>(options: Options<SubscribeChatStreamData, ThrowOnError, SubscribeChatStreamResponse>): Promise<ServerSentEventsResult<SubscribeChatStreamResponses>> => (options.client ?? client).sse.get<SubscribeChatStreamResponses, unknown, ThrowOnError>({ url: '/api/v1/chats/{chat_id}/stream', ...options });
+export const subscribeChatStream = <ThrowOnError extends boolean = false>(options: Options<SubscribeChatStreamData, ThrowOnError, SubscribeChatStreamResponse>): Promise<ServerSentEventsResult<SubscribeChatStreamResponses>> => (options.client ?? client).sse.get<SubscribeChatStreamResponses, SubscribeChatStreamErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/chats/{chat_id}/stream',
+    ...options
+});
 
 /**
  * Transition a DAG node's status (cancel, pause/resume, or retry)
@@ -213,6 +256,7 @@ export const subscribeChatStream = <ThrowOnError extends boolean = false>(option
  *
  */
 export const updateNodeStatus = <ThrowOnError extends boolean = false>(options: Options<UpdateNodeStatusData, ThrowOnError>): RequestResult<UpdateNodeStatusResponses, UpdateNodeStatusErrors, ThrowOnError> => (options.client ?? client).put<UpdateNodeStatusResponses, UpdateNodeStatusErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
     url: '/api/v1/chats/{chat_id}/nodes/{node_id}/status',
     ...options,
     headers: {
@@ -232,6 +276,7 @@ export const updateNodeStatus = <ThrowOnError extends boolean = false>(options: 
  *
  */
 export const editNodeTask = <ThrowOnError extends boolean = false>(options: Options<EditNodeTaskData, ThrowOnError>): RequestResult<EditNodeTaskResponses, EditNodeTaskErrors, ThrowOnError> => (options.client ?? client).patch<EditNodeTaskResponses, EditNodeTaskErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
     url: '/api/v1/chats/{chat_id}/nodes/{node_id}',
     ...options,
     headers: {
@@ -250,6 +295,7 @@ export const editNodeTask = <ThrowOnError extends boolean = false>(options: Opti
  *
  */
 export const queueNodeMessage = <ThrowOnError extends boolean = false>(options: Options<QueueNodeMessageData, ThrowOnError>): RequestResult<QueueNodeMessageResponses, QueueNodeMessageErrors, ThrowOnError> => (options.client ?? client).post<QueueNodeMessageResponses, QueueNodeMessageErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
     url: '/api/v1/chats/{chat_id}/nodes/{node_id}/queue',
     ...options,
     headers: {
@@ -261,12 +307,17 @@ export const queueNodeMessage = <ThrowOnError extends boolean = false>(options: 
 /**
  * Remove a queued message that has not yet been delivered
  */
-export const removeQueuedMessage = <ThrowOnError extends boolean = false>(options: Options<RemoveQueuedMessageData, ThrowOnError>): RequestResult<RemoveQueuedMessageResponses, RemoveQueuedMessageErrors, ThrowOnError> => (options.client ?? client).delete<RemoveQueuedMessageResponses, RemoveQueuedMessageErrors, ThrowOnError>({ url: '/api/v1/chats/{chat_id}/nodes/{node_id}/queue/{message_id}', ...options });
+export const removeQueuedMessage = <ThrowOnError extends boolean = false>(options: Options<RemoveQueuedMessageData, ThrowOnError>): RequestResult<RemoveQueuedMessageResponses, RemoveQueuedMessageErrors, ThrowOnError> => (options.client ?? client).delete<RemoveQueuedMessageResponses, RemoveQueuedMessageErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/chats/{chat_id}/nodes/{node_id}/queue/{message_id}',
+    ...options
+});
 
 /**
  * Edit a queued message that has not yet been delivered
  */
 export const editQueuedMessage = <ThrowOnError extends boolean = false>(options: Options<EditQueuedMessageData, ThrowOnError>): RequestResult<EditQueuedMessageResponses, EditQueuedMessageErrors, ThrowOnError> => (options.client ?? client).patch<EditQueuedMessageResponses, EditQueuedMessageErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
     url: '/api/v1/chats/{chat_id}/nodes/{node_id}/queue/{message_id}',
     ...options,
     headers: {
@@ -285,6 +336,7 @@ export const editQueuedMessage = <ThrowOnError extends boolean = false>(options:
  *
  */
 export const updateResponseStatus = <ThrowOnError extends boolean = false>(options: Options<UpdateResponseStatusData, ThrowOnError>): RequestResult<UpdateResponseStatusResponses, UpdateResponseStatusErrors, ThrowOnError> => (options.client ?? client).put<UpdateResponseStatusResponses, UpdateResponseStatusErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
     url: '/api/v1/chats/{chat_id}/responses/{response_id}/status',
     ...options,
     headers: {
@@ -301,10 +353,15 @@ export const updateResponseStatus = <ThrowOnError extends boolean = false>(optio
  * unreachable index is a 500; it never silently falls back to search or
  * returns a partial result. With `q`: runs the same embedding search a
  * live run's recall would use, so the tab can answer "what would a run
- * recall for this?" - entries then carry `score`, ordered descending.
+ * recall for this?" - entries then carry `score`, ordered descending,
+ * and are never paginated (a top-K search, not a stable page).
  *
  */
-export const listMemories = <ThrowOnError extends boolean = false>(options?: Options<ListMemoriesData, ThrowOnError>): RequestResult<ListMemoriesResponses, ListMemoriesErrors, ThrowOnError> => (options?.client ?? client).get<ListMemoriesResponses, ListMemoriesErrors, ThrowOnError>({ url: '/api/v1/memories', ...options });
+export const listMemories = <ThrowOnError extends boolean = false>(options?: Options<ListMemoriesData, ThrowOnError>): RequestResult<ListMemoriesResponses, ListMemoriesErrors, ThrowOnError> => (options?.client ?? client).get<ListMemoriesResponses, ListMemoriesErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/memories',
+    ...options
+});
 
 /**
  * Forget one memory
@@ -314,4 +371,8 @@ export const listMemories = <ThrowOnError extends boolean = false>(options?: Opt
  * a separate concern (suppression), not this endpoint's job.
  *
  */
-export const deleteMemory = <ThrowOnError extends boolean = false>(options: Options<DeleteMemoryData, ThrowOnError>): RequestResult<DeleteMemoryResponses, DeleteMemoryErrors, ThrowOnError> => (options.client ?? client).delete<DeleteMemoryResponses, DeleteMemoryErrors, ThrowOnError>({ url: '/api/v1/memories/{memory_id}', ...options });
+export const deleteMemory = <ThrowOnError extends boolean = false>(options: Options<DeleteMemoryData, ThrowOnError>): RequestResult<DeleteMemoryResponses, DeleteMemoryErrors, ThrowOnError> => (options.client ?? client).delete<DeleteMemoryResponses, DeleteMemoryErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/memories/{memory_id}',
+    ...options
+});

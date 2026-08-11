@@ -4,6 +4,7 @@
 package schema
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/oapi-codegen/runtime"
+)
+
+const (
+	BearerAuthScopes    bearerAuthContextKey    = "bearerAuth.Scopes"
+	TrustedHeaderScopes trustedHeaderContextKey = "trustedHeader.Scopes"
 )
 
 // Defines values for AgentActivityOutputItemType.
@@ -419,6 +425,15 @@ type EditNodeTaskBody struct {
 	Task string `json:"task"`
 }
 
+// ErrorResponse defines model for ErrorResponse.
+type ErrorResponse struct {
+	// Detail Optional additional context (e.g. which field failed validation).
+	Detail *string `json:"detail,omitempty"`
+
+	// Error Human-readable summary of what went wrong.
+	Error string `json:"error"`
+}
+
 // ItemStatus defines model for ItemStatus.
 type ItemStatus string
 
@@ -440,6 +455,9 @@ type Memory struct {
 // MemoryList defines model for MemoryList.
 type MemoryList struct {
 	Memories []Memory `json:"memories"`
+
+	// NextPageToken Opaque token - pass as `page_token` to fetch the next page. Absent when this page is the last, or the request set `q`. Treat as an opaque string: never parse it.
+	NextPageToken *string `json:"next_page_token,omitempty"`
 
 	// Total Total entries matching the filter (not just this page). With `q`, this is just len(memories) - search returns a ranked top-K, not a stable count.
 	Total int `json:"total"`
@@ -571,7 +589,12 @@ type TransitionError struct {
 	//   failed      → queued (retry)
 	//   cancelled   → queued (retry)
 	Current NodeStatus `json:"current"`
-	Error   string     `json:"error"`
+
+	// Detail Optional additional context (e.g. which field failed validation).
+	Detail *string `json:"detail,omitempty"`
+
+	// Error Human-readable summary of what went wrong.
+	Error string `json:"error"`
 }
 
 // Turn defines model for Turn.
@@ -625,6 +648,12 @@ type NodeID = string
 // ResponseID defines model for ResponseID.
 type ResponseID = string
 
+// bearerAuthContextKey is the context key for bearerAuth security scheme
+type bearerAuthContextKey string
+
+// trustedHeaderContextKey is the context key for trustedHeader security scheme
+type trustedHeaderContextKey string
+
 // ListChatsParams defines parameters for ListChats.
 type ListChatsParams struct {
 	// Limit Max chats to return. Defaults to 20; capped at 100.
@@ -638,6 +667,9 @@ type ListChatsParams struct {
 
 	// ShowArchived Deprecated, use `status`. Ignored when `status` is given. Otherwise: false (default) behaves as `status=active`, true as `status=active&status=archived`.
 	ShowArchived *bool `form:"show_archived,omitempty" json:"show_archived,omitempty"`
+
+	// IfNoneMatch An ETag from a previous response to this exact page (same limit, page_token, and status selection). A match short-circuits to a bodyless 304.
+	IfNoneMatch *string `json:"If-None-Match,omitempty"`
 }
 
 // ListChatsParamsStatus defines parameters for ListChats.
@@ -649,11 +681,13 @@ type ListMemoriesParams struct {
 	Bucket *string `form:"bucket,omitempty" json:"bucket,omitempty"`
 
 	// Q Run an embedding search instead of listing; matches then carry `score`.
-	Q     *string `form:"q,omitempty" json:"q,omitempty"`
-	Limit *int    `form:"limit,omitempty" json:"limit,omitempty"`
+	Q *string `form:"q,omitempty" json:"q,omitempty"`
 
-	// Offset Ignored when `q` is set (search ranks by score, not a stable page).
-	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+	// Limit Max memories to return. Defaults to 50; capped at 200.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// PageToken Opaque continuation token from a previous response's `next_page_token`. Treat it as an opaque string: never parse or construct one, pass back exactly what was returned. Omit for the first page. Ignored when `q` is set (search ranks by score, not a stable page). Only valid against the exact `bucket` filter it was issued for.
+	PageToken *string `form:"page_token,omitempty" json:"page_token,omitempty"`
 }
 
 // CreateChatJSONRequestBody defines body for CreateChat for application/json ContentType.
@@ -1082,6 +1116,14 @@ func (siw *ServerInterfaceWrapper) ListChats(w http.ResponseWriter, r *http.Requ
 	var err error
 	_ = err
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ListChatsParams
 
@@ -1137,6 +1179,27 @@ func (siw *ServerInterfaceWrapper) ListChats(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	headers := r.Header
+
+	// ------------- Optional header parameter "If-None-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-None-Match")]; found {
+		var IfNoneMatch string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-None-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-None-Match", valueList[0], &IfNoneMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-None-Match", Err: err})
+			return
+		}
+
+		params.IfNoneMatch = &IfNoneMatch
+
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListChats(w, r, params)
 	}))
@@ -1150,6 +1213,14 @@ func (siw *ServerInterfaceWrapper) ListChats(w http.ResponseWriter, r *http.Requ
 
 // CreateChat operation middleware
 func (siw *ServerInterfaceWrapper) CreateChat(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateChat(w, r)
@@ -1177,6 +1248,14 @@ func (siw *ServerInterfaceWrapper) DeleteChat(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteChat(w, r, chatId)
 	}))
@@ -1203,6 +1282,14 @@ func (siw *ServerInterfaceWrapper) GetChat(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetChat(w, r, chatId)
 	}))
@@ -1228,6 +1315,14 @@ func (siw *ServerInterfaceWrapper) UpdateChat(w http.ResponseWriter, r *http.Req
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
 		return
 	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateChat(w, r, chatId)
@@ -1264,6 +1359,14 @@ func (siw *ServerInterfaceWrapper) EditNodeTask(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.EditNodeTask(w, r, chatId, nodeId)
 	}))
@@ -1298,6 +1401,14 @@ func (siw *ServerInterfaceWrapper) QueueNodeMessage(w http.ResponseWriter, r *ht
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "node_id", Err: err})
 		return
 	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.QueueNodeMessage(w, r, chatId, nodeId)
@@ -1343,6 +1454,14 @@ func (siw *ServerInterfaceWrapper) RemoveQueuedMessage(w http.ResponseWriter, r 
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RemoveQueuedMessage(w, r, chatId, nodeId, messageId)
 	}))
@@ -1387,6 +1506,14 @@ func (siw *ServerInterfaceWrapper) EditQueuedMessage(w http.ResponseWriter, r *h
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.EditQueuedMessage(w, r, chatId, nodeId, messageId)
 	}))
@@ -1422,6 +1549,14 @@ func (siw *ServerInterfaceWrapper) UpdateNodeStatus(w http.ResponseWriter, r *ht
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateNodeStatus(w, r, chatId, nodeId)
 	}))
@@ -1448,6 +1583,14 @@ func (siw *ServerInterfaceWrapper) GetChatRecording(w http.ResponseWriter, r *ht
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetChatRecording(w, r, chatId)
 	}))
@@ -1473,6 +1616,14 @@ func (siw *ServerInterfaceWrapper) SendChatMessage(w http.ResponseWriter, r *htt
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
 		return
 	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SendChatMessage(w, r, chatId)
@@ -1509,6 +1660,14 @@ func (siw *ServerInterfaceWrapper) GetResponse(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetResponse(w, r, chatId, responseId)
 	}))
@@ -1544,6 +1703,14 @@ func (siw *ServerInterfaceWrapper) UpdateResponseStatus(w http.ResponseWriter, r
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateResponseStatus(w, r, chatId, responseId)
 	}))
@@ -1570,6 +1737,14 @@ func (siw *ServerInterfaceWrapper) SubscribeChatStream(w http.ResponseWriter, r 
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SubscribeChatStream(w, r, chatId)
 	}))
@@ -1586,6 +1761,14 @@ func (siw *ServerInterfaceWrapper) ListMemories(w http.ResponseWriter, r *http.R
 
 	var err error
 	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ListMemoriesParams
@@ -1629,15 +1812,15 @@ func (siw *ServerInterfaceWrapper) ListMemories(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// ------------- Optional query parameter "offset" -------------
+	// ------------- Optional query parameter "page_token" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "page_token", r.URL.Query(), &params.PageToken, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
 	if err != nil {
 		var requiredError *runtime.RequiredParameterError
 		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "page_token"})
 		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page_token", Err: err})
 		}
 		return
 	}
@@ -1668,6 +1851,14 @@ func (siw *ServerInterfaceWrapper) DeleteMemory(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteMemory(w, r, memoryId)
 	}))
@@ -1681,6 +1872,14 @@ func (siw *ServerInterfaceWrapper) DeleteMemory(w http.ResponseWriter, r *http.R
 
 // ListRecordings operation middleware
 func (siw *ServerInterfaceWrapper) ListRecordings(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListRecordings(w, r)

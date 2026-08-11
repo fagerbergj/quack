@@ -273,14 +273,14 @@ func (c *Client) getJSON(ctx context.Context, path string, out any) error {
 		return ErrNotFound
 	}
 	if status >= 400 {
-		return fmt.Errorf("GET %s: HTTP %d", path, status)
+		return fmt.Errorf("GET %s: %s", path, errStatus(status, body))
 	}
 	return json.Unmarshal(body, out)
 }
 
 // send issues a bodiless request and discards the response; 404 → ErrNotFound.
 func (c *Client) send(ctx context.Context, method, path string) error {
-	status, _, err := c.Request(ctx, method, path, nil)
+	status, body, err := c.Request(ctx, method, path, nil)
 	if err != nil {
 		return err
 	}
@@ -288,9 +288,25 @@ func (c *Client) send(ctx context.Context, method, path string) error {
 		return ErrNotFound
 	}
 	if status >= 400 {
-		return fmt.Errorf("%s %s: HTTP %d", method, path, status)
+		return fmt.Errorf("%s %s: %s", method, path, errStatus(status, body))
 	}
 	return nil
+}
+
+// errStatus renders a 4xx/5xx as "HTTP <status>: <server's reason>" using the
+// server's schema.ErrorResponse body when present, else just the status.
+func errStatus(status int, body []byte) string {
+	if msg := errBody(bytes.NewReader(body)); msg != "" {
+		return fmt.Sprintf("HTTP %d: %s", status, msg)
+	}
+	return fmt.Sprintf("HTTP %d", status)
+}
+
+// readAll reads r best-effort - "" on any error, since it only ever feeds an
+// already-failed response's body into errStatus for a nicer message.
+func readAll(r io.Reader) []byte {
+	b, _ := io.ReadAll(io.LimitReader(r, 4096))
+	return b
 }
 
 // FetchRecording downloads a chat's replay-ledger recording bundle (ZIP) -
@@ -308,7 +324,7 @@ func (c *Client) FetchRecording(ctx context.Context, chatID string) ([]byte, err
 		return nil, ErrNotFound
 	}
 	if status >= 400 {
-		return nil, fmt.Errorf("GET .../recording: HTTP %d", status)
+		return nil, fmt.Errorf("GET .../recording: %s", errStatus(status, body))
 	}
 	return body, nil
 }
@@ -494,7 +510,7 @@ func (c *Client) subscribeSSEOnce(ctx context.Context, chatID, lastID string, on
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("subscribe: server returned %s", resp.Status)
+		return fmt.Errorf("subscribe: %s", errStatus(resp.StatusCode, readAll(resp.Body)))
 	}
 	return parseSSE(resp.Body, onEvent)
 }
@@ -516,7 +532,7 @@ func (c *Client) SendMessage(ctx context.Context, chatID, content string, onEven
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("send message: server returned %s", resp.Status)
+		return fmt.Errorf("send message: %s", errStatus(resp.StatusCode, readAll(resp.Body)))
 	}
 	return parseSSE(resp.Body, onEvent)
 }
@@ -569,7 +585,7 @@ func (c *Client) SendMessageWithFiles(ctx context.Context, chatID, content strin
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("send message: server returned %s", resp.Status)
+		return fmt.Errorf("send message: %s", errStatus(resp.StatusCode, readAll(resp.Body)))
 	}
 	return parseSSE(resp.Body, onEvent)
 }
@@ -589,7 +605,7 @@ func (c *Client) postJSON(ctx context.Context, path string, v, out any) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("POST %s: server returned %s", path, resp.Status)
+		return fmt.Errorf("POST %s: %s", path, errStatus(resp.StatusCode, readAll(resp.Body)))
 	}
 	if out == nil {
 		return nil

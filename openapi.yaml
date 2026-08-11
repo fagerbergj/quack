@@ -11,11 +11,19 @@ info:
 servers:
   - url: /
 
+# internal/auth.Middleware: trusted header wins if present, else a verified
+# OIDC bearer token - either alone satisfies a request, not both.
+security:
+  - bearerAuth: []
+  - trustedHeader: []
+
 paths:
   /health:
     get:
       operationId: healthCheck
       summary: Liveness check
+      # Liveness probe; requireAuthExceptHealth always lets it through unauthenticated.
+      security: []
       responses:
         "200":
           description: OK
@@ -28,6 +36,14 @@ paths:
     get:
       operationId: listChats
       summary: List chats
+      description: >
+        A conditional GET: the 200 body's content hash is returned as an
+        `ETag` (weak, `W/"..."`, varying with page content, next_page_token,
+        and effectively limit/page_token/status since those change the
+        content). Send it back as `If-None-Match` on a later poll of the
+        exact same page to get a bodyless 304 when nothing changed - there is
+        no separate cache TTL, so every poll still reaches the server and
+        revalidates against the live rows.
       parameters:
         - name: limit
           in: query
@@ -75,13 +91,35 @@ paths:
             Deprecated, use `status`. Ignored when `status` is given.
             Otherwise: false (default) behaves as `status=active`, true as
             `status=active&status=archived`.
+        - name: If-None-Match
+          in: header
+          required: false
+          description: >
+            An ETag from a previous response to this exact page (same limit,
+            page_token, and status selection). A match short-circuits to a
+            bodyless 304.
+          schema:
+            type: string
       responses:
         "200":
           description: The chats
+          headers:
+            ETag:
+              description: Weak validator hashed from the response body; echo it back as If-None-Match to revalidate cheaply.
+              schema:
+                type: string
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ChatList"
+        "304":
+          description: Not modified - If-None-Match matched the current ETag for this exact page
+        "400":
+          description: An explicitly empty status selection, or an invalid page_token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     post:
       operationId: createChat
       summary: Create a chat
@@ -114,6 +152,10 @@ paths:
                 $ref: "#/components/schemas/ChatDetail"
         "404":
           description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
       operationId: deleteChat
       summary: Delete a chat
@@ -147,6 +189,10 @@ paths:
                 $ref: "#/components/schemas/ChatSummary"
         "404":
           description: No such chat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/recordings:
     get:
@@ -157,7 +203,10 @@ paths:
         `LedgerStore.List`), backing `quack recording list`/export. 200 with
         an empty array when recording is enabled but nothing has been
         recorded yet; 404 when recording is disabled entirely - same
-        disabled signal as `getChatRecording`.
+        disabled signal as `getChatRecording`. Deliberately unpaginated: one
+        entry per recorded session, bounded by the ledger's own retention_days
+        GC, not an open-ended table - unlike /chats it has no realistic path
+        to needing a page_token.
       responses:
         "200":
           description: The recorded sessions
@@ -167,6 +216,10 @@ paths:
                 $ref: "#/components/schemas/RecordingList"
         "404":
           description: Recording is not enabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/chats/{chat_id}/recording:
     get:
@@ -192,6 +245,10 @@ paths:
                 format: binary
         "404":
           description: No recording exists for this chat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/chats/{chat_id}/responses:
     post:
@@ -250,6 +307,9 @@ paths:
         `PUT /chats/{chat_id}/responses/{response_id}/status`; `chat_title`
         ({"title"}) is sent once the title is generated; `done` ({}) terminates
         the stream; `error` ({"error"}) signals failure.
+
+        A `chat_id` naming no chat is validated BEFORE the stream opens - a
+        clean 404, never an in-stream `error` event.
       parameters:
         - $ref: "#/components/parameters/ChatID"
       requestBody:
@@ -286,6 +346,12 @@ paths:
             text/event-stream:
               schema:
                 type: string
+        "404":
+          description: No such chat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/chats/{chat_id}/responses/{response_id}:
     get:
@@ -307,6 +373,10 @@ paths:
                 $ref: "#/components/schemas/Turn"
         "404":
           description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/chats/{chat_id}/stream:
     get:
@@ -318,6 +388,9 @@ paths:
         events so far, then streams live events until the run ends. If no run is
         active, replays the most recent completed run. Reconnect-safe via the
         replay buffer.
+
+        A `chat_id` naming no chat is validated BEFORE the stream opens - a
+        clean 404, never an in-stream `error` event.
       parameters:
         - $ref: "#/components/parameters/ChatID"
       x-sse-events:
@@ -348,6 +421,12 @@ paths:
             text/event-stream:
               schema:
                 type: string
+        "404":
+          description: No such chat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/chats/{chat_id}/nodes/{node_id}/status:
     put:
@@ -397,8 +476,16 @@ paths:
                 $ref: "#/components/schemas/DagNodeState"
         "400":
           description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No such node
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: Illegal transition; body names the allowed target statuses
             for the node's current status
@@ -431,8 +518,16 @@ paths:
           description: Edited
         "404":
           description: No such node
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: The node has already started; its prompt is immutable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/chats/{chat_id}/nodes/{node_id}/queue:
     post:
@@ -461,6 +556,10 @@ paths:
                 $ref: "#/components/schemas/QueuedMessage"
         "404":
           description: No such node, or the node isn't running right now
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/chats/{chat_id}/nodes/{node_id}/queue/{message_id}:
     patch:
@@ -481,8 +580,16 @@ paths:
           description: Edited
         "404":
           description: No such queued message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: Already delivered; immutable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
       operationId: removeQueuedMessage
       summary: Remove a queued message that has not yet been delivered
@@ -495,8 +602,16 @@ paths:
           description: Removed
         "404":
           description: No such queued message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: Already delivered; immutable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/chats/{chat_id}/responses/{response_id}/status:
     put:
@@ -521,8 +636,16 @@ paths:
           description: Cancelled
         "400":
           description: Bad request (unsupported target status)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: This response is not the active run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/memories:
     get:
@@ -534,7 +657,8 @@ paths:
         unreachable index is a 500; it never silently falls back to search or
         returns a partial result. With `q`: runs the same embedding search a
         live run's recall would use, so the tab can answer "what would a run
-        recall for this?" - entries then carry `score`, ordered descending.
+        recall for this?" - entries then carry `score`, ordered descending,
+        and are never paginated (a top-K search, not a stable page).
       parameters:
         - name: bucket
           in: query
@@ -548,15 +672,21 @@ paths:
             type: string
         - name: limit
           in: query
+          description: Max memories to return. Defaults to 50; capped at 200.
           schema:
             type: integer
-            default: 50
-        - name: offset
+        - name: page_token
           in: query
-          description: Ignored when `q` is set (search ranks by score, not a stable page).
+          required: false
+          description: >
+            Opaque continuation token from a previous response's
+            `next_page_token`. Treat it as an opaque string: never parse or
+            construct one, pass back exactly what was returned. Omit for the
+            first page. Ignored when `q` is set (search ranks by score, not a
+            stable page). Only valid against the exact `bucket` filter it was
+            issued for.
           schema:
-            type: integer
-            default: 0
+            type: string
       responses:
         "200":
           description: The matching memories
@@ -564,8 +694,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MemoryList"
+        "400":
+          description: Malformed page_token, or one issued for a different bucket filter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: The memory index is unreachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/memories/{memory_id}:
     delete:
@@ -582,6 +722,10 @@ paths:
           description: Forgotten
         "404":
           description: No such memory
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
 components:
   parameters:
@@ -736,6 +880,12 @@ components:
         total:
           type: integer
           description: Total entries matching the filter (not just this page). With `q`, this is just len(memories) - search returns a ranked top-K, not a stable count.
+        next_page_token:
+          type: string
+          description: >
+            Opaque token - pass as `page_token` to fetch the next page. Absent
+            when this page is the last, or the request set `q`. Treat as an
+            opaque string: never parse it.
 
     # -------------------------------------------------------------------------
     # Replay ledger
@@ -858,18 +1008,31 @@ components:
         status:
           $ref: "#/components/schemas/ResponseStatus"
 
-    TransitionError:
+    ErrorResponse:
       type: object
-      required: [error, current, allowed]
+      required: [error]
       properties:
         error:
           type: string
-        current:
-          $ref: "#/components/schemas/NodeStatus"
-        allowed:
-          type: array
-          items:
-            $ref: "#/components/schemas/NodeStatus"
+          description: Human-readable summary of what went wrong.
+        detail:
+          type: string
+          description: Optional additional context (e.g. which field failed validation).
+
+    TransitionError:
+      description: An illegal node-status transition - ErrorResponse refined with the
+        node's current status and its legal targets.
+      allOf:
+        - $ref: "#/components/schemas/ErrorResponse"
+        - type: object
+          required: [current, allowed]
+          properties:
+            current:
+              $ref: "#/components/schemas/NodeStatus"
+            allowed:
+              type: array
+              items:
+                $ref: "#/components/schemas/NodeStatus"
 
     # -------------------------------------------------------------------------
     # Turn (one user→assistant exchange, modelled after OpenResponses Response)
@@ -1109,3 +1272,29 @@ components:
           format: double
         judge_passed:
           type: boolean
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        OIDC bearer token, verified against the configured issuer/audience
+        (internal/auth.newOIDCVerifier). Enabled only when the deployment sets
+        auth.oidc in config/quack.yaml; unconfigured, no request satisfies
+        this scheme and trustedHeader (or nothing, if auth is off entirely)
+        governs instead.
+
+    trustedHeader:
+      type: apiKey
+      in: header
+      name: X-Authentik-Username
+      description: >
+        A forward-auth gateway's already-authenticated-user header
+        (internal/auth.Auth.trustedIdentity) - present and non-empty is
+        trusted outright, taking priority over bearerAuth per request. The
+        header NAME is deployment-configured
+        (auth.trusted_headers.user in config/quack.yaml, plus an optional
+        auth.trusted_headers.groups); X-Authentik-Username is this
+        description's example value, not a fixed contract - swap it for
+        whatever header your gateway actually sets.
