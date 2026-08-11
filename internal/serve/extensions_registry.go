@@ -6,4 +6,5 @@ package serve
 // unconfigured stays dormant; add a module by adding its import.
 import (
 	_ "github.com/fagerbergj/quack-extensions/noop"
+	_ "github.com/fagerbergj/quack-extensions/remarkable"
 )

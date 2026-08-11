@@ -1857,3 +1857,82 @@ workflows:
 		t.Errorf("error = %q, want it to name the shape", err)
 	}
 }
+
+// TestRealConfigDocumentIngestWorkflowExampleLoads loads the shipped
+// config/quack.yaml (real agents:, not a throwaway fixture) with an
+// uncommented copy of its own extensions.remarkable + document-ingest
+// workflows: examples appended, proving the example this repo ships actually
+// parses and binds against the real image-reader/synthesizer agents.
+func TestRealConfigDocumentIngestWorkflowExampleLoads(t *testing.T) {
+	for _, kv := range [][2]string{
+		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"}, {"QUACK_DATABASE_URL", "postgres://localhost/db"},
+		{"QUACK_ORCH_MODEL", "m"}, {"QUACK_RESEARCHER_MODEL", "r"}, {"QUACK_MEDIA_MODEL", "md"}, {"QUACK_IMAGE_MODEL", "im"},
+		{"QUACK_JUDGE_MODEL", "j"}, {"QUACK_EMBED_MODEL", "e"}, {"QUACK_SEARXNG_URL", "http://s"}, {"QUACK_CRAWL4AI_URL", "http://c"},
+		{"RMFAKECLOUD_URL", "https://rm.example.com"}, {"RMFAKECLOUD_EMAIL", "a@example.com"}, {"RMFAKECLOUD_PASSWORD", "pw"},
+	} {
+		t.Setenv(kv[0], kv[1])
+	}
+
+	raw, err := os.ReadFile("../../config/quack.yaml")
+	if err != nil {
+		t.Fatalf("read shipped config: %v", err)
+	}
+	c, err := Load(writeTemp(t, string(raw)+`
+extensions:
+  remarkable:
+    base_url: ${RMFAKECLOUD_URL}
+    email: ${RMFAKECLOUD_EMAIL}
+    password: ${RMFAKECLOUD_PASSWORD}
+workflows:
+  - name: document-ingest
+    trigger: "Ingest a new document (e.g. a reMarkable export) into the knowledge base"
+    agents: [image-reader, synthesizer]
+    shape: "ONE `+"`image-reader`"+` node (transcribes the attached document) -> ONE `+"`synthesizer`"+` node (terminal - writes the structured summary)"
+    nodes:
+      - id: transcribe
+        agent: image-reader
+        task: "Transcribe this document's full content, preserving structure (headings, lists, sketches described in words).\n\n{{ask}}"
+      - id: summarize
+        agent: synthesizer
+        depends_on: [transcribe]
+        task: "Write a structured Markdown summary of the transcribed document above: key facts, decisions, and action items.\n\n{{ask}}"
+`))
+	if err != nil {
+		t.Fatalf("Load with document-ingest example: %v", err)
+	}
+
+	node, ok := c.Extensions.Modules["remarkable"]
+	if !ok {
+		t.Fatal("extensions.remarkable not captured in Modules")
+	}
+	var rmCfg struct {
+		BaseURL  string `yaml:"base_url"`
+		Email    string `yaml:"email"`
+		Password string `yaml:"password"`
+	}
+	if err := node.Decode(&rmCfg); err != nil {
+		t.Fatalf("decode remarkable config: %v", err)
+	}
+	if rmCfg.BaseURL != "https://rm.example.com" || rmCfg.Email != "a@example.com" || rmCfg.Password != "pw" {
+		t.Errorf("remarkable config = %+v, want env-interpolated fields", rmCfg)
+	}
+
+	var shape *WorkflowShape
+	for i := range c.Workflows {
+		if c.Workflows[i].Name == "document-ingest" {
+			shape = &c.Workflows[i]
+		}
+	}
+	if shape == nil {
+		t.Fatalf("Workflows = %+v, want a document-ingest shape", c.Workflows)
+	}
+	if len(shape.Nodes) != 2 {
+		t.Fatalf("document-ingest nodes = %+v, want 2", shape.Nodes)
+	}
+	if shape.Nodes[0].Agent != "image-reader" || !strings.Contains(shape.Nodes[0].Task, "{{ask}}") {
+		t.Errorf("transcribe node = %+v", shape.Nodes[0])
+	}
+	if shape.Nodes[1].Agent != "synthesizer" || len(shape.Nodes[1].DependsOn) != 1 || shape.Nodes[1].DependsOn[0] != "transcribe" {
+		t.Errorf("summarize node = %+v", shape.Nodes[1])
+	}
+}

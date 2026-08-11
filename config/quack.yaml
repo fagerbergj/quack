@@ -292,6 +292,27 @@ skills:
 # skipping the planner LLM call entirely (e.g. a document-ingest pipeline).
 # See docs/configuration/agents.md#extending-the-workflow-catalog for the
 # schema and an example. Empty by default: the shipped table is unchanged.
+#
+# document-ingest is what extensions.remarkable above dispatches into: one
+# reader node transcribes the attached document, one synthesizer node turns
+# that into a structured summary (synthesizer has no memory tools configured,
+# so it only summarizes - it can't commit facts on its own).
+# workflows:
+#   - name: document-ingest
+#     trigger: "Ingest a new document (e.g. a reMarkable export) into the knowledge base"
+#     agents: [image-reader, synthesizer]
+#     shape: "ONE `image-reader` node (transcribes the attached document) → ONE `synthesizer` node (terminal - writes the structured summary)"
+#     nodes:
+#       - id: transcribe
+#         agent: image-reader
+#         task: "Transcribe this document's full content, preserving structure (headings, lists, sketches described in words).\n\n{{ask}}"
+#       - id: summarize
+#         agent: synthesizer
+#         depends_on: [transcribe]
+#         task: "Write a structured Markdown summary of the transcribed document above: key facts, decisions, and action items.\n\n{{ask}}"
+#   # rmfakecloud documents arrive as application/pdf; the OpenAI backend
+#   # (internal/inference/openaimodel) doesn't decode inline PDF data yet, so
+#   # this shape is the intended wiring, not yet an end-to-end working one.
 
 # The agents' working disk (filesystem/git tools). One configured root; a
 # per-user jail lives under it (<root>/<user_id>/ - "local" today, the OIDC
@@ -470,6 +491,17 @@ workspace:
 #     #   merge: "quack:merge"
 #     #   partial_fix: "quack:partial-fix"  # suppresses the unconditional Closes #N when applied to an issue
 #     #   fix: "quack:fix"          # keep a PR green - CI auto-heal + own-PR review engagement (ci_fix trigger)
+#
+#   # extensions.remarkable polls a self-hosted rmfakecloud instance for new/updated
+#   # reMarkable tablet documents and dispatches each one into the bound
+#   # "document-ingest" workflow (see workflows: above). Same ${VAR}-only secret
+#   # rule as github above.
+#   remarkable:
+#     base_url: ${RMFAKECLOUD_URL}
+#     email: ${RMFAKECLOUD_EMAIL}
+#     password: ${RMFAKECLOUD_PASSWORD}
+#     # poll_interval: 1m       # optional Go duration (e.g. "90s"); default 1m
+#     # folder_filter: Inbox    # optional; restricts polling to this folder + subfolders
 
 # Inbound request auth (internal/auth), gating the REST + MCP surface (never
 # /health or the SPA). Absent entirely - as here - auth is disabled and every
