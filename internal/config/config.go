@@ -15,21 +15,25 @@ import (
 )
 
 type Config struct {
-	Providers     map[string]ProviderConfig `yaml:"providers"`
-	Stores        map[string]StoreConfig    `yaml:"stores"`
-	Session       SessionConfig             `yaml:"session"`
-	Orchestrator  OrchestratorConfig        `yaml:"orchestrator"`
-	Agents        map[string]AgentConfig    `yaml:"agents"`
-	Tools         map[string]ToolConfig     `yaml:"tools"`
-	Gates         GatesConfig               `yaml:"gates"`
-	Dag           DagConfig                 `yaml:"dag"`
-	Server        ServerConfig              `yaml:"server"`
-	Workspace     WorkspaceConfig           `yaml:"workspace"`
-	Skills        SkillsConfig              `yaml:"skills"`
-	Extensions    ExtensionsConfig          `yaml:"extensions"`
-	Observability ObservabilityConfig       `yaml:"observability"`
-	Auth          *InboundAuthConfig        `yaml:"auth"`
-	Artifacts     ArtifactsConfig           `yaml:"artifacts"`
+	Providers    map[string]ProviderConfig `yaml:"providers"`
+	Stores       map[string]StoreConfig    `yaml:"stores"`
+	Session      SessionConfig             `yaml:"session"`
+	Orchestrator OrchestratorConfig        `yaml:"orchestrator"`
+	Agents       map[string]AgentConfig    `yaml:"agents"`
+	Tools        map[string]ToolConfig     `yaml:"tools"`
+	Gates        GatesConfig               `yaml:"gates"`
+	Dag          DagConfig                 `yaml:"dag"`
+	Server       ServerConfig              `yaml:"server"`
+	Workspace    WorkspaceConfig           `yaml:"workspace"`
+	Skills       SkillsConfig              `yaml:"skills"`
+	// Workflows is a top-level key, not nested under skills: - it's a
+	// binding mechanism onto the DAG planner, not a skill-library concern
+	// (skills.plugins is a different axis entirely).
+	Workflows     []WorkflowShape     `yaml:"workflows"`
+	Extensions    ExtensionsConfig    `yaml:"extensions"`
+	Observability ObservabilityConfig `yaml:"observability"`
+	Auth          *InboundAuthConfig  `yaml:"auth"`
+	Artifacts     ArtifactsConfig     `yaml:"artifacts"`
 	// Revision identifies the loaded config's content (sha256 of the raw file,
 	// short form) - a deployment-authored workflow shape's provenance stamps
 	// this as its version, so a shape changes version only when quack.yaml does.
@@ -41,8 +45,7 @@ type Config struct {
 // Codex discovery order. A root that fails to resolve is a startup warning,
 // never an error. Order is preserved and never deduped.
 type SkillsConfig struct {
-	Plugins   []string        `yaml:"plugins"`
-	Workflows []WorkflowShape `yaml:"workflows"`
+	Plugins []string `yaml:"plugins"`
 }
 
 // WorkflowShape teaches plan-work's "Common workflows" table a deployment-
@@ -50,20 +53,40 @@ type SkillsConfig struct {
 // ingestion, reMarkable notes, ...) that isn't in the shipped catalog.
 // Trigger and Shape render as the table's two columns verbatim; Agents is
 // the subset of that prose the config layer can actually validate.
+//
+// Nodes is optional (workflow binding): when present, a dispatch
+// naming this shape gets Nodes built into a dag.Plan directly - no planner
+// LLM call - instead of Trigger/Shape staying a planner hint. Trigger/Shape
+// still render in the table either way, so the shape stays discoverable to
+// an ordinary chat request too.
 type WorkflowShape struct {
-	Name    string   `yaml:"name"`    // short id for logs/warnings; also the future storage key (#806)
-	Trigger string   `yaml:"trigger"` // "Request" column - when this shape applies
-	Shape   string   `yaml:"shape"`   // "DAG shape" column - node chain + what the terminal node produces
-	Agents  []string `yaml:"agents"`  // every agent name Shape mentions, checked against Agents below
+	Name    string         `yaml:"name"`    // short id for logs/warnings; also the future storage key (#806)
+	Trigger string         `yaml:"trigger"` // "Request" column - when this shape applies
+	Shape   string         `yaml:"shape"`   // "DAG shape" column - node chain + what the terminal node produces
+	Agents  []string       `yaml:"agents"`  // every agent name Shape mentions, checked against Agents below
+	Nodes   []WorkflowNode `yaml:"nodes,omitempty"`
+}
+
+// WorkflowNode is one node of a bound workflow shape's fixed DAG. Task may
+// contain the literal token "{{ask}}", substituted verbatim with the
+// dispatching Ask.Message - the only templating this supports, deliberately.
+type WorkflowNode struct {
+	ID        string   `yaml:"id"`
+	Agent     string   `yaml:"agent"`
+	Task      string   `yaml:"task"`
+	DependsOn []string `yaml:"depends_on,omitempty"`
+	Rubric    string   `yaml:"rubric,omitempty"`
 }
 
 // validateWorkflows drops structurally incomplete shapes with a warning
 // (test case 4: never takes down planning) but hard-fails the whole config
 // when a structurally valid shape names an agent that isn't configured (test
-// case 3: never let a plan reach a node the executor can't run).
+// case 3: never let a plan reach a node the executor can't run), or when a
+// bound shape's node list is malformed - a shape a dispatch can bind to must
+// never fail loud only at dispatch time.
 func (c *Config) validateWorkflows() error {
-	valid := make([]WorkflowShape, 0, len(c.Skills.Workflows))
-	for i, w := range c.Skills.Workflows {
+	valid := make([]WorkflowShape, 0, len(c.Workflows))
+	for i, w := range c.Workflows {
 		id := w.Name
 		if id == "" {
 			id = fmt.Sprintf("workflows[%d]", i)
@@ -78,10 +101,77 @@ func (c *Config) validateWorkflows() error {
 				return fmt.Errorf("config: workflow shape %q names agent %q which is not configured under agents", w.Name, a)
 			}
 		}
+		if len(w.Nodes) > 0 {
+			if err := validateWorkflowNodes(w.Name, w.Nodes, c.Agents); err != nil {
+				return err
+			}
+		}
 		valid = append(valid, w)
 	}
-	c.Skills.Workflows = valid
+	c.Workflows = valid
 	return nil
+}
+
+// validateWorkflowNodes checks a bound shape's node list is a well-formed,
+// acyclic DAG naming only configured agents - the whole structural surface a
+// dispatch's Bind() will later rely on without re-checking.
+func validateWorkflowNodes(shapeName string, nodes []WorkflowNode, agents map[string]AgentConfig) error {
+	ids := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		if n.ID == "" || n.Agent == "" || n.Task == "" {
+			return fmt.Errorf("config: workflow shape %q: every bound node needs id, agent, and task", shapeName)
+		}
+		if ids[n.ID] {
+			return fmt.Errorf("config: workflow shape %q: duplicate bound node id %q", shapeName, n.ID)
+		}
+		ids[n.ID] = true
+		if _, ok := agents[n.Agent]; !ok {
+			return fmt.Errorf("config: workflow shape %q: bound node %q names agent %q which is not configured under agents", shapeName, n.ID, n.Agent)
+		}
+	}
+	for _, n := range nodes {
+		for _, dep := range n.DependsOn {
+			if !ids[dep] {
+				return fmt.Errorf("config: workflow shape %q: bound node %q depends on unknown node %q", shapeName, n.ID, dep)
+			}
+		}
+	}
+	if !workflowNodesAcyclic(nodes) {
+		return fmt.Errorf("config: workflow shape %q: bound nodes contain a dependency cycle", shapeName)
+	}
+	return nil
+}
+
+// workflowNodesAcyclic: Kahn's algorithm - every node must reach zero
+// in-degree, or some subset only depends on itself/each other (a cycle).
+func workflowNodesAcyclic(nodes []WorkflowNode) bool {
+	indeg := make(map[string]int, len(nodes))
+	dependents := map[string][]string{}
+	for _, n := range nodes {
+		indeg[n.ID] = len(n.DependsOn)
+		for _, d := range n.DependsOn {
+			dependents[d] = append(dependents[d], n.ID)
+		}
+	}
+	queue := make([]string, 0, len(nodes))
+	for id, d := range indeg {
+		if d == 0 {
+			queue = append(queue, id)
+		}
+	}
+	placed := 0
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		placed++
+		for _, dep := range dependents[id] {
+			indeg[dep]--
+			if indeg[dep] == 0 {
+				queue = append(queue, dep)
+			}
+		}
+	}
+	return placed == len(nodes)
 }
 
 var defaultSkillPlugins = []string{".agents/vendor/dotagents", ".agents/vendor/ponytail"}
