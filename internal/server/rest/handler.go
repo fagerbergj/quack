@@ -385,6 +385,9 @@ func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID sche
 
 // Starts a run and streams it as SSE. Accepts JSON or multipart/form-data (with optional file attachments).
 func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
+	if !h.requireChat(w, r, chatID) {
+		return
+	}
 	var body schema.SendMessageBody
 	var attachments []*genai.Part
 
@@ -763,6 +766,9 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 
 // Connects a client to a chat's live (or just-completed) run. Reconnect-safe via Last-Event-ID or the durable event log.
 func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
+	if !h.requireChat(w, r, chatID) {
+		return
+	}
 	sse, ok := newSSEWriter(w)
 	if !ok {
 		errMsg(w, http.StatusInternalServerError, "streaming unsupported")
@@ -1130,4 +1136,20 @@ func httpError(w http.ResponseWriter, status int, err error) {
 // the call sites that only ever had a literal string, not an error value.
 func errMsg(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, schema.ErrorResponse{Error: msg})
+}
+
+// requireChat 404s (writing the response) and returns false if chatID names
+// no chat - the preflight send/subscribe run BEFORE opening an SSE stream, so
+// a bad chat_id is a clean 404, never an in-stream error event.
+func (h *Handler) requireChat(w http.ResponseWriter, r *http.Request, chatID string) bool {
+	c, err := h.store.GetChat(r.Context(), chatID)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return false
+	}
+	if c == nil {
+		errMsg(w, http.StatusNotFound, "no such chat")
+		return false
+	}
+	return true
 }

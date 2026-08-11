@@ -266,6 +266,9 @@ paths:
         `PUT /chats/{chat_id}/responses/{response_id}/status`; `chat_title`
         ({"title"}) is sent once the title is generated; `done` ({}) terminates
         the stream; `error` ({"error"}) signals failure.
+
+        A `chat_id` naming no chat is validated BEFORE the stream opens - a
+        clean 404, never an in-stream `error` event.
       parameters:
         - $ref: "#/components/parameters/ChatID"
       requestBody:
@@ -302,6 +305,12 @@ paths:
             text/event-stream:
               schema:
                 type: string
+        "404":
+          description: No such chat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/chats/{chat_id}/responses/{response_id}:
     get:
@@ -338,6 +347,9 @@ paths:
         events so far, then streams live events until the run ends. If no run is
         active, replays the most recent completed run. Reconnect-safe via the
         replay buffer.
+
+        A `chat_id` naming no chat is validated BEFORE the stream opens - a
+        clean 404, never an in-stream `error` event.
       parameters:
         - $ref: "#/components/parameters/ChatID"
       x-sse-events:
@@ -368,6 +380,12 @@ paths:
             text/event-stream:
               schema:
                 type: string
+        "404":
+          description: No such chat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/chats/{chat_id}/nodes/{node_id}/status:
     put:

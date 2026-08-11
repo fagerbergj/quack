@@ -40,17 +40,18 @@ func waitForBody(t *testing.T, rec *httptest.ResponseRecorder, want string) {
 // "active" is derived from the shared hub, not that REST-only registry.
 func TestSubscribeLiveTail(t *testing.T) {
 	h := newTestHandler(t)
-	pub := runlog.NewPublisher(h.hub, h.eventLog, "c")
+	chatID := mustCreateChat(t, h)
+	pub := runlog.NewPublisher(h.hub, h.eventLog, chatID)
 	pub.Publish(stream.ResponseCreated("t1"))
 	pub.Publish(stream.NodeStart("n1", "researcher"))
 
-	req := httptest.NewRequest("GET", "/api/v1/chats/c/stream", nil)
+	req := httptest.NewRequest("GET", "/api/v1/chats/"+chatID+"/stream", nil)
 	ctx, cancel := context.WithCancel(req.Context())
 	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
 	done := make(chan struct{})
 	go func() {
-		h.SubscribeChatStream(rec, req, "c")
+		h.SubscribeChatStream(rec, req, chatID)
 		close(done)
 	}()
 
@@ -71,7 +72,7 @@ func TestSubscribeLiveTail(t *testing.T) {
 	// (REST handler, GitHub webhook dispatcher) does: publish Done, then close
 	// the hub topic so it stops accepting a next run's events as this one's.
 	pub.Publish(stream.Done())
-	h.hub.Close("c")
+	h.hub.Close(chatID)
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
@@ -85,19 +86,20 @@ func TestSubscribeLiveTail(t *testing.T) {
 // the fix for #282 must not turn every stream into a hanging connection.
 func TestSubscribeIdleSnapshotsAndCloses(t *testing.T) {
 	h := newTestHandler(t)
-	pub := runlog.NewPublisher(h.hub, h.eventLog, "c")
+	chatID := mustCreateChat(t, h)
+	pub := runlog.NewPublisher(h.hub, h.eventLog, chatID)
 	pub.Publish(stream.ResponseCreated("t1"))
 	pub.Publish(stream.NodeStart("n1", "researcher"))
 	pub.Publish(stream.NodeDone("n1", stream.NodeDoneData{}))
 	pub.Publish(stream.Done())
-	h.hub.Close("c")
+	h.hub.Close(chatID)
 
-	req := httptest.NewRequest("GET", "/api/v1/chats/c/stream", nil)
+	req := httptest.NewRequest("GET", "/api/v1/chats/"+chatID+"/stream", nil)
 	rec := httptest.NewRecorder()
 
 	done := make(chan struct{})
 	go func() {
-		h.SubscribeChatStream(rec, req, "c")
+		h.SubscribeChatStream(rec, req, chatID)
 		close(done)
 	}()
 	select {
@@ -118,18 +120,19 @@ func TestSubscribeIdleSnapshotsAndCloses(t *testing.T) {
 // path (TestSubscribeColdReplay covers that), but on the warm hub path too.
 func TestSubscribeLiveReconnectByLastEventID(t *testing.T) {
 	h := newTestHandler(t)
-	pub := runlog.NewPublisher(h.hub, h.eventLog, "c")
+	chatID := mustCreateChat(t, h)
+	pub := runlog.NewPublisher(h.hub, h.eventLog, chatID)
 	pub.Publish(stream.ResponseCreated("t1")) // seq 1
 	pub.Publish(stream.NodeStart("n1", "rs")) // seq 2
 
-	req := httptest.NewRequest("GET", "/api/v1/chats/c/stream", nil)
+	req := httptest.NewRequest("GET", "/api/v1/chats/"+chatID+"/stream", nil)
 	req.Header.Set("Last-Event-ID", "1")
 	ctx, cancel := context.WithCancel(req.Context())
 	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
 	done := make(chan struct{})
 	go func() {
-		h.SubscribeChatStream(rec, req, "c")
+		h.SubscribeChatStream(rec, req, chatID)
 		close(done)
 	}()
 

@@ -45,19 +45,24 @@ func TestSubscribeColdReplay(t *testing.T) {
 	}
 	h := &Handler{store: st, hub: stream.NewHub(), eventLog: runlog.NewEventLog(st)}
 	ctx := context.Background()
+	c, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	chatID := c.ID
 	for i, ev := range []stream.SSEEvent{
 		stream.NodeStart("n1", "researcher"),
 		stream.NodeDone("n1", stream.NodeDoneData{}),
 		stream.Done(),
 	} {
 		js, _ := runlog.MarshalEvent(ev)
-		if err := st.InsertChatEvent(ctx, store.ChatEvent{ChatID: "c", Seq: int64(i + 1), Event: js}); err != nil {
+		if err := st.InsertChatEvent(ctx, store.ChatEvent{ChatID: chatID, Seq: int64(i + 1), Event: js}); err != nil {
 			t.Fatalf("seed event %d: %v", i, err)
 		}
 	}
 
 	// Full cold replay: all three events, each carrying its id.
-	body := subscribe(t, h, "c", "")
+	body := subscribe(t, h, chatID, "")
 	for _, want := range []string{"id: 1", "id: 2", "id: 3", "event: node_start", "event: done"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("cold replay missing %q in:\n%s", want, body)
@@ -65,7 +70,7 @@ func TestSubscribeColdReplay(t *testing.T) {
 	}
 
 	// Resume from seq 2 → only event 3 (the Done).
-	body = subscribe(t, h, "c", "2")
+	body = subscribe(t, h, chatID, "2")
 	if strings.Contains(body, "id: 1") || strings.Contains(body, "id: 2") || !strings.Contains(body, "id: 3") {
 		t.Errorf("resume from seq 2 should send only id 3, got:\n%s", body)
 	}

@@ -71,7 +71,7 @@ func postMessage(t *testing.T, h *Handler, chatID, content string) {
 func TestOrchestratorRemembersConversation(t *testing.T) {
 	m := &recallModel{}
 	h := newTestHandlerWithModel(t, m)
-	chatID := "conv-1"
+	chatID := mustCreateChat(t, h)
 
 	postMessage(t, h, chatID, "remember the code word quackers")
 	postMessage(t, h, chatID, "what is the code word?")

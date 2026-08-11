@@ -43,7 +43,7 @@ func injectEvent(t *testing.T, h *Handler, chatID, author, branch string, conten
 func TestOrchestratorContextDiet(t *testing.T) {
 	m := &recallModel{}
 	h := newTestHandlerWithModel(t, m)
-	chatID := "conv-fat"
+	chatID := mustCreateChat(t, h)
 
 	postMessage(t, h, chatID, "add flappy bird to my repo")
 

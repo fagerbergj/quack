@@ -502,6 +502,15 @@ export type SendChatMessageData = {
     url: '/api/v1/chats/{chat_id}/responses';
 };
 
+export type SendChatMessageErrors = {
+    /**
+     * No such chat
+     */
+    404: ErrorResponse;
+};
+
+export type SendChatMessageError = SendChatMessageErrors[keyof SendChatMessageErrors];
+
 export type SendChatMessageResponses = {
     /**
      * SSE event stream
@@ -547,6 +556,15 @@ export type SubscribeChatStreamData = {
     query?: never;
     url: '/api/v1/chats/{chat_id}/stream';
 };
+
+export type SubscribeChatStreamErrors = {
+    /**
+     * No such chat
+     */
+    404: ErrorResponse;
+};
+
+export type SubscribeChatStreamError = SubscribeChatStreamErrors[keyof SubscribeChatStreamErrors];
 
 export type SubscribeChatStreamResponses = {
     /**

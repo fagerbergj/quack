@@ -67,6 +67,18 @@ func newTestHandlerWithModel(t *testing.T, m model.LLM) *Handler {
 	return NewHandler(st, orch, nil, nil, nil, nil, "test", nil, nil)
 }
 
+// mustCreateChat inserts a real chat row and returns its (store-minted) id -
+// SendChatMessage/SubscribeChatStream 404 preflight-check chat existence now,
+// so any test driving them needs a real row, not an arbitrary literal id.
+func mustCreateChat(t *testing.T, h *Handler) string {
+	t.Helper()
+	c, err := h.store.CreateChat(context.Background(), "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	return c.ID
+}
+
 // --- UpdateNodeStatus -------------------------------------------------------
 
 // seedPlan writes a minimal DagPlan (+ optional DagNode) fixture directly to
@@ -430,12 +442,7 @@ func TestUpdateResponseStatus_NoActiveRun404(t *testing.T) {
 // cancellable by that id once the run (and handler call) has returned.
 func TestSendChatMessage_ResponseCreatedFirst(t *testing.T) {
 	h := newTestHandler(t)
-	chatID := "c1"
-	if _, err := h.store.CreateChat(context.Background(), ""); err != nil {
-		t.Fatalf("CreateChat: %v", err)
-	}
-	// The store's CreateChat mints its own id; use the fixed chatID directly -
-	// SendChatMessage doesn't require the chat to pre-exist (SaveTurn upserts).
+	chatID := mustCreateChat(t, h)
 
 	body := `{"content":"hello"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/chats/"+chatID+"/responses", strings.NewReader(body))

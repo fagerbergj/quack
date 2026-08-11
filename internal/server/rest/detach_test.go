@@ -130,7 +130,7 @@ func watch(t *testing.T, h *Handler, chatID string, d time.Duration) bool {
 func TestRunSurvivesClientThatStopsReading(t *testing.T) {
 	m := newGatedModel(4 << 20) // 4MB reply: dwarfs any kernel/socket buffer
 	h := newTestHandlerWithModel(t, m)
-	chatID := "c1"
+	chatID := mustCreateChat(t, h)
 	srv := runServer(t, h, chatID)
 
 	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
@@ -162,7 +162,7 @@ func TestRunSurvivesClientThatStopsReading(t *testing.T) {
 func TestRunSurvivesClientDisconnect(t *testing.T) {
 	m := newGatedModel(0)
 	h := newTestHandlerWithModel(t, m)
-	chatID := "c1"
+	chatID := mustCreateChat(t, h)
 	srv := runServer(t, h, chatID)
 
 	ctx, abort := context.WithCancel(context.Background())
@@ -199,7 +199,7 @@ func TestRunSurvivesClientDisconnect(t *testing.T) {
 func TestExplicitCancelStillKillsRun(t *testing.T) {
 	m := newGatedModel(0) // never unblocked: only a cancel can end this run
 	h := newTestHandlerWithModel(t, m)
-	chatID := "c1"
+	chatID := mustCreateChat(t, h)
 	srv := runServer(t, h, chatID)
 
 	resp, err := http.Post(srv.URL+"/api/v1/chats/c1/responses", "application/json", strings.NewReader(`{"content":"hello"}`))
