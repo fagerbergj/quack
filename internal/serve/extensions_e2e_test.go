@@ -39,6 +39,7 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workflowcatalog"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // directAnswerModel is a minimal model.LLM that answers with plain text and
@@ -64,7 +65,7 @@ func (directAnswerModel) GenerateContent(_ context.Context, _ *model.LLMRequest,
 // orchRef the same way buildFromConfig does once the orchestrator exists.
 // The returned TurnAwareService is a row-backed artifact service sharing
 // the same store, exactly like buildFromConfig wires attachments in production.
-func newExtTestStack(t *testing.T) (*store.Store, *orchestrator.Orchestrator, *stream.Hub, *store.TurnAwareService) {
+func newExtTestStack(t *testing.T) (*store.Store, *orchestrator.Orchestrator, *stream.Hub, *store.TurnAwareService, *workspace.Jail) {
 	t.Helper()
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -79,7 +80,11 @@ func newExtTestStack(t *testing.T) (*store.Store, *orchestrator.Orchestrator, *s
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
 	planner := dag.NewPlanner(nil, nil, nil)
 	orch := orchestrator.New(st.Sessions, directAnswerModel{}, "You are a test duck.", planner, ex, nil, nil, nil)
-	return st, orch, stream.NewHub(), store.NewTurnAwareService(artifactSvc)
+	jail, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatalf("workspace.NewJail: %v", err)
+	}
+	return st, orch, stream.NewHub(), store.NewTurnAwareService(artifactSvc), jail
 }
 
 // noopModulesConfig parses an extensions: block through the REAL inline-map
@@ -126,12 +131,13 @@ func waitUntil(t *testing.T, timeout time.Duration, cond func() bool) {
 // orchestrator, and asserts the run lands as a normal chat+turn and that
 // /status only advances once RunEnded actually fires.
 func TestSDKExtensionDispatchLoop(t *testing.T) {
-	st, orch, hub, artifacts := newExtTestStack(t)
+	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
+	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  greeting: e2e\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -211,12 +217,13 @@ func TestSDKExtensionDispatchLoop(t *testing.T) {
 // (c) An unconfigured noop registers no routes at all - 404, not a
 // dormant-but-mounted handler.
 func TestSDKExtensionUnconfiguredExtensionRegistersNoRoutes(t *testing.T) {
-	st, orch, hub, artifacts := newExtTestStack(t)
+	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
+	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := &config.Config{Workspace: config.WorkspaceConfig{Root: t.TempDir()}}
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -240,12 +247,13 @@ func TestSDKExtensionUnconfiguredExtensionRegistersNoRoutes(t *testing.T) {
 
 // (d) extensions: naming an extension that isn't compiled in fails startup loudly.
 func TestSDKExtensionUnknownNameFailsStartup(t *testing.T) {
-	st, orch, hub, artifacts := newExtTestStack(t)
+	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
+	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "bogus-extension:\n  key: value\n")
-	_, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts)
+	_, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef)
 	if err == nil {
 		t.Fatal("expected an error for an unconfigured/uncompiled extension name")
 	}
@@ -257,12 +265,13 @@ func TestSDKExtensionUnknownNameFailsStartup(t *testing.T) {
 // enabled: false leaves a configured-and-compiled extension dormant, exactly
 // like an absent block - no construction, no routes.
 func TestSDKExtensionDisabledStaysDormant(t *testing.T) {
-	st, orch, hub, artifacts := newExtTestStack(t)
+	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
+	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  enabled: false\n  greeting: e2e\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -287,14 +296,15 @@ func TestSDKExtensionDisabledStaysDormant(t *testing.T) {
 // data_dir overrides Host.DataDir's default; the default (<workspace>/extensions/<name>)
 // must never get created when an override is given.
 func TestSDKExtensionDataDirOverrideUsed(t *testing.T) {
-	st, orch, hub, artifacts := newExtTestStack(t)
+	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
+	var judgeModelRef atomic.Pointer[model.LLM]
 
 	workspaceRoot := t.TempDir()
 	customDataDir := filepath.Join(t.TempDir(), "custom-noop-data")
 	cfg := noopModulesConfig(t, workspaceRoot, "noop:\n  data_dir: "+customDataDir+"\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -314,12 +324,13 @@ func TestSDKExtensionDataDirOverrideUsed(t *testing.T) {
 // extension's own yaml.Unmarshal of the same raw bytes - noop only knows
 // "greeting", and yaml tolerates unknown fields by default.
 func TestSDKExtensionReservedKeysToleratedByExtensionConfig(t *testing.T) {
-	st, orch, hub, artifacts := newExtTestStack(t)
+	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
+	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  enabled: true\n  data_dir: \"\"\n  greeting: still works\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -331,9 +342,10 @@ func TestSDKExtensionReservedKeysToleratedByExtensionConfig(t *testing.T) {
 // A registered+configured extension whose name collides with a reserved
 // route fails startup loudly, naming both the extension and the collision.
 func TestSDKExtensionReservedNameCollisionFailsStartup(t *testing.T) {
-	st, orch, hub, artifacts := newExtTestStack(t)
+	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
+	var judgeModelRef atomic.Pointer[model.LLM]
 
 	extsdk.Register("chat", func(extsdk.Host, []byte) (extsdk.Extension, error) {
 		t.Fatal("factory must never be called for a reserved-name collision")
@@ -341,7 +353,7 @@ func TestSDKExtensionReservedNameCollisionFailsStartup(t *testing.T) {
 	})
 
 	cfg := noopModulesConfig(t, t.TempDir(), "chat:\n  key: value\n")
-	_, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts)
+	_, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef)
 	if err == nil {
 		t.Fatal("expected an error for an extension name colliding with a reserved route")
 	}
@@ -358,7 +370,7 @@ func TestSDKExtensionReservedNameCollisionFailsStartup(t *testing.T) {
 // dispatch adapter (newExtDispatch) since noop's own dispatch policy always
 // mints a fresh id, but quack's LocalID-reuse contract is what's under test.
 func TestSDKExtensionRedispatchSameChatIDAppendsTurn(t *testing.T) {
-	st, orch, hub, artifacts := newExtTestStack(t)
+	st, orch, hub, artifacts, _ := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 
@@ -407,7 +419,7 @@ func TestSDKExtensionRedispatchSameChatIDAppendsTurn(t *testing.T) {
 // (f) an unknown Workflow name fails the dispatch call itself, before any
 // chat row is created - never a silent hint the planner might ignore.
 func TestSDKExtensionUnknownWorkflowErrorsCreatesNoChat(t *testing.T) {
-	st, orch, hub, artifacts := newExtTestStack(t)
+	st, orch, hub, artifacts, _ := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 
@@ -448,7 +460,7 @@ func TestSDKExtensionDispatchPreservesTraceContinuity(t *testing.T) {
 	otel.SetTracerProvider(tp)
 	defer otel.SetTracerProvider(prev)
 
-	st, orch, hub, artifacts := newExtTestStack(t)
+	st, orch, hub, artifacts, _ := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 	var extHolder atomic.Pointer[extsdk.Extension]

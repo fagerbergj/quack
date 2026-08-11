@@ -245,52 +245,14 @@ func (o *OtelConfig) applyDefaults() error {
 	return nil
 }
 
-// ExtensionsConfig is the extensions: block. GitHub is typed and strict;
-// Modules catches every other top-level key opaquely (internal/serve resolves
-// each against sdk.Registered() and hands the raw node to its Factory).
+// ExtensionsConfig is the extensions: block - every top-level key is opaque
+// (internal/serve resolves each against sdk.Registered() and hands the raw
+// node to its Factory). GitHub used to be typed and strict here
+// (GitHubExtensionConfig); now that internal/github is an SDK module like
+// any other, its config lives entirely in quack-extensions/github and quack
+// itself never parses it.
 type ExtensionsConfig struct {
-	GitHub  *GitHubExtensionConfig `yaml:"github"`
-	Modules map[string]yaml.Node   `yaml:",inline"`
-}
-
-// GitHubExtensionConfig configures the GitHub App extension (internal/github).
-// Secrets (private_key, webhook_secret) must be ${VAR} env references in raw YAML.
-type GitHubExtensionConfig struct {
-	ClientID           string       `yaml:"client_id"`
-	AppID              int64        `yaml:"app_id"`
-	PrivateKey         string       `yaml:"private_key"`
-	PrivateKeyPath     string       `yaml:"private_key_path"`
-	WebhookSecret      string       `yaml:"webhook_secret"`
-	Mention            string       `yaml:"mention"`
-	Triggers           []string     `yaml:"triggers"`
-	AutoReviewLabel    string       `yaml:"auto_review_label"`
-	AllowedUsers       []string     `yaml:"allowed_users"`
-	Labels             GitHubLabels `yaml:"labels"`
-	RunTimeoutMinutes  int          `yaml:"run_timeout_minutes"`
-	AutoArchiveOnMerge bool         `yaml:"auto_archive_on_merge"`
-}
-
-type GitHubLabels struct {
-	Plan       string `yaml:"plan"`
-	Implement  string `yaml:"implement"`
-	Review     string `yaml:"review"`
-	Merge      string `yaml:"merge"`
-	PartialFix string `yaml:"partial_fix"`
-	Fix        string `yaml:"fix"`
-}
-
-const defaultMention = "/quack"
-const defaultAutoReviewLabel = "quack-auto-review"
-const defaultPlanLabel = "quack:plan"
-const defaultImplementLabel = "quack:implement"
-const defaultMergeLabel = "quack:merge"
-const defaultPartialFixLabel = "quack:partial-fix"
-const defaultFixLabel = "quack:fix"
-
-var validGitHubTriggers = map[string]bool{
-	"mention": true, "pr_opened": true, "label": true,
-	"issue_plan": true, "issue_implement": true, "merge": true,
-	"ci_fix": true,
+	Modules map[string]yaml.Node `yaml:",inline"`
 }
 
 const (
@@ -890,9 +852,6 @@ func (c *Config) validate() error {
 	if err := c.validateWorkflows(); err != nil {
 		return err
 	}
-	if err := c.Extensions.GitHub.applyDefaults(); err != nil {
-		return err
-	}
 	if err := c.Observability.Otel.applyDefaults(); err != nil {
 		return err
 	}
@@ -941,74 +900,6 @@ func (a *InboundAuthConfig) validate() error {
 		return fmt.Errorf("config: auth.trusted_headers.user is empty")
 	}
 	return nil
-}
-
-func (g *GitHubExtensionConfig) applyDefaults() error {
-	if g == nil {
-		return nil
-	}
-	switch {
-	case g.ClientID == "" && g.AppID == 0:
-		return fmt.Errorf("config: extensions.github needs one of client_id (recommended) or app_id")
-	case g.ClientID != "" && g.AppID != 0:
-		return fmt.Errorf("config: extensions.github sets both client_id and app_id; use one (client_id recommended)")
-	}
-	if g.PrivateKey == "" && g.PrivateKeyPath == "" {
-		return fmt.Errorf("config: extensions.github needs one of private_key or private_key_path")
-	}
-	if g.PrivateKey != "" && g.PrivateKeyPath != "" {
-		return fmt.Errorf("config: extensions.github sets both private_key and private_key_path; use one")
-	}
-	if g.WebhookSecret == "" {
-		return fmt.Errorf("config: extensions.github.webhook_secret is required")
-	}
-	if g.RunTimeoutMinutes <= 0 {
-		g.RunTimeoutMinutes = 120
-	}
-	if g.Mention == "" {
-		g.Mention = defaultMention
-	}
-	if len(g.Triggers) == 0 {
-		g.Triggers = []string{"mention"}
-	}
-	for _, t := range g.Triggers {
-		if !validGitHubTriggers[t] {
-			return fmt.Errorf("config: extensions.github.triggers has unknown entry %q (want mention, pr_opened, label, issue_plan, issue_implement, merge, or ci_fix)", t)
-		}
-	}
-	if g.Labels.Review == "" {
-		g.Labels.Review = g.AutoReviewLabel
-	}
-	if g.Labels.Review == "" {
-		g.Labels.Review = defaultAutoReviewLabel
-	}
-	if g.Labels.Plan == "" {
-		g.Labels.Plan = defaultPlanLabel
-	}
-	if g.Labels.Implement == "" {
-		g.Labels.Implement = defaultImplementLabel
-	}
-	if g.Labels.Merge == "" {
-		g.Labels.Merge = defaultMergeLabel
-	}
-	if g.Labels.PartialFix == "" {
-		g.Labels.PartialFix = defaultPartialFixLabel
-	}
-	if g.Labels.Fix == "" {
-		g.Labels.Fix = defaultFixLabel
-	}
-	if len(g.AllowedUsers) == 0 {
-		slog.Warn("config: extensions.github.allowed_users is empty; DENYING every human-invoked trigger " +
-			"(mention comments, quack:plan/implement/merge labels) until it is set — auto-review is unaffected")
-	}
-	return nil
-}
-
-func (g *GitHubExtensionConfig) Issuer() string {
-	if g.ClientID != "" {
-		return g.ClientID
-	}
-	return fmt.Sprintf("%d", g.AppID)
 }
 
 func (w *WorkspaceConfig) applyDefaults() error {

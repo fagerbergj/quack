@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/tool"
 
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
@@ -36,12 +37,13 @@ func init() {
 // the wiring GET /api/v1/extensions depends on for a module WITH a UI
 // descriptor.
 func TestBuildSDKExtensions_UIDescriptorCaptured(t *testing.T) {
-	st, orch, hub, artifacts := newExtTestStack(t)
+	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
+	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "fake-ui-test:\n  enabled: true\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -65,12 +67,13 @@ func TestBuildSDKExtensions_UIDescriptorCaptured(t *testing.T) {
 // TestBuildSDKExtensions_NoUIDescriptor_NameOnly covers noop, which
 // implements no sdk.UI - the SPA nav must fall back to a name-only entry.
 func TestBuildSDKExtensions_NoUIDescriptor_NameOnly(t *testing.T) {
-	st, orch, hub, artifacts := newExtTestStack(t)
+	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
+	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  enabled: true\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}

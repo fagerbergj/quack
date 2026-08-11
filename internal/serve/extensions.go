@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"iter"
 	"log/slog"
@@ -16,6 +17,7 @@ import (
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 	"github.com/google/uuid"
 	"google.golang.org/adk/v2/artifact"
+	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/genai"
 	"gopkg.in/yaml.v3"
@@ -24,13 +26,16 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/orchestrator"
+	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/server"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
+	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workflowcatalog"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // extRunUserID distinguishes extension-dispatched sessions from local UI and
@@ -54,10 +59,13 @@ type builtSDKExtension struct {
 // extensions_registry.go's blank imports). A configured name absent from the
 // registry, or one that fails ValidateExtensionName, fails startup loudly; a
 // registered module absent from config, or configured with enabled: false,
-// stays dormant - never constructed (design doc "Model"). orchRef is read
-// lazily by the returned extensions' Dispatch closures: it isn't resolved
-// until the caller Stores the orchestrator, built later in buildFromConfig.
-func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService) ([]builtSDKExtension, error) {
+// stays dormant - never constructed (design doc "Model"). orchRef and
+// judgeModelRef are read lazily by the returned extensions' Dispatch/Classify
+// closures: neither is resolved until the caller Stores it, both built later
+// in buildFromConfig (judgeModelRef may never be Stored at all when no judge
+// model is configured - Classify degrades to an error, matching Host's own
+// nil-is-valid contract).
+func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM]) ([]builtSDKExtension, error) {
 	factories := extsdk.Registered()
 	names := make([]string, 0, len(cfg.Extensions.Modules))
 	for name := range cfg.Extensions.Modules {
@@ -111,6 +119,23 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, or
 			Dispatch: newExtDispatch(name, orchRef, st, hub, &extHolder, shapes, artifacts),
 			Log:      slog.Default().With("component", "ext."+name),
 			DataDir:  dataDir,
+			EnsureContextDir: func(userID, chatID string) (string, error) {
+				return jail.EnsureDir(userID, chatID, workspace.ContextDirScope)
+			},
+			ChatUser: func(chatID string) (string, bool) {
+				u := st.SessionUserForChat(context.Background(), chatID)
+				return u, u != ""
+			},
+			ArchiveChat: func(chatID string) error {
+				return st.ArchiveChat(context.Background(), chatID, true)
+			},
+			Classify: func(ctx context.Context, prompt string) (string, error) {
+				m := judgeModelRef.Load()
+				if m == nil || *m == nil {
+					return "", fmt.Errorf("extensions.%s: classify: no judge model configured", name)
+				}
+				return classifyWithModel(ctx, *m, prompt)
+			},
 		}
 		ext, err := factory(host, raw)
 		if err != nil {
@@ -195,14 +220,94 @@ func sdkExtensionTools(exts []builtSDKExtension) []tool.Tool {
 	return out
 }
 
+// findGitCredentialSource returns the first built extension implementing
+// sdk.GitCredentialSource, detected the same way Starter/Stopper are - not
+// hardcoded to one extension's name. More than one match logs a warning and
+// keeps the first (deterministic build order, sorted by name); today only
+// the GitHub extension implements this.
+func findGitCredentialSource(exts []builtSDKExtension) (extsdk.GitCredentialSource, string) {
+	var found extsdk.GitCredentialSource
+	var foundName string
+	for _, e := range exts {
+		src, ok := e.ext.(extsdk.GitCredentialSource)
+		if !ok {
+			continue
+		}
+		if found != nil {
+			slog.Warn("multiple extensions implement GitCredentialSource; keeping the first",
+				"component", "startup", "using", foundName, "ignoring", e.name)
+			continue
+		}
+		found, foundName = src, e.name
+	}
+	return found, foundName
+}
+
+// findDeliverer returns the first built extension implementing sdk.Deliverer -
+// same detection/ambiguity rule as findGitCredentialSource.
+func findDeliverer(exts []builtSDKExtension) (extsdk.Deliverer, string) {
+	var found extsdk.Deliverer
+	var foundName string
+	for _, e := range exts {
+		d, ok := e.ext.(extsdk.Deliverer)
+		if !ok {
+			continue
+		}
+		if found != nil {
+			slog.Warn("multiple extensions implement Deliverer; keeping the first",
+				"component", "startup", "using", foundName, "ignoring", e.name)
+			continue
+		}
+		found, foundName = d, e.name
+	}
+	return found, foundName
+}
+
+// sdkGitCredentialAdapter bridges sdk.GitCredentialSource to
+// tools.GitTokenSource - same shape, different concrete credential type
+// (the SDK boundary can't share quack's own internal type).
+type sdkGitCredentialAdapter struct{ src extsdk.GitCredentialSource }
+
+func (a sdkGitCredentialAdapter) GitCredential(ctx context.Context, rawURL string) (*tools.GitCredential, error) {
+	c, err := a.src.GitCredential(ctx, rawURL)
+	if err != nil || c == nil {
+		return nil, err
+	}
+	return &tools.GitCredential{Host: c.Host, Username: c.Username, Token: c.Token}, nil
+}
+
+// sdkDeliverAdapter bridges sdk.Deliverer to vetting.DeliverFunc.
+type sdkDeliverAdapter struct{ deliverer extsdk.Deliverer }
+
+func (a sdkDeliverAdapter) Deliver(ctx context.Context, dc vetting.DeliveryContext) ([]vetting.DeliveryItemOutcome, error) {
+	sdkItems := make([]extsdk.StagedDelivery, len(dc.Items))
+	for i, it := range dc.Items {
+		comments := make([]extsdk.ReviewComment, len(it.Comments))
+		for j, c := range it.Comments {
+			comments[j] = extsdk.ReviewComment{Path: c.Path, Line: c.Line, Body: c.Body}
+		}
+		sdkItems[i] = extsdk.StagedDelivery{
+			Kind: extsdk.DeliveryKind(it.Kind), Branch: it.Branch, Title: it.Title, Body: it.Body,
+			TitleOmitted: it.TitleOmitted, BodyOmitted: it.BodyOmitted,
+			Event: it.Event, Slot: it.Slot, Comments: comments, Recovered: it.Recovered,
+		}
+	}
+	outcomes, err := a.deliverer.Deliver(ctx, extsdk.DeliveryContext{
+		NodeID: dc.NodeID, ChatID: dc.ChatID, Items: sdkItems,
+		CloneURL: dc.CloneURL, PushedSHA: dc.PushedSHA, Branch: dc.Branch, IssueNumber: dc.IssueNumber,
+		GatePassed: dc.GatePassed, GateFeedback: dc.GateFeedback, ChecksSkipNote: dc.ChecksSkipNote,
+	})
+	out := make([]vetting.DeliveryItemOutcome, len(outcomes))
+	for i, o := range outcomes {
+		out[i] = vetting.DeliveryItemOutcome{Kind: o.Kind, URL: o.URL, Error: o.Error}
+	}
+	return out, err
+}
+
 // newExtDispatch builds the sdk.DispatchFunc an extension's Host carries.
 // The prep (chat row, turn) is synchronous and fast; the run itself happens
 // in a goroutine, so Dispatch returns before the run completes - RunObserver
 // is how a caller learns it finished.
-//
-// Ask.NodeContext, Ask.ContextItems, Run.Setup, and Run.ReadOnly have no
-// consumer here yet - they await the GitHub migration, the real consumer of
-// a pre-provisioned clone and node-scoped context.
 func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrator], st *store.Store, hub *stream.Hub, extHolder *atomic.Pointer[extsdk.Extension], shapes []workflowcatalog.Shape, artifacts *store.TurnAwareService) extsdk.DispatchFunc {
 	return func(ctx context.Context, req extsdk.DispatchRequest) error {
 		if req.Chat.LocalID == "" {
@@ -230,7 +335,9 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 
 		// Detach from the HTTP request's lifecycle (the run outlives the
 		// handler) while keeping the caller's trace, so the extension's
-		// inbound span still parents the whole run's spans.
+		// inbound span still parents the whole run's spans. Run.Timeout is
+		// applied inside driveExtensionRunEvents, which already owns
+		// runCtx's cancel-func lifecycle end to end.
 		runCtx := context.WithoutCancel(ctx)
 		allowedKinds := deliveryKindStrings(req.Delivery.AllowedKinds)
 
@@ -283,15 +390,28 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 			if err != nil {
 				return fmt.Errorf("extensions.%s: workflow %q bound plan: %w", name, req.Run.Workflow, err)
 			}
-			go driveBoundExtensionRun(runCtx, name, orch, st, hub, extHolder, userID, chatID, turnID, *plan)
+			go driveBoundExtensionRun(runCtx, name, orch, st, hub, extHolder, userID, chatID, turnID, *plan, req.Run.Timeout)
 			return nil
 		}
 
 		// The unshaped/hint path reaches the planner's own LLM turn (plan
-		// tool), which reads the allowlist back off ctx - see
-		// tools.AllowedDeliveryKindsFromContext.
+		// tool), which reads these facts back off ctx - see
+		// tools.AllowedDeliveryKindsFromContext, GitHubSetupFromContext,
+		// WorkerAskFromContext, ContextItemsFromContext, PlanOnlyFromContext.
+		// The real consumer of Setup/NodeContext/ContextItems/ReadOnly - the
+		// GitHub migration's pre-provisioned clone and node-scoped context.
 		runCtx = tools.WithAllowedDeliveryKinds(runCtx, allowedKinds)
-		go driveExtensionRun(runCtx, name, orch, st, hub, extHolder, userID, chatID, turnID, composeDispatchMessage(req), attachments)
+		if req.Run.Setup != nil {
+			runCtx = tools.WithGitHubSetup(runCtx, toDagSetup(*req.Run.Setup))
+		}
+		if req.Ask.NodeContext != "" {
+			runCtx = tools.WithWorkerAsk(runCtx, req.Ask.NodeContext)
+		}
+		if req.Ask.ContextItems != nil {
+			runCtx = tools.WithContextItems(runCtx, toDagContextItems(req.Ask.ContextItems))
+		}
+		runCtx = tools.WithPlanOnly(runCtx, req.Run.ReadOnly)
+		go driveExtensionRun(runCtx, name, orch, st, hub, extHolder, userID, chatID, turnID, composeDispatchMessage(req), attachments, req.Run.Timeout)
 		return nil
 	}
 }
@@ -306,6 +426,29 @@ func deliveryKindStrings(kinds []extsdk.DeliveryKind) []string {
 	out := make([]string, len(kinds))
 	for i, k := range kinds {
 		out[i] = string(k)
+	}
+	return out
+}
+
+// toDagSetup adapts the SDK's Setup to dag.Setup. ExistingHeadRef overrides
+// WorkBranch for the checkout rather than supplementing it (mirrors what
+// dag.OverrideExistingPRHead used to do post-hoc from the GitHub-specific
+// tools.WithGitHubPR context - now folded into Setup itself, generalized
+// past GitHub).
+func toDagSetup(s extsdk.Setup) dag.Setup {
+	out := dag.Setup{Repo: s.Repo, BaseRef: s.BaseRef, WorkBranch: s.WorkBranch}
+	if s.ExistingHeadRef != "" {
+		out.WorkBranch = s.ExistingHeadRef
+		out.CheckoutExistingHead = true
+	}
+	return out
+}
+
+// toDagContextItems adapts the SDK's NamedContext to dag.ContextItem - same shape.
+func toDagContextItems(items []extsdk.NamedContext) []dag.ContextItem {
+	out := make([]dag.ContextItem, len(items))
+	for i, it := range items {
+		out[i] = dag.ContextItem{Name: it.Name, Detail: it.Detail}
 	}
 	return out
 }
@@ -360,17 +503,18 @@ func ensureExtChatTitle(ctx context.Context, st *store.Store, chatID, title stri
 
 // driveExtensionRun runs one dispatched turn to completion through the
 // orchestrator's own LLM turn (the unshaped/hint path), mirroring
-// rest.Handler.runChat / github.Extension.dispatch.
-func driveExtensionRun(ctx context.Context, name string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, extHolder *atomic.Pointer[extsdk.Extension], userID, chatID, turnID, message string, attachments []*genai.Part) {
-	driveExtensionRunEvents(ctx, name, orch, st, hub, extHolder, userID, chatID, turnID, func(runCtx context.Context) iter.Seq2[stream.SSEEvent, error] {
+// rest.Handler.runChat / github.Extension.dispatch. timeout is
+// Run.Timeout - zero means unbounded.
+func driveExtensionRun(ctx context.Context, name string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, extHolder *atomic.Pointer[extsdk.Extension], userID, chatID, turnID, message string, attachments []*genai.Part, timeout time.Duration) {
+	driveExtensionRunEvents(ctx, name, orch, st, hub, extHolder, userID, chatID, turnID, timeout, func(runCtx context.Context) iter.Seq2[stream.SSEEvent, error] {
 		return orch.Run(runCtx, userID, chatID, message, attachments)
 	})
 }
 
 // driveBoundExtensionRun runs an already-built bound Plan to completion
 // through RunBoundPlan - no orchestrator LLM turn, no planner LLM call.
-func driveBoundExtensionRun(ctx context.Context, name string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, extHolder *atomic.Pointer[extsdk.Extension], userID, chatID, turnID string, plan dag.Plan) {
-	driveExtensionRunEvents(ctx, name, orch, st, hub, extHolder, userID, chatID, turnID, func(runCtx context.Context) iter.Seq2[stream.SSEEvent, error] {
+func driveBoundExtensionRun(ctx context.Context, name string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, extHolder *atomic.Pointer[extsdk.Extension], userID, chatID, turnID string, plan dag.Plan, timeout time.Duration) {
+	driveExtensionRunEvents(ctx, name, orch, st, hub, extHolder, userID, chatID, turnID, timeout, func(runCtx context.Context) iter.Seq2[stream.SSEEvent, error] {
 		return orch.RunBoundPlan(runCtx, userID, chatID, plan)
 	})
 }
@@ -382,8 +526,16 @@ func driveBoundExtensionRun(ctx context.Context, name string, orch *orchestrator
 // (orch.Run) and bound (orch.RunBoundPlan) paths - identical bookkeeping
 // either way, only the event source differs. run is called with runCtx (not
 // ctx) so hub-driven cancellation (cancelRun) actually reaches the run.
-func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, extHolder *atomic.Pointer[extsdk.Extension], userID, chatID, turnID string, run func(context.Context) iter.Seq2[stream.SSEEvent, error]) {
-	runCtx, cancelRun := context.WithCancel(ctx)
+// timeout>0 bounds runCtx itself (Run.Timeout) so TimedOut is observable
+// below - cancelRun (deferred) is what actually releases it either way.
+func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, extHolder *atomic.Pointer[extsdk.Extension], userID, chatID, turnID string, timeout time.Duration, run func(context.Context) iter.Seq2[stream.SSEEvent, error]) {
+	var runCtx context.Context
+	var cancelRun context.CancelFunc
+	if timeout > 0 {
+		runCtx, cancelRun = context.WithTimeout(ctx, timeout)
+	} else {
+		runCtx, cancelRun = context.WithCancel(ctx)
+	}
 	hub.RegisterRun(chatID, turnID, cancelRun)
 	_ = st.MarkRunActive(runCtx, chatID, turnID)
 	defer hub.Close(chatID)
@@ -402,7 +554,8 @@ func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrato
 	})
 	pub.Publish(stream.Done())
 
-	outcome := buildExtRunOutcome(runCtx, orch, st, userID, chatID, res.PlanID != "", res.NeedsInput)
+	timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
+	outcome := buildExtRunOutcome(runCtx, orch, st, userID, chatID, res.PlanID != "", res.NeedsInput, timedOut)
 	if p := extHolder.Load(); p != nil {
 		if obs, ok := (*p).(extsdk.RunObserver); ok {
 			obs.RunEnded(chatID, outcome)
@@ -412,17 +565,18 @@ func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrato
 
 // buildExtRunOutcome mirrors rest.Handler.stampRunOutcome / github's
 // stampRunOutcome (#738's terminal-status rule) and additionally builds the
-// RunOutcome RunObserver expects. TimedOut always reports false: extension
-// dispatch has no per-run deadline wired yet (only the GitHub webhook path
-// sets one) - that lands with the GitHub migration.
-func buildExtRunOutcome(parent context.Context, orch *orchestrator.Orchestrator, st *store.Store, userID, chatID string, planRan bool, needsInput stream.NodeNeedsInputData) extsdk.RunOutcome {
+// RunOutcome RunObserver expects. timedOut is the caller's own
+// Run.Timeout-scoped deadline check (buildExtRunOutcome's own ctx is
+// deliberately WithoutCancel of parent, so it can't observe parent's
+// deadline itself).
+func buildExtRunOutcome(parent context.Context, orch *orchestrator.Orchestrator, st *store.Store, userID, chatID string, planRan bool, needsInput stream.NodeNeedsInputData, timedOut bool) extsdk.RunOutcome {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 	defer cancel()
 	status, question := st.StampTerminalOutcome(ctx, orchestrator.AppName, userID, chatID, func() (string, bool) {
 		return orch.PendingQuestion(ctx, userID, chatID)
 	})
 
-	out := extsdk.RunOutcome{PlanRan: planRan, Answer: strings.TrimSpace(orch.LatestAnswer(ctx, userID, chatID))}
+	out := extsdk.RunOutcome{PlanRan: planRan, TimedOut: timedOut, Answer: strings.TrimSpace(orch.LatestAnswer(ctx, userID, chatID))}
 	switch status {
 	case store.RunStatusFailed:
 		out.Status = extsdk.RunFailed
@@ -432,6 +586,14 @@ func buildExtRunOutcome(parent context.Context, orch *orchestrator.Orchestrator,
 		out.NodeID = needsInput.NodeID
 	default:
 		out.Status = extsdk.RunDone
+		if out.Answer == "" && !timedOut {
+			// Silent-gap (#568): a run that finished with no error, no failed
+			// node, and no answer. Was GitHub-only (internal/github's own
+			// call); centralized here so every extension's dispatch gets the
+			// same metric, matching rest.Handler's own runs once it adopts
+			// this same accounting.
+			otelobs.RecordRunNoAnswer()
+		}
 	}
 	return out
 }

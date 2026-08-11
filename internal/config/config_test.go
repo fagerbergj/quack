@@ -998,198 +998,6 @@ workspace:
 	}
 }
 
-func TestGitHubExtensionValidatesAndDefaults(t *testing.T) {
-	t.Setenv("QUACK_GH_KEY", "pem")
-	t.Setenv("QUACK_GH_SECRET", "s3cret")
-	c, err := Load(writeTemp(t, baseConfig+`
-extensions:
-  github:
-    app_id: 12345
-    private_key: ${QUACK_GH_KEY}
-    webhook_secret: ${QUACK_GH_SECRET}
-`))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if c.Extensions.GitHub == nil || c.Extensions.GitHub.AppID != 12345 {
-		t.Fatal("github extension not parsed")
-	}
-	if c.Extensions.GitHub.Mention != "/quack" {
-		t.Errorf("mention default = %q; want /quack", c.Extensions.GitHub.Mention)
-	}
-	// app_id only ⇒ Issuer is the stringified App ID.
-	if got := c.Extensions.GitHub.Issuer(); got != "12345" {
-		t.Errorf("Issuer() = %q; want 12345", got)
-	}
-	if l := c.Extensions.GitHub.Labels; l.Plan != "quack:plan" || l.Review != "quack-auto-review" {
-		t.Errorf("labels defaults = %+v; want plan quack:plan, review quack-auto-review", l)
-	}
-	if l := c.Extensions.GitHub.Labels; l.Fix != "quack:fix" {
-		t.Errorf("labels defaults = %+v; want fix quack:fix", l)
-	}
-}
-
-// The ci_fix trigger (#254, redesigned #656) must pass the triggers
-// whitelist; an unknown entry (including the removed pr_fix) must still be
-// rejected.
-func TestGitHubExtensionFixTriggers(t *testing.T) {
-	t.Setenv("QUACK_GH_KEY", "pem")
-	t.Setenv("QUACK_GH_SECRET", "s3cret")
-	c, err := Load(writeTemp(t, baseConfig+`
-extensions:
-  github:
-    app_id: 1
-    private_key: ${QUACK_GH_KEY}
-    webhook_secret: ${QUACK_GH_SECRET}
-    triggers: [ci_fix]
-    labels:
-      fix: fix-me
-`))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if l := c.Extensions.GitHub.Labels; l.Fix != "fix-me" {
-		t.Errorf("labels = %+v; want fix fix-me", l)
-	}
-
-	_, err = Load(writeTemp(t, baseConfig+`
-extensions:
-  github:
-    app_id: 1
-    private_key: ${QUACK_GH_KEY}
-    webhook_secret: ${QUACK_GH_SECRET}
-    triggers: [ci_fixx]
-`))
-	if err == nil || !strings.Contains(err.Error(), "unknown entry") {
-		t.Fatalf("err = %v; want an unknown-trigger rejection", err)
-	}
-
-	_, err = Load(writeTemp(t, baseConfig+`
-extensions:
-  github:
-    app_id: 1
-    private_key: ${QUACK_GH_KEY}
-    webhook_secret: ${QUACK_GH_SECRET}
-    triggers: [pr_fix]
-`))
-	if err == nil || !strings.Contains(err.Error(), "unknown entry") {
-		t.Fatalf("err = %v; want pr_fix rejected (absorbed into ci_fix, #656)", err)
-	}
-}
-
-func TestGitHubExtensionAutoReviewLabelAliasesLabelsReview(t *testing.T) {
-	t.Setenv("QUACK_GH_KEY", "pem")
-	t.Setenv("QUACK_GH_SECRET", "s3cret")
-	// Deprecated auto_review_label still works when labels.review is unset…
-	c, err := Load(writeTemp(t, baseConfig+`
-extensions:
-  github:
-    app_id: 1
-    private_key: ${QUACK_GH_KEY}
-    webhook_secret: ${QUACK_GH_SECRET}
-    auto_review_label: legacy-label
-`))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got := c.Extensions.GitHub.Labels.Review; got != "legacy-label" {
-		t.Errorf("labels.review = %q; want legacy-label (alias)", got)
-	}
-	// …but labels.review wins when both are set.
-	c, err = Load(writeTemp(t, baseConfig+`
-extensions:
-  github:
-    app_id: 1
-    private_key: ${QUACK_GH_KEY}
-    webhook_secret: ${QUACK_GH_SECRET}
-    auto_review_label: legacy-label
-    labels:
-      review: new-label
-`))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got := c.Extensions.GitHub.Labels.Review; got != "new-label" {
-		t.Errorf("labels.review = %q; want new-label", got)
-	}
-}
-
-func TestGitHubExtensionClientIDIssuer(t *testing.T) {
-	t.Setenv("QUACK_GH_KEY", "pem")
-	t.Setenv("QUACK_GH_SECRET", "s3cret")
-	// client_id is GitHub's recommended issuer and a valid alternative to app_id.
-	c, err := Load(writeTemp(t, baseConfig+`
-extensions:
-  github:
-    client_id: Iv23liExample
-    private_key: ${QUACK_GH_KEY}
-    webhook_secret: ${QUACK_GH_SECRET}
-`))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got := c.Extensions.GitHub.Issuer(); got != "Iv23liExample" {
-		t.Errorf("Issuer() = %q; want Iv23liExample", got)
-	}
-}
-
-func TestGitHubExtensionRejectsLiteralSecrets(t *testing.T) {
-	// webhook_secret / private_key must be ${VAR}, never a literal (same rule as
-	// git-credential tokens; checked before ${VAR} expansion).
-	for _, field := range []string{
-		"webhook_secret: hunter2",
-		"private_key: -----BEGIN-----",
-	} {
-		_, err := Load(writeTemp(t, baseConfig+`
-extensions:
-  github:
-    app_id: 1
-    private_key: ${X}
-    webhook_secret: ${Y}
-    `+field+"\n"))
-		if err == nil {
-			t.Fatalf("expected error for literal secret %q", field)
-		}
-	}
-}
-
-func TestGitHubExtensionRequiresFields(t *testing.T) {
-	t.Setenv("QUACK_GH_KEY", "pem")
-	t.Setenv("QUACK_GH_SECRET", "s3cret")
-	// Missing both app_id and client_id.
-	_, err := Load(writeTemp(t, baseConfig+`
-extensions:
-  github:
-    private_key: ${QUACK_GH_KEY}
-    webhook_secret: ${QUACK_GH_SECRET}
-`))
-	if err == nil {
-		t.Fatal("expected error for missing issuer (app_id/client_id)")
-	}
-	// Both app_id and client_id set ⇒ ambiguous, rejected.
-	_, err = Load(writeTemp(t, baseConfig+`
-extensions:
-  github:
-    app_id: 1
-    client_id: Iv23liExample
-    private_key: ${QUACK_GH_KEY}
-    webhook_secret: ${QUACK_GH_SECRET}
-`))
-	if err == nil {
-		t.Fatal("expected error when both app_id and client_id are set")
-	}
-	// Missing private key entirely.
-	_, err = Load(writeTemp(t, baseConfig+`
-extensions:
-  github:
-    app_id: 1
-    webhook_secret: ${QUACK_GH_SECRET}
-`))
-	if err == nil {
-		t.Fatal("expected error for missing private key")
-	}
-}
-
 // An unrecognized top-level key under extensions: must pass strict parsing
 // as a raw node (issue #275) - internal/serve resolves it against
 // sdk.Registered() later, config never interprets it.
@@ -1217,24 +1025,35 @@ extensions:
 	}
 }
 
-// TestExtensionsGitHubStaysStrictAlongsideModules pins that adding the
-// inline Modules catch-all didn't loosen validation on the typed github
-// block - an unknown field there must still be rejected.
-func TestExtensionsGitHubStaysStrictAlongsideModules(t *testing.T) {
-	t.Setenv("QUACK_GH_KEY", "pem")
-	t.Setenv("QUACK_GH_SECRET", "s3cret")
-	_, err := Load(writeTemp(t, baseConfig+`
+// TestExtensionsGitHubPassesThroughOpaquely pins the GitHub-extension
+// migration's config-surface consequence directly: extensions.github is no
+// longer typed/strict in quack itself (config.GitHubExtensionConfig is
+// gone) - it passes through Modules exactly like any other module, unknown
+// fields included. quack-extensions/github's own Factory validates it now.
+func TestExtensionsGitHubPassesThroughOpaquely(t *testing.T) {
+	c, err := Load(writeTemp(t, baseConfig+`
 extensions:
   github:
     app_id: 1
     private_key: ${QUACK_GH_KEY}
     webhook_secret: ${QUACK_GH_SECRET}
     bogus_field: true
-  noop:
-    greeting: hi
 `))
-	if err == nil {
-		t.Fatal("expected an error for an unknown field under extensions.github")
+	if err != nil {
+		t.Fatalf("unexpected error: %v (extensions.github should be opaque to quack now)", err)
+	}
+	node, ok := c.Extensions.Modules["github"]
+	if !ok {
+		t.Fatal("extensions.github not captured in Modules")
+	}
+	var got struct {
+		AppID int64 `yaml:"app_id"`
+	}
+	if err := node.Decode(&got); err != nil {
+		t.Fatalf("decode captured node: %v", err)
+	}
+	if got.AppID != 1 {
+		t.Errorf("app_id = %d, want 1", got.AppID)
 	}
 }
 
