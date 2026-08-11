@@ -159,6 +159,61 @@ func TestCiteReasonBoundsLongList(t *testing.T) {
 	}
 }
 
+// TestCiteReasonSortsWorstFirstBeforeTruncating: answer order lists the
+// least-bad link first and the worst-scored link last - the reported bug
+// truncated to the first 10 in answer order and elided the worst offenders.
+// The fix must sort ascending by score before capping.
+func TestCiteReasonSortsWorstFirstBeforeTruncating(t *testing.T) {
+	var details []citationDetail
+	for i := 0; i < 15; i++ {
+		details = append(details, citationDetail{
+			url:   fmt.Sprintf("https://link%d.example.com/p", i),
+			score: 0.75 - float64(i)*0.05, // i=0 -> 0.75 (least-bad) .. i=14 -> 0.05 (worst)
+		})
+	}
+	reason := citeReason(0.4, details)
+
+	// The 10 lowest-scored links (i=5..14) must survive the cap.
+	for i := 5; i < 15; i++ {
+		want := fmt.Sprintf("https://link%d.example.com/p (%.2f)", i, 0.75-float64(i)*0.05)
+		if !strings.Contains(reason, want) {
+			t.Errorf("reason missing worst-scored link %q: %q", want, reason)
+		}
+	}
+	// The 5 least-bad links (i=0..4) must be elided, not named.
+	for i := 0; i < 5; i++ {
+		want := fmt.Sprintf("link%d.example.com", i)
+		if strings.Contains(reason, want) {
+			t.Errorf("reason names least-bad link %q that should have been elided: %q", want, reason)
+		}
+	}
+	if !strings.Contains(reason, "5 more elided") {
+		t.Errorf("reason missing elided count %q", reason)
+	}
+}
+
+// TestCiteReasonIncludesLegend is the #789 follow-up: the reason must carry
+// the score-tier legend and remedy exactly once, self-contained for a
+// revising worker with no other context - and only when there's something unbacked.
+func TestCiteReasonIncludesLegend(t *testing.T) {
+	fullyBacked := []citationDetail{{url: "https://ex.com/a", score: 1.0}}
+	if reason := citeReason(1.0, fullyBacked); strings.Contains(reason, citeReasonLegend) {
+		t.Errorf("fully-backed reason should not carry the legend: %q", reason)
+	}
+
+	unbacked := []citationDetail{
+		{url: "https://a.example.com/p", score: 0.5},
+		{url: "https://b.example.com/p", score: 0.25},
+	}
+	reason := citeReason(0.375, unbacked)
+	if !strings.Contains(reason, citeReasonLegend) {
+		t.Errorf("reason missing legend/remedy text: %q", reason)
+	}
+	if got := strings.Count(reason, "backing tiers:"); got != 1 {
+		t.Errorf("legend must appear exactly once regardless of unbacked link count, got %d: %q", got, reason)
+	}
+}
+
 func TestCitationScoreNormalizesAnchorsAndSlashes(t *testing.T) {
 	// Cited URL differs from the fetched one only by a trailing slash and a #anchor
 	// and host casing - should still score a 1.0 exact-fetch match.
