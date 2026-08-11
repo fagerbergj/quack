@@ -4,6 +4,7 @@ package runlog
 import (
 	"context"
 	"encoding/json"
+	"iter"
 	"log/slog"
 	"time"
 
@@ -101,6 +102,63 @@ func (p *Publisher) Publish(ev stream.SSEEvent) {
 	p.seq++
 	p.hub.Publish(p.chatID, p.seq, ev)
 	p.log.Append(p.chatID, p.seq, ev)
+}
+
+// DriveResult is what draining one run's event stream to a Publisher
+// determined - the plan/pause signals every dispatch path (REST, SDK
+// extensions, the GitHub webhook) needs to decide what happens next.
+type DriveResult struct {
+	// SawPlan is true the moment any dag_plan event is seen, name-only -
+	// even a test double's bare one with no Data payload.
+	SawPlan bool
+	// PlanID is "" unless a dag_plan event carried real DagPlanData; only
+	// this gates SaveDagPlan/PersistNodeEvent (a name-only event has nothing
+	// to persist).
+	PlanID string
+	// Paused is true iff a node_needs_input event carried real
+	// NodeNeedsInputData (mirrors PlanID's Data-required rule).
+	Paused     bool
+	NeedsInput stream.NodeNeedsInputData
+}
+
+// Drive drains run's event stream to pub, mirroring DAG plan/node state into
+// st as it goes - the shared loop behind every dispatch path (REST, SDK
+// extensions, the GitHub webhook), so the three don't each hand-roll their
+// own copy. onErr, if non-nil, is called for each per-event error the
+// iterator yields; the loop keeps draining regardless (never fatal). pub may
+// be nil (a caller with no store to persist against, e.g. a test double) -
+// persistence/publish are skipped, but plan/pause tracking still runs.
+func Drive(turnID string, st *store.Store, pub *Publisher, run iter.Seq2[stream.SSEEvent, error], onErr func(error)) DriveResult {
+	var res DriveResult
+	for ev, err := range run {
+		if err != nil {
+			if onErr != nil {
+				onErr(err)
+			}
+			continue
+		}
+		if ev.Name == stream.EventDagPlan {
+			res.SawPlan = true
+			if d, ok := ev.Data.(stream.DagPlanData); ok {
+				res.PlanID = d.PlanID
+				if pub != nil {
+					SaveDagPlan(st, pub.chatID, turnID, d)
+				}
+			}
+		} else if res.PlanID != "" && pub != nil {
+			PersistNodeEvent(st, res.PlanID, ev)
+		}
+		if ev.Name == stream.EventNodeNeedsInput {
+			if d, ok := ev.Data.(stream.NodeNeedsInputData); ok {
+				res.Paused = true
+				res.NeedsInput = d
+			}
+		}
+		if pub != nil {
+			pub.Publish(ev)
+		}
+	}
+	return res
 }
 
 // PersistNodeEvent upserts DagNode state for node-lifecycle events; illegal transitions are logged, write proceeds.

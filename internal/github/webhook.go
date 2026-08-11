@@ -19,7 +19,6 @@ import (
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/runlog"
-	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -352,6 +351,8 @@ func (e *Extension) engageOwnPRReview(p pullRequestReviewPayload, rawBody []byte
 	sessionID := fmt.Sprintf("github-%s-%s-%d", owner, repo, number)
 	login := p.Review.User.Login
 	if e.store != nil {
+		// Future sdk.Host.ChatUser(chatID) - recovers the acting login when
+		// re-engaging a session with no new commenter.
 		login = e.store.SessionUserForChat(ctx, sessionID)
 	}
 
@@ -522,6 +523,7 @@ func (e *Extension) mergeIfApproved(p pullRequestPayload, rawBody []byte) {
 		}
 		slog.Info("github pr merged", "component", "github", "repo", owner+"/"+repo, "pr", number, "user", p.Sender.Login)
 		if e.autoArchiveOnMerge && e.store != nil {
+			// Future sdk.Host.ArchiveChat(chatID).
 			if derr := e.store.ArchiveChat(ctx, sessionID, true); derr != nil {
 				slog.Warn("github: auto-archive on merge failed", "component", "github", "repo", owner+"/"+repo, "pr", number, "session", sessionID, "err", derr)
 			}
@@ -764,6 +766,38 @@ func verifySignature(secret, body []byte, header string) bool {
 	return hmac.Equal([]byte(header), []byte(expected))
 }
 
+// DispatchRequest is the in-tree mirror of the future sdk.DispatchRequest's
+// Ask/Run/Delivery grouping (.quack/design/sdk-v2-github.md) - naming the
+// mapping explicitly ahead of the physical extraction: Setup ↔ Run.Setup,
+// NodeContext/ContextItems ↔ Ask.NodeContext/Ask.ContextItems, AllowedKinds ↔
+// Delivery.AllowedKinds. Chat/Message stay separate dispatch() locals (the
+// sessionID/message plumbing predates this struct and isn't GitHub-specific
+// enough to be worth moving in).
+type DispatchRequest struct {
+	Setup        dag.Setup
+	PR           *tools.GitHubPR // nil for an issue run (no authoritative PR to stamp)
+	AllowedKinds []string
+	NodeContext  string
+	ContextItems []dag.ContextItem
+	PlanOnly     bool
+}
+
+// stampContext attaches req's facts the planner reads back off ctx (the
+// unshaped/hint dispatch path - see internal/serve/extensions.go's
+// newExtDispatch for the SDK path's equivalent, which stamps the same
+// AllowedKinds fact via tools.WithAllowedDeliveryKinds).
+func (req DispatchRequest) stampContext(ctx context.Context) context.Context {
+	ctx = tools.WithGitHubSetup(ctx, req.Setup)
+	if req.PR != nil {
+		ctx = tools.WithGitHubPR(ctx, req.PR.Owner, req.PR.Repo, req.PR.Number, req.PR.HeadRef)
+	}
+	ctx = tools.WithAllowedDeliveryKinds(ctx, req.AllowedKinds)
+	ctx = tools.WithWorkerAsk(ctx, req.NodeContext)
+	ctx = tools.WithContextItems(ctx, req.ContextItems)
+	ctx = tools.WithPlanOnly(ctx, req.PlanOnly)
+	return ctx
+}
+
 // dispatch runs the orchestrator on the task and posts the answer back as a comment.
 func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	owner, repo, number := p.Repository.Owner.Login, p.Repository.Name, p.Issue.Number
@@ -852,6 +886,8 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	isPlan := e.deliverableIsPlan(ctx, p, task, allowedKinds, isPR)
 
 	// Context directory (#659/#660): best-effort, skipped when no jail wired.
+	// Future sdk.Host.EnsureContextDir(userID, chatID) - jail.EnsureDir is
+	// the only sandbox-specific step; WriteContextDir just needs the path.
 	var ctxDir string
 	var ctxFiles []ContextFile
 	if e.jail != nil {
@@ -883,6 +919,22 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		}
 	}
 
+	// req is the in-tree mirror of the future sdk.DispatchRequest's Ask/Run/
+	// Delivery grouping - see stampContext and DispatchRequest's own doc.
+	req := DispatchRequest{
+		Setup:        dag.Setup{Repo: p.Repository.CloneURL, BaseRef: setupBaseRef(p, gh), WorkBranch: fmt.Sprintf("quack/issue-%d", number)},
+		AllowedKinds: allowedKinds,
+		NodeContext:  workerAsk,
+		ContextItems: contextItems,
+		// planOnly is the quack:plan label itself (#739), narrower than isPlan's
+		// fuzzy mention-based heuristic above - only this drives node capability.
+		PlanOnly: p.planOnly,
+	}
+	if isPR {
+		// Stamps the authoritative repo/PR for correct_review_finding and plan tool's review head branch.
+		req.PR = &tools.GitHubPR{Owner: owner, Repo: repo, Number: number, HeadRef: gh.snap.HeadRef}
+	}
+
 	slog.Info("github run dispatched", "component", "github", "repo", owner+"/"+repo, "issue", number)
 
 	// Persist as a turn so it shows up in getChat.
@@ -896,25 +948,11 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	}
 
 	// Register on the shared hub so REST handler's stop-button can cancel it too (#468).
-	runCtx, cancelRun := context.WithCancel(ctx)
-	// Stamp deterministic setup facts from the webhook event (#661).
-	runCtx = tools.WithGitHubSetup(runCtx, dag.Setup{
-		Repo:       p.Repository.CloneURL,
-		BaseRef:    setupBaseRef(p, gh),
-		WorkBranch: fmt.Sprintf("quack/issue-%d", number),
-	})
-	// Stamp the authoritative repo/PR for correct_review_finding and plan tool's review head branch.
-	if isPR {
-		runCtx = tools.WithGitHubPR(runCtx, owner, repo, number, gh.snap.HeadRef)
-	}
-	// allowedKinds computed once above; planner and gate trust the same value.
-	runCtx = tools.WithAllowedDeliveryKinds(runCtx, allowedKinds)
-	// #664: workerAsk/contextItems computed once above, never re-derived.
-	runCtx = tools.WithWorkerAsk(runCtx, workerAsk)
-	runCtx = tools.WithContextItems(runCtx, contextItems)
-	// planOnly is the quack:plan label itself (#739), narrower than isPlan's
-	// fuzzy mention-based heuristic above - only this drives node capability.
-	runCtx = tools.WithPlanOnly(runCtx, p.planOnly)
+	// e.runTimeout bounds runCtx itself so a timeout is actually observable
+	// below (orch.Run's own internal deadline is scoped to a context it
+	// derives, never visible back to this caller).
+	runCtx, cancelRun := context.WithTimeout(ctx, e.runTimeout)
+	runCtx = req.stampContext(runCtx)
 	e.hub.RegisterRun(sessionID, turnID, cancelRun)
 	if e.store != nil {
 		// Marks the chat in-flight so a crash before stampRunOutcome runs is detectable (#738).
@@ -928,12 +966,11 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 	}()
 
 	// LABEL-triggered runs with no plan get nudged once — a label is an unambiguous work request.
-	planRan, judgePassed, paused, needsInput := e.drive(runCtx, login, sessionID, message, owner, repo, number, turnID, pub)
+	planRan, paused, needsInput := e.drive(runCtx, login, sessionID, message, owner, repo, number, turnID, pub)
 	if !planRan && !paused && p.isLabelTrigger {
 		slog.Warn("github: work request produced no plan; nudging it to run the work once",
 			"component", "github", "repo", owner+"/"+repo, "issue", number)
-		_, jp2, _, _ := e.drive(runCtx, login, sessionID, runNudge, owner, repo, number, turnID, pub)
-		judgePassed = judgePassed || jp2
+		e.drive(runCtx, login, sessionID, runNudge, owner, repo, number, turnID, pub)
 	}
 	if pub != nil {
 		pub.Publish(stream.Done())
@@ -1091,7 +1128,9 @@ func (e *Extension) persistGithubLink(ctx context.Context, sessionID, login, own
 	}
 }
 
-// ensureTitle uses the issue/PR title for the chat title (dispatch never calls generateTitle, #380).
+// ensureTitle uses the issue/PR title for the chat title (dispatch never
+// calls generateTitle, #380). Future sdk.DispatchRequest.Chat.Title, applied
+// by the Host only when the chat has no title yet - same rule as here.
 func (e *Extension) ensureTitle(ctx context.Context, sessionID string, p issueCommentPayload, task string) {
 	if e.store == nil {
 		return
@@ -1120,41 +1159,14 @@ func (e *Extension) ensureTitle(ctx context.Context, sessionID string, p issueCo
 // firm instruction to actually do the work rather than narrate intent.
 const runNudge = "You answered without running anything. Do NOT reply in prose: use the plan and execute tools NOW to actually clone the repo, read the change, and carry out the review (or the requested change). Nothing has run yet and the user is waiting."
 
-// drive runs one orchestrator turn to completion. Reports planRan, judgePassed, and whether the run paused (HITL).
-func (e *Extension) drive(ctx context.Context, uid, sessionID, message, owner, repo string, number int, turnID string, pub *runlog.Publisher) (planRan, judgePassed bool, paused bool, needsInput stream.NodeNeedsInputData) {
-	var planID string
-	for ev, err := range e.runner.Run(ctx, uid, sessionID, message, nil) {
-		if err != nil {
-			slog.Warn("github run error", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
-			continue
-		}
-		switch ev.Name {
-		case stream.EventDagPlan:
-			planRan = true
-			if d, ok := ev.Data.(stream.DagPlanData); ok {
-				planID = d.PlanID
-				if pub != nil {
-					runlog.SaveDagPlan(e.store, sessionID, turnID, d)
-				}
-			}
-		case stream.EventNodeDone:
-			if d, ok := ev.Data.(stream.NodeDoneData); ok && d.JudgePassed {
-				judgePassed = true
-			}
-		case stream.EventNodeNeedsInput:
-			if d, ok := ev.Data.(stream.NodeNeedsInputData); ok {
-				paused = true
-				needsInput = d
-			}
-		}
-		if pub != nil {
-			if planID != "" {
-				runlog.PersistNodeEvent(e.store, planID, ev)
-			}
-			pub.Publish(ev)
-		}
-	}
-	return planRan, judgePassed, paused, needsInput
+// drive runs one orchestrator turn to completion via the shared runlog.Drive
+// loop (the same machinery internal/serve's SDK extension dispatch uses),
+// reporting whether the run produced a plan and whether it paused (HITL).
+func (e *Extension) drive(ctx context.Context, uid, sessionID, message, owner, repo string, number int, turnID string, pub *runlog.Publisher) (planRan, paused bool, needsInput stream.NodeNeedsInputData) {
+	res := runlog.Drive(turnID, e.store, pub, e.runner.Run(ctx, uid, sessionID, message, nil), func(err error) {
+		slog.Warn("github run error", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
+	})
+	return res.SawPlan, res.Paused, res.NeedsInput
 }
 
 // Mirrors orchestrator.AppName; this package doesn't import orchestrator for one string.
@@ -1162,20 +1174,14 @@ const chatAppName = "quack"
 
 // stampRunOutcome persists a finished run's terminal status on the chat row so ListChats can
 // read it directly (#738), same rule internal/server/rest stamps for REST-driven runs
-// (store.DeriveTerminalStatus). Detached from parent so ctx cancellation (e.g. #468's
+// (store.StampTerminalOutcome). Detached from parent so ctx cancellation (e.g. #468's
 // stop-button) can't also cancel the stamp write.
 func (e *Extension) stampRunOutcome(parent context.Context, uid, sessionID string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 	defer cancel()
-	turns, err := e.store.GetTurnsWithContent(ctx, chatAppName, uid, sessionID)
-	if err != nil {
-		slog.Warn("github: stamp run outcome: turns load failed", "component", "github", "chat", sessionID, "err", err)
-	}
-	q, hasQ := e.runner.PendingQuestion(ctx, uid, sessionID)
-	status, question := store.DeriveTerminalStatus(turns, q, hasQ)
-	if err := e.store.StampRunOutcome(ctx, sessionID, status, question); err != nil {
-		slog.Warn("github: stamp run outcome failed", "component", "github", "chat", sessionID, "err", err)
-	}
+	e.store.StampTerminalOutcome(ctx, chatAppName, uid, sessionID, func() (string, bool) {
+		return e.runner.PendingQuestion(ctx, uid, sessionID)
+	})
 }
 
 // githubContext is the loaded GitHub state for one dispatch (#459).
