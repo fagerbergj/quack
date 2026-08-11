@@ -185,9 +185,11 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, see
 // BuildBoundPlan builds a Plan from a workflow-catalog-bound node list (a
 // dispatch naming a shaped workflow) - no plan judge, no
 // review-fanout heuristic, and critically no orchestrator LLM turn: callers
-// pass the result straight to RunBoundPlan instead of Run.
-func (o *Orchestrator) BuildBoundPlan(ctx context.Context, nodes []dag.RawNode, message string, attachments []*genai.Part) (*dag.Plan, error) {
-	return o.planner.BuildBound(ctx, nodes, nil, nil, message, attachments, nil)
+// pass the result straight to RunBoundPlan instead of Run. allowedKinds: nil
+// = unrestricted, matching AllowedDeliveryKindsFromContext's sentinel on the
+// planner-LLM path.
+func (o *Orchestrator) BuildBoundPlan(ctx context.Context, nodes []dag.RawNode, message string, attachments []*genai.Part, allowedKinds []string) (*dag.Plan, error) {
+	return o.planner.BuildBound(ctx, nodes, nil, nil, message, attachments, allowedKinds)
 }
 
 // RunBoundPlan runs an already-built bound Plan directly through the graph
@@ -354,7 +356,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			githubSetup = &s
 		}
 		planTool, err := tools.NewPlanTool(o.planner, planCache, attachments, history, message, githubPR.HeadRef, githubSetup,
-			tools.GrantFromContext(ctx), tools.WorkerAskFromContext(ctx), tools.CIChecksFromContext(ctx), tools.PlanOnlyFromContext(ctx))
+			tools.AllowedDeliveryKindsFromContext(ctx), tools.WorkerAskFromContext(ctx), tools.ContextItemsFromContext(ctx), tools.PlanOnlyFromContext(ctx))
 		if err != nil {
 			yield(stream.Errorf("orchestrator: plan tool: "+err.Error()), nil)
 			return

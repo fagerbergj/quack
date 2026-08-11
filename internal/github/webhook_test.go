@@ -26,7 +26,6 @@ import (
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
-	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 const testSecret = "shhh-webhook-secret"
@@ -1228,7 +1227,7 @@ func TestBuildEnvelopeDeliverableClassification(t *testing.T) {
 	if err := json.Unmarshal(pullCommentBody("@quack review this, focusing on the auth path"), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	env := ext.buildEnvelope(context.Background(), pr, "review this, focusing on the auth path", seedGC(Snapshot{IsPR: true}, 0), vetting.Grant{}, "", nil)
+	env := ext.buildEnvelope(context.Background(), pr, "review this, focusing on the auth path", seedGC(Snapshot{IsPR: true}, 0), nil, "", nil)
 	if !strings.Contains(env, "<deliverable>a review with inline comments and a verdict</deliverable>") {
 		t.Errorf("review-intent PR envelope missing the review deliverable:\n%s", env)
 	}
@@ -1237,7 +1236,7 @@ func TestBuildEnvelopeDeliverableClassification(t *testing.T) {
 	}
 
 	// A PR request that DOES ask to change code gets the implement deliverable.
-	implEnv := ext.buildEnvelope(context.Background(), pr, "fix the null dereference in the auth path and open a PR", seedGC(Snapshot{IsPR: true}, 0), vetting.Grant{}, "", nil)
+	implEnv := ext.buildEnvelope(context.Background(), pr, "fix the null dereference in the auth path and open a PR", seedGC(Snapshot{IsPR: true}, 0), nil, "", nil)
 	if !strings.Contains(implEnv, "<deliverable>a commit addressing the requested change</deliverable>") {
 		t.Errorf("implement-intent PR envelope missing the implement deliverable:\n%s", implEnv)
 	}
@@ -1247,7 +1246,7 @@ func TestBuildEnvelopeDeliverableClassification(t *testing.T) {
 	if err := json.Unmarshal(issueCommentBody("@quack add a feature"), &issue); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	imsg := ext.buildEnvelope(context.Background(), issue, "add a feature", seedGC(Snapshot{}, 0), vetting.Grant{}, "", nil)
+	imsg := ext.buildEnvelope(context.Background(), issue, "add a feature", seedGC(Snapshot{}, 0), nil, "", nil)
 	if strings.Contains(imsg, "a review with inline comments") {
 		t.Errorf("issue envelope should not mention the review deliverable:\n%s", imsg)
 	}
@@ -1266,7 +1265,7 @@ func TestBuildEnvelopeDeliverableClassification(t *testing.T) {
 func TestBuildEnvelopeDeliverableClassifierResolvesFindingsAddress(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
 	ext.SetIntentClassifier(&fakeIntentClassifier{grantedDeliverable: "COMMIT"})
-	grant := vetting.Grant{PRScoped: true, PostReview: true, PushCommitsToPR: true}
+	grant := []string{"review", "pull_request"} // PR-scoped: post_review + push_commits_to_pr
 
 	var pr issueCommentPayload
 	if err := json.Unmarshal(pullCommentBody("@quack please address these findings make sure they are valid first"), &pr); err != nil {
@@ -1293,7 +1292,7 @@ func TestBuildEnvelopeDeliverableBoundedBySoleGrant(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
 	classifier := &fakeIntentClassifier{verdict: "WORK", deliverable: "COMMIT"} // even a COMMIT verdict must not surface without push_commits_to_pr
 	ext.SetIntentClassifier(classifier)
-	grant := vetting.Grant{PRScoped: true, PostReview: true, PushCommitsToPR: false}
+	grant := []string{"review"} // PR-scoped: post_review only, no push_commits_to_pr
 
 	var pr issueCommentPayload
 	if err := json.Unmarshal(pullCommentBody("@quack please address these findings"), &pr); err != nil {
@@ -1320,7 +1319,7 @@ func TestBuildEnvelopeDeliverableBoundedBySoleGrant(t *testing.T) {
 func TestBuildEnvelopeDeliverableClassifierFailureFallsBack(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
 	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "WORK", deliverableErr: errors.New("model unavailable")})
-	grant := vetting.Grant{PRScoped: true, PostReview: true, PushCommitsToPR: false}
+	grant := []string{"review"} // PR-scoped: post_review only, no push_commits_to_pr
 
 	var pr issueCommentPayload
 	if err := json.Unmarshal(pullCommentBody("@quack please address these findings"), &pr); err != nil {
@@ -1348,7 +1347,7 @@ func TestBuildEnvelopeDeliverableClassifierFailureFallsBack(t *testing.T) {
 func TestBuildEnvelopeGrantedPRChangeRequestClassifiesAsCommit(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
 	ext.SetIntentClassifier(&fakeIntentClassifier{grantedDeliverable: "COMMIT"})
-	grant := vetting.Grant{PRScoped: true, JoinPRConversation: true, PushCommitsToPR: true}
+	grant := []string{"comment", "pull_request"} // PR-scoped: join_pr_conversation + push_commits_to_pr
 
 	task := "1. EMBEDDING_MODEL should be qwen3-embed, not text-embedding-3-small. " +
 		"2. GENERATOR_MODEL should be qwen3.5-9b. 3. The volume paths are wrong. " +
@@ -1371,7 +1370,7 @@ func TestBuildEnvelopeGrantedPRChangeRequestClassifiesAsCommit(t *testing.T) {
 func TestBuildEnvelopeGrantedPRQuestionStaysReply(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
 	ext.SetIntentClassifier(&fakeIntentClassifier{grantedDeliverable: "REPLY"})
-	grant := vetting.Grant{PRScoped: true, JoinPRConversation: true, PushCommitsToPR: true}
+	grant := []string{"comment", "pull_request"} // PR-scoped: join_pr_conversation + push_commits_to_pr
 
 	task := "why did you vendor this instead of pulling the image?"
 	var pr issueCommentPayload
@@ -1392,7 +1391,7 @@ func TestBuildEnvelopeGrantedPRQuestionStaysReply(t *testing.T) {
 func TestBuildEnvelopeGrantedPRDeliverableFailsSafeToReply(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
 	ext.SetIntentClassifier(&fakeIntentClassifier{grantedDeliverableErr: errors.New("model unavailable")})
-	grant := vetting.Grant{PRScoped: true, JoinPRConversation: true, PushCommitsToPR: true}
+	grant := []string{"comment", "pull_request"} // PR-scoped: join_pr_conversation + push_commits_to_pr
 
 	task := "please address these findings"
 	var pr issueCommentPayload
@@ -1411,7 +1410,7 @@ func TestBuildEnvelopeGrantedPRDeliverableFailsSafeToReply(t *testing.T) {
 func TestBuildEnvelopeGrantedPRDeliverableIgnoresUngrantedReview(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
 	ext.SetIntentClassifier(&fakeIntentClassifier{grantedDeliverable: "REVIEW"})
-	grant := vetting.Grant{PRScoped: true, JoinPRConversation: true, PushCommitsToPR: true} // no post_review
+	grant := []string{"comment", "pull_request"} // PR-scoped: join_pr_conversation + push_commits_to_pr, no post_review
 
 	task := "take another look at the auth changes"
 	var pr issueCommentPayload
@@ -1438,14 +1437,14 @@ func TestBuildEnvelopeIssueDeliverableClassification(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	granted := vetting.Grant{OpenPR: true}
+	granted := []string{"pull_request"} // issue-scoped: open_pr
 	env := ext.buildEnvelope(context.Background(), issue, "implement this and open the PR", seedGC(Snapshot{}, 0), granted, "", nil)
 	if !strings.Contains(env, "a pull request implementing the approved plan") {
 		t.Errorf("implement request with open_pr granted should get the PR deliverable:\n%s", env)
 	}
 
 	// Same message, no quack:implement label: the grant bounds it back to a comment.
-	ungranted := ext.buildEnvelope(context.Background(), issue, "implement this and open the PR", seedGC(Snapshot{}, 0), vetting.Grant{}, "", nil)
+	ungranted := ext.buildEnvelope(context.Background(), issue, "implement this and open the PR", seedGC(Snapshot{}, 0), nil, "", nil)
 	if strings.Contains(ungranted, "a pull request implementing") {
 		t.Errorf("implement request WITHOUT open_pr granted must not surface the PR deliverable:\n%s", ungranted)
 	}
@@ -1470,7 +1469,7 @@ func TestBuildEnvelopeIssueDeliverableClassification(t *testing.T) {
 func TestBuildEnvelopeIssueDeliverableClassifierFailureFallsBack(t *testing.T) {
 	ext := newTestExtension(t, &fakeRunner{}, "http://unused")
 	ext.SetIntentClassifier(&fakeIntentClassifier{issueDeliverableErr: errors.New("model unavailable")})
-	granted := vetting.Grant{OpenPR: true}
+	granted := []string{"pull_request"} // issue-scoped: open_pr
 
 	var issue issueCommentPayload
 	if err := json.Unmarshal(issueCommentBody("@quack implement this, commit it, and open a PR"), &issue); err != nil {
@@ -1511,7 +1510,7 @@ func TestBuildEnvelopeSeedsFullOnFirstLoad(t *testing.T) {
 			{ID: 999, User: "fagerbergj", Body: "rework it - mem0 is not a store", CreatedAt: "t2"},
 		},
 	}
-	env := ext.buildEnvelope(context.Background(), issue, "rework it - mem0 is not a store", seedGC(snap, issue.Comment.ID), vetting.Grant{}, "", nil)
+	env := ext.buildEnvelope(context.Background(), issue, "rework it - mem0 is not a store", seedGC(snap, issue.Comment.ID), nil, "", nil)
 	if !strings.Contains(env, "evaluate mem0 as a memory backend") {
 		t.Errorf("envelope missing the seeded issue body:\n%s", env)
 	}
@@ -1542,7 +1541,7 @@ func TestBuildEnvelopeResumeSeedsOnlyDelta(t *testing.T) {
 		{ID: 2, User: "carol", Body: "a brand new comment", CreatedAt: "t1"},
 	}}
 	delta := diffSnapshots(old, cur, 0)
-	env := ext.buildEnvelope(context.Background(), issue, "what's new?", githubContext{snap: cur, delta: &delta}, vetting.Grant{}, "", nil)
+	env := ext.buildEnvelope(context.Background(), issue, "what's new?", githubContext{snap: cur, delta: &delta}, nil, "", nil)
 	if !strings.Contains(env, "a brand new comment") {
 		t.Errorf("resume envelope missing the new comment:\n%s", env)
 	}
@@ -1558,7 +1557,7 @@ func TestBuildEnvelopeResumeSeedsOnlyDelta(t *testing.T) {
 	if !unchanged.Empty() {
 		t.Fatalf("diffSnapshots(cur, cur) = %+v; want an empty delta", unchanged)
 	}
-	noopEnv := ext.buildEnvelope(context.Background(), issue, "anything new?", githubContext{snap: cur, delta: &unchanged}, vetting.Grant{}, "", nil)
+	noopEnv := ext.buildEnvelope(context.Background(), issue, "anything new?", githubContext{snap: cur, delta: &unchanged}, nil, "", nil)
 	if strings.Contains(noopEnv, "a brand new comment") || strings.Contains(noopEnv, "first comment") {
 		t.Errorf("an unchanged-snapshot resume should inject no comment content:\n%s", noopEnv)
 	}
@@ -1579,7 +1578,7 @@ func TestBuildEnvelopeChangedFilesOnPRRuns(t *testing.T) {
 		IsPR:  true,
 		Files: []changedFile{{Filename: "a.go", Additions: 10, Deletions: 2}, {Filename: "b.go", Additions: 1}},
 	}
-	env := ext.buildEnvelope(context.Background(), pr, "review this", seedGC(snap, 0), vetting.Grant{}, "", nil)
+	env := ext.buildEnvelope(context.Background(), pr, "review this", seedGC(snap, 0), nil, "", nil)
 	if !strings.Contains(env, `<changed_files count="2" additions="11" deletions="2">`) {
 		t.Errorf("envelope missing the changed_files summary attributes:\n%s", env)
 	}
@@ -1589,7 +1588,7 @@ func TestBuildEnvelopeChangedFilesOnPRRuns(t *testing.T) {
 
 	var issue issueCommentPayload
 	issue.Issue.Number = 7
-	issueEnv := ext.buildEnvelope(context.Background(), issue, "task", seedGC(Snapshot{}, 0), vetting.Grant{}, "", nil)
+	issueEnv := ext.buildEnvelope(context.Background(), issue, "task", seedGC(Snapshot{}, 0), nil, "", nil)
 	if strings.Contains(issueEnv, "<changed_files") {
 		t.Errorf("an issue-scoped envelope should carry no changed_files block:\n%s", issueEnv)
 	}
@@ -1607,7 +1606,7 @@ func TestBuildEnvelopeIncrementalReviewScoping(t *testing.T) {
 	}
 
 	// First-time review: no prior baseline, the full-review deliverable.
-	first := ext.buildEnvelope(context.Background(), pr, "review this", seedGC(Snapshot{IsPR: true}, 0), vetting.Grant{}, "", nil)
+	first := ext.buildEnvelope(context.Background(), pr, "review this", seedGC(Snapshot{IsPR: true}, 0), nil, "", nil)
 	if !strings.Contains(first, "<deliverable>a review with inline comments and a verdict</deliverable>") {
 		t.Errorf("first-time review should get the full-review deliverable:\n%s", first)
 	}
@@ -1616,14 +1615,14 @@ func TestBuildEnvelopeIncrementalReviewScoping(t *testing.T) {
 	withNew := ext.buildEnvelope(context.Background(), pr, "review this", githubContext{
 		snap:       Snapshot{IsPR: true},
 		newCommits: []snapshotCommit{{SHA: "abc1234567", Message: "fix the bug"}},
-	}, vetting.Grant{}, "", nil)
+	}, nil, "", nil)
 	if !strings.Contains(withNew, "a review of what is new since the last one") || !strings.Contains(withNew, "abc1234") {
 		t.Errorf("incremental review envelope missing the scoped deliverable naming the new commit:\n%s", withNew)
 	}
 
 	// Resume with zero new commits still reads as "scoped to what's new" (a
 	// review baseline exists), not the first-time framing.
-	noneNew := ext.buildEnvelope(context.Background(), pr, "review this", githubContext{snap: Snapshot{IsPR: true}, newCommits: []snapshotCommit{}}, vetting.Grant{}, "", nil)
+	noneNew := ext.buildEnvelope(context.Background(), pr, "review this", githubContext{snap: Snapshot{IsPR: true}, newCommits: []snapshotCommit{}}, nil, "", nil)
 	if !strings.Contains(noneNew, "already looked at every commit") {
 		t.Errorf("zero-new-commits resume should say there's nothing new, not the first-time framing:\n%s", noneNew)
 	}
@@ -1638,14 +1637,14 @@ func TestBuildEnvelopeConversationalFollowup(t *testing.T) {
 	if err := json.Unmarshal(pullCommentBody("@quack which finding matters most? No need to re-review."), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	env := ext.buildEnvelope(context.Background(), pr, "which finding matters most? No need to re-review.", seedGC(Snapshot{IsPR: true}, 0), vetting.Grant{}, "", nil)
+	env := ext.buildEnvelope(context.Background(), pr, "which finding matters most? No need to re-review.", seedGC(Snapshot{IsPR: true}, 0), nil, "", nil)
 	if !strings.Contains(env, "<deliverable>a reply to their message, posted as a comment") {
 		t.Errorf("conversational envelope missing the reply deliverable:\n%s", env)
 	}
 
 	// A genuine review request, classified as a work request, gets the work deliverable.
 	ext.SetIntentClassifier(&fakeIntentClassifier{verdict: "WORK"})
-	rev := ext.buildEnvelope(context.Background(), pr, "please review this PR", seedGC(Snapshot{IsPR: true, HeadRef: "x"}, 0), vetting.Grant{}, "", nil)
+	rev := ext.buildEnvelope(context.Background(), pr, "please review this PR", seedGC(Snapshot{IsPR: true, HeadRef: "x"}, 0), nil, "", nil)
 	if !strings.Contains(rev, "<deliverable>a review with inline comments and a verdict</deliverable>") {
 		t.Errorf("a classified work request must still get the review deliverable:\n%s", rev)
 	}
@@ -1660,7 +1659,7 @@ func TestBuildEnvelopeMentionClassifiedAsWork(t *testing.T) {
 	if err := json.Unmarshal(pullCommentBody("@quack review this, focusing on the auth path"), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	env := ext.buildEnvelope(context.Background(), pr, "review this, focusing on the auth path", seedGC(Snapshot{IsPR: true}, 0), vetting.Grant{}, "", nil)
+	env := ext.buildEnvelope(context.Background(), pr, "review this, focusing on the auth path", seedGC(Snapshot{IsPR: true}, 0), nil, "", nil)
 	if strings.Contains(env, "a reply to their message") {
 		t.Errorf("a mention classified WORK should not get the conversational deliverable:\n%s", env)
 	}
@@ -1673,7 +1672,7 @@ func TestBuildEnvelopeMentionClassifiedAsConversational(t *testing.T) {
 	if err := json.Unmarshal(pullCommentBody("@quack what did you mean by that finding?"), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	env := ext.buildEnvelope(context.Background(), pr, "what did you mean by that finding?", seedGC(Snapshot{IsPR: true}, 0), vetting.Grant{}, "", nil)
+	env := ext.buildEnvelope(context.Background(), pr, "what did you mean by that finding?", seedGC(Snapshot{IsPR: true}, 0), nil, "", nil)
 	if !strings.Contains(env, "a reply to their message") {
 		t.Errorf("a mention classified CONVERSATIONAL should get the reply deliverable:\n%s", env)
 	}
@@ -1692,7 +1691,7 @@ func TestBuildEnvelopeLabelTriggerNeverClassifies(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	pr.isLabelTrigger = true
-	env := ext.buildEnvelope(context.Background(), pr, autoReviewTask, seedGC(Snapshot{IsPR: true}, 0), vetting.Grant{}, "", nil)
+	env := ext.buildEnvelope(context.Background(), pr, autoReviewTask, seedGC(Snapshot{IsPR: true}, 0), nil, "", nil)
 	if strings.Contains(env, "a reply to their message") {
 		t.Errorf("a label-triggered PR request should never get the conversational deliverable:\n%s", env)
 	}
@@ -1712,12 +1711,12 @@ func TestBuildEnvelopePartialFixOmitsClosesKeyword(t *testing.T) {
 	issue.Issue.Number = 42
 	issue.isLabelTrigger = true
 
-	full := ext.buildEnvelope(context.Background(), issue, "implement it", seedGC(Snapshot{Labels: []string{"quack:implement"}}, 0), vetting.Grant{}, "", nil)
+	full := ext.buildEnvelope(context.Background(), issue, "implement it", seedGC(Snapshot{Labels: []string{"quack:implement"}}, 0), nil, "", nil)
 	if !strings.Contains(full, "Closes #42") {
 		t.Errorf("a non-partial implement envelope should ask for a Closes keyword:\n%s", full)
 	}
 
-	partial := ext.buildEnvelope(context.Background(), issue, "implement it", seedGC(Snapshot{Labels: []string{"quack:implement", "quack:partial-fix"}}, 0), vetting.Grant{}, "", nil)
+	partial := ext.buildEnvelope(context.Background(), issue, "implement it", seedGC(Snapshot{Labels: []string{"quack:implement", "quack:partial-fix"}}, 0), nil, "", nil)
 	if strings.Contains(partial, "Closes #42") {
 		t.Errorf("a partial-fix envelope must not ask for a Closes keyword:\n%s", partial)
 	}
@@ -1746,7 +1745,7 @@ func TestBuildEnvelopePlanOnlyDeliverable(t *testing.T) {
 	synthetic.planOnly = true
 	synthetic.isLabelTrigger = true
 
-	env := ext.buildEnvelope(context.Background(), synthetic, task, seedGC(Snapshot{Body: body}, 0), vetting.Grant{}, "", nil)
+	env := ext.buildEnvelope(context.Background(), synthetic, task, seedGC(Snapshot{Body: body}, 0), nil, "", nil)
 
 	if n := strings.Count(env, body); n != 1 {
 		t.Errorf("issue body appears %d times in the plan-only envelope, want exactly 1:\n%s", n, env)
@@ -1850,7 +1849,7 @@ func TestBuildEnvelopeQuotedCodeCorrectionNotWorkRequest(t *testing.T) {
 	if err := json.Unmarshal(pullCommentBody(task), &pr); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	env := ext.buildEnvelope(context.Background(), pr, task, seedGC(Snapshot{IsPR: true}, 0), vetting.Grant{}, "", nil)
+	env := ext.buildEnvelope(context.Background(), pr, task, seedGC(Snapshot{IsPR: true}, 0), nil, "", nil)
 	if !strings.Contains(env, "a reply to their message") {
 		t.Errorf("a correction quoting code must be conversational, not a work request:\n%s", env)
 	}

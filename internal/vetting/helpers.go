@@ -50,12 +50,14 @@ type Config struct {
 	WorkspaceCaps       workspace.Caps
 	Deliver             DeliverFunc         // posts staged delivery set; nil = disabled
 	GitCredentials      GitCredentialSource // resolves the gate-owned push credential; nil = push disabled
-	Grant               *Grant              // permission set; nil = unrestricted
-	ExternalWorker      bool                // ACP-backed; gate supplements session ledger
-	Setup               *SetupBranch        // pre-cloned checkout; delivery on this branch
-	ExistingPR          bool                // run pushes onto an already-open PR; stage_push offered instead of stage_pr
-	Skeptic             SkepticFactory      // adversarial verify; nil = disabled
-	SkepticRounds       int                 // skeptics per finding; <= 0 = disabled
+	// AllowedDeliveryKinds: nil = unrestricted (no trigger governs this run);
+	// non-nil (including empty) restricts staged delivery to exactly these kinds.
+	AllowedDeliveryKinds []string
+	ExternalWorker       bool           // ACP-backed; gate supplements session ledger
+	Setup                *SetupBranch   // pre-cloned checkout; delivery on this branch
+	ExistingPR           bool           // run pushes onto an already-open PR; stage_push offered instead of stage_pr
+	Skeptic              SkepticFactory // adversarial verify; nil = disabled
+	SkepticRounds        int            // skeptics per finding; <= 0 = disabled
 }
 
 // SetupBranch mirrors dag.Plan.Setup delivery fields.

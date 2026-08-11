@@ -364,7 +364,7 @@ func (e *Extension) failingChecks(ctx context.Context, owner, repo, sha string) 
 
 // renderOneCheck renders a single failing check's summary + annotations -
 // shared by renderFailingChecks (all of them, for the orchestrator's
-// classification text) and #664's per-node CI detail (dag.CICheck.Detail),
+// classification text) and #664's per-node CI detail (dag.ContextItem.Detail),
 // which must render exactly one check in isolation.
 func renderOneCheck(c failingCheck) string {
 	var b strings.Builder
@@ -391,14 +391,14 @@ func renderFailingChecks(checks []failingCheck) string {
 	return truncate(b.String(), maxChecksContextRunes)
 }
 
-// ciChecksForNodes converts failingChecks' output into dag.CICheck (#664):
+// ciChecksForNodes converts failingChecks' output into dag.ContextItem (#664):
 // one entry per failing check, each rendered in ISOLATION (renderOneCheck),
 // never the combined renderFailingChecks text - a node matched to one check
 // must never inherit another's annotations via a shared blob.
-func ciChecksForNodes(checks []failingCheck) []dag.CICheck {
-	out := make([]dag.CICheck, 0, len(checks))
+func ciChecksForNodes(checks []failingCheck) []dag.ContextItem {
+	out := make([]dag.ContextItem, 0, len(checks))
 	for _, c := range checks {
-		out = append(out, dag.CICheck{Name: c.Name, Detail: truncate(renderOneCheck(c), maxChecksContextRunes)})
+		out = append(out, dag.ContextItem{Name: c.Name, Detail: truncate(renderOneCheck(c), maxChecksContextRunes)})
 	}
 	return out
 }

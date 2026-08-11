@@ -88,13 +88,13 @@ func TestBuildTaskWorkerBackgroundFallsBackToUserMessage(t *testing.T) {
 	}
 }
 
-// TestBuildTaskCIChecksScopedToTheNodeThatNamesThem pins #664's test case 2: a
-// fix worker's node prompt carries the annotation detail for the check ITS OWN
-// task names, and not the other failing checks' detail - a sibling fix node
-// working a different check must never see this one's annotations.
-func TestBuildTaskCIChecksScopedToTheNodeThatNamesThem(t *testing.T) {
+// TestBuildTaskContextItemsScopedToTheNodeThatNamesThem pins #664's test case
+// 2: a fix worker's node prompt carries the annotation detail for the check
+// ITS OWN task names, and not the other failing checks' detail - a sibling fix
+// node working a different check must never see this one's annotations.
+func TestBuildTaskContextItemsScopedToTheNodeThatNamesThem(t *testing.T) {
 	plan := Plan{
-		CIChecks: []CICheck{
+		ContextItems: []ContextItem{
 			{Name: "build", Detail: "internal/foo.go:12 [failure] undefined: Bar"},
 			{Name: "lint", Detail: "internal/baz.go:3 [warning] unused import"},
 			{Name: "test", Detail: "internal/qux_test.go:9 [failure] TestQux failed"},

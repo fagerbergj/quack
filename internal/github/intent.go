@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -64,8 +65,8 @@ func (e *Extension) isWorkRequest(ctx context.Context, task string) bool {
 // never a legal answer here, so the remaining question is bounded entirely by post_review and
 // decided from the grant alone - no model call needed, ctx/task kept for a stable signature
 // alongside classifyGrantedPRDeliverable/classifyIssueDeliverable).
-func (e *Extension) classifyPRDeliverable(_ context.Context, _ string, grant vetting.Grant) (kind string, ok bool) {
-	if grant.PostReview {
+func (e *Extension) classifyPRDeliverable(_ context.Context, _ string, allowedKinds []string) (kind string, ok bool) {
+	if slices.Contains(allowedKinds, "review") {
 		return "review", true
 	}
 	return "", false
@@ -95,7 +96,7 @@ Message:
 // (classifier nil/erroring/unparseable) leaves the caller to fail safe to reply - never guess
 // commit. A live answer that names an ungranted option (REVIEW without post_review) degrades to
 // reply rather than being discarded outright, so a real ask for engagement isn't silently dropped.
-func (e *Extension) classifyGrantedPRDeliverable(ctx context.Context, task string, grant vetting.Grant) (kind string, ok bool) {
+func (e *Extension) classifyGrantedPRDeliverable(ctx context.Context, task string, allowedKinds []string) (kind string, ok bool) {
 	if e.intentClassifier == nil {
 		return "", false
 	}
@@ -110,7 +111,7 @@ func (e *Extension) classifyGrantedPRDeliverable(ctx context.Context, task strin
 	case strings.Contains(up, "COMMIT"):
 		return "commit", true
 	case strings.Contains(up, "REVIEW"):
-		if grant.PostReview {
+		if slices.Contains(allowedKinds, "review") {
 			return "review", true
 		}
 		return "reply", true // review asked for but not granted here - never escalate to commit instead
@@ -141,8 +142,8 @@ Message:
 // ok=false falls back to vetting.ImplementationIntent's wording heuristic,
 // never straight to conversational (a cold/erroring classifier must not
 // silently invert an implementation request).
-func (e *Extension) classifyIssueDeliverable(ctx context.Context, task string, grant vetting.Grant) (kind string, ok bool) {
-	if !grant.OpenPR || e.intentClassifier == nil {
+func (e *Extension) classifyIssueDeliverable(ctx context.Context, task string, allowedKinds []string) (kind string, ok bool) {
+	if !slices.Contains(allowedKinds, "pull_request") || e.intentClassifier == nil {
 		return "", false
 	}
 	ctx, cancel := context.WithTimeout(ctx, intentClassifierTimeout)
@@ -177,13 +178,13 @@ type issueDeliverableResult struct {
 // decides it wasn't one. p.issueDeliverableCache is nil for a caller that
 // invokes this outside a dispatch (e.g. a test calling buildEnvelope
 // directly) - falls back to one uncached call, preserving prior behaviour.
-func (e *Extension) classifyIssueDeliverableCached(ctx context.Context, p issueCommentPayload, task string, grant vetting.Grant) (kind string, ok bool) {
+func (e *Extension) classifyIssueDeliverableCached(ctx context.Context, p issueCommentPayload, task string, allowedKinds []string) (kind string, ok bool) {
 	c := p.issueDeliverableCache
 	if c == nil {
-		return e.classifyIssueDeliverable(ctx, task, grant)
+		return e.classifyIssueDeliverable(ctx, task, allowedKinds)
 	}
 	if !c.done {
-		c.kind, c.ok = e.classifyIssueDeliverable(ctx, task, grant)
+		c.kind, c.ok = e.classifyIssueDeliverable(ctx, task, allowedKinds)
 		c.done = true
 	}
 	return c.kind, c.ok
@@ -204,7 +205,7 @@ var planIntentRe = regexp.MustCompile(`(?i)\bplan(s|ning)?\b`)
 // the quack:plan label, and for a comment-triggered issue ask that mentions
 // planning and the classifier (or its fallback heuristic) doesn't read as
 // IMPLEMENT. Always false for a PR and for the quack:implement label.
-func (e *Extension) deliverableIsPlan(ctx context.Context, p issueCommentPayload, task string, grant vetting.Grant, isPR bool) bool {
+func (e *Extension) deliverableIsPlan(ctx context.Context, p issueCommentPayload, task string, allowedKinds []string, isPR bool) bool {
 	switch {
 	case p.planOnly:
 		return true
@@ -213,8 +214,9 @@ func (e *Extension) deliverableIsPlan(ctx context.Context, p issueCommentPayload
 	case !planIntentRe.MatchString(task):
 		return false
 	}
-	if kind, ok := e.classifyIssueDeliverableCached(ctx, p, task, grant); ok {
+	if kind, ok := e.classifyIssueDeliverableCached(ctx, p, task, allowedKinds); ok {
 		return kind != "implement"
 	}
-	return !(grant.OpenPR && vetting.ImplementationIntent(task))
+	// Not PR-scoped here (isPR already false above): "pull_request" means open-a-new-PR.
+	return !(slices.Contains(allowedKinds, "pull_request") && vetting.ImplementationIntent(task))
 }

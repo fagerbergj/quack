@@ -1,6 +1,7 @@
 package github
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/config"
@@ -13,9 +14,9 @@ func testLabels() config.GitHubLabels {
 	}
 }
 
-// A fork PR must never receive push_commits_to_pr - quack cannot push to a
-// fork's head (cifix.go) - regardless of which label would otherwise grant
-// it.
+// A fork PR must never receive the pull_request kind (push to an existing
+// PR) - quack cannot push to a fork's head (cifix.go) - regardless of which
+// label would otherwise grant it.
 func TestComputeGrant_ForkPRNeverGetsPushCommits(t *testing.T) {
 	for _, tc := range []struct {
 		name            string
@@ -27,9 +28,9 @@ func TestComputeGrant_ForkPRNeverGetsPushCommits(t *testing.T) {
 		{"quack authored a fork PR", nil, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			g := computeGrant(testLabels(), tc.labels, true /* prScoped */, tc.authoredByQuack, true /* forkHead */)
-			if g.PushCommitsToPR {
-				t.Fatalf("PushCommitsToPR = true for a fork PR, want false: %+v", g)
+			kinds := computeGrant(testLabels(), tc.labels, true /* prScoped */, tc.authoredByQuack, true /* forkHead */)
+			if slices.Contains(kinds, "pull_request") {
+				t.Fatalf("kinds = %v, want no pull_request for a fork PR", kinds)
 			}
 		})
 	}
@@ -48,9 +49,9 @@ func TestComputeGrant_SameRepoPRGetsPushCommits(t *testing.T) {
 		{"quack authored a same-repo PR", nil, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			g := computeGrant(testLabels(), tc.labels, true /* prScoped */, tc.authoredByQuack, false /* forkHead */)
-			if !g.PushCommitsToPR {
-				t.Fatalf("PushCommitsToPR = false for a same-repo PR, want true: %+v", g)
+			kinds := computeGrant(testLabels(), tc.labels, true /* prScoped */, tc.authoredByQuack, false /* forkHead */)
+			if !slices.Contains(kinds, "pull_request") {
+				t.Fatalf("kinds = %v, want pull_request for a same-repo PR", kinds)
 			}
 		})
 	}
@@ -59,12 +60,12 @@ func TestComputeGrant_SameRepoPRGetsPushCommits(t *testing.T) {
 // A quack-authored PR gets push + PR-conversation grants even with NO label
 // applied at all - "authorship IS the flag" (#656).
 func TestComputeGrant_AuthoredPRGrantsPushAndConversationWithNoLabel(t *testing.T) {
-	g := computeGrant(testLabels(), nil /* no labels */, true /* prScoped */, true /* authoredByQuack */, false /* forkHead */)
-	if !g.PushCommitsToPR || !g.JoinPRConversation {
-		t.Fatalf("authored PR grant = %+v, want PushCommitsToPR and JoinPRConversation both true", g)
+	kinds := computeGrant(testLabels(), nil /* no labels */, true /* prScoped */, true /* authoredByQuack */, false /* forkHead */)
+	if !slices.Contains(kinds, "pull_request") || !slices.Contains(kinds, "comment") {
+		t.Fatalf("kinds = %v, want pull_request and comment both granted", kinds)
 	}
-	if g.OpenPR || g.PostReview {
-		t.Fatalf("authored PR grant = %+v, want OpenPR and PostReview false - no label was applied", g)
+	if slices.Contains(kinds, "review") {
+		t.Fatalf("kinds = %v, want review false - no label was applied", kinds)
 	}
 }
 
@@ -72,25 +73,25 @@ func TestComputeGrant_AuthoredPRGrantsPushAndConversationWithNoLabel(t *testing.
 // nothing - permission comes only from labels/authorship/fork state, never
 // from message text.
 func TestComputeGrant_PlainIssueNoLabelsGrantsNothing(t *testing.T) {
-	g := computeGrant(testLabels(), nil, false /* prScoped */, false, false)
-	if g.JoinIssueConversation || g.OpenPR || g.PostReview || g.JoinPRConversation || g.PushCommitsToPR {
-		t.Fatalf("grant = %+v, want everything false with no labels and no authorship", g)
+	kinds := computeGrant(testLabels(), nil, false /* prScoped */, false, false)
+	if len(kinds) != 0 {
+		t.Fatalf("kinds = %v, want empty with no labels and no authorship", kinds)
 	}
 }
 
 func TestComputeGrant_LabelsMapToTheirDocumentedPermissions(t *testing.T) {
 	plan := computeGrant(testLabels(), []string{"quack:plan"}, false, false, false)
-	if !plan.JoinIssueConversation {
-		t.Fatalf("quack:plan grant = %+v, want JoinIssueConversation", plan)
+	if !slices.Contains(plan, "comment") {
+		t.Fatalf("quack:plan kinds = %v, want comment (join_issue_conversation)", plan)
 	}
 
 	implement := computeGrant(testLabels(), []string{"quack:implement"}, false, false, false)
-	if !implement.OpenPR {
-		t.Fatalf("quack:implement grant = %+v, want OpenPR", implement)
+	if !slices.Contains(implement, "pull_request") {
+		t.Fatalf("quack:implement kinds = %v, want pull_request (open_pr)", implement)
 	}
 
 	review := computeGrant(testLabels(), []string{"quack:review"}, true, false, false)
-	if !review.PostReview || !review.JoinPRConversation {
-		t.Fatalf("quack:review grant = %+v, want PostReview and JoinPRConversation", review)
+	if !slices.Contains(review, "review") || !slices.Contains(review, "comment") {
+		t.Fatalf("quack:review kinds = %v, want review and comment (post_review, join_pr_conversation)", review)
 	}
 }

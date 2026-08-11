@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -16,25 +17,12 @@ import (
 
 const seedCap = 32 * 1024
 
-// permissionsText renders a Grant as the envelope's <permissions> vocabulary.
-func permissionsText(g vetting.Grant) string {
-	var perms []string
-	if g.JoinIssueConversation {
-		perms = append(perms, "join_issue_conversation")
-	}
-	if g.OpenPR {
-		perms = append(perms, "open_pr")
-	}
-	if g.PostReview {
-		perms = append(perms, "post_review")
-	}
-	if g.JoinPRConversation {
-		perms = append(perms, "join_pr_conversation")
-	}
-	if g.PushCommitsToPR {
-		perms = append(perms, "push_commits_to_pr")
-	}
-	return strings.Join(perms, ", ")
+// permissionsText renders the run's allowed delivery kinds as the envelope's
+// <permissions> vocabulary - the same closed vocabulary (pull_request,
+// review, comment) staged delivery and the trust gate's allowlist use, so the
+// envelope and enforcement can never name two different things.
+func permissionsText(allowedKinds []string) string {
+	return strings.Join(allowedKinds, ", ")
 }
 
 // dropField reports keys dropped from filtered event/comment JSON (node_id, *_url, avatar_url, reactions, performed_via_github_app).
@@ -289,12 +277,12 @@ func contextBlock(dir string, files []ContextFile) string {
 }
 
 // buildEnvelope builds the trigger envelope: permissions, deliverable, ask, comments, changed_files, event, context.
-func (e *Extension) buildEnvelope(ctx context.Context, p issueCommentPayload, task string, gh githubContext, grant vetting.Grant, ctxDir string, ctxFiles []ContextFile) string {
+func (e *Extension) buildEnvelope(ctx context.Context, p issueCommentPayload, task string, gh githubContext, allowedKinds []string, ctxDir string, ctxFiles []ContextFile) string {
 	isPR := p.Issue.PullRequest != nil
-	deliverable := e.deliverableText(ctx, p, task, gh, grant, isPR)
+	deliverable := e.deliverableText(ctx, p, task, gh, allowedKinds, isPR)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "<permissions>%s</permissions>\n", permissionsText(grant))
+	fmt.Fprintf(&b, "<permissions>%s</permissions>\n", permissionsText(allowedKinds))
 	fmt.Fprintf(&b, "<deliverable>%s</deliverable>\n", deliverable)
 	b.WriteString(askBlock(p, gh, isPR))
 	b.WriteString(commentsBlock(gh, p.Comment.ID))
@@ -309,12 +297,12 @@ func (e *Extension) buildEnvelope(ctx context.Context, p issueCommentPayload, ta
 }
 
 // buildWorkerAsk is the consumer split for nodes (#664): ask-only text, never orchestrator-level evidence.
-func (e *Extension) buildWorkerAsk(ctx context.Context, p issueCommentPayload, task string, gh githubContext, grant vetting.Grant, ctxDir string) string {
+func (e *Extension) buildWorkerAsk(ctx context.Context, p issueCommentPayload, task string, gh githubContext, allowedKinds []string, ctxDir string) string {
 	isPR := p.Issue.PullRequest != nil
-	deliverable := e.deliverableText(ctx, p, task, gh, grant, isPR)
+	deliverable := e.deliverableText(ctx, p, task, gh, allowedKinds, isPR)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "<permissions>%s</permissions>\n", permissionsText(grant))
+	fmt.Fprintf(&b, "<permissions>%s</permissions>\n", permissionsText(allowedKinds))
 	fmt.Fprintf(&b, "<deliverable>%s</deliverable>\n", deliverable)
 	b.WriteString(askBlock(p, gh, isPR))
 	b.WriteString(commentsBlock(gh, p.Comment.ID))
@@ -345,7 +333,7 @@ func reviewDeliverableText(gh githubContext) string {
 const replyDeliverable = "a reply to their message, posted as a comment - no new work unless they explicitly ask for it"
 
 // deliverableText classifies the run and states what it produces. Applies classifier or falls back to ImplementationIntent.
-func (e *Extension) deliverableText(ctx context.Context, p issueCommentPayload, task string, gh githubContext, grant vetting.Grant, isPR bool) string {
+func (e *Extension) deliverableText(ctx context.Context, p issueCommentPayload, task string, gh githubContext, allowedKinds []string, isPR bool) string {
 	mentionIsWork := isPR && !p.isLabelTrigger && p.deliverableHint == ""
 
 	// #760: a comment on a PR quack can already push to has its permission question
@@ -353,8 +341,9 @@ func (e *Extension) deliverableText(ctx context.Context, p issueCommentPayload, 
 	// WORK/CONVERSATIONAL gate below was being asked to re-derive that MAY, and misread a
 	// message that both corrected something said earlier and asked for a specific change
 	// (home-server#3). Go straight to what the comment is asking for, bounded by the grant.
-	if mentionIsWork && grant.PushCommitsToPR {
-		if kind, ok := e.classifyGrantedPRDeliverable(ctx, task, grant); ok {
+	// mentionIsWork ⇒ PR-scoped, so "pull_request" here means push-to-this-PR.
+	if mentionIsWork && slices.Contains(allowedKinds, "pull_request") {
+		if kind, ok := e.classifyGrantedPRDeliverable(ctx, task, allowedKinds); ok {
 			switch kind {
 			case "commit":
 				return "a commit addressing the requested change"
@@ -377,14 +366,15 @@ func (e *Extension) deliverableText(ctx context.Context, p issueCommentPayload, 
 		return issueImplementDeliverable(e.labels.PartialFix, gh.snap.Labels, p.Issue.Number)
 	case !isPR && !p.isLabelTrigger:
 		// #713: a comment can ask for implementation too - the label only bounds whether it's a legal answer.
-		if kind, ok := e.classifyIssueDeliverableCached(ctx, p, task, grant); ok {
+		if kind, ok := e.classifyIssueDeliverableCached(ctx, p, task, allowedKinds); ok {
 			if kind == "implement" {
 				return issueImplementDeliverable(e.labels.PartialFix, gh.snap.Labels, p.Issue.Number)
 			}
 			return issueCommentDeliverable
 		}
 		// Classifier unavailable/failed/unparseable: fall back to the wording heuristic, never straight to conversational.
-		if grant.OpenPR && vetting.ImplementationIntent(task) {
+		// !isPR ⇒ issue-scoped, so "pull_request" here means open-a-new-PR.
+		if slices.Contains(allowedKinds, "pull_request") && vetting.ImplementationIntent(task) {
 			return issueImplementDeliverable(e.labels.PartialFix, gh.snap.Labels, p.Issue.Number)
 		}
 		return issueCommentDeliverable
@@ -393,7 +383,7 @@ func (e *Extension) deliverableText(ctx context.Context, p issueCommentPayload, 
 	}
 
 	if mentionIsWork {
-		if _, ok := e.classifyPRDeliverable(ctx, task, grant); ok {
+		if _, ok := e.classifyPRDeliverable(ctx, task, allowedKinds); ok {
 			return reviewDeliverableText(gh)
 		}
 	}

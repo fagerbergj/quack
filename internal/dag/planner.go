@@ -84,11 +84,11 @@ type RawNode struct {
 }
 
 // Build: validates submitted nodes into a Plan and stamps turn context.
-func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, delivery *Delivery, history []HistoryTurn, message string, attachments []*genai.Part, grant *vetting.Grant) (plan *Plan, err error) {
+func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, delivery *Delivery, history []HistoryTurn, message string, attachments []*genai.Part, allowedKinds []string) (plan *Plan, err error) {
 	ctx, span := otelobs.Start(ctx, "plan")
 	defer func() { otelobs.End(span, err) }()
 
-	plan, err = assemble(nodes, p.agents, p.checkCommands, setup, delivery, grant)
+	plan, err = assemble(nodes, p.agents, p.checkCommands, setup, delivery, allowedKinds)
 	if err != nil {
 		return nil, err
 	}
@@ -114,11 +114,11 @@ func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, deli
 // while a bound shape's structure was already validated once at config load.
 // This is the "no planner LLM call per dispatch" path - callers never
 // reach the orchestrator's own llmagent turn for a bound dispatch either.
-func (p *Planner) BuildBound(ctx context.Context, nodes []RawNode, setup *Setup, delivery *Delivery, message string, attachments []*genai.Part, grant *vetting.Grant) (plan *Plan, err error) {
+func (p *Planner) BuildBound(ctx context.Context, nodes []RawNode, setup *Setup, delivery *Delivery, message string, attachments []*genai.Part, allowedKinds []string) (plan *Plan, err error) {
 	ctx, span := otelobs.Start(ctx, "plan.bound")
 	defer func() { otelobs.End(span, err) }()
 
-	plan, err = assemble(nodes, p.agents, p.checkCommands, setup, delivery, grant)
+	plan, err = assemble(nodes, p.agents, p.checkCommands, setup, delivery, allowedKinds)
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +246,7 @@ func AttachmentDesc(parts []*genai.Part) string {
 }
 
 // assemble: validates nodes, hardens synthesizer deps, checks acyclicity, validates delivery kind.
-func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup *Setup, delivery *Delivery, grant *vetting.Grant) (*Plan, error) {
+func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup *Setup, delivery *Delivery, allowedKinds []string) (*Plan, error) {
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf("plan has no nodes")
 	}
@@ -258,7 +258,7 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 		known[a.Name] = true
 	}
 	ids := make(map[string]bool, len(nodes))
-	plan := &Plan{ID: uuid.NewString(), Setup: setup, Delivery: delivery, Grant: grant}
+	plan := &Plan{ID: uuid.NewString(), Setup: setup, Delivery: delivery, AllowedDeliveryKinds: allowedKinds}
 	for _, n := range nodes {
 		if n.ID == "" {
 			return nil, fmt.Errorf("node missing id")

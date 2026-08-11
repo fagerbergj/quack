@@ -561,25 +561,25 @@ func buildTask(plan Plan, node Node, upstream map[string]string, gateFailed map[
 			sb.WriteString("⚠ NOTE: upstream node \"" + dep + "\" produced NO answer - it failed. You have no data for its part of the task; explicitly state that this piece is unavailable rather than omitting it or fabricating content.\n\n---\n\n")
 		}
 	}
-	ciDetail := matchedCIChecks(plan.CIChecks, node.Task)
-	if sb.Len() == 0 && ciDetail == "" {
+	ctxDetail := matchedContext(plan.ContextItems, node.Task)
+	if sb.Len() == 0 && ctxDetail == "" {
 		return node.Task
 	}
 	sb.WriteString("YOUR TASK - do this, and ONLY this:\n")
 	sb.WriteString(node.Task)
-	sb.WriteString(ciDetail)
+	sb.WriteString(ctxDetail)
 	return sb.String()
 }
 
-// matchedCIChecks: CI detail for checks a node's task names by name.
-func matchedCIChecks(checks []CICheck, task string) string {
+// matchedContext: detail for context items a node's task names by name.
+func matchedContext(items []ContextItem, task string) string {
 	lower := strings.ToLower(task)
 	var sb strings.Builder
-	for _, c := range checks {
+	for _, c := range items {
 		if c.Name == "" || !strings.Contains(lower, strings.ToLower(c.Name)) {
 			continue
 		}
-		fmt.Fprintf(&sb, "\n\nCI DETAIL for the %q check your task names (other failing checks, if any, belong to other nodes and are not shown here):\n%s", c.Name, c.Detail)
+		fmt.Fprintf(&sb, "\n\nCONTEXT for the %q item your task names (other items, if any, belong to other nodes and are not shown here):\n%s", c.Name, c.Detail)
 	}
 	return sb.String()
 }

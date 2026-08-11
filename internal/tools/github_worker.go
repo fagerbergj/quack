@@ -8,9 +8,9 @@ import (
 
 // This file threads the two per-node evidence scopings a GitHub trigger
 // computes (#664, consumer split) from the webhook dispatch boundary to
-// tools.NewPlanTool, the SAME way WithGitHubSetup/WithGrant already do:
-// values the model must never author itself, read exactly once at the top of
-// Orchestrator.Run.
+// tools.NewPlanTool, the SAME way WithGitHubSetup/WithAllowedDeliveryKinds
+// already do: values the model must never author itself, read exactly once
+// at the top of Orchestrator.Run.
 
 type workerAskContextKey struct{}
 
@@ -30,20 +30,20 @@ func WorkerAskFromContext(ctx context.Context) string {
 	return s
 }
 
-type ciChecksContextKey struct{}
+type contextItemsContextKey struct{}
 
-// WithCIChecks attaches a CI-fix run's failing checks, each with its own
+// WithContextItems attaches a CI-fix run's failing checks, each with its own
 // rendered annotation detail - computed once at dispatch (cifix.go's
-// failingChecks), never re-derived from model output. buildTask hands a
-// check's detail only to the node whose own task names it (dag.CICheck).
-func WithCIChecks(ctx context.Context, checks []dag.CICheck) context.Context {
-	return context.WithValue(ctx, ciChecksContextKey{}, checks)
+// failingChecks), never re-derived from model output. buildTask hands an
+// item's detail only to the node whose own task names it (dag.ContextItem).
+func WithContextItems(ctx context.Context, items []dag.ContextItem) context.Context {
+	return context.WithValue(ctx, contextItemsContextKey{}, items)
 }
 
-// CIChecksFromContext reads back the checks WithCIChecks attached, if any.
-// nil for anything but a CI-triggered run.
-func CIChecksFromContext(ctx context.Context) []dag.CICheck {
-	c, _ := ctx.Value(ciChecksContextKey{}).([]dag.CICheck)
+// ContextItemsFromContext reads back the items WithContextItems attached, if
+// any. nil for anything but a CI-triggered run.
+func ContextItemsFromContext(ctx context.Context) []dag.ContextItem {
+	c, _ := ctx.Value(contextItemsContextKey{}).([]dag.ContextItem)
 	return c
 }
 
