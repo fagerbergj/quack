@@ -374,7 +374,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	}
 
 	builtinSkillSrc := newSkillSource(cfg.Skills.Plugins)
-	builtinSkillSrc = workflowcatalog.Wrap(builtinSkillSrc, workflowcatalog.FromConfig(cfg.Skills.Workflows, cfg.Revision))
+	builtinSkillSrc = workflowcatalog.Wrap(builtinSkillSrc, workflowcatalog.FromConfig(cfg.Workflows, cfg.Revision))
 	skillSrc := skillsource.New(builtinSkillSrc, jail, localUserID)
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
 	if err != nil {

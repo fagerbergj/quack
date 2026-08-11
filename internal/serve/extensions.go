@@ -58,7 +58,7 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, or
 	}
 	sort.Strings(names)
 
-	shapes := workflowcatalog.FromConfig(cfg.Skills.Workflows, cfg.Revision)
+	shapes := workflowcatalog.FromConfig(cfg.Workflows, cfg.Revision)
 
 	built := make([]builtSDKExtension, 0, len(names))
 	for _, name := range names {

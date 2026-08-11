@@ -15,21 +15,25 @@ import (
 )
 
 type Config struct {
-	Providers     map[string]ProviderConfig `yaml:"providers"`
-	Stores        map[string]StoreConfig    `yaml:"stores"`
-	Session       SessionConfig             `yaml:"session"`
-	Orchestrator  OrchestratorConfig        `yaml:"orchestrator"`
-	Agents        map[string]AgentConfig    `yaml:"agents"`
-	Tools         map[string]ToolConfig     `yaml:"tools"`
-	Gates         GatesConfig               `yaml:"gates"`
-	Dag           DagConfig                 `yaml:"dag"`
-	Server        ServerConfig              `yaml:"server"`
-	Workspace     WorkspaceConfig           `yaml:"workspace"`
-	Skills        SkillsConfig              `yaml:"skills"`
-	Extensions    ExtensionsConfig          `yaml:"extensions"`
-	Observability ObservabilityConfig       `yaml:"observability"`
-	Auth          *InboundAuthConfig        `yaml:"auth"`
-	Artifacts     ArtifactsConfig           `yaml:"artifacts"`
+	Providers    map[string]ProviderConfig `yaml:"providers"`
+	Stores       map[string]StoreConfig    `yaml:"stores"`
+	Session      SessionConfig             `yaml:"session"`
+	Orchestrator OrchestratorConfig        `yaml:"orchestrator"`
+	Agents       map[string]AgentConfig    `yaml:"agents"`
+	Tools        map[string]ToolConfig     `yaml:"tools"`
+	Gates        GatesConfig               `yaml:"gates"`
+	Dag          DagConfig                 `yaml:"dag"`
+	Server       ServerConfig              `yaml:"server"`
+	Workspace    WorkspaceConfig           `yaml:"workspace"`
+	Skills       SkillsConfig              `yaml:"skills"`
+	// Workflows is a top-level key, not nested under skills: - it's a
+	// binding mechanism onto the DAG planner, not a skill-library concern
+	// (skills.plugins is a different axis entirely).
+	Workflows     []WorkflowShape     `yaml:"workflows"`
+	Extensions    ExtensionsConfig    `yaml:"extensions"`
+	Observability ObservabilityConfig `yaml:"observability"`
+	Auth          *InboundAuthConfig  `yaml:"auth"`
+	Artifacts     ArtifactsConfig     `yaml:"artifacts"`
 	// Revision identifies the loaded config's content (sha256 of the raw file,
 	// short form) - a deployment-authored workflow shape's provenance stamps
 	// this as its version, so a shape changes version only when quack.yaml does.
@@ -41,8 +45,7 @@ type Config struct {
 // Codex discovery order. A root that fails to resolve is a startup warning,
 // never an error. Order is preserved and never deduped.
 type SkillsConfig struct {
-	Plugins   []string        `yaml:"plugins"`
-	Workflows []WorkflowShape `yaml:"workflows"`
+	Plugins []string `yaml:"plugins"`
 }
 
 // WorkflowShape teaches plan-work's "Common workflows" table a deployment-
@@ -82,8 +85,8 @@ type WorkflowNode struct {
 // bound shape's node list is malformed - a shape a dispatch can bind to must
 // never fail loud only at dispatch time.
 func (c *Config) validateWorkflows() error {
-	valid := make([]WorkflowShape, 0, len(c.Skills.Workflows))
-	for i, w := range c.Skills.Workflows {
+	valid := make([]WorkflowShape, 0, len(c.Workflows))
+	for i, w := range c.Workflows {
 		id := w.Name
 		if id == "" {
 			id = fmt.Sprintf("workflows[%d]", i)
@@ -105,7 +108,7 @@ func (c *Config) validateWorkflows() error {
 		}
 		valid = append(valid, w)
 	}
-	c.Skills.Workflows = valid
+	c.Workflows = valid
 	return nil
 }
 

@@ -1,5 +1,5 @@
 // Package workflowcatalog composes deployment-defined DAG shapes
-// (config.SkillsConfig.Workflows, quack.yaml's skills.workflows) into the
+// (config.Config.Workflows, quack.yaml's top-level workflows:) into the
 // plan-work skill's "Common workflows" table (issue #805), so an operator
 // teaches the planner a house-standard shape without forking the shipped
 // skill. Composition happens once, at skill-source construction (startup):

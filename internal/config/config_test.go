@@ -1651,20 +1651,19 @@ agents:
 // carrying provenance (operator source, config revision, approved).
 func TestWorkflowShapeValidIsComposable(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
-skills:
-  workflows:
-    - name: document-ingest
-      trigger: "Ingest a new document into the knowledge base"
-      agents: [document-classifier]
-      shape: "ONE `+"`document-classifier`"+` node (terminal - classifies and files the document)"
+workflows:
+  - name: document-ingest
+    trigger: "Ingest a new document into the knowledge base"
+    agents: [document-classifier]
+    shape: "ONE `+"`document-classifier`"+` node (terminal - classifies and files the document)"
 `))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(c.Skills.Workflows) != 1 {
-		t.Fatalf("Skills.Workflows = %+v, want 1 entry", c.Skills.Workflows)
+	if len(c.Workflows) != 1 {
+		t.Fatalf("Workflows = %+v, want 1 entry", c.Workflows)
 	}
-	w := c.Skills.Workflows[0]
+	w := c.Workflows[0]
 	if w.Name != "document-ingest" || len(w.Agents) != 1 || w.Agents[0] != "document-classifier" {
 		t.Errorf("workflow shape = %+v", w)
 	}
@@ -1679,12 +1678,11 @@ skills:
 // plan the executor can't run.
 func TestWorkflowShapeMissingAgentFailsStartup(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
-skills:
-  workflows:
-    - name: document-ingest
-      trigger: "Ingest a new document into the knowledge base"
-      agents: [document-classifier]
-      shape: "ONE `+"`document-classifier`"+` node (terminal)"
+workflows:
+  - name: document-ingest
+    trigger: "Ingest a new document into the knowledge base"
+    agents: [document-classifier]
+    shape: "ONE `+"`document-classifier`"+` node (terminal)"
 `))
 	if err == nil {
 		t.Fatal("expected an error for a workflow shape naming an unconfigured agent")
@@ -1699,21 +1697,20 @@ skills:
 // startup, and a well-formed shape alongside it still loads.
 func TestWorkflowShapeMalformedIsSkipped(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
-skills:
-  workflows:
-    - name: broken
-      trigger: "Missing a shape"
-      agents: [document-classifier]
-    - name: document-ingest
-      trigger: "Ingest a new document into the knowledge base"
-      agents: [document-classifier]
-      shape: "ONE `+"`document-classifier`"+` node (terminal)"
+workflows:
+  - name: broken
+    trigger: "Missing a shape"
+    agents: [document-classifier]
+  - name: document-ingest
+    trigger: "Ingest a new document into the knowledge base"
+    agents: [document-classifier]
+    shape: "ONE `+"`document-classifier`"+` node (terminal)"
 `))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(c.Skills.Workflows) != 1 || c.Skills.Workflows[0].Name != "document-ingest" {
-		t.Errorf("Skills.Workflows = %+v, want only the well-formed shape", c.Skills.Workflows)
+	if len(c.Workflows) != 1 || c.Workflows[0].Name != "document-ingest" {
+		t.Errorf("Workflows = %+v, want only the well-formed shape", c.Workflows)
 	}
 }
 
@@ -1724,8 +1721,8 @@ func TestWorkflowShapesDefaultEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(c.Skills.Workflows) != 0 {
-		t.Errorf("Skills.Workflows = %+v, want empty", c.Skills.Workflows)
+	if len(c.Workflows) != 0 {
+		t.Errorf("Workflows = %+v, want empty", c.Workflows)
 	}
 }
 
@@ -1735,25 +1732,24 @@ func TestWorkflowShapesDefaultEmpty(t *testing.T) {
 // exactly what it needs.
 func TestWorkflowShapeBoundNodesValid(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
-skills:
-  workflows:
-    - name: document-ingest
-      trigger: "Ingest a new document into the knowledge base"
-      agents: [document-classifier]
-      shape: "ONE `+"`document-classifier`"+` node (terminal - classifies and files the document)"
-      nodes:
-        - id: classify
-          agent: document-classifier
-          task: "Classify and file this document.\n\n{{ask}}"
-          rubric: "Output names the chosen folder and a one-line reason."
+workflows:
+  - name: document-ingest
+    trigger: "Ingest a new document into the knowledge base"
+    agents: [document-classifier]
+    shape: "ONE `+"`document-classifier`"+` node (terminal - classifies and files the document)"
+    nodes:
+      - id: classify
+        agent: document-classifier
+        task: "Classify and file this document.\n\n{{ask}}"
+        rubric: "Output names the chosen folder and a one-line reason."
 `))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(c.Skills.Workflows) != 1 {
-		t.Fatalf("Skills.Workflows = %+v, want 1 entry", c.Skills.Workflows)
+	if len(c.Workflows) != 1 {
+		t.Fatalf("Workflows = %+v, want 1 entry", c.Workflows)
 	}
-	nodes := c.Skills.Workflows[0].Nodes
+	nodes := c.Workflows[0].Nodes
 	if len(nodes) != 1 {
 		t.Fatalf("Nodes = %+v, want 1 node", nodes)
 	}
@@ -1768,16 +1764,15 @@ skills:
 // only when a dispatch tries to bind it later.
 func TestWorkflowShapeBoundNodeUnknownAgentFailsStartup(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
-skills:
-  workflows:
-    - name: document-ingest
-      trigger: "Ingest a new document into the knowledge base"
-      agents: [document-classifier]
-      shape: "ONE `+"`document-classifier`"+` node (terminal)"
-      nodes:
-        - id: classify
-          agent: nope
-          task: "classify it"
+workflows:
+  - name: document-ingest
+    trigger: "Ingest a new document into the knowledge base"
+    agents: [document-classifier]
+    shape: "ONE `+"`document-classifier`"+` node (terminal)"
+    nodes:
+      - id: classify
+        agent: nope
+        task: "classify it"
 `))
 	if err == nil {
 		t.Fatal("expected an error for a bound node naming an unconfigured agent")
@@ -1792,21 +1787,20 @@ skills:
 // point of validating structure once, so a dispatch never rediscovers it.
 func TestWorkflowShapeBoundNodeCycleFailsStartup(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
-skills:
-  workflows:
-    - name: document-ingest
-      trigger: "Ingest a new document into the knowledge base"
-      agents: [document-classifier]
-      shape: "two `+"`document-classifier`"+` nodes"
-      nodes:
-        - id: a
-          agent: document-classifier
-          task: "step a"
-          depends_on: [b]
-        - id: b
-          agent: document-classifier
-          task: "step b"
-          depends_on: [a]
+workflows:
+  - name: document-ingest
+    trigger: "Ingest a new document into the knowledge base"
+    agents: [document-classifier]
+    shape: "two `+"`document-classifier`"+` nodes"
+    nodes:
+      - id: a
+        agent: document-classifier
+        task: "step a"
+        depends_on: [b]
+      - id: b
+        agent: document-classifier
+        task: "step b"
+        depends_on: [a]
 `))
 	if err == nil {
 		t.Fatal("expected an error for a bound node cycle")
@@ -1820,19 +1814,18 @@ skills:
 // within one bound shape would make depends_on ambiguous - fail loud.
 func TestWorkflowShapeBoundNodeDuplicateIDFailsStartup(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
-skills:
-  workflows:
-    - name: document-ingest
-      trigger: "Ingest a new document into the knowledge base"
-      agents: [document-classifier]
-      shape: "two `+"`document-classifier`"+` nodes"
-      nodes:
-        - id: a
-          agent: document-classifier
-          task: "step one"
-        - id: a
-          agent: document-classifier
-          task: "step two"
+workflows:
+  - name: document-ingest
+    trigger: "Ingest a new document into the knowledge base"
+    agents: [document-classifier]
+    shape: "two `+"`document-classifier`"+` nodes"
+    nodes:
+      - id: a
+        agent: document-classifier
+        task: "step one"
+      - id: a
+        agent: document-classifier
+        task: "step two"
 `))
 	if err == nil {
 		t.Fatal("expected an error for duplicate bound node ids")
@@ -1848,15 +1841,14 @@ skills:
 // trigger/shape/agents shape, which is only ever a hint and gets skipped).
 func TestWorkflowShapeBoundNodeMissingFieldFailsStartup(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
-skills:
-  workflows:
-    - name: document-ingest
-      trigger: "Ingest a new document into the knowledge base"
-      agents: [document-classifier]
-      shape: "ONE `+"`document-classifier`"+` node (terminal)"
-      nodes:
-        - id: classify
-          agent: document-classifier
+workflows:
+  - name: document-ingest
+    trigger: "Ingest a new document into the knowledge base"
+    agents: [document-classifier]
+    shape: "ONE `+"`document-classifier`"+` node (terminal)"
+    nodes:
+      - id: classify
+        agent: document-classifier
 `))
 	if err == nil {
 		t.Fatal("expected an error for a bound node missing task")
