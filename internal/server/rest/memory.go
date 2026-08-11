@@ -66,7 +66,7 @@ func (h *Handler) ListMemories(w http.ResponseWriter, r *http.Request, params sc
 func (h *Handler) DeleteMemory(w http.ResponseWriter, r *http.Request, memoryID schema.MemoryID) {
 	err := forgetMemory(r.Context(), h.memStores(), memoryID)
 	if errors.Is(err, memory.ErrMemoryNotFound) {
-		http.Error(w, "not found", http.StatusNotFound)
+		errMsg(w, http.StatusNotFound, "not found")
 		return
 	}
 	if err != nil {

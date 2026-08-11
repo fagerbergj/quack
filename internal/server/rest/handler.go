@@ -234,7 +234,7 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 		return
 	}
 	if c == nil {
-		http.Error(w, "not found", http.StatusNotFound)
+		errMsg(w, http.StatusNotFound, "not found")
 		return
 	}
 	turns, err := h.store.GetTurnsWithContent(r.Context(), orchestrator.AppName, store.SessionUserFor(*c), chatID)
@@ -266,7 +266,7 @@ func (h *Handler) GetResponse(w http.ResponseWriter, r *http.Request, chatID sch
 		return
 	}
 	if tc == nil {
-		http.Error(w, "not found", http.StatusNotFound)
+		errMsg(w, http.StatusNotFound, "not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, buildTurn(*tc))
@@ -275,7 +275,7 @@ func (h *Handler) GetResponse(w http.ResponseWriter, r *http.Request, chatID sch
 // Lists sessions the replay ledger has entries for (backs `quack recording list`).
 func (h *Handler) ListRecordings(w http.ResponseWriter, r *http.Request) {
 	if h.ledgerStore == nil {
-		http.Error(w, "recording is not enabled", http.StatusNotFound)
+		errMsg(w, http.StatusNotFound, "recording is not enabled")
 		return
 	}
 	refs, err := h.ledgerStore.List(r.Context())
@@ -297,13 +297,13 @@ func (h *Handler) ListRecordings(w http.ResponseWriter, r *http.Request) {
 // Streams the chat's replay-ledger recording as a ZIP. ReadStream check first ensures a clean 404.
 func (h *Handler) GetChatRecording(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
 	if h.ledgerStore == nil {
-		http.Error(w, "recording is not enabled", http.StatusNotFound)
+		errMsg(w, http.StatusNotFound, "recording is not enabled")
 		return
 	}
 	entries, err := h.ledgerStore.ReadStream(r.Context(), chatID)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			http.Error(w, "no recording for this chat", http.StatusNotFound)
+			errMsg(w, http.StatusNotFound, "no recording for this chat")
 			return
 		}
 		httpError(w, http.StatusInternalServerError, err)
@@ -326,14 +326,14 @@ func (h *Handler) GetChatRecording(w http.ResponseWriter, r *http.Request, chatI
 func (h *Handler) UpdateChat(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
 	var body schema.UpdateChatBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
+		errMsg(w, http.StatusBadRequest, "invalid body")
 		return
 	}
 
 	hasTitle := body.Title != nil && strings.TrimSpace(*body.Title) != ""
 	hasArchived := body.Archived != nil
 	if !hasTitle && !hasArchived {
-		http.Error(w, "at least one of title or archived must be provided", http.StatusBadRequest)
+		errMsg(w, http.StatusBadRequest, "at least one of title or archived must be provided")
 		return
 	}
 
@@ -343,7 +343,7 @@ func (h *Handler) UpdateChat(w http.ResponseWriter, r *http.Request, chatID sche
 		return
 	}
 	if c == nil {
-		http.Error(w, "not found", http.StatusNotFound)
+		errMsg(w, http.StatusNotFound, "not found")
 		return
 	}
 
@@ -391,7 +391,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 	ct := r.Header.Get("Content-Type")
 	if strings.HasPrefix(ct, "multipart/form-data") {
 		if err := r.ParseMultipartForm(32 << 20); err != nil {
-			http.Error(w, "invalid multipart body", http.StatusBadRequest)
+			errMsg(w, http.StatusBadRequest, "invalid multipart body")
 			return
 		}
 		body.Content = r.FormValue("content")
@@ -417,17 +417,17 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		}
 	} else {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Content == "" {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
+			errMsg(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 	}
 	if body.Content == "" {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		errMsg(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	sse, ok := newSSEWriter(w)
 	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		errMsg(w, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
 
@@ -542,15 +542,15 @@ func (h *Handler) runChat(runCtx context.Context, chatID, turnID, message string
 func (h *Handler) UpdateResponseStatus(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, responseID schema.ResponseID) {
 	var body schema.ResponseStatusUpdateBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		errMsg(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if body.Status != schema.Cancelled {
-		http.Error(w, "unsupported target status", http.StatusBadRequest)
+		errMsg(w, http.StatusBadRequest, "unsupported target status")
 		return
 	}
 	if !h.hub.CancelResponse(chatID, responseID) {
-		http.Error(w, "no active run with this response id", http.StatusNotFound)
+		errMsg(w, http.StatusNotFound, "no active run with this response id")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -560,7 +560,7 @@ func (h *Handler) UpdateResponseStatus(w http.ResponseWriter, r *http.Request, c
 func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
 	var body schema.NodeStatusUpdateBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		errMsg(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	guidance := ""
@@ -572,7 +572,7 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 	// Load plan/node defs (to confirm node exists) and persisted outputs a retry reuses.
 	dp, err := h.store.GetLatestDagPlan(r.Context(), chatID)
 	if err != nil || dp == nil {
-		http.Error(w, "no plan for this chat", http.StatusNotFound)
+		errMsg(w, http.StatusNotFound, "no plan for this chat")
 		return
 	}
 	var planData stream.DagPlanData
@@ -588,7 +588,7 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 		}
 	}
 	if !nodeFound {
-		http.Error(w, "no such node in the plan", http.StatusNotFound)
+		errMsg(w, http.StatusNotFound, "no such node in the plan")
 		return
 	}
 
@@ -648,12 +648,12 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 func (h *Handler) QueueNodeMessage(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
 	var body schema.QueueMessageBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Message) == "" {
-		http.Error(w, "message is required", http.StatusBadRequest)
+		errMsg(w, http.StatusBadRequest, "message is required")
 		return
 	}
 	m, ok := h.orch.QueueNodeMessage(chatID, nodeID, strings.TrimSpace(body.Message))
 	if !ok {
-		http.Error(w, "node is not running right now; the message has nowhere to land", http.StatusNotFound)
+		errMsg(w, http.StatusNotFound, "node is not running right now; the message has nowhere to land")
 		return
 	}
 	writeJSON(w, http.StatusOK, queuedMessageWire(m))
@@ -663,11 +663,11 @@ func (h *Handler) QueueNodeMessage(w http.ResponseWriter, r *http.Request, chatI
 func (h *Handler) EditQueuedMessage(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID, messageID schema.MessageID) {
 	var body schema.QueueMessageBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Message) == "" {
-		http.Error(w, "message is required", http.StatusBadRequest)
+		errMsg(w, http.StatusBadRequest, "message is required")
 		return
 	}
 	if !h.orch.EditQueuedMessage(chatID, nodeID, messageID, strings.TrimSpace(body.Message)) {
-		http.Error(w, "no such pending queued message (unknown, or already delivered)", http.StatusConflict)
+		errMsg(w, http.StatusConflict, "no such pending queued message (unknown, or already delivered)")
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -676,7 +676,7 @@ func (h *Handler) EditQueuedMessage(w http.ResponseWriter, r *http.Request, chat
 // Drops a not-yet-delivered queued message.
 func (h *Handler) RemoveQueuedMessage(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID, messageID schema.MessageID) {
 	if !h.orch.RemoveQueuedMessage(chatID, nodeID, messageID) {
-		http.Error(w, "no such pending queued message (unknown, or already delivered)", http.StatusConflict)
+		errMsg(w, http.StatusConflict, "no such pending queued message (unknown, or already delivered)")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -686,11 +686,11 @@ func (h *Handler) RemoveQueuedMessage(w http.ResponseWriter, r *http.Request, ch
 func (h *Handler) EditNodeTask(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
 	var body schema.EditNodeTaskBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Task) == "" {
-		http.Error(w, "task is required", http.StatusBadRequest)
+		errMsg(w, http.StatusBadRequest, "task is required")
 		return
 	}
 	if !h.orch.SetNodeTaskOverride(chatID, nodeID, body.Task) {
-		http.Error(w, "the node has already started; its prompt is immutable", http.StatusConflict)
+		errMsg(w, http.StatusConflict, "the node has already started; its prompt is immutable")
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -765,7 +765,7 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
 	sse, ok := newSSEWriter(w)
 	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		errMsg(w, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
 	lastSeq := lastEventID(r)
@@ -1120,6 +1120,14 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// httpError writes err as the JSON schema.ErrorResponse body every 4xx/5xx
+// response declares - the one place a plain-text http.Error used to fire.
 func httpError(w http.ResponseWriter, status int, err error) {
-	http.Error(w, err.Error(), status)
+	writeJSON(w, status, schema.ErrorResponse{Error: err.Error()})
+}
+
+// errMsg writes msg as a schema.ErrorResponse - httpError's counterpart for
+// the call sites that only ever had a literal string, not an error value.
+func errMsg(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, schema.ErrorResponse{Error: msg})
 }

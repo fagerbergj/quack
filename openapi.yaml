@@ -114,6 +114,10 @@ paths:
                 $ref: "#/components/schemas/ChatDetail"
         "404":
           description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
       operationId: deleteChat
       summary: Delete a chat
@@ -147,6 +151,10 @@ paths:
                 $ref: "#/components/schemas/ChatSummary"
         "404":
           description: No such chat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/recordings:
     get:
@@ -167,6 +175,10 @@ paths:
                 $ref: "#/components/schemas/RecordingList"
         "404":
           description: Recording is not enabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/chats/{chat_id}/recording:
     get:
@@ -192,6 +204,10 @@ paths:
                 format: binary
         "404":
           description: No recording exists for this chat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/chats/{chat_id}/responses:
     post:
@@ -307,6 +323,10 @@ paths:
                 $ref: "#/components/schemas/Turn"
         "404":
           description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/chats/{chat_id}/stream:
     get:
@@ -397,8 +417,16 @@ paths:
                 $ref: "#/components/schemas/DagNodeState"
         "400":
           description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No such node
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: Illegal transition; body names the allowed target statuses
             for the node's current status
@@ -431,8 +459,16 @@ paths:
           description: Edited
         "404":
           description: No such node
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: The node has already started; its prompt is immutable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/chats/{chat_id}/nodes/{node_id}/queue:
     post:
@@ -461,6 +497,10 @@ paths:
                 $ref: "#/components/schemas/QueuedMessage"
         "404":
           description: No such node, or the node isn't running right now
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/chats/{chat_id}/nodes/{node_id}/queue/{message_id}:
     patch:
@@ -481,8 +521,16 @@ paths:
           description: Edited
         "404":
           description: No such queued message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: Already delivered; immutable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
       operationId: removeQueuedMessage
       summary: Remove a queued message that has not yet been delivered
@@ -495,8 +543,16 @@ paths:
           description: Removed
         "404":
           description: No such queued message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: Already delivered; immutable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/chats/{chat_id}/responses/{response_id}/status:
     put:
@@ -521,8 +577,16 @@ paths:
           description: Cancelled
         "400":
           description: Bad request (unsupported target status)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: This response is not the active run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/memories:
     get:
@@ -566,6 +630,10 @@ paths:
                 $ref: "#/components/schemas/MemoryList"
         "500":
           description: The memory index is unreachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/memories/{memory_id}:
     delete:
@@ -582,6 +650,10 @@ paths:
           description: Forgotten
         "404":
           description: No such memory
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
 components:
   parameters:
@@ -858,18 +930,31 @@ components:
         status:
           $ref: "#/components/schemas/ResponseStatus"
 
-    TransitionError:
+    ErrorResponse:
       type: object
-      required: [error, current, allowed]
+      required: [error]
       properties:
         error:
           type: string
-        current:
-          $ref: "#/components/schemas/NodeStatus"
-        allowed:
-          type: array
-          items:
-            $ref: "#/components/schemas/NodeStatus"
+          description: Human-readable summary of what went wrong.
+        detail:
+          type: string
+          description: Optional additional context (e.g. which field failed validation).
+
+    TransitionError:
+      description: An illegal node-status transition - ErrorResponse refined with the
+        node's current status and its legal targets.
+      allOf:
+        - $ref: "#/components/schemas/ErrorResponse"
+        - type: object
+          required: [current, allowed]
+          properties:
+            current:
+              $ref: "#/components/schemas/NodeStatus"
+            allowed:
+              type: array
+              items:
+                $ref: "#/components/schemas/NodeStatus"
 
     # -------------------------------------------------------------------------
     # Turn (one user→assistant exchange, modelled after OpenResponses Response)

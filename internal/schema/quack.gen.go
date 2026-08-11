@@ -419,6 +419,15 @@ type EditNodeTaskBody struct {
 	Task string `json:"task"`
 }
 
+// ErrorResponse defines model for ErrorResponse.
+type ErrorResponse struct {
+	// Detail Optional additional context (e.g. which field failed validation).
+	Detail *string `json:"detail,omitempty"`
+
+	// Error Human-readable summary of what went wrong.
+	Error string `json:"error"`
+}
+
 // ItemStatus defines model for ItemStatus.
 type ItemStatus string
 
@@ -571,7 +580,12 @@ type TransitionError struct {
 	//   failed      → queued (retry)
 	//   cancelled   → queued (retry)
 	Current NodeStatus `json:"current"`
-	Error   string     `json:"error"`
+
+	// Detail Optional additional context (e.g. which field failed validation).
+	Detail *string `json:"detail,omitempty"`
+
+	// Error Human-readable summary of what went wrong.
+	Error string `json:"error"`
 }
 
 // Turn defines model for Turn.
