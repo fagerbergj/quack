@@ -502,6 +502,7 @@ workspace:
 #     password: ${RMFAKECLOUD_PASSWORD}
 #     # poll_interval: 1m       # optional Go duration (e.g. "90s"); default 1m
 #     # folder_filter: Inbox    # optional; restricts polling to this folder + subfolders
+#     # max_attempts: 3         # optional; retries per failed document before giving up (0 = unlimited)
 
 # Inbound request auth (internal/auth), gating the REST + MCP surface (never
 # /health or the SPA). Absent entirely - as here - auth is disabled and every
