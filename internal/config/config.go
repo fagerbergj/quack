@@ -229,6 +229,9 @@ type OtelConfig struct {
 	Enabled      *bool   `yaml:"enabled"`
 	OTLPEndpoint string  `yaml:"otlp_endpoint"`
 	Sample       float64 `yaml:"sample"`
+	// Logs opts into OTLP log export. Off by default: logs need a collector
+	// logs pipeline most deployments don't run (slog/stdout is the sink).
+	Logs bool `yaml:"logs"`
 }
 
 const otelDefaultSample = 1.0

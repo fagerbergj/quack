@@ -251,6 +251,7 @@ observability:
     otlp_endpoint: ${QUACK_OTEL_OTLP_ENDPOINT} # unset ⇒ providers built, nothing exported
     # otlp_endpoint: http://otel-collector:4318  # the deployed home-server collector
     sample: 1.0                                # trace sample ratio in (0,1]
+    # logs: true   # ALSO ship slog via OTLP - needs a collector logs pipeline (default: stdout only)
   # The replay ledger (.quack/replay-log.md): every gen_ai.* log event, appended
   # to default_ledger as one JSONL line per session. Rides the otel logger
   # provider above, so it can only be on when otel is.
