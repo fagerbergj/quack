@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { navigate, type Route } from '../router'
+import { api, type ExtensionInfo } from '../api'
 
 const STORAGE_KEY = 'navRailCollapsed'
 
@@ -13,6 +14,9 @@ export interface NavRailProps {
   // collapsed state directly instead of reading localStorage, so a story can
   // show expanded/collapsed deterministically regardless of browser state.
   initialCollapsed?: boolean
+  // Storybook/test seam (same pattern as MemoryTab's initialState): pre-seeds
+  // the extension nav entries and skips the live GET /api/v1/extensions fetch.
+  initialExtensions?: ExtensionInfo[]
 }
 
 // NavRail (#746 item 1, fully collapsible per #759 item 1) is the app's
@@ -27,12 +31,27 @@ export interface NavRailProps {
 // width in the flex layout; a `fixed` restore button (real <button>, focusable,
 // named) is the only thing left on screen. Never auto-collapses/-expands on
 // its own (hover, timer, etc.) - only the two explicit clicks below touch it.
-export function NavRail({ route, initialCollapsed }: NavRailProps) {
+export function NavRail({ route, initialCollapsed, initialExtensions }: NavRailProps) {
   const [collapsed, setCollapsed] = useState(initialCollapsed ?? readCollapsed)
+  const [extensions, setExtensions] = useState<ExtensionInfo[]>(initialExtensions ?? [])
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, collapsed ? '1' : '0')
   }, [collapsed])
+
+  useEffect(() => {
+    if (initialExtensions !== undefined) return // story/test seam: static demo state, no live fetch
+    let cancelled = false
+    api.listExtensions().then(exts => {
+      if (!cancelled) setExtensions(exts)
+    }).catch(() => {
+      // Nav degrades to Chats/Memory only - an extensions-list failure
+      // should never block the rest of the app from rendering.
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [initialExtensions])
 
   if (collapsed) {
     return (
@@ -55,6 +74,13 @@ export function NavRail({ route, initialCollapsed }: NavRailProps) {
       <div className="flex-1 py-2 px-2 space-y-1 overflow-y-auto">
         <NavItem icon="💬" label="Chats" active={route === 'chat'} onClick={() => navigate('/chat')} />
         <NavItem icon="🧠" label="Memory" active={route === 'memory'} onClick={() => navigate('/memory')} />
+        {extensions.length > 0 && (
+          <div className="pt-1 mt-1 border-t border-gray-100 dark:border-gray-700 space-y-1">
+            {extensions.map(ext => (
+              <ExtensionNavItem key={ext.name} ext={ext} />
+            ))}
+          </div>
+        )}
       </div>
       <div className="p-2 border-t border-gray-200 dark:border-gray-700">
         <button
@@ -92,5 +118,37 @@ function NavItem({
       <span aria-hidden="true" className="text-base shrink-0 leading-none">{icon}</span>
       <span className="truncate">{label}</span>
     </button>
+  )
+}
+
+// ExtensionNavItem is a real <a href> (not navigate()'s client-side
+// pushState): an extension's routes are mounted server-side at /<name>/*,
+// outside the SPA's own router, so reaching one needs a full navigation. A
+// module with no UI descriptor (no href) still shows up, but inert - it
+// tells the user the extension is enabled with nowhere yet to go.
+function ExtensionNavItem({ ext }: { ext: ExtensionInfo }) {
+  const label = ext.title ?? ext.name
+  if (!ext.href) {
+    return (
+      <span
+        aria-label={label}
+        title={label}
+        className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-gray-400 dark:text-gray-600 cursor-default"
+      >
+        <span aria-hidden="true" className="text-base shrink-0 leading-none">🧩</span>
+        <span className="truncate">{label}</span>
+      </span>
+    )
+  }
+  return (
+    <a
+      href={ext.href}
+      aria-label={label}
+      title={label}
+      className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+    >
+      <span aria-hidden="true" className="text-base shrink-0 leading-none">🧩</span>
+      <span className="truncate">{label}</span>
+    </a>
   )
 }

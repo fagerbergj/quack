@@ -37,6 +37,18 @@ const GH_PR = chat({
 })
 const CHATS: ChatSummary[] = [DIRECT, GH_ISSUE, GH_PR]
 
+const EXT_A = chat({
+  id: 'ext-a',
+  title: 'Meeting notes',
+  origin: { extension: 'remarkable', label: 'Meeting notes', labels: { tags: [{ value: 'work', display: 'Work' }, { value: 'urgent' }] } },
+})
+const EXT_B = chat({
+  id: 'ext-b',
+  title: 'Shopping list',
+  origin: { extension: 'remarkable', label: 'Shopping list', labels: { tags: [{ value: 'urgent' }] } },
+})
+const EXT_CHATS: ChatSummary[] = [EXT_A, EXT_B]
+
 describe('computeFacets', () => {
   it('includes origin, status, repo, type facets with counts', () => {
     const facets = computeFacets(CHATS)
@@ -70,6 +82,24 @@ describe('computeFacets', () => {
     const byValue = Object.fromEntries(byKey.status.options.map((o: { value: string; label: string }) => [o.value, o.label]))
     expect(byValue.queued).toBe('Queued')
   })
+
+  // origin.labels dimensions are extension-supplied and data-driven - a
+  // "tags" dimension becomes its own facet, keyed label:tags so it can never
+  // collide with the fixed facet keys (origin/status/repo/type).
+  it('derives a facet per origin.labels dimension, using display text and per-value counts', () => {
+    const facets = computeFacets(EXT_CHATS)
+    const byKey = Object.fromEntries(facets.map(f => [f.key, f]))
+    expect(byKey['label:tags'].label).toBe('Tags')
+    expect(byKey['label:tags'].options).toEqual([
+      { value: 'urgent', label: 'urgent', count: 2 },
+      { value: 'work', label: 'Work', count: 1 },
+    ])
+  })
+
+  it('omits label:<dimension> facets when no chat carries origin.labels', () => {
+    const facets = computeFacets(CHATS)
+    expect(facets.some(f => f.key.startsWith('label:'))).toBe(false)
+  })
 })
 
 describe('matchesFacets', () => {
@@ -90,6 +120,16 @@ describe('matchesFacets', () => {
   it('a chat without a repo/type value never matches a repo/type selection', () => {
     expect(matchesFacets(DIRECT, { repo: ['acme/widget'] })).toBe(false)
     expect(matchesFacets(DIRECT, { type: ['issue'] })).toBe(false)
+  })
+
+  it('matches a label:<dimension> selection against any of the chat\'s values on that dimension (OR)', () => {
+    expect(matchesFacets(EXT_A, { 'label:tags': ['work'] })).toBe(true)
+    expect(matchesFacets(EXT_A, { 'label:tags': ['nonexistent'] })).toBe(false)
+    expect(matchesFacets(EXT_B, { 'label:tags': ['work', 'urgent'] })).toBe(true)
+  })
+
+  it('a chat with no origin never matches a label:<dimension> selection', () => {
+    expect(matchesFacets(DIRECT, { 'label:tags': ['work'] })).toBe(false)
   })
 })
 
@@ -116,6 +156,8 @@ describe('parseFilterState / serializeFilterState round trip', () => {
     { q: '', selected: { origin: ['github'] } },
     { q: '', selected: { status: ['running', 'failed'] } },
     { q: 'widget', selected: { origin: ['github'], repo: ['acme/widget'], type: ['issue'] } },
+    { q: '', selected: { 'label:tags': ['work', 'urgent'] } },
+    { q: 'notes', selected: { origin: ['direct'], 'label:tags': ['work'] } },
   ]
 
   it.each(cases)('round-trips %j', state => {
@@ -142,5 +184,11 @@ describe('parseFilterState / serializeFilterState round trip', () => {
 
   it('ignores unrecognized params', () => {
     expect(parseFilterState('?bogus=1')).toEqual({ q: '', selected: {} })
+  })
+
+  it('round-trips a label:<dimension> selection through the URL, URL-encoded', () => {
+    const qs = serializeFilterState({ q: '', selected: { 'label:tags': ['work', 'urgent'] } })
+    expect(new URLSearchParams(qs).get('label:tags')).toBe('work,urgent')
+    expect(parseFilterState(qs)).toEqual({ q: '', selected: { 'label:tags': ['work', 'urgent'] } })
   })
 })

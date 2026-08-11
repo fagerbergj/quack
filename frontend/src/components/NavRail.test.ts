@@ -1,8 +1,17 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach, beforeEach } from 'vitest'
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { NavRail } from './NavRail'
+import { client } from '../generated/client.gen'
+
+// Node's fetch/Request (unlike a browser's) refuses to build a Request from a
+// relative URL - see MemoryTab.test.ts for the same setup.
+client.setConfig({ baseUrl: 'http://localhost' })
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+}
 
 // #746 item 1: the rail's collapsed/expanded state persists across reload
 // (localStorage), and Memory is reachable from it as a peer of Chats.
@@ -75,5 +84,40 @@ describe('NavRail', () => {
     const chatsBtn = Array.from(host!.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Chats')!
     expect(memoryBtn.getAttribute('aria-current')).toBe('page')
     expect(chatsBtn.getAttribute('aria-current')).toBeNull()
+  })
+
+  it('renders an extension with a UI descriptor as a real <a href>, not a client-side route', () => {
+    render({ initialExtensions: [{ name: 'remarkable', title: 'reMarkable', href: '/remarkable/review' }] })
+    const link = host!.querySelector('a[href="/remarkable/review"]')
+    expect(link).toBeTruthy()
+    expect(link!.textContent).toContain('reMarkable')
+  })
+
+  it('renders a UI-less extension name-only, with no link', () => {
+    render({ initialExtensions: [{ name: 'noop' }] })
+    expect(host!.textContent).toContain('noop')
+    expect(host!.querySelector('a')).toBeNull()
+  })
+
+  it('renders no extensions section when the list is empty', () => {
+    render({ initialExtensions: [] })
+    expect(host!.querySelector('a')).toBeNull()
+  })
+
+  it('fetches GET /api/v1/extensions itself when no seam prop is given', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([{ name: 'remarkable', title: 'reMarkable', href: '/remarkable/review' }]))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      await act(async () => {
+        render()
+        await new Promise(resolve => setTimeout(resolve, 0))
+      })
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      const request = fetchMock.mock.calls[0][0] as Request
+      expect(request.url).toContain('/api/v1/extensions')
+      expect(host!.querySelector('a[href="/remarkable/review"]')).toBeTruthy()
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

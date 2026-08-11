@@ -93,6 +93,53 @@ describe('repo badge text', () => {
   })
 })
 
+// Generic origin chip: label (linked when href is present), plus an
+// optional badge chip - independent of the GitHub-specific fields above.
+describe('origin chip', () => {
+  let root: ReturnType<typeof createRoot> | undefined
+  let host: HTMLDivElement | undefined
+
+  afterEach(() => {
+    act(() => root?.unmount())
+    host?.remove()
+    root = undefined
+    host = undefined
+  })
+
+  function renderList(chats: ChatSummary[]) {
+    // @ts-expect-error react act environment flag
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    act(() => {
+      root!.render(createElement(ChatList, { chats, activeChatId: null, open: true, onSelect: () => {}, onNewChat: () => {}, onDelete: () => {}, onCloseMobile: () => {} }))
+    })
+  }
+
+  it('renders the label as a link when origin.href is present', () => {
+    renderList([chat({ id: 'e1', origin: { extension: 'remarkable', label: 'Meeting notes', href: 'https://remarkable.example/doc/42' } })])
+    const link = host!.querySelector('a[href="https://remarkable.example/doc/42"]')
+    expect(link?.textContent).toBe('Meeting notes')
+  })
+
+  it('renders the label as plain text (no link) when origin.href is absent', () => {
+    renderList([chat({ id: 'e2', origin: { extension: 'remarkable', label: 'Meeting notes' } })])
+    expect(host!.textContent).toContain('Meeting notes')
+    expect(host!.querySelector('a[title="Meeting notes"]')).toBeNull()
+  })
+
+  it('renders the badge chip when origin.badge is present', () => {
+    renderList([chat({ id: 'e3', origin: { extension: 'remarkable', label: 'Doc', badge: 'draft' } })])
+    expect(host!.textContent).toContain('draft')
+  })
+
+  it('renders nothing extra when origin is absent', () => {
+    renderList([chat({ id: 'e4' })])
+    expect(host!.textContent).not.toContain('undefined')
+  })
+})
+
 // #736: the sidebar is server-paginated - "Load more" only appears once the
 // parent signals a next page exists (hasMoreChats), and clicking it defers
 // to the parent's fetch (onLoadMoreChats), not a local re-fetch.

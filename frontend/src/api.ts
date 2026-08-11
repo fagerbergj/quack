@@ -11,11 +11,12 @@ import {
   getResponse as sdkGetResponse,
   listMemories as sdkListMemories,
   deleteMemory as sdkDeleteMemory,
+  listExtensions as sdkListExtensions,
 } from './generated'
 
-export type { ChatSummary, ChatDetail, ChatList, Turn, Memory, MemoryList } from './generated'
+export type { ChatSummary, ChatDetail, ChatList, Turn, Memory, MemoryList, ChatOrigin, ExtensionInfo } from './generated'
 
-import type { ChatSummary, ChatDetail, ChatList, Turn, MemoryList } from './generated'
+import type { ChatSummary, ChatDetail, ChatList, Turn, MemoryList, ExtensionInfo } from './generated'
 
 type Result<T> = { data?: T; error?: unknown; response?: Response }
 
@@ -75,4 +76,6 @@ export const api = {
       throw new Error(`Forget failed (${r.response ? r.response.status : 'no response'})`)
     }
   },
+
+  listExtensions: async (): Promise<ExtensionInfo[]> => unwrap(await sdkListExtensions()),
 }
