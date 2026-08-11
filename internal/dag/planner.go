@@ -107,6 +107,27 @@ func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, deli
 	return plan, nil
 }
 
+// BuildBound builds a Plan directly from a workflow-catalog shape's fixed
+// node list (an extension dispatch naming a bound workflow) - the same
+// structural validation Build runs, but no plan judge and no
+// review-fanout heuristic: both react to an arbitrary model-authored plan,
+// while a bound shape's structure was already validated once at config load.
+// This is the "no planner LLM call per dispatch" path - callers never
+// reach the orchestrator's own llmagent turn for a bound dispatch either.
+func (p *Planner) BuildBound(ctx context.Context, nodes []RawNode, setup *Setup, delivery *Delivery, message string, attachments []*genai.Part, grant *vetting.Grant) (plan *Plan, err error) {
+	ctx, span := otelobs.Start(ctx, "plan.bound")
+	defer func() { otelobs.End(span, err) }()
+
+	plan, err = assemble(nodes, p.agents, p.checkCommands, setup, delivery, grant)
+	if err != nil {
+		return nil, err
+	}
+	span.SetAttributes(attribute.String("plan_id", plan.ID), attribute.Int("node_count", len(plan.Nodes)))
+	plan.UserMessage = message
+	plan.Attachments = attachments
+	return plan, nil
+}
+
 // judgeRouting: scores plan shape against request via the plan judge.
 func (p *Planner) judgeRouting(ctx context.Context, plan *Plan, message string) error {
 	if p.judge == nil {

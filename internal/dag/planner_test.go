@@ -75,6 +75,55 @@ func TestBuildRejectsBadPlans(t *testing.T) {
 	}
 }
 
+// TestBuildBoundProducesExactPlanWithoutJudge is test case 1 (workflow
+// binding): a shaped catalog entry's nodes render into the exact
+// expected Plan, and - unlike Build - never touch the plan judge, proving
+// the bound path involves no LLM call at all (not even the optional one).
+func TestBuildBoundProducesExactPlanWithoutJudge(t *testing.T) {
+	judgeCalled := false
+	judge := func(context.Context, string, string) (bool, string, error) {
+		judgeCalled = true
+		return true, "", nil
+	}
+	p := NewPlanner([]AgentInfo{{Name: "image-reader"}, {Name: "classifier"}}, nil, judge)
+	nodes := []RawNode{
+		{ID: "ocr", Agent: "image-reader", Task: "OCR scan-0042.pdf"},
+		{ID: "classify", Agent: "classifier", Task: "Classify it.", DependsOn: []string{"ocr"}, Rubric: "names a folder"},
+	}
+	plan, err := p.BuildBound(context.Background(), nodes, nil, nil, "ingest scan-0042.pdf", nil, nil)
+	if err != nil {
+		t.Fatalf("BuildBound: %v", err)
+	}
+	if judgeCalled {
+		t.Error("BuildBound invoked the plan judge; bound plans must skip it entirely")
+	}
+	if len(plan.Nodes) != 2 {
+		t.Fatalf("plan.Nodes = %+v, want exactly the 2 bound nodes (no hardening/appending)", plan.Nodes)
+	}
+	if plan.Nodes[0].ID != "ocr" || plan.Nodes[0].AgentName != "image-reader" || plan.Nodes[0].Task != "OCR scan-0042.pdf" {
+		t.Errorf("plan.Nodes[0] = %+v", plan.Nodes[0])
+	}
+	if plan.Nodes[1].ID != "classify" || plan.Nodes[1].Rubric != "names a folder" ||
+		!slices.Equal(plan.Nodes[1].DependsOn, []string{"ocr"}) {
+		t.Errorf("plan.Nodes[1] = %+v", plan.Nodes[1])
+	}
+	if plan.UserMessage != "ingest scan-0042.pdf" {
+		t.Errorf("plan.UserMessage = %q", plan.UserMessage)
+	}
+}
+
+// TestBuildBoundStillValidatesStructure: BuildBound reuses the same
+// structural checks as Build (unknown agent, cycle, ...) - config-time
+// validation is a backstop, not the only line of defense.
+func TestBuildBoundStillValidatesStructure(t *testing.T) {
+	p := NewPlanner([]AgentInfo{{Name: "image-reader"}}, nil, nil)
+	if _, err := p.BuildBound(context.Background(), []RawNode{
+		{ID: "n1", Agent: "nope", Task: "x"},
+	}, nil, nil, "m", nil, nil); err == nil {
+		t.Error("expected an error for a bound node naming an unknown agent")
+	}
+}
+
 // TestBuildAppendsMissingSynthesizer: a multi-terminal plan with no synthesizer
 // (the model forgot the fan-in) gets one appended depending on every node -
 // otherwise the native graph build rejects the plan outright ("2 terminal

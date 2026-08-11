@@ -1728,3 +1728,140 @@ func TestWorkflowShapesDefaultEmpty(t *testing.T) {
 		t.Errorf("Skills.Workflows = %+v, want empty", c.Skills.Workflows)
 	}
 }
+
+// TestWorkflowShapeBoundNodesValid pins workflow binding: a
+// well-formed nodes: list on a shape survives validation and round-trips
+// verbatim (id/agent/task/depends_on/rubric), so workflowcatalog.Bind has
+// exactly what it needs.
+func TestWorkflowShapeBoundNodesValid(t *testing.T) {
+	c, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
+skills:
+  workflows:
+    - name: document-ingest
+      trigger: "Ingest a new document into the knowledge base"
+      agents: [document-classifier]
+      shape: "ONE `+"`document-classifier`"+` node (terminal - classifies and files the document)"
+      nodes:
+        - id: classify
+          agent: document-classifier
+          task: "Classify and file this document.\n\n{{ask}}"
+          rubric: "Output names the chosen folder and a one-line reason."
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(c.Skills.Workflows) != 1 {
+		t.Fatalf("Skills.Workflows = %+v, want 1 entry", c.Skills.Workflows)
+	}
+	nodes := c.Skills.Workflows[0].Nodes
+	if len(nodes) != 1 {
+		t.Fatalf("Nodes = %+v, want 1 node", nodes)
+	}
+	n := nodes[0]
+	if n.ID != "classify" || n.Agent != "document-classifier" || !strings.Contains(n.Task, "{{ask}}") || n.Rubric == "" {
+		t.Errorf("bound node = %+v, want fields preserved verbatim", n)
+	}
+}
+
+// TestWorkflowShapeBoundNodeUnknownAgentFailsStartup: a bound node naming an
+// agent absent from `agents:` must fail loud at config load, not surface
+// only when a dispatch tries to bind it later.
+func TestWorkflowShapeBoundNodeUnknownAgentFailsStartup(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
+skills:
+  workflows:
+    - name: document-ingest
+      trigger: "Ingest a new document into the knowledge base"
+      agents: [document-classifier]
+      shape: "ONE `+"`document-classifier`"+` node (terminal)"
+      nodes:
+        - id: classify
+          agent: nope
+          task: "classify it"
+`))
+	if err == nil {
+		t.Fatal("expected an error for a bound node naming an unconfigured agent")
+	}
+	if !strings.Contains(err.Error(), "document-ingest") || !strings.Contains(err.Error(), "nope") {
+		t.Errorf("error = %q, want it to name both the shape and the missing agent", err)
+	}
+}
+
+// TestWorkflowShapeBoundNodeCycleFailsStartup: a bound shape whose nodes
+// depend on each other in a cycle must fail loud at config load - the whole
+// point of validating structure once, so a dispatch never rediscovers it.
+func TestWorkflowShapeBoundNodeCycleFailsStartup(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
+skills:
+  workflows:
+    - name: document-ingest
+      trigger: "Ingest a new document into the knowledge base"
+      agents: [document-classifier]
+      shape: "two `+"`document-classifier`"+` nodes"
+      nodes:
+        - id: a
+          agent: document-classifier
+          task: "step a"
+          depends_on: [b]
+        - id: b
+          agent: document-classifier
+          task: "step b"
+          depends_on: [a]
+`))
+	if err == nil {
+		t.Fatal("expected an error for a bound node cycle")
+	}
+	if !strings.Contains(err.Error(), "document-ingest") || !strings.Contains(err.Error(), "cycle") {
+		t.Errorf("error = %q, want it to name the shape and mention the cycle", err)
+	}
+}
+
+// TestWorkflowShapeBoundNodeDuplicateIDFailsStartup: duplicate node ids
+// within one bound shape would make depends_on ambiguous - fail loud.
+func TestWorkflowShapeBoundNodeDuplicateIDFailsStartup(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
+skills:
+  workflows:
+    - name: document-ingest
+      trigger: "Ingest a new document into the knowledge base"
+      agents: [document-classifier]
+      shape: "two `+"`document-classifier`"+` nodes"
+      nodes:
+        - id: a
+          agent: document-classifier
+          task: "step one"
+        - id: a
+          agent: document-classifier
+          task: "step two"
+`))
+	if err == nil {
+		t.Fatal("expected an error for duplicate bound node ids")
+	}
+	if !strings.Contains(err.Error(), "document-ingest") || !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("error = %q, want it to name the shape and mention the duplicate", err)
+	}
+}
+
+// TestWorkflowShapeBoundNodeMissingFieldFailsStartup: a bound node missing
+// id/agent/task is a malformed BINDING, not a malformed hint - it fails
+// startup loudly rather than silently dropping (unlike a malformed
+// trigger/shape/agents shape, which is only ever a hint and gets skipped).
+func TestWorkflowShapeBoundNodeMissingFieldFailsStartup(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
+skills:
+  workflows:
+    - name: document-ingest
+      trigger: "Ingest a new document into the knowledge base"
+      agents: [document-classifier]
+      shape: "ONE `+"`document-classifier`"+` node (terminal)"
+      nodes:
+        - id: classify
+          agent: document-classifier
+`))
+	if err == nil {
+		t.Fatal("expected an error for a bound node missing task")
+	}
+	if !strings.Contains(err.Error(), "document-ingest") {
+		t.Errorf("error = %q, want it to name the shape", err)
+	}
+}

@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
+
+	"github.com/fagerbergj/quack/internal/config"
 )
 
 // writePlanWork lays down a minimal plan-work skill whose body carries a
@@ -126,5 +128,56 @@ func TestWrapOnlyAugmentsPlanWork(t *testing.T) {
 	}
 	if got != "\nBody.\n" {
 		t.Errorf("format-markdown instructions changed: %q", got)
+	}
+}
+
+// TestBindUnshapedShapeReturnsNotOK pins the "hint, not binding" default
+// (workflow binding): a shape with no Nodes must never produce a
+// dag.Plan node list - it stays a planner hint only.
+func TestBindUnshapedShapeReturnsNotOK(t *testing.T) {
+	shape := Shape{Name: "document-ingest", Trigger: "t", DAGShape: "s"}
+	if nodes, ok := Bind(shape, "the ask"); ok || nodes != nil {
+		t.Errorf("Bind(unshaped) = %v, %v, want nil, false", nodes, ok)
+	}
+}
+
+// TestBindShapedShapeSubstitutesAskAndPreservesStructure is test case 1:
+// a shaped catalog entry renders into the exact expected node list -
+// id/agent/rubric/depends_on preserved verbatim, {{ask}} substituted.
+func TestBindShapedShapeSubstitutesAskAndPreservesStructure(t *testing.T) {
+	shape := Shape{
+		Name: "document-ingest",
+		Nodes: []config.WorkflowNode{
+			{ID: "ocr", Agent: "image-reader", Task: "OCR this.\n\n{{ask}}"},
+			{ID: "classify", Agent: "classifier", Task: "Classify.\n\n{{ask}}", DependsOn: []string{"ocr"}, Rubric: "names a folder"},
+		},
+	}
+	nodes, ok := Bind(shape, "scan-0042.pdf")
+	if !ok {
+		t.Fatal("Bind(shaped) ok = false, want true")
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("nodes = %+v, want 2", nodes)
+	}
+	if nodes[0].ID != "ocr" || nodes[0].Agent != "image-reader" || nodes[0].Task != "OCR this.\n\nscan-0042.pdf" {
+		t.Errorf("nodes[0] = %+v", nodes[0])
+	}
+	if nodes[1].ID != "classify" || nodes[1].Rubric != "names a folder" || len(nodes[1].DependsOn) != 1 || nodes[1].DependsOn[0] != "ocr" {
+		t.Errorf("nodes[1] = %+v", nodes[1])
+	}
+	if nodes[1].Task != "Classify.\n\nscan-0042.pdf" {
+		t.Errorf("nodes[1].Task = %q, want ask substituted", nodes[1].Task)
+	}
+}
+
+// TestLookupFindsByName exercises the membership check newExtDispatch uses
+// to validate Run.Workflow before binding.
+func TestLookupFindsByName(t *testing.T) {
+	shapes := []Shape{{Name: "a"}, {Name: "b"}}
+	if _, ok := Lookup(shapes, "b"); !ok {
+		t.Error("Lookup(b) = false, want true")
+	}
+	if _, ok := Lookup(shapes, "c"); ok {
+		t.Error("Lookup(c) = true, want false")
 	}
 }

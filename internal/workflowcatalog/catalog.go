@@ -16,6 +16,7 @@ import (
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 
 	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/dag"
 )
 
 // planWorkSkill is the only skill this package augments.
@@ -39,20 +40,61 @@ type Shape struct {
 	Source   string
 	Version  string
 	Approved bool
+	// Nodes is non-empty only for a bound shape (workflow binding): Bind
+	// renders it into a dag.Plan directly, skipping the planner LLM call
+	// entirely. Empty Nodes means Trigger/DAGShape stay a planner hint only,
+	// exactly like every shape before binding existed.
+	Nodes []config.WorkflowNode
 }
 
 // FromConfig builds provenance-carrying Shapes from config entries.
-// config.Config.validateWorkflows has already dropped malformed entries and
-// confirmed every named agent is configured, so this is a pure mapping.
+// config.Config.validateWorkflows has already dropped malformed entries,
+// confirmed every named agent is configured, and validated any bound node
+// list, so this is a pure mapping.
 func FromConfig(shapes []config.WorkflowShape, revision string) []Shape {
 	out := make([]Shape, 0, len(shapes))
 	for _, w := range shapes {
 		out = append(out, Shape{
 			Name: w.Name, Trigger: w.Trigger, DAGShape: w.Shape, Agents: w.Agents,
-			Source: "operator", Version: revision, Approved: true,
+			Source: "operator", Version: revision, Approved: true, Nodes: w.Nodes,
 		})
 	}
 	return out
+}
+
+// Lookup returns the shape named name, if any of shapes matches.
+func Lookup(shapes []Shape, name string) (Shape, bool) {
+	for _, s := range shapes {
+		if s.Name == name {
+			return s, true
+		}
+	}
+	return Shape{}, false
+}
+
+// askPlaceholder is the only substitution a bound node's task template
+// supports - deliberately no templating engine, per the design's "minimal"
+// call: the first (and only) consumer is a one-or-two-node ingest pipeline.
+const askPlaceholder = "{{ask}}"
+
+// Bind renders shape's bound nodes into dag.RawNode, substituting ask for
+// every {{ask}} token in each node's task. ok is false when shape has no
+// bound nodes - still a planner hint only, never a programmatic binding.
+func Bind(shape Shape, ask string) (nodes []dag.RawNode, ok bool) {
+	if len(shape.Nodes) == 0 {
+		return nil, false
+	}
+	out := make([]dag.RawNode, len(shape.Nodes))
+	for i, n := range shape.Nodes {
+		out[i] = dag.RawNode{
+			ID:        n.ID,
+			Agent:     n.Agent,
+			Task:      strings.ReplaceAll(n.Task, askPlaceholder, ask),
+			Rubric:    n.Rubric,
+			DependsOn: n.DependsOn,
+		}
+	}
+	return out, true
 }
 
 // Wrap returns src unchanged when shapes is empty - the regression guard: a

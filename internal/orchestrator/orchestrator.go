@@ -182,6 +182,106 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, see
 	}
 }
 
+// BuildBoundPlan builds a Plan from a workflow-catalog-bound node list (a
+// dispatch naming a shaped workflow) - no plan judge, no
+// review-fanout heuristic, and critically no orchestrator LLM turn: callers
+// pass the result straight to RunBoundPlan instead of Run.
+func (o *Orchestrator) BuildBoundPlan(ctx context.Context, nodes []dag.RawNode, message string, attachments []*genai.Part) (*dag.Plan, error) {
+	return o.planner.BuildBound(ctx, nodes, nil, nil, message, attachments, nil)
+}
+
+// RunBoundPlan runs an already-built bound Plan directly through the graph
+// executor - the "no planner LLM call per dispatch" path: no orchestrator
+// llmagent turn ever runs. The trust gate is unaffected -
+// RunPlanAsGraph is the exact same executor a model-authored plan runs
+// through, so every node still passes through vetting.RunGatedRefine.
+func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID string, plan dag.Plan) iter.Seq2[stream.SSEEvent, error] {
+	return func(yield func(stream.SSEEvent, error) bool) {
+		var span oteltrace.Span
+		ctx, span = otelobs.Start(ctx, "run.bound", attribute.String(otelobs.ChatIDKey, sessionID))
+		ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: sessionID})
+		otelobs.RunQueued()
+		queued := true
+		o.queuedChats.Store(sessionID, struct{}{})
+		defer func() {
+			o.queuedChats.Delete(sessionID)
+			if queued {
+				otelobs.RunUnqueued()
+			} else {
+				otelobs.RunFinished()
+			}
+			otelobs.End(span, nil)
+		}()
+		origYield := yield
+		yield = func(ev stream.SSEEvent, err error) bool {
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+			}
+			return origYield(ev, err)
+		}
+
+		release, acquired := o.acquireRun(ctx)
+		defer release()
+		if acquired {
+			o.queuedChats.Delete(sessionID)
+			otelobs.RunUnqueued()
+			queued = false
+			otelobs.RunStarted()
+			if o.runDeadline > 0 {
+				var deadlineCancel context.CancelFunc
+				ctx, deadlineCancel = context.WithTimeout(ctx, o.runDeadline)
+				defer deadlineCancel()
+			}
+		}
+		o.executor.ResetNodeCancels(sessionID)
+
+		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { yield(ev, nil) })
+		yield(tools.DagPlanEvent(plan), nil)
+
+		nodeOutputs := make(map[string]string)
+		paused, err := o.executor.RunPlanAsGraph(ctx, plan, AppName, userID, sessionID, nil, yield, nodeOutputs, nil)
+		if err != nil {
+			yield(stream.Errorf("orchestrator: bound plan run: "+err.Error()), nil)
+			return
+		}
+		// Stashed exactly like the execute tool stashes a model-authored plan,
+		// so a later HITL resume (LatestPendingQuestion -> stashedPlan) finds
+		// it regardless of which path the resuming dispatch takes. Only after
+		// RunPlanAsGraph: its own runner is what auto-creates the session -
+		// nothing exists to stash into before that.
+		o.stashPlanForResume(ctx, userID, sessionID, plan)
+		if !paused {
+			answer := o.finalizeAnswer(ctx, plan, nodeOutputs)
+			o.persistAnswer(ctx, userID, sessionID, answer)
+		}
+		yield(stream.Done(), nil)
+	}
+}
+
+// stashPlanForResume persists plan into session state under the same key the
+// execute tool uses (tools.ExecPlanKey), so a bound run that parks on a HITL
+// node resumes the same way a model-authored one does.
+func (o *Orchestrator) stashPlanForResume(ctx context.Context, userID, sessionID string, plan dag.Plan) {
+	planJSON, err := json.Marshal(plan)
+	if err != nil {
+		slog.Warn("orchestrator: stash bound plan failed: marshal", "component", "orchestrator", "chat", sessionID, "err", err)
+		return
+	}
+	persistCtx := context.WithoutCancel(ctx)
+	resp, err := o.sessions.Get(persistCtx, &session.GetRequest{AppName: AppName, UserID: userID, SessionID: sessionID})
+	if err != nil || resp == nil {
+		slog.Warn("orchestrator: stash bound plan failed: session load", "component", "orchestrator", "chat", sessionID, "err", err)
+		return
+	}
+	ev := session.NewEvent(persistCtx, "")
+	ev.Author = orchestratorName
+	ev.Actions.StateDelta[tools.ExecPlanKey] = string(planJSON)
+	if err := o.sessions.AppendEvent(persistCtx, resp.Session, ev); err != nil {
+		slog.Warn("orchestrator: stash bound plan failed: append event", "component", "orchestrator", "chat", sessionID, "err", err)
+	}
+}
+
 // New builds the orchestrator from its dependencies.
 func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.Planner, executor *dag.Executor, skillTS tool.Toolset, userMem, taskMem *memory.Store) *Orchestrator {
 	return &Orchestrator{

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/server"
@@ -56,7 +58,7 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, or
 	}
 	sort.Strings(names)
 
-	workflowNames := catalogNames(cfg)
+	shapes := workflowcatalog.FromConfig(cfg.Skills.Workflows, cfg.Revision)
 
 	built := make([]builtSDKExtension, 0, len(names))
 	for _, name := range names {
@@ -99,7 +101,7 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, or
 
 		var extHolder atomic.Pointer[extsdk.Extension]
 		host := extsdk.Host{
-			Dispatch: newExtDispatch(name, orchRef, st, hub, &extHolder, workflowNames, artifacts),
+			Dispatch: newExtDispatch(name, orchRef, st, hub, &extHolder, shapes, artifacts),
 			Log:      slog.Default().With("component", "ext."+name),
 			DataDir:  dataDir,
 		}
@@ -112,19 +114,6 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, or
 		slog.Info("sdk extension enabled", "component", "startup", "extension", name)
 	}
 	return built, nil
-}
-
-// catalogNames is the set of workflow-catalog shape names a dispatch's
-// Run.Workflow may reference: config-defined shapes only (#807) - the
-// built-in "Common workflows" table's rows describe a request shape, not a
-// callable name.
-func catalogNames(cfg *config.Config) map[string]bool {
-	shapes := workflowcatalog.FromConfig(cfg.Skills.Workflows, cfg.Revision)
-	names := make(map[string]bool, len(shapes))
-	for _, s := range shapes {
-		names[s.Name] = true
-	}
-	return names
 }
 
 // startSDKExtensions calls Start on every extension implementing
@@ -186,13 +175,18 @@ func sdkExtensionTools(exts []builtSDKExtension) []tool.Tool {
 // Delivery.AllowedKinds have no consumer here yet - they await quack-core's
 // Grant/CICheck generalization and the GitHub migration that's the real
 // consumer of a pre-provisioned clone and node-scoped context.
-func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrator], st *store.Store, hub *stream.Hub, extHolder *atomic.Pointer[extsdk.Extension], workflowNames map[string]bool, artifacts *store.TurnAwareService) extsdk.DispatchFunc {
+func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrator], st *store.Store, hub *stream.Hub, extHolder *atomic.Pointer[extsdk.Extension], shapes []workflowcatalog.Shape, artifacts *store.TurnAwareService) extsdk.DispatchFunc {
 	return func(ctx context.Context, req extsdk.DispatchRequest) error {
 		if req.Chat.LocalID == "" {
 			return fmt.Errorf("extensions.%s: dispatch requires Chat.LocalID", name)
 		}
-		if req.Run.Workflow != "" && !workflowNames[req.Run.Workflow] {
-			return fmt.Errorf("extensions.%s: workflow %q is not in the configured workflow catalog", name, req.Run.Workflow)
+		var shape workflowcatalog.Shape
+		if req.Run.Workflow != "" {
+			var ok bool
+			shape, ok = workflowcatalog.Lookup(shapes, req.Run.Workflow)
+			if !ok {
+				return fmt.Errorf("extensions.%s: workflow %q is not in the configured workflow catalog", name, req.Run.Workflow)
+			}
 		}
 		orch := orchRef.Load()
 		if orch == nil {
@@ -252,6 +246,18 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 			attachments = append(attachments, ref)
 		}
 
+		// A bound shape (Nodes non-empty) skips the planner LLM call entirely:
+		// build the Plan now, synchronously, so a malformed binding is a hard
+		// dispatch error - never a silent fallback to the unshaped hint path.
+		if nodes, bound := workflowcatalog.Bind(shape, req.Ask.Message); bound {
+			plan, err := orch.BuildBoundPlan(runCtx, nodes, req.Ask.Message, attachments)
+			if err != nil {
+				return fmt.Errorf("extensions.%s: workflow %q bound plan: %w", name, req.Run.Workflow, err)
+			}
+			go driveBoundExtensionRun(runCtx, name, orch, st, hub, extHolder, userID, chatID, turnID, *plan)
+			return nil
+		}
+
 		go driveExtensionRun(runCtx, name, orch, st, hub, extHolder, userID, chatID, turnID, composeDispatchMessage(req), attachments)
 		return nil
 	}
@@ -274,12 +280,12 @@ func saveExtAttachment(ctx context.Context, artifacts *store.TurnAwareService, u
 	return artifactref.Encode(userID, chatID, name, resp.Version, mimeType), nil
 }
 
-// composeDispatchMessage folds the Workflow hint into Ask.Message. Workflow
-// is a hint, not a binding: the planner is one LLM call that reads the
-// workflow-catalog table itself (internal/workflowcatalog) - there is no
-// programmatic shape selector today, so naming one here only nudges that
-// call. By the time this runs, Workflow has already been validated against
-// the catalog (or is empty).
+// composeDispatchMessage folds the Workflow hint into Ask.Message. Only
+// reached when Workflow names an unbound shape (no Nodes) or is empty - a
+// bound shape never reaches here, it takes the BuildBoundPlan/
+// driveBoundExtensionRun path instead. For an unbound shape this is still
+// just a nudge: the orchestrator's own LLM turn reads the workflow-catalog
+// table (internal/workflowcatalog) and decides what to do with it.
 func composeDispatchMessage(req extsdk.DispatchRequest) string {
 	msg := req.Ask.Message
 	if req.Run.Workflow != "" {
@@ -305,11 +311,31 @@ func ensureExtChatTitle(ctx context.Context, st *store.Store, chatID, title stri
 	_ = st.UpdateTitle(ctx, chatID, title)
 }
 
-// driveExtensionRun runs one dispatched turn to completion, mirroring
-// rest.Handler.runChat / github.Extension.dispatch, then fires RunEnded -
-// the noop extension's dispatch counter only advances here, which is how the
-// E2E test proves the whole register->route->dispatch->run loop actually ran.
+// driveExtensionRun runs one dispatched turn to completion through the
+// orchestrator's own LLM turn (the unshaped/hint path), mirroring
+// rest.Handler.runChat / github.Extension.dispatch.
 func driveExtensionRun(ctx context.Context, name string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, extHolder *atomic.Pointer[extsdk.Extension], userID, chatID, turnID, message string, attachments []*genai.Part) {
+	driveExtensionRunEvents(ctx, name, orch, st, hub, extHolder, userID, chatID, turnID, func(runCtx context.Context) iter.Seq2[stream.SSEEvent, error] {
+		return orch.Run(runCtx, userID, chatID, message, attachments)
+	})
+}
+
+// driveBoundExtensionRun runs an already-built bound Plan to completion
+// through RunBoundPlan - no orchestrator LLM turn, no planner LLM call.
+func driveBoundExtensionRun(ctx context.Context, name string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, extHolder *atomic.Pointer[extsdk.Extension], userID, chatID, turnID string, plan dag.Plan) {
+	driveExtensionRunEvents(ctx, name, orch, st, hub, extHolder, userID, chatID, turnID, func(runCtx context.Context) iter.Seq2[stream.SSEEvent, error] {
+		return orch.RunBoundPlan(runCtx, userID, chatID, plan)
+	})
+}
+
+// driveExtensionRunEvents drains one dispatched turn's SSE stream to
+// completion, then fires RunEnded - the noop extension's dispatch counter
+// only advances here, which is how the E2E test proves the whole
+// register->route->dispatch->run loop actually ran. Shared by the unshaped
+// (orch.Run) and bound (orch.RunBoundPlan) paths - identical bookkeeping
+// either way, only the event source differs. run is called with runCtx (not
+// ctx) so hub-driven cancellation (cancelRun) actually reaches the run.
+func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, extHolder *atomic.Pointer[extsdk.Extension], userID, chatID, turnID string, run func(context.Context) iter.Seq2[stream.SSEEvent, error]) {
 	runCtx, cancelRun := context.WithCancel(ctx)
 	hub.RegisterRun(chatID, turnID, cancelRun)
 	_ = st.MarkRunActive(runCtx, chatID, turnID)
@@ -326,7 +352,7 @@ func driveExtensionRun(ctx context.Context, name string, orch *orchestrator.Orch
 
 	var activePlanID string
 	var needsInput stream.NodeNeedsInputData
-	for ev, err := range orch.Run(runCtx, userID, chatID, message, attachments) {
+	for ev, err := range run(runCtx) {
 		if err != nil {
 			slog.Warn("extension run error", "component", "ext."+name, "chat", chatID, "err", err)
 			continue

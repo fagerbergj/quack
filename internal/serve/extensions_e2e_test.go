@@ -38,6 +38,7 @@ import (
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/vetting"
+	"github.com/fagerbergj/quack/internal/workflowcatalog"
 )
 
 // directAnswerModel is a minimal model.LLM that answers with plain text and
@@ -411,8 +412,8 @@ func TestSDKExtensionUnknownWorkflowErrorsCreatesNoChat(t *testing.T) {
 	orchRef.Store(orch)
 
 	var extHolder atomic.Pointer[extsdk.Extension]
-	workflowNames := map[string]bool{"document-ingest": true}
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, workflowNames, artifacts)
+	shapes := []workflowcatalog.Shape{{Name: "document-ingest"}}
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, shapes, artifacts)
 
 	const localID = "unknown-workflow-fixture"
 	const chatID = "ext:noop:" + localID
@@ -679,5 +680,185 @@ func TestSDKExtensionDispatch_AttachmentHydratesAndPersistsReferenceOnly(t *test
 				t.Fatalf("a session event (author=%s) carries the raw attachment bytes", ev.Author)
 			}
 		}
+	}
+}
+
+// planToolProbeModel stands in for the orchestrator's own top-level model,
+// recording whether any call it received offered the "plan" tool - the
+// actual mechanism of "planning" in this codebase. It may still legitimately
+// be called for the unrelated post-execution format pass (finalizeAnswer ->
+// formatAnswer), which never offers tools at all; only a call that CAN
+// decompose into nodes counts as the planner LLM call this proves is
+// skipped.
+type planToolProbeModel struct{ sawPlanTool atomic.Bool }
+
+func (*planToolProbeModel) Name() string { return "plan-tool-probe-stub" }
+
+func (m *planToolProbeModel) SawPlanTool() bool { return m.sawPlanTool.Load() }
+
+func (m *planToolProbeModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	if extAttachStubHasTool(req, "plan") {
+		m.sawPlanTool.Store(true)
+	}
+	return func(yield func(*model.LLMResponse, error) bool) {
+		yield(&model.LLMResponse{
+			Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: "ok"}}},
+			FinishReason: genai.FinishReasonStop, TurnComplete: true,
+		}, nil)
+	}
+}
+
+// TestSDKExtensionDispatch_BoundWorkflowSkipsPlannerLLM is test case 4
+// (workflow binding): a dispatch naming a shaped catalog entry
+// runs the bound node straight through the graph executor - the
+// orchestrator's own LLM (the planner call) is never invoked - and the
+// persisted plan carries the node's task with {{ask}} substituted.
+func TestSDKExtensionDispatch_BoundWorkflowSkipsPlannerLLM(t *testing.T) {
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	artifactSvc, err := st.RowArtifactService()
+	if err != nil {
+		t.Fatalf("RowArtifactService: %v", err)
+	}
+	st.SetArtifactService(artifactSvc)
+	artifacts := store.NewTurnAwareService(artifactSvc)
+
+	workerStub := &extAttachStub{}
+	worker, err := llmagent.New(llmagent.Config{
+		Name: "worker", Model: workerStub, Description: "does work", Instruction: "ROLE:worker Do the task.",
+	})
+	if err != nil {
+		t.Fatalf("worker agent: %v", err)
+	}
+	ex := dag.NewExecutor(st.Sessions, map[string]adkagent.Agent{"worker": worker}, map[string]model.LLM{"worker": workerStub},
+		vetting.NewJudgeFactory(workerStub, nil, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.5, JudgeRounds: 1} }, nil)
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "worker", Description: "does work"}}, nil, nil)
+	orchModel := &planToolProbeModel{}
+	orch := orchestrator.New(st.Sessions, orchModel, "You are the orchestrator.", planner, ex, nil, nil, nil)
+
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+	hub := stream.NewHub()
+	var extHolder atomic.Pointer[extsdk.Extension]
+
+	shapes := []workflowcatalog.Shape{{
+		Name: "document-ingest",
+		Nodes: []config.WorkflowNode{
+			{ID: "n1", Agent: "worker", Task: "process: {{ask}}"},
+		},
+	}}
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, shapes, artifacts)
+
+	const localID = "bound-fixture"
+	const chatID = "ext:noop:" + localID
+	req := extsdk.DispatchRequest{
+		Chat: extsdk.ChatRef{LocalID: localID},
+		Ask:  extsdk.Ask{Message: "scan-0042.pdf"},
+		Run:  extsdk.RunConfig{Workflow: "document-ingest"},
+	}
+	if err := dispatch(context.Background(), req); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	waitRunSettled(t, st, chatID)
+
+	if orchModel.SawPlanTool() {
+		t.Error("orchestrator's own LLM saw the plan tool; a bound workflow dispatch must skip the planner LLM call entirely")
+	}
+	workerStub.mu.Lock()
+	workerCalls := workerStub.workerCalls
+	workerStub.mu.Unlock()
+	if workerCalls == 0 {
+		t.Error("the bound node's own worker agent was never invoked")
+	}
+
+	ctx := context.Background()
+	dp, err := st.GetLatestDagPlan(ctx, chatID)
+	if err != nil || dp == nil {
+		t.Fatalf("GetLatestDagPlan: %v, %v", dp, err)
+	}
+	if !strings.Contains(dp.PlanJSON, "process: scan-0042.pdf") {
+		t.Errorf("persisted plan JSON = %s, want the bound node's task with {{ask}} substituted", dp.PlanJSON)
+	}
+}
+
+// hintProbeModel answers differently depending on whether the orchestrator's
+// LLM turn actually saw the workflow-hint text composeDispatchMessage folds
+// in - proof the unshaped path still reaches the planner, hint and all.
+type hintProbeModel struct{ hint string }
+
+func (hintProbeModel) Name() string { return "hint-probe-stub" }
+
+func (m hintProbeModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		found := false
+		for _, c := range req.Contents {
+			if c == nil {
+				continue
+			}
+			for _, p := range c.Parts {
+				if p != nil && strings.Contains(p.Text, m.hint) {
+					found = true
+				}
+			}
+		}
+		answer := "no hint"
+		if found {
+			answer = "hint received"
+		}
+		yield(&model.LLMResponse{
+			Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: answer}}},
+			FinishReason: genai.FinishReasonStop, TurnComplete: true,
+		}, nil)
+	}
+}
+
+// TestSDKExtensionDispatch_UnshapedWorkflowFoldsHintIntoMessage is test case
+// 2 (workflow binding): a dispatch naming a catalog entry with
+// no bound Nodes still runs the orchestrator's own LLM turn, with the
+// workflow named as a hint in the composed message - unchanged behavior for
+// every shape that predates binding.
+func TestSDKExtensionDispatch_UnshapedWorkflowFoldsHintIntoMessage(t *testing.T) {
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	artifactSvc, err := st.RowArtifactService()
+	if err != nil {
+		t.Fatalf("RowArtifactService: %v", err)
+	}
+	st.SetArtifactService(artifactSvc)
+	artifacts := store.NewTurnAwareService(artifactSvc)
+
+	ex := dag.NewExecutor(st.Sessions, map[string]adkagent.Agent{}, map[string]model.LLM{}, nil,
+		func(string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
+	planner := dag.NewPlanner(nil, nil, nil)
+	orch := orchestrator.New(st.Sessions, hintProbeModel{hint: `Use the "unshaped-hint" workflow shape`}, "You are a test duck.", planner, ex, nil, nil, nil)
+
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+	hub := stream.NewHub()
+	var extHolder atomic.Pointer[extsdk.Extension]
+
+	// No Nodes: this shape stays a planner hint, never a binding.
+	shapes := []workflowcatalog.Shape{{Name: "unshaped-hint", Trigger: "t", DAGShape: "s"}}
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, shapes, artifacts)
+
+	const localID = "unshaped-fixture"
+	const chatID = "ext:noop:" + localID
+	req := extsdk.DispatchRequest{
+		Chat: extsdk.ChatRef{LocalID: localID},
+		Ask:  extsdk.Ask{Message: "hello"},
+		Run:  extsdk.RunConfig{Workflow: "unshaped-hint"},
+	}
+	if err := dispatch(context.Background(), req); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	waitRunSettled(t, st, chatID)
+
+	answer := orch.LatestAnswer(context.Background(), extRunUserID, chatID)
+	if answer != "hint received" {
+		t.Errorf("answer = %q, want %q (the orchestrator LLM must have seen the workflow hint)", answer, "hint received")
 	}
 }
