@@ -317,6 +317,13 @@ export type HealthCheckResponse = HealthCheckResponses[keyof HealthCheckResponse
 
 export type ListChatsData = {
     body?: never;
+    headers?: {
+        /**
+         * An ETag from a previous response to this exact page (same limit, page_token, and status selection). A match short-circuits to a bodyless 304.
+         *
+         */
+        'If-None-Match'?: string;
+    };
     path?: never;
     query?: {
         /**
@@ -343,6 +350,15 @@ export type ListChatsData = {
     };
     url: '/api/v1/chats';
 };
+
+export type ListChatsErrors = {
+    /**
+     * An explicitly empty status selection, or an invalid page_token
+     */
+    400: ErrorResponse;
+};
+
+export type ListChatsError = ListChatsErrors[keyof ListChatsErrors];
 
 export type ListChatsResponses = {
     /**

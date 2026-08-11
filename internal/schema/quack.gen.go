@@ -652,6 +652,9 @@ type ListChatsParams struct {
 
 	// ShowArchived Deprecated, use `status`. Ignored when `status` is given. Otherwise: false (default) behaves as `status=active`, true as `status=active&status=archived`.
 	ShowArchived *bool `form:"show_archived,omitempty" json:"show_archived,omitempty"`
+
+	// IfNoneMatch An ETag from a previous response to this exact page (same limit, page_token, and status selection). A match short-circuits to a bodyless 304.
+	IfNoneMatch *string `json:"If-None-Match,omitempty"`
 }
 
 // ListChatsParamsStatus defines parameters for ListChats.
@@ -1149,6 +1152,27 @@ func (siw *ServerInterfaceWrapper) ListChats(w http.ResponseWriter, r *http.Requ
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "show_archived", Err: err})
 		}
 		return
+	}
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "If-None-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-None-Match")]; found {
+		var IfNoneMatch string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-None-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-None-Match", valueList[0], &IfNoneMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-None-Match", Err: err})
+			return
+		}
+
+		params.IfNoneMatch = &IfNoneMatch
+
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

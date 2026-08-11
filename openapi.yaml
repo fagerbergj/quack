@@ -28,6 +28,14 @@ paths:
     get:
       operationId: listChats
       summary: List chats
+      description: >
+        A conditional GET: the 200 body's content hash is returned as an
+        `ETag` (weak, `W/"..."`, varying with page content, next_page_token,
+        and effectively limit/page_token/status since those change the
+        content). Send it back as `If-None-Match` on a later poll of the
+        exact same page to get a bodyless 304 when nothing changed - there is
+        no separate cache TTL, so every poll still reaches the server and
+        revalidates against the live rows.
       parameters:
         - name: limit
           in: query
@@ -75,13 +83,35 @@ paths:
             Deprecated, use `status`. Ignored when `status` is given.
             Otherwise: false (default) behaves as `status=active`, true as
             `status=active&status=archived`.
+        - name: If-None-Match
+          in: header
+          required: false
+          description: >
+            An ETag from a previous response to this exact page (same limit,
+            page_token, and status selection). A match short-circuits to a
+            bodyless 304.
+          schema:
+            type: string
       responses:
         "200":
           description: The chats
+          headers:
+            ETag:
+              description: Weak validator hashed from the response body; echo it back as If-None-Match to revalidate cheaply.
+              schema:
+                type: string
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ChatList"
+        "304":
+          description: Not modified - If-None-Match matched the current ETag for this exact page
+        "400":
+          description: An explicitly empty status selection, or an invalid page_token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     post:
       operationId: createChat
       summary: Create a chat
