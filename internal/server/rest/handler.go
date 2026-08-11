@@ -17,9 +17,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
@@ -53,21 +55,22 @@ type Handler struct {
 	store        *store.Store
 	orch         *orchestrator.Orchestrator
 	titler       model.LLM
-	jail         *workspace.Jail    // per-chat workspace tree cleanup on delete; nil ⇒ no workspace configured
-	hub          *stream.Hub        // fans a chat's run to extra subscribers (other devices); also the cancel-run registry (#468)
-	eventLog     *runlog.EventLog   // durably persists the run stream, backing replay across restarts
-	ledgerStore  ledger.LedgerStore // replay ledger backend; nil ⇒ recording disabled, GetChatRecording 404s
-	quackVersion string             // build stamp, stamped into a recording bundle's manifest.json
-	taskMem      *memory.Store      // repo:/role: buckets; nil ⇒ task memory disabled
-	userMem      *memory.Store      // user: buckets; nil ⇒ user memory disabled
+	jail         *workspace.Jail         // per-chat workspace tree cleanup on delete; nil ⇒ no workspace configured
+	hub          *stream.Hub             // fans a chat's run to extra subscribers (other devices); also the cancel-run registry (#468)
+	eventLog     *runlog.EventLog        // durably persists the run stream, backing replay across restarts
+	ledgerStore  ledger.LedgerStore      // replay ledger backend; nil ⇒ recording disabled, GetChatRecording 404s
+	quackVersion string                  // build stamp, stamped into a recording bundle's manifest.json
+	taskMem      *memory.Store           // repo:/role: buckets; nil ⇒ task memory disabled
+	userMem      *memory.Store           // user: buckets; nil ⇒ user memory disabled
+	artifacts    *store.TurnAwareService // durable attachment bytes; nil ⇒ multipart attachments are dropped (see saveAttachment)
 }
 
-// NewHandler builds a REST handler. jail/hub/ledgerStore/taskMem/userMem may be nil; hub defaults to a private hub.
-func NewHandler(s *store.Store, o *orchestrator.Orchestrator, titler model.LLM, jail *workspace.Jail, hub *stream.Hub, ledgerStore ledger.LedgerStore, quackVersion string, taskMem, userMem *memory.Store) *Handler {
+// NewHandler builds a REST handler. jail/hub/ledgerStore/taskMem/userMem/artifacts may be nil; hub defaults to a private hub.
+func NewHandler(s *store.Store, o *orchestrator.Orchestrator, titler model.LLM, jail *workspace.Jail, hub *stream.Hub, ledgerStore ledger.LedgerStore, quackVersion string, taskMem, userMem *memory.Store, artifacts *store.TurnAwareService) *Handler {
 	if hub == nil {
 		hub = stream.NewHub()
 	}
-	return &Handler{store: s, orch: o, titler: titler, jail: jail, hub: hub, eventLog: runlog.NewEventLog(s), ledgerStore: ledgerStore, quackVersion: quackVersion, taskMem: taskMem, userMem: userMem}
+	return &Handler{store: s, orch: o, titler: titler, jail: jail, hub: hub, eventLog: runlog.NewEventLog(s), ledgerStore: ledgerStore, quackVersion: quackVersion, taskMem: taskMem, userMem: userMem, artifacts: artifacts}
 }
 
 func (h *Handler) generateTitle(ctx context.Context, chatID, firstMessage string) string {
@@ -391,6 +394,10 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 	var body schema.SendMessageBody
 	var attachments []*genai.Part
 
+	// Generate a stable turn ID before the run so the DAG plan can reference it, the cancel
+	// endpoint can name it, and (below) an uploaded attachment can be stamped with it.
+	turnID := uuid.NewString()
+
 	ct := r.Header.Get("Content-Type")
 	if strings.HasPrefix(ct, "multipart/form-data") {
 		if err := r.ParseMultipartForm(32 << 20); err != nil {
@@ -398,6 +405,8 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 			return
 		}
 		body.Content = r.FormValue("content")
+		userID := h.sessionUser(r.Context(), chatID)
+		i := 0
 		for _, fhs := range r.MultipartForm.File {
 			for _, fh := range fhs {
 				f, err := fh.Open()
@@ -409,13 +418,21 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 				if err != nil {
 					continue
 				}
-				mime := fh.Header.Get("Content-Type")
-				if mime == "" {
-					mime = "application/octet-stream"
+				mimeType := fh.Header.Get("Content-Type")
+				if mimeType == "" {
+					mimeType = "application/octet-stream"
 				}
-				attachments = append(attachments, &genai.Part{
-					InlineData: &genai.Blob{Data: data, MIMEType: mime},
-				})
+				name := fh.Filename
+				if name == "" {
+					name = fmt.Sprintf("attachment-%d", i)
+				}
+				i++
+				ref, err := h.saveAttachment(r.Context(), userID, chatID, turnID, name, data, mimeType)
+				if err != nil {
+					slog.Warn("attachment save failed; dropping this file", "component", "rest", "chat", chatID, "name", name, "err", err)
+					continue
+				}
+				attachments = append(attachments, ref)
 			}
 		}
 	} else {
@@ -434,8 +451,6 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		return
 	}
 
-	// Generate a stable turn ID before the run so the DAG plan can reference it, and the cancel endpoint can name it.
-	turnID := uuid.NewString()
 	go func() { _ = h.store.SaveTurn(context.Background(), chatID, turnID) }()
 
 	// Subscribe BEFORE the run starts publishing so nothing is missed.
@@ -447,6 +462,23 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 
 	// From here this handler is only a viewer - it cannot stall or kill the run.
 	streamHub(r.Context(), sse, replay, live, 0)
+}
+
+// saveAttachment durably stores one uploaded file's bytes and returns a
+// lightweight reference part (internal/artifactref) - never the bytes - to
+// carry through plans and session events instead.
+func (h *Handler) saveAttachment(ctx context.Context, userID, chatID, turnID, name string, data []byte, mimeType string) (*genai.Part, error) {
+	if h.artifacts == nil {
+		return nil, fmt.Errorf("no artifact service configured")
+	}
+	resp, err := h.artifacts.SaveForTurn(ctx, &artifact.SaveRequest{
+		AppName: artifactref.AppName, UserID: userID, SessionID: chatID, FileName: name,
+		Part: &genai.Part{InlineData: &genai.Blob{Data: data, MIMEType: mimeType}},
+	}, turnID)
+	if err != nil {
+		return nil, err
+	}
+	return artifactref.Encode(userID, chatID, name, resp.Version, mimeType), nil
 }
 
 // Launches a chat turn as server-side work on a server-lifetime context (not the HTTP request's). Outlives its initiating client.

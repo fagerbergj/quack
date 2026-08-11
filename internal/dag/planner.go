@@ -201,15 +201,21 @@ func (p *Planner) checkReviewFanout(plan *Plan, message string) error {
 		totalChurn(message), reviewChurnThreshold, reviewerAgent, explorerAgent, reviewerAgent, reviewerAgent)
 }
 
-// AttachmentDesc: description of attachment MIME types for the text-only orchestrator.
+// AttachmentDesc: description of attachment MIME types for the text-only
+// orchestrator. Attachments are artifactref reference parts (FileData) by
+// the time they reach here, not InlineData - both are checked so this stays
+// correct if a caller ever hands it raw InlineData directly.
 func AttachmentDesc(parts []*genai.Part) string {
 	if len(parts) == 0 {
 		return ""
 	}
 	var mimes []string
 	for _, p := range parts {
-		if p.InlineData != nil && p.InlineData.MIMEType != "" {
+		switch {
+		case p.InlineData != nil && p.InlineData.MIMEType != "":
 			mimes = append(mimes, p.InlineData.MIMEType)
+		case p.FileData != nil && p.FileData.MIMEType != "":
+			mimes = append(mimes, p.FileData.MIMEType)
 		}
 	}
 	if len(mimes) == 0 {

@@ -129,17 +129,23 @@ type attachmentMeta struct {
 	Bytes    int    `json:"bytes,omitempty"`
 }
 
-// summarizeAttachments: strips a plan's attachments down to attachmentMeta, index-aligned.
+// summarizeAttachments: strips a plan's attachments down to attachmentMeta,
+// index-aligned. Attachments are artifactref reference parts (FileData) in
+// practice - Bytes is 0 for those (size lives in the artifact service, not here).
 func summarizeAttachments(parts []*genai.Part) []attachmentMeta {
 	if len(parts) == 0 {
 		return nil
 	}
 	out := make([]attachmentMeta, len(parts))
 	for i, part := range parts {
-		if part == nil || part.InlineData == nil {
+		switch {
+		case part == nil:
 			continue
+		case part.InlineData != nil:
+			out[i] = attachmentMeta{MIMEType: part.InlineData.MIMEType, Bytes: len(part.InlineData.Data)}
+		case part.FileData != nil:
+			out[i] = attachmentMeta{MIMEType: part.FileData.MIMEType}
 		}
-		out[i] = attachmentMeta{MIMEType: part.InlineData.MIMEType, Bytes: len(part.InlineData.Data)}
 	}
 	return out
 }

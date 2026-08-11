@@ -17,6 +17,7 @@ import (
 
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
+	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/session/database"
 	"gorm.io/driver/postgres"
@@ -285,10 +286,17 @@ type Store struct {
 	instanceID string
 	// Counts SELECT queries issued on db - test instrumentation for N+1 regressions (#738).
 	queryCount atomic.Int64
+	// artifacts: nil unless SetArtifactService was called - DeleteChat cascades into it when set.
+	artifacts artifact.Service
 }
 
 // QueryCount returns the number of SELECT queries issued so far. Test-only instrumentation.
 func (s *Store) QueryCount() int64 { return s.queryCount.Load() }
+
+// SetArtifactService wires the artifact service DeleteChat cascades chat
+// deletion into. Not part of New - the artifact service is built separately
+// (see internal/serve) and may be a different store than this one's.
+func (s *Store) SetArtifactService(svc artifact.Service) { s.artifacts = svc }
 
 // New opens the persistence store, runs migrations, and returns it.
 func New(kind, url string) (*Store, error) {
@@ -296,15 +304,7 @@ func New(kind, url string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Route GORM's slow-query warnings through slog.
-	gormCfg := &gorm.Config{Logger: logger.New(
-		slog.NewLogLogger(slog.Default().Handler(), slog.LevelWarn),
-		logger.Config{
-			SlowThreshold:             200 * time.Millisecond,
-			LogLevel:                  logger.Warn,
-			IgnoreRecordNotFoundError: true,
-		},
-	)}
+	gormCfg := &gorm.Config{Logger: slogGormLogger()}
 	db, err := gorm.Open(dialector(), gormCfg)
 	if err != nil {
 		return nil, err
@@ -336,6 +336,20 @@ func (s *Store) InstanceID() string { return s.instanceID }
 // SetInstanceID overrides the random default. Call once with a persisted identity
 // (LoadOrCreateInstanceID) before any node writes; ephemeral CLIs keep the default.
 func (s *Store) SetInstanceID(id string) { s.instanceID = id }
+
+// slogGormLogger routes GORM's slow-query warnings through slog. Shared by
+// New and the standalone artifact-service opener (artifact.go), which don't
+// otherwise share a construction path.
+func slogGormLogger() logger.Interface {
+	return logger.New(
+		slog.NewLogLogger(slog.Default().Handler(), slog.LevelWarn),
+		logger.Config{
+			SlowThreshold:             200 * time.Millisecond,
+			LogLevel:                  logger.Warn,
+			IgnoreRecordNotFoundError: true,
+		},
+	)
+}
 
 // dialectorFor returns a factory that yields a GORM dialector for kind+url.
 // SQLite shares one *sql.DB with max 1 conn to prevent SQLITE_BUSY.
@@ -574,7 +588,34 @@ func (s *Store) DeleteChat(ctx context.Context, id string) error {
 		slog.Warn("chat deleted but its ADK session could not be reaped",
 			"component", "store", "chat", id, "err", err)
 	}
+	s.deleteChatArtifacts(ctx, id, sessionUser)
 	return nil
+}
+
+// deleteChatArtifacts best-effort cascades chat deletion into the artifact
+// service (attachment bytes for this chat's session) - same failure posture
+// as the ADK session reap above: log and move on, never block the delete.
+func (s *Store) deleteChatArtifacts(ctx context.Context, chatID, sessionUser string) {
+	if s.artifacts == nil {
+		return
+	}
+	lr, err := s.artifacts.List(ctx, &artifact.ListRequest{AppName: chatAppName, UserID: sessionUser, SessionID: chatID})
+	if err != nil {
+		slog.Warn("chat deleted but its artifacts could not be listed for cleanup",
+			"component", "store", "chat", chatID, "err", err)
+		return
+	}
+	for _, name := range lr.FileNames {
+		// List also surfaces "user:"-prefixed names (visible cross-session by
+		// design) - this chat doesn't own those, so it must not delete them.
+		if strings.HasPrefix(name, "user:") {
+			continue
+		}
+		if err := s.artifacts.Delete(ctx, &artifact.DeleteRequest{AppName: chatAppName, UserID: sessionUser, SessionID: chatID, FileName: name}); err != nil {
+			slog.Warn("chat deleted but one of its artifacts could not be reaped",
+				"component", "store", "chat", chatID, "name", name, "err", err)
+		}
+	}
 }
 
 // SetChatGitHub upserts the originating GitHub repo/URL/state. Creates the row if missing

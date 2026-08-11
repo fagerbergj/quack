@@ -135,6 +135,19 @@ func ledgerStoreFromConfig(cfg *config.Config) ledger.LedgerStore {
 	return store
 }
 
+// buildArtifactService resolves cfg.Artifacts: in-memory by default, or the
+// durable Postgres large-object backend for a named store.
+func buildArtifactService(cfg *config.Config) (artifact.Service, error) {
+	if cfg.Artifacts.Store == "" {
+		return artifact.InMemoryService(), nil
+	}
+	as, ok := cfg.Store(cfg.Artifacts.Store)
+	if !ok {
+		return nil, fmt.Errorf("artifacts store %q not found in stores registry", cfg.Artifacts.Store)
+	}
+	return store.NewArtifactService(as.URL)
+}
+
 //go:embed all:web/dist
 var webDist embed.FS
 
@@ -302,8 +315,15 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		}
 	}
 
+	artifactSvc, err := buildArtifactService(cfg)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("artifact service init failed: %w", err)
+	}
+	artifacts := store.NewTurnAwareService(artifactSvc)
+	st.SetArtifactService(artifacts)
+
 	prov, _ := cfg.Provider(cfg.Orchestrator.Provider)
-	llm, err := inference.NewModel(prov, cfg.Orchestrator.Model)
+	llm, err := inference.NewModel(prov, cfg.Orchestrator.Model, artifacts)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("inference model init failed: %w", err)
 	}
@@ -334,7 +354,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	// extension's Dispatch may not fire until long after construction, but
 	// its Tools() are needed now to fold into extTools before buildAgents.
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
-	sdkExts, err := buildSDKExtensions(cfg, st, runHub, &orchRef)
+	sdkExts, err := buildSDKExtensions(cfg, st, runHub, &orchRef, artifacts)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -370,7 +390,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		if !ok {
 			return nil, fmt.Errorf("embedder provider %q not found", rm.Embedder.Provider)
 		}
-		embedder, err := inference.NewEmbedder(eprov, rm.Embedder.Model)
+		embedder, err := inference.NewEmbedder(eprov, rm.Embedder.Model, artifacts)
 		if err != nil {
 			return nil, fmt.Errorf("embedder: %w", err)
 		}
@@ -378,7 +398,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		if !ok {
 			return nil, fmt.Errorf("consolidation provider %q not found", rm.Consolidation.Provider)
 		}
-		consolidator, err := inference.NewModel(cprov, rm.Consolidation.Model)
+		consolidator, err := inference.NewModel(cprov, rm.Consolidation.Model, artifacts)
 		if err != nil {
 			return nil, fmt.Errorf("consolidation model: %w", err)
 		}
@@ -408,7 +428,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	var advisorAgent adkagent.Agent
 	if cfg.Gates.JudgeEnabled() {
 		if aprov, ok := cfg.Provider(cfg.Gates.Judge.Provider); ok {
-			if am, merr := inference.NewModel(aprov, cfg.Gates.Judge.Model); merr != nil {
+			if am, merr := inference.NewModel(aprov, cfg.Gates.Judge.Model, artifacts); merr != nil {
 				slog.Warn("advisor model build failed; ask_advisor disabled", "component", "startup", "err", merr)
 			} else if ab, berr := agent.LoadBundle("agents/advisor"); berr != nil {
 				slog.Warn("advisor bundle load failed; ask_advisor disabled", "component", "startup", "err", berr)
@@ -434,7 +454,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		}
 	}
 	var setupFn dag.SetupFunc
-	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(cfg, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, deliver, nodeCancelled, &setupFn)
+	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(cfg, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, deliver, nodeCancelled, &setupFn, artifacts)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("agent build failed: %w", err)
 	}
@@ -489,17 +509,12 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		return nil, nil, "", fmt.Errorf("orchestrator skills toolset init failed: %w", err)
 	}
 
-	var artifactSvc artifact.Service
-	if cfg.Artifacts.Enabled {
-		artifactSvc = artifact.InMemoryService()
-	}
-
 	planner := dag.NewPlanner(agentInfos, cfg.Workspace.CheckCommands, planJudge)
 	cfgFor := func(name string) vetting.Config { return gateCfgs[name] }
 	executor := dag.NewExecutor(st.Sessions, clientMap, modelMap, judgeFactory, cfgFor, mediaAgents)
 	executor.SetMaxActive(cfg.Dag.MaxActiveNodes)
 	executor.SetSetup(setupFn)
-	executor.SetArtifacts(artifactSvc)
+	executor.SetArtifacts(artifacts)
 	executorRef.Store(executor)
 	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
 	orch.SetMaxActiveRuns(cfg.Dag.MaxActiveRuns)
@@ -512,7 +527,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	}
 
 	if userStore != nil && cfg.Orchestrator.UserMemoryHook.Enabled {
-		if memAgent, err := buildUserMemoryHookAgent(cfg.Orchestrator.UserMemoryHook, cfg); err != nil {
+		if memAgent, err := buildUserMemoryHookAgent(cfg.Orchestrator.UserMemoryHook, cfg, artifacts); err != nil {
 			slog.Warn("user memory hook build failed; hook disabled", "component", "startup", "err", err)
 		} else {
 			orch.SetUserMemoryHook(memAgent)
@@ -537,7 +552,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 
 	var adkDebugHandler http.Handler
 	if cfg.Observability.ADKDebug {
-		if mount, derr := adkdebug.New(st.Sessions, clientMap, artifactSvc); derr != nil {
+		if mount, derr := adkdebug.New(st.Sessions, clientMap, artifacts); derr != nil {
 			slog.Warn("adk debug mount failed; disabled", "component", "startup", "err", derr)
 		} else {
 			if otelProviders.TracerProvider != nil {
@@ -552,7 +567,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	}
 
 	handler = server.New(server.Options{
-		REST:          rest.NewHandler(st, orch, llm, jail, runHub, ledgerStore, Version, taskStore, userStore),
+		REST:          rest.NewHandler(st, orch, llm, jail, runHub, ledgerStore, Version, taskStore, userStore, artifacts),
 		MCP:           mcpserver.Handler(orch),
 		SPA:           spa,
 		Extensions:    extensions,
@@ -600,12 +615,12 @@ func setupLoggingTo(w io.Writer, fallback slog.Level) {
 }
 
 // buildUserMemoryHookAgent builds the memory-extraction agent from the memory-agent bundle.
-func buildUserMemoryHookAgent(h config.UserMemoryHookConfig, cfg *config.Config) (adkagent.Agent, error) {
+func buildUserMemoryHookAgent(h config.UserMemoryHookConfig, cfg *config.Config, artifacts artifact.Service) (adkagent.Agent, error) {
 	prov, ok := cfg.Provider(h.Provider)
 	if !ok {
 		return nil, fmt.Errorf("provider %q not found", h.Provider)
 	}
-	m, err := inference.NewModel(prov, h.Model)
+	m, err := inference.NewModel(prov, h.Model, artifacts)
 	if err != nil {
 		return nil, fmt.Errorf("model: %w", err)
 	}
@@ -626,7 +641,7 @@ func buildUserMemoryHookAgent(h config.UserMemoryHookConfig, cfg *config.Config)
 }
 
 // buildAgents loads each agent bundle, builds its model and tools, exposes over A2A, returns client map.
-func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []tool.Tool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, setupOut *dag.SetupFunc) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, model.LLM, error) {
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []tool.Tool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, setupOut *dag.SetupFunc, artifacts artifact.Service) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, model.LLM, error) {
 	nodeServers := newPerNodeServers()
 
 	nodeScope := func(ctx context.Context) memory.Scope {
@@ -702,7 +717,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			if !ok {
 				return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("gates.judge: provider %q not found", cfg.Gates.Judge.Provider)
 			}
-			judge, err := inference.NewModel(jprov, cfg.Gates.Judge.Model)
+			judge, err := inference.NewModel(jprov, cfg.Gates.Judge.Model, artifacts)
 			if err != nil {
 				return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("gates.judge: model: %w", err)
 			}
@@ -753,7 +768,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("compaction: provider %q not found", compCfg.Provider)
 		}
 		var err error
-		if fallbackSummarizer, err = inference.NewModel(cprov, compCfg.Model); err != nil {
+		if fallbackSummarizer, err = inference.NewModel(cprov, compCfg.Model, artifacts); err != nil {
 			return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("compaction: model: %w", err)
 		}
 		slog.Info("context compaction enabled", "component", "startup", "fallback_summariser", compCfg.Model)
@@ -794,7 +809,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		if !ok {
 			return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "provider %q not found", ac.Provider)
 		}
-		m, err := inference.NewModel(prov, ac.Model)
+		m, err := inference.NewModel(prov, ac.Model, artifacts)
 		if err != nil {
 			return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "model: %v", err)
 		}
@@ -936,7 +951,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		}
 
 		buildWorker := func() (adkagent.Agent, model.LLM, []tool.Tool, error) {
-			wm, err := inference.NewModel(prov, ac.Model)
+			wm, err := inference.NewModel(prov, ac.Model, artifacts)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("model: %w", err)
 			}

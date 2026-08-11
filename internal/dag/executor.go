@@ -29,7 +29,7 @@ type Executor struct {
 	controls    *runControls
 	maxActive   int
 	setupFn     SetupFunc
-	artifacts   artifact.Service // nil unless config artifacts.enabled
+	artifacts   artifact.Service // ADK's own artifact tools/debug console; see SetArtifacts
 
 	gateResults sync.Map
 }
@@ -42,8 +42,8 @@ func (e *Executor) SetMaxActive(n int) {
 }
 
 // SetArtifacts wires an artifact.Service into the plan graph's runner,
-// reachable from every node via adkagent.Context.Artifacts(). Does NOT
-// reroute node attachments off inline session bytes - see workerInput.
+// reachable via adkagent.Context.Artifacts(). Node attachments are rerouted
+// separately, at the REST/plan entry boundary (internal/artifactref).
 func (e *Executor) SetArtifacts(svc artifact.Service) { e.artifacts = svc }
 
 // ResetNodeCancels: clears user-cancelled node flags for the next turn.

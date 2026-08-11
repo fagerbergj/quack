@@ -788,6 +788,9 @@ func MemoryScope(ctx adkagent.Context, cfg Config, author string) memory.Scope {
 }
 
 // runWorkerNode: runs worker as sub-branched child, strips thinking content.
+// attachments are artifactref reference parts by the time they arrive here
+// (rerouted at the REST/plan entry boundary) - real bytes are swapped back
+// in only at the model boundary (internal/inference's hydratingModel).
 func workerInput(prompt string, attachments []*genai.Part) any {
 	if len(attachments) == 0 {
 		return prompt

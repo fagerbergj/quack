@@ -1,7 +1,9 @@
 package serve
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"iter"
@@ -10,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,7 +21,9 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 	"gopkg.in/yaml.v3"
 
@@ -26,6 +31,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/server"
 	"github.com/fagerbergj/quack/internal/server/rest"
@@ -55,17 +61,24 @@ func (directAnswerModel) GenerateContent(_ context.Context, _ *model.LLMRequest,
 // newExtTestStack builds a real (sqlite) store + a stub-model orchestrator -
 // enough to drive a full dispatch without a live LLM - and stores it into
 // orchRef the same way buildFromConfig does once the orchestrator exists.
-func newExtTestStack(t *testing.T) (*store.Store, *orchestrator.Orchestrator, *stream.Hub) {
+// The returned TurnAwareService is a row-backed artifact service sharing
+// the same store, exactly like buildFromConfig wires attachments in production.
+func newExtTestStack(t *testing.T) (*store.Store, *orchestrator.Orchestrator, *stream.Hub, *store.TurnAwareService) {
 	t.Helper()
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
 		t.Fatalf("store.New: %v", err)
 	}
+	artifactSvc, err := st.RowArtifactService()
+	if err != nil {
+		t.Fatalf("RowArtifactService: %v", err)
+	}
+	st.SetArtifactService(artifactSvc)
 	ex := dag.NewExecutor(st.Sessions, map[string]adkagent.Agent{}, map[string]model.LLM{}, nil,
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
 	planner := dag.NewPlanner(nil, nil, nil)
 	orch := orchestrator.New(st.Sessions, directAnswerModel{}, "You are a test duck.", planner, ex, nil, nil, nil)
-	return st, orch, stream.NewHub()
+	return st, orch, stream.NewHub(), store.NewTurnAwareService(artifactSvc)
 }
 
 // noopModulesConfig parses an extensions: block through the REAL inline-map
@@ -112,12 +125,12 @@ func waitUntil(t *testing.T, timeout time.Duration, cond func() bool) {
 // orchestrator, and asserts the run lands as a normal chat+turn and that
 // /status only advances once RunEnded actually fires.
 func TestSDKExtensionDispatchLoop(t *testing.T) {
-	st, orch, hub := newExtTestStack(t)
+	st, orch, hub, artifacts := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 
 	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  greeting: e2e\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -197,12 +210,12 @@ func TestSDKExtensionDispatchLoop(t *testing.T) {
 // (c) An unconfigured noop registers no routes at all - 404, not a
 // dormant-but-mounted handler.
 func TestSDKExtensionUnconfiguredExtensionRegistersNoRoutes(t *testing.T) {
-	st, orch, hub := newExtTestStack(t)
+	st, orch, hub, artifacts := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 
 	cfg := &config.Config{Workspace: config.WorkspaceConfig{Root: t.TempDir()}}
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -226,12 +239,12 @@ func TestSDKExtensionUnconfiguredExtensionRegistersNoRoutes(t *testing.T) {
 
 // (d) extensions: naming an extension that isn't compiled in fails startup loudly.
 func TestSDKExtensionUnknownNameFailsStartup(t *testing.T) {
-	st, orch, hub := newExtTestStack(t)
+	st, orch, hub, artifacts := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 
 	cfg := noopModulesConfig(t, t.TempDir(), "bogus-extension:\n  key: value\n")
-	_, err := buildSDKExtensions(cfg, st, hub, &orchRef)
+	_, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts)
 	if err == nil {
 		t.Fatal("expected an error for an unconfigured/uncompiled extension name")
 	}
@@ -243,12 +256,12 @@ func TestSDKExtensionUnknownNameFailsStartup(t *testing.T) {
 // enabled: false leaves a configured-and-compiled extension dormant, exactly
 // like an absent block - no construction, no routes.
 func TestSDKExtensionDisabledStaysDormant(t *testing.T) {
-	st, orch, hub := newExtTestStack(t)
+	st, orch, hub, artifacts := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 
 	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  enabled: false\n  greeting: e2e\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -273,14 +286,14 @@ func TestSDKExtensionDisabledStaysDormant(t *testing.T) {
 // data_dir overrides Host.DataDir's default; the default (<workspace>/extensions/<name>)
 // must never get created when an override is given.
 func TestSDKExtensionDataDirOverrideUsed(t *testing.T) {
-	st, orch, hub := newExtTestStack(t)
+	st, orch, hub, artifacts := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 
 	workspaceRoot := t.TempDir()
 	customDataDir := filepath.Join(t.TempDir(), "custom-noop-data")
 	cfg := noopModulesConfig(t, workspaceRoot, "noop:\n  data_dir: "+customDataDir+"\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -300,12 +313,12 @@ func TestSDKExtensionDataDirOverrideUsed(t *testing.T) {
 // extension's own yaml.Unmarshal of the same raw bytes - noop only knows
 // "greeting", and yaml tolerates unknown fields by default.
 func TestSDKExtensionReservedKeysToleratedByExtensionConfig(t *testing.T) {
-	st, orch, hub := newExtTestStack(t)
+	st, orch, hub, artifacts := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 
 	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  enabled: true\n  data_dir: \"\"\n  greeting: still works\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -317,7 +330,7 @@ func TestSDKExtensionReservedKeysToleratedByExtensionConfig(t *testing.T) {
 // A registered+configured extension whose name collides with a reserved
 // route fails startup loudly, naming both the extension and the collision.
 func TestSDKExtensionReservedNameCollisionFailsStartup(t *testing.T) {
-	st, orch, hub := newExtTestStack(t)
+	st, orch, hub, artifacts := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 
@@ -327,7 +340,7 @@ func TestSDKExtensionReservedNameCollisionFailsStartup(t *testing.T) {
 	})
 
 	cfg := noopModulesConfig(t, t.TempDir(), "chat:\n  key: value\n")
-	_, err := buildSDKExtensions(cfg, st, hub, &orchRef)
+	_, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts)
 	if err == nil {
 		t.Fatal("expected an error for an extension name colliding with a reserved route")
 	}
@@ -344,12 +357,12 @@ func TestSDKExtensionReservedNameCollisionFailsStartup(t *testing.T) {
 // dispatch adapter (newExtDispatch) since noop's own dispatch policy always
 // mints a fresh id, but quack's LocalID-reuse contract is what's under test.
 func TestSDKExtensionRedispatchSameChatIDAppendsTurn(t *testing.T) {
-	st, orch, hub := newExtTestStack(t)
+	st, orch, hub, artifacts := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 
 	var extHolder atomic.Pointer[extsdk.Extension]
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
 
 	const localID = "redispatch-fixture"
 	const chatID = "ext:noop:" + localID
@@ -393,13 +406,13 @@ func TestSDKExtensionRedispatchSameChatIDAppendsTurn(t *testing.T) {
 // (f) an unknown Workflow name fails the dispatch call itself, before any
 // chat row is created - never a silent hint the planner might ignore.
 func TestSDKExtensionUnknownWorkflowErrorsCreatesNoChat(t *testing.T) {
-	st, orch, hub := newExtTestStack(t)
+	st, orch, hub, artifacts := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 
 	var extHolder atomic.Pointer[extsdk.Extension]
 	workflowNames := map[string]bool{"document-ingest": true}
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, workflowNames)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, workflowNames, artifacts)
 
 	const localID = "unknown-workflow-fixture"
 	const chatID = "ext:noop:" + localID
@@ -434,11 +447,11 @@ func TestSDKExtensionDispatchPreservesTraceContinuity(t *testing.T) {
 	otel.SetTracerProvider(tp)
 	defer otel.SetTracerProvider(prev)
 
-	st, orch, hub := newExtTestStack(t)
+	st, orch, hub, artifacts := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 	var extHolder atomic.Pointer[extsdk.Extension]
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
 
 	ctx, inboundSpan := tp.Tracer("quack-ext-test").Start(context.Background(), "inbound")
 	wantTraceID := inboundSpan.SpanContext().TraceID()
@@ -464,5 +477,207 @@ func TestSDKExtensionDispatchPreservesTraceContinuity(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("no quack.run span exported")
+	}
+}
+
+// extAttachStub plays the orchestrator (routes on the "plan" tool's
+// presence), the judge (submit_verdict), and the "media" worker - recording
+// the bytes/mime the worker actually received off req.Contents. Mirrors
+// rest.attachStub (internal/server/rest/attachments_test.go); duplicated
+// rather than exported since it's package-local test fixture, not API.
+type extAttachStub struct {
+	mu          sync.Mutex
+	workerCalls int
+	seenBytes   []byte
+	seenMime    string
+}
+
+func (*extAttachStub) Name() string { return "extAttachStub" }
+
+func (s *extAttachStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		switch {
+		case extAttachStubHasTool(req, "submit_verdict"):
+			yield(extAttachStubCall("submit_verdict", map[string]any{"score": 0.95, "feedback": ""}), nil)
+			return
+		case !extAttachStubHasTool(req, "plan"): // no plan tool ⇒ the media worker
+			s.mu.Lock()
+			s.workerCalls++
+			for _, c := range req.Contents {
+				if c == nil {
+					continue
+				}
+				for _, p := range c.Parts {
+					if p != nil && p.InlineData != nil {
+						s.seenBytes = append([]byte(nil), p.InlineData.Data...)
+						s.seenMime = p.InlineData.MIMEType
+					}
+				}
+			}
+			s.mu.Unlock()
+			yield(extAttachStubText("the image shows a duck"), nil)
+			return
+		}
+		if id, ok := extAttachStubPlanID(req); ok {
+			yield(extAttachStubCall("execute", map[string]any{"plan_id": id}), nil)
+			return
+		}
+		yield(extAttachStubCall("plan", map[string]any{"nodes": []any{map[string]any{
+			"id": "n1", "agent": "media", "task": "describe the attached image", "depends_on": []any{},
+		}}}), nil)
+	}
+}
+
+func extAttachStubHasTool(req *model.LLMRequest, name string) bool {
+	if req.Config == nil {
+		return false
+	}
+	for _, tl := range req.Config.Tools {
+		if tl == nil {
+			continue
+		}
+		for _, fd := range tl.FunctionDeclarations {
+			if fd != nil && fd.Name == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func extAttachStubPlanID(req *model.LLMRequest) (string, bool) {
+	for _, c := range req.Contents {
+		if c == nil {
+			continue
+		}
+		for _, p := range c.Parts {
+			if p == nil || p.FunctionResponse == nil || p.FunctionResponse.Name != "plan" {
+				continue
+			}
+			if id, ok := p.FunctionResponse.Response["plan_id"].(string); ok && id != "" {
+				return id, true
+			}
+		}
+	}
+	return "", false
+}
+
+func extAttachStubText(s string) *model.LLMResponse {
+	return &model.LLMResponse{
+		Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: s}}},
+		FinishReason: genai.FinishReasonStop, TurnComplete: true,
+	}
+}
+
+func extAttachStubCall(name string, args map[string]any) *model.LLMResponse {
+	return &model.LLMResponse{
+		Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{Name: name, Args: args}}}},
+		FinishReason: genai.FinishReasonStop, TurnComplete: true,
+	}
+}
+
+// newExtAttachmentTestStack is newExtTestStack, but with a one-node "media"
+// DAG behind the orchestrator, so a dispatched attachment has somewhere to
+// hydrate to - newExtTestStack's planner has no agents at all.
+func newExtAttachmentTestStack(t *testing.T) (*store.Store, *orchestrator.Orchestrator, *stream.Hub, *store.TurnAwareService, *extAttachStub) {
+	t.Helper()
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	artifactSvc, err := st.RowArtifactService()
+	if err != nil {
+		t.Fatalf("RowArtifactService: %v", err)
+	}
+	st.SetArtifactService(artifactSvc)
+	artifacts := store.NewTurnAwareService(artifactSvc)
+
+	stub := &extAttachStub{}
+	// Only the media worker's model is wrapped with hydration - mirrors
+	// production (inference.NewModel wraps every real model this way).
+	hydratedStub := inference.HydratingModelForTesting(stub, artifacts)
+	worker, err := llmagent.New(llmagent.Config{
+		Name: "media", Model: hydratedStub, Description: "reads images", Instruction: "ROLE:media Describe the attached image.",
+	})
+	if err != nil {
+		t.Fatalf("worker agent: %v", err)
+	}
+	ex := dag.NewExecutor(st.Sessions, map[string]adkagent.Agent{"media": worker}, map[string]model.LLM{"media": hydratedStub},
+		vetting.NewJudgeFactory(stub, nil, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.5, JudgeRounds: 1} },
+		map[string]bool{"media": true})
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "media", Description: "reads images"}}, nil, nil)
+	orch := orchestrator.New(st.Sessions, stub, "You are the orchestrator.", planner, ex, nil, nil, nil)
+	return st, orch, stream.NewHub(), artifacts, stub
+}
+
+// extFakePNG is not a real PNG - the stub model never decodes it - but is
+// distinctive enough to prove byte-for-byte round-trip and to search the
+// persisted plan/session JSON for.
+var extFakePNG = []byte("\x89PNG-ext-fake-pixel-data-0123456789abcdef")
+
+// TestSDKExtensionDispatch_AttachmentHydratesAndPersistsReferenceOnly is the
+// extension-dispatch mirror of rest.TestAttachmentRoundTrip: an attachment
+// on Ask.Attachments reaches the media worker's model as real bytes, while
+// the persisted DAG plan and ADK session events carry only a
+// quack-artifact:// reference - never the bytes themselves.
+func TestSDKExtensionDispatch_AttachmentHydratesAndPersistsReferenceOnly(t *testing.T) {
+	st, orch, hub, artifacts, stub := newExtAttachmentTestStack(t)
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+	var extHolder atomic.Pointer[extsdk.Extension]
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+
+	const localID = "attachment-fixture"
+	const chatID = "ext:noop:" + localID
+	req := extsdk.DispatchRequest{
+		Chat: extsdk.ChatRef{LocalID: localID},
+		Ask: extsdk.Ask{
+			Message:     "what is in this image?",
+			Attachments: []extsdk.Attachment{{Name: "photo.png", MIME: "image/png", Data: extFakePNG}},
+		},
+	}
+	if err := dispatch(context.Background(), req); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	waitRunSettled(t, st, chatID)
+
+	stub.mu.Lock()
+	gotBytes, gotMime, calls := stub.seenBytes, stub.seenMime, stub.workerCalls
+	stub.mu.Unlock()
+	if calls == 0 {
+		t.Fatal("the media worker was never invoked")
+	}
+	if !bytes.Equal(gotBytes, extFakePNG) {
+		t.Errorf("worker saw bytes %q, want the original attachment %q", gotBytes, extFakePNG)
+	}
+	if gotMime != "image/png" {
+		t.Errorf("worker saw mime %q, want image/png", gotMime)
+	}
+
+	ctx := context.Background()
+	dp, err := st.GetLatestDagPlan(ctx, chatID)
+	if err != nil || dp == nil {
+		t.Fatalf("GetLatestDagPlan: %v", err)
+	}
+	if bytes.Contains([]byte(dp.PlanJSON), extFakePNG) {
+		t.Errorf("persisted DAG plan JSON contains the raw attachment bytes:\n%s", dp.PlanJSON)
+	}
+	if bytes.Contains([]byte(dp.PlanJSON), []byte(base64.StdEncoding.EncodeToString(extFakePNG))) {
+		t.Errorf("persisted DAG plan JSON contains the base64-encoded attachment bytes:\n%s", dp.PlanJSON)
+	}
+
+	resp, err := st.Sessions.Get(ctx, &session.GetRequest{AppName: orchestrator.AppName, UserID: extRunUserID, SessionID: chatID})
+	if err != nil {
+		t.Fatalf("Sessions.Get: %v", err)
+	}
+	for ev := range resp.Session.Events().All() {
+		if ev == nil || ev.Content == nil {
+			continue
+		}
+		for _, p := range ev.Content.Parts {
+			if p != nil && p.InlineData != nil && bytes.Equal(p.InlineData.Data, extFakePNG) {
+				t.Fatalf("a session event (author=%s) carries the raw attachment bytes", ev.Author)
+			}
+		}
 	}
 }

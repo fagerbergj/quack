@@ -76,7 +76,7 @@ func nativeAgentGitHubWriteGrants(t *testing.T, cfg *config.Config, mutating map
 		if !ok {
 			t.Fatalf("agent %q: unknown provider %q", name, ac.Provider)
 		}
-		wm, err := inference.NewModel(prov, ac.Model)
+		wm, err := inference.NewModel(prov, ac.Model, nil)
 		if err != nil {
 			t.Fatalf("agent %q: model: %v", name, err)
 		}
