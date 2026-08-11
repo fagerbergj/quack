@@ -64,10 +64,12 @@ jobs:
       # -test so test-only helpers don't false-positive as unreachable. Package
       # patterns are explicit (not ./...) so a vendored JS package that happens to
       # ship Go source (frontend/node_modules/flatted) never gets pulled in.
+      # Dependency modules are filtered out (pkg/mod) - this gate polices quack's
+      # own code; an extension module's unused helpers are its repo's problem.
       # Print findings before failing - `test -z "$(...)"` swallows them, so a
       # red build says something is unreachable without ever saying what.
       - run: |
-          out=$($(go env GOPATH)/bin/deadcode -test ./cmd/... ./internal/... .)
+          out=$($(go env GOPATH)/bin/deadcode -test ./cmd/... ./internal/... . | grep -v '/pkg/mod/' || true)
           if [ -n "$out" ]; then
             echo "::error::unreachable code found - delete it or wire it up:"
             echo "$out"
