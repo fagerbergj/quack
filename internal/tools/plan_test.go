@@ -28,9 +28,9 @@ func (planToolCtx) ToolConfirmation() *toolconfirmation.ToolConfirmation { retur
 // buildPlan runs the plan tool exactly as the model would - through Run, with
 // JSON-shaped args - and returns the resulting cached plan. Shared by the
 // #661 deterministic-setup tests below.
-func buildPlan(t *testing.T, planner *dag.Planner, cache *PlanCache, existingHeadRef string, githubSetup *dag.Setup, args map[string]any) dag.Plan {
+func buildPlan(t *testing.T, planner *dag.Planner, cache *PlanCache, githubSetup *dag.Setup, args map[string]any) dag.Plan {
 	t.Helper()
-	tl, err := NewPlanTool(planner, cache, nil, nil, "", existingHeadRef, githubSetup, nil, "", nil, false)
+	tl, err := NewPlanTool(planner, cache, nil, nil, "", githubSetup, nil, "", nil, false)
 	if err != nil {
 		t.Fatalf("NewPlanTool: %v", err)
 	}
@@ -64,7 +64,7 @@ func implementNode() []map[string]any {
 func TestPlanToolStampsPlanOnly(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	cache := NewPlanCache()
-	tl, err := NewPlanTool(planner, cache, nil, nil, "", "", nil, nil, "", nil, true)
+	tl, err := NewPlanTool(planner, cache, nil, nil, "", nil, nil, "", nil, true)
 	if err != nil {
 		t.Fatalf("NewPlanTool: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestGitHubSetupOverridesPlannerSetupNoRoundTrip(t *testing.T) {
 		BaseRef:    "main",
 		WorkBranch: "quack/issue-65",
 	}
-	p := buildPlan(t, planner, NewPlanCache(), "", githubSetup, map[string]any{"nodes": implementNode()})
+	p := buildPlan(t, planner, NewPlanCache(), githubSetup, map[string]any{"nodes": implementNode()})
 	if p.Setup == nil {
 		t.Fatal("plan.Setup is nil, want it filled from the trigger")
 	}
@@ -115,9 +115,10 @@ func TestGitHubSetupOverridesPlannerSetupNoRoundTrip(t *testing.T) {
 func TestGitHubSetupWholesaleReplacesPlannerSetup(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	githubSetup := &dag.Setup{
-		Repo:       "https://github.com/fagerbergj/quack.git",
-		BaseRef:    "main",
-		WorkBranch: "quack/issue-97", // default, overridden below by the real PR head
+		Repo:                 "https://github.com/fagerbergj/quack.git",
+		BaseRef:              "main",
+		WorkBranch:           "feat/real-pr-head", // the real PR head, as toDagSetup maps ExistingHeadRef
+		CheckoutExistingHead: true,
 	}
 	args := map[string]any{
 		"nodes": implementNode(),
@@ -126,7 +127,7 @@ func TestGitHubSetupWholesaleReplacesPlannerSetup(t *testing.T) {
 			"work_branch": "planner-invented-branch",
 		},
 	}
-	p := buildPlan(t, planner, NewPlanCache(), "feat/real-pr-head", githubSetup, args)
+	p := buildPlan(t, planner, NewPlanCache(), githubSetup, args)
 	if p.Setup == nil {
 		t.Fatal("plan.Setup is nil")
 	}
@@ -154,7 +155,7 @@ func TestNonGitHubRunKeepsPlannerSetup(t *testing.T) {
 			"work_branch": "feat/planner-chosen",
 		},
 	}
-	p := buildPlan(t, planner, NewPlanCache(), "", nil, args)
+	p := buildPlan(t, planner, NewPlanCache(), nil, args)
 	if p.Setup == nil {
 		t.Fatal("plan.Setup is nil, want the planner's declared setup")
 	}
@@ -165,7 +166,7 @@ func TestNonGitHubRunKeepsPlannerSetup(t *testing.T) {
 
 func TestNewPlanToolMetadata(t *testing.T) {
 	planner := dag.NewPlanner(nil, nil, nil)
-	tl, err := NewPlanTool(planner, NewPlanCache(), nil, nil, "", "", nil, nil, "", nil, false)
+	tl, err := NewPlanTool(planner, NewPlanCache(), nil, nil, "", nil, nil, "", nil, false)
 	if err != nil {
 		t.Fatalf("NewPlanTool error: %v", err)
 	}
@@ -305,5 +306,43 @@ func TestPlanEdges(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("planEdges = %+v, want %+v", got, want)
+	}
+}
+
+// TestReviewDispatchSetupSatisfiesExistingHead pins the v0.29.0 cutover
+// regression: a review-only dispatch declares its existing PR head via Setup
+// (sdk ExistingHeadRef -> CheckoutExistingHead), the old WithGitHubPR ctx
+// stamp no longer exists - the plan tool must take the head from the Setup,
+// not reject every plan with "needs the PR's real head branch".
+func TestReviewDispatchSetupSatisfiesExistingHead(t *testing.T) {
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
+	githubSetup := &dag.Setup{
+		Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main",
+		WorkBranch: "quack/issue-836", CheckoutExistingHead: true,
+	}
+	reviewNode := []map[string]any{{"id": "rev", "agent": "code-reviewer", "task": "review the PR", "depends_on": []string{}}}
+	p := buildPlan(t, planner, NewPlanCache(), githubSetup, map[string]any{"nodes": reviewNode})
+	if p.Setup == nil || p.Setup.WorkBranch != "quack/issue-836" || !p.Setup.CheckoutExistingHead {
+		t.Errorf("Setup = %+v, want the dispatch-declared existing head checkout", p.Setup)
+	}
+}
+
+// TestReviewWithoutExistingHeadStillRejected keeps #520's guard: a
+// review-only plan whose dispatch Setup does NOT name an existing head must
+// still be rejected rather than reviewing a freshly-cut empty branch.
+func TestReviewWithoutExistingHeadStillRejected(t *testing.T) {
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
+	githubSetup := &dag.Setup{
+		Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main",
+		WorkBranch: "quack/issue-836", // no CheckoutExistingHead
+	}
+	tl, err := NewPlanTool(planner, NewPlanCache(), nil, nil, "", githubSetup, nil, "", nil, false)
+	if err != nil {
+		t.Fatalf("NewPlanTool: %v", err)
+	}
+	rt := tl.(runnableTool)
+	reviewNode := []map[string]any{{"id": "rev", "agent": "code-reviewer", "task": "review the PR", "depends_on": []string{}}}
+	if _, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{"nodes": reviewNode}); err == nil {
+		t.Fatal("plan accepted, want the review-needs-real-head rejection")
 	}
 }

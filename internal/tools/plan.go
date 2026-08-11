@@ -30,7 +30,7 @@ type planResult struct {
 }
 
 // NewPlanTool: validates and caches a DAG plan, emits dag_plan SSE event.
-func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn, message string, existingHeadRef string, githubSetup *dag.Setup, allowedKinds []string, workerAsk string, contextItems []dag.ContextItem, planOnly bool) (tool.Tool, error) {
+func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn, message string, githubSetup *dag.Setup, allowedKinds []string, workerAsk string, contextItems []dag.ContextItem, planOnly bool) (tool.Tool, error) {
 	checksDesc := "Checks are currently unavailable (workspace.check_commands is empty) - omit `checks`."
 	if cc := planner.CheckCommands(); len(cc) > 0 {
 		checksDesc = fmt.Sprintf("`checks` are OPTIONAL - you have NOT seen the repo yet, so do NOT guess its "+
@@ -83,7 +83,14 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 			p.WorkerBackground = workerAsk
 			p.ContextItems = contextItems
 			p.PlanOnly = planOnly
-			if err := dag.OverrideExistingPRHead(p, existingHeadRef); err != nil {
+			// The dispatch-declared Setup is the head-ref authority (sdk
+			// Setup.ExistingHeadRef → CheckoutExistingHead); the old
+			// WithGitHubPR ctx stamp is gone since the extension cutover.
+			existingHead := ""
+			if githubSetup != nil && githubSetup.CheckoutExistingHead {
+				existingHead = githubSetup.WorkBranch
+			}
+			if err := dag.OverrideExistingPRHead(p, existingHead); err != nil {
 				return planResult{}, fmt.Errorf("plan: %w", err)
 			}
 
