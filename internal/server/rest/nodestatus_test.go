@@ -64,7 +64,12 @@ func newTestHandlerWithModel(t *testing.T, m model.LLM) *Handler {
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
 	planner := dag.NewPlanner(nil, nil, nil)
 	orch := orchestrator.New(st.Sessions, m, "You are a test duck.", planner, ex, nil, nil, nil)
-	return NewHandler(st, orch, nil, nil, nil, nil, "test", nil, nil)
+	artifacts, err := st.RowArtifactService()
+	if err != nil {
+		t.Fatalf("RowArtifactService: %v", err)
+	}
+	st.SetArtifactService(artifacts)
+	return NewHandler(st, orch, nil, nil, nil, nil, "test", nil, nil, store.NewTurnAwareService(artifacts))
 }
 
 // mustCreateChat inserts a real chat row and returns its (store-minted) id -

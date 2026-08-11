@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/model"
 
 	"github.com/fagerbergj/quack/internal/config"
@@ -15,17 +16,13 @@ import (
 )
 
 // NewModel constructs an ADK model for the given provider and model name.
-// Two kinds are implemented: "openai" (any OpenAI-compatible endpoint, via
-// the vendored openaimodel adapter; the endpoint picks the actual server)
-// and "replay" (p.Bundle, a recording - internal/replay), for hermetic
-// replay of a recorded session with no live network. Both are wrapped in
-// tracedModel (traced.go) so quack.model.call.duration is recorded for every
-// model built anywhere in the system - the one factory, the one place to
-// hook it.
-func NewModel(p config.ProviderConfig, modelName string) (model.LLM, error) {
+// "openai" is wrapped in hydratingModel (hydrate.go) then tracedModel
+// (traced.go) - the one factory, the one place to hook both.
+func NewModel(p config.ProviderConfig, modelName string, artifacts artifact.Service) (model.LLM, error) {
 	switch p.Kind {
 	case "openai":
-		return &tracedModel{LLM: openaimodel.NewOpenAIModel(modelName, p.Endpoint, p.APIKey), name: modelName}, nil
+		live := &hydratingModel{LLM: openaimodel.NewOpenAIModel(modelName, p.Endpoint, p.APIKey), artifacts: artifacts}
+		return &tracedModel{LLM: live, name: modelName}, nil
 	case "replay":
 		sess, err := replay.Load(p.Bundle)
 		if err != nil {
@@ -34,12 +31,10 @@ func NewModel(p config.ProviderConfig, modelName string) (model.LLM, error) {
 		if p.ForkMode != "fork" {
 			return NewReplayModel(sess, modelName), nil
 		}
-		// Fork-replay (#605): p.Live is the caller's REAL provider config
-		// (config.Load already validated it's present and kind:"openai" for
-		// fork_mode: fork) - built through this SAME factory, so the live
-		// delegate is wrapped in tracedModel exactly like any other model.
+		// Fork-replay (#605): p.Live is the caller's REAL provider config,
+		// built through this SAME factory - wrapped like any other model.
 		sess.EnableFork(p.ForkFrom)
-		live, err := NewModel(*p.Live, modelName)
+		live, err := NewModel(*p.Live, modelName, artifacts)
 		if err != nil {
 			return nil, fmt.Errorf("inference: replay provider: live delegate: %w", err)
 		}
@@ -56,11 +51,11 @@ type Embedder interface {
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
 }
 
-// NewEmbedder constructs an Embedder for the given provider and embedding model.
-// It reuses NewModel's provider switch - the openai adapter serves /embeddings
-// too, so the same model.LLM doubles as an Embedder.
-func NewEmbedder(p config.ProviderConfig, modelName string) (Embedder, error) {
-	m, err := NewModel(p, modelName)
+// NewEmbedder constructs an Embedder for the given provider and embedding
+// model, reusing NewModel's switch. artifacts is only for signature
+// symmetry with NewModel - Embed never sees attachment parts.
+func NewEmbedder(p config.ProviderConfig, modelName string, artifacts artifact.Service) (Embedder, error) {
+	m, err := NewModel(p, modelName, artifacts)
 	if err != nil {
 		return nil, err
 	}

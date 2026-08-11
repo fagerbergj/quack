@@ -264,11 +264,13 @@ observability:
   # only by quack's auth + this flag. MUST stay off in production.
   adk_debug: false
 
-# Backs adkagent.Context.Artifacts() per DAG node - see dag.Executor.
-# SetArtifacts for the known chat-attachment reroute limitation. Intended
-# consumer: reMarkable's document flow (docs/design/extension-modules.md, #819).
-artifacts:
-  enabled: false
+# Backs adkagent.Context.Artifacts() and chat attachment storage. No store:
+# key -> in-memory (session-scoped, lost on restart). store: <name> -> that
+# store's postgres large-object backend - attachments survive restarts and
+# a resumed chat re-hydrates. Uncomment to opt in:
+artifacts: {}
+# artifacts:
+#   store: default_postgres
 
 # Skill-library plugin roots, beyond quack's own shipped skills/, merged into
 # both the native skill toolset and each ACP agent's opencode skills.paths.

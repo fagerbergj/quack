@@ -14,10 +14,12 @@ import (
 
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 	"github.com/google/uuid"
+	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/genai"
 	"gopkg.in/yaml.v3"
 
+	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/runlog"
@@ -46,7 +48,7 @@ type builtSDKExtension struct {
 // stays dormant - never constructed (design doc "Model"). orchRef is read
 // lazily by the returned extensions' Dispatch closures: it isn't resolved
 // until the caller Stores the orchestrator, built later in buildFromConfig.
-func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, orchRef *atomic.Pointer[orchestrator.Orchestrator]) ([]builtSDKExtension, error) {
+func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService) ([]builtSDKExtension, error) {
 	factories := extsdk.Registered()
 	names := make([]string, 0, len(cfg.Extensions.Modules))
 	for name := range cfg.Extensions.Modules {
@@ -97,7 +99,7 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, or
 
 		var extHolder atomic.Pointer[extsdk.Extension]
 		host := extsdk.Host{
-			Dispatch: newExtDispatch(name, orchRef, st, hub, &extHolder, workflowNames),
+			Dispatch: newExtDispatch(name, orchRef, st, hub, &extHolder, workflowNames, artifacts),
 			Log:      slog.Default().With("component", "ext."+name),
 			DataDir:  dataDir,
 		}
@@ -184,7 +186,7 @@ func sdkExtensionTools(exts []builtSDKExtension) []tool.Tool {
 // Delivery.AllowedKinds have no consumer here yet - they await quack-core's
 // Grant/CICheck generalization and the GitHub migration that's the real
 // consumer of a pre-provisioned clone and node-scoped context.
-func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrator], st *store.Store, hub *stream.Hub, extHolder *atomic.Pointer[extsdk.Extension], workflowNames map[string]bool) extsdk.DispatchFunc {
+func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrator], st *store.Store, hub *stream.Hub, extHolder *atomic.Pointer[extsdk.Extension], workflowNames map[string]bool, artifacts *store.TurnAwareService) extsdk.DispatchFunc {
 	return func(ctx context.Context, req extsdk.DispatchRequest) error {
 		if req.Chat.LocalID == "" {
 			return fmt.Errorf("extensions.%s: dispatch requires Chat.LocalID", name)
@@ -226,23 +228,50 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		}
 		ensureExtChatTitle(runCtx, st, chatID, req.Chat.Title, req.Chat.Origin)
 
-		attachments := make([]*genai.Part, 0, len(req.Ask.Attachments))
-		for _, a := range req.Ask.Attachments {
-			mime := a.MIME
-			if mime == "" {
-				mime = "application/octet-stream"
-			}
-			attachments = append(attachments, &genai.Part{InlineData: &genai.Blob{Data: a.Data, MIMEType: mime}})
-		}
-
 		turnID := uuid.NewString()
 		if err := st.SaveTurn(runCtx, chatID, turnID); err != nil {
 			slog.Warn("extension dispatch: save turn failed", "component", "ext."+name, "chat", chatID, "err", err)
 		}
 
+		attachments := make([]*genai.Part, 0, len(req.Ask.Attachments))
+		for i, a := range req.Ask.Attachments {
+			mime := a.MIME
+			if mime == "" {
+				mime = "application/octet-stream"
+			}
+			attName := a.Name
+			if attName == "" {
+				attName = fmt.Sprintf("attachment-%d", i)
+			}
+			ref, err := saveExtAttachment(runCtx, artifacts, userID, chatID, turnID, attName, a.Data, mime)
+			if err != nil {
+				slog.Warn("extension dispatch: attachment save failed; dropping this file",
+					"component", "ext."+name, "chat", chatID, "name", attName, "err", err)
+				continue
+			}
+			attachments = append(attachments, ref)
+		}
+
 		go driveExtensionRun(runCtx, name, orch, st, hub, extHolder, userID, chatID, turnID, composeDispatchMessage(req), attachments)
 		return nil
 	}
+}
+
+// saveExtAttachment mirrors rest.Handler.saveAttachment: durably store the
+// bytes and hand back a reference part (internal/artifactref), never the
+// bytes, so plans/session events/the gen_ai ledger carry no attachment bytes.
+func saveExtAttachment(ctx context.Context, artifacts *store.TurnAwareService, userID, chatID, turnID, name string, data []byte, mimeType string) (*genai.Part, error) {
+	if artifacts == nil {
+		return nil, fmt.Errorf("no artifact service configured")
+	}
+	resp, err := artifacts.SaveForTurn(ctx, &artifact.SaveRequest{
+		AppName: artifactref.AppName, UserID: userID, SessionID: chatID, FileName: name,
+		Part: &genai.Part{InlineData: &genai.Blob{Data: data, MIMEType: mimeType}},
+	}, turnID)
+	if err != nil {
+		return nil, err
+	}
+	return artifactref.Encode(userID, chatID, name, resp.Version, mimeType), nil
 }
 
 // composeDispatchMessage folds the Workflow hint into Ask.Message. Workflow

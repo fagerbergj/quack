@@ -112,11 +112,11 @@ func (r RecordingConfig) IsEnabled(otelEnabled bool) bool {
 	return *r.Enabled
 }
 
-// ArtifactsConfig turns on ADK's artifact.Service for the DAG executor's
-// runner (see dag.Executor.SetArtifacts). In-memory only - a restart loses
-// everything saved, so this is a spike-grade toggle, not a durability guarantee.
+// ArtifactsConfig selects the artifact.Service backend, always wired. Empty
+// Store means in-memory (lost on restart); a named store must be postgres
+// (config.validate enforces it) - its large-object backend, durable.
 type ArtifactsConfig struct {
-	Enabled bool `yaml:"enabled"`
+	Store string `yaml:"store"`
 }
 
 type InboundAuthConfig struct {
@@ -693,6 +693,16 @@ func (c *Config) validate() error {
 		return fmt.Errorf("config: session.store %q must be a postgres or sqlite store, got kind %q", c.Session.Store, ss.Kind)
 	} else if ss.URL == "" {
 		return fmt.Errorf("config: session.store %q has empty url", c.Session.Store)
+	}
+	if c.Artifacts.Store != "" {
+		as, ok := c.Store(c.Artifacts.Store)
+		if !ok {
+			return fmt.Errorf("config: artifacts.store %q is not defined under stores", c.Artifacts.Store)
+		} else if as.Kind != "postgres" {
+			return fmt.Errorf("config: artifacts.store %q must be a postgres store (large-object backend), got kind %q", c.Artifacts.Store, as.Kind)
+		} else if as.URL == "" {
+			return fmt.Errorf("config: artifacts.store %q has empty url", c.Artifacts.Store)
+		}
 	}
 	for name, a := range c.Agents {
 		if _, ok := c.Providers[a.Provider]; !ok {
