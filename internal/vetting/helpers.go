@@ -48,13 +48,14 @@ type Config struct {
 	Workspace           *workspace.Jail // nil + non-empty Checks fails closed
 	WorkspaceUserID     string
 	WorkspaceCaps       workspace.Caps
-	Deliver             DeliverFunc    // posts staged delivery set; nil = disabled
-	Grant               *Grant         // permission set; nil = unrestricted
-	ExternalWorker      bool           // ACP-backed; gate supplements session ledger
-	Setup               *SetupBranch   // pre-cloned checkout; delivery on this branch
-	ExistingPR          bool           // run pushes onto an already-open PR; stage_push offered instead of stage_pr
-	Skeptic             SkepticFactory // adversarial verify; nil = disabled
-	SkepticRounds       int            // skeptics per finding; <= 0 = disabled
+	Deliver             DeliverFunc         // posts staged delivery set; nil = disabled
+	GitCredentials      GitCredentialSource // resolves the gate-owned push credential; nil = push disabled
+	Grant               *Grant              // permission set; nil = unrestricted
+	ExternalWorker      bool                // ACP-backed; gate supplements session ledger
+	Setup               *SetupBranch        // pre-cloned checkout; delivery on this branch
+	ExistingPR          bool                // run pushes onto an already-open PR; stage_push offered instead of stage_pr
+	Skeptic             SkepticFactory      // adversarial verify; nil = disabled
+	SkepticRounds       int                 // skeptics per finding; <= 0 = disabled
 }
 
 // SetupBranch mirrors dag.Plan.Setup delivery fields.
@@ -99,6 +100,8 @@ type DeliveryContext struct {
 	IssueNumber  int    // PR number for review/comment targets
 	GatePassed   bool   // false = attach caveat
 	GateFeedback string // feedback for caveat when GatePassed is false
+	// PushedSHA: the branch head the gate itself pushed; "" = no push happened.
+	PushedSHA string
 	// ChecksSkipNote: non-empty when GatePassed but no build/test check ran
 	// for a reason worth telling the reader (#780). Already worded for
 	// display; "" means say nothing (checks ran, or the reason is operator

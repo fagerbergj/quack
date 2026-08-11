@@ -309,7 +309,7 @@ func TestSetupThenPushPreservesExistingPRHeadCommit(t *testing.T) {
 		runGitT(t, target, "add", "-A")
 		runGitT(t, target, "commit", "--quiet", "-m", "fix commit")
 
-		if _, err := PushBranch(context.Background(), b.jail.Root(), target, "pr/head", GitCredential{}, b.caps); err != nil {
+		if _, err := vetting.PushBranch(context.Background(), b.jail.Root(), target, "pr/head", vetting.GitCredential{}, b.caps); err != nil {
 			t.Fatalf("PushBranch: %v", err)
 		}
 

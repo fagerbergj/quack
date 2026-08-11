@@ -66,10 +66,10 @@ func TestDeliverPullRequestUpdatesExistingInsteadOfDuplicate(t *testing.T) {
 		GatePassed: true, // these test delivery mechanics, not the gate caveat
 		ChatID:     "chat-1",
 		CloneURL:   "https://github.com/acme/widgets.git",
-		Branch:     "feature", // CloneDir empty ⇒ no real push attempted
+		Branch:     "feature", // PushedSHA empty ⇒ Deliver skips verify, goes straight to the items
 		Items:      []vetting.StagedDelivery{{Kind: "pull_request", Title: "Add widget", Body: "does the thing"}},
 	}
-	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+	if _, err := app.Deliver(context.Background(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	if created {
@@ -109,7 +109,7 @@ func TestDeliverPushWithNothingToSayOmitsThePatch(t *testing.T) {
 		Branch:     "feature",
 		Items:      []vetting.StagedDelivery{{Kind: "pull_request", TitleOmitted: true, BodyOmitted: true}},
 	}
-	outcomes, err := app.Deliver(context.Background(), t.TempDir(), dc)
+	outcomes, err := app.Deliver(context.Background(), dc)
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestDeliverPushWithDeliberateUpdateAppliesBoth(t *testing.T) {
 		Branch:     "feature",
 		Items:      []vetting.StagedDelivery{{Kind: "pull_request", Title: "fix: retry flaky upload", Body: "adds a backoff"}},
 	}
-	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+	if _, err := app.Deliver(context.Background(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	if len(patchedBody) != 2 || patchedBody["title"] != "fix: retry flaky upload" || patchedBody["body"] != "adds a backoff" {
@@ -178,7 +178,7 @@ func TestDeliverPushPartialUpdateOmitsTitleKey(t *testing.T) {
 		Branch:     "feature",
 		Items:      []vetting.StagedDelivery{{Kind: "pull_request", Body: "adds a backoff and jitter", TitleOmitted: true}},
 	}
-	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+	if _, err := app.Deliver(context.Background(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	if _, hasTitle := patchedBody["title"]; hasTitle {
@@ -219,7 +219,7 @@ func TestDeliverPushWithNoTitleAndNoExistingPRFailsExplicitly(t *testing.T) {
 		Branch:     "feature",
 		Items:      []vetting.StagedDelivery{{Kind: "pull_request", TitleOmitted: true, BodyOmitted: true}},
 	}
-	outcomes, err := app.Deliver(context.Background(), t.TempDir(), dc)
+	outcomes, err := app.Deliver(context.Background(), dc)
 	if err == nil {
 		t.Fatal("Deliver: want an error - a titleless push with no PR to push onto has nothing to deliver")
 	}
@@ -263,7 +263,7 @@ func TestDeliverPushWithNoTitleAndFailedLookupFailsExplicitly(t *testing.T) {
 		Branch:     "feature",
 		Items:      []vetting.StagedDelivery{{Kind: "pull_request", TitleOmitted: true, BodyOmitted: true}},
 	}
-	outcomes, err := app.Deliver(context.Background(), t.TempDir(), dc)
+	outcomes, err := app.Deliver(context.Background(), dc)
 	if err == nil {
 		t.Fatal("Deliver: want an error - the PR lookup failed and there's no title to fall back on")
 	}
@@ -298,18 +298,18 @@ func runGitTest(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// TestDeliverVerifiesPushAgainstGitHub pins a `git push` that exits 0
-// is not proof the branch landed - Deliver must confirm the branch's head
-// against GitHub's OWN state before opening/updating anything, and fail
-// closed (no PR, no summary claiming success) when it doesn't match.
+// TestDeliverVerifiesPushAgainstGitHub pins that a gate-owned push
+// (dc.PushedSHA, set by vetting.commitDelivery before Deliver ever runs) is
+// not itself proof the branch landed - Deliver must confirm the branch's
+// head against GitHub's OWN state before opening/updating anything, and
+// fail closed (no PR, no summary claiming success) when it doesn't match.
 func TestDeliverVerifiesPushAgainstGitHub(t *testing.T) {
 	requireGitBinary(t)
 
-	bare := t.TempDir()
-	runGitTest(t, bare, "init", "--bare", "--initial-branch=main")
+	// A real commit purely to mint a realistic SHA - no push happens here;
+	// that's the gate's job now, already done by the time Deliver runs.
 	clone := t.TempDir()
-	runGitTest(t, filepath.Dir(clone), "clone", "--quiet", bare, clone)
-	runGitTest(t, clone, "checkout", "-b", "feature")
+	runGitTest(t, clone, "init", "-q", "--initial-branch=feature")
 	if err := os.WriteFile(filepath.Join(clone, "widget.go"), []byte("package widget\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -320,8 +320,8 @@ func TestDeliverVerifiesPushAgainstGitHub(t *testing.T) {
 	dc := vetting.DeliveryContext{
 		GatePassed: true, // these test delivery mechanics, not the gate caveat
 		CloneURL:   "https://github.com/acme/widgets.git",
-		CloneDir:   clone,
 		Branch:     "feature",
+		PushedSHA:  fullSHA,
 		Items:      []vetting.StagedDelivery{{Kind: "pull_request", Title: "Add widget", Body: "adds a widget"}},
 	}
 
@@ -343,7 +343,7 @@ func TestDeliverVerifiesPushAgainstGitHub(t *testing.T) {
 				t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			}
 		})
-		_, err := app.Deliver(context.Background(), t.TempDir(), dc)
+		_, err := app.Deliver(context.Background(), dc)
 		if err == nil {
 			t.Fatal("expected an error when the pushed branch isn't reflected on GitHub")
 		}
@@ -377,7 +377,7 @@ func TestDeliverVerifiesPushAgainstGitHub(t *testing.T) {
 				t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			}
 		})
-		if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+		if _, err := app.Deliver(context.Background(), dc); err != nil {
 			t.Fatalf("Deliver: %v", err)
 		}
 		if !prOpened {
@@ -414,7 +414,7 @@ func TestDeliverVerifiesPushAgainstGitHub(t *testing.T) {
 				t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			}
 		})
-		if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+		if _, err := app.Deliver(context.Background(), dc); err != nil {
 			t.Fatalf("Deliver: %v", err)
 		}
 		if atomic.LoadInt32(&prOpened) != 1 {
@@ -464,7 +464,7 @@ func TestDeliverCommentIdempotentEdit(t *testing.T) {
 		IssueNumber: 7,
 		Items:       []vetting.StagedDelivery{{Kind: "comment", Slot: "status", Body: "progress: 80%"}},
 	}
-	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+	if _, err := app.Deliver(context.Background(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	if posted {
@@ -510,7 +510,7 @@ func TestDeliverCommentCarriesGateCaveat(t *testing.T) {
 			IssueNumber:  7,
 			Items:        []vetting.StagedDelivery{{Kind: "comment", Slot: "status", Body: "<env>...</env>"}},
 		}
-		if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+		if _, err := app.Deliver(context.Background(), dc); err != nil {
 			t.Fatalf("Deliver: %v", err)
 		}
 		if !strings.Contains(postedBody, "did NOT pass") {
@@ -545,7 +545,7 @@ func TestDeliverCommentCarriesGateCaveat(t *testing.T) {
 			IssueNumber: 7,
 			Items:       []vetting.StagedDelivery{{Kind: "comment", Slot: "status", Body: "progress: 80%"}},
 		}
-		if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+		if _, err := app.Deliver(context.Background(), dc); err != nil {
 			t.Fatalf("Deliver: %v", err)
 		}
 		if strings.Contains(postedBody, "did NOT pass") {
@@ -593,7 +593,7 @@ func TestDeliverCollapsesPriorReview(t *testing.T) {
 		IssueNumber: 7,
 		Items:       []vetting.StagedDelivery{{Kind: "review", Event: "comment", Body: "new findings"}},
 	}
-	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+	if _, err := app.Deliver(context.Background(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	if minimizedID != "REVIEW1" {
@@ -632,7 +632,7 @@ func TestDeliverReviewOnOwnPRIsCommentNoVerdict(t *testing.T) {
 		Items: []vetting.StagedDelivery{{Kind: "review", Event: "approve", Body: "clean change",
 			Comments: []vetting.ReviewComment{{Path: "main.go", Line: 42, Body: "tiny nit"}}}},
 	}
-	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+	if _, err := app.Deliver(context.Background(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	var posted struct {
@@ -697,7 +697,7 @@ func TestDeliverReviewOnOwnPRStripsVerdictTail(t *testing.T) {
 		Items: []vetting.StagedDelivery{{Kind: "review", Event: "approve", Body: rawAnswer,
 			Comments: []vetting.ReviewComment{{Path: "main.go", Line: 42, Body: "tiny nit"}}}},
 	}
-	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+	if _, err := app.Deliver(context.Background(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	var posted struct {
@@ -760,7 +760,7 @@ func TestDeliverReviewInlineCommentsAndChatIDPR(t *testing.T) {
 			Comments: []vetting.ReviewComment{{Path: "main.go", Line: 42, Body: "route shadowed"}},
 		}},
 	}
-	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+	if _, err := app.Deliver(context.Background(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	var posted struct {
@@ -816,7 +816,7 @@ func TestDeliverReviewReanchorsUncommentableFinding(t *testing.T) {
 			}},
 		}},
 	}
-	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+	if _, err := app.Deliver(context.Background(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	var posted struct {
@@ -880,7 +880,7 @@ func TestDeliverReviewKeepsUnanchorableFindingInBody(t *testing.T) {
 			Comments: []vetting.ReviewComment{{Path: "dead.go", Line: 15, Body: "removed code still referenced elsewhere"}},
 		}},
 	}
-	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+	if _, err := app.Deliver(context.Background(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	var posted struct {
@@ -904,12 +904,9 @@ func TestDeliverReviewKeepsUnanchorableFindingInBody(t *testing.T) {
 	}
 }
 
-// TestDeliverReviewNeverPushesBranch pins #452: a review-only delivery whose
-// context carries a Branch + CloneDir (a setup-provisioned reviewer node always
-// does) must NOT push - a review lands on the existing PR via the API. Before
-// the stagesPush guard, Deliver force-pushed the reviewer's (base-HEAD) branch,
-// resetting the reviewed PR and wiping its commits. CloneDir here is a non-git
-// dir: the OLD code would try to push it and error; the fix skips push entirely.
+// TestDeliverReviewNeverPushesBranch pins #452: a review-only delivery with
+// no PushedSHA (the gate never pushes a review-only node - vetting's own
+// stagesPush guard, push_test.go) must never hit the push-verify endpoint.
 func TestDeliverReviewNeverPushesBranch(t *testing.T) {
 	app := newDeliveryApp(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -934,11 +931,10 @@ func TestDeliverReviewNeverPushesBranch(t *testing.T) {
 		GatePassed: true,
 		ChatID:     "github-acme-widgets-7",
 		CloneURL:   "https://github.com/acme/widgets.git",
-		CloneDir:   t.TempDir(), // set, as a real reviewer node's is - must still not push
 		Branch:     "some-pr-branch",
 		Items:      []vetting.StagedDelivery{{Kind: "review", Event: "approve", Body: "looks good"}},
 	}
-	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+	if _, err := app.Deliver(context.Background(), dc); err != nil {
 		t.Fatalf("review-only Deliver should succeed without any push: %v", err)
 	}
 }
@@ -973,7 +969,7 @@ func TestDeliverFailedGateOpensDraftPR(t *testing.T) {
 		Branch:       "quack/fix",
 		Items:        []vetting.StagedDelivery{{Kind: "pull_request", Title: "Fix it", Body: "the fix"}},
 	}
-	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+	if _, err := app.Deliver(context.Background(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	var posted struct {
@@ -1021,7 +1017,7 @@ func TestDeliverSuppressesClosesTrailerWhenPartialFix(t *testing.T) {
 		Branch:     "quack/partial",
 		Items:      []vetting.StagedDelivery{{Kind: "pull_request", Title: "Partial fix", Body: "does part of it"}},
 	}
-	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+	if _, err := app.Deliver(context.Background(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	var posted struct {
@@ -1066,7 +1062,7 @@ func TestDeliverSkipsClosesTrailerWhenChatIDResolvesToAPR(t *testing.T) {
 		Branch:     "quack/fix-92",
 		Items:      []vetting.StagedDelivery{{Kind: "pull_request", Title: "Redo the fix", Body: "the fix"}},
 	}
-	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+	if _, err := app.Deliver(context.Background(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	var posted struct {
@@ -1108,7 +1104,7 @@ func TestDeliverDoesNotAppendClosesOnPRUpdate(t *testing.T) {
 		Branch:     "fix/11-something",
 		Items:      []vetting.StagedDelivery{{Kind: "pull_request", Title: "Fix it", Body: "the fix"}},
 	}
-	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+	if _, err := app.Deliver(context.Background(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	if strings.Contains(patchedBody["body"], "Closes") {
@@ -1141,7 +1137,7 @@ func TestDeliverClosesTrailerNotDuplicated(t *testing.T) {
 		Branch:     "quack/fix5",
 		Items:      []vetting.StagedDelivery{{Kind: "pull_request", Title: "Fix it", Body: "does the work.\n\nCloses #5\n"}},
 	}
-	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+	if _, err := app.Deliver(context.Background(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	var posted struct {
