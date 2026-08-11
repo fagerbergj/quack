@@ -92,7 +92,10 @@ export const updateChat = <ThrowOnError extends boolean = false>(options: Option
  * `LedgerStore.List`), backing `quack recording list`/export. 200 with
  * an empty array when recording is enabled but nothing has been
  * recorded yet; 404 when recording is disabled entirely - same
- * disabled signal as `getChatRecording`.
+ * disabled signal as `getChatRecording`. Deliberately unpaginated: one
+ * entry per recorded session, bounded by the ledger's own retention_days
+ * GC, not an open-ended table - unlike /chats it has no realistic path
+ * to needing a page_token.
  *
  */
 export const listRecordings = <ThrowOnError extends boolean = false>(options?: Options<ListRecordingsData, ThrowOnError>): RequestResult<ListRecordingsResponses, ListRecordingsErrors, ThrowOnError> => (options?.client ?? client).get<ListRecordingsResponses, ListRecordingsErrors, ThrowOnError>({
@@ -350,7 +353,8 @@ export const updateResponseStatus = <ThrowOnError extends boolean = false>(optio
  * unreachable index is a 500; it never silently falls back to search or
  * returns a partial result. With `q`: runs the same embedding search a
  * live run's recall would use, so the tab can answer "what would a run
- * recall for this?" - entries then carry `score`, ordered descending.
+ * recall for this?" - entries then carry `score`, ordered descending,
+ * and are never paginated (a top-K search, not a stable page).
  *
  */
 export const listMemories = <ThrowOnError extends boolean = false>(options?: Options<ListMemoriesData, ThrowOnError>): RequestResult<ListMemoriesResponses, ListMemoriesErrors, ThrowOnError> => (options?.client ?? client).get<ListMemoriesResponses, ListMemoriesErrors, ThrowOnError>({

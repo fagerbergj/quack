@@ -30,13 +30,18 @@ func (h *Handler) memStores() []*memory.Store {
 // bucket just contributes nothing, so no prefix-routing guesswork is needed.
 func (h *Handler) ListMemories(w http.ResponseWriter, r *http.Request, params schema.ListMemoriesParams) {
 	stores := h.memStores()
+	bucketFilter := ""
 	var buckets []string
 	if params.Bucket != nil && strings.TrimSpace(*params.Bucket) != "" {
-		buckets = []string{strings.TrimSpace(*params.Bucket)}
+		bucketFilter = strings.TrimSpace(*params.Bucket)
+		buckets = []string{bucketFilter}
 	}
 	limit := memory.DefaultListLimit
 	if params.Limit != nil && *params.Limit > 0 {
 		limit = *params.Limit
+	}
+	if limit > memory.MemoryPageMaxLimit {
+		limit = memory.MemoryPageMaxLimit
 	}
 
 	if params.Q != nil && strings.TrimSpace(*params.Q) != "" {
@@ -50,15 +55,25 @@ func (h *Handler) ListMemories(w http.ResponseWriter, r *http.Request, params sc
 	}
 
 	offset := 0
-	if params.Offset != nil && *params.Offset > 0 {
-		offset = *params.Offset
+	if params.PageToken != nil && *params.PageToken != "" {
+		off, err := memory.DecodePageToken(*params.PageToken, bucketFilter)
+		if err != nil {
+			httpError(w, http.StatusBadRequest, err)
+			return
+		}
+		offset = off
 	}
 	mems, total, err := listMemories(r.Context(), stores, buckets, offset, limit)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, schema.MemoryList{Memories: memoriesWire(mems), Total: total})
+	out := schema.MemoryList{Memories: memoriesWire(mems), Total: total}
+	if next := offset + len(mems); len(mems) > 0 && next < total {
+		tok := memory.EncodePageToken(bucketFilter, next)
+		out.NextPageToken = &tok
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // DeleteMemory forgets one memory - a real delete, not a tombstone. 404 if no

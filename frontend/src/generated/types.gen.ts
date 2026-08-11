@@ -74,6 +74,11 @@ export type MemoryList = {
      * Total entries matching the filter (not just this page). With `q`, this is just len(memories) - search returns a ranked top-K, not a stable count.
      */
     total: number;
+    /**
+     * Opaque token - pass as `page_token` to fetch the next page. Absent when this page is the last, or the request set `q`. Treat as an opaque string: never parse it.
+     *
+     */
+    next_page_token?: string;
 };
 
 export type RecordingSummary = {
@@ -793,16 +798,24 @@ export type ListMemoriesData = {
          * Run an embedding search instead of listing; matches then carry `score`.
          */
         q?: string;
+        /**
+         * Max memories to return. Defaults to 50; capped at 200.
+         */
         limit?: number;
         /**
-         * Ignored when `q` is set (search ranks by score, not a stable page).
+         * Opaque continuation token from a previous response's `next_page_token`. Treat it as an opaque string: never parse or construct one, pass back exactly what was returned. Omit for the first page. Ignored when `q` is set (search ranks by score, not a stable page). Only valid against the exact `bucket` filter it was issued for.
+         *
          */
-        offset?: number;
+        page_token?: string;
     };
     url: '/api/v1/memories';
 };
 
 export type ListMemoriesErrors = {
+    /**
+     * Malformed page_token, or one issued for a different bucket filter
+     */
+    400: ErrorResponse;
     /**
      * The memory index is unreachable
      */

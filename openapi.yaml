@@ -203,7 +203,10 @@ paths:
         `LedgerStore.List`), backing `quack recording list`/export. 200 with
         an empty array when recording is enabled but nothing has been
         recorded yet; 404 when recording is disabled entirely - same
-        disabled signal as `getChatRecording`.
+        disabled signal as `getChatRecording`. Deliberately unpaginated: one
+        entry per recorded session, bounded by the ledger's own retention_days
+        GC, not an open-ended table - unlike /chats it has no realistic path
+        to needing a page_token.
       responses:
         "200":
           description: The recorded sessions
@@ -654,7 +657,8 @@ paths:
         unreachable index is a 500; it never silently falls back to search or
         returns a partial result. With `q`: runs the same embedding search a
         live run's recall would use, so the tab can answer "what would a run
-        recall for this?" - entries then carry `score`, ordered descending.
+        recall for this?" - entries then carry `score`, ordered descending,
+        and are never paginated (a top-K search, not a stable page).
       parameters:
         - name: bucket
           in: query
@@ -668,15 +672,21 @@ paths:
             type: string
         - name: limit
           in: query
+          description: Max memories to return. Defaults to 50; capped at 200.
           schema:
             type: integer
-            default: 50
-        - name: offset
+        - name: page_token
           in: query
-          description: Ignored when `q` is set (search ranks by score, not a stable page).
+          required: false
+          description: >
+            Opaque continuation token from a previous response's
+            `next_page_token`. Treat it as an opaque string: never parse or
+            construct one, pass back exactly what was returned. Omit for the
+            first page. Ignored when `q` is set (search ranks by score, not a
+            stable page). Only valid against the exact `bucket` filter it was
+            issued for.
           schema:
-            type: integer
-            default: 0
+            type: string
       responses:
         "200":
           description: The matching memories
@@ -684,6 +694,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MemoryList"
+        "400":
+          description: Malformed page_token, or one issued for a different bucket filter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: The memory index is unreachable
           content:
@@ -864,6 +880,12 @@ components:
         total:
           type: integer
           description: Total entries matching the filter (not just this page). With `q`, this is just len(memories) - search returns a ranked top-K, not a stable count.
+        next_page_token:
+          type: string
+          description: >
+            Opaque token - pass as `page_token` to fetch the next page. Absent
+            when this page is the last, or the request set `q`. Treat as an
+            opaque string: never parse it.
 
     # -------------------------------------------------------------------------
     # Replay ledger

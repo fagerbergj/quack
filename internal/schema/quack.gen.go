@@ -456,6 +456,9 @@ type Memory struct {
 type MemoryList struct {
 	Memories []Memory `json:"memories"`
 
+	// NextPageToken Opaque token - pass as `page_token` to fetch the next page. Absent when this page is the last, or the request set `q`. Treat as an opaque string: never parse it.
+	NextPageToken *string `json:"next_page_token,omitempty"`
+
 	// Total Total entries matching the filter (not just this page). With `q`, this is just len(memories) - search returns a ranked top-K, not a stable count.
 	Total int `json:"total"`
 }
@@ -678,11 +681,13 @@ type ListMemoriesParams struct {
 	Bucket *string `form:"bucket,omitempty" json:"bucket,omitempty"`
 
 	// Q Run an embedding search instead of listing; matches then carry `score`.
-	Q     *string `form:"q,omitempty" json:"q,omitempty"`
-	Limit *int    `form:"limit,omitempty" json:"limit,omitempty"`
+	Q *string `form:"q,omitempty" json:"q,omitempty"`
 
-	// Offset Ignored when `q` is set (search ranks by score, not a stable page).
-	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+	// Limit Max memories to return. Defaults to 50; capped at 200.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// PageToken Opaque continuation token from a previous response's `next_page_token`. Treat it as an opaque string: never parse or construct one, pass back exactly what was returned. Omit for the first page. Ignored when `q` is set (search ranks by score, not a stable page). Only valid against the exact `bucket` filter it was issued for.
+	PageToken *string `form:"page_token,omitempty" json:"page_token,omitempty"`
 }
 
 // CreateChatJSONRequestBody defines body for CreateChat for application/json ContentType.
@@ -1807,15 +1812,15 @@ func (siw *ServerInterfaceWrapper) ListMemories(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// ------------- Optional query parameter "offset" -------------
+	// ------------- Optional query parameter "page_token" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "page_token", r.URL.Query(), &params.PageToken, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
 	if err != nil {
 		var requiredError *runtime.RequiredParameterError
 		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "page_token"})
 		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page_token", Err: err})
 		}
 		return
 	}

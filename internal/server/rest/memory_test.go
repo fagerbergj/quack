@@ -3,6 +3,7 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"iter"
 	"net/http"
 	"net/http/httptest"
@@ -219,26 +220,32 @@ func TestListMemories_MergesAndOrdersAcrossBothStores(t *testing.T) {
 	// Paging across the merged set: page 1 ends on fact C (task's) and page 2
 	// starts on fact B (user's) - the boundary sits between the two stores'
 	// entries, exactly where a store-by-store concatenation would misbehave.
-	limit, offset0, offset1 := 2, 0, 2
+	limit := 2
 	w1 := httptest.NewRecorder()
-	h.ListMemories(w1, httptest.NewRequest(http.MethodGet, "/api/v1/memories", nil), schema.ListMemoriesParams{Bucket: &b, Limit: &limit, Offset: &offset0})
+	h.ListMemories(w1, httptest.NewRequest(http.MethodGet, "/api/v1/memories", nil), schema.ListMemoriesParams{Bucket: &b, Limit: &limit})
 	var page1 schema.MemoryList
 	if err := json.NewDecoder(w1.Body).Decode(&page1); err != nil {
 		t.Fatalf("decode page1: %v", err)
 	}
+	if page1.NextPageToken == nil || *page1.NextPageToken == "" {
+		t.Fatalf("page1 carried no next_page_token, but a second page exists")
+	}
 
 	w2 := httptest.NewRecorder()
-	h.ListMemories(w2, httptest.NewRequest(http.MethodGet, "/api/v1/memories", nil), schema.ListMemoriesParams{Bucket: &b, Limit: &limit, Offset: &offset1})
+	h.ListMemories(w2, httptest.NewRequest(http.MethodGet, "/api/v1/memories", nil), schema.ListMemoriesParams{Bucket: &b, Limit: &limit, PageToken: page1.NextPageToken})
 	var page2 schema.MemoryList
 	if err := json.NewDecoder(w2.Body).Decode(&page2); err != nil {
 		t.Fatalf("decode page2: %v", err)
 	}
+	if page2.NextPageToken != nil {
+		t.Fatalf("page2 carried a next_page_token = %q, want none - it's the last page", *page2.NextPageToken)
+	}
 
 	if got := memoryContents(page1.Memories); strings.Join(got, "|") != "fact D (newest, user)|fact C (task)" {
-		t.Fatalf("page1 (offset=0) = %v, want [D, C]", got)
+		t.Fatalf("page1 = %v, want [D, C]", got)
 	}
 	if got := memoryContents(page2.Memories); strings.Join(got, "|") != "fact B (user)|fact A (oldest, task)" {
-		t.Fatalf("page2 (offset=2) = %v, want [B, A]", got)
+		t.Fatalf("page2 = %v, want [B, A]", got)
 	}
 	seen := map[string]bool{}
 	for _, m := range append(append([]schema.Memory{}, page1.Memories...), page2.Memories...) {
@@ -249,6 +256,46 @@ func TestListMemories_MergesAndOrdersAcrossBothStores(t *testing.T) {
 	}
 	if len(seen) != 4 {
 		t.Fatalf("saw %d distinct ids across both pages, want 4 - an entry was dropped at the store boundary", len(seen))
+	}
+}
+
+// TestListMemories_InvalidPageToken400: a page_token the store can't decode
+// is a client error, not a 500 - mirrors TestListChats_InvalidPageToken400.
+func TestListMemories_InvalidPageToken400(t *testing.T) {
+	h := newTestHandler(t)
+	h.taskMem = newTestMemStore(t)
+	bad := "not-a-valid-token!!"
+	w := httptest.NewRecorder()
+	h.ListMemories(w, httptest.NewRequest(http.MethodGet, "/api/v1/memories", nil), schema.ListMemoriesParams{PageToken: &bad})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestListMemories_PageTokenBucketMismatch400: a token minted under one
+// bucket filter must not be honored against a different one - it's issued
+// scoped to the filter, same as store.chatsPageToken's scope binding.
+func TestListMemories_PageTokenBucketMismatch400(t *testing.T) {
+	h := newTestHandler(t)
+	h.taskMem = newTestMemStore(t)
+	for i := 0; i < 3; i++ {
+		commitFact(t, h.taskMem, "NightsOut", fmt.Sprintf("fact %d", i))
+	}
+
+	bucketA := "repo:NightsOut"
+	limit := 1
+	w := httptest.NewRecorder()
+	h.ListMemories(w, httptest.NewRequest(http.MethodGet, "/api/v1/memories", nil), schema.ListMemoriesParams{Bucket: &bucketA, Limit: &limit})
+	var page1 schema.MemoryList
+	if err := json.NewDecoder(w.Body).Decode(&page1); err != nil || page1.NextPageToken == nil {
+		t.Fatalf("seed page1 = %+v (decode err %v), want a next_page_token", page1, err)
+	}
+
+	bucketB := "repo:OtherRepo"
+	w2 := httptest.NewRecorder()
+	h.ListMemories(w2, httptest.NewRequest(http.MethodGet, "/api/v1/memories", nil), schema.ListMemoriesParams{Bucket: &bucketB, PageToken: page1.NextPageToken})
+	if w2.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (token issued for a different bucket); body=%s", w2.Code, w2.Body.String())
 	}
 }
 

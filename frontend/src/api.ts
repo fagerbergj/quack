@@ -64,7 +64,9 @@ export const api = {
     return unwrap(r)
   },
 
-  listMemories: async (params: { bucket?: string; q?: string; limit?: number; offset?: number }): Promise<MemoryList> =>
+  // page_token is opaque, same contract as listChats' - pass back exactly what
+  // a previous response's next_page_token gave, never parsed or constructed here.
+  listMemories: async (params: { bucket?: string; q?: string; limit?: number; page_token?: string }): Promise<MemoryList> =>
     unwrap(await sdkListMemories({ query: params })),
 
   forgetMemory: async (id: string): Promise<void> => {
