@@ -162,6 +162,40 @@ function ChatRow({
             {githubStateLabel(s.github_state)}
           </span>
         )}
+        {/* Generic origin chip (extension-dispatched chats, e.g. reMarkable) -
+            label chip, optional badge, subject link. GitHub stays on its own
+            dedicated fields above until it migrates to stamping origin itself. */}
+        {s.origin && (
+          <>
+            {s.origin.href ? (
+              <a
+                href={s.origin.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={e => e.stopPropagation()}
+                title={s.origin.label}
+                className={`flex-shrink-0 max-w-[7rem] truncate text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded hover:underline ${paletteClasses(s.origin.extension)}`}
+              >
+                {s.origin.label}
+              </a>
+            ) : (
+              <span
+                title={s.origin.label}
+                className={`flex-shrink-0 max-w-[7rem] truncate text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded ${paletteClasses(s.origin.extension)}`}
+              >
+                {s.origin.label}
+              </span>
+            )}
+            {s.origin.badge && (
+              <span
+                className="flex-shrink-0 text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400"
+                title={s.origin.badge}
+              >
+                {s.origin.badge}
+              </span>
+            )}
+          </>
+        )}
       </div>
       <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{relativeDate(s.updated_at)}</span>
       {/* Archived rows get an overflow menu for Restore - the only way back once a

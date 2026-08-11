@@ -52,7 +52,7 @@ func newTestHandlerWithSessionSpy(t *testing.T) (*Handler, *sessionGetSpy) {
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
 	planner := dag.NewPlanner(nil, nil, nil)
 	orch := orchestrator.New(st.Sessions, stubModel{}, "You are a test duck.", planner, ex, nil, nil, nil)
-	return NewHandler(st, orch, nil, nil, nil, nil, "test", nil, nil, nil), spy
+	return NewHandler(st, orch, nil, nil, nil, nil, "test", nil, nil, nil, nil), spy
 }
 
 // listChatsQueries runs ListChats and returns how many SELECT queries it issued.

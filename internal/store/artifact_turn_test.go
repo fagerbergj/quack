@@ -98,6 +98,71 @@ func TestDeleteChat_CascadesArtifacts(t *testing.T) {
 	}
 }
 
+func TestTurnAwareService_ListForSession_GroupsRevisionsByName(t *testing.T) {
+	st := newTestStore(t)
+	row, err := NewRowArtifactService(st.db)
+	if err != nil {
+		t.Fatalf("NewRowArtifactService: %v", err)
+	}
+	w := NewTurnAwareService(row)
+	ctx := context.Background()
+
+	if _, err := w.SaveForTurn(ctx, &artifact.SaveRequest{
+		AppName: "app", UserID: "u", SessionID: "chat-1", FileName: "doc.pdf", Part: mustPart("v1"),
+	}, "turn-1"); err != nil {
+		t.Fatalf("SaveForTurn v1: %v", err)
+	}
+	if _, err := w.SaveForTurn(ctx, &artifact.SaveRequest{
+		AppName: "app", UserID: "u", SessionID: "chat-1", FileName: "doc.pdf", Part: mustPart("v2"),
+	}, "turn-2"); err != nil {
+		t.Fatalf("SaveForTurn v2: %v", err)
+	}
+	if _, err := w.SaveForTurn(ctx, &artifact.SaveRequest{
+		AppName: "app", UserID: "u", SessionID: "chat-1", FileName: "notes.txt", Part: mustPart("only"),
+	}, "turn-1"); err != nil {
+		t.Fatalf("SaveForTurn notes: %v", err)
+	}
+	// A different session's artifact must not leak in.
+	if _, err := w.SaveForTurn(ctx, &artifact.SaveRequest{
+		AppName: "app", UserID: "u", SessionID: "chat-2", FileName: "other.txt", Part: mustPart("x"),
+	}, "turn-1"); err != nil {
+		t.Fatalf("SaveForTurn other session: %v", err)
+	}
+
+	summaries, err := w.ListForSession(ctx, "app", "u", "chat-1")
+	if err != nil {
+		t.Fatalf("ListForSession: %v", err)
+	}
+	if len(summaries) != 2 {
+		t.Fatalf("ListForSession = %+v, want 2 names", summaries)
+	}
+	if summaries[0].Name != "doc.pdf" || len(summaries[0].Revisions) != 2 {
+		t.Fatalf("doc.pdf summary = %+v, want 2 revisions", summaries[0])
+	}
+	if summaries[0].Revisions[0].Revision != 1 || summaries[0].Revisions[1].Revision != 2 {
+		t.Errorf("doc.pdf revisions = %+v, want ascending 1,2", summaries[0].Revisions)
+	}
+	if summaries[0].Revisions[0].TurnID != "turn-1" || summaries[0].Revisions[1].TurnID != "turn-2" {
+		t.Errorf("doc.pdf revision turn ids = %+v, want turn-1 then turn-2", summaries[0].Revisions)
+	}
+	if summaries[1].Name != "notes.txt" || len(summaries[1].Revisions) != 1 {
+		t.Fatalf("notes.txt summary = %+v, want 1 revision", summaries[1])
+	}
+}
+
+// artifact.InMemoryService() tracks no session-wide revision history -
+// ListForSession must report that honestly (nil, no error).
+func TestTurnAwareService_ListForSession_UnsupportedBackend(t *testing.T) {
+	w := NewTurnAwareService(artifact.InMemoryService())
+	summaries, err := w.ListForSession(context.Background(), "app", "u", "s")
+	if err != nil {
+		t.Fatalf("ListForSession on in-memory backend: %v", err)
+	}
+	if summaries != nil {
+		t.Errorf("ListForSession on in-memory backend = %+v, want nil", summaries)
+	}
+}
+
 // DeleteChat with no artifact service wired must not panic or error.
 func TestDeleteChat_NoArtifactService_NoOp(t *testing.T) {
 	st := newTestStore(t)

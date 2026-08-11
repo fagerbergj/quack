@@ -153,7 +153,7 @@ func newAttachmentTestHandler(t *testing.T, dbPath string, stub *attachStub) *Ha
 		map[string]bool{"media": true})
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "media", Description: "reads images"}}, nil, nil)
 	orch := orchestrator.New(st.Sessions, stub, "You are the orchestrator.", planner, ex, nil, nil, nil)
-	return NewHandler(st, orch, nil, nil, nil, nil, "test", nil, nil, artifacts)
+	return NewHandler(st, orch, nil, nil, nil, nil, "test", nil, nil, artifacts, nil)
 }
 
 func postMultipart(t *testing.T, h *Handler, chatID, content, filename, mimeType string, data []byte) {

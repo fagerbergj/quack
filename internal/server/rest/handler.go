@@ -63,14 +63,15 @@ type Handler struct {
 	taskMem      *memory.Store           // repo:/role: buckets; nil ⇒ task memory disabled
 	userMem      *memory.Store           // user: buckets; nil ⇒ user memory disabled
 	artifacts    *store.TurnAwareService // durable attachment bytes; nil ⇒ multipart attachments are dropped (see saveAttachment)
+	extensions   []schema.ExtensionInfo  // enabled SDK extensions for GET /api/v1/extensions; nil ⇒ empty list
 }
 
-// NewHandler builds a REST handler. jail/hub/ledgerStore/taskMem/userMem/artifacts may be nil; hub defaults to a private hub.
-func NewHandler(s *store.Store, o *orchestrator.Orchestrator, titler model.LLM, jail *workspace.Jail, hub *stream.Hub, ledgerStore ledger.LedgerStore, quackVersion string, taskMem, userMem *memory.Store, artifacts *store.TurnAwareService) *Handler {
+// NewHandler builds a REST handler. jail/hub/ledgerStore/taskMem/userMem/artifacts/extensions may be nil; hub defaults to a private hub.
+func NewHandler(s *store.Store, o *orchestrator.Orchestrator, titler model.LLM, jail *workspace.Jail, hub *stream.Hub, ledgerStore ledger.LedgerStore, quackVersion string, taskMem, userMem *memory.Store, artifacts *store.TurnAwareService, extensions []schema.ExtensionInfo) *Handler {
 	if hub == nil {
 		hub = stream.NewHub()
 	}
-	return &Handler{store: s, orch: o, titler: titler, jail: jail, hub: hub, eventLog: runlog.NewEventLog(s), ledgerStore: ledgerStore, quackVersion: quackVersion, taskMem: taskMem, userMem: userMem, artifacts: artifacts}
+	return &Handler{store: s, orch: o, titler: titler, jail: jail, hub: hub, eventLog: runlog.NewEventLog(s), ledgerStore: ledgerStore, quackVersion: quackVersion, taskMem: taskMem, userMem: userMem, artifacts: artifacts, extensions: extensions}
 }
 
 func (h *Handler) generateTitle(ctx context.Context, chatID, firstMessage string) string {
@@ -254,6 +255,11 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 		UpdatedAt:       c.UpdatedAt,
 		Status:          status,
 		PendingQuestion: pendingQuestion,
+		GithubUrl:       strPtr(c.GithubURL),
+		GithubRepo:      strPtr(c.GithubRepo),
+		GithubState:     detailStateVal(c.GithubState),
+		Archived:        boolPtr(c.Archived),
+		Origin:          chatOrigin(c.Origin),
 		Turns:           make([]schema.Turn, 0, len(turns)),
 	}
 	for _, tc := range turns {
@@ -273,6 +279,16 @@ func (h *Handler) GetResponse(w http.ResponseWriter, r *http.Request, chatID sch
 		return
 	}
 	writeJSON(w, http.StatusOK, buildTurn(*tc))
+}
+
+// ListExtensions lists every enabled SDK extension for the SPA nav -
+// name-only unless the module implements the SDK's optional UI descriptor.
+func (h *Handler) ListExtensions(w http.ResponseWriter, r *http.Request) {
+	out := h.extensions
+	if out == nil {
+		out = []schema.ExtensionInfo{}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // Lists sessions the replay ledger has entries for (backs `quack recording list`).
@@ -1070,6 +1086,7 @@ func (h *Handler) toSummary(c store.Chat) schema.ChatSummary {
 		GithubRepo:      strPtr(c.GithubRepo),
 		GithubState:     stateVal(c.GithubState),
 		Archived:        boolPtr(c.Archived),
+		Origin:          chatOrigin(c.Origin),
 	}
 }
 
@@ -1149,6 +1166,14 @@ func stateVal(s string) *schema.ChatSummaryGithubState {
 		return nil
 	}
 	v := schema.ChatSummaryGithubState(s)
+	return &v
+}
+
+func detailStateVal(s string) *schema.ChatDetailGithubState {
+	if s == "" {
+		return nil
+	}
+	v := schema.ChatDetailGithubState(s)
 	return &v
 }
 
