@@ -350,7 +350,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			}
 		}
 		history := buildHistory(prior)
-		githubPR, hasGitHubPR := tools.GitHubPRFromContext(ctx)
+		githubPR, _ := tools.GitHubPRFromContext(ctx)
 		var githubSetup *dag.Setup
 		if s, ok := tools.GitHubSetupFromContext(ctx); ok {
 			githubSetup = &s
@@ -387,15 +387,6 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			}
 			toolList = append(toolList, memory.NewPreload(), commitTool)
 			memSvc = o.userMem.View(memory.Scope{User: userID, Legacy: userID}, nil)
-		}
-
-		if o.taskMem != nil && hasGitHubPR {
-			correctTool, err := tools.NewCorrectReviewFindingTool(o.taskMem, githubPR)
-			if err != nil {
-				yield(stream.Errorf("orchestrator: correct_review_finding tool: "+err.Error()), nil)
-				return
-			}
-			toolList = append(toolList, correctTool)
 		}
 
 		ag, err := llmagent.New(llmagent.Config{
