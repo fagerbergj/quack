@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -47,6 +48,24 @@ func DeriveTerminalStatus(turns []TurnContent, pendingQuestion string, hasPendin
 		}
 	}
 	return RunStatusIdle, ""
+}
+
+// StampTerminalOutcome loads turns, derives the terminal status via
+// DeriveTerminalStatus, and persists it - the shared tail every dispatch
+// path (REST, SDK extensions, GitHub webhook) runs once a run's events stop
+// draining. pendingQuestion is the caller's own PendingQuestion lookup, kept
+// as a func value so callers don't need to share a concrete runner type.
+func (s *Store) StampTerminalOutcome(ctx context.Context, appName, userID, chatID string, pendingQuestion func() (string, bool)) (status, question string) {
+	turns, err := s.GetTurnsWithContent(ctx, appName, userID, chatID)
+	if err != nil {
+		slog.Warn("stamp terminal outcome: turns load failed", "component", "store", "chat", chatID, "err", err)
+	}
+	q, hasQ := pendingQuestion()
+	status, question = DeriveTerminalStatus(turns, q, hasQ)
+	if err := s.StampRunOutcome(ctx, chatID, status, question); err != nil {
+		slog.Warn("stamp terminal outcome: persist failed", "component", "store", "chat", chatID, "err", err)
+	}
+	return status, question
 }
 
 func hasFailedDagNode(nodes []DagNode) bool {

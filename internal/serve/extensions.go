@@ -369,31 +369,12 @@ func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrato
 	pub := runlog.NewPublisher(hub, eventLog, chatID)
 	pub.Publish(stream.ResponseCreated(turnID))
 
-	var activePlanID string
-	var needsInput stream.NodeNeedsInputData
-	for ev, err := range run(runCtx) {
-		if err != nil {
-			slog.Warn("extension run error", "component", "ext."+name, "chat", chatID, "err", err)
-			continue
-		}
-		if ev.Name == stream.EventDagPlan {
-			if d, ok := ev.Data.(stream.DagPlanData); ok {
-				activePlanID = d.PlanID
-				runlog.SaveDagPlan(st, chatID, turnID, d)
-			}
-		} else if activePlanID != "" {
-			runlog.PersistNodeEvent(st, activePlanID, ev)
-		}
-		if ev.Name == stream.EventNodeNeedsInput {
-			if d, ok := ev.Data.(stream.NodeNeedsInputData); ok {
-				needsInput = d
-			}
-		}
-		pub.Publish(ev)
-	}
+	res := runlog.Drive(turnID, st, pub, run(runCtx), func(err error) {
+		slog.Warn("extension run error", "component", "ext."+name, "chat", chatID, "err", err)
+	})
 	pub.Publish(stream.Done())
 
-	outcome := buildExtRunOutcome(runCtx, orch, st, userID, chatID, activePlanID != "", needsInput)
+	outcome := buildExtRunOutcome(runCtx, orch, st, userID, chatID, res.PlanID != "", res.NeedsInput)
 	if p := extHolder.Load(); p != nil {
 		if obs, ok := (*p).(extsdk.RunObserver); ok {
 			obs.RunEnded(chatID, outcome)
@@ -409,15 +390,9 @@ func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrato
 func buildExtRunOutcome(parent context.Context, orch *orchestrator.Orchestrator, st *store.Store, userID, chatID string, planRan bool, needsInput stream.NodeNeedsInputData) extsdk.RunOutcome {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 	defer cancel()
-	turns, err := st.GetTurnsWithContent(ctx, orchestrator.AppName, userID, chatID)
-	if err != nil {
-		slog.Warn("extension: stamp run outcome: turns load failed", "component", "serve", "chat", chatID, "err", err)
-	}
-	q, hasQ := orch.PendingQuestion(ctx, userID, chatID)
-	status, question := store.DeriveTerminalStatus(turns, q, hasQ)
-	if err := st.StampRunOutcome(ctx, chatID, status, question); err != nil {
-		slog.Warn("extension: stamp run outcome failed", "component", "serve", "chat", chatID, "err", err)
-	}
+	status, question := st.StampTerminalOutcome(ctx, orchestrator.AppName, userID, chatID, func() (string, bool) {
+		return orch.PendingQuestion(ctx, userID, chatID)
+	})
 
 	out := extsdk.RunOutcome{PlanRan: planRan, Answer: strings.TrimSpace(orch.LatestAnswer(ctx, userID, chatID))}
 	switch status {
