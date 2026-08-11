@@ -3,6 +3,9 @@ package dag
 import (
 	"context"
 	"iter"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -166,11 +169,38 @@ func gHasResponse(req *model.LLMRequest, name string) bool {
 	return false
 }
 
+// chainGitCredentials stubs vetting.GitCredentialSource - the chain's local
+// bare-repo remote needs no real auth, just a non-nil credential to push.
+type chainGitCredentials struct{}
+
+func (chainGitCredentials) GitCredential(context.Context, string) (*vetting.GitCredential, error) {
+	return &vetting.GitCredential{}, nil
+}
+
+func requireChainGit(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not found on PATH")
+	}
+}
+
+func runChainGit(t *testing.T, dir string, argv ...string) {
+	t.Helper()
+	cmd := exec.Command("git", argv...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", argv, err, out)
+	}
+}
+
 // newChainExecutor wires an Executor + jail for the chain e2e tests: ONE
 // implementer agent (shared by every node), a Deliver that forwards to
-// deliverCh, and a setup stub that counts its own calls.
+// deliverCh, and a setup stub that provisions a REAL git repo (committed,
+// remoted to a local bare repo) - commitDelivery's gate-owned push now runs
+// for real when a chain stages a pull_request.
 func newChainExecutor(t *testing.T) (ex *Executor, jail *workspace.Jail, deliverCh chan vetting.DeliveryContext, setupCalls *int32Counter) {
 	t.Helper()
+	requireChainGit(t)
 	stub := chainStub{}
 	ag, err := llmagent.New(llmagent.Config{
 		Name: implementerAgent, Model: stub, Description: "impl",
@@ -183,11 +213,15 @@ func newChainExecutor(t *testing.T) (ex *Executor, jail *workspace.Jail, deliver
 	if err != nil {
 		t.Fatalf("NewJail: %v", err)
 	}
+	bare := t.TempDir()
+	runChainGit(t, bare, "init", "--quiet", "--bare", "--initial-branch=main")
+
 	deliverCh = make(chan vetting.DeliveryContext, 4)
 	cfgFor := func(string) vetting.Config {
 		return vetting.Config{
 			Threshold: 0.6, JudgeRounds: 1,
 			Workspace: jail, WorkspaceUserID: "u1", WorkspaceCaps: workspace.DefaultCaps(),
+			GitCredentials: chainGitCredentials{},
 			Deliver: func(_ context.Context, dc vetting.DeliveryContext) ([]vetting.DeliveryItemOutcome, error) {
 				deliverCh <- dc
 				return nil, nil
@@ -198,8 +232,19 @@ func newChainExecutor(t *testing.T) (ex *Executor, jail *workspace.Jail, deliver
 		vetting.NewJudgeFactory(stub, nil, nil), cfgFor, nil)
 	ex.SetMaxActive(1)
 	setupCalls = &int32Counter{}
-	ex.SetSetup(func(context.Context, string, string, string, Setup) error {
+	ex.SetSetup(func(_ context.Context, userID, chatID, dir string, s Setup) error {
 		setupCalls.inc()
+		target, err := jail.EnsureDir(userID, chatID, dir)
+		if err != nil {
+			return err
+		}
+		runChainGit(t, target, "init", "--quiet", "--initial-branch="+s.WorkBranch)
+		runChainGit(t, target, "remote", "add", "origin", bare)
+		if err := os.WriteFile(filepath.Join(target, "widget.go"), []byte("package widget\n"), 0o644); err != nil {
+			return err
+		}
+		runChainGit(t, target, "add", "-A")
+		runChainGit(t, target, "-c", "user.name=t", "-c", "user.email=t@t.co", "commit", "--quiet", "-m", "impl")
 		return nil
 	})
 	return ex, jail, deliverCh, setupCalls

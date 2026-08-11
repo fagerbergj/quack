@@ -449,9 +449,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 
 	var deliver vetting.DeliverFunc
 	if githubApp != nil {
-		deliver = func(ctx context.Context, dc vetting.DeliveryContext) ([]vetting.DeliveryItemOutcome, error) {
-			return githubApp.Deliver(ctx, jail.Root(), dc)
-		}
+		deliver = githubApp.Deliver
 	}
 	var setupFn dag.SetupFunc
 	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(cfg, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, deliver, nodeCancelled, &setupFn, artifacts)
@@ -640,6 +638,18 @@ func buildUserMemoryHookAgent(h config.UserMemoryHookConfig, cfg *config.Config,
 	return agent.BuildChat(b, m, nil, nil, agent.Compaction{}, guidance, nil, "")
 }
 
+// gitCredentialAdapter bridges tools.GitTokenSource to vetting.GitCredentialSource -
+// vetting can't import internal/tools (tools already imports vetting), so it declares its own type.
+type gitCredentialAdapter struct{ src tools.GitTokenSource }
+
+func (a gitCredentialAdapter) GitCredential(ctx context.Context, rawURL string) (*vetting.GitCredential, error) {
+	c, err := a.src.GitCredential(ctx, rawURL)
+	if err != nil || c == nil {
+		return nil, err
+	}
+	return &vetting.GitCredential{Host: c.Host, Username: c.Username, Token: c.Token}, nil
+}
+
 // buildAgents loads each agent bundle, builds its model and tools, exposes over A2A, returns client map.
 func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []tool.Tool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, setupOut *dag.SetupFunc, artifacts artifact.Service) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, model.LLM, error) {
 	nodeServers := newPerNodeServers()
@@ -711,6 +721,9 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		gateCfg.WorkspaceUserID = localUserID
 		gateCfg.WorkspaceCaps = workspaceCaps
 		gateCfg.Deliver = deliver
+		if gitTokenSource != nil {
+			gateCfg.GitCredentials = gitCredentialAdapter{gitTokenSource}
+		}
 		gateCfg.CheckCommands = cfg.Workspace.CheckCommands
 		if cfg.Gates.JudgeEnabled() {
 			jprov, ok := cfg.Provider(cfg.Gates.Judge.Provider)

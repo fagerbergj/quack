@@ -702,7 +702,20 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	itemOutcomes, err := cfg.Deliver(cctx, dc)
+
+	// Gate-owned push: lands on the remote before any item reaches the
+	// extension. A push failure never reaches Deliver - nothing was attempted.
+	var itemOutcomes []DeliveryItemOutcome
+	err := ensurePush(cctx, cfg, &dc)
+	if err != nil {
+		slog.Error("gate push failed", "component", "vetting", "node", nodeID, "err", err, "branch", dc.Branch)
+		itemOutcomes = make([]DeliveryItemOutcome, len(dc.Items))
+		for i, item := range dc.Items {
+			itemOutcomes[i] = DeliveryItemOutcome{Kind: item.Kind, Error: err.Error()}
+		}
+	} else {
+		itemOutcomes, err = cfg.Deliver(cctx, dc)
+	}
 	span.SetAttributes(attribute.Bool("delivered", err == nil))
 	otelobs.End(span, err)
 

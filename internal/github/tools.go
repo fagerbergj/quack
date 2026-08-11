@@ -19,7 +19,6 @@ import (
 
 	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/vetting"
-	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // deliveryResults records each run's last commitDelivery outcome, keyed by chatID.
@@ -628,9 +627,11 @@ func (a *App) withClosesTrailer(ctx context.Context, owner, repo string, issueNu
 	return strings.TrimRight(body, "\n") + fmt.Sprintf("\n\nCloses #%d\n", issueNum)
 }
 
-// Deliver pushes the branch and delivers staged items (PR → review → comments).
+// Deliver posts staged items (PR → review → comments). The push itself is
+// gate-owned (vetting.commitDelivery) - dc.PushedSHA arrives already pushed;
+// this only confirms GitHub's own state reflects it (#570).
 // Outcomes are this extension's own record, never the worker's self-report.
-func (a *App) Deliver(ctx context.Context, jailRoot string, dc vetting.DeliveryContext) (outcomes []vetting.DeliveryItemOutcome, err error) {
+func (a *App) Deliver(ctx context.Context, dc vetting.DeliveryContext) (outcomes []vetting.DeliveryItemOutcome, err error) {
 	detail := deliveryOutcome{branch: dc.Branch}
 	defer func() {
 		detail.err = err
@@ -647,26 +648,14 @@ func (a *App) Deliver(ctx context.Context, jailRoot string, dc vetting.DeliveryC
 	if dc.IssueNumber == 0 {
 		dc.IssueNumber = prNumberFromChatID(dc.ChatID)
 	}
-	if dc.Branch != "" && dc.CloneDir != "" && stagesPush(dc.Items) {
-		tok, terr := a.tokenForRepo(ctx, owner, repo)
-		if terr != nil {
-			err = fmt.Errorf("github: delivery: %w", terr)
-			return itemOutcomesForPushFailure(dc, err), err
-		}
-		cred := tools.GitCredential{Host: gitHost, Username: gitUsername, Token: tok}
-		localSHA, perr := tools.PushBranch(ctx, jailRoot, dc.CloneDir, dc.Branch, cred, workspace.DefaultCaps())
-		if perr != nil {
-			err = fmt.Errorf("github: delivery: push %q: %w", dc.Branch, perr)
-			return itemOutcomesForPushFailure(dc, err), err
-		}
-		// Confirm push against GitHub's own state (exit 0 is not proof; #570).
+	if dc.PushedSHA != "" {
 		remoteSHA, verr := a.verifyPushedBranch(ctx, owner, repo, dc.Branch)
 		if verr != nil {
 			err = fmt.Errorf("github: delivery: push %q: verify against GitHub: %w", dc.Branch, verr)
 			return itemOutcomesForPushFailure(dc, err), err
 		}
-		if !strings.HasPrefix(remoteSHA, localSHA) {
-			err = fmt.Errorf("github: delivery: push %q: local head %s not reflected on GitHub (remote head %s) - not delivering", dc.Branch, localSHA, remoteSHA)
+		if !strings.HasPrefix(remoteSHA, dc.PushedSHA) {
+			err = fmt.Errorf("github: delivery: push %q: local head %s not reflected on GitHub (remote head %s) - not delivering", dc.Branch, dc.PushedSHA, remoteSHA)
 			return itemOutcomesForPushFailure(dc, err), err
 		}
 		detail.pushedSHA = remoteSHA
@@ -692,16 +681,6 @@ func (a *App) Deliver(ctx context.Context, jailRoot string, dc vetting.DeliveryC
 	}
 	err = errors.Join(errs...)
 	return outcomes, err
-}
-
-// stagesPush reports whether any staged item needs the branch pushed (#452).
-func stagesPush(items []vetting.StagedDelivery) bool {
-	for _, it := range items {
-		if it.Kind == "pull_request" {
-			return true
-		}
-	}
-	return false
 }
 
 // itemOutcomesForPushFailure marks every item as failed — push failed, nothing was attempted.

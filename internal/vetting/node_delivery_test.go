@@ -142,8 +142,10 @@ func TestCommitDeliveryOnPassUsesSetupBranchWhenDeclared(t *testing.T) {
 	// The worker never cloned or checked out anything itself (setup-provisioned
 	// runs are told not to) - the ledger fields commitDelivery would
 	// otherwise fall back to are empty on purpose.
+	// Kind "review" (not "pull_request") - no GitCredentials configured here,
+	// and this test is about branch/URL/dir resolution, not the push itself.
 	commitDelivery(context.Background(), nil, cfg, "impl", workerActivity{
-		stagedDelivery: map[string]StagedDelivery{"pr": {Kind: "pull_request", Title: "Add flappy bird"}},
+		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "approve", Body: "looks good"}},
 	}, GateResult{Passed: true})
 	select {
 	case dc := <-done:

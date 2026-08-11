@@ -480,14 +480,14 @@ func TestDeliverReviewTargetsCreatedPRNotIssue(t *testing.T) {
 	})
 	dc := vetting.DeliveryContext{
 		ChatID: "github-acme-widgets-61", IssueNumber: issueNum, CloneURL: "https://github.com/acme/widgets.git",
-		Branch:     "feat/migrate", // no CloneDir, so Deliver skips the push and goes straight to the items
+		Branch:     "feat/migrate", // no PushedSHA, so Deliver skips verify and goes straight to the items
 		GatePassed: true,
 		Items: []vetting.StagedDelivery{
 			{Kind: "pull_request", Title: "migrate", Body: "body"},
 			{Kind: "review", Event: "comment", Body: "findings"},
 		},
 	}
-	if _, err := app.Deliver(context.Background(), t.TempDir(), dc); err != nil {
+	if _, err := app.Deliver(context.Background(), dc); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	if len(reviewPaths) != 1 {
