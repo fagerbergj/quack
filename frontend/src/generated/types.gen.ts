@@ -85,10 +85,16 @@ export type ChatSummary = {
      */
     archived?: boolean;
     origin?: ChatOrigin;
+    /**
+     * Chat-wide token total (turns + DAG nodes) - compact so the sidebar list doesn't pay for the full input/output/reasoning/cached split; see ChatDetail.usage for that.
+     *
+     */
+    total_tokens?: number;
 };
 
 export type ChatDetail = ChatSummary & {
     turns: Array<Turn>;
+    usage: Usage;
 };
 
 export type ChatList = {
@@ -279,9 +285,19 @@ export type TurnInput = {
     content: string;
 };
 
+/**
+ * Token usage; the same schema is populated two different ways depending on where it appears. On Turn.usage it is SPARSE: a field is omitted entirely when its value is zero (or unknown for that turn), and reasoning folds into output_tokens rather than getting its own field. On ChatDetail.usage it is a chat-wide aggregate (every turn + every DAG node) and is ALWAYS FULLY POPULATED - every field is present, a genuine zero included, never omitted.
+ *
+ */
 export type Usage = {
     input_tokens?: number;
     output_tokens?: number;
+    reasoning_tokens?: number;
+    /**
+     * Subset of input_tokens served from the model's prompt cache.
+     */
+    cached_tokens?: number;
+    total_tokens?: number;
 };
 
 export type OutputItem = ({
@@ -371,6 +387,10 @@ export type DagNodeState = {
     total_tokens?: number;
     finish_reason?: string;
     reasoning_tokens?: number;
+    /**
+     * Subset of prompt_tokens served from the model's prompt cache.
+     */
+    cached_tokens?: number;
     server_duration_ms?: number;
     judge_rounds?: number;
     judge_final_score?: number;

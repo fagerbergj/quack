@@ -184,9 +184,20 @@ func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request, params schem
 		return
 	}
 
+	ids := make([]string, len(chats))
+	for i, c := range chats {
+		ids[i] = c.ID
+	}
+	totals, err := h.store.ChatsUsageTotals(r.Context(), ids)
+	if err != nil {
+		// Token totals are a nice-to-have on the list; don't fail the page over it.
+		slog.Warn("list chats: usage totals failed", "component", "rest", "err", err)
+		totals = map[string]int64{}
+	}
+
 	out := schema.ChatList{Data: make([]schema.ChatSummary, len(chats))}
 	for i, c := range chats {
-		out.Data[i] = h.toSummary(c)
+		out.Data[i] = h.toSummary(c, totals[c.ID])
 	}
 	if next != "" {
 		out.NextPageToken = &next
@@ -228,7 +239,8 @@ func (h *Handler) CreateChat(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, h.toSummary(*c))
+	// A brand-new chat has no turns/nodes yet - 0 tokens, no query needed.
+	writeJSON(w, http.StatusOK, h.toSummary(*c, 0))
 }
 
 func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
@@ -247,6 +259,11 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 		return
 	}
 	status, pendingQuestion := h.chatStatus(r.Context(), chatID, turns)
+	usage, err := h.store.GetChatUsage(r.Context(), chatID)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
 	detail := schema.ChatDetail{
 		Id:              c.ID,
 		Title:           strPtr(c.Title),
@@ -261,11 +278,28 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 		Archived:        boolPtr(c.Archived),
 		Origin:          chatOrigin(c.Origin),
 		Turns:           make([]schema.Turn, 0, len(turns)),
+		Usage:           usageAggregateToSchema(usage),
+	}
+	if usage.TotalTokens > 0 {
+		detail.TotalTokens = intPtr(int(usage.TotalTokens))
 	}
 	for _, tc := range turns {
 		detail.Turns = append(detail.Turns, buildTurn(tc))
 	}
 	writeJSON(w, http.StatusOK, detail)
+}
+
+// usageAggregateToSchema always populates every field (unlike Turn.usage,
+// which is sparse) - ChatDetail.usage is the chat-wide total, meaningfully
+// zero rather than absent.
+func usageAggregateToSchema(u store.UsageAggregate) schema.Usage {
+	return schema.Usage{
+		InputTokens:     intPtr(int(u.InputTokens)),
+		OutputTokens:    intPtr(int(u.OutputTokens)),
+		ReasoningTokens: intPtr(int(u.ReasoningTokens)),
+		CachedTokens:    intPtr(int(u.CachedTokens)),
+		TotalTokens:     intPtr(int(u.TotalTokens)),
+	}
 }
 
 func (h *Handler) GetResponse(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, responseID schema.ResponseID) {
@@ -382,7 +416,7 @@ func (h *Handler) UpdateChat(w http.ResponseWriter, r *http.Request, chatID sche
 		c.Archived = *body.Archived
 	}
 
-	writeJSON(w, http.StatusOK, h.toSummary(*c))
+	writeJSON(w, http.StatusOK, h.toSummary(*c, h.chatTotalTokens(r.Context(), chatID)))
 }
 
 func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
@@ -553,10 +587,11 @@ func (h *Handler) runChat(runCtx context.Context, chatID, turnID, message string
 		}
 	}
 
-	var activePlanID string
-	// Captured from top-level agent_complete so history can recover the model (ADK drops ModelVersion).
-	var orchModel string
-
+	// res.Step is the same per-event bookkeeping runlog.Drive uses for the SDK
+	// extension dispatch path - REST can't range through Drive directly (it
+	// interleaves trySendTitle and aborts immediately on error), so it calls
+	// the shared step function instead of hand-rolling its own copy.
+	var res runlog.DriveResult
 	for ev, err := range h.orch.Run(runCtx, h.sessionUser(runCtx, chatID), chatID, orchestrator.SourceApp, message, attachments) {
 		trySendTitle()
 		if err != nil {
@@ -564,29 +599,17 @@ func (h *Handler) runChat(runCtx context.Context, chatID, turnID, message string
 			publish(stream.Done())
 			return
 		}
-		if ev.Name == stream.EventAgentComplete {
-			if d, ok := ev.Data.(stream.AgentCompleteData); ok && d.NodeID == "" && d.Model != "" {
-				orchModel = d.Model
-			}
-		}
-		if ev.Name == stream.EventDagPlan {
-			if d, ok := ev.Data.(stream.DagPlanData); ok {
-				activePlanID = d.PlanID
-				runlog.SaveDagPlan(h.store, chatID, turnID, d)
-			}
-		} else if activePlanID != "" {
-			runlog.PersistNodeEvent(h.store, activePlanID, ev)
-		}
+		res.Step(h.store, chatID, turnID, true, ev)
 		publish(ev)
 	}
 	for title := range titleCh {
 		publish(stream.ChatTitle(title))
 	}
 	publish(stream.Done())
-	// Stamp model on turn row (DAG turns credit models per-node on DagNodeState).
-	if orchModel != "" && activePlanID == "" {
-		_ = h.store.SetTurnModel(runCtx, chatID, turnID, orchModel)
-	}
+	// Stamp model + usage on the turn row - shared with the SDK extension
+	// dispatch path (internal/serve.driveExtensionRunEvents) so both callers
+	// stamp the same way instead of each hand-rolling it.
+	runlog.StampTurn(runCtx, h.store, chatID, turnID, res)
 }
 
 // Cancels the chat's active run when response_id names it; stale ids 404.
@@ -999,6 +1022,9 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 			InputTokens:  intPtr(int(tc.PromptTokens)),
 			OutputTokens: intPtr(int(tc.CompletionTokens + tc.ReasoningTokens)),
 		}
+		if tc.CachedTokens > 0 {
+			usage.CachedTokens = intPtr(int(tc.CachedTokens))
+		}
 	}
 
 	return schema.Turn{
@@ -1024,6 +1050,7 @@ func dagNodeState(n store.DagNode) schema.DagNodeState {
 		CompletionTokens: intPtr(int(n.CompletionTokens)),
 		ReasoningTokens:  intPtr(int(n.ReasoningTokens)),
 		TotalTokens:      intPtr(int(n.TotalTokens)),
+		CachedTokens:     intPtr(int(n.CachedTokens)),
 		ServerDurationMs: intPtr(int(n.DurationMs)),
 		JudgeRounds:      intPtr(int(n.JudgeRounds)),
 		JudgeFinalScore:  float64Ptr(n.JudgeFinalScore),
@@ -1068,13 +1095,26 @@ func float64Ptr(f float64) *float64 {
 	return &f
 }
 
+// chatTotalTokens is the single-chat convenience wrapper around
+// ChatsUsageTotals, for call sites that only ever need one chat's total.
+func (h *Handler) chatTotalTokens(ctx context.Context, chatID string) int64 {
+	totals, err := h.store.ChatsUsageTotals(ctx, []string{chatID})
+	if err != nil {
+		slog.Warn("chat usage totals failed", "component", "rest", "chat", chatID, "err", err)
+		return 0
+	}
+	return totals[chatID]
+}
+
 // Builds a ChatSummary from the chat row alone: queued/running are cheap in-memory checks,
 // everything else is the stamp StampRunOutcome left at the last run's end - no turns/session
 // read per chat (#738; that per-chat read is what GetChat's chatStatus below still does,
 // which is fine there since GetChat already loads turns for the full detail body).
-func (h *Handler) toSummary(c store.Chat) schema.ChatSummary {
+// totalTokens is the chat's compact token count for the sidebar (see
+// ChatsUsageTotals) - 0 for a brand-new chat with no run yet.
+func (h *Handler) toSummary(c store.Chat, totalTokens int64) schema.ChatSummary {
 	status, pendingQuestion := h.liveOrStampedStatus(c)
-	return schema.ChatSummary{
+	s := schema.ChatSummary{
 		Id:              c.ID,
 		Title:           strPtr(c.Title),
 		SystemPrompt:    c.SystemPrompt,
@@ -1088,6 +1128,10 @@ func (h *Handler) toSummary(c store.Chat) schema.ChatSummary {
 		Archived:        boolPtr(c.Archived),
 		Origin:          chatOrigin(c.Origin),
 	}
+	if totalTokens > 0 {
+		s.TotalTokens = intPtr(int(totalTokens))
+	}
+	return s
 }
 
 // liveOrStampedStatus resolves queued/running live, else the chat row's stamped outcome.

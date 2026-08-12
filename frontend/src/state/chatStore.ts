@@ -8,7 +8,7 @@ import {
   freezeOpenRuns,
   type AgentRun,
 } from '../components/AgentParts'
-import type { Turn, DagOutputItem, NodeStatus, QueuedMessage } from '../generated'
+import type { Turn, DagOutputItem, NodeStatus, QueuedMessage, Usage } from '../generated'
 
 // Re-exported so existing importers (e.g. components/DagNode.tsx) keep working
 // unchanged - the generated enum is now the one source of truth for node states.
@@ -29,6 +29,7 @@ export interface NodeState {
   completionTokens?: number
   reasoningTokens?: number
   totalTokens?: number
+  cachedTokens?: number
   finishReason?: string
   serverDurationMs?: number
   judgeRounds?: number
@@ -85,6 +86,9 @@ export interface ChatState {
   pendingUserText?: string
   // Follow-ups queued while `live.streaming` was true, in send order.
   queue: QueuedTurn[]
+  // Chat-wide token aggregate from ChatDetail.usage - a snapshot as of the
+  // last seed(), not updated live while a run streams.
+  usage?: Usage
 }
 
 type Listener = () => void
@@ -162,12 +166,12 @@ export class ChatStore {
     }
   }
 
-  seed(chatId: string, turns: Turn[]): void {
+  seed(chatId: string, turns: Turn[], usage?: Usage): void {
     const cur = this.states.get(chatId)
     if (cur && (cur.live?.streaming || cur.turns.length > 0)) return
     // Preserve a queue accumulated before the chat ever had a turn (e.g. queued
     // during the very first, still-streaming run) across this reseed.
-    this.write(chatId, { ...EMPTY_STATE, turns, queue: cur?.queue ?? [] })
+    this.write(chatId, { ...EMPTY_STATE, turns, usage, queue: cur?.queue ?? [] })
   }
 
   clear(chatId: string): void {
@@ -841,6 +845,7 @@ export class ChatStore {
             completionTokens: meta.completionTokens,
             reasoningTokens: meta.reasoningTokens,
             totalTokens: meta.totalTokens,
+            cachedTokens: meta.cachedTokens,
             finishReason: meta.finishReason,
             serverDurationMs: meta.durationMs,
             judgeRounds: meta.judgeRounds,
@@ -959,6 +964,7 @@ export function dagTurnStateFromItem(item: DagOutputItem): DagTurnState {
       promptTokens: ns.prompt_tokens,
       completionTokens: ns.completion_tokens,
       totalTokens: ns.total_tokens,
+      cachedTokens: ns.cached_tokens,
       finishReason: ns.finish_reason,
       serverDurationMs: ns.server_duration_ms,
     }
@@ -1081,4 +1087,40 @@ export function pendingNodeQuestion(dag: DagTurnState): { nodeId: string; agent:
     }
   }
   return undefined
+}
+
+// ── chat header: model chip(s) + session usage ──────────────────────────────
+
+// distinctModels collects the non-empty, deduplicated, sorted model names
+// used across a set of node states - a DAG turn credits models per-node,
+// never on the turn itself (see plainReplyAttribution for the plain-reply case).
+function distinctModels(nodeStates: Record<string, { model?: string }>): string[] {
+  const models = new Set<string>()
+  for (const ns of Object.values(nodeStates)) {
+    if (ns.model) models.add(ns.model)
+  }
+  return [...models].sort()
+}
+
+// sessionModels is the chat header's model chip set: the current (live, if
+// streaming) or most recent turn's orchestrator model when set, else the
+// distinct models its DAG nodes used. Empty while nothing has run yet.
+export function sessionModels(state: ChatState): string[] {
+  if (state.live) {
+    return state.live.dag ? distinctModels(state.live.dag.nodeStates) : []
+  }
+  const turn = state.turns[state.turns.length - 1]
+  if (!turn) return []
+  if (turn.model) return [turn.model]
+  const dag = dagFromTurn(turn)
+  return dag ? distinctModels(dag.node_states) : []
+}
+
+// cacheRate is the header's expandable-breakdown cache-hit percentage,
+// undefined when there's nothing cached to report (never shown as "0%").
+export function cacheRate(usage: Usage | undefined): number | undefined {
+  const cached = usage?.cached_tokens ?? 0
+  const input = usage?.input_tokens ?? 0
+  if (cached <= 0 || input <= 0) return undefined
+  return Math.round((cached / input) * 100)
 }

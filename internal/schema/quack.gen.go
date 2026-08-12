@@ -331,8 +331,14 @@ type ChatDetail struct {
 	Status       ChatStatus `json:"status"`
 	SystemPrompt string     `json:"system_prompt"`
 	Title        *string    `json:"title,omitempty"`
-	Turns        []Turn     `json:"turns"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+
+	// TotalTokens Chat-wide token total (turns + DAG nodes) - compact so the sidebar list doesn't pay for the full input/output/reasoning/cached split; see ChatDetail.usage for that.
+	TotalTokens *int      `json:"total_tokens,omitempty"`
+	Turns       []Turn    `json:"turns"`
+	UpdatedAt   time.Time `json:"updated_at"`
+
+	// Usage Token usage; the same schema is populated two different ways depending on where it appears. On Turn.usage it is SPARSE: a field is omitted entirely when its value is zero (or unknown for that turn), and reasoning folds into output_tokens rather than getting its own field. On ChatDetail.usage it is a chat-wide aggregate (every turn + every DAG node) and is ALWAYS FULLY POPULATED - every field is present, a genuine zero included, never omitted.
+	Usage Usage `json:"usage"`
 }
 
 // ChatDetailGithubState Current state of the originating GitHub issue/PR. Only set when quack has observed the resource at dispatch time; absent otherwise.
@@ -405,7 +411,10 @@ type ChatSummary struct {
 	Status       ChatStatus `json:"status"`
 	SystemPrompt string     `json:"system_prompt"`
 	Title        *string    `json:"title,omitempty"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+
+	// TotalTokens Chat-wide token total (turns + DAG nodes) - compact so the sidebar list doesn't pay for the full input/output/reasoning/cached split; see ChatDetail.usage for that.
+	TotalTokens *int      `json:"total_tokens,omitempty"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // ChatSummaryGithubState Current state of the originating GitHub issue/PR. Only set when quack has observed the resource at dispatch time; absent otherwise.
@@ -437,6 +446,8 @@ type DagNodeDef struct {
 
 // DagNodeState defines model for DagNodeState.
 type DagNodeState struct {
+	// CachedTokens Subset of prompt_tokens served from the model's prompt cache.
+	CachedTokens     *int     `json:"cached_tokens,omitempty"`
 	CompletionTokens *int     `json:"completion_tokens,omitempty"`
 	Error            *string  `json:"error,omitempty"`
 	FinishReason     *string  `json:"finish_reason,omitempty"`
@@ -676,7 +687,9 @@ type Turn struct {
 	// Model Model that produced the orchestrator's own reply this turn. Absent for DAG turns (their models are per-node in DagNodeState).
 	Model  *string      `json:"model,omitempty"`
 	Output []OutputItem `json:"output"`
-	Usage  *Usage       `json:"usage,omitempty"`
+
+	// Usage Token usage; the same schema is populated two different ways depending on where it appears. On Turn.usage it is SPARSE: a field is omitted entirely when its value is zero (or unknown for that turn), and reasoning folds into output_tokens rather than getting its own field. On ChatDetail.usage it is a chat-wide aggregate (every turn + every DAG node) and is ALWAYS FULLY POPULATED - every field is present, a genuine zero included, never omitted.
+	Usage *Usage `json:"usage,omitempty"`
 }
 
 // TurnInput defines model for TurnInput.
@@ -697,10 +710,14 @@ type UpdateChatBody struct {
 	Title *string `json:"title,omitempty"`
 }
 
-// Usage defines model for Usage.
+// Usage Token usage; the same schema is populated two different ways depending on where it appears. On Turn.usage it is SPARSE: a field is omitted entirely when its value is zero (or unknown for that turn), and reasoning folds into output_tokens rather than getting its own field. On ChatDetail.usage it is a chat-wide aggregate (every turn + every DAG node) and is ALWAYS FULLY POPULATED - every field is present, a genuine zero included, never omitted.
 type Usage struct {
-	InputTokens  *int `json:"input_tokens,omitempty"`
-	OutputTokens *int `json:"output_tokens,omitempty"`
+	// CachedTokens Subset of input_tokens served from the model's prompt cache.
+	CachedTokens    *int `json:"cached_tokens,omitempty"`
+	InputTokens     *int `json:"input_tokens,omitempty"`
+	OutputTokens    *int `json:"output_tokens,omitempty"`
+	ReasoningTokens *int `json:"reasoning_tokens,omitempty"`
+	TotalTokens     *int `json:"total_tokens,omitempty"`
 }
 
 // ArtifactName defines model for ArtifactName.

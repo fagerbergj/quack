@@ -58,6 +58,7 @@ export interface NodeDoneMeta {
   completionTokens?: number
   reasoningTokens?: number
   totalTokens?: number
+  cachedTokens?: number
   finishReason?: string
   durationMs?: number
   judgeRounds?: number
@@ -253,7 +254,7 @@ function dispatchAgentEvent(
       const p = parsed as {
         node_id?: string; output_preview?: string
         model?: string; prompt_tokens?: number; completion_tokens?: number
-        reasoning_tokens?: number; total_tokens?: number; finish_reason?: string; duration_ms?: number
+        reasoning_tokens?: number; total_tokens?: number; cached_tokens?: number; finish_reason?: string; duration_ms?: number
         judge_rounds?: number; judge_final_score?: number; judge_passed?: boolean
       }
       if (typeof p.node_id === 'string') {
@@ -263,6 +264,7 @@ function dispatchAgentEvent(
           completionTokens: p.completion_tokens,
           reasoningTokens: p.reasoning_tokens,
           totalTokens: p.total_tokens,
+          cachedTokens: p.cached_tokens,
           finishReason: p.finish_reason,
           durationMs: p.duration_ms,
           judgeRounds: p.judge_rounds,

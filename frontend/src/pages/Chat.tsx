@@ -8,7 +8,8 @@ import { Composer } from '../components/Composer'
 import { ChatList } from '../components/ChatList'
 import { TurnView, visibleActivity } from '../components/TurnView'
 import { useChatStore, useChatState } from '../state/ChatStoreProvider'
-import { activityFromTurn, isTurnInProgress, terminalNodeId, pendingNodeQuestion, dagAnswerAttribution, type DagTurnState } from '../state/chatStore'
+import { activityFromTurn, isTurnInProgress, terminalNodeId, pendingNodeQuestion, dagAnswerAttribution, sessionModels, type DagTurnState } from '../state/chatStore'
+import { UsageSummary } from '../components/UsageSummary'
 import { pendingChoice, showLiveSpinner } from '../components/messageParts'
 import { AttachmentPreviews } from '../components/AttachmentUI'
 import { GitHubLink } from '../components/GitHubLink'
@@ -285,7 +286,7 @@ export default function Chat() {
         if (exists) return prev
         return [detail, ...prev]
       })
-      store.seed(activeChatId, detail.turns)
+      store.seed(activeChatId, detail.turns, detail.usage)
       setSeededChatId(activeChatId)
       // Reconnect to a run still in progress (e.g. this browser after a refresh):
       // the POST body stream is gone, so subscribe to the hub. attach no-ops if
@@ -573,10 +574,13 @@ export default function Chat() {
             />
             {githubLink && <GitHubLink url={githubLink.url} repo={githubLink.repo} className="flex-shrink-0" />}
           </div>
-          {/* Per-chat actions (#746 items 2/3): Download Logs is the escape
-              hatch to the untrimmed event-by-event recording - relabelled and
-              moved from a standing header link into the ⋯ overflow menu. */}
-          {activeChatId && <ChatMenu chatId={activeChatId} />}
+          <div className="flex items-center gap-3 flex-shrink-0">
+            {activeChatId && <UsageSummary models={sessionModels(state)} usage={state.usage} />}
+            {/* Per-chat actions (#746 items 2/3): Download Logs is the escape
+                hatch to the untrimmed event-by-event recording - relabelled and
+                moved from a standing header link into the ⋯ overflow menu. */}
+            {activeChatId && <ChatMenu chatId={activeChatId} />}
+          </div>
         </div>
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain px-6 py-6 space-y-6">

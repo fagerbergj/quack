@@ -68,6 +68,14 @@ type ChatTurn struct {
 	// Model that produced the orchestrator's reply; ADK drops ModelVersion on read.
 	// Empty for DAG turns (per-node on DagNode).
 	Model string `json:"model,omitempty"`
+	// Orchestrator's own token usage, stamped alongside Model (same reason:
+	// SQL-summable for the chat-wide aggregate without walking ADK session
+	// events). Empty for DAG turns (per-node on DagNode).
+	PromptTokens     int32 `json:"prompt_tokens,omitempty"`
+	CompletionTokens int32 `json:"completion_tokens,omitempty"`
+	ReasoningTokens  int32 `json:"reasoning_tokens,omitempty"`
+	TotalTokens      int32 `json:"total_tokens,omitempty"`
+	CachedTokens     int32 `json:"cached_tokens,omitempty"`
 }
 
 // GithubSnapshot stores the full GitHub state fetched at a github-origin
@@ -137,6 +145,7 @@ type DagNode struct {
 	CompletionTokens int32      `json:"completion_tokens"`
 	ReasoningTokens  int32      `json:"reasoning_tokens"`
 	TotalTokens      int32      `json:"total_tokens"`
+	CachedTokens     int32      `json:"cached_tokens"`
 	FinishReason     string     `json:"finish_reason"`
 	DurationMs       int64      `json:"duration_ms"`
 	JudgeRounds      int32      `json:"judge_rounds"`
@@ -159,7 +168,7 @@ type TurnContent struct {
 	Plan      *DagPlan
 	Nodes     []DagNode
 	// Orchestrator's own token usage (DAG turn per-node tokens are on Nodes).
-	PromptTokens, CompletionTokens, ReasoningTokens int32
+	PromptTokens, CompletionTokens, ReasoningTokens, TotalTokens, CachedTokens int32
 	// Orchestrator's model for plain-reply turns; empty for DAG turns.
 	Model string
 }
@@ -192,9 +201,9 @@ const orchestratorAuthor = "orchestrator"
 
 // Per-turn content extracted from a session's events.
 type turnGroup struct {
-	userText, asstText, asstThink                   string
-	toolCalls                                       []ToolCallRecord
-	promptTokens, completionTokens, reasoningTokens int32
+	userText, asstText, asstThink                                              string
+	toolCalls                                                                  []ToolCallRecord
+	promptTokens, completionTokens, reasoningTokens, cachedTokens, totalTokens int32
 }
 
 // groupSessionEvents buckets session events into per-turn groups, split on user events.
@@ -244,6 +253,8 @@ func groupSessionEvents(events iter.Seq[*session.Event]) []turnGroup {
 			cur.promptTokens += ev.UsageMetadata.PromptTokenCount
 			cur.completionTokens += ev.UsageMetadata.CandidatesTokenCount
 			cur.reasoningTokens += ev.UsageMetadata.ThoughtsTokenCount
+			cur.cachedTokens += ev.UsageMetadata.CachedContentTokenCount
+			cur.totalTokens += ev.UsageMetadata.TotalTokenCount
 		}
 		for _, p := range ev.Content.Parts {
 			if p == nil {
@@ -762,11 +773,26 @@ func (s *Store) SaveTurn(ctx context.Context, chatID, turnID string) error {
 	return s.db.WithContext(ctx).Create(t).Error
 }
 
-// SetTurnModel stamps the model on the turn row (ADK drops ModelVersion on read).
-func (s *Store) SetTurnModel(ctx context.Context, chatID, turnID, model string) error {
+// TurnUsage is the orchestrator's own per-turn token usage (DAG turns credit
+// tokens per-node on DagNode instead).
+type TurnUsage struct {
+	PromptTokens, CompletionTokens, ReasoningTokens, TotalTokens, CachedTokens int32
+}
+
+// SetTurnUsage stamps the model + token usage on the turn row in one write
+// (ADK drops both ModelVersion and a chat-wide-summable usage shape on
+// read - see GetChatUsage). Called once at run end for a plain-reply turn.
+func (s *Store) SetTurnUsage(ctx context.Context, chatID, turnID, model string, u TurnUsage) error {
 	return s.db.WithContext(ctx).Model(&ChatTurn{}).
 		Where("id = ? AND chat_id = ?", turnID, chatID).
-		Update("model", model).Error
+		Updates(map[string]any{
+			"model":             model,
+			"prompt_tokens":     u.PromptTokens,
+			"completion_tokens": u.CompletionTokens,
+			"reasoning_tokens":  u.ReasoningTokens,
+			"total_tokens":      u.TotalTokens,
+			"cached_tokens":     u.CachedTokens,
+		}).Error
 }
 
 // ListTurns returns all turns for a chat ordered by sequence.
@@ -894,15 +920,26 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 
 	result := make([]TurnContent, len(turns))
 	for i, t := range turns {
-		tc := TurnContent{ID: t.ID, CreatedAt: t.CreatedAt, Model: t.Model}
+		tc := TurnContent{
+			ID: t.ID, CreatedAt: t.CreatedAt, Model: t.Model,
+			// Stamped by SetTurnUsage at run end - the SQL-summable source of
+			// truth. Turns that predate that stamp fall back to the session
+			// walk below.
+			PromptTokens: t.PromptTokens, CompletionTokens: t.CompletionTokens,
+			ReasoningTokens: t.ReasoningTokens, TotalTokens: t.TotalTokens, CachedTokens: t.CachedTokens,
+		}
 		if i < len(groups) {
 			tc.UserText = groups[i].userText
 			tc.AsstText = groups[i].asstText
 			tc.AsstThink = groups[i].asstThink
 			tc.ToolCalls = groups[i].toolCalls
-			tc.PromptTokens = groups[i].promptTokens
-			tc.CompletionTokens = groups[i].completionTokens
-			tc.ReasoningTokens = groups[i].reasoningTokens
+			if tc.PromptTokens == 0 && tc.CompletionTokens == 0 {
+				tc.PromptTokens = groups[i].promptTokens
+				tc.CompletionTokens = groups[i].completionTokens
+				tc.ReasoningTokens = groups[i].reasoningTokens
+				tc.CachedTokens = groups[i].cachedTokens
+				tc.TotalTokens = groups[i].totalTokens
+			}
 		}
 		if plan := planByTurn[t.ID]; plan != nil {
 			tc.Plan = plan
@@ -925,4 +962,91 @@ func (s *Store) GetTurnWithContent(ctx context.Context, appName, userID, chatID,
 		}
 	}
 	return nil, nil
+}
+
+// UsageAggregate sums token usage across the two places a chat spends
+// tokens: ChatTurn (plain-reply turns) and DagNode (per-node DAG spend).
+type UsageAggregate struct {
+	InputTokens, OutputTokens, ReasoningTokens, CachedTokens, TotalTokens int64
+}
+
+func (a *UsageAggregate) add(prompt, completion, reasoning, cached, total int64) {
+	a.InputTokens += prompt
+	a.OutputTokens += completion
+	a.ReasoningTokens += reasoning
+	a.CachedTokens += cached
+	a.TotalTokens += total
+}
+
+// tokenSums is the shared Scan target for a SUM(...) row over either table's
+// token columns.
+type tokenSums struct {
+	Prompt, Completion, Reasoning, Cached, Total int64
+}
+
+const sumTokenCols = "COALESCE(SUM(prompt_tokens),0) AS prompt, COALESCE(SUM(completion_tokens),0) AS completion, " +
+	"COALESCE(SUM(reasoning_tokens),0) AS reasoning, COALESCE(SUM(cached_tokens),0) AS cached, COALESCE(SUM(total_tokens),0) AS total"
+
+// GetChatUsage returns one chat's token aggregate via two SQL SUMs (turns,
+// then DAG nodes joined through their plan) - never loads a row into memory.
+func (s *Store) GetChatUsage(ctx context.Context, chatID string) (UsageAggregate, error) {
+	var agg UsageAggregate
+
+	var t tokenSums
+	if err := s.db.WithContext(ctx).Model(&ChatTurn{}).Where("chat_id = ?", chatID).
+		Select(sumTokenCols).Scan(&t).Error; err != nil {
+		return UsageAggregate{}, err
+	}
+	agg.add(t.Prompt, t.Completion, t.Reasoning, t.Cached, t.Total)
+
+	var n tokenSums
+	if err := s.db.WithContext(ctx).Table("dag_nodes").
+		Joins("JOIN dag_plans ON dag_plans.id = dag_nodes.plan_id").
+		Where("dag_plans.chat_id = ?", chatID).
+		Select(sumTokenCols).
+		Scan(&n).Error; err != nil {
+		return UsageAggregate{}, err
+	}
+	agg.add(n.Prompt, n.Completion, n.Reasoning, n.Cached, n.Total)
+	return agg, nil
+}
+
+// ChatsUsageTotals sums each chat's total tokens (turns + DAG nodes) for a
+// batch of chat ids in two GROUP BY queries - the sidebar's one extra
+// round-trip per page, not one per chat.
+func (s *Store) ChatsUsageTotals(ctx context.Context, chatIDs []string) (map[string]int64, error) {
+	totals := make(map[string]int64, len(chatIDs))
+	if len(chatIDs) == 0 {
+		return totals, nil
+	}
+
+	var turnRows []struct {
+		ChatID string
+		Total  int64
+	}
+	if err := s.db.WithContext(ctx).Model(&ChatTurn{}).
+		Select("chat_id, COALESCE(SUM(total_tokens),0) AS total").
+		Where("chat_id IN ?", chatIDs).Group("chat_id").
+		Scan(&turnRows).Error; err != nil {
+		return nil, err
+	}
+	for _, r := range turnRows {
+		totals[r.ChatID] += r.Total
+	}
+
+	var nodeRows []struct {
+		ChatID string
+		Total  int64
+	}
+	if err := s.db.WithContext(ctx).Table("dag_nodes").
+		Select("dag_plans.chat_id AS chat_id, COALESCE(SUM(dag_nodes.total_tokens),0) AS total").
+		Joins("JOIN dag_plans ON dag_plans.id = dag_nodes.plan_id").
+		Where("dag_plans.chat_id IN ?", chatIDs).Group("dag_plans.chat_id").
+		Scan(&nodeRows).Error; err != nil {
+		return nil, err
+	}
+	for _, r := range nodeRows {
+		totals[r.ChatID] += r.Total
+	}
+	return totals, nil
 }

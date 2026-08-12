@@ -506,11 +506,11 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		if stop {
 			return
 		}
-		model, promptTokens, completionTokens, reasoningTokens, totalTokens, finishReason := translator.Usage()
+		model, promptTokens, completionTokens, reasoningTokens, totalTokens, cachedTokens, finishReason := translator.Usage()
 		yield(stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{
 			RunID: orchRunID, Stage: stream.StageWorker,
 			Model: model, PromptTokens: promptTokens, CompletionTokens: completionTokens,
-			ReasoningTokens: reasoningTokens, TotalTokens: totalTokens, FinishReason: finishReason,
+			ReasoningTokens: reasoningTokens, TotalTokens: totalTokens, CachedTokens: cachedTokens, FinishReason: finishReason,
 		}}, nil)
 
 		if !produced {
