@@ -420,6 +420,21 @@ workspace:
   # disables checks entirely.
   check_commands: ["go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make"]
 
+  # check_setup: repo bootstrap commands, run once per provisioned clone (in
+  # BOTH the worker's tree and the baseline worktree the gate diffs against)
+  # before checks are derived or run. Without this, a check that only fails
+  # for lack of bootstrapping (not the worker's fault) self-disarms exactly
+  # like real repo debt - which is how quack's own repo lost gating on
+  # go test/make build/make test in a fresh clone (embed.go needs `make
+  # plugins`; the mermaid tests need scripts/node_modules). A failing setup
+  # command logs a warning and leaves that self-disarm to do its job - it
+  # never fails a node directly. Unset (default) = no bootstrap, current
+  # behavior. Commented out below as quack's own example - NOT enabled by
+  # default:
+  # check_setup:
+  #   - make plugins
+  #   - npm --prefix scripts ci
+
   # Deployment-level per-host HTTPS git credentials - ONE identity per host (a
   # PAT), configured like every other secret. Empty (default) = public repos
   # only. `token` MUST be an ${VAR} env reference (a literal secret here is a

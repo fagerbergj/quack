@@ -16,7 +16,7 @@ import (
 var baselineCache sync.Map // key: dir\x00sha\x00check → bool
 
 // failsAtBase: does check fail on base tree? Pre-existing debt doesn't count against the worker. Conservative on error.
-func failsAtBase(dir, check string, caps workspace.Caps) bool {
+func failsAtBase(dir, check string, caps workspace.Caps, setup []string) bool {
 	base, err := baseCommit(dir, caps)
 	if err != nil {
 		// Worker may be charged for pre-existing failure.
@@ -27,7 +27,7 @@ func failsAtBase(dir, check string, caps workspace.Caps) bool {
 	if v, ok := baselineCache.Load(key); ok {
 		return v.(bool)
 	}
-	fails, err := runAtBase(dir, base, check, caps)
+	fails, err := runAtBase(dir, base, check, caps, setup)
 	if err != nil {
 		slog.Warn("cannot run check at base; check keeps gating", "component", "vetting", "check", check, "err", err)
 		return false
@@ -53,7 +53,7 @@ func baseCommit(dir string, caps workspace.Caps) (string, error) {
 }
 
 // runAtBase: runs check in a throwaway detached worktree at base.
-func runAtBase(dir, base, check string, caps workspace.Caps) (bool, error) {
+func runAtBase(dir, base, check string, caps workspace.Caps, setup []string) (bool, error) {
 	// Use SandboxTmpDir under sandbox (server /tmp is not granted).
 	tmp, err := os.MkdirTemp(workspace.SandboxTmpDir(caps), "quack-base-")
 	if err != nil {
@@ -75,6 +75,9 @@ func runAtBase(dir, base, check string, caps workspace.Caps) (bool, error) {
 	if _, err := os.Stat(filepath.Join(dir, "node_modules")); err == nil {
 		_ = os.Symlink(filepath.Join(dir, "node_modules"), filepath.Join(wt, "node_modules"))
 	}
+	// wt is a fresh checkout that never saw dir's setup - rerun it here so the
+	// baseline reflects "base commit + bootstrap", not "base commit, unbootstrapped".
+	runCheckSetup(wt, setup, caps)
 	stages, err := workspace.SplitPipeline(check)
 	if err != nil {
 		return false, err

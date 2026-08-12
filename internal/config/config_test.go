@@ -815,6 +815,7 @@ workspace:
   max_list_entries: 100
   timeout_seconds: 30
   check_commands: ["go build", "go test"]
+  check_setup: ["make plugins"]
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -840,6 +841,9 @@ workspace:
 	}
 	if len(w.CheckCommands) != 2 || w.CheckCommands[0] != "go build" || w.CheckCommands[1] != "go test" {
 		t.Errorf("CheckCommands = %v, want [go build, go test]", w.CheckCommands)
+	}
+	if len(w.CheckSetup) != 1 || w.CheckSetup[0] != "make plugins" {
+		t.Errorf("CheckSetup = %v, want [make plugins]", w.CheckSetup)
 	}
 }
 
@@ -1190,6 +1194,18 @@ func TestWorkspaceDefaults_CheckCommands(t *testing.T) {
 	}
 	if len(disabled.CheckCommands) != 0 {
 		t.Fatalf("explicit [] must stay disabled, got %v", disabled.CheckCommands)
+	}
+}
+
+// Unlike check_commands, check_setup has no shipped default list - an unset
+// check_setup must stay empty (no bootstrap runs) rather than auto-enable one.
+func TestWorkspaceDefaults_CheckSetupNotEnabledByDefault(t *testing.T) {
+	unset := WorkspaceConfig{}
+	if err := unset.applyDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	if len(unset.CheckSetup) != 0 {
+		t.Fatalf("unset check_setup = %v, want empty - it must never auto-enable a bootstrap", unset.CheckSetup)
 	}
 }
 

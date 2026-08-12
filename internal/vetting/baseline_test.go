@@ -87,7 +87,7 @@ func TestRunAtBaseUsesTheSandboxTmpDir(t *testing.T) {
 	// goes under the granted $HOME - anywhere else and the sandbox denies the
 	// write, which is the point of the mode.
 	record := filepath.Join(caps.HomeDir, "cwd")
-	if _, err := runAtBase(repo, base, "pwd | tee "+record, caps); err != nil {
+	if _, err := runAtBase(repo, base, "pwd | tee "+record, caps, nil); err != nil {
 		t.Fatalf("runAtBase: %v", err)
 	}
 	got, err := os.ReadFile(record)
@@ -185,5 +185,85 @@ func TestChecksPassBaselineLeavesWorkerTreeIntact(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "new.txt") || !strings.Contains(string(out), "a.txt") {
 		t.Errorf("git status = %q, want the worker's uncommitted changes still there", out)
+	}
+}
+
+// #839: quack's own repo self-disarms nearly every derived check because they
+// all fail in a fresh clone (embed.go needs `make plugins`, mermaid tests need
+// `npm ci`), so a missing bootstrap gets waived exactly like real repo debt
+// and the gate loses its teeth. check_setup runs a repo-declared bootstrap
+// once, in BOTH the worker's tree and the baseline worktree (runAtBase), so a
+// check that only fails for lack of bootstrapping regains real teeth: the
+// check here can never pass without check_setup (generated.txt never exists
+// anywhere), and the worker's own regression is that its content diverges
+// from the source setup projects it from.
+func TestCheckSetupMakesABaseFailingCheckGateAgain(t *testing.T) {
+	cfg, repo := clonedRepoConfig(t, []string{"grep -q hello generated.txt"}, map[string]string{"src.txt": "hello"})
+	cfg.CheckSetup = []string{"cp src.txt generated.txt"}
+	if err := os.WriteFile(filepath.Join(repo, "src.txt"), []byte("bye"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok := checksPassCriterion(context.Background(), cfg)
+	if !ok {
+		t.Fatal("checks_pass should apply")
+	}
+	if got.Score != 0 {
+		t.Errorf("Score = %v, want 0 - check_setup ran at base too, so the base check passes and the worker's regression is real: %s", got.Score, got.Reason)
+	}
+	if strings.Contains(got.Reason, "ignored, not your fault") {
+		t.Errorf("Reason = %q, the check must not have been waived as pre-existing", got.Reason)
+	}
+}
+
+// The other half: leave the worker's change alone, so the only thing
+// check_setup changes is whether the check can pass at all.
+func TestCheckSetupPassesWhenWorkerLeavesSourceAlone(t *testing.T) {
+	cfg, _ := clonedRepoConfig(t, []string{"grep -q hello generated.txt"}, map[string]string{"src.txt": "hello"})
+	cfg.CheckSetup = []string{"cp src.txt generated.txt"}
+
+	got, ok := checksPassCriterion(context.Background(), cfg)
+	if !ok {
+		t.Fatal("checks_pass should apply")
+	}
+	if got.Score != 1 {
+		t.Errorf("Score = %v, want 1 (setup ran, check passes, nothing waived): %s", got.Score, got.Reason)
+	}
+}
+
+// A broken bootstrap must never become a new way to fail a node - the
+// existing base-failure self-disarm (TestChecksPassPreExistingFailureDoesNotGate)
+// keeps protecting the worker exactly as it did before check_setup existed.
+func TestCheckSetupFailureFallsBackToBaseFailureSelfDisarm(t *testing.T) {
+	cfg, repo := clonedRepoConfig(t, []string{"ls broken"}, map[string]string{"a.txt": "a"})
+	cfg.CheckSetup = []string{"false"} // deliberately broken bootstrap command
+	if err := os.WriteFile(filepath.Join(repo, "new.txt"), []byte("worker"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := checksPassCriterion(context.Background(), cfg)
+	if !ok {
+		t.Fatal("checks_pass should apply")
+	}
+	if got.Score != 1 {
+		t.Errorf("Score = %v, want 1 (a broken check_setup must not fail the worker for the repo's own sins): %s", got.Score, got.Reason)
+	}
+}
+
+// No check_setup configured (the zero value every pre-#839 test in this file
+// leaves it at) must behave byte-identically to before the feature existed.
+func TestCheckSetupUnconfiguredIsUnchanged(t *testing.T) {
+	cfg, repo := clonedRepoConfig(t, []string{"ls marker"}, map[string]string{"marker": "here"})
+	if cfg.CheckSetup != nil {
+		t.Fatal("clonedRepoConfig must not set CheckSetup - this test pins the no-config default")
+	}
+	if err := os.Remove(filepath.Join(repo, "marker")); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := checksPassCriterion(context.Background(), cfg)
+	if !ok {
+		t.Fatal("checks_pass should apply")
+	}
+	if got.Score != 0 {
+		t.Errorf("Score = %v, want 0 (unchanged regression-gates-without-setup behavior)", got.Score)
 	}
 }

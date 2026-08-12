@@ -710,6 +710,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			gateCfg.GitCredentials = gitCredentialAdapter{gitTokenSource}
 		}
 		gateCfg.CheckCommands = cfg.Workspace.CheckCommands
+		gateCfg.CheckSetup = cfg.Workspace.CheckSetup
 		if cfg.Gates.JudgeEnabled() {
 			jprov, ok := cfg.Provider(cfg.Gates.Judge.Provider)
 			if !ok {

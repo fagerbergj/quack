@@ -88,6 +88,8 @@ func checksPassCriterion(ctx context.Context, cfg Config) (criterionScore, bool)
 		slog.Info("no single repo found to derive checks from; skipping checks", "component", "vetting", "node", cfg.NodeID)
 		return skipChecks(ctx, skipReasonNoRepo)
 	}
+	caps := checksCaps(cfg)
+	runCheckSetup(dir, cfg.CheckSetup, caps)
 	checks := cfg.Checks
 	if len(checks) == 0 {
 		checks = deriveChecks(dir, cfg.CheckCommands)
@@ -102,7 +104,6 @@ func checksPassCriterion(ctx context.Context, cfg Config) (criterionScore, bool)
 		}
 		slog.Info("derived checks from the repo", "component", "vetting", "node", cfg.NodeID, "dir", dir, "checks", checks)
 	}
-	caps := checksCaps(cfg)
 	var preexisting []string
 	for _, check := range checks {
 		stages, err := workspace.SplitPipeline(check)
@@ -120,7 +121,7 @@ func checksPassCriterion(ctx context.Context, cfg Config) (criterionScore, bool)
 		}
 		if res.ExitCode != 0 {
 			// Don't gate on pre-existing failures in the base commit (baseline.go).
-			if failsAtBase(dir, check, caps) {
+			if failsAtBase(dir, check, caps, cfg.CheckSetup) {
 				slog.Warn("check already fails at base; not gating on it", "component", "vetting", "node", cfg.NodeID, "check", check)
 				preexisting = append(preexisting, check)
 				continue
