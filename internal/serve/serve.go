@@ -754,7 +754,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 	}
 	if setupOut != nil {
 		*setupOut = func(ctx context.Context, _, chatID, dir string, setup dag.Setup) error {
-			_, err := tools.SetupClone(ctx, jail, localUserID, chatID, dir, setup.Repo, setup.BaseRef, setup.WorkBranch, setup.CheckoutExistingHead, workspaceCaps, gitCredentials, gitTokenSource)
+			_, err := tools.SetupClone(ctx, jail, localUserID, chatID, dir, setup.Repo, setup.BaseRef, setup.WorkBranch, setup.CheckoutExistingHead, workspaceCaps, gitCredentials, gitTokenSource, cfg.Workspace.CheckSetup)
 			return err
 		}
 	}
@@ -888,7 +888,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 						return "", fmt.Errorf("acp worktree: resolve parent clone: %w", err)
 					}
 					return tools.SetupWorktree(ctx, jail, userID, chatID, parentDir, workspace.NodeDir(nodeID),
-						workspace.WorktreeBranch(nodeID), workspaceCaps)
+						workspace.WorktreeBranch(nodeID), workspaceCaps, cfg.Workspace.CheckSetup)
 				},
 			})
 			if err != nil {

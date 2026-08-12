@@ -89,7 +89,7 @@ func checksPassCriterion(ctx context.Context, cfg Config) (criterionScore, bool)
 		return skipChecks(ctx, skipReasonNoRepo)
 	}
 	caps := checksCaps(cfg)
-	runCheckSetup(dir, cfg.CheckSetup, caps)
+	workspace.RunCheckSetup(dir, cfg.CheckSetup, caps)
 	checks := cfg.Checks
 	if len(checks) == 0 {
 		checks = deriveChecks(dir, cfg.CheckCommands)

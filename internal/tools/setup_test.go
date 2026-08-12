@@ -67,8 +67,30 @@ func TestSetupCloneAndBranchFailsOnEmptyWorkBranch(t *testing.T) {
 
 func TestSetupCloneRejectsNonHTTPS(t *testing.T) {
 	b := newTestGitBinding(t)
-	if _, err := SetupClone(context.Background(), b.jail, b.userID, "", "repo", "file:///tmp/repo", "main", "quack/work", false, b.caps, nil, nil); err == nil {
+	if _, err := SetupClone(context.Background(), b.jail, b.userID, "", "repo", "file:///tmp/repo", "main", "quack/work", false, b.caps, nil, nil, nil); err == nil {
 		t.Error("expected SetupClone to reject a non-https repo URL")
+	}
+}
+
+// TestSetupCloneRunsCheckSetup pins the #856 follow-up's other call site: the
+// shared clone must be bootstrapped quack-side, right after checkout, so
+// implementer nodes (which use it directly, no worktree) land in an
+// already-bootstrapped tree without waiting for gate-check time. Exercises
+// setupCloneAndBranch + workspace.RunCheckSetup directly (SetupClone's own
+// composition) since SetupClone's https-only URL check has no local-fixture
+// bypass, same as every other clone-behavior test in this file.
+func TestSetupCloneRunsCheckSetup(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+
+	target, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "quack/work", false)
+	if err != nil {
+		t.Fatalf("setupCloneAndBranch: %v", err)
+	}
+	workspace.RunCheckSetup(target, []string{"touch generated.txt"}, b.caps)
+	if _, err := os.Stat(filepath.Join(target, "generated.txt")); err != nil {
+		t.Errorf("check_setup did not run in the clone: %v", err)
 	}
 }
 
