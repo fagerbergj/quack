@@ -14,10 +14,15 @@ type Caps struct {
 	ExtraPath      []string
 	Env            map[string]string
 	HomeDir        string
-	WorkRoot       string
-	Sandbox        SandboxMode
-	Limits         Limits
-	ExtraRO        []string
+	// ScratchDir is a per-node writable tmp dir (Jail.ScratchDir) that TMPDIR
+	// points at for a sandboxed worker's own scratch use. "" falls back to the
+	// shared HomeDir/tmp (see homeTmpDir) - callers that don't scope scratch
+	// per node (the gate's own one-shot check commands, tests).
+	ScratchDir string
+	WorkRoot   string
+	Sandbox    SandboxMode
+	Limits     Limits
+	ExtraRO    []string
 	// ReadOnly mounts the node's own work/dir RO instead of RW (#754) - set
 	// from the agent's read_only config, not merely stated in its prompt.
 	ReadOnly bool
@@ -38,6 +43,6 @@ func DefaultCaps() Caps {
 func (c Caps) IsZero() bool {
 	return c.MaxReadBytes == 0 && c.MaxWriteBytes == 0 && c.MaxResults == 0 &&
 		c.MaxListEntries == 0 && c.Timeout == 0 && c.MaxOutputBytes == 0 &&
-		len(c.ExtraPath) == 0 && len(c.Env) == 0 && c.HomeDir == "" && c.Sandbox == "" && c.Limits == Limits{} &&
+		len(c.ExtraPath) == 0 && len(c.Env) == 0 && c.HomeDir == "" && c.ScratchDir == "" && c.Sandbox == "" && c.Limits == Limits{} &&
 		len(c.ExtraRO) == 0 && !c.ReadOnly
 }

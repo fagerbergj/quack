@@ -2,6 +2,7 @@ package acp
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -28,7 +29,7 @@ func TestResolveNodeWorktreeParentInvokesWorktreeHook(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	cwd, _, _, _, err := a.resolveNode(context.Background(), "review the PR\n\n"+vetting.AdvisorThreadMarker(token))
+	cwd, _, _, _, _, err := a.resolveNode(context.Background(), "review the PR\n\n"+vetting.AdvisorThreadMarker(token))
 	if err != nil {
 		t.Fatalf("resolveNode: %v", err)
 	}
@@ -53,7 +54,7 @@ func TestResolveNodeWorktreeParentWithoutHookErrors(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	_, _, _, _, err := a.resolveNode(context.Background(), "review\n\n"+vetting.AdvisorThreadMarker(token))
+	_, _, _, _, _, err := a.resolveNode(context.Background(), "review\n\n"+vetting.AdvisorThreadMarker(token))
 	if err == nil {
 		t.Fatal("resolveNode: want an error - the node needs a worktree but none is configured")
 	}
@@ -75,7 +76,7 @@ func TestResolveNodeNonWorktreeNodeUsesJail(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	cwd, _, _, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
+	cwd, _, _, _, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
 	if err != nil {
 		t.Fatalf("resolveNode: %v", err)
 	}
@@ -104,7 +105,7 @@ func TestResolveNodeReturnsAdvisorTaskReadOnly(t *testing.T) {
 		vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
 			NodeID: "impl1", WorkspaceNodeID: "impl1", SessionID: "chat1", ReadOnly: want,
 		})
-		_, _, _, got, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
+		_, _, _, _, got, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
 		vetting.UnregisterAdvisorThread(token)
 		if err != nil {
 			t.Fatalf("resolveNode: %v", err)
@@ -132,7 +133,7 @@ func TestResolveNodeGrantsContextDir(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	_, _, ctxDir, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
+	_, _, ctxDir, _, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
 	if err != nil {
 		t.Fatalf("resolveNode: %v", err)
 	}
@@ -161,11 +162,74 @@ func TestResolveNodeNoJailNoContextDir(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	_, _, ctxDir, _, err := a.resolveNode(context.Background(), "review\n\n"+vetting.AdvisorThreadMarker(token))
+	_, _, ctxDir, _, _, err := a.resolveNode(context.Background(), "review\n\n"+vetting.AdvisorThreadMarker(token))
 	if err != nil {
 		t.Fatalf("resolveNode: %v", err)
 	}
 	if ctxDir != "" {
 		t.Errorf("ctxDir = %q, want \"\" with no Jail configured", ctxDir)
+	}
+}
+
+// TestResolveNodeGrantsScratchDir pins the writable-scratch fix: resolveNode
+// derives a per-node scratch dir (workspace.Jail.ScratchDir) from the SAME
+// (UserID, SessionID, WorkspaceNodeID) coordinate the cwd resolves under -
+// created, and distinct from the node's own working directory - regardless
+// of the node's ReadOnly flag (a read-only reviewer needs scratch exactly as
+// much as a writer does).
+func TestResolveNodeGrantsScratchDir(t *testing.T) {
+	dir := t.TempDir()
+	jail, err := workspace.NewJail(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{opts: Options{UserID: "u1", Jail: jail}}
+	for _, readOnly := range []bool{true, false} {
+		token := vetting.AdvisorThreadToken("plan-1", "impl1")
+		vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
+			NodeID: "impl1", WorkspaceNodeID: "impl1", SessionID: "chat1", ReadOnly: readOnly,
+		})
+		cwd, _, _, scratchDir, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
+		vetting.UnregisterAdvisorThread(token)
+		if err != nil {
+			t.Fatalf("resolveNode (readOnly=%v): %v", readOnly, err)
+		}
+		want, err := jail.ScratchDir("u1", "chat1", "impl1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if scratchDir != want {
+			t.Errorf("scratchDir (readOnly=%v) = %q, want %q", readOnly, scratchDir, want)
+		}
+		if scratchDir == cwd {
+			t.Errorf("scratchDir must not be the node's own working directory: both are %q", scratchDir)
+		}
+		if info, statErr := os.Stat(scratchDir); statErr != nil || !info.IsDir() {
+			t.Errorf("scratchDir %q was not created: %v", scratchDir, statErr)
+		}
+	}
+}
+
+// TestResolveNodeNoJailNoScratchDir mirrors TestResolveNodeNoJailNoContextDir
+// for the scratch grant: no Jail configured degrades to "", never a panic.
+func TestResolveNodeNoJailNoScratchDir(t *testing.T) {
+	a := &Agent{opts: Options{
+		UserID: "u1",
+		Worktree: func(ctx context.Context, userID, chatID, parentNodeID, nodeID string) (string, error) {
+			return "/resolved/worktree/dir", nil
+		},
+	}}
+	token := vetting.AdvisorThreadToken("plan-1", "review1")
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
+		NodeID: "review1", WorkspaceNodeID: "review1", WorktreeParent: workspace.SharedRepoScope, SessionID: "chat1",
+	})
+	defer vetting.UnregisterAdvisorThread(token)
+
+	_, _, _, scratchDir, _, err := a.resolveNode(context.Background(), "review\n\n"+vetting.AdvisorThreadMarker(token))
+	if err != nil {
+		t.Fatalf("resolveNode: %v", err)
+	}
+	if scratchDir != "" {
+		t.Errorf("scratchDir = %q, want \"\" with no Jail configured", scratchDir)
 	}
 }

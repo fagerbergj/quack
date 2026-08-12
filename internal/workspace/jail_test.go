@@ -428,6 +428,102 @@ func TestJailHomeDirPerUserIsolated(t *testing.T) {
 	}
 }
 
+// TestJailScratchDirCreatesDirectory: ScratchDir creates and returns a real,
+// existing directory - a worker's TMPDIR must resolve to something that's
+// already there at round start, not a path it has to create itself.
+func TestJailScratchDirCreatesDirectory(t *testing.T) {
+	j := newTestJail(t)
+	scratch, err := j.ScratchDir("alice", "chat1", "node1")
+	if err != nil {
+		t.Fatalf("ScratchDir: %v", err)
+	}
+	info, err := os.Stat(scratch)
+	if err != nil {
+		t.Fatalf("ScratchDir did not create %q: %v", scratch, err)
+	}
+	if !info.IsDir() {
+		t.Errorf("ScratchDir %q is not a directory", scratch)
+	}
+}
+
+// TestJailScratchDirPerNodeIsolated pins the actual fix: two different nodes
+// (even in the same chat) get DISTINCT scratch dirs - the pre-fix behavior
+// (TMPDIR = HomeDir/tmp, no node component) shared one scratch dir across
+// every node for the whole user, so one node's mktemp-named files could
+// collide with, or be visible to, a concurrent node's.
+func TestJailScratchDirPerNodeIsolated(t *testing.T) {
+	j := newTestJail(t)
+	a, err := j.ScratchDir("alice", "chat1", "node-a")
+	if err != nil {
+		t.Fatalf("ScratchDir(node-a): %v", err)
+	}
+	b, err := j.ScratchDir("alice", "chat1", "node-b")
+	if err != nil {
+		t.Fatalf("ScratchDir(node-b): %v", err)
+	}
+	if a == b {
+		t.Errorf("ScratchDir(node-a) == ScratchDir(node-b) = %q, want distinct per-node scratch dirs", a)
+	}
+}
+
+// TestJailScratchDirIsSiblingNotNestedInARepo mirrors
+// TestJailHomeDirIsSiblingNotNestedInARepo: scratch lives under HomeDir,
+// never inside the node's own workspace - a read-only node's tree must stay
+// wholly immutable, so its scratch cannot live anywhere under it.
+func TestJailScratchDirIsSiblingNotNestedInARepo(t *testing.T) {
+	j := newTestJail(t)
+	nodeDir, err := j.Resolve("alice", "chat1", NodeDir("node1"))
+	if err != nil {
+		t.Fatalf("Resolve(node1): %v", err)
+	}
+	if err := os.MkdirAll(nodeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	scratch, err := j.ScratchDir("alice", "chat1", "node1")
+	if err != nil {
+		t.Fatalf("ScratchDir: %v", err)
+	}
+	if strings.HasPrefix(scratch, nodeDir+string(filepath.Separator)) || scratch == nodeDir {
+		t.Fatalf("ScratchDir %q is nested inside the node's own workspace %q - must be a sibling", scratch, nodeDir)
+	}
+	home, err := j.HomeDir("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(scratch, home+string(filepath.Separator)) {
+		t.Errorf("ScratchDir %q is not under HomeDir %q", scratch, home)
+	}
+}
+
+// TestJailScratchDirIsStableAcrossCalls mirrors TestJailHomeDirIsStableAcrossCalls.
+func TestJailScratchDirIsStableAcrossCalls(t *testing.T) {
+	j := newTestJail(t)
+	s1, err := j.ScratchDir("alice", "chat1", "node1")
+	if err != nil {
+		t.Fatalf("ScratchDir: %v", err)
+	}
+	s2, err := j.ScratchDir("alice", "chat1", "node1")
+	if err != nil {
+		t.Fatalf("ScratchDir (2nd call): %v", err)
+	}
+	if s1 != s2 {
+		t.Errorf("ScratchDir not stable: %q vs %q", s1, s2)
+	}
+}
+
+// TestJailScratchDirRejectsInvalidIDs mirrors the chatID/userID escape guards
+// elsewhere in this file: a crafted chatID or nodeID can't walk the scratch
+// dir outside the jail.
+func TestJailScratchDirRejectsInvalidIDs(t *testing.T) {
+	j := newTestJail(t)
+	if _, err := j.ScratchDir("alice", "../evil", "node1"); !errors.Is(err, ErrInvalidChatID) {
+		t.Errorf("ScratchDir(../evil, _) = %v, want ErrInvalidChatID", err)
+	}
+	if _, err := j.ScratchDir("alice", "chat1", "../evil"); !errors.Is(err, ErrInvalidNodeID) {
+		t.Errorf("ScratchDir(_, ../evil) = %v, want ErrInvalidNodeID", err)
+	}
+}
+
 func TestNewJailCreatesRoot(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "does-not-exist-yet")
 	j, err := NewJail(dir)

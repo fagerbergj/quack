@@ -91,30 +91,38 @@ func (a *Agent) RunNode(ctx adkagent.Context, nodeInput any) iter.Seq2[*session.
 }
 
 // resolveNode derives the node's working directory, memory-MCP credential,
-// and GitHub context-dir grant from the advisor-thread marker in the prompt.
-// memSecret is resolved separately in the memSessions registry - the
-// advisor-thread token never doubles as the MCP bearer credential.
-func (a *Agent) resolveNode(ctx context.Context, prompt string) (cwd, memSecret, ctxDir string, readOnly bool, err error) {
+// GitHub context-dir grant, and per-node scratch dir from the advisor-thread
+// marker in the prompt. memSecret is resolved separately in the memSessions
+// registry - the advisor-thread token never doubles as the MCP bearer
+// credential.
+func (a *Agent) resolveNode(ctx context.Context, prompt string) (cwd, memSecret, ctxDir, scratchDir string, readOnly bool, err error) {
 	token, ok := vetting.ParseAdvisorThread(prompt)
 	if !ok {
-		return "", "", "", false, errors.New("acp: prompt carries no workspace-scope marker (is this agent running outside the gate?)")
+		return "", "", "", "", false, errors.New("acp: prompt carries no workspace-scope marker (is this agent running outside the gate?)")
 	}
 	at, ok := vetting.LookupAdvisorThread(token)
 	if !ok {
-		return "", "", "", false, fmt.Errorf("acp: advisor thread %q not registered", token)
+		return "", "", "", "", false, fmt.Errorf("acp: advisor thread %q not registered", token)
 	}
 	if a.opts.Jail != nil {
 		ctxDir, _ = a.opts.Jail.Resolve(a.opts.UserID, at.SessionID, workspace.ContextDirScope)
+		// A read-only reviewer needs this exactly as much as a writer does
+		// (TMPDIR/mktemp/heredocs don't care whether the round can touch its
+		// own tree) - scoped per node so concurrent rounds never collide.
+		scratchDir, err = a.opts.Jail.ScratchDir(a.opts.UserID, at.SessionID, at.WorkspaceNodeID)
+		if err != nil {
+			return "", "", "", "", false, fmt.Errorf("acp: scratch dir: %w", err)
+		}
 	}
 	if at.WorktreeParent != "" {
 		if a.opts.Worktree == nil {
-			return "", "", "", false, fmt.Errorf("acp: node %q needs a git worktree but no worktree executor is configured", at.NodeID)
+			return "", "", "", "", false, fmt.Errorf("acp: node %q needs a git worktree but no worktree executor is configured", at.NodeID)
 		}
 		cwd, err = a.opts.Worktree(ctx, a.opts.UserID, at.SessionID, at.WorktreeParent, at.WorkspaceNodeID)
-		return cwd, at.MemSecret, ctxDir, at.ReadOnly, err
+		return cwd, at.MemSecret, ctxDir, scratchDir, at.ReadOnly, err
 	}
 	cwd, err = a.opts.Jail.EnsureDir(a.opts.UserID, at.SessionID, workspace.NodeDir(at.WorkspaceNodeID))
-	return cwd, at.MemSecret, ctxDir, at.ReadOnly, err
+	return cwd, at.MemSecret, ctxDir, scratchDir, at.ReadOnly, err
 }
 
 // runPrompt is one full round: spawn, handshake, prompt, stream translation, shutdown.
@@ -124,7 +132,7 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 			yield(nil, errors.New("acp: empty prompt"))
 			return
 		}
-		cwd, memSecret, ctxDir, readOnly, err := a.resolveNode(ctx, prompt)
+		cwd, memSecret, ctxDir, scratchDir, readOnly, err := a.resolveNode(ctx, prompt)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -134,6 +142,7 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 		// regardless of what the agent is normally configured for.
 		caps := a.opts.Caps
 		caps.ReadOnly = readOnly
+		caps.ScratchDir = scratchDir
 		outbound := environmentBlock(ctx, cwd, caps) + "\n\n" + prompt
 		if a.opts.Preamble != "" {
 			outbound = a.opts.Preamble + "\n\n" + outbound

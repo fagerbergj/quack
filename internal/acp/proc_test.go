@@ -16,7 +16,7 @@ func TestSpawnEnvIsHermetic(t *testing.T) {
 	for _, mode := range []workspace.SandboxMode{"", workspace.SandboxNone, workspace.SandboxBwrap, workspace.SandboxLandlock} {
 		caps := workspace.Caps{Sandbox: mode, ExtraPath: []string{"/opt/jdk-21/bin"}}
 		a := &Agent{opts: Options{Caps: caps, Home: "/home/agent"}}
-		env := a.spawnEnv()
+		env := a.spawnEnv(a.opts.Caps)
 		want := "PATH=" + workspace.ChildPath(caps)
 		found := false
 		for _, e := range env {
@@ -30,6 +30,32 @@ func TestSpawnEnvIsHermetic(t *testing.T) {
 		if !found {
 			t.Errorf("mode %q: spawnEnv() = %v, want %q present", mode, env, want)
 		}
+	}
+}
+
+// TestSpawnEnvTracksRoundScratchDir pins the writable-scratch fix: spawnEnv
+// must build TMPDIR from THIS round's caps (the parameter, with per-node
+// ScratchDir already resolved by resolveNode/runPrompt), not the agent's
+// static a.opts.Caps - before this fix TMPDIR always read a.opts.Caps, so a
+// round's ScratchDir override never reached the subprocess's actual
+// environment despite being correctly computed and granted.
+func TestSpawnEnvTracksRoundScratchDir(t *testing.T) {
+	home := t.TempDir()
+	static := workspace.Caps{Sandbox: workspace.SandboxLandlock, HomeDir: home}
+	a := &Agent{opts: Options{Caps: static, Home: home}}
+
+	roundCaps := static
+	roundCaps.ScratchDir = t.TempDir()
+
+	var got string
+	for _, e := range a.spawnEnv(roundCaps) {
+		if strings.HasPrefix(e, "TMPDIR=") {
+			got = e
+		}
+	}
+	want := "TMPDIR=" + roundCaps.ScratchDir
+	if got != want {
+		t.Errorf("spawnEnv(roundCaps) TMPDIR = %q, want %q (the round's scratch dir, not the agent's static caps)", got, want)
 	}
 }
 
@@ -84,7 +110,7 @@ func TestSpawnEnvPinsJavaTmpDir(t *testing.T) {
 		caps := workspace.Caps{Sandbox: tc.mode, HomeDir: home}
 		a := &Agent{opts: Options{Caps: caps, Home: home}}
 		var got string
-		for _, e := range a.spawnEnv() {
+		for _, e := range a.spawnEnv(a.opts.Caps) {
 			if strings.HasPrefix(e, "JAVA_TOOL_OPTIONS=") {
 				got = e
 			}
@@ -108,7 +134,7 @@ func TestSpawnEnvOperatorOverridesJavaToolOptions(t *testing.T) {
 		Home: home,
 		Env:  []string{"JAVA_TOOL_OPTIONS=-Xmx512m"},
 	}}
-	env := a.spawnEnv()
+	env := a.spawnEnv(a.opts.Caps)
 	var last string
 	for _, e := range env {
 		if strings.HasPrefix(e, "JAVA_TOOL_OPTIONS=") {

@@ -18,6 +18,9 @@ var ErrInvalidUserID = errors.New("workspace: invalid user id")
 // Rejects a chatID that can't safely name one directory component. Empty chatID means "no per-chat scope" (backward compatible).
 var ErrInvalidChatID = errors.New("workspace: invalid chat id")
 
+// Rejects a nodeID that can't safely name one directory component (ScratchDir).
+var ErrInvalidNodeID = errors.New("workspace: invalid node id")
+
 // One configured workspace root; per-user boundaries derived at resolve time.
 type Jail struct {
 	// Absolute, symlink-resolved workspace root.
@@ -68,6 +71,31 @@ func (j *Jail) HomeDir(userID string) (string, error) {
 		return "", fmt.Errorf("workspace: create home dir %q: %w", home, err)
 	}
 	return home, nil
+}
+
+// ScratchDir is a private, per-node writable tmp dir for a sandboxed worker's
+// own scratch use (mktemp, heredocs, a build's tmp files) - a home for the
+// TMPDIR grant that doesn't collide with, or get swept alongside, another
+// node's. Nested under HomeDir (never inside the node's own workspace: a
+// read-only node's tree must stay wholly immutable), one directory component
+// per node so workspace gc's existing per-entry sweepHomeTmp TTL sweep (see
+// gc.go) reaps it with no changes of its own.
+func (j *Jail) ScratchDir(userID, chatID, nodeID string) (string, error) {
+	if !isSafePathComponent(chatID) {
+		return "", ErrInvalidChatID
+	}
+	if !isSafePathComponent(nodeID) {
+		return "", ErrInvalidNodeID
+	}
+	home, err := j.HomeDir(userID)
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(home, "tmp", chatID+"__"+nodeID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("workspace: create scratch dir %q: %w", dir, err)
+	}
+	return dir, nil
 }
 
 // Working directory a DAG node's tools default to (one component under chat scope). "" falls back to chat root.

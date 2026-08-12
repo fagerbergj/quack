@@ -252,8 +252,19 @@ func tmpArgs(caps Caps) []string {
 	return []string{"--tmpfs", "/tmp"}
 }
 
-// homeTmpDir returns caps.HomeDir/tmp (created on demand), "" when unavailable.
+// homeTmpDir returns caps.ScratchDir (created on demand) when the caller has
+// scoped one - a sandboxed worker's own per-node tmp, see Jail.ScratchDir -
+// else falls back to the shared caps.HomeDir/tmp (created on demand), ""
+// when neither is set.
 func homeTmpDir(caps Caps) string {
+	if caps.ScratchDir != "" {
+		if err := os.MkdirAll(caps.ScratchDir, 0o700); err != nil {
+			slog.Warn("could not create the sandbox scratch dir; falling back to shared HOME/tmp",
+				"component", "workspace", "dir", caps.ScratchDir, "err", err)
+		} else {
+			return caps.ScratchDir
+		}
+	}
 	if caps.HomeDir == "" {
 		return ""
 	}
