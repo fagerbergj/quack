@@ -46,6 +46,12 @@ type Setup struct {
 	WorkBranch string `json:"work_branch"`
 
 	CheckoutExistingHead bool `json:"-"`
+
+	// Provisioned: set once Executor.Provision has cloned this Setup - makes
+	// a second Provision/runPlanSetup call (execute tool, then the run phase)
+	// a no-op instead of a double clone. Never round-trips through the
+	// resume-plan JSON; that's fine, setup never runs again on resume anyway.
+	Provisioned bool `json:"-"`
 }
 
 // Delivery: post-gate step for reaching GitHub, run once at the run level.

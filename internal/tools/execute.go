@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -25,8 +26,12 @@ type executeResult struct {
 // ExecPlanKey: session-state key for the selected plan (full JSON), so a retry finds it in persisted session.
 const ExecPlanKey = "orch.exec.plan"
 
-// NewExecuteTool: validates plan_id, selects it, ends the llmagent's turn.
-func NewExecuteTool(cache *PlanCache) (tool.Tool, error) {
+// NewExecuteTool: validates plan_id, provisions its Setup, selects it, ends
+// the llmagent's turn. provision: eager clone+checkout of plan.Setup (nil-safe
+// no-op if unset) - runs HERE, synchronously, so a clone failure is this
+// tool's own error result (the model sees it and can revise the plan) rather
+// than a run-time abort deep inside RunPlanAsGraph (#848).
+func NewExecuteTool(cache *PlanCache, provision func(ctx context.Context, userID, chatID string, plan *dag.Plan) error) (tool.Tool, error) {
 	return functiontool.New[executeArgs, executeResult](
 		functiontool.Config{
 			Name: "execute",
@@ -38,6 +43,11 @@ func NewExecuteTool(cache *PlanCache) (tool.Tool, error) {
 			plan, ok := cache.Get(a.PlanID)
 			if !ok {
 				return executeResult{}, fmt.Errorf("execute: unknown plan_id %q - call plan first and pass the plan_id it returns", a.PlanID)
+			}
+			if provision != nil {
+				if err := provision(tc, tc.UserID(), tc.SessionID(), &plan); err != nil {
+					return executeResult{}, fmt.Errorf("execute: %w", err)
+				}
 			}
 			planJSON, err := json.Marshal(plan)
 			if err != nil {

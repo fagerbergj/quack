@@ -246,6 +246,14 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { yield(ev, nil) })
 		yield(tools.DagPlanEvent(plan), nil)
 
+		// A bound plan never passes through the execute tool (no orchestrator
+		// LLM turn exists to revise from), so provisioning failure here has no
+		// tool call to fail into - surface the human form directly on the stream.
+		if perr := o.executor.Provision(ctx, userID, sessionID, &plan); perr != nil {
+			yield(stream.Errorf("orchestrator: bound plan setup: "+perr.Error()), nil)
+			return
+		}
+
 		nodeOutputs := make(map[string]string)
 		paused, err := o.executor.RunPlanAsGraph(ctx, plan, AppName, userID, sessionID, nil, yield, nodeOutputs, nil)
 		if err != nil {
@@ -367,7 +375,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			yield(stream.Errorf("orchestrator: plan tool: "+err.Error()), nil)
 			return
 		}
-		execTool, err := tools.NewExecuteTool(planCache)
+		execTool, err := tools.NewExecuteTool(planCache, o.executor.Provision)
 		if err != nil {
 			yield(stream.Errorf("orchestrator: execute tool: "+err.Error()), nil)
 			return

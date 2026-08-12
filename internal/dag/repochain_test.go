@@ -301,6 +301,42 @@ func TestRunPlanAsGraph_ChainSharesOneCloneAndDeliversOnceAtTerminal(t *testing.
 	}
 }
 
+// (d) #848: the execute tool provisions eagerly (Provision) before handing
+// the plan to the run phase - RunPlanAsGraph's own runPlanSetup must see
+// Setup.Provisioned and skip, never re-clone the same real repo fixture.
+func TestRunPlanAsGraph_EagerProvisionThenRunDoesNotDoubleClone(t *testing.T) {
+	ex, _, deliverCh, setupCalls := newChainExecutor(t)
+	plan := Plan{
+		ID: "p", UserMessage: "go",
+		Setup: &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"},
+		Nodes: []Node{
+			{ID: "impl", AgentName: implementerAgent, Task: "the whole thing"},
+		},
+	}
+	// Simulates the execute tool's eager provisioning, synchronously before
+	// the tool call returns success.
+	if err := ex.Provision(context.Background(), "u1", "chat1", &plan); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if got := setupCalls.get(); got != 1 {
+		t.Fatalf("setup called %d times after Provision, want 1", got)
+	}
+
+	runChainPlan(t, ex, plan)
+
+	if got := setupCalls.get(); got != 1 {
+		t.Fatalf("setup called %d times total, want exactly 1 (no double-clone across Provision + the run phase)", got)
+	}
+	select {
+	case dc := <-deliverCh:
+		if dc.NodeID != "impl" {
+			t.Errorf("delivered NodeID = %q, want %q", dc.NodeID, "impl")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("delivery never fired")
+	}
+}
+
 // (c) Regression: a single repo-touching node (no chain) still gets its clone
 // provisioned and its delivery posted, exactly as before #310.
 func TestRunPlanAsGraph_SingleRepoNodeStillDelivers(t *testing.T) {
