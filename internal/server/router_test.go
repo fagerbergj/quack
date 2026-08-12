@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/fstest"
 
 	"github.com/go-chi/chi/v5"
 
@@ -199,6 +200,39 @@ func TestRouterMountsSDKExtensionAtBareName(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code == http.StatusOK {
 		t.Errorf("GET /ext/noop/status = %d, want it NOT mounted under the old /ext/ prefix", rec.Code)
+	}
+}
+
+// TestRouterServesStaticSPAAssetVerbatim pins the split spaHandler relies
+// on: a real file under the embedded dist (e.g. frontend/public's
+// assets/ext/v1/kit.css, copied through verbatim by Vite) is served as
+// itself, not swallowed by the index.html client-route fallback.
+func TestRouterServesStaticSPAAssetVerbatim(t *testing.T) {
+	spa := fstest.MapFS{
+		"index.html":            &fstest.MapFile{Data: []byte("<html>spa</html>")},
+		"assets/ext/v1/kit.css": &fstest.MapFile{Data: []byte(".qk-card{color:red}")},
+	}
+	h := server.New(server.Options{REST: &rest.Handler{}, SPA: spa})
+
+	req := httptest.NewRequest(http.MethodGet, "/assets/ext/v1/kit.css", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /assets/ext/v1/kit.css = %d, want 200", rec.Code)
+	}
+	if got := rec.Body.String(); got != ".qk-card{color:red}" {
+		t.Errorf("body = %q, want the kit.css bytes verbatim (not index.html)", got)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/css; charset=utf-8" {
+		t.Errorf("Content-Type = %q, want text/css", ct)
+	}
+
+	// An unknown client-side route still falls back to index.html.
+	req = httptest.NewRequest(http.MethodGet, "/chat/nonexistent", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Body.String() != "<html>spa</html>" {
+		t.Errorf("got %d %q, want 200 <html>spa</html> (SPA fallback)", rec.Code, rec.Body.String())
 	}
 }
 
