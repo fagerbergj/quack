@@ -5,7 +5,7 @@ import { createRoot } from 'react-dom/client'
 
 import { filterChats } from '../lib/chatFilters'
 import { isGithubChat } from '../lib/github'
-import { ChatList, githubStateBadgeClass, githubStateLabel } from './ChatList'
+import { ChatList, githubStateBadgeClass, githubStateLabel, originBadgeClass } from './ChatList'
 import type { ChatSummary } from '../api'
 
 // No @testing-library/react in this repo - ChatList's filter/facet logic
@@ -137,6 +137,23 @@ describe('origin chip', () => {
   it('renders nothing extra when origin is absent', () => {
     renderList([chat({ id: 'e4' })])
     expect(host!.textContent).not.toContain('undefined')
+  })
+
+  // #870: the origin badge mirrors GitHub's own state colors for exactly
+  // these three values - any other extension-defined badge stays the
+  // existing neutral chip rather than guessing at unknown semantics.
+  it('colors the badge chip for open/merged/closed like GitHub, and leaves anything else neutral', () => {
+    expect(originBadgeClass('open')).toContain('green')
+    expect(originBadgeClass('merged')).toContain('purple')
+    expect(originBadgeClass('closed')).toContain('red')
+    expect(originBadgeClass('draft')).toBe('bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400')
+    expect(originBadgeClass('some-extension-value')).toBe('bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400')
+  })
+
+  it('applies the open/merged/closed color class to the rendered badge chip', () => {
+    renderList([chat({ id: 'e5', origin: { extension: 'remarkable', label: 'PR', badge: 'merged' } })])
+    const badge = Array.from(host!.querySelectorAll('span')).find(el => el.textContent === 'merged')!
+    expect(badge.className).toContain('purple')
   })
 })
 
