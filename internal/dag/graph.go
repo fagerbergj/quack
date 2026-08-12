@@ -27,8 +27,9 @@ type nodeScopedWorker interface {
 	ForNode(nodeKey string) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, release func(), err error)
 }
 
-// buildGateNodes: one gated node per plan node.
-func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int)) (map[string]workflow.Node, []adkagent.Agent, error) {
+// buildGateNodes: one gated node per plan node. source: the run's origin
+// (extension name or a fixed app value) - observability only, see vetting.Config.Source.
+func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int)) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
@@ -57,7 +58,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 			return nil, nil, err
 		}
 		node := n
-		cfg := nodeGateConfig(plan, node, worker, cfgFor, chatID)
+		cfg := nodeGateConfig(plan, node, worker, cfgFor, chatID, source)
 		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release)
 	}
 	return nodesByID, subAgents, nil
@@ -69,7 +70,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 // cfgFor's result is turned into a node's actual config - regardless of which
 // agent the planner picked (#739). Filtering by agent name would miss a
 // future writable agent; this keys on the capability fields themselves.
-func nodeGateConfig(plan Plan, node Node, worker adkagent.Agent, cfgFor func(string) vetting.Config, chatID string) vetting.Config {
+func nodeGateConfig(plan Plan, node Node, worker adkagent.Agent, cfgFor func(string) vetting.Config, chatID, source string) vetting.Config {
 	cfg := cfgFor(node.AgentName)
 	cfg.DeliverPromptEvent = vetting.PromptEventNeeded(worker)
 	cfg.Checks = node.Checks
@@ -82,6 +83,7 @@ func nodeGateConfig(plan Plan, node Node, worker adkagent.Agent, cfgFor func(str
 	cfg.Task = node.Task
 	cfg.DeriveChecks = node.AgentName == implementerAgent
 	cfg.ChatID = chatID
+	cfg.Source = source
 	if plan.Setup != nil && setupQualifyingAgent(node.AgentName) {
 		cfg.Setup = &vetting.SetupBranch{Repo: plan.Setup.Repo, WorkBranch: plan.Setup.WorkBranch}
 		cfg.ExistingPR = plan.Setup.CheckoutExistingHead

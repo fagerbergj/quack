@@ -200,7 +200,7 @@ func newTestOrch(t *testing.T, stub *orchStub) *Orchestrator {
 func runTurn(t *testing.T, o *Orchestrator, msg string) []stream.SSEEvent {
 	t.Helper()
 	var evs []stream.SSEEvent
-	for ev, err := range o.Run(context.Background(), "u", "chat", msg, nil) {
+	for ev, err := range o.Run(context.Background(), "u", "chat", SourceApp, msg, nil) {
 		if err != nil {
 			t.Fatalf("Run: %v", err)
 		}

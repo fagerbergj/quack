@@ -49,6 +49,7 @@ const (
 	GenAIUsageInputTokens      = string(semconv.GenAIUsageInputTokensKey)
 	GenAIUsageOutputTokens     = string(semconv.GenAIUsageOutputTokensKey)
 	GenAIResponseFinishReasons = string(semconv.GenAIResponseFinishReasonsKey)
+	GenAITokenType             = string(semconv.GenAITokenTypeKey)
 	ErrorType                  = string(semconv.ErrorTypeKey)
 
 	// GenAIOperationPlan - "plan" has no registered semconv enum.
@@ -69,6 +70,15 @@ var (
 
 	// GenAIProviderOpenAI is quack's one implemented inference provider kind.
 	GenAIProviderOpenAI = semconv.GenAIProviderNameOpenAI.Value.AsString()
+
+	// gen_ai.token.type values. Only input/output are registered semconv
+	// enums; reasoning/cached are quack-specific (llama.cpp's
+	// prompt_tokens_details.cached_tokens and OpenAI's reasoning_tokens both
+	// need a bucket semconv doesn't yet define).
+	GenAITokenTypeInput     = semconv.GenAITokenTypeInput.Value.AsString()
+	GenAITokenTypeOutput    = semconv.GenAITokenTypeOutput.Value.AsString()
+	GenAITokenTypeReasoning = "reasoning"
+	GenAITokenTypeCached    = "cached"
 )
 
 // loggerProvider mirrors tracer()'s lazy-global pattern; logs have no stable global slot.

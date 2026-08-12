@@ -89,7 +89,7 @@ func TestUserTurns_FromProductionShapedBundle(t *testing.T) {
 	const chatID = "prod-shaped-chat"
 	const userMsg = "are ducks birds?"
 	o := newOrchForTest(t, answerStub{text: "Ducks are birds."})
-	for _, runErr := range o.Run(context.Background(), "u", chatID, userMsg, nil) {
+	for _, runErr := range o.Run(context.Background(), "u", chatID, orchestrator.SourceApp, userMsg, nil) {
 		if runErr != nil {
 			t.Fatalf("Run: %v", runErr)
 		}

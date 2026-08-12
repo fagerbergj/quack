@@ -533,7 +533,9 @@ func newExtUpdateChatOrigin(name string, st *store.Store) func(localID string, o
 // Run.Timeout - zero means unbounded.
 func driveExtensionRun(ctx context.Context, name string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, extHolder *atomic.Pointer[extsdk.Extension], userID, chatID, turnID, message string, attachments []*genai.Part, timeout time.Duration) {
 	driveExtensionRunEvents(ctx, name, orch, st, hub, extHolder, userID, chatID, turnID, timeout, func(runCtx context.Context) iter.Seq2[stream.SSEEvent, error] {
-		return orch.Run(runCtx, userID, chatID, message, attachments)
+		// name doubles as the token.usage/cost "source" attribution - the
+		// extension's own registration name (github, remarkable, ...).
+		return orch.Run(runCtx, userID, chatID, name, message, attachments)
 	})
 }
 
@@ -541,7 +543,7 @@ func driveExtensionRun(ctx context.Context, name string, orch *orchestrator.Orch
 // through RunBoundPlan - no orchestrator LLM turn, no planner LLM call.
 func driveBoundExtensionRun(ctx context.Context, name string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, extHolder *atomic.Pointer[extsdk.Extension], userID, chatID, turnID string, plan dag.Plan, timeout time.Duration) {
 	driveExtensionRunEvents(ctx, name, orch, st, hub, extHolder, userID, chatID, turnID, timeout, func(runCtx context.Context) iter.Seq2[stream.SSEEvent, error] {
-		return orch.RunBoundPlan(runCtx, userID, chatID, plan)
+		return orch.RunBoundPlan(runCtx, userID, chatID, name, plan)
 	})
 }
 

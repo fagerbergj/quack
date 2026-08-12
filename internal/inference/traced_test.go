@@ -6,7 +6,15 @@ import (
 	"iter"
 	"testing"
 
+	"go.opentelemetry.io/otel/attribute"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"google.golang.org/adk/v2/model"
+	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
 // stubModel is a minimal model.LLM for testing tracedModel's passthrough.
@@ -122,3 +130,207 @@ func TestTracedModel_EmbedErrorsWhenUnsupported(t *testing.T) {
 
 // Ensure tracedModel satisfies Embedder (NewEmbedder's type assertion relies on this).
 var _ Embedder = (*tracedModel)(nil)
+
+// newUsageTestMeter installs a fresh manual-reader-backed meter as the
+// otelobs package singleton, so tracedModel's token/cost Record calls land
+// somewhere this test can read back.
+func newUsageTestMeter(t *testing.T) *sdkmetric.ManualReader {
+	t.Helper()
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	if err := otelobs.InitMetricsForTesting(mp.Meter("test")); err != nil {
+		t.Fatalf("InitMetricsForTesting: %v", err)
+	}
+	return reader
+}
+
+func collectMetric(t *testing.T, reader *sdkmetric.ManualReader, name string) (metricdata.Metrics, bool) {
+	t.Helper()
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	for _, sm := range rm.ScopeMetrics {
+		for _, met := range sm.Metrics {
+			if met.Name == name {
+				return met, true
+			}
+		}
+	}
+	return metricdata.Metrics{}, false
+}
+
+// tokenUsagePoints indexes gen_ai.client.token.usage's current data points
+// by their gen_ai.token.type attribute.
+func tokenUsagePoints(t *testing.T, reader *sdkmetric.ManualReader) map[string]metricdata.DataPoint[int64] {
+	t.Helper()
+	met, ok := collectMetric(t, reader, "gen_ai.client.token.usage")
+	if !ok {
+		return nil
+	}
+	sum, ok := met.Data.(metricdata.Sum[int64])
+	if !ok {
+		t.Fatalf("gen_ai.client.token.usage is not an int64 Sum")
+	}
+	out := map[string]metricdata.DataPoint[int64]{}
+	for _, dp := range sum.DataPoints {
+		v, _ := dp.Attributes.Value(attribute.Key(otelobs.GenAITokenType))
+		out[v.AsString()] = dp
+	}
+	return out
+}
+
+func costPoint(t *testing.T, reader *sdkmetric.ManualReader) (metricdata.DataPoint[float64], bool) {
+	t.Helper()
+	met, ok := collectMetric(t, reader, "gen_ai.client.cost")
+	if !ok {
+		return metricdata.DataPoint[float64]{}, false
+	}
+	sum, ok := met.Data.(metricdata.Sum[float64])
+	if !ok || len(sum.DataPoints) == 0 {
+		return metricdata.DataPoint[float64]{}, false
+	}
+	return sum.DataPoints[0], true
+}
+
+func attrVal(set attribute.Set, key string) string {
+	v, _ := set.Value(attribute.Key(key))
+	return v.AsString()
+}
+
+func usageResp(prompt, cached, candidates, thoughts int32) *model.LLMResponse {
+	return &model.LLMResponse{
+		Content:      &genai.Content{Parts: []*genai.Part{{Text: "answer"}}},
+		TurnComplete: true,
+		UsageMetadata: &genai.GenerateContentResponseUsageMetadata{
+			PromptTokenCount:        prompt,
+			CachedContentTokenCount: cached,
+			CandidatesTokenCount:    candidates,
+			ThoughtsTokenCount:      thoughts,
+		},
+	}
+}
+
+// TestTracedModel_TokenUsage_SplitsCachedFromInput pins the token_type
+// fan-out: genai's PromptTokenCount already includes cached tokens, so
+// token_type=input must report the NON-cached remainder or input+cached
+// would double-count a cache hit. Attribution (agent/user/source) comes
+// through ctx, exactly like emitChatEvent's coords.
+func TestTracedModel_TokenUsage_SplitsCachedFromInput(t *testing.T) {
+	reader := newUsageTestMeter(t)
+
+	tm := &tracedModel{LLM: &stubModel{name: "m", resps: []*model.LLMResponse{usageResp(100, 30, 40, 5)}}, name: "m"}
+	ctx := ledger.WithCoords(context.Background(), ledger.Coords{Agent: "code-implementer", User: "local", Source: "github"})
+	for range tm.GenerateContent(ctx, &model.LLMRequest{}, true) {
+	}
+
+	points := tokenUsagePoints(t, reader)
+	want := map[string]int64{
+		otelobs.GenAITokenTypeInput:     70, // 100 prompt total - 30 cached
+		otelobs.GenAITokenTypeOutput:    40,
+		otelobs.GenAITokenTypeReasoning: 5,
+		otelobs.GenAITokenTypeCached:    30,
+	}
+	for typ, wantN := range want {
+		dp, ok := points[typ]
+		if !ok {
+			t.Fatalf("no data point for token_type=%q (got %v)", typ, points)
+		}
+		if dp.Value != wantN {
+			t.Errorf("token_type=%q value = %d, want %d", typ, dp.Value, wantN)
+		}
+		if got := attrVal(dp.Attributes, "agent"); got != "code-implementer" {
+			t.Errorf("token_type=%q agent = %q, want code-implementer", typ, got)
+		}
+		if got := attrVal(dp.Attributes, "user"); got != "local" {
+			t.Errorf("token_type=%q user = %q, want local", typ, got)
+		}
+		if got := attrVal(dp.Attributes, "source"); got != "github" {
+			t.Errorf("token_type=%q source = %q, want github", typ, got)
+		}
+	}
+}
+
+// TestTracedModel_Cost_ComputedFromConfiguredPricing pins the price math:
+// cost = raw prompt total (cached billed at the input rate, no separate
+// cached tier configured) * input price + (output+reasoning) * output price.
+func TestTracedModel_Cost_ComputedFromConfiguredPricing(t *testing.T) {
+	reader := newUsageTestMeter(t)
+
+	pricing := &config.ModelPricing{InputPerMTok: 2, OutputPerMTok: 4}
+	tm := &tracedModel{LLM: &stubModel{name: "m", resps: []*model.LLMResponse{usageResp(2_000_000, 500_000, 1_000_000, 0)}}, name: "m", pricing: pricing}
+	ctx := ledger.WithCoords(context.Background(), ledger.Coords{Agent: "code-implementer"})
+	for range tm.GenerateContent(ctx, &model.LLMRequest{}, true) {
+	}
+
+	dp, ok := costPoint(t, reader)
+	if !ok {
+		t.Fatal("gen_ai.client.cost was never recorded")
+	}
+	// 2M prompt tokens * $2/Mtok + 1M output tokens * $4/Mtok = $8.
+	const want = 8.0
+	if dp.Value != want {
+		t.Errorf("gen_ai.client.cost = %v, want %v", dp.Value, want)
+	}
+	if got := attrVal(dp.Attributes, otelobs.GenAIRequestModel); got != "m" {
+		t.Errorf("gen_ai.client.cost gen_ai.request.model = %q, want m", got)
+	}
+}
+
+// TestTracedModel_NoPricing_NoCostMetric guards "never guess a price": a
+// model absent from config's price table gets token usage but no cost.
+func TestTracedModel_NoPricing_NoCostMetric(t *testing.T) {
+	reader := newUsageTestMeter(t)
+
+	tm := &tracedModel{LLM: &stubModel{name: "m", resps: []*model.LLMResponse{usageResp(100, 0, 40, 0)}}, name: "m"}
+	for range tm.GenerateContent(context.Background(), &model.LLMRequest{}, true) {
+	}
+
+	if _, ok := costPoint(t, reader); ok {
+		t.Error("gen_ai.client.cost was recorded for a model with no configured pricing, want none")
+	}
+	if points := tokenUsagePoints(t, reader); points[otelobs.GenAITokenTypeInput].Value != 100 {
+		t.Errorf("token usage still expected without pricing, got %v", points)
+	}
+}
+
+// TestTracedModel_NoUsageMetadata_NoMetrics guards a response that never
+// carried usage (a provider outage, a malformed reply) - no metric at all,
+// never a fabricated zero.
+func TestTracedModel_NoUsageMetadata_NoMetrics(t *testing.T) {
+	reader := newUsageTestMeter(t)
+
+	tm := &tracedModel{LLM: &stubModel{name: "m", resps: []*model.LLMResponse{{Content: &genai.Content{Parts: []*genai.Part{{Text: "answer"}}}, TurnComplete: true}}}, name: "m"}
+	for range tm.GenerateContent(context.Background(), &model.LLMRequest{}, true) {
+	}
+
+	if _, ok := collectMetric(t, reader, "gen_ai.client.token.usage"); ok {
+		t.Error("gen_ai.client.token.usage was recorded for a response with no UsageMetadata")
+	}
+	if _, ok := costPoint(t, reader); ok {
+		t.Error("gen_ai.client.cost was recorded for a response with no UsageMetadata")
+	}
+}
+
+// TestTracedModel_AttributionAbsentWhenCoordsUnset guards "omit, don't
+// guess": a call with no ledger coords on ctx must not stamp empty-string
+// agent/user/source attributes.
+func TestTracedModel_AttributionAbsentWhenCoordsUnset(t *testing.T) {
+	reader := newUsageTestMeter(t)
+
+	tm := &tracedModel{LLM: &stubModel{name: "m", resps: []*model.LLMResponse{usageResp(10, 0, 0, 0)}}, name: "m"}
+	for range tm.GenerateContent(context.Background(), &model.LLMRequest{}, true) {
+	}
+
+	points := tokenUsagePoints(t, reader)
+	dp, ok := points[otelobs.GenAITokenTypeInput]
+	if !ok {
+		t.Fatal("no data point for token_type=input")
+	}
+	for _, key := range []string{"agent", "user", "source"} {
+		if _, ok := dp.Attributes.Value(attribute.Key(key)); ok {
+			t.Errorf("attribute %q is set with no coords on ctx, want it omitted", key)
+		}
+	}
+}

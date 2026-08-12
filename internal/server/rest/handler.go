@@ -557,7 +557,7 @@ func (h *Handler) runChat(runCtx context.Context, chatID, turnID, message string
 	// Captured from top-level agent_complete so history can recover the model (ADK drops ModelVersion).
 	var orchModel string
 
-	for ev, err := range h.orch.Run(runCtx, h.sessionUser(runCtx, chatID), chatID, message, attachments) {
+	for ev, err := range h.orch.Run(runCtx, h.sessionUser(runCtx, chatID), chatID, orchestrator.SourceApp, message, attachments) {
 		trySendTitle()
 		if err != nil {
 			publish(stream.Errorf(err.Error()))

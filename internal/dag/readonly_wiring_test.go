@@ -96,7 +96,7 @@ func TestPlanOnlyAdvisorTaskIsReadOnly(t *testing.T) {
 	plan := Plan{ID: "t-planonly", UserMessage: "x", PlanOnly: true,
 		Nodes: []Node{{ID: "n1", AgentName: implementerAgent}}}
 	cfgFor := func(string) vetting.Config { return writableGateCfg() }
-	cfg := nodeGateConfig(plan, plan.Nodes[0], nil, cfgFor, "chat1")
+	cfg := nodeGateConfig(plan, plan.Nodes[0], nil, cfgFor, "chat1", "")
 	if !cfg.ReadOnly {
 		t.Fatal("precondition failed: nodeGateConfig did not force ReadOnly for a planOnly node")
 	}
@@ -120,7 +120,7 @@ func TestPlanOnlyAdvisorTaskIsReadOnly(t *testing.T) {
 func TestNonPlanRunAdvisorTaskIsWritable(t *testing.T) {
 	plan := Plan{ID: "t-writable", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: implementerAgent}}}
 	cfgFor := func(string) vetting.Config { return writableGateCfg() }
-	cfg := nodeGateConfig(plan, plan.Nodes[0], nil, cfgFor, "chat1")
+	cfg := nodeGateConfig(plan, plan.Nodes[0], nil, cfgFor, "chat1", "")
 	if cfg.ReadOnly {
 		t.Fatal("precondition failed: a non-planOnly node came out ReadOnly")
 	}

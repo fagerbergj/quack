@@ -5,6 +5,14 @@ providers:
     kind: openai            # API protocol; the endpoint picks the actual server
     endpoint: ${QUACK_LLM_ENDPOINT}
     api_key: ${QUACK_LLM_API_KEY}
+    # Optional per-model USD price table for gen_ai.client.cost - keyed by the
+    # RESOLVED model name (e.g. QUACK_CODER_MODEL's actual value, not the env
+    # var), since that's the name inference.NewModel is called with. A model
+    # absent here gets token usage but no cost metric - never a guessed price.
+    # models:
+    #   qwen3-coder-30b:
+    #     input_per_mtok: 0.20
+    #     output_per_mtok: 0.80
 
 # Named backend registry (like providers): consumers reference a store by name.
 # `kind` selects the adapter (the portability seam). A vector store also carries

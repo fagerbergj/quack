@@ -19,6 +19,8 @@ import (
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/ledger"
 )
 
 // stubModel is a deterministic model.LLM for driving the gated-worker node offline.
@@ -607,6 +609,69 @@ func TestGatedWorkerNode_ZeroRoundsSkipsJudge(t *testing.T) {
 	}
 	if stub.workerCalls != 1 {
 		t.Errorf("worker calls = %d, want 1 (draft only, no revise)", stub.workerCalls)
+	}
+}
+
+// coordsCapturingModel is a worker stub that also implements
+// ledger.CoordSetter, so a test can inspect exactly what RunGatedRefine
+// stamped via SetLedgerCoords - the object-carried path token-metric
+// attribution relies on, since ctx.Value doesn't survive RunNode scheduling.
+type coordsCapturingModel struct {
+	stubFixedAnswerModel
+	coords ledger.Coords
+}
+
+func (m *coordsCapturingModel) SetLedgerCoords(c ledger.Coords) { m.coords = c }
+
+// TestRunGatedRefine_StampsUserAndSourceOntoWorkerModel guards the token-
+// metrics attribution plumbing: User must come from the ADK session (mirrors
+// MemoryScope, never caller-set) and Source must pass through unchanged from
+// cfg - both stamped on the worker model exactly like Agent already is.
+func TestRunGatedRefine_StampsUserAndSourceOntoWorkerModel(t *testing.T) {
+	stub := &coordsCapturingModel{stubFixedAnswerModel: stubFixedAnswerModel{text: "the answer"}}
+	worker, err := llmagent.New(llmagent.Config{
+		Name: "web-researcher", Model: stub, Description: "researcher",
+		Instruction: "Answer the question.",
+	})
+	if err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+	cfg := Config{JudgeRounds: 0, Agent: "web-researcher", Source: "github"}
+	node, err := newTestGatedNode("researcher-gate", worker, stub, nil, cfg)
+	if err != nil {
+		t.Fatalf("node: %v", err)
+	}
+	root, err := workflowagent.New(workflowagent.Config{
+		Name:      "root",
+		SubAgents: []adkagent.Agent{worker},
+		Edges:     workflow.Chain(workflow.Start, node),
+	})
+	if err != nil {
+		t.Fatalf("root: %v", err)
+	}
+	r, err := runner.New(runner.Config{
+		AppName: "test", Agent: root,
+		SessionService: session.InMemoryService(), AutoCreateSession: true,
+	})
+	if err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "What is the capital of France?"}}}
+	for _, err := range r.Run(t.Context(), "the-user", "s", task, adkagent.RunConfig{}) {
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	}
+
+	if stub.coords.User != "the-user" {
+		t.Errorf("coords.User = %q, want %q (the ADK session identity)", stub.coords.User, "the-user")
+	}
+	if stub.coords.Source != "github" {
+		t.Errorf("coords.Source = %q, want %q (passed through from cfg)", stub.coords.Source, "github")
+	}
+	if stub.coords.Agent != "web-researcher" {
+		t.Errorf("coords.Agent = %q, want %q", stub.coords.Agent, "web-researcher")
 	}
 }
 
