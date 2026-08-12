@@ -8,4 +8,5 @@ import (
 	_ "github.com/fagerbergj/quack-extensions/github"
 	_ "github.com/fagerbergj/quack-extensions/noop"
 	_ "github.com/fagerbergj/quack-extensions/remarkable"
+	_ "github.com/fagerbergj/quack-extensions/usage"
 )
