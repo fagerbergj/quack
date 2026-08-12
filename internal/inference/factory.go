@@ -22,7 +22,11 @@ func NewModel(p config.ProviderConfig, modelName string, artifacts artifact.Serv
 	switch p.Kind {
 	case "openai":
 		live := &hydratingModel{LLM: openaimodel.NewOpenAIModel(modelName, p.Endpoint, p.APIKey), artifacts: artifacts}
-		return &tracedModel{LLM: live, name: modelName}, nil
+		tm := &tracedModel{LLM: live, name: modelName}
+		if pr, ok := p.Models[modelName]; ok {
+			tm.pricing = &pr
+		}
+		return tm, nil
 	case "replay":
 		sess, err := replay.Load(p.Bundle)
 		if err != nil {

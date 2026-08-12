@@ -4,12 +4,16 @@ import (
 	"context"
 	"testing"
 
+	"go.opentelemetry.io/otel/attribute"
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
+	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
@@ -78,7 +82,7 @@ func TestOrchestratorRun_RootChatCarriesChatID(t *testing.T) {
 	o := newTracedTestOrch(t, stub)
 
 	const chatID = "root-stream-chat"
-	for _, err := range o.Run(context.Background(), "u", chatID, "are ducks birds?", nil) {
+	for _, err := range o.Run(context.Background(), "u", chatID, SourceApp, "are ducks birds?", nil) {
 		if err != nil {
 			t.Fatalf("Run: %v", err)
 		}
@@ -103,5 +107,63 @@ func TestOrchestratorRun_RootChatCarriesChatID(t *testing.T) {
 	}
 	if got := chatAttrs["gen_ai.agent.name"]; got != "" {
 		t.Errorf("root chat gen_ai.agent.name = %q, want empty", got)
+	}
+}
+
+// TestOrchestratorRun_SourceAndUserReachTokenUsageMetric drives Run's
+// source/userID parameters end to end through the SAME production seam
+// #617 above pins for gen_ai.conversation.id: ledger.WithCoords at Run's top
+// -> tracedModel.GenerateContent -> recordUsageMetrics -> gen_ai.client.token.usage.
+func TestOrchestratorRun_SourceAndUserReachTokenUsageMetric(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	if err := otelobs.InitMetricsForTesting(mp.Meter("test")); err != nil {
+		t.Fatalf("InitMetricsForTesting: %v", err)
+	}
+
+	reply := &model.LLMResponse{
+		Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: "Ducks are birds."}}},
+		TurnComplete: true,
+		FinishReason: genai.FinishReasonStop,
+		UsageMetadata: &genai.GenerateContentResponseUsageMetadata{
+			PromptTokenCount:     10,
+			CandidatesTokenCount: 5,
+		},
+	}
+	stub := &orchStub{replies: []*model.LLMResponse{reply}}
+	o := newTracedTestOrch(t, stub)
+
+	for _, err := range o.Run(context.Background(), "the-user", "source-chat", "github", "are ducks birds?", nil) {
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	}
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	var found bool
+	for _, sm := range rm.ScopeMetrics {
+		for _, met := range sm.Metrics {
+			if met.Name != "gen_ai.client.token.usage" {
+				continue
+			}
+			sum, ok := met.Data.(metricdata.Sum[int64])
+			if !ok {
+				t.Fatalf("gen_ai.client.token.usage is not an int64 Sum")
+			}
+			for _, dp := range sum.DataPoints {
+				userVal, _ := dp.Attributes.Value(attribute.Key("user"))
+				sourceVal, _ := dp.Attributes.Value(attribute.Key("source"))
+				if userVal.AsString() == "the-user" && sourceVal.AsString() == "github" {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("no gen_ai.client.token.usage data point carries user=the-user source=github - Run's source/userID params never reached tracedModel")
 	}
 }

@@ -15,6 +15,14 @@ import (
 // package-level singleton; nil-safe until Init runs.
 var m *metrics
 
+// InitMetricsForTesting installs meter's instruments as the package
+// singleton (test-only) - lets another package's test exercise a Record*
+// call against a real metric.ManualReader, the same way
+// SetLoggerProviderForTesting does for the ledger/log seam.
+func InitMetricsForTesting(meter metric.Meter) error {
+	return initMetrics(meter)
+}
+
 type metrics struct {
 	runsActive       metric.Int64UpDownCounter
 	runsQueued       metric.Int64UpDownCounter
@@ -30,6 +38,8 @@ type metrics struct {
 	checksSkipped    metric.Int64Counter     // attrs: reason
 	memCommitFail    metric.Int64Counter     // attrs: reason, agent
 	runNoAnswer      metric.Int64Counter
+	tokenUsage       metric.Int64Counter   // attrs: gen_ai.request.model, agent, user, source, gen_ai.token.type
+	cost             metric.Float64Counter // attrs: gen_ai.request.model, agent, user, source; unit USD
 }
 
 // initMetrics builds every instrument from meter and installs it as the
@@ -96,6 +106,16 @@ func initMetrics(meter metric.Meter) error {
 	}
 	if m2.runNoAnswer, err = meter.Int64Counter("quack.run.no_answer",
 		metric.WithDescription("runs that finished without hitting the run deadline or being cancelled, yet persisted no final answer - the silent-gap class also covered by gate.checks.skipped/judge.unavailable/delivery.outcome=none, but at the whole-run level (see the GitHub extension's tail-comment fallback)")); err != nil {
+		return err
+	}
+	if m2.tokenUsage, err = meter.Int64Counter("gen_ai.client.token.usage",
+		metric.WithDescription("tokens consumed per completed model call, by gen_ai.token.type (input/output/reasoning/cached)"),
+		metric.WithUnit("{token}")); err != nil {
+		return err
+	}
+	if m2.cost, err = meter.Float64Counter("gen_ai.client.cost",
+		metric.WithDescription("USD cost per completed model call, computed from config/quack.yaml's optional per-model price table; a model absent from that table emits no cost here"),
+		metric.WithUnit("USD")); err != nil {
 		return err
 	}
 	m = m2
@@ -283,10 +303,67 @@ func RecordRunNoAnswer() {
 	m.runNoAnswer.Add(context.Background(), 1)
 }
 
+// RecordTokenUsage records gen_ai.client.token.usage, one data point per
+// non-zero token type. model/agent/user/source empty ⇒ that attribute is
+// omitted (an unattributed call), never stamped with a fabricated value.
+// input MUST already exclude cached tokens (genai's PromptTokenCount
+// includes them) so the four token_type series never double-count.
+func RecordTokenUsage(model, agent, user, source string, input, output, reasoning, cached int64) {
+	if m == nil {
+		return
+	}
+	ctx := context.Background()
+	record := func(tokenType string, n int64) {
+		if n == 0 {
+			return
+		}
+		m.tokenUsage.Add(ctx, n, metric.WithAttributes(genAIUsageAttrs(model, agent, user, source, tokenType)...))
+	}
+	record(GenAITokenTypeInput, input)
+	record(GenAITokenTypeOutput, output)
+	record(GenAITokenTypeReasoning, reasoning)
+	record(GenAITokenTypeCached, cached)
+}
+
+// RecordCost records gen_ai.client.cost (USD) for one completed call.
+// Callers only invoke this when a price is actually configured for the
+// model - there's no "0 means unpriced" here, since a real $0 call would be
+// indistinguishable.
+func RecordCost(model, agent, user, source string, usd float64) {
+	if m == nil {
+		return
+	}
+	m.cost.Add(context.Background(), usd, metric.WithAttributes(genAIUsageAttrs(model, agent, user, source, "")...))
+}
+
+// genAIUsageAttrs builds the shared attribute set for token.usage/cost,
+// omitting any empty field rather than stamping a zero-value placeholder.
+func genAIUsageAttrs(model, agent, user, source, tokenType string) []attribute.KeyValue {
+	attrs := make([]attribute.KeyValue, 0, 5)
+	if model != "" {
+		attrs = append(attrs, attribute.String(GenAIRequestModel, model))
+	}
+	if agent != "" {
+		attrs = append(attrs, attrAgent(agent))
+	}
+	if user != "" {
+		attrs = append(attrs, attrUser(user))
+	}
+	if source != "" {
+		attrs = append(attrs, attrSource(source))
+	}
+	if tokenType != "" {
+		attrs = append(attrs, attribute.String(GenAITokenType, tokenType))
+	}
+	return attrs
+}
+
 func attrAgent(v string) attribute.KeyValue          { return attribute.String("agent", v) }
 func attrModel(v string) attribute.KeyValue          { return attribute.String("model", v) }
 func attrStage(v string) attribute.KeyValue          { return attribute.String("stage", v) }
 func attrBool(key string, v bool) attribute.KeyValue { return attribute.Bool(key, v) }
+func attrUser(v string) attribute.KeyValue           { return attribute.String("user", v) }
+func attrSource(v string) attribute.KeyValue         { return attribute.String("source", v) }
 
 // logf for non-fatal startup diagnostics.
 func logf(msg string, args ...any) {

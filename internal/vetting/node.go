@@ -227,6 +227,11 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	// cfg is a per-call copy; stamping only reaches this node's judge rounds.
 	cfg.AdvisorToken = advisorToken
 	cfg.NodeBaseSHA = cloneHeadSHA(cfg)
+	// User attribution: the ADK session identity (mirrors MemoryScope below) -
+	// not caller-set, so a node can never claim to run as someone it isn't.
+	if s := ctx.Session(); s != nil {
+		cfg.User = s.UserID()
+	}
 
 	// Memory recall for ACP workers; front-load into round-0 prompt.
 	if cfg.ExternalWorker && cfg.CommitMemory {
@@ -250,7 +255,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		}
 	}
 	// Replay-ledger coords for gate's disk probes.
-	probeCtx := ledger.WithCoords(ctx, ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, Round: probeRound})
+	probeCtx := ledger.WithCoords(ctx, ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, Round: probeRound, User: cfg.User, Source: cfg.Source})
 	activity := func() workerActivity {
 		act := activityFromSessionAt(ctx.Session(), nodeDir)
 		augmentFromRepo(probeCtx, &act, cfg)
@@ -437,7 +442,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			runID := fmt.Sprintf("judge-r%d", round)
 			judgeCtx, jspan := startStageSpan(nodeCtx, sink, cfg, nodeID, "judge", stream.StageJudge, runID, round)
 			// Replay-ledger coords for judge round (via context.WithValue, not adkagent.Context).
-			ledgerCtx := ledger.WithCoords(ctx, ledger.Coords{ChatID: cfg.ChatID, Node: nodeID, Agent: "judge", Round: runID})
+			ledgerCtx := ledger.WithCoords(ctx, ledger.Coords{ChatID: cfg.ChatID, Node: nodeID, Agent: "judge", Round: runID, User: cfg.User, Source: cfg.Source})
 			// Compute deterministic criteria before judge runs.
 			det, skip := computeDeterministicCriteria(judgeCtx, answer, act, cfg)
 			if skip != "" {
@@ -884,7 +889,7 @@ func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Conf
 		attribute.String("model", modelName(workerModel)),
 		attribute.String("stage", stage),
 	)
-	coords := ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, Round: runID}
+	coords := ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, Round: runID, User: cfg.User, Source: cfg.Source}
 	gctx := ctx.WithAgentContext(ledger.WithCoords(ctx, coords))
 	// WithAgentContext stamp does not survive RunNode scheduling; inference models get stamped directly.
 	if cs, ok := workerModel.(interface{ SetLedgerCoords(ledger.Coords) }); ok {
@@ -901,7 +906,7 @@ func checksPassCriterionTraced(ctx context.Context, cfg Config) (criterionScore,
 	spanCtx, span := otelobs.Start(ctx, "gate.checks",
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", cfg.NodeID))
 	defer span.End()
-	probeCtx := ledger.WithCoords(spanCtx, ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, Round: probeRound})
+	probeCtx := ledger.WithCoords(spanCtx, ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, Round: probeRound, User: cfg.User, Source: cfg.Source})
 	c, ok := checksPassCriterion(probeCtx, cfg)
 	span.SetAttributes(attribute.Bool("applicable", ok), attribute.Float64("score", c.Score))
 	return c, ok

@@ -39,7 +39,7 @@ func TestPlanOnlyForcesReadOnlyNoDeliver(t *testing.T) {
 	}}
 	cfgFor := func(string) vetting.Config { return writableGateCfg() }
 	for _, n := range plan.Nodes {
-		cfg := nodeGateConfig(plan, n, nil, cfgFor, "chat1")
+		cfg := nodeGateConfig(plan, n, nil, cfgFor, "chat1", "")
 		if !cfg.ReadOnly {
 			t.Errorf("node %q (%s): ReadOnly = false, want true for a planOnly plan", n.ID, n.AgentName)
 		}
@@ -61,7 +61,7 @@ func TestPlanOnlyOffersNoWritableNode(t *testing.T) {
 	}}
 	cfgFor := func(string) vetting.Config { return writableGateCfg() }
 	for _, n := range plan.Nodes {
-		cfg := nodeGateConfig(plan, n, nil, cfgFor, "chat1")
+		cfg := nodeGateConfig(plan, n, nil, cfgFor, "chat1", "")
 		if prNode(cfg) {
 			t.Errorf("node %q (%s): prNode = true, stage_pr would be registered on a planOnly run", n.ID, n.AgentName)
 		}
@@ -74,7 +74,7 @@ func TestPlanOnlyOffersNoWritableNode(t *testing.T) {
 func TestNonPlanRunKeepsWritableNode(t *testing.T) {
 	plan := Plan{Nodes: []Node{{ID: "n1", AgentName: implementerAgent}}}
 	cfgFor := func(string) vetting.Config { return writableGateCfg() }
-	cfg := nodeGateConfig(plan, plan.Nodes[0], nil, cfgFor, "chat1")
+	cfg := nodeGateConfig(plan, plan.Nodes[0], nil, cfgFor, "chat1", "")
 
 	if cfg.ReadOnly {
 		t.Error("ReadOnly = true, want false for a non-planOnly run")
@@ -96,12 +96,29 @@ func TestNonPlanRunKeepsWritableNode(t *testing.T) {
 func TestPlanOnlyImplementerNodeHasNoWritableCapability(t *testing.T) {
 	plan := Plan{PlanOnly: true, Nodes: []Node{{ID: "n1", AgentName: implementerAgent}}}
 	cfgFor := func(string) vetting.Config { return writableGateCfg() }
-	cfg := nodeGateConfig(plan, plan.Nodes[0], nil, cfgFor, "chat1")
+	cfg := nodeGateConfig(plan, plan.Nodes[0], nil, cfgFor, "chat1", "")
 
 	if prNode(cfg) {
 		t.Fatal("a planOnly run's code-implementer node has prNode = true - stage_pr would be offered, reproducing document-pipeline#124")
 	}
 	if !cfg.ReadOnly || cfg.Deliver != nil {
 		t.Fatalf("cfg = %+v, want ReadOnly=true and Deliver=nil for a planOnly code-implementer node", cfg)
+	}
+}
+
+// TestNodeGateConfig_CarriesSource pins the token-metrics attribution
+// plumbing: nodeGateConfig's source parameter (extracted from the run's
+// ledger coords by RunPlanAsGraph/RetryPlanInNode, before any RunNode
+// scheduling) must land on cfg.Source, exactly like chatID lands on cfg.ChatID.
+func TestNodeGateConfig_CarriesSource(t *testing.T) {
+	plan := Plan{Nodes: []Node{{ID: "n1", AgentName: implementerAgent}}}
+	cfgFor := func(string) vetting.Config { return writableGateCfg() }
+	cfg := nodeGateConfig(plan, plan.Nodes[0], nil, cfgFor, "chat1", "github")
+
+	if cfg.Source != "github" {
+		t.Errorf("cfg.Source = %q, want %q", cfg.Source, "github")
+	}
+	if cfg.ChatID != "chat1" {
+		t.Errorf("cfg.ChatID = %q, want %q", cfg.ChatID, "chat1")
 	}
 }

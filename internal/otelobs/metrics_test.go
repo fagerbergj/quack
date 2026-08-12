@@ -293,6 +293,127 @@ func TestRecordRunNoAnswer_Counts(t *testing.T) {
 	}
 }
 
+// tokenUsagePoints collects gen_ai.client.token.usage data points keyed by
+// their gen_ai.token.type attribute (each type is its own series).
+func tokenUsagePoints(t *testing.T, reader *metric.ManualReader) map[string]metricdata.DataPoint[int64] {
+	t.Helper()
+	sum, ok := collect(t, reader, "gen_ai.client.token.usage").Data.(metricdata.Sum[int64])
+	if !ok {
+		t.Fatalf("gen_ai.client.token.usage is not an int64 Sum")
+	}
+	out := map[string]metricdata.DataPoint[int64]{}
+	for _, dp := range sum.DataPoints {
+		v, _ := dp.Attributes.Value(attribute.Key(GenAITokenType))
+		out[v.AsString()] = dp
+	}
+	return out
+}
+
+func attrString(t *testing.T, set attribute.Set, key string) string {
+	t.Helper()
+	v, _ := set.Value(attribute.Key(key))
+	return v.AsString()
+}
+
+// TestRecordTokenUsage_FansOutByTokenType guards the four-way split: one
+// data point per non-zero token_type, each carrying model/agent/user/source.
+func TestRecordTokenUsage_FansOutByTokenType(t *testing.T) {
+	reader := newTestMeter(t)
+
+	RecordTokenUsage("qwen3-coder", "code-implementer", "local", "github", 100, 50, 10, 25)
+
+	points := tokenUsagePoints(t, reader)
+	for typ, want := range map[string]int64{
+		GenAITokenTypeInput:     100,
+		GenAITokenTypeOutput:    50,
+		GenAITokenTypeReasoning: 10,
+		GenAITokenTypeCached:    25,
+	} {
+		dp, ok := points[typ]
+		if !ok {
+			t.Fatalf("no data point for token_type=%q (got %v)", typ, points)
+		}
+		if dp.Value != want {
+			t.Errorf("token_type=%q value = %d, want %d", typ, dp.Value, want)
+		}
+		if got := attrString(t, dp.Attributes, GenAIRequestModel); got != "qwen3-coder" {
+			t.Errorf("token_type=%q gen_ai.request.model = %q, want %q", typ, got, "qwen3-coder")
+		}
+		if got := attrString(t, dp.Attributes, "agent"); got != "code-implementer" {
+			t.Errorf("token_type=%q agent = %q, want %q", typ, got, "code-implementer")
+		}
+		if got := attrString(t, dp.Attributes, "user"); got != "local" {
+			t.Errorf("token_type=%q user = %q, want %q", typ, got, "local")
+		}
+		if got := attrString(t, dp.Attributes, "source"); got != "github" {
+			t.Errorf("token_type=%q source = %q, want %q", typ, got, "github")
+		}
+	}
+}
+
+// TestRecordTokenUsage_ZeroTypeOmitted guards against a spurious series for
+// a token type that genuinely had zero tokens this call (e.g. no cache hit).
+func TestRecordTokenUsage_ZeroTypeOmitted(t *testing.T) {
+	reader := newTestMeter(t)
+
+	RecordTokenUsage("qwen3-coder", "web-researcher", "local", "app", 100, 50, 0, 0)
+
+	points := tokenUsagePoints(t, reader)
+	if _, ok := points[GenAITokenTypeReasoning]; ok {
+		t.Errorf("token_type=reasoning has a data point for a zero-token call, want none")
+	}
+	if _, ok := points[GenAITokenTypeCached]; ok {
+		t.Errorf("token_type=cached has a data point for a zero-token call, want none")
+	}
+}
+
+// TestRecordTokenUsage_AbsentAttributionOmitsAttribute guards the "omit,
+// don't guess" rule: an empty agent/user/source must never show up as the
+// empty-string attribute value.
+func TestRecordTokenUsage_AbsentAttributionOmitsAttribute(t *testing.T) {
+	reader := newTestMeter(t)
+
+	RecordTokenUsage("qwen3-coder", "", "", "", 10, 0, 0, 0)
+
+	points := tokenUsagePoints(t, reader)
+	dp, ok := points[GenAITokenTypeInput]
+	if !ok {
+		t.Fatal("no data point for token_type=input")
+	}
+	for _, key := range []string{"agent", "user", "source"} {
+		if _, ok := dp.Attributes.Value(attribute.Key(key)); ok {
+			t.Errorf("attribute %q is set on an unattributed call, want it omitted entirely", key)
+		}
+	}
+}
+
+// TestRecordCost_ComputesFromConfiguredPricing exercises RecordCost directly
+// (the price math itself lives in inference.recordUsageMetrics - this pins
+// the instrument's own attribute/value contract).
+func TestRecordCost_ComputesFromConfiguredPricing(t *testing.T) {
+	reader := newTestMeter(t)
+
+	RecordCost("qwen3-coder", "code-implementer", "local", "github", 1.5)
+
+	h, ok := collect(t, reader, "gen_ai.client.cost").Data.(metricdata.Sum[float64])
+	if !ok {
+		t.Fatalf("gen_ai.client.cost is not a float64 Sum")
+	}
+	if len(h.DataPoints) != 1 {
+		t.Fatalf("gen_ai.client.cost has %d data points, want 1", len(h.DataPoints))
+	}
+	dp := h.DataPoints[0]
+	if dp.Value != 1.5 {
+		t.Errorf("gen_ai.client.cost value = %v, want 1.5", dp.Value)
+	}
+	if got := attrString(t, dp.Attributes, GenAIRequestModel); got != "qwen3-coder" {
+		t.Errorf("gen_ai.client.cost gen_ai.request.model = %q, want %q", got, "qwen3-coder")
+	}
+	if _, ok := dp.Attributes.Value(attribute.Key(GenAITokenType)); ok {
+		t.Errorf("gen_ai.client.cost carries gen_ai.token.type, want cost to stay a single per-call total")
+	}
+}
+
 // TestJudgeScoreHistogram_HasExplicitBuckets guards #433: a 0-1 score
 // recorded against the OTel default buckets (5, 10, ...) lands entirely in
 // one bucket, making the histogram useless. Explicit sub-1.0 boundaries must

@@ -37,6 +37,11 @@ const AppName = "quack"
 
 const orchestratorName = "orchestrator"
 
+// SourceApp: the gen_ai.client.token.usage/cost "source" value for a direct
+// UI/REST/MCP chat - as opposed to an extension-dispatched run, whose source
+// is that extension's own registration name.
+const SourceApp = "app"
+
 // Orchestrator: ADK llmagent that selects direct answer or plan + execute.
 type Orchestrator struct {
 	sessions    session.Service
@@ -197,11 +202,11 @@ func (o *Orchestrator) BuildBoundPlan(ctx context.Context, nodes []dag.RawNode, 
 // llmagent turn ever runs. The trust gate is unaffected -
 // RunPlanAsGraph is the exact same executor a model-authored plan runs
 // through, so every node still passes through vetting.RunGatedRefine.
-func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID string, plan dag.Plan) iter.Seq2[stream.SSEEvent, error] {
+func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, source string, plan dag.Plan) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		var span oteltrace.Span
 		ctx, span = otelobs.Start(ctx, "run.bound", attribute.String(otelobs.ChatIDKey, sessionID))
-		ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: sessionID})
+		ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: sessionID, User: userID, Source: source})
 		otelobs.RunQueued()
 		queued := true
 		o.queuedChats.Store(sessionID, struct{}{})
@@ -299,11 +304,13 @@ func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.P
 }
 
 // Run processes message as the orchestrator agent and yields SSE events.
-func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message string, attachments []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
+// source: the run's origin for gen_ai.client.token.usage/cost attribution -
+// an extension's registration name, or SourceApp for a direct UI/REST/MCP chat.
+func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, message string, attachments []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		var span oteltrace.Span
 		ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, sessionID))
-		ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: sessionID})
+		ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: sessionID, User: userID, Source: source})
 		otelobs.RunQueued()
 		queued := true
 		o.queuedChats.Store(sessionID, struct{}{})

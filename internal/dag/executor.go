@@ -14,6 +14,7 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
@@ -143,7 +144,8 @@ func (s *DagStream) Finish() {
 
 // RetryPlanInNode: re-runs target node + descendants with seeded outputs.
 func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, nodeID string, seeded map[string]string) (map[string]string, error) {
-	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID,
+	source := ledger.CoordsFromContext(ctx).Source
+	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, source,
 		func(nodeID string, score float64, passed bool, rounds int) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds)
 		})

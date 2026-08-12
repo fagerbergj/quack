@@ -12,6 +12,7 @@ import (
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
@@ -161,7 +162,11 @@ func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userI
 			return false, fmt.Errorf("dag: plan setup: %w", serr)
 		}
 	}
-	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID,
+	// Source travels on ctx up to THIS point only (buildGateNodes is called
+	// synchronously, before workflow.RunNode ever schedules a child) - past
+	// here it's carried on vetting.Config, same reason cfg.Agent is.
+	source := ledger.CoordsFromContext(ctx).Source
+	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, source,
 		func(nodeID string, score float64, passed bool, rounds int) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds)
 		})

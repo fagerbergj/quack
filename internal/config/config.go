@@ -435,6 +435,17 @@ type ProviderConfig struct {
 	ForkMode string          `yaml:"fork_mode"`
 	ForkFrom string          `yaml:"fork_from"`
 	Live     *ProviderConfig `yaml:"live"`
+	// Models: optional per-model USD price table, keyed by model name as
+	// passed to inference.NewModel. A model absent here gets no cost metric -
+	// quack never guesses a price.
+	Models map[string]ModelPricing `yaml:"models"`
+}
+
+// ModelPricing: USD per million tokens. Zero value (a model absent from
+// ProviderConfig.Models) means "no pricing configured", not "free".
+type ModelPricing struct {
+	InputPerMTok  float64 `yaml:"input_per_mtok"`
+	OutputPerMTok float64 `yaml:"output_per_mtok"`
 }
 
 type StoreConfig struct {

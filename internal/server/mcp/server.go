@@ -49,7 +49,7 @@ func Handler(orch *orchestrator.Orchestrator) http.Handler {
 // askTool adapts Orchestrator to the MRTR run/pending surface.
 func askTool(orch *orchestrator.Orchestrator) mcp.ToolHandlerFor[AskInput, any] {
 	run := func(ctx context.Context, sessionID, message string) iter.Seq2[stream.SSEEvent, error] {
-		return orch.Run(ctx, userID, sessionID, message, nil)
+		return orch.Run(ctx, userID, sessionID, orchestrator.SourceApp, message, nil)
 	}
 	pending := func(ctx context.Context, sessionID string) (orchestrator.PendingQuestion, bool) {
 		return orchestrator.LatestPendingQuestion(orch.PriorEvents(ctx, userID, sessionID))

@@ -42,6 +42,8 @@ type Config struct {
 	NodeID              string          // workspace scope for checks/clone resolution
 	AdvisorToken        string          // fs tool scope token; empty = no scope
 	Agent               string          // observability only
+	User                string          // observability only; resolved from the ADK session, not caller-set
+	Source              string          // observability only; run origin (extension name or a fixed app value)
 	Task                string          // delivery check; empty = no check
 	Workdir             string          // for Checks; ignored when Checks empty
 	ChatID              string          // per-chat workspace scope

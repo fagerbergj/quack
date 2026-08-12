@@ -7,6 +7,13 @@ type Coords struct {
 	Node   string
 	Agent  string
 	Round  string
+	// User: the ADK session identity that owns this run (local user, GitHub
+	// commenter login, etc) - observability attribution only.
+	User string
+	// Source: the run's origin - an extension's registration name for an
+	// extension-dispatched run, or a fixed value for direct UI/REST/MCP
+	// chats. Bounded cardinality by construction; never chat_id or node_id.
+	Source string
 }
 
 type coordsKey struct{}
