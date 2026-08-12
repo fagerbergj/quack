@@ -758,9 +758,11 @@ func (s *Store) UpdateTitle(ctx context.Context, id, title string) error {
 
 // ArchiveChat toggles the archived flag on a chat.
 // Archiving never touches UpdatedAt so that archive/unarchive doesn't reorder
-// the recency-sorted chat list.
+// the recency-sorted chat list - UpdateColumn (not Update) is required for that:
+// GORM auto-stamps UpdatedAt on any plain Update/Updates call by field-name
+// convention, and only UpdateColumn/UpdateColumns skip that.
 func (s *Store) ArchiveChat(ctx context.Context, id string, archived bool) error {
-	return s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", id).Update("archived", archived).Error
+	return s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", id).UpdateColumn("archived", archived).Error
 }
 
 // SaveTurn persists a new turn at the next available sequence position.
