@@ -66,10 +66,11 @@ RUN tar -xzf /tmp/opencode.tar.gz -C /usr/local/bin opencode
 # does need the container runtime to permit unprivileged user namespaces (Docker's
 # default seccomp profile does; a hardened runtime may not - see
 # docs/configuration.md). util-linux carries prlimit(1), which applies the
-# per-child rlimits (workspace.limits).
+# per-child rlimits (workspace.limits). poppler-utils carries pdftoppm/pdfinfo,
+# used to render PDF attachments to images for vision models (#829).
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git ca-certificates bubblewrap util-linux make \
+      git ca-certificates bubblewrap util-linux make poppler-utils \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --uid 65532 --no-create-home --shell /usr/sbin/nologin nonroot
 WORKDIR /

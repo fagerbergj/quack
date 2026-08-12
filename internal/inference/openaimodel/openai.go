@@ -615,7 +615,13 @@ func toOpenAIChatCompletionMessage(content *genai.Content) ([]openai.ChatComplet
 			case "video/mp4", "video/webm", "video/ogg":
 				return nil, fmt.Errorf("unsupported video MIME type: %s", part.InlineData.MIMEType)
 			case "application/pdf":
-				return nil, fmt.Errorf("unsupported PDF MIME type: %s", part.InlineData.MIMEType)
+				// Vision models take images, not documents - expand the PDF into one
+				// image part per rendered page (#829) rather than rejecting it.
+				imgParts, err := pdfToImageParts(part.InlineData.Data)
+				if err != nil {
+					return nil, err
+				}
+				userParts = append(userParts, imgParts...)
 			default:
 				userParts = append(userParts, openai.TextContentPart(string(part.InlineData.Data)))
 			}
