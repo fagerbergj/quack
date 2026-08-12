@@ -104,12 +104,14 @@ type verdict struct {
 }
 
 // JudgeFactory: builds a fresh agentic judge per round, per-factory read-only tools, per-round readCounter.
-type JudgeFactory func(sink *verdict) (adkagent.Agent, *readCounter, error)
+// maxIters wires forcedVerdictCallback so the round's last allowed turn (or a repeated identical tool
+// call) forces a text-only verdict instead of silently exhausting the budget (#853).
+type JudgeFactory func(sink *verdict, maxIters int) (adkagent.Agent, *readCounter, error)
 
 // NewJudgeFactory: builds agentic judge with judgeModel, read-only tools, skillsets, and submit_verdict.
 func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []tool.Toolset) JudgeFactory {
 	behaviour := judgeBehaviour(len(readTools) > 0, len(skillsets) > 0)
-	return func(sink *verdict) (adkagent.Agent, *readCounter, error) {
+	return func(sink *verdict, maxIters int) (adkagent.Agent, *readCounter, error) {
 		submit, err := newSubmitVerdictTool(sink)
 		if err != nil {
 			return nil, nil, err
@@ -125,11 +127,62 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 			InstructionProvider: func(_ adkagent.ReadonlyContext) (string, error) {
 				return promptbuilder.Judge(judgeTools, behaviour), nil
 			},
-			Tools:    judgeTools,
-			Toolsets: skillsets,
+			Tools:                judgeTools,
+			Toolsets:             skillsets,
+			BeforeModelCallbacks: []llmagent.BeforeModelCallback{forcedVerdictCallback(maxIters)},
 		})
 		return a, reads, err
 	}
+}
+
+// judgeForceCloseInstruction: appended on the round's last allowed turn, or right after the judge
+// repeats an identical tool call - forcedVerdictCallback has already stripped every tool (including
+// submit_verdict) this turn, so the model must close with the verdict as plain JSON text; runJudgeRound's
+// existing parseVerdict fallback picks it up exactly like a local model that skipped the tool call.
+const judgeForceCloseInstruction = "\n\nSTOP - you are out of tool budget for this round; no tools, including submit_verdict, are available on this turn. " +
+	"Using ONLY what you have already read and verified above, output your verdict now as a single JSON object and nothing else (no code fence, no other text): " +
+	`{"score": <0-10 overall fallback>, "criteria": {"<criterion name>": {"reason": "<why>", "score": <0-10>}, ...}, "feedback": "<concise, actionable - empty if it passes>"}` +
+	" Score every criterion the rubric named, from what you have already verified."
+
+// forcedVerdictCallback strips all tools and appends judgeForceCloseInstruction on the round's last
+// allowed turn, or the turn right after the judge repeats an identical tool call (model stutter that
+// would otherwise burn the rest of the budget repeating itself, #853).
+func forcedVerdictCallback(maxIters int) llmagent.BeforeModelCallback {
+	turn := 0
+	return func(_ adkagent.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
+		turn++
+		if turn < maxIters && !repeatsLastToolCall(req.Contents) {
+			return nil, nil
+		}
+		req.Tools = nil
+		if req.Config != nil {
+			req.Config.Tools = nil
+		}
+		req.Contents = append(req.Contents, &genai.Content{Role: "user", Parts: []*genai.Part{{Text: judgeForceCloseInstruction}}})
+		return nil, nil
+	}
+}
+
+// repeatsLastToolCall reports whether the two most recent model function calls in the conversation so
+// far are the same tool with the same args (Go's json.Marshal sorts map keys, so this compares stably).
+func repeatsLastToolCall(contents []*genai.Content) bool {
+	var prev, last *genai.FunctionCall
+	for _, c := range contents {
+		if c == nil {
+			continue
+		}
+		for _, p := range c.Parts {
+			if p != nil && p.FunctionCall != nil {
+				prev, last = last, p.FunctionCall
+			}
+		}
+	}
+	if last == nil || prev == nil || last.Name != prev.Name {
+		return false
+	}
+	a, aerr := json.Marshal(last.Args)
+	b, berr := json.Marshal(prev.Args)
+	return aerr == nil && berr == nil && string(a) == string(b)
 }
 
 // verdictArgs: submit_verdict schema. Only score is required.
@@ -413,23 +466,23 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 			return
 		}
 	}
-	if err == nil || ctx.Err() != nil {
-		if unreadPass(readc, v) {
-			// Discard and re-judge once. Second offence accepted (one wasted round ceiling).
-			slog.Warn("judge passed without reading the repo; re-judging once",
-				"component", "vetting", "agent", cfg.Agent, "score", v.Score)
-			v2, readc2, err2 := runJudgeRound(ctx, factory, cfg, question,
-				fitted+"\n\n"+unreadPassFeedback, changedFiles, known, act, emit)
-			if err2 == nil {
-				if unreadPass(readc2, v2) {
-					slog.Warn("judge passed without reading the repo again; accepting the verdict",
-						"component", "vetting", "agent", cfg.Agent, "score", v2.Score)
-				}
-				v, err = v2, nil
-				return
-			}
-			slog.Warn("re-judge failed; keeping the unread verdict", "component", "vetting", "err", err2)
+
+	// A round that ran but never reached a verdict (model stutter exhausting the
+	// budget, #853) gets exactly one retry with a fresh session before surfacing
+	// unvetted - shrinking the answer (the fallback below) wouldn't fix a stutter,
+	// so this returns unconditionally rather than falling into that path.
+	if errors.Is(err, ErrJudgeNoVerdict) && ctx.Err() == nil {
+		slog.Warn("judge ended without a verdict; retrying the round once with a fresh session",
+			"component", "vetting", "agent", cfg.Agent)
+		v, readc, err = runJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, known, act, emit)
+		if err == nil {
+			v = finishJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, known, act, emit, v, readc)
 		}
+		return
+	}
+
+	if err == nil || ctx.Err() != nil {
+		v = finishJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, known, act, emit, v, readc)
 		return
 	}
 	retryAnswer := fitJudgeAnswer(cfg, question, fitted, changedFiles, known, act, 0.5)
@@ -441,10 +494,36 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	return
 }
 
+// finishJudgeRound: a PASS verdict backed by zero judge reads is discarded and re-judged once before
+// being trusted (second offence accepted - one wasted round is the ceiling). No-op otherwise.
+func finishJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, fitted, changedFiles, known string, act workerActivity, emit func(*genai.Part) bool, v verdict, readc *readCounter) verdict {
+	if !unreadPass(readc, v) {
+		return v
+	}
+	slog.Warn("judge passed without reading the repo; re-judging once",
+		"component", "vetting", "agent", cfg.Agent, "score", v.Score)
+	v2, readc2, err2 := runJudgeRound(ctx, factory, cfg, question,
+		fitted+"\n\n"+unreadPassFeedback, changedFiles, known, act, emit)
+	if err2 != nil {
+		slog.Warn("re-judge failed; keeping the unread verdict", "component", "vetting", "err", err2)
+		return v
+	}
+	if unreadPass(readc2, v2) {
+		slog.Warn("judge passed without reading the repo again; accepting the verdict",
+			"component", "vetting", "agent", cfg.Agent, "score", v2.Score)
+	}
+	return v2
+}
+
 // runJudgeRound: isolated agentic judge round (own runner + in-memory session). Falls back to text parsing.
 func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer, changedFiles, knownFailures string, act workerActivity, emit func(*genai.Part) bool) (verdict, *readCounter, error) {
+	maxIters := cfg.JudgeMaxIterations
+	if maxIters <= 0 {
+		maxIters = defaultJudgeMaxIterations
+	}
+
 	var sink verdict
-	judgeAgent, reads, err := factory(&sink)
+	judgeAgent, reads, err := factory(&sink, maxIters)
 	if err != nil {
 		return verdict{}, nil, fmt.Errorf("vetting: build judge agent: %w", err)
 	}
@@ -456,11 +535,6 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	})
 	if err != nil {
 		return verdict{}, nil, fmt.Errorf("vetting: judge runner: %w", err)
-	}
-
-	maxIters := cfg.JudgeMaxIterations
-	if maxIters <= 0 {
-		maxIters = defaultJudgeMaxIterations
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
