@@ -136,6 +136,16 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, or
 				}
 				return classifyWithModel(ctx, *m, prompt)
 			},
+			UpdateChatOrigin: func(ctx context.Context, chatID string, origin *extsdk.ChatOrigin) error {
+				var originJSON string
+				if origin != nil {
+					if b, err := json.Marshal(origin); err == nil {
+						originJSON = string(b)
+					}
+				}
+				userID := extRunUserID
+				return st.SetChatOrigin(ctx, chatID, userID, originJSON)
+			},
 		}
 		ext, err := factory(host, raw)
 		if err != nil {
