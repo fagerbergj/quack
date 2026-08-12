@@ -337,7 +337,7 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
           onClear={() => setFilterState({ selected: {} })}
         />
       </div>
-      <div className="flex-1 overflow-y-auto overscroll-contain">
+      <div className="flex-1 overflow-y-auto overscroll-contain chat-list-scroll">
         {(runningQueued.length === 0 && active.length === 0 && archived.length === 0) && chats.length === 0 && (
           <div className="text-xs text-gray-400 dark:text-gray-500 text-center py-6 px-3">No conversations yet</div>
         )}

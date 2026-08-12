@@ -140,6 +140,34 @@ describe('origin chip', () => {
   })
 })
 
+// #870: thin themed scrollbar on the sidebar's own scroll container.
+describe('ChatList scroll container', () => {
+  let root: ReturnType<typeof createRoot> | undefined
+  let host: HTMLDivElement | undefined
+
+  afterEach(() => {
+    act(() => root?.unmount())
+    host?.remove()
+    root = undefined
+    host = undefined
+  })
+
+  it('carries the themed thin-scrollbar class', () => {
+    // @ts-expect-error react act environment flag
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    act(() => {
+      root!.render(createElement(ChatList, {
+        chats: CHATS, activeChatId: null, open: true,
+        onSelect: () => {}, onNewChat: () => {}, onDelete: () => {}, onCloseMobile: () => {},
+      }))
+    })
+    expect(host!.querySelector('.chat-list-scroll')).toBeTruthy()
+  })
+})
+
 // #736: the sidebar is server-paginated - "Load more" only appears once the
 // parent signals a next page exists (hasMoreChats), and clicking it defers
 // to the parent's fetch (onLoadMoreChats), not a local re-fetch.
