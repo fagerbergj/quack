@@ -2,14 +2,6 @@ module github.com/fagerbergj/quack
 
 go 1.26.5
 
-// TODO(remove before merge): local replace for the unreleased sdk vNext
-// (Host.UpdateChatOrigin) and its github-module consumer - swap for the
-// real tags after review.
-replace (
-	github.com/fagerbergj/quack-extensions/github => /home/jason/workspace/quack-extensions/github
-	github.com/fagerbergj/quack-extensions/sdk => /home/jason/workspace/quack-extensions/sdk
-)
-
 require (
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.2
 	github.com/a2aproject/a2a-go/v2 v2.4.0
@@ -19,10 +11,10 @@ require (
 	github.com/charmbracelet/huh v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/coder/acp-go-sdk v0.13.5
-	github.com/fagerbergj/quack-extensions/github v0.1.0
+	github.com/fagerbergj/quack-extensions/github v0.2.1
 	github.com/fagerbergj/quack-extensions/noop v0.2.0
 	github.com/fagerbergj/quack-extensions/remarkable v0.1.1
-	github.com/fagerbergj/quack-extensions/sdk v0.3.0
+	github.com/fagerbergj/quack-extensions/sdk v0.4.0
 	github.com/glebarez/sqlite v1.11.0
 	github.com/go-chi/chi/v5 v5.3.1
 	github.com/go-jose/go-jose/v4 v4.1.4
