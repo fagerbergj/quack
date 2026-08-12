@@ -603,3 +603,191 @@ func TestRunJudgeAgent_ChangedFilesCoverage(t *testing.T) {
 		}
 	})
 }
+
+// stutterJudge repeats the exact same tool call twice (the model stutter
+// #853 exists for), then - once forcedVerdictCallback has stripped its tools
+// for repeating itself - closes with the verdict as plain-text JSON instead
+// of a tool call.
+type stutterJudge struct{ calls int32 }
+
+func (j *stutterJudge) Name() string { return "stutter-judge" }
+
+func (j *stutterJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		n := atomic.AddInt32(&j.calls, 1)
+		if n <= 2 {
+			yield(stubCall("read_file", map[string]any{"path": "game.go"}), nil)
+			return
+		}
+		if len(req.Tools) != 0 || (req.Config != nil && len(req.Config.Tools) != 0) {
+			yield(nil, fmt.Errorf("expected no tools on the forced closing turn, got %d req.Tools", len(req.Tools)))
+			return
+		}
+		yield(stubText(`{"score": 9, "criteria": {"accuracy": {"reason": "verified from prior reads", "score": 9}}, "feedback": ""}`), nil)
+	}
+}
+
+// TestRunJudgeAgent_ForcedVerdictOnRepeatedToolCall is #853 test case (a): a
+// judge that repeats an identical tool call gets its NEXT turn sent with no
+// tools and the forced-close instruction, and the resulting plain-text
+// verdict is parsed via the existing parseVerdict fallback.
+func TestRunJudgeAgent_ForcedVerdictOnRepeatedToolCall(t *testing.T) {
+	var reads int32
+	readTool := newSpyReadTool(t, "package x\n", &reads)
+	judge := &stutterJudge{}
+	factory := NewJudgeFactory(judge, []tool.Tool{readTool}, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6} // plenty of budget left - only the repeat should force the close
+
+	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	if err != nil {
+		t.Fatalf("runJudgeAgent: %v", err)
+	}
+	if v.Score != 0.9 {
+		t.Errorf("verdict score = %v, want 0.9 (parsed from the forced-close text)", v.Score)
+	}
+	if got := atomic.LoadInt32(&judge.calls); got != 3 {
+		t.Errorf("judge model called %d times, want 3 (two identical read_file calls + the forced no-tools close)", got)
+	}
+}
+
+// isFreshRound reports whether req is the first call of a brand-new round
+// (no prior function call in its history yet) - each runJudgeRound call
+// builds its own runner and session, so this is how a scripted fake model
+// tells "still the same round" from "a fresh retry started".
+func isFreshRound(req *model.LLMRequest) bool {
+	for _, c := range req.Contents {
+		if c == nil {
+			continue
+		}
+		for _, p := range c.Parts {
+			if p != nil && p.FunctionCall != nil {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// roundStuckThenRecoversJudge never reaches a verdict in its first round
+// (repeats a tool call forever, like stuckJudge), then submits a normal
+// verdict on the very first call of any later round - the stand-in for
+// #853's "one retry with a fresh session" recovering a stuck round.
+type roundStuckThenRecoversJudge struct {
+	rounds int32
+	calls  int32
+}
+
+func (j *roundStuckThenRecoversJudge) Name() string { return "round-stuck-then-recovers-judge" }
+
+func (j *roundStuckThenRecoversJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		atomic.AddInt32(&j.calls, 1)
+		if isFreshRound(req) {
+			atomic.AddInt32(&j.rounds, 1)
+		}
+		if atomic.LoadInt32(&j.rounds) == 1 {
+			yield(stubCall("read_file", map[string]any{"path": "game.go"}), nil)
+			return
+		}
+		yield(stubCall(submitVerdictTool, map[string]any{"score": 0.85, "feedback": "recovered on retry"}), nil)
+	}
+}
+
+// TestRunJudgeAgent_NoVerdictRetriesOnceThenSucceeds is #853 test case (b): a
+// round that exhausts its budget without a verdict gets exactly one retry
+// with a fresh session, and that retry's normal verdict is returned.
+func TestRunJudgeAgent_NoVerdictRetriesOnceThenSucceeds(t *testing.T) {
+	readTool := newSpyReadTool(t, "package x\n", new(int32))
+	judge := &roundStuckThenRecoversJudge{}
+	factory := NewJudgeFactory(judge, []tool.Tool{readTool}, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 2}
+
+	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	if err != nil {
+		t.Fatalf("runJudgeAgent: %v", err)
+	}
+	if v.Score != 0.85 {
+		t.Errorf("verdict score = %v, want 0.85 (the retry round that recovered)", v.Score)
+	}
+	if got := atomic.LoadInt32(&judge.rounds); got != 2 {
+		t.Errorf("rounds started = %d, want 2 (the failed round + the one retry that recovered)", got)
+	}
+}
+
+// alwaysStuckJudge never reaches a verdict, in any round - the stand-in for
+// #853's "both attempts fail" case. roundsStarted counts independent rounds
+// (fresh sessions), so the test asserts on rounds attempted, not the
+// call-count mechanics of any one round.
+type alwaysStuckJudge struct{ roundsStarted int32 }
+
+func (j *alwaysStuckJudge) Name() string { return "always-stuck-judge" }
+
+func (j *alwaysStuckJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if isFreshRound(req) {
+			atomic.AddInt32(&j.roundsStarted, 1)
+		}
+		yield(stubCall("read_file", map[string]any{"path": "game.go"}), nil)
+	}
+}
+
+// TestRunJudgeAgent_NoVerdictRetryExhausted is #853 test case (c): when the
+// retry ALSO ends without a verdict, runJudgeAgent returns the same
+// ErrJudgeNoVerdict sentinel as before, having attempted exactly one retry.
+func TestRunJudgeAgent_NoVerdictRetryExhausted(t *testing.T) {
+	readTool := newSpyReadTool(t, "package x\n", new(int32))
+	judge := &alwaysStuckJudge{}
+	factory := NewJudgeFactory(judge, []tool.Tool{readTool}, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 2}
+
+	_, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	if err == nil {
+		t.Fatal("runJudgeAgent: expected an error - the judge never reaches a verdict in either round")
+	}
+	if !errors.Is(err, ErrJudgeNoVerdict) {
+		t.Errorf("err = %v, want errors.Is(err, ErrJudgeNoVerdict)", err)
+	}
+	if got := atomic.LoadInt32(&judge.roundsStarted); got != 2 {
+		t.Errorf("rounds started = %d, want 2 (the original round + exactly one retry, no more)", got)
+	}
+}
+
+// recordingToolsJudge captures whether req.Tools was populated when the
+// judge model was called, so a test can prove forcedVerdictCallback left an
+// ordinary round alone.
+type recordingToolsJudge struct{ sawTools *bool }
+
+func (recordingToolsJudge) Name() string { return "recording-tools-judge" }
+
+func (j recordingToolsJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		*j.sawTools = len(req.Tools) > 0
+		yield(stubCall(submitVerdictTool, map[string]any{"score": 0.8, "feedback": ""}), nil)
+	}
+}
+
+// TestRunJudgeAgent_NormalRoundKeepsTools is #853 test case (d): a judge that
+// submits its verdict on the very first turn, well under budget, is left
+// alone by forcedVerdictCallback - tools stay intact, one call, no retry.
+func TestRunJudgeAgent_NormalRoundKeepsTools(t *testing.T) {
+	var reads int32
+	readTool := newSpyReadTool(t, "package x\n", &reads)
+	var sawTools bool
+	factory := NewJudgeFactory(recordingToolsJudge{sawTools: &sawTools}, []tool.Tool{readTool}, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6}
+
+	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	if err != nil {
+		t.Fatalf("runJudgeAgent: %v", err)
+	}
+	if !sawTools {
+		t.Error("forcedVerdictCallback stripped tools on an ordinary first turn, well under budget")
+	}
+	if v.Score != 0.8 {
+		t.Errorf("verdict score = %v, want 0.8", v.Score)
+	}
+}
