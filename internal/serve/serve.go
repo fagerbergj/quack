@@ -811,6 +811,12 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		if err != nil {
 			return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "model: %v", err)
 		}
+		// m's pricing (above) never surfaces - ACP's workerModel is never invoked,
+		// so resolve pricing again here the way inference.NewModel does.
+		var acpPricing *config.ModelPricing
+		if pr, ok := prov.Models[ac.Model]; ok {
+			acpPricing = &pr
+		}
 
 		if ac.Acp != nil {
 			bundle, err := agent.LoadBundle(ac.Bundle)
@@ -881,6 +887,8 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				Jail:            jail,
 				UserID:          localUserID,
 				PermissionJudge: permJudge,
+				ModelName:       ac.Model,
+				Pricing:         acpPricing,
 				Worktree: func(ctx context.Context, userID, chatID, parentNodeID, nodeID string) (string, error) {
 					parentDir, err := jail.Resolve(userID, chatID, workspace.NodeDir(parentNodeID))
 					if err != nil {

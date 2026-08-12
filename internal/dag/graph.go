@@ -59,7 +59,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		}
 		node := n
 		cfg := nodeGateConfig(plan, node, worker, cfgFor, chatID, source)
-		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release)
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release)
 	}
 	return nodesByID, subAgents, nil
 }
@@ -99,7 +99,7 @@ func nodeGateConfig(plan Plan, node Node, worker adkagent.Agent, cfgFor func(str
 }
 
 // newGatedNode: assembles worker prompt, runs trust-gate refine loop.
-func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, workerTools []tool.Tool, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int), release func()) workflow.Node {
+func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, worker adkagent.Agent, workerTools []tool.Tool, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int), release func()) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
 		func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
 			if release != nil {
@@ -165,6 +165,9 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				atts = nil
 			}
 			ledger.StampCoords(workerTools, ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent})
+			// ACP agents ignore workerModel (never invoked - the subprocess does the
+			// real work), so their gen_ai metrics attribution rides on worker itself.
+			ledger.StampCoords([]adkagent.Agent{worker}, ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, User: cfg.User, Source: cfg.Source})
 			answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, workerModel, judge, cfg, prompt, atts, ctrl, emit)
 			if errors.Is(err, vetting.ErrNodeEmpty) {
 				markGateFailed(ctx, node.ID)

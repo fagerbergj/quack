@@ -11,6 +11,7 @@ import (
 	"iter"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	sdk "github.com/coder/acp-go-sdk"
@@ -19,6 +20,8 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/replay"
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -42,6 +45,11 @@ type Options struct {
 	IdleTimeout     time.Duration
 	PermissionJudge func(ctx context.Context, toolName, title string, input map[string]any) (allow bool, reason string)
 	Replay          *replay.Session
+	// ModelName: the model this agent's opencode config binds it to
+	// (OPENCODE_CONFIG_CONTENT) - attrs the round's gen_ai metrics.
+	ModelName string
+	// Pricing: nil = no price table entry for ModelName, cost metric skipped.
+	Pricing *config.ModelPricing
 }
 
 // Agent is an adkagent.Agent backed by an external ACP subprocess.
@@ -50,6 +58,18 @@ type Agent struct {
 	name string
 	opts Options
 	log  *slog.Logger
+
+	mu     sync.Mutex
+	coords ledger.Coords
+}
+
+// SetLedgerCoords stamps coordinates for the next round - copied into a
+// local at round start (round() below), not read live, since this Agent is
+// shared across concurrent nodes and a round can run for many minutes.
+func (a *Agent) SetLedgerCoords(c ledger.Coords) {
+	a.mu.Lock()
+	a.coords = c
+	a.mu.Unlock()
 }
 
 // New builds an ACP-backed agent.
@@ -170,6 +190,11 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 	ctx, roundSpan := otelobs.Start(ctx, "acp.round", attribute.String("agent", a.name), attribute.String("cwd", cwd))
 	defer func() { otelobs.End(roundSpan, err) }()
 
+	// Snapshot now, before any subprocess I/O - see SetLedgerCoords.
+	a.mu.Lock()
+	coords := a.coords
+	a.mu.Unlock()
+
 	spawnCtx, spawnSpan := otelobs.Start(ctx, "acp.spawn", attribute.String("agent", a.name))
 	_ = spawnCtx
 	h, err := a.start(ctx, cwd, extraRO, caps)
@@ -265,6 +290,9 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 				otelobs.End(promptSpan, d.err)
 				return fmt.Errorf("acp: prompt: %w%s", d.err, h.stderrTail())
 			}
+			// The Prompt RPC returns exactly once per round with its own
+			// (not cumulative) usage - the round's usage is known here, once.
+			recordUsage(a.opts.ModelName, coords, a.opts.Pricing, d.resp.Usage)
 			if d.resp.StopReason == sdk.StopReasonRefusal {
 				refusalErr := errors.New("acp: agent refused the prompt")
 				otelobs.End(promptSpan, refusalErr)
