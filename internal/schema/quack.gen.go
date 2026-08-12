@@ -337,7 +337,7 @@ type ChatDetail struct {
 	Turns       []Turn    `json:"turns"`
 	UpdatedAt   time.Time `json:"updated_at"`
 
-	// Usage Token usage. On Turn.usage, a sparse per-turn summary (reasoning folds into output_tokens, as before); on ChatDetail.usage, the chat-wide aggregate across every turn and DAG node, always fully populated.
+	// Usage Token usage; the same schema is populated two different ways depending on where it appears. On Turn.usage it is SPARSE: a field is omitted entirely when its value is zero (or unknown for that turn), and reasoning folds into output_tokens rather than getting its own field. On ChatDetail.usage it is a chat-wide aggregate (every turn + every DAG node) and is ALWAYS FULLY POPULATED - every field is present, a genuine zero included, never omitted.
 	Usage Usage `json:"usage"`
 }
 
@@ -688,7 +688,7 @@ type Turn struct {
 	Model  *string      `json:"model,omitempty"`
 	Output []OutputItem `json:"output"`
 
-	// Usage Token usage. On Turn.usage, a sparse per-turn summary (reasoning folds into output_tokens, as before); on ChatDetail.usage, the chat-wide aggregate across every turn and DAG node, always fully populated.
+	// Usage Token usage; the same schema is populated two different ways depending on where it appears. On Turn.usage it is SPARSE: a field is omitted entirely when its value is zero (or unknown for that turn), and reasoning folds into output_tokens rather than getting its own field. On ChatDetail.usage it is a chat-wide aggregate (every turn + every DAG node) and is ALWAYS FULLY POPULATED - every field is present, a genuine zero included, never omitted.
 	Usage *Usage `json:"usage,omitempty"`
 }
 
@@ -710,7 +710,7 @@ type UpdateChatBody struct {
 	Title *string `json:"title,omitempty"`
 }
 
-// Usage Token usage. On Turn.usage, a sparse per-turn summary (reasoning folds into output_tokens, as before); on ChatDetail.usage, the chat-wide aggregate across every turn and DAG node, always fully populated.
+// Usage Token usage; the same schema is populated two different ways depending on where it appears. On Turn.usage it is SPARSE: a field is omitted entirely when its value is zero (or unknown for that turn), and reasoning folds into output_tokens rather than getting its own field. On ChatDetail.usage it is a chat-wide aggregate (every turn + every DAG node) and is ALWAYS FULLY POPULATED - every field is present, a genuine zero included, never omitted.
 type Usage struct {
 	// CachedTokens Subset of input_tokens served from the model's prompt cache.
 	CachedTokens    *int `json:"cached_tokens,omitempty"`

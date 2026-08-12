@@ -56,7 +56,7 @@ export function UsageSummary({ models, usage }: UsageSummaryProps) {
 }
 
 function UsageRow({ label, value }: { label: string; value?: number }) {
-  if (!value) return null
+  if (value == null) return null
   return (
     <div className="flex items-center justify-between">
       <span>{label}</span>

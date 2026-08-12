@@ -224,6 +224,7 @@ func PersistNodeEvent(st *store.Store, planID string, ev stream.SSEEvent) {
 		n.OutputPreview, n.Output = d.OutputPreview, d.Output
 		n.Model, n.PromptTokens, n.CompletionTokens = d.Model, d.PromptTokens, d.CompletionTokens
 		n.ReasoningTokens, n.TotalTokens, n.FinishReason = d.ReasoningTokens, d.TotalTokens, d.FinishReason
+		n.CachedTokens = d.CachedTokens
 		n.DurationMs, n.JudgeRounds = d.DurationMs, d.JudgeRounds
 		n.JudgeFinalScore, n.JudgePassed = d.JudgeFinalScore, d.JudgePassed
 	case stream.NodeFailedData:

@@ -517,6 +517,59 @@ func TestGroupSessionEvents_UsageAccumulation(t *testing.T) {
 	}
 }
 
+// TestGetTurnsWithContent_UsageFallbackIsSymmetric pins the review fix: a
+// turn that predates SetTurnUsage (ChatTurn's token columns are zero) falls
+// back to the session-walk-derived usage for ALL five fields, not just the
+// three original ones - cachedTokens/totalTokens used to stay 0 even though
+// groupSessionEvents already computed them.
+func TestGetTurnsWithContent_UsageFallbackIsSymmetric(t *testing.T) {
+	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("New sqlite: %v", err)
+	}
+	ctx := context.Background()
+
+	c, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	// SaveTurn only - no SetTurnUsage, so the ChatTurn row's token columns
+	// stay zero and GetTurnsWithContent must fall back to the session walk.
+	if err := st.SaveTurn(ctx, c.ID, "t1"); err != nil {
+		t.Fatalf("SaveTurn: %v", err)
+	}
+
+	sessResp, err := st.Sessions.Create(ctx, &session.CreateRequest{AppName: chatAppName, UserID: "local", SessionID: c.ID})
+	if err != nil {
+		t.Fatalf("session Create: %v", err)
+	}
+	userEv := session.NewEvent(ctx, "test")
+	userEv.Author = "user"
+	userEv.Content = &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}
+	if err := st.Sessions.AppendEvent(ctx, sessResp.Session, userEv); err != nil {
+		t.Fatalf("AppendEvent user: %v", err)
+	}
+	asstEv := session.NewEvent(ctx, "test")
+	asstEv.Author = orchestratorAuthor
+	asstEv.Content = &genai.Content{Role: "model", Parts: []*genai.Part{{Text: "hello"}}}
+	asstEv.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{
+		PromptTokenCount: 50, CandidatesTokenCount: 10, ThoughtsTokenCount: 2, TotalTokenCount: 62, CachedContentTokenCount: 15,
+	}
+	if err := st.Sessions.AppendEvent(ctx, sessResp.Session, asstEv); err != nil {
+		t.Fatalf("AppendEvent asst: %v", err)
+	}
+
+	turns, err := st.GetTurnsWithContent(ctx, chatAppName, "local", c.ID)
+	if err != nil || len(turns) != 1 {
+		t.Fatalf("GetTurnsWithContent: %+v err=%v", turns, err)
+	}
+	tc := turns[0]
+	if tc.PromptTokens != 50 || tc.CompletionTokens != 10 || tc.ReasoningTokens != 2 ||
+		tc.TotalTokens != 62 || tc.CachedTokens != 15 {
+		t.Errorf("fallback usage = %+v, want prompt=50 completion=10 reasoning=2 total=62 cached=15 (all five fields from the session walk)", tc)
+	}
+}
+
 // TestDeleteChat_ReapsSession pins #352 bug 2: deleting a chat must not
 // strand its turns, DAG plan/node state, durable event log, or ADK session -
 // all of it lives in tables/services keyed off the chat id, and the "chats"

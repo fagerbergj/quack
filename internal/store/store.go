@@ -201,9 +201,9 @@ const orchestratorAuthor = "orchestrator"
 
 // Per-turn content extracted from a session's events.
 type turnGroup struct {
-	userText, asstText, asstThink                   string
-	toolCalls                                       []ToolCallRecord
-	promptTokens, completionTokens, reasoningTokens int32
+	userText, asstText, asstThink                                              string
+	toolCalls                                                                  []ToolCallRecord
+	promptTokens, completionTokens, reasoningTokens, cachedTokens, totalTokens int32
 }
 
 // groupSessionEvents buckets session events into per-turn groups, split on user events.
@@ -253,6 +253,8 @@ func groupSessionEvents(events iter.Seq[*session.Event]) []turnGroup {
 			cur.promptTokens += ev.UsageMetadata.PromptTokenCount
 			cur.completionTokens += ev.UsageMetadata.CandidatesTokenCount
 			cur.reasoningTokens += ev.UsageMetadata.ThoughtsTokenCount
+			cur.cachedTokens += ev.UsageMetadata.CachedContentTokenCount
+			cur.totalTokens += ev.UsageMetadata.TotalTokenCount
 		}
 		for _, p := range ev.Content.Parts {
 			if p == nil {
@@ -935,6 +937,8 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 				tc.PromptTokens = groups[i].promptTokens
 				tc.CompletionTokens = groups[i].completionTokens
 				tc.ReasoningTokens = groups[i].reasoningTokens
+				tc.CachedTokens = groups[i].cachedTokens
+				tc.TotalTokens = groups[i].totalTokens
 			}
 		}
 		if plan := planByTurn[t.ID]; plan != nil {

@@ -1285,9 +1285,13 @@ components:
     Usage:
       type: object
       description: >
-        Token usage. On Turn.usage, a sparse per-turn summary (reasoning folds
-        into output_tokens, as before); on ChatDetail.usage, the chat-wide
-        aggregate across every turn and DAG node, always fully populated.
+        Token usage; the same schema is populated two different ways depending
+        on where it appears. On Turn.usage it is SPARSE: a field is omitted
+        entirely when its value is zero (or unknown for that turn), and
+        reasoning folds into output_tokens rather than getting its own field.
+        On ChatDetail.usage it is a chat-wide aggregate (every turn + every DAG
+        node) and is ALWAYS FULLY POPULATED - every field is present, a
+        genuine zero included, never omitted.
       properties:
         input_tokens:
           type: integer

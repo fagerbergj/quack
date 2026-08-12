@@ -54,4 +54,16 @@ describe('UsageSummary - session token total and breakdown', () => {
     const out = html([], { ...usage, cached_tokens: 0 })
     expect(out).not.toContain('Cache rate')
   })
+
+  // Regression: UsageRow used to hide a row on a falsy value, so a
+  // genuinely-zero dimension (e.g. no reasoning tokens this turn) silently
+  // vanished instead of reading "0" - indistinguishable from "not tracked".
+  it('renders all four breakdown rows even when their values are 0', () => {
+    const out = html([], { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, cached_tokens: 0, total_tokens: 100 })
+    expect(out).toContain('Input')
+    expect(out).toContain('Output')
+    expect(out).toContain('Reasoning')
+    expect(out).toContain('Cached')
+    expect(out.match(/>0</g)?.length).toBe(4)
+  })
 })
