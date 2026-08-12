@@ -350,7 +350,6 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, message strin
 			}
 		}
 		history := buildHistory(prior)
-		githubPR, _ := tools.GitHubPRFromContext(ctx)
 		var githubSetup *dag.Setup
 		if s, ok := tools.GitHubSetupFromContext(ctx); ok {
 			githubSetup = &s
