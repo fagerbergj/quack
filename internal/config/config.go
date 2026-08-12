@@ -285,6 +285,7 @@ type WorkspaceConfig struct {
 	MaxListEntries int                   `yaml:"max_list_entries"`
 	TimeoutSeconds int                   `yaml:"timeout_seconds"`
 	CheckCommands  []string              `yaml:"check_commands"`
+	CheckSetup     []string              `yaml:"check_setup"`
 	ExecPath       []string              `yaml:"exec_path"`
 	Env            map[string]string     `yaml:"env"`
 	GitCredentials []GitCredentialConfig `yaml:"git_credentials"`

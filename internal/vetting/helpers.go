@@ -39,6 +39,7 @@ type Config struct {
 	Checks              []string        // per-node deterministic gate commands
 	DeriveChecks        bool            // derive from repo when Checks empty
 	CheckCommands       []string        // prefix allowlist; empty ⇒ checks disabled
+	CheckSetup          []string        // repo bootstrap commands; run once per clone (checks.go, baseline.go) before checks are derived/run, both in the worker's tree and the base baseline worktree
 	NodeID              string          // workspace scope for checks/clone resolution
 	AdvisorToken        string          // fs tool scope token; empty = no scope
 	Agent               string          // observability only
