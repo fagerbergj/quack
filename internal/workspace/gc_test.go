@@ -153,6 +153,43 @@ func TestSweepHomeTmpTTLBoundaryLeavesCachesAlone(t *testing.T) {
 	}
 }
 
+// TestSweepHomeTmpReapsScratchDirEntries proves the ACTUAL Jail.ScratchDir
+// output - not a hand-rolled path - is swept the same way as any other
+// .quack-home/tmp entry: no gc.go change was needed for the per-node scratch
+// fix, because ScratchDir names one flat, single-component directory per
+// (chatID, nodeID) under tmp/, exactly the granularity sweepHomeTmp already
+// walks.
+func TestSweepHomeTmpReapsScratchDirEntries(t *testing.T) {
+	jail := newTestJail(t)
+	old := time.Now().Add(-12 * time.Hour)
+	fresh := time.Now()
+
+	oldScratch, err := jail.ScratchDir("alice", "chat1", "old-node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newScratch, err := jail.ScratchDir("alice", "chat1", "new-node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	touch(t, filepath.Join(oldScratch, "f"), old)
+	touch(t, filepath.Join(newScratch, "f"), fresh)
+	if err := os.Chtimes(oldScratch, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	res := Sweep(context.Background(), jail, GCConfig{ScratchTTL: time.Hour}, never, nil)
+	if res.ScratchRemoved != 1 {
+		t.Fatalf("ScratchRemoved = %d, want 1", res.ScratchRemoved)
+	}
+	if _, err := os.Stat(oldScratch); !os.IsNotExist(err) {
+		t.Errorf("old node's scratch dir should have been reaped, stat err = %v", err)
+	}
+	if _, err := os.Stat(newScratch); err != nil {
+		t.Errorf("fresh node's scratch dir should have survived: %v", err)
+	}
+}
+
 // growHome writes an n-byte file into the user's agent home, simulating
 // opencode.db/snapshot/tool-output growth from a completed round.
 func growHome(t *testing.T, jail *Jail, userID, name string, n int) {

@@ -54,17 +54,18 @@ func (a *Agent) wrappedArgv(cwd string, extraRO []string, caps workspace.Caps) [
 // mode (workspace.ChildPath - the same fixed PATH the gate's own children
 // get), never the server's ambient PATH - the toolchain the agent needs to
 // RUN is covered by Caps.ExtraPath + the system dirs already in ChildPath, so
-// ambient added no reach a leak couldn't also use. Caps.ReadOnly plays no
-// part here - PATH/TMPDIR/JVM options don't depend on it - so this still
-// reads the agent's static opts.Caps rather than a per-round override.
-func (a *Agent) spawnEnv() []string {
+// ambient added no reach a leak couldn't also use. caps is THIS round's
+// effective caps (ReadOnly/ScratchDir already resolved by the caller, same as
+// wrappedArgv takes) - TMPDIR must track caps.ScratchDir's per-node grant, not
+// the agent's static opts.Caps, or every round would share one scratch dir.
+func (a *Agent) spawnEnv(caps workspace.Caps) []string {
 	env := []string{
-		"PATH=" + workspace.ChildPath(a.opts.Caps),
+		"PATH=" + workspace.ChildPath(caps),
 		"HOME=" + a.opts.Home,
-		"TMPDIR=" + workspace.SandboxTmpDir(a.opts.Caps),
+		"TMPDIR=" + workspace.SandboxTmpDir(caps),
 		"NO_COLOR=1",
 	}
-	if opts := workspace.SandboxJavaToolOptions(a.opts.Caps); opts != "" {
+	if opts := workspace.SandboxJavaToolOptions(caps); opts != "" {
 		env = append(env, "JAVA_TOOL_OPTIONS="+opts)
 	}
 	return append(env, a.opts.Env...)
@@ -105,7 +106,7 @@ func (a *Agent) startLive(ctx context.Context, cwd string, extraRO []string, cap
 	argv := a.wrappedArgv(cwd, extraRO, caps)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = cwd
-	cmd.Env = a.spawnEnv()
+	cmd.Env = a.spawnEnv(caps)
 	// Own process group + group kill + WaitDelay: the exact hang class from the
 	// v0.5.2 run_command incident - a grandchild holding our stdout pipe keeps
 	// Wait blocked forever unless the whole group dies and the pipe is

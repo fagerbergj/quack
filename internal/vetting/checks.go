@@ -156,7 +156,9 @@ func boundCheckOutput(out string) string {
 		maxCheckOutputChars, len(out))
 }
 
-// checksCaps stamps the node's own directory as WorkRoot for sandbox consistency.
+// checksCaps stamps the node's own directory as WorkRoot for sandbox
+// consistency, and a per-node scratch dir (Jail.ScratchDir) as TMPDIR so a
+// check command's own tmp use never lands in the checked-out tree.
 func checksCaps(cfg Config) workspace.Caps {
 	caps := cfg.WorkspaceCaps
 	root, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.NodeDir(cfg.NodeID))
@@ -164,6 +166,9 @@ func checksCaps(cfg Config) workspace.Caps {
 		return caps
 	}
 	caps.WorkRoot = root
+	if scratch, err := cfg.Workspace.ScratchDir(cfg.WorkspaceUserID, cfg.ChatID, cfg.NodeID); err == nil {
+		caps.ScratchDir = scratch
+	}
 	return caps
 }
 
