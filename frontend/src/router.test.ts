@@ -18,6 +18,15 @@ describe('routeFor', () => {
     expect(routeFor('/memory-foo')).toBe('chat')
   })
 
+  it('matches /ext/:name (#870 extension host)', () => {
+    expect(routeFor('/ext/usage')).toBe('ext')
+    expect(routeFor('/ext/usage/')).toBe('ext')
+  })
+
+  it('does not match /extra or other /ext-prefixed-but-different paths', () => {
+    expect(routeFor('/extra')).toBe('chat')
+  })
+
   it('defaults everything else, including chat routes, to chat', () => {
     expect(routeFor('/')).toBe('chat')
     expect(routeFor('/chat/abc-123')).toBe('chat')

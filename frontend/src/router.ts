@@ -29,14 +29,17 @@ export function useChatId(): string | undefined {
   return chatId
 }
 
-// The app's second page (#727): a plain path match, same spirit as
-// readChatId - no route table, no dependency, just the one path this needs.
-export type Route = 'chat' | 'memory'
+// The app's pages: a plain path match, same spirit as readChatId - no route
+// table, no dependency, just the paths this needs. 'ext' (#870) hosts an
+// extension's own UI inside the SPA shell at /ext/<name>, rather than a real
+// <a href> that would navigate away from the app entirely.
+export type Route = 'chat' | 'memory' | 'ext'
 
 // Pure (no window access) so it's directly testable - see router.test.ts.
 // Anchored to the full segment (/memory or /memory/...), not a bare prefix:
 // startsWith('/memory') would also match /memory-export.
 export function routeFor(pathname: string): Route {
+  if (/^\/ext(\/|$)/.test(pathname)) return 'ext'
   return /^\/memory(\/|$)/.test(pathname) ? 'memory' : 'chat'
 }
 
@@ -53,6 +56,23 @@ export function useRoute(): Route {
     return () => window.removeEventListener('popstate', onPop)
   }, [])
   return route
+}
+
+function readExtName(): string | undefined {
+  const m = window.location.pathname.match(/^\/ext\/([^/]+)/)
+  return m ? decodeURIComponent(m[1]) : undefined
+}
+
+// Current extension name from a /ext/:name URL; re-renders on navigate() and
+// browser back/forward - the ExtensionHost page's counterpart to useChatId.
+export function useExtName(): string | undefined {
+  const [name, setName] = useState(readExtName)
+  useEffect(() => {
+    const onPop = () => setName(readExtName())
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+  return name
 }
 
 // Current query string (e.g. "?q=foo&status=running"), the sidebar's filter
