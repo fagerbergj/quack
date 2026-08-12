@@ -14,7 +14,7 @@ require (
 	github.com/fagerbergj/quack-extensions/github v0.2.1
 	github.com/fagerbergj/quack-extensions/noop v0.2.0
 	github.com/fagerbergj/quack-extensions/remarkable v0.1.1
-	github.com/fagerbergj/quack-extensions/sdk v0.4.1
+	github.com/fagerbergj/quack-extensions/sdk v0.4.2
 	github.com/fagerbergj/quack-extensions/usage v0.1.0
 	github.com/glebarez/sqlite v1.11.0
 	github.com/go-chi/chi/v5 v5.3.1
@@ -178,3 +178,7 @@ require (
 	rsc.io/omap v1.2.0 // indirect
 	rsc.io/ordered v1.1.1 // indirect
 )
+
+// Development-only: sdk v0.4.2 (UIDescriptor.Icon) isn't tagged yet, points
+// at a local worktree. Swap for a plain require once the tag exists.
+replace github.com/fagerbergj/quack-extensions/sdk => /tmp/claude-1000/-home-jason-workspace-agent-researcher/aceffcda-234d-4d50-85f4-23e5a7b00e3f/scratchpad/qx-icon/sdk
