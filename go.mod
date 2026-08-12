@@ -2,6 +2,14 @@ module github.com/fagerbergj/quack
 
 go 1.26.5
 
+// TODO(remove before merge): local replace for the unreleased sdk vNext
+// (Host.UpdateChatOrigin) and its github-module consumer - swap for the
+// real tags after review.
+replace (
+	github.com/fagerbergj/quack-extensions/github => /home/jason/workspace/quack-extensions/github
+	github.com/fagerbergj/quack-extensions/sdk => /home/jason/workspace/quack-extensions/sdk
+)
+
 require (
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.2
 	github.com/a2aproject/a2a-go/v2 v2.4.0

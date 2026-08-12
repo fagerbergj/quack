@@ -129,6 +129,7 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, or
 			ArchiveChat: func(chatID string) error {
 				return st.ArchiveChat(context.Background(), chatID, true)
 			},
+			UpdateChatOrigin: newExtUpdateChatOrigin(name, st),
 			Classify: func(ctx context.Context, prompt string) (string, error) {
 				m := judgeModelRef.Load()
 				if m == nil || *m == nil {
@@ -499,6 +500,31 @@ func ensureExtChatTitle(ctx context.Context, st *store.Store, chatID, title stri
 		return
 	}
 	_ = st.UpdateTitle(ctx, chatID, title)
+}
+
+// newExtUpdateChatOrigin builds the sdk.Host.UpdateChatOrigin closure: same
+// "ext:<name>:<localID>" namespacing newExtDispatch uses, and the same
+// origin marshaling newExtDispatch does for a fresh dispatch. Returns
+// extsdk.ErrUnknownChat when localID never reached Dispatch, so a
+// state-change webhook for an issue/PR that was never dispatched (the common
+// case) fails predictably rather than silently minting a bare chat row.
+func newExtUpdateChatOrigin(name string, st *store.Store) func(localID string, origin extsdk.ChatOrigin) error {
+	return func(localID string, origin extsdk.ChatOrigin) error {
+		chatID := fmt.Sprintf("ext:%s:%s", name, localID)
+		ctx := context.Background()
+		c, err := st.GetChat(ctx, chatID)
+		if err != nil {
+			return fmt.Errorf("extensions.%s: update chat origin: %w", name, err)
+		}
+		if c == nil {
+			return fmt.Errorf("extensions.%s: update chat origin: %w", name, extsdk.ErrUnknownChat)
+		}
+		b, err := json.Marshal(&origin)
+		if err != nil {
+			return fmt.Errorf("extensions.%s: update chat origin: marshal: %w", name, err)
+		}
+		return st.SetChatOrigin(ctx, chatID, c.SessionUser, string(b))
+	}
 }
 
 // driveExtensionRun runs one dispatched turn to completion through the

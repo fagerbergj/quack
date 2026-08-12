@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"iter"
 	"net/http"
@@ -33,6 +34,7 @@ import (
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/orchestrator"
+	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/server"
 	"github.com/fagerbergj/quack/internal/server/rest"
 	"github.com/fagerbergj/quack/internal/store"
@@ -872,5 +874,84 @@ func TestSDKExtensionDispatch_UnshapedWorkflowFoldsHintIntoMessage(t *testing.T)
 	answer := orch.LatestAnswer(context.Background(), extRunUserID, chatID)
 	if answer != "hint received" {
 		t.Errorf("answer = %q, want %q (the orchestrator LLM must have seen the workflow hint)", answer, "hint received")
+	}
+}
+
+// TestSDKExtensionUpdateChatOriginRefreshesBadge is #844's proof: a chat
+// dispatched with badge "open" reads back "open" over the real GET
+// /api/v1/chats/{id} route, Host.UpdateChatOrigin flips it, and the same GET
+// shows the new badge - without a second Dispatch/run.
+func TestSDKExtensionUpdateChatOriginRefreshesBadge(t *testing.T) {
+	st, orch, hub, artifacts, jail := newExtTestStack(t)
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+	var extHolder atomic.Pointer[extsdk.Extension]
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+	updateOrigin := newExtUpdateChatOrigin("noop", st)
+
+	const localID = "badge-fixture"
+	const chatID = "ext:noop:" + localID
+	origin := &extsdk.ChatOrigin{Extension: "noop", Label: "acme/widgets#7", Kind: "issues", Badge: "open"}
+	req := extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID, Origin: origin}, Ask: extsdk.Ask{Message: "hi"}}
+	if err := dispatch(context.Background(), req); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	waitRunSettled(t, st, chatID)
+
+	restHandler := rest.NewHandler(st, orch, nil, jail, hub, nil, "", nil, nil, artifacts, nil)
+	ts := httptest.NewServer(server.New(server.Options{REST: restHandler}))
+	defer ts.Close()
+
+	getBadge := func() string {
+		t.Helper()
+		resp, err := http.Get(ts.URL + "/api/v1/chats/" + chatID)
+		if err != nil {
+			t.Fatalf("GET chat: %v", err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET chat status = %d, body = %s", resp.StatusCode, body)
+		}
+		var detail schema.ChatDetail
+		if err := json.Unmarshal(body, &detail); err != nil {
+			t.Fatalf("decode chat: %v (body=%s)", err, body)
+		}
+		if detail.Origin == nil || detail.Origin.Badge == nil {
+			t.Fatalf("chat origin/badge missing: %+v", detail.Origin)
+		}
+		return *detail.Origin.Badge
+	}
+
+	if got := getBadge(); got != "open" {
+		t.Fatalf("badge before update = %q, want open", got)
+	}
+
+	if err := updateOrigin(localID, extsdk.ChatOrigin{Extension: "noop", Label: "acme/widgets#7", Kind: "issues", Badge: "closed"}); err != nil {
+		t.Fatalf("UpdateChatOrigin: %v", err)
+	}
+
+	if got := getBadge(); got != "closed" {
+		t.Fatalf("badge after update = %q, want closed", got)
+	}
+}
+
+// TestSDKExtensionUpdateChatOriginUnknownChatErrors pins the no-op contract
+// on the quack side: a localID that never reached Dispatch reports
+// extsdk.ErrUnknownChat, never a silently-created bare chat row.
+func TestSDKExtensionUpdateChatOriginUnknownChatErrors(t *testing.T) {
+	st, _, _, _, _ := newExtTestStack(t)
+	updateOrigin := newExtUpdateChatOrigin("noop", st)
+
+	err := updateOrigin("never-dispatched", extsdk.ChatOrigin{Extension: "noop", Label: "x", Badge: "closed"})
+	if !errors.Is(err, extsdk.ErrUnknownChat) {
+		t.Fatalf("err = %v, want ErrUnknownChat", err)
+	}
+	c, gerr := st.GetChat(context.Background(), "ext:noop:never-dispatched")
+	if gerr != nil {
+		t.Fatalf("GetChat: %v", gerr)
+	}
+	if c != nil {
+		t.Fatalf("GetChat = %+v, want no chat row created by a failed update", c)
 	}
 }
