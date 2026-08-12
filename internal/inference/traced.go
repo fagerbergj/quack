@@ -21,6 +21,10 @@ type tracedModel struct {
 	name string
 	// pricing: nil = no price table entry for this model, cost metric skipped.
 	pricing *config.ModelPricing
+	// defaultAgent: metrics-only fallback agent (e.g. "orchestrator") for calls
+	// with no per-round Coords.Agent. Never joins ctx - replay's StreamKey{}
+	// needs the root chat event's Coords.Agent to stay empty (#617).
+	defaultAgent string
 
 	mu     sync.Mutex
 	coords ledger.Coords
@@ -29,6 +33,12 @@ type tracedModel struct {
 // TracedModelForTesting wraps m like NewModel does, for tests.
 func TracedModelForTesting(m model.LLM, name string) model.LLM {
 	return &tracedModel{LLM: m, name: name}
+}
+
+// SetDefaultAgent sets the metrics-only agent fallback (see the defaultAgent
+// field doc) - called once at startup, before the model serves any traffic.
+func (t *tracedModel) SetDefaultAgent(name string) {
+	t.defaultAgent = name
 }
 
 // SetLedgerCoords stamps coordinates for subsequent GenerateContent calls,
@@ -55,7 +65,7 @@ func (t *tracedModel) GenerateContent(ctx context.Context, req *model.LLMRequest
 		defer func() {
 			otelobs.RecordModelCallDuration(t.name, time.Since(t0))
 			emitChatEvent(ctx, t.name, req, last, callErr)
-			recordUsageMetrics(ctx, t.name, t.pricing, last)
+			recordUsageMetrics(ctx, t.name, t.defaultAgent, t.pricing, last)
 		}()
 		inner(func(resp *model.LLMResponse, err error) bool {
 			if err != nil {
@@ -75,12 +85,18 @@ func (t *tracedModel) GenerateContent(ctx context.Context, req *model.LLMRequest
 // cached subset out so the token_type series never double-count. Cost keeps
 // the raw prompt total: quack has no separate cached-token price tier, so a
 // cached token is billed at the input rate (see the pricing doc comment).
-func recordUsageMetrics(ctx context.Context, modelName string, pricing *config.ModelPricing, resp *model.LLMResponse) {
+// defaultAgent fills the agent attribute only when ctx carries none (see
+// tracedModel.defaultAgent) - never overrides a real per-round Coords.Agent.
+func recordUsageMetrics(ctx context.Context, modelName, defaultAgent string, pricing *config.ModelPricing, resp *model.LLMResponse) {
 	if resp == nil || resp.UsageMetadata == nil {
 		return
 	}
 	u := resp.UsageMetadata
 	c := ledger.CoordsFromContext(ctx)
+	agent := c.Agent
+	if agent == "" {
+		agent = defaultAgent
+	}
 	promptTotal := int64(u.PromptTokenCount)
 	cached := int64(u.CachedContentTokenCount)
 	input := promptTotal - cached
@@ -89,10 +105,10 @@ func recordUsageMetrics(ctx context.Context, modelName string, pricing *config.M
 	}
 	output := int64(u.CandidatesTokenCount)
 	reasoning := int64(u.ThoughtsTokenCount)
-	otelobs.RecordTokenUsage(modelName, c.Agent, c.User, c.Source, input, output, reasoning, cached)
+	otelobs.RecordTokenUsage(modelName, agent, c.User, c.Source, input, output, reasoning, cached)
 	if pricing != nil {
 		cost := float64(promptTotal)/1e6*pricing.InputPerMTok + float64(output+reasoning)/1e6*pricing.OutputPerMTok
-		otelobs.RecordCost(modelName, c.Agent, c.User, c.Source, cost)
+		otelobs.RecordCost(modelName, agent, c.User, c.Source, cost)
 	}
 }
 

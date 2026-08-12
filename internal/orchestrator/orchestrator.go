@@ -35,7 +35,10 @@ import (
 
 const AppName = "quack"
 
-const orchestratorName = "orchestrator"
+// AgentName: gen_ai metrics "agent" value for the orchestrator's own model calls.
+const AgentName = "orchestrator"
+
+const orchestratorName = AgentName
 
 // SourceApp: the gen_ai.client.token.usage/cost "source" value for a direct
 // UI/REST/MCP chat - as opposed to an extension-dispatched run, whose source

@@ -45,11 +45,13 @@ func ledgerAttrsOf(r sdklog.Record) map[string]string {
 }
 
 // newTracedTestOrch is newTestOrch (continue_test.go) with the orchestrator's
-// OWN model wrapped the way production's inference.NewModel always wraps it -
-// tracedModel is what stamps gen_ai.conversation.id from ctx (emitChatEvent).
+// OWN model wrapped and stamped the way production's inference.NewModel/serve.go do.
 func newTracedTestOrch(t *testing.T, stub *orchStub) *Orchestrator {
 	t.Helper()
 	tracedModel := inference.TracedModelForTesting(stub, "orch-test-model")
+	if da, ok := tracedModel.(interface{ SetDefaultAgent(string) }); ok {
+		da.SetDefaultAgent(AgentName)
+	}
 	worker, err := llmagent.New(llmagent.Config{
 		Name: "web-researcher", Model: stub, Description: "researcher", Instruction: "ROLE:researcher",
 	})
@@ -159,6 +161,9 @@ func TestOrchestratorRun_SourceAndUserReachTokenUsageMetric(t *testing.T) {
 				sourceVal, _ := dp.Attributes.Value(attribute.Key("source"))
 				if userVal.AsString() == "the-user" && sourceVal.AsString() == "github" {
 					found = true
+					if agentVal, ok := dp.Attributes.Value(attribute.Key("agent")); !ok || agentVal.AsString() != orchestratorName {
+						t.Errorf("gen_ai.client.token.usage agent = %q, want %q - the orchestrator's own top-level model calls carry no agent attribution", agentVal.AsString(), orchestratorName)
+					}
 				}
 			}
 		}

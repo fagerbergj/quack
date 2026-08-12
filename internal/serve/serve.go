@@ -325,6 +325,10 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("inference model init failed: %w", err)
 	}
+	// Never runs inside a DAG node, so no vetting.Config.Agent stamps it.
+	if da, ok := llm.(interface{ SetDefaultAgent(string) }); ok {
+		da.SetDefaultAgent(orchestrator.AgentName)
+	}
 
 	// runHub is needed by the SDK extensions built below (Dispatch fans a
 	// run's events through it) as well as REST.
@@ -721,6 +725,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("gates.judge: model: %w", err)
 			}
 			judgeModel = judge
+			gateCfg.JudgeModel = judge
 			var judgeReadTools []tool.Tool
 			if jail != nil {
 				judgeReadTools, err = tools.Build([]string{"read_file", "list_dir", "glob", "grep"}, tools.Deps{

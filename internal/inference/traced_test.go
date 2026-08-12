@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"go.opentelemetry.io/otel/attribute"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"google.golang.org/adk/v2/model"
@@ -348,5 +349,64 @@ func TestTracedModel_AttributionAbsentWhenCoordsUnset(t *testing.T) {
 		if _, ok := dp.Attributes.Value(attribute.Key(key)); ok {
 			t.Errorf("attribute %q is set with no coords on ctx, want it omitted", key)
 		}
+	}
+}
+
+// TestTracedModel_DefaultAgentFillsTokenUsageWhenCoordsCarryNone pins the
+// orchestrator's own top-level turn, which never runs inside a DAG node and
+// so never gets a ctx-carried Coords.Agent.
+func TestTracedModel_DefaultAgentFillsTokenUsageWhenCoordsCarryNone(t *testing.T) {
+	reader := newUsageTestMeter(t)
+
+	tm := &tracedModel{LLM: &stubModel{name: "m", resps: []*model.LLMResponse{usageResp(10, 0, 5, 0)}}, name: "m", defaultAgent: "orchestrator"}
+	ctx := ledger.WithCoords(context.Background(), ledger.Coords{User: "local", Source: "app"})
+	for range tm.GenerateContent(ctx, &model.LLMRequest{}, true) {
+	}
+
+	points := tokenUsagePoints(t, reader)
+	dp, ok := points[otelobs.GenAITokenTypeInput]
+	if !ok {
+		t.Fatal("no data point for token_type=input")
+	}
+	if got := attrVal(dp.Attributes, "agent"); got != "orchestrator" {
+		t.Errorf("agent = %q, want orchestrator (the defaultAgent fallback)", got)
+	}
+}
+
+// TestTracedModel_DefaultAgentNeverOverridesRealCoords guards the fallback
+// direction: a per-round Coords.Agent (a DAG node's worker/judge call) must
+// win over defaultAgent, never be replaced by it.
+func TestTracedModel_DefaultAgentNeverOverridesRealCoords(t *testing.T) {
+	reader := newUsageTestMeter(t)
+
+	tm := &tracedModel{LLM: &stubModel{name: "m", resps: []*model.LLMResponse{usageResp(10, 0, 5, 0)}}, name: "m", defaultAgent: "orchestrator"}
+	ctx := ledger.WithCoords(context.Background(), ledger.Coords{Agent: "code-implementer"})
+	for range tm.GenerateContent(ctx, &model.LLMRequest{}, true) {
+	}
+
+	points := tokenUsagePoints(t, reader)
+	if got := attrVal(points[otelobs.GenAITokenTypeInput].Attributes, "agent"); got != "code-implementer" {
+		t.Errorf("agent = %q, want code-implementer (defaultAgent must not override a real Coords.Agent)", got)
+	}
+}
+
+// TestTracedModel_DefaultAgentNeverLeaksIntoChatEvent guards #617: replay's
+// StreamKey needs the root chat event's Coords.Agent to stay empty.
+func TestTracedModel_DefaultAgentNeverLeaksIntoChatEvent(t *testing.T) {
+	capExp := &captureExporter{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
+	restore := otelobs.SetLoggerProviderForTesting(lp)
+	defer restore()
+
+	tm := &tracedModel{LLM: &stubModel{name: "m", resps: []*model.LLMResponse{usageResp(10, 0, 5, 0)}}, name: "m", defaultAgent: "orchestrator"}
+	for range tm.GenerateContent(context.Background(), &model.LLMRequest{}, true) {
+	}
+
+	if len(capExp.records) != 1 {
+		t.Fatalf("got %d chat log records, want 1", len(capExp.records))
+	}
+	attrs := attrsOf(t, capExp.records[0])
+	if v, ok := attrs["gen_ai.agent.name"]; ok {
+		t.Errorf("gen_ai.agent.name = %q, want absent - defaultAgent must never leak into the chat ledger event", v.AsString())
 	}
 }

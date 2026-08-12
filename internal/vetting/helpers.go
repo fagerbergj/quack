@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
@@ -61,6 +62,10 @@ type Config struct {
 	ExistingPR           bool           // run pushes onto an already-open PR; stage_push offered instead of stage_pr
 	Skeptic              SkepticFactory // adversarial verify; nil = disabled
 	SkepticRounds        int            // skeptics per finding; <= 0 = disabled
+	// JudgeModel: the raw model behind judge (set once at startup, same
+	// instance NewJudgeFactory closes over) - stamped with per-round coords
+	// the same way workerModel is, so its metrics don't rely on ctx alone.
+	JudgeModel model.LLM
 }
 
 // SetupBranch mirrors dag.Plan.Setup delivery fields.
