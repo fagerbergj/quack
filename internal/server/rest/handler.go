@@ -501,7 +501,12 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 		return
 	}
 
-	go func() { _ = h.store.SaveTurn(context.Background(), chatID, turnID) }()
+	go func() {
+		ctx := context.Background()
+		if err := h.store.SaveTurn(ctx, chatID, turnID); err == nil {
+			_ = h.store.SetTurnInput(ctx, chatID, turnID, body.Content)
+		}
+	}()
 
 	// Subscribe BEFORE the run starts publishing so nothing is missed.
 	h.hub.Reset(chatID)
