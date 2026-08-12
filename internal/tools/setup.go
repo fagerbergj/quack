@@ -9,14 +9,23 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// SetupClone: harness-executed clone + branch checkout, run once before any node.
-func SetupClone(ctx context.Context, jail *workspace.Jail, userID, chatID, dir, repoURL, baseRef, workBranch string, checkoutExistingHead bool, caps workspace.Caps, credentials []GitCredential, tokenSource GitTokenSource) (string, error) {
+// SetupClone: harness-executed clone + branch checkout, run once before any
+// node. checkSetup bootstraps the clone (e.g. `make plugins`) right after
+// checkout, quack-side, before any sandboxed worker starts in it - the gate's
+// own checksPassCriterion reruns the same call, a no-op once this has (see
+// workspace.RunCheckSetup's cache).
+func SetupClone(ctx context.Context, jail *workspace.Jail, userID, chatID, dir, repoURL, baseRef, workBranch string, checkoutExistingHead bool, caps workspace.Caps, credentials []GitCredential, tokenSource GitTokenSource, checkSetup []string) (string, error) {
 	if _, err := validateCloneURL(repoURL); err != nil {
 		return "", err
 	}
 	b := gitBinding{userID: userID, jail: jail, caps: caps, credentials: credentials, tokenSource: tokenSource}
 	b.chatID = chatID
-	return setupCloneAndBranch(ctx, b, dir, repoURL, baseRef, workBranch, checkoutExistingHead)
+	target, err := setupCloneAndBranch(ctx, b, dir, repoURL, baseRef, workBranch, checkoutExistingHead)
+	if err != nil {
+		return "", err
+	}
+	workspace.RunCheckSetup(target, checkSetup, caps)
+	return target, nil
 }
 
 // setupCloneAndBranch: false=create new branch off baseRef, true=checkout existing remote branch.

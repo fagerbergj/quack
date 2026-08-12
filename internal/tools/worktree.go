@@ -9,9 +9,14 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// SetupWorktree provisions one node's git worktree, linked off the plan's shared setup clone.
-// Idempotent: a resumed run finds its worktree already registered. A gate-failed node's worktree is kept.
-func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, parentDir, nodeRelDir, branch string, caps workspace.Caps) (string, error) {
+// SetupWorktree provisions one node's git worktree, linked off the plan's
+// shared setup clone. Idempotent: a resumed run finds its worktree already
+// registered. A gate-failed node's worktree is kept. checkSetup bootstraps
+// the worktree quack-side, before any sandboxed worker starts in it - a
+// read-only worker (reviewer/explorer) can never run it itself, and the
+// shared clone's own bootstrap (SetupClone) is not carried by `worktree add`
+// for untracked state (e.g. an untracked vendor dir).
+func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, parentDir, nodeRelDir, branch string, caps workspace.Caps, checkSetup []string) (string, error) {
 	b := gitBinding{userID: userID, jail: jail, caps: caps}
 	b.chatID = chatID
 	target, err := b.resolve(nodeRelDir)
@@ -19,6 +24,7 @@ func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, pa
 		return "", fmt.Errorf("setup: resolve worktree dir: %w", err)
 	}
 	if worktreeValid(target, parentDir) {
+		workspace.RunCheckSetup(target, checkSetup, caps)
 		return target, nil
 	}
 	if err := os.RemoveAll(target); err != nil {
@@ -32,6 +38,7 @@ func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, pa
 	if _, _, err := runGit(ctx, parentDir, []string{"worktree", "add", "--quiet", "-B", branch, target, "HEAD"}, caps, nil); err != nil {
 		return "", fmt.Errorf("setup: worktree add %q: %w", branch, err)
 	}
+	workspace.RunCheckSetup(target, checkSetup, caps)
 	return target, nil
 }
 

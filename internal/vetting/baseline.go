@@ -77,7 +77,7 @@ func runAtBase(dir, base, check string, caps workspace.Caps, setup []string) (bo
 	}
 	// wt is a fresh checkout that never saw dir's setup - rerun it here so the
 	// baseline reflects "base commit + bootstrap", not "base commit, unbootstrapped".
-	runCheckSetup(wt, setup, caps)
+	workspace.RunCheckSetup(wt, setup, caps)
 	stages, err := workspace.SplitPipeline(check)
 	if err != nil {
 		return false, err

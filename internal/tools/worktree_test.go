@@ -27,12 +27,12 @@ func TestSetupWorktreeCreatesDistinctDirsAndBranches(t *testing.T) {
 	}
 
 	dir1, err := SetupWorktree(context.Background(), b.jail, b.userID, b.chatID, parentDir,
-		workspace.NodeDir("review1"), workspace.WorktreeBranch("review1"), b.caps)
+		workspace.NodeDir("review1"), workspace.WorktreeBranch("review1"), b.caps, nil)
 	if err != nil {
 		t.Fatalf("SetupWorktree(review1): %v", err)
 	}
 	dir2, err := SetupWorktree(context.Background(), b.jail, b.userID, b.chatID, parentDir,
-		workspace.NodeDir("explore1"), workspace.WorktreeBranch("explore1"), b.caps)
+		workspace.NodeDir("explore1"), workspace.WorktreeBranch("explore1"), b.caps, nil)
 	if err != nil {
 		t.Fatalf("SetupWorktree(explore1): %v", err)
 	}
@@ -83,7 +83,7 @@ func TestSetupWorktreeIsIdempotent(t *testing.T) {
 
 	nodeRel := workspace.NodeDir("review1")
 	branch := workspace.WorktreeBranch("review1")
-	dir, err := SetupWorktree(context.Background(), b.jail, b.userID, b.chatID, parentDir, nodeRel, branch, b.caps)
+	dir, err := SetupWorktree(context.Background(), b.jail, b.userID, b.chatID, parentDir, nodeRel, branch, b.caps, nil)
 	if err != nil {
 		t.Fatalf("first SetupWorktree: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestSetupWorktreeIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dir2, err := SetupWorktree(context.Background(), b.jail, b.userID, b.chatID, parentDir, nodeRel, branch, b.caps)
+	dir2, err := SetupWorktree(context.Background(), b.jail, b.userID, b.chatID, parentDir, nodeRel, branch, b.caps, nil)
 	if err != nil {
 		t.Fatalf("second SetupWorktree (resume) must succeed, got: %v", err)
 	}
@@ -101,5 +101,77 @@ func TestSetupWorktreeIsIdempotent(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); err != nil {
 		t.Errorf("idempotent re-entry must NOT clobber the worker's own files: %v", err)
+	}
+}
+
+// TestSetupWorktreeRunsCheckSetup pins the #856 follow-up: a read-only
+// worktree (reviewer/explorer) can never bootstrap itself, so check_setup
+// must run quack-side, in the worktree, before the worker's first round -
+// not only later at gate-check time.
+func TestSetupWorktreeRunsCheckSetup(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+
+	parentDir, err := setupCloneAndBranch(context.Background(), b, workspace.SetupCloneDir(workspace.SharedRepoScope),
+		"file://"+bare, "main", "quack/work", false)
+	if err != nil {
+		t.Fatalf("setup the shared clone: %v", err)
+	}
+
+	dir, err := SetupWorktree(context.Background(), b.jail, b.userID, b.chatID, parentDir,
+		workspace.NodeDir("review1"), workspace.WorktreeBranch("review1"), b.caps, []string{"touch generated.txt"})
+	if err != nil {
+		t.Fatalf("SetupWorktree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "generated.txt")); err != nil {
+		t.Errorf("check_setup did not run in the worktree before returning: %v", err)
+	}
+}
+
+// TestSetupWorktreeNoCheckSetupUnchanged pins that an unset check_setup
+// leaves worktree provisioning byte-identical to before this call site existed.
+func TestSetupWorktreeNoCheckSetupUnchanged(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+
+	parentDir, err := setupCloneAndBranch(context.Background(), b, workspace.SetupCloneDir(workspace.SharedRepoScope),
+		"file://"+bare, "main", "quack/work", false)
+	if err != nil {
+		t.Fatalf("setup the shared clone: %v", err)
+	}
+
+	dir, err := SetupWorktree(context.Background(), b.jail, b.userID, b.chatID, parentDir,
+		workspace.NodeDir("review1"), workspace.WorktreeBranch("review1"), b.caps, nil)
+	if err != nil {
+		t.Fatalf("SetupWorktree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "generated.txt")); err == nil {
+		t.Error("no check_setup configured, but a bootstrap artifact appeared anyway")
+	}
+}
+
+// TestSetupWorktreeCheckSetupFailureWarnsAndProceeds pins the shared failure
+// semantics with the gate's own check_setup call (checks.go): a broken
+// bootstrap command must not fail node worktree provisioning.
+func TestSetupWorktreeCheckSetupFailureWarnsAndProceeds(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+
+	parentDir, err := setupCloneAndBranch(context.Background(), b, workspace.SetupCloneDir(workspace.SharedRepoScope),
+		"file://"+bare, "main", "quack/work", false)
+	if err != nil {
+		t.Fatalf("setup the shared clone: %v", err)
+	}
+
+	dir, err := SetupWorktree(context.Background(), b.jail, b.userID, b.chatID, parentDir,
+		workspace.NodeDir("review1"), workspace.WorktreeBranch("review1"), b.caps, []string{"false"})
+	if err != nil {
+		t.Fatalf("SetupWorktree must succeed despite a broken check_setup command, got: %v", err)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Errorf("worktree missing after a failed check_setup: %v", err)
 	}
 }
