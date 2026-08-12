@@ -508,6 +508,14 @@ workspace:
 #     password: ${RMFAKECLOUD_PASSWORD}
 #     # poll_interval: 1m       # optional Go duration (e.g. "90s"); default 1m
 #     # folder_filter: Inbox    # optional; restricts polling to this folder + subfolders
+#
+#   # extensions.usage serves an in-app token/cost dashboard at /usage/ (authed),
+#   # charting gen_ai.client.* metrics via a narrow GET-only proxy to Prometheus.
+#   # Needs the deployment's Prometheus reachable from the quack container.
+#   usage:
+#     prometheus_url: http://prometheus:9090
+#     # tempo_url: http://tempo:3200   # optional, linked only
+#     # default_range: 24h             # optional Go duration
 #     # max_attempts: 3         # optional; retries per failed document before giving up (0 = unlimited)
 
 # Inbound request auth (internal/auth), gating the REST + MCP surface (never
