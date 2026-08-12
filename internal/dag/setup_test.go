@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"strings"
 	"sync"
 	"testing"
 
@@ -211,6 +212,76 @@ func TestRunPlanSetup_PassesThroughCheckoutExistingHead(t *testing.T) {
 				t.Errorf("setupFn's Setup.CheckoutExistingHead = %v, want %v (runPlanSetup must pass through what OverrideExistingPRHead already decided upstream, not recompute it from node composition)", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestProvision_MarksProvisionedAndSkipsOnSecondCall pins #848: the execute
+// tool calls Provision eagerly; the run phase's runPlanSetup must then see
+// Setup.Provisioned and no-op, never re-clone the same plan.
+func TestProvision_MarksProvisionedAndSkipsOnSecondCall(t *testing.T) {
+	var calls int32Counter
+	ex := &Executor{setupFn: func(context.Context, string, string, string, Setup) error {
+		calls.inc()
+		return nil
+	}}
+	plan := Plan{
+		Setup: &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"},
+		Nodes: []Node{{ID: "impl", AgentName: implementerAgent}},
+	}
+	if err := ex.Provision(context.Background(), "u", "c", &plan); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if !plan.Setup.Provisioned {
+		t.Fatal("Provision must set Setup.Provisioned = true on success")
+	}
+	// runPlanSetup takes Plan by value, as RunPlanAsGraph does - Setup itself
+	// is still the same pointer, so the run phase sees the same flag.
+	if err := ex.runPlanSetup(context.Background(), "u", "c", plan); err != nil {
+		t.Fatalf("runPlanSetup: %v", err)
+	}
+	if got := calls.get(); got != 1 {
+		t.Fatalf("setupFn called %d times total, want exactly 1 (Provision then runPlanSetup must not double-clone)", got)
+	}
+}
+
+// TestProvision_ClonefailureIsHumanReadable pins #848's other half: a clone
+// failure must read as "plan setup failed: repository ... is unreachable
+// (fatal: ...)" - the git STDERR reason is kept (it's the useful part), but
+// runGit's leading "git clone --quiet ...: " argv dump is stripped, since
+// that's what "the raw git fatal in chat" actually meant live: the full
+// invocation, not just the reason. Also must still satisfy errors.Is against
+// the underlying cause, so callers that inspect it (e.g. RunPlanAsGraph's
+// error wrapping) keep working.
+func TestProvision_ClonefailureIsHumanReadable(t *testing.T) {
+	// Mirrors runGit's actual error shape (internal/tools/git.go): "git
+	// <argv...>: <stderr>" - this IS what SetupClone returns on a real
+	// unreachable-repo failure, not a plain message.
+	cause := errors.New("git clone --quiet --branch main --single-branch https://github.com/chrishay-quack/quack.git repo: " +
+		"fatal: could not read Username for 'https://github.com': terminal prompts disabled")
+	ex := &Executor{setupFn: func(context.Context, string, string, string, Setup) error { return cause }}
+	plan := Plan{
+		Setup: &Setup{Repo: "https://github.com/chrishay-quack/quack.git", BaseRef: "main", WorkBranch: "quack/work"},
+		Nodes: []Node{{ID: "impl", AgentName: implementerAgent}},
+	}
+	err := ex.Provision(context.Background(), "u", "c", &plan)
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if !errors.Is(err, cause) {
+		t.Errorf("errors.Is(err, cause) = false, want true (chain must reach the underlying git error)")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "plan setup failed") || !strings.Contains(msg, plan.Setup.Repo) || !strings.Contains(msg, "unreachable") {
+		t.Errorf("err = %q, want the human setup-failure form naming the repo", msg)
+	}
+	if !strings.Contains(msg, "fatal: could not read Username") {
+		t.Errorf("err = %q, want the underlying git STDERR reason preserved", msg)
+	}
+	if strings.Contains(msg, "git clone") {
+		t.Errorf("err = %q, want the git argv dump (\"git clone ...\") stripped, not surfaced verbatim", msg)
+	}
+	if plan.Setup.Provisioned {
+		t.Error("Setup.Provisioned must stay false after a failed clone")
 	}
 }
 
