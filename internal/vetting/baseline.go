@@ -12,8 +12,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// baselineCache: memoises "does this check fail at base?" per (dir, sha, check).
-var baselineCache sync.Map // key: dir\x00sha\x00check → bool
+// baselineCache: memoises "does this check fail at base?" per (dir, sha, check, setup).
+var baselineCache sync.Map // key: dir\x00sha\x00check\x00setup → bool
 
 // failsAtBase: does check fail on base tree? Pre-existing debt doesn't count against the worker. Conservative on error.
 func failsAtBase(dir, check string, caps workspace.Caps, setup []string) bool {
@@ -23,7 +23,9 @@ func failsAtBase(dir, check string, caps workspace.Caps, setup []string) bool {
 		slog.Warn("cannot determine base commit; check keeps gating", "component", "vetting", "dir", dir, "err", err)
 		return false
 	}
-	key := dir + "\x00" + base + "\x00" + check
+	// setup is part of the key - a repo whose check_setup changes between runs of the
+	// same dir/sha must not reuse a baseline computed under the old bootstrap.
+	key := dir + "\x00" + base + "\x00" + check + "\x00" + strings.Join(setup, "\x00")
 	if v, ok := baselineCache.Load(key); ok {
 		return v.(bool)
 	}
