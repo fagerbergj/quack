@@ -2,9 +2,12 @@
 package server
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -124,15 +127,61 @@ func requireAuthExceptHealth(a *auth.Auth) func(http.Handler) http.Handler {
 
 func spaHandler(spa fs.FS) http.HandlerFunc {
 	fileServer := http.FileServer(http.FS(spa))
+	etags := buildETags(spa)
 	return func(w http.ResponseWriter, r *http.Request) {
 		p := strings.TrimPrefix(r.URL.Path, "/")
 		if p == "" {
 			p = "index.html"
 		}
 		if _, err := fs.Stat(spa, p); err != nil {
+			setCacheHeaders(w, "index.html", etags)
 			http.ServeFileFS(w, r, spa, "index.html")
 			return
 		}
+		setCacheHeaders(w, p, etags)
 		fileServer.ServeHTTP(w, r)
 	}
+}
+
+// hashedAssetRE matches Vite's fingerprinted output (assets/name-<hash>.ext);
+// deliberately conservative so a verbatim-copied public/ file (e.g.
+// assets/ext/v1/kit.css) never gets mistaken for one.
+var hashedAssetRE = regexp.MustCompile(`-[0-9A-Za-z_]{8,}\.[0-9A-Za-z]+$`)
+
+func isHashedAsset(p string) bool {
+	return strings.HasPrefix(p, "assets/") && hashedAssetRE.MatchString(p)
+}
+
+// setCacheHeaders implements #859: a hashed Vite asset is immutable for a
+// year, everything else (index.html, verbatim public/ files) revalidates on
+// every load via ETag so a stale SPA shell can't survive a deploy.
+func setCacheHeaders(w http.ResponseWriter, p string, etags map[string]string) {
+	if isHashedAsset(p) {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-cache")
+	if etag, ok := etags[p]; ok {
+		w.Header().Set("ETag", etag) // net/http honors a pre-set ETag for If-None-Match -> 304
+	}
+}
+
+// buildETags hashes every non-hashed-asset file once at startup - the
+// embedded FS is fixed for the process lifetime (and its modtimes are zero,
+// so http.FileServer's own Last-Modified path never fires).
+func buildETags(spa fs.FS) map[string]string {
+	etags := make(map[string]string)
+	_ = fs.WalkDir(spa, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || isHashedAsset(p) {
+			return nil
+		}
+		data, rerr := fs.ReadFile(spa, p)
+		if rerr != nil {
+			return nil
+		}
+		sum := sha256.Sum256(data)
+		etags[p] = `"` + hex.EncodeToString(sum[:16]) + `"`
+		return nil
+	})
+	return etags
 }

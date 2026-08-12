@@ -209,8 +209,9 @@ func TestRouterMountsSDKExtensionAtBareName(t *testing.T) {
 // itself, not swallowed by the index.html client-route fallback.
 func TestRouterServesStaticSPAAssetVerbatim(t *testing.T) {
 	spa := fstest.MapFS{
-		"index.html":            &fstest.MapFile{Data: []byte("<html>spa</html>")},
-		"assets/ext/v1/kit.css": &fstest.MapFile{Data: []byte(".qk-card{color:red}")},
+		"index.html":                 &fstest.MapFile{Data: []byte("<html>spa</html>")},
+		"assets/ext/v1/kit.css":      &fstest.MapFile{Data: []byte(".qk-card{color:red}")},
+		"assets/index-4f9a2c1bd8.js": &fstest.MapFile{Data: []byte("console.log('hi')")},
 	}
 	h := server.New(server.Options{REST: &rest.Handler{}, SPA: spa})
 
@@ -226,6 +227,13 @@ func TestRouterServesStaticSPAAssetVerbatim(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); ct != "text/css; charset=utf-8" {
 		t.Errorf("Content-Type = %q, want text/css", ct)
 	}
+	// kit.css is a verbatim public/ file, not a Vite-hashed asset (#859): revalidate every load.
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-cache" {
+		t.Errorf("kit.css Cache-Control = %q, want no-cache", cc)
+	}
+	if rec.Header().Get("ETag") == "" {
+		t.Errorf("kit.css ETag missing, want a content-hash ETag so revalidation can 304")
+	}
 
 	// An unknown client-side route still falls back to index.html.
 	req = httptest.NewRequest(http.MethodGet, "/chat/nonexistent", nil)
@@ -233,6 +241,23 @@ func TestRouterServesStaticSPAAssetVerbatim(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || rec.Body.String() != "<html>spa</html>" {
 		t.Errorf("got %d %q, want 200 <html>spa</html> (SPA fallback)", rec.Code, rec.Body.String())
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-cache" {
+		t.Errorf("index.html Cache-Control = %q, want no-cache (#859: never let the shell go stale)", cc)
+	}
+	if rec.Header().Get("ETag") == "" {
+		t.Errorf("index.html ETag missing, want a content-hash ETag so revalidation can 304")
+	}
+
+	// A content-hashed Vite asset gets a year-long immutable cache.
+	req = httptest.NewRequest(http.MethodGet, "/assets/index-4f9a2c1bd8.js", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /assets/index-4f9a2c1bd8.js = %d, want 200", rec.Code)
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "public, max-age=31536000, immutable" {
+		t.Errorf("hashed asset Cache-Control = %q, want public, max-age=31536000, immutable", cc)
 	}
 }
 
