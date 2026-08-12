@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -158,6 +159,61 @@ func TestNewSkillSourceDotagentsOnDiskNoDuplicate(t *testing.T) {
 	src := newSkillSource([]string{dotagents})
 	if _, err := src.ListFrontmatters(context.Background()); err != nil {
 		t.Fatalf("ListFrontmatters: %v (embedded fallback likely double-added dotagents)", err)
+	}
+}
+
+// TestAcpSkillPathsBackfillsDotagents pins the ACP counterpart of
+// TestNewSkillSourceDotagentsMissingOnDisk: dotagents ships no plugin.json/
+// .codex-plugin manifest, so plugin.ResolveSkillDirs always drops it.
+// acpSkillPaths must backfill dotagentsEmbeddedSkills the same way
+// newSkillSource does, or an ACP agent's opencode subprocess never gets
+// dotagents' skills.paths entry at all - e.g. code-reviewer's
+// load_skill("review-code") 404s even though quack ships the skill.
+func TestAcpSkillPathsBackfillsDotagents(t *testing.T) {
+	root := repoRoot(t)
+	t.Chdir(root)
+
+	paths := acpSkillPaths([]string{".agents/vendor/dotagents", ".agents/vendor/ponytail"})
+
+	wantDotagents := filepath.Join(root, dotagentsEmbeddedSkills)
+	if !slices.Contains(paths, wantDotagents) {
+		t.Fatalf("acpSkillPaths() = %v, want dotagents skills dir %q backfilled in", paths, wantDotagents)
+	}
+	if _, err := os.Stat(filepath.Join(wantDotagents, "review-code", "SKILL.md")); err != nil {
+		t.Errorf("review-code not found under the backfilled dotagents dir: %v", err)
+	}
+
+	wantPonytail := filepath.Join(root, ".agents", "vendor", "ponytail", "skills")
+	if !slices.Contains(paths, wantPonytail) {
+		t.Errorf("acpSkillPaths() = %v, want ponytail's resolved skills dir %q", paths, wantPonytail)
+	}
+}
+
+// TestAcpSkillPathsNoDuplicateWhenDotagentsResolves proves the backfill is
+// suppressed once a plugin root already resolves to the same directory - so a
+// future dotagents release that ships its own manifest doesn't hand opencode
+// the same skills dir twice under two path strings (opencode may reject a
+// duplicate skill name the same way quack's own MergedSource does).
+func TestAcpSkillPathsNoDuplicateWhenDotagentsResolves(t *testing.T) {
+	root := t.TempDir()
+	dotagents := filepath.Join(root, ".agents", "vendor", "dotagents")
+	if err := os.MkdirAll(dotagents, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writePluginManifest(t, dotagents, "dotagents")
+	writeVendorSkill(t, filepath.Join(dotagents, "skills"), "review-code", "test skill")
+	t.Chdir(root)
+
+	paths := acpSkillPaths([]string{".agents/vendor/dotagents"})
+	want := filepath.Join(root, filepath.FromSlash(dotagentsEmbeddedSkills))
+	n := 0
+	for _, p := range paths {
+		if p == want {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("acpSkillPaths() included %q %d times, want exactly 1: %v", want, n, paths)
 	}
 }
 
