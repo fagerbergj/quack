@@ -1,24 +1,97 @@
 package acp
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	sdk "github.com/coder/acp-go-sdk"
 )
 
+// A thought chunk small enough to miss both coalescing thresholds buffers
+// rather than emitting immediately - it surfaces once a later update flushes it.
 func TestTranslate_ThoughtAndMessageChunks(t *testing.T) {
 	tr := newTranslator("/work")
 
 	specs := tr.translate(sdk.UpdateAgentThoughtText("planning"))
-	if len(specs) != 1 || !specs[0].partial || !specs[0].parts[0].Thought || specs[0].parts[0].Text != "planning" {
-		t.Fatalf("thought chunk: got %+v", specs)
+	if specs != nil {
+		t.Fatalf("small thought chunk should buffer, not emit: got %+v", specs)
 	}
 
-	tr.translate(sdk.UpdateAgentMessageText("did the "))
+	specs = tr.translate(sdk.UpdateAgentMessageText("did the "))
+	if len(specs) != 2 {
+		t.Fatalf("message chunk should flush the buffered thought first: got %d specs", len(specs))
+	}
+	if !specs[0].partial || !specs[0].parts[0].Thought || specs[0].parts[0].Text != "planning" {
+		t.Fatalf("flushed thought: got %+v", specs[0])
+	}
+	if specs[1].parts[0].Thought {
+		t.Fatalf("message spec should not be a thought: got %+v", specs[1])
+	}
+	if specs[1].parts[0].Text != "did the " {
+		t.Fatalf("message text: got %+v", specs[1])
+	}
+
 	tr.translate(sdk.UpdateAgentMessageText("thing"))
 	final := finalSpec(tr)
 	if final.partial || final.parts[0].Text != "did the thing" {
 		t.Fatalf("final answer: got partial=%v text=%q", final.partial, final.parts[0].Text)
+	}
+}
+
+// N small deltas under both thresholds stay buffered; nothing has been emitted yet.
+func TestTranslate_ThoughtCoalescesSmallDeltas(t *testing.T) {
+	tr := newTranslator("/work")
+	for i := 0; i < 20; i++ {
+		if specs := tr.translate(sdk.UpdateAgentThoughtText(" tok")); specs != nil {
+			t.Fatalf("delta %d: expected no emission under threshold, got %+v", i, specs)
+		}
+	}
+	if tr.thinking.String() != strings.Repeat(" tok", 20) {
+		t.Fatalf("buffered text: got %q", tr.thinking.String())
+	}
+}
+
+// Once the byte threshold is crossed mid-stream, the whole batch flushes as
+// one event and the buffer resets for the next batch.
+func TestTranslate_ThoughtFlushesOnByteThreshold(t *testing.T) {
+	tr := newTranslator("/work")
+	big := strings.Repeat("x", thinkFlushBytes)
+	specs := tr.translate(sdk.UpdateAgentThoughtText(big))
+	if len(specs) != 1 || !specs[0].parts[0].Thought || specs[0].parts[0].Text != big {
+		t.Fatalf("byte-threshold flush: got %+v", specs)
+	}
+	if tr.thinking.Len() != 0 {
+		t.Fatalf("buffer should reset after flush, got %d bytes left", tr.thinking.Len())
+	}
+}
+
+// Once the elapsed-time threshold is crossed, the next delta flushes
+// everything buffered so far (including itself) as one event.
+func TestTranslate_ThoughtFlushesOnElapsed(t *testing.T) {
+	tr := newTranslator("/work")
+	tr.translate(sdk.UpdateAgentThoughtText("a"))
+	tr.thinkOpen = time.Now().Add(-thinkFlushElapsed - time.Millisecond)
+	specs := tr.translate(sdk.UpdateAgentThoughtText("b"))
+	if len(specs) != 1 || specs[0].parts[0].Text != "ab" {
+		t.Fatalf("elapsed-threshold flush: got %+v", specs)
+	}
+}
+
+// A non-thinking event (here, a tool call) flushes any pending thought first,
+// ordered ahead of the event's own spec.
+func TestTranslate_ThoughtFlushesBeforeToolCall(t *testing.T) {
+	tr := newTranslator("/work")
+	tr.translate(sdk.UpdateAgentThoughtText("checking the config"))
+	specs := tr.translate(sdk.StartToolCall("t1", "Read config.go", sdk.WithStartKind(sdk.ToolKindRead)))
+	if len(specs) != 2 {
+		t.Fatalf("want flushed-thought + tool-call specs, got %d", len(specs))
+	}
+	if !specs[0].parts[0].Thought || specs[0].parts[0].Text != "checking the config" {
+		t.Fatalf("flushed thought: got %+v", specs[0])
+	}
+	if specs[1].parts[0].FunctionCall == nil {
+		t.Fatalf("tool-call spec: got %+v", specs[1])
 	}
 }
 
@@ -176,5 +249,76 @@ func TestTranslate_UsageRidesFinalEvent(t *testing.T) {
 	final := finalSpec(tr)
 	if final.usage == nil || final.usage.TotalTokenCount != 1234 {
 		t.Fatalf("usage lost: %+v", final.usage)
+	}
+}
+
+// A delete kind has a direct native twin (delete_path) - the frontend's
+// DeletePathView reads args.path + result.deleted.
+func TestTranslate_DeleteKindMapsToDeletePath(t *testing.T) {
+	tr := newTranslator("/work")
+	tr.translate(sdk.StartToolCall("t4", "Delete old.go", sdk.WithStartKind(sdk.ToolKindDelete)))
+	specs := tr.translate(sdk.UpdateToolCall("t4",
+		sdk.WithUpdateStatus(sdk.ToolCallStatusCompleted),
+		sdk.WithUpdateLocations([]sdk.ToolCallLocation{{Path: "/work/old.go"}})))
+	call, resp := specs[0].parts[0].FunctionCall, specs[0].parts[1].FunctionResponse
+	if call.Name != "delete_path" || call.Args["path"] != "old.go" {
+		t.Fatalf("delete should map to delete_path with a node-relative path, got %s %v", call.Name, call.Args)
+	}
+	if resp.Response["deleted"] != true {
+		t.Fatalf("deleted flag lost: %+v", resp.Response)
+	}
+}
+
+// ACP's "search" kind has no tool-identity field to distinguish content grep
+// from filename glob - both map onto grep's arg shape, carrying pattern/path/glob.
+func TestTranslate_SearchKindMapsToGrep(t *testing.T) {
+	tr := newTranslator("/work")
+	specs := tr.translate(sdk.StartToolCall("t5", "grep TODO", sdk.WithStartKind(sdk.ToolKindSearch),
+		sdk.WithStartRawInput(map[string]any{"pattern": "TODO", "path": "/work/internal", "include": "*.go"})))
+	call := specs[0].parts[0].FunctionCall
+	if call.Name != "grep" {
+		t.Fatalf("search should map to grep, got %s", call.Name)
+	}
+	if call.Args["pattern"] != "TODO" || call.Args["path"] != "internal" || call.Args["glob"] != "*.go" {
+		t.Fatalf("search args lost: %+v", call.Args)
+	}
+}
+
+// A kind with no display twin keeps its real name but still carries its
+// rawInput (not just the title) so the generic renderer shows substance.
+func TestTranslate_UnmappedKindKeepsNameAndArgs(t *testing.T) {
+	tr := newTranslator("/work")
+	tr.translate(sdk.StartToolCall("t6", "Move file", sdk.WithStartKind(sdk.ToolKindMove),
+		sdk.WithStartRawInput(map[string]any{"from": "a.go", "to": "b.go"})))
+	specs := tr.translate(sdk.UpdateToolCall("t6",
+		sdk.WithUpdateStatus(sdk.ToolCallStatusCompleted),
+		sdk.WithUpdateRawOutput(map[string]any{"output": "renamed"})))
+	call, resp := specs[0].parts[0].FunctionCall, specs[0].parts[1].FunctionResponse
+	if call.Name != "move" {
+		t.Fatalf("unmapped kind should keep its real name, got %s", call.Name)
+	}
+	if call.Args["from"] != "a.go" || call.Args["to"] != "b.go" || call.Args["title"] != "Move file" {
+		t.Fatalf("unmapped kind should carry rawInput + title, got %+v", call.Args)
+	}
+	if resp.Response["output"] != "renamed" {
+		t.Fatalf("unmapped kind should still get a result preview, got %+v", resp.Response)
+	}
+}
+
+// A long tool result is bounded, never dumped verbatim into the event stream.
+func TestTranslate_ResultPreviewIsBounded(t *testing.T) {
+	tr := newTranslator("/work")
+	huge := strings.Repeat("o", 5000)
+	tr.translate(sdk.StartToolCall("t7", "go test ./...", sdk.WithStartKind(sdk.ToolKindExecute)))
+	specs := tr.translate(sdk.UpdateToolCall("t7",
+		sdk.WithUpdateStatus(sdk.ToolCallStatusCompleted),
+		sdk.WithUpdateRawOutput(map[string]any{"output": huge})))
+	resp := specs[0].parts[1].FunctionResponse.Response
+	out, _ := resp["output"].(string)
+	if len(out) >= len(huge) {
+		t.Fatalf("result preview should be bounded, got %d bytes", len(out))
+	}
+	if !strings.HasSuffix(out, "…[truncated]") {
+		t.Fatalf("bounded preview should mark truncation, got suffix %q", out[len(out)-20:])
 	}
 }

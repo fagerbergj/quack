@@ -3,6 +3,7 @@ package acp
 import (
 	"path/filepath"
 	"strings"
+	"time"
 
 	sdk "github.com/coder/acp-go-sdk"
 	"google.golang.org/genai"
@@ -15,13 +16,25 @@ type eventSpec struct {
 	usage   *genai.GenerateContentResponseUsageMetadata
 }
 
+// Thinking deltas arrive one per streamed token - raw, that's a DB row per
+// token. Coalesce into batches flushed on whichever limit hits first; the
+// flush check only runs when the next update arrives (acp.go's select loop
+// isn't ours to add a ticker to), so a round that ends mid-batch with no
+// further updates drops the trailing partial thought.
+const (
+	thinkFlushElapsed = 1500 * time.Millisecond
+	thinkFlushBytes   = 750
+)
+
 // translator turns ACP session/update notifications into event specs in
 // quack's tool vocabulary.
 type translator struct {
-	cwd     string
-	answer  strings.Builder
-	pending map[string]pendingTool
-	usage   *genai.GenerateContentResponseUsageMetadata
+	cwd       string
+	answer    strings.Builder
+	pending   map[string]pendingTool
+	usage     *genai.GenerateContentResponseUsageMetadata
+	thinking  strings.Builder
+	thinkOpen time.Time // zero when no batch is open
 }
 
 type pendingTool struct {
@@ -37,15 +50,22 @@ func newTranslator(cwd string) *translator {
 }
 
 func (t *translator) translate(u sdk.SessionUpdate) []eventSpec {
+	if u.AgentThoughtChunk != nil {
+		return t.bufferThought(u.AgentThoughtChunk)
+	}
+
+	// Any non-thinking update closes out a batch in progress - ordering is
+	// preserved since the flushed thought always precedes this update's own spec.
+	var out []eventSpec
+	if spec, ok := t.flushThought(); ok {
+		out = append(out, spec)
+	}
+
 	switch {
-	case u.AgentThoughtChunk != nil:
-		if txt := blockText(u.AgentThoughtChunk.Content); txt != "" {
-			return []eventSpec{{partial: true, parts: []*genai.Part{{Text: txt, Thought: true}}}}
-		}
 	case u.AgentMessageChunk != nil:
 		if txt := blockText(u.AgentMessageChunk.Content); txt != "" {
 			t.answer.WriteString(txt)
-			return []eventSpec{{partial: true, parts: []*genai.Part{{Text: txt}}}}
+			out = append(out, eventSpec{partial: true, parts: []*genai.Part{{Text: txt}}})
 		}
 	case u.ToolCall != nil:
 		t.answer.Reset()
@@ -56,9 +76,10 @@ func (t *translator) translate(u sdk.SessionUpdate) []eventSpec {
 		name, args := t.mapToolCall(p)
 		if terminalStatus(c.Status) {
 			delete(t.pending, id)
-			return []eventSpec{t.pairSpec(id, name, args, p, c.Status == sdk.ToolCallStatusFailed, c.RawOutput)}
+			out = append(out, t.pairSpec(id, name, args, p, c.Status == sdk.ToolCallStatusFailed, c.RawOutput))
+		} else {
+			out = append(out, eventSpec{partial: true, parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: id, Name: name, Args: args}}}})
 		}
-		return []eventSpec{{partial: true, parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: id, Name: name, Args: args}}}}}
 	case u.ToolCallUpdate != nil:
 		up := u.ToolCallUpdate
 		id := string(up.ToolCallId)
@@ -80,15 +101,44 @@ func (t *translator) translate(u sdk.SessionUpdate) []eventSpec {
 		}
 		if up.Status == nil || !terminalStatus(*up.Status) {
 			t.pending[id] = p
-			return nil
+			return out
 		}
 		delete(t.pending, id)
 		name, args := t.mapToolCall(p)
-		return []eventSpec{t.pairSpec(id, name, args, p, *up.Status == sdk.ToolCallStatusFailed, up.RawOutput)}
+		out = append(out, t.pairSpec(id, name, args, p, *up.Status == sdk.ToolCallStatusFailed, up.RawOutput))
 	case u.UsageUpdate != nil:
 		t.usage = &genai.GenerateContentResponseUsageMetadata{TotalTokenCount: int32(u.UsageUpdate.Used)}
 	}
+	return out
+}
+
+// bufferThought appends one thinking delta to the open batch, flushing it
+// once either coalescing limit is hit.
+func (t *translator) bufferThought(c *sdk.SessionUpdateAgentThoughtChunk) []eventSpec {
+	txt := blockText(c.Content)
+	if txt == "" {
+		return nil
+	}
+	if t.thinkOpen.IsZero() {
+		t.thinkOpen = time.Now()
+	}
+	t.thinking.WriteString(txt)
+	if time.Since(t.thinkOpen) >= thinkFlushElapsed || t.thinking.Len() >= thinkFlushBytes {
+		spec, _ := t.flushThought()
+		return []eventSpec{spec}
+	}
 	return nil
+}
+
+// flushThought drains the open thinking batch, if any.
+func (t *translator) flushThought() (eventSpec, bool) {
+	if t.thinking.Len() == 0 {
+		return eventSpec{}, false
+	}
+	txt := t.thinking.String()
+	t.thinking.Reset()
+	t.thinkOpen = time.Time{}
+	return eventSpec{partial: true, parts: []*genai.Part{{Text: txt, Thought: true}}}, true
 }
 
 // finalSpec is the round's durable answer event: the agent message text
@@ -144,12 +194,45 @@ func (t *translator) mapToolCall(p pendingTool) (string, map[string]any) {
 			url = p.title
 		}
 		return "web_fetch", map[string]any{"url": url}
+	case sdk.ToolKindDelete:
+		if path := t.firstPath(p); path != "" {
+			return "delete_path", map[string]any{"path": path}
+		}
+	case sdk.ToolKindSearch:
+		// ACP's "search" kind covers both content search and filename glob -
+		// the protocol carries no tool-identity field to split them, so both
+		// land on grep's arg/result shape; a glob-shaped output (no "matches")
+		// still renders via GenericView instead of the richer GrepView.
+		args := map[string]any{}
+		if pattern, _ := in["pattern"].(string); pattern != "" {
+			args["pattern"] = pattern
+		} else if p.title != "" {
+			args["pattern"] = p.title
+		}
+		if path := t.firstPath(p); path != "" {
+			args["path"] = path
+		}
+		if g, _ := in["glob"].(string); g != "" {
+			args["glob"] = g
+		} else if inc, _ := in["include"].(string); inc != "" {
+			args["glob"] = inc
+		}
+		return "grep", args
 	}
 	name := string(p.kind)
 	if name == "" {
 		name = "tool"
 	}
-	return name, map[string]any{"title": p.title}
+	args := map[string]any{}
+	if m, ok := p.rawInput.(map[string]any); ok {
+		for k, v := range m {
+			args[k] = v
+		}
+	}
+	if p.title != "" {
+		args["title"] = p.title
+	}
+	return name, args
 }
 
 // toolResponse builds the FunctionResponse payload.
@@ -171,6 +254,8 @@ func (t *translator) toolResponse(name string, p pendingTool, failed bool, rawOu
 		return resp
 	case "edit_file":
 		return map[string]any{"replacements": 1}
+	case "delete_path":
+		return map[string]any{"deleted": true}
 	case "write_file":
 		resp := map[string]any{}
 		if d := firstDiff(p.content); d != nil {
