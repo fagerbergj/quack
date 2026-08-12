@@ -91,8 +91,9 @@ func TestPDFToImageParts_MissingBinary(t *testing.T) {
 	if err == nil {
 		t.Fatal("pdfToImageParts: got nil error, want one naming the missing pdftoppm binary")
 	}
-	if !strings.Contains(err.Error(), "pdftoppm") || !strings.Contains(err.Error(), "poppler-utils") {
-		t.Errorf("error = %q, want it to name pdftoppm/poppler-utils", err.Error())
+	const wantPrefix = "openaimodel: pdftoppm (poppler-utils) is required"
+	if !strings.HasPrefix(err.Error(), wantPrefix) {
+		t.Errorf("error = %q, want prefix %q (pins the LookPath path, not just keyword presence)", err.Error(), wantPrefix)
 	}
 }
 

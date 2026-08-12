@@ -295,6 +295,22 @@ func TestTracedModel_NoPricing_NoCostMetric(t *testing.T) {
 	}
 }
 
+// TestTracedModel_CachedExceedsPrompt_ClampsInputToZero guards a malformed
+// provider response (cached > prompt total) from producing a negative
+// token_type=input value on the hot path every model call traverses.
+func TestTracedModel_CachedExceedsPrompt_ClampsInputToZero(t *testing.T) {
+	reader := newUsageTestMeter(t)
+
+	tm := &tracedModel{LLM: &stubModel{name: "m", resps: []*model.LLMResponse{usageResp(10, 50, 5, 0)}}, name: "m"}
+	for range tm.GenerateContent(context.Background(), &model.LLMRequest{}, true) {
+	}
+
+	points := tokenUsagePoints(t, reader)
+	if got := points[otelobs.GenAITokenTypeInput].Value; got != 0 {
+		t.Errorf("token_type=input = %d, want 0 (clamped, not negative)", got)
+	}
+}
+
 // TestTracedModel_NoUsageMetadata_NoMetrics guards a response that never
 // carried usage (a provider outage, a malformed reply) - no metric at all,
 // never a fabricated zero.

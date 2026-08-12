@@ -21,6 +21,7 @@ import (
 // (document-ingest inputs can run long); var so tests can shrink it without a
 // giant fixture. pdfRenderDPI: ~150 is enough for OCR/handwriting - 300 balloons
 // image size for no legibility gain on a scanned page.
+// Not safe for concurrent modification - pdfToImageParts calls are sequential today.
 var pdfMaxPages = 20
 
 const pdfRenderDPI = 150
