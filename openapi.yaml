@@ -957,17 +957,26 @@ components:
           description: True if the chat is archived and hidden from the main list by default.
         origin:
           $ref: "#/components/schemas/ChatOrigin"
+        total_tokens:
+          type: integer
+          description: >
+            Chat-wide token total (turns + DAG nodes) - compact so the sidebar
+            list doesn't pay for the full input/output/reasoning/cached split;
+            see ChatDetail.usage for that.
 
     ChatDetail:
       allOf:
         - $ref: "#/components/schemas/ChatSummary"
         - type: object
-          required: [turns]
+          required: [turns, usage]
           properties:
             turns:
               type: array
               items:
                 $ref: "#/components/schemas/Turn"
+            # Chat-wide token aggregate, summing every turn and DAG node.
+            usage:
+              $ref: "#/components/schemas/Usage"
 
     ChatList:
       type: object
@@ -1275,10 +1284,21 @@ components:
 
     Usage:
       type: object
+      description: >
+        Token usage. On Turn.usage, a sparse per-turn summary (reasoning folds
+        into output_tokens, as before); on ChatDetail.usage, the chat-wide
+        aggregate across every turn and DAG node, always fully populated.
       properties:
         input_tokens:
           type: integer
         output_tokens:
+          type: integer
+        reasoning_tokens:
+          type: integer
+        cached_tokens:
+          type: integer
+          description: Subset of input_tokens served from the model's prompt cache.
+        total_tokens:
           type: integer
 
     # -------------------------------------------------------------------------
@@ -1465,6 +1485,9 @@ components:
           type: string
         reasoning_tokens:
           type: integer
+        cached_tokens:
+          type: integer
+          description: Subset of prompt_tokens served from the model's prompt cache.
         server_duration_ms:
           type: integer
         judge_rounds:

@@ -517,7 +517,12 @@ export const DagNode = memo(function DagNode({
             </span>
           )}
           {state.totalTokens != null && state.totalTokens > 0 && (
-            <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">{state.totalTokens.toLocaleString()} tok</span>
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
+              {state.totalTokens.toLocaleString()} tok
+              {state.cachedTokens != null && state.cachedTokens > 0 && (
+                <span title={`${state.cachedTokens.toLocaleString()} tokens served from cache`}> ({state.cachedTokens.toLocaleString()} cached)</span>
+              )}
+            </span>
           )}
           {/* A finished node shows the server-measured duration (reconnect-proof);
               a running one ticks live from the server start time. */}

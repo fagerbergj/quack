@@ -581,6 +581,9 @@ func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrato
 		slog.Warn("extension run error", "component", "ext."+name, "chat", chatID, "err", err)
 	})
 	pub.Publish(stream.Done())
+	// Stamp model + usage on the turn row - rest.Handler.runChat shares this
+	// same tail, so an extension-dispatched chat gets it too.
+	runlog.StampTurn(runCtx, st, chatID, turnID, res)
 
 	timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
 	outcome := buildExtRunOutcome(runCtx, orch, st, userID, chatID, res.PlanID != "", res.NeedsInput, timedOut)

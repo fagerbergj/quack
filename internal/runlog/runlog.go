@@ -106,7 +106,8 @@ func (p *Publisher) Publish(ev stream.SSEEvent) {
 
 // DriveResult is what draining one run's event stream to a Publisher
 // determined - the plan/pause signals every dispatch path (REST, SDK
-// extensions, the GitHub webhook) needs to decide what happens next.
+// extensions, the GitHub webhook) needs to decide what happens next, plus
+// the orchestrator's own model/usage for StampTurn's tail.
 type DriveResult struct {
 	// SawPlan is true the moment any dag_plan event is seen, name-only -
 	// even a test double's bare one with no Data payload.
@@ -119,6 +120,47 @@ type DriveResult struct {
 	// NodeNeedsInputData (mirrors PlanID's Data-required rule).
 	Paused     bool
 	NeedsInput stream.NodeNeedsInputData
+	// Model/Usage come from the top-level (NodeID == "") agent_complete -
+	// the orchestrator's own reply. Empty for a DAG turn (PlanID != ""),
+	// which credits tokens per-node on DagNode instead - see StampTurn.
+	Model string
+	Usage store.TurnUsage
+}
+
+// Step folds one event into res: DAG plan/node persistence, pause tracking,
+// and model/usage capture - the per-event logic shared by Drive and
+// rest.Handler's own loop (REST interleaves title-send between events, so it
+// can't range through Drive directly; both must still agree on this step).
+// persist gates the store writes (Drive passes pub != nil; a caller with no
+// store, e.g. a test double, passes false and still gets plan/pause/usage
+// tracking).
+func (res *DriveResult) Step(st *store.Store, chatID, turnID string, persist bool, ev stream.SSEEvent) {
+	if ev.Name == stream.EventDagPlan {
+		res.SawPlan = true
+		if d, ok := ev.Data.(stream.DagPlanData); ok {
+			res.PlanID = d.PlanID
+			if persist {
+				SaveDagPlan(st, chatID, turnID, d)
+			}
+		}
+	} else if res.PlanID != "" && persist {
+		PersistNodeEvent(st, res.PlanID, ev)
+	}
+	if ev.Name == stream.EventNodeNeedsInput {
+		if d, ok := ev.Data.(stream.NodeNeedsInputData); ok {
+			res.Paused = true
+			res.NeedsInput = d
+		}
+	}
+	if ev.Name == stream.EventAgentComplete {
+		if d, ok := ev.Data.(stream.AgentCompleteData); ok && d.NodeID == "" && d.Model != "" {
+			res.Model = d.Model
+			res.Usage = store.TurnUsage{
+				PromptTokens: d.PromptTokens, CompletionTokens: d.CompletionTokens,
+				ReasoningTokens: d.ReasoningTokens, TotalTokens: d.TotalTokens, CachedTokens: d.CachedTokens,
+			}
+		}
+	}
 }
 
 // Drive drains run's event stream to pub, mirroring DAG plan/node state into
@@ -127,7 +169,7 @@ type DriveResult struct {
 // own copy. onErr, if non-nil, is called for each per-event error the
 // iterator yields; the loop keeps draining regardless (never fatal). pub may
 // be nil (a caller with no store to persist against, e.g. a test double) -
-// persistence/publish are skipped, but plan/pause tracking still runs.
+// persistence/publish are skipped, but plan/pause/usage tracking still runs.
 func Drive(turnID string, st *store.Store, pub *Publisher, run iter.Seq2[stream.SSEEvent, error], onErr func(error)) DriveResult {
 	var res DriveResult
 	for ev, err := range run {
@@ -137,28 +179,30 @@ func Drive(turnID string, st *store.Store, pub *Publisher, run iter.Seq2[stream.
 			}
 			continue
 		}
-		if ev.Name == stream.EventDagPlan {
-			res.SawPlan = true
-			if d, ok := ev.Data.(stream.DagPlanData); ok {
-				res.PlanID = d.PlanID
-				if pub != nil {
-					SaveDagPlan(st, pub.chatID, turnID, d)
-				}
-			}
-		} else if res.PlanID != "" && pub != nil {
-			PersistNodeEvent(st, res.PlanID, ev)
+		chatID := ""
+		if pub != nil {
+			chatID = pub.chatID
 		}
-		if ev.Name == stream.EventNodeNeedsInput {
-			if d, ok := ev.Data.(stream.NodeNeedsInputData); ok {
-				res.Paused = true
-				res.NeedsInput = d
-			}
-		}
+		res.Step(st, chatID, turnID, pub != nil, ev)
 		if pub != nil {
 			pub.Publish(ev)
 		}
 	}
 	return res
+}
+
+// StampTurn stamps the orchestrator's model + token usage on the turn row -
+// the tail every dispatch path (REST, SDK extensions) must share rather than
+// duplicate (#831's lesson applied to model/usage stamping, not just the
+// drain loop). A DAG turn (res.PlanID != "") is a no-op here: its tokens are
+// already on DagNode, per node.
+func StampTurn(ctx context.Context, st *store.Store, chatID, turnID string, res DriveResult) {
+	if res.Model == "" || res.PlanID != "" {
+		return
+	}
+	if err := st.SetTurnUsage(ctx, chatID, turnID, res.Model, res.Usage); err != nil {
+		slog.Warn("runlog: stamp turn model/usage failed", "component", "runlog", "chat", chatID, "turn", turnID, "err", err)
+	}
 }
 
 // PersistNodeEvent upserts DagNode state for node-lifecycle events; illegal transitions are logged, write proceeds.

@@ -223,21 +223,22 @@ type dagStream struct {
 	needsInput  map[string]bool
 	curRun      map[string]string
 	steerSeen   map[string]int
-	usage       map[string]*runUsage
+	usage       map[string]*runUsage // open run only; reset on each closeRun
+	nodeUsage   map[string]*runUsage // cumulative across the node's whole life (worker-r0, worker-r1, ...); feeds node_done
 	last        string
 	stopped     bool
 }
 
 type runUsage struct {
-	prompt, completion, reasoning, total int32
-	model, finish                        string
+	prompt, completion, reasoning, total, cached int32
+	model, finish                                string
 }
 
 func newDagStream(agentByID map[string]string, yield func(stream.SSEEvent, error) bool, outputs map[string]string, scoreOf func(string) gateScore, cancelled func(string) bool, userPaused func(string) bool, steerOf func(string, int) string) *dagStream {
 	return &dagStream{
 		agentByID: agentByID, yield: yield, outputs: outputs, scoreOf: scoreOf, cancelled: cancelled, userPaused: userPaused, steerOf: steerOf,
 		started: map[string]bool{}, doneEmitted: map[string]bool{}, needsInput: map[string]bool{}, startedAt: map[string]time.Time{},
-		curRun: map[string]string{}, steerSeen: map[string]int{}, usage: map[string]*runUsage{},
+		curRun: map[string]string{}, steerSeen: map[string]int{}, usage: map[string]*runUsage{}, nodeUsage: map[string]*runUsage{},
 	}
 }
 
@@ -320,6 +321,9 @@ func (s *dagStream) handle(ev *session.Event) bool {
 		}
 		s.curRun[node] = runID
 		s.usage[node] = &runUsage{}
+		if s.nodeUsage[node] == nil {
+			s.nodeUsage[node] = &runUsage{}
+		}
 		if gen := steerGen(runID); gen > s.steerSeen[node] {
 			s.steerSeen[node] = gen
 			guidance := ""
@@ -394,6 +398,7 @@ func (s *dagStream) accum(node string, ev *session.Event) {
 		u.completion += ev.UsageMetadata.CandidatesTokenCount
 		u.reasoning += ev.UsageMetadata.ThoughtsTokenCount
 		u.total += ev.UsageMetadata.TotalTokenCount
+		u.cached += ev.UsageMetadata.CachedContentTokenCount
 	}
 	if ev.ModelVersion != "" {
 		u.model = ev.ModelVersion
@@ -403,7 +408,9 @@ func (s *dagStream) accum(node string, ev *session.Event) {
 	}
 }
 
-// closeRun: emits agent_complete for active worker run.
+// closeRun: emits agent_complete for active worker run, and folds its usage
+// into the node's cumulative total (node_done reports the whole node's spend
+// across every worker/revise round, not just the last one).
 func (s *dagStream) closeRun(node string) bool {
 	runID := s.curRun[node]
 	if runID == "" {
@@ -413,7 +420,15 @@ func (s *dagStream) closeRun(node string) bool {
 	d := stream.AgentCompleteData{RunID: runID, Stage: st, Round: rd}
 	if u := s.usage[node]; u != nil {
 		d.Model, d.FinishReason = u.model, u.finish
-		d.PromptTokens, d.CompletionTokens, d.ReasoningTokens, d.TotalTokens = u.prompt, u.completion, u.reasoning, u.total
+		d.PromptTokens, d.CompletionTokens, d.ReasoningTokens, d.TotalTokens, d.CachedTokens = u.prompt, u.completion, u.reasoning, u.total, u.cached
+		if nu := s.nodeUsage[node]; nu != nil {
+			nu.prompt += u.prompt
+			nu.completion += u.completion
+			nu.reasoning += u.reasoning
+			nu.total += u.total
+			nu.cached += u.cached
+			nu.model, nu.finish = u.model, u.finish
+		}
 	}
 	s.curRun[node] = ""
 	s.usage[node] = nil
@@ -430,12 +445,17 @@ func (s *dagStream) flush() bool {
 	return !s.stopped
 }
 
-// nodeDoneData: builds node_done payload from output and judge result.
+// nodeDoneData: builds node_done payload from output, cumulative worker-run
+// usage, and judge result.
 func (s *dagStream) nodeDoneData(node string) stream.NodeDoneData {
 	out := s.outputs[node]
 	d := stream.NodeDoneData{Output: out, OutputPreview: preview(out)}
 	if t, ok := s.startedAt[node]; ok {
 		d.DurationMs = time.Since(t).Milliseconds()
+	}
+	if u := s.nodeUsage[node]; u != nil {
+		d.Model, d.FinishReason = u.model, u.finish
+		d.PromptTokens, d.CompletionTokens, d.ReasoningTokens, d.TotalTokens, d.CachedTokens = u.prompt, u.completion, u.reasoning, u.total, u.cached
 	}
 	if s.scoreOf != nil {
 		g := s.scoreOf(node)

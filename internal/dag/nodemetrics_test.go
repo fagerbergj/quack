@@ -4,6 +4,9 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/adk/v2/session"
+	"google.golang.org/genai"
+
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
@@ -57,6 +60,46 @@ func TestRecordedGateResultIsReadableImmediately(t *testing.T) {
 	// A different chat with the same node id must not collide.
 	if other := e.gateScore(t.Context(), "quack", "local", "chat-2", "n1"); other.score != 0 {
 		t.Fatalf("gate result leaked across chats: %+v", other)
+	}
+}
+
+// Regression: node_done reported zero tokens - nodeDoneData read the per-run
+// usage accumulator, which closeRun always nils before node_done is built.
+// Token usage (and cached, added alongside) must be a cumulative total across
+// every worker/revise round, not just the last one closed.
+func TestNodeDoneReportsCumulativeTokenUsage(t *testing.T) {
+	const r0 = "quack-dag-p@1/n1@rr/web-researcher@worker-r0"
+	const r1 = "quack-dag-p@1/n1@rr/web-researcher@worker-r1"
+	const npath = "quack-dag-p@1/n1@rr"
+	agentByID := map[string]string{"n1": "web-researcher"}
+
+	withUsage := func(path string, prompt, completion, total, cached int32, text string) *session.Event {
+		e := ev(path, &genai.Part{Text: text})
+		e.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{
+			PromptTokenCount: prompt, CandidatesTokenCount: completion, TotalTokenCount: total, CachedContentTokenCount: cached,
+		}
+		e.ModelVersion = "qwen3"
+		return e
+	}
+
+	evs := []*session.Event{
+		withUsage(r0, 100, 20, 120, 10, "draft"),
+		withUsage(r1, 50, 15, 65, 40, "revised"),
+		{NodeInfo: &session.NodeInfo{Path: npath}, Output: "final"},
+	}
+
+	got := drive(evs, agentByID, gateScore{})
+	var nd stream.NodeDoneData
+	for _, e := range got {
+		if e.Name == stream.EventNodeDone {
+			nd = e.Data.(stream.NodeDoneData)
+		}
+	}
+	if nd.PromptTokens != 150 || nd.CompletionTokens != 35 || nd.TotalTokens != 185 || nd.CachedTokens != 50 {
+		t.Fatalf("node_done usage = %+v, want cumulative prompt=150 completion=35 total=185 cached=50", nd)
+	}
+	if nd.Model != "qwen3" {
+		t.Fatalf("node_done model = %q, want qwen3", nd.Model)
 	}
 }
 

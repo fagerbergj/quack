@@ -40,13 +40,13 @@ func TestSQLiteStoreRoundTrip(t *testing.T) {
 	if err := st.SaveTurn(ctx, c.ID, "t1"); err != nil {
 		t.Fatalf("SaveTurn: %v", err)
 	}
-	// The orchestrator's model is stamped on the turn row at run end (ADK's
-	// event storage drops ModelVersion) and must round-trip into TurnContent.
-	if err := st.SetTurnModel(ctx, c.ID, "t1", "gpt-oss-120b"); err != nil {
-		t.Fatalf("SetTurnModel: %v", err)
+	// The orchestrator's model + usage are stamped on the turn row at run end
+	// (ADK's event storage drops ModelVersion) and must round-trip into TurnContent.
+	if err := st.SetTurnUsage(ctx, c.ID, "t1", "gpt-oss-120b", TurnUsage{PromptTokens: 50, CompletionTokens: 10, CachedTokens: 5, TotalTokens: 60}); err != nil {
+		t.Fatalf("SetTurnUsage: %v", err)
 	}
-	if turns, err := st.GetTurnsWithContent(ctx, "quack", "local", c.ID); err != nil || len(turns) != 1 || turns[0].Model != "gpt-oss-120b" {
-		t.Fatalf("GetTurnsWithContent model round-trip: %+v err=%v", turns, err)
+	if turns, err := st.GetTurnsWithContent(ctx, "quack", "local", c.ID); err != nil || len(turns) != 1 || turns[0].Model != "gpt-oss-120b" || turns[0].CachedTokens != 5 {
+		t.Fatalf("GetTurnsWithContent model/usage round-trip: %+v err=%v", turns, err)
 	}
 	if err := st.SaveDagPlan(ctx, c.ID, "p1", "t1", `{"nodes":[]}`); err != nil {
 		t.Fatalf("SaveDagPlan: %v", err)
@@ -60,6 +60,81 @@ func TestSQLiteStoreRoundTrip(t *testing.T) {
 
 	if _, err := os.Stat(dbPath); err != nil {
 		t.Fatalf("sqlite file not created on disk: %v", err)
+	}
+}
+
+// TestChatUsageAggregate covers GetChatUsage/ChatsUsageTotals: SQL SUM across
+// a chat's plain-reply turns AND its DAG nodes (joined through the plan),
+// never loading a row into memory. Two chats prove ChatsUsageTotals doesn't
+// cross-contaminate between them.
+func TestChatUsageAggregate(t *testing.T) {
+	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("New sqlite: %v", err)
+	}
+	ctx := context.Background()
+
+	c1, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	if err := st.SaveTurn(ctx, c1.ID, "t1"); err != nil {
+		t.Fatalf("SaveTurn: %v", err)
+	}
+	if err := st.SetTurnUsage(ctx, c1.ID, "t1", "gpt-oss-120b", TurnUsage{
+		PromptTokens: 100, CompletionTokens: 20, ReasoningTokens: 5, TotalTokens: 125, CachedTokens: 30,
+	}); err != nil {
+		t.Fatalf("SetTurnUsage: %v", err)
+	}
+	if err := st.SaveDagPlan(ctx, c1.ID, "p1", "t1", `{"nodes":[]}`); err != nil {
+		t.Fatalf("SaveDagPlan: %v", err)
+	}
+	if err := st.UpsertDagNode(ctx, DagNode{
+		NodeID: "n1", PlanID: "p1", Status: "done",
+		PromptTokens: 200, CompletionTokens: 40, ReasoningTokens: 10, TotalTokens: 250, CachedTokens: 60,
+	}); err != nil {
+		t.Fatalf("UpsertDagNode: %v", err)
+	}
+
+	// A second chat with its own DAG node - must not leak into c1's totals.
+	c2, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat c2: %v", err)
+	}
+	if err := st.SaveTurn(ctx, c2.ID, "t2"); err != nil {
+		t.Fatalf("SaveTurn c2: %v", err)
+	}
+	if err := st.SaveDagPlan(ctx, c2.ID, "p2", "t2", `{"nodes":[]}`); err != nil {
+		t.Fatalf("SaveDagPlan c2: %v", err)
+	}
+	if err := st.UpsertDagNode(ctx, DagNode{NodeID: "n2", PlanID: "p2", Status: "done", TotalTokens: 999}); err != nil {
+		t.Fatalf("UpsertDagNode c2: %v", err)
+	}
+
+	agg, err := st.GetChatUsage(ctx, c1.ID)
+	if err != nil {
+		t.Fatalf("GetChatUsage: %v", err)
+	}
+	want := UsageAggregate{InputTokens: 300, OutputTokens: 60, ReasoningTokens: 15, CachedTokens: 90, TotalTokens: 375}
+	if agg != want {
+		t.Fatalf("GetChatUsage = %+v, want %+v", agg, want)
+	}
+
+	totals, err := st.ChatsUsageTotals(ctx, []string{c1.ID, c2.ID})
+	if err != nil {
+		t.Fatalf("ChatsUsageTotals: %v", err)
+	}
+	if totals[c1.ID] != 375 || totals[c2.ID] != 999 {
+		t.Fatalf("ChatsUsageTotals = %+v, want c1=375 c2=999", totals)
+	}
+
+	// A chat with no turns/nodes yet must total 0, not error.
+	c3, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat c3: %v", err)
+	}
+	if agg, err := st.GetChatUsage(ctx, c3.ID); err != nil || agg != (UsageAggregate{}) {
+		t.Fatalf("GetChatUsage empty chat = %+v err=%v, want zero value", agg, err)
 	}
 }
 

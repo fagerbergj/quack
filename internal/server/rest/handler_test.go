@@ -126,7 +126,7 @@ func TestChatStatusIdle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
-	got := h.toSummary(*c)
+	got := h.toSummary(*c, 0)
 	if got.Status != schema.ChatStatusIdle {
 		t.Errorf("status = %q, want idle", got.Status)
 	}
@@ -149,7 +149,7 @@ func TestToSummaryGithubFields(t *testing.T) {
 	if err != nil || c == nil {
 		t.Fatalf("GetChat: %+v err=%v", c, err)
 	}
-	got := h.toSummary(*c)
+	got := h.toSummary(*c, 0)
 	if got.GithubUrl == nil || *got.GithubUrl != "https://github.com/acme/widget-app/pull/7" {
 		t.Errorf("github_url = %v, want the pull URL", got.GithubUrl)
 	}
@@ -161,7 +161,7 @@ func TestToSummaryGithubFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
-	got = h.toSummary(*plain)
+	got = h.toSummary(*plain, 0)
 	if got.GithubUrl != nil || got.GithubRepo != nil {
 		t.Errorf("non-github chat should have nil github fields, got url=%v repo=%v", got.GithubUrl, got.GithubRepo)
 	}
@@ -180,7 +180,7 @@ func TestChatStatusRunning(t *testing.T) {
 	}
 	h.hub.Publish(c.ID, 1, stream.SSEEvent{Name: "node_start"})
 
-	got := h.toSummary(*c)
+	got := h.toSummary(*c, 0)
 	if got.Status != schema.ChatStatusRunning {
 		t.Errorf("status = %q, want running", got.Status)
 	}

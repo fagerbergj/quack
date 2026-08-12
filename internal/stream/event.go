@@ -131,6 +131,7 @@ type AgentCompleteData struct {
 	CompletionTokens int32  `json:"completion_tokens,omitempty"`
 	ReasoningTokens  int32  `json:"reasoning_tokens,omitempty"`
 	TotalTokens      int32  `json:"total_tokens,omitempty"`
+	CachedTokens     int32  `json:"cached_tokens,omitempty"` // subset of PromptTokens served from the model's prompt cache
 	FinishReason     string `json:"finish_reason,omitempty"`
 
 	Score    float64 `json:"score,omitempty"`    // judge
@@ -219,6 +220,7 @@ type NodeDoneData struct {
 	CompletionTokens int32   `json:"completion_tokens,omitempty"`
 	ReasoningTokens  int32   `json:"reasoning_tokens,omitempty"`
 	TotalTokens      int32   `json:"total_tokens,omitempty"`
+	CachedTokens     int32   `json:"cached_tokens,omitempty"`
 	FinishReason     string  `json:"finish_reason,omitempty"`
 	DurationMs       int64   `json:"duration_ms,omitempty"`
 	JudgeRounds      int32   `json:"judge_rounds,omitempty"`
@@ -369,17 +371,17 @@ type Translator struct {
 	curRound int
 	curAgent string
 
-	prompt, completion, reasoning, total int32
-	model                                string
-	finish                               string
+	prompt, completion, reasoning, total, cached int32
+	model                                        string
+	finish                                       string
 }
 
 // NewTranslator returns a Translator for one node stream.
 func NewTranslator() *Translator { return &Translator{} }
 
 // Returns accumulated model/usage/finish-reason. Counters reset when a new run opens. Safe to call at any point.
-func (t *Translator) Usage() (model string, prompt, completion, reasoning, total int32, finishReason string) {
-	return t.model, t.prompt, t.completion, t.reasoning, t.total, t.finish
+func (t *Translator) Usage() (model string, prompt, completion, reasoning, total, cached int32, finishReason string) {
+	return t.model, t.prompt, t.completion, t.reasoning, t.total, t.cached, t.finish
 }
 
 // Event maps one ADK session event to zero or more wire events.
@@ -394,6 +396,7 @@ func (t *Translator) Event(ev *session.Event) []SSEEvent {
 		t.completion += ev.UsageMetadata.CandidatesTokenCount
 		t.reasoning += ev.UsageMetadata.ThoughtsTokenCount
 		t.total += ev.UsageMetadata.TotalTokenCount
+		t.cached += ev.UsageMetadata.CachedContentTokenCount
 	}
 	if ev.ModelVersion != "" {
 		t.model = ev.ModelVersion
@@ -418,7 +421,7 @@ func (t *Translator) Event(ev *session.Event) []SSEEvent {
 			t.curStage = asString(r["stage"])
 			t.curRound = asInt(r["round"])
 			t.curAgent = asString(r["agent"])
-			t.prompt, t.completion, t.reasoning, t.total = 0, 0, 0, 0
+			t.prompt, t.completion, t.reasoning, t.total, t.cached = 0, 0, 0, 0, 0
 			t.model, t.finish = "", ""
 			out = append(out, SSEEvent{Name: EventAgentStart, Data: AgentStartData{
 				RunID: t.curRun, Agent: t.curAgent, Stage: t.curStage, Round: t.curRound,
@@ -431,7 +434,7 @@ func (t *Translator) Event(ev *session.Event) []SSEEvent {
 				Score: asFloat(r["score"]), Passed: asBool(r["passed"]),
 				Feedback: asString(r["feedback"]), Status: asString(r["status"]), Reason: asString(r["reason"]),
 				Model: t.model, PromptTokens: t.prompt, CompletionTokens: t.completion,
-				ReasoningTokens: t.reasoning, TotalTokens: t.total, FinishReason: t.finish,
+				ReasoningTokens: t.reasoning, TotalTokens: t.total, CachedTokens: t.cached, FinishReason: t.finish,
 			}
 			out = append(out, SSEEvent{Name: EventAgentComplete, Data: d})
 			t.curRun, t.curStage, t.curRound, t.curAgent = "", "", 0, ""

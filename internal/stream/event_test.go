@@ -70,7 +70,7 @@ func TestTranslatorAccumulatesUsageOntoComplete(t *testing.T) {
 
 	usage := eventWith(&genai.Part{Text: "x", Thought: true})
 	usage.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{
-		PromptTokenCount: 100, CandidatesTokenCount: 20, TotalTokenCount: 120,
+		PromptTokenCount: 100, CandidatesTokenCount: 20, TotalTokenCount: 120, CachedContentTokenCount: 30,
 	}
 	usage.ModelVersion = "qwen3"
 	usage.FinishReason = genai.FinishReasonMaxTokens
@@ -78,7 +78,7 @@ func TestTranslatorAccumulatesUsageOntoComplete(t *testing.T) {
 
 	got := tr.Event(eventWith(AgentCompletePart(AgentCompleteData{RunID: "r1", Stage: StageWorker})))
 	d, ok := got[0].Data.(AgentCompleteData)
-	if !ok || d.PromptTokens != 100 || d.TotalTokens != 120 || d.Model != "qwen3" || d.FinishReason != string(genai.FinishReasonMaxTokens) {
+	if !ok || d.PromptTokens != 100 || d.TotalTokens != 120 || d.CachedTokens != 30 || d.Model != "qwen3" || d.FinishReason != string(genai.FinishReasonMaxTokens) {
 		t.Errorf("complete usage = %+v", got[0].Data)
 	}
 }
@@ -92,15 +92,15 @@ func TestTranslatorUsageWithoutMarkers(t *testing.T) {
 	tr := NewTranslator()
 	usage := eventWith(&genai.Part{Text: "the answer"})
 	usage.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{
-		PromptTokenCount: 50, CandidatesTokenCount: 10, TotalTokenCount: 60,
+		PromptTokenCount: 50, CandidatesTokenCount: 10, TotalTokenCount: 60, CachedContentTokenCount: 15,
 	}
 	usage.ModelVersion = "gpt-oss-120b"
 	usage.FinishReason = genai.FinishReasonStop
 	tr.Event(usage)
 
-	model, prompt, completion, _, total, finish := tr.Usage()
-	if model != "gpt-oss-120b" || prompt != 50 || completion != 10 || total != 60 || finish != string(genai.FinishReasonStop) {
-		t.Errorf("Usage() = model=%q prompt=%d completion=%d total=%d finish=%q", model, prompt, completion, total, finish)
+	model, prompt, completion, _, total, cached, finish := tr.Usage()
+	if model != "gpt-oss-120b" || prompt != 50 || completion != 10 || total != 60 || cached != 15 || finish != string(genai.FinishReasonStop) {
+		t.Errorf("Usage() = model=%q prompt=%d completion=%d total=%d cached=%d finish=%q", model, prompt, completion, total, cached, finish)
 	}
 }
 

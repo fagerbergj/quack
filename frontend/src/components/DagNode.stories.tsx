@@ -86,6 +86,16 @@ export const DoneWithTokens: Story = {
   },
 }
 
+export const DoneWithCachedTokens: Story = {
+  args: {
+    node: wrNode,
+    state: { status: 'done', startedAt: 0, finishedAt: 34_000, totalTokens: 1_847, cachedTokens: 1_200, model: 'qwen3-30b-a3b', finishReason: 'STOP' },
+    runs: [workerDone(researchActivity)],
+    answer: 'Best months to visit Dublin: **May–September**, warmest June–August.',
+    isFinal: false,
+  },
+}
+
 export const FinalNodeDone: Story = {
   args: {
     node: synthNode,
