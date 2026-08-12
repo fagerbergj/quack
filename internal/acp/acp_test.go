@@ -84,6 +84,20 @@ func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 		time.Sleep(80 * time.Millisecond)
 		send(sdk.UpdateAgentMessageText("working"))
 		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
+	case "usage":
+		// Several streamed updates before the terminal response - proves the
+		// metric seam fires once (on PromptResponse), not once per update.
+		send(sdk.UpdateAgentThoughtText("planning"))
+		send(sdk.StartToolCall("t1", "go test ./...", sdk.WithStartKind(sdk.ToolKindExecute)))
+		send(sdk.UpdateToolCall("t1", sdk.WithUpdateStatus(sdk.ToolCallStatusCompleted)))
+		send(sdk.UpdateAgentMessageText("done"))
+		cached, thoughts := 25, 10
+		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn, Usage: &sdk.Usage{
+			InputTokens: 100, OutputTokens: 50, CachedReadTokens: &cached, ThoughtTokens: &thoughts,
+		}}, nil
+	case "usage-none":
+		send(sdk.UpdateAgentMessageText("done"))
+		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
 	}
 	send(sdk.UpdateAgentThoughtText("planning"))
 	send(sdk.StartToolCall("t1", "go test ./...",

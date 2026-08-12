@@ -63,7 +63,7 @@ func runSingleNode(t *testing.T, plan Plan, cfg vetting.Config, stub model.LLM) 
 		t.Fatal(err)
 	}
 	gateNodes := map[string]workflow.Node{
-		plan.Nodes[0].ID: newGatedNode(plan, plan.Nodes[0], wn, nil, nil, vetting.NewJudgeFactory(stub, nil, nil), cfg, nil, nil, "", nil, nil),
+		plan.Nodes[0].ID: newGatedNode(plan, plan.Nodes[0], wn, nil, nil, nil, vetting.NewJudgeFactory(stub, nil, nil), cfg, nil, nil, "", nil, nil),
 	}
 	orchestrate := workflow.NewDynamicNode[any, string]("orch",
 		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
