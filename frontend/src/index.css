@@ -47,3 +47,27 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   direction: ltr;
 }
+
+/* Thin themed scrollbar for the chat list (#870) - standards-first
+   (scrollbar-width/-color), with a ::-webkit-scrollbar fallback since Chrome
+   still ignores the standard properties as of this writing. */
+.chat-list-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-gray-600) transparent;
+}
+.dark .chat-list-scroll {
+  scrollbar-color: var(--color-gray-500) transparent;
+}
+.chat-list-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.chat-list-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.chat-list-scroll::-webkit-scrollbar-thumb {
+  background-color: var(--color-gray-600);
+  border-radius: 9999px;
+}
+.dark .chat-list-scroll::-webkit-scrollbar-thumb {
+  background-color: var(--color-gray-500);
+}

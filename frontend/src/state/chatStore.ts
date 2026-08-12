@@ -737,6 +737,8 @@ export class ChatStore {
         this.write(chatId, { ...s, live: { ...s.live, text: '' } })
       }
 
+      const TERMINAL_NODE_STATUSES: ReadonlySet<NodeStatus> = new Set(['done', 'failed', 'cancelled'])
+
       return {
         onAgentStart: d => {
           // A fresh top-level (no-node) run starting means any text already
@@ -747,8 +749,21 @@ export class ChatStore {
           // orchestrator, #422) render the answer doubled: the first attempt's
           // text followed by the second's. Mirrors resetAnswer's per-node reset
           // below, which already does this for DAG node runs.
-          if (d.nodeId) resetAnswer(d.nodeId, d.stage)
-          else resetTopLevelText()
+          if (d.nodeId) {
+            resetAnswer(d.nodeId, d.stage)
+            // A run actually starting means the node is running, whatever its
+            // status said a moment ago - covers the steer resume path above
+            // (and any future one) without hardcoding which prior status it
+            // came from. Terminal statuses are left alone: a run can't
+            // legitimately restart on an already-finished node.
+            const s = this.states.get(chatId)
+            const current = s?.live?.dag?.nodeStates[d.nodeId]?.status
+            if (current === undefined || !TERMINAL_NODE_STATUSES.has(current)) {
+              updateNodeState(d.nodeId, { status: 'running' })
+            }
+          } else {
+            resetTopLevelText()
+          }
           return d.nodeId
             ? updateNodeRuns(d.nodeId, r => startRun(r, runArgs(d)))
             : updateTopLevelRuns(r => startRun(r, runArgs(d)))
@@ -879,13 +894,18 @@ export class ChatStore {
           updateNodeState(nodeId, { status: 'needs_input', question: message })
         },
         onNodeSteered: (nodeId, guidance) => {
-          // The node was interrupted and is re-running with new guidance (same
-          // session). Freeze the interrupted run, re-queue the node, and record
-          // the steer; a fresh node_start → … → node_done follows on this stream.
+          // The node was interrupted and is re-running with new guidance
+          // (same session) - it never actually stopped running, so the
+          // status stays 'running' (queued→running is the only edge into
+          // 'running' the backend's state machine allows; running→queued is
+          // illegal and previously left the node stuck rendering idle chrome
+          // for the whole steered re-run). Freeze the interrupted run and
+          // record the steer; a fresh node_start → … → node_done follows on
+          // this stream.
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
           const s = this.states.get(chatId)
           const prevSteers = s?.live?.dag?.nodeStates[nodeId]?.steers ?? []
-          updateNodeState(nodeId, { status: 'queued', error: undefined, steers: [...prevSteers, guidance], queue: [] })
+          updateNodeState(nodeId, { status: 'running', error: undefined, steers: [...prevSteers, guidance], queue: [] })
         },
       }
   }

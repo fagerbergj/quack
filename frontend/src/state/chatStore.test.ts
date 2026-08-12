@@ -256,7 +256,7 @@ describe('ChatStore - mid-node steering', () => {
     store.seed('c', [])
   })
 
-  it('node_steered re-queues the node and records the guidance', async () => {
+  it('node_steered keeps the node running (not queued) and records the guidance', async () => {
     const sse = [
       'event: dag_plan',
       'data: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}',
@@ -271,8 +271,49 @@ describe('ChatStore - mid-node steering', () => {
     fetchMock.mockResolvedValueOnce(makeStream(sse))
     await store.submit('c', 'go')
     const ns = store.get('c').live?.dag?.nodeStates['a']
-    expect(ns?.status).toBe('queued')
+    // Regression (#870): onNodeSteered used to set 'queued' - an illegal
+    // running→queued transition per the backend's own state machine - and
+    // nothing ever restored 'running', so the node rendered idle chrome
+    // (no pulse, no spinner, canQueue gone) for the whole steered re-run.
+    expect(ns?.status).toBe('running')
     expect(ns?.steers).toEqual(['focus on cost'])
+  })
+
+  // Full steer→resume sequence, observed as it streams (not just at the end):
+  // the node must read 'running' (DagNode's running-derived UI -
+  // pulse/spinner/canQueue) at every point between the steer and node_done,
+  // never dropping to 'queued' or idle chrome while the resumed run streams
+  // tokens.
+  it('stays running across the full node_steered → agent_start → agent_token → node_done sequence', async () => {
+    const encoder = new TextEncoder()
+    let controller!: ReadableStreamDefaultController<Uint8Array>
+    const stream = new ReadableStream({ start(ctrl) { controller = ctrl } })
+    fetchMock.mockResolvedValueOnce(new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } }))
+    const p = store.submit('c', 'go')
+
+    const send = (chunk: string) => controller.enqueue(encoder.encode(chunk))
+
+    send('event: dag_plan\ndata: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}\n\n')
+    send('event: node_start\ndata: {"node_id":"a","agent":"researcher"}\n\n')
+    send('event: node_steered\ndata: {"node_id":"a","guidance":"focus on cost"}\n\n')
+    await vi.waitFor(() => expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('running'))
+
+    // Resumed run: agent_start must restore/keep 'running' (the fix's (b) half).
+    send('event: agent_start\ndata: {"node_id":"a","run_id":"worker-r1","agent":"researcher","stage":"worker"}\n\n')
+    await vi.waitFor(() => expect(store.get('c').live?.dag?.nodeRuns['a']?.length).toBe(1))
+    expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('running')
+
+    // agent_token must not disturb it.
+    send('event: agent_token\ndata: {"node_id":"a","run_id":"worker-r1","text":"partial"}\n\n')
+    await vi.waitFor(() => expect(store.get('c').live?.dag?.nodeAnswer['a']).toBe('partial'))
+    expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('running')
+
+    send('event: node_done\ndata: {"node_id":"a"}\n\n')
+    send('event: done\ndata: {}\n\n')
+    controller.close()
+    await p
+
+    expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('done')
   })
 
   it('node_paused marks the node paused, keeping its accumulated answer', async () => {

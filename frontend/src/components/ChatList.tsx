@@ -17,6 +17,19 @@ export function githubStateBadgeClass(state: string): string {
   }
 }
 
+// originBadgeClass mirrors GitHub's own state colors for the generic origin
+// badge (#832), but only for these three exact values - an extension's own
+// badge vocabulary (e.g. "draft", a doc's revision label) is unknown to us
+// and must not be guessed at, so it keeps the neutral chip below.
+export function originBadgeClass(badge: string): string {
+  switch (badge) {
+    case 'open': return 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400'
+    case 'merged': return 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400'
+    case 'closed': return 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
+    default: return 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'
+  }
+}
+
 export function githubStateLabel(state: string): string {
   const map: Record<string, string> = {
     open: '◉ open',
@@ -188,7 +201,7 @@ function ChatRow({
             )}
             {s.origin.badge && (
               <span
-                className="flex-shrink-0 text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400"
+                className={`flex-shrink-0 text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded ${originBadgeClass(s.origin.badge)}`}
                 title={s.origin.badge}
               >
                 {s.origin.badge}
@@ -337,7 +350,7 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
           onClear={() => setFilterState({ selected: {} })}
         />
       </div>
-      <div className="flex-1 overflow-y-auto overscroll-contain">
+      <div className="flex-1 overflow-y-auto overscroll-contain chat-list-scroll">
         {(runningQueued.length === 0 && active.length === 0 && archived.length === 0) && chats.length === 0 && (
           <div className="text-xs text-gray-400 dark:text-gray-500 text-center py-6 px-3">No conversations yet</div>
         )}

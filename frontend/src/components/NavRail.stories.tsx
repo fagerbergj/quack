@@ -32,10 +32,10 @@ export const ExpandedOnMemory: Story = {
   ),
 }
 
-// Fully collapsed (#759 item 1): no rail, no icons - just the restore
-// button, a real focusable control with an accessible name, not a hover
-// zone. The 320px frame stands in for a narrow phone viewport: at that
-// width the restore button is the entire footprint the nav costs.
+// Fully collapsed (#759 item 1, revised #870): a slim ~40px icon strip, not
+// an empty sliver - Chats/Memory/extensions and the expand chevron are all
+// still real, focusable, accessible-named buttons. The 320px frame stands in
+// for a narrow phone viewport.
 export const Collapsed: Story = {
   args: { route: 'chat', initialCollapsed: true, initialExtensions: [] },
   render: args => (
@@ -45,15 +45,37 @@ export const Collapsed: Story = {
   ),
 }
 
+// Collapsed with extensions: the icon strip carries an extension's icon too
+// (🧩 fallback, or the API-provided icon - see WithExtensions below).
+export const CollapsedWithExtensions: Story = {
+  args: {
+    route: 'chat',
+    initialCollapsed: true,
+    initialExtensions: [
+      { name: 'remarkable', title: 'reMarkable', href: '/remarkable/review' },
+      { name: 'usage', title: 'Usage', href: '/usage' },
+    ],
+  },
+  render: args => (
+    <div className="h-96 w-[320px] relative border border-dashed border-gray-300 dark:border-gray-600">
+      <NavRail {...args} />
+    </div>
+  ),
+}
+
 // Extension nav entries (#/api/v1/extensions): a module with a UI descriptor
-// is a real link, one without stays name-only and inert.
+// (href) gets a nav entry that navigates client-side to this app's own
+// /ext/:name host page (#870) - one without an href renders nothing at all,
+// not an inert placeholder (see the 'github' entry here, which is absent).
 export const WithExtensions: Story = {
   args: {
     route: 'chat',
     initialCollapsed: false,
     initialExtensions: [
       { name: 'remarkable', title: 'reMarkable', href: '/remarkable/review' },
-      { name: 'noop' },
+      // @ts-expect-error icon isn't in the generated type yet - see NavRail's extensionIcon
+      { name: 'usage', title: 'Usage', href: '/usage', icon: '📊' },
+      { name: 'github' },
     ],
   },
   render: args => (

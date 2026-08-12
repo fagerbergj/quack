@@ -27,6 +27,13 @@ function githubChat(
   }
 }
 
+function originChat(id: string, title: string, badge?: string): ChatSummary {
+  return {
+    id, title, system_prompt: '', created_at: now, updated_at: now, status: 'idle',
+    origin: { extension: 'remarkable', label: title, badge },
+  }
+}
+
 const CHATS: ChatSummary[] = [
   chat('1', 'Best time to visit Dublin'),
   chat('2', 'Local LLM models for my hardware'),
@@ -98,6 +105,21 @@ export const StatusDots: Story = {
       chat('failed-1', 'Hit an error', 'failed'),
       chat('waiting-1', 'Paused on a question', 'needs_input'),
       chat('idle-1', 'Nothing going on', 'idle'),
+    ],
+    activeChatId: null,
+  },
+}
+
+// #870: the origin badge mirrors GitHub's own state colors for open/merged/
+// closed - any other badge value (e.g. "draft", or an extension-specific
+// label) keeps the existing neutral gray chip rather than inventing a color.
+export const OriginBadgeStates: Story = {
+  args: {
+    chats: [
+      originChat('origin-open', 'Open pull request', 'open'),
+      originChat('origin-merged', 'Merged pull request', 'merged'),
+      originChat('origin-closed', 'Closed pull request', 'closed'),
+      originChat('origin-other', 'Extension-defined badge', 'draft'),
     ],
     activeChatId: null,
   },
