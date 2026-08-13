@@ -22,38 +22,39 @@ type Config struct {
 	// one clone, so diffing from the reflog's oldest entry shows every sibling's
 	// work too and the change-shape criteria fail on commits this node never made
 	// (#710). Empty ⇒ fall back to the reflog base (single-node plans, no clone).
-	NodeBaseSHA         string
-	DeterministicRounds int             // cheap citation/length check + revise cycles
-	JudgeRounds         int             // model-judge/revise rounds
-	Threshold           float64         // pass score in (0,1]
-	JudgeMaxIterations  int             // cap on judge model turns per round
-	JudgeContextWindow  int             // context window in tokens; 0 ⇒ default
-	Constitution        string          // global principles for judge prompt
-	Rubric              string          // scoring guide; global default or per-agent override
-	RequireRetrieval    bool            // zero retrieval = ungrounded
-	ReadOnly            bool            // no delivery tools - completion is review/exploration
-	IsReviewer          bool            // stamped from node agent, never from task wording
-	Memory              *memory.Store   // staged tradecraft on pass
-	CommitMemory        bool            // task-memory participant
-	MemoryRole          string          // role bucket key; empty falls back to repo then user
-	DeliverPromptEvent  bool            // true for A2A workers (session events)
-	Checks              []string        // per-node deterministic gate commands
-	DeriveChecks        bool            // derive from repo when Checks empty
-	CheckCommands       []string        // prefix allowlist; empty ⇒ checks disabled
-	CheckSetup          []string        // repo bootstrap commands; run once per clone (checks.go, baseline.go) before checks are derived/run, both in the worker's tree and the base baseline worktree
-	NodeID              string          // workspace scope for checks/clone resolution
-	AdvisorToken        string          // fs tool scope token; empty = no scope
-	Agent               string          // observability only
-	User                string          // observability only; resolved from the ADK session, not caller-set
-	Source              string          // observability only; run origin (extension name or a fixed app value)
-	Task                string          // delivery check; empty = no check
-	Workdir             string          // for Checks; ignored when Checks empty
-	ChatID              string          // per-chat workspace scope
-	Workspace           *workspace.Jail // nil + non-empty Checks fails closed
-	WorkspaceUserID     string
-	WorkspaceCaps       workspace.Caps
-	Deliver             DeliverFunc         // posts staged delivery set; nil = disabled
-	GitCredentials      GitCredentialSource // resolves the gate-owned push credential; nil = push disabled
+	NodeBaseSHA          string
+	DeterministicRounds  int             // cheap citation/length check + revise cycles
+	JudgeRounds          int             // model-judge/revise rounds
+	Threshold            float64         // pass score in (0,1]
+	JudgeMaxIterations   int             // cap on judge model turns per round
+	JudgeContextWindow   int             // context window in tokens; 0 ⇒ default
+	JudgeMaxOutputTokens int             // cap on judge/skeptic/plan-judge reply tokens; <= 0 = uncapped
+	Constitution         string          // global principles for judge prompt
+	Rubric               string          // scoring guide; global default or per-agent override
+	RequireRetrieval     bool            // zero retrieval = ungrounded
+	ReadOnly             bool            // no delivery tools - completion is review/exploration
+	IsReviewer           bool            // stamped from node agent, never from task wording
+	Memory               *memory.Store   // staged tradecraft on pass
+	CommitMemory         bool            // task-memory participant
+	MemoryRole           string          // role bucket key; empty falls back to repo then user
+	DeliverPromptEvent   bool            // true for A2A workers (session events)
+	Checks               []string        // per-node deterministic gate commands
+	DeriveChecks         bool            // derive from repo when Checks empty
+	CheckCommands        []string        // prefix allowlist; empty ⇒ checks disabled
+	CheckSetup           []string        // repo bootstrap commands; run once per clone (checks.go, baseline.go) before checks are derived/run, both in the worker's tree and the base baseline worktree
+	NodeID               string          // workspace scope for checks/clone resolution
+	AdvisorToken         string          // fs tool scope token; empty = no scope
+	Agent                string          // observability only
+	User                 string          // observability only; resolved from the ADK session, not caller-set
+	Source               string          // observability only; run origin (extension name or a fixed app value)
+	Task                 string          // delivery check; empty = no check
+	Workdir              string          // for Checks; ignored when Checks empty
+	ChatID               string          // per-chat workspace scope
+	Workspace            *workspace.Jail // nil + non-empty Checks fails closed
+	WorkspaceUserID      string
+	WorkspaceCaps        workspace.Caps
+	Deliver              DeliverFunc         // posts staged delivery set; nil = disabled
+	GitCredentials       GitCredentialSource // resolves the gate-owned push credential; nil = push disabled
 	// AllowedDeliveryKinds: nil = unrestricted (no trigger governs this run);
 	// non-nil (including empty) restricts staged delivery to exactly these kinds.
 	AllowedDeliveryKinds []string

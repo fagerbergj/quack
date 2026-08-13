@@ -3,6 +3,7 @@ package vetting
 import (
 	"context"
 	"iter"
+	"sync/atomic"
 	"testing"
 
 	"google.golang.org/adk/v2/model"
@@ -143,6 +144,67 @@ func (m *patternSkepticModel) GenerateContent(_ context.Context, _ *model.LLMReq
 		refuted := m.pattern[i]
 		m.calls++
 		yield(stubCall(submitSkepticVerdictTool, map[string]any{"refuted": refuted, "reason": "scripted"}), nil)
+	}
+}
+
+// garbledSkepticModel always calls submit_skeptic_verdict with an empty args
+// map - the same truncated-tool-call shape as judge.go's garbledVerdictJudge
+// - so schema validation (both fields are required) rejects it before the
+// handler that populates sink ever runs.
+type garbledSkepticModel struct{}
+
+func (garbledSkepticModel) Name() string { return "garbled-skeptic" }
+
+func (garbledSkepticModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		yield(stubCall(submitSkepticVerdictTool, map[string]any{}), nil)
+	}
+}
+
+// TestAdversarialVerify_GarbledSubmitDefaultsToRefuted proves #889's fix on
+// the skeptic side: a garbled/schema-rejected submit_skeptic_verdict call
+// must fall to the documented fail-closed default (refuted), never the zero
+// value Refuted=false a naively "submitted" empty verdict would carry - which
+// would be the OPPOSITE of fail-closed.
+func TestAdversarialVerify_GarbledSubmitDefaultsToRefuted(t *testing.T) {
+	q, a := testQuestionAnswer()
+	cfg := Config{Threshold: 0.7, SkepticRounds: 1, Skeptic: NewSkepticFactory(garbledSkepticModel{}, nil)}
+	v := verdict{Criteria: map[string]criterionScore{
+		"grounded": {Score: 0.9, Reason: "the answer cites specific config fields"},
+	}}
+	got := adversarialVerify(context.Background(), cfg, q, a, workerActivity{}, v, nil)
+	if got.Criteria["grounded"].Score != 0 {
+		t.Fatalf("grounded score = %v, want 0 - a garbled skeptic call must fail closed (refuted), not silently survive", got.Criteria["grounded"].Score)
+	}
+}
+
+// maxTokensRecordingSkeptic records the MaxOutputTokens the request actually
+// carried before submitting a normal verdict, proving the shared judge/
+// skeptic cap reaches the skeptic's own model request too (#889).
+type maxTokensRecordingSkeptic struct{ got *int32 }
+
+func (maxTokensRecordingSkeptic) Name() string { return "max-tokens-recording-skeptic" }
+
+func (m maxTokensRecordingSkeptic) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if req.Config != nil {
+			atomic.StoreInt32(m.got, req.Config.MaxOutputTokens)
+		}
+		yield(stubCall(submitSkepticVerdictTool, map[string]any{"refuted": false, "reason": "checks out"}), nil)
+	}
+}
+
+// TestAdversarialVerify_RequestCarriesConfiguredMaxOutputTokens proves
+// cfg.JudgeMaxOutputTokens reaches the skeptic's own model request.
+func TestAdversarialVerify_RequestCarriesConfiguredMaxOutputTokens(t *testing.T) {
+	q, a := testQuestionAnswer()
+	got := int32(-1)
+	cfg := Config{Threshold: 0.7, SkepticRounds: 1, JudgeMaxOutputTokens: 2048,
+		Skeptic: NewSkepticFactory(maxTokensRecordingSkeptic{got: &got}, nil)}
+	v := verdict{Criteria: map[string]criterionScore{"grounded": {Score: 0.9, Reason: "cited"}}}
+	adversarialVerify(context.Background(), cfg, q, a, workerActivity{}, v, nil)
+	if got != 2048 {
+		t.Errorf("req.Config.MaxOutputTokens = %d, want 2048", got)
 	}
 }
 
