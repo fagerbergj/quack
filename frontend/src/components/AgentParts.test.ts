@@ -152,4 +152,10 @@ describe('ActivityList - compaction row', () => {
     expect(out).toContain('210K')
     expect(out).toContain('96K')
   })
+
+  it('carries a plain-English aria-label for screen readers', () => {
+    const activity: Activity[] = [{ kind: 'compaction', tokensBefore: 210_000, tokensAfter: 96_000 }]
+    const out = renderToStaticMarkup(createElement(ActivityList, { activity }))
+    expect(out).toContain('aria-label="Context compacted from 210,000 to 96,000 tokens"')
+  })
 })

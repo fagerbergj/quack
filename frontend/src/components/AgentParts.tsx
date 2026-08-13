@@ -228,7 +228,10 @@ function ThinkBlock({ text }: { text: string }) {
 // expands: the before/after counts are the whole story.
 function CompactionBlock({ tokensBefore, tokensAfter }: { tokensBefore: number; tokensAfter: number }) {
   return (
-    <div className="flex items-center gap-1.5 my-0.5 py-0.5 text-[11px] text-gray-400 dark:text-gray-500 not-prose">
+    <div
+      className="flex items-center gap-1.5 my-0.5 py-0.5 text-[11px] text-gray-400 dark:text-gray-500 not-prose"
+      aria-label={`Context compacted from ${tokensBefore.toLocaleString()} to ${tokensAfter.toLocaleString()} tokens`}
+    >
       <span aria-hidden>↯</span>
       <span className="italic">compacted</span>
       <span className="tabular-nums">{fmtTokenCount(tokensBefore)} → {fmtTokenCount(tokensAfter)}</span>
