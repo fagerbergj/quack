@@ -36,7 +36,7 @@ const skepticInstruction = "You are an adversarial skeptic. Another judge alread
 
 // NewSkepticFactory: builds SkepticFactory same way as NewJudgeFactory, using same read-only tools.
 func NewSkepticFactory(skepticModel model.LLM, readTools []tool.Tool) SkepticFactory {
-	return func(sink *skepticVerdict) (adkagent.Agent, error) {
+	return func(sink *skepticVerdict, maxOutputTokens int) (adkagent.Agent, error) {
 		submit, err := newSubmitSkepticVerdictTool(sink)
 		if err != nil {
 			return nil, err
@@ -45,11 +45,12 @@ func NewSkepticFactory(skepticModel model.LLM, readTools []tool.Tool) SkepticFac
 		skepticTools = append(skepticTools, readTools...)
 		skepticTools = append(skepticTools, submit)
 		return llmagent.New(llmagent.Config{
-			Name:        "skeptic",
-			Description: "adversarial refuter of one judge finding",
-			Model:       skepticModel,
-			Instruction: skepticInstruction,
-			Tools:       skepticTools,
+			Name:                  "skeptic",
+			Description:           "adversarial refuter of one judge finding",
+			Model:                 skepticModel,
+			Instruction:           skepticInstruction,
+			Tools:                 skepticTools,
+			GenerateContentConfig: judgeGenConfig(maxOutputTokens),
 		})
 	}
 }
@@ -61,7 +62,8 @@ type skepticVerdict struct {
 }
 
 // SkepticFactory: builds a fresh skeptic agent per round, mirroring JudgeFactory.
-type SkepticFactory func(sink *skepticVerdict) (adkagent.Agent, error)
+// maxOutputTokens caps the round's own reply tokens; <= 0 leaves it uncapped (#889).
+type SkepticFactory func(sink *skepticVerdict, maxOutputTokens int) (adkagent.Agent, error)
 
 func newSubmitSkepticVerdictTool(sink *skepticVerdict) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
@@ -97,9 +99,9 @@ func buildSkepticPrompt(criterion string, c criterionScore, question *genai.Cont
 }
 
 // runSkepticRound: runs one isolated skeptic. Any error defaults to REFUTED (fails closed).
-func runSkepticRound(ctx context.Context, factory SkepticFactory, maxIters int, criterion string, c criterionScore, question *genai.Content, answer string, act workerActivity, emit func(*genai.Part) bool) skepticVerdict {
+func runSkepticRound(ctx context.Context, factory SkepticFactory, maxIters, maxOutputTokens int, criterion string, c criterionScore, question *genai.Content, answer string, act workerActivity, emit func(*genai.Part) bool) skepticVerdict {
 	var sink skepticVerdict
-	skepticAgent, err := factory(&sink)
+	skepticAgent, err := factory(&sink, maxOutputTokens)
 	if err != nil {
 		return skepticVerdict{Refuted: true, Reason: fmt.Sprintf("skeptic build failed, defaulting to refuted: %v", err)}
 	}
@@ -118,6 +120,7 @@ func runSkepticRound(ctx context.Context, factory SkepticFactory, maxIters int, 
 	var (
 		submitted bool
 		turns     int
+		repeats   repeatLoopDetector
 	)
 	for ev, rerr := range sr.Run(runCtx, "skeptic", "verdict", content, adkagent.RunConfig{}) {
 		if rerr != nil {
@@ -131,9 +134,17 @@ func runSkepticRound(ctx context.Context, factory SkepticFactory, maxIters int, 
 			case p == nil:
 				continue
 			case p.FunctionCall != nil && p.FunctionCall.Name == submitSkepticVerdictTool:
-				submitted = true
-			case p.Thought && p.Text != "" && emit != nil:
-				if !emit(stream.ThinkingPart(p.Text)) {
+				// suppress; success confirmed on the matching FunctionResponse
+				// below - a garbled/schema-rejected call must not be mistaken
+				// for a submitted verdict (#889), which would otherwise default
+				// to the zero value Refuted=false - the OPPOSITE of fail-closed.
+			case p.FunctionResponse != nil && p.FunctionResponse.Name == submitSkepticVerdictTool:
+				if _, failed := p.FunctionResponse.Response["error"]; !failed {
+					submitted = true
+				}
+			case p.Thought && p.Text != "":
+				repeats.observe(p.Text)
+				if emit != nil && !emit(stream.ThinkingPart(p.Text)) {
 					return skepticVerdict{Refuted: true, Reason: "consumer disconnected mid-round, defaulting to refuted"}
 				}
 			}
@@ -141,8 +152,9 @@ func runSkepticRound(ctx context.Context, factory SkepticFactory, maxIters int, 
 		if ev.TurnComplete {
 			turns++
 		}
-		// Safety cap: a stuck skeptic must not stall sequential rounds.
-		if turns > maxIters {
+		// Safety cap: a stuck skeptic must not stall sequential rounds, nor may
+		// a runaway repeat loop decode the same text forever (#889).
+		if turns > maxIters || repeats.tripped {
 			cancel()
 			break
 		}
@@ -170,7 +182,7 @@ func adversarialVerify(ctx context.Context, cfg Config, question *genai.Content,
 		refuted := 0
 		var reasons []string
 		for i := 0; i < cfg.SkepticRounds; i++ {
-			sv := runSkepticRound(ctx, cfg.Skeptic, maxIters, name, c, question, answer, act, emit)
+			sv := runSkepticRound(ctx, cfg.Skeptic, maxIters, cfg.JudgeMaxOutputTokens, name, c, question, answer, act, emit)
 			if sv.Refuted {
 				refuted++
 				if strings.TrimSpace(sv.Reason) != "" {

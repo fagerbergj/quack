@@ -566,6 +566,9 @@ func TestRealConfigLoads(t *testing.T) {
 	if s, ok := c.Store(c.Session.Store); !ok || s.Kind != "postgres" {
 		t.Errorf("session store %q did not resolve to postgres: %+v ok=%v", c.Session.Store, s, ok)
 	}
+	if c.Gates.Judge.MaxOutputTokens != 8192 {
+		t.Errorf("gates.judge.max_output_tokens = %d, want the shipped default 8192 (#889)", c.Gates.Judge.MaxOutputTokens)
+	}
 }
 
 // TestRealConfigWorkersHaveNoDirectGitHubMutation pins the staged-delivery
@@ -1090,6 +1093,9 @@ gates:
 	if c.Gates.Judge.Threshold != 0.7 || c.Gates.Judge.MaxIterations != 6 {
 		t.Errorf("judge defaults not applied: threshold=%v max_iterations=%d", c.Gates.Judge.Threshold, c.Gates.Judge.MaxIterations)
 	}
+	if c.Gates.Judge.MaxOutputTokens != 0 {
+		t.Errorf("max_output_tokens = %d, want 0 (uncapped) when omitted - unlike threshold/max_iterations this field is never Go-side defaulted, only quack.yaml's own text sets 8192", c.Gates.Judge.MaxOutputTokens)
+	}
 	if c.Gates.DeterministicChecks.MaxRounds != 4 {
 		t.Errorf("stage rounds wrong: det=%d", c.Gates.DeterministicChecks.MaxRounds)
 	}
@@ -1107,6 +1113,23 @@ gates:
 	}
 }
 
+// TestLoadGatesJudgeMaxOutputTokensRoundTrips proves an explicit
+// max_output_tokens value survives loading unchanged - the field is additive
+// and never Go-side defaulted, so whatever the operator writes is what ships.
+func TestLoadGatesJudgeMaxOutputTokensRoundTrips(t *testing.T) {
+	c, err := Load(writeTemp(t, baseConfig+`
+gates:
+  rubric: "be good"
+  judge: { provider: default, model: judge-m, max_rounds: 1, max_output_tokens: 4096 }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Gates.Judge.MaxOutputTokens != 4096 {
+		t.Errorf("max_output_tokens = %d, want 4096", c.Gates.Judge.MaxOutputTokens)
+	}
+}
+
 func TestLoadGatesRejectsBadConfig(t *testing.T) {
 	cases := map[string]string{
 		"unknown provider": `
@@ -1119,6 +1142,8 @@ gates: { rubric: r, rubric_path: p, judge: { provider: default, model: j, max_ro
 gates: { rubric: r, judge: { provider: default, model: j, max_rounds: 1, threshold: 1.5 } }`,
 		"negative rounds": `
 gates: { rubric: r, deterministic_checks: { max_rounds: -1 }, judge: { provider: default, model: j, max_rounds: 1 } }`,
+		"negative max_output_tokens": `
+gates: { rubric: r, judge: { provider: default, model: j, max_rounds: 1, max_output_tokens: -1 } }`,
 	}
 	for name, block := range cases {
 		if _, err := Load(writeTemp(t, baseConfig+block)); err == nil {

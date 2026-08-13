@@ -3,6 +3,7 @@ package vetting
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"google.golang.org/genai"
@@ -45,8 +46,9 @@ Give the plan the benefit of the doubt on ambiguous phrasing - this check exists
 
 Call submit_plan_verdict exactly once with accept (bool) and reason (if rejecting: name the ONE specific edit that fixes it - e.g. "add a terminal node that actually writes the plan - the current terminal node only explores", "this is a plan-only request; drop the code-implementer node", "declare delivery so the shipped code can reach GitHub", "split the implementer into a chain of independent, goal-scoped nodes", or "shrink this to the commit/threads/files the user actually named instead of the whole PR" - never a vague "reconsider the plan"; if accepting: a brief reason is fine, or "").`
 
-// NewPlanJudge: builds PlanJudge backed by judgeModel (reuses the trust gate's judge). Isolated in-memory session per call.
-func NewPlanJudge(judgeModel model.LLM) PlanJudge {
+// NewPlanJudge: builds PlanJudge backed by judgeModel (reuses the trust gate's judge). Isolated in-memory
+// session per call. maxOutputTokens caps the round's own reply tokens; <= 0 leaves it uncapped (#889).
+func NewPlanJudge(judgeModel model.LLM, maxOutputTokens int) PlanJudge {
 	return func(ctx context.Context, request, planSummary string) (bool, string, error) {
 		var sink planVerdictArgs
 		var submitted bool
@@ -67,11 +69,12 @@ func NewPlanJudge(judgeModel model.LLM) PlanJudge {
 			return false, "", fmt.Errorf("vetting: build plan judge tool: %w", err)
 		}
 		judgeAgent, err := llmagent.New(llmagent.Config{
-			Name:        "plan-judge",
-			Description: "independent DAG plan verifier",
-			Model:       judgeModel,
-			Instruction: planRubricInstruction,
-			Tools:       []tool.Tool{submit},
+			Name:                  "plan-judge",
+			Description:           "independent DAG plan verifier",
+			Model:                 judgeModel,
+			Instruction:           planRubricInstruction,
+			Tools:                 []tool.Tool{submit},
+			GenerateContentConfig: judgeGenConfig(maxOutputTokens),
 		})
 		if err != nil {
 			return false, "", fmt.Errorf("vetting: build plan judge agent: %w", err)
@@ -84,11 +87,29 @@ func NewPlanJudge(judgeModel model.LLM) PlanJudge {
 			return false, "", fmt.Errorf("vetting: plan judge runner: %w", err)
 		}
 
+		runCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
 		prompt := buildPlanJudgePrompt(request, planSummary)
 		content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: prompt}}}
-		for _, rerr := range r.Run(ctx, "plan-judge", "verdict", content, adkagent.RunConfig{}) { //nolint:staticcheck // ev unused; loop is only for side effects + error
+		var repeats repeatLoopDetector
+		for ev, rerr := range r.Run(runCtx, "plan-judge", "verdict", content, adkagent.RunConfig{}) {
 			if rerr != nil {
 				return false, "", rerr
+			}
+			if ev == nil || ev.Content == nil {
+				continue
+			}
+			for _, p := range ev.Content.Parts {
+				if p != nil && p.Text != "" {
+					repeats.observe(p.Text)
+				}
+			}
+			// A runaway repeat loop must not decode the same text forever (#889).
+			if repeats.tripped {
+				slog.Warn("plan judge aborted: runaway repeat detected mid-generation", "component", "vetting")
+				cancel()
+				break
 			}
 		}
 		if !submitted {

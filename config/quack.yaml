@@ -226,6 +226,9 @@ gates:
     skeptics: 0              # adversarial verify (#370): N independent skeptics per load-bearing
                               # PASSING criterion, majority-refute kills it. 0 (default) = off -
                               # each qualifying criterion costs N extra judge-model calls.
+    max_output_tokens: 8192  # cap on the judge/skeptic/plan-judge round's own reply - a runaway
+                              # generation loop can otherwise decode tens of thousands of tokens on
+                              # a verdict that should be a few hundred (#889). 0 = uncapped.
 
 # DAG execution policy.
 dag:

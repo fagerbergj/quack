@@ -774,7 +774,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				gateCfg.Skeptic = vetting.NewSkepticFactory(judge, judgeReadTools)
 			}
 			safetyJudge = tools.NewSafetyJudge(judge)
-			planJudge = vetting.NewPlanJudge(judge)
+			planJudge = vetting.NewPlanJudge(judge, cfg.Gates.Judge.MaxOutputTokens)
 		}
 		slog.Info("trust gate enabled", "component", "startup",
 			"deterministic_rounds", gateCfg.DeterministicRounds,
