@@ -471,7 +471,7 @@ type StoreConfig struct {
 type ConsolidationConfig struct {
 	Provider        string `yaml:"provider"`
 	Model           string `yaml:"model"`
-	IntervalMinutes int    `yaml:"interval"`
+	IntervalMinutes int    `yaml:"interval_minutes"`
 	RetentionDays   int    `yaml:"retention_days"`
 }
 
