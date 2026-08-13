@@ -24,19 +24,18 @@ func TestEveryAgentPromptSkillIsShipped(t *testing.T) {
 	root := repoRoot(t)
 
 	// Mirror what actually reaches an agent (internal/serve's newSkillSource):
-	// quack's own skills/, plus plugin-resolved roots, plus dotagents' skills/
-	// directly - dotagents ships no plugin manifest, so it reaches the runtime
-	// via the embedded fallback (dotagentsEmbeddedSkills), not discovery.
+	// quack's own skills/, plus each plugin root resolved via internal/plugin
+	// discovery.
 	//
 	// The trees are in-tree, so an unresolvable root is a real breakage. This
 	// used to t.Skip unless BOTH roots resolved, which never happened even with
 	// submodules initialised - so this check has never actually run.
+	dotagents := filepath.Join(root, ".agents", "vendor", "dotagents")
 	ponytail := filepath.Join(root, ".agents", "vendor", "ponytail")
-	vendorDirs := plugin.ResolveSkillDirs([]string{ponytail})
-	if len(vendorDirs) != 1 {
-		t.Fatalf("vendored ponytail plugin did not resolve at %s", ponytail)
+	vendorDirs := plugin.ResolveSkillDirs([]string{dotagents, ponytail})
+	if len(vendorDirs) != 2 {
+		t.Fatalf("vendored dotagents/ponytail plugins did not both resolve: got %v", vendorDirs)
 	}
-	vendorDirs = append(vendorDirs, filepath.Join(root, dotagentsEmbeddedSkills))
 
 	shipped := map[string]bool{}
 	for _, dir := range append([]string{filepath.Join(root, "skills")}, vendorDirs...) {

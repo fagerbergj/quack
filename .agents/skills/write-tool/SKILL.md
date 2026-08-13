@@ -7,7 +7,7 @@ description: |
   constraints, and evaluation. Also covers adding a new builtin tool to this repo (Go implementation
   + registry entry).
   Use when adding a new capability that requires code execution, API access, file I/O, or any
-  deterministic operation. Use write-agent-skill instead if the goal is to teach the agent how to
+  deterministic operation. Use agent-skill-authoring instead if the goal is to teach the agent how to
   approach a domain - skills shape thinking, tools take actions.
 license: MIT
 ---
@@ -16,7 +16,7 @@ license: MIT
 
 ## When NOT to Use
 
-If you need to teach the agent *how to approach* a domain - workflows, conventions, decision criteria, domain knowledge - write a skill instead using `write-agent-skill`. Tools are the agent's hands; skills are its training. See `references/tool-vs-skill.md` for the decision matrix.
+If you need to teach the agent *how to approach* a domain - workflows, conventions, decision criteria, domain knowledge - write a skill instead using `agent-skill-authoring`. Tools are the agent's hands; skills are its training. See `references/tool-vs-skill.md` for the decision matrix.
 
 ## Checklist (validate before shipping)
 
