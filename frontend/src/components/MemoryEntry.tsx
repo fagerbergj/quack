@@ -7,23 +7,44 @@ export interface MemoryEntryProps {
   onForget: (id: string) => Promise<void>
 }
 
-export type MemoryTier = 'unverified' | 'reinforced' | 'invalidated'
+export type MemoryTier = 'unverified' | 'reinforced' | 'invalidated' | 'unknown'
 
-// memoryTier normalizes status - a memory written before the lifecycle field
-// existed (design doc §3) has no status at all, and reads as unverified, not
-// as an error state.
+// memoryTier maps a memory's status (Memory['status'], openapi.yaml) to a
+// display tier. Missing/empty status is a pre-lifecycle memory (design doc
+// §3) and reads as unverified, by design - not "unknown". Every other value
+// is switched on exhaustively: adding a status to the generated enum without
+// a case here is a compile error (the `never` assignment below fails to
+// type-check), not a badge silently relabeling an unrecognized status
+// "unverified".
 export function memoryTier(memory: Pick<Memory, 'status'>): MemoryTier {
-  return memory.status === 'reinforced' || memory.status === 'invalidated' ? memory.status : 'unverified'
+  const status = memory.status
+  if (!status) return 'unverified'
+  switch (status) {
+    case 'unverified': return 'unverified'
+    case 'reinforced': return 'reinforced'
+    case 'invalidated': return 'invalidated'
+    default: {
+      const _exhaustive: never = status
+      void _exhaustive
+      return 'unknown'
+    }
+  }
 }
 
+// memoryTierLabel renders an unknown status as itself (the raw string the
+// backend sent) rather than masquerading as unverified.
 export function memoryTierLabel(memory: Pick<Memory, 'status' | 'reinforcement_count'>): string {
   const tier = memoryTier(memory)
-  return tier === 'reinforced' ? `reinforced ×${memory.reinforcement_count ?? 0}` : tier
+  if (tier === 'reinforced') return `reinforced ×${memory.reinforcement_count ?? 0}`
+  if (tier === 'unknown') return String(memory.status)
+  return tier
 }
 
 // memoryTierBadgeClass mirrors originBadgeClass's palette (ChatList.tsx) for
 // the memory lifecycle tiers (memory-lifecycle.md §8 step 6): green for
-// reinforced, red for invalidated, neutral gray for unverified.
+// reinforced, red for invalidated, neutral gray for unverified AND for any
+// status this build doesn't recognize (never a color the reader would read
+// as a claim about a tier we didn't actually verify).
 export function memoryTierBadgeClass(tier: MemoryTier): string {
   switch (tier) {
     case 'reinforced': return 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400'
@@ -39,7 +60,7 @@ function TierBadge({ memory }: { memory: Memory }) {
   const tier = memoryTier(memory)
   return (
     <span
-      title={tier === 'invalidated' ? memory.invalidation_reason ?? memoryTierLabel(memory) : memoryTierLabel(memory)}
+      title={memory.invalidation_reason ?? memoryTierLabel(memory)}
       className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${memoryTierBadgeClass(tier)}`}
     >
       {memoryTierLabel(memory)}

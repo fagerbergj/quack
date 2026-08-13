@@ -24,6 +24,13 @@ describe('memoryTier (design doc §3/§8 step 6 - lifecycle tier)', () => {
     expect(memoryTier({ status: 'reinforced' })).toBe('reinforced')
     expect(memoryTier({ status: 'invalidated' })).toBe('invalidated')
   })
+
+  // The generated type only names three statuses, but the backend's actual
+  // JSON can drift from it at runtime (a future status added server-side
+  // before the frontend regenerates) - cast past the type to simulate that.
+  it('reads a status this build does not recognize as unknown, never as unverified', () => {
+    expect(memoryTier({ status: 'pending_review' as Memory['status'] })).toBe('unknown')
+  })
 })
 
 describe('memoryTierLabel', () => {
@@ -39,6 +46,10 @@ describe('memoryTierLabel', () => {
     expect(memoryTierLabel({ status: undefined })).toBe('unverified')
     expect(memoryTierLabel({ status: 'invalidated' })).toBe('invalidated')
   })
+
+  it('renders an unrecognized status as itself, not "unverified"', () => {
+    expect(memoryTierLabel({ status: 'pending_review' as Memory['status'] })).toBe('pending_review')
+  })
 })
 
 describe('memoryTierBadgeClass', () => {
@@ -49,6 +60,10 @@ describe('memoryTierBadgeClass', () => {
     for (const tier of ['reinforced', 'invalidated', 'unverified'] as const) {
       expect(memoryTierBadgeClass(tier)).toMatch(/dark:/)
     }
+  })
+
+  it('renders unknown the same neutral gray as unverified - never a color implying a tier we verified', () => {
+    expect(memoryTierBadgeClass('unknown')).toContain('gray')
   })
 })
 
@@ -94,5 +109,16 @@ describe('MemoryEntry tier rendering', () => {
   it('renders no reason line for an invalidated memory carrying no reason', () => {
     const el = render({ ...BASE, status: 'invalidated' })
     expect(el.textContent).toContain('invalidated')
+  })
+
+  it('renders an unrecognized status as its raw value, never as "unverified"', () => {
+    const el = render({ ...BASE, status: 'pending_review' as Memory['status'] })
+    expect(el.textContent).toContain('pending_review')
+    expect(el.textContent).not.toContain('unverified')
+  })
+
+  it('still reads a missing status as unverified (unchanged by the unknown-status handling)', () => {
+    const el = render({ ...BASE, status: undefined })
+    expect(el.textContent).toContain('unverified')
   })
 })
