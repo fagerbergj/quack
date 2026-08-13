@@ -331,7 +331,7 @@ func New(kind, url string) (*Store, error) {
 	}); err != nil {
 		return nil, err
 	}
-	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}, &GithubSnapshot{}, &GithubReviewBaseline{}, &GithubFixState{}, &GithubMergeIntent{}); err != nil {
+	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}, &GithubSnapshot{}, &GithubReviewBaseline{}, &GithubFixState{}, &GithubMergeIntent{}, &MemoryOp{}); err != nil {
 		return nil, err
 	}
 	sessions, err := database.NewSessionService(dialector(), gormCfg)

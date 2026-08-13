@@ -149,6 +149,10 @@ type neighbour struct {
 	NodeID   string
 	Source   string
 	MintedAt string
+
+	Status             string
+	ValidFrom          string
+	ReinforcementCount int
 }
 
 // op is one consolidation decision from the LLM.
@@ -157,6 +161,7 @@ type op struct {
 	ID      string `json:"id"`      // existing memory id (UPDATE / DELETE)
 	Content string `json:"content"` // memory text (ADD / UPDATE)
 	Kind    string `json:"kind"`    // free-form tag stored in metadata
+	Reason  string `json:"reason"`  // DELETE only: why (becomes invalidation_reason)
 }
 
 // maxProbeRunes caps the text embedded to find dedup neighbours. The probe only
@@ -205,6 +210,7 @@ func (s *Store) neighbours(ctx context.Context, bucket, sourceText string, stage
 			out = append(out, neighbour{
 				ID: p.ID, Content: p.Content,
 				ChatID: p.ChatID, NodeID: p.NodeID, Source: p.Source, MintedAt: p.MintedAt,
+				Status: p.Status, ValidFrom: p.ValidFrom, ReinforcementCount: p.ReinforcementCount,
 			})
 		}
 	}
@@ -278,14 +284,16 @@ func (s *Store) decide(ctx context.Context, staged []Candidate, sourceText strin
 }
 
 // apply writes the operations into one bucket: ADD/UPDATE upsert a point (UPDATE
-// keeps the existing id), DELETE removes one, NOOP is skipped. valid is the
-// neighbours the consolidator was shown, keyed by id; an UPDATE/DELETE naming any
-// other id is treated as a hallucination (UPDATE → fresh ADD, DELETE → dropped).
-// prov stamps a fresh ADD; an UPDATE instead carries forward the id's original
-// minted_at/provenance from valid - the memory was minted by its original run, and
-// a wording correction doesn't re-mint it. Returns writes applied.
+// keeps the existing id), DELETE invalidates one in place (soft-delete only - see
+// design doc §4(a)/§8 phase 2), NOOP is skipped. valid is the neighbours the
+// consolidator was shown, keyed by id; an UPDATE/DELETE naming any other id is
+// treated as a hallucination (UPDATE → fresh ADD, DELETE → dropped). prov stamps a
+// fresh ADD; an UPDATE instead carries forward the id's original minted_at/
+// provenance/lifecycle from valid - the memory was minted by its original run, and
+// a wording correction doesn't re-mint it or reset earned trust. Every write and
+// invalidation logs one memory_ops row (actor=consolidator). Returns writes applied.
 func (s *Store) apply(ctx context.Context, bucket, author string, prov Provenance, ops []op, valid map[string]neighbour) (int, error) {
-	var dels []string
+	var invalidations []op
 	var writes []op
 	for _, o := range ops {
 		switch strings.ToUpper(strings.TrimSpace(o.Action)) {
@@ -299,7 +307,7 @@ func (s *Store) apply(ctx context.Context, bucket, author string, prov Provenanc
 		case "DELETE":
 			if o.ID != "" {
 				if _, ok := valid[o.ID]; ok {
-					dels = append(dels, o.ID)
+					invalidations = append(invalidations, o)
 				}
 			}
 		}
@@ -317,42 +325,75 @@ func (s *Store) apply(ctx context.Context, bucket, author string, prov Provenanc
 		}
 		ts := nowRFC3339()
 		points := make([]point, 0, len(writes))
+		writeIDs := make([]struct {
+			ID    string
+			Fresh bool
+		}, 0, len(writes))
 		for i, o := range writes {
 			id := o.ID
 			fresh := strings.ToUpper(strings.TrimSpace(o.Action)) == "ADD" || id == ""
 			mintedAt, chatID, nodeID, source := ts, prov.ChatID, prov.NodeID, prov.Source
+			status, reinforcementCount, validFrom := string(StatusUnverified), 0, ts
 			if !fresh {
 				if n, ok := valid[id]; ok {
 					mintedAt, chatID, nodeID, source = n.MintedAt, n.ChatID, n.NodeID, n.Source
+					reinforcementCount = n.ReinforcementCount
+					if n.Status != "" {
+						status = n.Status
+					}
+					if n.ValidFrom != "" {
+						validFrom = n.ValidFrom
+					}
 				}
 			} else {
 				id = uuid.NewString()
 			}
 			points = append(points, point{
-				ID:        id,
-				Vector:    vecs[i],
-				Content:   o.Content,
-				Scope:     bucket,
-				Author:    author,
-				Timestamp: ts,
-				Kind:      o.Kind,
-				ChatID:    chatID,
-				NodeID:    nodeID,
-				Source:    source,
-				MintedAt:  mintedAt,
+				ID:                 id,
+				Vector:             vecs[i],
+				Content:            o.Content,
+				Scope:              bucket,
+				Author:             author,
+				Timestamp:          ts,
+				Kind:               o.Kind,
+				ChatID:             chatID,
+				NodeID:             nodeID,
+				Source:             source,
+				MintedAt:           mintedAt,
+				Status:             status,
+				ValidFrom:          validFrom,
+				ReinforcementCount: reinforcementCount,
 			})
+			writeIDs = append(writeIDs, struct {
+				ID    string
+				Fresh bool
+			}{id, fresh})
 		}
 		if err := s.idx.upsert(ctx, points); err != nil {
 			return 0, err
 		}
 		count += len(points)
+		for _, w := range writeIDs {
+			opName := OpUpdate
+			if w.Fresh {
+				opName = OpAdd
+			}
+			s.logOp(ctx, w.ID, opName, ActorConsolidator, "")
+		}
 	}
 
-	if len(dels) > 0 {
-		if _, err := s.idx.remove(ctx, dels); err != nil {
-			return 0, err
+	if len(invalidations) > 0 {
+		for _, o := range invalidations {
+			reason := strings.TrimSpace(o.Reason)
+			if reason == "" {
+				reason = "invalidated by consolidator"
+			}
+			if err := s.idx.invalidateByID(ctx, []string{o.ID}, reason); err != nil {
+				return count, err
+			}
+			s.logOp(ctx, o.ID, OpInvalidate, ActorConsolidator, reason)
 		}
-		count += len(dels)
+		count += len(invalidations)
 	}
 
 	s.log.Debug("commit", "bucket", bucket, "author", author, "ops", len(ops), "writes", count)
@@ -373,9 +414,10 @@ var consolidatePrompts = map[string]string{
 		"clearly supported. Then RECONCILE each kept memory against the existing ones:\n" +
 		"- ADD: genuinely new - provide content (one atomic sentence) and a kind (e.g. convention|command|layout|source|search|fetch|deadend).\n" +
 		"- UPDATE: refines/supersedes an existing memory - provide its id plus the new content and kind.\n" +
-		"- DELETE: an existing memory is now contradicted or obsolete - provide its id.\n" +
+		"- DELETE: an existing memory is now contradicted, obsolete, or a duplicate - provide its id and a short reason " +
+		"(e.g. \"duplicate of <id>\", \"contradicted by newer info\"). This invalidates it; it is never erased.\n" +
 		"- NOOP: already covered - skip it.\n\n" +
-		"Reply with ONLY JSON: {\"ops\":[{\"action\":\"ADD|UPDATE|DELETE|NOOP\",\"id\":\"\",\"content\":\"\",\"kind\":\"\"}]}. " +
+		"Reply with ONLY JSON: {\"ops\":[{\"action\":\"ADD|UPDATE|DELETE|NOOP\",\"id\":\"\",\"content\":\"\",\"kind\":\"\",\"reason\":\"\"}]}. " +
 		"Empty ops list if nothing is worth keeping.",
 
 	"user": "You maintain durable facts ABOUT THE USER - who they are, their preferences, relationships, " +
@@ -386,9 +428,9 @@ var consolidatePrompts = map[string]string{
 		"kept. Then RECONCILE each kept fact against the existing ones:\n" +
 		"- ADD: genuinely new - provide content (one atomic sentence) and a kind (identity|preference|relationship|possession|goal|limit).\n" +
 		"- UPDATE: the fact changed (moved, switched jobs, new preference) - provide the existing id plus new content and kind.\n" +
-		"- DELETE: an existing fact is now contradicted - provide its id.\n" +
+		"- DELETE: an existing fact is now contradicted - provide its id and a short reason. This invalidates it; it is never erased.\n" +
 		"- NOOP: already known - skip it.\n\n" +
-		"Reply with ONLY JSON: {\"ops\":[{\"action\":\"ADD|UPDATE|DELETE|NOOP\",\"id\":\"\",\"content\":\"\",\"kind\":\"\"}]}. " +
+		"Reply with ONLY JSON: {\"ops\":[{\"action\":\"ADD|UPDATE|DELETE|NOOP\",\"id\":\"\",\"content\":\"\",\"kind\":\"\",\"reason\":\"\"}]}. " +
 		"Empty ops list if nothing is worth keeping.",
 }
 
