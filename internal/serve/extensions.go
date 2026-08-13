@@ -653,7 +653,9 @@ func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrato
 	runlog.StampTurn(runCtx, st, chatID, turnID, res)
 
 	timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
-	outcome := buildExtRunOutcome(runCtx, orch, st, userID, chatID, res.PlanID != "", res.NeedsInput, timedOut)
+	// hub.RegisterRun's cancel func is runCtx's own - a user Stop surfaces here as Canceled.
+	cancelled := errors.Is(runCtx.Err(), context.Canceled)
+	outcome := buildExtRunOutcome(runCtx, orch, st, userID, chatID, res.PlanID != "", res.NeedsInput, timedOut, cancelled)
 	if p := extHolder.Load(); p != nil {
 		if obs, ok := (*p).(extsdk.RunObserver); ok {
 			obs.RunEnded(chatID, outcome)
@@ -667,18 +669,27 @@ func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrato
 // Run.Timeout-scoped deadline check (buildExtRunOutcome's own ctx is
 // deliberately WithoutCancel of parent, so it can't observe parent's
 // deadline itself).
-func buildExtRunOutcome(parent context.Context, orch *orchestrator.Orchestrator, st *store.Store, userID, chatID string, planRan bool, needsInput stream.NodeNeedsInputData, timedOut bool) extsdk.RunOutcome {
+func buildExtRunOutcome(parent context.Context, orch *orchestrator.Orchestrator, st *store.Store, userID, chatID string, planRan bool, needsInput stream.NodeNeedsInputData, timedOut, cancelled bool) extsdk.RunOutcome {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 	defer cancel()
 	status, question := st.StampTerminalOutcome(ctx, orchestrator.AppName, userID, chatID, func() (string, bool) {
 		return orch.PendingQuestion(ctx, userID, chatID)
 	})
+	answer := strings.TrimSpace(orch.LatestAnswer(ctx, userID, chatID))
+	return mapExtRunOutcome(status, question, answer, planRan, needsInput, timedOut, cancelled)
+}
 
-	out := extsdk.RunOutcome{PlanRan: planRan, TimedOut: timedOut, Answer: strings.TrimSpace(orch.LatestAnswer(ctx, userID, chatID))}
-	switch status {
-	case store.RunStatusFailed:
+// mapExtRunOutcome is buildExtRunOutcome's classification step, split out so
+// it's testable without a live store/orch. cancelled wins over status - it
+// interrupted whatever DeriveTerminalStatus derived from the turn.
+func mapExtRunOutcome(status, question, answer string, planRan bool, needsInput stream.NodeNeedsInputData, timedOut, cancelled bool) extsdk.RunOutcome {
+	out := extsdk.RunOutcome{PlanRan: planRan, TimedOut: timedOut, Answer: answer}
+	switch {
+	case cancelled:
+		out.Status = extsdk.RunCancelled
+	case status == store.RunStatusFailed:
 		out.Status = extsdk.RunFailed
-	case store.RunStatusNeedsInput:
+	case status == store.RunStatusNeedsInput:
 		out.Status = extsdk.RunNeedsInput
 		out.Question = question
 		out.NodeID = needsInput.NodeID
