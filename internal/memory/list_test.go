@@ -31,7 +31,7 @@ func TestListIsNotSearch(t *testing.T) {
 	upsertTimed(t, s, "b", "repo:x", "unrelated fact b", "2026-08-02T00:00:00Z")
 	upsertTimed(t, s, "c", "repo:x", "unrelated fact c", "2026-08-03T00:00:00Z")
 
-	got, total, err := s.List(ctx, []string{"repo:x"}, 0, 10)
+	got, total, err := s.List(ctx, []string{"repo:x"}, 0, 10, false)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestListBucketFilterIsARealBoundary(t *testing.T) {
 	upsertTimed(t, s, "a1", "repo:a", "fact about a", "2026-08-01T00:00:00Z")
 	upsertTimed(t, s, "b1", "repo:b", "fact about b", "2026-08-01T00:00:01Z")
 
-	got, total, err := s.List(ctx, []string{"repo:a"}, 0, 10)
+	got, total, err := s.List(ctx, []string{"repo:a"}, 0, 10, false)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestListPagingIsStable(t *testing.T) {
 	seen := map[string]bool{}
 	var pageSizes []int
 	for _, offset := range []int{0, 10, 20} {
-		page, total, err := s.List(ctx, []string{"repo:x"}, offset, 10)
+		page, total, err := s.List(ctx, []string{"repo:x"}, offset, 10, false)
 		if err != nil {
 			t.Fatalf("List offset=%d: %v", offset, err)
 		}

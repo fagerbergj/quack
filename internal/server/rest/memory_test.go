@@ -126,8 +126,9 @@ func TestDeleteMemory_UnknownID_404(t *testing.T) {
 	}
 }
 
-// A committed memory shows up in a bucket listing, and forgetting it removes
-// it - and only it - from that same listing.
+// A committed memory shows up in a bucket listing; deleting it invalidates it
+// (design doc §4(b), soft-delete only) - it drops out of the default listing
+// but is still there, reason "manual delete", under include_invalidated=true.
 func TestListAndDeleteMemory_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 	h := newTestHandler(t)
@@ -153,6 +154,9 @@ func TestListAndDeleteMemory_RoundTrip(t *testing.T) {
 		t.Fatalf("got %+v, want exactly one memory", got)
 	}
 	id := got.Memories[0].Id
+	if s := got.Memories[0].Status; s == nil || *s != schema.Unverified {
+		t.Fatalf("status before delete = %v, want unverified", s)
+	}
 
 	delReq := httptest.NewRequest(http.MethodDelete, "/api/v1/memories/"+id, nil)
 	delW := httptest.NewRecorder()
@@ -168,14 +172,72 @@ func TestListAndDeleteMemory_RoundTrip(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	if got2.Total != 0 || len(got2.Memories) != 0 {
-		t.Fatalf("after delete: got %+v, want empty", got2)
+		t.Fatalf("default listing after delete: got %+v, want empty (invalidated excluded)", got2)
 	}
 
-	// Deleting it again is a 404 - it's really gone, not tombstoned.
+	// include_invalidated=true still finds it, with its status and reason.
+	includeInvalidated := true
+	w3 := httptest.NewRecorder()
+	h.ListMemories(w3, httptest.NewRequest(http.MethodGet, "/api/v1/memories?bucket="+bucket+"&include_invalidated=true", nil),
+		schema.ListMemoriesParams{Bucket: &bucket, IncludeInvalidated: &includeInvalidated})
+	var got3 schema.MemoryList
+	if err := json.NewDecoder(w3.Body).Decode(&got3); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got3.Total != 1 || len(got3.Memories) != 1 {
+		t.Fatalf("include_invalidated=true listing = %+v, want the one invalidated memory", got3)
+	}
+	m := got3.Memories[0]
+	if m.Status == nil || *m.Status != schema.Invalidated {
+		t.Fatalf("status after delete = %v, want invalidated", m.Status)
+	}
+	if m.InvalidationReason == nil || *m.InvalidationReason != "manual delete" {
+		t.Fatalf("invalidation_reason = %v, want %q (default)", m.InvalidationReason, "manual delete")
+	}
+
+	// Deleting an already-invalidated memory is idempotent (soft-delete never
+	// revives, and re-invalidating an existing point is a success, not a 404).
 	delW2 := httptest.NewRecorder()
 	h.DeleteMemory(delW2, httptest.NewRequest(http.MethodDelete, "/api/v1/memories/"+id, nil), id)
-	if delW2.Code != http.StatusNotFound {
-		t.Fatalf("re-delete status = %d, want 404", delW2.Code)
+	if delW2.Code != http.StatusNoContent {
+		t.Fatalf("re-delete status = %d, want 204 (idempotent)", delW2.Code)
+	}
+}
+
+// TestDeleteMemory_CustomReason covers design doc §7 case 5's reason
+// round-trip: a caller-supplied reason replaces the "manual delete" default.
+func TestDeleteMemory_CustomReason(t *testing.T) {
+	h := newTestHandler(t)
+	h.taskMem = newTestMemStore(t)
+	commitFact(t, h.taskMem, "NightsOut", "advice that turned out to be wrong")
+
+	bucket := "repo:NightsOut"
+	w := httptest.NewRecorder()
+	h.ListMemories(w, httptest.NewRequest(http.MethodGet, "/api/v1/memories?bucket="+bucket, nil), schema.ListMemoriesParams{Bucket: &bucket})
+	var got schema.MemoryList
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil || len(got.Memories) != 1 {
+		t.Fatalf("seed listing = %+v (decode err %v), want exactly one entry", got, err)
+	}
+	id := got.Memories[0].Id
+
+	body := strings.NewReader(`{"reason":"contradicted by a later, correct run"}`)
+	delReq := httptest.NewRequest(http.MethodDelete, "/api/v1/memories/"+id, body)
+	delW := httptest.NewRecorder()
+	h.DeleteMemory(delW, delReq, id)
+	if delW.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want 204", delW.Code)
+	}
+
+	includeInvalidated := true
+	w2 := httptest.NewRecorder()
+	h.ListMemories(w2, httptest.NewRequest(http.MethodGet, "/api/v1/memories?bucket="+bucket+"&include_invalidated=true", nil),
+		schema.ListMemoriesParams{Bucket: &bucket, IncludeInvalidated: &includeInvalidated})
+	var got2 schema.MemoryList
+	if err := json.NewDecoder(w2.Body).Decode(&got2); err != nil || len(got2.Memories) != 1 {
+		t.Fatalf("include_invalidated listing = %+v (decode err %v), want exactly one entry", got2, err)
+	}
+	if r := got2.Memories[0].InvalidationReason; r == nil || *r != "contradicted by a later, correct run" {
+		t.Fatalf("invalidation_reason = %v, want the custom reason", r)
 	}
 }
 
@@ -300,8 +362,8 @@ func TestListMemories_PageTokenBucketMismatch400(t *testing.T) {
 }
 
 // A memory living only in the second configured store (userMem) must still
-// be found and deleted - forgetMemory can't stop at the first store that
-// doesn't have the id.
+// be found and invalidated - invalidateMemory can't stop at the first store
+// that doesn't have the id.
 func TestDeleteMemory_FindsIDInSecondStore(t *testing.T) {
 	h := newTestHandler(t)
 	h.taskMem = newTestMemStore(t) // stays empty - the id is only in userMem

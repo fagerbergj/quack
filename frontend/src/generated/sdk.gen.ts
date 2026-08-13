@@ -400,15 +400,20 @@ export const listMemories = <ThrowOnError extends boolean = false>(options?: Opt
 });
 
 /**
- * Forget one memory
+ * Invalidate one memory
  *
- * A real delete against the vector index, not a tombstone - if a
- * forgotten fact gets re-learned by a later run's consolidation, that's
- * a separate concern (suppression), not this endpoint's job.
+ * Soft-delete (memory lifecycle design doc §4(b)): the point stays in
+ * the index with `status: invalidated` and an `invalidation_reason` -
+ * never removed - so a default listing excludes it but the audit trail
+ * (`memory_ops`, actor `human`) and `include_invalidated=true` still see it.
  *
  */
 export const deleteMemory = <ThrowOnError extends boolean = false>(options: Options<DeleteMemoryData, ThrowOnError>): RequestResult<DeleteMemoryResponses, DeleteMemoryErrors, ThrowOnError> => (options.client ?? client).delete<DeleteMemoryResponses, DeleteMemoryErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
     url: '/api/v1/memories/{memory_id}',
-    ...options
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
 });

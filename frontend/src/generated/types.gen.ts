@@ -120,6 +120,25 @@ export type Memory = {
      * Cosine similarity to the search query. Present only when the request set `q`; meaningless (omitted) for a plain listing.
      */
     score?: number;
+    /**
+     * Epistemic tier (memory lifecycle design doc §3). A memory written before this field existed reads as `unverified`.
+     */
+    status?: 'unverified' | 'reinforced' | 'invalidated';
+    /**
+     * How many positive outcome events (e.g. a PR merged) have reinforced this memory.
+     */
+    reinforcement_count?: number;
+    /**
+     * Why this memory was invalidated. Present only when `status` is `invalidated`.
+     */
+    invalidation_reason?: string;
+};
+
+export type DeleteMemoryBody = {
+    /**
+     * Why this memory is being invalidated. Defaults to `"manual delete"` when omitted.
+     */
+    reason?: string;
 };
 
 export type MemoryList = {
@@ -988,6 +1007,10 @@ export type ListMemoriesData = {
          */
         limit?: number;
         /**
+         * Include invalidated memories (memory lifecycle design doc §4(d)). Defaults to false - a default listing shows only what quack currently trusts.
+         */
+        include_invalidated?: boolean;
+        /**
          * Opaque continuation token from a previous response's `next_page_token`. Treat it as an opaque string: never parse or construct one, pass back exactly what was returned. Omit for the first page. Ignored when `q` is set (search ranks by score, not a stable page). Only valid against the exact `bucket` filter it was issued for.
          *
          */
@@ -1019,7 +1042,7 @@ export type ListMemoriesResponses = {
 export type ListMemoriesResponse = ListMemoriesResponses[keyof ListMemoriesResponses];
 
 export type DeleteMemoryData = {
-    body?: never;
+    body?: DeleteMemoryBody;
     path: {
         memory_id: string;
     };
@@ -1038,7 +1061,7 @@ export type DeleteMemoryError = DeleteMemoryErrors[keyof DeleteMemoryErrors];
 
 export type DeleteMemoryResponses = {
     /**
-     * Forgotten
+     * Invalidated
      */
     204: void;
 };
