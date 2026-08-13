@@ -148,6 +148,82 @@ func TestExecute_CancelNodeStopsBeforeJudge(t *testing.T) {
 	}
 }
 
+// judgeBlockStub blocks the FIRST judge call (the one carrying submit_verdict)
+// until the test unblocks it, then returns a failing verdict - so the test can
+// inject a cancel while the judge's own model call is in flight and confirm the
+// gate stops before the revise round starts. The worker draft never blocks.
+type judgeBlockStub struct {
+	mu          sync.Mutex
+	workerCalls int
+	judgeCalls  int
+	started     chan struct{}
+	unblock     chan struct{}
+}
+
+func (*judgeBlockStub) Name() string { return "judgeBlockStub" }
+
+func (s *judgeBlockStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if gHasTool(req, "submit_verdict") {
+			s.mu.Lock()
+			s.judgeCalls++
+			n := s.judgeCalls
+			s.mu.Unlock()
+			if n == 1 {
+				select {
+				case s.started <- struct{}{}:
+				default:
+				}
+				<-s.unblock // let the test inject cancel before the verdict is even known
+			}
+			yield(gCall("submit_verdict", map[string]any{"score": 0.1, "feedback": "needs work"}), nil)
+			return
+		}
+		s.mu.Lock()
+		s.workerCalls++
+		s.mu.Unlock()
+		yield(gText("draft"), nil)
+	}
+}
+
+func newJudgeBlockExecutor(t *testing.T, stub *judgeBlockStub, rounds int) (*Executor, Plan) {
+	t.Helper()
+	ag, err := llmagent.New(llmagent.Config{Name: "blk", Model: stub, Description: "blk", Instruction: "ROLE:blk Answer."})
+	if err != nil {
+		t.Fatalf("agent: %v", err)
+	}
+	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"blk": ag}, nil,
+		vetting.NewJudgeFactory(stub, nil, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: rounds} }, nil)
+	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "blk", Task: "do it"}}}
+	return ex, plan
+}
+
+// TestExecute_CancelDuringJudgeStopsBeforeRevise: the cooperative ctrl check
+// used to run only at the TOP of each judge round, so a cancel that lands
+// while the judge's own model call is in flight still paid for a full revise
+// round before the next boundary honored it (#879 incident). A cancel set
+// during the judge call must stop the gate before revise starts.
+func TestExecute_CancelDuringJudgeStopsBeforeRevise(t *testing.T) {
+	stub := &judgeBlockStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
+	ex, plan := newJudgeBlockExecutor(t, stub, 1)
+
+	go func() {
+		<-stub.started
+		ex.CancelNode("chat", "n1") // set cancel while the judge is mid-verdict
+		close(stub.unblock)         // judge returns a FAILING verdict → gate must not start revise
+	}()
+	events, _ := runPlanSSE(t, ex, plan, "chat")
+
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if stub.workerCalls != 1 {
+		t.Errorf("worker ran %d times; a cancel during the judge round should have stopped the gate before the revise round started", stub.workerCalls)
+	}
+	if got := nodeEnd(events, "n1"); got != stream.EventNodeCancelled {
+		t.Errorf("n1 ended as %q; want node_cancelled", got)
+	}
+}
+
 // nodeEnd returns the terminal event name (node_done / node_failed / node_cancelled)
 // for a node.
 func nodeEnd(events []stream.SSEEvent, nodeID string) string {
