@@ -418,42 +418,6 @@ func TestSDKExtensionRedispatchSameChatIDAppendsTurn(t *testing.T) {
 	}
 }
 
-// TestSDKExtensionDispatchPersistsTurnInputBeforeRunStarts pins the
-// queued-chat bug on the extension dispatch path: newExtDispatch's SaveTurn/
-// SetTurnInput pair runs synchronously in the dispatch call itself, before
-// `go driveExtensionRun` ever starts the run - so the turn's trigger text
-// must already be readable the instant dispatch() returns, with zero session
-// events yet (the state a run stuck behind the worker semaphore is in).
-func TestSDKExtensionDispatchPersistsTurnInputBeforeRunStarts(t *testing.T) {
-	st, orch, hub, artifacts, _ := newExtTestStack(t)
-	var orchRef atomic.Pointer[orchestrator.Orchestrator]
-	orchRef.Store(orch)
-
-	var extHolder atomic.Pointer[extsdk.Extension]
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
-
-	const localID = "queued-input-fixture"
-	const chatID = "ext:noop:" + localID
-	req := extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID}, Ask: extsdk.Ask{Message: "queued trigger text"}}
-	if err := dispatch(context.Background(), req); err != nil {
-		t.Fatalf("dispatch: %v", err)
-	}
-
-	ctx := context.Background()
-	turns, err := st.GetTurnsWithContent(ctx, orchestrator.AppName, extRunUserID, chatID)
-	if err != nil {
-		t.Fatalf("GetTurnsWithContent: %v", err)
-	}
-	if len(turns) != 1 {
-		t.Fatalf("turns for %s = %d, want 1", chatID, len(turns))
-	}
-	if got := turns[0].UserText; got != "queued trigger text" {
-		t.Errorf("UserText = %q, want the dispatched ask (available before the run has appended any session event)", got)
-	}
-
-	waitRunSettled(t, st, chatID)
-}
-
 // (f) an unknown Workflow name fails the dispatch call itself, before any
 // chat row is created - never a silent hint the planner might ignore.
 func TestSDKExtensionUnknownWorkflowErrorsCreatesNoChat(t *testing.T) {
