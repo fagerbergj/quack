@@ -1,6 +1,9 @@
 package memory
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // OpsLogOp names one memory_ops audit row's transition.
 type OpsLogOp string
@@ -30,6 +33,11 @@ const (
 // Store.SetOpsLog).
 type OpsLog interface {
 	LogMemoryOp(ctx context.Context, memoryID string, op OpsLogOp, actor OpsLogActor, reason string) error
+	// PruneMemoryOps hard-deletes memory_ops rows older than cutoff (design
+	// doc §6's bound on unbounded audit-trail growth) and reports how many
+	// were removed - the retention sweep's counterpart to the point-level
+	// hard-delete it runs alongside.
+	PruneMemoryOps(ctx context.Context, cutoff time.Time) (int, error)
 }
 
 // logOp is best-effort: an audit-write failure must never fail the memory

@@ -6,14 +6,18 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // fakeOpsLog records every memory_ops write for assertion, mirroring how a
 // real internal/store-backed OpsLog would be called (see internal/serve's
 // storeOpsLog adapter).
 type fakeOpsLog struct {
-	mu   sync.Mutex
-	rows []opRow
+	mu          sync.Mutex
+	rows        []opRow
+	pruneCalls  []time.Time
+	pruneResult int
+	pruneErr    error
 }
 
 type opRow struct {
@@ -28,6 +32,16 @@ func (f *fakeOpsLog) LogMemoryOp(_ context.Context, memoryID string, op OpsLogOp
 	defer f.mu.Unlock()
 	f.rows = append(f.rows, opRow{memoryID, op, actor, reason})
 	return nil
+}
+
+func (f *fakeOpsLog) PruneMemoryOps(_ context.Context, cutoff time.Time) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pruneCalls = append(f.pruneCalls, cutoff)
+	if f.pruneErr != nil {
+		return 0, f.pruneErr
+	}
+	return f.pruneResult, nil
 }
 
 // TestApply_AddSetsLifecycleAndLogsOp covers design doc §4(a): a fresh ADD is

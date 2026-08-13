@@ -450,15 +450,29 @@ type ModelPricing struct {
 }
 
 type StoreConfig struct {
-	Kind          string         `yaml:"kind"`
-	URL           string         `yaml:"url"`
-	Extends       string         `yaml:"extends"`
-	Embedder      *ProviderModel `yaml:"embedder"`
-	Consolidation *ProviderModel `yaml:"consolidation"`
-	TopK          int            `yaml:"top_k"`
-	MinScore      *float32       `yaml:"min_score"`
-	Collection    string         `yaml:"collection"`
-	Root          string         `yaml:"root"`
+	Kind          string               `yaml:"kind"`
+	URL           string               `yaml:"url"`
+	Extends       string               `yaml:"extends"`
+	Embedder      *ProviderModel       `yaml:"embedder"`
+	Consolidation *ConsolidationConfig `yaml:"consolidation"`
+	TopK          int                  `yaml:"top_k"`
+	MinScore      *float32             `yaml:"min_score"`
+	Collection    string               `yaml:"collection"`
+	Root          string               `yaml:"root"`
+}
+
+// ConsolidationConfig binds the model driving both the gated-commit reconcile
+// and the periodic sweep (design doc docs/memory-lifecycle.md §4(c)), plus
+// the sweep's own schedule. IntervalMinutes 0/absent disables the periodic
+// sweep entirely - matching ledger.RunRetentionSweep's retentionDays<=0
+// convention, not this struct's own RetentionDays. RetentionDays 0 keeps
+// invalidated points and memory_ops rows forever (explicit, not implicit -
+// see design doc §6).
+type ConsolidationConfig struct {
+	Provider        string `yaml:"provider"`
+	Model           string `yaml:"model"`
+	IntervalMinutes int    `yaml:"interval_minutes"`
+	RetentionDays   int    `yaml:"retention_days"`
 }
 
 const defaultLedgerRoot = "./recordings"
@@ -491,7 +505,7 @@ type ResolvedMemory struct {
 	Kind          string
 	URL           string
 	Embedder      ProviderModel
-	Consolidation ProviderModel
+	Consolidation ConsolidationConfig
 	Collection    string
 	TopK          int
 	MinScore      float32
@@ -753,6 +767,17 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: store %q min_score must be in [0,1]", name)
 		}
 		c.Stores[name] = s
+	}
+	for name, s := range c.Stores {
+		if s.Consolidation == nil {
+			continue
+		}
+		if s.Consolidation.IntervalMinutes < 0 {
+			return fmt.Errorf("config: store %q consolidation.interval_minutes must be >= 0", name)
+		}
+		if s.Consolidation.RetentionDays < 0 {
+			return fmt.Errorf("config: store %q consolidation.retention_days must be >= 0", name)
+		}
 	}
 	if ss, ok := c.Store(c.Session.Store); !ok {
 		return fmt.Errorf("config: session.store %q is not defined under stores", c.Session.Store)
