@@ -112,10 +112,10 @@ github.com/fagerbergj/quack-extensions/noop v0.2.0 h1:Or3gYcjGMP/tPzzgemUX11jwHM
 github.com/fagerbergj/quack-extensions/noop v0.2.0/go.mod h1:IxUsCKZGXXSNwyYwkSLtbM9FW6vQhnyGUgoQ6omRB60=
 github.com/fagerbergj/quack-extensions/remarkable v0.1.1 h1:CrPRUCRVptHR87o+VBSYR2NxaWKWOIiZMcaDbd0oOLw=
 github.com/fagerbergj/quack-extensions/remarkable v0.1.1/go.mod h1:i0AqOLF3PueQ5V5nQZqxsQPlS5MvhSWuvImNQXs6w6A=
-github.com/fagerbergj/quack-extensions/sdk v0.4.1 h1:nt3cCdQI4QRFcxFgMrelljoe44ix95/EY8gdij38o/w=
-github.com/fagerbergj/quack-extensions/sdk v0.4.1/go.mod h1:fp+3J6PT73ww7q73Zu4uaOCihbsihnarw+YT8F//GCI=
-github.com/fagerbergj/quack-extensions/usage v0.1.0 h1:IVDAchq5dcnz3jd9VCMbM6xgdW+wk0GShVDajFdgLHk=
-github.com/fagerbergj/quack-extensions/usage v0.1.0/go.mod h1:YH6Bk6YXSbAxlw8ppjJplsz+SDD7Pc9h6Lc+EhJpXoM=
+github.com/fagerbergj/quack-extensions/sdk v0.4.2 h1:yU9t3DOlLpVoesmPW8kTv+bqqMO/qFDIEjkh++2l2hk=
+github.com/fagerbergj/quack-extensions/sdk v0.4.2/go.mod h1:fp+3J6PT73ww7q73Zu4uaOCihbsihnarw+YT8F//GCI=
+github.com/fagerbergj/quack-extensions/usage v0.2.0 h1:7k2ut72kJvO+eqpvdYTMmMiruxAvobWSo3pLtSMjx6k=
+github.com/fagerbergj/quack-extensions/usage v0.2.0/go.mod h1:cqMsRCXOlruyG1E8lPm59yzUKjKvZkWmzGSZjPsmOB4=
 github.com/felixge/httpsnoop v1.1.0 h1:3YtUj32ZZkqZtt3sZZsClsymw/QDuVfpNhoA31zeORc=
 github.com/felixge/httpsnoop v1.1.0/go.mod h1:Zqxgdd+1Rkcz8euOqdr7lqgCRJztwr5hp9vDSi5UZCE=
 github.com/glebarez/go-sqlite v1.21.2 h1:3a6LFC4sKahUunAmynQKLZceZCOzUthkRkEAl9gAXWo=

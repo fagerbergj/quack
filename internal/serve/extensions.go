@@ -47,11 +47,12 @@ const extRunUserID = "ext"
 type builtSDKExtension struct {
 	name string
 	ext  extsdk.Extension
-	// title/href come from the module's optional sdk.UI descriptor, captured
-	// once at build time; both empty when the module implements no UI (the
-	// SPA nav then lists it name-only).
+	// title/href/icon come from the module's optional sdk.UI descriptor,
+	// captured once at build time; all empty when the module implements no
+	// UI (the SPA nav then lists it name-only).
 	title string
 	href  string
+	icon  string
 }
 
 // buildSDKExtensions constructs every configured module named under
@@ -146,7 +147,7 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, or
 		b := builtSDKExtension{name: name, ext: ext}
 		if ui, ok := ext.(extsdk.UI); ok {
 			d := ui.UI()
-			b.title, b.href = d.Title, d.Href
+			b.title, b.href, b.icon = d.Title, d.Href, d.Icon
 		}
 		built = append(built, b)
 		slog.Info("sdk extension enabled", "component", "startup", "extension", name)
@@ -205,6 +206,9 @@ func extensionDescriptors(exts []builtSDKExtension) []schema.ExtensionInfo {
 		}
 		if e.href != "" {
 			info.Href = &e.href
+		}
+		if e.icon != "" {
+			info.Icon = &e.icon
 		}
 		out = append(out, info)
 	}

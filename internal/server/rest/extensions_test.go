@@ -31,12 +31,12 @@ func TestListExtensions_Empty(t *testing.T) {
 
 // TestListExtensions_NameOnlyAndWithUI covers both shapes the SDK's
 // optional UI descriptor produces: a module implementing it gets
-// title/href, one that doesn't stays name-only.
+// title/href/icon, one that doesn't stays name-only.
 func TestListExtensions_NameOnlyAndWithUI(t *testing.T) {
 	h := newTestHandler(t)
 	h.extensions = []schema.ExtensionInfo{
 		{Name: "noop"},
-		{Name: "remarkable", Title: strp("reMarkable"), Href: strp("/remarkable/review")},
+		{Name: "remarkable", Title: strp("reMarkable"), Href: strp("/remarkable/review"), Icon: strp("📄")},
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/extensions", nil)
@@ -53,10 +53,10 @@ func TestListExtensions_NameOnlyAndWithUI(t *testing.T) {
 	if len(out) != 2 {
 		t.Fatalf("out = %+v, want 2 entries", out)
 	}
-	if out[0].Name != "noop" || out[0].Title != nil || out[0].Href != nil {
+	if out[0].Name != "noop" || out[0].Title != nil || out[0].Href != nil || out[0].Icon != nil {
 		t.Errorf("out[0] = %+v, want name-only noop", out[0])
 	}
-	if out[1].Name != "remarkable" || out[1].Title == nil || *out[1].Title != "reMarkable" || out[1].Href == nil || *out[1].Href != "/remarkable/review" {
-		t.Errorf("out[1] = %+v, want remarkable with title/href", out[1])
+	if out[1].Name != "remarkable" || out[1].Title == nil || *out[1].Title != "reMarkable" || out[1].Href == nil || *out[1].Href != "/remarkable/review" || out[1].Icon == nil || *out[1].Icon != "📄" {
+		t.Errorf("out[1] = %+v, want remarkable with title/href/icon", out[1])
 	}
 }

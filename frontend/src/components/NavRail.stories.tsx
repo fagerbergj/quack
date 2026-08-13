@@ -73,7 +73,6 @@ export const WithExtensions: Story = {
     initialCollapsed: false,
     initialExtensions: [
       { name: 'remarkable', title: 'reMarkable', href: '/remarkable/review' },
-      // @ts-expect-error icon isn't in the generated type yet - see NavRail's extensionIcon
       { name: 'usage', title: 'Usage', href: '/usage', icon: '📊' },
       { name: 'github' },
     ],

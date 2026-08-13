@@ -1080,6 +1080,9 @@ components:
         href:
           type: string
           description: Same-origin relative reference into the extension's own routes; absent when the extension implements no UI descriptor.
+        icon:
+          type: string
+          description: Single emoji for nav display; absent when the extension's UI descriptor sets none.
 
     # -------------------------------------------------------------------------
     # Artifacts (chat-scoped, read-only)

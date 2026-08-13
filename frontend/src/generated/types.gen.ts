@@ -158,6 +158,10 @@ export type ExtensionInfo = {
      * Same-origin relative reference into the extension's own routes; absent when the extension implements no UI descriptor.
      */
     href?: string;
+    /**
+     * Single emoji for nav display; absent when the extension's UI descriptor sets none.
+     */
+    icon?: string;
 };
 
 export type ArtifactRevisionInfo = {
