@@ -139,7 +139,7 @@ func TestSDKExtensionDispatchLoop(t *testing.T) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  greeting: e2e\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef, nil, nil)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestSDKExtensionUnconfiguredExtensionRegistersNoRoutes(t *testing.T) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := &config.Config{Workspace: config.WorkspaceConfig{Root: t.TempDir()}}
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef, nil, nil)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestSDKExtensionUnknownNameFailsStartup(t *testing.T) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "bogus-extension:\n  key: value\n")
-	_, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef)
+	_, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef, nil, nil)
 	if err == nil {
 		t.Fatal("expected an error for an unconfigured/uncompiled extension name")
 	}
@@ -273,7 +273,7 @@ func TestSDKExtensionDisabledStaysDormant(t *testing.T) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  enabled: false\n  greeting: e2e\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef, nil, nil)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestSDKExtensionDataDirOverrideUsed(t *testing.T) {
 	workspaceRoot := t.TempDir()
 	customDataDir := filepath.Join(t.TempDir(), "custom-noop-data")
 	cfg := noopModulesConfig(t, workspaceRoot, "noop:\n  data_dir: "+customDataDir+"\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef, nil, nil)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -332,7 +332,7 @@ func TestSDKExtensionReservedKeysToleratedByExtensionConfig(t *testing.T) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  enabled: true\n  data_dir: \"\"\n  greeting: still works\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef, nil, nil)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -355,7 +355,7 @@ func TestSDKExtensionReservedNameCollisionFailsStartup(t *testing.T) {
 	})
 
 	cfg := noopModulesConfig(t, t.TempDir(), "chat:\n  key: value\n")
-	_, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef)
+	_, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef, nil, nil)
 	if err == nil {
 		t.Fatal("expected an error for an extension name colliding with a reserved route")
 	}
@@ -923,7 +923,7 @@ func TestSDKExtensionUpdateChatOriginRefreshesBadge(t *testing.T) {
 	orchRef.Store(orch)
 	var extHolder atomic.Pointer[extsdk.Extension]
 	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
-	updateOrigin := newExtUpdateChatOrigin("noop", st)
+	updateOrigin := newExtUpdateChatOrigin("noop", st, nil, nil)
 
 	const localID = "badge-fixture"
 	const chatID = "ext:noop:" + localID
@@ -977,7 +977,7 @@ func TestSDKExtensionUpdateChatOriginRefreshesBadge(t *testing.T) {
 // extsdk.ErrUnknownChat, never a silently-created bare chat row.
 func TestSDKExtensionUpdateChatOriginUnknownChatErrors(t *testing.T) {
 	st, _, _, _, _ := newExtTestStack(t)
-	updateOrigin := newExtUpdateChatOrigin("noop", st)
+	updateOrigin := newExtUpdateChatOrigin("noop", st, nil, nil)
 
 	err := updateOrigin("never-dispatched", extsdk.ChatOrigin{Extension: "noop", Label: "x", Badge: "closed"})
 	if !errors.Is(err, extsdk.ErrUnknownChat) {
