@@ -233,7 +233,8 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		cfg.User = s.UserID()
 	}
 
-	// Memory recall for ACP workers; front-load into round-0 prompt.
+	// Memory recall for ACP workers; append after the prompt so sibling nodes'
+	// shared BACKGROUND prefix (dag.buildTask) stays a cache hit.
 	if cfg.ExternalWorker && cfg.CommitMemory {
 		_, recallSpan := otelobs.Start(nodeCtx, "memory.recall",
 			attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID))
@@ -242,7 +243,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		recallSpan.End()
 		otelobs.RecordMemoryRecall(rec != "")
 		if rec != "" {
-			prompt = rec + "\n\n" + prompt
+			prompt = prompt + "\n\n" + rec
 			log.Info("recalled memory injected into the worker prompt", "bytes", len(rec))
 		}
 	}

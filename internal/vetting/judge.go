@@ -220,7 +220,11 @@ func newSubmitVerdictTool(sink *verdict) (tool.Tool, error) {
 	})
 }
 
-// buildJudgePrompt: assembles judge's user message (constitution, rubric, question, ledger, knownFailures, answer).
+// buildJudgePrompt: assembles judge's user message. Order is constitution →
+// rubric → task → question → answer → ledger → changed files → known
+// failures: the stable, round-invariant sections lead and the volatile,
+// per-round evidence (re-derived every round) trails, so the prefix up to
+// and including the answer stays a prompt-cache hit across rounds.
 func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Content, answer, changedFiles string, act workerActivity, knownFailures string) string {
 	var sb strings.Builder
 	if constitution != "" {
@@ -240,6 +244,8 @@ func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Con
 	}
 	sb.WriteString("\n\nUser's question:\n")
 	sb.WriteString(contentPlainText(question))
+	sb.WriteString("\n\nAnswer to judge:\n")
+	sb.WriteString(answer)
 	if ws := buildWorkspaceSection(act); ws != "" {
 		sb.WriteString("\n\n")
 		sb.WriteString(ws)
@@ -252,8 +258,6 @@ func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Con
 		sb.WriteString("\n\n")
 		sb.WriteString(knownFailures)
 	}
-	sb.WriteString("\n\nAnswer to judge:\n")
-	sb.WriteString(answer)
 	return sb.String()
 }
 

@@ -453,6 +453,34 @@ func TestJudgePromptScopedToNodeNotOrchestratorFileCount(t *testing.T) {
 	}
 }
 
+// TestBuildJudgePromptSectionOrder pins the cache-friendly section order:
+// the stable, round-invariant sections (constitution, rubric, task,
+// question, answer) come before the volatile, re-derived-per-round evidence
+// (ledger, changed files, known failures) - so the prefix up to and
+// including the answer stays byte-identical, and a cache hit, across rounds.
+func TestBuildJudgePromptSectionOrder(t *testing.T) {
+	act := workerActivity{workspace: []wsOp{{tool: "read_file", detail: `read_file(path="README.md")`}}}
+	det := map[string]criterionScore{"checks_pass": {Score: 0, Reason: "deterministic: build failed"}}
+	known := judgeKnownFailuresSection(det, 0.7)
+
+	prompt := buildJudgePrompt("the constitution", "the rubric", "the node task",
+		questionContent("the question"), "the answer", "the changed files diff", act, known)
+
+	sections := []string{"the constitution", "the rubric", "the node task", "the question", "the answer",
+		"Workspace activity", "the changed files diff", judgeKnownFailuresHeader}
+	last := -1
+	for _, s := range sections {
+		idx := strings.Index(prompt, s)
+		if idx < 0 {
+			t.Fatalf("prompt missing section %q:\n%s", s, prompt)
+		}
+		if idx < last {
+			t.Fatalf("section %q is out of order (want constitution, rubric, task, question, answer, ledger, changed files, known failures):\n%s", s, prompt)
+		}
+		last = idx
+	}
+}
+
 // TestJudgeKnownFailuresSection_FormatsFailingCriteriaSorted checks the
 // section names every below-threshold criterion, sorted, and skips a passing one.
 func TestJudgeKnownFailuresSection_FormatsFailingCriteriaSorted(t *testing.T) {
