@@ -129,6 +129,41 @@ func TestSetupWorktreeRunsCheckSetup(t *testing.T) {
 	}
 }
 
+// TestSetupWorktreeRunsCheckSetupAfterSharedCloneAlreadyDid pins the per-dir
+// cache key: workspace.RunCheckSetup's cache is shared across every caller
+// (SetupClone and SetupWorktree both call into it), so a naive key (e.g. the
+// parent clone's dir, or the node ID alone) would make the shared clone's
+// bootstrap poison a worktree's own - exactly the live failure (a worktree
+// missing scripts/node_modules despite the shared clone having "already run
+// check_setup"). The key must be the worktree's OWN resolved dir.
+func TestSetupWorktreeRunsCheckSetupAfterSharedCloneAlreadyDid(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+	checkSetup := []string{"touch generated.txt"}
+
+	parentDir, err := setupCloneAndBranch(context.Background(), b, workspace.SetupCloneDir(workspace.SharedRepoScope),
+		"file://"+bare, "main", "quack/work", false)
+	if err != nil {
+		t.Fatalf("setup the shared clone: %v", err)
+	}
+	// Warm the cache for the SHARED clone's own dir first, mirroring
+	// SetupClone's provisioning-time call.
+	workspace.RunCheckSetup(parentDir, checkSetup, b.caps)
+	if _, err := os.Stat(filepath.Join(parentDir, "generated.txt")); err != nil {
+		t.Fatalf("check_setup did not run in the shared clone: %v", err)
+	}
+
+	dir, err := SetupWorktree(context.Background(), b.jail, b.userID, b.chatID, parentDir,
+		workspace.NodeDir("review1"), workspace.WorktreeBranch("review1"), b.caps, checkSetup)
+	if err != nil {
+		t.Fatalf("SetupWorktree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "generated.txt")); err != nil {
+		t.Errorf("check_setup did not run in the worktree - the shared clone's dir already being cached must not skip the worktree's own bootstrap: %v", err)
+	}
+}
+
 // TestSetupWorktreeNoCheckSetupUnchanged pins that an unset check_setup
 // leaves worktree provisioning byte-identical to before this call site existed.
 func TestSetupWorktreeNoCheckSetupUnchanged(t *testing.T) {
