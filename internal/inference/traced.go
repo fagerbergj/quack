@@ -10,9 +10,17 @@ import (
 	"google.golang.org/adk/v2/model"
 
 	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/inference/openaimodel"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
+
+// usageEmbedder is Embedder plus the token usage an OpenAI-compatible
+// /embeddings response reports - an internal capability tracedModel
+// type-asserts for, so the public Embedder contract stays vectors-only.
+type usageEmbedder interface {
+	EmbedWithUsage(ctx context.Context, texts []string) ([][]float32, openaimodel.EmbedUsage, error)
+}
 
 // tracedModel wraps a model.LLM to record quack.model.call.duration.
 // Wrapping here (NewModel) covers every model in the system.
@@ -112,13 +120,50 @@ func recordUsageMetrics(ctx context.Context, modelName, defaultAgent string, pri
 	}
 }
 
-// Embed delegates to the wrapped model when it implements Embedder, timing the call.
+// Embed delegates to the wrapped model, timing the call into the same
+// quack.model.call.duration histogram GenerateContent uses (an embed call IS
+// a model call, and the dashboard's latency panel already groups by the
+// `model` attribute - an embed model has its own distinct name, so it lands
+// in its own series there without conflating with chat-completion latency; a
+// second instrument would just add a query for no separate signal). When the
+// wrapped model reports token usage (openaimodel's /embeddings response),
+// records gen_ai.client.token.usage/cost the same way GenerateContent does -
+// embeddings have no output/reasoning/cached tokens, so only token_type=input
+// is ever recorded.
 func (t *tracedModel) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	t0 := time.Now()
+	defer func() { otelobs.RecordModelCallDuration(t.name, time.Since(t0)) }()
+
+	if ue, ok := t.LLM.(usageEmbedder); ok {
+		vecs, usage, err := ue.EmbedWithUsage(ctx, texts)
+		if err == nil {
+			t.recordEmbedUsage(ctx, usage)
+		}
+		return vecs, err
+	}
 	e, ok := t.LLM.(Embedder)
 	if !ok {
 		return nil, fmt.Errorf("inference: model %q does not implement Embed", t.name)
 	}
-	t0 := time.Now()
-	defer func() { otelobs.RecordModelCallDuration(t.name, time.Since(t0)) }()
 	return e.Embed(ctx, texts)
+}
+
+// recordEmbedUsage mirrors recordUsageMetrics for the embeddings shape - see
+// its doc comment for the agent-attribution rule (ctx coords win, defaultAgent
+// fills the gap). A zero PromptTokens (a defensive, usage-less response) records
+// nothing rather than a fabricated zero.
+func (t *tracedModel) recordEmbedUsage(ctx context.Context, u openaimodel.EmbedUsage) {
+	if u.PromptTokens == 0 {
+		return
+	}
+	c := ledger.CoordsFromContext(ctx)
+	agent := c.Agent
+	if agent == "" {
+		agent = t.defaultAgent
+	}
+	otelobs.RecordTokenUsage(t.name, agent, c.User, c.Source, u.PromptTokens, 0, 0, 0)
+	if t.pricing != nil {
+		cost := float64(u.PromptTokens) / 1e6 * t.pricing.InputPerMTok
+		otelobs.RecordCost(t.name, agent, c.User, c.Source, cost)
+	}
 }
