@@ -318,6 +318,9 @@ func (a sdkDeliverAdapter) Deliver(ctx context.Context, dc vetting.DeliveryConte
 // is how a caller learns it finished.
 func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrator], st *store.Store, hub *stream.Hub, extHolder *atomic.Pointer[extsdk.Extension], shapes []workflowcatalog.Shape, artifacts *store.TurnAwareService) extsdk.DispatchFunc {
 	return func(ctx context.Context, req extsdk.DispatchRequest) error {
+		if hub.Draining() {
+			return fmt.Errorf("extensions.%s: server is shutting down; dispatch will need to be retried", name)
+		}
 		if req.Chat.LocalID == "" {
 			return fmt.Errorf("extensions.%s: dispatch requires Chat.LocalID", name)
 		}
@@ -651,6 +654,18 @@ func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrato
 	// Stamp model + usage on the turn row - rest.Handler.runChat shares this
 	// same tail, so an extension-dispatched chat gets it too.
 	runlog.StampTurn(runCtx, st, chatID, turnID, res)
+
+	// Shutdown force-cancelled this run - skip RunEnded entirely so a deploy
+	// never posts a PR comment for work the process didn't get to finish.
+	if hub.WasInterrupted(chatID) {
+		stampCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		if err := st.StampRunOutcome(stampCtx, chatID, store.RunStatusInterrupted, ""); err != nil {
+			slog.Warn("extension run: interrupted stamp failed", "component", "ext."+name, "chat", chatID, "err", err)
+		}
+		cancel()
+		slog.Warn("extension run interrupted by shutdown; no RunEnded delivered", "component", "ext."+name, "chat", chatID)
+		return
+	}
 
 	timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
 	outcome := buildExtRunOutcome(runCtx, orch, st, userID, chatID, res.PlanID != "", res.NeedsInput, timedOut)

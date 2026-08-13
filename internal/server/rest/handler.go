@@ -441,6 +441,10 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 	if !h.requireChat(w, r, chatID) {
 		return
 	}
+	if h.hub.Draining() {
+		errMsg(w, http.StatusServiceUnavailable, "server is shutting down; try again shortly")
+		return
+	}
 	var body schema.SendMessageBody
 	var attachments []*genai.Part
 
@@ -717,9 +721,17 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 		writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusPaused))
 	case dag.StatusRunning:
 		// paused → running: a fresh re-run reusing the plan's stored outputs.
+		if h.hub.Draining() {
+			errMsg(w, http.StatusServiceUnavailable, "server is shutting down; try again shortly")
+			return
+		}
 		h.retryNodeAsync(dp, chatID, nodeID, guidance)
 		writeJSON(w, http.StatusOK, schema.DagNodeState{Status: schema.NodeStatusQueued})
 	case dag.StatusQueued:
+		if h.hub.Draining() {
+			errMsg(w, http.StatusServiceUnavailable, "server is shutting down; try again shortly")
+			return
+		}
 		h.retryNodeAsync(dp, chatID, nodeID, guidance)
 		writeJSON(w, http.StatusOK, schema.DagNodeState{Status: schema.NodeStatusQueued})
 	}
@@ -1159,7 +1171,7 @@ func (h *Handler) liveOrStampedStatus(c store.Chat) (schema.ChatStatus, *string)
 	case store.RunStatusNeedsInput:
 		q := c.PendingQuestion
 		return schema.ChatStatusNeedsInput, &q
-	case store.RunStatusFailed:
+	case store.RunStatusFailed, store.RunStatusInterrupted:
 		return schema.ChatStatusFailed, nil
 	default:
 		return schema.ChatStatusIdle, nil
@@ -1198,6 +1210,14 @@ func (h *Handler) terminalStatus(ctx context.Context, chatID string, turns []sto
 func (h *Handler) stampRunOutcome(parent context.Context, chatID string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 	defer cancel()
+	// Shutdown force-cancelled this run - report that, not whatever
+	// DeriveTerminalStatus would guess from a cut-off turn.
+	if h.hub.WasInterrupted(chatID) {
+		if err := h.store.StampRunOutcome(ctx, chatID, store.RunStatusInterrupted, ""); err != nil {
+			slog.Warn("stamp run outcome: interrupted persist failed", "component", "rest", "chat", chatID, "err", err)
+		}
+		return
+	}
 	turns, err := h.store.GetTurnsWithContent(ctx, orchestrator.AppName, h.sessionUser(ctx, chatID), chatID)
 	if err != nil {
 		slog.Warn("stamp run outcome: turns load failed", "component", "rest", "chat", chatID, "err", err)
