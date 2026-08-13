@@ -31,12 +31,19 @@ interface ContextFile {
   endpoint: string
 }
 
+interface CheckRun {
+  name: string
+  status: string
+  conclusion?: string
+}
+
 export type EnvelopeBlock =
   | { kind: 'permissions'; text: string }
   | { kind: 'deliverable'; text: string }
   | { kind: 'ask'; askKind: 'issue' | 'pull_request'; number?: string; title: string; description: string }
   | { kind: 'comments'; total?: number; added?: number; edited?: number; deleted?: number; comments: Comment[] | null; raw: string }
   | { kind: 'changed_files'; count?: number; additions?: number; deletions?: number; files: ChangedFile[] | null; raw: string }
+  | { kind: 'checks'; count?: number; summary?: string; checks: CheckRun[] | null; raw: string }
   | { kind: 'event'; name?: string; pretty: string | null; raw: string }
   | { kind: 'context'; dir?: string; files: ContextFile[] }
   | { kind: 'unknown'; tag: string; attrs: Record<string, string>; raw: string }
@@ -195,6 +202,16 @@ function toEnvelopeBlock(b: RawBlock): EnvelopeBlock {
         raw,
       }
     }
+    case 'checks': {
+      const raw = b.content.trim()
+      return {
+        kind: 'checks',
+        count: numAttr(b.attrs.count),
+        summary: b.attrs.summary,
+        checks: parseChecks(raw),
+        raw,
+      }
+    }
     case 'event': {
       const raw = b.content.trim()
       const parsed = tryParseJSON(raw)
@@ -214,6 +231,39 @@ function toEnvelopeBlock(b: RawBlock): EnvelopeBlock {
     default:
       return { kind: 'unknown', tag: b.tag, attrs: b.attrs, raw: b.content.trim() }
   }
+}
+
+// parseCheckLine reads one checksBlock line ("name: status" or "name:
+// completed conclusion"). Splits on the LAST ": " - a job name can itself
+// contain a colon (e.g. "test: unit (node 18)"), but the appended
+// status/conclusion never does.
+function parseCheckLine(line: string): CheckRun | null {
+  const idx = line.lastIndexOf(': ')
+  if (idx === -1) return null
+  const name = line.slice(0, idx).trim()
+  const rest = line.slice(idx + 2).trim()
+  if (!name || !rest) return null
+  const [status, ...conclusionParts] = rest.split(' ')
+  if (status === 'completed') {
+    const conclusion = conclusionParts.join(' ')
+    return conclusion ? { name, status, conclusion } : null
+  }
+  return { name, status: rest }
+}
+
+// parseChecks parses every line of a <checks> block's body, or returns null
+// if any line doesn't match - the whole block falls back to raw rather than
+// silently dropping the checks it couldn't parse.
+function parseChecks(raw: string): CheckRun[] | null {
+  const lines = raw.split('\n').map(l => l.trim()).filter(Boolean)
+  if (lines.length === 0) return null
+  const checks: CheckRun[] = []
+  for (const line of lines) {
+    const c = parseCheckLine(line)
+    if (!c) return null
+    checks.push(c)
+  }
+  return checks
 }
 
 function numAttr(v: string | undefined): number | undefined {
@@ -319,4 +369,13 @@ export function changedFilesSummaryLabel(b: Extract<EnvelopeBlock, { kind: 'chan
   const add = b.additions ?? 0
   const del = b.deletions ?? 0
   return `${n} file${n === 1 ? '' : 's'}, +${add}/-${del}`
+}
+
+// checksSummaryLabel is the collapsed header for a <checks> block: the
+// backend's own failing/pending/passing summary attribute when present
+// (checksBlock always sends one alongside a non-empty block), else a plain count.
+export function checksSummaryLabel(b: Extract<EnvelopeBlock, { kind: 'checks' }>): string {
+  if (b.summary) return `checks: ${b.summary}`
+  const n = b.count ?? b.checks?.length ?? 0
+  return `${n} check${n === 1 ? '' : 's'}`
 }

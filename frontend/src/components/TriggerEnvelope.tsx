@@ -6,6 +6,7 @@ import {
   parseEnvelope,
   commentsSummaryLabel,
   changedFilesSummaryLabel,
+  checksSummaryLabel,
   accumulateComments,
   type EnvelopeBlock,
 } from './envelope'
@@ -61,6 +62,7 @@ function EnvelopeBlockView({ block, priorContents }: { block: EnvelopeBlock; pri
     case 'ask': return <AskSection block={block} />
     case 'comments': return <CommentsSection block={block} priorContents={priorContents} />
     case 'changed_files': return <ChangedFilesSection block={block} />
+    case 'checks': return <ChecksSection block={block} />
     case 'event': return <EventSection block={block} />
     case 'context': return <ContextSection block={block} />
     case 'unknown': return <UnknownSection block={block} />
@@ -221,6 +223,41 @@ function ChangedFilesSection({ block }: { block: Extract<EnvelopeBlock, { kind: 
                 </span>
               </li>
             ))}
+          </ul>
+        </Expandable>
+      ) : <RawFallback text={block.raw} />}
+    </CollapsibleSection>
+  )
+}
+
+// failingCheck reports whether a check's terminal state should read as a
+// failure - the same rule checksBlock uses to build its own summary counts.
+function failingCheck(c: { status: string; conclusion?: string }): boolean {
+  return c.status === 'completed' && (c.conclusion === 'failure' || c.conclusion === 'timed_out')
+}
+
+// ChecksSection - collapsed, header is the backend's failing/pending/passing
+// summary; expands to one monospace line per check, failing ones in the
+// existing red danger token so they read at a glance.
+function ChecksSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'checks' }> }) {
+  return (
+    <CollapsibleSection summary={checksSummaryLabel(block)}>
+      {block.checks ? (
+        <Expandable maxHeight={320} fade="from-white dark:from-gray-800">
+          <ul className="space-y-0.5 text-[11px] font-mono">
+            {block.checks.map((c, i) => {
+              const failing = failingCheck(c)
+              return (
+                <li key={i} className="flex items-center gap-2">
+                  <span className={`truncate ${failing ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-200'}`}>
+                    {c.name}
+                  </span>
+                  <span className={`ml-auto shrink-0 ${failing ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-gray-400 dark:text-gray-500'}`}>
+                    {c.status}{c.conclusion ? ` ${c.conclusion}` : ''}
+                  </span>
+                </li>
+              )
+            })}
           </ul>
         </Expandable>
       ) : <RawFallback text={block.raw} />}

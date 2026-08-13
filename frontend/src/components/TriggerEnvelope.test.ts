@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { parseEnvelope, commentsSummaryLabel, changedFilesSummaryLabel, accumulateComments, type EnvelopeBlock } from './envelope'
+import { parseEnvelope, commentsSummaryLabel, changedFilesSummaryLabel, checksSummaryLabel, accumulateComments, type EnvelopeBlock } from './envelope'
 import { TriggerMessage } from './TriggerEnvelope'
 
 // A full CI-fix envelope (design: .quack/trigger-prompts-v2.md, Step 6/7) -
@@ -107,6 +107,55 @@ describe('parseEnvelope', () => {
   })
 })
 
+// A <checks> block (quack-extensions/github's checksBlock format): one
+// "name: status[ conclusion]" line per check plus a count/summary attribute pair.
+const CHECKS_ENVELOPE = `<permissions>p</permissions>
+<deliverable>d</deliverable>
+<checks count="3" summary="1 failing, 1 pending, 1 passing">build: completed failure
+lint: in_progress
+test: completed success
+</checks>`
+
+function checksBlockOf(content: string) {
+  const b = parseEnvelope(content)!.find(b => b.kind === 'checks')
+  if (!b) throw new Error('fixture has no <checks> block')
+  return b as Extract<EnvelopeBlock, { kind: 'checks' }>
+}
+
+describe('checksSummaryLabel', () => {
+  it('uses the summary attribute when present', () => {
+    const b = checksBlockOf(CHECKS_ENVELOPE)
+    expect(b.checks).toEqual([
+      { name: 'build', status: 'completed', conclusion: 'failure' },
+      { name: 'lint', status: 'in_progress' },
+      { name: 'test', status: 'completed', conclusion: 'success' },
+    ])
+    expect(checksSummaryLabel(b)).toBe('checks: 1 failing, 1 pending, 1 passing')
+  })
+
+  it('falls back to a plain count when the summary attribute is absent', () => {
+    const noSummary = `<permissions>p</permissions><deliverable>d</deliverable><checks count="2">build: completed success
+lint: completed success
+</checks>`
+    expect(checksSummaryLabel(checksBlockOf(noSummary))).toBe('2 checks')
+  })
+
+  it('falls back to a plain count when the summary attribute is empty/malformed', () => {
+    const emptySummary = `<permissions>p</permissions><deliverable>d</deliverable><checks count="1" summary="">build: completed success
+</checks>`
+    expect(checksSummaryLabel(checksBlockOf(emptySummary))).toBe('1 check')
+  })
+
+  it('degrades a checks block with an unparsable line to the raw fallback, not a throw', () => {
+    const malformed = `<permissions>p</permissions><deliverable>d</deliverable><checks count="1" summary="1 passing">not a valid check line</checks>`
+    const b = checksBlockOf(malformed)
+    expect(b.checks).toBeNull()
+    expect(b.raw).toBe('not a valid check line')
+    // The summary attribute still parses independently of the body.
+    expect(checksSummaryLabel(b)).toBe('checks: 1 passing')
+  })
+})
+
 // #730 fixtures: a seed turn (full snapshot, envelope.go's commentsBlock with
 // gh.delta == nil) followed by two resume deltas, mirroring a real
 // issue-comment back-and-forth across three triggers.
@@ -197,6 +246,14 @@ describe('TriggerMessage', () => {
     expect(out).toContain('1 new, 0 edited, 0 deleted')
     expect(out).toContain('16 files, +880/-330')
     expect(out).toContain('workflow_run.completed')
+  })
+
+  it('renders a <checks> block with the summary label collapsed and per-check lines expanded', () => {
+    const withChecks = CI_FIX_ENVELOPE.replace('</changed_files>', '</changed_files>\n' + CHECKS_ENVELOPE.split('\n').slice(2).join('\n'))
+    const out = renderToStaticMarkup(createElement(TriggerMessage, { content: withChecks }))
+    expect(out).toContain('checks: 1 failing, 1 pending, 1 passing')
+    expect(out).toContain('build')
+    expect(out).toContain('failure')
   })
 
   it('renders an unknown block as a labelled collapsed section rather than dropping it', () => {
@@ -303,6 +360,20 @@ describe('TriggerMessage interaction (real DOM, not string assertions)', () => {
       act(() => root!.unmount())
       host!.remove()
     }
+  })
+
+  it('a failing check is visibly distinguishable from a passing/pending one once its section is opened', () => {
+    const envelope = `<permissions>join_pr_conversation</permissions>
+<deliverable>a review</deliverable>
+${CHECKS_ENVELOPE.split('\n').slice(2).join('\n')}`
+    const el = mount(envelope)
+    const details = el.querySelector('details')!
+    act(() => details.querySelector('summary')!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
+    expect(details.open).toBe(true)
+    expect(details.textContent).toContain('build')
+    expect(details.textContent).toContain('failure')
+    // The failing check's danger styling, not shared by the passing/pending rows.
+    expect(details.innerHTML).toMatch(/text-red-600[^"]*"[^>]*>build/)
   })
 
   it('a deleted comment is visibly distinguishable from a live one once its section is opened', () => {
