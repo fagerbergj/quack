@@ -85,6 +85,8 @@ type AgentStartData struct {
 	Agent  string `json:"agent"`
 	Stage  string `json:"stage"` // worker | judge | revise
 	Round  int    `json:"round,omitempty"`
+	// Server wall-clock (epoch ms) the run began - anchors the per-run timer across reconnect/replay.
+	StartedAtMs int64 `json:"started_at_ms,omitempty"`
 }
 
 // Reasoning streamed during a run.

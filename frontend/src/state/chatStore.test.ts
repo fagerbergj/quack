@@ -615,6 +615,76 @@ describe('ChatStore - mid-node steering', () => {
     expect(dag?.startedAt).toBe(1000)
     expect(dag?.nodeStates['a'].startedAt).toBe(2000)
   })
+
+  // Root cause of the sub-step (worker/judge/revise) timer resetting on page
+  // refresh: agent_start carried no server timestamp, so a replayed run always
+  // anchored to Date.now() at replay time. Mirrors the dag/node test above for
+  // the run level.
+  it('uses server started_at_ms for a sub-step (agent_start) timer, not replay-time Date.now()', async () => {
+    const sse = [
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"r","task":"t","depends_on":[]}],"edges":[]}',
+      '',
+      'event: node_start',
+      'data: {"node_id":"a","agent":"r"}',
+      '',
+      'event: agent_start',
+      'data: {"node_id":"a","run_id":"judge-r1","agent":"judge","stage":"judge","started_at_ms":5000}',
+      '',
+    ].join('\n')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'go')
+    const run = store.get('c').live?.dag?.nodeRuns['a']?.find(r => r.runId === 'judge-r1')
+    expect(run?.startedAt).toBe(5000)
+  })
+
+  // A live run (no replay) carries no started_at_ms yet - it still anchors, this
+  // time to Date.now() at arrival, so it starts ticking from ~0 immediately.
+  it('falls back to Date.now() for a live agent_start with no started_at_ms', async () => {
+    const before = Date.now()
+    const sse = [
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"r","task":"t","depends_on":[]}],"edges":[]}',
+      '',
+      'event: node_start',
+      'data: {"node_id":"a","agent":"r"}',
+      '',
+      'event: agent_start',
+      'data: {"node_id":"a","run_id":"worker-r0","agent":"r","stage":"worker"}',
+      '',
+    ].join('\n')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'go')
+    const after = Date.now()
+    const run = store.get('c').live?.dag?.nodeRuns['a']?.find(r => r.runId === 'worker-r0')
+    expect(run?.startedAt).toBeGreaterThanOrEqual(before)
+    expect(run?.startedAt).toBeLessThanOrEqual(after)
+  })
+
+  // Clock-skew guard: a server clock ahead of the client must never produce a
+  // start time in the future (which would render as a negative elapsed
+  // duration) - clamp to the client's own now instead.
+  it('clamps a future server started_at_ms (clock skew) to the client now', async () => {
+    const future = Date.now() + 60_000
+    const sse = [
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"r","task":"t","depends_on":[]}],"edges":[]}',
+      '',
+      'event: node_start',
+      'data: {"node_id":"a","agent":"r"}',
+      '',
+      'event: agent_start',
+      `data: {"node_id":"a","run_id":"judge-r1","agent":"judge","stage":"judge","started_at_ms":${future}}`,
+      '',
+    ].join('\n')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    const before = Date.now()
+    await store.submit('c', 'go')
+    const after = Date.now()
+    const run = store.get('c').live?.dag?.nodeRuns['a']?.find(r => r.runId === 'judge-r1')
+    expect(run?.startedAt).toBeGreaterThanOrEqual(before)
+    expect(run?.startedAt).toBeLessThanOrEqual(after)
+  })
 })
 
 // dag builds a minimal DagTurnState: two nodes, b depends on a (a is not

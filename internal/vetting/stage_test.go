@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
@@ -128,18 +129,26 @@ func TestStageSpan_SSEWireFormatUnchanged(t *testing.T) {
 	sink := func(ev stream.SSEEvent) { got = append(got, ev) }
 	cfg := Config{ChatID: "chat-1", Agent: "code-reviewer"}
 
+	before := time.Now().UnixMilli()
 	_, jspan := startStageSpan(context.Background(), sink, cfg, "node-1", "judge", stream.StageJudge, "judge-r1", 1)
+	after := time.Now().UnixMilli()
 	jspan.end(stream.AgentCompleteData{RunID: "judge-r1", Stage: stream.StageJudge, Round: 1, Score: 0.9, Passed: true, Feedback: "solid"}, nil)
 
-	wantStart := `{"node_id":"node-1","run_id":"judge-r1","agent":"judge","stage":"judge","round":1}`
 	// AgentCompleteData.MarshalJSON re-serializes judge-stage payloads through a
 	// map for the score/passed/feedback omitempty override, so keys sort alphabetically.
 	wantComplete := `{"feedback":"solid","node_id":"node-1","passed":true,"round":1,"run_id":"judge-r1","score":0.9,"stage":"judge"}`
 
-	gotStart, err := json.Marshal(got[0].Data)
+	start := got[0].Data.(stream.AgentStartData)
+	if start.StartedAtMs < before || start.StartedAtMs > after {
+		t.Errorf("agent_start.StartedAtMs = %d, want within [%d, %d]", start.StartedAtMs, before, after)
+	}
+	// Wire shape sans the timestamp, which is asserted separately above (it's real wall-clock, not pinnable).
+	start.StartedAtMs = 0
+	gotStart, err := json.Marshal(start)
 	if err != nil {
 		t.Fatalf("marshal agent_start: %v", err)
 	}
+	wantStart := `{"node_id":"node-1","run_id":"judge-r1","agent":"judge","stage":"judge","round":1}`
 	if string(gotStart) != wantStart {
 		t.Errorf("agent_start JSON = %s, want %s", gotStart, wantStart)
 	}

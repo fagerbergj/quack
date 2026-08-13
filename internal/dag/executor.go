@@ -336,7 +336,7 @@ func (s *dagStream) handle(ev *session.Event) bool {
 		}
 		st, rd := stageRound(runID)
 		if !s.emit(stream.ScopeToNode(stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{
-			RunID: runID, Agent: s.agentByID[node], Stage: st, Round: rd,
+			RunID: runID, Agent: s.agentByID[node], Stage: st, Round: rd, StartedAtMs: time.Now().UnixMilli(),
 		}}, node)) {
 			return false
 		}
