@@ -9,7 +9,7 @@ import type { ComponentPropsWithoutRef } from 'react'
 import type { Element } from 'hast'
 import type { Activity, ToolCall } from './messageParts'
 import { agentLabel, liveStatusLine } from './messageParts'
-import { summarizeArgs, previewLine, toolFailed, toolActionLine } from './toolFormat'
+import { summarizeArgs, previewLine, toolFailed, toolActionLine, fmtTokenCount } from './toolFormat'
 import { escapeUnmatchedBackticks } from '../lib/backticks'
 import { Expandable } from './Expandable'
 import { ToolCallView } from './ToolCallView'
@@ -151,11 +151,13 @@ export function ActivityList({ activity }: { activity: Activity[] }) {
           {showAll ? '▾ show less' : `⋯ ${hidden} earlier`}
         </button>
       )}
-      {activity.slice(start).map((a, i) => (
-        a.kind === 'thinking'
-          ? <ThinkBlock key={start + i} text={a.text} />
-          : <ToolBlock key={start + i} tool={a.tool} />
-      ))}
+      {activity.slice(start).map((a, i) => {
+        switch (a.kind) {
+          case 'thinking': return <ThinkBlock key={start + i} text={a.text} />
+          case 'compaction': return <CompactionBlock key={start + i} tokensBefore={a.tokensBefore} tokensAfter={a.tokensAfter} />
+          default: return <ToolBlock key={start + i} tool={a.tool} />
+        }
+      })}
     </>
   )
 }
@@ -218,6 +220,19 @@ function ThinkBlock({ text }: { text: string }) {
         </Expandable>
       </div>
     </details>
+  )
+}
+
+// CompactionBlock is a one-line inline row marking a mid-round history
+// rewrite - same collapsed-summary ethos as ThinkBlock/ToolBlock, but never
+// expands: the before/after counts are the whole story.
+function CompactionBlock({ tokensBefore, tokensAfter }: { tokensBefore: number; tokensAfter: number }) {
+  return (
+    <div className="flex items-center gap-1.5 my-0.5 py-0.5 text-[11px] text-gray-400 dark:text-gray-500 not-prose">
+      <span aria-hidden>↯</span>
+      <span className="italic">compacted</span>
+      <span className="tabular-nums">{fmtTokenCount(tokensBefore)} → {fmtTokenCount(tokensAfter)}</span>
+    </div>
   )
 }
 

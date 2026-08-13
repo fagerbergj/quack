@@ -118,6 +118,57 @@ func TestNodeDoneReportsCumulativeTokenUsage(t *testing.T) {
 	}
 }
 
+// ContextTokens must be the LAST measured prompt-token count, not summed like
+// PromptTokens - a multi-tool-call round's calls each report the model's
+// growing context size, so summing them overshoots what the model actually
+// held at any one time.
+func TestAgentCompleteContextTokensIsLastNotSummed(t *testing.T) {
+	const r0 = "quack-dag-p@1/n1@rr/web-researcher@worker-r0"
+	const r1 = "quack-dag-p@1/n1@rr/web-researcher@worker-r1"
+	const npath = "quack-dag-p@1/n1@rr"
+	agentByID := map[string]string{"n1": "web-researcher"}
+
+	withPrompt := func(path string, prompt int32) *session.Event {
+		e := ev(path, &genai.Part{Text: "x"})
+		e.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: prompt}
+		return e
+	}
+
+	evs := []*session.Event{
+		// r0: two tool-call round trips within the same round - context grows
+		// with each call, so the round's occupancy is the LAST one (60k), not
+		// the sum (100k).
+		withPrompt(r0, 40_000),
+		withPrompt(r0, 60_000),
+		// r1: one call.
+		withPrompt(r1, 90_000),
+		{NodeInfo: &session.NodeInfo{Path: npath}, Output: "final"},
+	}
+
+	got := drive(evs, agentByID, gateScore{})
+	var nd stream.NodeDoneData
+	complete := map[string]stream.AgentCompleteData{}
+	for _, e := range got {
+		switch e.Name {
+		case stream.EventNodeDone:
+			nd = e.Data.(stream.NodeDoneData)
+		case stream.EventAgentComplete:
+			d := e.Data.(stream.AgentCompleteData)
+			complete[d.RunID] = d
+		}
+	}
+	if got := complete["worker-r0"].ContextTokens; got != 60_000 {
+		t.Errorf("worker-r0 ContextTokens = %d, want 60000 (last call, not the 100000 sum)", got)
+	}
+	if got := complete["worker-r1"].ContextTokens; got != 90_000 {
+		t.Errorf("worker-r1 ContextTokens = %d, want 90000", got)
+	}
+	// node_done also overwrites across rounds rather than summing.
+	if nd.ContextTokens != 90_000 {
+		t.Errorf("node_done ContextTokens = %d, want 90000 (freshest round, not 40000+60000+90000)", nd.ContextTokens)
+	}
+}
+
 // nowMinus returns a time n seconds in the past.
 func nowMinus(t *testing.T, secs int) time.Time {
 	t.Helper()

@@ -218,3 +218,39 @@ describe('DagNode - token badge shows cached tokens alongside the total', () => 
     expect(out).not.toContain('cached')
   })
 })
+
+describe('DagNode - context meter', () => {
+  const meterNode: DagNodeDef = { ...node, context_window: 262_144 }
+
+  function meterHtml(contextTokens: number, def = meterNode): string {
+    return renderToStaticMarkup(createElement(DagNode, {
+      node: def,
+      state: { status: 'running', startedAt: 0, contextTokens },
+      runs: [],
+      answer: '',
+      isFinal: false,
+    }))
+  }
+
+  it('shows a compact used/limit reading once a round reports context tokens', () => {
+    expect(meterHtml(156_000)).toContain('156K/262K')
+  })
+
+  it('colors the bar amber past 80% and red past 95% of the limit', () => {
+    expect(meterHtml(220_000)).toContain('bg-amber-500') // 84%
+    expect(meterHtml(255_000)).toContain('bg-red-500') // 97%
+    expect(meterHtml(50_000)).not.toContain('bg-amber-500') // 19%, plain
+    expect(meterHtml(50_000)).not.toContain('bg-red-500')
+  })
+
+  it('renders nothing for an agent with no configured context_window', () => {
+    expect(meterHtml(156_000, node)).not.toContain('tokens of context used')
+  })
+
+  it('renders nothing before any round has reported context tokens', () => {
+    const out = renderToStaticMarkup(createElement(DagNode, {
+      node: meterNode, state: { status: 'running', startedAt: 0 }, runs: [], answer: '', isFinal: false,
+    }))
+    expect(out).not.toContain('tokens of context used')
+  })
+})

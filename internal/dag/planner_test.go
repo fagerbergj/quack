@@ -59,6 +59,34 @@ func TestBuildValidatesAndStamps(t *testing.T) {
 	}
 }
 
+func TestBuildStampsAgentContextWindow(t *testing.T) {
+	p := NewPlanner([]AgentInfo{
+		{Name: "web-researcher", ContextWindow: 131072},
+		{Name: "synthesizer", ContextWindow: 65536},
+	}, nil, nil)
+	// Two independent (multi-terminal) nodes trigger the auto-appended
+	// synthesizer fan-in - see assemble()'s terminalIDs check.
+	plan, err := p.Build(context.Background(), []RawNode{
+		{ID: "n1", Agent: "web-researcher", Task: "a"},
+		{ID: "n2", Agent: "web-researcher", Task: "b"},
+	}, nil, nil, nil, "do it", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]Node{}
+	for _, n := range plan.Nodes {
+		byID[n.ID] = n
+	}
+	if got := byID["n1"].ContextWindow; got != 131072 {
+		t.Errorf("n1.ContextWindow = %d, want 131072", got)
+	}
+	// The auto-appended synthesizer fan-in gets its limit too, not just
+	// explicitly-authored nodes.
+	if got := byID["synthesize"].ContextWindow; got != 65536 {
+		t.Errorf("synthesize.ContextWindow = %d, want 65536", got)
+	}
+}
+
 func TestBuildRejectsBadPlans(t *testing.T) {
 	p := testPlanner()
 	cases := map[string][]RawNode{

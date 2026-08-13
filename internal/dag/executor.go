@@ -231,7 +231,11 @@ type dagStream struct {
 
 type runUsage struct {
 	prompt, completion, reasoning, total, cached int32
-	model, finish                                string
+	// ctxTokens is the LAST measured prompt-token count seen, not summed like
+	// the fields above - a multi-tool-call round sums past the model's actual
+	// context occupancy, so the context meter needs this instead.
+	ctxTokens     int32
+	model, finish string
 }
 
 func newDagStream(agentByID map[string]string, yield func(stream.SSEEvent, error) bool, outputs map[string]string, scoreOf func(string) gateScore, cancelled func(string) bool, userPaused func(string) bool, steerOf func(string, int) string) *dagStream {
@@ -399,6 +403,9 @@ func (s *dagStream) accum(node string, ev *session.Event) {
 		u.reasoning += ev.UsageMetadata.ThoughtsTokenCount
 		u.total += ev.UsageMetadata.TotalTokenCount
 		u.cached += ev.UsageMetadata.CachedContentTokenCount
+		if ev.UsageMetadata.PromptTokenCount > 0 {
+			u.ctxTokens = ev.UsageMetadata.PromptTokenCount
+		}
 	}
 	if ev.ModelVersion != "" {
 		u.model = ev.ModelVersion
@@ -421,6 +428,7 @@ func (s *dagStream) closeRun(node string) bool {
 	if u := s.usage[node]; u != nil {
 		d.Model, d.FinishReason = u.model, u.finish
 		d.PromptTokens, d.CompletionTokens, d.ReasoningTokens, d.TotalTokens, d.CachedTokens = u.prompt, u.completion, u.reasoning, u.total, u.cached
+		d.ContextTokens = u.ctxTokens
 		if nu := s.nodeUsage[node]; nu != nil {
 			nu.prompt += u.prompt
 			nu.completion += u.completion
@@ -428,6 +436,11 @@ func (s *dagStream) closeRun(node string) bool {
 			nu.total += u.total
 			nu.cached += u.cached
 			nu.model, nu.finish = u.model, u.finish
+			// Overwritten, not accumulated: node_done should report the freshest
+			// context occupancy across the node's rounds, not their sum.
+			if u.ctxTokens > 0 {
+				nu.ctxTokens = u.ctxTokens
+			}
 		}
 	}
 	s.curRun[node] = ""
@@ -456,6 +469,7 @@ func (s *dagStream) nodeDoneData(node string) stream.NodeDoneData {
 	if u := s.nodeUsage[node]; u != nil {
 		d.Model, d.FinishReason = u.model, u.finish
 		d.PromptTokens, d.CompletionTokens, d.ReasoningTokens, d.TotalTokens, d.CachedTokens = u.prompt, u.completion, u.reasoning, u.total, u.cached
+		d.ContextTokens = u.ctxTokens
 	}
 	if s.scoreOf != nil {
 		g := s.scoreOf(node)

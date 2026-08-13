@@ -4,6 +4,7 @@ import {
   appendRunThinking,
   appendRunToolCall,
   fillRunToolResult,
+  appendRunCompaction,
   completeRun,
   freezeOpenRuns,
   type AgentRun,
@@ -30,6 +31,10 @@ export interface NodeState {
   reasoningTokens?: number
   totalTokens?: number
   cachedTokens?: number
+  // contextTokens is the LAST measured prompt-token count from the node's
+  // most recent worker/revise round - the context meter's "used" reading,
+  // updated on agent_complete and frozen by node_done.
+  contextTokens?: number
   finishReason?: string
   serverDurationMs?: number
   judgeRounds?: number
@@ -814,10 +819,16 @@ export class ChatStore {
           }
           if (d.nodeId) {
             updateNodeRuns(d.nodeId, r => completeRun(r, d.runId, completeArgs, Date.now()))
+            // Context meter tracks only the answer-producing stages - a judge
+            // run's own context has nothing to do with the worker's window.
+            if (ANSWER_STAGES.has(d.stage) && d.contextTokens != null) {
+              updateNodeState(d.nodeId, { contextTokens: d.contextTokens })
+            }
           } else {
             updateTopLevelRuns(r => completeRun(r, d.runId, completeArgs, Date.now()))
           }
         },
+        onCompaction: d => updateNodeRuns(d.nodeId, r => appendRunCompaction(r, d.runId, d.tokensBefore, d.tokensAfter)),
         onChatTitle: title => onTitle?.(title),
         onError,
         // The very first event of a run: captures the response id so stop()
@@ -861,6 +872,7 @@ export class ChatStore {
             reasoningTokens: meta.reasoningTokens,
             totalTokens: meta.totalTokens,
             cachedTokens: meta.cachedTokens,
+            contextTokens: meta.contextTokens,
             finishReason: meta.finishReason,
             serverDurationMs: meta.durationMs,
             judgeRounds: meta.judgeRounds,

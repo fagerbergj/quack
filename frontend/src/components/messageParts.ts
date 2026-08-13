@@ -28,10 +28,12 @@ export interface ToolCall {
   done: boolean
 }
 
-// Activity is one ordered item inside a run: reasoning or a tool call.
+// Activity is one ordered item inside a run: reasoning, a tool call, or a
+// context-compaction event (the run's history was rewritten mid-round).
 export type Activity =
   | { kind: 'thinking'; text: string }
   | { kind: 'tool'; tool: ToolCall }
+  | { kind: 'compaction'; tokensBefore: number; tokensAfter: number }
 
 // AgentRun is one agent invocation within a node. Result fields are populated on
 // agent_complete and vary by stage.
@@ -161,6 +163,16 @@ export function freezeOpenRuns(runs: AgentRun[], nowMs?: number): AgentRun[] {
     if (run.done) return run
     const durationMs = nowMs != null && run.startedAt != null ? nowMs - run.startedAt : run.durationMs
     return { ...run, done: true, durationMs }
+  })
+}
+
+// appendRunCompaction records a compaction event in a run's activity feed
+// (mutated in place, see appendRunThinking) - a no-op if the run isn't found
+// (e.g. the client attached after the run's own agent_start already scrolled by).
+export function appendRunCompaction(runs: AgentRun[], runId: string, tokensBefore: number, tokensAfter: number): AgentRun[] {
+  return mapRun(runs, runId, run => {
+    run.activity.push({ kind: 'compaction', tokensBefore, tokensAfter })
+    return { ...run }
   })
 }
 

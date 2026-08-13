@@ -55,6 +55,9 @@ func totalChurn(message string) int {
 type AgentInfo struct {
 	Name        string
 	Description string
+	// ContextWindow: the agent's configured context_window (0 if unset) - carried onto
+	// each node it's assigned to, for the frontend's context meter.
+	ContextWindow int
 }
 
 // Planner validates an orchestrator-authored DAG and stamps turn context for the executor.
@@ -253,9 +256,9 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 	if err := validateDelivery(delivery); err != nil {
 		return nil, err
 	}
-	known := make(map[string]bool, len(agents))
+	known := make(map[string]AgentInfo, len(agents))
 	for _, a := range agents {
-		known[a.Name] = true
+		known[a.Name] = a
 	}
 	ids := make(map[string]bool, len(nodes))
 	plan := &Plan{ID: uuid.NewString(), Setup: setup, Delivery: delivery, AllowedDeliveryKinds: allowedKinds}
@@ -266,7 +269,8 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 		if ids[n.ID] {
 			return nil, fmt.Errorf("duplicate node id %q", n.ID)
 		}
-		if !known[n.Agent] {
+		agentInfo, ok := known[n.Agent]
+		if !ok {
 			return nil, fmt.Errorf("unknown agent %q for node %q", n.Agent, n.ID)
 		}
 		if len(n.Checks) > 0 {
@@ -276,13 +280,14 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 		}
 		ids[n.ID] = true
 		plan.Nodes = append(plan.Nodes, Node{
-			ID:        n.ID,
-			AgentName: n.Agent,
-			Task:      n.Task,
-			Rubric:    n.Rubric,
-			DependsOn: n.DependsOn,
-			Checks:    n.Checks,
-			Workdir:   n.Workdir,
+			ID:            n.ID,
+			AgentName:     n.Agent,
+			Task:          n.Task,
+			Rubric:        n.Rubric,
+			DependsOn:     n.DependsOn,
+			Checks:        n.Checks,
+			Workdir:       n.Workdir,
+			ContextWindow: agentInfo.ContextWindow,
 		})
 	}
 
@@ -310,17 +315,19 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 			plan.Nodes[i].DependsOn = deps
 		}
 		// Append a synthesizer fan-in when the orchestrator omits it and multi-terminal would fail.
-		if !hasSynth && known["synthesizer"] && len(terminalIDs(plan.Nodes)) > 1 {
+		synthInfo, hasSynthAgent := known["synthesizer"]
+		if !hasSynth && hasSynthAgent && len(terminalIDs(plan.Nodes)) > 1 {
 			// Appended fan-in is safe: nothing depends on it, no descendants to cycle into.
 			var all []string
 			for _, n := range plan.Nodes {
 				all = append(all, n.ID)
 			}
 			plan.Nodes = append(plan.Nodes, Node{
-				ID:        "synthesize",
-				AgentName: "synthesizer",
-				Task:      "Combine the findings from every preceding node into one complete, well-cited answer to the user's request.",
-				DependsOn: all,
+				ID:            "synthesize",
+				AgentName:     "synthesizer",
+				Task:          "Combine the findings from every preceding node into one complete, well-cited answer to the user's request.",
+				DependsOn:     all,
+				ContextWindow: synthInfo.ContextWindow,
 			})
 		}
 	}

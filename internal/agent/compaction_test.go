@@ -16,7 +16,9 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/inference"
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
+	"github.com/fagerbergj/quack/internal/stream"
 )
 
 // --- fakes -----------------------------------------------------------------
@@ -242,6 +244,66 @@ func TestCompactSummarises(t *testing.T) {
 	}
 	if len(req.Contents) >= len(contents) {
 		t.Fatalf("compaction did not shrink contents: %d → %d", len(contents), len(req.Contents))
+	}
+}
+
+// TestCompactionEmitsNodeScopedEvent: a compaction round must forward a
+// compaction event through the yield-ctx escape hatch, carrying the node/run
+// coordinates and the actual before/after shrink - so the frontend's context
+// meter and node timeline see it, not just the log line.
+func TestCompactionEmitsNodeScopedEvent(t *testing.T) {
+	llm := &fakeLLM{text: "## Goal\n- compacted"}
+
+	task := textContent(genai.RoleUser, "the self-contained task")
+	contents := []*genai.Content{task}
+	for i := 0; i < 30; i++ {
+		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 2_000)))
+	}
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: budgetWindow(contents, defaultEventRetentionSize), Enabled: true})
+
+	var got []stream.SSEEvent
+	ctx := newFakeCtx()
+	ctx.Ctx = ledger.WithCoords(
+		stream.WithYield(context.Background(), func(ev stream.SSEEvent) { got = append(got, ev) }),
+		ledger.Coords{Node: "n1", Round: "worker-r0"},
+	)
+
+	req := &model.LLMRequest{Contents: append([]*genai.Content{}, contents...)}
+	if _, err := cb(ctx, req); err != nil {
+		t.Fatalf("callback err: %v", err)
+	}
+
+	if len(got) != 1 {
+		t.Fatalf("compaction events emitted = %d, want 1: %+v", len(got), got)
+	}
+	if got[0].Name != stream.EventCompaction {
+		t.Fatalf("event name = %q, want %q", got[0].Name, stream.EventCompaction)
+	}
+	d := got[0].Data.(stream.CompactionData)
+	if d.NodeID != "n1" || d.RunID != "worker-r0" {
+		t.Fatalf("compaction event coords = %+v, want node=n1 run=worker-r0", d)
+	}
+	if d.TokensBefore <= d.TokensAfter {
+		t.Fatalf("compaction event tokens_before=%d tokens_after=%d, want a real shrink", d.TokensBefore, d.TokensAfter)
+	}
+}
+
+// TestCompactionNoYieldNoPanic: outside a DAG node run (no yield-ctx attached
+// - unit tests, the advisor's own nested runner), compaction must still work;
+// emitting the event is best-effort, never a hard dependency.
+func TestCompactionNoYieldNoPanic(t *testing.T) {
+	llm := &fakeLLM{text: "## Goal\n- compacted"}
+	contents := []*genai.Content{textContent(genai.RoleUser, "task")}
+	for i := 0; i < 30; i++ {
+		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 2_000)))
+	}
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: budgetWindow(contents, defaultEventRetentionSize), Enabled: true})
+	req := &model.LLMRequest{Contents: contents}
+	if _, err := cb(newFakeCtx(), req); err != nil {
+		t.Fatalf("callback err: %v", err)
+	}
+	if llm.calls != 1 {
+		t.Fatalf("compaction did not run without a yield sink: calls=%d", llm.calls)
 	}
 }
 

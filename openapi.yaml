@@ -1486,6 +1486,9 @@ components:
           type: array
           items:
             type: string
+        context_window:
+          type: integer
+          description: The assigned agent's configured context_window (0/absent if unset) - the context meter's static limit.
 
     DagEdge:
       type: object
