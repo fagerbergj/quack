@@ -51,11 +51,18 @@ type memoryRow struct {
 	Author     string
 	Timestamp  string
 	Kind       string
-	ChatID     string
+	ChatID     string `gorm:"index"` // ApplyOutcome looks memories up by this
 	NodeID     string
 	Source     string
 	MintedAt   string
-	Vector     []byte
+
+	Status             string
+	ValidFrom          string
+	InvalidatedAt      string
+	InvalidationReason string
+	ReinforcementCount int
+
+	Vector []byte
 }
 
 func (memoryRow) TableName() string { return "memories" }
@@ -73,7 +80,12 @@ func (x *sqliteIndex) ensure(ctx context.Context, _ func() (int, error)) error {
 }
 
 func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32, k int) ([]scored, error) {
-	q := x.db.WithContext(ctx).Where("collection = ?", x.coll)
+	// Recall and the commit-path neighbour query share this: an invalidated
+	// memory must never surface as a candidate to recall OR to reconcile
+	// against (design doc §4(d)) - a missing/NULL status predates the
+	// lifecycle fields and reads as valid.
+	q := x.db.WithContext(ctx).Where("collection = ?", x.coll).
+		Where("status IS NULL OR status <> ?", string(StatusInvalidated))
 	if len(buckets) > 0 {
 		q = q.Where("scope IN ?", buckets) // OR across the caller's buckets
 	}
@@ -84,17 +96,22 @@ func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32
 	out := make([]scored, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, scored{
-			ID:        r.ID,
-			Content:   r.Content,
-			Author:    r.Author,
-			Timestamp: r.Timestamp,
-			Kind:      r.Kind,
-			Scope:     r.Scope,
-			ChatID:    r.ChatID,
-			NodeID:    r.NodeID,
-			Source:    r.Source,
-			MintedAt:  r.MintedAt,
-			Score:     cosine(vec, bytesToVec(r.Vector)),
+			ID:                 r.ID,
+			Content:            r.Content,
+			Author:             r.Author,
+			Timestamp:          r.Timestamp,
+			Kind:               r.Kind,
+			Scope:              r.Scope,
+			ChatID:             r.ChatID,
+			NodeID:             r.NodeID,
+			Source:             r.Source,
+			MintedAt:           r.MintedAt,
+			Status:             r.Status,
+			ValidFrom:          r.ValidFrom,
+			InvalidatedAt:      r.InvalidatedAt,
+			InvalidationReason: r.InvalidationReason,
+			ReinforcementCount: r.ReinforcementCount,
+			Score:              cosine(vec, bytesToVec(r.Vector)),
 		})
 	}
 	// Highest cosine first; cap to k. ponytail: O(n) scan + sort - fine at memory
@@ -126,6 +143,8 @@ func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit 
 		out[i] = scored{
 			ID: r.ID, Content: r.Content, Author: r.Author, Timestamp: r.Timestamp, Kind: r.Kind, Scope: r.Scope,
 			ChatID: r.ChatID, NodeID: r.NodeID, Source: r.Source, MintedAt: r.MintedAt,
+			Status: r.Status, ValidFrom: r.ValidFrom, InvalidatedAt: r.InvalidatedAt,
+			InvalidationReason: r.InvalidationReason, ReinforcementCount: r.ReinforcementCount,
 		}
 	}
 	return out, nil
@@ -147,18 +166,23 @@ func (x *sqliteIndex) upsert(ctx context.Context, pts []point) error {
 	rows := make([]memoryRow, len(pts))
 	for i, p := range pts {
 		rows[i] = memoryRow{
-			ID:         p.ID,
-			Collection: x.coll,
-			Scope:      p.Scope,
-			Content:    p.Content,
-			Author:     p.Author,
-			Timestamp:  p.Timestamp,
-			Kind:       p.Kind,
-			ChatID:     p.ChatID,
-			NodeID:     p.NodeID,
-			Source:     p.Source,
-			MintedAt:   p.MintedAt,
-			Vector:     vecToBytes(p.Vector),
+			ID:                 p.ID,
+			Collection:         x.coll,
+			Scope:              p.Scope,
+			Content:            p.Content,
+			Author:             p.Author,
+			Timestamp:          p.Timestamp,
+			Kind:               p.Kind,
+			ChatID:             p.ChatID,
+			NodeID:             p.NodeID,
+			Source:             p.Source,
+			MintedAt:           p.MintedAt,
+			Status:             p.Status,
+			ValidFrom:          p.ValidFrom,
+			InvalidatedAt:      p.InvalidatedAt,
+			InvalidationReason: p.InvalidationReason,
+			ReinforcementCount: p.ReinforcementCount,
+			Vector:             vecToBytes(p.Vector),
 		}
 	}
 	// Upsert on the primary key so an UPDATE op (same id) overwrites in place.
@@ -179,6 +203,61 @@ func (x *sqliteIndex) remove(ctx context.Context, ids []string) (int, error) {
 		return 0, fmt.Errorf("memory: sqlite delete: %w", res.Error)
 	}
 	return int(res.RowsAffected), nil
+}
+
+// invalidateByID soft-invalidates ids in place - a plain UPDATE, never a
+// DELETE (design doc §4(a): the consolidator's DELETE invalidates, it
+// doesn't remove).
+func (x *sqliteIndex) invalidateByID(ctx context.Context, ids []string, reason string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	err := x.db.WithContext(ctx).Model(&memoryRow{}).
+		Where("collection = ? AND id IN ?", x.coll, ids).
+		Updates(map[string]any{
+			"status":              string(StatusInvalidated),
+			"invalidated_at":      nowRFC3339(),
+			"invalidation_reason": reason,
+		}).Error
+	if err != nil {
+		return fmt.Errorf("memory: sqlite invalidate: %w", err)
+	}
+	return nil
+}
+
+// updateStatus applies o to every row whose chat_id matches and isn't
+// already invalidated (sticky), one UPDATE per row since reinforcement_count
+// differs per row. Returns the ids touched.
+func (x *sqliteIndex) updateStatus(ctx context.Context, chatID string, o OutcomeSignal) ([]string, error) {
+	var rows []memoryRow
+	err := x.db.WithContext(ctx).
+		Where("collection = ? AND chat_id = ?", x.coll, chatID).
+		Where("status IS NULL OR status <> ?", string(StatusInvalidated)).
+		Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("memory: sqlite outcome query: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	ts := nowRFC3339()
+	ids := make([]string, len(rows))
+	for i, r := range rows {
+		ids[i] = r.ID
+		var upd map[string]any
+		switch o.Kind {
+		case OutcomeReinforced:
+			upd = map[string]any{"status": string(StatusReinforced), "reinforcement_count": r.ReinforcementCount + 1}
+		case OutcomeInvalidated:
+			upd = map[string]any{"status": string(StatusInvalidated), "invalidated_at": ts, "invalidation_reason": o.Reason}
+		}
+		if err := x.db.WithContext(ctx).Model(&memoryRow{}).
+			Where("collection = ? AND id = ?", x.coll, r.ID).
+			Updates(upd).Error; err != nil {
+			return nil, fmt.Errorf("memory: sqlite outcome update: %w", err)
+		}
+	}
+	return ids, nil
 }
 
 // cosine is the cosine similarity of two equal-length vectors, in [-1, 1]; 0 for

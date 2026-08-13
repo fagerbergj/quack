@@ -32,6 +32,12 @@ const (
 	payloadNodeID    = "node_id"
 	payloadSource    = "source"
 	payloadMintedAt  = "minted_at"
+
+	payloadStatus             = "status"
+	payloadValidFrom          = "valid_from"
+	payloadInvalidatedAt      = "invalidated_at"
+	payloadInvalidationReason = "invalidation_reason"
+	payloadReinforcementCount = "reinforcement_count"
 )
 
 // Open connects to Qdrant at addr (host:port gRPC) and returns a memory Store
@@ -95,18 +101,36 @@ func bucketFilter(buckets []string) *qdrant.Filter {
 
 func pointFromPayload(id *qdrant.PointId, payload map[string]*qdrant.Value, score float32) scored {
 	return scored{
-		ID:        pointID(id),
-		Content:   payloadString(payload, payloadContent),
-		Author:    payloadString(payload, payloadAuthor),
-		Timestamp: payloadString(payload, payloadTimestamp),
-		Kind:      payloadString(payload, payloadKind),
-		Scope:     payloadString(payload, payloadScope),
-		ChatID:    payloadString(payload, payloadChatID),
-		NodeID:    payloadString(payload, payloadNodeID),
-		Source:    payloadString(payload, payloadSource),
-		MintedAt:  payloadString(payload, payloadMintedAt),
-		Score:     score,
+		ID:                 pointID(id),
+		Content:            payloadString(payload, payloadContent),
+		Author:             payloadString(payload, payloadAuthor),
+		Timestamp:          payloadString(payload, payloadTimestamp),
+		Kind:               payloadString(payload, payloadKind),
+		Scope:              payloadString(payload, payloadScope),
+		ChatID:             payloadString(payload, payloadChatID),
+		NodeID:             payloadString(payload, payloadNodeID),
+		Source:             payloadString(payload, payloadSource),
+		MintedAt:           payloadString(payload, payloadMintedAt),
+		Status:             payloadString(payload, payloadStatus),
+		ValidFrom:          payloadString(payload, payloadValidFrom),
+		InvalidatedAt:      payloadString(payload, payloadInvalidatedAt),
+		InvalidationReason: payloadString(payload, payloadInvalidationReason),
+		ReinforcementCount: payloadInt(payload, payloadReinforcementCount),
+		Score:              score,
 	}
+}
+
+// excludeInvalidated adds a must_not status=invalidated condition to f (or a
+// fresh filter, so this composes with an empty bucket set too). A point
+// minted before the lifecycle fields existed has no status key at all, which
+// never matches a keyword condition - so it passes through as valid, exactly
+// the "missing reads as valid" rule design doc §4(d) calls for.
+func excludeInvalidated(f *qdrant.Filter) *qdrant.Filter {
+	if f == nil {
+		f = &qdrant.Filter{}
+	}
+	f.MustNot = append(f.MustNot, qdrant.NewMatch(payloadStatus, string(StatusInvalidated)))
+	return f
 }
 
 func (x *qdrantIndex) query(ctx context.Context, buckets []string, vec []float32, k int) ([]scored, error) {
@@ -115,8 +139,12 @@ func (x *qdrantIndex) query(ctx context.Context, buckets []string, vec []float32
 		CollectionName: x.coll,
 		Query:          qdrant.NewQueryDense(vec),
 		Limit:          &limit,
-		Filter:         bucketFilter(buckets),
-		WithPayload:    qdrant.NewWithPayload(true),
+		// Recall and the commit-path neighbour query share this: an invalidated
+		// memory must never surface as a candidate to recall OR to reconcile
+		// against (design doc §4(d)) - filtered in the backend query, not a Go
+		// post-filter, so it can't crowd valid points out of the top-k first.
+		Filter:      excludeInvalidated(bucketFilter(buckets)),
+		WithPayload: qdrant.NewWithPayload(true),
 	})
 	if err != nil {
 		return nil, err
@@ -181,17 +209,26 @@ func (x *qdrantIndex) upsert(ctx context.Context, pts []point) error {
 	points := make([]*qdrant.PointStruct, 0, len(pts))
 	for _, p := range pts {
 		payload := map[string]any{
-			payloadContent:   p.Content,
-			payloadScope:     p.Scope,
-			payloadAuthor:    p.Author,
-			payloadTimestamp: p.Timestamp,
-			payloadChatID:    p.ChatID,
-			payloadNodeID:    p.NodeID,
-			payloadSource:    p.Source,
-			payloadMintedAt:  p.MintedAt,
+			payloadContent:            p.Content,
+			payloadScope:              p.Scope,
+			payloadAuthor:             p.Author,
+			payloadTimestamp:          p.Timestamp,
+			payloadChatID:             p.ChatID,
+			payloadNodeID:             p.NodeID,
+			payloadSource:             p.Source,
+			payloadMintedAt:           p.MintedAt,
+			payloadStatus:             p.Status,
+			payloadValidFrom:          p.ValidFrom,
+			payloadReinforcementCount: p.ReinforcementCount,
 		}
 		if p.Kind != "" {
 			payload[payloadKind] = p.Kind
+		}
+		if p.InvalidatedAt != "" {
+			payload[payloadInvalidatedAt] = p.InvalidatedAt
+		}
+		if p.InvalidationReason != "" {
+			payload[payloadInvalidationReason] = p.InvalidationReason
 		}
 		points = append(points, &qdrant.PointStruct{
 			Id:      qdrant.NewID(p.ID),
@@ -213,10 +250,7 @@ func (x *qdrantIndex) remove(ctx context.Context, ids []string) (int, error) {
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	pids := make([]*qdrant.PointId, len(ids))
-	for i, id := range ids {
-		pids[i] = qdrant.NewID(id)
-	}
+	pids := idsToPointIDs(ids)
 	existing, err := x.client.Get(ctx, &qdrant.GetPoints{CollectionName: x.coll, Ids: pids, WithPayload: qdrant.NewWithPayload(false)})
 	if err != nil {
 		return 0, fmt.Errorf("memory: get before delete: %w", err)
@@ -235,11 +269,120 @@ func (x *qdrantIndex) remove(ctx context.Context, ids []string) (int, error) {
 	return len(existing), nil
 }
 
+// idsToPointIDs converts memory ids to the qdrant client's point-id type.
+func idsToPointIDs(ids []string) []*qdrant.PointId {
+	pids := make([]*qdrant.PointId, len(ids))
+	for i, id := range ids {
+		pids[i] = qdrant.NewID(id)
+	}
+	return pids
+}
+
+// invalidateByID soft-invalidates ids in place - a payload-only SetPayload,
+// never a Delete (design doc §4(a): the consolidator's DELETE invalidates,
+// it doesn't remove).
+func (x *qdrantIndex) invalidateByID(ctx context.Context, ids []string, reason string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	wait := true
+	_, err := x.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
+		CollectionName: x.coll,
+		Wait:           &wait,
+		Payload: qdrant.NewValueMap(map[string]any{
+			payloadStatus:             string(StatusInvalidated),
+			payloadInvalidatedAt:      nowRFC3339(),
+			payloadInvalidationReason: reason,
+		}),
+		PointsSelector: &qdrant.PointsSelector{PointsSelectorOneOf: &qdrant.PointsSelector_Points{Points: &qdrant.PointsIdsList{Ids: idsToPointIDs(ids)}}},
+	})
+	if err != nil {
+		return fmt.Errorf("memory: invalidate: %w", err)
+	}
+	return nil
+}
+
+// updateStatus applies o to every point whose chat_id matches and isn't
+// already invalidated (sticky - see the index interface doc). Reinforcement
+// count differs per point, so a bulk SetPayload can't carry it: fetch the
+// candidates once, then reinforce writes one SetPayload per point while
+// invalidate (a uniform payload) writes one call for all of them.
+func (x *qdrantIndex) updateStatus(ctx context.Context, chatID string, o OutcomeSignal) ([]string, error) {
+	filter := &qdrant.Filter{
+		Must:    []*qdrant.Condition{qdrant.NewMatch(payloadChatID, chatID)},
+		MustNot: []*qdrant.Condition{qdrant.NewMatch(payloadStatus, string(StatusInvalidated))},
+	}
+	it := x.client.ScrollAll(ctx, &qdrant.ScrollPoints{CollectionName: x.coll, Filter: filter, WithPayload: qdrant.NewWithPayload(true)})
+	type candidate struct {
+		id    string
+		count int
+	}
+	var candidates []candidate
+	for {
+		pts, err := it.Next()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, fmt.Errorf("memory: scroll for outcome: %w", err)
+		}
+		for _, p := range pts {
+			candidates = append(candidates, candidate{id: pointID(p.GetId()), count: payloadInt(p.GetPayload(), payloadReinforcementCount)})
+		}
+	}
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	ids := make([]string, len(candidates))
+	for i, c := range candidates {
+		ids[i] = c.id
+	}
+
+	wait := true
+	switch o.Kind {
+	case OutcomeInvalidated:
+		if _, err := x.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
+			CollectionName: x.coll,
+			Wait:           &wait,
+			Payload: qdrant.NewValueMap(map[string]any{
+				payloadStatus:             string(StatusInvalidated),
+				payloadInvalidatedAt:      nowRFC3339(),
+				payloadInvalidationReason: o.Reason,
+			}),
+			PointsSelector: &qdrant.PointsSelector{PointsSelectorOneOf: &qdrant.PointsSelector_Points{Points: &qdrant.PointsIdsList{Ids: idsToPointIDs(ids)}}},
+		}); err != nil {
+			return nil, fmt.Errorf("memory: set payload invalidate: %w", err)
+		}
+	case OutcomeReinforced:
+		for _, c := range candidates {
+			if _, err := x.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
+				CollectionName: x.coll,
+				Wait:           &wait,
+				Payload: qdrant.NewValueMap(map[string]any{
+					payloadStatus:             string(StatusReinforced),
+					payloadReinforcementCount: c.count + 1,
+				}),
+				PointsSelector: &qdrant.PointsSelector{PointsSelectorOneOf: &qdrant.PointsSelector_Points{Points: &qdrant.PointsIdsList{Ids: idsToPointIDs([]string{c.id})}}},
+			}); err != nil {
+				return nil, fmt.Errorf("memory: set payload reinforce: %w", err)
+			}
+		}
+	}
+	return ids, nil
+}
+
 func payloadString(payload map[string]*qdrant.Value, key string) string {
 	if v, ok := payload[key]; ok {
 		return v.GetStringValue()
 	}
 	return ""
+}
+
+func payloadInt(payload map[string]*qdrant.Value, key string) int {
+	if v, ok := payload[key]; ok {
+		return int(v.GetIntegerValue())
+	}
+	return 0
 }
 
 func pointID(id *qdrant.PointId) string {

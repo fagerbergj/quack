@@ -32,6 +32,14 @@ type index interface {
 	upsert(ctx context.Context, pts []point) error
 	// remove deletes the named ids and reports how many actually existed.
 	remove(ctx context.Context, ids []string) (int, error)
+	// invalidateByID soft-invalidates the named ids in place (status=invalidated,
+	// invalidated_at=now, invalidation_reason=reason) - the consolidator's DELETE,
+	// which never removes a point (design doc §4(a)/§8 phase 2, soft-delete only).
+	invalidateByID(ctx context.Context, ids []string, reason string) error
+	// updateStatus applies an outcome to every point matching chatID that is not
+	// already invalidated (sticky: nothing revives an invalidated memory), and
+	// returns the ids actually touched - a payload-only mutation, no re-embed.
+	updateStatus(ctx context.Context, chatID string, o OutcomeSignal) ([]string, error)
 }
 
 // scored is one ranked memory.
@@ -46,7 +54,14 @@ type scored struct {
 	NodeID    string // provenance: minting DAG node, empty for an orchestrator-level commit
 	Source    string // provenance: minting run's origin, empty = native quack run
 	MintedAt  string // set once on ADD, never changed by an UPDATE
-	Score     float32
+	// Lifecycle (design doc §3/§4, phase 2): empty Status means the point predates
+	// this phase and reads as StatusUnverified everywhere (recall filter, tier prefix).
+	Status             string
+	ValidFrom          string
+	InvalidatedAt      string
+	InvalidationReason string
+	ReinforcementCount int
+	Score              float32
 }
 
 // point is one memory to upsert.
@@ -62,6 +77,12 @@ type point struct {
 	NodeID    string
 	Source    string
 	MintedAt  string
+
+	Status             string
+	ValidFrom          string
+	InvalidatedAt      string
+	InvalidationReason string
+	ReinforcementCount int
 }
 
 const (
@@ -82,7 +103,15 @@ type Store struct {
 	minScore     float32 // recall hits below this cosine are dropped (0 = none)
 	log          *slog.Logger
 	embCache     *embedCache
+	opsLog       OpsLog // audit trail sink; nil unless the caller wires one (see SetOpsLog)
 }
+
+// SetOpsLog wires the memory_ops audit sink. internal/memory can't import
+// internal/store (dependency direction runs the other way) - the server
+// bootstrap (internal/serve) constructs a store-backed OpsLog and calls this
+// after opening the Store. Unwired (nil) is a valid, silent no-op - tests and
+// a recall-only Store don't need an audit trail.
+func (s *Store) SetOpsLog(l OpsLog) { s.opsLog = l }
 
 // newStore wraps a backend, probing the embedder for vector dimension.
 func newStore(ctx context.Context, idx index, embedder inference.Embedder, consolidator model.LLM, collection, domain string, topK int, minScore float32) (*Store, error) {
@@ -158,7 +187,7 @@ func (s *Store) recall(ctx context.Context, buckets []string, query string) (*ad
 		previews = append(previews, preview(p.Content))
 		e := adkmemory.Entry{
 			ID:      p.ID,
-			Content: &genai.Content{Role: "model", Parts: []*genai.Part{{Text: p.Content}}},
+			Content: &genai.Content{Role: "model", Parts: []*genai.Part{{Text: tierPrefix(p.Status, p.ReinforcementCount) + p.Content}}},
 			Author:  p.Author,
 		}
 		if p.Timestamp != "" {

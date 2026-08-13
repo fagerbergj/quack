@@ -406,7 +406,14 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		if err != nil {
 			return nil, fmt.Errorf("consolidation model: %w", err)
 		}
-		return memory.New(context.Background(), rm.Kind, rm.URL, embedder, consolidator, rm.Collection, domain, rm.TopK, rm.MinScore)
+		s, err := memory.New(context.Background(), rm.Kind, rm.URL, embedder, consolidator, rm.Collection, domain, rm.TopK, rm.MinScore)
+		if err != nil {
+			return nil, err
+		}
+		// internal/memory can't import internal/store; st (already open above) is
+		// the memory_ops audit sink, wired in here.
+		s.SetOpsLog(storeOpsLog{st})
+		return s, nil
 	}
 	var taskStore, userStore *memory.Store
 	if rm, ok := cfg.MemoryStore("stage_memory"); ok {
