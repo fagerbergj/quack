@@ -161,10 +161,14 @@ func (x *qdrantIndex) query(ctx context.Context, buckets []string, vec []float32
 // first in Go, then slices out the requested page. Fine at memory's documented
 // scale (hundreds-thousands); avoids requiring a payload index on `timestamp`
 // for Qdrant's order_by, which a fresh collection won't have.
-func (x *qdrantIndex) list(ctx context.Context, buckets []string, offset, limit int) ([]scored, error) {
+func (x *qdrantIndex) list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool) ([]scored, error) {
+	filter := bucketFilter(buckets)
+	if !includeInvalidated {
+		filter = excludeInvalidated(filter)
+	}
 	it := x.client.ScrollAll(ctx, &qdrant.ScrollPoints{
 		CollectionName: x.coll,
-		Filter:         bucketFilter(buckets),
+		Filter:         filter,
 		WithPayload:    qdrant.NewWithPayload(true),
 	})
 	var all []scored
@@ -196,9 +200,13 @@ func (x *qdrantIndex) list(ctx context.Context, buckets []string, offset, limit 
 	return all[offset:end], nil
 }
 
-func (x *qdrantIndex) count(ctx context.Context, buckets []string) (int, error) {
+func (x *qdrantIndex) count(ctx context.Context, buckets []string, includeInvalidated bool) (int, error) {
+	filter := bucketFilter(buckets)
+	if !includeInvalidated {
+		filter = excludeInvalidated(filter)
+	}
 	exact := true
-	n, err := x.client.Count(ctx, &qdrant.CountPoints{CollectionName: x.coll, Filter: bucketFilter(buckets), Exact: &exact})
+	n, err := x.client.Count(ctx, &qdrant.CountPoints{CollectionName: x.coll, Filter: filter, Exact: &exact})
 	if err != nil {
 		return 0, fmt.Errorf("memory: count: %w", err)
 	}
@@ -280,13 +288,22 @@ func idsToPointIDs(ids []string) []*qdrant.PointId {
 
 // invalidateByID soft-invalidates ids in place - a payload-only SetPayload,
 // never a Delete (design doc §4(a): the consolidator's DELETE invalidates,
-// it doesn't remove).
-func (x *qdrantIndex) invalidateByID(ctx context.Context, ids []string, reason string) error {
+// it doesn't remove). A Get precedes it, same as remove, to report how many
+// of ids actually existed (SetPayload itself doesn't say).
+func (x *qdrantIndex) invalidateByID(ctx context.Context, ids []string, reason string) (int, error) {
 	if len(ids) == 0 {
-		return nil
+		return 0, nil
+	}
+	pids := idsToPointIDs(ids)
+	existing, err := x.client.Get(ctx, &qdrant.GetPoints{CollectionName: x.coll, Ids: pids, WithPayload: qdrant.NewWithPayload(false)})
+	if err != nil {
+		return 0, fmt.Errorf("memory: get before invalidate: %w", err)
+	}
+	if len(existing) == 0 {
+		return 0, nil
 	}
 	wait := true
-	_, err := x.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
+	_, err = x.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
 		CollectionName: x.coll,
 		Wait:           &wait,
 		Payload: qdrant.NewValueMap(map[string]any{
@@ -294,12 +311,12 @@ func (x *qdrantIndex) invalidateByID(ctx context.Context, ids []string, reason s
 			payloadInvalidatedAt:      nowRFC3339(),
 			payloadInvalidationReason: reason,
 		}),
-		PointsSelector: &qdrant.PointsSelector{PointsSelectorOneOf: &qdrant.PointsSelector_Points{Points: &qdrant.PointsIdsList{Ids: idsToPointIDs(ids)}}},
+		PointsSelector: &qdrant.PointsSelector{PointsSelectorOneOf: &qdrant.PointsSelector_Points{Points: &qdrant.PointsIdsList{Ids: pids}}},
 	})
 	if err != nil {
-		return fmt.Errorf("memory: invalidate: %w", err)
+		return 0, fmt.Errorf("memory: invalidate: %w", err)
 	}
-	return nil
+	return len(existing), nil
 }
 
 // updateStatus applies o to every point whose chat_id matches and isn't

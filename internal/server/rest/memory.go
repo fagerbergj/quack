@@ -2,6 +2,7 @@ package rest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sort"
@@ -63,7 +64,8 @@ func (h *Handler) ListMemories(w http.ResponseWriter, r *http.Request, params sc
 		}
 		offset = off
 	}
-	mems, total, err := listMemories(r.Context(), stores, buckets, offset, limit)
+	includeInvalidated := params.IncludeInvalidated != nil && *params.IncludeInvalidated
+	mems, total, err := listMemories(r.Context(), stores, buckets, offset, limit, includeInvalidated)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
 		return
@@ -76,10 +78,17 @@ func (h *Handler) ListMemories(w http.ResponseWriter, r *http.Request, params sc
 	writeJSON(w, http.StatusOK, out)
 }
 
-// DeleteMemory forgets one memory - a real delete, not a tombstone. 404 if no
-// configured store has that id.
+// DeleteMemory invalidates one memory (soft-delete, design doc §4(b)) - the
+// point stays in the index with status=invalidated; nothing is removed. 404
+// if no configured store has that id.
 func (h *Handler) DeleteMemory(w http.ResponseWriter, r *http.Request, memoryID schema.MemoryID) {
-	err := forgetMemory(r.Context(), h.memStores(), memoryID)
+	var body schema.DeleteMemoryBody
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	reason := "manual delete"
+	if body.Reason != nil && strings.TrimSpace(*body.Reason) != "" {
+		reason = strings.TrimSpace(*body.Reason)
+	}
+	err := invalidateMemory(r.Context(), h.memStores(), memoryID, reason)
 	if errors.Is(err, memory.ErrMemoryNotFound) {
 		errMsg(w, http.StatusNotFound, "not found")
 		return
@@ -95,17 +104,19 @@ func (h *Handler) DeleteMemory(w http.ResponseWriter, r *http.Request, memoryID 
 // only one; with two (task + user both enabled) it fetches everything each
 // store holds for the filter, merges, and pages in Go - memory's documented
 // scale (hundreds-thousands) makes that cheap, and it's the only way to keep
-// offset/limit meaningful across two independent backends.
-func listMemories(ctx context.Context, stores []*memory.Store, buckets []string, offset, limit int) ([]memory.Memory, int, error) {
+// offset/limit meaningful across two independent backends. includeInvalidated
+// rides straight through to the index-level filter (Store.List) so the total
+// and the page both agree, rather than a Go post-filter after paging.
+func listMemories(ctx context.Context, stores []*memory.Store, buckets []string, offset, limit int, includeInvalidated bool) ([]memory.Memory, int, error) {
 	if len(stores) == 0 {
 		return nil, 0, nil
 	}
 	if len(stores) == 1 {
-		return stores[0].List(ctx, buckets, offset, limit)
+		return stores[0].List(ctx, buckets, offset, limit, includeInvalidated)
 	}
 	var all []memory.Memory
 	for _, st := range stores {
-		mems, _, err := st.List(ctx, buckets, 0, 0)
+		mems, _, err := st.List(ctx, buckets, 0, 0, includeInvalidated)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -140,11 +151,11 @@ func searchMemories(ctx context.Context, stores []*memory.Store, buckets []strin
 	return all, nil
 }
 
-// forgetMemory tries each configured store in turn; ErrMemoryNotFound only if
-// none of them had the id.
-func forgetMemory(ctx context.Context, stores []*memory.Store, id string) error {
+// invalidateMemory tries each configured store in turn; ErrMemoryNotFound
+// only if none of them had the id.
+func invalidateMemory(ctx context.Context, stores []*memory.Store, id, reason string) error {
 	for _, st := range stores {
-		err := st.Forget(ctx, id)
+		err := st.InvalidateByID(ctx, id, reason, memory.ActorHuman)
 		if err == nil {
 			return nil
 		}
@@ -171,6 +182,18 @@ func memoriesWire(mems []memory.Memory) []schema.Memory {
 		if m.Score != 0 {
 			score := m.Score
 			w.Score = &score
+		}
+		// Status "" predates the lifecycle fields (design doc §3) and reads as unverified.
+		status := schema.MemoryStatus(m.Status)
+		if status == "" {
+			status = schema.Unverified
+		}
+		w.Status = &status
+		count := m.ReinforcementCount
+		w.ReinforcementCount = &count
+		if m.InvalidationReason != "" {
+			reason := m.InvalidationReason
+			w.InvalidationReason = &reason
 		}
 		out[i] = w
 	}

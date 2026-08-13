@@ -146,6 +146,27 @@ func (e ItemStatus) Valid() bool {
 	}
 }
 
+// Defines values for MemoryStatus.
+const (
+	Invalidated MemoryStatus = "invalidated"
+	Reinforced  MemoryStatus = "reinforced"
+	Unverified  MemoryStatus = "unverified"
+)
+
+// Valid indicates whether the value is a known member of the MemoryStatus enum.
+func (e MemoryStatus) Valid() bool {
+	switch e {
+	case Invalidated:
+		return true
+	case Reinforced:
+		return true
+	case Unverified:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for MessageOutputItemType.
 const (
 	Message MessageOutputItemType = "message"
@@ -489,6 +510,12 @@ type DagOutputItem struct {
 // DagOutputItemType defines model for DagOutputItem.Type.
 type DagOutputItemType string
 
+// DeleteMemoryBody defines model for DeleteMemoryBody.
+type DeleteMemoryBody struct {
+	// Reason Why this memory is being invalidated. Defaults to `"manual delete"` when omitted.
+	Reason *string `json:"reason,omitempty"`
+}
+
 // EditNodeTaskBody defines model for EditNodeTaskBody.
 type EditNodeTaskBody struct {
 	Task string `json:"task"`
@@ -529,12 +556,24 @@ type Memory struct {
 	Bucket  string `json:"bucket"`
 	Content string `json:"content"`
 	Id      string `json:"id"`
-	Kind    string `json:"kind"`
+
+	// InvalidationReason Why this memory was invalidated. Present only when `status` is `invalidated`.
+	InvalidationReason *string `json:"invalidation_reason,omitempty"`
+	Kind               string  `json:"kind"`
+
+	// ReinforcementCount How many positive outcome events (e.g. a PR merged) have reinforced this memory.
+	ReinforcementCount *int `json:"reinforcement_count,omitempty"`
 
 	// Score Cosine similarity to the search query. Present only when the request set `q`; meaningless (omitted) for a plain listing.
-	Score     *float32  `json:"score,omitempty"`
-	Timestamp time.Time `json:"timestamp"`
+	Score *float32 `json:"score,omitempty"`
+
+	// Status Epistemic tier (memory lifecycle design doc §3). A memory written before this field existed reads as `unverified`.
+	Status    *MemoryStatus `json:"status,omitempty"`
+	Timestamp time.Time     `json:"timestamp"`
 }
+
+// MemoryStatus Epistemic tier (memory lifecycle design doc §3). A memory written before this field existed reads as `unverified`.
+type MemoryStatus string
 
 // MemoryList defines model for MemoryList.
 type MemoryList struct {
@@ -785,6 +824,9 @@ type ListMemoriesParams struct {
 	// Limit Max memories to return. Defaults to 50; capped at 200.
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 
+	// IncludeInvalidated Include invalidated memories (memory lifecycle design doc §4(d)). Defaults to false - a default listing shows only what quack currently trusts.
+	IncludeInvalidated *bool `form:"include_invalidated,omitempty" json:"include_invalidated,omitempty"`
+
 	// PageToken Opaque continuation token from a previous response's `next_page_token`. Treat it as an opaque string: never parse or construct one, pass back exactly what was returned. Omit for the first page. Ignored when `q` is set (search ranks by score, not a stable page). Only valid against the exact `bucket` filter it was issued for.
 	PageToken *string `form:"page_token,omitempty" json:"page_token,omitempty"`
 }
@@ -812,6 +854,9 @@ type SendChatMessageJSONRequestBody = SendMessageBody
 
 // UpdateResponseStatusJSONRequestBody defines body for UpdateResponseStatus for application/json ContentType.
 type UpdateResponseStatusJSONRequestBody = ResponseStatusUpdateBody
+
+// DeleteMemoryJSONRequestBody defines body for DeleteMemory for application/json ContentType.
+type DeleteMemoryJSONRequestBody = DeleteMemoryBody
 
 // AsOutputTextPart returns the union data inside the ContentPart as a OutputTextPart
 func (t ContentPart) AsOutputTextPart() (OutputTextPart, error) {
@@ -1080,7 +1125,7 @@ type ServerInterface interface {
 	// Browse or search quack's semantic memory
 	// (GET /api/v1/memories)
 	ListMemories(w http.ResponseWriter, r *http.Request, params ListMemoriesParams)
-	// Forget one memory
+	// Invalidate one memory
 	// (DELETE /api/v1/memories/{memory_id})
 	DeleteMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryID)
 	// List recorded chat sessions
@@ -1209,7 +1254,7 @@ func (_ Unimplemented) ListMemories(w http.ResponseWriter, r *http.Request, para
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// Forget one memory
+// Invalidate one memory
 // (DELETE /api/v1/memories/{memory_id})
 func (_ Unimplemented) DeleteMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryID) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -2049,6 +2094,19 @@ func (siw *ServerInterfaceWrapper) ListMemories(w http.ResponseWriter, r *http.R
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "include_invalidated" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "include_invalidated", r.URL.Query(), &params.IncludeInvalidated, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "include_invalidated"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "include_invalidated", Err: err})
 		}
 		return
 	}

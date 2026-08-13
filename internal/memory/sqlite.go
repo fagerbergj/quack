@@ -123,10 +123,13 @@ func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32
 	return out, nil
 }
 
-func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit int) ([]scored, error) {
+func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool) ([]scored, error) {
 	q := x.db.WithContext(ctx).Where("collection = ?", x.coll)
 	if len(buckets) > 0 {
 		q = q.Where("scope IN ?", buckets)
+	}
+	if !includeInvalidated {
+		q = q.Where("status IS NULL OR status <> ?", string(StatusInvalidated))
 	}
 	// id DESC breaks timestamp ties deterministically, so paging never
 	// duplicates or drops a row across offset boundaries.
@@ -150,10 +153,13 @@ func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit 
 	return out, nil
 }
 
-func (x *sqliteIndex) count(ctx context.Context, buckets []string) (int, error) {
+func (x *sqliteIndex) count(ctx context.Context, buckets []string, includeInvalidated bool) (int, error) {
 	q := x.db.WithContext(ctx).Model(&memoryRow{}).Where("collection = ?", x.coll)
 	if len(buckets) > 0 {
 		q = q.Where("scope IN ?", buckets)
+	}
+	if !includeInvalidated {
+		q = q.Where("status IS NULL OR status <> ?", string(StatusInvalidated))
 	}
 	var n int64
 	if err := q.Count(&n).Error; err != nil {
@@ -207,22 +213,22 @@ func (x *sqliteIndex) remove(ctx context.Context, ids []string) (int, error) {
 
 // invalidateByID soft-invalidates ids in place - a plain UPDATE, never a
 // DELETE (design doc §4(a): the consolidator's DELETE invalidates, it
-// doesn't remove).
-func (x *sqliteIndex) invalidateByID(ctx context.Context, ids []string, reason string) error {
+// doesn't remove). Reports how many of ids actually existed.
+func (x *sqliteIndex) invalidateByID(ctx context.Context, ids []string, reason string) (int, error) {
 	if len(ids) == 0 {
-		return nil
+		return 0, nil
 	}
-	err := x.db.WithContext(ctx).Model(&memoryRow{}).
+	res := x.db.WithContext(ctx).Model(&memoryRow{}).
 		Where("collection = ? AND id IN ?", x.coll, ids).
 		Updates(map[string]any{
 			"status":              string(StatusInvalidated),
 			"invalidated_at":      nowRFC3339(),
 			"invalidation_reason": reason,
-		}).Error
-	if err != nil {
-		return fmt.Errorf("memory: sqlite invalidate: %w", err)
+		})
+	if res.Error != nil {
+		return 0, fmt.Errorf("memory: sqlite invalidate: %w", res.Error)
 	}
-	return nil
+	return int(res.RowsAffected), nil
 }
 
 // updateStatus applies o to every row whose chat_id matches and isn't

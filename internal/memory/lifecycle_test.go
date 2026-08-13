@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -113,9 +114,9 @@ func TestApplyOutcome_Invalidate(t *testing.T) {
 		t.Fatalf("recall (after invalidate) got %d, want 0 - excluded at the backend query", len(resp.Memories))
 	}
 
-	// Soft-delete only: the point still exists, reachable via list (which,
-	// unlike query, never filters by status).
-	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10)
+	// Soft-delete only: the point still exists, reachable via list with
+	// includeInvalidated=true (query never surfaces it regardless).
+	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -170,7 +171,7 @@ func TestApplyOutcome_Reinforce(t *testing.T) {
 
 	byID := func(t *testing.T) map[string]scored {
 		t.Helper()
-		pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10)
+		pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
@@ -217,6 +218,65 @@ func TestApplyOutcome_Reinforce(t *testing.T) {
 		if r.memoryID != "m1" || r.op != OpReinforce || r.actor != ActorOutcomeFeedback {
 			t.Fatalf("op row = %+v, want {m1 reinforce outcome-feedback}", r)
 		}
+	}
+}
+
+// TestInvalidateByID_HumanDelete covers design doc §7 case 5: a human delete
+// via the REST handler invalidates by id (not chat_id, unlike ApplyOutcome),
+// defaults the reason to "manual delete", writes one memory_ops row actor
+// "human" op "invalidate", excludes the point from recall, and is idempotent
+// on a second call against the same (now-invalidated) id.
+func TestInvalidateByID_HumanDelete(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStore(t, "task", nil)
+	ops := &fakeOpsLog{}
+	s.SetOpsLog(ops)
+
+	if err := s.idx.upsert(ctx, []point{{
+		ID: "m1", Vector: []float32{1, 0, 0, 0}, Content: "a memory a maintainer wants gone", Scope: "repo:r",
+		Author: "a", Timestamp: "t", Status: string(StatusUnverified), ValidFrom: "t",
+	}}); err != nil {
+		t.Fatalf("seed upsert: %v", err)
+	}
+
+	if err := s.InvalidateByID(ctx, "m1", "", ActorHuman); err != nil {
+		t.Fatalf("InvalidateByID: %v", err)
+	}
+
+	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(pts) != 1 || pts[0].Status != string(StatusInvalidated) || pts[0].InvalidationReason != "manual delete" {
+		t.Fatalf("point after delete = %+v, want status=invalidated reason=%q (default)", pts, "manual delete")
+	}
+
+	if len(ops.rows) != 1 {
+		t.Fatalf("ops rows = %+v, want exactly 1", ops.rows)
+	}
+	if r := ops.rows[0]; r.memoryID != "m1" || r.op != OpInvalidate || r.actor != ActorHuman || r.reason != "manual delete" {
+		t.Fatalf("op row = %+v, want {m1 invalidate human \"manual delete\"}", r)
+	}
+
+	resp, err := s.recall(ctx, []string{"repo:r"}, "a memory a maintainer wants gone")
+	if err != nil {
+		t.Fatalf("recall: %v", err)
+	}
+	if len(resp.Memories) != 0 {
+		t.Fatalf("recall after delete got %d, want 0 - excluded at the backend query", len(resp.Memories))
+	}
+
+	// Deleting an already-invalidated id is idempotent: the point exists, so
+	// it succeeds again rather than 404-ing, but nothing revives it.
+	if err := s.InvalidateByID(ctx, "m1", "second delete", ActorHuman); err != nil {
+		t.Fatalf("InvalidateByID (idempotent 2nd call): %v", err)
+	}
+	if len(ops.rows) != 2 {
+		t.Fatalf("ops rows after 2nd delete = %+v, want exactly 2", ops.rows)
+	}
+
+	if err := s.InvalidateByID(ctx, "does-not-exist", "", ActorHuman); !errors.Is(err, ErrMemoryNotFound) {
+		t.Fatalf("InvalidateByID(unknown) = %v, want ErrMemoryNotFound", err)
 	}
 }
 
@@ -269,7 +329,7 @@ func TestApply_ConsolidatorDeleteInvalidatesWithReason(t *testing.T) {
 		t.Fatalf("Commit: %v", err)
 	}
 
-	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10)
+	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}

@@ -760,6 +760,12 @@ paths:
           description: Max memories to return. Defaults to 50; capped at 200.
           schema:
             type: integer
+        - name: include_invalidated
+          in: query
+          description: Include invalidated memories (memory lifecycle design doc §4(d)). Defaults to false - a default listing shows only what quack currently trusts.
+          schema:
+            type: boolean
+            default: false
         - name: page_token
           in: query
           required: false
@@ -795,16 +801,23 @@ paths:
   /api/v1/memories/{memory_id}:
     delete:
       operationId: deleteMemory
-      summary: Forget one memory
+      summary: Invalidate one memory
       description: |
-        A real delete against the vector index, not a tombstone - if a
-        forgotten fact gets re-learned by a later run's consolidation, that's
-        a separate concern (suppression), not this endpoint's job.
+        Soft-delete (memory lifecycle design doc §4(b)): the point stays in
+        the index with `status: invalidated` and an `invalidation_reason` -
+        never removed - so a default listing excludes it but the audit trail
+        (`memory_ops`, actor `human`) and `include_invalidated=true` still see it.
       parameters:
         - $ref: "#/components/parameters/MemoryID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteMemoryBody"
       responses:
         "204":
-          description: Forgotten
+          description: Invalidated
         "404":
           description: No such memory
           content:
@@ -1018,6 +1031,23 @@ components:
           type: number
           format: float
           description: Cosine similarity to the search query. Present only when the request set `q`; meaningless (omitted) for a plain listing.
+        status:
+          type: string
+          enum: [unverified, reinforced, invalidated]
+          description: Epistemic tier (memory lifecycle design doc §3). A memory written before this field existed reads as `unverified`.
+        reinforcement_count:
+          type: integer
+          description: How many positive outcome events (e.g. a PR merged) have reinforced this memory.
+        invalidation_reason:
+          type: string
+          description: Why this memory was invalidated. Present only when `status` is `invalidated`.
+
+    DeleteMemoryBody:
+      type: object
+      properties:
+        reason:
+          type: string
+          description: Why this memory is being invalidated. Defaults to `"manual delete"` when omitted.
 
     MemoryList:
       type: object

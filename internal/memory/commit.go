@@ -388,7 +388,7 @@ func (s *Store) apply(ctx context.Context, bucket, author string, prov Provenanc
 			if reason == "" {
 				reason = "invalidated by consolidator"
 			}
-			if err := s.idx.invalidateByID(ctx, []string{o.ID}, reason); err != nil {
+			if _, err := s.idx.invalidateByID(ctx, []string{o.ID}, reason); err != nil {
 				return count, err
 			}
 			s.logOp(ctx, o.ID, OpInvalidate, ActorConsolidator, reason)

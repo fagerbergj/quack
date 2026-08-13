@@ -26,16 +26,20 @@ type index interface {
 	query(ctx context.Context, buckets []string, vec []float32, k int) ([]scored, error)
 	// list returns up to `limit` points in any of the given buckets (all buckets if
 	// empty), newest first by Timestamp, skipping `offset`. limit<=0 means no cap.
-	list(ctx context.Context, buckets []string, offset, limit int) ([]scored, error)
-	// count returns how many points match buckets (all buckets if empty).
-	count(ctx context.Context, buckets []string) (int, error)
+	// includeInvalidated=false excludes status=invalidated points, matching the
+	// query()/recall filter (design doc §4(d) extended to the browse surface, phase 3).
+	list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool) ([]scored, error)
+	// count returns how many points match buckets (all buckets if empty), under the
+	// same includeInvalidated filter as list.
+	count(ctx context.Context, buckets []string, includeInvalidated bool) (int, error)
 	upsert(ctx context.Context, pts []point) error
 	// remove deletes the named ids and reports how many actually existed.
 	remove(ctx context.Context, ids []string) (int, error)
 	// invalidateByID soft-invalidates the named ids in place (status=invalidated,
-	// invalidated_at=now, invalidation_reason=reason) - the consolidator's DELETE,
-	// which never removes a point (design doc §4(a)/§8 phase 2, soft-delete only).
-	invalidateByID(ctx context.Context, ids []string, reason string) error
+	// invalidated_at=now, invalidation_reason=reason) - the consolidator's DELETE
+	// and the human-delete REST path, neither of which ever removes a point
+	// (design doc §4(a)/(b), soft-delete only). Reports how many ids actually existed.
+	invalidateByID(ctx context.Context, ids []string, reason string) (int, error)
 	// updateStatus applies an outcome to every point matching chatID that is not
 	// already invalidated (sticky: nothing revives an invalidated memory), and
 	// returns the ids actually touched - a payload-only mutation, no re-embed.
@@ -223,25 +227,33 @@ type Memory struct {
 	Timestamp string
 	Kind      string
 	Score     float32
+
+	// Lifecycle (design doc §3). Status "" reads as unverified (pre-lifecycle point).
+	Status             string
+	ReinforcementCount int
+	InvalidationReason string
 }
 
 // List returns entries in the given buckets (every bucket if empty), newest
 // first, paged by offset/limit (limit<=0 defaults to DefaultListLimit), plus
-// the total count matching the same filter. Unlike Search/recall, this never
-// falls back to embedding search and never degrades on a failure - an
-// unreachable index is returned as an error, not an empty or partial result.
-func (s *Store) List(ctx context.Context, buckets []string, offset, limit int) ([]Memory, int, error) {
+// the total count matching the same filter. includeInvalidated=false (the
+// default listing) excludes status=invalidated entries from both the page and
+// the total, matching query()/recall's backend-level filter (design doc §4(d)).
+// Unlike Search/recall, this never falls back to embedding search and never
+// degrades on a failure - an unreachable index is returned as an error, not an
+// empty or partial result.
+func (s *Store) List(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool) ([]Memory, int, error) {
 	if limit <= 0 {
 		limit = DefaultListLimit
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	pts, err := s.idx.list(ctx, buckets, offset, limit)
+	pts, err := s.idx.list(ctx, buckets, offset, limit, includeInvalidated)
 	if err != nil {
 		return nil, 0, fmt.Errorf("memory: list %q: %w", s.coll, err)
 	}
-	total, err := s.idx.count(ctx, buckets)
+	total, err := s.idx.count(ctx, buckets, includeInvalidated)
 	if err != nil {
 		return nil, 0, fmt.Errorf("memory: count %q: %w", s.coll, err)
 	}
@@ -290,10 +302,38 @@ func (s *Store) Forget(ctx context.Context, id string) error {
 	return nil
 }
 
+// InvalidateByID soft-invalidates one memory by id directly - the human-delete
+// REST path (design doc §4(b)), which targets a specific point rather than
+// matching by provenance chat_id like ApplyOutcome. Writes one memory_ops row
+// (op=invalidate) under the given actor. ErrMemoryNotFound if id isn't in the
+// index (invalidating an already-invalidated id is idempotent, not an error).
+func (s *Store) InvalidateByID(ctx context.Context, id, reason string, actor OpsLogActor) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ErrMemoryNotFound
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "manual delete"
+	}
+	n, err := s.idx.invalidateByID(ctx, []string{id}, reason)
+	if err != nil {
+		return fmt.Errorf("memory: invalidate %q: %w", id, err)
+	}
+	if n == 0 {
+		return ErrMemoryNotFound
+	}
+	s.logOp(ctx, id, OpInvalidate, actor, reason)
+	return nil
+}
+
 func toMemories(pts []scored) []Memory {
 	out := make([]Memory, len(pts))
 	for i, p := range pts {
-		out[i] = Memory{ID: p.ID, Content: p.Content, Bucket: p.Scope, Author: p.Author, Timestamp: p.Timestamp, Kind: p.Kind, Score: p.Score}
+		out[i] = Memory{
+			ID: p.ID, Content: p.Content, Bucket: p.Scope, Author: p.Author, Timestamp: p.Timestamp, Kind: p.Kind, Score: p.Score,
+			Status: p.Status, ReinforcementCount: p.ReinforcementCount, InvalidationReason: p.InvalidationReason,
+		}
 	}
 	return out
 }
