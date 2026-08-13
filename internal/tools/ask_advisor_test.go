@@ -10,6 +10,9 @@ import (
 	"sync"
 	"testing"
 
+	"go.opentelemetry.io/otel/attribute"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/agent/workflowagent"
@@ -20,6 +23,8 @@ import (
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/inference"
+	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
@@ -279,6 +284,71 @@ func TestAskAdvisor_SeededWithTaskAndRubric(t *testing.T) {
 	}
 	if !strings.Contains(first, "RUBRIC-SENTINEL") {
 		t.Errorf("advisor's 1st request missing the node's acceptance rubric; got:\n%s", first)
+	}
+}
+
+// usageAdvisor replies with a fixed usage-carrying response - drives the
+// SetDefaultAgent metric test without recordingAdvisor's prompt bookkeeping.
+type usageAdvisor struct{}
+
+func (usageAdvisor) Name() string { return "usage-advisor" }
+
+func (usageAdvisor) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		yield(&model.LLMResponse{
+			Content:       &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: "ADVICE"}}},
+			FinishReason:  genai.FinishReasonStop,
+			TurnComplete:  true,
+			UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 10, CandidatesTokenCount: 5},
+		}, nil)
+	}
+}
+
+// TestAskAdvisor_DefaultAgentFillsTokenUsage pins serve.go's advisor wiring:
+// ask_advisor runs the advisor via its own nested runner.Run, whose ctx never
+// carries the worker's node coords, so the advisor's tracedModel needs the
+// SetDefaultAgent("advisor") fallback to attribute its token usage at all.
+func TestAskAdvisor_DefaultAgentFillsTokenUsage(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	if err := otelobs.InitMetricsForTesting(mp.Meter("test")); err != nil {
+		t.Fatalf("InitMetricsForTesting: %v", err)
+	}
+
+	advisor := inference.TracedModelForTesting(usageAdvisor{}, "advisor-test-model")
+	if da, ok := advisor.(interface{ SetDefaultAgent(string) }); ok {
+		da.SetDefaultAgent("advisor")
+	} else {
+		t.Fatal("TracedModelForTesting result does not implement SetDefaultAgent")
+	}
+	sessions := session.InMemoryService()
+	runAdvisorHarness(t, &oneConsultWorker{}, advisor, sessions, "n1", "task", "rubric")
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	var found bool
+	for _, sm := range rm.ScopeMetrics {
+		for _, met := range sm.Metrics {
+			if met.Name != "gen_ai.client.token.usage" {
+				continue
+			}
+			sum, ok := met.Data.(metricdata.Sum[int64])
+			if !ok {
+				t.Fatalf("gen_ai.client.token.usage is not an int64 Sum")
+			}
+			for _, dp := range sum.DataPoints {
+				agentVal, _ := dp.Attributes.Value(attribute.Key("agent"))
+				if agentVal.AsString() == "advisor" {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("no gen_ai.client.token.usage data point carries agent=advisor - the advisor's SetDefaultAgent fallback never reached the metric")
 	}
 }
 

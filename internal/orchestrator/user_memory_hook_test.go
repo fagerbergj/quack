@@ -11,12 +11,17 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/memory"
+	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
 // --- pre-filter ---
@@ -46,17 +51,22 @@ func TestUserMemoryPreFilter(t *testing.T) {
 // --- mineUserMemory (agent invocation + parsing) ---
 
 // scriptedModel is a model.LLM that always replies with the same scripted text,
-// for driving a memory-agent stand-in without a real model.
-type scriptedModel struct{ reply string }
+// for driving a memory-agent stand-in without a real model. usage is nil by
+// default (existing callers get no usage metadata, matching prior behaviour).
+type scriptedModel struct {
+	reply string
+	usage *genai.GenerateContentResponseUsageMetadata
+}
 
 func (scriptedModel) Name() string { return "scripted-memory-agent" }
 
 func (s scriptedModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		yield(&model.LLMResponse{
-			Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: s.reply}}},
-			FinishReason: genai.FinishReasonStop,
-			TurnComplete: true,
+			Content:       &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: s.reply}}},
+			FinishReason:  genai.FinishReasonStop,
+			TurnComplete:  true,
+			UsageMetadata: s.usage,
 		}, nil)
 	}
 }
@@ -145,6 +155,67 @@ func TestMineUserMemory(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestMineUserMemory_DefaultAgentFillsTokenUsage pins serve.go's memory-hook
+// wiring: mineUserMemory runs from a fire-and-forget goroutine after the
+// orchestrator's own turn ends, via its own nested runner.Run, so the memory-hook
+// model's tracedModel needs the SetDefaultAgent("memory-hook") fallback to
+// attribute its token usage at all.
+func TestMineUserMemory_DefaultAgentFillsTokenUsage(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	if err := otelobs.InitMetricsForTesting(mp.Meter("test")); err != nil {
+		t.Fatalf("InitMetricsForTesting: %v", err)
+	}
+
+	m := inference.TracedModelForTesting(scriptedModel{
+		reply: `[]`,
+		usage: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 10, CandidatesTokenCount: 5},
+	}, "memory-hook-test-model")
+	if da, ok := m.(interface{ SetDefaultAgent(string) }); ok {
+		da.SetDefaultAgent("memory-hook")
+	} else {
+		t.Fatal("TracedModelForTesting result does not implement SetDefaultAgent")
+	}
+	ag, err := llmagent.New(llmagent.Config{
+		Name: "test-memory-agent", Description: "test double", Model: m, Instruction: "reply with the scripted text",
+	})
+	if err != nil {
+		t.Fatalf("llmagent.New: %v", err)
+	}
+
+	// No ledger coords on ctx - mirrors mineUserMemory's real caller (a background goroutine).
+	if _, err := mineUserMemory(context.Background(), ag, "some message"); err != nil {
+		t.Fatalf("mineUserMemory: %v", err)
+	}
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	var found bool
+	for _, sm := range rm.ScopeMetrics {
+		for _, met := range sm.Metrics {
+			if met.Name != "gen_ai.client.token.usage" {
+				continue
+			}
+			sum, ok := met.Data.(metricdata.Sum[int64])
+			if !ok {
+				t.Fatalf("gen_ai.client.token.usage is not an int64 Sum")
+			}
+			for _, dp := range sum.DataPoints {
+				agentVal, _ := dp.Attributes.Value(attribute.Key("agent"))
+				if agentVal.AsString() == "memory-hook" {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("no gen_ai.client.token.usage data point carries agent=memory-hook - the memory-hook model's SetDefaultAgent fallback never reached the metric")
 	}
 }
 
