@@ -19,6 +19,9 @@ interface AgentStartPayload {
   agent: string
   stage: Stage
   round?: number
+  // Server wall-clock (epoch ms) the run began - anchors the sub-step timer
+  // across reconnect/replay, mirroring node_start's started_at_ms.
+  startedAtMs?: number
 }
 
 // AgentCompletePayload closes an agent run with its stage-specific result.
@@ -149,7 +152,7 @@ function dispatchAgentEvent(
 ): boolean {
   switch (event) {
     case 'agent_start': {
-      const p = parsed as { run_id?: string; agent?: string; stage?: string; round?: number }
+      const p = parsed as { run_id?: string; agent?: string; stage?: string; round?: number; started_at_ms?: number }
       if (typeof p.run_id === 'string') {
         handlers.onAgentStart?.({
           nodeId: nodeIdOf(parsed),
@@ -157,6 +160,7 @@ function dispatchAgentEvent(
           agent: typeof p.agent === 'string' ? p.agent : '',
           stage: (p.stage ?? 'worker') as Stage,
           round: typeof p.round === 'number' ? p.round : undefined,
+          startedAtMs: typeof p.started_at_ms === 'number' ? p.started_at_ms : undefined,
         })
       }
       return true

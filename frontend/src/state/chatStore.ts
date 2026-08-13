@@ -14,6 +14,15 @@ import type { Turn, DagOutputItem, NodeStatus, QueuedMessage, Usage } from '../g
 // unchanged - the generated enum is now the one source of truth for node states.
 export type { NodeStatus, QueuedMessage }
 
+// anchorTime resolves a dag/node/run's start time from the server's epoch-ms
+// timestamp when one arrived on the wire - clamped to now so a client/server
+// clock skew can never produce a start time in the future (negative elapsed).
+// Falls back to Date.now() for a live event that carries no server timestamp.
+function anchorTime(serverMs?: number): number {
+  if (serverMs == null) return Date.now()
+  return Math.min(serverMs, Date.now())
+}
+
 export interface NodeState {
   status: NodeStatus
   outputPreview?: string
@@ -709,8 +718,8 @@ export class ChatStore {
         this.write(chatId, { ...s, live: { ...s.live, dag } })
       }
 
-      const runArgs = (d: { runId: string; agent: string; stage: import('./agentStream').Stage; round?: number }) =>
-        ({ runId: d.runId, agent: d.agent, stage: d.stage, round: d.round, startedAt: Date.now() })
+      const runArgs = (d: { runId: string; agent: string; stage: import('./agentStream').Stage; round?: number; startedAtMs?: number }) =>
+        ({ runId: d.runId, agent: d.agent, stage: d.stage, round: d.round, startedAt: anchorTime(d.startedAtMs) })
 
       // ANSWER_STAGES are the stages whose streamed text IS the node's answer: the
       // initial worker draft AND each revision (which fully replaces the prior
@@ -842,14 +851,14 @@ export class ChatStore {
             nodeStates,
             nodeRuns: {},
             nodeAnswer: {},
-            startedAt: plan.started_at_ms ?? Date.now(),
+            startedAt: anchorTime(plan.started_at_ms),
           }
           this.write(chatId, { ...s, live: { ...s.live, dag, text: '', runs: [] } })
         },
         onNodeQueued: nodeId => updateNodeState(nodeId, { status: 'queued' }),
         // Anchor timers to the server's start time (epoch ms) so a reconnect/replay
         // shows true elapsed time instead of restarting from the replay moment.
-        onNodeStart: (nodeId, _agent, startedAtMs) => updateNodeState(nodeId, { status: 'running', startedAt: startedAtMs ?? Date.now() }),
+        onNodeStart: (nodeId, _agent, startedAtMs) => updateNodeState(nodeId, { status: 'running', startedAt: anchorTime(startedAtMs) }),
         onNodeDone: (nodeId, preview, meta: NodeDoneMeta) => {
           // Freeze any run still counting - the node is done, so no run is live.
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))

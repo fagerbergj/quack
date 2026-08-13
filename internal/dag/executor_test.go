@@ -79,10 +79,15 @@ func TestDagStream_WorkerActivityAndNodeDone(t *testing.T) {
 		t.Fatalf("event sequence:\n got=%v\nwant=%v", g, want)
 	}
 
-	// agent_start is scoped to the plan node with the worker stage/run.
+	// agent_start is scoped to the plan node with the worker stage/run, and
+	// carries a real wall-clock timestamp (anchors the sub-step timer across
+	// reconnect/replay, #root cause of the sub-step-timer-resets-on-refresh bug).
 	as := got[1].Data.(stream.AgentStartData)
 	if as.NodeID != "n1" || as.RunID != "worker-r0" || as.Stage != stream.StageWorker {
 		t.Fatalf("agent_start = %+v", as)
+	}
+	if as.StartedAtMs == 0 {
+		t.Errorf("agent_start.StartedAtMs = 0, want a real timestamp")
 	}
 	// tool call/result pair by call id, scoped to the node.
 	tc := got[3].Data.(stream.AgentToolCallData)

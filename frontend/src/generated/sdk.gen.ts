@@ -174,8 +174,10 @@ export const getChatArtifact = <ThrowOnError extends boolean = false>(options: O
  * are NOT a separate stage - they surface as ordinary tool activity
  * (`agent_tool_call` / `agent_tool_result`) within the worker's own run.
  *
- * Agent-run events: `agent_start` ({"node_id","run_id","agent","stage","round"})
- * opens a run; `agent_thinking` ({"node_id","run_id","text"}) is reasoning;
+ * Agent-run events: `agent_start` ({"node_id","run_id","agent","stage","round",
+ * "started_at_ms"}) opens a run - `started_at_ms` is the server wall-clock
+ * (epoch ms) it began, anchoring the run's timer across reconnect/replay;
+ * `agent_thinking` ({"node_id","run_id","text"}) is reasoning;
  * `agent_tool_call` ({"node_id","run_id","call_id","name","args"}) and
  * `agent_tool_result` ({"node_id","run_id","call_id","name","result"}) are
  * tool activity; `agent_token` ({"node_id","run_id","text"}) is answer text

@@ -2,6 +2,7 @@ package vetting
 
 import (
 	"context"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	oteltrace "go.opentelemetry.io/otel/trace"
@@ -28,7 +29,7 @@ func startStageSpan(spanCtx context.Context, sink func(stream.SSEEvent), cfg Con
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID),
 		attribute.String("run_id", runID), attribute.String("agent", cfg.Agent), attribute.Int("round", round))
 	emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{
-		RunID: runID, Agent: sseAgent, Stage: stage, Round: round,
+		RunID: runID, Agent: sseAgent, Stage: stage, Round: round, StartedAtMs: time.Now().UnixMilli(),
 	}})
 	return ctx, &stageSpan{span: span, sink: sink, nodeID: nodeID}
 }
