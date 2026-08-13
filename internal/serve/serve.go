@@ -424,6 +424,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		taskStore = s
 		slog.Info("semantic memory enabled", "component", "startup", "collection", rm.Collection,
 			"embedder", rm.Embedder.Model, "consolidation", rm.Consolidation.Model)
+		startConsolidationSweep(ctx, s, rm)
 	}
 	if slices.Contains(cfg.Orchestrator.Tools, "commit_memory") {
 		if rm, ok := cfg.MemoryStore("commit_memory"); ok {
@@ -433,6 +434,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 			}
 			userStore = s
 			slog.Info("user memory enabled", "component", "startup", "collection", rm.Collection)
+			startConsolidationSweep(ctx, s, rm)
 		}
 	}
 
