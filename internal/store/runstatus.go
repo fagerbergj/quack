@@ -14,6 +14,10 @@ const (
 	RunStatusIdle       = "idle"
 	RunStatusFailed     = "failed"
 	RunStatusNeedsInput = "needs_input"
+	// RunStatusInterrupted marks a run the server cut short itself (shutdown's
+	// force-cancel, or a boot scan finding a killed process's leftover) -
+	// distinct from RunStatusFailed; wire-surfaces as ChatStatusFailed.
+	RunStatusInterrupted = "interrupted"
 )
 
 // MarkRunActive records that chatID has turnID in flight, so a crash before StampRunOutcome
@@ -66,6 +70,26 @@ func (s *Store) StampTerminalOutcome(ctx context.Context, appName, userID, chatI
 		slog.Warn("stamp terminal outcome: persist failed", "component", "store", "chat", chatID, "err", err)
 	}
 	return status, question
+}
+
+// ScanOrphanedRuns (re-)stamps RunStatusInterrupted on every chat a killed
+// process left mid-run (ActiveTurnID set, or already interrupted). Call at
+// boot alongside FailStaleDagNodes; returned ids are for the caller to log.
+func (s *Store) ScanOrphanedRuns(ctx context.Context) ([]string, error) {
+	var chats []Chat
+	if err := s.db.WithContext(ctx).
+		Where("active_turn_id <> ? OR run_status = ?", "", RunStatusInterrupted).
+		Find(&chats).Error; err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(chats))
+	for _, c := range chats {
+		ids = append(ids, c.ID)
+		if err := s.StampRunOutcome(ctx, c.ID, RunStatusInterrupted, ""); err != nil {
+			slog.Warn("scan orphaned runs: stamp failed", "component", "store", "chat", c.ID, "err", err)
+		}
+	}
+	return ids, nil
 }
 
 func hasFailedDagNode(nodes []DagNode) bool {

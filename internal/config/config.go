@@ -589,6 +589,9 @@ type UserMemoryHookConfig struct {
 type ServerConfig struct {
 	Addr     string `yaml:"addr"`
 	Topology string `yaml:"topology"`
+	// ShutdownGraceSeconds bounds how long SIGTERM waits for in-flight runs
+	// to finish before force-cancelling them (see serve.DrainActiveRuns).
+	ShutdownGraceSeconds int `yaml:"shutdown_grace_seconds"`
 }
 
 const (
@@ -877,6 +880,12 @@ func (c *Config) validate() error {
 	}
 	if c.Server.Addr == "" {
 		c.Server.Addr = ":8080"
+	}
+	if c.Server.ShutdownGraceSeconds == 0 {
+		c.Server.ShutdownGraceSeconds = 20
+	}
+	if c.Server.ShutdownGraceSeconds < 0 {
+		return fmt.Errorf("config: server.shutdown_grace_seconds must be >= 0")
 	}
 	switch c.Server.Topology {
 	case "", TopologyEmbedded, TopologyManaged, TopologyExternal:

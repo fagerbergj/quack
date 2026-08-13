@@ -247,6 +247,11 @@ server:
   # available. Tool backends (search/fetch) are NOT managed - set them via the
   # tools below (kind: exa for keyless, kind: direct for fetch).
   # topology: managed
+  # shutdown_grace_seconds: how long SIGTERM waits for in-flight runs to
+  # finish before force-cancelling them (default 20). Your deploy's own kill
+  # grace (docker-compose stop_grace_period, k8s terminationGracePeriodSeconds)
+  # must be longer than this, or the platform SIGKILLs before quack finishes draining.
+  # shutdown_grace_seconds: 20
 
 # OTel tracing/metrics - emission-only (Tempo/Grafana, the home-server
 # monitoring stack, own trace/metric viewing; quack keeps no local store of
