@@ -135,20 +135,23 @@ The style guide and the linter are the authority on style, and out-of-scope obse
 ### `constructive_actionable`
 
 The review critiques the work, not the developer; explains the *why* behind
-each finding so it's actionable; and includes at least one sincere piece of
-praise in the summary. Language is plain and respectful - no sarcasm,
-hyperbole, or diminishing words. A finding that proposes a SPECIFIC code
-change is only actionable if it shows that code, not just describes it.
+each finding so it's actionable. Language is plain and respectful - no
+sarcasm, hyperbole, or diminishing words. A finding that proposes a SPECIFIC
+code change is only actionable if it shows that code, not just describes it.
+A summary that also includes a sincere piece of praise is a polish signal,
+worth at most a point off if missing - it can never by itself pull this
+criterion below passing.
 
 **Evaluation steps.**
 1. Check the tone targets the code, not the author, and avoids "just"/"always"
    /"obviously"-style diminishment.
 2. Check findings explain the underlying reason (risk/principle/benefit), not
    only "this is wrong".
-3. Check the summary - `stage_review`'s body, or the reply text ahead of the
-   fallback `VERDICT:`/`FINDINGS:` tail - for at least one genuine, sincere
-   sentence of praise. There is no `praise:` label; the prompt reserves
-   praise for the summary.
+3. Note whether the summary - `stage_review`'s body, or the reply text ahead
+   of the fallback `VERDICT:`/`FINDINGS:` tail - includes at least one
+   genuine, sincere sentence of praise. There is no `praise:` label; the
+   prompt reserves praise for the summary. Its absence is a minor deduction,
+   never a disqualifier.
 4. For each finding that proposes a specific code change (a rename, an
    extraction, a different implementation - anything more concrete than "this
    could be cleaner"), check whether it supplies that code in a fenced code
@@ -158,12 +161,11 @@ change is only actionable if it shows that code, not just describes it.
    concrete and needs NO code block; do not penalize those for lacking one.
 
 **Scoring bands.**
-- **7–10** - respectful, every finding explains its why, there is sincere
-  praise, and every finding proposing specific code supplies it in a fenced
-  block.
-- **4–6** - actionable but terse (some findings state what without why),
-  praise is missing/perfunctory, or a finding proposes a specific change in
-  prose without the code to back it.
+- **7–10** - respectful, every finding explains its why, and every finding
+  proposing specific code supplies it in a fenced block. Missing praise costs
+  at most one point here (e.g. 10 → 9), never more.
+- **4–6** - actionable but terse (some findings state what without why), or a
+  finding proposes a specific change in prose without the code to back it.
 - **0–3** - comments target the person, are dismissive, or are unactionable
   ("this is bad") with no reasoning.
 

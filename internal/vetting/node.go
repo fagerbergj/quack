@@ -486,6 +486,22 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			if res.Passed || round > cfg.JudgeRounds {
 				break
 			}
+			// Re-check now that the verdict is known to have failed: the judge's
+			// own model call can run long, and a revise round after it is another
+			// full worker round - a cancel landing during the judge call must stop
+			// here too, not just at the top of the next round (#879).
+			if ctrl != nil {
+				if ctrl.Cancelled() {
+					return answer, res, nil
+				}
+				if ctrl.Paused() {
+					return answer, res, ErrNodePaused
+				}
+				if q := ctrl.TakeQueued(); strings.TrimSpace(q) != "" {
+					queuedText = q
+					break
+				}
+			}
 			// #762: undo this round's commits before the worker gets another
 			// try, but only if commit_hygiene says it swept in off-task work -
 			// an ordinary incomplete/wrong round keeps its commits so revise
