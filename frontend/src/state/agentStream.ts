@@ -76,7 +76,7 @@ export interface NodeDoneMeta {
 
 // CompactionPayload is the compaction event payload: a node's worker history
 // was rewritten to fit its agent's context window mid-round.
-export interface CompactionPayload {
+interface CompactionPayload {
   nodeId: string
   runId: string
   tokensBefore: number
