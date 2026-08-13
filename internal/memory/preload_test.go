@@ -45,7 +45,7 @@ func TestStoreRecall(t *testing.T) {
 	consolidator := fakeModel{reply: `{"ops":[{"action":"ADD","content":"build with make dev, not npm run build","kind":"convention"}]}`}
 	s := newSQLiteStore(t, "task", consolidator)
 	sc := Scope{Role: RoleCoding}
-	if _, err := s.Commit(context.Background(), sc, "explorer", []Candidate{{Content: "build with make dev"}}, "report"); err != nil {
+	if _, err := s.Commit(context.Background(), sc, "explorer", Provenance{}, []Candidate{{Content: "build with make dev"}}, "report"); err != nil {
 		t.Fatal(err)
 	}
 	got := s.Recall(context.Background(), sc, "how do I build this repo")

@@ -51,6 +51,10 @@ type memoryRow struct {
 	Author     string
 	Timestamp  string
 	Kind       string
+	ChatID     string
+	NodeID     string
+	Source     string
+	MintedAt   string
 	Vector     []byte
 }
 
@@ -86,6 +90,10 @@ func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32
 			Timestamp: r.Timestamp,
 			Kind:      r.Kind,
 			Scope:     r.Scope,
+			ChatID:    r.ChatID,
+			NodeID:    r.NodeID,
+			Source:    r.Source,
+			MintedAt:  r.MintedAt,
 			Score:     cosine(vec, bytesToVec(r.Vector)),
 		})
 	}
@@ -115,7 +123,10 @@ func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit 
 	}
 	out := make([]scored, len(rows))
 	for i, r := range rows {
-		out[i] = scored{ID: r.ID, Content: r.Content, Author: r.Author, Timestamp: r.Timestamp, Kind: r.Kind, Scope: r.Scope}
+		out[i] = scored{
+			ID: r.ID, Content: r.Content, Author: r.Author, Timestamp: r.Timestamp, Kind: r.Kind, Scope: r.Scope,
+			ChatID: r.ChatID, NodeID: r.NodeID, Source: r.Source, MintedAt: r.MintedAt,
+		}
 	}
 	return out, nil
 }
@@ -143,6 +154,10 @@ func (x *sqliteIndex) upsert(ctx context.Context, pts []point) error {
 			Author:     p.Author,
 			Timestamp:  p.Timestamp,
 			Kind:       p.Kind,
+			ChatID:     p.ChatID,
+			NodeID:     p.NodeID,
+			Source:     p.Source,
+			MintedAt:   p.MintedAt,
 			Vector:     vecToBytes(p.Vector),
 		}
 	}

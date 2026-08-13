@@ -386,7 +386,7 @@ func TestSummarizeText(t *testing.T) {
 }
 
 func TestNewCommitMemoryTool(t *testing.T) {
-	tl, err := NewCommitMemoryTool(nil, "u1") // construction only; handler not invoked
+	tl, err := NewCommitMemoryTool(nil, "u1", "chat1", "") // construction only; handler not invoked
 	if err != nil {
 		t.Fatalf("NewCommitMemoryTool: %v", err)
 	}

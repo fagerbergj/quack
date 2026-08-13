@@ -23,6 +23,17 @@ type Candidate struct {
 	Metadata map[string]string
 }
 
+// Provenance identifies the run that mints a memory: which chat, which DAG
+// node (empty for an orchestrator-level commit, e.g. commit_memory), and
+// which delivery source (empty = native quack run, e.g. chat UI/REST/MCP -
+// see Orchestrator.Run's `source` param). Phase 1 of the memory lifecycle
+// (design doc, issue #849): stamped on write, not yet acted on at recall.
+type Provenance struct {
+	ChatID string
+	NodeID string
+	Source string
+}
+
 // nowRFC3339 lets tests stamp deterministically; defaults to time.Now.
 var nowRFC3339 = func() string { return time.Now().UTC().Format(time.RFC3339) }
 
@@ -43,7 +54,7 @@ var nowRFC3339 = func() string { return time.Now().UTC().Format(time.RFC3339) }
 // ponytail: per-(bucket, collection) commits can race - two parallel commits of
 // the same fact both ADD. Best-effort: the next commit's consolidation reconciles
 // the dup. Add a per-key lock only if duplicate churn proves real.
-func (s *Store) Commit(ctx context.Context, sc Scope, author string, staged []Candidate, sourceText string) (int, error) {
+func (s *Store) Commit(ctx context.Context, sc Scope, author string, prov Provenance, staged []Candidate, sourceText string) (int, error) {
 	if s.consolidator == nil {
 		return 0, fmt.Errorf("memory: Commit on a store with no consolidator")
 	}
@@ -79,7 +90,7 @@ func (s *Store) Commit(ctx context.Context, sc Scope, author string, staged []Ca
 		if bucket == def {
 			src = sourceText
 		}
-		n, err := s.commitTo(ctx, bucket, author, byBucket[bucket], src)
+		n, err := s.commitTo(ctx, bucket, author, prov, byBucket[bucket], src)
 		if err != nil {
 			return total, err
 		}
@@ -89,7 +100,7 @@ func (s *Store) Commit(ctx context.Context, sc Scope, author string, staged []Ca
 }
 
 // commitTo runs the vet + reconcile pass for ONE bucket and applies its operations.
-func (s *Store) commitTo(ctx context.Context, bucket, author string, staged []Candidate, sourceText string) (int, error) {
+func (s *Store) commitTo(ctx context.Context, bucket, author string, prov Provenance, staged []Candidate, sourceText string) (int, error) {
 	// Fetch existing memories in this bucket near the work to reconcile against.
 	neighbours, err := s.neighbours(ctx, bucket, sourceText, staged)
 	if err != nil {
@@ -106,11 +117,13 @@ func (s *Store) commitTo(ctx context.Context, bucket, author string, staged []Ca
 
 	// Only honour an UPDATE/DELETE id the consolidator was actually shown - a
 	// hallucinated id would otherwise upsert an orphan point at an arbitrary id.
-	valid := make(map[string]bool, len(neighbours))
+	// Keyed by neighbour (not just bool) so an UPDATE can carry forward its
+	// original mint instead of the current commit's.
+	valid := make(map[string]neighbour, len(neighbours))
 	for _, n := range neighbours {
-		valid[n.ID] = true
+		valid[n.ID] = n
 	}
-	return s.apply(ctx, bucket, author, ops, valid)
+	return s.apply(ctx, bucket, author, prov, ops, valid)
 }
 
 // dedupCandidates drops candidates with duplicate trimmed content (cheap; saves
@@ -130,8 +143,12 @@ func dedupCandidates(in []Candidate) []Candidate {
 }
 
 type neighbour struct {
-	ID      string
-	Content string
+	ID       string
+	Content  string
+	ChatID   string
+	NodeID   string
+	Source   string
+	MintedAt string
 }
 
 // op is one consolidation decision from the LLM.
@@ -185,7 +202,10 @@ func (s *Store) neighbours(ctx context.Context, bucket, sourceText string, stage
 	out := make([]neighbour, 0, len(pts))
 	for _, p := range pts {
 		if p.Content != "" {
-			out = append(out, neighbour{ID: p.ID, Content: p.Content})
+			out = append(out, neighbour{
+				ID: p.ID, Content: p.Content,
+				ChatID: p.ChatID, NodeID: p.NodeID, Source: p.Source, MintedAt: p.MintedAt,
+			})
 		}
 	}
 	return out, nil
@@ -258,24 +278,29 @@ func (s *Store) decide(ctx context.Context, staged []Candidate, sourceText strin
 }
 
 // apply writes the operations into one bucket: ADD/UPDATE upsert a point (UPDATE
-// keeps the existing id), DELETE removes one, NOOP is skipped. valid is the set of
-// ids the consolidator was shown; an UPDATE/DELETE naming any other id is treated as
-// a hallucination (UPDATE → fresh ADD, DELETE → dropped). Returns writes applied.
-func (s *Store) apply(ctx context.Context, bucket, author string, ops []op, valid map[string]bool) (int, error) {
+// keeps the existing id), DELETE removes one, NOOP is skipped. valid is the
+// neighbours the consolidator was shown, keyed by id; an UPDATE/DELETE naming any
+// other id is treated as a hallucination (UPDATE → fresh ADD, DELETE → dropped).
+// prov stamps a fresh ADD; an UPDATE instead carries forward the id's original
+// minted_at/provenance from valid - the memory was minted by its original run, and
+// a wording correction doesn't re-mint it. Returns writes applied.
+func (s *Store) apply(ctx context.Context, bucket, author string, prov Provenance, ops []op, valid map[string]neighbour) (int, error) {
 	var dels []string
 	var writes []op
 	for _, o := range ops {
 		switch strings.ToUpper(strings.TrimSpace(o.Action)) {
 		case "ADD", "UPDATE":
 			if strings.TrimSpace(o.Content) != "" {
-				if !valid[o.ID] {
+				if _, ok := valid[o.ID]; !ok {
 					o.ID = "" // hallucinated/absent id → fresh ADD, not an orphan upsert
 				}
 				writes = append(writes, o)
 			}
 		case "DELETE":
-			if o.ID != "" && valid[o.ID] {
-				dels = append(dels, o.ID)
+			if o.ID != "" {
+				if _, ok := valid[o.ID]; ok {
+					dels = append(dels, o.ID)
+				}
 			}
 		}
 	}
@@ -294,7 +319,13 @@ func (s *Store) apply(ctx context.Context, bucket, author string, ops []op, vali
 		points := make([]point, 0, len(writes))
 		for i, o := range writes {
 			id := o.ID
-			if strings.ToUpper(strings.TrimSpace(o.Action)) == "ADD" || id == "" {
+			fresh := strings.ToUpper(strings.TrimSpace(o.Action)) == "ADD" || id == ""
+			mintedAt, chatID, nodeID, source := ts, prov.ChatID, prov.NodeID, prov.Source
+			if !fresh {
+				if n, ok := valid[id]; ok {
+					mintedAt, chatID, nodeID, source = n.MintedAt, n.ChatID, n.NodeID, n.Source
+				}
+			} else {
 				id = uuid.NewString()
 			}
 			points = append(points, point{
@@ -305,6 +336,10 @@ func (s *Store) apply(ctx context.Context, bucket, author string, ops []op, vali
 				Author:    author,
 				Timestamp: ts,
 				Kind:      o.Kind,
+				ChatID:    chatID,
+				NodeID:    nodeID,
+				Source:    source,
+				MintedAt:  mintedAt,
 			})
 		}
 		if err := s.idx.upsert(ctx, points); err != nil {

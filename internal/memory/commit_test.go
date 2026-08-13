@@ -28,7 +28,7 @@ func TestCommit_AddThenRecall(t *testing.T) {
 	s := newSQLiteStore(t, "task", consolidator)
 
 	sc := Scope{Role: RoleResearch, User: "u1", Legacy: "web-researcher"}
-	n, err := s.Commit(ctx, sc, "web-researcher",
+	n, err := s.Commit(ctx, sc, "web-researcher", Provenance{},
 		[]Candidate{{Content: "use the official transit site", Metadata: map[string]string{"kind": "source"}}},
 		"Dublin buses run by transportforireland.ie ...")
 	if err != nil {
@@ -54,7 +54,7 @@ func TestCommit_Noop(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", fakeModel{reply: `{"ops":[]}`})
 
-	n, err := s.Commit(ctx, Scope{Role: RoleResearch, User: "u1"}, "web-researcher", []Candidate{{Content: "today's bus fare is 2 euro"}}, "")
+	n, err := s.Commit(ctx, Scope{Role: RoleResearch, User: "u1"}, "web-researcher", Provenance{}, []Candidate{{Content: "today's bus fare is 2 euro"}}, "")
 	if err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestCommit_Noop(t *testing.T) {
 // TestCommit_NoConsolidator guards the read-only-store error path (no LLM call).
 func TestCommit_NoConsolidator(t *testing.T) {
 	s := &Store{} // no consolidator
-	if _, err := s.Commit(context.Background(), Scope{User: "u1"}, "a", []Candidate{{Content: "x"}}, ""); err == nil {
+	if _, err := s.Commit(context.Background(), Scope{User: "u1"}, "a", Provenance{}, []Candidate{{Content: "x"}}, ""); err == nil {
 		t.Fatal("Commit with nil consolidator should error")
 	}
 }

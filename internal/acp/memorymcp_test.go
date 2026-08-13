@@ -138,10 +138,10 @@ func TestMemoryMCP_LoadMemory_ScopedRecall(t *testing.T) {
 	}
 	inScope := memory.Scope{Repo: "acme/in-scope"}
 	outOfScope := memory.Scope{Repo: "acme/out-of-scope"}
-	if _, err := store.Commit(ctx, inScope, "seed", nil, "run go test ./... before every commit"); err != nil {
+	if _, err := store.Commit(ctx, inScope, "seed", memory.Provenance{}, nil, "run go test ./... before every commit"); err != nil {
 		t.Fatalf("seed in-scope: %v", err)
 	}
-	if _, err := store.Commit(ctx, outOfScope, "seed", nil, "the other repo uses npm test"); err != nil {
+	if _, err := store.Commit(ctx, outOfScope, "seed", memory.Provenance{}, nil, "the other repo uses npm test"); err != nil {
 		t.Fatalf("seed out-of-scope: %v", err)
 	}
 
@@ -221,10 +221,10 @@ func TestMemoryMCP_CrossNodeIsolation(t *testing.T) {
 
 	scopeA := memory.Scope{Repo: "acme/node-a-repo"}
 	scopeB := memory.Scope{Repo: "acme/node-b-repo"}
-	if _, err := store.Commit(ctx, scopeA, "seed", nil, "node A's secret build note"); err != nil {
+	if _, err := store.Commit(ctx, scopeA, "seed", memory.Provenance{}, nil, "node A's secret build note"); err != nil {
 		t.Fatalf("seed A: %v", err)
 	}
-	if _, err := store.Commit(ctx, scopeB, "seed", nil, "node B's secret build note"); err != nil {
+	if _, err := store.Commit(ctx, scopeB, "seed", memory.Provenance{}, nil, "node B's secret build note"); err != nil {
 		t.Fatalf("seed B: %v", err)
 	}
 

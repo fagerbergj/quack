@@ -19,8 +19,11 @@ type commitMemoryArgs struct {
 	Kind    string `json:"kind"`
 }
 
-// NewCommitMemoryTool: orchestrator's commit_memory tool - writes directly (no judge gate).
-func NewCommitMemoryTool(store *memory.Store, userID string) (tool.Tool, error) {
+// NewCommitMemoryTool: orchestrator's commit_memory tool - writes directly (no judge
+// gate). chatID/source stamp provenance (see memory.Provenance); built fresh per
+// Orchestrator.Run call, so a plain closure over them is safe (no cross-node reuse
+// like the DAG-node tools that need SetLedgerCoords).
+func NewCommitMemoryTool(store *memory.Store, userID, chatID, source string) (tool.Tool, error) {
 	return functiontool.New[commitMemoryArgs, string](
 		functiontool.Config{
 			Name: "commit_memory",
@@ -43,7 +46,8 @@ func NewCommitMemoryTool(store *memory.Store, userID string) (tool.Tool, error) 
 			defer cancel()
 			// User bucket: records facts about the user. Legacy is the pre-bucket key for existing memories.
 			sc := memory.Scope{User: userID, Legacy: userID}
-			if _, err := store.Commit(cctx, sc, "orchestrator", []memory.Candidate{cand}, ""); err != nil {
+			prov := memory.Provenance{ChatID: chatID, Source: source}
+			if _, err := store.Commit(cctx, sc, "orchestrator", prov, []memory.Candidate{cand}, ""); err != nil {
 				return "", fmt.Errorf("commit_memory: %w", err)
 			}
 			return "Remembered.", nil
