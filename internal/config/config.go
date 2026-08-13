@@ -773,7 +773,7 @@ func (c *Config) validate() error {
 			continue
 		}
 		if s.Consolidation.IntervalMinutes < 0 {
-			return fmt.Errorf("config: store %q consolidation.interval must be >= 0", name)
+			return fmt.Errorf("config: store %q consolidation.interval_minutes must be >= 0", name)
 		}
 		if s.Consolidation.RetentionDays < 0 {
 			return fmt.Errorf("config: store %q consolidation.retention_days must be >= 0", name)

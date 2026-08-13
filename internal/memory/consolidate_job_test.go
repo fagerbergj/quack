@@ -2,8 +2,13 @@ package memory
 
 import (
 	"context"
+	"errors"
+	"iter"
 	"testing"
 	"time"
+
+	"google.golang.org/adk/v2/model"
+	"google.golang.org/genai"
 )
 
 // seedMemory upserts one point with the lifecycle/provenance fields the
@@ -16,6 +21,36 @@ func seedMemory(t *testing.T, s *Store, p point) {
 	}
 	if err := s.idx.upsert(context.Background(), []point{p}); err != nil {
 		t.Fatalf("seed upsert %s: %v", p.ID, err)
+	}
+}
+
+// errIndex wraps a real index, forcing remove() to fail regardless of what
+// the backing index would have done - pins the sweep's warn-and-continue
+// behavior on a backend error without a separate fake backend.
+type errIndex struct {
+	index
+	removeErr error
+}
+
+func (e *errIndex) remove(ctx context.Context, ids []string) (int, error) {
+	if e.removeErr != nil {
+		return 0, e.removeErr
+	}
+	return e.index.remove(ctx, ids)
+}
+
+// countingErrModel is a consolidator stub that always replies with malformed
+// JSON (so decideDedupe's parse fails) and counts how many times it was
+// called - proves a cluster's error doesn't stop the sweep from attempting
+// the next cluster.
+type countingErrModel struct{ calls *int }
+
+func (countingErrModel) Name() string { return "fake-erroring-consolidator" }
+
+func (m countingErrModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	*m.calls++
+	return func(yield func(*model.LLMResponse, error) bool) {
+		yield(&model.LLMResponse{Content: &genai.Content{Parts: []*genai.Part{{Text: "not valid json"}}}}, nil)
 	}
 }
 
@@ -295,5 +330,103 @@ func TestRunConsolidationSweep_RunsImmediatelyThenTicks(t *testing.T) {
 	}
 	if len(remaining) != 0 {
 		t.Fatalf("expected the immediate sweep to remove the expired point; got %+v", remaining)
+	}
+}
+
+// TestConsolidateOnce_ClusterErrorContinuesToNextCluster covers the sweep's
+// warn-and-continue contract: one cluster's decideDedupe/apply failure (a
+// malformed consolidation reply) must not stop consolidateOnce from
+// attempting the rest - two independent bursts (different chat_ids) both get
+// a call to the consolidator, and neither's points are touched since both
+// calls fail to parse.
+func TestConsolidateOnce_ClusterErrorContinuesToNextCluster(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStore(t, "task", nil)
+	ops := &fakeOpsLog{}
+	s.SetOpsLog(ops)
+
+	seedMemory(t, s, point{ID: "a1", Content: "dup A1", Scope: "repo:r", Author: "a", Timestamp: "t",
+		ChatID: "chat-1", MintedAt: "2026-08-13T00:00:00Z", Status: string(StatusUnverified), ValidFrom: "t"})
+	seedMemory(t, s, point{ID: "a2", Content: "dup A2", Scope: "repo:r", Author: "a", Timestamp: "t",
+		ChatID: "chat-1", MintedAt: "2026-08-13T00:05:00Z", Status: string(StatusUnverified), ValidFrom: "t"})
+	seedMemory(t, s, point{ID: "b1", Content: "dup B1", Scope: "repo:r", Author: "a", Timestamp: "t",
+		ChatID: "chat-2", MintedAt: "2026-08-13T00:00:00Z", Status: string(StatusUnverified), ValidFrom: "t"})
+	seedMemory(t, s, point{ID: "b2", Content: "dup B2", Scope: "repo:r", Author: "a", Timestamp: "t",
+		ChatID: "chat-2", MintedAt: "2026-08-13T00:05:00Z", Status: string(StatusUnverified), ValidFrom: "t"})
+
+	calls := 0
+	s.consolidator = countingErrModel{calls: &calls}
+
+	s.consolidateOnce(ctx) // must not panic or stop after the first cluster's error
+
+	if calls != 2 {
+		t.Fatalf("consolidator calls = %d, want 2 (both clusters attempted despite the first failing)", calls)
+	}
+	all, _, err := s.List(ctx, []string{"repo:r"}, 0, 10, true)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(all) != 4 {
+		t.Fatalf("all memories = %+v, want all 4 untouched (every decideDedupe call failed to parse)", all)
+	}
+	if len(ops.rows) != 0 {
+		t.Fatalf("ops rows = %+v, want none (no op ever applied)", ops.rows)
+	}
+}
+
+// TestRetentionOnce_RemoveErrorContinuesToPrune covers the sweep's
+// warn-and-continue contract from the retention side: idx.remove() failing
+// must not stop retentionOnce from still attempting the memory_ops prune.
+func TestRetentionOnce_RemoveErrorContinuesToPrune(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStore(t, "task", nil)
+	ops := &fakeOpsLog{}
+	s.SetOpsLog(ops)
+
+	old := time.Now().Add(-40 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	seedMemory(t, s, point{ID: "expired", Content: "long invalidated", Scope: "repo:r", Author: "a", Timestamp: "t",
+		Status: string(StatusInvalidated), ValidFrom: "t", InvalidatedAt: old, InvalidationReason: "stale"})
+
+	s.idx = &errIndex{index: s.idx, removeErr: errors.New("backend unavailable")}
+
+	s.retentionOnce(ctx, 30) // must not panic or skip the prune step
+
+	if len(ops.pruneCalls) != 1 {
+		t.Fatalf("PruneMemoryOps calls = %d, want 1 (still attempted despite the remove error)", len(ops.pruneCalls))
+	}
+	remaining, _, err := s.List(ctx, []string{"repo:r"}, 0, 10, true)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(remaining) != 1 {
+		t.Fatalf("remaining = %+v, want the point still present (remove failed)", remaining)
+	}
+}
+
+// TestRetentionOnce_PruneMemoryOpsErrorDoesNotAbort covers the sweep's
+// warn-and-continue contract from the opsLog side: PruneMemoryOps failing
+// must not undo or block the point removal that already happened, and must
+// not panic or propagate - retentionOnce has no error return.
+func TestRetentionOnce_PruneMemoryOpsErrorDoesNotAbort(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStore(t, "task", nil)
+	ops := &fakeOpsLog{pruneErr: errors.New("audit store unavailable")}
+	s.SetOpsLog(ops)
+
+	old := time.Now().Add(-40 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	seedMemory(t, s, point{ID: "expired", Content: "long invalidated", Scope: "repo:r", Author: "a", Timestamp: "t",
+		Status: string(StatusInvalidated), ValidFrom: "t", InvalidatedAt: old, InvalidationReason: "stale"})
+
+	s.retentionOnce(ctx, 30) // must not panic despite PruneMemoryOps erroring
+
+	remaining, _, err := s.List(ctx, []string{"repo:r"}, 0, 10, true)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("remaining = %+v, want the expired point removed regardless of the prune error", remaining)
+	}
+	if len(ops.pruneCalls) != 1 {
+		t.Fatalf("PruneMemoryOps calls = %d, want 1", len(ops.pruneCalls))
 	}
 }

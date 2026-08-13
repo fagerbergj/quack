@@ -17,6 +17,7 @@ type fakeOpsLog struct {
 	rows        []opRow
 	pruneCalls  []time.Time
 	pruneResult int
+	pruneErr    error
 }
 
 type opRow struct {
@@ -37,6 +38,9 @@ func (f *fakeOpsLog) PruneMemoryOps(_ context.Context, cutoff time.Time) (int, e
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.pruneCalls = append(f.pruneCalls, cutoff)
+	if f.pruneErr != nil {
+		return 0, f.pruneErr
+	}
 	return f.pruneResult, nil
 }
 

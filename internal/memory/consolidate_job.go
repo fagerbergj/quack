@@ -17,6 +17,28 @@ const clusterWindow = 15 * time.Minute
 // a burst's wording), distinct from the agent name a live commit stamps.
 const consolidatorAuthor = "memory-consolidator"
 
+// sweepPageSize bounds each list() call the sweep makes to the backend, so a
+// growing collection can't force one unbounded scroll/select per tick.
+const sweepPageSize = 500
+
+// forEachSweepPage walks every point across all buckets in pages of
+// sweepPageSize, calling fn once per page until the backend is exhausted.
+func (s *Store) forEachSweepPage(ctx context.Context, includeInvalidated bool, fn func([]scored)) error {
+	for offset := 0; ; offset += sweepPageSize {
+		page, err := s.idx.list(ctx, nil, offset, sweepPageSize, includeInvalidated)
+		if err != nil {
+			return err
+		}
+		if len(page) == 0 {
+			return nil
+		}
+		fn(page)
+		if len(page) < sweepPageSize {
+			return nil
+		}
+	}
+}
+
 // RunConsolidationSweep runs the periodic burst-dedupe pass (design doc
 // §4(c)) plus retention (design doc §6) - once immediately, then every
 // interval, until ctx is done. Mirrors ledger.RunRetentionSweep's shape and
@@ -50,17 +72,22 @@ func (s *Store) sweepOnce(ctx context.Context, retentionDays int) {
 // dedupe each cluster (design doc §4(c)). Off the hot path: reached only from
 // the ticker, never inlined in a commit.
 func (s *Store) consolidateOnce(ctx context.Context) {
-	pts, err := s.idx.list(ctx, nil, 0, 0, false) // every bucket, currently-valid only
+	// Clustering needs every currently-valid unverified memory grouped by
+	// bucket before it can chain bursts, so the accumulation itself isn't
+	// avoidable here - but paging the fetch still bounds each backend call
+	// (vs. one unbounded scroll/select) as the collection grows.
+	byBucket := map[string][]scored{}
+	err := s.forEachSweepPage(ctx, false, func(page []scored) { // currently-valid only
+		for _, p := range page {
+			if p.Status == string(StatusReinforced) {
+				continue // earned trust; never a dedupe candidate
+			}
+			byBucket[p.Scope] = append(byBucket[p.Scope], p)
+		}
+	})
 	if err != nil {
 		s.log.Warn("consolidation sweep: list failed", "err", err)
 		return
-	}
-	byBucket := map[string][]scored{}
-	for _, p := range pts {
-		if p.Status == string(StatusReinforced) {
-			continue // earned trust; never a dedupe candidate
-		}
-		byBucket[p.Scope] = append(byBucket[p.Scope], p)
 	}
 	clusters, applied := 0, 0
 	for _, bucket := range slices.Sorted(maps.Keys(byBucket)) { // deterministic order
@@ -163,21 +190,27 @@ func (s *Store) retentionOnce(ctx context.Context, retentionDays int) {
 	}
 	cutoff := time.Now().Add(-time.Duration(retentionDays) * 24 * time.Hour)
 
-	pts, err := s.idx.list(ctx, nil, 0, 0, true) // every bucket, including invalidated
+	// Page the fetch, but only ever accumulate ids (not full points - the
+	// bulk of a point's size is Content), and remove after the walk
+	// completes rather than mid-page: deleting during an offset-paged walk
+	// would shift a later page's window and skip a still-expired row (it
+	// would just be caught on the next tick, but there's no reason to risk it).
+	var expired []string
+	err := s.forEachSweepPage(ctx, true, func(page []scored) { // every bucket, including invalidated
+		for _, p := range page {
+			if p.Status != string(StatusInvalidated) || p.InvalidatedAt == "" {
+				continue
+			}
+			t, err := time.Parse(time.RFC3339, p.InvalidatedAt)
+			if err != nil || t.After(cutoff) {
+				continue
+			}
+			expired = append(expired, p.ID)
+		}
+	})
 	if err != nil {
 		s.log.Warn("retention sweep: list failed", "err", err)
 		return
-	}
-	var expired []string
-	for _, p := range pts {
-		if p.Status != string(StatusInvalidated) || p.InvalidatedAt == "" {
-			continue
-		}
-		t, err := time.Parse(time.RFC3339, p.InvalidatedAt)
-		if err != nil || t.After(cutoff) {
-			continue
-		}
-		expired = append(expired, p.ID)
 	}
 	removed := 0
 	if len(expired) > 0 {
