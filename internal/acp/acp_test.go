@@ -265,6 +265,41 @@ func TestRunPrompt_EnvironmentBlockTrailsTheTask(t *testing.T) {
 	}
 }
 
+// TestRunPrompt_EnvironmentBlockDisclosesReadOnly pins that the round's
+// EFFECTIVE caps (AdvisorTask.ReadOnly, resolved per node in resolveNode)
+// reach the environment block, not just a.opts.Caps's static default.
+func TestRunPrompt_EnvironmentBlockDisclosesReadOnly(t *testing.T) {
+	a := testAgent(t, "echo")
+	token := vetting.AdvisorThreadToken("plan-1", "review1")
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{NodeID: "review1", WorkspaceNodeID: "review1", SessionID: "s1", ReadOnly: true})
+	defer vetting.UnregisterAdvisorThread(token)
+
+	r, err := runner.New(runner.Config{
+		AppName: "test", Agent: a, SessionService: session.InMemoryService(), AutoCreateSession: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "review the PR\n\n" + vetting.AdvisorThreadMarker(token)}}}
+	var lastText string
+	for ev, err := range r.Run(t.Context(), "u1", "s1", task, adkagent.RunConfig{}) {
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		if ev.Content == nil {
+			continue
+		}
+		for _, p := range ev.Content.Parts {
+			if p.Text != "" {
+				lastText = p.Text
+			}
+		}
+	}
+	if !strings.Contains(lastText, "filesystem: this working tree is READ-ONLY") {
+		t.Fatalf("prompt missing the read-only disclosure line: %q", lastText)
+	}
+}
+
 // TestRound_MCPToolsBlockSaysNoneWhenNoSurface proves the block is rendered
 // (loud) rather than omitted (silent) when the round has no MCP participant.
 func TestRound_MCPToolsBlockSaysNoneWhenNoSurface(t *testing.T) {

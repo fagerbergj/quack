@@ -97,6 +97,29 @@ func TestEnvironmentBlockEmptyDir(t *testing.T) {
 	}
 }
 
+// TestEnvironmentBlockDisclosesReadOnly: a read-only round's block states the
+// filesystem is read-only (the landlock grant already enforces it - a
+// reviewer burning a round on an unexplained npm install EACCES is the bug
+// this line fixes), and stays silent when the tree is writable.
+func TestEnvironmentBlockDisclosesReadOnly(t *testing.T) {
+	dir := t.TempDir()
+
+	caps := workspace.DefaultCaps()
+	caps.ReadOnly = true
+	block := environmentBlock(context.Background(), dir, caps)
+	if !strings.Contains(block, "filesystem: this working tree is READ-ONLY") {
+		t.Errorf("block = %q, want a read-only filesystem disclosure line", block)
+	}
+	if !strings.Contains(block, "EACCES") {
+		t.Errorf("block = %q, want the EACCES consequence named", block)
+	}
+
+	block = environmentBlock(context.Background(), dir, workspace.DefaultCaps())
+	if strings.Contains(block, "filesystem:") {
+		t.Errorf("block = %q, want no filesystem line for a writable tree", block)
+	}
+}
+
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
