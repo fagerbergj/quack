@@ -212,7 +212,7 @@ is a fifteen-second takeaway that does NOT repeat the verdict.
    Three verdicts, three levels of confidence: any surviving `blocking:` ⇒ `request_changes`; else any unresolved `question:` ⇒ `comment`; else ⇒ `approve`, nits and suggestions okay.
 3. `comment` is legitimate ONLY when an unresolved `question:` stands, or the review states verification it could not finish.
    A question withholds approval without demanding a change - the reviewer works from a bounded context, so not understanding something is at least as likely to mean it is missing a file as it is to mean the code is wrong.
-   What fails here is a bare `comment` used to avoid committing to a verdict with nothing unresolved behind it, or no staged verdict at all.
+   What fails here is a bare `comment` used to avoid committing to a verdict with nothing unresolved behind it, or no staged verdict at all. An empty or non-blocking findings list plus verification the review itself says it completed is a clean review regardless of framing - staging it as an "incremental note" on a re-review doesn't earn the unfinished-verification exemption.
 4. Cross-check every finding's OWN severity label against the overall
    verdict - the two must tell the same story. A finding labeled `blocking:`
    (with or without a category tag like `blocking (security):`) sitting
@@ -228,12 +228,7 @@ is a fifteen-second takeaway that does NOT repeat the verdict.
   consistent staged verdict (including an explicit approve on a clean change).
 - **4–6** - mostly structured but missing the summary, or the staged verdict
   slightly mismatches the findings.
-- **0–3** - an unstructured wall of comments with no summary, no staged
-  verdict at all, a staged verdict that contradicts the findings (approves
-  over an unresolved blocking issue, or ANY finding is labeled blocking/
-  security-severity while the verdict is `approve`, or `request_changes` is
-  staged over findings that are all nits/suggestions), or a clean review
-  resolved to `comment` instead of `approve`.
+- **0–3** - an unstructured wall of comments with no summary, no staged verdict at all, a staged verdict that contradicts the findings (approves over an unresolved blocking issue, or ANY finding is labeled blocking/security-severity while the verdict is `approve`, or `request_changes` is staged over findings that are all nits/suggestions), or a clean review - empty or non-blocking findings, verification the review calls complete - resolved to `comment` instead of `approve`, including one staged as a re-review's "incremental note".
 
 ---
 
