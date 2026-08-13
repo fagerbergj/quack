@@ -190,12 +190,12 @@ func TestUpdateChatOriginOpenToClosedInvalidatesBothStores(t *testing.T) {
 	}
 
 	taskMems := listAll(t, taskMem, []string{"repo:r"})
-	if len(taskMems) != 1 || taskMems[0].Status != string(memory.StatusInvalidated) || taskMems[0].InvalidationReason != "subject closed unmerged" {
-		t.Fatalf("task memory = %+v, want status=invalidated reason=%q", taskMems, "subject closed unmerged")
+	if len(taskMems) != 1 || taskMems[0].Status != string(memory.StatusInvalidated) || taskMems[0].InvalidationReason != memory.OutcomeReasonClosedUnmerged {
+		t.Fatalf("task memory = %+v, want status=invalidated reason=%q", taskMems, memory.OutcomeReasonClosedUnmerged)
 	}
 	userMems := listAll(t, userMem, []string{"user:u"})
-	if len(userMems) != 1 || userMems[0].Status != string(memory.StatusInvalidated) || userMems[0].InvalidationReason != "subject closed unmerged" {
-		t.Fatalf("user memory = %+v, want status=invalidated reason=%q", userMems, "subject closed unmerged")
+	if len(userMems) != 1 || userMems[0].Status != string(memory.StatusInvalidated) || userMems[0].InvalidationReason != memory.OutcomeReasonClosedUnmerged {
+		t.Fatalf("user memory = %+v, want status=invalidated reason=%q", userMems, memory.OutcomeReasonClosedUnmerged)
 	}
 
 	rows := ops.snapshot()

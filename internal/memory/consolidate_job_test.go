@@ -160,6 +160,26 @@ func TestBurstClusters_WithinWindowChains(t *testing.T) {
 	}
 }
 
+// TestBurstClusters_UnparsableMintedAtFlushesAndSkips covers a malformed
+// MintedAt (data migration, corruption): the point can't be placed in time,
+// so it's dropped rather than guessed into a cluster, and whatever chained
+// before it still flushes as its own cluster instead of being discarded too.
+// The bad row's MintedAt is chosen to sort (lexicographically, same as
+// burstClusters itself sorts) between b and c, so it actually interrupts the
+// chain rather than landing at either end.
+func TestBurstClusters_UnparsableMintedAtFlushesAndSkips(t *testing.T) {
+	pts := []scored{
+		{ID: "a", ChatID: "chat-1", MintedAt: "2026-08-13T00:00:00Z"},
+		{ID: "b", ChatID: "chat-1", MintedAt: "2026-08-13T00:05:00Z"},
+		{ID: "bad", ChatID: "chat-1", MintedAt: "2026-08-13T00:07:00"}, // no zone: fails time.Parse
+		{ID: "c", ChatID: "chat-1", MintedAt: "2026-08-13T00:10:00Z"},
+	}
+	got := burstClusters(pts)
+	if len(got) != 1 || len(got[0]) != 2 || got[0][0].ID != "a" || got[0][1].ID != "b" {
+		t.Fatalf("burstClusters = %+v, want one flushed cluster [a b] (bad and lone c dropped)", got)
+	}
+}
+
 // TestConsolidateOnce_SkipsReinforcedAndInvalidatedNeighbours covers design
 // doc §7's implicit rule: a reinforced memory (earned trust) and an already-
 // invalidated one, both sharing the dedupe-eligible pair's chat_id/time
