@@ -25,6 +25,7 @@ import (
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/runlog"
@@ -65,8 +66,10 @@ type builtSDKExtension struct {
 // closures: neither is resolved until the caller Stores it, both built later
 // in buildFromConfig (judgeModelRef may never be Stored at all when no judge
 // model is configured - Classify degrades to an error, matching Host's own
-// nil-is-valid contract).
-func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM]) ([]builtSDKExtension, error) {
+// nil-is-valid contract). taskMem/userMem are already-built by the time this
+// runs (buildFromConfig constructs them first) and may each be nil - the same
+// task/user split rest/memory.go's memStores() iterates.
+func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskMem, userMem *memory.Store) ([]builtSDKExtension, error) {
 	factories := extsdk.Registered()
 	names := make([]string, 0, len(cfg.Extensions.Modules))
 	for name := range cfg.Extensions.Modules {
@@ -130,7 +133,7 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, or
 			ArchiveChat: func(chatID string) error {
 				return st.ArchiveChat(context.Background(), chatID, true)
 			},
-			UpdateChatOrigin: newExtUpdateChatOrigin(name, st),
+			UpdateChatOrigin: newExtUpdateChatOrigin(name, st, taskMem, userMem),
 			Classify: func(ctx context.Context, prompt string) (string, error) {
 				m := judgeModelRef.Load()
 				if m == nil || *m == nil {
@@ -515,7 +518,13 @@ func ensureExtChatTitle(ctx context.Context, st *store.Store, chatID, title stri
 // extsdk.ErrUnknownChat when localID never reached Dispatch, so a
 // state-change webhook for an issue/PR that was never dispatched (the common
 // case) fails predictably rather than silently minting a bare chat row.
-func newExtUpdateChatOrigin(name string, st *store.Store) func(localID string, origin extsdk.ChatOrigin) error {
+//
+// Also where memory-lifecycle design doc §4(b)/§5's core-side interpretation
+// lives: the extension only ever reports the domain fact (State); mapping a
+// State transition to a memory outcome, and which stores that outcome
+// touches, is core's own call - memory concepts never cross the SDK
+// boundary. taskMem/userMem stay nil-tolerant like every other Host field.
+func newExtUpdateChatOrigin(name string, st *store.Store, taskMem, userMem *memory.Store) func(localID string, origin extsdk.ChatOrigin) error {
 	return func(localID string, origin extsdk.ChatOrigin) error {
 		chatID := fmt.Sprintf("ext:%s:%s", name, localID)
 		ctx := context.Background()
@@ -526,11 +535,62 @@ func newExtUpdateChatOrigin(name string, st *store.Store) func(localID string, o
 		if c == nil {
 			return fmt.Errorf("extensions.%s: update chat origin: %w", name, extsdk.ErrUnknownChat)
 		}
+		prevState := priorOriginState(c.Origin)
 		b, err := json.Marshal(&origin)
 		if err != nil {
 			return fmt.Errorf("extensions.%s: update chat origin: marshal: %w", name, err)
 		}
-		return st.SetChatOrigin(ctx, chatID, c.SessionUser, string(b))
+		if err := st.SetChatOrigin(ctx, chatID, c.SessionUser, string(b)); err != nil {
+			return fmt.Errorf("extensions.%s: update chat origin: %w", name, err)
+		}
+		applyMemoryOutcome(ctx, name, chatID, prevState, origin.State, taskMem, userMem)
+		return nil
+	}
+}
+
+// priorOriginState reads State off a chat's previously stored origin JSON
+// (opaque to internal/store - see Chat.Origin), so newExtUpdateChatOrigin can
+// tell a transition from steady state before overwriting it. "" (including
+// no prior origin, or one minted before sdk v0.5.0 added State) reads as
+// unknown, same as the SDK's own zero value.
+func priorOriginState(originJSON string) extsdk.SubjectState {
+	if originJSON == "" {
+		return ""
+	}
+	var o extsdk.ChatOrigin
+	if err := json.Unmarshal([]byte(originJSON), &o); err != nil {
+		return ""
+	}
+	return o.State
+}
+
+// applyMemoryOutcome maps a ChatOrigin.State transition to a memory outcome
+// (design doc §4(b)/§5): merged reinforces, closed (from anything) invalidates
+// with a fixed reason, open/"" is a no-op either direction - stickiness
+// against a reopen-after-close lives in memory.Store.ApplyOutcome itself, not
+// here. Steady state (prev == next, e.g. a repeated closed webhook) never
+// reaches an outcome. Fire-and-forget: a memory store error is logged, never
+// surfaced - the origin update it rides on must not fail because of it.
+func applyMemoryOutcome(ctx context.Context, name, chatID string, prev, next extsdk.SubjectState, stores ...*memory.Store) {
+	if prev == next {
+		return
+	}
+	var outcome memory.OutcomeSignal
+	switch next {
+	case extsdk.SubjectMerged:
+		outcome = memory.OutcomeSignal{Kind: memory.OutcomeReinforced}
+	case extsdk.SubjectClosed:
+		outcome = memory.OutcomeSignal{Kind: memory.OutcomeInvalidated, Reason: "subject closed unmerged"}
+	default:
+		return
+	}
+	for _, s := range stores {
+		if s == nil {
+			continue
+		}
+		if _, err := s.ApplyOutcome(ctx, chatID, outcome); err != nil {
+			slog.Warn("apply memory outcome failed", "component", "ext."+name, "chat", chatID, "kind", outcome.Kind, "err", err)
+		}
 	}
 }
 

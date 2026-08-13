@@ -43,7 +43,7 @@ func TestBuildSDKExtensions_UIDescriptorCaptured(t *testing.T) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "fake-ui-test:\n  enabled: true\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef, nil, nil)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestBuildSDKExtensions_NoUIDescriptor_NameOnly(t *testing.T) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  enabled: true\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef, nil, nil)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}

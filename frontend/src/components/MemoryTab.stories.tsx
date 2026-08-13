@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import { within, userEvent, expect } from 'storybook/test'
 import { MemoryTab } from './MemoryTab'
 import type { Memory } from '../api'
 
@@ -61,5 +62,32 @@ export const SearchResults: Story = {
       memories: MEMORIES.map((m, i) => ({ ...m, score: 0.91 - i * 0.15 })),
       total: MEMORIES.length,
     },
+  },
+}
+
+// All three lifecycle tiers (design doc §3/§8 step 6) in one list: an
+// unverified memory (missing status, MEMORIES[0]), a reinforced one, and an
+// invalidated one carrying its reason.
+const MIXED_TIERS: Memory[] = [
+  MEMORIES[0],
+  { ...MEMORIES[1], status: 'reinforced', reinforcement_count: 4 },
+  { ...MEMORIES[2], status: 'invalidated', invalidation_reason: 'pr closed unmerged' },
+]
+
+export const MixedTiers: Story = {
+  args: { initialState: { memories: MIXED_TIERS, total: MIXED_TIERS.length } },
+}
+
+// Clicking "Show invalidated" is a plain checkbox, off by default - this
+// story just demonstrates it's reachable and toggleable, since the fetch it
+// triggers has no backend here (initialState skips the live GET).
+export const ShowInvalidatedToggled: Story = {
+  args: { initialState: { memories: MIXED_TIERS, total: MIXED_TIERS.length } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const toggle = canvas.getByLabelText('Show invalidated') as HTMLInputElement
+    expect(toggle.checked).toBe(false)
+    await userEvent.click(toggle)
+    expect(toggle.checked).toBe(true)
   },
 }
