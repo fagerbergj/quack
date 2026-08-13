@@ -114,8 +114,8 @@ github.com/fagerbergj/quack-extensions/remarkable v0.1.1 h1:CrPRUCRVptHR87o+VBSY
 github.com/fagerbergj/quack-extensions/remarkable v0.1.1/go.mod h1:i0AqOLF3PueQ5V5nQZqxsQPlS5MvhSWuvImNQXs6w6A=
 github.com/fagerbergj/quack-extensions/sdk v0.5.0 h1:L9reIzzncECsLvpR2drpIqt4d1VYGfPNPPNNAWYnx7g=
 github.com/fagerbergj/quack-extensions/sdk v0.5.0/go.mod h1:fp+3J6PT73ww7q73Zu4uaOCihbsihnarw+YT8F//GCI=
-github.com/fagerbergj/quack-extensions/usage v0.3.0 h1:iSNBtGvz7EcPInMOgT9h3ULA23vhzGiNEHtTAWmrRak=
-github.com/fagerbergj/quack-extensions/usage v0.3.0/go.mod h1:vH+F4I+jlipfU8E/dLEtiKbxWp05TO8+1OuylsLFA4k=
+github.com/fagerbergj/quack-extensions/usage v0.3.1 h1:dmaIVDHTAXUJc+Ayap1Qkds2ciXz/2fyXSvGEeRNDCI=
+github.com/fagerbergj/quack-extensions/usage v0.3.1/go.mod h1:vH+F4I+jlipfU8E/dLEtiKbxWp05TO8+1OuylsLFA4k=
 github.com/felixge/httpsnoop v1.1.0 h1:3YtUj32ZZkqZtt3sZZsClsymw/QDuVfpNhoA31zeORc=
 github.com/felixge/httpsnoop v1.1.0/go.mod h1:Zqxgdd+1Rkcz8euOqdr7lqgCRJztwr5hp9vDSi5UZCE=
 github.com/glebarez/go-sqlite v1.21.2 h1:3a6LFC4sKahUunAmynQKLZceZCOzUthkRkEAl9gAXWo=
