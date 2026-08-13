@@ -163,7 +163,10 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 		caps := a.opts.Caps
 		caps.ReadOnly = readOnly
 		caps.ScratchDir = scratchDir
-		outbound := environmentBlock(ctx, cwd, caps) + "\n\n" + prompt
+		// Environment block goes AFTER the task: it is regenerated every round
+		// (branch/HEAD/dir listing drift once a round commits anything), so
+		// leading with it broke the prompt-cache prefix from round 2 on.
+		outbound := prompt + "\n\n" + environmentBlock(ctx, cwd, caps)
 		if a.opts.Preamble != "" {
 			outbound = a.opts.Preamble + "\n\n" + outbound
 		}
