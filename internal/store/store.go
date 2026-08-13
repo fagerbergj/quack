@@ -76,6 +76,11 @@ type ChatTurn struct {
 	ReasoningTokens  int32 `json:"reasoning_tokens,omitempty"`
 	TotalTokens      int32 `json:"total_tokens,omitempty"`
 	CachedTokens     int32 `json:"cached_tokens,omitempty"`
+	// Input is the turn's trigger text, stamped at dispatch time by SetTurnInput -
+	// before the run's first session event exists, so a run still queued on the
+	// worker semaphore has something to show. GetTurnsWithContent falls back to
+	// the session walk for turns that predate this column.
+	Input string `json:"-"`
 }
 
 // GithubSnapshot stores the full GitHub state fetched at a github-origin
@@ -775,6 +780,15 @@ func (s *Store) SaveTurn(ctx context.Context, chatID, turnID string) error {
 	return s.db.WithContext(ctx).Create(t).Error
 }
 
+// SetTurnInput persists the turn's trigger text at dispatch time (both
+// rest.SendChatMessage and an extension's Dispatch call this right after
+// SaveTurn), before the run's first session event exists.
+func (s *Store) SetTurnInput(ctx context.Context, chatID, turnID, input string) error {
+	return s.db.WithContext(ctx).Model(&ChatTurn{}).
+		Where("id = ? AND chat_id = ?", turnID, chatID).
+		Update("input", input).Error
+}
+
 // TurnUsage is the orchestrator's own per-turn token usage (DAG turns credit
 // tokens per-node on DagNode instead).
 type TurnUsage struct {
@@ -929,9 +943,15 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 			// walk below.
 			PromptTokens: t.PromptTokens, CompletionTokens: t.CompletionTokens,
 			ReasoningTokens: t.ReasoningTokens, TotalTokens: t.TotalTokens, CachedTokens: t.CachedTokens,
+			// Stamped by SetTurnInput at dispatch time - present even for a turn
+			// that's still queued, before any session event exists. Turns that
+			// predate that stamp fall back to the session walk below.
+			UserText: t.Input,
 		}
 		if i < len(groups) {
-			tc.UserText = groups[i].userText
+			if tc.UserText == "" {
+				tc.UserText = groups[i].userText
+			}
 			tc.AsstText = groups[i].asstText
 			tc.AsstThink = groups[i].asstThink
 			tc.ToolCalls = groups[i].toolCalls

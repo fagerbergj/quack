@@ -8,9 +8,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/orchestrator"
+	"github.com/fagerbergj/quack/internal/store"
 )
 
 // recallModel answers each turn with a marker and records the full text of
@@ -88,4 +92,42 @@ func TestOrchestratorRemembersConversation(t *testing.T) {
 	if !strings.Contains(second, "REPLY-MARKER-1") {
 		t.Errorf("turn 2 request lost the orchestrator's own turn-1 reply:\n%s", second)
 	}
+}
+
+// TestSendChatMessage_PersistsTurnInput pins the queued-chat bug: dispatch
+// (SendChatMessage) must stamp the trigger text on the turn row itself,
+// not rely solely on the session-event walk - a run still queued behind the
+// worker semaphore has a ChatTurn row but no session events yet, so the old
+// session-walk-only path always rendered "" for it.
+func TestSendChatMessage_PersistsTurnInput(t *testing.T) {
+	m := &recallModel{}
+	h := newTestHandlerWithModel(t, m)
+	chatID := mustCreateChat(t, h)
+
+	postMessage(t, h, chatID, "hello from the trigger message")
+
+	turns := waitForTurnInput(t, h, chatID)
+	if len(turns) != 1 {
+		t.Fatalf("got %d turns, want 1", len(turns))
+	}
+	if got := turns[0].UserText; got != "hello from the trigger message" {
+		t.Errorf("UserText = %q, want the dispatched content", got)
+	}
+}
+
+// waitForTurnInput polls GetTurnsWithContent until the turn's input has
+// landed - SendChatMessage's SaveTurn/SetTurnInput pair runs in a background
+// goroutine that isn't ordered against the handler's own return.
+func waitForTurnInput(t *testing.T, h *Handler, chatID string) []store.TurnContent {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		turns, err := h.store.GetTurnsWithContent(context.Background(), orchestrator.AppName, userID, chatID)
+		if err == nil && len(turns) == 1 && turns[0].UserText != "" {
+			return turns
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("turn input for chat %q never landed", chatID)
+	return nil
 }

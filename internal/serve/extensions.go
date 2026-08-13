@@ -360,8 +360,11 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		ensureExtChatTitle(runCtx, st, chatID, req.Chat.Title, req.Chat.Origin)
 
 		turnID := uuid.NewString()
+		dispatchMsg := composeDispatchMessage(req)
 		if err := st.SaveTurn(runCtx, chatID, turnID); err != nil {
 			slog.Warn("extension dispatch: save turn failed", "component", "ext."+name, "chat", chatID, "err", err)
+		} else if err := st.SetTurnInput(runCtx, chatID, turnID, dispatchMsg); err != nil {
+			slog.Warn("extension dispatch: save turn input failed", "component", "ext."+name, "chat", chatID, "err", err)
 		}
 
 		attachments := make([]*genai.Part, 0, len(req.Ask.Attachments))
@@ -412,7 +415,7 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 			runCtx = tools.WithContextItems(runCtx, toDagContextItems(req.Ask.ContextItems))
 		}
 		runCtx = tools.WithPlanOnly(runCtx, req.Run.ReadOnly)
-		go driveExtensionRun(runCtx, name, orch, st, hub, extHolder, userID, chatID, turnID, composeDispatchMessage(req), attachments, req.Run.Timeout)
+		go driveExtensionRun(runCtx, name, orch, st, hub, extHolder, userID, chatID, turnID, dispatchMsg, attachments, req.Run.Timeout)
 		return nil
 	}
 }
