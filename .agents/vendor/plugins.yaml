@@ -4,7 +4,7 @@
 plugins:
   - name: dotagents
     url: https://github.com/fagerbergj/dotagents
-    ref: 82059690739e6f80c916044d1900cdd50f11c97d
+    ref: 3c58752bd0218943716cecbaa3da52333aaa2177
     path: .agents/vendor/dotagents
   - name: ponytail
     url: https://github.com/DietrichGebert/ponytail

@@ -1179,11 +1179,8 @@ func mcpServerName(raw string, i int) string {
 }
 
 // acpSkillPaths collects on-disk skill roots for an ACP agent's skills.paths:
-// quack's own skills/, each configured plugin's skills directory (internal/plugin
-// discovery), then dotagentsEmbeddedSkills as a backfill - dotagents ships no
-// plugin.json/.codex-plugin manifest, so ResolveSkillDirs always drops it; without
-// this an ACP agent never sees it even though newSkillSource's native path does
-// (same backfill, there via the embedded fallback).
+// quack's own skills/, then each configured plugin's skills directory
+// (internal/plugin discovery), in order.
 func acpSkillPaths(pluginRoots []string) []string {
 	var out []string
 	if abs, err := filepath.Abs("skills"); err == nil {
@@ -1191,14 +1188,7 @@ func acpSkillPaths(pluginRoots []string) []string {
 			out = append(out, abs)
 		}
 	}
-	dirs := plugin.ResolveSkillDirs(pluginRoots)
-	out = append(out, dirs...)
-	if abs, err := filepath.Abs(dotagentsEmbeddedSkills); err == nil && !slices.Contains(dirs, abs) {
-		if st, err := os.Stat(abs); err == nil && st.IsDir() {
-			out = append(out, abs)
-		}
-	}
-	return out
+	return append(out, plugin.ResolveSkillDirs(pluginRoots)...)
 }
 
 // contentText flattens a content's text parts (for advisor-thread marker extraction).

@@ -59,7 +59,7 @@ orchestrator:
   # contribute: the issue→plan→agree→implement→review→merge umbrella that hands
   # off to the others (kept alongside them, not on a worker - the orchestrator
   # is the only agent that owns the whole loop).
-  skills: [plan-work, format-markdown, present-coding-plan, contribute, write-mermaid]
+  skills: [plan-work, format-markdown, present-coding-plan, contribute, mermaid-authoring]
   provider: default
   model: ${QUACK_ORCH_MODEL}            # the thin dispatcher: routes requests to agents
   tools: [commit_memory]         # bind commit_memory to enable user memory (recall + commit of per-user preferences)
@@ -80,7 +80,7 @@ orchestrator:
 agents:
   web-researcher:
     bundle: agents/web-researcher
-    skills: [format-markdown, research-git-repos, write-mermaid]
+    skills: [format-markdown, research-git-repos, mermaid-authoring]
     provider: default
     memory:
       bucket: research   # shared-memory role bucket (see internal/memory/scope.go)
@@ -141,7 +141,7 @@ agents:
     bundle: agents/synthesizer
     # pr-authoring: when a run's answer IS a PR body (run-level synthesis of the atomic
     # commits a chain of code-implementer nodes made), write it like a PR, not a report.
-    skills: [format-markdown, present-coding-plan, pr-authoring, write-mermaid]
+    skills: [format-markdown, present-coding-plan, pr-authoring, mermaid-authoring]
     provider: default
     model: ${QUACK_RESEARCHER_MODEL}
     context_window: 65536       # same model as web-researcher
