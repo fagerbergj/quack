@@ -28,7 +28,7 @@ func TestFalsePositiveCorrectionRecalledByReviewer(t *testing.T) {
 	s := newSQLiteStore(t, "task", fakeModel{reply: string(reply)})
 
 	sc := Scope{Repo: repoA, Role: RoleCoding}
-	if _, err := s.Commit(ctx, sc, "orchestrator",
+	if _, err := s.Commit(ctx, sc, "orchestrator", Provenance{},
 		[]Candidate{{Content: correction, Metadata: map[string]string{"kind": "false_positive"}}}, ""); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}

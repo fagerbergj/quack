@@ -358,7 +358,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		}
 		o.executor.ResetNodeCancels(sessionID)
 		planCache := tools.NewPlanCache()
-		o.maybeMineUserMemory(ctx, userID, message)
+		o.maybeMineUserMemory(ctx, userID, sessionID, source, message)
 		prior := o.PriorEvents(ctx, userID, sessionID)
 		pending, hasPending := LatestPendingQuestion(prior)
 		if hasPending {
@@ -397,7 +397,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		toolList := []tool.Tool{planTool, execTool, choiceTool}
 		var memSvc adkmemory.Service
 		if o.userMem != nil {
-			commitTool, err := tools.NewCommitMemoryTool(o.userMem, userID)
+			commitTool, err := tools.NewCommitMemoryTool(o.userMem, userID, sessionID, source)
 			if err != nil {
 				yield(stream.Errorf("orchestrator: commit_memory tool: "+err.Error()), nil)
 				return

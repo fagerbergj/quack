@@ -28,6 +28,10 @@ const (
 	payloadAuthor    = "author"
 	payloadTimestamp = "timestamp"
 	payloadKind      = "kind"
+	payloadChatID    = "chat_id"
+	payloadNodeID    = "node_id"
+	payloadSource    = "source"
+	payloadMintedAt  = "minted_at"
 )
 
 // Open connects to Qdrant at addr (host:port gRPC) and returns a memory Store
@@ -97,6 +101,10 @@ func pointFromPayload(id *qdrant.PointId, payload map[string]*qdrant.Value, scor
 		Timestamp: payloadString(payload, payloadTimestamp),
 		Kind:      payloadString(payload, payloadKind),
 		Scope:     payloadString(payload, payloadScope),
+		ChatID:    payloadString(payload, payloadChatID),
+		NodeID:    payloadString(payload, payloadNodeID),
+		Source:    payloadString(payload, payloadSource),
+		MintedAt:  payloadString(payload, payloadMintedAt),
 		Score:     score,
 	}
 }
@@ -177,6 +185,10 @@ func (x *qdrantIndex) upsert(ctx context.Context, pts []point) error {
 			payloadScope:     p.Scope,
 			payloadAuthor:    p.Author,
 			payloadTimestamp: p.Timestamp,
+			payloadChatID:    p.ChatID,
+			payloadNodeID:    p.NodeID,
+			payloadSource:    p.Source,
+			payloadMintedAt:  p.MintedAt,
 		}
 		if p.Kind != "" {
 			payload[payloadKind] = p.Kind

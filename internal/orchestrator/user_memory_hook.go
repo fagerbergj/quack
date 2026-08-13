@@ -28,7 +28,7 @@ const (
 )
 
 // maybeMineUserMemory: fire-and-forget end-of-turn user-memory hook; never blocks the response.
-func (o *Orchestrator) maybeMineUserMemory(ctx context.Context, userID, message string) {
+func (o *Orchestrator) maybeMineUserMemory(ctx context.Context, userID, chatID, source, message string) {
 	if o.userMem == nil || o.memAgent == nil {
 		return
 	}
@@ -42,7 +42,7 @@ func (o *Orchestrator) maybeMineUserMemory(ctx context.Context, userID, message 
 			slog.Warn("user memory hook: extraction failed", "component", "orchestrator", "user", userID, "err", err)
 			return
 		}
-		commitUserMemory(bgCtx, o.userMem, userID, cands)
+		commitUserMemory(bgCtx, o.userMem, userID, memory.Provenance{ChatID: chatID, Source: source}, cands)
 	}()
 }
 
@@ -106,14 +106,14 @@ func stripToJSONArray(s string) string {
 }
 
 // commitUserMemory writes candidates via the store's Commit path; best-effort, failure is logged silently.
-func commitUserMemory(ctx context.Context, store *memory.Store, userID string, cands []memory.Candidate) {
+func commitUserMemory(ctx context.Context, store *memory.Store, userID string, prov memory.Provenance, cands []memory.Candidate) {
 	if store == nil || len(cands) == 0 {
 		return
 	}
 	sc := memory.Scope{User: userID, Legacy: userID}
 	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	n, err := store.Commit(cctx, sc, orchestratorName, cands, "")
+	n, err := store.Commit(cctx, sc, orchestratorName, prov, cands, "")
 	if err != nil {
 		slog.Warn("user memory hook: commit failed", "component", "orchestrator", "user", userID, "err", err)
 		return

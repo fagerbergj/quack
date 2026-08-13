@@ -81,7 +81,7 @@ func newTestMemStore(t *testing.T) *memory.Store {
 // assert on their content or relative order.
 func commitFact(t *testing.T, s *memory.Store, bucket, content string) {
 	t.Helper()
-	if _, err := s.Commit(context.Background(), memory.Scope{Repo: bucket}, "test",
+	if _, err := s.Commit(context.Background(), memory.Scope{Repo: bucket}, "test", memory.Provenance{},
 		[]memory.Candidate{{Content: content, Metadata: map[string]string{"bucket": "repo"}}}, ""); err != nil {
 		t.Fatalf("Commit(%q): %v", content, err)
 	}
@@ -133,7 +133,7 @@ func TestListAndDeleteMemory_RoundTrip(t *testing.T) {
 	h := newTestHandler(t)
 	h.taskMem = newTestMemStore(t)
 
-	if _, err := h.taskMem.Commit(ctx, memory.Scope{Repo: "NightsOut"}, "code-explorer",
+	if _, err := h.taskMem.Commit(ctx, memory.Scope{Repo: "NightsOut"}, "code-explorer", memory.Provenance{},
 		[]memory.Candidate{{Content: "needs minSdk 30", Metadata: map[string]string{"bucket": "repo"}}}, ""); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}

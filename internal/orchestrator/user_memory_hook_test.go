@@ -218,7 +218,7 @@ func TestCommitUserMemoryScopedToUser(t *testing.T) {
 	store := newTestStore(t)
 	cands := []memory.Candidate{{Content: "User prefers concise responses.", Metadata: map[string]string{"kind": "preference"}}}
 
-	commitUserMemory(context.Background(), store, "alice", cands)
+	commitUserMemory(context.Background(), store, "alice", memory.Provenance{ChatID: "chat1"}, cands)
 
 	aliceScope := memory.Scope{User: "alice", Legacy: "alice"}
 	if got := store.Recall(context.Background(), aliceScope, "response style"); !strings.Contains(got, "concise") {
@@ -233,8 +233,8 @@ func TestCommitUserMemoryScopedToUser(t *testing.T) {
 
 func TestCommitUserMemoryNoCandidatesIsNoop(t *testing.T) {
 	store := newTestStore(t)
-	commitUserMemory(context.Background(), store, "alice", nil) // must not panic on nil store or empty candidates
-	commitUserMemory(context.Background(), nil, "alice", []memory.Candidate{{Content: "x"}})
+	commitUserMemory(context.Background(), store, "alice", memory.Provenance{}, nil) // must not panic on nil store or empty candidates
+	commitUserMemory(context.Background(), nil, "alice", memory.Provenance{}, []memory.Candidate{{Content: "x"}})
 }
 
 // --- maybeMineUserMemory (gating, async, error-swallowing) ---
@@ -260,7 +260,7 @@ func TestMaybeMineUserMemory_TrivialMessageNeverWakesAgent(t *testing.T) {
 	ag := buildScriptedAgentFunc(t, func() { mu.Lock(); called = true; mu.Unlock() }, `[]`)
 
 	o := &Orchestrator{userMem: store, memAgent: ag}
-	o.maybeMineUserMemory(context.Background(), "alice", "Can you review this code?")
+	o.maybeMineUserMemory(context.Background(), "alice", "chat1", "", "Can you review this code?")
 
 	// Give any (wrongly) spawned goroutine a chance to run before asserting absence.
 	time.Sleep(50 * time.Millisecond)
@@ -274,7 +274,7 @@ func TestMaybeMineUserMemory_TrivialMessageNeverWakesAgent(t *testing.T) {
 func TestMaybeMineUserMemory_ToggleOffNeverRuns(t *testing.T) {
 	store := newTestStore(t)
 	o := &Orchestrator{userMem: store, memAgent: nil} // hook not wired (config disabled)
-	o.maybeMineUserMemory(context.Background(), "alice", "I always prefer terse answers.")
+	o.maybeMineUserMemory(context.Background(), "alice", "chat1", "", "I always prefer terse answers.")
 
 	time.Sleep(50 * time.Millisecond)
 	got := store.Recall(context.Background(), memory.Scope{User: "alice", Legacy: "alice"}, "terse")
@@ -288,7 +288,7 @@ func TestMaybeMineUserMemory_FiresAndCommitsScoped(t *testing.T) {
 	ag := buildScriptedAgent(t, `[{"content":"User prefers terse, concise answers.","kind":"preference"}]`)
 
 	o := &Orchestrator{userMem: store, memAgent: ag}
-	o.maybeMineUserMemory(context.Background(), "alice", "From now on always keep it terse.")
+	o.maybeMineUserMemory(context.Background(), "alice", "chat1", "", "From now on always keep it terse.")
 
 	ok := waitFor(t, 2*time.Second, func() bool {
 		return strings.Contains(store.Recall(context.Background(), memory.Scope{User: "alice", Legacy: "alice"}, "verbosity"), "terse")
@@ -306,7 +306,7 @@ func TestMaybeMineUserMemory_AgentErrorIsSwallowed(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		o.maybeMineUserMemory(context.Background(), "alice", "I always prefer terse answers.")
+		o.maybeMineUserMemory(context.Background(), "alice", "chat1", "", "I always prefer terse answers.")
 		close(done)
 	}()
 	select {
@@ -333,7 +333,7 @@ func TestMaybeMineUserMemory_NeverBlocksTheCaller(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		o.maybeMineUserMemory(context.Background(), "alice", "I always prefer terse answers.")
+		o.maybeMineUserMemory(context.Background(), "alice", "chat1", "", "I always prefer terse answers.")
 		close(done)
 	}()
 	select {

@@ -42,6 +42,10 @@ type scored struct {
 	Timestamp string
 	Kind      string
 	Scope     string // the bucket this point is stored under
+	ChatID    string // provenance: minting chat (see Provenance)
+	NodeID    string // provenance: minting DAG node, empty for an orchestrator-level commit
+	Source    string // provenance: minting run's origin, empty = native quack run
+	MintedAt  string // set once on ADD, never changed by an UPDATE
 	Score     float32
 }
 
@@ -54,6 +58,10 @@ type point struct {
 	Author    string
 	Timestamp string
 	Kind      string
+	ChatID    string
+	NodeID    string
+	Source    string
+	MintedAt  string
 }
 
 const (

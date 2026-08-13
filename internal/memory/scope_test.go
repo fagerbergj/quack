@@ -56,7 +56,7 @@ func TestRepoBucketSharedByEveryCodingAgent(t *testing.T) {
 
 	// The explorer stages a REPO fact and its answer passes the gate → committed.
 	explorer := Scope{Repo: repoA, Role: RoleCoding, User: "u1", Legacy: "code-explorer"}
-	if _, err := s.Commit(ctx, explorer, "code-explorer",
+	if _, err := s.Commit(ctx, explorer, "code-explorer", Provenance{},
 		[]Candidate{{Content: fact, Metadata: map[string]string{"bucket": "repo"}}}, ""); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestRoleBucketNotSharedAcrossFamilies(t *testing.T) {
 	s := newSQLiteStore(t, "task", addOp(fact))
 
 	researcher := Scope{Role: RoleResearch, User: "u1", Legacy: "web-researcher"}
-	if _, err := s.Commit(ctx, researcher, "web-researcher",
+	if _, err := s.Commit(ctx, researcher, "web-researcher", Provenance{},
 		[]Candidate{{Content: fact, Metadata: map[string]string{"bucket": "role"}}}, ""); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestUserBucketRecalledByEveryone(t *testing.T) {
 	const fact = "the user prefers TypeScript over JavaScript"
 	s := newSQLiteStore(t, "task", addOp(fact))
 
-	if _, err := s.Commit(ctx, Scope{User: "u1", Legacy: "u1"}, "orchestrator",
+	if _, err := s.Commit(ctx, Scope{User: "u1", Legacy: "u1"}, "orchestrator", Provenance{},
 		[]Candidate{{Content: fact, Metadata: map[string]string{"bucket": "user"}}}, ""); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestCommitRoutesCandidatesToTheirBuckets(t *testing.T) {
 	s := newSQLiteStore(t, "task", echoModel{})
 
 	sc := Scope{Repo: repoA, Role: RoleCoding, User: "u1", Legacy: "code-explorer"}
-	if _, err := s.Commit(ctx, sc, "code-explorer", []Candidate{
+	if _, err := s.Commit(ctx, sc, "code-explorer", Provenance{}, []Candidate{
 		{Content: "repo-fact", Metadata: map[string]string{"bucket": "repo"}},
 		{Content: "role-fact", Metadata: map[string]string{"bucket": "role"}},
 		{Content: "user-fact", Metadata: map[string]string{"bucket": "user"}},
@@ -186,7 +186,7 @@ func TestCommitFallsBackToRoleWithoutARepo(t *testing.T) {
 	s := newSQLiteStore(t, "task", echoModel{})
 
 	sc := Scope{Role: RoleCoding, User: "u1", Legacy: "code-implementer"} // no Repo
-	if _, err := s.Commit(ctx, sc, "code-implementer",
+	if _, err := s.Commit(ctx, sc, "code-implementer", Provenance{},
 		[]Candidate{{Content: "install deps before running checks", Metadata: map[string]string{"bucket": "repo"}}}, ""); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestPreloadInjectsBucketedMemory(t *testing.T) {
 	s := newSQLiteStore(t, "task", addOp(fact))
 
 	explorer := Scope{Repo: repoA, Role: RoleCoding, User: "u1", Legacy: "code-explorer"}
-	if _, err := s.Commit(ctx, explorer, "code-explorer",
+	if _, err := s.Commit(ctx, explorer, "code-explorer", Provenance{},
 		[]Candidate{{Content: fact, Metadata: map[string]string{"bucket": "repo"}}}, ""); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}

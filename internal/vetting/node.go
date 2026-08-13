@@ -628,13 +628,14 @@ func commitMemoryOnPass(ctx adkagent.Context, spanCtx context.Context, cfg Confi
 		return
 	}
 	sc := MemoryScope(ctx, cfg, author)
+	prov := memory.Provenance{ChatID: cfg.ChatID, NodeID: author, Source: cfg.Source}
 	// Fire-and-forget: link span to node span (separate trace, node may finish before goroutine does).
 	parentSC := oteltrace.SpanContextFromContext(spanCtx)
 	go func() {
 		cctx, cancel := context.WithTimeout(context.Background(), memoryCommitTimeout)
 		defer cancel()
 		cctx, commitSpan := otelobs.StartLinked(cctx, "memory.commit", parentSC, attribute.String("agent", author))
-		n, err := cfg.Memory.Commit(cctx, sc, author, staged, answer)
+		n, err := cfg.Memory.Commit(cctx, sc, author, prov, staged, answer)
 		otelobs.End(commitSpan, err)
 		if err != nil {
 			reason := otelobs.ClassifyMemoryCommitError(err)
