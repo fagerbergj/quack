@@ -340,34 +340,6 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	// is also what actually builds the judge model judgeModelRef will hold).
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	var judgeModelRef atomic.Pointer[model.LLM]
-	sdkExts, err := buildSDKExtensions(cfg, st, runHub, &orchRef, artifacts, jail, &judgeModelRef)
-	if err != nil {
-		return nil, nil, "", err
-	}
-	extTools := sdkExtensionTools(sdkExts)
-
-	// The SDK inverse interfaces' first real consumer: whichever compiled,
-	// configured module implements them (github, today) supplies quack's
-	// push credential and delivery target - detected the same way
-	// Starter/Stopper are, not hardcoded to one extension's name.
-	gitCredSrc, gitCredSrcName := findGitCredentialSource(sdkExts)
-	deliverer, delivererName := findDeliverer(sdkExts)
-	var gitTokenSource tools.GitTokenSource
-	if gitCredSrc != nil {
-		gitTokenSource = sdkGitCredentialAdapter{src: gitCredSrc}
-		slog.Info("extension supplies git credentials", "component", "startup", "extension", gitCredSrcName)
-	}
-	var deliver vetting.DeliverFunc
-	if deliverer != nil {
-		deliver = sdkDeliverAdapter{deliverer: deliverer}.Deliver
-		slog.Info("extension supplies delivery", "component", "startup", "extension", delivererName)
-	}
-
-	cleanups = append(cleanups, func() {
-		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer stopCancel()
-		stopSDKExtensions(stopCtx, sdkExts)
-	})
 
 	// Bring the plugin trees to their pinned refs before anything reads them,
 	// and log what we actually got - skills change how every agent plans, so
@@ -435,6 +407,38 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 			slog.Info("user memory enabled", "component", "startup", "collection", rm.Collection)
 		}
 	}
+
+	// Built after taskStore/userStore so UpdateChatOrigin's memory-outcome
+	// mapping (design doc §4(b)/§5) can close over the concrete stores
+	// instead of a lazily-resolved ref.
+	sdkExts, err := buildSDKExtensions(cfg, st, runHub, &orchRef, artifacts, jail, &judgeModelRef, taskStore, userStore)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	extTools := sdkExtensionTools(sdkExts)
+
+	// The SDK inverse interfaces' first real consumer: whichever compiled,
+	// configured module implements them (github, today) supplies quack's
+	// push credential and delivery target - detected the same way
+	// Starter/Stopper are, not hardcoded to one extension's name.
+	gitCredSrc, gitCredSrcName := findGitCredentialSource(sdkExts)
+	deliverer, delivererName := findDeliverer(sdkExts)
+	var gitTokenSource tools.GitTokenSource
+	if gitCredSrc != nil {
+		gitTokenSource = sdkGitCredentialAdapter{src: gitCredSrc}
+		slog.Info("extension supplies git credentials", "component", "startup", "extension", gitCredSrcName)
+	}
+	var deliver vetting.DeliverFunc
+	if deliverer != nil {
+		deliver = sdkDeliverAdapter{deliverer: deliverer}.Deliver
+		slog.Info("extension supplies delivery", "component", "startup", "extension", delivererName)
+	}
+
+	cleanups = append(cleanups, func() {
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stopCancel()
+		stopSDKExtensions(stopCtx, sdkExts)
+	})
 
 	var advisorAgent adkagent.Agent
 	if cfg.Gates.JudgeEnabled() {
