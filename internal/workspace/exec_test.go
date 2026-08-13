@@ -418,6 +418,29 @@ func TestChildEnvIncludesWorkspaceEnv(t *testing.T) {
 	}
 }
 
+// TestChildEnvTmpdirTracksScratchDirUnderLandlock pins the RunArgv/RunPipeline
+// seam (the gate's own check commands - internal/vetting/checks.go's
+// checksCaps - and every other RunArgv/RunPipeline caller) to the same
+// ScratchDir-preferring TMPDIR internal/acp's spawnEnv already gets: a check
+// command's own tmp use (a test binary's t.TempDir(), `git worktree add`'s
+// mkdtemp) must land on the SAME device as the checked-out tree, or rename-
+// based git ops fail EXDEV against the host's real /tmp.
+func TestChildEnvTmpdirTracksScratchDirUnderLandlock(t *testing.T) {
+	scratch := t.TempDir()
+	caps := Caps{Sandbox: SandboxLandlock, HomeDir: t.TempDir(), ScratchDir: scratch}
+	got := childEnv("/repo", caps)
+	want := "TMPDIR=" + scratch
+	found := false
+	for _, e := range got {
+		if e == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("childEnv = %v, want %q present", got, want)
+	}
+}
+
 // TestRunArgvEnvReachesChild is the executable-fixture proof: workspace.env
 // values actually arrive in a spawned child's real environment, not just in
 // the Caps struct.
