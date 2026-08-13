@@ -14,6 +14,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/inference/openaimodel"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
@@ -126,6 +127,136 @@ func TestTracedModel_EmbedErrorsWhenUnsupported(t *testing.T) {
 	tm := &tracedModel{LLM: &stubModel{name: "no-embed"}, name: "no-embed"}
 	if _, err := tm.Embed(context.Background(), []string{"hello"}); err == nil {
 		t.Error("expected an error for a model that doesn't implement Embedder")
+	}
+}
+
+// usageEmbeddableStub additionally implements usageEmbedder.
+type usageEmbeddableStub struct {
+	stubModel
+	vectors [][]float32
+	usage   openaimodel.EmbedUsage
+	err     error
+}
+
+func (e *usageEmbeddableStub) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	vecs, _, err := e.EmbedWithUsage(ctx, texts)
+	return vecs, err
+}
+
+func (e *usageEmbeddableStub) EmbedWithUsage(ctx context.Context, texts []string) ([][]float32, openaimodel.EmbedUsage, error) {
+	if e.err != nil {
+		return nil, openaimodel.EmbedUsage{}, e.err
+	}
+	return e.vectors, e.usage, nil
+}
+
+// TestTracedModel_Embed_RecordsTokenUsageInput pins the embeddings shape:
+// only token_type=input is ever recorded (no output/reasoning/cached), and a
+// call with no ctx coords falls back to defaultAgent - the same fallback rule
+// GenerateContent uses.
+func TestTracedModel_Embed_RecordsTokenUsageInput(t *testing.T) {
+	reader := newUsageTestMeter(t)
+
+	inner := &usageEmbeddableStub{
+		stubModel: stubModel{name: "qwen3-embed"},
+		vectors:   [][]float32{{1, 2, 3}},
+		usage:     openaimodel.EmbedUsage{PromptTokens: 12, TotalTokens: 12},
+	}
+	tm := &tracedModel{LLM: inner, name: "qwen3-embed", defaultAgent: "embed"}
+
+	if _, err := tm.Embed(context.Background(), []string{"hello"}); err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+
+	points := tokenUsagePoints(t, reader)
+	dp, ok := points[otelobs.GenAITokenTypeInput]
+	if !ok {
+		t.Fatalf("no data point for token_type=input (got %v)", points)
+	}
+	if dp.Value != 12 {
+		t.Errorf("token_type=input value = %d, want 12", dp.Value)
+	}
+	if got := attrVal(dp.Attributes, otelobs.GenAIRequestModel); got != "qwen3-embed" {
+		t.Errorf("model = %q, want qwen3-embed", got)
+	}
+	if got := attrVal(dp.Attributes, "agent"); got != "embed" {
+		t.Errorf("agent = %q, want embed (the defaultAgent fallback)", got)
+	}
+	for _, typ := range []string{otelobs.GenAITokenTypeOutput, otelobs.GenAITokenTypeReasoning, otelobs.GenAITokenTypeCached} {
+		if _, ok := points[typ]; ok {
+			t.Errorf("token_type=%q recorded for an embed call, want only input", typ)
+		}
+	}
+}
+
+// TestTracedModel_Embed_RealCoordsWinOverDefault guards the fallback
+// direction for Embed the same way GenerateContent's own test does: a
+// per-round Coords.Agent must win over defaultAgent, never be replaced by it.
+func TestTracedModel_Embed_RealCoordsWinOverDefault(t *testing.T) {
+	reader := newUsageTestMeter(t)
+
+	inner := &usageEmbeddableStub{
+		stubModel: stubModel{name: "qwen3-embed"},
+		vectors:   [][]float32{{1}},
+		usage:     openaimodel.EmbedUsage{PromptTokens: 5, TotalTokens: 5},
+	}
+	tm := &tracedModel{LLM: inner, name: "qwen3-embed", defaultAgent: "embed"}
+	ctx := ledger.WithCoords(context.Background(), ledger.Coords{Agent: "web-researcher"})
+
+	if _, err := tm.Embed(ctx, []string{"hello"}); err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+
+	points := tokenUsagePoints(t, reader)
+	if got := attrVal(points[otelobs.GenAITokenTypeInput].Attributes, "agent"); got != "web-researcher" {
+		t.Errorf("agent = %q, want web-researcher (defaultAgent must not override real Coords.Agent)", got)
+	}
+}
+
+// TestTracedModel_Embed_RecordsDuration pins that an embed call lands in the
+// same quack.model.call.duration histogram GenerateContent uses.
+func TestTracedModel_Embed_RecordsDuration(t *testing.T) {
+	reader := newUsageTestMeter(t)
+
+	inner := &usageEmbeddableStub{stubModel: stubModel{name: "qwen3-embed"}, vectors: [][]float32{{1}}}
+	tm := &tracedModel{LLM: inner, name: "qwen3-embed"}
+
+	if _, err := tm.Embed(context.Background(), []string{"hello"}); err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+
+	met, ok := collectMetric(t, reader, "quack.model.call.duration")
+	if !ok {
+		t.Fatal("quack.model.call.duration was never recorded for Embed")
+	}
+	hist, ok := met.Data.(metricdata.Histogram[float64])
+	if !ok || len(hist.DataPoints) == 0 {
+		t.Fatal("quack.model.call.duration has no data points")
+	}
+	if got := attrVal(hist.DataPoints[0].Attributes, "model"); got != "qwen3-embed" {
+		t.Errorf("model = %q, want qwen3-embed", got)
+	}
+}
+
+// TestTracedModel_Embed_NoUsage_NoPanic guards the defensive path: a response
+// with no usage (PromptTokens==0, the EmbedUsage zero value) must record no
+// token/cost metric and must not panic - the same "never fabricate a zero"
+// rule recordUsageMetrics follows for a nil UsageMetadata.
+func TestTracedModel_Embed_NoUsage_NoPanic(t *testing.T) {
+	reader := newUsageTestMeter(t)
+
+	inner := &usageEmbeddableStub{stubModel: stubModel{name: "qwen3-embed"}, vectors: [][]float32{{1}}}
+	tm := &tracedModel{LLM: inner, name: "qwen3-embed", pricing: &config.ModelPricing{InputPerMTok: 1}}
+
+	if _, err := tm.Embed(context.Background(), []string{"hello"}); err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+
+	if _, ok := collectMetric(t, reader, "gen_ai.client.token.usage"); ok {
+		t.Error("gen_ai.client.token.usage was recorded for a usage-less embeddings response")
+	}
+	if _, ok := costPoint(t, reader); ok {
+		t.Error("gen_ai.client.cost was recorded for a usage-less embeddings response")
 	}
 }
 

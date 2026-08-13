@@ -11,6 +11,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/artifactref"
+	"github.com/fagerbergj/quack/internal/inference/openaimodel"
 )
 
 // hydratingModel swaps artifactref reference parts for real bytes just
@@ -49,6 +50,16 @@ func (h *hydratingModel) Embed(ctx context.Context, texts []string) ([][]float32
 		return nil, fmt.Errorf("inference: model does not implement Embed")
 	}
 	return e.Embed(ctx, texts)
+}
+
+// EmbedWithUsage passes through like Embed, promoting the inner model's usage
+// reporting (openaimodel.OpenAIModel) so tracedModel can reach it through this layer.
+func (h *hydratingModel) EmbedWithUsage(ctx context.Context, texts []string) ([][]float32, openaimodel.EmbedUsage, error) {
+	e, ok := h.LLM.(usageEmbedder)
+	if !ok {
+		return nil, openaimodel.EmbedUsage{}, fmt.Errorf("inference: model does not implement EmbedWithUsage")
+	}
+	return e.EmbedWithUsage(ctx, texts)
 }
 
 // hydrateRequest builds a shallow copy of req with reference parts replaced

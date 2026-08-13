@@ -13,6 +13,8 @@ providers:
     #   qwen3-coder-30b:
     #     input_per_mtok: 0.20
     #     output_per_mtok: 0.80
+    #   qwen3-embed:               # an embed model only ever bills input_per_mtok
+    #     input_per_mtok: 0.02
 
 # Named backend registry (like providers): consumers reference a store by name.
 # `kind` selects the adapter (the portability seam). A vector store also carries

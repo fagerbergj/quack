@@ -73,13 +73,29 @@ func (o *OpenAIModel) apiErr(ctx context.Context, op string, err error) error {
 	return fmt.Errorf("openai %s (%s): %w", o.ModelName, op, err)
 }
 
+// EmbedUsage is the token accounting an OpenAI-compatible /embeddings response
+// reports. There is no output/reasoning/cached split - an embedding call has
+// no completion, so PromptTokens and TotalTokens are normally equal.
+type EmbedUsage struct {
+	PromptTokens int64
+	TotalTokens  int64
+}
+
 // Embed returns one embedding vector per input text, in input order, from the
 // OpenAI-compatible /embeddings endpoint. It uses o.ModelName as the embedding
 // model, so an OpenAIModel constructed with an embedding model name doubles as an
 // embedder (the same client/endpoint serves both).
 func (o *OpenAIModel) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	out, _, err := o.EmbedWithUsage(ctx, texts)
+	return out, err
+}
+
+// EmbedWithUsage is Embed plus the response's usage block, for callers that
+// need token accounting (inference.tracedModel) without widening the public
+// Embedder interface every other caller sees.
+func (o *OpenAIModel) EmbedWithUsage(ctx context.Context, texts []string) ([][]float32, EmbedUsage, error) {
 	if len(texts) == 0 {
-		return nil, nil
+		return nil, EmbedUsage{}, nil
 	}
 	// Regenerating an embedding has no externally-visible side effect (unlike
 	// a GitHub comment/merge), so a retry-after-server-fault is safe here.
@@ -88,16 +104,16 @@ func (o *OpenAIModel) Embed(ctx context.Context, texts []string) ([][]float32, e
 		Input: openai.EmbeddingNewParamsInputUnion{OfArrayOfStrings: texts},
 	})
 	if err != nil {
-		return nil, err
+		return nil, EmbedUsage{}, err
 	}
 	if len(resp.Data) != len(texts) {
-		return nil, fmt.Errorf("openaimodel: embeddings returned %d vectors for %d inputs", len(resp.Data), len(texts))
+		return nil, EmbedUsage{}, fmt.Errorf("openaimodel: embeddings returned %d vectors for %d inputs", len(resp.Data), len(texts))
 	}
 	// Place each vector by its declared index - the API need not return them in order.
 	out := make([][]float32, len(texts))
 	for _, e := range resp.Data {
 		if e.Index < 0 || int(e.Index) >= len(out) {
-			return nil, fmt.Errorf("openaimodel: embedding index %d out of range for %d inputs", e.Index, len(texts))
+			return nil, EmbedUsage{}, fmt.Errorf("openaimodel: embedding index %d out of range for %d inputs", e.Index, len(texts))
 		}
 		v := make([]float32, len(e.Embedding))
 		for i, f := range e.Embedding {
@@ -105,7 +121,8 @@ func (o *OpenAIModel) Embed(ctx context.Context, texts []string) ([][]float32, e
 		}
 		out[e.Index] = v
 	}
-	return out, nil
+	usage := EmbedUsage{PromptTokens: resp.Usage.PromptTokens, TotalTokens: resp.Usage.TotalTokens}
+	return out, usage, nil
 }
 
 // GenerateContent implements model.LLM.

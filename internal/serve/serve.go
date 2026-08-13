@@ -134,9 +134,9 @@ func ledgerStoreFromConfig(cfg *config.Config) ledger.LedgerStore {
 }
 
 // setDefaultAgent stamps m's metrics-only agent fallback (tracedModel.SetDefaultAgent) -
-// for any model consumer that never runs inside a DAG node's coords-stamped ctx. No-op
-// for a model.LLM that doesn't implement it (e.g. under test).
-func setDefaultAgent(m model.LLM, name string) {
+// for any model or embedder consumer that never runs inside a DAG node's coords-stamped
+// ctx. No-op for a value that doesn't implement it (e.g. under test).
+func setDefaultAgent(m any, name string) {
 	if da, ok := m.(interface{ SetDefaultAgent(string) }); ok {
 		da.SetDefaultAgent(name)
 	}
@@ -377,6 +377,11 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		if err != nil {
 			return nil, fmt.Errorf("embedder: %w", err)
 		}
+		// recall runs inside a DAG node's own ctx (real per-round coords); commit
+		// fires from a background goroutine (commitMemoryOnPass) or a tool call
+		// whose ctx never carries them - "embed" is the fallback for that gap,
+		// distinct from the consolidator's "memory" name below.
+		setDefaultAgent(embedder, "embed")
 		cprov, ok := cfg.Provider(rm.Consolidation.Provider)
 		if !ok {
 			return nil, fmt.Errorf("consolidation provider %q not found", rm.Consolidation.Provider)
