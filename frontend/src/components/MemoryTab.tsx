@@ -27,6 +27,9 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
   const [bucket, setBucket] = useState('')
   const [q, setQ] = useState('')
   const [sort, setSort] = useState<MemorySort>('newest')
+  // Local to the tab (no persisted preference, per design doc §8 step 6) - a
+  // default listing shows only what quack currently trusts.
+  const [includeInvalidated, setIncludeInvalidated] = useState(false)
   // page_token is opaque (never parsed/constructed) - pageTokens[i] is the
   // token that fetched page i (pageTokens[0] is undefined: first page).
   // Going back replays a token this component already received, going
@@ -63,6 +66,7 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
         q: q.trim() || undefined,
         limit: PAGE_SIZE,
         page_token: pageTokens[pageIndex],
+        include_invalidated: includeInvalidated || undefined,
       })
       setMemories(result.memories)
       setTotal(result.total)
@@ -77,7 +81,7 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
     } finally {
       setLoading(false)
     }
-  }, [bucket, q, pageIndex, pageTokens])
+  }, [bucket, q, pageIndex, pageTokens, includeInvalidated])
 
   useEffect(() => {
     if (initialState !== undefined) return // story/test seam: static demo state, no live fetch
@@ -97,6 +101,11 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
 
   function handleBucketChange(next: string) {
     setBucket(next)
+    resetPaging()
+  }
+
+  function handleIncludeInvalidatedChange(next: boolean) {
+    setIncludeInvalidated(next)
     resetPaging()
   }
 
@@ -144,6 +153,15 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
           aria-label="Search memories"
           className="flex-1 min-w-0 rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
         />
+        <label className="flex-shrink-0 flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none whitespace-nowrap">
+          <input
+            type="checkbox"
+            checked={includeInvalidated}
+            onChange={e => handleIncludeInvalidatedChange(e.target.checked)}
+            className="accent-blue-600"
+          />
+          Show invalidated
+        </label>
         <MemorySortFilter
           sort={sort}
           onSortChange={setSort}

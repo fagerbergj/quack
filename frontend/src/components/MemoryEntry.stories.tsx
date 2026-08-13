@@ -30,6 +30,24 @@ export const SearchResult: Story = {
   args: { memory: { ...REPO_FACT, id: 's1', score: 0.87 } },
 }
 
+// The three lifecycle tiers (design doc §3/§8 step 6). A missing status
+// (Default, above) reads as unverified - a memory minted before the field
+// existed - so it isn't restated as its own story.
+export const Reinforced: Story = {
+  args: { memory: { ...REPO_FACT, id: 'r1', status: 'reinforced', reinforcement_count: 3 } },
+}
+
+export const Invalidated: Story = {
+  args: {
+    memory: {
+      ...REPO_FACT,
+      id: 'i1',
+      status: 'invalidated',
+      invalidation_reason: 'pr closed unmerged',
+    },
+  },
+}
+
 // A long fact wraps instead of overflowing the row.
 export const LongContent: Story = {
   args: {
