@@ -249,6 +249,21 @@ func TestCheckSetupFailureFallsBackToBaseFailureSelfDisarm(t *testing.T) {
 	}
 }
 
+// The bug (review on #856): baselineCache was keyed by (dir, sha, check) only,
+// so toggling check_setup for the same dir/sha/check reused a stale cached
+// result from before the bootstrap ran instead of recomputing.
+func TestFailsAtBaseCacheKeyIncludesSetup(t *testing.T) {
+	cfg, repo := clonedRepoConfig(t, nil, map[string]string{"src.txt": "hello"})
+	check := "grep -q hello generated.txt"
+
+	if !failsAtBase(repo, check, cfg.WorkspaceCaps, nil) {
+		t.Fatal("failsAtBase with no setup = false, want true (generated.txt never exists without check_setup)")
+	}
+	if failsAtBase(repo, check, cfg.WorkspaceCaps, []string{"cp src.txt generated.txt"}) {
+		t.Error("failsAtBase with check_setup = true, want false (stale cache from the no-setup call above)")
+	}
+}
+
 // No check_setup configured (the zero value every pre-#839 test in this file
 // leaves it at) must behave byte-identically to before the feature existed.
 func TestCheckSetupUnconfiguredIsUnchanged(t *testing.T) {

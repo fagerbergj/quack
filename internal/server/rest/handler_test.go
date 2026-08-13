@@ -475,9 +475,11 @@ func TestUpdateChat_ArchiveDoesNotTouchUpdatedAt(t *testing.T) {
 	}
 
 	saved, _ := h.store.GetChat(ctx, c.ID)
-	beforeUnix := saved.UpdatedAt.Unix()
+	before := saved.UpdatedAt
 
-	// Give the clock a moment to tick and also let any DB auto-timestamps settle.
+	// Give the clock a moment to tick, so a real (bugged) auto-stamp would be
+	// caught even by a comparison too coarse to see it - it isn't needed for
+	// this test's own comparison, which is exact rather than second-truncated.
 	time.Sleep(50 * time.Millisecond)
 
 	trueVal := true
@@ -494,8 +496,13 @@ func TestUpdateChat_ArchiveDoesNotTouchUpdatedAt(t *testing.T) {
 		t.Errorf("stored Archived after archive call = false, want true")
 	}
 
-	if saved.UpdatedAt.Unix() != beforeUnix {
-		t.Errorf("updated_at Unix second after archive changed from %d to %d; want equal", beforeUnix, saved.UpdatedAt.Unix())
+	// Exact comparison, not truncated to the Unix second - the guarantee is that
+	// archiving never writes updated_at at all, not merely that it lands in the
+	// same second (a truncated comparison would flake whenever the two DB writes
+	// straddle a second boundary, and would silently pass even if this DID
+	// rewrite updated_at to a value that rounds to the same second).
+	if !saved.UpdatedAt.Equal(before) {
+		t.Errorf("updated_at after archive changed from %v to %v; want unchanged", before, saved.UpdatedAt)
 	}
 
 	// Unarchive and verify UpdatedAt still unchanged.
@@ -509,8 +516,8 @@ func TestUpdateChat_ArchiveDoesNotTouchUpdatedAt(t *testing.T) {
 	if saved.Archived {
 		t.Errorf("stored Archived = true after unarchive; want false")
 	}
-	if saved.UpdatedAt.Unix() != beforeUnix {
-		t.Errorf("updated_at Unix second after unarchive changed from %d to %d; want equal", beforeUnix, saved.UpdatedAt.Unix())
+	if !saved.UpdatedAt.Equal(before) {
+		t.Errorf("updated_at after unarchive changed from %v to %v; want unchanged", before, saved.UpdatedAt)
 	}
 }
 

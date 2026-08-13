@@ -604,6 +604,50 @@ func TestRunJudgeAgent_ChangedFilesCoverage(t *testing.T) {
 	})
 }
 
+// TestRepeatsLastToolCall pins repeatsLastToolCall's contract directly (review
+// on #857): only the two MOST RECENT calls matter, and both name and args must match.
+func TestRepeatsLastToolCall(t *testing.T) {
+	call := func(name string, args map[string]any) *genai.Content {
+		return &genai.Content{Role: "model", Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{Name: name, Args: args}}}}
+	}
+	tests := []struct {
+		name  string
+		calls []*genai.Content
+		want  bool
+	}{
+		{"no calls", nil, false},
+		{"one call", []*genai.Content{call("read_file", map[string]any{"path": "a"})}, false},
+		{"identical consecutive", []*genai.Content{
+			call("read_file", map[string]any{"path": "a"}),
+			call("read_file", map[string]any{"path": "a"}),
+		}, true},
+		{"same name different args", []*genai.Content{
+			call("read_file", map[string]any{"path": "a"}),
+			call("read_file", map[string]any{"path": "b"}),
+		}, false},
+		{"different names", []*genai.Content{
+			call("read_file", map[string]any{"path": "a"}),
+			call("list_dir", map[string]any{"path": "a"}),
+		}, false},
+		{"repeat separated by a different call is not consecutive", []*genai.Content{
+			call("read_file", map[string]any{"path": "a"}),
+			call("list_dir", map[string]any{"path": "a"}),
+			call("read_file", map[string]any{"path": "a"}),
+		}, false},
+		{"multi-key args match regardless of map order", []*genai.Content{
+			call("edit", map[string]any{"path": "a", "text": "x"}),
+			call("edit", map[string]any{"text": "x", "path": "a"}),
+		}, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := repeatsLastToolCall(tc.calls); got != tc.want {
+				t.Errorf("repeatsLastToolCall() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // stutterJudge repeats the exact same tool call twice (the model stutter
 // #853 exists for), then - once forcedVerdictCallback has stripped its tools
 // for repeating itself - closes with the verdict as plain-text JSON instead

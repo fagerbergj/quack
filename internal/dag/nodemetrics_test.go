@@ -73,33 +73,48 @@ func TestNodeDoneReportsCumulativeTokenUsage(t *testing.T) {
 	const npath = "quack-dag-p@1/n1@rr"
 	agentByID := map[string]string{"n1": "web-researcher"}
 
-	withUsage := func(path string, prompt, completion, total, cached int32, text string) *session.Event {
+	withUsage := func(path string, prompt, completion, total, cached int32, model, text string) *session.Event {
 		e := ev(path, &genai.Part{Text: text})
 		e.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{
 			PromptTokenCount: prompt, CandidatesTokenCount: completion, TotalTokenCount: total, CachedContentTokenCount: cached,
 		}
-		e.ModelVersion = "qwen3"
+		e.ModelVersion = model
 		return e
 	}
 
+	// r0 and r1 deliberately use different models, so nd.Model below actually
+	// proves last-run-wins semantics rather than two rounds agreeing by coincidence.
 	evs := []*session.Event{
-		withUsage(r0, 100, 20, 120, 10, "draft"),
-		withUsage(r1, 50, 15, 65, 40, "revised"),
+		withUsage(r0, 100, 20, 120, 10, "qwen3", "draft"),
+		withUsage(r1, 50, 15, 65, 40, "claude-sonnet", "revised"),
 		{NodeInfo: &session.NodeInfo{Path: npath}, Output: "final"},
 	}
 
 	got := drive(evs, agentByID, gateScore{})
 	var nd stream.NodeDoneData
+	complete := map[string]stream.AgentCompleteData{}
 	for _, e := range got {
-		if e.Name == stream.EventNodeDone {
+		switch e.Name {
+		case stream.EventNodeDone:
 			nd = e.Data.(stream.NodeDoneData)
+		case stream.EventAgentComplete:
+			d := e.Data.(stream.AgentCompleteData)
+			complete[d.RunID] = d
 		}
 	}
 	if nd.PromptTokens != 150 || nd.CompletionTokens != 35 || nd.TotalTokens != 185 || nd.CachedTokens != 50 {
 		t.Fatalf("node_done usage = %+v, want cumulative prompt=150 completion=35 total=185 cached=50", nd)
 	}
-	if nd.Model != "qwen3" {
-		t.Fatalf("node_done model = %q, want qwen3", nd.Model)
+	if nd.Model != "claude-sonnet" {
+		t.Fatalf("node_done model = %q, want claude-sonnet (last run wins)", nd.Model)
+	}
+
+	r0Done, r1Done := complete["worker-r0"], complete["worker-r1"]
+	if r0Done.PromptTokens != 100 || r0Done.CompletionTokens != 20 || r0Done.CachedTokens != 10 {
+		t.Errorf("worker-r0 agent_complete usage = %+v, want per-run prompt=100 completion=20 cached=10", r0Done)
+	}
+	if r1Done.PromptTokens != 50 || r1Done.CompletionTokens != 15 || r1Done.CachedTokens != 40 {
+		t.Errorf("worker-r1 agent_complete usage = %+v, want per-run prompt=50 completion=15 cached=40", r1Done)
 	}
 }
 
