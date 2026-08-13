@@ -601,12 +601,82 @@ func TestBuildRejectsUnknownDeliveryKind(t *testing.T) {
 
 func TestBuildAcceptsEachValidDeliveryKind(t *testing.T) {
 	p := testPlanner()
-	for _, kind := range []string{"pull_request", "review", "comment"} {
+	for _, kind := range []string{"pull_request", "comment"} {
 		if _, err := p.Build(context.Background(), []RawNode{
 			{ID: "impl", Agent: "code-implementer", Task: "x"},
 		}, nil, &Delivery{Kind: kind}, nil, "m", nil, nil); err != nil {
 			t.Errorf("Build: delivery.kind %q must be accepted: %v", kind, err)
 		}
+	}
+	// "review" additionally requires a reviewerAgent node (checkReviewDeliverable) -
+	// covered on its own planner below, not the generic code-implementer fixture above.
+	reviewPlanner := NewPlanner([]AgentInfo{{Name: reviewerAgent}}, nil, nil)
+	if _, err := reviewPlanner.Build(context.Background(), []RawNode{
+		{ID: "review", Agent: reviewerAgent, Task: "x"},
+	}, nil, &Delivery{Kind: "review"}, nil, "m", nil, nil); err != nil {
+		t.Errorf("Build: delivery.kind \"review\" with a %s node must be accepted: %v", reviewerAgent, err)
+	}
+}
+
+// #888: a quack:review dispatch (explorer + synthesizer, no code-reviewer)
+// was accepted by the LLM plan judge - nothing in that plan could ever stage
+// a formal review, so the answer posted as a bare issue comment and merge
+// automation saw no review. checkReviewDeliverable is deterministic and runs
+// unconditionally, so it must reject this shape even when a permissive judge
+// would have waved it through.
+func TestBuildRejectsReviewDispatchWithoutReviewerNode(t *testing.T) {
+	judge, calls, _, _ := fakePlanJudge(true, "", nil) // judge would accept - the deterministic check must still fire
+	p := NewPlanner([]AgentInfo{{Name: explorerAgent}, {Name: "synthesizer"}}, nil, judge)
+	_, err := p.Build(context.Background(), []RawNode{
+		{ID: "explore", Agent: explorerAgent, Task: "Read the diff and form a verdict."},
+		{ID: "synth", Agent: "synthesizer", Task: "Post the verdict.", DependsOn: []string{"explore"}},
+	}, nil, nil, nil, "Review PR #888.", nil, []string{"review", "comment"})
+	if err == nil {
+		t.Fatal("Build: expected rejection - a review dispatch with no code-reviewer node can never stage a review")
+	}
+	if !strings.Contains(err.Error(), reviewerAgent) {
+		t.Errorf("Build error = %q, want it to name %q as the fix", err, reviewerAgent)
+	}
+	// The deterministic check runs before the (expensive, sometimes-wrong) LLM
+	// judge and short-circuits Build - the judge must never even be called.
+	if *calls != 0 {
+		t.Errorf("plan judge calls = %d, want 0 - the deterministic check must short-circuit before it", *calls)
+	}
+}
+
+// The same dispatch, with a code-reviewer node added, passes.
+func TestBuildAcceptsReviewDispatchWithReviewerNode(t *testing.T) {
+	p := NewPlanner([]AgentInfo{{Name: reviewerAgent}}, nil, nil)
+	_, err := p.Build(context.Background(), []RawNode{
+		{ID: "review", Agent: reviewerAgent, Task: "Review the diff and post inline comments."},
+	}, nil, nil, nil, "Review PR #888.", nil, []string{"review", "comment"})
+	if err != nil {
+		t.Fatalf("Build: a review dispatch with a %s node must pass: %v", reviewerAgent, err)
+	}
+}
+
+// A plan whose declared Delivery.Kind is "review" (rather than the dispatch
+// grant) hits the same guard, independent of AllowedDeliveryKinds.
+func TestBuildRejectsDeclaredReviewDeliveryWithoutReviewerNode(t *testing.T) {
+	p := NewPlanner([]AgentInfo{{Name: explorerAgent}}, nil, nil)
+	_, err := p.Build(context.Background(), []RawNode{
+		{ID: "explore", Agent: explorerAgent, Task: "Read the diff."},
+	}, nil, &Delivery{Kind: "review"}, nil, "m", nil, nil)
+	if err == nil || !strings.Contains(err.Error(), reviewerAgent) {
+		t.Fatalf("Build error = %v, want rejection naming %q", err, reviewerAgent)
+	}
+}
+
+// Non-review dispatches (no "review" in AllowedDeliveryKinds, no declared
+// review Delivery) are unaffected: an issue/implement plan with no reviewer
+// node keeps passing.
+func TestBuildAllowsNonReviewDispatchWithoutReviewerNode(t *testing.T) {
+	p := NewPlanner([]AgentInfo{{Name: "code-implementer"}}, nil, nil)
+	_, err := p.Build(context.Background(), []RawNode{
+		{ID: "impl", Agent: "code-implementer", Task: "Add the widget."},
+	}, nil, &Delivery{Kind: "pull_request"}, nil, "Add a widget and open a PR.", nil, []string{"pull_request", "comment"})
+	if err != nil {
+		t.Fatalf("Build: a non-review dispatch must never require a %s node: %v", reviewerAgent, err)
 	}
 }
 

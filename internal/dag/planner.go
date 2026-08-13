@@ -93,6 +93,9 @@ func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, deli
 		return nil, err
 	}
 	span.SetAttributes(attribute.String("plan_id", plan.ID), attribute.Int("node_count", len(plan.Nodes)))
+	if err = checkReviewDeliverable(plan); err != nil {
+		return nil, err
+	}
 	if err = p.judgeRouting(ctx, plan, message); err != nil {
 		return nil, err
 	}
@@ -186,6 +189,42 @@ func planSummary(p *Plan) string {
 		sb.WriteString("\ndelivery: (none declared)")
 	}
 	return sb.String()
+}
+
+// checkReviewDeliverable: deterministic guard - runs unconditionally, unlike
+// checkReviewFanout, because the incident it fixes (#888) was the LLM plan
+// judge itself wrongly accepting an explorer+synthesizer plan for a
+// quack:review dispatch; nothing in that plan could ever stage a formal
+// review, so the run's prose posted as a bare issue comment and merge
+// automation saw no review. Oracle: node.AgentName == reviewerAgent, the same
+// literal the runtime already uses to grant the review MCP tools
+// (dag/graph.go's cfg.IsReviewer) - not a fresh rule, a mirror of the one
+// that actually gates stage_review/stage_review_comment at runtime.
+// ponytail: a hardcoded agent name, not a config-derived "review-capable"
+// set - there is no other machine-readable declaration of review capability
+// to derive from (agent-card.json carries skills, not MCP-surface grants).
+// Ceiling: a plan WITH a code-reviewer node always passes even if that
+// node's task text never actually calls stage_review - this only catches
+// the structurally-impossible case, not a lazy reviewer task.
+func checkReviewDeliverable(plan *Plan) error {
+	expectsReview := plan.Delivery != nil && plan.Delivery.Kind == "review"
+	for _, k := range plan.AllowedDeliveryKinds {
+		if k == "review" {
+			expectsReview = true
+			break
+		}
+	}
+	if !expectsReview {
+		return nil
+	}
+	for _, n := range plan.Nodes {
+		if n.AgentName == reviewerAgent {
+			return nil
+		}
+	}
+	return fmt.Errorf("a review deliverable needs a %s node: only a %s node can stage inline comments and a "+
+		"verdict via the review MCP tools (stage_review/stage_review_comment) - this plan has none, so no formal "+
+		"review could ever be staged. Add a terminal %s node.", reviewerAgent, reviewerAgent, reviewerAgent)
 }
 
 // checkReviewFanout: rejects single-reviewer plans for large PRs (judge-disabled fallback).
