@@ -168,9 +168,6 @@ func (s *Store) consolidateCluster(ctx context.Context, bucket string, cluster [
 	if err != nil {
 		return 0, err
 	}
-	if len(ops) == 0 {
-		return 0, nil
-	}
 	// Provenance for a fallback fresh ADD (the dedupe prompt asks for
 	// UPDATE/DELETE/NOOP; ADD is the escape hatch apply() already handles).
 	// The cluster shares one chat_id by construction, so this keeps a merged

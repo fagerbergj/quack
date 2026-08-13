@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -83,7 +84,10 @@ func (h *Handler) ListMemories(w http.ResponseWriter, r *http.Request, params sc
 // if no configured store has that id.
 func (h *Handler) DeleteMemory(w http.ResponseWriter, r *http.Request, memoryID schema.MemoryID) {
 	var body schema.DeleteMemoryBody
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		errMsg(w, http.StatusBadRequest, "malformed request body")
+		return
+	}
 	reason := "manual delete"
 	if body.Reason != nil && strings.TrimSpace(*body.Reason) != "" {
 		reason = strings.TrimSpace(*body.Reason)

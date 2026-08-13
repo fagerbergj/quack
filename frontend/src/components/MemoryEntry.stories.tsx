@@ -48,6 +48,14 @@ export const Invalidated: Story = {
   },
 }
 
+// A status this build doesn't recognize yet (server ahead of a stale
+// frontend build) - neutral-gray, never mislabeled as unverified.
+export const UnknownStatus: Story = {
+  args: {
+    memory: { ...REPO_FACT, id: 'u1', status: 'pending_review' as Memory['status'] },
+  },
+}
+
 // A long fact wraps instead of overflowing the row.
 export const LongContent: Story = {
   args: {

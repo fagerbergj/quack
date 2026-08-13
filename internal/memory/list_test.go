@@ -146,6 +146,43 @@ func TestListPagingIsStable(t *testing.T) {
 	}
 }
 
+// Test case 5 (issue #878 review): paging stays stable once invalidated
+// entries are in the mix - no duplicates, no omissions, across pages.
+func TestListPagingIncludeInvalidated_Mixed(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStore(t, "task", nil)
+	ids := []string{"m00", "m01", "m02", "m03", "m04"}
+	for i, id := range ids {
+		ts := time.Date(2026, 8, 1, 0, 0, i, 0, time.UTC).Format(time.RFC3339)
+		upsertTimed(t, s, id, "repo:x", "fact "+id, ts)
+	}
+	for _, id := range []string{"m01", "m03"} {
+		if err := s.InvalidateByID(ctx, id, "test", ActorOutcomeFeedback); err != nil {
+			t.Fatalf("InvalidateByID(%s): %v", id, err)
+		}
+	}
+
+	seen := map[string]bool{}
+	for _, offset := range []int{0, 2, 4} {
+		page, total, err := s.List(ctx, []string{"repo:x"}, offset, 2, true)
+		if err != nil {
+			t.Fatalf("List offset=%d: %v", offset, err)
+		}
+		if total != 5 {
+			t.Fatalf("total at offset=%d = %d, want 5", offset, total)
+		}
+		for _, m := range page {
+			if seen[m.ID] {
+				t.Fatalf("id %s appeared on more than one page", m.ID)
+			}
+			seen[m.ID] = true
+		}
+	}
+	if len(seen) != 5 {
+		t.Fatalf("saw %d distinct ids across all pages, want 5 (no omissions)", len(seen))
+	}
+}
+
 // Search (the ?q= path) carries a score and the bucket each hit came from,
 // unlike List.
 func TestSearchReturnsScoredEntries(t *testing.T) {

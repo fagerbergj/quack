@@ -35,12 +35,23 @@ type OutcomeSignal struct {
 	Reason string
 }
 
+// OutcomeReasonClosedUnmerged is the fixed invalidation_reason a subject
+// (PR/issue) closed without merging stamps on every memory it minted -
+// callers and tests compare against this constant rather than a literal.
+const OutcomeReasonClosedUnmerged = "subject closed unmerged"
+
 // ApplyOutcome matches memories by provenance chat_id and applies o to every
 // one of them that isn't already invalidated (sticky: nothing revives an
 // invalidated memory, and invalidating twice is idempotent). Returns the
 // count touched. Reinforce bumps reinforcement_count and promotes
 // unverified→reinforced; invalidate stamps invalidated_at/invalidation_reason.
 // Every touched memory writes one memory_ops row (actor=outcome-feedback).
+//
+// updateStatus is read-then-write per row, not serializable: two concurrent
+// calls for the same chatID could both read the same reinforcement_count and
+// under-count by one. Invalidate is idempotent either way; only a
+// simultaneous double-reinforce is affected, and only quack's own webhook
+// dedup keeps that rare in practice.
 func (s *Store) ApplyOutcome(ctx context.Context, chatID string, o OutcomeSignal) (int, error) {
 	chatID = strings.TrimSpace(chatID)
 	if chatID == "" {
@@ -48,6 +59,9 @@ func (s *Store) ApplyOutcome(ctx context.Context, chatID string, o OutcomeSignal
 	}
 	if o.Kind == OutcomeInvalidated && strings.TrimSpace(o.Reason) == "" {
 		return 0, fmt.Errorf("memory: ApplyOutcome invalidate requires a reason")
+	}
+	if o.Kind != OutcomeReinforced && o.Kind != OutcomeInvalidated {
+		return 0, fmt.Errorf("memory: ApplyOutcome: unknown outcome kind %q", o.Kind)
 	}
 	ids, err := s.idx.updateStatus(ctx, chatID, o)
 	if err != nil {
@@ -60,7 +74,11 @@ func (s *Store) ApplyOutcome(ctx context.Context, chatID string, o OutcomeSignal
 	for _, id := range ids {
 		s.logOp(ctx, id, op, ActorOutcomeFeedback, o.Reason)
 	}
-	s.log.Debug("apply outcome", "chat_id", chatID, "kind", o.Kind, "touched", len(ids))
+	if len(ids) > 0 {
+		s.log.Info("apply outcome", "chat_id", chatID, "kind", o.Kind, "touched", len(ids))
+	} else {
+		s.log.Debug("apply outcome", "chat_id", chatID, "kind", o.Kind, "touched", 0)
+	}
 	return len(ids), nil
 }
 

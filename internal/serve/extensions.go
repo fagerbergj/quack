@@ -580,7 +580,7 @@ func applyMemoryOutcome(ctx context.Context, name, chatID string, prev, next ext
 	case extsdk.SubjectMerged:
 		outcome = memory.OutcomeSignal{Kind: memory.OutcomeReinforced}
 	case extsdk.SubjectClosed:
-		outcome = memory.OutcomeSignal{Kind: memory.OutcomeInvalidated, Reason: "subject closed unmerged"}
+		outcome = memory.OutcomeSignal{Kind: memory.OutcomeInvalidated, Reason: memory.OutcomeReasonClosedUnmerged}
 	default:
 		return
 	}
