@@ -368,6 +368,10 @@ type JudgeConfig struct {
 	MaxIterations int     `yaml:"max_iterations"`
 	ContextWindow int     `yaml:"context_window"`
 	Skeptics      int     `yaml:"skeptics"`
+	// MaxOutputTokens caps the judge/skeptic/plan-judge round's own reply
+	// tokens - 0 (the Go zero value, e.g. an older config that predates this
+	// field) leaves it uncapped like before #889. quack.yaml's own default is 8192.
+	MaxOutputTokens int `yaml:"max_output_tokens"`
 }
 
 func (g GatesConfig) JudgeEnabled() bool { return g.Judge.Model != "" && g.Judge.MaxRounds > 0 }
@@ -589,6 +593,9 @@ type UserMemoryHookConfig struct {
 type ServerConfig struct {
 	Addr     string `yaml:"addr"`
 	Topology string `yaml:"topology"`
+	// ShutdownGraceSeconds bounds how long SIGTERM waits for in-flight runs
+	// to finish before force-cancelling them (see serve.DrainActiveRuns).
+	ShutdownGraceSeconds int `yaml:"shutdown_grace_seconds"`
 }
 
 const (
@@ -843,6 +850,9 @@ func (c *Config) validate() error {
 			if g.Judge.Skeptics < 0 {
 				return fmt.Errorf("config: gates.judge.skeptics must be >= 0")
 			}
+			if g.Judge.MaxOutputTokens < 0 {
+				return fmt.Errorf("config: gates.judge.max_output_tokens must be >= 0")
+			}
 		}
 	}
 	if c.Session.Compaction.Enabled {
@@ -877,6 +887,12 @@ func (c *Config) validate() error {
 	}
 	if c.Server.Addr == "" {
 		c.Server.Addr = ":8080"
+	}
+	if c.Server.ShutdownGraceSeconds == 0 {
+		c.Server.ShutdownGraceSeconds = 20
+	}
+	if c.Server.ShutdownGraceSeconds < 0 {
+		return fmt.Errorf("config: server.shutdown_grace_seconds must be >= 0")
 	}
 	switch c.Server.Topology {
 	case "", TopologyEmbedded, TopologyManaged, TopologyExternal:

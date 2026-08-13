@@ -105,13 +105,14 @@ type verdict struct {
 
 // JudgeFactory: builds a fresh agentic judge per round, per-factory read-only tools, per-round readCounter.
 // maxIters wires forcedVerdictCallback so the round's last allowed turn (or a repeated identical tool
-// call) forces a text-only verdict instead of silently exhausting the budget (#853).
-type JudgeFactory func(sink *verdict, maxIters int) (adkagent.Agent, *readCounter, error)
+// call) forces a text-only verdict instead of silently exhausting the budget (#853). maxOutputTokens
+// caps the round's own reply tokens against a runaway generation loop; <= 0 leaves it uncapped (#889).
+type JudgeFactory func(sink *verdict, maxIters, maxOutputTokens int) (adkagent.Agent, *readCounter, error)
 
 // NewJudgeFactory: builds agentic judge with judgeModel, read-only tools, skillsets, and submit_verdict.
 func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []tool.Toolset) JudgeFactory {
 	behaviour := judgeBehaviour(len(readTools) > 0, len(skillsets) > 0)
-	return func(sink *verdict, maxIters int) (adkagent.Agent, *readCounter, error) {
+	return func(sink *verdict, maxIters, maxOutputTokens int) (adkagent.Agent, *readCounter, error) {
 		submit, err := newSubmitVerdictTool(sink)
 		if err != nil {
 			return nil, nil, err
@@ -127,12 +128,23 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 			InstructionProvider: func(_ adkagent.ReadonlyContext) (string, error) {
 				return promptbuilder.Judge(judgeTools, behaviour), nil
 			},
-			Tools:                judgeTools,
-			Toolsets:             skillsets,
-			BeforeModelCallbacks: []llmagent.BeforeModelCallback{forcedVerdictCallback(maxIters)},
+			Tools:                 judgeTools,
+			Toolsets:              skillsets,
+			GenerateContentConfig: judgeGenConfig(maxOutputTokens),
+			BeforeModelCallbacks:  []llmagent.BeforeModelCallback{forcedVerdictCallback(maxIters)},
 		})
 		return a, reads, err
 	}
+}
+
+// judgeGenConfig caps a judge/skeptic/plan-judge round's own reply tokens - a
+// verdict is a few hundred tokens of JSON, but an ungoverned round can decode
+// tens of thousands looping (#889). <= 0 leaves the request uncapped.
+func judgeGenConfig(maxOutputTokens int) *genai.GenerateContentConfig {
+	if maxOutputTokens <= 0 {
+		return nil
+	}
+	return &genai.GenerateContentConfig{MaxOutputTokens: int32(maxOutputTokens)}
 }
 
 // judgeForceCloseInstruction: appended on the round's last allowed turn, or right after the judge
@@ -208,7 +220,11 @@ func newSubmitVerdictTool(sink *verdict) (tool.Tool, error) {
 	})
 }
 
-// buildJudgePrompt: assembles judge's user message (constitution, rubric, question, ledger, knownFailures, answer).
+// buildJudgePrompt: assembles judge's user message. Order is constitution →
+// rubric → task → question → answer → ledger → changed files → known
+// failures: the stable, round-invariant sections lead and the volatile,
+// per-round evidence (re-derived every round) trails, so the prefix up to
+// and including the answer stays a prompt-cache hit across rounds.
 func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Content, answer, changedFiles string, act workerActivity, knownFailures string) string {
 	var sb strings.Builder
 	if constitution != "" {
@@ -228,6 +244,8 @@ func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Con
 	}
 	sb.WriteString("\n\nUser's question:\n")
 	sb.WriteString(contentPlainText(question))
+	sb.WriteString("\n\nAnswer to judge:\n")
+	sb.WriteString(answer)
 	if ws := buildWorkspaceSection(act); ws != "" {
 		sb.WriteString("\n\n")
 		sb.WriteString(ws)
@@ -240,8 +258,6 @@ func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Con
 		sb.WriteString("\n\n")
 		sb.WriteString(knownFailures)
 	}
-	sb.WriteString("\n\nAnswer to judge:\n")
-	sb.WriteString(answer)
 	return sb.String()
 }
 
@@ -515,6 +531,67 @@ func finishJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, que
 	return v2
 }
 
+// judgeRepeat* tune the runaway-generation guard shared by the judge, skeptic,
+// and plan judge: a degenerate loop stutters far faster than any legitimate
+// verdict grows, so watching a bounded trailing window is enough (#889: 18K+
+// tokens looped on one verdict before this existed).
+const (
+	judgeRepeatWindowChars  = 9000 // trailing text rescanned per check
+	judgeRepeatMinUnitChars = 8    // shortest repeat unit checked (a short stutter phrase)
+	judgeRepeatMaxUnitChars = 150  // longest repeat unit checked (a couple of sentences)
+	judgeRepeatTripChars    = 8000 // contiguous repeat span that aborts the round (~2K tokens at judgeCharsPerToken)
+	judgeRepeatCheckStride  = 200  // re-scan only every this many new chars (the scan itself is O(window×units))
+)
+
+// repeatLoopDetector watches a model's streamed text for a runaway repeat
+// loop. Not safe for concurrent use; one instance per round.
+type repeatLoopDetector struct {
+	buf        strings.Builder
+	sinceCheck int
+	tripped    bool
+}
+
+// observe appends newly streamed text and, once enough has accumulated since
+// the last scan, checks the trailing window for a repeat loop.
+func (d *repeatLoopDetector) observe(s string) {
+	if d.tripped || s == "" {
+		return
+	}
+	d.buf.WriteString(s)
+	d.sinceCheck += len(s)
+	if d.sinceCheck < judgeRepeatCheckStride {
+		return
+	}
+	d.sinceCheck = 0
+	tail := d.buf.String()
+	if len(tail) > judgeRepeatWindowChars {
+		tail = tail[len(tail)-judgeRepeatWindowChars:]
+	}
+	if repeatingTailSpan(tail, judgeRepeatMinUnitChars, judgeRepeatMaxUnitChars) >= judgeRepeatTripChars {
+		d.tripped = true
+	}
+}
+
+// repeatingTailSpan returns the length of the longest contiguous span at the
+// end of s made of the same repeated unit (0 if none found), checking unit
+// sizes in [minUnit, maxUnit]. Phase-aligned to the end of s rather than to
+// fixed byte offsets, since a loop's start position is never known in advance.
+func repeatingTailSpan(s string, minUnit, maxUnit int) int {
+	n := len(s)
+	best := 0
+	for unit := minUnit; unit <= maxUnit && unit*2 <= n; unit++ {
+		pattern := s[n-unit:]
+		span := unit
+		for pos := n - unit; pos-unit >= 0 && s[pos-unit:pos] == pattern; pos -= unit {
+			span += unit
+		}
+		if span > unit && span > best { // a single occurrence isn't a repeat
+			best = span
+		}
+	}
+	return best
+}
+
 // runJudgeRound: isolated agentic judge round (own runner + in-memory session). Falls back to text parsing.
 func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer, changedFiles, knownFailures string, act workerActivity, emit func(*genai.Part) bool) (verdict, *readCounter, error) {
 	maxIters := cfg.JudgeMaxIterations
@@ -523,7 +600,7 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	}
 
 	var sink verdict
-	judgeAgent, reads, err := factory(&sink, maxIters)
+	judgeAgent, reads, err := factory(&sink, maxIters, cfg.JudgeMaxOutputTokens)
 	if err != nil {
 		return verdict{}, nil, fmt.Errorf("vetting: build judge agent: %w", err)
 	}
@@ -557,6 +634,7 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 		submitted bool
 		turns     int
 		accum     strings.Builder
+		repeats   repeatLoopDetector
 	)
 	for ev, err := range jr.Run(runCtx, "judge", "verdict", content, adkagent.RunConfig{}) {
 		if err != nil {
@@ -571,10 +649,16 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 			}
 			switch {
 			case p.FunctionCall != nil && p.FunctionCall.Name == submitVerdictTool:
-				submitted = true // handler runs as part of this call; sink is populated
+				// suppress from generic tool-call activity; success is confirmed
+				// on the matching FunctionResponse below - a schema-rejected or
+				// garbled call (e.g. truncated by the output cap) must not be
+				// mistaken for a submitted verdict (#889).
 			case p.FunctionResponse != nil && p.FunctionResponse.Name == submitVerdictTool:
-				// suppress
+				if _, failed := p.FunctionResponse.Response["error"]; !failed {
+					submitted = true // handler ran; sink is populated
+				}
 			case p.Thought && p.Text != "":
+				repeats.observe(p.Text)
 				if !emit(stream.ThinkingPart(p.Text)) {
 					return verdict{}, reads, context.Canceled
 				}
@@ -589,6 +673,7 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 			case p.Text != "":
 				// Local model emits reasoning as plain text, not Thought parts.
 				accum.WriteString(p.Text)
+				repeats.observe(p.Text)
 				if !emit(stream.ThinkingPart(p.Text)) {
 					return verdict{}, reads, context.Canceled
 				}
@@ -597,8 +682,13 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 		if ev.TurnComplete {
 			turns++
 		}
-		// Safety cap: prevent infinite loop if judge never calls submit_verdict.
-		if turns > maxIters {
+		// Safety cap: prevent infinite loop if judge never calls submit_verdict,
+		// or a runaway repeat loop is decoding the same text forever (#889).
+		if turns > maxIters || repeats.tripped {
+			if repeats.tripped {
+				slog.Warn("judge round aborted: runaway repeat detected mid-generation",
+					"component", "vetting", "agent", cfg.Agent)
+			}
 			cancel()
 			break
 		}

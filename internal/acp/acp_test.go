@@ -8,6 +8,10 @@ import (
 	"time"
 
 	sdk "github.com/coder/acp-go-sdk"
+	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/runner"
+	"google.golang.org/adk/v2/session"
+	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workspace"
@@ -215,6 +219,49 @@ func TestRound_MCPToolsBlockLeadsThePrompt(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("prompt sent to the subprocess is missing tool name %q: %q", want, got)
 		}
+	}
+}
+
+// TestRunPrompt_EnvironmentBlockTrailsTheTask pins the cache-prefix fix: the
+// environment block (regenerated every round - branch/HEAD/dir listing drift
+// once a round commits anything) must sit AFTER the task text in the
+// assembled round prompt, so a stable task prefix stays a cache hit across
+// rounds. Drives the full runPrompt path (via a real ADK runner + the echo
+// fake agent over stdio), not just the round()-level helper.
+func TestRunPrompt_EnvironmentBlockTrailsTheTask(t *testing.T) {
+	a := testAgent(t, "echo")
+	token := vetting.AdvisorThreadToken("plan-1", "impl1")
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{NodeID: "impl1", WorkspaceNodeID: "impl1", SessionID: "s1"})
+	defer vetting.UnregisterAdvisorThread(token)
+
+	r, err := runner.New(runner.Config{
+		AppName: "test", Agent: a, SessionService: session.InMemoryService(), AutoCreateSession: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "add the feature\n\n" + vetting.AdvisorThreadMarker(token)}}}
+	var lastText string
+	for ev, err := range r.Run(t.Context(), "u1", "s1", task, adkagent.RunConfig{}) {
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		if ev.Content == nil {
+			continue
+		}
+		for _, p := range ev.Content.Parts {
+			if p.Text != "" {
+				lastText = p.Text
+			}
+		}
+	}
+	taskIdx := strings.Index(lastText, "add the feature")
+	envIdx := strings.Index(lastText, "<environment_context>")
+	if taskIdx < 0 || envIdx < 0 {
+		t.Fatalf("prompt missing task text or environment block: %q", lastText)
+	}
+	if envIdx < taskIdx {
+		t.Fatalf("environment block must trail the task text, got: %q", lastText)
 	}
 }
 

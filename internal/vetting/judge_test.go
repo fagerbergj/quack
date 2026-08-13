@@ -453,6 +453,34 @@ func TestJudgePromptScopedToNodeNotOrchestratorFileCount(t *testing.T) {
 	}
 }
 
+// TestBuildJudgePromptSectionOrder pins the cache-friendly section order:
+// the stable, round-invariant sections (constitution, rubric, task,
+// question, answer) come before the volatile, re-derived-per-round evidence
+// (ledger, changed files, known failures) - so the prefix up to and
+// including the answer stays byte-identical, and a cache hit, across rounds.
+func TestBuildJudgePromptSectionOrder(t *testing.T) {
+	act := workerActivity{workspace: []wsOp{{tool: "read_file", detail: `read_file(path="README.md")`}}}
+	det := map[string]criterionScore{"checks_pass": {Score: 0, Reason: "deterministic: build failed"}}
+	known := judgeKnownFailuresSection(det, 0.7)
+
+	prompt := buildJudgePrompt("the constitution", "the rubric", "the node task",
+		questionContent("the question"), "the answer", "the changed files diff", act, known)
+
+	sections := []string{"the constitution", "the rubric", "the node task", "the question", "the answer",
+		"Workspace activity", "the changed files diff", judgeKnownFailuresHeader}
+	last := -1
+	for _, s := range sections {
+		idx := strings.Index(prompt, s)
+		if idx < 0 {
+			t.Fatalf("prompt missing section %q:\n%s", s, prompt)
+		}
+		if idx < last {
+			t.Fatalf("section %q is out of order (want constitution, rubric, task, question, answer, ledger, changed files, known failures):\n%s", s, prompt)
+		}
+		last = idx
+	}
+}
+
 // TestJudgeKnownFailuresSection_FormatsFailingCriteriaSorted checks the
 // section names every below-threshold criterion, sorted, and skips a passing one.
 func TestJudgeKnownFailuresSection_FormatsFailingCriteriaSorted(t *testing.T) {
@@ -645,6 +673,251 @@ func TestRepeatsLastToolCall(t *testing.T) {
 				t.Errorf("repeatsLastToolCall() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestRepeatingTailSpan pins the pure detection function #889's runaway-loop
+// guard is built on: a uniformly repeated unit at the end of a string is
+// found and measured; a single occurrence, a too-short string, or ordinary
+// non-repeating prose is not mistaken for one.
+func TestRepeatingTailSpan(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
+		if got := repeatingTailSpan("", judgeRepeatMinUnitChars, judgeRepeatMaxUnitChars); got != 0 {
+			t.Errorf("got %d, want 0", got)
+		}
+	})
+	t.Run("too short for any candidate unit", func(t *testing.T) {
+		if got := repeatingTailSpan("abcdefg", judgeRepeatMinUnitChars, judgeRepeatMaxUnitChars); got != 0 {
+			t.Errorf("got %d, want 0", got)
+		}
+	})
+	t.Run("no repetition", func(t *testing.T) {
+		s := "the quick brown fox jumps over a lazy dog while a cat watches quietly from the fence"
+		if got := repeatingTailSpan(s, judgeRepeatMinUnitChars, judgeRepeatMaxUnitChars); got != 0 {
+			t.Errorf("got %d, want 0 (no unit actually repeats)", got)
+		}
+	})
+	t.Run("uniform repeat spans the whole string", func(t *testing.T) {
+		unit := "repeats! " // 9 chars, within [minUnit,maxUnit]
+		s := strings.Repeat(unit, 30)
+		if got := repeatingTailSpan(s, judgeRepeatMinUnitChars, judgeRepeatMaxUnitChars); got != len(s) {
+			t.Errorf("got %d, want %d (the entire string is one repeated unit)", got, len(s))
+		}
+	})
+	t.Run("repeat only at the tail is found, prefix is ignored", func(t *testing.T) {
+		unit := "loopy!!! " // 9 chars
+		prefix := "an unrelated, non-repeating lead-in that never recurs "
+		repeat := strings.Repeat(unit, 30)
+		s := prefix + repeat
+		if got := repeatingTailSpan(s, judgeRepeatMinUnitChars, judgeRepeatMaxUnitChars); got != len(repeat) {
+			t.Errorf("got %d, want %d (only the tail repeat should count, not the prefix)", got, len(repeat))
+		}
+	})
+}
+
+// TestRepeatLoopDetector pins the stateful wrapper: it stays untripped under
+// the trip threshold and trips once a genuine runaway repeat clears it,
+// scanning only in judgeRepeatCheckStride-sized increments.
+func TestRepeatLoopDetector(t *testing.T) {
+	t.Run("varied text across many small appends never trips", func(t *testing.T) {
+		var d repeatLoopDetector
+		for i := 0; i < 50; i++ {
+			d.observe(fmt.Sprintf("turn %d covers a distinct point that was not made before, ", i))
+		}
+		if d.tripped {
+			t.Error("detector tripped on genuinely varied text")
+		}
+	})
+	t.Run("a long uniform repeat trips", func(t *testing.T) {
+		var d repeatLoopDetector
+		unit := "This exact sentence repeats without variation. " // 49 chars
+		for i := 0; i < 400 && !d.tripped; i++ {
+			d.observe(unit)
+		}
+		if !d.tripped {
+			t.Error("detector never tripped on a long uniform repeat")
+		}
+	})
+}
+
+// maxTokensRecordingJudge records the MaxOutputTokens the request actually
+// carried (0 if req.Config was nil or the field unset) before submitting a
+// normal verdict, proving the configured cap reaches the model call (#889).
+type maxTokensRecordingJudge struct{ got *int32 }
+
+func (maxTokensRecordingJudge) Name() string { return "max-tokens-recording-judge" }
+
+func (j maxTokensRecordingJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if req.Config != nil {
+			atomic.StoreInt32(j.got, req.Config.MaxOutputTokens)
+		}
+		yield(stubCall(submitVerdictTool, map[string]any{"score": 0.8, "feedback": ""}), nil)
+	}
+}
+
+// TestJudgeRequestCarriesConfiguredMaxOutputTokens proves cfg.JudgeMaxOutputTokens
+// reaches the actual model request as genai.GenerateContentConfig.MaxOutputTokens.
+func TestJudgeRequestCarriesConfiguredMaxOutputTokens(t *testing.T) {
+	got := int32(-1)
+	factory := NewJudgeFactory(maxTokensRecordingJudge{got: &got}, nil, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	cfg := Config{Rubric: "score 0-10", JudgeMaxOutputTokens: 4096}
+
+	if _, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true }); err != nil {
+		t.Fatalf("runJudgeAgent: %v", err)
+	}
+	if got != 4096 {
+		t.Errorf("req.Config.MaxOutputTokens = %d, want 4096", got)
+	}
+}
+
+// TestJudgeRequestZeroMaxOutputTokensLeavesUncapped proves the field's
+// documented "<= 0 = uncapped" contract: an unset cfg.JudgeMaxOutputTokens
+// must not set any MaxOutputTokens on the request at all.
+func TestJudgeRequestZeroMaxOutputTokensLeavesUncapped(t *testing.T) {
+	got := int32(-1)
+	factory := NewJudgeFactory(maxTokensRecordingJudge{got: &got}, nil, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	cfg := Config{Rubric: "score 0-10"} // JudgeMaxOutputTokens left unset
+
+	if _, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true }); err != nil {
+		t.Fatalf("runJudgeAgent: %v", err)
+	}
+	if got != 0 {
+		t.Errorf("req.Config.MaxOutputTokens = %d, want 0 (uncapped)", got)
+	}
+}
+
+// garbledVerdictJudge always calls submit_verdict with an empty args map -
+// exactly what a truncated/broken tool-call payload parses to upstream
+// (openaimodel's parseJSONArgs swallows the JSON error and returns {}). The
+// call is attempted every turn but its required "score" field is missing, so
+// schema validation rejects it before the handler that populates the verdict
+// ever runs.
+type garbledVerdictJudge struct{ calls int32 }
+
+func (j *garbledVerdictJudge) Name() string { return "garbled-verdict-judge" }
+
+func (j *garbledVerdictJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		atomic.AddInt32(&j.calls, 1)
+		yield(stubCall(submitVerdictTool, map[string]any{}), nil)
+	}
+}
+
+// TestRunJudgeAgent_GarbledSubmitVerdictRoutesToNoVerdict proves #889's fix: a
+// submit_verdict call whose arguments fail schema validation (as a truncated
+// tool-call payload would) must never be mistaken for a real submission - the
+// round must end in ErrJudgeNoVerdict, never a "valid" zero-value verdict
+// silently accepted as a scored pass or fail.
+func TestRunJudgeAgent_GarbledSubmitVerdictRoutesToNoVerdict(t *testing.T) {
+	judge := &garbledVerdictJudge{}
+	factory := NewJudgeFactory(judge, nil, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 2}
+
+	_, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	if !errors.Is(err, ErrJudgeNoVerdict) {
+		t.Fatalf("err = %v, want errors.Is(err, ErrJudgeNoVerdict) - a garbled submit_verdict call must never look like a real verdict", err)
+	}
+}
+
+// loopingJudgeModel emits reasoning text alongside a read_file call every
+// turn - a plain text-only reply would otherwise end the agent run, so the
+// tool call is what keeps the loop going - and that reasoning text is the
+// EXACT same repeated phrase every time: the #889 incident's shape, a
+// runaway generation loop that never reaches submit_verdict. The read_file
+// path varies per call so this exercises only the #889 repeat guard, not the
+// pre-existing #853 identical-tool-call stutter breaker.
+type loopingJudgeModel struct{ calls int32 }
+
+func (j *loopingJudgeModel) Name() string { return "looping-judge" }
+
+func (j *loopingJudgeModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		n := atomic.AddInt32(&j.calls, 1)
+		resp := &model.LLMResponse{
+			Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{
+				{Text: "This exact sentence repeats without variation. ", Thought: true},
+				{FunctionCall: &genai.FunctionCall{Name: "read_file", Args: map[string]any{"path": fmt.Sprintf("file%d.go", n)}}},
+			}},
+			FinishReason: genai.FinishReasonStop,
+			TurnComplete: true,
+		}
+		yield(resp, nil)
+	}
+}
+
+// TestRunJudgeAgent_RunawayRepeatAbortsEarly proves #889's repeat guard: a
+// judge stuck decoding the same text is cancelled and routed to the same
+// no-verdict retry path a truncated reply takes - well before its iteration
+// budget would otherwise let it keep running. The call count assertion is
+// load-bearing: the round ends in ErrJudgeNoVerdict either way (the repeated
+// text never parses as JSON regardless), so only a bounded call count proves
+// the guard fired instead of the loop simply running to the turn cap.
+func TestRunJudgeAgent_RunawayRepeatAbortsEarly(t *testing.T) {
+	readTool := newSpyReadTool(t, "package x\n", new(int32))
+	judge := &loopingJudgeModel{}
+	factory := NewJudgeFactory(judge, []tool.Tool{readTool}, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	// A generous turn budget that would let the loop run hundreds of turns per
+	// round if the repeat guard were not what stopped it.
+	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 1000}
+
+	_, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	if !errors.Is(err, ErrJudgeNoVerdict) {
+		t.Fatalf("err = %v, want errors.Is(err, ErrJudgeNoVerdict)", err)
+	}
+	// #779's no-verdict path retries once with a fresh session, so up to two
+	// rounds each trip the guard around its own ~160-180 call mark; 700 stays
+	// far below the ~2000 calls the 1000-turn budget would allow unguarded.
+	if got := atomic.LoadInt32(&judge.calls); got >= 700 {
+		t.Errorf("judge model called %d times, want well under the 1000-turn budget - the repeat guard should have aborted early", got)
+	}
+}
+
+// variedJudgeModel produces a few turns of genuinely different reasoning text
+// - nowhere near the repeat guard's trip span - each paired with a read_file
+// call to keep the loop going, before submitting a normal verdict.
+type variedJudgeModel struct{ calls int32 }
+
+func (j *variedJudgeModel) Name() string { return "varied-judge" }
+
+func (j *variedJudgeModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		n := atomic.AddInt32(&j.calls, 1)
+		if n <= 3 {
+			resp := &model.LLMResponse{
+				Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{
+					{Text: fmt.Sprintf("Turn %d looks at a distinct part of the answer - finding %d is unrelated to the others.", n, n*13), Thought: true},
+					{FunctionCall: &genai.FunctionCall{Name: "read_file", Args: map[string]any{"path": fmt.Sprintf("file%d.go", n)}}},
+				}},
+				FinishReason: genai.FinishReasonStop,
+				TurnComplete: true,
+			}
+			yield(resp, nil)
+			return
+		}
+		yield(stubCall(submitVerdictTool, map[string]any{"score": 0.9, "feedback": ""}), nil)
+	}
+}
+
+// TestRunJudgeAgent_VariedReplyNotAborted is the repeat guard's other half:
+// genuinely varied text spread across several turns must never trip it.
+func TestRunJudgeAgent_VariedReplyNotAborted(t *testing.T) {
+	readTool := newSpyReadTool(t, "package x\n", new(int32))
+	judge := &variedJudgeModel{}
+	factory := NewJudgeFactory(judge, []tool.Tool{readTool}, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6}
+
+	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	if err != nil {
+		t.Fatalf("runJudgeAgent: %v", err)
+	}
+	if v.Score != 0.9 {
+		t.Errorf("verdict score = %v, want 0.9 - varied filler text must not trip the repeat guard", v.Score)
 	}
 }
 

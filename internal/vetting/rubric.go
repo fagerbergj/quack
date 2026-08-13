@@ -25,14 +25,15 @@ func FromConfig(c config.GatesConfig) (Config, error) {
 		return Config{}, err
 	}
 	return Config{
-		DeterministicRounds: c.DeterministicChecks.MaxRounds,
-		JudgeRounds:         c.Judge.MaxRounds,
-		Threshold:           c.Judge.Threshold,
-		JudgeMaxIterations:  c.Judge.MaxIterations,
-		JudgeContextWindow:  c.Judge.ContextWindow,
-		Constitution:        constitution,
-		Rubric:              rubric,
-		SkepticRounds:       c.Judge.Skeptics,
+		DeterministicRounds:  c.DeterministicChecks.MaxRounds,
+		JudgeRounds:          c.Judge.MaxRounds,
+		Threshold:            c.Judge.Threshold,
+		JudgeMaxIterations:   c.Judge.MaxIterations,
+		JudgeContextWindow:   c.Judge.ContextWindow,
+		Constitution:         constitution,
+		Rubric:               rubric,
+		SkepticRounds:        c.Judge.Skeptics,
+		JudgeMaxOutputTokens: c.Judge.MaxOutputTokens,
 	}, nil
 }
 

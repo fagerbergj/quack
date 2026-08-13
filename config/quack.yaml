@@ -226,6 +226,9 @@ gates:
     skeptics: 0              # adversarial verify (#370): N independent skeptics per load-bearing
                               # PASSING criterion, majority-refute kills it. 0 (default) = off -
                               # each qualifying criterion costs N extra judge-model calls.
+    max_output_tokens: 8192  # cap on the judge/skeptic/plan-judge round's own reply - a runaway
+                              # generation loop can otherwise decode tens of thousands of tokens on
+                              # a verdict that should be a few hundred (#889). 0 = uncapped.
 
 # DAG execution policy.
 dag:
@@ -247,6 +250,11 @@ server:
   # available. Tool backends (search/fetch) are NOT managed - set them via the
   # tools below (kind: exa for keyless, kind: direct for fetch).
   # topology: managed
+  # shutdown_grace_seconds: how long SIGTERM waits for in-flight runs to
+  # finish before force-cancelling them (default 20). Your deploy's own kill
+  # grace (docker-compose stop_grace_period, k8s terminationGracePeriodSeconds)
+  # must be longer than this, or the platform SIGKILLs before quack finishes draining.
+  # shutdown_grace_seconds: 20
 
 # OTel tracing/metrics - emission-only (Tempo/Grafana, the home-server
 # monitoring stack, own trace/metric viewing; quack keeps no local store of

@@ -3,13 +3,16 @@ package stream
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 )
 
 // In-memory fan-out of SSE events per chat ID. Also carries the cancel-run registry.
 type Hub struct {
-	mu     sync.Mutex
-	topics map[string]*topic
-	runs   sync.Map // chatID → *runHandle
+	mu          sync.Mutex
+	topics      map[string]*topic
+	runs        sync.Map // chatID → *runHandle
+	draining    atomic.Bool
+	interrupted sync.Map // chatID → struct{}, set right before a shutdown force-cancel (see MarkInterrupted)
 }
 
 // Cancel handle for a chat's in-flight run (responseID guards against cancelling stale runs).
@@ -41,6 +44,37 @@ func (h *Hub) CancelRun(chatID string) bool {
 // Reports whether chatID has a run registered (queued or executing). Unlike Active, covers runs still waiting on runSem. Used by workspace GC.
 func (h *Hub) HasRegisteredRun(chatID string) bool {
 	_, ok := h.runs.Load(chatID)
+	return ok
+}
+
+// ActiveChatIDs snapshots every chat with a run currently registered - the
+// set graceful shutdown needs to drain (internal/serve.DrainActiveRuns).
+func (h *Hub) ActiveChatIDs() []string {
+	var ids []string
+	h.runs.Range(func(k, _ any) bool {
+		ids = append(ids, k.(string))
+		return true
+	})
+	return ids
+}
+
+// BeginDraining marks the server as shutting down: dispatch entrypoints
+// (REST SendChatMessage, SDK extension Dispatch) consult Draining and refuse
+// new work, so nothing starts a run this process won't stick around to finish.
+func (h *Hub) BeginDraining() { h.draining.Store(true) }
+
+// Draining reports whether BeginDraining has been called.
+func (h *Hub) Draining() bool { return h.draining.Load() }
+
+// MarkInterrupted flags chatID's run as cut short by shutdown, set by
+// DrainActiveRuns right before its force-cancel so the run's own tail can
+// tell that apart from an ordinary error or completion.
+func (h *Hub) MarkInterrupted(chatID string) { h.interrupted.Store(chatID, struct{}{}) }
+
+// WasInterrupted reports and clears chatID's interrupted flag - read once, at
+// the run's own tail.
+func (h *Hub) WasInterrupted(chatID string) bool {
+	_, ok := h.interrupted.LoadAndDelete(chatID)
 	return ok
 }
 

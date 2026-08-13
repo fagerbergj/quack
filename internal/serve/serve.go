@@ -164,7 +164,8 @@ var Version string
 // Run builds the server and serves on cfg.Server.Addr until ctx is cancelled.
 func Run(ctx context.Context, configPath string, port int) error {
 	setupLoggingTo(os.Stdout, slog.LevelInfo)
-	handler, cleanup, addr, err := build(ctx, configPath, port, true)
+	var hooks shutdownHooks
+	handler, cleanup, addr, err := build(ctx, configPath, port, true, &hooks)
 	if err != nil {
 		return err
 	}
@@ -193,6 +194,11 @@ func Run(ctx context.Context, configPath string, port int) error {
 	case <-ctx.Done():
 	}
 	slog.Info("shutting down")
+	// Before srv.Shutdown: DrainActiveRuns' first act is Hub.BeginDraining, so
+	// a request landing in this window is rejected, not started unattended.
+	if hooks.hub != nil {
+		DrainActiveRuns(hooks.hub, hooks.grace)
+	}
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutCtx)
@@ -212,7 +218,7 @@ func InProcess(ctx context.Context, configPath string) (baseURL string, stop fun
 // InProcessFromConfig is InProcess for a caller with a resolved *config.Config in memory.
 func InProcessFromConfig(ctx context.Context, cfg *config.Config) (baseURL string, stop func() error, err error) {
 	setupLoggingTo(os.Stderr, slog.LevelWarn)
-	handler, cleanup, _, err := buildFromConfig(ctx, cfg, 0, false)
+	handler, cleanup, _, err := buildFromConfig(ctx, cfg, 0, false, nil)
 	if err != nil {
 		return "", nil, err
 	}
@@ -237,17 +243,25 @@ func InProcessFromConfig(ctx context.Context, cfg *config.Config) (baseURL strin
 	return "http://" + ln.Addr().String(), stop, nil
 }
 
+// shutdownHooks is an out-param for what Run needs post-build to drain
+// SIGTERM (DrainActiveRuns) - avoids growing buildFromConfig's return arity
+// across its ~25 early error returns. nil skips draining (InProcess's CLI use).
+type shutdownHooks struct {
+	hub   *stream.Hub
+	grace time.Duration
+}
+
 // build loads config and constructs the HTTP handler, shared by Run and InProcess.
-func build(ctx context.Context, configPath string, port int, reconcile bool) (handler http.Handler, cleanup func(), addr string, err error) {
+func build(ctx context.Context, configPath string, port int, reconcile bool, hooks *shutdownHooks) (handler http.Handler, cleanup func(), addr string, err error) {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("config load failed: %w", err)
 	}
-	return buildFromConfig(ctx, cfg, port, reconcile)
+	return buildFromConfig(ctx, cfg, port, reconcile, hooks)
 }
 
 // buildFromConfig is build for an already-loaded Config. reconcile gates startup orphan reconciliation.
-func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcile bool) (handler http.Handler, cleanup func(), addr string, err error) {
+func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcile bool, hooks *shutdownHooks) (handler http.Handler, cleanup func(), addr string, err error) {
 	var cleanups []func()
 	runCleanups := func() {
 		for i := len(cleanups) - 1; i >= 0; i-- {
@@ -320,6 +334,16 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		} else if n > 0 {
 			slog.Info("marked orphaned dag nodes failed (previous process killed mid-run)", "component", "store", "count", n)
 		}
+		// Chat-level counterpart to FailStaleDagNodes - no re-dispatch here,
+		// just a clean status and a log line the operator can act on.
+		if ids, err := st.ScanOrphanedRuns(context.Background()); err != nil {
+			slog.Error("scan orphaned runs", "component", "store", "err", err)
+		} else {
+			for _, id := range ids {
+				slog.Warn("chat left mid-run by a previous process; marked interrupted - resend the message or re-apply the trigger label to resume",
+					"component", "startup", "chat", id)
+			}
+		}
 	}
 
 	artifactSvc, err := buildArtifactService(cfg)
@@ -340,6 +364,10 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	// runHub is needed by the SDK extensions built below (Dispatch fans a
 	// run's events through it) as well as REST.
 	runHub := stream.NewHub()
+	if hooks != nil {
+		hooks.hub = runHub
+		hooks.grace = time.Duration(cfg.Server.ShutdownGraceSeconds) * time.Second
+	}
 
 	// orchRef/judgeModelRef are resolved further down - an SDK extension's
 	// Dispatch/Classify may not fire until long after construction, but its
@@ -774,7 +802,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				gateCfg.Skeptic = vetting.NewSkepticFactory(judge, judgeReadTools)
 			}
 			safetyJudge = tools.NewSafetyJudge(judge)
-			planJudge = vetting.NewPlanJudge(judge)
+			planJudge = vetting.NewPlanJudge(judge, cfg.Gates.Judge.MaxOutputTokens)
 		}
 		slog.Info("trust gate enabled", "component", "startup",
 			"deterministic_rounds", gateCfg.DeterministicRounds,

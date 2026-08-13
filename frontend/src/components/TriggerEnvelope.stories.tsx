@@ -50,6 +50,41 @@ export const IssuePlan: Story = {
   },
 }
 
+// <checks> (quack-extensions/github's checksBlock): the collapsed header uses
+// the backend's own failing/pending/passing summary; opened, failing checks
+// read in the danger token, distinct from pending/passing.
+export const ChecksMixedStatuses: Story = {
+  args: {
+    content: `<permissions>push_commits_to_pr, join_pr_conversation</permissions>
+<deliverable>commits on this PR's head branch that make the failing checks pass</deliverable>
+<pull_request number="97"><title>Material 3 theming with dynamic color and dark mode</title><description>Implements Material You theming.</description></pull_request>
+<checks count="8" summary="2 failing, 1 pending, 5 passing">build (ubuntu-latest): completed failure
+build (macos-latest): completed success
+lint: completed failure
+unit-tests: completed success
+integration-tests: completed success
+e2e: in_progress
+typecheck: completed success
+format-check: completed success
+</checks>
+<event name="check_suite.completed">{"action":"completed","check_suite":{"conclusion":"failure"}}</event>`,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByText('checks: 2 failing, 1 pending, 5 passing'))
+  },
+}
+
+// A malformed <checks> body (backend contract drift, or truncation) -
+// degrades to the raw fallback instead of throwing or dropping the section.
+export const MalformedChecks: Story = {
+  args: {
+    content: `<permissions>join_pr_conversation</permissions>
+<deliverable>a review</deliverable>
+<checks count="1" summary="1 passing">this is not a valid check line</checks>`,
+  },
+}
+
 // A block type quack starts emitting after this UI shipped: rendered as a
 // labelled collapsed section with its raw content, never dropped (#667).
 export const UnknownBlock: Story = {
