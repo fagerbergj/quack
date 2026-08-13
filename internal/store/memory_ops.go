@@ -29,3 +29,13 @@ func (s *Store) InsertMemoryOp(ctx context.Context, memoryID, op, actor, reason 
 	row := &MemoryOp{ID: uuid.NewString(), MemoryID: memoryID, Op: op, Actor: actor, Reason: reason, Timestamp: time.Now().UTC()}
 	return s.db.WithContext(ctx).Create(row).Error
 }
+
+// PruneMemoryOps hard-deletes memory_ops rows older than cutoff. Implements
+// memory.OpsLog's prune call (see internal/serve's storeOpsLog adapter).
+func (s *Store) PruneMemoryOps(ctx context.Context, cutoff time.Time) (int, error) {
+	res := s.db.WithContext(ctx).Where("timestamp < ?", cutoff).Delete(&MemoryOp{})
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return int(res.RowsAffected), nil
+}

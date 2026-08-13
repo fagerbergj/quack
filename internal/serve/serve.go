@@ -133,6 +133,15 @@ func ledgerStoreFromConfig(cfg *config.Config) ledger.LedgerStore {
 	return store
 }
 
+// setDefaultAgent stamps m's metrics-only agent fallback (tracedModel.SetDefaultAgent) -
+// for any model consumer that never runs inside a DAG node's coords-stamped ctx. No-op
+// for a model.LLM that doesn't implement it (e.g. under test).
+func setDefaultAgent(m model.LLM, name string) {
+	if da, ok := m.(interface{ SetDefaultAgent(string) }); ok {
+		da.SetDefaultAgent(name)
+	}
+}
+
 // buildArtifactService resolves cfg.Artifacts: in-memory by default, or the
 // durable Postgres large-object backend for a named store.
 func buildArtifactService(cfg *config.Config) (artifact.Service, error) {
@@ -326,9 +335,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		return nil, nil, "", fmt.Errorf("inference model init failed: %w", err)
 	}
 	// Never runs inside a DAG node, so no vetting.Config.Agent stamps it.
-	if da, ok := llm.(interface{ SetDefaultAgent(string) }); ok {
-		da.SetDefaultAgent(orchestrator.AgentName)
-	}
+	setDefaultAgent(llm, orchestrator.AgentName)
 
 	// runHub is needed by the SDK extensions built below (Dispatch fans a
 	// run's events through it) as well as REST.
@@ -378,6 +385,9 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		if err != nil {
 			return nil, fmt.Errorf("consolidation model: %w", err)
 		}
+		// Commit runs from a background goroutine (user memory hook) or a tool call
+		// whose ctx lost its node coords - never a DAG node's own model call.
+		setDefaultAgent(consolidator, "memory")
 		s, err := memory.New(context.Background(), rm.Kind, rm.URL, embedder, consolidator, rm.Collection, domain, rm.TopK, rm.MinScore)
 		if err != nil {
 			return nil, err
@@ -396,6 +406,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		taskStore = s
 		slog.Info("semantic memory enabled", "component", "startup", "collection", rm.Collection,
 			"embedder", rm.Embedder.Model, "consolidation", rm.Consolidation.Model)
+		startConsolidationSweep(ctx, s, rm)
 	}
 	if slices.Contains(cfg.Orchestrator.Tools, "commit_memory") {
 		if rm, ok := cfg.MemoryStore("commit_memory"); ok {
@@ -405,6 +416,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 			}
 			userStore = s
 			slog.Info("user memory enabled", "component", "startup", "collection", rm.Collection)
+			startConsolidationSweep(ctx, s, rm)
 		}
 	}
 
@@ -450,6 +462,8 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 			} else if built, aerr := agent.BuildChat(ab, am, nil, nil, agent.Compaction{}, "", nil, ""); aerr != nil {
 				slog.Warn("advisor build failed; ask_advisor disabled", "component", "startup", "err", aerr)
 			} else {
+				// ask_advisor runs the advisor as its own nested runner.Run - never a DAG node's own model call.
+				setDefaultAgent(am, "advisor")
 				advisorAgent = built
 				slog.Info("advisor enabled", "component", "startup", "model", cfg.Gates.Judge.Model)
 			}
@@ -622,6 +636,9 @@ func buildUserMemoryHookAgent(h config.UserMemoryHookConfig, cfg *config.Config,
 	if err != nil {
 		return nil, fmt.Errorf("model: %w", err)
 	}
+	// Fires from a fire-and-forget goroutine after the orchestrator's own turn ends,
+	// via its own nested runner.Run - never a DAG node's own model call.
+	setDefaultAgent(m, "memory-hook")
 	b, err := agent.LoadBundle("agents/memory-agent")
 	if err != nil {
 		return nil, fmt.Errorf("bundle: %w", err)
@@ -786,6 +803,9 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		if fallbackSummarizer, err = inference.NewModel(cprov, compCfg.Model, artifacts); err != nil {
 			return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("compaction: model: %w", err)
 		}
+		// Only ever used when ResolveSummarizer has no active worker model - rare, but
+		// that call site is outside any node's own coords stamp when it happens.
+		setDefaultAgent(fallbackSummarizer, "compaction")
 		slog.Info("context compaction enabled", "component", "startup", "fallback_summariser", compCfg.Model)
 	} else if compCfg.Enabled {
 		slog.Info("context compaction enabled", "component", "startup", "summariser", "active worker model (no fallback configured)")

@@ -7,10 +7,16 @@ import (
 	"strings"
 	"testing"
 
+	"go.opentelemetry.io/otel/attribute"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/inference"
+	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
 // --- fakes -----------------------------------------------------------------
@@ -61,6 +67,8 @@ type fakeLLM struct {
 	text       string
 	calls      int
 	lastPrompt string
+	// usage is nil by default (existing callers get no usage metadata, matching prior behaviour).
+	usage *genai.GenerateContentResponseUsageMetadata
 }
 
 func (f *fakeLLM) Name() string { return "fake" }
@@ -73,7 +81,7 @@ func (f *fakeLLM) GenerateContent(_ context.Context, req *model.LLMRequest, _ bo
 		yield(&model.LLMResponse{Content: &genai.Content{
 			Role:  genai.RoleModel,
 			Parts: []*genai.Part{{Text: f.text}},
-		}}, nil)
+		}, UsageMetadata: f.usage}, nil)
 	}
 }
 
@@ -234,6 +242,61 @@ func TestCompactSummarises(t *testing.T) {
 	}
 	if len(req.Contents) >= len(contents) {
 		t.Fatalf("compaction did not shrink contents: %d → %d", len(contents), len(req.Contents))
+	}
+}
+
+// TestSummarizeHead_DefaultAgentFillsTokenUsage pins serve.go's compaction
+// fallback wiring: ResolveSummarizer only reaches fallbackSummarizer when no
+// active worker model is available - a call site outside any node's own coords
+// stamp - so the fallback's tracedModel needs the SetDefaultAgent("compaction")
+// fallback to attribute its token usage at all.
+func TestSummarizeHead_DefaultAgentFillsTokenUsage(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	if err := otelobs.InitMetricsForTesting(mp.Meter("test")); err != nil {
+		t.Fatalf("InitMetricsForTesting: %v", err)
+	}
+
+	fallback := inference.TracedModelForTesting(&fakeLLM{
+		text:  "summary",
+		usage: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 10, CandidatesTokenCount: 5},
+	}, "compaction-fallback-test-model")
+	if da, ok := fallback.(interface{ SetDefaultAgent(string) }); ok {
+		da.SetDefaultAgent("compaction")
+	} else {
+		t.Fatal("TracedModelForTesting result does not implement SetDefaultAgent")
+	}
+
+	// No ledger coords on ctx - mirrors ResolveSummarizer's fallback call site.
+	if _, err := summarizeHead(context.Background(), fallback, "summarize this"); err != nil {
+		t.Fatalf("summarizeHead: %v", err)
+	}
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	var found bool
+	for _, sm := range rm.ScopeMetrics {
+		for _, met := range sm.Metrics {
+			if met.Name != "gen_ai.client.token.usage" {
+				continue
+			}
+			sum, ok := met.Data.(metricdata.Sum[int64])
+			if !ok {
+				t.Fatalf("gen_ai.client.token.usage is not an int64 Sum")
+			}
+			for _, dp := range sum.DataPoints {
+				agentVal, _ := dp.Attributes.Value(attribute.Key("agent"))
+				if agentVal.AsString() == "compaction" {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("no gen_ai.client.token.usage data point carries agent=compaction - the fallback summariser's SetDefaultAgent never reached the metric")
 	}
 }
 

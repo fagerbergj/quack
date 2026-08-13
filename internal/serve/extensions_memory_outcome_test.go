@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	_ "github.com/glebarez/go-sqlite"
 	"google.golang.org/adk/v2/model"
@@ -114,6 +115,10 @@ func (f *fakeOpsLog) LogMemoryOp(_ context.Context, memoryID string, op memory.O
 	defer f.mu.Unlock()
 	f.rows = append(f.rows, fakeOpRow{memoryID, op, actor, reason})
 	return nil
+}
+
+func (f *fakeOpsLog) PruneMemoryOps(_ context.Context, _ time.Time) (int, error) {
+	return 0, nil
 }
 
 func (f *fakeOpsLog) snapshot() []fakeOpRow {

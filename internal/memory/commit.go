@@ -248,10 +248,36 @@ func (s *Store) decide(ctx context.Context, staged []Candidate, sourceText strin
 	if !ok {
 		sysPrompt = consolidatePrompts["task"]
 	}
+	return s.runConsolidation(ctx, sysPrompt, user.String())
+}
+
+// decideDedupe runs the consolidation model over one burst cluster of
+// currently-valid unverified memories (design doc §4(c)) - the periodic
+// sweep's ticker-triggered counterpart to decide's commit-triggered
+// reconcile. Every item in cluster is both candidate and neighbour: there is
+// no separate staged/source text, just the existing memories to dedupe
+// against each other.
+func (s *Store) decideDedupe(ctx context.Context, cluster []neighbour) ([]op, error) {
+	var user strings.Builder
+	user.WriteString("MEMORIES MINTED CLOSE TOGETHER BY THE SAME RUN (dedupe near-identical claims):\n")
+	for _, n := range cluster {
+		fmt.Fprintf(&user, "- id=%s: %s\n", n.ID, n.Content)
+	}
+	sysPrompt, ok := consolidateDedupePrompts[s.domain]
+	if !ok {
+		sysPrompt = consolidateDedupePrompts["task"]
+	}
+	return s.runConsolidation(ctx, sysPrompt, user.String())
+}
+
+// runConsolidation is the LLM-calling core shared by decide and decideDedupe:
+// one JSON-mode completion, parsed into the op taxonomy both trigger paths
+// reuse.
+func (s *Store) runConsolidation(ctx context.Context, sysPrompt, userPrompt string) ([]op, error) {
 	// /no_think disables reasoning on qwen/gemma-class models (the configured
 	// consolidation model); harmless to others.
 	req := &model.LLMRequest{
-		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "/no_think " + user.String()}}}},
+		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "/no_think " + userPrompt}}}},
 		Config: &genai.GenerateContentConfig{
 			SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: sysPrompt}}},
 			// JSON mode grammar-constrains the model to valid JSON, so a stray escape
@@ -432,6 +458,42 @@ var consolidatePrompts = map[string]string{
 		"- NOOP: already known - skip it.\n\n" +
 		"Reply with ONLY JSON: {\"ops\":[{\"action\":\"ADD|UPDATE|DELETE|NOOP\",\"id\":\"\",\"content\":\"\",\"kind\":\"\",\"reason\":\"\"}]}. " +
 		"Empty ops list if nothing is worth keeping.",
+}
+
+// consolidateDedupePrompts is the periodic sweep's prompt variant (design doc
+// §4(c)): unlike consolidatePrompts, there is no STAGED-vs-EXISTING split -
+// every memory shown is an existing one, minted by the same run within
+// minutes of the others, that may restate the same claim. The taxonomy stays
+// ADD/UPDATE/DELETE/NOOP, but ADD is for a genuinely new synthesis only; the
+// normal case is UPDATE (or NOOP) the id worth keeping and DELETE the rest
+// against it, so "duplicate of <id>" always names a real, still-existing id.
+var consolidateDedupePrompts = map[string]string{
+	"task": "You maintain a team of agents' SHARED long-term memory about one subject. Below is a BURST of " +
+		"unverified memories minted by the same run within minutes of each other - they may restate the same " +
+		"claim more than once.\n\n" +
+		"For each group of near-identical memories in the burst:\n" +
+		"- UPDATE the id whose wording is worth keeping with the clearest merged content and kind (or NOOP it " +
+		"if its wording is already the best one).\n" +
+		"- DELETE every other id in that group, reason \"duplicate of <the id you kept>\".\n" +
+		"- ADD only if none of them is worth keeping as-is but the group together implies a genuinely new " +
+		"synthesis - provide content and a kind (convention|command|layout|source|search|fetch|deadend) - and " +
+		"still DELETE the originals it replaces.\n" +
+		"Memories in the burst that describe genuinely different facts: NOOP both, they are not duplicates.\n\n" +
+		"Reply with ONLY JSON: {\"ops\":[{\"action\":\"ADD|UPDATE|DELETE|NOOP\",\"id\":\"\",\"content\":\"\",\"kind\":\"\",\"reason\":\"\"}]}. " +
+		"Empty ops list if nothing in the burst duplicates.",
+
+	"user": "You maintain durable facts ABOUT THE USER. Below is a BURST of unverified facts minted within " +
+		"minutes of each other - they may restate the same fact more than once.\n\n" +
+		"For each group of near-identical facts in the burst:\n" +
+		"- UPDATE the id whose wording is worth keeping with the clearest merged content and kind (or NOOP it " +
+		"if its wording is already the best one).\n" +
+		"- DELETE every other id in that group, reason \"duplicate of <the id you kept>\".\n" +
+		"- ADD only if none of them is worth keeping as-is but the group together implies a genuinely new " +
+		"synthesis - provide content and a kind (identity|preference|relationship|possession|goal|limit) - and " +
+		"still DELETE the originals it replaces.\n" +
+		"Facts in the burst that describe genuinely different things: NOOP both, they are not duplicates.\n\n" +
+		"Reply with ONLY JSON: {\"ops\":[{\"action\":\"ADD|UPDATE|DELETE|NOOP\",\"id\":\"\",\"content\":\"\",\"kind\":\"\",\"reason\":\"\"}]}. " +
+		"Empty ops list if nothing in the burst duplicates.",
 }
 
 // stripFences removes a leading ```json / ``` fence and trailing ``` if present,

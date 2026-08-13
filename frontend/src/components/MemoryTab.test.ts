@@ -124,4 +124,35 @@ describe('MemoryTab', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1) // just the initial GET
     expect(host!.textContent).toContain(MEMORY.content)
   })
+
+  it('omits include_invalidated from the initial GET (default off)', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ memories: [MEMORY], total: 1 }))
+    await renderAndFlush()
+
+    const request = fetchMock.mock.calls[0][0] as Request
+    expect(request.url).not.toContain('include_invalidated')
+  })
+
+  it('toggling "Show invalidated" refetches with include_invalidated=true', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ memories: [MEMORY], total: 1 }))
+    await renderAndFlush()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    const toggle = host!.querySelector('input[type="checkbox"]') as HTMLInputElement
+    expect(toggle).not.toBeNull()
+    expect(toggle.checked).toBe(false)
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ memories: [MEMORY], total: 1 }))
+    await act(async () => {
+      // React tracks a checkbox's toggle via the native 'click' event, not
+      // 'change' - dispatching MouseEvent click (as the forget-button tests
+      // above do) is what actually flips it through React's onChange.
+      toggle.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const request = fetchMock.mock.calls[1][0] as Request
+    expect(request.url).toContain('include_invalidated=true')
+  })
 })

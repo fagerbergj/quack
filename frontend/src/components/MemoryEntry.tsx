@@ -7,6 +7,67 @@ export interface MemoryEntryProps {
   onForget: (id: string) => Promise<void>
 }
 
+export type MemoryTier = 'unverified' | 'reinforced' | 'invalidated' | 'unknown'
+
+// memoryTier maps a memory's status (Memory['status'], openapi.yaml) to a
+// display tier. Missing/empty status is a pre-lifecycle memory (design doc
+// §3) and reads as unverified, by design - not "unknown". Every other value
+// is switched on exhaustively: adding a status to the generated enum without
+// a case here is a compile error (the `never` assignment below fails to
+// type-check), not a badge silently relabeling an unrecognized status
+// "unverified".
+export function memoryTier(memory: Pick<Memory, 'status'>): MemoryTier {
+  const status = memory.status
+  if (!status) return 'unverified'
+  switch (status) {
+    case 'unverified': return 'unverified'
+    case 'reinforced': return 'reinforced'
+    case 'invalidated': return 'invalidated'
+    default: {
+      const _exhaustive: never = status
+      void _exhaustive
+      return 'unknown'
+    }
+  }
+}
+
+// memoryTierLabel renders an unknown status as itself (the raw string the
+// backend sent) rather than masquerading as unverified.
+export function memoryTierLabel(memory: Pick<Memory, 'status' | 'reinforcement_count'>): string {
+  const tier = memoryTier(memory)
+  if (tier === 'reinforced') return `reinforced ×${memory.reinforcement_count ?? 0}`
+  if (tier === 'unknown') return String(memory.status)
+  return tier
+}
+
+// memoryTierBadgeClass mirrors originBadgeClass's palette (ChatList.tsx) for
+// the memory lifecycle tiers (memory-lifecycle.md §8 step 6): green for
+// reinforced, red for invalidated, neutral gray for unverified AND for any
+// status this build doesn't recognize (never a color the reader would read
+// as a claim about a tier we didn't actually verify).
+export function memoryTierBadgeClass(tier: MemoryTier): string {
+  switch (tier) {
+    case 'reinforced': return 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400'
+    case 'invalidated': return 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
+    default: return 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'
+  }
+}
+
+// TierBadge - the compact lifecycle indicator every memory row carries.
+// Title mirrors the visible label, or the invalidation reason when present,
+// so a hover reveals the same secondary text without requiring the extra line.
+function TierBadge({ memory }: { memory: Memory }) {
+  const tier = memoryTier(memory)
+  return (
+    <span
+      title={memory.invalidation_reason ?? memoryTierLabel(memory)}
+      className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${memoryTierBadgeClass(tier)}`}
+    >
+      {memoryTierLabel(memory)}
+    </span>
+  )
+}
+
 // Pill - a category-coloured pill (#746 item 13): the colour is deterministic
 // (hashed from the label itself, not assignment order) and always rendered
 // WITH the label text - colour is never the only signal.
@@ -49,11 +110,20 @@ export function MemoryEntry({ memory, onForget }: MemoryEntryProps) {
           <Pill label={memory.bucket} seed={memory.bucket} />
           <Pill label={memory.author} seed={memory.author} />
           {memory.kind && <Pill label={memory.kind} seed={memory.kind} />}
+          <TierBadge memory={memory} />
           <span className="text-[11px] text-gray-400 dark:text-gray-500">{new Date(memory.timestamp).toLocaleString()}</span>
           {memory.score != null && (
             <span className="text-[11px] text-gray-400 dark:text-gray-500">score {memory.score.toFixed(2)}</span>
           )}
         </div>
+        {memory.status === 'invalidated' && memory.invalidation_reason && (
+          <p
+            title={memory.invalidation_reason}
+            className="text-[11px] text-gray-400 dark:text-gray-500 mt-1 truncate"
+          >
+            {memory.invalidation_reason}
+          </p>
+        )}
         {error && <p className="text-xs text-red-500 dark:text-red-400 mt-1">{error}</p>}
       </div>
       <div className="flex-shrink-0">
