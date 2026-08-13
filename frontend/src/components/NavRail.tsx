@@ -171,11 +171,8 @@ function NavItem({
   )
 }
 
-// `icon` isn't in the generated ExtensionInfo type yet (a wire schema
-// addition is landing separately) - read it defensively so this doesn't
-// break the moment the field appears, falling back to the generic glyph.
 function extensionIcon(ext: ExtensionInfo): string {
-  return (ext as { icon?: string }).icon ?? '🧩'
+  return ext.icon ?? '🧩'
 }
 
 // ExtensionNavItem navigates client-side to this app's own /ext/:name host

@@ -503,8 +503,10 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 
 	go func() {
 		ctx := context.Background()
-		if err := h.store.SaveTurn(ctx, chatID, turnID); err == nil {
-			_ = h.store.SetTurnInput(ctx, chatID, turnID, body.Content)
+		if err := h.store.SaveTurn(ctx, chatID, turnID); err != nil {
+			slog.Warn("save turn failed", "component", "rest", "chat", chatID, "err", err)
+		} else if err := h.store.SetTurnInput(ctx, chatID, turnID, body.Content); err != nil {
+			slog.Warn("save turn input failed", "component", "rest", "chat", chatID, "err", err)
 		}
 	}()
 
