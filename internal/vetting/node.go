@@ -442,7 +442,12 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			runID := fmt.Sprintf("judge-r%d", round)
 			judgeCtx, jspan := startStageSpan(nodeCtx, sink, cfg, nodeID, "judge", stream.StageJudge, runID, round)
 			// Replay-ledger coords for judge round (via context.WithValue, not adkagent.Context).
-			ledgerCtx := ledger.WithCoords(ctx, ledger.Coords{ChatID: cfg.ChatID, Node: nodeID, Agent: "judge", Round: runID, User: cfg.User, Source: cfg.Source})
+			judgeCoords := ledger.Coords{ChatID: cfg.ChatID, Node: nodeID, Agent: "judge", Round: runID, User: cfg.User, Source: cfg.Source}
+			ledgerCtx := ledger.WithCoords(ctx, judgeCoords)
+			// Same belt-and-suspenders as runWorkerNodeTraced's workerModel stamp.
+			if cs, ok := cfg.JudgeModel.(interface{ SetLedgerCoords(ledger.Coords) }); ok {
+				cs.SetLedgerCoords(judgeCoords)
+			}
 			// Compute deterministic criteria before judge runs.
 			det, skip := computeDeterministicCriteria(judgeCtx, answer, act, cfg)
 			if skip != "" {
@@ -460,7 +465,8 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				break
 			}
 			// Adversarial verify: load-bearing passing criteria get refuted by independent skeptics.
-			v = adversarialVerify(judgeCtx, cfg, question, answer, act, v, judgePartEmitter(sink, nodeID, runID+"-skeptic"))
+			// ledgerCtx, not judgeCtx: skeptics are their own model calls and need the same coords.
+			v = adversarialVerify(ledgerCtx, cfg, question, answer, act, v, judgePartEmitter(sink, nodeID, runID+"-skeptic"))
 			v = mergeDeterministic(v, det)
 			feedback := composeFeedback(v, cfg.Threshold)
 			res = GateResult{Passed: v.Score >= cfg.Threshold, Score: v.Score, Feedback: feedback, Rounds: round}
