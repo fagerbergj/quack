@@ -459,10 +459,13 @@ type DagEdge struct {
 
 // DagNodeDef defines model for DagNodeDef.
 type DagNodeDef struct {
-	Agent     string   `json:"agent"`
-	DependsOn []string `json:"depends_on"`
-	Id        string   `json:"id"`
-	Task      string   `json:"task"`
+	Agent string `json:"agent"`
+
+	// ContextWindow The assigned agent's configured context_window (0/absent if unset) - the context meter's static limit.
+	ContextWindow *int     `json:"context_window,omitempty"`
+	DependsOn     []string `json:"depends_on"`
+	Id            string   `json:"id"`
+	Task          string   `json:"task"`
 }
 
 // DagNodeState defines model for DagNodeState.

@@ -309,6 +309,31 @@ func TestPlanEdges(t *testing.T) {
 	}
 }
 
+// TestDagPlanEventCarriesContextWindow pins the context meter's static-limit
+// path: DagPlanEvent must forward each node's ContextWindow (stamped by the
+// planner from its agent's config) onto the wire DagNodeDef.
+func TestDagPlanEventCarriesContextWindow(t *testing.T) {
+	p := dag.Plan{ID: "p1", Nodes: []dag.Node{
+		{ID: "a", AgentName: "web-researcher", ContextWindow: 131072},
+		{ID: "b", AgentName: "synthesizer"}, // unconfigured limit -> 0
+	}}
+	ev := DagPlanEvent(p)
+	data, ok := ev.Data.(stream.DagPlanData)
+	if !ok {
+		t.Fatalf("event data is %T, want stream.DagPlanData", ev.Data)
+	}
+	byID := map[string]stream.DagNodeDef{}
+	for _, n := range data.Nodes {
+		byID[n.ID] = n
+	}
+	if got := byID["a"].ContextWindow; got != 131072 {
+		t.Errorf("node a ContextWindow = %d, want 131072", got)
+	}
+	if got := byID["b"].ContextWindow; got != 0 {
+		t.Errorf("node b ContextWindow = %d, want 0", got)
+	}
+}
+
 // TestReviewDispatchSetupSatisfiesExistingHead pins the v0.29.0 cutover
 // regression: a review-only dispatch declares its existing PR head via Setup
 // (sdk ExistingHeadRef -> CheckoutExistingHead), the old WithGitHubPR ctx

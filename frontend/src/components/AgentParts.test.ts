@@ -9,9 +9,10 @@ import {
   completeRun,
   freezeOpenRuns,
   ToolBlock,
+  ActivityList,
   type AgentRun,
 } from './AgentParts'
-import type { ToolCall } from './messageParts'
+import type { Activity, ToolCall } from './messageParts'
 
 function run(runs: AgentRun[], runId: string): AgentRun {
   const r = runs.find(x => x.runId === runId)
@@ -140,5 +141,21 @@ describe('ToolBlock - no copy button (#746 item 6)', () => {
   it('renders no button at all', () => {
     const out = renderToStaticMarkup(createElement(ToolBlock, { tool }))
     expect(out).not.toContain('<button')
+  })
+})
+
+describe('ActivityList - compaction row', () => {
+  it('renders a compacted before/after summary', () => {
+    const activity: Activity[] = [{ kind: 'compaction', tokensBefore: 210_000, tokensAfter: 96_000 }]
+    const out = renderToStaticMarkup(createElement(ActivityList, { activity }))
+    expect(out).toContain('compacted')
+    expect(out).toContain('210K')
+    expect(out).toContain('96K')
+  })
+
+  it('carries a plain-English aria-label for screen readers', () => {
+    const activity: Activity[] = [{ kind: 'compaction', tokensBefore: 210_000, tokensAfter: 96_000 }]
+    const out = renderToStaticMarkup(createElement(ActivityList, { activity }))
+    expect(out).toContain('aria-label="Context compacted from 210,000 to 96,000 tokens"')
   })
 })

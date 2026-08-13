@@ -524,8 +524,8 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	agentInfos := make([]dag.AgentInfo, 0, len(clientMap))
 	mediaAgents := make(map[string]bool)
 	for name, c := range clientMap {
-		agentInfos = append(agentInfos, dag.AgentInfo{Name: name, Description: c.Description()})
 		ac := cfg.Agents[name]
+		agentInfos = append(agentInfos, dag.AgentInfo{Name: name, Description: c.Description(), ContextWindow: ac.ContextWindow})
 		for _, inp := range ac.Inputs {
 			if inp == "image" || inp == "audio" {
 				mediaAgents[name] = true

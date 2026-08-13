@@ -19,6 +19,12 @@ export function previewLine(text: string, max = 80): string {
   return oneLine.length > max ? oneLine.slice(0, max) + '…' : oneLine
 }
 
+// fmtTokenCount compacts a token count for tight spaces (a context meter, a
+// compaction row): thousands round to the nearest K, smaller counts show as-is.
+export function fmtTokenCount(n: number): string {
+  return n >= 1000 ? `${Math.round(n / 1000)}K` : String(n)
+}
+
 // TOOL_VERBS labels the compact live-status line's tool call (#725) with a
 // present-participle verb; anything unmapped just shows its raw name.
 const TOOL_VERBS: Record<string, string> = {

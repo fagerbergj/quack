@@ -60,6 +60,10 @@ const (
 	// so a phantom "the gate passed" success is distinguishable from an actual
 	// delivery failure. See DeliveryResultData.
 	EventDeliveryResult = "delivery_result"
+
+	// EventCompaction reports a node's worker history being rewritten to fit
+	// its agent's context window - see internal/agent's Compaction.
+	EventCompaction = "compaction"
 )
 
 // Delivery outcome values.
@@ -134,7 +138,11 @@ type AgentCompleteData struct {
 	ReasoningTokens  int32  `json:"reasoning_tokens,omitempty"`
 	TotalTokens      int32  `json:"total_tokens,omitempty"`
 	CachedTokens     int32  `json:"cached_tokens,omitempty"` // subset of PromptTokens served from the model's prompt cache
-	FinishReason     string `json:"finish_reason,omitempty"`
+	// ContextTokens is the LAST measured prompt-token count of this run, not
+	// summed across its tool-call round trips like PromptTokens - the model's
+	// actual context occupancy rather than the round's cumulative spend.
+	ContextTokens int32  `json:"context_tokens,omitempty"`
+	FinishReason  string `json:"finish_reason,omitempty"`
 
 	Score    float64 `json:"score,omitempty"`    // judge
 	Passed   bool    `json:"passed,omitempty"`   // judge
@@ -181,6 +189,9 @@ type DagNodeDef struct {
 	Agent     string   `json:"agent"`
 	Task      string   `json:"task"`
 	DependsOn []string `json:"depends_on"`
+	// ContextWindow is the assigned agent's configured context_window (0 if
+	// unset) - the context meter's static limit.
+	ContextWindow int `json:"context_window,omitempty"`
 }
 
 // Wire representation of one edge in a DAG plan.
@@ -223,6 +234,7 @@ type NodeDoneData struct {
 	ReasoningTokens  int32   `json:"reasoning_tokens,omitempty"`
 	TotalTokens      int32   `json:"total_tokens,omitempty"`
 	CachedTokens     int32   `json:"cached_tokens,omitempty"`
+	ContextTokens    int32   `json:"context_tokens,omitempty"` // last measured, not summed - see AgentCompleteData
 	FinishReason     string  `json:"finish_reason,omitempty"`
 	DurationMs       int64   `json:"duration_ms,omitempty"`
 	JudgeRounds      int32   `json:"judge_rounds,omitempty"`
@@ -282,6 +294,22 @@ type DeliveryResultData struct {
 func DeliveryResult(nodeID, outcome, kind, url, errMsg, traceID string) SSEEvent {
 	return SSEEvent{Name: EventDeliveryResult, Data: DeliveryResultData{
 		NodeID: nodeID, Outcome: outcome, Kind: kind, URL: url, Error: errMsg, TraceID: traceID,
+	}}
+}
+
+// `compaction` event payload: a node's worker history was rewritten to fit
+// its agent's context window mid-round.
+type CompactionData struct {
+	NodeID       string `json:"node_id,omitempty"`
+	RunID        string `json:"run_id,omitempty"`
+	TokensBefore int32  `json:"tokens_before"`
+	TokensAfter  int32  `json:"tokens_after"`
+}
+
+// Compaction builds a compaction event.
+func Compaction(nodeID, runID string, tokensBefore, tokensAfter int32) SSEEvent {
+	return SSEEvent{Name: EventCompaction, Data: CompactionData{
+		NodeID: nodeID, RunID: runID, TokensBefore: tokensBefore, TokensAfter: tokensAfter,
 	}}
 }
 

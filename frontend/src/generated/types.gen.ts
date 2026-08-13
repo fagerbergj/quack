@@ -391,6 +391,10 @@ export type DagNodeDef = {
     agent: string;
     task: string;
     depends_on: Array<string>;
+    /**
+     * The assigned agent's configured context_window (0/absent if unset) - the context meter's static limit.
+     */
+    context_window?: number;
 };
 
 export type DagEdge = {

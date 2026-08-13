@@ -111,7 +111,7 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 func DagPlanEvent(p dag.Plan) stream.SSEEvent {
 	nodes := make([]stream.DagNodeDef, len(p.Nodes))
 	for i, n := range p.Nodes {
-		nodes[i] = stream.DagNodeDef{ID: n.ID, Agent: n.AgentName, Task: n.Task, DependsOn: n.DependsOn}
+		nodes[i] = stream.DagNodeDef{ID: n.ID, Agent: n.AgentName, Task: n.Task, DependsOn: n.DependsOn, ContextWindow: n.ContextWindow}
 	}
 	return stream.DagPlan(p.ID, nodes, planEdges(p.Nodes))
 }

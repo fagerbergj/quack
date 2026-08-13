@@ -478,3 +478,55 @@ export const DeterministicRetryOneFeed: Story = {
     await canvas.findByText('3 tool calls')
   },
 }
+
+// ---- context meter + compaction (per-node context pressure) ---------------
+
+const contextNode: DagNodeDef = { ...wrNode, context_window: 262_144 }
+
+// Comfortably under the 80% warning threshold - a plain gray reading.
+export const ContextMeterHealthy: Story = {
+  args: {
+    node: contextNode,
+    state: { status: 'running', startedAt: Date.now() - 12_000, contextTokens: 90_000 },
+    runs: [{ runId: 'r1', agent: 'web-researcher', stage: 'worker', done: false, activity: researchActivity }],
+    answer: '',
+    isFinal: false,
+  },
+}
+
+// Past 80% - amber.
+export const ContextMeterWarning: Story = {
+  args: {
+    node: contextNode,
+    state: { status: 'running', startedAt: Date.now() - 12_000, contextTokens: 220_000 },
+    runs: [{ runId: 'r1', agent: 'web-researcher', stage: 'worker', done: false, activity: researchActivity }],
+    answer: '',
+    isFinal: false,
+  },
+}
+
+// Past 95% - red, right where compaction is about to kick in.
+export const ContextMeterDanger: Story = {
+  args: {
+    node: contextNode,
+    state: { status: 'running', startedAt: Date.now() - 12_000, contextTokens: 255_000 },
+    runs: [{ runId: 'r1', agent: 'web-researcher', stage: 'worker', done: false, activity: researchActivity }],
+    answer: '',
+    isFinal: false,
+  },
+}
+
+// A compaction event shows inline in the worker's activity feed, alongside
+// its ordinary thinking/tool-call rows - then the meter drops back down.
+export const CompactionInFeed: Story = {
+  args: {
+    node: contextNode,
+    state: { status: 'running', startedAt: Date.now() - 40_000, contextTokens: 96_000 },
+    runs: [{
+      runId: 'r1', agent: 'web-researcher', stage: 'worker', done: false,
+      activity: [...researchActivity, { kind: 'compaction', tokensBefore: 210_000, tokensAfter: 96_000 }],
+    }],
+    answer: '',
+    isFinal: false,
+  },
+}

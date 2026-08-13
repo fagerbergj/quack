@@ -59,14 +59,17 @@ type Delivery struct {
 	Kind string `json:"kind"`
 }
 
+// Node.ContextWindow is stamped from the assigned agent's config at plan
+// assembly - the static limit the context meter compares live usage against.
 type Node struct {
-	ID        string
-	AgentName string
-	Task      string
-	Rubric    string
-	DependsOn []string
-	Checks    []string
-	Workdir   string
+	ID            string
+	AgentName     string
+	Task          string
+	Rubric        string
+	DependsOn     []string
+	Checks        []string
+	Workdir       string
+	ContextWindow int
 }
 
 // terminalIDs returns IDs of nodes no other node depends on.

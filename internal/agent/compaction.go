@@ -12,6 +12,9 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/stream"
 )
 
 // Compaction summarises older turns into a durable sentinel event, then filters
@@ -111,6 +114,7 @@ func enforceBudget(ctx adkagent.Context, c Compaction, threshold, retention int,
 			if out, ok2 := compact(ctx, c, req.Contents, headEnd); ok2 {
 				req.Contents = out
 				logCompaction(ctx, "event_appended", beforeMsgs, beforeTokens, req.Contents, threshold)
+				emitCompaction(ctx, beforeTokens, estimateTokens(req.Contents))
 			}
 		}
 	}
@@ -135,6 +139,18 @@ func logCompaction(ctx adkagent.Context, path string, beforeMsgs, beforeTokens i
 		"msgs", fmt.Sprintf("%d→%d", beforeMsgs, len(contents)),
 		"est_tokens", fmt.Sprintf("%d→%d", beforeTokens, estimateTokens(contents)),
 		"threshold", threshold, "session", ctx.SessionID())
+}
+
+// emitCompaction forwards a node-scoped compaction event to the SSE stream,
+// via the same yield-ctx escape hatch the plan tool uses - a no-op outside a
+// DAG node run (e.g. unit tests, or the advisor's own nested runner).
+func emitCompaction(ctx adkagent.Context, before, after int) {
+	sink, ok := stream.YieldFromContext(ctx)
+	if !ok {
+		return
+	}
+	coords := ledger.CoordsFromContext(ctx)
+	sink(stream.Compaction(coords.Node, coords.Round, int32(before), int32(after)))
 }
 
 // backstop handles overflow of the verbatim tail.

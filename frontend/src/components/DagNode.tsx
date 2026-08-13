@@ -5,7 +5,7 @@ import { NodePopup } from './NodePopup'
 import { StatusDot } from './StatusDot'
 import type { NodeState, NodeStatus } from '../state/chatStore'
 import { agentLabel, type Activity, type AgentRun } from './messageParts'
-import { previewLine } from './toolFormat'
+import { previewLine, fmtTokenCount } from './toolFormat'
 import { type DagNodeDef } from '../state/agentStream'
 import { fmtMs, LiveTimer } from '../utils/timer'
 
@@ -135,6 +135,35 @@ function RunModel({ run }: { run: AgentRun }) {
   return (
     <span className="text-[10px] text-gray-400 dark:text-gray-500 font-mono truncate max-w-[100px]" title={run.model}>
       {run.model}
+    </span>
+  )
+}
+
+// CONTEXT_WARN_PCT/CONTEXT_DANGER_PCT: the meter's amber/red thresholds.
+const CONTEXT_WARN_PCT = 80
+const CONTEXT_DANGER_PCT = 95
+
+// ContextMeter shows a node's context-window pressure: a thin fill bar plus
+// "156K/262K" text, from the node's own agent-configured limit and its most
+// recent worker/revise round's measured usage. Hidden until both are known.
+function ContextMeter({ used, limit }: { used: number; limit: number }) {
+  if (limit <= 0 || used <= 0) return null
+  const pct = Math.min(100, Math.round((used / limit) * 100))
+  const barColor = pct >= CONTEXT_DANGER_PCT ? 'bg-red-500 dark:bg-red-400'
+    : pct >= CONTEXT_WARN_PCT ? 'bg-amber-500 dark:bg-amber-400'
+    : 'bg-gray-400 dark:bg-gray-500'
+  const textColor = pct >= CONTEXT_DANGER_PCT ? 'text-red-600 dark:text-red-400'
+    : pct >= CONTEXT_WARN_PCT ? 'text-amber-600 dark:text-amber-400'
+    : 'text-gray-400 dark:text-gray-500'
+  return (
+    <span
+      className="flex items-center gap-1"
+      title={`${used.toLocaleString()} / ${limit.toLocaleString()} tokens of context used`}
+    >
+      <span className="w-8 h-1 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+        <span className={`block h-full rounded-full ${barColor}`} style={{ width: `${pct}%` }} />
+      </span>
+      <span className={`text-[10px] tabular-nums ${textColor}`}>{fmtTokenCount(used)}/{fmtTokenCount(limit)}</span>
     </span>
   )
 }
@@ -524,6 +553,7 @@ export const DagNode = memo(function DagNode({
               )}
             </span>
           )}
+          <ContextMeter used={state.contextTokens ?? 0} limit={node.context_window ?? 0} />
           {/* A finished node shows the server-measured duration (reconnect-proof);
               a running one ticks live from the server start time. */}
           {(state.finishedAt != null && state.serverDurationMs != null) ? (

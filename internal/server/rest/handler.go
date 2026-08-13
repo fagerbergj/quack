@@ -971,7 +971,7 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 		if err := json.Unmarshal([]byte(tc.Plan.PlanJSON), &planData); err == nil {
 			nodes := make([]schema.DagNodeDef, len(planData.Nodes))
 			for i, n := range planData.Nodes {
-				nodes[i] = schema.DagNodeDef{Id: n.ID, Agent: n.Agent, Task: n.Task, DependsOn: n.DependsOn}
+				nodes[i] = schema.DagNodeDef{Id: n.ID, Agent: n.Agent, Task: n.Task, DependsOn: n.DependsOn, ContextWindow: intPtr(n.ContextWindow)}
 			}
 			edges := make([]schema.DagEdge, len(planData.Edges))
 			for i, e := range planData.Edges {
