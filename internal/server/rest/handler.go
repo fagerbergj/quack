@@ -414,6 +414,12 @@ func (h *Handler) UpdateChat(w http.ResponseWriter, r *http.Request, chatID sche
 			return
 		}
 		c.Archived = *body.Archived
+		// A run still waiting behind max_active_runs must not fire later against
+		// an archived chat - cancel it the same id-guarded way a user Stop does.
+		// A run already executing (Queued false) is left alone.
+		if *body.Archived && h.orch.Queued(chatID) && c.ActiveTurnID != "" {
+			h.hub.CancelResponse(chatID, c.ActiveTurnID)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, h.toSummary(*c, h.chatTotalTokens(r.Context(), chatID)))

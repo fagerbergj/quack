@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
-import { liveDagFinalText, chatGitHubLink, EditableChatTitle, shouldQueueSubmit, mergeChatsPage, pollWhileVisible, pollPageExcludingPending, nextArchivedChats } from './Chat'
+import { liveDagFinalText, chatGitHubLink, EditableChatTitle, shouldQueueSubmit, mergeChatsPage, pollWhileVisible, pollPageExcludingPending, nextArchivedChats, chatBelongsInActiveList, resolveActiveChat } from './Chat'
 import type { DagTurnState } from '../state/chatStore'
 import type { ChatSummary } from '../api'
 
@@ -318,5 +318,44 @@ describe('nextArchivedChats - archive/unarchive transitions', () => {
 
   it('is a no-op unarchiving against an unloaded (undefined) list', () => {
     expect(nextArchivedChats(undefined, chat({ id: 'c1' }), false)).toBeUndefined()
+  })
+})
+
+// Root cause of "a focused archived chat appears active": the getChat effect
+// used to add whatever it fetched into the active-scoped `chats` list
+// unconditionally, so opening an archived chat (its own URL, or a click from
+// the Archived section) resurrected it into the sidebar's active groups and
+// the header's active chrome. chatBelongsInActiveList is the fix's gate.
+describe('chatBelongsInActiveList', () => {
+  it('is true for an active chat', () => {
+    expect(chatBelongsInActiveList(chat({ id: 'c1', archived: false }))).toBe(true)
+  })
+
+  it('is false for an archived chat - it must never join the active list', () => {
+    expect(chatBelongsInActiveList(chat({ id: 'c1', archived: true }))).toBe(false)
+  })
+})
+
+// resolveActiveChat is the focused header/composer's source of truth for
+// `archived` - it must resolve an archived chat's metadata even though
+// chatBelongsInActiveList keeps it out of `chats` (the active-scoped list).
+describe('resolveActiveChat', () => {
+  it('prefers the active-scoped `chats` list when the chat is there', () => {
+    const inList = chat({ id: 'c1', title: 'from list' })
+    const detail = chat({ id: 'c1', title: 'stale snapshot' })
+    expect(resolveActiveChat([inList], 'c1', detail)?.title).toBe('from list')
+  })
+
+  it('falls back to the GetChat snapshot for a chat kept out of the list (archived)', () => {
+    const detail = chat({ id: 'c1', archived: true })
+    expect(resolveActiveChat([], 'c1', detail)).toEqual(detail)
+  })
+
+  it('is undefined when neither source matches the focused chat id', () => {
+    expect(resolveActiveChat([chat({ id: 'other' })], 'c1', chat({ id: 'also-other' }))).toBeUndefined()
+  })
+
+  it('is undefined with no chat focused', () => {
+    expect(resolveActiveChat([], null, null)).toBeUndefined()
   })
 })

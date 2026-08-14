@@ -61,6 +61,21 @@ export function nextArchivedChats(current: ChatSummary[] | undefined, item: Chat
   return current?.filter(c => c.id !== item.id)
 }
 
+// chatBelongsInActiveList gates whether a freshly GetChat-resolved chat may join
+// the active-scoped `chats` list - an archived chat must never join it (#809),
+// however it was reached (its own URL, or a click from the Archived section).
+export function chatBelongsInActiveList(detail: ChatSummary): boolean {
+  return !detail.archived
+}
+
+// resolveActiveChat is the focused chat's metadata: `chats` (the active-scoped,
+// live-polled list) first, else the one-shot GetChat snapshot kept for a chat
+// that must stay out of that list (archived) - never both, never neither once
+// GetChat has resolved.
+export function resolveActiveChat(chats: ChatSummary[], activeChatId: string | null, detail: ChatSummary | null): ChatSummary | undefined {
+  return chats.find(s => s.id === activeChatId) ?? (detail?.id === activeChatId ? detail : undefined)
+}
+
 // pollWhileVisible calls `poll` on an interval, but only while the document is visible - a
 // backgrounded tab has nothing to show, so it costs nothing (#738). Becoming visible again
 // fires `poll` immediately rather than waiting out the rest of the interval. Returns a
@@ -171,10 +186,17 @@ export default function Chat() {
   // sidebar's poll can mark a chat 'running' before its own getChat resolves,
   // and an early attach() makes seed() a no-op, permanently dropping history).
   const [seededChatId, setSeededChatId] = useState<string | null>(null)
-  const activeChat = chats.find(s => s.id === activeChatId)
+  // A focused chat GetChat has resolved but that must stay out of the active-
+  // scoped `chats` list (archived) - see the getChat effect below.
+  const [activeChatDetail, setActiveChatDetail] = useState<ChatSummary | null>(null)
+  const activeChat = resolveActiveChat(chats, activeChatId, activeChatDetail)
   const githubLink = chatGitHubLink(activeChat)
   const state = useChatState(activeChatId)
   const streaming = state.live?.streaming ?? false
+  // An archived chat's focused view is read-only: it never presents as active,
+  // even if a run left running through the archive (backend leaves those alone).
+  const isArchived = !!activeChat?.archived
+  const liveActive = streaming && !isArchived
   const error = state.error
   const live = state.live
   const [chatListOpen, setChatListOpen] = useState(false)
@@ -252,6 +274,10 @@ export default function Chat() {
         setChats(prev => [item, ...prev])
       }
       setArchivedChats(prev => nextArchivedChats(prev, item, archived))
+      // Archiving/unarchiving the focused chat in place must flip its read-only
+      // presentation immediately, not just its sidebar group (the header/composer
+      // fall back to this snapshot once the chat leaves the active `chats` list).
+      setActiveChatDetail(prev => (prev?.id === chatId ? { ...prev, archived } : prev))
     }
     if (newArchived) archivingIdsRef.current.add(chatId)
     move({ ...existing, archived: newArchived }, newArchived)
@@ -281,11 +307,14 @@ export default function Chat() {
     let cancelled = false
     api.getChat(activeChatId).then(detail => {
       if (cancelled) return
-      setChats(prev => {
-        const exists = prev.find(s => s.id === activeChatId)
-        if (exists) return prev
-        return [detail, ...prev]
-      })
+      setActiveChatDetail(detail)
+      if (chatBelongsInActiveList(detail)) {
+        setChats(prev => {
+          const exists = prev.find(s => s.id === activeChatId)
+          if (exists) return prev
+          return [detail, ...prev]
+        })
+      }
       store.seed(activeChatId, detail.turns, detail.usage)
       setSeededChatId(activeChatId)
       // Reconnect to a run still in progress (e.g. this browser after a refresh):
@@ -300,7 +329,8 @@ export default function Chat() {
       // acquired), so a refresh while queued must still attach. The DAG check
       // stays as a fallback for a restarted server whose in-memory hub state
       // died with it.
-      if (detail.status === 'running' || detail.status === 'queued' || isTurnInProgress(detail.turns[detail.turns.length - 1])) {
+      // Archived stays detached - read-only focus, regardless of status.
+      if (chatBelongsInActiveList(detail) && (detail.status === 'running' || detail.status === 'queued' || isTurnInProgress(detail.turns[detail.turns.length - 1]))) {
         store.attach(activeChatId)
       }
     }).catch(() => {})
@@ -346,13 +376,13 @@ export default function Chat() {
   // this client already streams (it posted the run) or has an existing
   // EventSource - no double-subscribe.
   useEffect(() => {
-    if (!activeChatId || !activeChat?.status) return
+    if (!activeChatId || !activeChat?.status || activeChat.archived) return
     if (seededChatId !== activeChatId) return // wait for the getChat effect's own attach - see seededChatId above
     const s = activeChat.status
     if (s === 'running' || s === 'queued') {
       store.attach(activeChatId)
     }
-  }, [activeChatId, activeChat?.status, seededChatId])
+  }, [activeChatId, activeChat?.status, activeChat?.archived, seededChatId])
 
   function activateChat(id: string) {
     setActiveChatId(id)
@@ -569,9 +599,17 @@ export default function Chat() {
             </button>
             <EditableChatTitle
               title={activeChat?.title || (activeChatId ? 'New chat' : 'Chat')}
-              editable={!!activeChatId}
+              editable={!!activeChatId && !isArchived}
               onRename={handleRenameChat}
             />
+            {isArchived && (
+              <span
+                title="This chat is archived and read-only. Restore it from the Archived section to continue."
+                className="flex-shrink-0 text-[10px] font-semibold tracking-wide px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400"
+              >
+                Archived
+              </span>
+            )}
             {githubLink && <GitHubLink url={githubLink.url} repo={githubLink.repo} className="flex-shrink-0" />}
           </div>
           <div className="flex items-center gap-3 flex-shrink-0">
@@ -615,7 +653,9 @@ export default function Chat() {
             const liveDag = live.dag
             const liveTopText = live.text ?? ''
             const liveTopRuns = live.runs ?? []
-            const liveDone = !streaming
+            // Archived is always "done": no active-run chrome even if a run left
+            // running through the archive (see liveActive above).
+            const liveDone = !liveActive
             // Which text is the user-facing answer:
             //  - a DAG ran: the terminal node's answer IS the response (execute always
             //    delivers from the node now - there's no orchestrator-composed
@@ -629,16 +669,18 @@ export default function Chat() {
             // get_user_choice is surfaced as its own QuestionBubble below, not a raw tool block.
             const orchActivity = visibleActivity(liveTopRuns.flatMap(r => r.activity))
             // A get_user_choice clarification awaiting an answer on the (paused) live turn.
-            const choice = liveDone ? pendingChoice(liveTopRuns) : null
+            // Archived is read-only - never offer to answer it; unarchive to continue.
+            const choice = liveDone && !isArchived ? pendingChoice(liveTopRuns) : null
             // A paused node's mid-node HITL question (only possible once the run has
-            // ended - the plan pauses the whole turn, so liveDone is implied).
-            const nodeQuestion = liveDag ? pendingNodeQuestion(liveDag) : undefined
+            // ended - the plan pauses the whole turn, so liveDone is implied). Same
+            // archived read-only rule as `choice` above.
+            const nodeQuestion = liveDag && !isArchived ? pendingNodeQuestion(liveDag) : undefined
             // Show spinner while streaming until something VISIBLE arrives (DAG,
             // answer text, or visible activity). Keyed on orchActivity, not run
             // count - the orchestrator's top-level run is created empty on the
             // first event, so a run-count check blanks the dots before the plan.
             const showSpinner = showLiveSpinner({
-              streaming,
+              streaming: liveActive,
               hasDag: !!liveDag,
               answerText: liveTopText,
               visibleActivityCount: orchActivity.length,
@@ -735,10 +777,10 @@ export default function Chat() {
                             agent="orchestrator"
                             model={answerAttribution?.model}
                             tokens={answerAttribution?.tokens}
-                            status={streaming ? 'running' : 'done'}
+                            status={liveActive ? 'running' : 'done'}
                           />
                           {orchActivity.length > 0 && (
-                            streaming ? <LiveStatusLine activity={orchActivity} /> : <ActivityList activity={orchActivity} />
+                            liveActive ? <LiveStatusLine activity={orchActivity} /> : <ActivityList activity={orchActivity} />
                           )}
                           {/* Running is conveyed by the header's pulsing StatusDot
                               (#416) - no separate spinner dot while text streams in. */}
@@ -756,7 +798,7 @@ export default function Chat() {
                         onSelect={handleChoice}
                       />
                     )}
-                    {liveText && (!streaming) && (
+                    {liveText && (!liveActive) && (
                       <div className="flex items-center gap-3 mt-1.5 px-1">
                         <button
                           onClick={() => handleCopy(copyKey, liveText)}
@@ -808,12 +850,13 @@ export default function Chat() {
         </div>
 
         <Composer
-          disabled={!activeChatId}
-          streaming={streaming}
+          disabled={!activeChatId || isArchived}
+          streaming={liveActive}
           onSubmit={submitMessage}
           onStop={handleStop}
           queue={state.queue}
           onRemoveQueued={handleRemoveQueued}
+          archived={isArchived}
         />
       </div>
     </div>
