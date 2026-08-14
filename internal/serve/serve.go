@@ -1161,6 +1161,26 @@ func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths [
 	if ac.ContextWindow > 0 {
 		modelCfg["limit"] = m{"context": ac.ContextWindow, "output": 32768}
 	}
+	// git push is denied for every agent (delivery is gate-owned). Clone is denied
+	// too - #579: the environment block already shows what's on disk - except for a
+	// read-only agent with acp.allow_clone, which is chartered to read third-party
+	// repos the gate never provisions (clone target: $TMPDIR, cwd is RO).
+	bash := m{
+		"git push": "deny", "git push *": "deny",
+		"*": "allow",
+	}
+	// external_directory: cwd is the boundary (#346), except for a clone-allowed
+	// agent - its clone lands outside cwd and would be unreadable. The sandbox
+	// (work tree RO, $HOME/$TMPDIR RW) is the real boundary there.
+	extDir := m{"*": "deny"}
+	if ac.Acp == nil || !ac.Acp.AllowClone {
+		bash["git clone"] = "deny"
+		bash["git clone *"] = "deny"
+		bash["gh repo clone"] = "deny"
+		bash["gh repo clone *"] = "deny"
+	} else {
+		extDir = m{"*": "allow"}
+	}
 	cfg := m{
 		"provider": m{"quack": m{
 			"npm":     "@ai-sdk/openai-compatible",
@@ -1170,13 +1190,8 @@ func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths [
 		}},
 		"model": "quack/" + ac.Model,
 		"permission": m{
-			"bash": m{
-				"git push": "deny", "git push *": "deny",
-				"git clone": "deny", "git clone *": "deny",
-				"gh repo clone": "deny", "gh repo clone *": "deny",
-				"*": "allow",
-			},
-			"external_directory": m{"*": "deny"},
+			"bash":               bash,
+			"external_directory": extDir,
 			"doom_loop":          "deny",
 			"read":               m{"*.env": "deny", "*.env.*": "deny"},
 		},

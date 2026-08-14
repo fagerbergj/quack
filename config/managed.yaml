@@ -94,6 +94,7 @@ agents:
     acp:
       command: ["opencode", "acp"]
       read_only: true
+      allow_clone: true   # reads third-party repos by cloning into $TMPDIR; git push stays denied
   synthesizer:
     bundle: agents/synthesizer
     skills: [format-markdown, present-coding-plan]

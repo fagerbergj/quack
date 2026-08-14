@@ -45,38 +45,89 @@ func TestOpencodeEnvMcpServersShape(t *testing.T) {
 	}
 }
 
-// TestOpencodeEnvDeniesCloneAndPush pins the clone-deny half of the worktree-isolation
-// follow-up: cloning is unnecessary now that the environment block
-// (internal/acp's environmentBlock) shows the agent what's already on disk,
-// and denied for the same reason git push already is - mirror the git push
-// deny's exact shape (bare command + wildcard variant) for git clone and
-// gh repo clone.
-func TestOpencodeEnvDeniesCloneAndPush(t *testing.T) {
-	env := opencodeEnv(config.ProviderConfig{}, config.AgentConfig{
-		Model: "m",
-		Acp:   &config.AcpAgentConfig{Command: []string{"opencode", "acp"}},
-	}, nil)
+// opencodePermissions decodes the generated config's permission block.
+func opencodePermissions(t *testing.T, ac config.AgentConfig) (bash map[string]string, extDir map[string]string) {
+	t.Helper()
+	env := opencodeEnv(config.ProviderConfig{}, ac, nil)
 	raw := strings.TrimPrefix(env[0], "OPENCODE_CONFIG_CONTENT=")
-
 	var cfg struct {
 		Permission struct {
-			Bash map[string]string `json:"bash"`
+			Bash              map[string]string `json:"bash"`
+			ExternalDirectory map[string]string `json:"external_directory"`
 		} `json:"permission"`
 	}
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		t.Fatalf("OPENCODE_CONFIG_CONTENT: %v:\n%s", err, raw)
 	}
+	return cfg.Permission.Bash, cfg.Permission.ExternalDirectory
+}
+
+// TestOpencodeEnvDeniesCloneAndPush pins the clone-deny half of the worktree-isolation
+// follow-up for every agent that can WRITE code: cloning is unnecessary now that the
+// environment block (internal/acp's environmentBlock) shows the agent what's already
+// on disk, and denied for the same reason git push already is - mirror the git push
+// deny's exact shape (bare command + wildcard variant) for git clone and gh repo clone.
+func TestOpencodeEnvDeniesCloneAndPush(t *testing.T) {
+	bash, extDir := opencodePermissions(t, config.AgentConfig{
+		Model: "m",
+		Acp:   &config.AcpAgentConfig{Command: []string{"opencode", "acp"}},
+	})
 	for _, denied := range []string{
 		"git push", "git push *",
 		"git clone", "git clone *",
 		"gh repo clone", "gh repo clone *",
 	} {
-		if got := cfg.Permission.Bash[denied]; got != "deny" {
+		if got := bash[denied]; got != "deny" {
 			t.Errorf("bash permission[%q] = %q, want %q", denied, got, "deny")
 		}
 	}
-	if cfg.Permission.Bash["*"] != "allow" {
-		t.Errorf(`bash permission["*"] = %q, want "allow"`, cfg.Permission.Bash["*"])
+	if bash["*"] != "allow" {
+		t.Errorf(`bash permission["*"] = %q, want "allow"`, bash["*"])
+	}
+	if extDir["*"] != "deny" {
+		t.Errorf(`external_directory["*"] = %q, want "deny" (cwd is the boundary)`, extDir["*"])
+	}
+}
+
+// TestOpencodeEnvAllowsCloneForAllowCloneAgent: the code-explorer is chartered to read
+// third-party repos the gate never provisions, so acp.allow_clone lifts the clone deny
+// (and the cwd-only external_directory boundary, since the clone lands in $TMPDIR).
+// git push stays denied - allow_clone is about reading, never delivering.
+func TestOpencodeEnvAllowsCloneForAllowCloneAgent(t *testing.T) {
+	bash, extDir := opencodePermissions(t, config.AgentConfig{
+		Model: "m",
+		Acp:   &config.AcpAgentConfig{Command: []string{"opencode", "acp"}, ReadOnly: true, AllowClone: true},
+	})
+	for _, cmd := range []string{"git clone", "git clone *", "gh repo clone", "gh repo clone *"} {
+		if got, ok := bash[cmd]; ok {
+			t.Errorf("bash permission[%q] = %q, want no deny entry (falls through to the %q allow)", cmd, got, "*")
+		}
+	}
+	for _, denied := range []string{"git push", "git push *"} {
+		if got := bash[denied]; got != "deny" {
+			t.Errorf("bash permission[%q] = %q, want %q - delivery stays gate-owned", denied, got, "deny")
+		}
+	}
+	if extDir["*"] != "allow" {
+		t.Errorf(`external_directory["*"] = %q, want "allow" (the clone lives outside cwd; the sandbox is the boundary)`, extDir["*"])
+	}
+}
+
+// TestOpencodeEnvReadOnlyAloneDoesNotAllowClone: allow_clone is the ONLY key that
+// lifts the deny. read_only alone (the code-reviewer's shape) keeps clone denied -
+// the reviewer works on the gate-provisioned worktree and has no business cloning.
+func TestOpencodeEnvReadOnlyAloneDoesNotAllowClone(t *testing.T) {
+	bash, extDir := opencodePermissions(t, config.AgentConfig{
+		Model: "m",
+		Acp:   &config.AcpAgentConfig{Command: []string{"opencode", "acp"}, ReadOnly: true},
+	})
+	for _, denied := range []string{"git push", "git push *", "git clone", "git clone *", "gh repo clone", "gh repo clone *"} {
+		if got := bash[denied]; got != "deny" {
+			t.Errorf("read_only-only agent: bash permission[%q] = %q, want %q", denied, got, "deny")
+		}
+	}
+	if extDir["*"] != "deny" {
+		t.Errorf(`read_only-only agent: external_directory["*"] = %q, want "deny"`, extDir["*"])
 	}
 }
 

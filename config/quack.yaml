@@ -132,13 +132,15 @@ agents:
     model: ${QUACK_CODER_MODEL}       # reads code; reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
     context_window: 65536
     judge_rounds: 2             # exploration is largely one-pass; 2 rounds closes a gate gap
-    # External ACP explorer, read_only: clones/reads with its own tools, never commits.
-    # Judged by its bundle rubric (exploration quality), not web citations.
+    # External ACP explorer, read_only: reads the provisioned worktree and, with
+    # allow_clone, shallow-clones third-party repos into $TMPDIR to read those too.
+    # Never commits. Judged by its bundle rubric (exploration quality), not web citations.
     acp:
       command: ["opencode", "acp"]
       mcp_servers:
         - https://mcp.context7.com/mcp
       read_only: true
+      allow_clone: true   # the only agent exempt from the git clone deny; git push stays denied
   synthesizer:
     bundle: agents/synthesizer
     # pr-authoring: when a run's answer IS a PR body (run-level synthesis of the atomic
