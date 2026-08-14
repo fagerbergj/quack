@@ -26,7 +26,7 @@ jobs:
       - run: npm ci
         working-directory: scripts
       - name: cache skill plugins
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .agents/vendor
           key: plugins-${{ hashFiles('.agents/vendor/plugins.yaml') }}
@@ -54,7 +54,7 @@ jobs:
       # Pinned to go.mod's toolchain: `@latest` alone builds against whatever the
       # tool's own go.mod allows, which can lag and then refuse to analyze this repo.
       - name: cache skill plugins
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .agents/vendor
           key: plugins-${{ hashFiles('.agents/vendor/plugins.yaml') }}
