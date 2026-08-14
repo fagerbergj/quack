@@ -75,6 +75,10 @@ func (s *Store) StampTerminalOutcome(ctx context.Context, appName, userID, chatI
 // ScanOrphanedRuns (re-)stamps RunStatusInterrupted on every chat a killed
 // process left mid-run (ActiveTurnID set, or already interrupted). Call at
 // boot alongside FailStaleDagNodes; returned ids are for the caller to log.
+//
+// Startup-only: the scan is table-wide with no per-chat liveness check, so
+// calling it once the Hub has registered runs would stamp a live chat as
+// interrupted.
 func (s *Store) ScanOrphanedRuns(ctx context.Context) ([]string, error) {
 	var chats []Chat
 	if err := s.db.WithContext(ctx).

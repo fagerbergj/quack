@@ -249,10 +249,10 @@ function ChecksSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'check
               const failing = failingCheck(c)
               return (
                 <li key={i} className="flex items-center gap-2">
-                  <span className={`truncate ${failing ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-200'}`}>
+                  <span className={`truncate ${failing ? 'text-red-500 dark:text-red-400' : 'text-gray-700 dark:text-gray-200'}`}>
                     {c.name}
                   </span>
-                  <span className={`ml-auto shrink-0 ${failing ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-gray-400 dark:text-gray-500'}`}>
+                  <span className={`ml-auto shrink-0 ${failing ? 'text-red-500 dark:text-red-400 font-semibold' : 'text-gray-400 dark:text-gray-500'}`}>
                     {c.status}{c.conclusion ? ` ${c.conclusion}` : ''}
                   </span>
                 </li>

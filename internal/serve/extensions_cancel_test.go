@@ -34,6 +34,7 @@ func TestMapExtRunOutcome(t *testing.T) {
 		{"needs_input maps through", store.RunStatusNeedsInput, false, false, extsdk.RunNeedsInput},
 		{"idle maps to done", store.RunStatusIdle, false, false, extsdk.RunDone},
 		{"timed out, not cancelled, still done", store.RunStatusIdle, false, true, extsdk.RunDone},
+		{"cancelled beats timed out too", store.RunStatusIdle, true, true, extsdk.RunCancelled},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
