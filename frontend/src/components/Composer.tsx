@@ -30,14 +30,15 @@ function useNarrowViewport(): boolean {
   return narrow
 }
 
-function placeholderFor(disabled: boolean, streaming: boolean, narrow: boolean): string {
+function placeholderFor(disabled: boolean, streaming: boolean, narrow: boolean, archived: boolean): string {
+  if (archived) return 'Archived chats are read-only - restore to continue'
   if (disabled) return 'Select or start a chat first'
   if (streaming) return narrow ? 'Type a follow-up…' : 'Type a follow-up… (queues until the current response finishes)'
   return narrow ? 'Ask something…' : 'Ask something… (Enter to send, Shift+Enter for newline)'
 }
 
 export interface ComposerProps {
-  // No active chat - input is disabled.
+  // No active chat, or the active chat is archived - input is disabled.
   disabled: boolean
   // A turn is streaming - input stays live and Send queues instead of running
   // a second turn; Stop appears alongside it to cancel the active run.
@@ -48,13 +49,16 @@ export interface ComposerProps {
   // rows above the input; empty/omitted when nothing is queued.
   queue?: QueuedTurn[]
   onRemoveQueued?: (id: string) => void
+  // Distinguishes an archived chat's disabled composer (a specific, expected
+  // read-only state) from the generic "no chat selected" disabled placeholder.
+  archived?: boolean
 }
 
 // Composer owns the draft `input` + `attachments` locally so typing only re-renders
 // this small component, not the whole chat (the turn list / DAG trees). It hands the
 // finished message up via onSubmit - the caller decides whether that's an immediate
 // send or (while streaming) queuing it for after the current run.
-export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemoveQueued }: ComposerProps) {
+export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemoveQueued, archived = false }: ComposerProps) {
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<AttachmentItem[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -175,7 +179,7 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
             // compete for the row's space.
             className="flex-1 min-w-0 rounded-xl border border-gray-300 dark:border-gray-600 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none max-h-48 disabled:opacity-50 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400 placeholder:truncate"
             rows={1}
-            placeholder={placeholderFor(disabled, streaming, narrow)}
+            placeholder={placeholderFor(disabled, streaming, narrow, archived)}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}

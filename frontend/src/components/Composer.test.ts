@@ -87,3 +87,41 @@ describe('Composer streaming placeholder', () => {
     expect(ta.placeholder).toBe('Type a follow-up…')
   })
 })
+
+// An archived chat's Composer is disabled like "no chat selected", but must say
+// so distinctly - "Select or start a chat first" is actively wrong once a real,
+// archived chat is focused (part of the "focused archived chat appears active" fix).
+describe('Composer archived placeholder', () => {
+  let root: ReturnType<typeof createRoot> | undefined
+  let host: HTMLDivElement | undefined
+
+  afterEach(() => {
+    act(() => root?.unmount())
+    host?.remove()
+    root = undefined
+    host = undefined
+    vi.unstubAllGlobals()
+  })
+
+  function render() {
+    mockMatchMedia(false)
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    act(() => {
+      root!.render(createElement(Composer, { disabled: true, streaming: false, archived: true, onSubmit: () => {}, onStop: () => {} }))
+    })
+  }
+
+  it('shows the read-only placeholder instead of the generic disabled one', () => {
+    render()
+    const ta = host!.querySelector('textarea')!
+    expect(ta.placeholder).toBe('Archived chats are read-only - restore to continue')
+  })
+
+  it('disables the textarea', () => {
+    render()
+    const ta = host!.querySelector('textarea')!
+    expect(ta.disabled).toBe(true)
+  })
+})

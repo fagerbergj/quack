@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"iter"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
@@ -581,4 +583,139 @@ func TestUpdateChat_TitleOnlyStillTouchesUpdatedAt(t *testing.T) {
 	if saved.UpdatedAt.Equal(before) {
 		t.Errorf("updated_at should have been touched by title change; before=%s after=%s", before.Format(time.RFC3339), saved.UpdatedAt.Format(time.RFC3339))
 	}
+}
+
+// --- UpdateChat archive vs. the run queue ------------------------------------
+
+// blockingModel is a model.LLM whose GenerateContent blocks until unblock is
+// closed or ctx is cancelled - holds the one global run slot open on demand so
+// a second chat's run can be driven into a genuinely queued state.
+type blockingModel struct {
+	entered chan struct{}
+	unblock chan struct{}
+}
+
+func (m *blockingModel) Name() string { return "blocking" }
+
+func (m *blockingModel) GenerateContent(ctx context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		select {
+		case m.entered <- struct{}{}:
+		default:
+		}
+		select {
+		case <-m.unblock:
+			yield(&model.LLMResponse{
+				Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: "done"}}},
+				FinishReason: genai.FinishReasonStop,
+				TurnComplete: true,
+			}, nil)
+		case <-ctx.Done():
+			yield(nil, ctx.Err())
+		}
+	}
+}
+
+// waitFor polls cond until it's true, failing the test if timeout elapses first.
+func waitFor(t *testing.T, timeout time.Duration, msg string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting: %s", msg)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestUpdateChat_ArchiveCancelsQueuedRun pins the fix for "archived chats
+// remain in the queue": archiving a chat whose run is still waiting behind
+// max_active_runs cancels it via the same hub path a user Stop uses, and the
+// chat's status settles away from queued/running rather than firing later.
+func TestUpdateChat_ArchiveCancelsQueuedRun(t *testing.T) {
+	bm := &blockingModel{entered: make(chan struct{}, 1), unblock: make(chan struct{})}
+	h := newTestHandlerWithModel(t, bm)
+	h.orch.SetMaxActiveRuns(1)
+	ctx := context.Background()
+
+	chatA := mustCreateChat(t, h)
+	chatB := mustCreateChat(t, h)
+
+	// Chat A takes the one slot and holds it inside the model call.
+	h.startRun(chatA, "turn-a", "hello", nil)
+	select {
+	case <-bm.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("chat A never reached the model - it should have acquired the only slot immediately")
+	}
+
+	// Chat B is admitted but can't acquire - it queues behind A.
+	h.startRun(chatB, "turn-b", "hello", nil)
+	waitFor(t, 2*time.Second, "chat B admitted to the queue", func() bool { return h.orch.Queued(chatB) })
+
+	cB, err := h.store.GetChat(ctx, chatB)
+	if err != nil {
+		t.Fatalf("GetChat chat B: %v", err)
+	}
+	if status, _ := h.liveOrStampedStatus(*cB); status != schema.ChatStatusQueued {
+		t.Fatalf("chat B status before archive = %q, want queued", status)
+	}
+
+	trueVal := true
+	rec := patchUpdateChat(t, h, chatB, schema.UpdateChatBody{Archived: &trueVal})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("archive status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	waitFor(t, 2*time.Second, "chat B's queued run cancelled", func() bool { return !h.orch.Queued(chatB) })
+	waitFor(t, 2*time.Second, "chat B's run fully unregistered", func() bool { return !h.hub.HasRegisteredRun(chatB) })
+
+	cB, err = h.store.GetChat(ctx, chatB)
+	if err != nil {
+		t.Fatalf("GetChat chat B after archive: %v", err)
+	}
+	if status, _ := h.liveOrStampedStatus(*cB); status == schema.ChatStatusQueued || status == schema.ChatStatusRunning {
+		t.Errorf("chat B status after archive+cancel = %q, want settled, not left queued/running", status)
+	}
+
+	// Chat A's unrelated run must be untouched by archiving chat B.
+	if !h.hub.HasRegisteredRun(chatA) {
+		t.Error("chat A's run was cancelled by archiving chat B")
+	}
+
+	close(bm.unblock)
+	waitFor(t, 2*time.Second, "chat A's run finished", func() bool { return !h.hub.HasRegisteredRun(chatA) })
+}
+
+// TestUpdateChat_ArchiveLeavesRunningRunAlone is the flip side: archiving a
+// chat whose run has already left the queue and is executing must not cancel
+// it - the archive handler's cancel path only reaches a still-queued run.
+func TestUpdateChat_ArchiveLeavesRunningRunAlone(t *testing.T) {
+	bm := &blockingModel{entered: make(chan struct{}, 1), unblock: make(chan struct{})}
+	h := newTestHandlerWithModel(t, bm)
+	h.orch.SetMaxActiveRuns(1)
+
+	chatA := mustCreateChat(t, h)
+	h.startRun(chatA, "turn-a", "hello", nil)
+	select {
+	case <-bm.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("chat A never reached the model")
+	}
+
+	trueVal := true
+	rec := patchUpdateChat(t, h, chatA, schema.UpdateChatBody{Archived: &trueVal})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("archive status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Give a (wrongly issued) cancel a moment to land, then prove the run
+	// is still alive.
+	time.Sleep(100 * time.Millisecond)
+	if !h.hub.HasRegisteredRun(chatA) {
+		t.Fatal("chat A's running run was cancelled by archiving it - running runs must be left alone")
+	}
+
+	close(bm.unblock)
+	waitFor(t, 2*time.Second, "chat A's run finished", func() bool { return !h.hub.HasRegisteredRun(chatA) })
 }
