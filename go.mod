@@ -29,7 +29,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/oapi-codegen/runtime v1.6.0
 	github.com/openai/openai-go/v3 v3.49.0
-	github.com/qdrant/go-client v1.18.3
+	github.com/qdrant/go-client v1.19.0
 	github.com/spf13/cobra v1.10.2
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
 	github.com/zitadel/oidc/v3 v3.48.1
