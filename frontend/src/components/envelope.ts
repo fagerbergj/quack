@@ -243,7 +243,7 @@ function parseCheckLine(line: string): CheckRun | null {
   const name = line.slice(0, idx).trim()
   const rest = line.slice(idx + 2).trim()
   if (!name || !rest) return null
-  const [status, ...conclusionParts] = rest.split(' ')
+  const [status, ...conclusionParts] = rest.split(/\s+/)
   if (status === 'completed') {
     const conclusion = conclusionParts.join(' ')
     return conclusion ? { name, status, conclusion } : null

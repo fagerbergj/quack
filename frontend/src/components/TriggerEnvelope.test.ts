@@ -154,6 +154,12 @@ lint: completed success
     // The summary attribute still parses independently of the body.
     expect(checksSummaryLabel(b)).toBe('checks: 1 passing')
   })
+
+  it('tolerates irregular whitespace between status and conclusion', () => {
+    const doubleSpaced = `<permissions>p</permissions><deliverable>d</deliverable><checks count="1" summary="1 failing">build:  completed  failure
+</checks>`
+    expect(checksBlockOf(doubleSpaced).checks).toEqual([{ name: 'build', status: 'completed', conclusion: 'failure' }])
+  })
 })
 
 // #730 fixtures: a seed turn (full snapshot, envelope.go's commentsBlock with
@@ -373,7 +379,7 @@ ${CHECKS_ENVELOPE.split('\n').slice(2).join('\n')}`
     expect(details.textContent).toContain('build')
     expect(details.textContent).toContain('failure')
     // The failing check's danger styling, not shared by the passing/pending rows.
-    expect(details.innerHTML).toMatch(/text-red-600[^"]*"[^>]*>build/)
+    expect(details.innerHTML).toMatch(/text-red-500[^"]*"[^>]*>build/)
   })
 
   it('a deleted comment is visibly distinguishable from a live one once its section is opened', () => {

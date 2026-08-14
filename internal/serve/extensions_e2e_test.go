@@ -452,6 +452,30 @@ func TestSDKExtensionUnknownWorkflowErrorsCreatesNoChat(t *testing.T) {
 	}
 }
 
+// TestSDKExtensionDispatchRejectsWhileDraining proves the shutdown-drain
+// gate (#888) covers the extension path, not just the REST handler tested
+// by rest.TestSendChatMessage_DrainingRejects503.
+func TestSDKExtensionDispatchRejectsWhileDraining(t *testing.T) {
+	st, orch, hub, _, _ := newExtTestStack(t)
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+
+	var extHolder atomic.Pointer[extsdk.Extension]
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, nil)
+
+	hub.BeginDraining()
+	req := extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: "draining-fixture"}, Ask: extsdk.Ask{Message: "hello"}}
+	if err := dispatch(context.Background(), req); err == nil {
+		t.Fatal("expected an error while the hub is draining")
+	} else if !strings.Contains(err.Error(), "shutting down") {
+		t.Errorf("err = %v, want it to explain the server is shutting down", err)
+	}
+
+	if c, _ := st.GetChat(context.Background(), "ext:noop:draining-fixture"); c != nil {
+		t.Fatalf("GetChat = %+v, want no chat created for a rejected dispatch", c)
+	}
+}
+
 // TestSDKExtensionDispatchPreservesTraceContinuity pins the design doc's OTel
 // test case: Dispatch must preserve the caller's context so the extension's
 // inbound span parents the whole run trace, not start a disconnected one.
