@@ -118,54 +118,41 @@ func EmitServerConfig(a InitAnswers) string {
 }
 
 // emitCodingAgents renders the three coding agents, mirroring the reference
-// config/quack.yaml roster: the implementer gets the full read/write/git/run
-// toolset and a deep judge budget (iterate-until-tests-pass); explorer and
-// reviewer are READ-ONLY. run_code (code mode, goja - no external runtime) is
-// on for implementer and explorer. Memory tools are included only when an
-// embedding model was selected.
+// config/quack.yaml roster: each is an EXTERNAL agent over ACP (opencode drives
+// the model bound here), explorer and reviewer read-only. quack has no native
+// repo/exec tools - they left the registry with the ACP switch - so these
+// agents carry no tools: list at all.
 func emitCodingAgents(b *strings.Builder, a InitAnswers) {
 	model := a.CoderModel
 	if model == "" {
 		model = a.MainModel
 	}
-	mem := ""
-	if a.EmbedModel != "" {
-		mem = ", load_memory, stage_memory"
+	acp := func(readOnly bool) {
+		b.WriteString("    acp:\n      command: [opencode, acp]   # needs opencode on PATH\n")
+		if readOnly {
+			b.WriteString("      read_only: true\n")
+		}
 	}
-	implementer := "[read_file, write_file, edit_file, list_dir, glob, grep, delete_path,\n" +
-		"            cd, git_clone, git_checkout, git_status, git_diff, git_log, git_commit, git_branch,\n" +
-		"            run_command, ask_user" + mem + ", run_code]"
-	readOnly := "read_file, list_dir, glob, grep,\n" +
-		"            cd, git_clone, git_checkout, git_status, git_diff, git_log, ask_user" + mem
-	explorer := "[" + readOnly + ", run_command, run_code]"
-	reviewer := "[" + readOnly
-	if a.WebFetch {
-		reviewer += ", web_fetch"
-	}
-	reviewer += "]"
-
-	emitAgent(b, "code-implementer", model, 65536, implementer)
+	emitAgent(b, "code-implementer", model, 65536, "")
 	b.WriteString("    judge_rounds: 8   # coding converges via the judge+revise grind\n")
-	emitAgent(b, "code-explorer", model, 65536, explorer)
+	acp(false)
+	emitAgent(b, "code-explorer", model, 65536, "")
 	b.WriteString("    judge_rounds: 2\n")
-	emitAgent(b, "code-reviewer", model, 65536, reviewer)
+	acp(true)
+	emitAgent(b, "code-reviewer", model, 65536, "")
 	b.WriteString("    judge_rounds: 2\n")
+	acp(true)
 }
 
 // emitWorkspace renders the workspace section the coding agents need: the
-// sandbox mode (bwrap needs bubblewrap installed; none = no OS boundary) and
-// guard tiers for the two arbitrary-execution tools. The judge tier only
-// exists with a judge model, so guards degrade to confirm-only without one.
+// sandbox mode the ACP child processes run inside (bwrap needs bubblewrap
+// installed; none = no OS boundary).
 func emitWorkspace(b *strings.Builder, a InitAnswers) {
 	sandbox := a.Sandbox
 	if sandbox == "" {
 		sandbox = "bwrap"
 	}
-	tier := "confirm"
-	if a.JudgeModel != "" {
-		tier = "judge+confirm"
-	}
-	fmt.Fprintf(b, "workspace:\n  sandbox: %s\n  guards:\n    run_command: %s\n    run_code: %s\n\n", sandbox, tier, tier)
+	fmt.Fprintf(b, "workspace:\n  sandbox: %s\n\n", sandbox)
 }
 
 // EnvExports is the set of `export` lines the wizard prints so the emitted
@@ -212,9 +199,13 @@ func emitOrchTools(b *strings.Builder, a InitAnswers) {
 	fmt.Fprintf(b, "  tools: [%s]\n", strings.Join(tools, ", "))
 }
 
+// emitAgent renders one agent; a blank tools omits the key (ACP agents have none).
 func emitAgent(b *strings.Builder, name, model string, ctx int, tools string) {
-	fmt.Fprintf(b, "  %s:\n    bundle: agents/%s\n    provider: default\n    model: %s\n    context_window: %d\n    tools: %s\n",
-		name, name, model, ctx, tools)
+	fmt.Fprintf(b, "  %s:\n    bundle: agents/%s\n    provider: default\n    model: %s\n    context_window: %d\n",
+		name, name, model, ctx)
+	if tools != "" {
+		fmt.Fprintf(b, "    tools: %s\n", tools)
+	}
 }
 
 // DefaultBackendURL is the no-docker default connection for a store/tool kind,

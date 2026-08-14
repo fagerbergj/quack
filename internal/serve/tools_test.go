@@ -1,8 +1,15 @@
 package serve
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/fagerbergj/quack/internal/cli"
+	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/tools"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // TestResolveToolNames guards the config-driven gating of runtime-conditional
@@ -74,5 +81,48 @@ func TestResolveToolNames(t *testing.T) {
 				t.Errorf("wantLoadMemory = %v, want %v", gotWantLoadMem, tc.wantWantLoadMem)
 			}
 		})
+	}
+}
+
+// TestEmitServerConfigToolsBuild runs the `quack init` wizard's own output
+// through the tool resolution the server does at startup (resolveToolNames +
+// tools.Build). The wizard kept emitting the pre-ACP coding toolset
+// (cd/git_clone/run_command/run_code, #343 deleted their constructors), so a
+// freshly initialized config died at boot with `unknown builtin tool "cd"`.
+func TestEmitServerConfigToolsBuild(t *testing.T) {
+	t.Setenv("QUACK_LLM_API_KEY", "k")
+	a := cli.InitAnswers{
+		Endpoint: "http://x/v1", MainModel: "m", JudgeModel: "j", EmbedModel: "e",
+		SessionKind: "sqlite", MemoryKind: "sqlite",
+		WebSearch: true, SearchKind: "exa", WebFetch: true, FetchKind: "direct",
+		Coding: true, Sandbox: "none",
+	}
+	path := filepath.Join(t.TempDir(), "quack.yaml")
+	if err := os.WriteFile(path, []byte(cli.EmitServerConfig(a)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("emitted config failed to load: %v", err)
+	}
+	jail, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps := tools.Deps{
+		WebSearch:       tools.Backend{Kind: cfg.Tools["web_search"].Kind, URL: cfg.Tools["web_search"].URL},
+		Fetch:           tools.Backend{Kind: cfg.Tools["web_fetch"].Kind, URL: cfg.Tools["web_fetch"].URL},
+		Summarizer:      directAnswerModel{},
+		Workspace:       jail,
+		WorkspaceUserID: "u",
+	}
+	for name, ac := range cfg.Agents {
+		if ac.Acp != nil {
+			continue // external worker: brings its own tools, quack builds none
+		}
+		names, _ := resolveToolNames(ac.Tools, true, false)
+		if _, err := tools.Build(names, deps); err != nil {
+			t.Errorf("agent %q tools %v: %v", name, ac.Tools, err)
+		}
 	}
 }

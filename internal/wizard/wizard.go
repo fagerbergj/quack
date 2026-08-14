@@ -362,7 +362,7 @@ func featuresGroup(feats *[]string) *huh.Group {
 			Options(
 				huh.NewOption("Web search", "search"),
 				huh.NewOption("Web fetch", "fetch"),
-				huh.NewOption("Coding agents (workspace + sandbox)", "coding"),
+				huh.NewOption("Coding agents (workspace + sandbox; needs opencode on PATH)", "coding"),
 			).
 			Value(feats),
 	).Title("Features").Description("Toggle the tool backends to configure")
@@ -389,8 +389,8 @@ func codingGroups(a *cli.InitAnswers, feats *[]string, models []string) []*huh.G
 	sandbox := huh.NewGroup(
 		huh.NewSelect[string]().
 			Options(
-				huh.NewOption("bwrap - OS sandbox for run_command/run_code children (needs bubblewrap)", "bwrap"),
-				huh.NewOption("none  - no OS boundary (guards still apply)", "none"),
+				huh.NewOption("bwrap - OS sandbox for the coding agents' child processes (needs bubblewrap)", "bwrap"),
+				huh.NewOption("none  - no OS boundary", "none"),
 			).
 			Value(&a.Sandbox),
 	).Title("Workspace sandbox").Description("The OS boundary agent-run commands execute inside").
