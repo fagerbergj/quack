@@ -481,6 +481,53 @@ func TestBuildJudgePromptSectionOrder(t *testing.T) {
 	}
 }
 
+// TestBuildJudgePromptStablePrefixIsByteIdentical pins what the section-order
+// test above cannot: two rounds of the SAME node must produce prompts that are
+// byte-identical up to where the answer body starts. Order alone is not enough -
+// a clock, a run id, or a re-derived path leaking into the constitution/rubric/
+// task/question would keep every section in place and still move the first
+// differing byte to offset 0, which is what llama.cpp's per-slot prefix cache
+// actually measures (verified against the production judge: two rounds assembled
+// this way reuse 2,899 tokens; a prompt that diverges at byte 0 reuses none).
+func TestBuildJudgePromptStablePrefixIsByteIdentical(t *testing.T) {
+	const constitution, rubric, task = "the constitution", "the rubric", "the node task"
+	question := questionContent("the question")
+
+	// Round 1 and round 2 of one node: same stable head, different answer and
+	// different volatile evidence (ledger, changed files, known failures).
+	first := buildJudgePrompt(constitution, rubric, task, question, "the first answer", "diff one",
+		workerActivity{workspace: []wsOp{{tool: "read_file", detail: `read_file(path="a.go")`}}},
+		judgeKnownFailuresSection(map[string]criterionScore{"checks_pass": {Score: 0, Reason: "build failed"}}, 0.7))
+	second := buildJudgePrompt(constitution, rubric, task, question, "a wholly different second answer", "diff two",
+		workerActivity{workspace: []wsOp{{tool: "grep", detail: `grep(pattern="TODO")`}}}, "")
+
+	const answerHeader = "\n\nAnswer to judge:\n"
+	want := strings.Index(first, answerHeader) + len(answerHeader)
+	if want <= len(answerHeader) {
+		t.Fatalf("prompt missing %q header:\n%s", answerHeader, first)
+	}
+
+	got := 0
+	for got < len(first) && got < len(second) && first[got] == second[got] {
+		got++
+	}
+	if got < want {
+		t.Fatalf("stable prefix ends at byte %d, want at least %d (through the answer header).\n"+
+			"first differing byte is inside the supposedly round-invariant head - everything before the\n"+
+			"answer must be byte-identical across rounds or the judge re-prefills the whole prompt.\n"+
+			"round 1 from byte %d: %q\nround 2 from byte %d: %q",
+			got, want, got, excerptAt(first, got), got, excerptAt(second, got))
+	}
+}
+
+// excerptAt returns a short window of s starting at i, for prefix-mismatch reporting.
+func excerptAt(s string, i int) string {
+	if i >= len(s) {
+		return ""
+	}
+	return s[i:min(i+80, len(s))]
+}
+
 // TestJudgeKnownFailuresSection_FormatsFailingCriteriaSorted checks the
 // section names every below-threshold criterion, sorted, and skips a passing one.
 func TestJudgeKnownFailuresSection_FormatsFailingCriteriaSorted(t *testing.T) {
