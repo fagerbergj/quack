@@ -651,7 +651,9 @@ func commitMemoryOnPass(ctx adkagent.Context, spanCtx context.Context, cfg Confi
 	go func() {
 		cctx, cancel := context.WithTimeout(context.Background(), memoryCommitTimeout)
 		defer cancel()
-		cctx, commitSpan := otelobs.StartLinked(cctx, "memory.commit", parentSC, attribute.String("agent", author))
+		// Own trace root (detached ctx, no coords) - name the chat explicitly.
+		cctx, commitSpan := otelobs.StartLinked(cctx, "memory.commit", parentSC,
+			attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("agent", author))
 		n, err := cfg.Memory.Commit(cctx, sc, author, prov, staged, answer)
 		otelobs.End(commitSpan, err)
 		if err != nil {
