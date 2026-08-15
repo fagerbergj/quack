@@ -286,7 +286,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	}
 
 	ledgerStore := ledgerStoreFromConfig(cfg)
-	otelProviders, otelShutdown, err := otelobs.Init(ctx, cfg.Observability, ledgerStore)
+	otelProviders, otelShutdown, err := otelobs.Init(ctx, cfg.Observability, ledgerStore, Version)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("otel init failed: %w", err)
 	}
