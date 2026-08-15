@@ -405,7 +405,8 @@ type AcpAgentConfig struct {
 	McpServers []string          `yaml:"mcp_servers"`
 	ReadOnly   bool              `yaml:"read_only"`
 	// AllowClone lifts the git clone deny for this agent (code-explorer reads
-	// third-party repos the gate never provisions). Requires ReadOnly - see validate.
+	// third-party repos the gate never provisions). Requires ReadOnly - see validate -
+	// and takes effect only under sandbox: landlock (see serve.opencodeEnv).
 	AllowClone bool `yaml:"allow_clone"`
 }
 
