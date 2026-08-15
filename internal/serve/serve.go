@@ -1165,12 +1165,13 @@ func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths [
 	// (#579) except for a read-only acp.allow_clone agent, which is chartered to read
 	// third-party repos the gate never provisions. Clone plus the wide
 	// external_directory it needs (the clone lands outside cwd, #346) rest on the RO
-	// work tree, and only landlock enforces that on the ACP child - WrapArgv wraps it
-	// there and nowhere else - so under bwrap/none allow_clone degrades to denied
-	// rather than to unbounded.
-	allowClone := ac.Acp != nil && ac.Acp.AllowClone && sandbox == workspace.SandboxLandlock
+	// work tree, so clone is allowed only in a mode that OS-enforces it on the ACP
+	// child - landlock or bwrap, both of which WrapArgv wraps (#921). Under `none`
+	// there is no boundary at all, so allow_clone degrades to denied rather than to
+	// unbounded.
+	allowClone := ac.Acp != nil && ac.Acp.AllowClone && workspace.EnforcesBoundary(sandbox)
 	if ac.Acp != nil && ac.Acp.AllowClone && !allowClone {
-		slog.Warn("acp.allow_clone ignored: clone needs the read-only work tree OS-enforced, which only sandbox: landlock does for the ACP child",
+		slog.Warn("acp.allow_clone ignored: clone needs the read-only work tree OS-enforced, which sandbox: none cannot do for the ACP child",
 			"component", "acp", "sandbox", sandbox)
 	}
 	bash := m{

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -486,9 +487,12 @@ func RunSandboxExecIfInvoked() {
 	os.Exit(0)
 }
 
-// TMPDIR for subprocesses outside RunArgv/RunPipeline (ACP). Landlock can't remap /tmp so tools must be told.
+// TMPDIR for subprocesses outside RunArgv/RunPipeline (ACP). Landlock can't
+// remap /tmp so tools must be told; under bwrap the same identity-bound
+// scratch dir is what WrapArgv grants RW, and the server's own ambient TMPDIR
+// would name a path that doesn't exist inside the namespace.
 func SandboxTmpDir(caps Caps) string {
-	if caps.Sandbox == SandboxLandlock {
+	if EnforcesBoundary(caps.Sandbox) {
 		return landlockTmpDir(caps)
 	}
 	return os.TempDir()
@@ -535,9 +539,8 @@ func ChildPath(caps Caps) string {
 // Both surfaced as the same opaque SQLite error. Any fixed FSIZE is a date
 // rather than a bound while the agent's DB grows, so this seam grants no
 // ceiling at all and the container's own quota is the boundary here.
-// ponytail: bwrap returns argv unchanged - landlock is what containers use.
 func WrapArgv(dir string, argv []string, caps Caps, extraRO, extraRW []string) []string {
-	if len(argv) == 0 || caps.Sandbox != SandboxLandlock {
+	if len(argv) == 0 || !EnforcesBoundary(caps.Sandbox) {
 		if caps.ReadOnly {
 			warnReadOnlyUnenforced(caps.Sandbox)
 		}
@@ -546,22 +549,99 @@ func WrapArgv(dir string, argv []string, caps Caps, extraRO, extraRW []string) [
 	rw, ro := landlockGrants(dir, caps)
 	rw = append(rw, extraRW...)
 	ro = append(ro, extraRO...)
+	if caps.Sandbox == SandboxBwrap {
+		return bwrapWrapArgv(dir, argv, caps, rw, ro)
+	}
 	return assembleSandboxExec(rw, ro, argv)
+}
+
+// EnforcesBoundary reports whether mode gives a WrapArgv'd child an
+// OS-enforced path boundary (work tree per caps.ReadOnly, $HOME/$TMPDIR
+// writable, nothing else reachable). The gate on capabilities that REST on
+// that boundary - acp.allow_clone and the wide external_directory it needs,
+// see serve.opencodeEnv. SandboxNone never qualifies.
+func EnforcesBoundary(mode SandboxMode) bool {
+	return mode == SandboxLandlock || mode == SandboxBwrap
+}
+
+// bwrapWrapArgv gives the ACP child the SAME grants landlockGrants computes,
+// as bwrap mounts: rw as --bind-try, ro as --ro-bind-try, both at IDENTITY
+// paths. Not childArgv's SandboxWorkRoot remap - the ACP child exchanges
+// absolute paths with quack over JSON-RPC (session cwd out, tool-call paths
+// back), so a remapped work tree would make every path either side names
+// meaningless to the other.
+func bwrapWrapArgv(dir string, argv []string, caps Caps, rw, ro []string) []string {
+	args := bwrapSystemArgs()
+	args = append(args, tmpArgs(caps)...)
+	args = append(args, identityBinds(rw, ro)...)
+	// Sandbox root RO so the empty parent dirs bwrap creates for the binds
+	// below aren't a writable scratch space (mirrors childArgv).
+	args = append(args, "--remount-ro", "/", "--chdir", dir, "--")
+	return append([]string{bwrapPath()}, append(args, argv...)...)
+}
+
+// identityBinds renders grants as bwrap binds onto their own host paths,
+// SHALLOWEST FIRST: bwrap applies binds in argv order and a later mount on a
+// subpath overlays the earlier one, so ordering by depth is what makes the
+// most specific grant win (a read-only work tree nested inside a writable
+// HOME must stay read-only). -try mirrors landlock's IgnoreIfMissing.
+func identityBinds(rw, ro []string) []string {
+	type bind struct{ flag, path string }
+	var binds []bind
+	seen := map[string]bool{}
+	add := func(flag string, paths []string) {
+		for _, p := range paths {
+			p = strings.TrimSpace(p)
+			if p == "" || !filepath.IsAbs(p) {
+				continue
+			}
+			p = filepath.Clean(p)
+			if bwrapOwnedMount(p) || seen[p] {
+				continue
+			}
+			seen[p] = true
+			binds = append(binds, bind{flag, p})
+		}
+	}
+	// RO first: a path a caller granted both ways keeps the read-only bind,
+	// matching landlockGrants' own RO-wins intent for a read_only node.
+	add("--ro-bind-try", ro)
+	add("--bind-try", rw)
+	slices.SortStableFunc(binds, func(a, b bind) int {
+		return strings.Count(a.path, "/") - strings.Count(b.path, "/")
+	})
+	var args []string
+	for _, b := range binds {
+		args = append(args, b.flag, b.path, b.path)
+	}
+	return args
+}
+
+// bwrapOwnedMount reports paths bwrapSystemArgs/tmpArgs already mount, which a
+// grant must NOT bind over: /proc and /dev are their own filesystem types
+// there (a host bind would leak the real PID table and device nodes back in),
+// /tmp is the private tmpfs or scratch bind, and the rest are the same
+// read-only system view landlockSystemDirs grants - bwrap's is narrower for
+// /etc (a per-file allowlist), which is stricter, not weaker.
+func bwrapOwnedMount(p string) bool {
+	switch p {
+	case "/proc", "/dev", "/tmp":
+		return true
+	}
+	return slices.Contains(landlockSystemDirs(), p)
 }
 
 var warnReadOnlyUnenforcedOnce sync.Once
 
 // warnReadOnlyUnenforced (#754): a read_only agent's own subprocess (the ACP
-// path WrapArgv wraps) only gets a real RO mount under landlock - sandbox:
-// none has no boundary at all, and bwrap never wraps this path at all (see
-// internal/acp's wrappedArgv doc - a ceiling from #579, not new here).
-// Degrade and say so once, rather than silently leaving the flag as a
-// prompt-only claim.
+// path WrapArgv wraps) gets a real RO mount under landlock and bwrap (#921) -
+// sandbox: none has no boundary at all. Degrade and say so once, rather than
+// silently leaving the flag as a prompt-only claim.
 func warnReadOnlyUnenforced(mode SandboxMode) {
 	warnReadOnlyUnenforcedOnce.Do(func() {
 		slog.Warn("read_only agent's own working directory is NOT read-only enforced at the OS level in this sandbox mode "+
-			"(WrapArgv only mounts it RO under landlock); the agent could write there - only its prompt says not to. "+
-			"Set workspace.sandbox: landlock to enforce it.", "component", "workspace", "sandbox", mode)
+			"(WrapArgv only mounts it RO under landlock or bwrap); the agent could write there - only its prompt says not to. "+
+			"Set workspace.sandbox: landlock or bwrap to enforce it.", "component", "workspace", "sandbox", mode)
 	})
 }
 

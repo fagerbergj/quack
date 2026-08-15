@@ -48,9 +48,10 @@ func environmentBlock(ctx context.Context, cwd string, caps workspace.Caps) stri
 		fmt.Fprintf(&b, "entries: %s\n", strings.Join(entries, ", "))
 	}
 	if caps.ReadOnly {
-		// Which paths, not what to do with them: an agent told only "read-only"
-		// either burns a round on EACCES or gives up on running the change.
-		// Naming the writable paths is what makes "run it" achievable here.
+		// landlock and bwrap both enforce this. Name which paths, not what to do
+		// with them: an agent told only "read-only" either burns a round on
+		// EACCES or gives up on running the change. Naming the writable paths is
+		// what makes "run it" achievable here.
 		fmt.Fprintf(&b, "filesystem: read-only (OS-enforced, EACCES on write): %s\n", cwd)
 		writable := []string{workspace.SandboxTmpDir(caps)}
 		if caps.HomeDir != "" {

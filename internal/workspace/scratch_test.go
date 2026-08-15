@@ -180,14 +180,30 @@ func TestWrapArgvTmpdirEnvPointsAtScratchDir(t *testing.T) {
 	}
 }
 
-// TestWrapArgvScratchDirUnwrappedOutsideLandlock: mode none/bwrap pass argv
-// through unchanged (the documented ACP ceiling - see WrapArgv's own doc), so
-// ScratchDir grants nothing extra there; TMPDIR still names it via the env,
-// same as any other caller of SandboxTmpDir.
-func TestWrapArgvScratchDirUnwrappedOutsideLandlock(t *testing.T) {
+// TestWrapArgvScratchDirGrantedUnderBwrap (#921): the scratch dir is bound RW
+// at its identity path under bwrap too, and SandboxTmpDir names that same path
+// - a mismatch would leave TMPDIR pointing at something the namespace doesn't
+// have (the server's own ambient /tmp is a private tmpfs in there).
+func TestWrapArgvScratchDirGrantedUnderBwrap(t *testing.T) {
 	dir := t.TempDir()
 	scratch := t.TempDir()
-	for _, mode := range []SandboxMode{SandboxNone, SandboxBwrap, ""} {
+	caps := Caps{Sandbox: SandboxBwrap, ScratchDir: scratch, HomeDir: t.TempDir()}
+	if got := SandboxTmpDir(caps); got != scratch {
+		t.Errorf("SandboxTmpDir(bwrap) = %q, want the scratch dir %q", got, scratch)
+	}
+	got := WrapArgv(dir, []string{"opencode", "acp"}, caps, nil, nil)
+	if !strings.Contains(strings.Join(got, "\x00"), "--bind-try\x00"+scratch+"\x00"+scratch) {
+		t.Errorf("WrapArgv(bwrap) = %v, missing the scratch dir RW bind %q", got, scratch)
+	}
+}
+
+// TestWrapArgvScratchDirUnwrappedUnderNone: `none` has no boundary to wrap
+// into, so ScratchDir grants nothing there; TMPDIR still names the process
+// tmp dir, same as any other caller of SandboxTmpDir.
+func TestWrapArgvScratchDirUnwrappedUnderNone(t *testing.T) {
+	dir := t.TempDir()
+	scratch := t.TempDir()
+	for _, mode := range []SandboxMode{SandboxNone, ""} {
 		caps := Caps{Sandbox: mode, ScratchDir: scratch}
 		got := WrapArgv(dir, []string{"opencode", "acp"}, caps, nil, nil)
 		if len(got) != 2 || got[0] != "opencode" || got[1] != "acp" {

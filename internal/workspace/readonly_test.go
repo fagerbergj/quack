@@ -39,8 +39,7 @@ func TestReadOnlyCapsBlocksWriteBwrap(t *testing.T) {
 }
 
 // TestReadOnlyCapsBlocksWriteLandlock is test case 1's landlock half - the
-// mode that actually confines the ACP subprocess in production (WrapArgv
-// only wraps under landlock).
+// mode the container deploy runs (config/quack.yaml), where bwrap can't nest.
 func TestReadOnlyCapsBlocksWriteLandlock(t *testing.T) {
 	requireLandlock(t)
 	dir := t.TempDir()
@@ -172,13 +171,13 @@ func TestLandlockGrantsReadOnlyGrantsRO(t *testing.T) {
 	}
 }
 
-// TestWrapArgvReadOnlyDegradesAndLogsOutsideLandlock is test case 4: with
-// sandboxing unable to enforce read_only (sandbox: none has no boundary at
-// all; bwrap is a documented ceiling for the ACP path - see WrapArgv's doc),
-// the node must still run (argv unchanged, no error) rather than refuse to
-// start, and the degradation must be LOGGED, not silent.
-func TestWrapArgvReadOnlyDegradesAndLogsOutsideLandlock(t *testing.T) {
-	for _, mode := range []SandboxMode{SandboxNone, SandboxBwrap, ""} {
+// TestWrapArgvReadOnlyDegradesAndLogsUnderNone is test case 4: with sandboxing
+// unable to enforce read_only (sandbox: none has no boundary at all), the node
+// must still run (argv unchanged, no error) rather than refuse to start, and
+// the degradation must be LOGGED, not silent. bwrap enforces it since #921, so
+// it is no longer in this set - see TestWrapArgvBwrapEnforcesGrantsEndToEnd.
+func TestWrapArgvReadOnlyDegradesAndLogsUnderNone(t *testing.T) {
+	for _, mode := range []SandboxMode{SandboxNone, ""} {
 		t.Run(string(mode), func(t *testing.T) {
 			var buf bytes.Buffer
 			restore := slog.Default()
