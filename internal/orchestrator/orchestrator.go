@@ -82,6 +82,18 @@ func (o *Orchestrator) acquireRun(ctx context.Context) (release func(), acquired
 	select {
 	case o.runSem <- struct{}{}:
 		return func() { <-o.runSem }, true
+	default:
+	}
+	// Only spanned once it actually blocks. Without this a queued run that never
+	// acquires emits a childless "quack.run" root whose latency is pure waiting.
+	ctx, span := otelobs.Start(ctx, "run.queue")
+	defer func() {
+		span.SetAttributes(attribute.Bool("acquired", acquired))
+		otelobs.End(span, nil)
+	}()
+	select {
+	case o.runSem <- struct{}{}:
+		return func() { <-o.runSem }, true
 	case <-ctx.Done():
 		return func() {}, false
 	}
