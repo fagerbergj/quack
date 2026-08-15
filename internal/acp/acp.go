@@ -247,8 +247,16 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 	finalPrompt := mcpToolsBlock(toolNames) + "\n\n" + outbound
 
 	done := make(chan promptDone, 1)
-	_, promptSpan := otelobs.Start(ctx, "acp.prompt", attribute.String("agent", a.name), attribute.String("session_id", string(sess.SessionId)))
+	promptCtx, promptSpan := otelobs.Start(ctx, "acp.prompt", attribute.String("agent", a.name), attribute.String("session_id", string(sess.SessionId)))
 	defer promptSpan.End() // safety net for the relay-stopped/cancel exits below; the done-branch sets the real status first
+	// Per-tool-call child spans, ended as their updates arrive - the only
+	// telemetry that reaches a collector before the round finishes (#924).
+	turns := newTurnSpans(promptCtx, a.name)
+	defer turns.closeAll() // LIFO: runs before promptSpan.End() above
+	endPrompt := func(err error) {
+		turns.closeAll()
+		otelobs.End(promptSpan, err)
+	}
 	go func() {
 		resp, perr := h.conn.Prompt(context.Background(), sdk.PromptRequest{
 			SessionId: sess.SessionId,
@@ -259,6 +267,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 
 	tr := newTranslator(cwd)
 	relay := func(u sdk.SessionUpdate) bool {
+		turns.observe(u)
 		for _, spec := range tr.translate(u) {
 			if !emit(spec) {
 				return false
@@ -299,7 +308,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 				break
 			}
 			if d.err != nil {
-				otelobs.End(promptSpan, d.err)
+				endPrompt(d.err)
 				return fmt.Errorf("acp: prompt: %w%s", d.err, h.stderrTail())
 			}
 			// The Prompt RPC returns exactly once per round with its own
@@ -307,13 +316,13 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 			recordUsage(a.opts.ModelName, coords, a.opts.Pricing, d.resp.Usage)
 			if d.resp.StopReason == sdk.StopReasonRefusal {
 				refusalErr := errors.New("acp: agent refused the prompt")
-				otelobs.End(promptSpan, refusalErr)
+				endPrompt(refusalErr)
 				return refusalErr
 			}
 			final := finalSpec(tr)
 			a.log.Info("acp round done", "stop", string(d.resp.StopReason), "answer_len", len(final.parts[0].Text))
 			promptSpan.SetAttributes(attribute.String("stop_reason", string(d.resp.StopReason)))
-			otelobs.End(promptSpan, nil)
+			endPrompt(nil)
 			emit(final)
 			return nil
 		case <-ctx.Done():

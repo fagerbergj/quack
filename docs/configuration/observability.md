@@ -37,8 +37,11 @@ Quack's own spans are named `quack.<name>` (ADK's, above, are not). The vocabula
 | `quack.setup.clone` | Repo provisioning for a plan's `Setup` (the pre-provisioned clone). |
 | `quack.delivery` | The gate-owned delivery step (commit/push/PR/review). |
 | `quack.acp.spawn` / `.handshake` / `.prompt` / `.round` | The external ACP subprocess lifecycle (`opencode acp`) for code-implementer/reviewer/explorer nodes. |
+| `quack.acp.tool.<kind>` | One tool call the ACP subprocess made, from its `session/update` to its terminal status — a child of `quack.acp.prompt`. `<kind>` is the ACP tool kind (`execute`, `read`, `edit`, `search`, …). |
 
 Quack's spans wrap work, not model calls — the model calls are ADK's `generate_content` spans nested inside them. So a quack span never carries `model` or `gen_ai.request.model`: OTel consumers (Langfuse among them) read a model-named attribute as "this is a model call" and would fold node and round wall-clock into every per-model latency and cost aggregate. Where the model a wrapper ran under is still worth having (`quack.node`, `quack.worker.round`), it goes under `quack.model`.
+
+An ACP round can run for two hours, and a span only exports when it ends — so `quack.acp.round` and `quack.acp.prompt` tell you nothing until the round is over. `quack.acp.tool.<kind>` is what makes a running round visible: one span per tool call, ended as the update is handled, so the last one's end time is the round's last sign of life. Tool granularity is deliberate — thought and message chunks arrive per token (thousands per review), tool calls in the tens to low hundreds. The subprocess's own model calls go straight to llm-swap without trace context, so they appear in neither this trace nor as links.
 
 A fire-and-forget span (e.g. the async memory commit) uses `StartLinked` instead of a child span — it gets its own root, linked to (not nested under) the run that triggered it, since the run may finish and close its own span before the commit does.
 
