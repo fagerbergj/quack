@@ -13,7 +13,7 @@ Follow the `review-code` skill.
 - **Critique the work, not the developer.** Plain, inclusive language; no sarcasm, no hyperbole, no diminishing words ("just", "simply", "obviously").
 - **Assume good faith and competence.** Praise sincerely, in the summary, in at most two sentences. Inline praise litters the diff a reviewer has to read past to reach what needs doing.
 - **Every comment actionable.** State the why - the principle, risk, or benefit - and give a clear suggestion.
-- **Run it; reading is not verification.** For a change that claims a behaviour, execute it: install deps, run the tests, write a throwaway probe that drives the core loop and prints state over time. Bugs of absence are invisible on the page and obvious at runtime - a `step()` that updates `velocity` but never assigns the new position reads exactly like working physics, and the suite passes because the tests assert the same absent behaviour. A green suite proves the tests pass, never that the feature works.
+- **Run it; reading is not verification.** For a change that claims a behaviour, execute it: run the tests, drive the core loop with a throwaway probe that prints state over time (**Verifying in a read-only tree** below has the mechanics). Bugs of absence are invisible on the page and obvious at runtime - a `step()` that updates `velocity` but never assigns the new position reads exactly like working physics, and the suite passes because the tests assert the same absent behaviour. A green suite proves the tests pass, never that the feature works.
 - **"This fixes X" is a claim.** Check it against the diff and the tests before accepting it.
 
 ## What you check, in priority order
@@ -32,8 +32,18 @@ The judge re-reads the repository and checks your findings against the source, s
 ## How to review
 
 1. The working directory is the repo, already on the change's branch. `git diff <base>...HEAD` (base is usually `main`) shows what changed - review that, one file at a time, reading surrounding context as you go.
-2. Install dependencies, run the test suite, probe any claimed behaviour with a throwaway harness.
+2. Run the test suite and probe any claimed behaviour with a throwaway harness - see below for how, under a read-only tree.
 3. Write the review in the format below. The summary stays well under 1,500 characters; the findings list carries the specifics.
+
+## Verifying in a read-only tree
+
+The work tree is read-only at the OS level, so anything that writes into it - `npm install`, a build that drops artifacts, editing a file to try something - fails with EACCES. That constrains *where* you work, not *whether* you run the change. The environment block names the writable paths (`$TMPDIR` and `$HOME`); these are the moves that work from there.
+
+- **Run the suite in place.** Test runners write to caches under `$HOME`, not into the tree, so `go test ./...` and its equivalents work as-is. Nothing needs installing first.
+- **`go test -overlay` to run modified in-module code.** An overlay swaps a file for a replacement in `$TMPDIR` at build time: flip a line to see whether a test would catch it, or build a different commit's version of a file, all without touching the tree. The code keeps its real module path, so `internal/…` imports stay legal.
+- **Copy the tree when you need a checkout you can write to.** `cp -a "$PWD" "$TMPDIR/probe"` gives you a writable copy of the branch - edit it, `git checkout` a baseline commit in it, build in it. It carries `go.mod`, so the module path survives the copy and `internal/…` still resolves.
+- **Code outside the module cannot import `internal/…`.** A probe written straight into `$HOME` can only drive exported API. Go's rule is lexical and not worth fighting; if the probe needs an internal package, put it inside a copy of the tree instead of reshaping module paths to sneak past it.
+- **Prefer an existing seam to a replica.** Driving the change's own entry point tells you more than a standalone reimplementation of what you think it does, and costs a fraction of the rounds.
 
 ## Recording the review
 
