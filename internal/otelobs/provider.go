@@ -27,7 +27,9 @@ const tracerName = "github.com/fagerbergj/quack"
 // ServiceName is the OTel resource's service.name prefix.
 const ServiceName = "quack"
 
-// ChatIDKey is the standard span attribute for chat/run in scope.
+// ChatIDKey is the standard span attribute for chat/run in scope. Start also
+// mirrors it onto GenAIConversationID, which is what OTel-native tooling
+// (Langfuse sessions) groups a trace by; chat_id stays for existing queries.
 const ChatIDKey = "chat_id"
 
 // Providers holds the process-wide OTel wiring; emission-only - Grafana owns viewing.
@@ -126,14 +128,34 @@ func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledge
 // tracer reads otel.GetTracerProvider() lazily so disabled config yields no-ops.
 func tracer() oteltrace.Tracer { return otel.Tracer(tracerName) }
 
+// sessionAttrs adds gen_ai.conversation.id (from the explicit chat_id attr, else
+// ctx coords - the same source EmitLog reads) and user.id, so every quack span
+// carries the session identity OTel consumers resolve traces by.
+func sessionAttrs(ctx context.Context, attrs []attribute.KeyValue) []attribute.KeyValue {
+	c := ledger.CoordsFromContext(ctx)
+	chatID := c.ChatID
+	for _, kv := range attrs {
+		if kv.Key == ChatIDKey && kv.Value.AsString() != "" {
+			chatID = kv.Value.AsString()
+		}
+	}
+	if chatID != "" {
+		attrs = append(attrs, attribute.String(GenAIConversationID, chatID))
+	}
+	if c.User != "" {
+		attrs = append(attrs, attribute.String(UserID, c.User))
+	}
+	return attrs
+}
+
 // Start opens "quack.<name>" as a child span; safe to call unconditionally.
 func Start(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, oteltrace.Span) {
-	return tracer().Start(ctx, "quack."+name, oteltrace.WithAttributes(attrs...))
+	return tracer().Start(ctx, "quack."+name, oteltrace.WithAttributes(sessionAttrs(ctx, attrs)...))
 }
 
 // StartLinked opens a NEW ROOT span linked to (not child of) linkTo for async work.
 func StartLinked(ctx context.Context, name string, linkTo oteltrace.SpanContext, attrs ...attribute.KeyValue) (context.Context, oteltrace.Span) {
-	opts := []oteltrace.SpanStartOption{oteltrace.WithAttributes(attrs...), oteltrace.WithNewRoot()}
+	opts := []oteltrace.SpanStartOption{oteltrace.WithAttributes(sessionAttrs(ctx, attrs)...), oteltrace.WithNewRoot()}
 	if linkTo.IsValid() {
 		opts = append(opts, oteltrace.WithLinks(oteltrace.Link{SpanContext: linkTo}))
 	}

@@ -208,8 +208,9 @@ func (o *Orchestrator) BuildBoundPlan(ctx context.Context, nodes []dag.RawNode, 
 func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, source string, plan dag.Plan) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		var span oteltrace.Span
-		ctx, span = otelobs.Start(ctx, "run.bound", attribute.String(otelobs.ChatIDKey, sessionID))
+		// Coords first: the root span reads them for gen_ai.conversation.id/user.id.
 		ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: sessionID, User: userID, Source: source})
+		ctx, span = otelobs.Start(ctx, "run.bound", attribute.String(otelobs.ChatIDKey, sessionID))
 		otelobs.RunQueued()
 		queued := true
 		o.queuedChats.Store(sessionID, struct{}{})
@@ -320,8 +321,9 @@ func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.P
 func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, message string, attachments []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		var span oteltrace.Span
-		ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, sessionID))
+		// Coords first: the root span reads them for gen_ai.conversation.id/user.id.
 		ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: sessionID, User: userID, Source: source})
+		ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, sessionID))
 		otelobs.RunQueued()
 		queued := true
 		o.queuedChats.Store(sessionID, struct{}{})

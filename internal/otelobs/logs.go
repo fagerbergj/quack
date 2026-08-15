@@ -51,6 +51,7 @@ const (
 	GenAIResponseFinishReasons = string(semconv.GenAIResponseFinishReasonsKey)
 	GenAITokenType             = string(semconv.GenAITokenTypeKey)
 	ErrorType                  = string(semconv.ErrorTypeKey)
+	UserID                     = string(semconv.UserIDKey)
 
 	// GenAIOperationPlan - "plan" has no registered semconv enum.
 	GenAIOperationPlan = "plan"
