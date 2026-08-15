@@ -195,9 +195,11 @@ func TestACPAgentPermissionDeniesGitPush(t *testing.T) {
 		if !ok {
 			t.Fatalf("agent %q: unknown provider %q", name, ac.Provider)
 		}
-		env := opencodeEnv(prov, ac, nil)
-		if !acpPermissionDeniesGitPush(t, env) {
-			t.Errorf("agent %q: generated opencode permission config does not deny git push - see #669", name)
+		for _, mode := range []workspace.SandboxMode{workspace.SandboxLandlock, workspace.SandboxBwrap, workspace.SandboxNone} {
+			env := opencodeEnv(prov, ac, nil, mode)
+			if !acpPermissionDeniesGitPush(t, env) {
+				t.Errorf("agent %q (sandbox %s): generated opencode permission config does not deny git push - see #669", name, mode)
+			}
 		}
 	}
 	if !found {

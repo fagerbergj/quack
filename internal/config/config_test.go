@@ -616,6 +616,12 @@ func TestRealConfigWorkersHaveNoDirectGitHubMutation(t *testing.T) {
 		if ac.Acp.ReadOnly != wantRO {
 			t.Errorf("agent %q read_only = %v, want %v", name, ac.Acp.ReadOnly, wantRO)
 		}
+		// Only the explorer clones - it reads third-party repos the gate never
+		// provisions. An agent whose work gets delivered must not gain clone.
+		wantClone := name == "code-explorer"
+		if ac.Acp.AllowClone != wantClone {
+			t.Errorf("agent %q allow_clone = %v, want %v", name, ac.Acp.AllowClone, wantClone)
+		}
 	}
 }
 
@@ -1316,6 +1322,34 @@ agents:
 	}
 	if !strings.Contains(err.Error(), "memory.bucket") {
 		t.Errorf("error should name the replacement 'memory.bucket': %v", err)
+	}
+}
+
+// TestAllowCloneRequiresReadOnly: clone is only safe for an agent that cannot
+// write its worktree, so allow_clone without read_only is a config error, not a
+// silently-granted capability.
+func TestAllowCloneRequiresReadOnly(t *testing.T) {
+	_, err := Load(writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://x }
+stores:
+  main: { kind: postgres, url: u }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+agents:
+  code-implementer:
+    bundle: agents/code-implementer
+    provider: default
+    model: c-model
+    acp:
+      command: ["opencode", "acp"]
+      allow_clone: true
+`))
+	if err == nil {
+		t.Fatal("expected an error for acp.allow_clone without acp.read_only")
+	}
+	if !strings.Contains(err.Error(), "allow_clone") || !strings.Contains(err.Error(), "read_only") {
+		t.Errorf("error should name both keys: %v", err)
 	}
 }
 

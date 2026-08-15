@@ -81,6 +81,7 @@ agents:
     acp:
       command: ["opencode", "acp"]
       read_only: true
+      allow_clone: true
   synthesizer:
     bundle: agents/synthesizer
     skills: [format-markdown, present-coding-plan, pr-authoring]

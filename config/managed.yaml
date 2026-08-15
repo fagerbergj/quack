@@ -94,6 +94,7 @@ agents:
     acp:
       command: ["opencode", "acp"]
       read_only: true
+      allow_clone: true   # clones third-party repos into $TMPDIR - landlock only, no-op under this preset's bwrap; git push stays denied
   synthesizer:
     bundle: agents/synthesizer
     skills: [format-markdown, present-coding-plan]

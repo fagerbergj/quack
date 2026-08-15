@@ -918,7 +918,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			}
 			wsBlock := workspace.PromptBlock(workspaceCaps, cfg.Workspace.CheckCommands)
 			preamble := promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, nil, skillFms, behaviour, grading, wsBlock)
-			env := opencodeEnv(prov, ac, acpSkillPaths(cfg.Skills.Plugins))
+			env := opencodeEnv(prov, ac, acpSkillPaths(cfg.Skills.Plugins), workspaceCaps.Sandbox)
 			env = append(env, acpChildEnv(cfg.Workspace.Env, ac.Acp.Env)...)
 			var permJudge func(ctx context.Context, toolName, title string, input map[string]any) (bool, string)
 			if safetyJudge != nil {
@@ -1151,7 +1151,7 @@ func acpChildEnv(workspaceEnv, agentEnv map[string]string) []string {
 }
 
 // opencodeEnv generates OPENCODE_CONFIG_CONTENT for an ACP agent: provider, model, headless permission policy.
-func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths []string) []string {
+func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths []string, sandbox workspace.SandboxMode) []string {
 	type m = map[string]any
 	apiKey := prov.APIKey
 	if apiKey == "" {
@@ -1160,6 +1160,31 @@ func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths [
 	modelCfg := m{}
 	if ac.ContextWindow > 0 {
 		modelCfg["limit"] = m{"context": ac.ContextWindow, "output": 32768}
+	}
+	// git push: denied for every agent, delivery is gate-owned. Clone is denied too
+	// (#579) except for a read-only acp.allow_clone agent, which is chartered to read
+	// third-party repos the gate never provisions. Clone plus the wide
+	// external_directory it needs (the clone lands outside cwd, #346) rest on the RO
+	// work tree, and only landlock enforces that on the ACP child - WrapArgv wraps it
+	// there and nowhere else - so under bwrap/none allow_clone degrades to denied
+	// rather than to unbounded.
+	allowClone := ac.Acp != nil && ac.Acp.AllowClone && sandbox == workspace.SandboxLandlock
+	if ac.Acp != nil && ac.Acp.AllowClone && !allowClone {
+		slog.Warn("acp.allow_clone ignored: clone needs the read-only work tree OS-enforced, which only sandbox: landlock does for the ACP child",
+			"component", "acp", "sandbox", sandbox)
+	}
+	bash := m{
+		"git push": "deny", "git push *": "deny",
+		"*": "allow",
+	}
+	extDir := m{"*": "deny"}
+	if allowClone {
+		extDir = m{"*": "allow"}
+	} else {
+		bash["git clone"] = "deny"
+		bash["git clone *"] = "deny"
+		bash["gh repo clone"] = "deny"
+		bash["gh repo clone *"] = "deny"
 	}
 	cfg := m{
 		"provider": m{"quack": m{
@@ -1170,13 +1195,8 @@ func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths [
 		}},
 		"model": "quack/" + ac.Model,
 		"permission": m{
-			"bash": m{
-				"git push": "deny", "git push *": "deny",
-				"git clone": "deny", "git clone *": "deny",
-				"gh repo clone": "deny", "gh repo clone *": "deny",
-				"*": "allow",
-			},
-			"external_directory": m{"*": "deny"},
+			"bash":               bash,
+			"external_directory": extDir,
 			"doom_loop":          "deny",
 			"read":               m{"*.env": "deny", "*.env.*": "deny"},
 		},

@@ -59,6 +59,7 @@ code-implementer:
 - `env` — extra subprocess environment, overriding quack's generated defaults.
 - `mcp_servers` — MCP server URLs passed straight through into the subprocess's own MCP config (e.g. context7 for library docs).
 - `read_only` — set on `code-reviewer` and `code-explorer`: the agent never commits or pushes, so the gate skips the commit/push delivery demand and instead reads its verdict out of its final answer.
+- `allow_clone` — set on `code-explorer` only: lifts the `git clone`/`gh repo clone` deny (and the cwd-only `external_directory` boundary) so it can shallow-clone a third-party repo into `$TMPDIR` and read it locally. Requires `read_only`; config validation rejects it otherwise. Takes effect only under `workspace.sandbox: landlock` — the read-only work tree that makes the wider `external_directory` safe is OS-enforced on the ACP subprocess there and nowhere else, so under `bwrap` (the default) or `none` the flag has no effect and clone stays denied. `git push` stays denied for every agent in every mode.
 
 An ACP agent has **no quack tools at all** — it brings its own (opencode's built-in edit/read/shell tools), with the model bound via a generated `OPENCODE_CONFIG_CONTENT` and `git push` denied inside the subprocess (delivery is gate-owned; see [trust-gate.md](trust-gate.md)). quack's skill library is injected via opencode's `skills.paths`, so the same `agents/skills/` content (e.g. the ponytail coding-discipline skills) is available to an ACP worker without it needing quack tool access to read it.
 

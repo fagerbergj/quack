@@ -89,6 +89,7 @@ agents:
       mcp_servers:
         - https://mcp.context7.com/mcp
       read_only: true
+      allow_clone: true
   synthesizer:
     bundle: agents/synthesizer
     skills: [format-markdown, present-coding-plan, pr-authoring]

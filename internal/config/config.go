@@ -404,6 +404,10 @@ type AcpAgentConfig struct {
 	Env        map[string]string `yaml:"env"`
 	McpServers []string          `yaml:"mcp_servers"`
 	ReadOnly   bool              `yaml:"read_only"`
+	// AllowClone lifts the git clone deny for this agent (code-explorer reads
+	// third-party repos the gate never provisions). Requires ReadOnly - see validate -
+	// and takes effect only under sandbox: landlock (see serve.opencodeEnv).
+	AllowClone bool `yaml:"allow_clone"`
 }
 
 func (a AgentConfig) IsGated() bool { return a.Gated == nil || *a.Gated }
@@ -734,6 +738,10 @@ func (c *Config) validate() error {
 		case "", "coding", "research":
 		default:
 			return fmt.Errorf("config: agent %q has unknown memory.bucket %q (known: coding, research)", name, a.Memory.Bucket)
+		}
+		// Cloning is only safe for an agent that cannot deliver code from what it cloned.
+		if a.Acp != nil && a.Acp.AllowClone && !a.Acp.ReadOnly {
+			return fmt.Errorf("config: agent %q sets acp.allow_clone without acp.read_only", name)
 		}
 	}
 	for name := range c.Stores {

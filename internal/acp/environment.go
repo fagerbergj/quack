@@ -50,7 +50,7 @@ func environmentBlock(ctx context.Context, cwd string, caps workspace.Caps) stri
 	if caps.ReadOnly {
 		// Landlock enforces this; a reviewer that doesn't know WHY npm install
 		// bare-fails with EACCES burns a round finding out the hard way.
-		b.WriteString("filesystem: this working tree is READ-ONLY at the OS level (reads and execution work; any write into it - npm install, go build artifacts in-tree, file edits - fails with EACCES). Verify claims by reading code and the PR's CI results instead of building.\n")
+		b.WriteString("filesystem: this working tree is READ-ONLY at the OS level (reads and execution work; any write into it - npm install, go build artifacts in-tree, file edits - fails with EACCES). Verify claims by reading code and the PR's CI results instead of building. $TMPDIR and $HOME stay writable - use them for scratch work.\n")
 	}
 	b.WriteString("</environment_context>")
 	return b.String()
