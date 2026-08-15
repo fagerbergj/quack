@@ -22,8 +22,17 @@ const (
 
 // MarkRunActive records that chatID has turnID in flight, so a crash before StampRunOutcome
 // runs is detectable: ActiveTurnID left non-empty with no live hub/queue signal (#738).
+//
+// Logs its own failure: every caller discards the error, and a lost marker is
+// invisible to ScanOrphanedRuns - the chat then keeps whatever status the run
+// BEFORE it stamped, with nothing at boot to correct it (#920).
 func (s *Store) MarkRunActive(ctx context.Context, chatID, turnID string) error {
-	return s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", chatID).Update("active_turn_id", turnID).Error
+	err := s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", chatID).Update("active_turn_id", turnID).Error
+	if err != nil {
+		slog.Warn("mark run active failed; a crash during this run will not be reconciled at boot",
+			"component", "store", "chat", chatID, "turn", turnID, "err", err)
+	}
+	return err
 }
 
 // StampRunOutcome records a run's terminal status on the chat row and clears the in-flight
