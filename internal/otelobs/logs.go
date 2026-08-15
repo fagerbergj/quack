@@ -61,6 +61,12 @@ const (
 
 	quackNodeKey  = "quack.node"
 	quackRoundKey = "quack.round"
+
+	// QuackModel carries the model a wrapper span (node, worker round) ran
+	// under. Vendor-namespaced on purpose: Langfuse types any span with a
+	// model-named attribute ("model", gen_ai.request.model, ...) as a
+	// GENERATION, and these spans make no model call (#927).
+	QuackModel = "quack.model"
 )
 
 // vars, not consts - attribute.Value has no constant form.

@@ -21,6 +21,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
 // stubModel is a deterministic model.LLM for driving the gated-worker node offline.
@@ -1094,5 +1095,60 @@ func TestJudgeFailureFeedback(t *testing.T) {
 	wrapped := fmt.Errorf("vetting: judge round: %w", ErrJudgeNoVerdict)
 	if status, _ := judgeFailureFeedback(wrapped); status != judgeStatusNoVerdict {
 		t.Errorf("status = %q for a wrapped ErrJudgeNoVerdict, want %q", status, judgeStatusNoVerdict)
+	}
+}
+
+// TestWrapperSpans_ReportNoModel is #927: quack.node and quack.worker.round
+// wrap a whole node or ACP round and make no model call of their own, so they
+// must carry no attribute a consumer reads as a model - that is what types an
+// observation as a GENERATION in Langfuse and drops wall-clock wrappers into
+// every per-model latency and cost aggregate. Session identity (#922) stays.
+func TestWrapperSpans_ReportNoModel(t *testing.T) {
+	exp := withTestTracer(t)
+	cfg := Config{ChatID: "chat-1", Agent: "code-implementer", JudgeRounds: 1, Threshold: 0.7, Rubric: "score the answer 0-10"}
+	if res := runGatedRefineOnce(t, cfg, "Implemented the feature; this answer is long enough to clear the length check."); !res.Passed {
+		t.Fatalf("gate should pass: %+v", res)
+	}
+
+	byName := map[string]map[string]string{}
+	for _, s := range exp.GetSpans() {
+		attrs := map[string]string{}
+		for _, kv := range s.Attributes {
+			attrs[string(kv.Key)] = kv.Value.Emit()
+		}
+		byName[s.Name] = attrs
+	}
+
+	// The attribute keys that make an OTel span a Langfuse GENERATION.
+	generationKeys := []string{
+		"model", otelobs.GenAIRequestModel, otelobs.GenAIResponseModel, "llm.model_name",
+		otelobs.GenAIUsageInputTokens, otelobs.GenAIUsageOutputTokens,
+	}
+	for _, name := range []string{"quack.node", "quack.worker.round"} {
+		attrs, ok := byName[name]
+		if !ok {
+			t.Fatalf("span %q was never recorded", name)
+		}
+		for _, k := range generationKeys {
+			if v, ok := attrs[k]; ok {
+				t.Errorf("%s carries %s=%q - that types it as a GENERATION with no token usage", name, k, v)
+			}
+		}
+		if got := attrs[otelobs.QuackModel]; got != "stub-fixed" {
+			t.Errorf("%s %s = %q, want stub-fixed - the model stays readable under quack's own namespace", name, otelobs.QuackModel, got)
+		}
+		if got := attrs[otelobs.GenAIConversationID]; got != "chat-1" {
+			t.Errorf("%s %s = %q, want chat-1 - session grouping is unrelated to the type problem", name, otelobs.GenAIConversationID, got)
+		}
+	}
+
+	// Control: the real model call in the same trace still reports its model.
+	// Only when ADK's span reaches this exporter - ADK caches its tracer at
+	// init, so it stays bound to whichever provider a package-mates' test
+	// installed first.
+	if attrs, ok := byName["generate_content stub-fixed"]; ok {
+		if got := attrs[otelobs.GenAIRequestModel]; got != "stub-fixed" {
+			t.Errorf("generation span %s = %q, want stub-fixed", otelobs.GenAIRequestModel, got)
+		}
 	}
 }
