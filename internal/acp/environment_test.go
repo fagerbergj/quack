@@ -97,18 +97,25 @@ func TestEnvironmentBlockEmptyDir(t *testing.T) {
 	}
 }
 
-// TestEnvironmentBlockDisclosesReadOnly: a read-only round's block states the
-// filesystem is read-only (the landlock grant already enforces it - a
-// reviewer burning a round on an unexplained npm install EACCES is the bug
-// this line fixes), and stays silent when the tree is writable.
+// TestEnvironmentBlockDisclosesReadOnly: a read-only round's block names both
+// sides - which path is read-only and which are writable. Naming only the
+// read-only half is what left reviewers either burning a round on an
+// unexplained EACCES or abandoning "run it" entirely. Stays silent when the
+// tree is writable.
 func TestEnvironmentBlockDisclosesReadOnly(t *testing.T) {
 	dir := t.TempDir()
 
 	caps := workspace.DefaultCaps()
 	caps.ReadOnly = true
 	block := environmentBlock(context.Background(), dir, caps)
-	if !strings.Contains(block, "filesystem: this working tree is READ-ONLY") {
-		t.Errorf("block = %q, want a read-only filesystem disclosure line", block)
+	if !strings.Contains(block, "filesystem: read-only") || !strings.Contains(block, dir) {
+		t.Errorf("block = %q, want the read-only path named", block)
+	}
+	if !strings.Contains(block, "filesystem: writable: ") {
+		t.Errorf("block = %q, want the writable paths named - the half that makes running the change possible", block)
+	}
+	if !strings.Contains(block, workspace.SandboxTmpDir(caps)) {
+		t.Errorf("block = %q, want the scratch dir named as writable", block)
 	}
 	if !strings.Contains(block, "EACCES") {
 		t.Errorf("block = %q, want the EACCES consequence named", block)

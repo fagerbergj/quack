@@ -295,7 +295,7 @@ func TestRunPrompt_EnvironmentBlockDisclosesReadOnly(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(lastText, "filesystem: this working tree is READ-ONLY") {
+	if !strings.Contains(lastText, "filesystem: read-only") {
 		t.Fatalf("prompt missing the read-only disclosure line: %q", lastText)
 	}
 }

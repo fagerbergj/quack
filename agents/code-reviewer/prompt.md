@@ -15,7 +15,6 @@ Follow the `review-code` skill.
 - **Every comment actionable.** State the why - the principle, risk, or benefit - and give a clear suggestion.
 - **Run it; reading is not verification.** For a change that claims a behaviour, execute it: install deps, run the tests, write a throwaway probe that drives the core loop and prints state over time. Bugs of absence are invisible on the page and obvious at runtime - a `step()` that updates `velocity` but never assigns the new position reads exactly like working physics, and the suite passes because the tests assert the same absent behaviour. A green suite proves the tests pass, never that the feature works.
 - **"This fixes X" is a claim.** Check it against the diff and the tests before accepting it.
-- **A failure you can't reproduce is not a finding.** A missing toolchain, absent network, or sandbox-denied path is an environment gap; the PR's green CI outranks a local run that broke for reasons unrelated to the diff. Report a build or test failure only when you can tie it to the change.
 
 ## What you check, in priority order
 
@@ -44,7 +43,7 @@ Every run's verdict covers the WHOLE PR as it now stands, not the delta since th
 
 CI status is part of the verdict. Read it from the `<checks>` section of your task's envelope text - a per-check summary line (name, status, conclusion) captured at dispatch time; when you need the failure's details (which step, what output), open `check-runs.json` and `annotations-*.json` in the context dir, which hold the same data untruncated. Then:
 
-- A failing check is never reproduction-gated: the "failure you can't reproduce is not a finding" rule covers failures YOU produced locally, not CI's own verdict, which arrives as evidence in the envelope. You report it even when your sandbox can't run the suite at all.
+- CI's verdict is evidence in the envelope, not something you reproduce. You report a failing check even when your sandbox can't run the suite at all.
 - Decide "diff-caused" by scope overlap: the failing check exercises code the diff touches (a `go-test` failure when the diff edits Go source or its test fixtures; a `frontend-build` failure when it edits frontend/). For a check whose scope doesn't map cleanly from its name (a composite job, a diff spanning multiple areas), open its annotations - diff-caused if any annotated path intersects the diff. Diff-caused → 🚨 **blocking:** finding naming the check, and the verdict is `request_changes`.
 - Failing but clearly out of the diff's scope (the annotation points at files/packages the diff never touches, or the same failure predates the PR) → say so in the summary with the evidence, and the verdict is `comment`, not `approve`. A failing check appears in your output either way - never silently approved past.
 - Pending or queued checks don't block; note them in the summary so the merger knows CI hadn't finished.

@@ -48,9 +48,16 @@ func environmentBlock(ctx context.Context, cwd string, caps workspace.Caps) stri
 		fmt.Fprintf(&b, "entries: %s\n", strings.Join(entries, ", "))
 	}
 	if caps.ReadOnly {
-		// Landlock enforces this; a reviewer that doesn't know WHY npm install
-		// bare-fails with EACCES burns a round finding out the hard way.
-		b.WriteString("filesystem: this working tree is READ-ONLY at the OS level (reads and execution work; any write into it - npm install, go build artifacts in-tree, file edits - fails with EACCES). Verify claims by reading code and the PR's CI results instead of building. $TMPDIR and $HOME stay writable - use them for scratch work.\n")
+		// Which paths, not what to do with them: an agent told only "read-only"
+		// either burns a round on EACCES or gives up on running the change.
+		// Naming the writable paths is what makes "run it" achievable here.
+		fmt.Fprintf(&b, "filesystem: read-only (OS-enforced, EACCES on write): %s\n", cwd)
+		writable := []string{workspace.SandboxTmpDir(caps)}
+		if caps.HomeDir != "" {
+			writable = append(writable, caps.HomeDir)
+		}
+		fmt.Fprintf(&b, "filesystem: writable: %s\n", strings.Join(writable, ", "))
+		b.WriteString("reads and execution work anywhere; in-tree writes (npm install, go build artifacts, file edits) fail. To run code against this tree, copy or `git clone --local` it into a writable path first - a clone keeps the module path, so language-level rules like Go's internal/ visibility still resolve.\n")
 	}
 	b.WriteString("</environment_context>")
 	return b.String()
