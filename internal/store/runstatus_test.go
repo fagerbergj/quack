@@ -70,6 +70,41 @@ func TestScanOrphanedRuns_ReSurfacesAlreadyInterrupted(t *testing.T) {
 	}
 }
 
+// TestScanOrphanedRuns_ClearsInterruptedWithLeftoverTurnID is #920's compound
+// state: a chat already stamped interrupted (a previous shutdown's drain) that
+// ALSO still carries an ActiveTurnID - the shape a process killed before its
+// stamp landed leaves behind. Both halves must settle in one scan, because a
+// leftover ActiveTurnID is what makes the chat read as permanently busy;
+// recovering it by hand with an UPDATE is not a recovery path.
+func TestScanOrphanedRuns_ClearsInterruptedWithLeftoverTurnID(t *testing.T) {
+	st := newRunStatusTestStore(t)
+	ctx := context.Background()
+	if err := st.SetChatOrigin(ctx, "chat-wedged", "u1", ""); err != nil {
+		t.Fatalf("SetChatOrigin: %v", err)
+	}
+	if err := st.StampRunOutcome(ctx, "chat-wedged", RunStatusInterrupted, ""); err != nil {
+		t.Fatalf("StampRunOutcome: %v", err)
+	}
+	if err := st.MarkRunActive(ctx, "chat-wedged", "turn-abandoned"); err != nil {
+		t.Fatalf("MarkRunActive: %v", err)
+	}
+
+	if _, err := st.ScanOrphanedRuns(ctx); err != nil {
+		t.Fatalf("ScanOrphanedRuns: %v", err)
+	}
+
+	c, err := st.GetChat(ctx, "chat-wedged")
+	if err != nil || c == nil {
+		t.Fatalf("GetChat: %v, %v", c, err)
+	}
+	if c.ActiveTurnID != "" {
+		t.Fatalf("ActiveTurnID = %q, want cleared - the chat is still wedged after boot", c.ActiveTurnID)
+	}
+	if c.RunStatus != RunStatusInterrupted {
+		t.Errorf("RunStatus = %q, want %q", c.RunStatus, RunStatusInterrupted)
+	}
+}
+
 // TestScanOrphanedRuns_LeavesHealthyChatsAlone is the negative case: idle,
 // failed, and needs_input chats with no ActiveTurnID must never be touched.
 func TestScanOrphanedRuns_LeavesHealthyChatsAlone(t *testing.T) {
