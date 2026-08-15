@@ -169,7 +169,7 @@ func sweepBaselineTemp(ctx context.Context, ttl time.Duration, prune WorktreePru
 		}
 		sz := dirSize(dir)
 		pruneWorktreesUnder(ctx, dir, prune)
-		if err := os.RemoveAll(dir); err != nil {
+		if err := removeAll(dir); err != nil {
 			slog.Warn("workspace gc: remove baseline scratch failed", "component", "workspace", "dir", dir, "err", err)
 			continue
 		}
@@ -206,7 +206,7 @@ func sweepHomeTmp(ttl time.Duration, jail *Jail) (removed int, bytes int64) {
 				continue
 			}
 			sz := dirSize(p)
-			if err := os.RemoveAll(p); err != nil {
+			if err := removeAll(p); err != nil {
 				slog.Warn("workspace gc: remove home tmp entry failed", "component", "workspace", "path", p, "err", err)
 				continue
 			}
@@ -287,7 +287,7 @@ func anyChatActiveForUser(jail *Jail, userID string, isActive ActiveChatFunc) bo
 // resetHomeDir empties home in one shot - opencode.db's schema is not ours,
 // so we reclaim the whole opaque directory rather than edit inside it.
 func resetHomeDir(home string) error {
-	if err := os.RemoveAll(home); err != nil {
+	if err := removeAll(home); err != nil {
 		return err
 	}
 	return os.MkdirAll(home, 0o700)
@@ -308,6 +308,28 @@ func pruneWorktreesUnder(ctx context.Context, root string, prune WorktreePruner)
 		}
 		return nil
 	})
+}
+
+// removeAll deletes path, restoring write permission on directories that deny
+// it before retrying. Go's module cache marks cached deps 0444 and their
+// parent dirs 0555, so a plain RemoveAll fails with EACCES on unlink - the
+// same reason `go clean -modcache` has to exist. Fast path first: the chmod
+// walk only runs once a plain removal has actually failed.
+func removeAll(path string) error {
+	err := os.RemoveAll(path)
+	if err == nil {
+		return nil
+	}
+	_ = filepath.WalkDir(path, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if d.IsDir() {
+			_ = os.Chmod(p, 0o700)
+		}
+		return nil
+	})
+	return os.RemoveAll(path)
 }
 
 // dirSize sums regular-file sizes under root. Best-effort.

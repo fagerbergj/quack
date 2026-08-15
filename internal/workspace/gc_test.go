@@ -482,3 +482,37 @@ func TestSweepBaselineWorktreeReapingKeepsParentConsistent(t *testing.T) {
 		t.Fatalf("git worktree add after reap: %v\n%s", err, out)
 	}
 }
+
+// TestRemoveAllReclaimsReadOnlyModuleCache is the production failure: GC's
+// quota reset died with `unlinkat .../go/pkg/mod/dario.cat/mergo@v1.0.2/
+// issue131_test.go: permission denied` because Go writes cached deps 0444
+// inside 0555 parents, and you cannot unlink out of a directory you cannot
+// write. First half proves the tree really does defeat os.RemoveAll.
+func TestRemoveAllReclaimsReadOnlyModuleCache(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the write bit; the failure this test reproduces cannot happen")
+	}
+	root := t.TempDir()
+	modDir := filepath.Join(root, "go", "pkg", "mod", "dario.cat", "mergo@v1.0.2")
+	if err := os.MkdirAll(modDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(modDir, "issue131_test.go"), []byte("package mergo\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(modDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	// Without this a failing test leaves an undeletable dir behind for t.TempDir's own cleanup.
+	t.Cleanup(func() { _ = os.Chmod(modDir, 0o755) })
+
+	if err := os.RemoveAll(root); err == nil {
+		t.Fatal("os.RemoveAll unexpectedly succeeded; the test no longer reproduces the modcache failure")
+	}
+	if err := removeAll(root); err != nil {
+		t.Fatalf("removeAll: %v", err)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Errorf("tree should be gone, stat err = %v", err)
+	}
+}
