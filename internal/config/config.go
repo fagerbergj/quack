@@ -406,7 +406,8 @@ type AcpAgentConfig struct {
 	ReadOnly   bool              `yaml:"read_only"`
 	// AllowClone lifts the git clone deny for this agent (code-explorer reads
 	// third-party repos the gate never provisions). Requires ReadOnly - see validate -
-	// and takes effect only under sandbox: landlock (see serve.opencodeEnv).
+	// and takes effect only under a sandbox that enforces a boundary on the ACP
+	// child, landlock or bwrap (see serve.opencodeEnv / workspace.EnforcesBoundary).
 	AllowClone bool `yaml:"allow_clone"`
 }
 

@@ -44,8 +44,9 @@ type procHandle struct {
 // through the SAME sandbox seam every other child runs inside
 // (workspace.WrapArgv) - RW (or RO, per caps.ReadOnly - #754) is cwd's own
 // scope (the node dir), RO adds the skill paths opencode needs to read
-// (ExtraRO) on top of the caps' own system + exec_path grants. bwrap/none
-// pass Command through unchanged today (see WrapArgv's doc).
+// (ExtraRO) on top of the caps' own system + exec_path grants. landlock
+// applies them as a ruleset, bwrap as identity bind mounts (#921); `none`
+// passes Command through unchanged.
 func (a *Agent) wrappedArgv(cwd string, extraRO []string, caps workspace.Caps) []string {
 	return workspace.WrapArgv(cwd, a.opts.Command, caps, append(append([]string{}, a.opts.ExtraRO...), extraRO...), nil)
 }

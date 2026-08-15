@@ -314,8 +314,8 @@ func TestResolveSandboxLandlockSucceeds(t *testing.T) {
 
 // TestWrapArgvLandlockIncludesExtraGrants: WrapArgv adds extraRO/extraRW on
 // top of the caller's own scope (internal/acp's skill paths, and worktree
-// isolation's future extraRW), and mode none/bwrap pass argv through
-// unchanged (see WrapArgv's ponytail note on the bwrap ACP ceiling).
+// isolation's future extraRW). The bwrap and none halves live in
+// wrapargv_bwrap_test.go.
 func TestWrapArgvLandlockIncludesExtraGrants(t *testing.T) {
 	dir := t.TempDir()
 	argv := []string{"opencode", "acp"}
@@ -325,13 +325,6 @@ func TestWrapArgvLandlockIncludesExtraGrants(t *testing.T) {
 	for _, want := range []string{SandboxExecArg, dir, "/skills", "/extra-rw", "opencode acp"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("WrapArgv(landlock) = %v, missing %q", got, want)
-		}
-	}
-
-	for _, mode := range []SandboxMode{SandboxNone, SandboxBwrap, ""} {
-		unwrapped := WrapArgv(dir, argv, Caps{Sandbox: mode}, []string{"/skills"}, nil)
-		if len(unwrapped) != 2 || unwrapped[0] != "opencode" || unwrapped[1] != "acp" {
-			t.Errorf("WrapArgv(%q) = %v, want argv unchanged", mode, unwrapped)
 		}
 	}
 }

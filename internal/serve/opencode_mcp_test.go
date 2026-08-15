@@ -106,44 +106,44 @@ func TestOpencodeEnvDeniesCloneAndPush(t *testing.T) {
 
 // TestOpencodeEnvAllowsCloneForAllowCloneAgent: the code-explorer is chartered to read
 // third-party repos the gate never provisions, so acp.allow_clone lifts the clone deny
-// (and the cwd-only external_directory boundary, since the clone lands in $TMPDIR) -
-// but only under landlock, the one mode where the RO work tree that makes the wide
-// external_directory safe is actually OS-enforced on the ACP child (workspace.WrapArgv).
+// (and the cwd-only external_directory boundary, since the clone lands in $TMPDIR) - in
+// every mode that OS-enforces the RO work tree the wide external_directory rests on.
+// Since #921 that is landlock AND bwrap, both of which workspace.WrapArgv wraps.
 // git push stays denied - allow_clone is about reading, never delivering.
 func TestOpencodeEnvAllowsCloneForAllowCloneAgent(t *testing.T) {
-	bash, extDir := opencodePermissions(t, config.AgentConfig{
-		Model: "m",
-		Acp:   &config.AcpAgentConfig{Command: []string{"opencode", "acp"}, ReadOnly: true, AllowClone: true},
-	}, workspace.SandboxLandlock)
-	for _, cmd := range []string{"git clone", "git clone *", "gh repo clone", "gh repo clone *"} {
-		if got, ok := bash[cmd]; ok {
-			t.Errorf("bash permission[%q] = %q, want no deny entry (falls through to the %q allow)", cmd, got, "*")
-		}
-	}
-	for _, denied := range []string{"git push", "git push *"} {
-		if got := bash[denied]; got != "deny" {
-			t.Errorf("bash permission[%q] = %q, want %q - delivery stays gate-owned", denied, got, "deny")
-		}
-	}
-	if extDir["*"] != "allow" {
-		t.Errorf(`external_directory["*"] = %q, want "allow" (the clone lives outside cwd; the sandbox is the boundary)`, extDir["*"])
-	}
-}
-
-// TestOpencodeEnvAllowCloneNeedsLandlock: outside landlock the ACP child is never
-// wrapped (bwrap, the DEFAULT) or has no boundary at all (none), so `external_directory:
-// allow` would let opencode's file tools read and write anywhere the server user can -
-// ~/.ssh, ~/.aws, .env. allow_clone degrades to the pre-#917 closed shape instead.
-func TestOpencodeEnvAllowCloneNeedsLandlock(t *testing.T) {
-	for _, mode := range []workspace.SandboxMode{workspace.SandboxBwrap, workspace.SandboxNone} {
+	for _, mode := range []workspace.SandboxMode{workspace.SandboxLandlock, workspace.SandboxBwrap} {
 		t.Run(string(mode), func(t *testing.T) {
 			bash, extDir := opencodePermissions(t, config.AgentConfig{
 				Model: "m",
 				Acp:   &config.AcpAgentConfig{Command: []string{"opencode", "acp"}, ReadOnly: true, AllowClone: true},
 			}, mode)
-			assertClosedShape(t, bash, extDir)
+			for _, cmd := range []string{"git clone", "git clone *", "gh repo clone", "gh repo clone *"} {
+				if got, ok := bash[cmd]; ok {
+					t.Errorf("bash permission[%q] = %q, want no deny entry (falls through to the %q allow)", cmd, got, "*")
+				}
+			}
+			for _, denied := range []string{"git push", "git push *"} {
+				if got := bash[denied]; got != "deny" {
+					t.Errorf("bash permission[%q] = %q, want %q - delivery stays gate-owned", denied, got, "deny")
+				}
+			}
+			if extDir["*"] != "allow" {
+				t.Errorf(`external_directory["*"] = %q, want "allow" (the clone lives outside cwd; the sandbox is the boundary)`, extDir["*"])
+			}
 		})
 	}
+}
+
+// TestOpencodeEnvAllowCloneNeedsABoundary: under `none` there is no OS boundary at
+// all, so `external_directory: allow` would let opencode's file tools read and write
+// anywhere the server user can - ~/.ssh, ~/.aws, .env. allow_clone degrades to the
+// pre-#917 closed shape instead rather than to unbounded.
+func TestOpencodeEnvAllowCloneNeedsABoundary(t *testing.T) {
+	bash, extDir := opencodePermissions(t, config.AgentConfig{
+		Model: "m",
+		Acp:   &config.AcpAgentConfig{Command: []string{"opencode", "acp"}, ReadOnly: true, AllowClone: true},
+	}, workspace.SandboxNone)
+	assertClosedShape(t, bash, extDir)
 }
 
 // TestOpencodeEnvReadOnlyAloneDoesNotAllowClone: allow_clone is the ONLY key that
