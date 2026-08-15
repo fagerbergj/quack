@@ -38,6 +38,8 @@ Quack's own spans are named `quack.<name>` (ADK's, above, are not). The vocabula
 | `quack.delivery` | The gate-owned delivery step (commit/push/PR/review). |
 | `quack.acp.spawn` / `.handshake` / `.prompt` / `.round` | The external ACP subprocess lifecycle (`opencode acp`) for code-implementer/reviewer/explorer nodes. |
 
+Quack's spans wrap work, not model calls — the model calls are ADK's `generate_content` spans nested inside them. So a quack span never carries `model` or `gen_ai.request.model`: OTel consumers (Langfuse among them) read a model-named attribute as "this is a model call" and would fold node and round wall-clock into every per-model latency and cost aggregate. Where the model a wrapper ran under is still worth having (`quack.node`, `quack.worker.round`), it goes under `quack.model`.
+
 A fire-and-forget span (e.g. the async memory commit) uses `StartLinked` instead of a child span — it gets its own root, linked to (not nested under) the run that triggered it, since the run may finish and close its own span before the commit does.
 
 `TraceIDOf(ctx)` surfaces the active trace id for cross-referencing a durable event-log line (e.g. `delivery_result`) into Tempo by hand.

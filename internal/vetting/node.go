@@ -206,7 +206,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID),
 		attribute.String("node_id", nodeID),
 		attribute.String("agent", cfg.Agent),
-		attribute.String("model", modelName(workerModel)),
+		attribute.String(otelobs.QuackModel, modelName(workerModel)),
 	)
 	defer func() {
 		span.SetAttributes(
@@ -912,7 +912,7 @@ func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Conf
 		attribute.String("node_id", cfg.NodeID),
 		attribute.String("run_id", runID),
 		attribute.String("agent", cfg.Agent),
-		attribute.String("model", modelName(workerModel)),
+		attribute.String(otelobs.QuackModel, modelName(workerModel)),
 		attribute.String("stage", stage),
 	)
 	coords := ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, Round: runID, User: cfg.User, Source: cfg.Source}
