@@ -977,11 +977,6 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 		det["grounded_in_retrieval"] = criterionScore{Score: 0, Reason: "deterministic: no web_search/web_fetch activity this session - " +
 			"research the task and cite what you retrieve; if you are blocked on information only the user has, call ask_user (never write a question to the user as your answer)"}
 	}
-	// Read-only external agent that cloned but did zero reads/greps: the clone alone is not exploration.
-	if cfg.ExternalWorker && cfg.ReadOnly && len(act.clonedRepos) > 0 && len(act.paths) == 0 && act.greps == 0 {
-		det["exploration_grounded"] = criterionScore{Score: 0, Reason: "deterministic: repo cloned but zero read_file/grep calls - " +
-			"the answer's findings are not grounded in anything actually read; explore the clone (read_file/grep) before reporting"}
-	}
 	if cs, details, hasCites := citationScore(answer, act, resolveCiteCloneRoots(cfg, act)); hasCites {
 		det["cites_sources"] = criterionScore{Score: cs, Reason: citeReason(cs, details)}
 	}
@@ -1196,9 +1191,6 @@ func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity 
 					s.applyDelivery(p.FunctionCall)
 				case "cd":
 					pendingCd[p.FunctionCall.ID] = true
-				case "search":
-					// ACP grep/glob - counted regardless of success/failure.
-					s.act.greps++
 				default:
 					if isWorkspaceTool(p.FunctionCall.Name) {
 						pendingWs[p.FunctionCall.ID] = p.FunctionCall.Args

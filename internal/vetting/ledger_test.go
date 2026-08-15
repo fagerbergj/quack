@@ -338,10 +338,9 @@ func TestActivityWrittenTracksCwd(t *testing.T) {
 
 // TestGitCloneCountsAsRetrieval reenacts the live routing-failure's second
 // half (2026-07-10): a node following the research-git-repos flow CLONES a
-// repo instead of web-fetching it, then cites the repo URL - citationScore
-// scored it 0.00 backing because git_clone landed in neither fetched nor
-// seen. A successful clone must enter act.clonedRepos/clonedDirs (full-backing
-// credit: the repo's whole contents are locally available), and the ledger
+// repo instead of web-fetching it, and grounded_in_retrieval fired because
+// git_clone landed in neither fetched nor seen. A successful clone must enter
+// act.clonedRepos/clonedDirs and satisfy the retrieval check, and the ledger
 // entry is unchanged.
 func TestGitCloneCountsAsRetrieval(t *testing.T) {
 	svc := session.InMemoryService()
@@ -381,14 +380,11 @@ func TestGitCloneCountsAsRetrieval(t *testing.T) {
 	if len(act.clonedDirs) != 1 || act.clonedDirs[0] != "repo" {
 		t.Fatalf("act.clonedDirs = %v, want [repo]", act.clonedDirs)
 	}
-	// citationScore gives a citation of the cloned repo full backing.
-	answer := "The repo's entrypoint is documented in [the repository](" + repoURL + ")."
-	score, details, ok := citationScore(answer, act, nil)
-	if !ok {
-		t.Fatal("citationScore abstained despite recorded retrieval")
-	}
-	if score != 1.0 {
-		t.Errorf("citationScore = %v, want 1.0 backing for the cloned repo URL (details: %+v)", score, details)
+	// The clone is retrieval: grounded_in_retrieval must not fire on it.
+	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
+	got := foldDeterministic(ctx, v, "The repo's entrypoint is cmd/main.go.", act, Config{RequireRetrieval: true})
+	if _, present := got.Criteria["grounded_in_retrieval"]; present {
+		t.Error("grounded_in_retrieval fired despite a recorded clone")
 	}
 	// Ledger behavior unchanged: the git_clone op is still recorded.
 	if len(act.workspace) != 1 || act.workspace[0].tool != "git_clone" {

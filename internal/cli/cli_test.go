@@ -266,10 +266,10 @@ func TestEmitFillsBlankBackendURL(t *testing.T) {
 	}
 }
 
-// TestEmitServerConfigCoding: the coding feature emits the three coding agents,
-// the workspace section (sandbox + run_command/run_code guards), and loads
-// through the real config loader. The guard tier tracks the judge: judge+confirm
-// with a judge model, confirm without.
+// TestEmitServerConfigCoding: the coding feature emits the three coding agents
+// as ACP workers (no tools: list - quack has no native repo/exec tools), the
+// workspace section the ACP children run inside, and loads through the real
+// config loader.
 func TestEmitServerConfigCoding(t *testing.T) {
 	t.Setenv("QUACK_LLM_API_KEY", "k")
 	base := InitAnswers{
@@ -297,6 +297,18 @@ func TestEmitServerConfigCoding(t *testing.T) {
 			if ag.Model != "coder-x" {
 				t.Errorf("%s model = %q, want coder-x", want, ag.Model)
 			}
+			if ag.Acp == nil || len(ag.Acp.Command) == 0 {
+				t.Errorf("%s must be an ACP agent (coding tools are not in the registry)", want)
+			}
+			if len(ag.Tools) != 0 {
+				t.Errorf("%s tools = %v, want none: an ACP worker builds no quack tools", want, ag.Tools)
+			}
+		}
+		if !cfg.Agents["code-explorer"].Acp.ReadOnly || !cfg.Agents["code-reviewer"].Acp.ReadOnly {
+			t.Error("explorer and reviewer must be read_only ACP agents")
+		}
+		if cfg.Agents["code-implementer"].Acp.ReadOnly {
+			t.Error("the implementer must not be read_only")
 		}
 		if cfg.Agents["code-implementer"].JudgeRounds != 8 {
 			t.Errorf("implementer judge_rounds = %d, want 8", cfg.Agents["code-implementer"].JudgeRounds)
@@ -304,12 +316,9 @@ func TestEmitServerConfigCoding(t *testing.T) {
 		if cfg.Workspace.Sandbox != "none" {
 			t.Errorf("workspace.sandbox = %q, want none", cfg.Workspace.Sandbox)
 		}
-		if got := cfg.Workspace.Guards["run_code"]; got != "judge+confirm" {
-			t.Errorf("guards[run_code] = %q, want judge+confirm", got)
-		}
 	})
 
-	t.Run("no judge downgrades guards, blank coder model reuses main", func(t *testing.T) {
+	t.Run("blank coder model reuses main", func(t *testing.T) {
 		a := base
 		path := filepath.Join(t.TempDir(), "quack.yaml")
 		if err := os.WriteFile(path, []byte(EmitServerConfig(a)), 0o644); err != nil {
@@ -318,9 +327,6 @@ func TestEmitServerConfigCoding(t *testing.T) {
 		cfg, err := loadConfigForTest(path)
 		if err != nil {
 			t.Fatalf("emitted coding config failed to load: %v\n---\n%s", err, EmitServerConfig(a))
-		}
-		if got := cfg.Workspace.Guards["run_command"]; got != "confirm" {
-			t.Errorf("guards[run_command] = %q, want confirm without a judge", got)
 		}
 		if got := cfg.Agents["code-implementer"].Model; got != "m" {
 			t.Errorf("blank coder model should reuse main, got %q", got)

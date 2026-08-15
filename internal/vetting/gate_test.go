@@ -226,13 +226,12 @@ func TestCitationScoreNormalizesAnchorsAndSlashes(t *testing.T) {
 }
 
 // TestCitationScoreClonedRepoGrounding reenacts the live failure (2026-07-12):
-// an explore-repo node cloned a repo, read files inside it via read_file, and
-// cited (a) a blob URL under the cloned repo and (b) local file paths - honest,
+// an explore-repo node cited local file paths inside a clone - honest,
 // fully-grounded citations that scored 0.25 mean backing and sank a node the
-// judge had passed. Cloned-repo grounding is full backing; fabrication
-// (un-cloned repos, untouched paths) still scores 0. Local paths are now
-// disk-verified against a real clone root, not the ledger - act.paths is left
-// EMPTY on purpose to prove disk verification alone backs the real files.
+// judge had passed. Local paths are disk-verified against a real clone root,
+// not the ledger - act.paths is left EMPTY on purpose to prove disk
+// verification alone backs the real files. Fabricated paths still score 0, and
+// so do bare repo URLs: no web fetch/search backs them.
 func TestCitationScoreClonedRepoGrounding(t *testing.T) {
 	root := t.TempDir()
 	writeCiteFile(t, root, "games-repo/app/games.ts", "export {};\n")
@@ -240,32 +239,25 @@ func TestCitationScoreClonedRepoGrounding(t *testing.T) {
 	writeCiteFile(t, root, "games-repo/README.md", "# games\n")
 
 	answer := strings.Join([]string{
-		"[README.md](https://github.com/fagerbergj/games/blob/main/README.md)", // URL under the cloned repo → 1.0
-		"[games.ts](games-repo/app/games.ts)",                                  // real file on disk → 1.0
-		"[board.ts](games-repo/lib/board.ts)",                                  // real file, never in the (empty) ledger → 1.0
-		"[readme](games-repo/README.md#usage)",                                 // fragment dropped, real file → 1.0
-		"[fabricated](docs/never-touched.md)",                                  // does not exist on disk → 0.0
-		"[not-that-dir](games-repo-extra/x.ts)",                                // does not exist on disk → 0.0
-		"[other-repo](https://github.com/fagerbergj/games-extra)",              // segment boundary: clone of …/games doesn't back …/games-extra → 0.0
-		"[uncloned](https://github.com/other/thing)",                           // URL to a repo never cloned → 0.0
+		"[games.ts](games-repo/app/games.ts)",        // real file on disk → 1.0
+		"[board.ts](games-repo/lib/board.ts)",        // real file, never in the (empty) ledger → 1.0
+		"[readme](games-repo/README.md#usage)",       // fragment dropped, real file → 1.0
+		"[fabricated](docs/never-touched.md)",        // does not exist on disk → 0.0
+		"[not-that-dir](games-repo-extra/x.ts)",      // does not exist on disk → 0.0
+		"[uncloned](https://github.com/other/thing)", // never fetched or searched → 0.0
 	}, " ")
-	act := workerActivity{
-		clonedRepos: []string{"https://github.com/fagerbergj/games.git"}, // .git suffix normalized away
-	}
 
-	score, details, ok := citationScore(answer, act, []string{root})
+	score, details, ok := citationScore(answer, workerActivity{}, []string{root})
 	if !ok {
-		t.Fatal("citationScore abstained despite a clone root and cloned-repo URL activity")
+		t.Fatal("citationScore abstained despite a clone root")
 	}
 	want := map[string]float64{
-		"https://github.com/fagerbergj/games/blob/main/README.md": 1.0,
-		"games-repo/app/games.ts":                                 1.0,
-		"games-repo/lib/board.ts":                                 1.0,
-		"games-repo/README.md#usage":                              1.0,
-		"docs/never-touched.md":                                   0.0,
-		"games-repo-extra/x.ts":                                   0.0,
-		"https://github.com/fagerbergj/games-extra":               0.0,
-		"https://github.com/other/thing":                          0.0,
+		"games-repo/app/games.ts":        1.0,
+		"games-repo/lib/board.ts":        1.0,
+		"games-repo/README.md#usage":     1.0,
+		"docs/never-touched.md":          0.0,
+		"games-repo-extra/x.ts":          0.0,
+		"https://github.com/other/thing": 0.0,
 	}
 	got := map[string]float64{}
 	for _, d := range details {
@@ -276,7 +268,7 @@ func TestCitationScoreClonedRepoGrounding(t *testing.T) {
 			t.Errorf("citation %s scored %.2f, want %.2f", target, got[target], w)
 		}
 	}
-	if wantMean := 4.0 / 8.0; score != wantMean {
+	if wantMean := 3.0 / 6.0; score != wantMean {
 		t.Errorf("mean score = %.3f, want %.3f (details: %+v)", score, wantMean, details)
 	}
 }
@@ -684,71 +676,5 @@ func TestFoldDeterministic_RetrievalPresentNotPenalized(t *testing.T) {
 	got := foldDeterministic(context.Background(), v, "Answer citing [x](https://ex.com/a).", act, Config{RequireRetrieval: true})
 	if _, present := got.Criteria["grounded_in_retrieval"]; present {
 		t.Fatal("grounded_in_retrieval penalty applied despite recorded retrieval")
-	}
-}
-
-// TestFoldDeterministic_ExplorationGroundedCatchesFabrication: the #289 live
-// failure - a code-explorer node clones a repo, performs ZERO read_file/grep
-// calls, and still emits a confident, substantive "survey" of it. The clone
-// alone satisfies grounded_in_retrieval, so exploration_grounded is the
-// backstop that must sink the score to 0 (weakest-link) regardless of how
-// good the judge's other criteria look.
-func TestFoldDeterministic_ExplorationGroundedCatchesFabrication(t *testing.T) {
-	act := workerActivity{clonedRepos: []string{"https://github.com/org/repo"}, clonedDirs: []string{"repo"}}
-	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
-	cfg := Config{ExternalWorker: true, ReadOnly: true}
-	got := foldDeterministic(context.Background(), v, "internal/engine/ is a 319k-line monolith spanning...", act, cfg)
-	if got.Score != 0 {
-		t.Fatalf("score = %v, want 0 (weakest-link on exploration_grounded)", got.Score)
-	}
-	c, ok := got.Criteria["exploration_grounded"]
-	if !ok || c.Score != 0 {
-		t.Fatalf("exploration_grounded criterion missing or nonzero: %+v", got.Criteria)
-	}
-}
-
-// TestFoldDeterministic_ExplorationGroundedPassesWithReads: a code-explorer
-// that actually read (or grepped) the clone is not penalized - acceptance
-// case from #289.
-func TestFoldDeterministic_ExplorationGroundedPassesWithReads(t *testing.T) {
-	cfg := Config{ExternalWorker: true, ReadOnly: true}
-	for name, act := range map[string]workerActivity{
-		"reads": {clonedRepos: []string{"https://github.com/org/repo"}, paths: map[string]bool{"repo/main.go": true}},
-		"greps": {clonedRepos: []string{"https://github.com/org/repo"}, greps: 3},
-	} {
-		v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
-		got := foldDeterministic(context.Background(), v, "main.go is the entrypoint; it wires up the router.", act, cfg)
-		if _, present := got.Criteria["exploration_grounded"]; present {
-			t.Errorf("%s: exploration_grounded penalty applied despite real exploration activity", name)
-		}
-	}
-}
-
-// TestFoldDeterministic_ExplorationGroundedScopedToExternalReadOnly: the
-// check must not fire outside its scope - a node with no clone at all
-// (legitimately read-nothing) and a non-ReadOnly / non-ExternalWorker agent
-// (e.g. a native synthesizer with a bare clone in its activity, which cannot
-// happen in practice but must still be inert) are both untouched.
-func TestFoldDeterministic_ExplorationGroundedScopedToExternalReadOnly(t *testing.T) {
-	cloned := workerActivity{clonedRepos: []string{"https://github.com/org/repo"}}
-	cases := map[string]Config{
-		"not external":  {ReadOnly: true},
-		"not read-only": {ExternalWorker: true},
-		"neither":       {},
-	}
-	for name, cfg := range cases {
-		v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
-		got := foldDeterministic(context.Background(), v, "some findings", cloned, cfg)
-		if _, present := got.Criteria["exploration_grounded"]; present {
-			t.Errorf("%s: exploration_grounded fired out of scope", name)
-		}
-	}
-	// No clone at all: an ExternalWorker+ReadOnly node that never cloned
-	// anything (e.g. it worked in a pre-provisioned setup clone) has nothing
-	// to be ungrounded about.
-	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
-	got := foldDeterministic(context.Background(), v, "some findings", workerActivity{}, Config{ExternalWorker: true, ReadOnly: true})
-	if _, present := got.Criteria["exploration_grounded"]; present {
-		t.Error("exploration_grounded fired with no clone at all")
 	}
 }

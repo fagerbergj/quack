@@ -164,8 +164,6 @@ type workerActivity struct {
 	reviewCommented bool
 	reviewSubmitted bool
 
-	greps int // ACP grep/glob calls
-
 	ranCommand bool
 
 	stagedDelivery map[string]StagedDelivery

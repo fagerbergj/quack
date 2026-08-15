@@ -724,7 +724,7 @@ var markdownLinkRe = regexp.MustCompile(`\[[^\]]*\]\(([^)\s]+)\)`)
 var codeCiteRe = regexp.MustCompile(`\b([\w.-]+)@([\w.-]+(?:/[\w.-]+)+)(?::(\d+(?:-\d+)?))?`)
 
 // citationScore: deterministic grade per cited link. Web URLs against session ledger; local code citations against clone on disk.
-// Web layers: fetched=1.00, under cloned repo=1.00, searched=0.75, same host fetched=0.50, same host searched=0.25, neither=0.00.
+// Web layers: fetched=1.00, searched=0.75, same host fetched=0.50, same host searched=0.25, neither=0.00.
 // Worker-facing meaning of these tiers lives in citeReasonLegend below - keep the two in sync.
 func citationScore(answer string, act workerActivity, cloneRoots []string) (score float64, details []citationDetail, ok bool) {
 	if len(act.fetched) == 0 && len(act.seen) == 0 && len(act.clonedRepos) == 0 && len(cloneRoots) == 0 {
@@ -732,7 +732,6 @@ func citationScore(answer string, act workerActivity, cloneRoots []string) (scor
 	}
 	fetchedURL, fetchedHost := normalizedSets(slices.Collect(maps.Keys(act.fetched)))
 	seenURL, seenHost := normalizedSets(slices.Collect(maps.Keys(act.seen)))
-	cloneNorms := normalizedCloneURLs(act.clonedRepos)
 
 	dedup := make(map[string]struct{})
 	var sum float64
@@ -757,8 +756,6 @@ func citationScore(answer string, act workerActivity, cloneRoots []string) (scor
 			key = norm
 			switch {
 			case fetchedURL[norm]:
-				s = 1.00
-			case underClonedRepo(norm, cloneNorms):
 				s = 1.00
 			case seenURL[norm]:
 				s = 0.75
@@ -878,29 +875,6 @@ func fileHasLine(path string, n int) bool {
 	for sc.Scan() {
 		count++
 		if count >= n {
-			return true
-		}
-	}
-	return false
-}
-
-// normalizedCloneURLs: normalizes clone URLs (normalizeURL + trim .git suffix).
-func normalizedCloneURLs(clones []string) []string {
-	out := make([]string, 0, len(clones))
-	for _, c := range clones {
-		n, _ := normalizeURL(c)
-		if n = strings.TrimSuffix(n, ".git"); n != "" {
-			out = append(out, n)
-		}
-	}
-	return out
-}
-
-// underClonedRepo: does normalized URL point at/under a cloned repo? Segment-aware.
-func underClonedRepo(norm string, cloneNorms []string) bool {
-	n := strings.TrimSuffix(norm, ".git")
-	for _, c := range cloneNorms {
-		if n == c || strings.HasPrefix(n, c+"/") {
 			return true
 		}
 	}
