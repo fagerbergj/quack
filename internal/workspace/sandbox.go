@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 )
 
 // SandboxMode: OS boundary for child processes (Jail constrains tools, not processes). bwrap namespace or server user's own filesystem.
@@ -245,6 +246,34 @@ func isDir(p string) bool {
 	return err == nil && fi.IsDir()
 }
 
+// sameDevice reports whether a and b live on the same filesystem
+// (syscall.Stat_t.Dev) - the actual invariant a TMPDIR fallback must satisfy,
+// since git's hardlinking operations (clone --local, worktree add) fail with
+// EXDEV across devices. Verifies rather than assumes (#936).
+func sameDevice(a, b string) (bool, error) {
+	sa, err := os.Stat(a)
+	if err != nil {
+		return false, err
+	}
+	sb, err := os.Stat(b)
+	if err != nil {
+		return false, err
+	}
+	da, ok := sa.Sys().(*syscall.Stat_t)
+	if !ok {
+		return false, fmt.Errorf("sameDevice: no Stat_t for %s", a)
+	}
+	db, ok := sb.Sys().(*syscall.Stat_t)
+	if !ok {
+		return false, fmt.Errorf("sameDevice: no Stat_t for %s", b)
+	}
+	return da.Dev == db.Dev, nil
+}
+
+// sameDeviceHook: test seam (same pattern as probeLandlockHook) so tests can
+// simulate a cross-device fallback without real separate filesystems.
+var sameDeviceHook = sameDevice
+
 // Private /tmp backed by $HOME/tmp when available (tmpfs = RAM pressure for builds).
 func tmpArgs(caps Caps) []string {
 	if tmp := homeTmpDir(caps); tmp != "" {
@@ -255,8 +284,13 @@ func tmpArgs(caps Caps) []string {
 
 // homeTmpDir returns caps.ScratchDir (created on demand) when the caller has
 // scoped one - a sandboxed worker's own per-node tmp, see Jail.ScratchDir -
-// else falls back to the shared caps.HomeDir/tmp (created on demand), ""
-// when neither is set.
+// else falls back to the shared caps.HomeDir/tmp (created on demand),
+// verified against caps.WorkRoot's device (sameDeviceHook) so a HomeDir that
+// turns out to live on a different filesystem is rejected rather than handed
+// out as TMPDIR (#936). "" when nothing usable is derivable - the caller
+// warns and falls back to a shared /tmp. The ScratchDir path is NOT
+// re-verified: it is already the workspace-scoped dir (Jail.ScratchDir under
+// /workspace), so this is the common, already-correct case, unchanged.
 func homeTmpDir(caps Caps) string {
 	if caps.ScratchDir != "" {
 		if err := os.MkdirAll(caps.ScratchDir, 0o700); err != nil {
@@ -273,6 +307,14 @@ func homeTmpDir(caps Caps) string {
 	if err := os.MkdirAll(tmp, 0o700); err != nil {
 		slog.Warn("could not create the sandbox tmp dir; falling back to a shared /tmp",
 			"component", "workspace", "dir", tmp, "err", err)
+		return ""
+	}
+	// Can't verify without a WorkRoot to compare against (e.g. caps.WorkRoot
+	// unset) - trust the dir as before rather than reject it on no evidence.
+	if same, err := sameDeviceHook(tmp, caps.WorkRoot); err == nil && !same {
+		slog.Warn("HOME/tmp is on a different filesystem than the workspace; using it as TMPDIR would break "+
+			"hardlinking git operations (clone --local, worktree add) with a confusing EXDEV error - falling "+
+			"back to a shared /tmp instead", "component", "workspace", "dir", tmp, "workroot", caps.WorkRoot)
 		return ""
 	}
 	return tmp
@@ -455,7 +497,9 @@ func toolchainROPaths(caps Caps) []string {
 }
 
 // landlockTmpDir is the RW tmp grant: caps.HomeDir/tmp when available
-// (homeTmpDir - shared with bwrap's tmpArgs), else the real /tmp. Landlock has
+// (homeTmpDir - shared with bwrap's tmpArgs), else the real /tmp - loudly
+// (#936), since a silent /tmp can land TMPDIR on a different device than the
+// workspace and turn into a confusing EXDEV from git much later. Landlock has
 // no mount namespace, so unlike bwrap's private tmpfs fallback this is the
 // SAME /tmp every other process on the host sees - no worse than SandboxNone
 // without an isolated HOME configured, just not private.
@@ -463,6 +507,9 @@ func landlockTmpDir(caps Caps) string {
 	if tmp := homeTmpDir(caps); tmp != "" {
 		return tmp
 	}
+	slog.Warn("no workspace-scoped scratch dir available; TMPDIR falls back to the shared /tmp, which may be a "+
+		"different filesystem than the workspace - git operations that hardlink (clone --local, worktree add) "+
+		"can fail with a confusing EXDEV", "component", "workspace", "tmp", os.TempDir(), "workroot", caps.WorkRoot)
 	return os.TempDir()
 }
 
@@ -490,7 +537,11 @@ func RunSandboxExecIfInvoked() {
 // TMPDIR for subprocesses outside RunArgv/RunPipeline (ACP). Landlock can't
 // remap /tmp so tools must be told; under bwrap the same identity-bound
 // scratch dir is what WrapArgv grants RW, and the server's own ambient TMPDIR
-// would name a path that doesn't exist inside the namespace.
+// would name a path that doesn't exist inside the namespace. SandboxNone has
+// no boundary at all (ResolveSandbox already warns loudly at startup), so
+// os.TempDir() here is the same default an unsandboxed process would use
+// unset - not a hidden fallback, and it must not be swapped for a
+// caps.WorkRoot-derived path that may not exist on a dev machine (#936).
 func SandboxTmpDir(caps Caps) string {
 	if EnforcesBoundary(caps.Sandbox) {
 		return landlockTmpDir(caps)

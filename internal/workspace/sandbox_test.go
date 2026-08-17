@@ -1,7 +1,9 @@
 package workspace
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -345,5 +347,98 @@ func TestSandboxJavaToolOptionsCombinesLandlockTmpdirAndMemoryBound(t *testing.T
 	got := SandboxJavaToolOptions(caps)
 	if !strings.HasPrefix(got, "-Djava.io.tmpdir="+SandboxTmpDir(caps)+" -Xmx") {
 		t.Errorf("SandboxJavaToolOptions() = %q, want the tmpdir pin first and the memory bound appended", got)
+	}
+}
+
+// TestSameDeviceHoldsForPathsOnTheSameFilesystem: the normal-path invariant -
+// two dirs under the same parent are the same device.
+func TestSameDeviceHoldsForPathsOnTheSameFilesystem(t *testing.T) {
+	root := t.TempDir()
+	a := filepath.Join(root, "a")
+	b := filepath.Join(root, "b")
+	if err := os.MkdirAll(a, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(b, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	same, err := sameDevice(a, b)
+	if err != nil {
+		t.Fatalf("sameDevice(%q, %q) errored: %v", a, b, err)
+	}
+	if !same {
+		t.Errorf("sameDevice(%q, %q) = false, want true: both under %q", a, b, root)
+	}
+}
+
+// TestSameDeviceErrorsOnAMissingPath: can't verify what can't be stat'd -
+// callers must treat an error as "unknown", not "different device".
+func TestSameDeviceErrorsOnAMissingPath(t *testing.T) {
+	if _, err := sameDevice(filepath.Join(t.TempDir(), "does-not-exist"), t.TempDir()); err == nil {
+		t.Fatal("sameDevice on a missing path must error, not silently report a verdict")
+	}
+}
+
+// TestHomeTmpDirRejectsACrossDeviceHomeDir is the fallback case from #936: a
+// real dev machine has no second filesystem handy to prove this against, so
+// the test drives the decision logic directly via sameDeviceHook (a same
+// pattern as probeLandlockHook) rather than asserting on live stat results,
+// which would pass vacuously when HomeDir and WorkRoot happen to share a
+// device (the common case on a dev box).
+func TestHomeTmpDirRejectsACrossDeviceHomeDir(t *testing.T) {
+	restore := sameDeviceHook
+	sameDeviceHook = func(a, b string) (bool, error) { return false, nil }
+	defer func() { sameDeviceHook = restore }()
+
+	caps := Caps{HomeDir: t.TempDir(), WorkRoot: t.TempDir()}
+	if got := homeTmpDir(caps); got != "" {
+		t.Errorf("homeTmpDir() = %q, want \"\" when HOME/tmp is reported cross-device from WorkRoot", got)
+	}
+}
+
+// TestHomeTmpDirTrustsHomeDirWhenDeviceIsUnknown: caps.WorkRoot unset means
+// there is nothing to verify against - homeTmpDir must fall back to its
+// pre-#936 behaviour (trust HOME/tmp) rather than reject on no evidence.
+func TestHomeTmpDirTrustsHomeDirWhenDeviceIsUnknown(t *testing.T) {
+	home := t.TempDir()
+	got := homeTmpDir(Caps{HomeDir: home})
+	want := filepath.Join(home, "tmp")
+	if got != want {
+		t.Errorf("homeTmpDir() = %q, want %q (WorkRoot unset, nothing to verify against)", got, want)
+	}
+}
+
+// TestHomeTmpDirScratchDirIgnoresDeviceCheck: ScratchDir is already the
+// workspace-scoped dir (Jail.ScratchDir) - the common, already-correct path
+// - so it must NOT be re-verified even when the device hook is stubbed to
+// reject everything.
+func TestHomeTmpDirScratchDirIgnoresDeviceCheck(t *testing.T) {
+	restore := sameDeviceHook
+	sameDeviceHook = func(a, b string) (bool, error) { return false, nil }
+	defer func() { sameDeviceHook = restore }()
+
+	scratch := filepath.Join(t.TempDir(), "scratch")
+	caps := Caps{ScratchDir: scratch, WorkRoot: t.TempDir()}
+	if got := homeTmpDir(caps); got != scratch {
+		t.Errorf("homeTmpDir() = %q, want %q: ScratchDir resolving normally must be unaffected by the device check", got, scratch)
+	}
+}
+
+// TestLandlockTmpDirWarnsBeforeFallingBackToSharedTmp: when neither
+// ScratchDir nor HomeDir yields a usable dir, landlockTmpDir must still work
+// (fall back to os.TempDir()) but LOUDLY - a silent fallback is exactly the
+// #936 bug (a cross-device TMPDIR that fails confusingly much later).
+func TestLandlockTmpDirWarnsBeforeFallingBackToSharedTmp(t *testing.T) {
+	var buf bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	got := landlockTmpDir(Caps{})
+	slog.SetDefault(restore)
+
+	if got != os.TempDir() {
+		t.Errorf("landlockTmpDir() = %q, want os.TempDir() (%q) with nothing else configured", got, os.TempDir())
+	}
+	if out := buf.String(); !strings.Contains(out, "level=WARN") {
+		t.Errorf("expected a WARN log for the silent-fallback case, got: %s", out)
 	}
 }
