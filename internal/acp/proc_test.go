@@ -2,6 +2,7 @@ package acp
 
 import (
 	"bufio"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -61,6 +62,62 @@ func TestSpawnEnvTracksRoundScratchDir(t *testing.T) {
 	want := "TMPDIR=" + roundCaps.ScratchDir
 	if got != want {
 		t.Errorf("spawnEnv(roundCaps) TMPDIR = %q, want %q (the round's scratch dir, not the agent's static caps)", got, want)
+	}
+}
+
+// TestSpawnEnvSetsGitCredentialNeuteringVars pins #936's authority half:
+// spawnEnv carries GIT_ASKPASS/GIT_SSH_COMMAND=/bin/false and
+// GIT_TERMINAL_PROMPT=0 so the ACP child can't authenticate to a real remote -
+// checking these three strings alone would pass even if `git push` were still
+// denied outright, so TestSpawnEnvAllowsLocalGitPush proves the capability
+// half stayed intact.
+func TestSpawnEnvSetsGitCredentialNeuteringVars(t *testing.T) {
+	a := &Agent{opts: Options{Caps: workspace.DefaultCaps(), Home: t.TempDir()}}
+	want := map[string]bool{
+		"GIT_ASKPASS=/bin/false":     false,
+		"GIT_SSH_COMMAND=/bin/false": false,
+		"GIT_TERMINAL_PROMPT=0":      false,
+	}
+	for _, e := range a.spawnEnv(a.opts.Caps) {
+		if _, ok := want[e]; ok {
+			want[e] = true
+		}
+	}
+	for k, found := range want {
+		if !found {
+			t.Errorf("spawnEnv() missing %q", k)
+		}
+	}
+}
+
+// TestSpawnEnvAllowsLocalGitPush proves #936's capability half with a real git
+// process, not just an env-var assertion: under the exact env spawnEnv builds
+// for the ACP child, `git push` to a local bare remote must succeed - the
+// credential-neutering vars remove authority over a real remote, they must
+// not also block the command against one the sandbox already trusts (the
+// project's own test fixtures push exactly this way).
+func TestSpawnEnvAllowsLocalGitPush(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	remote := t.TempDir()
+	runGit(t, remote, "init", "-q", "--bare")
+
+	work := t.TempDir()
+	runGit(t, work, "init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(work, "f.txt"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, work, "add", "-A")
+	runGit(t, work, "-c", "user.email=a@b.c", "-c", "user.name=a", "commit", "-q", "-m", "init")
+	runGit(t, work, "remote", "add", "origin", remote)
+
+	a := &Agent{opts: Options{Caps: workspace.DefaultCaps(), Home: t.TempDir()}}
+	cmd := exec.Command("git", "push", "origin", "main")
+	cmd.Dir = work
+	cmd.Env = a.spawnEnv(a.opts.Caps)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git push to a local remote under spawnEnv() failed: %v: %s", err, out)
 	}
 }
 

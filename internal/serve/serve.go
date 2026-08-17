@@ -1161,13 +1161,18 @@ func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths [
 	if ac.ContextWindow > 0 {
 		modelCfg["limit"] = m{"context": ac.ContextWindow, "output": 32768}
 	}
-	// git push: denied for every agent, delivery is gate-owned. Clone is denied too
-	// (#579) except for a read-only acp.allow_clone agent, which is chartered to read
-	// third-party repos the gate never provisions. Clone plus the wide
-	// external_directory it needs (the clone lands outside cwd, #346) rest on the RO
-	// work tree, so clone is allowed only in a mode that OS-enforces it on the ACP
-	// child - landlock or bwrap, both of which WrapArgv wraps (#921). Under `none`
-	// there is no boundary at all, so allow_clone degrades to denied rather than to
+	// git push is left allowed here (#936): the ACP child's spawnEnv
+	// (internal/acp.spawnEnv) strips its authority to authenticate to any real
+	// remote (GIT_ASKPASS/GIT_SSH_COMMAND=/bin/false, GIT_TERMINAL_PROMPT=0), so
+	// denying the command outright is no longer needed to keep delivery
+	// gate-owned - it only broke the project's own tests, which push to a local
+	// test remote. Clone is still denied (#579) except for a read-only
+	// acp.allow_clone agent, which is chartered to read third-party repos the
+	// gate never provisions. Clone plus the wide external_directory it needs
+	// (the clone lands outside cwd, #346) rest on the RO work tree, so clone is
+	// allowed only in a mode that OS-enforces it on the ACP child - landlock or
+	// bwrap, both of which WrapArgv wraps (#921). Under `none` there is no
+	// boundary at all, so allow_clone degrades to denied rather than to
 	// unbounded.
 	allowClone := ac.Acp != nil && ac.Acp.AllowClone && workspace.EnforcesBoundary(sandbox)
 	if ac.Acp != nil && ac.Acp.AllowClone && !allowClone {
@@ -1175,7 +1180,6 @@ func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths [
 			"component", "acp", "sandbox", sandbox)
 	}
 	bash := m{
-		"git push": "deny", "git push *": "deny",
 		"*": "allow",
 	}
 	extDir := m{"*": "deny"}
