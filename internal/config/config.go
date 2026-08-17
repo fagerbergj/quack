@@ -1051,6 +1051,18 @@ func (w *WorkspaceConfig) applyDefaults() error {
 			return fmt.Errorf("config: workspace.guards[%q] has unknown tier %q (want none, judge, confirm, or judge+confirm)", tool, tier)
 		}
 	}
+	// No network in the sandbox: "auto" defers a doomed download, "local" fails
+	// fast. GOMODCACHE points at the Dockerfile's pre-seeded copy under GOROOT
+	// (#936) since the child's HOME is a fresh per-job dir, never that cache.
+	if w.Env == nil {
+		w.Env = map[string]string{}
+	}
+	if _, ok := w.Env["GOTOOLCHAIN"]; !ok {
+		w.Env["GOTOOLCHAIN"] = "local"
+	}
+	if _, ok := w.Env["GOMODCACHE"]; !ok {
+		w.Env["GOMODCACHE"] = "/usr/local/go/pkg/mod"
+	}
 	for k := range w.Env {
 		if strings.TrimSpace(k) == "" {
 			return fmt.Errorf("config: workspace.env has an empty variable name")

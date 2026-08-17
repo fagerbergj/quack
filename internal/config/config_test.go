@@ -866,14 +866,36 @@ workspace:
 	}
 }
 
-// TestWorkspaceEnvDefaultsEmpty: no workspace.env section ⇒ nil map, no error.
+// TestWorkspaceEnvDefaultsEmpty: no workspace.env section ⇒ just the
+// GOTOOLCHAIN/GOMODCACHE defaults the sandbox needs to build offline (#936).
 func TestWorkspaceEnvDefaultsEmpty(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(c.Workspace.Env) != 0 {
-		t.Errorf("Env = %v, want empty", c.Workspace.Env)
+	want := map[string]string{"GOTOOLCHAIN": "local", "GOMODCACHE": "/usr/local/go/pkg/mod"}
+	if len(c.Workspace.Env) != len(want) || c.Workspace.Env["GOTOOLCHAIN"] != want["GOTOOLCHAIN"] || c.Workspace.Env["GOMODCACHE"] != want["GOMODCACHE"] {
+		t.Errorf("Env = %v, want %v", c.Workspace.Env, want)
+	}
+}
+
+// TestWorkspaceEnvGoDefaultsOverridable proves explicit workspace.env entries
+// win over the GOTOOLCHAIN/GOMODCACHE defaults.
+func TestWorkspaceEnvGoDefaultsOverridable(t *testing.T) {
+	c, err := Load(writeTemp(t, baseConfig+`
+workspace:
+  env:
+    GOTOOLCHAIN: auto
+    GOMODCACHE: /custom/mod/cache
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Workspace.Env["GOTOOLCHAIN"] != "auto" {
+		t.Errorf("Env[GOTOOLCHAIN] = %q, want auto", c.Workspace.Env["GOTOOLCHAIN"])
+	}
+	if c.Workspace.Env["GOMODCACHE"] != "/custom/mod/cache" {
+		t.Errorf("Env[GOMODCACHE] = %q, want /custom/mod/cache", c.Workspace.Env["GOMODCACHE"])
 	}
 }
 
