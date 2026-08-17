@@ -54,7 +54,7 @@ Rules:
 - If the input is already clear and well-organized, return it with only minimal changes.`
 
 // formatAnswer runs a tool-less/gate-less format pass; fails open (never blocks delivery).
-func formatAnswer(ctx context.Context, m model.LLM, message, answer string) string {
+func formatAnswer(ctx context.Context, m model.LLM, message, answer, chatID string) string {
 	answer = strings.TrimSpace(answer)
 	if m == nil || answer == "" {
 		return answer
@@ -77,8 +77,14 @@ func formatAnswer(ctx context.Context, m model.LLM, message, answer string) stri
 	}
 	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: fmt.Sprintf(
 		"User's request:\n%s\n\nSpecialist's raw output to format:\n%s", message, answer)}}}
+	// Real chat id groups this run under its causing chat in Langfuse
+	// (gen_ai.conversation.id); empty falls back rather than emitting "".
+	sessionID := "format"
+	if chatID != "" {
+		sessionID = chatID
+	}
 	var out strings.Builder
-	for ev, rerr := range r.Run(ctx, "format", "format", content, adkagent.RunConfig{}) {
+	for ev, rerr := range r.Run(ctx, "format", sessionID, content, adkagent.RunConfig{}) {
 		if rerr != nil {
 			return answer
 		}
@@ -98,10 +104,10 @@ func formatAnswer(ctx context.Context, m model.LLM, message, answer string) stri
 }
 
 // finalizeAnswer: single place every delivery path formats node outputs for the user.
-func (o *Orchestrator) finalizeAnswer(ctx context.Context, plan dag.Plan, nodeOutputs map[string]string) string {
+func (o *Orchestrator) finalizeAnswer(ctx context.Context, plan dag.Plan, nodeOutputs map[string]string, chatID string) string {
 	answer := tools.TerminalOutput(plan, nodeOutputs)
 	if !needsFormatPass(plan) {
 		return answer
 	}
-	return formatAnswer(ctx, o.model, plan.UserMessage, answer)
+	return formatAnswer(ctx, o.model, plan.UserMessage, answer, chatID)
 }

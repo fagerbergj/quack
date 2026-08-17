@@ -16,6 +16,18 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
+// judgeSessionID: real chat id groups a judge/skeptic/writer run under the chat that
+// caused it in Langfuse (ADK stamps gen_ai.conversation.id from this session id).
+// Each caller gets its own throwaway InMemoryService per run, so reusing chatID
+// across calls can't leak conversation state between them (only observability
+// grouping is affected). Empty chatID falls back rather than emitting "".
+func judgeSessionID(chatID, fallback string) string {
+	if chatID == "" {
+		return fallback
+	}
+	return chatID
+}
+
 // Config carries per-agent trust-gate settings for RunGatedRefine and the judge.
 type Config struct {
 	// NodeBaseSHA is the clone's HEAD when THIS node started. Chained nodes share

@@ -15,6 +15,8 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
+
+	"github.com/fagerbergj/quack/internal/ledger"
 )
 
 // PlanJudge: decides whether a proposed DAG plan is a well-formed answer to the user's request.
@@ -93,7 +95,8 @@ func NewPlanJudge(judgeModel model.LLM, maxOutputTokens int) PlanJudge {
 		prompt := buildPlanJudgePrompt(request, planSummary)
 		content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: prompt}}}
 		var repeats repeatLoopDetector
-		for ev, rerr := range r.Run(runCtx, "plan-judge", "verdict", content, adkagent.RunConfig{}) {
+		chatID := ledger.CoordsFromContext(runCtx).ChatID
+		for ev, rerr := range r.Run(runCtx, "plan-judge", judgeSessionID(chatID, "verdict"), content, adkagent.RunConfig{}) {
 			if rerr != nil {
 				return false, "", rerr
 			}

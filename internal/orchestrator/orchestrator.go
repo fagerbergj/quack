@@ -178,7 +178,7 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, see
 			ds.Handle(ev)
 		}
 		ds.Finish()
-		if answer := o.finalizeAnswer(ctx, plan, nodeOutputs); answer != "" {
+		if answer := o.finalizeAnswer(ctx, plan, nodeOutputs, chatID); answer != "" {
 			persistCtx := context.WithoutCancel(ctx)
 			if resp, gerr := o.sessions.Get(persistCtx, &session.GetRequest{AppName: AppName, UserID: userID, SessionID: chatID}); gerr == nil && resp != nil {
 				aev := session.NewEvent(persistCtx, "")
@@ -271,7 +271,7 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 		// nothing exists to stash into before that.
 		o.stashPlanForResume(ctx, userID, sessionID, plan)
 		if !paused {
-			answer := o.finalizeAnswer(ctx, plan, nodeOutputs)
+			answer := o.finalizeAnswer(ctx, plan, nodeOutputs, sessionID)
 			o.persistAnswer(ctx, userID, sessionID, answer)
 		}
 		yield(stream.Done(), nil)
@@ -557,7 +557,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 					return
 				}
 				if !paused {
-					planCache.SetDelivered(o.finalizeAnswer(ctx, plan, nodeOutputs))
+					planCache.SetDelivered(o.finalizeAnswer(ctx, plan, nodeOutputs, sessionID))
 				}
 			}
 		}
@@ -699,7 +699,7 @@ func (o *Orchestrator) resumeNodeRun(ctx context.Context, userID, sessionID, mes
 		return
 	}
 	if !paused {
-		answer := o.finalizeAnswer(ctx, plan, nodeOutputs)
+		answer := o.finalizeAnswer(ctx, plan, nodeOutputs, sessionID)
 		o.persistAnswer(ctx, userID, sessionID, answer)
 	}
 	yield(stream.Done(), nil)

@@ -20,7 +20,9 @@ import (
 // userMemoryPreFilter: cheap gate on whether a message might state a preference; false positives are cheap.
 var userMemoryPreFilter = regexp.MustCompile(`(?i)\b(prefer|always|never|from now on|going forward|in the future|by default|instead of|rather than|don't|do not|no more|stop |i like|i want|i need|i hate|i love|keep it|make it|remember that|for me|my style|as a rule|as a habit)\b`)
 
-// memoryAgentAppName/etc: throwaway in-memory session per call (fresh per call, constant name fine).
+// memoryAgentAppName/etc: throwaway in-memory session per call, isolated by a
+// fresh InMemoryService, not by session id. memoryAgentSessionID is only the
+// fallback when no chat id is available (see mineUserMemory).
 const (
 	memoryAgentAppName   = "quack-memory-agent"
 	memoryAgentUserID    = "memory-agent"
@@ -37,7 +39,7 @@ func (o *Orchestrator) maybeMineUserMemory(ctx context.Context, userID, chatID, 
 	}
 	bgCtx := context.WithoutCancel(ctx)
 	go func() {
-		cands, err := mineUserMemory(bgCtx, o.memAgent, message)
+		cands, err := mineUserMemory(bgCtx, o.memAgent, message, chatID)
 		if err != nil {
 			slog.Warn("user memory hook: extraction failed", "component", "orchestrator", "user", userID, "err", err)
 			return
@@ -53,7 +55,7 @@ type memoryCandidate struct {
 }
 
 // mineUserMemory: run memory agent once, parse JSON array reply into commit-ready candidates.
-func mineUserMemory(ctx context.Context, memAgent adkagent.Agent, message string) ([]memory.Candidate, error) {
+func mineUserMemory(ctx context.Context, memAgent adkagent.Agent, message, chatID string) ([]memory.Candidate, error) {
 	r, err := runner.New(runner.Config{
 		AppName: memoryAgentAppName, Agent: memAgent,
 		SessionService: session.InMemoryService(), AutoCreateSession: true,
@@ -62,8 +64,14 @@ func mineUserMemory(ctx context.Context, memAgent adkagent.Agent, message string
 		return nil, err
 	}
 	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: message}}}
+	// Real chat id groups this run under its causing chat in Langfuse
+	// (gen_ai.conversation.id); empty falls back rather than emitting "".
+	sessionID := memoryAgentSessionID
+	if chatID != "" {
+		sessionID = chatID
+	}
 	var out strings.Builder
-	for ev, rerr := range r.Run(ctx, memoryAgentUserID, memoryAgentSessionID, content, adkagent.RunConfig{}) {
+	for ev, rerr := range r.Run(ctx, memoryAgentUserID, sessionID, content, adkagent.RunConfig{}) {
 		if rerr != nil {
 			return nil, rerr
 		}

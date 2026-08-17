@@ -82,7 +82,7 @@ func (s *formatStub) GenerateContent(_ context.Context, _ *model.LLMRequest, _ b
 // comes back from the tool-less writer.
 func TestFormatAnswer_ReturnsModelOutput(t *testing.T) {
 	stub := &formatStub{reply: "# Plan\n\n1. Do the thing."}
-	got := formatAnswer(context.Background(), stub, "plan the thing", "raw exploration notes")
+	got := formatAnswer(context.Background(), stub, "plan the thing", "raw exploration notes", "chat-1")
 	if got != "# Plan\n\n1. Do the thing." {
 		t.Errorf("formatAnswer = %q, want the model's formatted text", got)
 	}
@@ -92,7 +92,7 @@ func TestFormatAnswer_ReturnsModelOutput(t *testing.T) {
 // block delivery - it falls back to the raw answer unchanged.
 func TestFormatAnswer_FailsOpenOnModelError(t *testing.T) {
 	stub := &formatStub{err: fmt.Errorf("model unavailable")}
-	got := formatAnswer(context.Background(), stub, "plan the thing", "raw exploration notes")
+	got := formatAnswer(context.Background(), stub, "plan the thing", "raw exploration notes", "chat-1")
 	if got != "raw exploration notes" {
 		t.Errorf("formatAnswer = %q, want the raw answer unchanged on model error", got)
 	}
@@ -100,7 +100,7 @@ func TestFormatAnswer_FailsOpenOnModelError(t *testing.T) {
 
 // TestFormatAnswer_NilModelReturnsRaw: no model configured ⇒ no pass attempted.
 func TestFormatAnswer_NilModelReturnsRaw(t *testing.T) {
-	got := formatAnswer(context.Background(), nil, "plan the thing", "raw exploration notes")
+	got := formatAnswer(context.Background(), nil, "plan the thing", "raw exploration notes", "chat-1")
 	if got != "raw exploration notes" {
 		t.Errorf("formatAnswer = %q, want the raw answer unchanged with a nil model", got)
 	}
@@ -109,7 +109,7 @@ func TestFormatAnswer_NilModelReturnsRaw(t *testing.T) {
 // TestFormatAnswer_EmptyAnswerShortCircuits: nothing to format.
 func TestFormatAnswer_EmptyAnswerShortCircuits(t *testing.T) {
 	stub := &formatStub{reply: "should never be seen"}
-	if got := formatAnswer(context.Background(), stub, "plan the thing", "  "); got != "" {
+	if got := formatAnswer(context.Background(), stub, "plan the thing", "  ", "chat-1"); got != "" {
 		t.Errorf("formatAnswer = %q, want empty for an empty raw answer", got)
 	}
 }

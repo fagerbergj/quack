@@ -136,7 +136,7 @@ func TestMineUserMemory(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ag := buildScriptedAgent(t, tt.reply)
-			got, err := mineUserMemory(context.Background(), ag, "some message")
+			got, err := mineUserMemory(context.Background(), ag, "some message", "chat-1")
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got candidates %+v", got)
@@ -188,7 +188,7 @@ func TestMineUserMemory_DefaultAgentFillsTokenUsage(t *testing.T) {
 	}
 
 	// No ledger coords on ctx - mirrors mineUserMemory's real caller (a background goroutine).
-	if _, err := mineUserMemory(context.Background(), ag, "some message"); err != nil {
+	if _, err := mineUserMemory(context.Background(), ag, "some message", "chat-1"); err != nil {
 		t.Fatalf("mineUserMemory: %v", err)
 	}
 

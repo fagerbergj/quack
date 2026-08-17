@@ -172,6 +172,37 @@ func TestRunJudgeAgent_OverBudgetAnswerFitsBudget(t *testing.T) {
 	}
 }
 
+// TestRunJudgeAgent_SessionIDIsChatIDNotConstant is the Langfuse-attribution
+// regression: ADK's runner.Run takes the session id as its third argument and
+// stamps gen_ai.conversation.id from it (google.golang.org/adk/v2/internal/
+// telemetry), so a hardcoded "verdict" literal collapsed every judge call
+// ever made, across every chat, into one Langfuse session. A tool callback
+// sees the real ADK session id via adkagent.Context.SessionID() - assert that
+// runJudgeRound passed cfg.ChatID, not the old constant.
+func TestRunJudgeAgent_SessionIDIsChatIDNotConstant(t *testing.T) {
+	var gotSessionID string
+	spy, err := functiontool.New[spyReadArgs, spyReadResult](
+		functiontool.Config{Name: "read_file", Description: "Read a text file from your workspace."},
+		func(tc adkagent.Context, _ spyReadArgs) (spyReadResult, error) {
+			gotSessionID = tc.SessionID()
+			return spyReadResult{Content: "func Play() {}\nfunc TestPlay(t *testing.T) {}\n"}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("spy tool: %v", err)
+	}
+	factory := NewJudgeFactory(scriptedJudge{}, []tool.Tool{spy}, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the game in game.go"}}}
+	cfg := Config{Rubric: "score 0-10", ChatID: "chat-42"}
+
+	if _, err := runJudgeAgent(t.Context(), factory, cfg, q, "I implemented game.go", workerActivity{}, nil, func(*genai.Part) bool { return true }); err != nil {
+		t.Fatalf("runJudgeAgent: %v", err)
+	}
+	if gotSessionID != "chat-42" {
+		t.Errorf("judge run session id = %q, want %q (the chat id, not the old \"verdict\" constant)", gotSessionID, "chat-42")
+	}
+}
+
 // flakyTransientJudge fails its first `failures` calls with a transient-
 // looking error (a 502, standing in for a model swap in flight), then submits
 // a normal verdict - the stand-in for #572's incident.

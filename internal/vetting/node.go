@@ -387,7 +387,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		// Last resort: tool-less writer in fresh runner if worker stuck after continuation budget.
 		if strings.TrimSpace(answer) == "" {
 			log.Warn("worker still empty after continuation; falling back to the tool-less writer", "rounds", maxContinueRounds)
-			answer, err = runWriterFresh(ctx, workerModel, buildFinalizeContent(question, activity()))
+			answer, err = runWriterFresh(ctx, workerModel, buildFinalizeContent(question, activity()), cfg.ChatID)
 			if err != nil {
 				log.Error("writer recovery failed", "err", err)
 				return "", GateResult{}, err
