@@ -151,7 +151,7 @@ func TestGitPushToolNotBuildable(t *testing.T) {
 
 // acpPermissionDeniesGitPush parses an ACP agent's generated
 // OPENCODE_CONFIG_CONTENT env entry and reports whether its bash permission
-// policy denies both "git push" and "git push *".
+// policy denies "git push" or "git push *".
 func acpPermissionDeniesGitPush(t *testing.T, env []string) bool {
 	t.Helper()
 	var raw string
@@ -172,14 +172,17 @@ func acpPermissionDeniesGitPush(t *testing.T, env []string) bool {
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		t.Fatalf("parse OPENCODE_CONFIG_CONTENT: %v", err)
 	}
-	return cfg.Permission.Bash["git push"] == "deny" && cfg.Permission.Bash["git push *"] == "deny"
+	return cfg.Permission.Bash["git push"] == "deny" || cfg.Permission.Bash["git push *"] == "deny"
 }
 
-// TestACPAgentPermissionDeniesGitPush is the #669 drift test's second half:
-// every ACP agent's generated opencode permission config denies git push -
-// checked against opencodeEnv, the SAME function buildAgents calls to build
-// the subprocess env, not a hand-written policy string.
-func TestACPAgentPermissionDeniesGitPush(t *testing.T) {
+// TestACPAgentPermissionAllowsGitPush is #936's replacement for the #669 command
+// deny: authority over git push is removed by stripping the ACP child's
+// credentials (internal/acp.spawnEnv sets GIT_ASKPASS/GIT_SSH_COMMAND=/bin/false,
+// GIT_TERMINAL_PROMPT=0), not by denying the command - a denial list blocked the
+// project's own tests, which push to a local test remote and are not dangerous.
+// Checked against opencodeEnv, the SAME function buildAgents calls to build the
+// subprocess env, not a hand-written policy string.
+func TestACPAgentPermissionAllowsGitPush(t *testing.T) {
 	requireStageDeliverEnv(t)
 	cfg, err := config.Load("../../config/quack.yaml")
 	if err != nil {
@@ -197,8 +200,8 @@ func TestACPAgentPermissionDeniesGitPush(t *testing.T) {
 		}
 		for _, mode := range []workspace.SandboxMode{workspace.SandboxLandlock, workspace.SandboxBwrap, workspace.SandboxNone} {
 			env := opencodeEnv(prov, ac, nil, mode)
-			if !acpPermissionDeniesGitPush(t, env) {
-				t.Errorf("agent %q (sandbox %s): generated opencode permission config does not deny git push - see #669", name, mode)
+			if acpPermissionDeniesGitPush(t, env) {
+				t.Errorf("agent %q (sandbox %s): generated opencode permission config still denies git push - see #936, authority should come from credential removal instead", name, mode)
 			}
 		}
 	}
@@ -207,12 +210,13 @@ func TestACPAgentPermissionDeniesGitPush(t *testing.T) {
 	}
 }
 
-// TestACPGitPushDenyCheckCatchesFlippedPermission proves
-// acpPermissionDeniesGitPush is not vacuous: flipping the policy to allow
-// git push (issue #669's own test case 2) must fail it.
-func TestACPGitPushDenyCheckCatchesFlippedPermission(t *testing.T) {
-	allowed := []string{`OPENCODE_CONFIG_CONTENT={"permission":{"bash":{"git push":"allow","git push *":"allow","*":"allow"}}}`}
-	if acpPermissionDeniesGitPush(t, allowed) {
-		t.Fatal("a config allowing git push passed the deny check - it would silently pass a real hole")
+// TestACPGitPushDenyCheckCatchesReintroducedDeny proves acpPermissionDeniesGitPush
+// is not vacuous: a config that denies git push must still be caught, so a
+// regression back to the old command-deny model would fail
+// TestACPAgentPermissionAllowsGitPush loudly.
+func TestACPGitPushDenyCheckCatchesReintroducedDeny(t *testing.T) {
+	denied := []string{`OPENCODE_CONFIG_CONTENT={"permission":{"bash":{"git push":"deny","git push *":"deny","*":"allow"}}}`}
+	if !acpPermissionDeniesGitPush(t, denied) {
+		t.Fatal("a config denying git push passed as allowed - the check would silently miss a reintroduced deny")
 	}
 }

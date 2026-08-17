@@ -59,12 +59,24 @@ func (a *Agent) wrappedArgv(cwd string, extraRO []string, caps workspace.Caps) [
 // effective caps (ReadOnly/ScratchDir already resolved by the caller, same as
 // wrappedArgv takes) - TMPDIR must track caps.ScratchDir's per-node grant, not
 // the agent's static opts.Caps, or every round would share one scratch dir.
+//
+// The GIT_* trio strips the child's authority to authenticate to any real
+// remote (#936) - GIT_ASKPASS/GIT_SSH_COMMAND point at /bin/false so an HTTPS
+// or SSH credential prompt fails closed instead of hanging or succeeding, and
+// GIT_TERMINAL_PROMPT=0 kills git's own fallback prompt. `git push` itself
+// stays fully allowed: it works against a local/file:// remote (the test
+// suite's own target) and merely can't authenticate anywhere else. This is
+// independent of internal/vetting's gate-owned push, which builds its own env
+// from scratch (pushGitEnv) and is never touched here.
 func (a *Agent) spawnEnv(caps workspace.Caps) []string {
 	env := []string{
 		"PATH=" + workspace.ChildPath(caps),
 		"HOME=" + a.opts.Home,
 		"TMPDIR=" + workspace.SandboxTmpDir(caps),
 		"NO_COLOR=1",
+		"GIT_ASKPASS=/bin/false",
+		"GIT_SSH_COMMAND=/bin/false",
+		"GIT_TERMINAL_PROMPT=0",
 	}
 	if opts := workspace.SandboxJavaToolOptions(caps); opts != "" {
 		env = append(env, "JAVA_TOOL_OPTIONS="+opts)
