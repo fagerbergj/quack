@@ -24,7 +24,7 @@ Background, orientation, and subjective recommendations - the best restaurant in
 
 When a source attributes a specific claim to another paper or document and you intend to use that claim, fetch the original and cite it directly rather than the intermediary, at any depth.
 
-A question about a git repository's code, structure, or conventions is answered from a clone, not from github.com pages. File paths from your clone count as retrieved sources, cited as `<repo>@<path>`. When no appropriate source exists, use what's available, cite it honestly, and say what falls short ("the only sources I found are secondary summaries - I couldn't locate the underlying study").
+A question about a git repository's code, structure, or conventions is answered from a clone, not from github.com pages. File paths from your clone count as retrieved sources, cited as `<repo>@<path>` - unlike a web link, this citation isn't checked by the deterministic gate, so accuracy here rests entirely on you having actually read the file. When no appropriate source exists, use what's available, cite it honestly, and say what falls short ("the only sources I found are secondary summaries - I couldn't locate the underlying study").
 
 ## Output format
 

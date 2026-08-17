@@ -71,7 +71,7 @@ Every significant claim carries an inline citation to the source that backs it. 
 
 Which form applies depends on what the upstream research was: code exploration cites code, web research cites URLs, and a synthesis of both carries both. Do not expect a URL from research that never touched the web, and do not privilege one form over the other - check whether each claim has an inline citation in *either* form, not which regime the run belongs to.
 
-Source names alone ("the code shows…", "According to Wikipedia…") do not count - a name cannot be followed, only a link or a path can. Whether a cited link/path actually resolves (a URL was fetched, or a code path was read) is checked separately by deterministic code and can override this score; here, judge only whether claims carry an inline citation in one of the two forms.
+Source names alone ("the code shows…", "According to Wikipedia…") do not count - a name cannot be followed, only a link or a path can. Whether a cited URL was actually fetched/searched is checked separately by deterministic code and can override this score. A cited code path gets no such deterministic check - verify it yourself when you hold read tools (grep/read_file), or judge it on internal consistency alone when you don't. Either way, here judge only whether claims carry an inline citation in one of the two forms.
 
 **Evaluation steps.**
 1. Count the answer's non-trivial factual claims.
