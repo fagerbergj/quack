@@ -104,6 +104,8 @@ List the SDK root as well as its `bin/`. Under `sandbox: bwrap`, `exec_path` ent
 
 `GOPATH`/`GOCACHE` need no special handling: they default under `$HOME`, and unlike the JVM, Go honours it.
 
+**`GOTOOLCHAIN` and `GOMODCACHE` default to `local` and `/usr/local/go/pkg/mod`.** The sandbox has no network, so `GOTOOLCHAIN=auto` (Go's own default) would try and fail to download any toolchain newer than the image's; `local` fails fast with Go's own error instead. `$HOME/go/pkg/mod` (Go's default module cache location) is a fresh, empty per-job directory every run, so `GOMODCACHE` is pointed at the copy of `go mod download`'s output baked into the image under `GOROOT` instead — the one path outside `$HOME` the sandbox can actually reach read-only. Both are plain `workspace.env` defaults (`internal/config/config.go`), so a deployment pinning its own Go version via `GOROOT` above should set `GOMODCACHE` alongside it, pointing at that toolchain's own pre-seeded module cache if it has one, or drop the override to fall back to `$HOME` if it doesn't.
+
 ## Verifying
 
 Config that loads is not config that works. Run the project's own test command in the container, with the same environment a gate check gets:

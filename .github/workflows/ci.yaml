@@ -10,6 +10,10 @@ jobs:
   go-test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # local, not auto (#936): catch a dep bump needing a newer toolchain here,
+    # not masked by CI's own network - the runtime sandbox has none.
+    env:
+      GOTOOLCHAIN: local
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7

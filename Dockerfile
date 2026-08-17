@@ -30,15 +30,17 @@ WORKDIR /app
 # tag, defaults to "dev" so a plain `docker build` / `make build` still works.
 ARG VERSION=dev
 COPY go.mod go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod go mod download
+# Not cache-mounted (#936): a cache mount's writes never land in an image layer,
+# and the runtime stage needs this cache to survive into one - see GOMODCACHE below.
+RUN go mod download
 COPY . .
 COPY --from=frontend /app/frontend/dist ./internal/serve/web/dist
 # Not in git and go:embed needs them, so fetch before building.
 RUN ./scripts/plugins.sh
 # -trimpath + -ldflags="-s -w": strip local paths and the symbol/DWARF tables
-# (smaller, reproducible binary). Module + build caches are mounted, not embedded.
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
+# (smaller, reproducible binary). Build cache is mounted (pure speed, discarded);
+# /go/pkg/mod is not - see the go mod download comment above.
+RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /quack ./cmd/quack
 
 # 2b) The external ACP coding agent (internal/acp, docs/acp-coder.md): one
@@ -83,6 +85,12 @@ COPY --from=backend /quack /quack
 # per-user caches (GOPATH/GOCACHE) default under $HOME, which quack points at
 # the writable workspace volume - nothing writes outside it.
 COPY --from=backend /usr/local/go /usr/local/go
+# go.sum's module cache (#936), under GOROOT rather than $HOME: the sandbox
+# ro-binds /usr whole but never /home, and workspace.env's GOMODCACHE default
+# points here. Extracted read-only (0444/0555) by go mod download itself, so
+# uid 65532 can read it with no chown - and Go still fails loudly, not
+# silently online, on any module go.sum doesn't already cover.
+COPY --from=backend /go/pkg/mod /usr/local/go/pkg/mod
 # The ACP coding agent (agents.<name>.acp: ["opencode", "acp"] - resolved via
 # the server's PATH). Its per-round state/caches land under the subprocess
 # $HOME quack sets (the jail home on the workspace volume), and its first round
