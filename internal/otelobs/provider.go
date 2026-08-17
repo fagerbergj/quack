@@ -27,6 +27,15 @@ const tracerName = "github.com/fagerbergj/quack"
 // ServiceName is the OTel resource's service.name prefix.
 const ServiceName = "quack"
 
+// Resource attributes for "which build, which deployment" - neither has a
+// semconv form quack can use here: v1.26 predates deployment.environment.name,
+// and release is a Langfuse field with no semantic convention at all (its
+// version field reads service.version, its release field only langfuse.release).
+const (
+	DeploymentEnvironmentName = "deployment.environment.name"
+	langfuseRelease           = "langfuse.release"
+)
+
 // ChatIDKey is the standard span attribute for chat/run in scope. Start also
 // mirrors it onto GenAIConversationID, which is what OTel-native tooling
 // (Langfuse sessions) groups a trace by; chat_id stays for existing queries.
@@ -60,14 +69,26 @@ func signalURL(endpoint, path string) string {
 	return trimmed + path
 }
 
-func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledger.LedgerStore) (*Providers, func(context.Context) error, error) {
+// newResource builds the resource every signal carries. version is the build
+// stamp (serve.Version); a dev build leaves it empty and the attributes are
+// omitted rather than exported as "".
+func newResource(cfg config.OtelConfig, version string) (*resource.Resource, error) {
+	attrs := []attribute.KeyValue{semconv.ServiceName(ServiceName)}
+	if version != "" {
+		attrs = append(attrs, semconv.ServiceVersion(version), attribute.String(langfuseRelease, version))
+	}
+	if cfg.Environment != "" {
+		attrs = append(attrs, attribute.String(DeploymentEnvironmentName, cfg.Environment))
+	}
+	return resource.Merge(resource.Default(), resource.NewSchemaless(attrs...))
+}
+
+func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledger.LedgerStore, version string) (*Providers, func(context.Context) error, error) {
 	if !cfg.Otel.IsEnabled() {
 		return &Providers{}, func(context.Context) error { return nil }, nil
 	}
 
-	res, err := resource.Merge(resource.Default(), resource.NewSchemaless(
-		semconv.ServiceName(ServiceName),
-	))
+	res, err := newResource(cfg.Otel, version)
 	if err != nil {
 		return nil, nil, fmt.Errorf("otelobs: resource: %w", err)
 	}

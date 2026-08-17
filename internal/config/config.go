@@ -232,15 +232,25 @@ type OtelConfig struct {
 	// Logs opts into OTLP log export. Off by default: logs need a collector
 	// logs pipeline most deployments don't run (slog/stdout is the sink).
 	Logs bool `yaml:"logs"`
+	// Environment lands on the OTel resource as deployment.environment.name -
+	// what trace backends split dev traffic from the deployed server by.
+	Environment string `yaml:"environment"`
 }
 
 const otelDefaultSample = 1.0
+
+// otelDefaultEnvironment assumes the deployed server, since that is what runs
+// unattended; a dev run overrides it (QUACK_OTEL_ENVIRONMENT).
+const otelDefaultEnvironment = "production"
 
 func (o OtelConfig) IsEnabled() bool { return o.Enabled == nil || *o.Enabled }
 
 func (o *OtelConfig) applyDefaults() error {
 	if o.Sample == 0 {
 		o.Sample = otelDefaultSample
+	}
+	if o.Environment == "" {
+		o.Environment = otelDefaultEnvironment
 	}
 	if o.Sample < 0 || o.Sample > 1 {
 		return fmt.Errorf("config: otel.sample must be in (0,1]")

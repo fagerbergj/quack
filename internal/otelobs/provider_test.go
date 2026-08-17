@@ -17,7 +17,7 @@ import (
 
 func TestInit_DisabledIsNoop(t *testing.T) {
 	disabled := false
-	p, shutdown, err := Init(context.Background(), config.ObservabilityConfig{Otel: config.OtelConfig{Enabled: &disabled}}, nil)
+	p, shutdown, err := Init(context.Background(), config.ObservabilityConfig{Otel: config.OtelConfig{Enabled: &disabled}}, nil, "")
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestInit_DisabledIsNoop(t *testing.T) {
 }
 
 func TestInit_EnabledInstallsGlobalProviders(t *testing.T) {
-	p, shutdown, err := Init(context.Background(), config.ObservabilityConfig{Otel: config.OtelConfig{Sample: 1.0}}, nil)
+	p, shutdown, err := Init(context.Background(), config.ObservabilityConfig{Otel: config.OtelConfig{Sample: 1.0}}, nil, "")
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestTraceIDOf(t *testing.T) {
 	if got := TraceIDOf(context.Background()); got != "" {
 		t.Errorf("TraceIDOf(no span) = %q, want empty", got)
 	}
-	_, shutdown, err := Init(context.Background(), config.ObservabilityConfig{Otel: config.OtelConfig{Sample: 1.0}}, nil)
+	_, shutdown, err := Init(context.Background(), config.ObservabilityConfig{Otel: config.OtelConfig{Sample: 1.0}}, nil, "")
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -70,6 +70,60 @@ func TestTraceIDOf(t *testing.T) {
 	if got := TraceIDOf(ctx); got == "" {
 		t.Errorf("TraceIDOf(spanned ctx) = empty, want a trace id")
 	}
+}
+
+// TestNewResource_CarriesVersionAndEnvironment: a trace backend answers "which
+// build produced this run" and "is this the deployed server or a laptop" from
+// the resource alone, so the exported span has to carry both.
+func TestNewResource_CarriesVersionAndEnvironment(t *testing.T) {
+	res, err := newResource(config.OtelConfig{Environment: "staging"}, "v0.36.0")
+	if err != nil {
+		t.Fatalf("newResource: %v", err)
+	}
+
+	exp := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp), sdktrace.WithResource(res))
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+	_, span := tp.Tracer("test").Start(context.Background(), "quack.run")
+	span.End()
+
+	attrs := resourceAttrs(t, exp)
+	for key, want := range map[string]string{
+		"service.version":         "v0.36.0",
+		langfuseRelease:           "v0.36.0",
+		DeploymentEnvironmentName: "staging",
+	} {
+		if got := attrs[key]; got != want {
+			t.Errorf("resource %s = %q, want %q", key, got, want)
+		}
+	}
+}
+
+// TestNewResource_OmitsEmptyVersion: a dev build leaves serve.Version unset,
+// and an empty service.version is worse than none - it reads as a real value.
+func TestNewResource_OmitsEmptyVersion(t *testing.T) {
+	res, err := newResource(config.OtelConfig{Environment: "development"}, "")
+	if err != nil {
+		t.Fatalf("newResource: %v", err)
+	}
+	for _, kv := range res.Attributes() {
+		if kv.Key == "service.version" || string(kv.Key) == langfuseRelease {
+			t.Errorf("resource carries %s = %q, want it omitted", kv.Key, kv.Value.Emit())
+		}
+	}
+}
+
+func resourceAttrs(t *testing.T, exp *tracetest.InMemoryExporter) map[string]string {
+	t.Helper()
+	spans := exp.GetSpans()
+	if len(spans) == 0 {
+		t.Fatalf("no spans recorded")
+	}
+	attrs := map[string]string{}
+	for _, kv := range spans[0].Resource.Attributes() {
+		attrs[string(kv.Key)] = kv.Value.Emit()
+	}
+	return attrs
 }
 
 // withTestTracer installs an in-memory span recorder as the global tracer
