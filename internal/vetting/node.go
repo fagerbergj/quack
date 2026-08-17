@@ -979,7 +979,7 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 		det["grounded_in_retrieval"] = criterionScore{Score: 0, Reason: "deterministic: no web_search/web_fetch activity this session - " +
 			"research the task and cite what you retrieve; if you are blocked on information only the user has, call ask_user (never write a question to the user as your answer)"}
 	}
-	if cs, details, hasCites := citationScore(answer, act, resolveCiteCloneRoots(cfg, act)); hasCites {
+	if cs, details, hasCites := citationScore(answer, act); hasCites {
 		det["cites_sources"] = criterionScore{Score: cs, Reason: citeReason(cs, details)}
 	}
 	// Deterministic gate checks: planner's checks or derived from repo.
@@ -1030,25 +1030,6 @@ func mergeDeterministic(v verdict, det map[string]criterionScore) verdict {
 func foldDeterministic(ctx context.Context, v verdict, answer string, act workerActivity, cfg Config) verdict {
 	det, _ := computeDeterministicCriteria(ctx, answer, act, cfg)
 	return mergeDeterministic(v, det)
-}
-
-// resolveCiteCloneRoots: resolves clone dir roots for citationScore disk verification.
-func resolveCiteCloneRoots(cfg Config, act workerActivity) []string {
-	if cfg.Workspace == nil {
-		return nil
-	}
-	var roots []string
-	if cfg.Setup != nil {
-		if abs, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID)); err == nil {
-			roots = append(roots, abs)
-		}
-	}
-	for _, dir := range act.clonedDirs {
-		if abs, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, dir); err == nil {
-			roots = append(roots, abs)
-		}
-	}
-	return roots
 }
 
 // composeFeedback: merges judge feedback with below-threshold criterion reasons for the revise prompt.
@@ -1329,7 +1310,7 @@ func (s *activityScanner) recordWorkspace(name string, args, resp map[string]any
 			s.act.currentBranch = strings.TrimSpace(cur)
 		}
 	case "read_file", "write_file", "edit_file", "delete_path":
-		// citationScore backs a path only if it appears here or under a cloned dir.
+		// grounded_in_retrieval treats any read/written path as retrieval evidence (node.go RequireRetrieval check).
 		pth, ok := args["path"].(string)
 		if !ok {
 			return

@@ -3,25 +3,9 @@ package vetting
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
-
-// writeCiteFile writes content under dir/rel (creating parent dirs) and
-// returns the file's line count - a small helper the disk-verified citation
-// tests use to build a real, on-disk "clone" instead of faking a ledger.
-func writeCiteFile(t *testing.T, dir, rel, content string) {
-	t.Helper()
-	full := filepath.Join(dir, rel)
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
 
 func TestRecordSearchResults(t *testing.T) {
 	seen := map[string]string{}
@@ -57,7 +41,7 @@ func TestCitationScoreLayers(t *testing.T) {
 		seen:    map[string]string{"https://srch.com/exact-result": "snip"},
 	}
 
-	score, details, ok := citationScore(answer, act, nil)
+	score, details, ok := citationScore(answer, act)
 	if !ok {
 		t.Fatal("citationScore ok=false, want true (answer cites URLs)")
 	}
@@ -93,7 +77,7 @@ func TestCiteReasonNamesUnretrievedLinks(t *testing.T) {
 		"[c](https://elsewhere.com/never-retrieved-2)",
 	}, " ")
 	act := workerActivity{fetched: map[string]struct{}{"https://ex.com/fetched": {}}}
-	score, details, ok := citationScore(answer, act, nil)
+	score, details, ok := citationScore(answer, act)
 	if !ok {
 		t.Fatal("citationScore ok=false, want true")
 	}
@@ -117,7 +101,7 @@ func TestCiteReasonScoreUnchanged(t *testing.T) {
 		"[c](https://elsewhere.com/never-retrieved-2)",
 	}, " ")
 	act := workerActivity{fetched: map[string]struct{}{"https://ex.com/fetched": {}}}
-	score, details, ok := citationScore(answer, act, nil)
+	score, details, ok := citationScore(answer, act)
 	if !ok {
 		t.Fatal("citationScore ok=false, want true")
 	}
@@ -142,7 +126,7 @@ func TestCiteReasonBoundsLongList(t *testing.T) {
 	// citationScore requires some retrieval activity to engage at all - a
 	// fetch unrelated to any of the 40 cited links keeps all 40 unbacked.
 	act := workerActivity{fetched: map[string]struct{}{"https://other.example.com/unrelated": {}}}
-	score, details, ok := citationScore(answer, act, nil)
+	score, details, ok := citationScore(answer, act)
 	if !ok {
 		t.Fatal("citationScore ok=false, want true")
 	}
@@ -219,224 +203,42 @@ func TestCitationScoreNormalizesAnchorsAndSlashes(t *testing.T) {
 	// and host casing - should still score a 1.0 exact-fetch match.
 	answer := "See [x](https://Ex.com/Page/#section)."
 	act := workerActivity{fetched: map[string]struct{}{"https://ex.com/Page": {}}}
-	score, _, ok := citationScore(answer, act, nil)
+	score, _, ok := citationScore(answer, act)
 	if !ok || score != 1.0 {
 		t.Errorf("score=%.2f ok=%v, want 1.0 true (anchor/slash/case normalized)", score, ok)
 	}
 }
 
-// TestCitationScoreClonedRepoGrounding reenacts the live failure (2026-07-12):
-// an explore-repo node cited local file paths inside a clone - honest,
-// fully-grounded citations that scored 0.25 mean backing and sank a node the
-// judge had passed. Local paths are disk-verified against a real clone root,
-// not the ledger - act.paths is left EMPTY on purpose to prove disk
-// verification alone backs the real files. Fabricated paths still score 0, and
-// so do bare repo URLs: no web fetch/search backs them.
-func TestCitationScoreClonedRepoGrounding(t *testing.T) {
-	root := t.TempDir()
-	writeCiteFile(t, root, "games-repo/app/games.ts", "export {};\n")
-	writeCiteFile(t, root, "games-repo/lib/board.ts", "export {};\n")
-	writeCiteFile(t, root, "games-repo/README.md", "# games\n")
-
-	answer := strings.Join([]string{
-		"[games.ts](games-repo/app/games.ts)",        // real file on disk → 1.0
-		"[board.ts](games-repo/lib/board.ts)",        // real file, never in the (empty) ledger → 1.0
-		"[readme](games-repo/README.md#usage)",       // fragment dropped, real file → 1.0
-		"[fabricated](docs/never-touched.md)",        // does not exist on disk → 0.0
-		"[not-that-dir](games-repo-extra/x.ts)",      // does not exist on disk → 0.0
-		"[uncloned](https://github.com/other/thing)", // never fetched or searched → 0.0
-	}, " ")
-
-	score, details, ok := citationScore(answer, workerActivity{}, []string{root})
-	if !ok {
-		t.Fatal("citationScore abstained despite a clone root")
-	}
-	want := map[string]float64{
-		"games-repo/app/games.ts":        1.0,
-		"games-repo/lib/board.ts":        1.0,
-		"games-repo/README.md#usage":     1.0,
-		"docs/never-touched.md":          0.0,
-		"games-repo-extra/x.ts":          0.0,
-		"https://github.com/other/thing": 0.0,
-	}
-	got := map[string]float64{}
-	for _, d := range details {
-		got[d.url] = d.score
-	}
-	for target, w := range want {
-		if got[target] != w {
-			t.Errorf("citation %s scored %.2f, want %.2f", target, got[target], w)
-		}
-	}
-	if wantMean := 3.0 / 6.0; score != wantMean {
-		t.Errorf("mean score = %.3f, want %.3f (details: %+v)", score, wantMean, details)
-	}
-}
-
-// TestCitationScoreSkipsAnchorsAndNonWebSchemes: in-document anchors and
-// mailto: targets are not citations - they must not enter the mean at all.
+// TestCitationScoreSkipsAnchorsAndNonWebSchemes: in-document anchors, mailto:
+// targets, and local file paths are not web-gradeable - they must not enter
+// the mean at all (local citations are no longer deterministically checked).
 func TestCitationScoreSkipsAnchorsAndNonWebSchemes(t *testing.T) {
-	root := t.TempDir()
-	writeCiteFile(t, root, "repo/file.go", "package repo\n")
-	answer := "[sec](#usage) [mail](mailto:a@b.com) [real](repo/file.go)"
-	score, details, ok := citationScore(answer, workerActivity{}, []string{root})
+	act := workerActivity{fetched: map[string]struct{}{"https://ex.com/a": {}}}
+	answer := "[sec](#usage) [mail](mailto:a@b.com) [local](repo/file.go) [real](https://ex.com/a)"
+	score, details, ok := citationScore(answer, act)
 	if !ok || len(details) != 1 || score != 1.0 {
-		t.Errorf("score=%.2f details=%+v ok=%v, want 1.0 with exactly the path graded", score, details, ok)
+		t.Errorf("score=%.2f details=%+v ok=%v, want 1.0 with exactly the web link graded", score, details, ok)
 	}
 }
 
 func TestCitationScoreNoCitations(t *testing.T) {
-	_, _, ok := citationScore("A plain answer with no links.", workerActivity{}, nil)
+	act := workerActivity{fetched: map[string]struct{}{"https://ex.com/a": {}}}
+	_, _, ok := citationScore("A plain answer with no links.", act)
 	if ok {
 		t.Error("citationScore ok=true for an answer with no URLs, want false")
 	}
 }
 
+// TestCitationScoreSkippedWithoutRetrieval is the regression that matters
+// most for this check (removal of local-citation scoring, see judge.go):
+// a code-only node that never fetched or searched the web must cleanly
+// abstain (ok=false, "nothing to grade") rather than scoring 0 and forcing a
+// revision round - even though it cited local files inline.
 func TestCitationScoreSkippedWithoutRetrieval(t *testing.T) {
-	// A non-web agent (synthesizer) does no fetch/search and has no clone root
-	// to disk-verify against, so its citation can't be graded - ok=false leaves
-	// the model's cites_sources in place.
-	answer := "Per the research, [x](https://ex.com/a)."
-	if _, _, ok := citationScore(answer, workerActivity{}, nil); ok {
-		t.Error("citationScore ok=true with no retrieval or clone root, want false (skip override)")
-	}
-}
-
-// TestCitationScoreCodeExplorerInlineFormat reenacts #437: the code-explorer
-// cites files via "<repo>@path[:lines]" inline text, not Markdown links.
-// citationScore must recognize this format and disk-verify it against the
-// clone root (path exists → 1.0), not silently drop the citation to a 0.00
-// mean, and not rely on a ledger the code-explorer (an external ACP agent)
-// never populates.
-func TestCitationScoreCodeExplorerInlineFormat(t *testing.T) {
-	root := t.TempDir()
-	writeCiteFile(t, root, "internal/foo.go", strings.Repeat("line\n", 10))
-	answer := strings.Join([]string{
-		"See quack@internal/foo.go:1-5 for the entry point.",
-		"Also quack@internal/bar.go was never opened.",
-	}, " ")
-	score, details, ok := citationScore(answer, workerActivity{}, []string{root})
-	if !ok {
-		t.Fatal("citationScore ok=false, want true (code citations present)")
-	}
-	if len(details) != 2 {
-		t.Fatalf("details = %+v, want 2 entries", details)
-	}
-	got := map[string]float64{}
-	for _, d := range details {
-		got[d.url] = d.score
-	}
-	if got["quack@internal/foo.go:1-5"] != 1.0 {
-		t.Errorf("read file scored %.2f, want 1.0", got["quack@internal/foo.go:1-5"])
-	}
-	if got["quack@internal/bar.go"] != 0.0 {
-		t.Errorf("untouched file scored %.2f, want 0.0", got["quack@internal/bar.go"])
-	}
-	if wantMean := 0.5; score != wantMean {
-		t.Errorf("mean score = %.3f, want %.3f", score, wantMean)
-	}
-}
-
-// TestCitationScoreDoesNotConfuseEmailForCodeCite guards the "at least one
-// slash in the path" constraint on codeCiteRe: an email address inside a
-// mailto: link must not be misread as an unbacked code citation.
-func TestCitationScoreDoesNotConfuseEmailForCodeCite(t *testing.T) {
-	root := t.TempDir()
-	writeCiteFile(t, root, "repo/file.go", "package repo\n")
-	answer := "[mail](mailto:a@b.com) [real](repo/file.go)"
-	score, details, ok := citationScore(answer, workerActivity{}, []string{root})
-	if !ok || len(details) != 1 || score != 1.0 {
-		t.Errorf("score=%.2f details=%+v ok=%v, want 1.0 with exactly the path graded (email not counted)", score, details, ok)
-	}
-}
-
-// TestCitationScoreDiskVerifiesBareAndRepoPrefixedForm covers (a) from the
-// #437 rework: a code cite to a real file scores 1.0 whether written bare
-// (repo-relative) or in the code-explorer's "<repo>@path" inline form.
-func TestCitationScoreDiskVerifiesBareAndRepoPrefixedForm(t *testing.T) {
-	root := t.TempDir()
-	writeCiteFile(t, root, "internal/foo.go", strings.Repeat("line\n", 10))
-
-	answer := "See [foo](internal/foo.go) and quack@internal/foo.go for the entry point."
-	score, details, ok := citationScore(answer, workerActivity{}, []string{root})
-	if !ok {
-		t.Fatal("citationScore ok=false, want true")
-	}
-	if len(details) != 2 {
-		t.Fatalf("details = %+v, want 2 entries (bare markdown link + code cite)", details)
-	}
-	if score != 1.0 {
-		t.Errorf("score = %.2f, want 1.0 (both forms cite a real file)", score)
-	}
-}
-
-// TestCitationScoreDiskVerificationCatchesFabrication covers (b): a code
-// citation to a file that does not exist on disk scores 0.0 even with a
-// valid clone root passed.
-func TestCitationScoreDiskVerificationCatchesFabrication(t *testing.T) {
-	root := t.TempDir()
-	writeCiteFile(t, root, "internal/foo.go", "package foo\n")
-
-	answer := "See quack@internal/never-existed.go for the entry point."
-	score, details, ok := citationScore(answer, workerActivity{}, []string{root})
-	if !ok {
-		t.Fatal("citationScore ok=false, want true (clone root present)")
-	}
-	if len(details) != 1 || score != 0.0 {
-		t.Errorf("score=%.2f details=%+v, want 0.0 for a file that doesn't exist", score, details)
-	}
-}
-
-// TestCitationScoreDiskVerificationCatchesOutOfRangeLine covers (c): a cited
-// line range beyond the file's actual line count is fabricated even though
-// the file itself exists.
-func TestCitationScoreDiskVerificationCatchesOutOfRangeLine(t *testing.T) {
-	root := t.TempDir()
-	writeCiteFile(t, root, "internal/foo.go", strings.Repeat("line\n", 10)) // 10 lines
-
-	answer := "See quack@internal/foo.go:9999 for the entry point."
-	score, details, ok := citationScore(answer, workerActivity{}, []string{root})
-	if !ok {
-		t.Fatal("citationScore ok=false, want true (clone root present)")
-	}
-	if len(details) != 1 || score != 0.0 {
-		t.Errorf("score=%.2f details=%+v, want 0.0 for a line range past the file's end", score, details)
-	}
-}
-
-// TestCitationScoreEmptyLedgerWithCloneRootStillDiskVerifies covers (d), the
-// regression that matters: a setup-provisioned node whose ledger is
-// completely EMPTY (no act.paths, no act.clonedDirs - exactly what a
-// harness-provisioned clone or an external ACP agent leaves behind, #437)
-// still scores real citations 1.0 as long as a clone root is passed in.
-func TestCitationScoreEmptyLedgerWithCloneRootStillDiskVerifies(t *testing.T) {
-	root := t.TempDir() // stands in for the resolved SetupCloneDir
-	writeCiteFile(t, root, "internal/foo.go", strings.Repeat("line\n", 10))
-
-	answer := "The entry point is [internal/foo.go](internal/foo.go)."
-	score, _, ok := citationScore(answer, workerActivity{}, []string{root})
-	if !ok {
-		t.Fatal("citationScore abstained despite a clone root - an empty ledger must not cause abstention")
-	}
-	if score != 1.0 {
-		t.Errorf("score = %.2f, want 1.0 (real file, empty ledger, clone root passed)", score)
-	}
-}
-
-// TestCitationScoreRejectsPathEscape covers (f): a cited path that tries to
-// escape the clone root via ".." must never be disk-verified, regardless of
-// what actually exists at the resolved location outside the root.
-func TestCitationScoreRejectsPathEscape(t *testing.T) {
-	root := t.TempDir()
-	// A real /etc/passwd exists on the host - prove the escape is rejected
-	// on containment, not because the target happens to be missing.
-	answer := "[passwd](../../etc/passwd)"
-	score, details, ok := citationScore(answer, workerActivity{}, []string{root})
-	if !ok {
-		t.Fatal("citationScore ok=false, want true (clone root present)")
-	}
-	if len(details) != 1 || score != 0.0 {
-		t.Errorf("score=%.2f details=%+v, want 0.0 - a path escape must never be backed", score, details)
+	answer := "Per quack@internal/foo.go:1-5, [see also](internal/bar.go)."
+	act := workerActivity{clonedRepos: []string{"https://github.com/org/repo"}}
+	if _, _, ok := citationScore(answer, act); ok {
+		t.Error("citationScore ok=true for a code-only node with no web activity, want false (nothing to grade)")
 	}
 }
 

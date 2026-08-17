@@ -1,21 +1,17 @@
 package vetting
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"maps"
 	"net/url"
 	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -58,7 +54,7 @@ const (
 	judgeSkillsClause = "You also have skill tools (list_skills, load_skill, load_skill_resource) - the same skills the worker could use. When it helps, load a relevant review or quality skill (for example a code-review skill like `ponytail-review`, or call list_skills to see what is available) so you can ground your quality assessment in the SAME principles the worker was told to follow, rather than principles baked into this prompt. This is OPTIONAL and bounded: use your judgment, do not load a skill on every case, load at most what you need to reach a verdict, and still finish with exactly one submit_verdict call. "
 
 	judgeBehaviourTail = "If an image is attached to this message, you can see it - use it to directly verify any visual claims in the answer. If there is no image, judge on internal consistency and appropriate hedging only; do NOT penalise an answer merely because you cannot see the source. " +
-		"Do NOT try to verify which URLs were fetched - citation backing is checked separately by deterministic code, so score `cites_sources` only on whether claims carry followable links at all, not on whether you think a URL is real. " +
+		"Do NOT try to verify which URLs were fetched - WEB citation backing is checked separately by deterministic code, so score `cites_sources` only on whether claims carry followable links at all, not on whether you think a URL is real. Local file/code citations (a repo-relative path, `<repo>@path[:lines]`) get NO such deterministic check - verify those yourself per the read-tools instructions above, or judge them on internal consistency alone when you hold no tools. " +
 		"CRITICAL - the leniency below is SCOPED, not a blanket pass for citations: it protects claims about LIVE WEB or EXTERNAL content you have no way to check from here (a fresh article, an external product, a fact outside this repo) and your own world knowledge is stale and incomplete, so NEVER treat such a claim as fabricated or ungrounded merely because you do not recognize it, it sounds new, or it postdates your training - an unfamiliar title, name, product, or event is NOT evidence of fabrication there. A specific is 'invented' only when the answer's OWN text is internally inconsistent or makes a precise claim it never supports, never because it conflicts with your memory. This leniency NEVER applies to claims about the workspace/repo: when you hold read tools, verify them per the mandatory instructions above - a citation there is a pointer to go check, not proof, and an unverified in-repo claim scores as unsupported even if it 'sounds right'; when you hold no tools, judge in-repo claims on internal consistency only, same as any other unverifiable claim, without extending web-content leniency to them. " +
 		"Score EVERY criterion the rubric names - no more, no fewer. For each, reason in one or two sentences, then assign an INTEGER score from 0 to 10 using the rubric's scoring bands (10 = the criterion is fully met, 0 = total failure; use the intermediate values for partial quality - do not snap to 0, 5, or 10). Judge substance, not style: length and fluent prose earn no credit. Each criterion is an independent requirement: the answer's overall score is its WEAKEST criterion, so a single failing criterion sinks it - do not let a strong dimension excuse a failing one. " +
 		"When - and only when - you have scored every criterion, call the submit_verdict tool exactly once with: `criteria` (an object mapping each criterion name to {reason, score}), `score` (a fallback the gate uses only if you submit no criteria - with criteria present it derives the overall score from them, so your per-criterion reasoning is the work that counts), and `feedback` (concrete, actionable notes naming the lowest-scoring criteria and what to fix; empty when the answer passes). " +
@@ -710,24 +706,19 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 // reader which one happened instead of calling both "unavailable" (#779).
 var ErrJudgeNoVerdict = errors.New("vetting: judge ended without a verdict")
 
-// markdownLinkRe extracts inline Markdown link targets - web URLs AND local
-// paths ([games-repo/app/games.ts](games-repo/app/games.ts)): repo-exploration
-// and coding nodes cite the files they read, not web pages.
+// markdownLinkRe extracts inline Markdown link targets - web URLs and local
+// paths alike; only http(s) targets are scored (see citationScore).
 var markdownLinkRe = regexp.MustCompile(`\[[^\]]*\]\(([^)\s]+)\)`)
 
-// codeCiteRe matches the code-explorer's inline file-read citation format -
-// "<repo>@<path>" or "<repo>@<path>:<line-range>" (e.g.
-// "quack@internal/dag/executor.go" or "quack@server/core/worker.go:207-216")
-// - used instead of Markdown links when citing files read off a clone. The
-// path segment requires at least one "/" so this can't mistake an email
-// address (a@b.com) for a citation.
-var codeCiteRe = regexp.MustCompile(`\b([\w.-]+)@([\w.-]+(?:/[\w.-]+)+)(?::(\d+(?:-\d+)?))?`)
-
-// citationScore: deterministic grade per cited link. Web URLs against session ledger; local code citations against clone on disk.
-// Web layers: fetched=1.00, searched=0.75, same host fetched=0.50, same host searched=0.25, neither=0.00.
+// citationScore: deterministic grade per cited web link, against the session ledger.
+// Local file/code citations (e.g. "<repo>@<path>") are NOT graded here - a
+// worker's own claim to have read a file quotes lines an LLM judge can check
+// against the ledger directly, so a second deterministic pass produced false
+// failures without adding coverage (#see PR removing diskCiteScore).
+// Layers: fetched=1.00, searched=0.75, same host fetched=0.50, same host searched=0.25, neither=0.00.
 // Worker-facing meaning of these tiers lives in citeReasonLegend below - keep the two in sync.
-func citationScore(answer string, act workerActivity, cloneRoots []string) (score float64, details []citationDetail, ok bool) {
-	if len(act.fetched) == 0 && len(act.seen) == 0 && len(act.clonedRepos) == 0 && len(cloneRoots) == 0 {
+func citationScore(answer string, act workerActivity) (score float64, details []citationDetail, ok bool) {
+	if len(act.fetched) == 0 && len(act.seen) == 0 {
 		return 0, nil, false
 	}
 	fetchedURL, fetchedHost := normalizedSets(slices.Collect(maps.Keys(act.fetched)))
@@ -744,141 +735,37 @@ func citationScore(answer string, act workerActivity, cloneRoots []string) (scor
 		if err != nil || target == "" {
 			continue
 		}
-
-		var key string
+		if u.Scheme != "http" && u.Scheme != "https" {
+			continue // mailto:, local path, in-document anchor, … - not web-gradeable
+		}
+		norm, host := normalizeURL(target)
+		if norm == "" {
+			continue
+		}
+		if _, dup := dedup[norm]; dup {
+			continue
+		}
+		dedup[norm] = struct{}{}
 		var s float64
 		switch {
-		case u.Scheme == "http" || u.Scheme == "https":
-			norm, host := normalizeURL(target)
-			if norm == "" {
-				continue
-			}
-			key = norm
-			switch {
-			case fetchedURL[norm]:
-				s = 1.00
-			case seenURL[norm]:
-				s = 0.75
-			case host != "" && fetchedHost[host]:
-				s = 0.50
-			case host != "" && seenHost[host]:
-				s = 0.25
-			default:
-				s = 0.00
-			}
-		case u.Scheme != "":
-			continue // mailto:, ftp:, … - not a gradeable citation
+		case fetchedURL[norm]:
+			s = 1.00
+		case seenURL[norm]:
+			s = 0.75
+		case host != "" && fetchedHost[host]:
+			s = 0.50
+		case host != "" && seenHost[host]:
+			s = 0.25
 		default:
-			// Local code citation. u.Path drops a fragment ([x](file.md#L4))
-			// and query. Disk-verified, not ledger-checked - see the doc comment.
-			np := normalizePath(u.Path)
-			if np == "" {
-				continue // pure in-document anchor like (#section)
-			}
-			key = np
-			s = diskCiteScore(cloneRoots, []string{np}, "")
+			s = 0.00
 		}
-		if _, dup := dedup[key]; dup {
-			continue
-		}
-		dedup[key] = struct{}{}
 		details = append(details, citationDetail{url: target, score: s})
-		sum += s
-	}
-	for _, m := range codeCiteRe.FindAllStringSubmatch(answer, -1) {
-		repo, path, lineRange := m[1], normalizePath(m[2]), m[3]
-		if path == "" {
-			continue
-		}
-		key := "code:" + repo + "@" + path
-		if _, dup := dedup[key]; dup {
-			continue
-		}
-		dedup[key] = struct{}{}
-		// A code citation is repo-relative, but the clone root may correspond
-		// to it either bare (repo-relative) or clone-dir-prefixed (repo/path)
-		// - try both.
-		s := diskCiteScore(cloneRoots, []string{path, repo + "/" + path}, lineRange)
-		details = append(details, citationDetail{url: m[0], score: s})
 		sum += s
 	}
 	if len(details) == 0 {
 		return 0, nil, false
 	}
 	return sum / float64(len(details)), details, true
-}
-
-// maxCiteLineScanBytes: bounds cited-file reads for line-range confirmation.
-const maxCiteLineScanBytes = 512 * 1024
-
-// diskCiteScore: verifies code citation against clone on disk. Tries candidate with and without root base name.
-func diskCiteScore(cloneRoots []string, candidates []string, lineRange string) float64 {
-	endLine := 0
-	if lineRange != "" {
-		end := lineRange
-		if _, after, found := strings.Cut(lineRange, "-"); found {
-			end = after
-		}
-		n, err := strconv.Atoi(end)
-		if err != nil {
-			return 0
-		}
-		endLine = n
-	}
-	for _, root := range cloneRoots {
-		base := filepath.Base(root)
-		for _, cand := range candidates {
-			tries := []string{cand}
-			if stripped, ok := strings.CutPrefix(cand, base+"/"); ok {
-				tries = append(tries, stripped)
-			}
-			for _, t := range tries {
-				abs, ok := resolveUnderRoot(root, t)
-				if !ok {
-					continue
-				}
-				info, err := os.Stat(abs)
-				if err != nil || info.IsDir() {
-					continue
-				}
-				if endLine == 0 || fileHasLine(abs, endLine) {
-					return 1.0
-				}
-			}
-		}
-	}
-	return 0
-}
-
-// resolveUnderRoot: joins rel under root, rejecting path traversal.
-func resolveUnderRoot(root, rel string) (string, bool) {
-	if root == "" || rel == "" || filepath.IsAbs(rel) {
-		return "", false
-	}
-	root = filepath.Clean(root)
-	joined := filepath.Join(root, rel)
-	if joined != root && !strings.HasPrefix(joined, root+string(filepath.Separator)) {
-		return "", false
-	}
-	return joined, true
-}
-
-// fileHasLine: does path have at least n lines? Scans at most maxCiteLineScanBytes.
-func fileHasLine(path string, n int) bool {
-	f, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(io.LimitReader(f, maxCiteLineScanBytes))
-	count := 0
-	for sc.Scan() {
-		count++
-		if count >= n {
-			return true
-		}
-	}
-	return false
 }
 
 // normalizePath: trims "./" prefix and trailing "/". No symlink/.. resolution.
@@ -900,9 +787,9 @@ type citationDetail struct {
 // a forty-link answer must not produce forty lines of feedback (#789).
 const maxCiteReasonLinks = 10
 
-// citeReasonLegend: what each citationScore tier (~line 563) means and the
-// remedy, for a revising worker with no other context.
-const citeReasonLegend = "backing tiers: 1.0=fetched/on-clone (trust it), 0.75=seen in search results only (fetch to confirm before keeping), 0.5/0.25=same host but exact page never seen (likely invented - re-find or drop), 0=never seen anywhere (fabricated - drop it). Score is the mean across all cited links, so one weak link among many matters less than an isolated one."
+// citeReasonLegend: what each citationScore tier means and the remedy, for a
+// revising worker with no other context.
+const citeReasonLegend = "backing tiers: 1.0=fetched (trust it), 0.75=seen in search results only (fetch to confirm before keeping), 0.5/0.25=same host but exact page never seen (likely invented - re-find or drop), 0=never seen anywhere (fabricated - drop it). Applies to web links only. Score is the mean across all cited web links, so one weak link among many matters less than an isolated one."
 
 // citeReason names the links that scored below full backing, worst first, so
 // the worker fixes the most-damning ones first if the list gets capped.
