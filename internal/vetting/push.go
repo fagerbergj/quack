@@ -130,6 +130,10 @@ func pushGitEnv(dir string, caps workspace.Caps, auth *gitAuth) []string {
 		"GIT_CONFIG_NOSYSTEM=1",
 		"PATH=" + pushGitChildPath(caps),
 		"HOME=" + home,
+		// Git writes loose objects via a tmp file under TMPDIR then renames it
+		// into .git/objects - unset, that defaults to the real /tmp, which can
+		// be a different device than dir and turn the rename into EXDEV (#936).
+		"TMPDIR=" + workspace.SandboxTmpDir(caps),
 	}
 	if auth != nil {
 		env = append(env,

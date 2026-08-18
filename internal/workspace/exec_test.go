@@ -441,6 +441,27 @@ func TestChildEnvTmpdirTracksScratchDirUnderLandlock(t *testing.T) {
 	}
 }
 
+// TestChildEnvGotmpdirMatchesTmpdir: Go's build work dir defaults to
+// os.TempDir() when GOTMPDIR is unset, which the jail doesn't grant (#936) -
+// GOTMPDIR must equal whatever TMPDIR resolved to.
+func TestChildEnvGotmpdirMatchesTmpdir(t *testing.T) {
+	scratch := t.TempDir()
+	caps := Caps{Sandbox: SandboxLandlock, HomeDir: t.TempDir(), ScratchDir: scratch}
+	got := childEnv("/repo", caps)
+	var tmpdir, gotmpdir string
+	for _, e := range got {
+		if strings.HasPrefix(e, "TMPDIR=") {
+			tmpdir = strings.TrimPrefix(e, "TMPDIR=")
+		}
+		if strings.HasPrefix(e, "GOTMPDIR=") {
+			gotmpdir = strings.TrimPrefix(e, "GOTMPDIR=")
+		}
+	}
+	if tmpdir == "" || gotmpdir != tmpdir {
+		t.Errorf("childEnv = %v, want GOTMPDIR == TMPDIR (%q)", got, tmpdir)
+	}
+}
+
 // TestRunArgvEnvReachesChild is the executable-fixture proof: workspace.env
 // values actually arrive in a spawned child's real environment, not just in
 // the Caps struct.
