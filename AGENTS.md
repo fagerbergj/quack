@@ -136,6 +136,8 @@ agents/<name>/
 
 `agent.LoadBundle` reads the bundle; `agent.Build` turns a native one into an LLM agent. The config (`config/quack.yaml`) binds a model (and, for native agents, a tool list) to each bundle.
 
+Before changing anything under `internal/workspace/`'s sandbox (`sandbox.go`, `jail.go`, `exec.go`) or an ACP agent's env/argv wrapping (`internal/acp/proc.go`, `internal/serve/serve.go`'s `opencodeEnv`), run `quack sandbox check --agent code-reviewer` first (see `docs/sandbox-cli.md`) - it's the same `Caps`/`WrapArgv`/`spawnEnv` path the ACP child gets, and it catches a regression before the next review does.
+
 ### Inference (`internal/inference/`)
 
 `inference.NewModel(providerConfig, modelName)` is the single factory for `model.LLM`. Only `kind: "openai"` is implemented (any OpenAI-compatible endpoint). Adding a new provider kind is localized to `factory.go`.
