@@ -183,6 +183,16 @@ func childEnv(dir string, caps Caps) []string {
 	for _, k := range sortedEnvKeys(caps.Env) {
 		env = append(env, k+"="+caps.Env[k])
 	}
+	// Appended LAST (exec.Cmd.Env: last value wins for a duplicate key) so
+	// these win over caps.Env's GOMODCACHE (the #940 preseed, read-only) - same
+	// reasoning and helper as acp.Agent.spawnEnv (#954): GOMODCACHE must be
+	// writable even for an offline `go test`.
+	env = append(env,
+		"GOMODCACHE="+EnsureWritableGoModCache(childHome(dir, caps)),
+		"GOCACHE="+filepath.Join(childHome(dir, caps), ".cache", "go-build"),
+		"GOFLAGS=-mod=mod",
+		"GOTOOLCHAIN=local",
+	)
 	return env
 }
 

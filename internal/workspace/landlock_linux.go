@@ -62,7 +62,12 @@ func SandboxExecMain(args []string) error {
 
 	var rules []landlock.Rule
 	if len(rw) > 0 {
-		rules = append(rules, landlock.RWDirs(rw...).IgnoreIfMissing())
+		// WithRefer grants LANDLOCK_ACCESS_FS_REFER: without it, cross-directory
+		// link()/rename() within these RW dirs is denied and reported as EXDEV even
+		// on one filesystem - breaking git's object writes and `git clone --local`.
+		// Safe to request unconditionally: landlockABI is fixed at V3 (REFER needs
+		// only ABI>=2), so any kernel this ruleset applies on already supports it.
+		rules = append(rules, landlock.RWDirs(rw...).WithRefer().IgnoreIfMissing())
 	}
 	if len(ro) > 0 {
 		rules = append(rules, landlock.RODirs(ro...).IgnoreIfMissing())

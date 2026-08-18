@@ -419,3 +419,98 @@ func TestSandboxExecStampsTheEnvMarker(t *testing.T) {
 		t.Errorf("marker %q does not name the mode, ABI and grant counts", line)
 	}
 }
+
+// TestSandboxExecRefer pins issue #954: without LANDLOCK_ACCESS_FS_REFER,
+// link()/rename() across two dirs under the SAME rw grant is denied and
+// reported as EXDEV even though both paths are on one filesystem - breaking
+// git's object writes (rename tmp -> .git/objects/xx/) and `git clone
+// --local` (hardlinks). All three checks share a single rw-granted root so a
+// regression to the pre-WithRefer ruleset fails every subcase.
+func TestSandboxExecRefer(t *testing.T) {
+	requireLandlock(t)
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+
+	t.Run("os_link_across_dirs", func(t *testing.T) {
+		root := t.TempDir()
+		caps := sandboxCaps(t, SandboxLandlock)
+		caps.WorkRoot = root
+
+		srcDir := filepath.Join(root, "src")
+		dstDir := filepath.Join(root, "dst")
+		if err := os.MkdirAll(srcDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(dstDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		src := filepath.Join(srcDir, "f")
+		if err := os.WriteFile(src, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		dst := filepath.Join(dstDir, "f")
+		res, err := RunArgv(context.Background(), root, []string{"ln", src, dst}, caps)
+		if err != nil || res.ExitCode != 0 {
+			t.Fatalf("cross-dir ln under the rw grant: err=%v exit=%d output=%q (EXDEV means REFER isn't granted)", err, res.ExitCode, res.Output)
+		}
+	})
+
+	t.Run("git_init_commit_push_to_bare", func(t *testing.T) {
+		root := t.TempDir()
+		workDir := filepath.Join(root, "work")
+		bareDir := filepath.Join(root, "bare.git")
+		if err := os.MkdirAll(workDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command("git", "init", "-q", "--bare", bareDir).CombinedOutput(); err != nil {
+			t.Fatalf("git init --bare (unsandboxed setup): %v: %s", err, out)
+		}
+
+		caps := sandboxCaps(t, SandboxLandlock)
+		caps.WorkRoot = root
+		run := func(argv ...string) ExecResult {
+			t.Helper()
+			res, err := RunArgv(context.Background(), workDir, argv, caps)
+			if err != nil {
+				t.Fatalf("%v: %v (%q)", argv, err, res.Output)
+			}
+			return res
+		}
+		if res := run("git", "init", "-q"); res.ExitCode != 0 {
+			t.Fatalf("git init: exit=%d %q", res.ExitCode, res.Output)
+		}
+		if res := run("git", "-c", "user.email=a@b.c", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "init"); res.ExitCode != 0 {
+			t.Fatalf("git commit: exit=%d %q (Invalid cross-device link means REFER isn't granted)", res.ExitCode, res.Output)
+		}
+		if res := run("git", "push", bareDir, "HEAD:refs/heads/main"); res.ExitCode != 0 {
+			t.Fatalf("git push to bare repo under the same rw grant: exit=%d %q (Invalid cross-device link means REFER isn't granted)", res.ExitCode, res.Output)
+		}
+	})
+
+	t.Run("git_clone_local", func(t *testing.T) {
+		root := t.TempDir()
+		srcDir := filepath.Join(root, "src")
+		if err := os.MkdirAll(srcDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		setup := func(dir string, argv ...string) {
+			t.Helper()
+			cmd := exec.Command("git", argv...)
+			cmd.Dir = dir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v (unsandboxed setup): %v: %s", argv, err, out)
+			}
+		}
+		setup(srcDir, "init", "-q")
+		setup(srcDir, "-c", "user.email=a@b.c", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "init")
+
+		caps := sandboxCaps(t, SandboxLandlock)
+		caps.WorkRoot = root
+		dst := filepath.Join(root, "clone")
+		res, err := RunArgv(context.Background(), root, []string{"git", "clone", "--local", "-q", srcDir, dst}, caps)
+		if err != nil || res.ExitCode != 0 {
+			t.Fatalf("git clone --local under the rw grant: err=%v exit=%d output=%q (failed to create link means REFER isn't granted)", err, res.ExitCode, res.Output)
+		}
+	})
+}

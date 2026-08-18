@@ -408,12 +408,20 @@ func TestChildEnvIncludesWorkspaceEnv(t *testing.T) {
 		"ANDROID_HOME=/opt/android-sdk",
 		"JAVA_HOME=/opt/jdk-21",
 	}
-	if len(got) != len(want) {
-		t.Fatalf("childEnv = %v, want %v", got, want)
+	// GOMODCACHE/GOCACHE/GOFLAGS/GOTOOLCHAIN (#954) are appended last and
+	// checked separately below - they're not workspace.env entries.
+	if len(got) != len(want)+4 {
+		t.Fatalf("childEnv = %v, want %v plus 4 go cache vars", got, want)
 	}
 	for i, w := range want {
 		if got[i] != w {
 			t.Errorf("childEnv[%d] = %q, want %q", i, got[i], w)
+		}
+	}
+	tail := strings.Join(got[len(want):], " ")
+	for _, k := range []string{"GOMODCACHE=", "GOCACHE=", "GOFLAGS=-mod=mod", "GOTOOLCHAIN=local"} {
+		if !strings.Contains(tail, k) {
+			t.Errorf("childEnv tail %q missing %q", tail, k)
 		}
 	}
 }

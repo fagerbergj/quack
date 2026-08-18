@@ -304,3 +304,40 @@ func TestWrappedArgvBwrapAcpHandshake(t *testing.T) {
 		t.Fatalf("no ACP initialize reply through the bwrap wrap in 90s\nstderr: %s", stderr.String())
 	}
 }
+
+// TestSpawnEnvSetsGoCacheVars pins #954: GOMODCACHE/GOCACHE/GOFLAGS/
+// GOTOOLCHAIN all land in spawnEnv, GOMODCACHE and GOCACHE pointing at
+// writable dirs under the jail's HOME grant - not Go's compiled-in default
+// under /home/nonroot (unwritable) and not the #940 preseed directly (also
+// unwritable: it's RO-mounted under /usr).
+func TestSpawnEnvSetsGoCacheVars(t *testing.T) {
+	home := t.TempDir()
+	a := &Agent{opts: Options{Caps: workspace.Caps{Sandbox: workspace.SandboxLandlock}, Home: home}}
+	env := a.spawnEnv(a.opts.Caps)
+
+	got := map[string]string{}
+	for _, e := range env {
+		if k, v, ok := strings.Cut(e, "="); ok {
+			got[k] = v
+		}
+	}
+
+	wantModCache := filepath.Join(home, "go", "pkg", "mod")
+	if got["GOMODCACHE"] != wantModCache {
+		t.Errorf("GOMODCACHE = %q, want %q (writable, under HOME)", got["GOMODCACHE"], wantModCache)
+	}
+	if !strings.HasPrefix(got["GOCACHE"], home) {
+		t.Errorf("GOCACHE = %q, want a path under HOME %q", got["GOCACHE"], home)
+	}
+	if got["GOFLAGS"] != "-mod=mod" {
+		t.Errorf("GOFLAGS = %q, want -mod=mod", got["GOFLAGS"])
+	}
+	if got["GOTOOLCHAIN"] != "local" {
+		t.Errorf("GOTOOLCHAIN = %q, want local (no network toolchain fetch)", got["GOTOOLCHAIN"])
+	}
+	for _, k := range []string{"GOMODCACHE", "GOCACHE"} {
+		if fi, err := os.Stat(got[k]); err != nil || !fi.IsDir() {
+			t.Errorf("%s = %q is not a directory that exists: %v", k, got[k], err)
+		}
+	}
+}
