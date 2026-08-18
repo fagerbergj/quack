@@ -69,7 +69,7 @@ func (m *strayCommitStub) GenerateContent(_ context.Context, req *model.LLMReque
 			return
 		}
 		m.workerN++
-		if strings.Contains(stubAllText(req), "Reviewer feedback to address") {
+		if strings.Contains(stubAllText(req), "Verdict:") {
 			// Revise round: do the actual task.
 			writeFile(m.t, filepath.Join(m.dir, "publish.yml"), "name: publish\n")
 			m.git("add", "-A")
@@ -247,7 +247,7 @@ func (m *incompleteOnTaskStub) GenerateContent(_ context.Context, req *model.LLM
 			}), nil)
 			return
 		}
-		if strings.Contains(stubAllText(req), "Reviewer feedback to address") {
+		if strings.Contains(stubAllText(req), "Verdict:") {
 			writeFile(m.t, filepath.Join(m.dir, ".dockerignore"), "node_modules\n")
 			m.git("add", "-A")
 			m.git("commit", "-q", "-m", "Add .dockerignore")

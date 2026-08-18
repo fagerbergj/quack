@@ -175,7 +175,7 @@ func TestComposeFeedbackAppendsFailingCriteriaReasons(t *testing.T) {
 			"checks_pass":      {Score: 0, Reason: "check \"go test ./...\" failed (exit 1): some failure"},
 		},
 	}
-	got := composeFeedback(v, 0.7)
+	_, got := composeFeedback(v, 0.7, 1)
 	if !strings.Contains(got, "judge's own narrative") {
 		t.Errorf("composeFeedback dropped the judge's own feedback: %q", got)
 	}
@@ -192,7 +192,7 @@ func TestComposeFeedbackNoFailuresReturnsJudgeFeedbackUnchanged(t *testing.T) {
 		Feedback: "all good",
 		Criteria: map[string]criterionScore{"answers_question": {Score: 1, Reason: "great"}},
 	}
-	got := composeFeedback(v, 0.7)
+	_, got := composeFeedback(v, 0.7, 1)
 	if got != "all good" {
 		t.Errorf("composeFeedback = %q, want unchanged judge feedback %q", got, "all good")
 	}

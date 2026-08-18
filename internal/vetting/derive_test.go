@@ -281,10 +281,10 @@ func TestComposeFeedbackCheckOutputIsBounded(t *testing.T) {
 	v := verdict{
 		Feedback: "judge narrative",
 		Criteria: map[string]criterionScore{
-			"checks_pass": {Score: 0, Reason: "deterministic: check \"npm run build\" failed (exit 1):\n" + boundCheckOutput(huge)},
+			"checks_pass": {Score: 0, Reason: "deterministic: check \"npm run build\" failed (exit 1):\n" + boundCheckOutput(huge), Deterministic: true},
 		},
 	}
-	if got := composeFeedback(v, 0.7); len(got) > maxCheckOutputChars+1_000 {
+	if _, got := composeFeedback(v, 0.7, 1); len(got) > maxCheckOutputChars+1_000 {
 		t.Errorf("composeFeedback = %d chars, want the check output bounded to ~%d", len(got), maxCheckOutputChars)
 	}
 }

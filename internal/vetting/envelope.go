@@ -147,7 +147,7 @@ func buildEnvelope(v verdict, threshold float64, round int) verdictEnvelope {
 			Score:     c.Score,
 			Threshold: threshold,
 			Anchor:    c.Anchor,
-			Shortfall: c.Shortfall,
+			Shortfall: criterionText(c), // prefers Shortfall, falls back to the deprecated Reason
 			Fix:       c.Fix,
 		}
 		if c.Deterministic {

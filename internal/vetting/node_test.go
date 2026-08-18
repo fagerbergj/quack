@@ -50,7 +50,7 @@ func (m *stubModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ 
 		}
 		m.workerCalls++
 		m.workerPrompts = append(m.workerPrompts, stubAllText(req))
-		if strings.Contains(stubAllText(req), "Reviewer feedback") {
+		if strings.Contains(stubAllText(req), "Verdict:") {
 			yield(stubText("This is the revised answer with the reviewer's fixes applied."), nil)
 			return
 		}
@@ -475,7 +475,7 @@ func TestComposeFeedbackDeterministicOnlyLeadsAndScopesJudgeNotes(t *testing.T) 
 	det := map[string]criterionScore{"delivery_complete": {Score: 0, Reason: "deterministic: no commit found in the ledger"}}
 	merged := mergeDeterministic(v, det)
 
-	got := composeFeedback(merged, 0.7)
+	_, got := composeFeedback(merged, 0.7, 1)
 
 	detIdx := strings.Index(got, "Deterministic check failures")
 	feedbackIdx := strings.Index(got, "The implementation is excellent.")
@@ -501,7 +501,7 @@ func TestComposeFeedbackJudgeOnlyDoesNotLabelDeterministic(t *testing.T) {
 		Criteria: map[string]criterionScore{"accuracy": {Score: 0.3, Reason: "the analysis misses the caching layer"}},
 		Feedback: "needs more depth",
 	}
-	got := composeFeedback(v, 0.7)
+	_, got := composeFeedback(v, 0.7, 1)
 	if strings.Contains(got, "Deterministic") {
 		t.Errorf("composeFeedback = %q, must not label a judge-scored criterion as deterministic", got)
 	}
@@ -524,7 +524,7 @@ func TestComposeFeedbackBothKindsEachOwnHeadingNoDuplicates(t *testing.T) {
 	det := map[string]criterionScore{"checks_pass": {Score: 0, Reason: "deterministic: go test ./... failed"}}
 	merged := mergeDeterministic(v, det)
 
-	got := composeFeedback(merged, 0.7)
+	_, got := composeFeedback(merged, 0.7, 1)
 
 	if !strings.Contains(got, "Deterministic check failures") {
 		t.Errorf("composeFeedback = %q, want a deterministic-failures heading", got)
@@ -543,7 +543,7 @@ func TestComposeFeedbackBothKindsEachOwnHeadingNoDuplicates(t *testing.T) {
 // is returned unchanged - no grouping/labelling machinery kicks in.
 func TestComposeFeedbackPassingUnchanged(t *testing.T) {
 	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.95}}, Feedback: "all good"}
-	if got := composeFeedback(v, 0.7); got != "all good" {
+	if _, got := composeFeedback(v, 0.7, 1); got != "all good" {
 		t.Errorf("composeFeedback = %q, want unchanged judge feedback %q", got, "all good")
 	}
 }
@@ -589,7 +589,7 @@ func TestComposeFeedbackScoreUnchanged(t *testing.T) {
 				t.Errorf("Score = %v, want %v (composeFeedback grouping must not move the score)", merged.Score, tc.wantScore)
 			}
 			// composeFeedback itself must never touch the score.
-			composeFeedback(merged, 0.7)
+			composeFeedback(merged, 0.7, 1)
 			if merged.Score != tc.wantScore {
 				t.Errorf("Score after composeFeedback = %v, want unchanged %v", merged.Score, tc.wantScore)
 			}

@@ -176,25 +176,19 @@ func TestCiteReasonSortsWorstFirstBeforeTruncating(t *testing.T) {
 	}
 }
 
-// TestCiteReasonIncludesLegend is the #789 follow-up: the reason must carry
-// the score-tier legend and remedy exactly once, self-contained for a
-// revising worker with no other context - and only when there's something unbacked.
-func TestCiteReasonIncludesLegend(t *testing.T) {
-	fullyBacked := []citationDetail{{url: "https://ex.com/a", score: 1.0}}
-	if reason := citeReason(1.0, fullyBacked); strings.Contains(reason, citeReasonLegend) {
-		t.Errorf("fully-backed reason should not carry the legend: %q", reason)
-	}
-
+// TestCiteReasonNoLongerCarriesLegend is the #941 follow-up: the tier legend
+// moved out of the reason string and into cites_sources's structured bands
+// (citesSourcesBands, node.go) - the reason itself must never emit it again,
+// on any round.
+func TestCiteReasonNoLongerCarriesLegend(t *testing.T) {
+	const legendFragment = "backing tiers:"
 	unbacked := []citationDetail{
 		{url: "https://a.example.com/p", score: 0.5},
 		{url: "https://b.example.com/p", score: 0.25},
 	}
 	reason := citeReason(0.375, unbacked)
-	if !strings.Contains(reason, citeReasonLegend) {
-		t.Errorf("reason missing legend/remedy text: %q", reason)
-	}
-	if got := strings.Count(reason, "backing tiers:"); got != 1 {
-		t.Errorf("legend must appear exactly once regardless of unbacked link count, got %d: %q", got, reason)
+	if strings.Contains(reason, legendFragment) {
+		t.Errorf("reason should no longer carry the tier legend (moved to bands): %q", reason)
 	}
 }
 
