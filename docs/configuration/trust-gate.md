@@ -5,7 +5,7 @@ Limited local models bluff, so nothing a node's worker produces is trusted by de
 ```yaml
 gates:
   constitution_path: config/constitution.md   # global principles, shared by the advisor + judge
-  rubric_path: config/rubric.md               # default scoring guide (an agent's own rubric.md wins)
+  rubric_path: config/rubric.md               # default scoring guide (an agent's own rubric.yaml wins)
   deterministic_checks:
     max_rounds: 4   # free citation/length checks; up to 4 cheap worker revise cycles
   judge:
@@ -38,7 +38,7 @@ A separate, independently-configured model scores the answer G-Eval style agains
 
 ## Rubrics
 
-`rubric_path` is the default scoring guide; an agent's own bundle can override it with a `rubric.md` sitting next to its `prompt.md` (see [agents.md](agents.md)). `constitution_path` is the fixed, standing set of principles layered under every rubric - grounded claims, no fabrication - that no per-node rubric can remove.
+`rubric_path` is the default scoring guide; an agent's own bundle can override it with a `rubric.yaml` sitting next to its `prompt.md` (see [agents.md](agents.md)). `constitution_path` is the fixed, standing set of principles layered under every rubric - grounded claims, no fabrication - that no per-node rubric can remove.
 
 The judge needs concrete criteria to score against, and a vague rubric makes a small judge wander. So the **planner writes a per-node rubric when it builds the DAG** - it already defines the task, and "done" is the other half:
 

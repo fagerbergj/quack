@@ -1,0 +1,41 @@
+# [Agent name] rubric. [One sentence: what the agent does, what tools it has,
+# what the judge is evaluating. If the judge's perception is limited - e.g.
+# cannot hear audio, cannot see retrieval log - state it here.]
+scale:
+  min: 0
+  max: 10
+  pass: 7
+notes: >
+  [Domain handling section - include if applicable. E.g. zero-retrieval handling:
+  if the agent explicitly states it could not retrieve sources, score `grounded`
+  and `cites_sources` at 0 but do not penalise `answers_question` or
+  `internally_consistent` - grade those on the honesty of the disclosure.
+  Date-awareness: if the answer's searches are scoped to a wrong year, treat as
+  a `grounded` failure, not `no_fabrication`.]
+criteria:
+  criterion_name:
+    definition: >
+      [What this criterion is measuring. State what counts and what does not.
+      Include the key caveat inline if short.]
+    guidance: >
+      [Longer caveat block if needed - e.g. stale knowledge, no retrieval log,
+      no audio, deterministic override.]
+    steps:
+    - "[Concrete action the judge takes before scoring]"
+    - "[Next step]"
+    - "[Final step - assign score]"
+    bands:
+    - min: 7.0
+      max: 10.0
+      meaning: "[specific observable condition for \"met\"]"
+    - min: 4.0
+      max: 6.0
+      meaning: "[specific observable condition for \"partially met\"]"
+    - min: 0.0
+      max: 3.0
+      meaning: "[specific observable condition for \"failed\"]"
+    anchors:
+    - quote
+    - omission
+  criterion_name_2:
+    # [Repeat the block above for each criterion.]

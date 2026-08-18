@@ -9,7 +9,7 @@ This file provides guidance to AI coding agents working in this repository.
 Never:
 
 - Edit `internal/schema/quack.gen.go` or anything under `frontend/src/generated/` - these are generated; changes will be overwritten and CI will fail.
-- Add an unrecognised file to an `agents/<name>/` bundle. Each bundle contains exactly `agent-card.json` and `prompt.md`, plus the optional `rubric.md` (judge rubric) and `memory.md` ("what to remember" guidance, M6).
+- Add an unrecognised file to an `agents/<name>/` bundle. Each bundle contains exactly `agent-card.json` and `prompt.md`, plus the optional `rubric.yaml` (judge rubric) and `memory.md` ("what to remember" guidance, M6).
 - Edit `openapi.yaml` without running `make generate` and committing the regenerated files.
 
 Always:
@@ -130,7 +130,7 @@ Native (llmagent) bundles remain for the non-code agents (web-researcher, synthe
 agents/<name>/
   agent-card.json   # A2A AgentCard: identity + skills
   prompt.md         # system prompt (for ACP agents: the per-round preamble)
-  rubric.md         # optional: per-agent judge rubric (falls back to config/rubric.md)
+  rubric.yaml       # optional: per-agent judge rubric (falls back to config/rubric.md)
   memory.md         # optional: "what to remember" guidance (M6), native agents only
 ```
 

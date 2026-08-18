@@ -58,7 +58,7 @@ agents:
     tools: [web_search, web_fetch, summarize, current_date, stage_memory, ask_advisor]
     # no skills scoped: see config/quack.yaml's web-researcher comment
   code-implementer:
-    bundle: agents/code-implementer   # card + prompt.md (ACP preamble) + rubric.md
+    bundle: agents/code-implementer   # card + prompt.md (ACP preamble) + rubric.yaml
     provider: default
     memory:
       bucket: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
@@ -71,7 +71,7 @@ agents:
     acp:
       command: ["opencode", "acp"]
   code-reviewer:
-    bundle: agents/code-reviewer      # card + prompt.md (values + VERDICT/FINDINGS contract) + rubric.md
+    bundle: agents/code-reviewer      # card + prompt.md (values + VERDICT/FINDINGS contract) + rubric.yaml
     provider: default
     memory:
       bucket: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
@@ -84,7 +84,7 @@ agents:
       command: ["opencode", "acp"]
       read_only: true
   code-explorer:
-    bundle: agents/code-explorer      # card + prompt.md (read-only exploration) + rubric.md
+    bundle: agents/code-explorer      # card + prompt.md (read-only exploration) + rubric.yaml
     provider: default
     memory:
       bucket: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)

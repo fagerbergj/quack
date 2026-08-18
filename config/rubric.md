@@ -2,7 +2,7 @@
 
 This is the default G-Eval scoring guide. It operationalises the global
 constitution into named criteria, each scored on a **0–10 integer scale**.
-Agents that need domain-specific scoring drop a rubric.md into their bundle
+Agents that need domain-specific scoring drop a rubric.yaml into their bundle
 directory - that replaces this file while the constitution remains in effect.
 
 ## How to score (G-Eval)

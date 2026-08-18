@@ -68,7 +68,7 @@ Quack's *published* image is the reproducibility unit - it's pinned at publish t
 
 ## Gotchas
 
-- **Never `.dockerignore` `*.md` / `docs/` / `config/`.** The runtime stage copies `prompt.md`, `SKILL.md`, `rubric.md`, and `config/constitution.md` from the build context - ignoring markdown ships a silently broken image (agents/skills fail to load at startup). The `.dockerignore` carries a comment saying so; keep it.
+- **Never `.dockerignore` `*.md` / `docs/` / `config/`.** The runtime stage copies `config/`, `agents/`, and `skills/` wholesale from the build context - `prompt.md`, `agent-card.json`, `rubric.yaml`/`rubric.md`, `SKILL.md`, `config/constitution.md` and all - so ignoring markdown or yaml ships a silently broken image (agents/skills fail to load at startup). The `.dockerignore` carries a comment saying so; keep it.
 - **Cache mounts are not committed to layers**, so they shrink build *time*, never final image *size*. Multi-stage `COPY --from` is what shrinks size. Don't conflate the two.
 - **Distroless has no shell.** `RUN`, `sh`, and `docker exec … sh` don't exist in the runtime stage - do shell work in an earlier stage, and debug a running container with `docker debug` or a sidecar, not by adding a shell to the image.
 - **`COPY . .` busts the build cache on any source change.** That's why dependency manifests are copied and installed *before* it. Don't move `COPY . .` above the dependency install.

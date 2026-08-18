@@ -44,7 +44,7 @@ Build flags: `-s` drops the symbol table, `-w` the DWARF debug info, `-trimpath`
 
 ```text
 # Do NOT add *.md / docs/ / config/ - the runtime stage COPYs prompt.md, SKILL.md,
-# rubric.md, and config/constitution.md from the context.
+# rubric.yaml/rubric.md, and config/constitution.md from the context.
 .git
 .github
 .vscode
