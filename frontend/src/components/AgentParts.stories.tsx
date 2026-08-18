@@ -130,13 +130,7 @@ export const ManyToolCalls: Story = {
   args: { activity: manyActivity },
 }
 
-// #959 - reproduces the #948 shape: a code-review agent whose reasoning
-// arrives as many short fragments interleaved between tool calls (307
-// agent_thinking + 103 agent_tool_call events in the real run), plus a
-// handful of ACP calls whose kind fell outside the bounded enum and arrived
-// as name:"other" with the real identity in title. Built through the same
-// reducers the live stream uses (not a hand-authored Activity[]) so the
-// story exercises the actual fold/thread-through logic, not a mockup of it.
+// Interleaved thinking/tool-call events (#959) folded into one Thought block.
 function buildInterleavedFixture(): Activity[] {
   let runs = startRun([], { runId: 'r1', agent: 'code-reviewer', stage: 'worker' })
   const fragments = [

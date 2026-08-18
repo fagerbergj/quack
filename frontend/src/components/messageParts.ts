@@ -98,13 +98,8 @@ export function startRun(runs: AgentRun[], r: { runId: string; agent: string; st
   return [...runs, { runId: r.runId, agent: r.agent, stage: r.stage, round: r.round, activity: [], done: false, startedAt: r.startedAt }]
 }
 
-// appendRunThinking adds reasoning to a run, coalescing into the run's most
-// recent thinking item - even across intervening tool calls (#959: the ACP
-// relay interleaves think/tool_call/think/tool_call, and without this a
-// reviewer that thinks a few words between each of 100 tool calls produced
-// ~100 one-line Thought fragments instead of one readable block). Tracked via
-// lastThinkIdx rather than scanning backward, so folding stays O(1) amortized
-// per event - a tool call in between never resets or costs a scan.
+// appendRunThinking coalesces into the most recent thinking item even across
+// intervening tool calls (#959), using lastThinkIdx for O(1) lookup.
 // Mutates run.activity in place (push / index-assign) rather than spreading the
 // whole array - an event's cost is O(1) amortized, not O(run length), so a run
 // with N events stays O(N) total instead of O(N²) (#379). The run itself still

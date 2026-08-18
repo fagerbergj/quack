@@ -11,12 +11,8 @@ export function summarizeArgs(args: Record<string, unknown>): string {
   return ''
 }
 
-// previewLine collapses text to a single-line, length-capped preview - the
-// collapsed-state summary for a thinking block (#385: a scannable one-liner
-// beside the "Thought" label, not a wall of reasoning, until expanded). Prefers
-// to break at the end of the first sentence (readable) over a mid-word cut
-// (#959: a folded Thought block can span a whole tool-calling stretch, so
-// "first N chars" often landed mid-word or mid-clause).
+// previewLine collapses to a single-line preview for thinking blocks (#385).
+// Now prefers sentence boundaries (#959) to avoid mid-word cuts in folded blocks.
 export function previewLine(text: string, max = 80): string {
   const oneLine = text.replace(/\s+/g, ' ').trim()
   if (oneLine.length <= max) return oneLine

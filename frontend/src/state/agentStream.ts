@@ -190,10 +190,8 @@ function dispatchAgentEvent(
       return true
     }
     case 'agent_tool_call': {
-      // title isn't in the generated event type (only {node_id,run_id,call_id,
-      // name,args} is documented) but the ACP relay sends it for kind "other"
-      // calls (stage_review, "Loaded skill: …") where name alone is useless
-      // (#959) - read it the same best-effort way p.args already is.
+      // ACP relay sends title for kind "other" calls where name alone is
+      // meaningless (#959) - read it best-effort like p.args.
       const p = parsed as { run_id?: string; call_id?: string; name?: string; args?: Record<string, unknown>; title?: string }
       if (typeof p.name === 'string') {
         handlers.onAgentToolCall?.(p.run_id ?? '', p.call_id ?? '', p.name, p.args ?? {}, nodeIdOf(parsed), typeof p.title === 'string' ? p.title : undefined)
