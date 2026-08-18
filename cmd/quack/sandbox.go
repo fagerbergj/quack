@@ -166,6 +166,10 @@ func runSandboxInteractive(cmd *cobra.Command, f sandboxFlags) error {
 
 	err = c.Wait()
 	if exitErr, ok := err.(*exec.ExitError); ok {
+		// os.Exit skips defers - restore the terminal and tear down the seat
+		// before it, or a non-zero shell exit leaves the caller's tty raw.
+		_ = term.Restore(stdinFd, oldState)
+		teardown()
 		os.Exit(exitErr.ExitCode())
 	}
 	return err
@@ -232,6 +236,7 @@ func runSandboxRun(cmd *cobra.Command, f sandboxFlags, script string) error {
 
 	err = c.Run()
 	if exitErr, ok := err.(*exec.ExitError); ok {
+		teardown() // os.Exit below skips defer; run it before exiting
 		exitIfNonZero(exitErr.ExitCode())
 		return nil
 	}
@@ -296,6 +301,7 @@ func runSandboxCheck(cmd *cobra.Command, f sandboxFlags) error {
 	results := cli.RunSandboxChecks(cmd.Context(), runner, seat.ReadOnly, workspace.EnforcesBoundary(seat.Caps.Sandbox), cfg.Workspace.CheckCommands)
 	fmt.Fprint(cmd.OutOrStdout(), cli.FormatSandboxProbeTable(results))
 	if cli.AnyFail(results) {
+		teardown() // os.Exit below skips defer; run it before exiting
 		exitIfNonZero(1)
 	}
 	return nil
