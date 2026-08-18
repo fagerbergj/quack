@@ -9,6 +9,7 @@ import (
 	"hash/fnv"
 	"io"
 	"io/fs"
+	"iter"
 	"log/slog"
 	"mime"
 	"net/http"
@@ -713,7 +714,11 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 		}
 		writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusCancelled))
 	case dag.StatusPaused:
-		if !h.orch.PauseNode(chatID, nodeID, dag.PauseUser) {
+		reason := dag.PauseUser
+		if body.Reason != nil && *body.Reason != "" {
+			reason = dag.PauseReason(*body.Reason)
+		}
+		if !h.orch.PauseNode(chatID, nodeID, reason) {
 			writeJSON(w, http.StatusConflict, schema.TransitionError{
 				Error:   "node is not pausable right now (no live run); nothing was paused",
 				Current: schema.NodeStatus(current),
@@ -738,6 +743,85 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 		h.retryNodeAsync(dp, chatID, nodeID, guidance)
 		writeJSON(w, http.StatusOK, schema.DagNodeState{Status: schema.NodeStatusQueued})
 	}
+}
+
+// StartNode is the explicit per-node "start" transition (#962): queued or
+// paused -> running. For a node paused awaiting_input, body.Content is the
+// answer to its parked question, delivered the same way SendChatMessage
+// delivers a chat-level answer.
+func (h *Handler) StartNode(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
+	var body schema.NodeStartBody
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&body) // optional body - no answer needed outside awaiting_input
+	}
+	dp, err := h.store.GetLatestDagPlan(r.Context(), chatID)
+	if err != nil || dp == nil {
+		errMsg(w, http.StatusNotFound, "no plan for this chat")
+		return
+	}
+	dn, err := h.store.GetDagNode(r.Context(), dp.ID, nodeID)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
+	current := dag.StatusQueued
+	if dn != nil {
+		current = dag.NodeStatus(dn.Status)
+	}
+	if !dag.CanTransition(current, dag.StatusRunning) {
+		writeJSON(w, http.StatusConflict, schema.TransitionError{
+			Error:   fmt.Sprintf("illegal transition: %s -> running", current),
+			Current: schema.NodeStatus(current),
+			Allowed: allowedStatuses(current),
+		})
+		return
+	}
+	if h.hub.Draining() {
+		errMsg(w, http.StatusServiceUnavailable, "server is shutting down; try again shortly")
+		return
+	}
+	content := ""
+	if body.Content != nil {
+		content = strings.TrimSpace(*body.Content)
+	}
+	h.startNodeAsync(dp, chatID, nodeID, content)
+	writeJSON(w, http.StatusOK, schema.DagNodeState{Status: schema.NodeStatusQueued})
+}
+
+// StopNode is the explicit per-node "stop" transition: any non-terminal
+// status -> cancelled. Cooperative for a running node; immediate otherwise.
+func (h *Handler) StopNode(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
+	dp, err := h.store.GetLatestDagPlan(r.Context(), chatID)
+	if err != nil || dp == nil {
+		errMsg(w, http.StatusNotFound, "no plan for this chat")
+		return
+	}
+	dn, err := h.store.GetDagNode(r.Context(), dp.ID, nodeID)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
+	current := dag.StatusQueued
+	if dn != nil {
+		current = dag.NodeStatus(dn.Status)
+	}
+	if !dag.CanTransition(current, dag.StatusCancelled) {
+		writeJSON(w, http.StatusConflict, schema.TransitionError{
+			Error:   fmt.Sprintf("illegal transition: %s -> cancelled", current),
+			Current: schema.NodeStatus(current),
+			Allowed: allowedStatuses(current),
+		})
+		return
+	}
+	if !h.orch.StopNode(chatID, nodeID) {
+		writeJSON(w, http.StatusConflict, schema.TransitionError{
+			Error:   "node is not stoppable right now (no live run - it may be queued but not yet dispatched, or already finished); nothing was stopped",
+			Current: schema.NodeStatus(current),
+			Allowed: allowedStatuses(current),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusCancelled))
 }
 
 // Appends a message to a running node's queue, delivered at its next turn boundary. 404s if the node isn't live.
@@ -819,6 +903,48 @@ func allowedStatuses(from dag.NodeStatus) []schema.NodeStatus {
 		out[i] = schema.NodeStatus(t)
 	}
 	return out
+}
+
+// Starts (or resumes) nodeID in background via Orchestrator.StartNode - a
+// fresh dispatch from queued, or a re-entry at the node's last gate boundary
+// from paused, delivering message as the parked question's answer when the
+// node paused awaiting_input. Progress publishes through the same hub as
+// retryNodeAsync.
+func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message string) {
+	go func() {
+		runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
+		h.hub.RegisterRun(chatID, dp.TurnID, cancelRun)
+		_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
+		defer func() {
+			cancelRun()
+			h.hub.UnregisterRun(chatID)
+		}()
+		defer h.hub.Close(chatID)
+		defer h.stampRunOutcome(runCtx, chatID)
+
+		h.eventLog.Reset(runCtx, chatID)
+		publish := runlog.NewPublisher(h.hub, h.eventLog, chatID).Publish
+		publish(stream.ResponseCreated(dp.TurnID))
+
+		userID := h.sessionUser(runCtx, chatID)
+		for ev, err := range iterFromStart(runCtx, h.orch, userID, chatID, nodeID, message) {
+			if err != nil {
+				publish(stream.Errorf(err.Error()))
+				break
+			}
+			runlog.PersistNodeEvent(h.store, dp.ID, ev)
+			publish(ev)
+		}
+		publish(stream.Done())
+	}()
+}
+
+// iterFromStart adapts Orchestrator.StartNode's yield-callback shape to the
+// iter.Seq2 the other node-run helpers range over.
+func iterFromStart(ctx context.Context, o *orchestrator.Orchestrator, userID, chatID, nodeID, message string) iter.Seq2[stream.SSEEvent, error] {
+	return func(yield func(stream.SSEEvent, error) bool) {
+		o.StartNode(ctx, userID, chatID, nodeID, message, yield)
+	}
 }
 
 // Re-runs nodeID and descendants in background, reusing the plan's stored outputs. Progress publishes through the same hub.
@@ -987,7 +1113,7 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 			// Completed if all nodes are done/failed/cancelled, in_progress otherwise.
 			dagStatus := schema.Completed
 			for _, ns := range nodeStates {
-				if ns.Status == schema.NodeStatusRunning || ns.Status == schema.NodeStatusQueued || ns.Status == schema.NodeStatusNeedsInput {
+				if ns.Status == schema.NodeStatusRunning || ns.Status == schema.NodeStatusQueued || ns.Status == schema.NodeStatusNeedsInput || ns.Status == schema.NodeStatusPaused {
 					dagStatus = schema.InProgress
 					break
 				}
@@ -1061,9 +1187,18 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 }
 
 // Converts persisted store.DagNode into wire DagNodeState. Shared by buildTurn and UpdateNodeStatus.
+// Normalizes the legacy needs_input DB spelling to the one wire vocabulary
+// the SPA sees: paused, with pause_reason awaiting_input - dag.IsPaused
+// covers both spellings; the DB column itself is untouched.
 func dagNodeState(n store.DagNode) schema.DagNodeState {
+	status := dag.NodeStatus(n.Status)
+	reason := n.PauseReason
+	if status == dag.StatusNeedsInput {
+		status = dag.StatusPaused
+		reason = string(dag.PauseAwaitingInput)
+	}
 	ns := schema.DagNodeState{
-		Status:           schema.NodeStatus(n.Status),
+		Status:           schema.NodeStatus(status),
 		Model:            strPtr(n.Model),
 		FinishReason:     strPtr(n.FinishReason),
 		OutputPreview:    strPtr(n.OutputPreview),
@@ -1077,6 +1212,23 @@ func dagNodeState(n store.DagNode) schema.DagNodeState {
 		JudgeRounds:      intPtr(int(n.JudgeRounds)),
 		JudgeFinalScore:  float64Ptr(n.JudgeFinalScore),
 		JudgePassed:      boolPtr(n.JudgePassed),
+	}
+	if reason != "" {
+		pr := schema.PauseReason(reason)
+		ns.PauseReason = &pr
+	}
+	if n.PendingQuestion != "" {
+		ns.PendingQuestion = strPtr(n.PendingQuestion)
+	}
+	if n.QueuedMessages != "" {
+		var q []dag.QueuedMessage
+		if err := json.Unmarshal([]byte(n.QueuedMessages), &q); err == nil && len(q) > 0 {
+			qm := make([]schema.QueuedMessage, len(q))
+			for i, m := range q {
+				qm[i] = queuedMessageWire(m)
+			}
+			ns.QueuedMessages = &qm
+		}
 	}
 	if n.StartedAt != nil {
 		ms := int(n.StartedAt.UnixMilli())
