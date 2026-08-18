@@ -172,7 +172,10 @@ func sortedEnvKeys(env map[string]string) []string {
 func childEnv(dir string, caps Caps) []string {
 	env := []string{"PATH=" + childPath(caps), "HOME=" + childHome(dir, caps)}
 	if caps.Sandbox == SandboxLandlock {
-		env = append(env, "TMPDIR="+landlockTmpDir(caps))
+		tmp := landlockTmpDir(caps)
+		// GOTMPDIR must track TMPDIR: unset, Go's build work dir defaults to
+		// os.TempDir(), which the jail doesn't grant (#936).
+		env = append(env, "TMPDIR="+tmp, "GOTMPDIR="+tmp)
 	}
 	if opts := SandboxJavaToolOptions(caps); opts != "" {
 		env = append(env, "JAVA_TOOL_OPTIONS="+opts)

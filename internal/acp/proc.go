@@ -69,10 +69,14 @@ func (a *Agent) wrappedArgv(cwd string, extraRO []string, caps workspace.Caps) [
 // independent of internal/vetting's gate-owned push, which builds its own env
 // from scratch (pushGitEnv) and is never touched here.
 func (a *Agent) spawnEnv(caps workspace.Caps) []string {
+	tmp := workspace.SandboxTmpDir(caps)
 	env := []string{
 		"PATH=" + workspace.ChildPath(caps),
 		"HOME=" + a.opts.Home,
-		"TMPDIR=" + workspace.SandboxTmpDir(caps),
+		"TMPDIR=" + tmp,
+		// GOTMPDIR mirrors TMPDIR: unset, Go's build work dir defaults to
+		// os.TempDir(), which the jail doesn't grant (#936).
+		"GOTMPDIR=" + tmp,
 		"NO_COLOR=1",
 		"GIT_ASKPASS=/bin/false",
 		"GIT_SSH_COMMAND=/bin/false",
