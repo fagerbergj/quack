@@ -163,9 +163,5 @@ jobs:
       - name: quack sandbox check
         run: |
           docker run --rm --network none \
-            -e QUACK_LLM_ENDPOINT=http://localhost:1 \
-            -e QUACK_LLM_API_KEY=x \
-            -e QUACK_DATABASE_URL=postgres://ci:ci@localhost/ci \
-            -e QUACK_ORCH_MODEL=ci-probe \
-            -e QUACK_CODER_MODEL=ci-probe \
+            -e QUACK_WORKSPACE_ROOT=/tmp/workspace \
             quack:ci sandbox check --agent code-reviewer
