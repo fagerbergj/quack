@@ -19,6 +19,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -80,38 +81,53 @@ const (
 	pluginFetchScript  = "scripts/plugins.sh"
 )
 
-// newSkillSource builds the skill toolset Source from quack's own shipped
-// skills plus each configured plugin root's skills directory (internal/plugin
-// discovery), in order. dotagentsEmbeddedSkills then backfills any names
-// discovery didn't resolve from disk, so a standalone install with no repo
-// checkout still gets it - added by NAME, not unconditionally: MergedSource
-// errors on a skill defined by two sources at once, so a dotagents plugin
-// root that DID resolve from disk must never also get the embedded copy.
-func newSkillSource(pluginRoots []string) skill.Source {
+// resolvedSkillSource merges quack's own shipped skills/ with each configured
+// plugin root's skills directory (internal/plugin discovery) - the disk-only
+// view both newSkillSource and acpSkillPaths compare the embedded dotagents
+// fallback against.
+func resolvedSkillSource(pluginRoots []string) skill.Source {
 	sources := []skill.Source{skill.NewFileSystemSource(bundledir.SubFS("skills"))}
 	for _, dir := range plugin.ResolveSkillDirs(pluginRoots) {
 		sources = append(sources, skill.NewFileSystemSource(os.DirFS(dir)))
 	}
-	resolved := skill.NewMergedSource(sources...)
+	return skill.NewMergedSource(sources...)
+}
 
+// missingDotagentsSkillNames returns the dotagentsEmbeddedSkills names NOT
+// already resolved on disk via resolvedSkillSource(pluginRoots) - the backfill
+// rule both newSkillSource and acpSkillPaths apply: add by NAME, not
+// unconditionally, since a dotagents plugin root that DID resolve from disk
+// must never also get the embedded copy (MergedSource errors on a skill
+// defined by two sources at once).
+func missingDotagentsSkillNames(pluginRoots []string) []string {
 	have := map[string]bool{}
-	if fms, err := resolved.ListFrontmatters(context.Background()); err == nil {
+	if fms, err := resolvedSkillSource(pluginRoots).ListFrontmatters(context.Background()); err == nil {
 		for _, fm := range fms {
 			have[fm.Name] = true
 		}
 	}
 	fallback := skill.NewFileSystemSource(bundledir.SubFS(dotagentsEmbeddedSkills))
-	var backfill []string
+	var missing []string
 	if fms, err := fallback.ListFrontmatters(context.Background()); err == nil {
 		for _, fm := range fms {
 			if !have[fm.Name] {
-				backfill = append(backfill, fm.Name)
+				missing = append(missing, fm.Name)
 			}
 		}
 	}
+	return missing
+}
+
+// newSkillSource builds the skill toolset Source: resolvedSkillSource, then
+// dotagentsEmbeddedSkills backfills any names discovery didn't resolve from
+// disk, so a standalone install with no repo checkout still gets it.
+func newSkillSource(pluginRoots []string) skill.Source {
+	resolved := resolvedSkillSource(pluginRoots)
+	backfill := missingDotagentsSkillNames(pluginRoots)
 	if len(backfill) == 0 {
 		return resolved
 	}
+	fallback := skill.NewFileSystemSource(bundledir.SubFS(dotagentsEmbeddedSkills))
 	return skill.NewMergedSource(resolved, skillsource.Scoped(fallback, backfill))
 }
 
@@ -1236,9 +1252,47 @@ func mcpServerName(raw string, i int) string {
 	return labels[0]
 }
 
+// extractedDotagentsSkillsDir is where the embedded dotagents skills are
+// materialised on disk for the sandboxed ACP child (opencode reads
+// skills.paths off disk; it has no access to the binary's embedded FS,
+// unlike the in-process skill toolset newSkillSource feeds). Under
+// os.TempDir(), not caps.HomeDir: extraction happens once at startup, before
+// any agent's per-round Caps exist, and both sandbox backends (bwrap's
+// extraROArgs, landlock's landlockGrants) ro-bind/grant Caps.ExtraRO entries
+// by absolute path with no same-device requirement - unlike TMPDIR (#939),
+// this needs no device care.
+var extractedDotagentsSkillsDir = filepath.Join(os.TempDir(), "quack-acp-dotagents-skills")
+
+var extractDotagentsSkillsOnce sync.Once
+
+// ensureExtractedDotagentsSkills materialises dotagentsEmbeddedSkills under
+// extractedDotagentsSkillsDir, once per process. Idempotent across restarts
+// (each file is just rewritten with the same bytes). Extraction failure logs
+// and degrades: acpSkillPaths' caller falls back to the disk-only list, same
+// as today, rather than failing startup.
+func ensureExtractedDotagentsSkills() {
+	extractDotagentsSkillsOnce.Do(func() {
+		src := bundledir.SubFS(dotagentsEmbeddedSkills)
+		if err := os.RemoveAll(extractedDotagentsSkillsDir); err != nil && !os.IsNotExist(err) {
+			slog.Warn("acp skill extraction: could not clear stale dir; ACP agents may miss dotagents skills",
+				"component", "serve", "dir", extractedDotagentsSkillsDir, "err", err)
+			return
+		}
+		if err := os.CopyFS(extractedDotagentsSkillsDir, src); err != nil {
+			slog.Warn("acp skill extraction failed; ACP agents may miss dotagents skills",
+				"component", "serve", "dir", extractedDotagentsSkillsDir, "err", err)
+		}
+	})
+}
+
 // acpSkillPaths collects on-disk skill roots for an ACP agent's skills.paths:
 // quack's own skills/, then each configured plugin's skills directory
-// (internal/plugin discovery), in order.
+// (internal/plugin discovery), then - only for names that resolution didn't
+// find on disk - the extracted dotagentsEmbeddedSkills dir. Same by-NAME
+// backfill rule as newSkillSource (missingDotagentsSkillNames): a dev run
+// with dotagents checked out on disk must not also get the extracted copy,
+// since opencode's skill loader may error (or worse, silently shadow) on a
+// duplicate name.
 func acpSkillPaths(pluginRoots []string) []string {
 	var out []string
 	if abs, err := filepath.Abs("skills"); err == nil {
@@ -1246,7 +1300,15 @@ func acpSkillPaths(pluginRoots []string) []string {
 			out = append(out, abs)
 		}
 	}
-	return append(out, plugin.ResolveSkillDirs(pluginRoots)...)
+	out = append(out, plugin.ResolveSkillDirs(pluginRoots)...)
+
+	if missing := missingDotagentsSkillNames(pluginRoots); len(missing) > 0 {
+		ensureExtractedDotagentsSkills()
+		if st, err := os.Stat(extractedDotagentsSkillsDir); err == nil && st.IsDir() {
+			out = append(out, extractedDotagentsSkillsDir)
+		}
+	}
+	return out
 }
 
 // contentText flattens a content's text parts (for advisor-thread marker extraction).
