@@ -26,6 +26,10 @@ export interface ToolCall {
   args: Record<string, unknown>
   result?: unknown
   done: boolean
+  // title carries the ACP-supplied human label for calls the backend maps to
+  // the catch-all kind "other" (a stage_review MCP call, "Loaded skill: …") -
+  // name alone is meaningless for those, so the row should prefer title (#959).
+  title?: string
 }
 
 // Activity is one ordered item inside a run: reasoning, a tool call, or a
@@ -43,6 +47,10 @@ export interface AgentRun {
   stage: Stage
   round?: number
   activity: Activity[]
+  // Index of the run's most recent thinking item, so appendRunThinking can
+  // fold a delta into it in O(1) even across intervening tool calls (#959),
+  // rather than rescanning activity for the last thinking item.
+  lastThinkIdx?: number
   done: boolean
   startedAt?: number    // ms timestamp when the run opened
   durationMs?: number   // set on complete
@@ -90,17 +98,25 @@ export function startRun(runs: AgentRun[], r: { runId: string; agent: string; st
   return [...runs, { runId: r.runId, agent: r.agent, stage: r.stage, round: r.round, activity: [], done: false, startedAt: r.startedAt }]
 }
 
-// appendRunThinking adds reasoning to a run, coalescing with a trailing thinking item.
+// appendRunThinking adds reasoning to a run, coalescing into the run's most
+// recent thinking item - even across intervening tool calls (#959: the ACP
+// relay interleaves think/tool_call/think/tool_call, and without this a
+// reviewer that thinks a few words between each of 100 tool calls produced
+// ~100 one-line Thought fragments instead of one readable block). Tracked via
+// lastThinkIdx rather than scanning backward, so folding stays O(1) amortized
+// per event - a tool call in between never resets or costs a scan.
 // Mutates run.activity in place (push / index-assign) rather than spreading the
 // whole array - an event's cost is O(1) amortized, not O(run length), so a run
 // with N events stays O(N) total instead of O(N²) (#379). The run itself still
 // gets a new object identity (below) so callers keep seeing a fresh reference.
 export function appendRunThinking(runs: AgentRun[], runId: string, text: string): AgentRun[] {
   return mapRun(runs, runId, run => {
-    const last = run.activity[run.activity.length - 1]
-    if (last && last.kind === 'thinking') {
-      run.activity[run.activity.length - 1] = { kind: 'thinking', text: last.text + text }
+    const idx = run.lastThinkIdx
+    const existing = idx != null ? run.activity[idx] : undefined
+    if (existing && existing.kind === 'thinking') {
+      run.activity[idx as number] = { kind: 'thinking', text: existing.text + text }
     } else {
+      run.lastThinkIdx = run.activity.length
       run.activity.push({ kind: 'thinking', text })
     }
     return { ...run }
@@ -112,14 +128,14 @@ export function appendRunThinking(runs: AgentRun[], runId: string, text: string)
 // resolve (translate.go emits the pending call, then pairs the resolved one) -
 // update that row in place rather than pushing a second, since the eventual
 // result only ever fills the most recent match, orphaning the first (#746).
-export function appendRunToolCall(runs: AgentRun[], runId: string, callId: string, name: string, args: Record<string, unknown>): AgentRun[] {
+export function appendRunToolCall(runs: AgentRun[], runId: string, callId: string, name: string, args: Record<string, unknown>, title?: string): AgentRun[] {
   return mapRun(runs, runId, run => {
     const idx = callId === '' ? -1 : run.activity.findIndex(a => a.kind === 'tool' && !a.tool.done && a.tool.callId === callId)
     if (idx >= 0) {
-      run.activity[idx] = { kind: 'tool', tool: { callId, name, args, done: false } }
+      run.activity[idx] = { kind: 'tool', tool: { callId, name, args, title, done: false } }
       return { ...run }
     }
-    run.activity.push({ kind: 'tool', tool: { callId, name, args, done: false } })
+    run.activity.push({ kind: 'tool', tool: { callId, name, args, title, done: false } })
     return { ...run }
   })
 }

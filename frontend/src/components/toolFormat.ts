@@ -13,10 +13,18 @@ export function summarizeArgs(args: Record<string, unknown>): string {
 
 // previewLine collapses text to a single-line, length-capped preview - the
 // collapsed-state summary for a thinking block (#385: a scannable one-liner
-// beside the "Thought" label, not a wall of reasoning, until expanded).
+// beside the "Thought" label, not a wall of reasoning, until expanded). Prefers
+// to break at the end of the first sentence (readable) over a mid-word cut
+// (#959: a folded Thought block can span a whole tool-calling stretch, so
+// "first N chars" often landed mid-word or mid-clause).
 export function previewLine(text: string, max = 80): string {
   const oneLine = text.replace(/\s+/g, ' ').trim()
-  return oneLine.length > max ? oneLine.slice(0, max) + '…' : oneLine
+  if (oneLine.length <= max) return oneLine
+  const sentence = oneLine.slice(0, max * 2).match(/^.{10,}?[.!?](?=\s|$)/)
+  if (sentence) return sentence[0]
+  const cut = oneLine.slice(0, max)
+  const lastSpace = cut.lastIndexOf(' ')
+  return (lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut) + '…'
 }
 
 // fmtTokenCount compacts a token count for tight spaces (a context meter, a

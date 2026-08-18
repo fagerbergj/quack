@@ -127,9 +127,13 @@ describe('run-model reducers', () => {
     }
     const finalRun = run(runs, 'r1')
     expect(finalRun.activity).toBe(activityRef) // same array throughout - never re-copied
-    // Each thinking append is preceded by a tool call, so nothing coalesces:
-    // N tool-call entries + N separate thinking entries.
-    expect(finalRun.activity).toHaveLength(N * 2)
+    // #959: thinking now folds into the run's most recent thinking item across
+    // intervening tool calls, so N tool-call entries + a single folded thinking
+    // entry, not N separate fragments.
+    expect(finalRun.activity).toHaveLength(N + 1)
+    const thinkingEntries = finalRun.activity.filter(a => a.kind === 'thinking')
+    expect(thinkingEntries).toHaveLength(1)
+    expect((thinkingEntries[0] as { text: string }).text).toBe('.'.repeat(N))
   })
 })
 

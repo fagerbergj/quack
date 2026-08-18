@@ -111,7 +111,7 @@ export interface AgentStreamHandlers {
   // Agent-run lifecycle + typed activity (flat; each carries node_id + run_id).
   onAgentStart?: (d: AgentStartPayload) => void
   onAgentThinking?: (runId: string, text: string, nodeId?: string) => void
-  onAgentToolCall?: (runId: string, callId: string, name: string, args: Record<string, unknown>, nodeId?: string) => void
+  onAgentToolCall?: (runId: string, callId: string, name: string, args: Record<string, unknown>, nodeId?: string, title?: string) => void
   onAgentToolResult?: (runId: string, callId: string, name: string, result: unknown, nodeId?: string) => void
   onAgentToken?: (runId: string, text: string, nodeId?: string) => void
   onAgentComplete?: (d: AgentCompletePayload) => void
@@ -190,9 +190,13 @@ function dispatchAgentEvent(
       return true
     }
     case 'agent_tool_call': {
-      const p = parsed as { run_id?: string; call_id?: string; name?: string; args?: Record<string, unknown> }
+      // title isn't in the generated event type (only {node_id,run_id,call_id,
+      // name,args} is documented) but the ACP relay sends it for kind "other"
+      // calls (stage_review, "Loaded skill: …") where name alone is useless
+      // (#959) - read it the same best-effort way p.args already is.
+      const p = parsed as { run_id?: string; call_id?: string; name?: string; args?: Record<string, unknown>; title?: string }
       if (typeof p.name === 'string') {
-        handlers.onAgentToolCall?.(p.run_id ?? '', p.call_id ?? '', p.name, p.args ?? {}, nodeIdOf(parsed))
+        handlers.onAgentToolCall?.(p.run_id ?? '', p.call_id ?? '', p.name, p.args ?? {}, nodeIdOf(parsed), typeof p.title === 'string' ? p.title : undefined)
       }
       return true
     }
