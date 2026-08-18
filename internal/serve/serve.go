@@ -1263,26 +1263,56 @@ func mcpServerName(raw string, i int) string {
 // this needs no device care.
 var extractedDotagentsSkillsDir = filepath.Join(os.TempDir(), "quack-acp-dotagents-skills")
 
-var extractDotagentsSkillsOnce sync.Once
+var extractDotagentsSkillsMu sync.Mutex
 
-// ensureExtractedDotagentsSkills materialises dotagentsEmbeddedSkills under
-// extractedDotagentsSkillsDir, once per process. Idempotent across restarts
-// (each file is just rewritten with the same bytes). Extraction failure logs
-// and degrades: acpSkillPaths' caller falls back to the disk-only list, same
-// as today, rather than failing startup.
-func ensureExtractedDotagentsSkills() {
-	extractDotagentsSkillsOnce.Do(func() {
-		src := bundledir.SubFS(dotagentsEmbeddedSkills)
-		if err := os.RemoveAll(extractedDotagentsSkillsDir); err != nil && !os.IsNotExist(err) {
-			slog.Warn("acp skill extraction: could not clear stale dir; ACP agents may miss dotagents skills",
-				"component", "serve", "dir", extractedDotagentsSkillsDir, "err", err)
-			return
+// ensureExtractedDotagentsSkillNames materialises exactly the named
+// dotagentsEmbeddedSkills subdirectories under extractedDotagentsSkillsDir -
+// per-skill, so a name that resolves from disk after having once been
+// missing (a config change) doesn't leave a stale extracted duplicate
+// alongside it. Idempotent: a name already extracted (checked by presence)
+// is left alone, so restarts don't re-copy the whole tree. Extraction
+// failure logs and degrades - a name that fails to extract is simply absent
+// from the dir, same as a plugin-root skills dir that doesn't resolve.
+func ensureExtractedDotagentsSkillNames(missing []string) {
+	extractDotagentsSkillsMu.Lock()
+	defer extractDotagentsSkillsMu.Unlock()
+
+	want := map[string]bool{}
+	for _, n := range missing {
+		want[n] = true
+	}
+	if err := os.MkdirAll(extractedDotagentsSkillsDir, 0o755); err != nil {
+		slog.Warn("acp skill extraction: could not create dir; ACP agents may miss dotagents skills",
+			"component", "serve", "dir", extractedDotagentsSkillsDir, "err", err)
+		return
+	}
+	// Prune anything extracted that's no longer missing, so it can't sit
+	// alongside an on-disk copy of the same name.
+	if entries, err := os.ReadDir(extractedDotagentsSkillsDir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() && !want[e.Name()] {
+				_ = os.RemoveAll(filepath.Join(extractedDotagentsSkillsDir, e.Name()))
+			}
 		}
-		if err := os.CopyFS(extractedDotagentsSkillsDir, src); err != nil {
-			slog.Warn("acp skill extraction failed; ACP agents may miss dotagents skills",
-				"component", "serve", "dir", extractedDotagentsSkillsDir, "err", err)
+	}
+	src := bundledir.SubFS(dotagentsEmbeddedSkills)
+	for name := range want {
+		dest := filepath.Join(extractedDotagentsSkillsDir, name)
+		if _, err := os.Stat(dest); err == nil {
+			continue // already extracted
 		}
-	})
+		sub, err := fs.Sub(src, name)
+		if err != nil {
+			slog.Warn("acp skill extraction: skill not found in embedded FS",
+				"component", "serve", "skill", name, "err", err)
+			continue
+		}
+		if err := os.CopyFS(dest, sub); err != nil {
+			slog.Warn("acp skill extraction failed for one skill; ACP agents may miss it",
+				"component", "serve", "skill", name, "err", err)
+			_ = os.RemoveAll(dest)
+		}
+	}
 }
 
 // acpSkillPaths collects on-disk skill roots for an ACP agent's skills.paths:
@@ -1303,7 +1333,7 @@ func acpSkillPaths(pluginRoots []string) []string {
 	out = append(out, plugin.ResolveSkillDirs(pluginRoots)...)
 
 	if missing := missingDotagentsSkillNames(pluginRoots); len(missing) > 0 {
-		ensureExtractedDotagentsSkills()
+		ensureExtractedDotagentsSkillNames(missing)
 		if st, err := os.Stat(extractedDotagentsSkillsDir); err == nil && st.IsDir() {
 			out = append(out, extractedDotagentsSkillsDir)
 		}
