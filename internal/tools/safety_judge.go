@@ -15,6 +15,8 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
+
+	"github.com/fagerbergj/quack/internal/ledger"
 )
 
 // SafetyJudge: decides if a guarded tool call serves the user's task.
@@ -91,7 +93,13 @@ func NewSafetyJudge(judgeModel model.LLM) SafetyJudge {
 
 		prompt := buildSafetyJudgePrompt(request, task, toolName, args, activity)
 		content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: prompt}}}
-		for _, rerr := range r.Run(ctx, "safety-judge", "verdict", content, adkagent.RunConfig{}) { //nolint:staticcheck // ev unused; loop is only for side effects + error
+		// Real chat id groups this run under its causing chat in Langfuse
+		// (gen_ai.conversation.id); empty falls back rather than emitting "".
+		sessionID := "verdict"
+		if chatID := ledger.CoordsFromContext(ctx).ChatID; chatID != "" {
+			sessionID = chatID
+		}
+		for _, rerr := range r.Run(ctx, "safety-judge", sessionID, content, adkagent.RunConfig{}) { //nolint:staticcheck // ev unused; loop is only for side effects + error
 			if rerr != nil {
 				return false, "", rerr
 			}

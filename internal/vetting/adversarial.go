@@ -99,7 +99,7 @@ func buildSkepticPrompt(criterion string, c criterionScore, question *genai.Cont
 }
 
 // runSkepticRound: runs one isolated skeptic. Any error defaults to REFUTED (fails closed).
-func runSkepticRound(ctx context.Context, factory SkepticFactory, maxIters, maxOutputTokens int, criterion string, c criterionScore, question *genai.Content, answer string, act workerActivity, emit func(*genai.Part) bool) skepticVerdict {
+func runSkepticRound(ctx context.Context, factory SkepticFactory, maxIters, maxOutputTokens int, criterion string, c criterionScore, question *genai.Content, answer string, act workerActivity, emit func(*genai.Part) bool, chatID string) skepticVerdict {
 	var sink skepticVerdict
 	skepticAgent, err := factory(&sink, maxOutputTokens)
 	if err != nil {
@@ -122,7 +122,7 @@ func runSkepticRound(ctx context.Context, factory SkepticFactory, maxIters, maxO
 		turns     int
 		repeats   repeatLoopDetector
 	)
-	for ev, rerr := range sr.Run(runCtx, "skeptic", "verdict", content, adkagent.RunConfig{}) {
+	for ev, rerr := range sr.Run(runCtx, "skeptic", judgeSessionID(chatID, "verdict"), content, adkagent.RunConfig{}) {
 		if rerr != nil {
 			return skepticVerdict{Refuted: true, Reason: fmt.Sprintf("skeptic run failed, defaulting to refuted: %v", rerr)}
 		}
@@ -182,7 +182,7 @@ func adversarialVerify(ctx context.Context, cfg Config, question *genai.Content,
 		refuted := 0
 		var reasons []string
 		for i := 0; i < cfg.SkepticRounds; i++ {
-			sv := runSkepticRound(ctx, cfg.Skeptic, maxIters, cfg.JudgeMaxOutputTokens, name, c, question, answer, act, emit)
+			sv := runSkepticRound(ctx, cfg.Skeptic, maxIters, cfg.JudgeMaxOutputTokens, name, c, question, answer, act, emit, cfg.ChatID)
 			if sv.Refuted {
 				refuted++
 				if strings.TrimSpace(sv.Reason) != "" {

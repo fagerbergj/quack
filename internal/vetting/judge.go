@@ -632,7 +632,7 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 		accum     strings.Builder
 		repeats   repeatLoopDetector
 	)
-	for ev, err := range jr.Run(runCtx, "judge", "verdict", content, adkagent.RunConfig{}) {
+	for ev, err := range jr.Run(runCtx, "judge", judgeSessionID(cfg.ChatID, "verdict"), content, adkagent.RunConfig{}) {
 		if err != nil {
 			return verdict{}, reads, err
 		}
@@ -1130,7 +1130,7 @@ func parseVerdict(raw string) (verdict, error) {
 }
 
 // runWriterFresh: recovers empty worker draft via tool-less writer in a fresh runner (re-invoking worker loses finalize prompt).
-func runWriterFresh(ctx context.Context, m model.LLM, content *genai.Content) (string, error) {
+func runWriterFresh(ctx context.Context, m model.LLM, content *genai.Content, chatID string) (string, error) {
 	if m == nil {
 		return "", fmt.Errorf("vetting: no writer model for empty-answer recovery")
 	}
@@ -1148,7 +1148,7 @@ func runWriterFresh(ctx context.Context, m model.LLM, content *genai.Content) (s
 		return "", fmt.Errorf("vetting: writer runner: %w", err)
 	}
 	var out strings.Builder
-	for ev, rerr := range wr.Run(ctx, "writer", "finalize", content, adkagent.RunConfig{}) {
+	for ev, rerr := range wr.Run(ctx, "writer", judgeSessionID(chatID, "finalize"), content, adkagent.RunConfig{}) {
 		if rerr != nil {
 			return "", rerr
 		}
