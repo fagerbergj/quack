@@ -178,10 +178,14 @@ func SandboxPS1(agentName string, readOnly bool) string {
 // duplicated rather than pulled through a new cross-package seam), plus
 // extra so a caller can layer PS1/other overrides on top.
 func SandboxSpawnEnv(caps workspace.Caps, ac config.AgentConfig, extra map[string]string) []string {
+	tmp := workspace.SandboxTmpDir(caps)
 	env := []string{
 		"PATH=" + workspace.ChildPath(caps),
 		"HOME=" + caps.HomeDir,
-		"TMPDIR=" + workspace.SandboxTmpDir(caps),
+		"TMPDIR=" + tmp,
+		// GOTMPDIR mirrors TMPDIR, same as acp.Agent.spawnEnv (#936/#952): unset,
+		// Go's build work dir defaults to os.TempDir(), which the jail doesn't grant.
+		"GOTMPDIR=" + tmp,
 		"NO_COLOR=1",
 		"GIT_ASKPASS=/bin/false",
 		"GIT_SSH_COMMAND=/bin/false",
