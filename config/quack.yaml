@@ -93,7 +93,7 @@ agents:
             ]  # NO repo tools: reading source is code-explorer's job (see its card)  # read-only fs + clone, so research can pull a repo apart
     # no skills scoped: it has no repo tools to act on research-git-repos with, and no plan/review/code skills apply to it
   code-implementer:
-    bundle: agents/code-implementer   # card + prompt.md (ACP preamble: ponytail discipline, commit-only) + rubric.md
+    bundle: agents/code-implementer   # card + prompt.md (ACP preamble: ponytail discipline, commit-only) + rubric.yaml
     provider: default
     memory:
       bucket: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
@@ -110,7 +110,7 @@ agents:
       mcp_servers:
         - https://mcp.context7.com/mcp
   code-reviewer:
-    bundle: agents/code-reviewer      # card + prompt.md (ACP preamble: values + VERDICT/FINDINGS output contract) + rubric.md
+    bundle: agents/code-reviewer      # card + prompt.md (ACP preamble: values + VERDICT/FINDINGS output contract) + rubric.yaml
     provider: default
     memory:
       bucket: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
@@ -125,7 +125,7 @@ agents:
       command: ["opencode", "acp"]
       read_only: true
   code-explorer:
-    bundle: agents/code-explorer      # card + prompt.md (ACP preamble: read-only exploration, cite <repo>@<path>) + rubric.md
+    bundle: agents/code-explorer      # card + prompt.md (ACP preamble: read-only exploration, cite <repo>@<path>) + rubric.yaml
     provider: default
     memory:
       bucket: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
@@ -214,7 +214,7 @@ tools:
 # runs.
 gates:
   constitution_path: config/constitution.md   # global principles, used for the advisor + judge
-  rubric_path: config/rubric.md               # default scoring guide (agents may override with rubric.md in their bundle)
+  rubric_path: config/rubric.md               # default scoring guide (agents may override with rubric.yaml in their bundle)
   deterministic_checks:
     max_rounds: 4   # free citation/length checks; up to 4 cheap worker revise cycles
   judge:

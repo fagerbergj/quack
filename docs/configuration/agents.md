@@ -8,7 +8,7 @@ Each bundle lives at `agents/<name>/` and contains exactly:
 
 - `agent-card.json` — the [A2A AgentCard](https://a2a-protocol.org/latest/specification/): identity, description, and the skills it advertises. This is what the orchestrator's planner routes on.
 - `prompt.md` — the system prompt. For a native agent this is the whole prompt; for an external ACP agent (below) it's the per-round preamble prepended to the coding agent's own instructions.
-- `rubric.md` (optional) — a per-agent judge rubric, overriding `config/rubric.md`.
+- `rubric.yaml` (optional) — a per-agent judge rubric, overriding `config/rubric.md`.
 - `memory.md` (optional) — "what to remember" guidance for shared memory (native agents only).
 
 No other files belong in a bundle — an unrecognized file will get overwritten or ignored.
@@ -79,7 +79,7 @@ The orchestrator stays light on tools — it needs only:
 | [`preloadmemorytool`](https://pkg.go.dev/google.golang.org/adk/tool/preloadmemorytool) | No (ADK) | Auto-injects relevant memory into the prompt at the start of each turn. |
 | `commit_memory` | Yes | Writes a durable fact to quack's own `memory.Store`; the orchestrator calls it directly for user facts, the gate calls it on a judge pass for task findings. |
 
-`commit_memory` relies on the orchestrator model choosing to call it, which doesn't hold up reliably in practice. `orchestrator.user_memory_hook` (#262) is the fix: an end-of-turn hook that, after a cheap keyword pre-filter, hands the message to a dedicated `agents/memory-agent` bundle and commits whatever it extracts - fire-and-forget, so it never affects the response. Off by default (costs a model call per qualifying turn); enable with `orchestrator.user_memory_hook.enabled: true` plus a `provider`/`model`. Its guidance comes from `agents/orchestrator/memory.md` (what's worth remembering) and `agents/memory-agent/rubric.md` (the candidate-quality bar) - not duplicated into its own prompt.
+`commit_memory` relies on the orchestrator model choosing to call it, which doesn't hold up reliably in practice. `orchestrator.user_memory_hook` (#262) is the fix: an end-of-turn hook that, after a cheap keyword pre-filter, hands the message to a dedicated `agents/memory-agent` bundle and commits whatever it extracts - fire-and-forget, so it never affects the response. Off by default (costs a model call per qualifying turn); enable with `orchestrator.user_memory_hook.enabled: true` plus a `provider`/`model`. Its guidance comes from `agents/orchestrator/memory.md` (what's worth remembering) and `agents/memory-agent/rubric.yaml` (the candidate-quality bar) - not duplicated into its own prompt.
 
 This is the orchestrator's own fixed list, not the full builtin tool registry (`internal/tools/` has ~25 tools — web search/fetch, memory, git, filesystem, etc.) that individual agents pull from by name in their own `tools:` list above. That broader registry has no reference doc yet; see the `write-tool` skill for how a builtin tool is defined and registered.
 

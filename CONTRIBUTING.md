@@ -54,4 +54,4 @@ cd frontend && npm test && npx tsc --noEmit && npx eslint src/
 
 ## Adding or changing an agent
 
-An agent is a **bundle** under `agents/<name>/` - exactly `agent-card.json` + `prompt.md` (plus the optional `rubric.md` and `memory.md`). `config/quack.yaml` binds it to a model and a tool list. **No Go changes are needed** to add or modify an agent (AGENTS.md "Agent bundles").
+An agent is a **bundle** under `agents/<name>/` - exactly `agent-card.json` + `prompt.md` (plus the optional `rubric.yaml` and `memory.md`). `config/quack.yaml` binds it to a model and a tool list. **No Go changes are needed** to add or modify an agent (AGENTS.md "Agent bundles").
