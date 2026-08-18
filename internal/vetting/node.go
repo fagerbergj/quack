@@ -468,18 +468,20 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			// Adversarial verify: load-bearing passing criteria get refuted by independent skeptics.
 			// ledgerCtx, not judgeCtx: skeptics are their own model calls and need the same coords.
 			v = adversarialVerify(ledgerCtx, cfg, question, answer, act, v, judgePartEmitter(sink, nodeID, runID+"-skeptic"))
+			v = sanitizeAnchors(v, answer, cfg)
 			v = mergeDeterministic(v, det)
-			feedback := composeFeedback(v, cfg.Threshold)
-			res = GateResult{Passed: v.Score >= cfg.Threshold, Score: v.Score, Feedback: feedback, Rounds: round}
+			v = applyRubricSpecs(v, cfg.Rubric)
+			env, feedback := composeFeedback(v, cfg.Threshold, round)
+			res = GateResult{Passed: env.Passed, Score: v.Score, Feedback: feedback, Rounds: round}
 			emitEvaluationResults(ledgerCtx, runID, v)
-			jspan.end(stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Score: res.Score, Passed: res.Passed, Feedback: res.Feedback}, nil)
+			jspan.end(stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Score: res.Score, Passed: res.Passed, Feedback: res.Feedback, Envelope: env}, nil)
 			log.Info("judge round done", "round", round, "score", v.Score, "passed", res.Passed)
 			otelobs.RecordJudgeVerdict(cfg.Agent, res.Score, res.Passed)
 			// Debug: per-criterion reasoning for diagnosable gate failures.
 			if len(v.Criteria) > 0 && log.Enabled(context.Background(), slog.LevelDebug) {
 				parts := make([]string, 0, len(v.Criteria))
 				for name, cs := range v.Criteria {
-					parts = append(parts, fmt.Sprintf("%s=%.0f (%s)", name, cs.Score, strings.TrimSpace(cs.Reason)))
+					parts = append(parts, fmt.Sprintf("%s=%.0f (%s)", name, cs.Score, strings.TrimSpace(criterionText(cs))))
 				}
 				sort.Strings(parts)
 				log.Debug("judge verdict detail", "round", round, "criteria", strings.Join(parts, " | "), "feedback", strings.TrimSpace(v.Feedback))
@@ -508,7 +510,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			// an ordinary incomplete/wrong round keeps its commits so revise
 			// builds on them instead of redoing the change from scratch.
 			resetCloneToNodeBase(cfg, v)
-			revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, feedback, act, citationOnlyFailure(v, cfg.Threshold))) + markerLine
+			revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, env, act, citationOnlyFailure(v, cfg.Threshold))) + markerLine
 			revised, rerr := runWorkerNodeTraced(ctx, nodeCtx, cfg, workerModel, workerNode, revisePrompt, fmt.Sprintf("worker-r%d%s", round, sfx), "revise", promptEmit)
 			if rerr != nil {
 				log.Error("revision worker failed; keeping prior answer", "round", round, "err", rerr)
@@ -980,7 +982,11 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 			"research the task and cite what you retrieve; if you are blocked on information only the user has, call ask_user (never write a question to the user as your answer)"}
 	}
 	if cs, details, hasCites := citationScore(answer, act); hasCites {
-		det["cites_sources"] = criterionScore{Score: cs, Reason: citeReason(cs, details)}
+		evidence := make([]evidenceItem, len(details))
+		for i, d := range details {
+			evidence[i] = evidenceItem{Ref: d.url, Score: d.score}
+		}
+		det["cites_sources"] = criterionScore{Score: cs, Reason: citeReason(cs, details), Evidence: evidence}
 	}
 	// Deterministic gate checks: planner's checks or derived from repo.
 	if c, ok := checksPassCriterionTraced(ctx, cfg); ok {
@@ -1011,16 +1017,58 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 	return det, checksSkipReason
 }
 
+// deterministicCriterionSpec: definition/fix declared per deterministic
+// criterion name (#941). A static table rather than editing each of the ~10
+// constructor sites (checks.go, mermaid.go, shape.go, vacuoustests.go,
+// delivery.go) - the criterion names are a fixed, code-owned set, so one
+// lookup keyed by name is a smaller diff with the same effect.
+var deterministicCriterionSpec = map[string]struct {
+	definition string
+	fix        string
+}{
+	"sufficient_length":            {"The answer must be non-empty.", "Write a substantive answer."},
+	"grounded_in_retrieval":        {"Claims must trace to retrieval performed this session (web fetch/search or file reads), not model memory.", "Research the task and cite what you retrieve; call ask_user if blocked on information only the user has."},
+	"checks_pass":                  {"The node's configured or derived build/test checks must exit zero.", "Fix the failing check(s) named in the failure output."},
+	"no_vacuous_tests":             {"An added test file must exercise a real production identifier, not assert trivially.", "Rewrite the test to call/assert against actual production code."},
+	"mermaid_valid":                {"Mermaid diagrams in the deliverable must be syntactically valid.", "Fix the invalid mermaid diagram(s) named in the failure."},
+	"no_tool_call_syntax":          {"The deliverable must not contain a leaked or malformed tool-call fragment.", "Remove the leaked tool-call fragment from the answer."},
+	"no_dangling_deliverable_path": {"A deliverable must not point to a file that exists only in this run's discarded working directory.", "State the result in the answer text itself, or commit the file so it survives the run."},
+	"delivery_complete":            {"The task's delivery step (commit/push/PR) must actually show in the session ledger.", "Complete the delivery step the task asked for - commit, push, or open the PR."},
+	"review_posted":                {"A review task must actually submit its verdict via github_submit_review.", "Post the review with github_add_review_comment/github_submit_review, not just in the answer text."},
+	"behaviour_verified":           {"A code-review task must execute the change (tests, a throwaway harness) before judging it.", "Run the change - its tests or a small harness - before asserting it works."},
+}
+
+// citesSourcesBands: the cites_sources tier legend, moved out of the reason
+// string and into structured bands per #941 (must stop being re-emitted per round).
+var citesSourcesBands = []bandSpec{
+	{Min: 0.00, Max: 0.24, Meaning: "never seen anywhere - the citation is fabricated"},
+	{Min: 0.25, Max: 0.74, Meaning: "same host seen but this exact page never fetched - likely invented"},
+	{Min: 0.75, Max: 1.00, Meaning: "fetched or seen in search - backed"},
+}
+
+const citesSourcesFix = "Fetch each source, or remove the citation and any claim resting on it."
+
 // mergeDeterministic: folds deterministic criteria into verdict and re-aggregates.
 // Stamps Deterministic here (not in computeDeterministicCriteria) since det's
 // keys are exactly the code-owned set - composeFeedback reads it to tell a
-// code-owned failure from a judge-scored one (#791).
+// code-owned failure from a judge-scored one (#791). Also stamps each
+// criterion's declared definition/bands/fix (#941).
 func mergeDeterministic(v verdict, det map[string]criterionScore) verdict {
 	if v.Criteria == nil {
 		v.Criteria = map[string]criterionScore{}
 	}
 	for name, c := range det {
 		c.Deterministic = true
+		if spec, ok := deterministicCriterionSpec[name]; ok {
+			c.Definition = spec.definition
+			c.Fix = spec.fix
+		}
+		if name == "cites_sources" {
+			c.Definition = "Every cited link is backed by a page the run actually fetched."
+			c.Bands = citesSourcesBands
+			c.Fix = citesSourcesFix
+			c.Scale = &scaleSpec{Min: 0, Max: 1}
+		}
 		v.Criteria[name] = c
 	}
 	return aggregateVerdict(v)
@@ -1032,43 +1080,47 @@ func foldDeterministic(ctx context.Context, v verdict, answer string, act worker
 	return mergeDeterministic(v, det)
 }
 
-// composeFeedback: merges judge feedback with below-threshold criterion reasons for the revise prompt.
-// Deterministic (code-owned) and judge-scored failures are kept in separate,
-// separately-labelled groups - a code-owned failure has one correct fix, a low
-// judge score is arguable, and collapsing them into one "deterministic" list
-// misrepresents the judge's opinion as a decided fact (#791). Deterministic
-// failures lead, since they are decided; the judge's notes are not.
-func composeFeedback(v verdict, threshold float64) string {
+// composeFeedback builds the #941 structured envelope from v and a rendered
+// one-paragraph summary for callers that still want prose: AgentCompleteData.Feedback
+// (kept for one release so the UI does not blank) and GateResult.Feedback (the
+// delivery-caveat text). The envelope itself - not this summary - is what
+// buildRevisionContent hands the worker.
+func composeFeedback(v verdict, threshold float64, round int) (verdictEnvelope, string) {
+	env := buildEnvelope(v, threshold, round)
+	return env, renderFeedbackSummary(env, v.Feedback, v.Findings)
+}
+
+// renderFeedbackSummary: prose rendering of the envelope, in the same
+// deterministic-leads/judge-follows shape composeFeedback used before #941 -
+// a code-owned failure has one correct fix, a low judge score is arguable, and
+// collapsing them together misrepresents the judge's opinion as decided (#791).
+func renderFeedbackSummary(env verdictEnvelope, judgeFeedback string, findings []findingVerdict) string {
 	var detFails, judgeFails []string
-	for name, c := range v.Criteria {
-		if c.Score >= threshold || strings.TrimSpace(c.Reason) == "" {
-			continue
-		}
-		line := fmt.Sprintf("- %s: %s", name, c.Reason)
-		if c.Deterministic {
-			detFails = append(detFails, line)
-		} else {
-			judgeFails = append(judgeFails, line)
+	for _, f := range env.DeterministicFailures {
+		if s := strings.TrimSpace(f.Shortfall); s != "" {
+			detFails = append(detFails, fmt.Sprintf("- %s: %s", f.Criterion.Name, s))
 		}
 	}
-	sort.Strings(detFails) // stable order across runs (map iteration is random)
+	for _, f := range env.JudgeFailures {
+		if s := strings.TrimSpace(f.Shortfall); s != "" {
+			judgeFails = append(judgeFails, fmt.Sprintf("- %s: %s", f.Criterion.Name, s))
+		}
+	}
+	sort.Strings(detFails) // stable order (buildEnvelope already sorts by name, but keep this local to the function's own contract)
 	sort.Strings(judgeFails)
-	findingsFeedback := composeFindingsFeedback(v.Findings)
+	findingsFeedback := composeFindingsFeedback(findings)
 	if len(detFails) == 0 && len(judgeFails) == 0 && findingsFeedback == "" {
-		return v.Feedback
+		return judgeFeedback
 	}
 	var sb strings.Builder
 	if len(detFails) > 0 {
 		sb.WriteString("Deterministic check failures (code-owned, already decided - fix these):\n")
 		sb.WriteString(strings.Join(detFails, "\n"))
 	}
-	if fb := strings.TrimSpace(v.Feedback); fb != "" {
+	if fb := strings.TrimSpace(judgeFeedback); fb != "" {
 		if sb.Len() > 0 {
 			sb.WriteString("\n\n")
 		}
-		// Only scoped when a deterministic failure exists: the judge was told (judgeKnownFailuresHeader)
-		// to exclude these from its scoring, so its otherwise-unqualified praise would read as a
-		// contradiction of the failures printed above it without this label.
 		if len(detFails) > 0 {
 			sb.WriteString("Judge's assessment of the remaining criteria (the deterministic failures above were excluded from its scoring):\n")
 		}
