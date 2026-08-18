@@ -517,17 +517,41 @@ describe('ChatStore - mid-node steering', () => {
     expect(store.get('c').live?.text).toBe('second attempt answer')
   })
 
-  it('cancelNode and pauseNode PUT the node status endpoint', () => {
+  it('stopNode POSTs to the stop endpoint and pauseNode PUTs the status endpoint with a reason', () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 200 }))
-    store.cancelNode('c', 'a')
+    store.stopNode('c', 'a')
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/chats/c/nodes/a/status',
-      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ status: 'cancelled' }) }),
+      '/api/v1/chats/c/nodes/a/stop',
+      expect.objectContaining({ method: 'POST' }),
     )
     store.pauseNode('c', 'a')
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/chats/c/nodes/a/status',
-      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ status: 'paused' }) }),
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ status: 'paused', reason: undefined }) }),
+    )
+    store.pauseNode('c', 'a', 'shutdown')
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/chats/c/nodes/a/status',
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ status: 'paused', reason: 'shutdown' }) }),
+    )
+  })
+
+  it('startNode POSTs an answer to the start endpoint', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    FakeEventSource.last = null
+    const sse = [
+      `event: dag_plan\ndata: ${JSON.stringify({ plan_id: 'p', nodes: [{ id: 'a', agent: 'r', task: 't', depends_on: [] }], edges: [] })}\n\n`,
+      `event: node_needs_input\ndata: {"node_id":"a","interrupt_id":"i1","message":"which region?"}\n\n`,
+      `event: done\ndata: {}\n\n`,
+    ].join('')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'go')
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ status: 'queued' }), { status: 200 }))
+    store.startNode('c', 'a', 'the answer')
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/chats/c/nodes/a/start',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ content: 'the answer' }) }),
     )
   })
 

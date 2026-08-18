@@ -9,11 +9,11 @@ import {
   freezeOpenRuns,
   type AgentRun,
 } from '../components/AgentParts'
-import type { Turn, DagOutputItem, NodeStatus, QueuedMessage, Usage } from '../generated'
+import type { Turn, DagOutputItem, NodeStatus, PauseReason, QueuedMessage, Usage } from '../generated'
 
 // Re-exported so existing importers (e.g. components/DagNode.tsx) keep working
 // unchanged - the generated enum is now the one source of truth for node states.
-export type { NodeStatus, QueuedMessage }
+export type { NodeStatus, PauseReason, QueuedMessage }
 
 // anchorTime resolves a dag/node/run's start time from the server's epoch-ms
 // timestamp when one arrived on the wire - clamped to now so a client/server
@@ -28,9 +28,13 @@ export interface NodeState {
   status: NodeStatus
   outputPreview?: string
   error?: string
-  // Set while status === 'needs_input': the question the node asked the user.
-  // The next message sent on the chat is delivered to the node as the answer.
+  // Set while status === 'needs_input' (server: paused/awaiting_input): the
+  // question the node asked the user, answered via startNode(chatId, nodeId, answer).
   question?: string
+  // Why the node is paused - unset for every other status. Best-effort for a
+  // live-streamed pause (the node_paused/node_needs_input SSE events don't
+  // carry it yet); authoritative once the chat is (re)loaded from the server.
+  pauseReason?: PauseReason
   startedAt?: number
   finishedAt?: number
   outputChars?: number
@@ -308,23 +312,21 @@ export class ChatStore {
     this.controllers.get(chatId)?.abort()
   }
 
-  // cancelNode stops one running node; the rest of the DAG keeps going
+  // stopNode terminates one node (queued, running, or paused) into the
+  // terminal cancelled state; the rest of the DAG keeps going
   // (continue-but-warn). The local stream stays open.
-  cancelNode(chatId: string, nodeId: string): void {
-    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/status`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'cancelled' }),
-    }).catch(() => {})
+  stopNode(chatId: string, nodeId: string): void {
+    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/stop`, { method: 'POST' }).catch(() => {})
   }
 
   // pauseNode suspends one running node at its next turn boundary, keeping its
-  // accumulated work (resumable). Not optimistic, same reasoning as cancelNode.
-  pauseNode(chatId: string, nodeId: string): void {
+  // accumulated work (resumable). Not optimistic, same reasoning as stopNode.
+  // reason defaults to "user" server-side when omitted.
+  pauseNode(chatId: string, nodeId: string, reason?: PauseReason): void {
     fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/status`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'paused' }),
+      body: JSON.stringify({ status: 'paused', reason }),
     }).then(async res => {
       if (res.ok) return
       const body = (await res.json().catch(() => ({}))) as { error?: string }
@@ -332,10 +334,12 @@ export class ChatStore {
     }).catch(() => {})
   }
 
-  // resumeNode resumes a paused node: a fresh re-run (like retry), reusing the
-  // rest of the plan's stored outputs. Mirrors retryNode's optimistic local
-  // reset + resubscribe.
-  resumeNode(chatId: string, nodeId: string): void {
+  // startNode starts a queued node (fresh dispatch) or resumes a paused one
+  // (re-entering the plan's graph at its last boundary), reusing the rest of
+  // the plan's stored outputs. answer carries the reply to a node paused
+  // awaiting_input - same field SendMessageBody uses for a chat-level answer.
+  // Mirrors retryNode's optimistic local reset + resubscribe.
+  startNode(chatId: string, nodeId: string, answer?: string): void {
     const s = this.states.get(chatId)
     if (!s?.live?.dag || s.live.streaming) return
     const dag = s.live.dag
@@ -350,19 +354,19 @@ export class ChatStore {
     }
     this.write(chatId, { ...s, live: { ...s.live, streaming: true, error: '', dag: { ...dag, nodeStates, nodeAnswer, nodeRuns, finishedAt: undefined } } })
     const generation = this.bumpGeneration(chatId)
-    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/status`, {
-      method: 'PUT',
+    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/start`, {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'running' }),
+      body: JSON.stringify({ content: answer }),
     })
       .then(res => {
-        if (!res.ok) throw new Error(`resume failed: HTTP ${res.status}`)
+        if (!res.ok) throw new Error(`start failed: HTTP ${res.status}`)
         this.subscribeToStream(chatId, generation)
       })
       .catch((err: unknown) => {
         const cur = this.states.get(chatId)
         if (!cur?.live) return
-        const msg = (err as Error)?.message || 'resume failed'
+        const msg = (err as Error)?.message || 'start failed'
         this.write(chatId, { ...cur, error: msg, live: { ...cur.live, streaming: false } })
       })
   }
@@ -901,18 +905,19 @@ export class ChatStore {
           updateNodeState(nodeId, { status: 'cancelled', finishedAt: Date.now(), error: undefined })
         },
         onNodePaused: nodeId => {
-          // The node was suspended by the user - keeps its accumulated work,
-          // resumable (unlike cancel). Not a terminal/finished state for the
-          // allDone check below.
+          // The node was suspended - keeps its accumulated work, resumable
+          // (unlike stop). Not a terminal/finished state for the allDone
+          // check below. The event doesn't carry why yet, so this optimistic
+          // default ("by you") holds until the next chat (re)load corrects
+          // it from the server's persisted pause_reason.
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
-          updateNodeState(nodeId, { status: 'paused', error: undefined })
+          updateNodeState(nodeId, { status: 'paused', error: undefined, pauseReason: 'user' })
         },
         onNodeNeedsInput: (nodeId, _interruptId, message) => {
           // Mid-node HITL: the node paused to ask the user. Freeze its open runs
-          // and mark it waiting; the answer goes out as a normal chat message
-          // (the backend routes it to the paused node).
+          // and mark it waiting; the answer is delivered via startNode(chatId, nodeId, answer).
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
-          updateNodeState(nodeId, { status: 'needs_input', question: message })
+          updateNodeState(nodeId, { status: 'needs_input', question: message, pauseReason: 'awaiting_input' })
         },
         onNodeSteered: (nodeId, guidance) => {
           // The node was interrupted and is re-running with new guidance
@@ -1008,6 +1013,9 @@ export function dagTurnStateFromItem(item: DagOutputItem): DagTurnState {
       cachedTokens: ns.cached_tokens,
       finishReason: ns.finish_reason,
       serverDurationMs: ns.server_duration_ms,
+      pauseReason: ns.pause_reason,
+      question: ns.pending_question,
+      queue: ns.queued_messages,
     }
     if (ns.started_at_ms != null)
       startedAt = startedAt == null ? ns.started_at_ms : Math.min(startedAt, ns.started_at_ms)

@@ -446,7 +446,7 @@ export default function Chat() {
   }, [activeChatId, store])
 
   const handleCancelNode = useCallback((nodeId: string) => {
-    if (activeChatId) store.cancelNode(activeChatId, nodeId)
+    if (activeChatId) store.stopNode(activeChatId, nodeId)
   }, [activeChatId, store])
 
   const handlePauseNode = useCallback((nodeId: string) => {
@@ -454,7 +454,7 @@ export default function Chat() {
   }, [activeChatId, store])
 
   const handleResumeNode = useCallback((nodeId: string) => {
-    if (activeChatId) store.resumeNode(activeChatId, nodeId)
+    if (activeChatId) store.startNode(activeChatId, nodeId)
   }, [activeChatId, store])
 
   const handleQueueNodeMessage = useCallback((nodeId: string, text: string) => {
@@ -477,14 +477,13 @@ export default function Chat() {
     if (activeChatId) store.retryNode(activeChatId, nodeId, guidance)
   }, [activeChatId, store])
 
-  // handleAnswerNode answers a paused node's question (mid-node HITL) by sending
-  // the answer as the next message - the backend delivers it to the paused node.
-  const handleAnswerNode = useCallback((_nodeId: string, answer: string) => {
+  // handleAnswerNode answers a paused node's question (mid-node HITL) via the
+  // node's own start endpoint - answer travels as NodeStartBody.content, the
+  // same delivery StartNode uses for every paused/awaiting_input resume.
+  const handleAnswerNode = useCallback((nodeId: string, answer: string) => {
     if (!activeChatId) return
-    void store.submit(activeChatId, answer, undefined, title => {
-      setChats(prev => prev.map(c => c.id === activeChatId ? { ...c, title } : c))
-    }).then(() => loadChats().then(data => setChats(data)))
-  }, [activeChatId, store, loadChats])
+    store.startNode(activeChatId, nodeId, answer)
+  }, [activeChatId, store])
 
   // submitMessage is the Composer's send action. While the chat is streaming
   // it queues instead of starting a second concurrent run (store.drainQueue
