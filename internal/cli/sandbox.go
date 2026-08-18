@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 
+	"github.com/fagerbergj/quack/internal/acp"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -172,37 +173,25 @@ func SandboxPS1(agentName string, readOnly bool) string {
 
 // SandboxSpawnEnv mirrors internal/acp.Agent.spawnEnv (PATH/HOME/TMPDIR/
 // GIT_*/JAVA_TOOL_OPTIONS via workspace.ChildPath/SandboxTmpDir/
-// SandboxJavaToolOptions, all exported seams) plus workspace.env merged with
-// the agent's acp.env (mirrors serve.acpChildEnv, unexported there - the
-// merge itself is a two-line map fold with no sandbox logic in it, so it's
-// duplicated rather than pulled through a new cross-package seam), plus
+// the agent's real env via acp.SpawnEnv - the SAME function Agent.spawnEnv
+// delegates to, so this cannot drift from what the ACP child gets - plus
 // extra so a caller can layer PS1/other overrides on top.
 func SandboxSpawnEnv(caps workspace.Caps, ac config.AgentConfig, extra map[string]string) []string {
-	tmp := workspace.SandboxTmpDir(caps)
-	env := []string{
-		"PATH=" + workspace.ChildPath(caps),
-		"HOME=" + caps.HomeDir,
-		"TMPDIR=" + tmp,
-		// GOTMPDIR mirrors TMPDIR, same as acp.Agent.spawnEnv (#936/#952): unset,
-		// Go's build work dir defaults to os.TempDir(), which the jail doesn't grant.
-		"GOTMPDIR=" + tmp,
-		"NO_COLOR=1",
-		"GIT_ASKPASS=/bin/false",
-		"GIT_SSH_COMMAND=/bin/false",
-		"GIT_TERMINAL_PROMPT=0",
-	}
-	if opts := workspace.SandboxJavaToolOptions(caps); opts != "" {
-		env = append(env, "JAVA_TOOL_OPTIONS="+opts)
-	}
-
+	// The agent's opts.Env is workspace.env merged with its acp.env, in the
+	// same order serve builds it - hand that to the ONE real builder.
 	merged := map[string]string{}
 	maps.Copy(merged, caps.Env)
 	if ac.Acp != nil {
 		maps.Copy(merged, ac.Acp.Env)
 	}
-	maps.Copy(merged, extra)
+	var agentEnv []string
 	for _, k := range slices.Sorted(maps.Keys(merged)) {
-		env = append(env, k+"="+merged[k])
+		agentEnv = append(agentEnv, k+"="+merged[k])
+	}
+	env := acp.SpawnEnv(caps.HomeDir, agentEnv, caps)
+	// extra (PS1 etc.) layers LAST so it wins on duplicate keys.
+	for _, k := range slices.Sorted(maps.Keys(extra)) {
+		env = append(env, k+"="+extra[k])
 	}
 	return env
 }
