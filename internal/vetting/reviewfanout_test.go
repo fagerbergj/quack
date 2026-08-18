@@ -2,9 +2,13 @@ package vetting
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"google.golang.org/adk/v2/workflow"
 )
 
 // Multi-reviewer plan (#867): three reviewer nodes fan out; nothing may be
@@ -181,5 +185,82 @@ func TestReviewFanout_FailedSiblingDoesNotBlockDelivery(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("a failed sibling must not block delivery forever")
+	}
+}
+
+// isReviewerPauseSentinel: both pause sentinels exclude a node from the
+// abort path; a real dead end (nil w/ no delivery, or a plain error) does
+// not.
+func TestIsReviewerPauseSentinel(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"ErrNodePaused", ErrNodePaused, true},
+		{"workflow.ErrNodeInterrupted", workflow.ErrNodeInterrupted, true},
+		{"wrapped ErrNodeInterrupted", fmt.Errorf("park: %w", workflow.ErrNodeInterrupted), true},
+		{"plain error", errors.New("boom"), false},
+	}
+	for _, c := range cases {
+		if got := isReviewerPauseSentinel(c.err); got != c.want {
+			t.Errorf("%s: isReviewerPauseSentinel = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// A reviewer node parked on a human question (workflow.ErrNodeInterrupted,
+// ADK's HITL park sentinel, returned by pauseIfWorkerRaisedHITL) must NOT be
+// registered as a failed terminal - it isn't done yet. Nothing may deliver
+// while it's parked; once it resumes and stages its real verdict, the fan-in
+// completes and that verdict is included, not discarded (#948 review finding).
+func TestReviewFanout_ParkedReviewerNotCountedFailedThenResumesIntoDelivery(t *testing.T) {
+	done := make(chan DeliveryContext, 1)
+	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
+		done <- dc
+		return nil, nil
+	}
+	fanout := GetReviewFanout(t.Name(), 2)
+	cfg := Config{Deliver: deliver, ReviewFanout: fanout, IsReviewer: true}
+
+	// r1 finishes normally with request_changes.
+	commitDelivery(context.Background(), nil, cfg, "r1", workerActivity{
+		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "request_changes", Body: "found a bug"}},
+	}, GateResult{Passed: true})
+
+	// r2 parks on a human question - RunGatedRefine's defer sees
+	// workflow.ErrNodeInterrupted and, per isReviewerPauseSentinel, must NOT
+	// call resolveAbortedReviewer.
+	if !isReviewerPauseSentinel(workflow.ErrNodeInterrupted) {
+		t.Fatal("workflow.ErrNodeInterrupted must be treated as a pause, not a failure")
+	}
+	// (deliberately NOT calling resolveAbortedReviewer for r2 here - that's the point)
+
+	select {
+	case dc := <-done:
+		t.Fatalf("delivered while r2 is still parked: %+v", dc)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// r2 resumes and finishes with its own verdict.
+	commitDelivery(context.Background(), nil, cfg, "r2", workerActivity{
+		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "approve", Body: "resumed, looks fine"}},
+	}, GateResult{Passed: true})
+
+	select {
+	case dc := <-done:
+		if len(dc.Items) != 1 {
+			t.Fatalf("Items = %+v, want exactly one merged delivery", dc.Items)
+		}
+		item := dc.Items[0]
+		if item.Event != "request_changes" {
+			t.Fatalf("Event = %q, want worst-of (request_changes)", item.Event)
+		}
+		if !strings.Contains(item.Body, "resumed, looks fine") {
+			t.Fatalf("Body = %q, want the parked node's resumed verdict included, not discarded", item.Body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no delivery after the parked reviewer resumed and staged its verdict")
 	}
 }

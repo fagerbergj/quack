@@ -104,6 +104,7 @@ func mergeReviews(terminal map[string]reviewFanoutEntry) StagedDelivery {
 			continue
 		}
 		if !e.ok {
+			notes = append(notes, fmt.Sprintf("- %s: completed without staging a review", id))
 			continue
 		}
 		event := e.item.Event

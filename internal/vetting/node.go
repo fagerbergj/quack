@@ -288,11 +288,16 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	// has handled that; any other return path (worker error, ErrNodeEmpty,
 	// cancel) needs to register as a failed sibling here instead, so a dead
 	// reviewer node can never block the run's delivery forever. A paused
-	// node is not terminal - it may still resume, so it's excluded.
+	// node is NOT terminal - it may still resume and stage its real verdict
+	// later, so both pause sentinels are excluded: ErrNodePaused (cooperative
+	// cancel/pause/queue checks) and workflow.ErrNodeInterrupted (ADK's own
+	// park signal, returned by pauseIfWorkerRaisedHITL's three call sites) -
+	// registering a merely-parked node as "failed" would let the fan-in
+	// delivered without it, then silently discard its verdict on resume.
 	delivered := false
 	if cfg.IsReviewer && cfg.ReviewFanout != nil {
 		defer func() {
-			if delivered || errors.Is(err, ErrNodePaused) {
+			if delivered || isReviewerPauseSentinel(err) {
 				return
 			}
 			resolveAbortedReviewer(nodeCtx, sink, cfg, nodeID)
@@ -842,6 +847,17 @@ func deliverMergedReview(ctx context.Context, sink func(stream.SSEEvent), cfg Co
 	cfg.ReviewFanout = nil
 	act := workerActivity{stagedDelivery: map[string]StagedDelivery{"review": merged}}
 	commitDelivery(ctx, sink, cfg, nodeID, act, GateResult{Passed: true})
+}
+
+// isReviewerPauseSentinel: true when err means "parked, may still resume" -
+// not a terminal outcome for the review fan-in. Both of RunGatedRefine's own
+// early-return sentinel (ErrNodePaused, the cooperative cancel/pause/queue
+// checks) and ADK's workflow.ErrNodeInterrupted (returned by
+// pauseIfWorkerRaisedHITL's three call sites, on an ask_user/guard park) mean
+// the node is not done - registering it as failed here would let the fan-in
+// deliver without it, then silently discard its real verdict on resume.
+func isReviewerPauseSentinel(err error) bool {
+	return errors.Is(err, ErrNodePaused) || errors.Is(err, workflow.ErrNodeInterrupted)
 }
 
 // resolveAbortedReviewer: registers a reviewer node that never reached
