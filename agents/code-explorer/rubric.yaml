@@ -1,0 +1,149 @@
+scale:
+  min: 0
+  max: 10
+  pass: 7
+criteria:
+  accurate:
+    definition: >
+      The understanding matches what the code actually does. No misrepresentation, no
+      plausible-but-wrong description, no guessing dressed as fact.
+    guidance: >
+      This is the correctness of the exploration: a confident description that gets the
+      behavior, control flow, or structure wrong actively misleads a downstream
+      implementer and is worse than a hedged one.
+
+      When you can, open a file the answer describes and compare. Weight the load- bearing
+      claims - the ones an implementer would act on - most heavily.
+    steps:
+    - Identify the answer's factual claims about behavior, structure, and conventions.
+    - For the load-bearing ones, check them against the actual code (via your read-only
+      tools where a clone is available, or against the ledger's read samples).
+    - Judge whether uncertainty is stated where the code was ambiguous, rather than
+      papered over with false confidence.
+    bands:
+    - min: 7.0
+      max: 10.0
+      meaning: the description matches the code; any uncertainty is flagged honestly.
+    - min: 4.0
+      max: 6.0
+      meaning: mostly accurate, but a secondary claim is wrong or misleading, or a guess is
+        stated as fact without hedging.
+    - min: 0.0
+      max: 3.0
+      meaning: a core claim about how the code works is wrong, or the answer confidently
+        misrepresents the structure/behavior.
+    anchors:
+    - path
+    - omission
+  answers_the_task:
+    definition: >
+      The response covers what was actually asked - the specific structure, the named
+      convention, how the requested feature works - at a depth useful for the task, not a
+      related-but-different tour of the repo.
+    steps:
+    - Decompose the request into its distinct asks (the specific thing to explain, any
+      named files/areas/constraints).
+    - Check that each ask is addressed from the actual code.
+    - Note any silent narrowing, topic drift, or a generic repo overview substituted for
+      the specific question asked. **A well-evidenced NEGATIVE result answers the
+      task.** Sometimes the thing the explorer was sent to read is genuinely not in any
+      source it can reach - it's a hosted service, an unreleased product, a design
+      published only as a blog post, or it lives in a dependency rather than the repo.
+      An explorer that establishes this, names what it searched (repos, paths,
+      patterns), reports what it *did* find and what that thing actually is (a feature
+      flag is not an implementation), and says where the real answer likely lives, has
+      done its job **completely**. Score it on the quality of that evidence, exactly as
+      you would a positive finding - do NOT mark it down for "not answering", and do NOT
+      reward an explorer that kept cloning speculative repositories instead of reporting
+      the dead end. The explorer has no web tools; "go and search the web" was never an
+      option available to it.
+    bands:
+    - min: 7.0
+      max: 10.0
+      meaning: addresses the request completely, at a depth proportionate to what was asked; or
+        establishes, with evidence, that the answer is not in the reachable source, and
+        says what is there instead and where the answer likely lives.
+    - min: 4.0
+      max: 6.0
+      meaning: addresses the main ask but leaves a sub-question thin or drops a named area.
+    - min: 0.0
+      max: 3.0
+      meaning: misses the core ask, answers a generic "what is this repo" in place of the
+        specific question, or reports "not found" with no account of what was searched
+        and no conclusion drawn.
+    anchors:
+    - path
+    - omission
+  clear_and_actionable:
+    definition: >
+      The understanding is organized and precise enough for a downstream implementer to
+      act on: exact file/path/symbol references (not vague gestures like "somewhere in the
+      server layer"), a structure that leads the reader through the answer, and enough
+      specificity that the reader knows which files they'd touch and which patterns they'd
+      follow.
+    steps:
+    - Check that key claims name specific files/paths/symbols rather than gesturing at
+      areas.
+    - Judge whether the organization (sections, ordering) makes the answer easy to act
+      on, or whether it is an undifferentiated wall.
+    - Confirm the response is ONLY the answer - it begins directly (no "Great, I
+      explored the repo" preamble) and ends with the answer, with no leaked planning,
+      self-talk, or meta-commentary about tools/skills. Score down for each such
+      intrusion; the buried content's quality does not excuse it.
+    bands:
+    - min: 7.0
+      max: 10.0
+      meaning: precise file/symbol references, well-organized, directly actionable; pure answer
+        with no preamble or leaked reasoning.
+    - min: 4.0
+      max: 6.0
+      meaning: useful but vague in places (an area named where a file was needed), or a stray
+        opener/meta sentence mars an otherwise clean answer.
+    - min: 0.0
+      max: 3.0
+      meaning: too vague to act on (no concrete references), disorganized, or noticeably marred
+        by preamble/leaked planning.
+    anchors:
+    - path
+    - omission
+  grounded_in_code:
+    definition: >
+      Every claim the answer makes about the code - what a function does, how a convention
+      works, that module A calls module B, where X lives - traces to a file the worker
+      actually read this session. General knowledge, prior training, or inference from a
+      filename does not count as grounding - the whole point of an explorer is that it
+      looked.
+    guidance: >
+      This is the code-grounding criterion; it replaces the web-researcher's URL-citation
+      check.
+
+      Judge grounding by whether each non-trivial claim is backed by a file in the ledger
+      and, where the answer cites <repo>@<path>, whether that path was actually read. Do
+      NOT lower this score merely because a described API or pattern is unfamiliar to you
+      - an explorer reads code you cannot see. Lower it when a claim about the code has no
+      read behind it (an assertion about a file the ledger shows was never opened) or when
+      a quote/paraphrase contradicts the read sample.
+    steps:
+    - List the answer's non-trivial claims about the code.
+    - For each, check whether a corresponding file appears in the ledger (read, or under
+      a cloned repo) - and, if the answer quotes or paraphrases file content, whether
+      the read sample is consistent with it.
+    - Treat a claim about a file the ledger never recorded as read as ungrounded; treat
+      an honest "I did not read/verify this" as a disclosure, not a fabrication.
+    - Score the proportion of claims that are backed by actual reads.
+    bands:
+    - min: 7.0
+      max: 10.0
+      meaning: essentially every claim about the code traces to a file the worker read; quotes
+        match their read samples.
+    - min: 4.0
+      max: 6.0
+      meaning: most claims are grounded, but several rest on inference from names or on files
+        never opened, or the answer over-quotes beyond what it read.
+    - min: 0.0
+      max: 3.0
+      meaning: the answer asserts how the code works largely from guesswork - describing files
+        the ledger shows were never read - or quotes content its reads cannot support.
+    anchors:
+    - path
+    - omission

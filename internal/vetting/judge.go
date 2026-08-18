@@ -56,9 +56,10 @@ const (
 	judgeBehaviourTail = "If an image is attached to this message, you can see it - use it to directly verify any visual claims in the answer. If there is no image, judge on internal consistency and appropriate hedging only; do NOT penalise an answer merely because you cannot see the source. " +
 		"Do NOT try to verify which URLs were fetched - WEB citation backing is checked separately by deterministic code, so score `cites_sources` only on whether claims carry followable links at all, not on whether you think a URL is real. Local file/code citations (a repo-relative path, `<repo>@path[:lines]`) get NO such deterministic check - verify those yourself per the read-tools instructions above, or judge them on internal consistency alone when you hold no tools. " +
 		"CRITICAL - the leniency below is SCOPED, not a blanket pass for citations: it protects claims about LIVE WEB or EXTERNAL content you have no way to check from here (a fresh article, an external product, a fact outside this repo) and your own world knowledge is stale and incomplete, so NEVER treat such a claim as fabricated or ungrounded merely because you do not recognize it, it sounds new, or it postdates your training - an unfamiliar title, name, product, or event is NOT evidence of fabrication there. A specific is 'invented' only when the answer's OWN text is internally inconsistent or makes a precise claim it never supports, never because it conflicts with your memory. This leniency NEVER applies to claims about the workspace/repo: when you hold read tools, verify them per the mandatory instructions above - a citation there is a pointer to go check, not proof, and an unverified in-repo claim scores as unsupported even if it 'sounds right'; when you hold no tools, judge in-repo claims on internal consistency only, same as any other unverifiable claim, without extending web-content leniency to them. " +
-		"Score EVERY criterion the rubric names - no more, no fewer. For each, reason in one or two sentences, then assign an INTEGER score from 0 to 10 using the rubric's scoring bands (10 = the criterion is fully met, 0 = total failure; use the intermediate values for partial quality - do not snap to 0, 5, or 10). Judge substance, not style: length and fluent prose earn no credit. Each criterion is an independent requirement: the answer's overall score is its WEAKEST criterion, so a single failing criterion sinks it - do not let a strong dimension excuse a failing one. " +
-		"When - and only when - you have scored every criterion, call the submit_verdict tool exactly once with: `criteria` (an object mapping each criterion name to {reason, score}), `score` (a fallback the gate uses only if you submit no criteria - with criteria present it derives the overall score from them, so your per-criterion reasoning is the work that counts), and `feedback` (concrete, actionable notes naming the lowest-scoring criteria and what to fix; empty when the answer passes). " +
-		"A FAILING criterion's `reason` is handed to the worker verbatim as its brief for the next attempt, so name the specific thing that failed - the claim, file, path, link, or command - never a restatement of the score. A reason that leaves the worker unable to tell WHICH item to fix has told it nothing. " +
+		"Score EVERY criterion the rubric names - no more, no fewer. For each, reason in one or two sentences, then assign an INTEGER score from 0 to 10 using the rubric's scoring bands (10 = the criterion is fully met, 0 = total failure; use the intermediate values for partial quality - do not snap to 0, 5, or 10). Choosing within a band: pick the higher number when the criterion is met more completely or the flaw is more trivial, the lower number when it only just clears the band. Judge substance, not style: length and fluent prose earn no credit. Each criterion is an independent requirement: the answer's overall score is its WEAKEST criterion, so a single failing criterion sinks it - do not let a strong dimension excuse a failing one. " +
+		"When - and only when - you have scored every criterion, call the submit_verdict tool exactly once with: `criteria` (an object mapping each criterion name to {shortfall, fix, anchor, score}), `score` (a fallback the gate uses only if you submit no criteria - with criteria present it derives the overall score from them, so your per-criterion reasoning is the work that counts), and `feedback` (concrete, actionable notes naming the lowest-scoring criteria and what to fix; empty when the answer passes). " +
+		"For a FAILING criterion: `shortfall` names the specific thing that failed - the claim, file, path, link, or command - never a restatement of the score; `fix` is the concrete remedy. Both are handed to the worker verbatim as its brief for the next attempt, so a shortfall that leaves the worker unable to tell WHICH item to fix has told it nothing. " +
+		"`anchor` is OPTIONAL - where in the answer the criticism points, when it is locatable. Set kind to `quote` with `text` set to the exact offending substring (verbatim, or it will be dropped); `path` with `path` (and optional `line`) for a claim about a specific file in the repo; or `omission` with `expected` describing what should be present but is absent - use omission when nothing in the answer can be quoted or pointed to, never force a quote/path anchor onto an absence. Leave anchor out entirely when no span applies. " +
 		"submit_verdict is the only way to finish: a verdict written as prose or JSON in your reply is never read."
 )
 
@@ -77,12 +78,24 @@ func judgeBehaviour(hasReadTools, hasSkills bool) string {
 
 // criterionScore: per-criterion assessment, normalised 0.0-1.0.
 type criterionScore struct {
-	Reason string  `json:"reason,omitempty"`
-	Score  float64 `json:"score"`
+	// Reason: deprecated per #941 - kept accepted on the way in for one release
+	// so a judge that ignores the schema change still round-trips; aggregateVerdict
+	// copies it into Shortfall when Shortfall is empty.
+	Reason    string      `json:"reason,omitempty"`
+	Shortfall string      `json:"shortfall,omitempty"` // diagnosis - what fell short
+	Fix       string      `json:"fix,omitempty"`       // remedy
+	Anchor    *anchorSpec `json:"anchor,omitempty"`    // where in the answer, if locatable
+	Score     float64     `json:"score"`
 	// Deterministic marks a code-owned criterion (set by mergeDeterministic from
 	// computeDeterministicCriteria's provenance, never by the judge) - json:"-" so
 	// it never appears in the judge's tool schema or gets round-tripped from its output.
 	Deterministic bool `json:"-"`
+	// Definition/Scale/Bands/Evidence: envelope metadata, never set by the judge
+	// (json:"-") - populated by mergeDeterministic or applyRubricSpecs.
+	Definition string         `json:"-"`
+	Scale      *scaleSpec     `json:"-"`
+	Bands      []bandSpec     `json:"-"`
+	Evidence   []evidenceItem `json:"-"`
 }
 
 // verdict: structured round score. Score is lowest criterion (weakest-link).
@@ -787,10 +800,6 @@ type citationDetail struct {
 // a forty-link answer must not produce forty lines of feedback (#789).
 const maxCiteReasonLinks = 10
 
-// citeReasonLegend: what each citationScore tier means and the remedy, for a
-// revising worker with no other context.
-const citeReasonLegend = "backing tiers: 1.0=fetched (trust it), 0.75=seen in search results only (fetch to confirm before keeping), 0.5/0.25=same host but exact page never seen (likely invented - re-find or drop), 0=never seen anywhere (fabricated - drop it). Applies to web links only. Score is the mean across all cited web links, so one weak link among many matters less than an isolated one."
-
 // citeReason names the links that scored below full backing, worst first, so
 // the worker fixes the most-damning ones first if the list gets capped.
 func citeReason(score float64, details []citationDetail) string {
@@ -819,7 +828,6 @@ func citeReason(score float64, details []citationDetail) string {
 	if elided > 0 {
 		reason += fmt.Sprintf(" (and %d more elided)", elided)
 	}
-	reason += ". " + citeReasonLegend
 	return reason
 }
 
@@ -918,7 +926,12 @@ func boundExcerpt(s string, maxChars int) string {
 }
 
 // buildRevisionContent: re-invokes worker to address judge feedback. Every section bounded (boundExcerpt).
-func buildRevisionContent(constitution string, question *genai.Content, answer, feedback string, act workerActivity, citationOnly bool) *genai.Content {
+// #941: the worker gets the structured verdict envelope (definition/bands/anchor per
+// failing criterion), not prose - this is what closes the gap where buildRevisionContent
+// previously had no rubric access at all, so a worker told "no_fabrication: 4" had no idea
+// what a 7 looked like. Rubric text itself isn't a parameter here: applyRubricSpecs (node.go)
+// already folds each failing criterion's parsed definition/bands into env before this runs.
+func buildRevisionContent(constitution string, question *genai.Content, answer string, env verdictEnvelope, act workerActivity, citationOnly bool) *genai.Content {
 	var sb strings.Builder
 	if citationOnly {
 		// The answer's substance passed; only cites_sources failed. This is a
@@ -931,7 +944,8 @@ func buildRevisionContent(constitution string, question *genai.Content, answer, 
 			"Then output only the corrected answer with no preamble or commentary.\n\n")
 	} else {
 		sb.WriteString("An independent reviewer evaluated your previous answer and it must be improved before it can be returned. " +
-			"Address the reviewer's feedback below: use your tools to fix the gaps - re-fetch and verify sources, correct or remove unsupported claims, add missing citations. " +
+			"Below is the structured verdict: each failing criterion's definition, scoring bands, and (where locatable) an anchor into your answer, plus a concrete fix. " +
+			"Address every failure - use your tools to fix the gaps: re-fetch and verify sources, correct or remove unsupported claims, add missing citations. " +
 			"If you're unsure how to address this feedback, consult your advisor (ask_advisor) before revising - it knows this task's goal and can help you tell what actually needs to change. " +
 			"Then output only the corrected answer with no preamble or commentary.\n\n")
 	}
@@ -940,9 +954,9 @@ func buildRevisionContent(constitution string, question *genai.Content, answer, 
 		sb.WriteString(constitution)
 		sb.WriteString("\n\n")
 	}
-	sb.WriteString("Reviewer feedback to address:\n")
-	sb.WriteString(boundExcerpt(feedback, maxFeedbackChars))
-	sb.WriteString("\n\n")
+	sb.WriteString("Verdict:\n```json\n")
+	sb.WriteString(boundExcerpt(marshalEnvelope(env), maxFeedbackChars))
+	sb.WriteString("\n```\n\n")
 	if section := buildActivitySection(act); section != "" {
 		sb.WriteString(boundExcerpt(section, maxActivitySectionChars))
 		sb.WriteString("\n")
@@ -1028,6 +1042,14 @@ func normalizeScale(v *verdict) {
 // aggregateVerdict: weakest-link gating - lowest criterion is the overall score. Clamped [0,1].
 func aggregateVerdict(v verdict) verdict {
 	applyFindingsVerdict(&v)
+	// #941: reason -> shortfall migration, single choke point for every path
+	// that produces a verdict (submit_verdict tool and the text-fallback parser alike).
+	for name, c := range v.Criteria {
+		if strings.TrimSpace(c.Shortfall) == "" && strings.TrimSpace(c.Reason) != "" {
+			c.Shortfall = c.Reason
+			v.Criteria[name] = c
+		}
+	}
 	// Weakest-link gating: lowest criterion is the score.
 	if len(v.Criteria) > 0 {
 		lowest := 1.0

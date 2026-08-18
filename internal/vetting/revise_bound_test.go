@@ -45,13 +45,16 @@ func TestBuildRevisionContentBounded(t *testing.T) {
 	huge := func(c byte, n int) string { return strings.Repeat(string(c), n) }
 	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: huge('Q', 200_000)}}}
 	answer := huge('A', 200_000)
-	feedback := huge('F', 200_000)
+	env := verdictEnvelope{
+		Passed: false, Score: 0, Threshold: 0.7, Scoring: scoringLowestCriterion, Round: 1,
+		JudgeFailures: []failureEntry{{Criterion: criterionSpec{Name: "x"}, Shortfall: huge('F', 200_000)}},
+	}
 	act := workerActivity{}
 	for i := 0; i < 500; i++ {
 		act.workspace = append(act.workspace, wsOp{tool: "read_file", detail: huge('L', 400), sample: huge('S', 300)})
 	}
 
-	got := contentPlainText(buildRevisionContent("principles", question, answer, feedback, act, false))
+	got := contentPlainText(buildRevisionContent("principles", question, answer, env, act, false))
 
 	// Fixed scaffolding (directive + principles + labels) plus the four capped
 	// sections plus the markers - comfortably under a documented ceiling.
@@ -65,7 +68,11 @@ func TestBuildRevisionContentBounded(t *testing.T) {
 
 	// Small inputs pass through unmodified.
 	smallQ := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "what is 2+2?"}}}
-	small := contentPlainText(buildRevisionContent("", smallQ, "4", "be precise", workerActivity{}, false))
+	smallEnv := verdictEnvelope{
+		Passed: false, Score: 0, Threshold: 0.7, Scoring: scoringLowestCriterion, Round: 1,
+		JudgeFailures: []failureEntry{{Criterion: criterionSpec{Name: "x"}, Shortfall: "be precise"}},
+	}
+	small := contentPlainText(buildRevisionContent("", smallQ, "4", smallEnv, workerActivity{}, false))
 	if strings.Contains(small, "truncated to fit the context window") {
 		t.Fatalf("small revise inputs were needlessly truncated: %q", small)
 	}

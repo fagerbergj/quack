@@ -146,7 +146,11 @@ type AgentCompleteData struct {
 
 	Score    float64 `json:"score,omitempty"`    // judge
 	Passed   bool    `json:"passed,omitempty"`   // judge
-	Feedback string  `json:"feedback,omitempty"` // judge
+	Feedback string  `json:"feedback,omitempty"` // judge; rendered one-paragraph summary, kept for one release so the UI does not blank (#941)
+	// Envelope: the structured verdict (#941) - deterministic/judge failures
+	// with definition/bands/anchor, and passing criteria. any, not a named
+	// type, to avoid stream <- vetting import cycle; always a *vetting envelope value or nil.
+	Envelope any `json:"envelope,omitempty"` // judge
 
 	Status string `json:"status,omitempty"` // "" ok | "unavailable" (judge unreachable) | "no_verdict" (judge ran, never committed one)
 	Reason string `json:"reason,omitempty"`

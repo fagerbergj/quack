@@ -50,7 +50,7 @@ func (m *stubModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ 
 		}
 		m.workerCalls++
 		m.workerPrompts = append(m.workerPrompts, stubAllText(req))
-		if strings.Contains(stubAllText(req), "Reviewer feedback") {
+		if strings.Contains(stubAllText(req), "Verdict:") {
 			yield(stubText("This is the revised answer with the reviewer's fixes applied."), nil)
 			return
 		}
@@ -355,7 +355,7 @@ func TestRunGatedRefine_StampsJudgeModelWithRoundCoords(t *testing.T) {
 func TestMergeDeterministic_WeakestLinkUnchanged(t *testing.T) {
 	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.95}, "clarity": {Score: 0.9}}, Score: 0.9}
 	det := map[string]criterionScore{"mermaid_valid": {Score: 0, Reason: "deterministic: invalid mermaid diagram at line 12: parse error"}}
-	got := mergeDeterministic(v, det)
+	got := mergeDeterministic(v, det, Config{})
 	if got.Score != 0 {
 		t.Fatalf("score = %v, want 0 (weakest-link on the deterministic failure)", got.Score)
 	}
@@ -473,9 +473,9 @@ func TestRunGatedRefine_ChecksSkipReasonEmptyWhenChecksRan(t *testing.T) {
 func TestComposeFeedbackDeterministicOnlyLeadsAndScopesJudgeNotes(t *testing.T) {
 	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 1.0}}, Feedback: "The implementation is excellent."}
 	det := map[string]criterionScore{"delivery_complete": {Score: 0, Reason: "deterministic: no commit found in the ledger"}}
-	merged := mergeDeterministic(v, det)
+	merged := mergeDeterministic(v, det, Config{})
 
-	got := composeFeedback(merged, 0.7)
+	_, got := composeFeedback(merged, 0.7, 1)
 
 	detIdx := strings.Index(got, "Deterministic check failures")
 	feedbackIdx := strings.Index(got, "The implementation is excellent.")
@@ -501,7 +501,7 @@ func TestComposeFeedbackJudgeOnlyDoesNotLabelDeterministic(t *testing.T) {
 		Criteria: map[string]criterionScore{"accuracy": {Score: 0.3, Reason: "the analysis misses the caching layer"}},
 		Feedback: "needs more depth",
 	}
-	got := composeFeedback(v, 0.7)
+	_, got := composeFeedback(v, 0.7, 1)
 	if strings.Contains(got, "Deterministic") {
 		t.Errorf("composeFeedback = %q, must not label a judge-scored criterion as deterministic", got)
 	}
@@ -522,9 +522,9 @@ func TestComposeFeedbackBothKindsEachOwnHeadingNoDuplicates(t *testing.T) {
 		Feedback: "judge notes",
 	}
 	det := map[string]criterionScore{"checks_pass": {Score: 0, Reason: "deterministic: go test ./... failed"}}
-	merged := mergeDeterministic(v, det)
+	merged := mergeDeterministic(v, det, Config{})
 
-	got := composeFeedback(merged, 0.7)
+	_, got := composeFeedback(merged, 0.7, 1)
 
 	if !strings.Contains(got, "Deterministic check failures") {
 		t.Errorf("composeFeedback = %q, want a deterministic-failures heading", got)
@@ -543,7 +543,7 @@ func TestComposeFeedbackBothKindsEachOwnHeadingNoDuplicates(t *testing.T) {
 // is returned unchanged - no grouping/labelling machinery kicks in.
 func TestComposeFeedbackPassingUnchanged(t *testing.T) {
 	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.95}}, Feedback: "all good"}
-	if got := composeFeedback(v, 0.7); got != "all good" {
+	if _, got := composeFeedback(v, 0.7, 1); got != "all good" {
 		t.Errorf("composeFeedback = %q, want unchanged judge feedback %q", got, "all good")
 	}
 }
@@ -584,12 +584,12 @@ func TestComposeFeedbackScoreUnchanged(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			merged := mergeDeterministic(tc.v, tc.det)
+			merged := mergeDeterministic(tc.v, tc.det, Config{})
 			if merged.Score != tc.wantScore {
 				t.Errorf("Score = %v, want %v (composeFeedback grouping must not move the score)", merged.Score, tc.wantScore)
 			}
 			// composeFeedback itself must never touch the score.
-			composeFeedback(merged, 0.7)
+			composeFeedback(merged, 0.7, 1)
 			if merged.Score != tc.wantScore {
 				t.Errorf("Score after composeFeedback = %v, want unchanged %v", merged.Score, tc.wantScore)
 			}

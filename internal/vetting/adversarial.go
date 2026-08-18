@@ -85,7 +85,7 @@ func loadBearing(c criterionScore, threshold float64) bool {
 // buildSkepticPrompt: the finding under test + original exchange context.
 func buildSkepticPrompt(criterion string, c criterionScore, question *genai.Content, answer string, act workerActivity) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Finding to refute - criterion %q, scored %.0f/10 as PASSING by the primary judge, reasoning:\n%s\n\n", criterion, c.Score*10, strings.TrimSpace(c.Reason))
+	fmt.Fprintf(&sb, "Finding to refute - criterion %q, scored %.0f/10 as PASSING by the primary judge, reasoning:\n%s\n\n", criterion, c.Score*10, strings.TrimSpace(criterionText(c)))
 	sb.WriteString("Original question:\n")
 	sb.WriteString(boundExcerpt(contentPlainText(question), maxOriginalQuestionChars))
 	sb.WriteString("\n\nAnswer being evaluated:\n")
