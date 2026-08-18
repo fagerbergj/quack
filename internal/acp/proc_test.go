@@ -163,8 +163,13 @@ func TestWrappedArgvBwrap(t *testing.T) {
 			t.Errorf("wrappedArgv bwrap = %v, missing %q", argv, strings.ReplaceAll(want, "\x00", " "))
 		}
 	}
-	if strings.Contains(joined, workspace.SandboxWorkRoot) {
-		t.Errorf("wrappedArgv bwrap remapped the node dir onto %s: %v", workspace.SandboxWorkRoot, argv)
+	// Token equality, not substring: in the jail TMPDIR is under
+	// /tmp/workspace/..., which contains SandboxWorkRoot ("/workspace") as a
+	// substring of an unrelated path and would false-positive here.
+	for _, arg := range argv {
+		if arg == workspace.SandboxWorkRoot {
+			t.Errorf("wrappedArgv bwrap remapped the node dir onto %s: %v", workspace.SandboxWorkRoot, argv)
+		}
 	}
 	if !strings.HasSuffix(strings.Join(argv, " "), "-- opencode acp") {
 		t.Errorf("wrappedArgv bwrap = %v, want the original command preserved past --", argv)
