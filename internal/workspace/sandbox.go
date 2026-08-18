@@ -549,6 +549,39 @@ func SandboxTmpDir(caps Caps) string {
 	return os.TempDir()
 }
 
+// preseededGoModCache is the Dockerfile's read-only pre-populated module
+// cache (built at image time so `go build`/`go test` work with no network,
+// #940) - mounted RO under /usr, outside every RW grant.
+const preseededGoModCache = "/usr/local/go/pkg/mod"
+
+// EnsureWritableGoModCache returns a writable GOMODCACHE under home, farmed
+// with one symlink per top-level entry of preseededGoModCache the first time
+// it's called for this home dir. GOMODCACHE itself must be writable - Go
+// writes cache/lock (and any module the preseed lacks) even when `go test`
+// downloads nothing - so pointing GOMODCACHE straight at the RO preseed
+// fails; a real writable dir with the preseed farmed in gives both: writes
+// land as real files, reads of already-cached modules hit the real content
+// through the symlinks. Best-effort: no preseed (dev machine) or an already-
+// populated dir is not an error, just fewer/no symlinks added.
+func EnsureWritableGoModCache(home string) string {
+	dir := filepath.Join(home, "go", "pkg", "mod")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return dir
+	}
+	entries, err := os.ReadDir(preseededGoModCache)
+	if err != nil {
+		return dir
+	}
+	for _, e := range entries {
+		link := filepath.Join(dir, e.Name())
+		if _, err := os.Lstat(link); err == nil {
+			continue // already farmed, or the caller/a build wrote something real here
+		}
+		_ = os.Symlink(filepath.Join(preseededGoModCache, e.Name()), link)
+	}
+	return dir
+}
+
 // JAVA_TOOL_OPTIONS a sandboxed child needs. JAVA_TOOL_OPTIONS replaces not merges; java.io.tmpdir is hardcoded to /tmp.
 func SandboxJavaToolOptions(caps Caps) string {
 	var parts []string
