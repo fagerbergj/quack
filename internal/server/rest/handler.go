@@ -713,7 +713,7 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 		}
 		writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusCancelled))
 	case dag.StatusPaused:
-		if !h.orch.PauseNode(chatID, nodeID) {
+		if !h.orch.PauseNode(chatID, nodeID, dag.PauseUser) {
 			writeJSON(w, http.StatusConflict, schema.TransitionError{
 				Error:   "node is not pausable right now (no live run); nothing was paused",
 				Current: schema.NodeStatus(current),

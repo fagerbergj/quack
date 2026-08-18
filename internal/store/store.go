@@ -151,6 +151,12 @@ type DagNode struct {
 	JudgeRounds      int32      `json:"judge_rounds"`
 	JudgeFinalScore  float64    `json:"judge_final_score"`
 	JudgePassed      bool       `json:"judge_passed"`
+	// Why a paused node is paused: user | shutdown | awaiting_input.
+	PauseReason string `gorm:"column:pause_reason" json:"pause_reason,omitempty"`
+	// HITL question this node is parked on (node-scoped; chats.pending_question is the legacy chat-scoped copy).
+	PendingQuestion string `gorm:"column:pending_question" json:"pending_question,omitempty"`
+	// JSON []dag.QueuedMessage - the steer queue, so a queued message survives a restart.
+	QueuedMessages string `gorm:"column:queued_messages" json:"-"`
 	// Stamped when a node is queued/running for ownership tracking.
 	InstanceID string `gorm:"column:instance_id" json:"-"`
 	// Bumped on every write; fallback for FailStaleDagNodes when no InstanceID matches.
@@ -820,6 +826,17 @@ func (s *Store) UpsertDagNode(ctx context.Context, node DagNode) error {
 	}
 	if node.InstanceID == "" {
 		db = db.Omit("instance_id")
+	}
+	// Lifecycle columns are owned by SetNodeState/SetNodeQueue (synchronous,
+	// pause-critical); a stream-driven upsert must never blank them.
+	if node.PauseReason == "" {
+		db = db.Omit("pause_reason")
+	}
+	if node.PendingQuestion == "" {
+		db = db.Omit("pending_question")
+	}
+	if node.QueuedMessages == "" {
+		db = db.Omit("queued_messages")
 	}
 	t := time.Now().UTC()
 	node.UpdatedAt = &t

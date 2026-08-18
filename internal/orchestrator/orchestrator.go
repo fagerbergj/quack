@@ -111,8 +111,13 @@ func (o *Orchestrator) CancelNode(chatID, nodeID string) bool {
 }
 
 // PauseNode suspends a node at its next gate boundary; resumable.
-func (o *Orchestrator) PauseNode(chatID, nodeID string) bool {
-	return o.executor.PauseNode(chatID, nodeID)
+func (o *Orchestrator) PauseNode(chatID, nodeID string, reason dag.PauseReason) bool {
+	return o.executor.PauseNode(chatID, nodeID, reason)
+}
+
+// StopNode cancels a node into the terminal cancelled state.
+func (o *Orchestrator) StopNode(chatID, nodeID string) bool {
+	return o.executor.StopNode(chatID, nodeID)
 }
 
 // QueueNodeMessage appends a message to a running node's queue.
@@ -688,6 +693,24 @@ func (o *Orchestrator) persistAnswer(ctx context.Context, userID, sessionID, ans
 
 // resumeNodeRun delivers a paused node's answer and streams the resumed graph.
 func (o *Orchestrator) resumeNodeRun(ctx context.Context, userID, sessionID, message string, pend pendingInterrupt, yield func(stream.SSEEvent, error) bool) {
+	o.startNodeRun(ctx, userID, sessionID, message, &pend, pend.nodeID, yield)
+}
+
+// StartNode is the "start a paused node" transition: it re-enters the stashed
+// plan's graph at the node that paused. A node parked on a question
+// (pause_reason awaiting_input, i.e. an unanswered HITL interrupt in the
+// session) takes message as the answer; a node paused by a user or by
+// shutdown needs no message and simply resumes at its last gate boundary.
+func (o *Orchestrator) StartNode(ctx context.Context, userID, sessionID, nodeID, message string, yield func(stream.SSEEvent, error) bool) {
+	o.executor.StartNode(sessionID, nodeID)
+	var pend *pendingInterrupt
+	if p, ok := latestPendingNodeInterrupt(o.PriorEvents(ctx, userID, sessionID)); ok && p.nodeID == nodeID {
+		pend = &p
+	}
+	o.startNodeRun(ctx, userID, sessionID, message, pend, nodeID, yield)
+}
+
+func (o *Orchestrator) startNodeRun(ctx context.Context, userID, sessionID, message string, pend *pendingInterrupt, nodeID string, yield func(stream.SSEEvent, error) bool) {
 	plan, ok := o.stashedPlan(ctx, userID, sessionID)
 	if !ok {
 		yield(stream.Errorf("resume: no plan in session to resume"), nil)
@@ -697,15 +720,22 @@ func (o *Orchestrator) resumeNodeRun(ctx context.Context, userID, sessionID, mes
 	safeYield := func(ev stream.SSEEvent, e error) bool { mu.Lock(); defer mu.Unlock(); return yield(ev, e) }
 	ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
 	safeYield(tools.DagPlanEvent(plan), nil)
-	content := &genai.Content{Role: "user", Parts: []*genai.Part{{
-		FunctionResponse: &genai.FunctionResponse{
-			ID:       pend.id,
-			Name:     workflow.WorkflowInputFunctionCallName,
-			Response: map[string]any{"payload": message},
-		},
-	}}}
+	// awaiting_input: the message is the answer to the parked question.
+	// user/shutdown pause: nothing to deliver, just re-enter the graph.
+	var content *genai.Content
+	if pend != nil {
+		content = &genai.Content{Role: "user", Parts: []*genai.Part{{
+			FunctionResponse: &genai.FunctionResponse{
+				ID:       pend.id,
+				Name:     workflow.WorkflowInputFunctionCallName,
+				Response: map[string]any{"payload": message},
+			},
+		}}}
+	} else if strings.TrimSpace(message) != "" {
+		content = &genai.Content{Role: "user", Parts: []*genai.Part{{Text: message}}}
+	}
 	nodeOutputs := make(map[string]string)
-	paused, err := o.executor.RunPlanAsGraph(ctx, plan, AppName, userID, sessionID, content, safeYield, nodeOutputs, []string{pend.nodeID})
+	paused, err := o.executor.RunPlanAsGraph(ctx, plan, AppName, userID, sessionID, content, safeYield, nodeOutputs, []string{nodeID})
 	if err != nil {
 		safeYield(stream.Errorf("resume: "+err.Error()), nil)
 		return

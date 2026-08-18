@@ -1,12 +1,26 @@
 package dag
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
 )
+
+// NodeStateStore is the write-through seam for the node state machine: every
+// pause/start/stop and every steer-queue edit lands here before it is acted
+// on, so a kill can't lose it. Stringly typed on purpose - internal/store
+// imports internal/dag, so it cannot take dag types in its signatures.
+// Implemented by *store.Store (SetNodeStatusForChat/SetNodeQueue/GetNodeState).
+type NodeStateStore interface {
+	SetNodeStatusForChat(ctx context.Context, chatID, nodeID, status, pauseReason, pendingQuestion string) error
+	SetNodeQueue(ctx context.Context, chatID, nodeID, queueJSON string) error
+	GetNodeState(ctx context.Context, chatID, nodeID string) (status, pauseReason, pendingQuestion, queueJSON string, err error)
+}
 
 // queuedMsg: one message in a running node's queue. Delivered messages are kept but immutable.
 type queuedMsg struct {
@@ -27,8 +41,13 @@ type nodeControl struct {
 	mu        sync.Mutex
 	cancelled bool
 	paused    bool
+	reason    PauseReason
 	queue     []*queuedMsg
 	drained   [][]string // one entry per TakeQueued() drain, in order - generation N (the -sN run suffix) reads drained[N-1]
+
+	// Write-through coordinates; nil store = in-memory only (tests).
+	store          NodeStateStore
+	chatID, nodeID string
 }
 
 func (c *nodeControl) Cancelled() bool {
@@ -58,7 +77,9 @@ func (c *nodeControl) TakeQueued() string {
 		return ""
 	}
 	c.drained = append(c.drained, out)
-	return strings.Join(out, "\n\n")
+	joined := strings.Join(out, "\n\n")
+	go c.persistQueue() // delivery flags only; never on the pause-critical path
+	return joined
 }
 
 // drainedGeneration returns the Nth drain's guidance text (1-based).
@@ -71,16 +92,73 @@ func (c *nodeControl) drainedGeneration(n int) string {
 	return strings.Join(c.drained[n-1], "\n\n")
 }
 
+// PauseReason reports why the node is paused ("" when it isn't).
+func (c *nodeControl) PauseReason() PauseReason {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.paused {
+		return ""
+	}
+	return c.reason
+}
+
 func (c *nodeControl) markCancelled() {
 	c.mu.Lock()
 	c.cancelled = true
 	c.mu.Unlock()
+	c.persistStatus(StatusCancelled, "", "")
 }
 
-func (c *nodeControl) markPaused(v bool) {
+// markPaused is the single pause path: HITL, a user pause and shutdown all
+// come through here. The store write happens BEFORE the flag is visible, so
+// a crash between the two can only lose the in-memory copy, never the row.
+func (c *nodeControl) markPaused(reason PauseReason, question string) {
+	// Empty status: the HITL park's status arrives on the needs_input event;
+	// this write is here for the reason + question.
+	status := StatusPaused
+	if reason == PauseAwaitingInput {
+		status = ""
+	}
+	c.persistStatus(status, reason, question)
 	c.mu.Lock()
-	c.paused = v
+	c.paused, c.reason = true, reason
 	c.mu.Unlock()
+}
+
+// PauseForInput parks the node on a worker question (vetting.NodeControl).
+func (c *nodeControl) PauseForInput(question string) { c.markPaused(PauseAwaitingInput, question) }
+
+// resume clears the pause so the node can re-enter its gate loop.
+func (c *nodeControl) resume() {
+	c.mu.Lock()
+	c.paused, c.reason = false, ""
+	c.mu.Unlock()
+	c.persistStatus(StatusQueued, "", "")
+}
+
+func (c *nodeControl) persistStatus(status NodeStatus, reason PauseReason, question string) {
+	if c == nil || c.store == nil {
+		return
+	}
+	if err := c.store.SetNodeStatusForChat(context.Background(), c.chatID, c.nodeID, string(status), string(reason), question); err != nil {
+		slog.Warn("nodeControl: persist status failed", "component", "dag",
+			"chat", c.chatID, "node", c.nodeID, "status", status, "err", err)
+	}
+}
+
+// persistQueue mirrors the steer queue to dag_nodes.queued_messages. Caller holds no lock.
+func (c *nodeControl) persistQueue() {
+	if c == nil || c.store == nil {
+		return
+	}
+	b, err := json.Marshal(c.snapshotQueue())
+	if err != nil {
+		return
+	}
+	if err := c.store.SetNodeQueue(context.Background(), c.chatID, c.nodeID, string(b)); err != nil {
+		slog.Warn("nodeControl: persist queue failed", "component", "dag",
+			"chat", c.chatID, "node", c.nodeID, "err", err)
+	}
 }
 
 // enqueue appends a new queued message and returns a copy.
@@ -90,6 +168,34 @@ func (c *nodeControl) enqueue(text string) queuedMsg {
 	m := &queuedMsg{ID: newMsgID(), Text: text, CreatedAt: time.Now().UTC()}
 	c.queue = append(c.queue, m)
 	return *m
+}
+
+// restore rebuilds a fresh control from dag_nodes (steer queue + pause) so a
+// node re-registered after a restart still carries its undelivered messages.
+func (c *nodeControl) restore() {
+	if c.store == nil {
+		return
+	}
+	status, reason, _, queueJSON, err := c.store.GetNodeState(context.Background(), c.chatID, c.nodeID)
+	if err != nil {
+		slog.Warn("nodeControl: restore failed", "component", "dag", "chat", c.chatID, "node", c.nodeID, "err", err)
+		return
+	}
+	var msgs []queuedMsg
+	if queueJSON != "" {
+		_ = json.Unmarshal([]byte(queueJSON), &msgs)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := range msgs {
+		if !msgs[i].Delivered {
+			m := msgs[i]
+			c.queue = append(c.queue, &m)
+		}
+	}
+	if IsPaused(NodeStatus(status)) {
+		c.paused, c.reason = true, PauseReason(reason)
+	}
 }
 
 // editQueued rewrites a not-yet-delivered message's text.
@@ -141,15 +247,16 @@ type runControls struct {
 	mu        sync.Mutex
 	m         map[string]map[string]*nodeControl // chatID → nodeID → control (live)
 	cancelled map[string]map[string]bool         // chatID → nodeID → user-cancelled; persists after the control is unregistered so the stream can mark the node "cancelled" (not "failed")
-	paused    map[string]map[string]bool         // chatID → nodeID → user-paused this run; persists past unregister, same reason as cancelled
+	paused    map[string]map[string]PauseReason  // chatID → nodeID → why it paused this run; persists past unregister, same reason as cancelled
 	overrides map[string]map[string]string       // chatID → nodeID → pending prompt edit for a not-yet-started node (see graph.go's effectiveNode.Task)
+	store     NodeStateStore
 }
 
 func newRunControls() *runControls {
 	return &runControls{
 		m:         map[string]map[string]*nodeControl{},
 		cancelled: map[string]map[string]bool{},
-		paused:    map[string]map[string]bool{},
+		paused:    map[string]map[string]PauseReason{},
 		overrides: map[string]map[string]string{},
 	}
 }
@@ -165,7 +272,25 @@ func (r *runControls) wasCancelled(chatID, nodeID string) bool {
 func (r *runControls) wasPaused(chatID, nodeID string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.paused[chatID][nodeID]
+	_, ok := r.paused[chatID][nodeID]
+	return ok
+}
+
+// markPausedSticky records the pause reason past unregister.
+func (r *runControls) markPausedSticky(chatID, nodeID string, reason PauseReason) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.paused[chatID] == nil {
+		r.paused[chatID] = map[string]PauseReason{}
+	}
+	r.paused[chatID][nodeID] = reason
+}
+
+// clearPausedSticky forgets a pause once the node is started again.
+func (r *runControls) clearPausedSticky(chatID, nodeID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.paused[chatID], nodeID)
 }
 
 // resetCancelled clears flags and overrides for a new turn.
@@ -184,7 +309,7 @@ func (r *runControls) registerAndTakeOverride(chatID, nodeID string) (c *nodeCon
 	if r.m[chatID] == nil {
 		r.m[chatID] = map[string]*nodeControl{}
 	}
-	c = &nodeControl{}
+	c = &nodeControl{store: r.store, chatID: chatID, nodeID: nodeID}
 	r.m[chatID][nodeID] = c
 	if m := r.overrides[chatID]; m != nil {
 		if t, present := m[nodeID]; present {
@@ -229,6 +354,17 @@ func (r *runControls) setOverrideIfNotStarted(chatID, nodeID, task string) bool 
 	return true
 }
 
+// register builds the control and rehydrates its persisted queue/pause state.
+func (r *runControls) register(chatID, nodeID string) (*nodeControl, string, bool) {
+	c, override, ok := r.registerAndTakeOverride(chatID, nodeID)
+	c.restore()
+	return c, override, ok
+}
+
+// SetNodeStateStore wires write-through persistence for the node state
+// machine. Nil (the default) keeps every control in memory only.
+func (e *Executor) SetNodeStateStore(s NodeStateStore) { e.controls.store = s }
+
 // CancelNode stops one running node; rest of DAG continues. Returns false if node isn't running.
 func (e *Executor) CancelNode(chatID, nodeID string) bool {
 	c := e.controls.get(chatID, nodeID)
@@ -250,20 +386,47 @@ func (e *Executor) NodeCancelled(chatID, nodeID string) bool {
 	return e.controls.wasCancelled(chatID, nodeID)
 }
 
-// PauseNode suspends a running node, resumable via retry re-run.
-func (e *Executor) PauseNode(chatID, nodeID string) bool {
+// PauseNode suspends a running node at its next gate boundary. reason
+// distinguishes a human pause from a shutdown drain; HITL pauses itself
+// through the same seam (nodeControl.PauseForInput). Empty reason = user.
+func (e *Executor) PauseNode(chatID, nodeID string, reason PauseReason) bool {
+	if reason == "" {
+		reason = PauseUser
+	}
 	c := e.controls.get(chatID, nodeID)
 	if c == nil {
 		return false
 	}
-	c.markPaused(true)
-	e.controls.mu.Lock()
-	if e.controls.paused[chatID] == nil {
-		e.controls.paused[chatID] = map[string]bool{}
-	}
-	e.controls.paused[chatID][nodeID] = true
-	e.controls.mu.Unlock()
+	c.markPaused(reason, "")
+	e.controls.markPausedSticky(chatID, nodeID, reason)
 	return true
+}
+
+// StartNode clears a node's pause so its graph can be re-entered (the
+// re-entry itself is the orchestrator's - see Orchestrator.StartNode).
+// Returns the reason it was paused for, so the caller knows whether the
+// incoming message is an answer to a question (awaiting_input) or nothing at
+// all (user/shutdown).
+func (e *Executor) StartNode(chatID, nodeID string) (PauseReason, bool) {
+	reason := e.NodePauseReason(chatID, nodeID)
+	if c := e.controls.get(chatID, nodeID); c != nil {
+		if reason == "" {
+			reason = c.PauseReason()
+		}
+		c.resume()
+	}
+	e.controls.clearPausedSticky(chatID, nodeID)
+	return reason, true
+}
+
+// StopNode cancels a node into the terminal cancelled state.
+func (e *Executor) StopNode(chatID, nodeID string) bool { return e.CancelNode(chatID, nodeID) }
+
+// NodePauseReason reports why a node is paused ("" if it isn't), surviving unregister.
+func (e *Executor) NodePauseReason(chatID, nodeID string) PauseReason {
+	e.controls.mu.Lock()
+	defer e.controls.mu.Unlock()
+	return e.controls.paused[chatID][nodeID]
 }
 
 // QueueNodeMessage appends a message to a running node's queue.
@@ -273,6 +436,7 @@ func (e *Executor) QueueNodeMessage(chatID, nodeID, text string) (QueuedMessage,
 		return QueuedMessage{}, false
 	}
 	m := c.enqueue(text)
+	c.persistQueue()
 	return toQueuedMessage(m), true
 }
 
@@ -291,7 +455,11 @@ func (e *Executor) EditQueuedMessage(chatID, nodeID, messageID, text string) boo
 	if c == nil {
 		return false
 	}
-	return c.editQueued(messageID, text)
+	ok := c.editQueued(messageID, text)
+	if ok {
+		c.persistQueue()
+	}
+	return ok
 }
 
 // RemoveQueuedMessage drops a not-yet-delivered queued message.
@@ -300,7 +468,11 @@ func (e *Executor) RemoveQueuedMessage(chatID, nodeID, messageID string) bool {
 	if c == nil {
 		return false
 	}
-	return c.removeQueued(messageID)
+	ok := c.removeQueued(messageID)
+	if ok {
+		c.persistQueue()
+	}
+	return ok
 }
 
 // NodeQueue returns the current queue for a running node (nil if not live).

@@ -590,6 +590,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	executor.SetMaxActive(cfg.Dag.MaxActiveNodes)
 	executor.SetSetup(setupFn)
 	executor.SetArtifacts(artifacts)
+	executor.SetNodeStateStore(st) // write-through node state machine (#962)
 	executorRef.Store(executor)
 	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
 	orch.SetMaxActiveRuns(cfg.Dag.MaxActiveRuns)
