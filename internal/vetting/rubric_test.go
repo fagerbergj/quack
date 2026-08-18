@@ -7,6 +7,23 @@ import (
 	"testing"
 )
 
+// readRubricText: a .yaml rubric renders to markdown (#941); anything else
+// (config/rubric.md, still raw prose) reads as-is.
+func readRubricText(path string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	if strings.HasSuffix(path, ".yaml") {
+		doc, err := loadRubricYAML(raw, path)
+		if err != nil {
+			return "", err
+		}
+		return renderRubricMarkdown(doc), nil
+	}
+	return string(raw), nil
+}
+
 // TestCleanOutputRubricCatchesDeliberation pins clean_output failing visible
 // deliberation (self-correction, an abandoned draft, a rewritten snippet),
 // not just preamble/trailing narration, across the default rubric and every
@@ -14,7 +31,7 @@ import (
 // the language fails this test instead of silently reopening the gap.
 func TestCleanOutputRubricCatchesDeliberation(t *testing.T) {
 	rubrics := []string{"../../config/rubric.md"}
-	bundleRubrics, err := filepath.Glob("../../agents/*/rubric.md")
+	bundleRubrics, err := filepath.Glob("../../agents/*/rubric.yaml")
 	if err != nil {
 		t.Fatalf("glob bundle rubrics: %v", err)
 	}
@@ -22,11 +39,10 @@ func TestCleanOutputRubricCatchesDeliberation(t *testing.T) {
 
 	var checked int
 	for _, path := range rubrics {
-		raw, err := os.ReadFile(path)
+		rubric, err := readRubricText(path)
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
 		}
-		rubric := string(raw)
 
 		i := strings.Index(rubric, "`clean_output`")
 		if i < 0 {
@@ -81,11 +97,10 @@ func TestCleanOutputRubricCatchesDeliberation(t *testing.T) {
 // approve verdict, and a request_changes verdict backed by only nits) so a
 // live judge is actually told to check it.
 func TestStructuredVerdictRubricCatchesSeverityCoherence(t *testing.T) {
-	raw, err := os.ReadFile("../../agents/code-reviewer/rubric.md")
+	rubric, err := readRubricText("../../agents/code-reviewer/rubric.yaml")
 	if err != nil {
 		t.Fatalf("read code-reviewer rubric: %v", err)
 	}
-	rubric := string(raw)
 
 	i := strings.Index(rubric, "`structured_verdict`")
 	if i < 0 {
@@ -118,11 +133,10 @@ func TestStructuredVerdictRubricCatchesSeverityCoherence(t *testing.T) {
 // discipline yet), while a purely observational finding (a question, a
 // naming nit) must be explicitly exempt from that requirement.
 func TestConstructiveActionableRubricScoresCodeBlocks(t *testing.T) {
-	raw, err := os.ReadFile("../../agents/code-reviewer/rubric.md")
+	rubric, err := readRubricText("../../agents/code-reviewer/rubric.yaml")
 	if err != nil {
 		t.Fatalf("read code-reviewer rubric: %v", err)
 	}
-	rubric := string(raw)
 
 	i := strings.Index(rubric, "`constructive_actionable`")
 	if i < 0 {

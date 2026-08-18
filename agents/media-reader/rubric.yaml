@@ -1,0 +1,168 @@
+scale:
+  min: 0
+  max: 10
+  pass: 7
+criteria:
+  faithful:
+    definition: 'Every statement in the answer traces to something visibly or audibly present in the media.
+      Over-inference - drawing conclusions the media does not support - fails this criterion, even when
+      no specific detail is fabricated.
+
+
+      **Evaluation steps - image input (you can see the image).**
+
+      1. Inspect the image directly. Identify every claim in the answer (described objects, text, layout,
+      relationships).
+
+      2. For each claim, verify it against what is actually visible. Flag any claim that goes beyond what
+      the image shows or infers a relationship the image does not establish.
+
+      3. Check whether genuinely illegible text is flagged or given as a best-guess (acceptable) versus
+      confidently asserted as exact (not acceptable).
+
+      4. Score the proportion of claims that are directly traceable to what you can see.
+
+
+      **Evaluation steps - audio input (you cannot hear the audio).**
+
+      1. Identify every claim in the answer (described content, quoted phrases, characterised events).
+
+      2. For each, ask: does the answer present this as extracted from the audio, or does it assert something
+      the audio would have to support?
+
+      3. Check whether inaudible or unclear passages are flagged inline rather than silently presented
+      as certain.
+
+      4. Score the proportion of claims that appear appropriately grounded or hedged rather than baldly
+      asserted.'
+    steps: []
+    bands:
+    - min: 7.0
+      max: 10.0
+      meaning: essentially every claim is traceable to the media; uncertain or unclear items are flagged
+        or qualified.
+    - min: 4.0
+      max: 6.0
+      meaning: most claims are grounded, but a few specifics or inferences are asserted without hedging
+        where the media was likely ambiguous.
+    - min: 0.0
+      max: 3.0
+      meaning: the answer draws conclusions or fills in details the media could not support, or claims
+        directly contradict what is visible.
+    anchors:
+    - omission
+  no_hallucination:
+    definition: 'The answer contains no detail invented from the model''s training knowledge - no specific
+      name, number, date, or quoted phrase stated confidently that is not present in the media. This criterion
+      targets commission errors: things added that were not there, not omissions.
+
+
+      Do **not** score a proper noun as hallucinated merely because you do not recognise it. A name or
+      term you are unfamiliar with may be exactly what the media contains. A specific is suspect only
+      when the answer''s own text is internally inconsistent, or when the model asserts it with no hedge
+      in a context where it could not have read it from the media.
+
+
+      **Evaluation steps - image input (you can see the image).**
+
+      1. List every named entity, number, or quoted phrase in the answer.
+
+      2. Look for each in the image. Flag any that appear confident yet are absent from or contradict
+      what you see.
+
+      3. Pay particular attention to specifics that could plausibly be generated from training knowledge
+      rather than read from the image (a person''s name inferred from appearance, a date not visible,
+      a brand not shown).
+
+
+      **Evaluation steps - audio input (you cannot hear the audio).**
+
+      1. List every named entity, number, or quoted phrase in the answer.
+
+      2. For each, ask: is this the kind of specific that must come from the audio, or could the model
+      have drawn it from training data?
+
+      3. Flag any specific stated as fact - without any hedge - that the model could not have known without
+      hearing it.'
+    steps: []
+    bands:
+    - min: 7.0
+      max: 10.0
+      meaning: no specifics appear invented from training knowledge; where the model infers, it says so.
+    - min: 4.0
+      max: 6.0
+      meaning: minor secondary details look approximate or loosely inferred; no core name, date, or quoted
+        phrase appears fabricated.
+    - min: 0.0
+      max: 3.0
+      meaning: a name, number, or quoted phrase is clearly not from the media and is stated as fact without
+        qualification.
+    anchors:
+    - omission
+  answers_question:
+    definition: The response addresses exactly what the user asked, in full - not a related-but-different
+      question, and not a partial answer that drops part of the request.
+    steps:
+    - Decompose the user's question into its distinct asks (e.g. "transcribe AND summarise AND list action
+      items").
+    - Check that each ask is addressed in the answer.
+    - Note any silent narrowing or dropped sub-request.
+    bands:
+    - min: 7.0
+      max: 10.0
+      meaning: addresses the request completely, including all sub-asks.
+    - min: 4.0
+      max: 6.0
+      meaning: addresses the main ask but leaves a minor sub-request unanswered.
+    - min: 0.0
+      max: 3.0
+      meaning: misses the core ask or redirects to something different.
+    anchors:
+    - omission
+  internally_consistent:
+    definition: The answer does not contradict itself, and its conclusions follow from the content it
+      presents. This criterion is about self-contradiction - not about faithfulness to the media (which
+      `faithful` covers).
+    steps:
+    - 'Check for self-contradiction: a claim in one section undercut by a claim in another.'
+    - Check that structured sections (summary vs. detail, list items vs. conclusion) agree with each other.
+    - Check that hedges are consistent - if the answer says "possibly X" in one place, it should not assert
+      X as certain later.
+    bands:
+    - min: 7.0
+      max: 10.0
+      meaning: fully consistent throughout; no internal contradictions.
+    - min: 4.0
+      max: 6.0
+      meaning: minor tensions that do not undermine the core answer.
+    - min: 0.0
+      max: 3.0
+      meaning: clear contradictions, or conclusions the presented content does not support.
+    anchors:
+    - omission
+  clean_output:
+    definition: 'The response is ONLY the answer - it begins directly with the answer and ends with it.
+      No preamble ("I can see…", "Let me analyse…"), no process narration, no meta-commentary about the
+      media format or the agent''s capabilities. This includes mid-body deliberation: visible self-correction
+      ("Actually, let me reconsider…"), an abandoned or superseded draft left in place, or the same conclusion
+      written out more than once on the way to a final version.'
+    steps:
+    - 'Read the first sentence: does the answer begin directly, or with a preamble?'
+    - Scan the body and tail for leaked planning, self-talk, or meta-commentary.
+    - Check whether any snippet, list, or conclusion appears more than once in different (superseded)
+      forms - a sign of an abandoned draft left in place.
+    - Score down for each intrusion.
+    bands:
+    - min: 7.0
+      max: 10.0
+      meaning: pure answer; no preamble, narration, or trailing reasoning; only the final version of any
+        content appears.
+    - min: 4.0
+      max: 6.0
+      meaning: a stray opener or a single meta sentence, otherwise clean.
+    - min: 0.0
+      max: 3.0
+      meaning: noticeable preamble, leaked planning/reasoning, or a duplicated/superseded draft left in
+        the output.
+    anchors:
+    - omission

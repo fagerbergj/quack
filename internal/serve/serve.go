@@ -1122,10 +1122,12 @@ func perAgentGateCfg(base vetting.Config, name string, ac config.AgentConfig, me
 		c.ReadOnly = ac.Acp.ReadOnly
 		c.ExternalWorker = true
 	}
-	if override, err := vetting.LoadBundleRubric(ac.Bundle); err != nil {
+	if override, specs, fixes, err := vetting.LoadBundleRubricSpecs(ac.Bundle); err != nil {
 		return c, err
 	} else if override != "" {
 		c.Rubric = override
+		c.RubricSpecs = specs
+		c.RubricFixes = fixes
 		slog.Info("using per-agent rubric from bundle", "component", "startup", "agent", name)
 	}
 	if ac.JudgeRounds > 0 {

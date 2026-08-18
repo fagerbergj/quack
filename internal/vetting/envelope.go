@@ -4,9 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
-	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 )
 
@@ -160,100 +158,26 @@ func buildEnvelope(v verdict, threshold float64, round int) verdictEnvelope {
 	return env
 }
 
-// ── Rubric parsing (#941) ──────────────────────────────────────────────
-
-// rubricSectionRe matches a "### `name`" criterion header.
-var rubricSectionRe = regexp.MustCompile("(?m)^### `([a-zA-Z0-9_]+)`\\s*$")
-
-// rubricBandRe matches a scoring-band bullet: "- **N** - meaning" or "- **N–M** - meaning" (en dash).
-var rubricBandRe = regexp.MustCompile(`^-\s+\*\*(\d+)(?:[–-](\d+))?\*\*\s*-\s*(.+)$`)
-
-const evaluationStepsMarker = "**Evaluation steps.**"
-const scoringBandsMarker = "**Scoring bands.**"
-
-// judgeRubricScale: every prose rubric.md in agents/*/ scores 0-10 integers (per rubric preamble).
-var judgeRubricScale = &scaleSpec{Min: 0, Max: 10}
-
-// parseRubric extracts each "### `name`" section's definition and scoring
-// bands from a rubric.md. A section that doesn't parse (bands missing/malformed)
-// falls back to its raw text as definition with empty bands - rubric formatting
-// never fails the round (#941).
-func parseRubric(rubric string) map[string]criterionSpec {
-	out := map[string]criterionSpec{}
-	matches := rubricSectionRe.FindAllStringSubmatchIndex(rubric, -1)
-	for i, m := range matches {
-		name := rubric[m[2]:m[3]]
-		start := m[1]
-		end := len(rubric)
-		if i+1 < len(matches) {
-			end = matches[i+1][0]
-		}
-		section := strings.TrimSpace(rubric[start:end])
-		out[name] = parseRubricSection(name, section)
-	}
-	return out
-}
-
-// parseRubricSection parses one criterion's section body (header line already stripped).
-func parseRubricSection(name, section string) criterionSpec {
-	definition := section
-	if idx := strings.Index(section, evaluationStepsMarker); idx >= 0 {
-		definition = strings.TrimSpace(section[:idx])
-	}
-	bands := parseRubricBands(section)
-	if len(bands) == 0 {
-		// Fallback: unparseable section -> raw text in definition, empty bands (#941).
-		return criterionSpec{Name: name, Definition: section, Scale: judgeRubricScale}
-	}
-	return criterionSpec{Name: name, Definition: definition, Scale: judgeRubricScale, Bands: bands}
-}
-
-// parseRubricBands parses the "**Scoring bands.**" bullet list out of a criterion section.
-func parseRubricBands(section string) []bandSpec {
-	idx := strings.Index(section, scoringBandsMarker)
-	if idx < 0 {
-		return nil
-	}
-	body := section[idx+len(scoringBandsMarker):]
-	// Bands run to the end of the section (sections are already split at the next header).
-	if cut := strings.Index(body, "\n---"); cut >= 0 {
-		body = body[:cut]
-	}
-	var bands []bandSpec
-	for _, line := range strings.Split(body, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		mm := rubricBandRe.FindStringSubmatch(line)
-		if mm == nil {
-			continue
-		}
-		lo, err := strconv.ParseFloat(mm[1], 64)
-		if err != nil {
-			continue
-		}
-		hi := lo
-		if mm[2] != "" {
-			hi, err = strconv.ParseFloat(mm[2], 64)
-			if err != nil {
-				continue
-			}
-		}
-		bands = append(bands, bandSpec{Min: lo, Max: hi, Meaning: strings.TrimSpace(mm[3])})
-	}
-	return bands
-}
+// ── Rubric specs (#941) ─────────────────────────────────────────────────
+//
+// #941 redirect: the rubric is authored as YAML (rubricyaml.go) - it IS data,
+// so the envelope reads it directly (rubricDocSpecs) rather than parsing it
+// back out of rendered markdown. applyRubricSpecs stays a name->spec lookup
+// for exactly one reason: a DAG planner can still hand a node a raw,
+// unstructured rubric override at runtime (dag.Node.Rubric, config.go's
+// GatesConfig.Rubric inline string) that was never YAML and has no criterion
+// sections to look up - RubricSpecs is nil in that case, and every criterion
+// silently keeps a zero-value spec (empty definition/bands) rather than
+// failing the round.
 
 // applyRubricSpecs fills each judge (non-deterministic) failing/passing
-// criterion's Definition/Scale/Bands from the parsed rubric, by name. Missing
-// from the rubric entirely (should not happen for a real judge criterion) is
-// left with zero-value spec fields rather than failing the round.
-func applyRubricSpecs(v verdict, rubric string) verdict {
-	if rubric == "" || len(v.Criteria) == 0 {
+// criterion's Definition/Scale/Bands from the node's loaded rubric specs, by
+// name. specs nil (no YAML rubric loaded for this node - e.g. a raw planner
+// override) or missing entries leave zero-value spec fields.
+func applyRubricSpecs(v verdict, specs map[string]criterionSpec) verdict {
+	if len(specs) == 0 || len(v.Criteria) == 0 {
 		return v
 	}
-	specs := parseRubric(rubric)
 	for name, c := range v.Criteria {
 		if c.Deterministic {
 			continue

@@ -76,7 +76,7 @@ func (m *scriptedModel) GenerateContent(_ context.Context, req *model.LLMRequest
 			yield(fixtureCall("submit_verdict", map[string]any{"score": score, "feedback": "tighten the claims"}), nil)
 		case fixtureHasFuncResponse(req, fixtureToolName):
 			yield(fixtureText("This is the initial draft answer."), nil)
-		case strings.Contains(text, "Reviewer feedback"):
+		case strings.Contains(text, "Verdict:"):
 			yield(fixtureText("This is the revised answer with the reviewer's fixes applied."), nil)
 		default:
 			yield(fixtureCall(fixtureToolName, map[string]any{"query": text}), nil)

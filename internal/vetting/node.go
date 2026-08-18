@@ -469,8 +469,8 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			// ledgerCtx, not judgeCtx: skeptics are their own model calls and need the same coords.
 			v = adversarialVerify(ledgerCtx, cfg, question, answer, act, v, judgePartEmitter(sink, nodeID, runID+"-skeptic"))
 			v = sanitizeAnchors(v, answer, cfg)
-			v = mergeDeterministic(v, det)
-			v = applyRubricSpecs(v, cfg.Rubric)
+			v = mergeDeterministic(v, det, cfg)
+			v = applyRubricSpecs(v, cfg.RubricSpecs)
 			env, feedback := composeFeedback(v, cfg.Threshold, round)
 			res = GateResult{Passed: env.Passed, Score: v.Score, Feedback: feedback, Rounds: round}
 			emitEvaluationResults(ledgerCtx, runID, v)
@@ -1052,8 +1052,13 @@ const citesSourcesFix = "Fetch each source, or remove the citation and any claim
 // Stamps Deterministic here (not in computeDeterministicCriteria) since det's
 // keys are exactly the code-owned set - composeFeedback reads it to tell a
 // code-owned failure from a judge-scored one (#791). Also stamps each
-// criterion's declared definition/bands/fix (#941).
-func mergeDeterministic(v verdict, det map[string]criterionScore) verdict {
+// criterion's declared definition/bands/fix (#941): cfg.RubricSpecs/RubricFixes
+// (loaded from the node's rubric.yaml) win when the rubric names the
+// criterion (e.g. cites_sources in web-researcher/synthesizer's rubric.yaml);
+// deterministicCriterionSpec/citesSourcesBands below are the fallback for
+// criteria no rubric declares (checks_pass, delivery_complete, ...) or when
+// no structured rubric was loaded for this node at all.
+func mergeDeterministic(v verdict, det map[string]criterionScore, cfg Config) verdict {
 	if v.Criteria == nil {
 		v.Criteria = map[string]criterionScore{}
 	}
@@ -1069,6 +1074,14 @@ func mergeDeterministic(v verdict, det map[string]criterionScore) verdict {
 			c.Fix = citesSourcesFix
 			c.Scale = &scaleSpec{Min: 0, Max: 1}
 		}
+		if spec, ok := cfg.RubricSpecs[name]; ok {
+			c.Definition = spec.Definition
+			c.Bands = spec.Bands
+			c.Scale = spec.Scale
+		}
+		if fix, ok := cfg.RubricFixes[name]; ok {
+			c.Fix = fix
+		}
 		v.Criteria[name] = c
 	}
 	return aggregateVerdict(v)
@@ -1077,7 +1090,7 @@ func mergeDeterministic(v verdict, det map[string]criterionScore) verdict {
 // foldDeterministic: compute then merge in one step.
 func foldDeterministic(ctx context.Context, v verdict, answer string, act workerActivity, cfg Config) verdict {
 	det, _ := computeDeterministicCriteria(ctx, answer, act, cfg)
-	return mergeDeterministic(v, det)
+	return mergeDeterministic(v, det, cfg)
 }
 
 // composeFeedback builds the #941 structured envelope from v and a rendered
