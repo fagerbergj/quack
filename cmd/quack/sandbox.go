@@ -63,7 +63,7 @@ func newSandboxCmd() *cobra.Command {
 // first.
 func openSandboxSeat(f sandboxFlags) (cli.SandboxSeat, func(), error) {
 	cfgPath := defaultConfigPath()
-	cfg, err := config.Load(cfgPath)
+	cfg, err := config.LoadForSandbox(cfgPath)
 	if err != nil {
 		return cli.SandboxSeat{}, nil, err
 	}
@@ -87,7 +87,7 @@ func openSandboxSeat(f sandboxFlags) (cli.SandboxSeat, func(), error) {
 // alongside the seat for SandboxSpawnEnv's acp.env merge (cli.SandboxSeat
 // deliberately carries only Caps, not the full AgentConfig).
 func sandboxAgentConfig(f sandboxFlags) (config.AgentConfig, error) {
-	cfg, err := config.Load(defaultConfigPath())
+	cfg, err := config.LoadForSandbox(defaultConfigPath())
 	if err != nil {
 		return config.AgentConfig{}, err
 	}
@@ -288,7 +288,7 @@ func runSandboxCheck(cmd *cobra.Command, f sandboxFlags) error {
 		return err
 	}
 	defer teardown()
-	cfg, err := config.Load(defaultConfigPath())
+	cfg, err := config.LoadForSandbox(defaultConfigPath())
 	if err != nil {
 		return err
 	}

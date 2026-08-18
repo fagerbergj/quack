@@ -17,6 +17,50 @@ func writeTemp(t *testing.T, content string) string {
 	return p
 }
 
+// TestLoadForSandbox_SkipsRuntimeValidation: a config with every runtime
+// value (endpoint/model/db) left as an unset ${VAR} - e.g. a CI image with
+// no QUACK_*_MODEL/QUACK_DATABASE_URL - loads under LoadForSandbox (the
+// path `quack sandbox` uses) but still fails Load, so nothing that DOES need
+// live inference plumbing accidentally starts on an incomplete config.
+func TestLoadForSandbox_SkipsRuntimeValidation(t *testing.T) {
+	path := writeTemp(t, `
+providers:
+  default:
+    kind: openai
+    endpoint: ${QUACK_LLM_ENDPOINT}
+stores:
+  main: { kind: sqlite, url: ${QUACK_DATABASE_URL} }
+session: { store: main }
+orchestrator:
+  provider: default
+  model: ${QUACK_ORCH_MODEL}
+agents:
+  code-reviewer:
+    bundle: agents/code-reviewer
+    provider: default
+    model: ${QUACK_CODER_MODEL}
+    acp: { command: ["opencode", "acp"], read_only: true }
+  image-reader:
+    bundle: agents/image-reader
+    provider: default
+    model: ${QUACK_IMAGE_MODEL}
+workspace:
+  root: /tmp/quack-sandbox-test-workspace
+`)
+
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load: expected an error on empty models/endpoint/db url, got nil")
+	}
+
+	c, err := LoadForSandbox(path)
+	if err != nil {
+		t.Fatalf("LoadForSandbox: %v", err)
+	}
+	if c.Agents["code-reviewer"].Acp == nil || !c.Agents["code-reviewer"].Acp.ReadOnly {
+		t.Errorf("expected code-reviewer's acp block to survive: %+v", c.Agents["code-reviewer"])
+	}
+}
+
 func TestLoadInterpolatesEnv(t *testing.T) {
 	t.Setenv("QUACK_LLM_ENDPOINT", "http://x/v1")
 	t.Setenv("QUACK_LLM_API_KEY", "secret")

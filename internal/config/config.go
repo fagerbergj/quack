@@ -38,6 +38,13 @@ type Config struct {
 	// short form) - a deployment-authored workflow shape's provenance stamps
 	// this as its version, so a shape changes version only when quack.yaml does.
 	Revision string `yaml:"-"`
+	// skipRuntimeValidation - set by LoadForSandbox - skips the checks that
+	// require a live LLM endpoint/model/database to be configured (provider
+	// endpoint, orchestrator/agent model, session/artifacts store URL). Every
+	// other check (workspace, gates shape, dag, server, etc.) still runs, so
+	// `quack sandbox` validates the SAME workspace config an ACP agent gets,
+	// just without demanding inference plumbing it never calls.
+	skipRuntimeValidation bool
 }
 
 // SkillsConfig names skill-library plugin roots beyond quack's own shipped
@@ -669,6 +676,24 @@ func expandEnv(key string) string {
 }
 
 func Load(path string) (*Config, error) {
+	return load(path, false)
+}
+
+// LoadForSandbox loads path the same way Load does (parse, expand, the full
+// workspace/gates/dag/server validation and defaulting) but skips the checks
+// that require live inference plumbing an agent's OWN model calls need,
+// never `quack sandbox`: provider endpoint, orchestrator/agent model,
+// session/artifacts store url. `quack sandbox` runs a shell command inside
+// an agent's Caps/WrapArgv/spawnEnv - it never calls a model or a store - so
+// a deployment config with those left as empty env vars (e.g. a CI image
+// with no QUACK_*_MODEL/QUACK_DATABASE_URL set) should still resolve one
+// agent's acp/workspace config instead of failing on a sibling agent's
+// unrelated empty model.
+func LoadForSandbox(path string) (*Config, error) {
+	return load(path, true)
+}
+
+func load(path string, skipRuntimeValidation bool) (*Config, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config %q: %w", path, err)
@@ -689,6 +714,7 @@ func Load(path string) (*Config, error) {
 	}
 	sum := sha256.Sum256(raw)
 	c.Revision = hex.EncodeToString(sum[:])[:12]
+	c.skipRuntimeValidation = skipRuntimeValidation
 	if err := c.validate(); err != nil {
 		return nil, err
 	}
@@ -702,7 +728,7 @@ func (c *Config) validate() error {
 	for name, p := range c.Providers {
 		switch p.Kind {
 		case "openai":
-			if p.Endpoint == "" {
+			if p.Endpoint == "" && !c.skipRuntimeValidation {
 				return fmt.Errorf("config: provider %q has empty endpoint", name)
 			}
 		case "replay":
@@ -732,7 +758,7 @@ func (c *Config) validate() error {
 	if _, ok := c.Providers[c.Orchestrator.Provider]; !ok {
 		return fmt.Errorf("config: orchestrator.provider %q is not defined under providers", c.Orchestrator.Provider)
 	}
-	if c.Orchestrator.Model == "" {
+	if c.Orchestrator.Model == "" && !c.skipRuntimeValidation {
 		return fmt.Errorf("config: orchestrator.model is empty")
 	}
 	if c.Orchestrator.UserMemoryHook.Enabled {
@@ -809,7 +835,7 @@ func (c *Config) validate() error {
 		return fmt.Errorf("config: session.store %q is not defined under stores", c.Session.Store)
 	} else if ss.Kind != "postgres" && ss.Kind != "sqlite" {
 		return fmt.Errorf("config: session.store %q must be a postgres or sqlite store, got kind %q", c.Session.Store, ss.Kind)
-	} else if ss.URL == "" {
+	} else if ss.URL == "" && !c.skipRuntimeValidation {
 		return fmt.Errorf("config: session.store %q has empty url", c.Session.Store)
 	}
 	if c.Artifacts.Store != "" {
@@ -818,7 +844,7 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: artifacts.store %q is not defined under stores", c.Artifacts.Store)
 		} else if as.Kind != "postgres" {
 			return fmt.Errorf("config: artifacts.store %q must be a postgres store (large-object backend), got kind %q", c.Artifacts.Store, as.Kind)
-		} else if as.URL == "" {
+		} else if as.URL == "" && !c.skipRuntimeValidation {
 			return fmt.Errorf("config: artifacts.store %q has empty url", c.Artifacts.Store)
 		}
 	}
@@ -829,7 +855,7 @@ func (c *Config) validate() error {
 		if a.Bundle == "" {
 			return fmt.Errorf("config: agent %q has empty bundle path", name)
 		}
-		if a.Model == "" {
+		if a.Model == "" && !c.skipRuntimeValidation {
 			return fmt.Errorf("config: agent %q has empty model", name)
 		}
 		if a.Acp != nil && len(a.Acp.Command) == 0 {
