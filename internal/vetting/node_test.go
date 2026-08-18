@@ -443,6 +443,12 @@ func TestRunGatedRefine_ChecksSkipReasonSurfacesOnPassingUnsupportedBuild(t *tes
 // reason - a clean run says nothing extra.
 func TestRunGatedRefine_ChecksSkipReasonEmptyWhenChecksRan(t *testing.T) {
 	cfg, root := scopeCfg(t, "", "go", "gofmt")
+	// TMPDIR/GOTMPDIR pinned to t.TempDir() (honours the jail's own TMPDIR,
+	// unlike the real /tmp #936 warns childEnv falls back to for non-landlock
+	// caps): the default zero-value caps leave `go build`'s work dir on a
+	// path the jail doesn't grant.
+	scratch := t.TempDir()
+	cfg.WorkspaceCaps.Env = map[string]string{"TMPDIR": scratch, "GOTMPDIR": scratch}
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/x\n\ngo 1.24\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

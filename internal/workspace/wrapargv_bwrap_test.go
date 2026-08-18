@@ -139,8 +139,13 @@ func TestWrapArgvBwrapShape(t *testing.T) {
 			t.Errorf("WrapArgv(bwrap) missing %q\ngot: %v", strings.ReplaceAll(want, "\x00", " "), got)
 		}
 	}
-	if strings.Contains(joined, SandboxWorkRoot) {
-		t.Errorf("WrapArgv(bwrap) remapped the work tree onto %s; ACP paths must stay identity\ngot: %v", SandboxWorkRoot, got)
+	// Token equality, not substring: in the jail TMPDIR is under
+	// /tmp/workspace/..., which contains SandboxWorkRoot ("/workspace") as a
+	// substring of an unrelated path and would false-positive here.
+	for _, arg := range got {
+		if arg == SandboxWorkRoot {
+			t.Errorf("WrapArgv(bwrap) remapped the work tree onto %s; ACP paths must stay identity\ngot: %v", SandboxWorkRoot, got)
+		}
 	}
 	if strings.Contains(joined, "--bind-try\x00"+dir) {
 		t.Errorf("WrapArgv(bwrap, ReadOnly) also bound the work tree read-write: %v", got)
