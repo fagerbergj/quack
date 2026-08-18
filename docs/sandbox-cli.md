@@ -43,7 +43,7 @@ run` under the hood:
 | `go env` GOTOOLCHAIN/GOMODCACHE/GOTMPDIR/GOCACHE | all set, all under writable paths |
 | `go build` offline | a throwaway module builds under `$TMPDIR` with no network |
 | `git init`+commit+push to a bare repo under `$TMPDIR` | no cross-device (EXDEV) error |
-| `git clone --local` cwd → `$TMPDIR` | the hardlink path works (same device) |
+| `git clone --local` into `$TMPDIR` | the hardlink path works (same device) |
 | `git push https://github.com/x/y` | fails, with no credential prompt |
 | `unshare --user true`, `bwrap --version` | INFO only: whether nested namespaces are available |
 | each `workspace.check_commands` entry | INFO only: whether the binary is on `ChildPath` |

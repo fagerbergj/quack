@@ -60,7 +60,7 @@ func RunSandboxChecks(ctx context.Context, r SandboxRunner, readOnly, enforced b
 		{name: "go env GOTOOLCHAIN/GOMODCACHE/GOTMPDIR/GOCACHE", script: `go env GOTOOLCHAIN GOMODCACHE GOTMPDIR GOCACHE | grep -qv '^$' && for d in $(go env GOMODCACHE GOTMPDIR GOCACHE); do mkdir -p "$d" && [ -w "$d" ] || exit 1; done`},
 		{name: "go build offline", script: goBuildProbeScript},
 		{name: "git init+commit+push to bare $TMPDIR (no EXDEV)", script: gitPushProbeScript},
-		{name: "git clone --local cwd -> $TMPDIR", script: gitCloneLocalProbeScript},
+		{name: "git clone --local into $TMPDIR (hardlink path)", script: gitCloneLocalProbeScript},
 		{name: "git push https://github.com/x/y (no credential prompt)", script: `GIT_TERMINAL_PROMPT=0 timeout 5 git push https://github.com/x/y HEAD:refs/heads/probe 2>&1; test $? -ne 0`},
 		{name: "unshare --user true (nested userns)", script: `unshare --user true`, info: true},
 		{name: "bwrap --version (nesting)", script: `bwrap --version`, info: true},
@@ -164,7 +164,7 @@ GOFLAGS=-mod=mod GOPROXY=off go build ./...
 // gitPushProbeScript proves git init+commit+push to a bare repo under
 // $TMPDIR works with no EXDEV (the hardlink-across-devices failure #936
 // chased) - both repos live under $TMPDIR so this only proves same-device
-// git, not clone --local from cwd (see gitCloneLocalProbeScript for that).
+// git via push; gitCloneLocalProbeScript covers the clone --local hardlink path.
 const gitPushProbeScript = `
 set -e
 base="$TMPDIR/quack-sandbox-gitpush-$$"
@@ -181,11 +181,16 @@ git commit -qm probe
 git push -q "$base/bare.git" HEAD:refs/heads/probe
 `
 
-// gitCloneLocalProbeScript proves `git clone --local` from cwd into $TMPDIR
-// works (same-device hardlink path) - the issue body's clone-into-scratch probe.
+// gitCloneLocalProbeScript proves `git clone --local` (the hardlink path) works
+// into $TMPDIR. Self-contained: cwd may not be a repo (a fresh --cwd is not),
+// so it inits one under $TMPDIR and clones that - same-device hardlinks are
+// what the probe is for, not cwd's identity.
 const gitCloneLocalProbeScript = `
 set -e
-dst="$TMPDIR/quack-sandbox-clonelocal-$$"
-trap 'rm -rf "$dst"' EXIT
-git clone --local -q . "$dst" 2>&1 || git clone --local -q --no-hardlinks . "$dst"
+base="$TMPDIR/quack-sandbox-clonelocal-$$"
+mkdir -p "$base"
+trap 'rm -rf "$base"' EXIT
+git init -q "$base/src"
+git -C "$base/src" -c user.name=probe -c user.email=probe@quack commit -q --allow-empty -m probe
+git clone --local -q "$base/src" "$base/dst"
 `
