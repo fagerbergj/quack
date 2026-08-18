@@ -4,9 +4,10 @@ scale:
   pass: 7
 criteria:
   answers_question:
-    definition: The response addresses exactly what the user asked, in full. For routing decisions, the
-      delegated response addresses the question; for direct answers, the orchestrator's own output addresses
-      it.
+    definition: >
+      The response addresses exactly what the user asked, in full. For routing decisions,
+      the delegated response addresses the question; for direct answers, the
+      orchestrator's own output addresses it.
     steps:
     - Identify what the user asked.
     - Check whether the response (direct or delegated) covers every part of the request.
@@ -24,11 +25,45 @@ criteria:
     anchors:
     - quote
     - omission
-  no_fabrication:
-    definition: When the orchestrator answers directly (conversational queries), it does not invent facts,
-      URLs, or specific details it cannot know from context.
+  clean_output:
+    definition: >
+      The response begins directly with the answer - no preamble, no meta-commentary, no
+      process narration. The orchestrator never exposes its routing logic to the user.
+    guidance: >
+      This includes mid-body deliberation: visible self-correction ("Actually, let me
+      reconsider…"), an abandoned or superseded draft left in place, or the same
+      conclusion - a snippet, a list, a decision - written out more than once on the way
+      to a final version.
     steps:
-    - Identify claims the orchestrator made in its own direct response (not via a specialist).
+    - "Read the first sentence: direct content, or a preamble / \"let me route this
+      to…\"?"
+    - Scan for leaked routing logic, self-talk, or meta-commentary about skills or
+      delegation.
+    - Check whether any snippet, list, or conclusion appears more than once in different
+      (superseded) forms - a sign of an abandoned draft left in place.
+    - Score down for each intrusion.
+    bands:
+    - min: 7.0
+      max: 10.0
+      meaning: pure answer; no preamble or routing narration; only the final version of any
+        content appears.
+    - min: 4.0
+      max: 6.0
+      meaning: a single stray opener or one routing comment, otherwise clean.
+    - min: 0.0
+      max: 3.0
+      meaning: noticeable preamble, routing narration, leaked process, or a
+        duplicated/superseded draft left in the output.
+    anchors:
+    - quote
+    - omission
+  no_fabrication:
+    definition: >
+      When the orchestrator answers directly (conversational queries), it does not invent
+      facts, URLs, or specific details it cannot know from context.
+    steps:
+    - Identify claims the orchestrator made in its own direct response (not via a
+      specialist).
     - Check whether each claim is answerable from context or is a plausible fabrication.
     - Weight specific claims (names, versions, URLs) most heavily.
     bands:
@@ -41,32 +76,6 @@ criteria:
     - min: 0.0
       max: 3.0
       meaning: a specific URL, claim, or fact is clearly invented or unverifiable.
-    anchors:
-    - quote
-    - omission
-  clean_output:
-    definition: 'The response begins directly with the answer - no preamble, no meta-commentary, no process
-      narration. The orchestrator never exposes its routing logic to the user. This includes mid-body
-      deliberation: visible self-correction ("Actually, let me reconsider…"), an abandoned or superseded
-      draft left in place, or the same conclusion - a snippet, a list, a decision - written out more than
-      once on the way to a final version.'
-    steps:
-    - 'Read the first sentence: direct content, or a preamble / "let me route this to…"?'
-    - Scan for leaked routing logic, self-talk, or meta-commentary about skills or delegation.
-    - Check whether any snippet, list, or conclusion appears more than once in different (superseded)
-      forms - a sign of an abandoned draft left in place.
-    - Score down for each intrusion.
-    bands:
-    - min: 7.0
-      max: 10.0
-      meaning: pure answer; no preamble or routing narration; only the final version of any content appears.
-    - min: 4.0
-      max: 6.0
-      meaning: a single stray opener or one routing comment, otherwise clean.
-    - min: 0.0
-      max: 3.0
-      meaning: noticeable preamble, routing narration, leaked process, or a duplicated/superseded draft
-        left in the output.
     anchors:
     - quote
     - omission

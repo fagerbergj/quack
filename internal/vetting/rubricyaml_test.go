@@ -201,3 +201,66 @@ func TestRubricDocSpecsAndFixes(t *testing.T) {
 		t.Errorf("no_fabrication is not deterministic - should not appear in fixes")
 	}
 }
+
+// TestGuidanceReachesJudgePromptNotEnvelope pins the split the coordinator asked
+// for: `guidance` (judge-only asides - recency caveats, "don't verify this here",
+// how to weigh things) must render into the judge's rubric prompt, but must never
+// reach rubricDocSpecs - the envelope only ever gets `definition`, the short
+// worker-actionable summary. A worker rejection must never surface a sentence
+// meant for the judge's eyes only.
+func TestGuidanceReachesJudgePromptNotEnvelope(t *testing.T) {
+	doc := rubricDoc{
+		Scale: rubricScale{Min: 0, Max: 10, Pass: 7},
+		Criteria: map[string]rubricCriterion{
+			"no_fabrication": {
+				Definition: "Nothing reads as invented.",
+				Guidance:   "Recency caveat: your own knowledge is stale, do not flag unfamiliar specifics.",
+				Bands:      []bandSpec{{Min: 0, Max: 10, Meaning: "m"}},
+			},
+		},
+	}
+	rendered := renderRubricMarkdown(doc)
+	if !strings.Contains(rendered, "Recency caveat") {
+		t.Errorf("judge prompt render is missing guidance text:\n%s", rendered)
+	}
+
+	specs := rubricDocSpecs(doc)
+	if strings.Contains(specs["no_fabrication"].Definition, "Recency caveat") {
+		t.Errorf("envelope spec leaked judge-only guidance into the worker-facing definition: %+v", specs["no_fabrication"])
+	}
+	if specs["no_fabrication"].Definition != "Nothing reads as invented." {
+		t.Errorf("envelope spec definition = %q, want the short worker-facing sentence only", specs["no_fabrication"].Definition)
+	}
+}
+
+// TestMemoryAgentZeroCriteriaHandledLikeAnyOtherRubric: memory-agent's
+// rubric.yaml is prose-only guidance (criteria: {}), used as chat guidance
+// text rather than a judge rubric. loadRubric/LoadBundleRubric must still
+// render its notes as non-empty text (the judge/chat build still needs it),
+// and an envelope built from a verdict with no criteria at all must have
+// empty Passing/Deterministic/Judge arrays rather than erroring.
+func TestMemoryAgentZeroCriteriaHandledLikeAnyOtherRubric(t *testing.T) {
+	raw, err := os.ReadFile("../../agents/memory-agent/rubric.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := loadRubricYAML(raw, "memory-agent/rubric.yaml")
+	if err != nil {
+		t.Fatalf("load/validate: %v", err)
+	}
+	if len(doc.Criteria) != 0 {
+		t.Fatalf("expected 0 criteria, got %d", len(doc.Criteria))
+	}
+	rendered := renderRubricMarkdown(doc)
+	if strings.TrimSpace(rendered) == "" {
+		t.Fatal("rendered text is empty - the notes-only content must still reach the caller (guidance prose, judge prompt)")
+	}
+	if !strings.Contains(rendered, "Candidate quality bar") {
+		t.Errorf("rendered rubric missing its notes content:\n%s", rendered)
+	}
+
+	env := buildEnvelope(verdict{}, 0.7, 1)
+	if len(env.Passing) != 0 || len(env.DeterministicFailures) != 0 || len(env.JudgeFailures) != 0 {
+		t.Errorf("envelope from a criteria-less verdict should have all-empty arrays, got %+v", env)
+	}
+}

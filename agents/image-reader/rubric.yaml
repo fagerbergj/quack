@@ -2,104 +2,20 @@ scale:
   min: 0
   max: 10
   pass: 7
-notes: 'No-text handling: if the image contains no legible text and the answer honestly states this (e.g.
-  "No text is visible in this image"), do not penalise `completeness`. Score `completeness` on whether
-  the disclosure is accurate and the description of what IS visible is reasonable. Score `answers_question`
-  on whether the honest disclosure is an appropriate response to the request.
-
-  '
+notes: >
+  No-text handling: if the image contains no legible text and the answer honestly states
+  this (e.g. "No text is visible in this image"), do not penalise `completeness`. Score
+  `completeness` on whether the disclosure is accurate and the description of what IS
+  visible is reasonable. Score `answers_question` on whether the honest disclosure is an
+  appropriate response to the request.
 criteria:
-  faithful:
-    definition: Every statement in the answer traces to something visibly present in the image. Over-inference
-      - drawing conclusions the image does not support - fails this criterion, even when no specific detail
-      is fabricated.
-    steps:
-    - Inspect the image directly. Identify every claim in the answer (transcribed text, described objects,
-      layout, relationships).
-    - For each claim, verify it against what is actually visible. Flag any claim that goes beyond what
-      the image shows or infers a relationship the image does not establish.
-    - Check whether genuinely illegible text is flagged or given as a best-guess (acceptable) versus confidently
-      asserted as exact (not acceptable).
-    - Score the proportion of claims that are directly traceable to what you can see. **Stale-knowledge
-      caveat:** the agent may transcribe proper nouns, technical terms, or names that appear in the image
-      but are unfamiliar to you. Do not flag a transcribed word as hallucinated merely because you do
-      not recognise it - only flag it if the image clearly shows different text.
-    bands:
-    - min: 7.0
-      max: 10.0
-      meaning: essentially every claim is traceable to the image; uncertain or unclear items are flagged
-        or qualified.
-    - min: 4.0
-      max: 6.0
-      meaning: most claims are grounded, but a few specifics or inferences are asserted without hedging
-        where the image was ambiguous.
-    - min: 0.0
-      max: 3.0
-      meaning: the answer draws conclusions or fills in details the image could not support, or claims
-        directly contradict what is visible.
-    anchors:
-    - omission
-  no_hallucination:
-    definition: 'The answer contains no detail invented from the model''s training knowledge - no specific
-      name, number, date, or quoted phrase stated confidently that is not present in the image. This criterion
-      targets commission errors: things added that were not there, not omissions.
-
-
-      Do **not** score a transcribed proper noun as hallucinated merely because you do not recognise it.
-      A name or term unfamiliar to you may be exactly what the image contains. A specific is suspect only
-      when the answer is internally inconsistent, or when it asserts a detail with no hedge in a context
-      where it could not have been read from the image.'
-    steps:
-    - List every named entity, number, or quoted phrase in the answer.
-    - Look for each in the image. Flag any that appear confident yet are absent from or contradict what
-      you see.
-    - Pay attention to specifics that could plausibly be generated from training knowledge rather than
-      read from the image - a person's name inferred from appearance, a date not visible, a brand not
-      shown.
-    bands:
-    - min: 7.0
-      max: 10.0
-      meaning: no specifics appear invented from training knowledge; where the model infers, it says so.
-    - min: 4.0
-      max: 6.0
-      meaning: minor secondary details look approximate or loosely inferred; no core name, date, or quoted
-        phrase appears fabricated.
-    - min: 0.0
-      max: 3.0
-      meaning: a name, number, or quoted phrase is clearly not from the image and is stated as fact without
-        qualification.
-    anchors:
-    - omission
-  completeness:
-    definition: 'The answer captures all significant text and content in the image - it does not silently
-      omit sections, labels, or passages. This criterion is distinct from `faithful`: `faithful` asks
-      whether stated claims are supported; `completeness` asks whether important content was missed.'
-    steps:
-    - Scan the image for distinct text regions, labels, and content sections.
-    - Check whether each region is represented in the answer. Note any silently dropped section.
-    - For dense images, check that small print and secondary labels are included where the user asked
-      for full extraction.
-    - Do not penalise for omitting content the user did not ask for (e.g., if the user asked only to transcribe
-      a heading, body text can be omitted).
-    bands:
-    - min: 7.0
-      max: 10.0
-      meaning: all significant content the user asked for is present; minor incidental text may be omitted
-        without penalty.
-    - min: 4.0
-      max: 6.0
-      meaning: a section or label is missing that a thorough reader would include.
-    - min: 0.0
-      max: 3.0
-      meaning: large portions of asked-for content are silently missing.
-    anchors:
-    - omission
   answers_question:
-    definition: The response addresses exactly what the user asked, in full - not a related-but-different
-      question, and not a partial answer that drops part of the request.
+    definition: >
+      The response addresses exactly what the user asked, in full - not a related-but-
+      different question, and not a partial answer that drops part of the request.
     steps:
-    - Decompose the user's question into its distinct asks (e.g. "transcribe AND summarise AND list action
-      items").
+    - Decompose the user's question into its distinct asks (e.g. "transcribe AND
+      summarise AND list action items").
     - Check that each ask is addressed in the answer.
     - Note any silent narrowing or dropped sub-request.
     bands:
@@ -115,28 +31,128 @@ criteria:
     anchors:
     - omission
   clean_output:
-    definition: 'The response is ONLY the answer - it begins directly and ends with it. No preamble ("I
-      can see…", "Let me analyse…"), no process narration, no meta-commentary about image quality or the
-      agent''s capabilities. This includes mid-body deliberation: visible self-correction ("Actually,
-      let me reconsider…"), an abandoned or superseded draft left in place, or the same conclusion written
-      out more than once on the way to a final version.'
+    definition: >
+      The response is ONLY the answer - it begins directly and ends with it. No preamble
+      ("I can see…", "Let me analyse…"), no process narration, no meta-commentary about
+      image quality or the agent's capabilities.
+    guidance: >
+      This includes mid-body deliberation: visible self-correction ("Actually, let me
+      reconsider…"), an abandoned or superseded draft left in place, or the same
+      conclusion written out more than once on the way to a final version.
     steps:
-    - 'Read the first sentence: does the answer begin directly, or with a preamble?'
+    - "Read the first sentence: does the answer begin directly, or with a preamble?"
     - Scan the body and tail for leaked planning, self-talk, or meta-commentary.
-    - Check whether any snippet, list, or conclusion appears more than once in different (superseded)
-      forms - a sign of an abandoned draft left in place.
+    - Check whether any snippet, list, or conclusion appears more than once in different
+      (superseded) forms - a sign of an abandoned draft left in place.
     - Score down for each intrusion.
     bands:
     - min: 7.0
       max: 10.0
-      meaning: pure answer; no preamble, narration, or trailing reasoning; only the final version of any
-        content appears.
+      meaning: pure answer; no preamble, narration, or trailing reasoning; only the final
+        version of any content appears.
     - min: 4.0
       max: 6.0
       meaning: a stray opener or a single meta sentence, otherwise clean.
     - min: 0.0
       max: 3.0
-      meaning: noticeable preamble, leaked planning/reasoning, or a duplicated/superseded draft left in
-        the output.
+      meaning: noticeable preamble, leaked planning/reasoning, or a duplicated/superseded draft
+        left in the output.
+    anchors:
+    - omission
+  completeness:
+    definition: >
+      The answer captures all significant text and content in the image - it does not
+      silently omit sections, labels, or passages.
+    guidance: >
+      This criterion is distinct from `faithful`: `faithful` asks whether stated claims
+      are supported; `completeness` asks whether important content was missed.
+    steps:
+    - Scan the image for distinct text regions, labels, and content sections.
+    - Check whether each region is represented in the answer. Note any silently dropped
+      section.
+    - For dense images, check that small print and secondary labels are included where
+      the user asked for full extraction.
+    - Do not penalise for omitting content the user did not ask for (e.g., if the user
+      asked only to transcribe a heading, body text can be omitted).
+    bands:
+    - min: 7.0
+      max: 10.0
+      meaning: all significant content the user asked for is present; minor incidental text may
+        be omitted without penalty.
+    - min: 4.0
+      max: 6.0
+      meaning: a section or label is missing that a thorough reader would include.
+    - min: 0.0
+      max: 3.0
+      meaning: large portions of asked-for content are silently missing.
+    anchors:
+    - omission
+  faithful:
+    definition: >
+      Every statement in the answer traces to something visibly present in the image.
+      Over-inference - drawing conclusions the image does not support - fails this
+      criterion, even when no specific detail is fabricated.
+    steps:
+    - Inspect the image directly. Identify every claim in the answer (transcribed text,
+      described objects, layout, relationships).
+    - For each claim, verify it against what is actually visible. Flag any claim that
+      goes beyond what the image shows or infers a relationship the image does not
+      establish.
+    - Check whether genuinely illegible text is flagged or given as a best-guess
+      (acceptable) versus confidently asserted as exact (not acceptable).
+    - Score the proportion of claims that are directly traceable to what you can see.
+      **Stale-knowledge caveat:** the agent may transcribe proper nouns, technical
+      terms, or names that appear in the image but are unfamiliar to you. Do not flag a
+      transcribed word as hallucinated merely because you do not recognise it - only
+      flag it if the image clearly shows different text.
+    bands:
+    - min: 7.0
+      max: 10.0
+      meaning: essentially every claim is traceable to the image; uncertain or unclear items
+        are flagged or qualified.
+    - min: 4.0
+      max: 6.0
+      meaning: most claims are grounded, but a few specifics or inferences are asserted without
+        hedging where the image was ambiguous.
+    - min: 0.0
+      max: 3.0
+      meaning: the answer draws conclusions or fills in details the image could not support, or
+        claims directly contradict what is visible.
+    anchors:
+    - omission
+  no_hallucination:
+    definition: >
+      The answer contains no detail invented from the model's training knowledge - no
+      specific name, number, date, or quoted phrase stated confidently that is not present
+      in the image.
+    guidance: >
+      This criterion targets commission errors: things added that were not there, not
+      omissions.
+
+      Do **not** score a transcribed proper noun as hallucinated merely because you do not
+      recognise it. A name or term unfamiliar to you may be exactly what the image
+      contains. A specific is suspect only when the answer is internally inconsistent, or
+      when it asserts a detail with no hedge in a context where it could not have been
+      read from the image.
+    steps:
+    - List every named entity, number, or quoted phrase in the answer.
+    - Look for each in the image. Flag any that appear confident yet are absent from or
+      contradict what you see.
+    - Pay attention to specifics that could plausibly be generated from training
+      knowledge rather than read from the image - a person's name inferred from
+      appearance, a date not visible, a brand not shown.
+    bands:
+    - min: 7.0
+      max: 10.0
+      meaning: no specifics appear invented from training knowledge; where the model infers, it
+        says so.
+    - min: 4.0
+      max: 6.0
+      meaning: minor secondary details look approximate or loosely inferred; no core name,
+        date, or quoted phrase appears fabricated.
+    - min: 0.0
+      max: 3.0
+      meaning: a name, number, or quoted phrase is clearly not from the image and is stated as
+        fact without qualification.
     anchors:
     - omission
