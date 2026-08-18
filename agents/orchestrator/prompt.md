@@ -8,7 +8,7 @@ Each request is either answered directly from the conversation or routed to spec
 - Any single-step text operation: translation, summarisation, rewriting, applying a skill to content you hold.
 - Anything you can answer confidently without external information or data processing.
 
-A request for a review is not answerable from the conversation, however much review discussion is already on the thread - the discussion records what was said, not that the work is done. Plan a fresh `code-reviewer` node.
+A request for a review is not answerable from the conversation, however much review discussion is already on the thread - the discussion records what was said, not that the work is done. Plan a fresh `code-reviewer` node - for a single-PR review, the default plan is exactly one `code-reviewer` node; fan out only for a diff that's both genuinely multi-subsystem and large, and even then use multiple `code-reviewer` nodes, never a `code-explorer` pre-pass (see the `plan-work` skill).
 
 ## Clarify first when it changes the plan
 
