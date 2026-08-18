@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { within, expect, waitFor } from 'storybook/test'
+import { within, userEvent, expect, waitFor } from 'storybook/test'
 import { ActivityList, AssistantText, BubbleHeader, LiveStatusLine } from './AgentParts'
+import { appendRunThinking, appendRunToolCall, fillRunToolResult, startRun } from './messageParts'
 import type { Activity } from './messageParts'
 
 const meta: Meta<typeof ActivityList> = {
@@ -127,6 +128,43 @@ const manyActivity: Activity[] = Array.from({ length: 60 }, (_, i) => ({
 
 export const ManyToolCalls: Story = {
   args: { activity: manyActivity },
+}
+
+// Interleaved thinking/tool-call events (#959) folded into one Thought block.
+function buildInterleavedFixture(): Activity[] {
+  let runs = startRun([], { runId: 'r1', agent: 'code-reviewer', stage: 'worker' })
+  const fragments = [
+    'Let me look at the diff first.', 'OK so this touches the auth middleware.',
+    'Checking for missing nil checks.', 'This looks fine.', 'Now the tests.',
+    'Coverage seems thin here.', 'Let me check the error path too.',
+    'Good, that is handled.', 'One more file to check.', 'This is the last one.',
+  ]
+  for (let i = 0; i < fragments.length; i++) {
+    runs = appendRunThinking(runs, 'r1', fragments[i])
+    const callId = `c${i}`
+    const isOther = i === 3 || i === 7
+    const name = isOther ? 'other' : 'read_file'
+    const title = isOther ? (i === 3 ? 'quackmcp_stage_review' : 'Loaded skill: review-code') : undefined
+    runs = appendRunToolCall(runs, 'r1', callId, name, isOther ? {} : { path: `src/file${i}.go` }, title)
+    runs = fillRunToolResult(runs, 'r1', callId, name, { ok: true })
+  }
+  return runs[0].activity
+}
+
+export const InterleavedThinkingAndOtherTools: Story = {
+  args: { activity: buildInterleavedFixture() },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    // The folded Thought block is the run's oldest item, so it's behind the
+    // windowing toggle - expand it before asserting.
+    await userEvent.click(canvas.getByText(/earlier/))
+    // All ten thought fragments folded into one Thought block, not ten.
+    expect(canvas.getAllByText('Thought')).toHaveLength(1)
+    // Every tool row shows its real identity - never the bare "other".
+    expect(canvas.queryByText('other')).toBeNull()
+    expect(canvas.getByText('quackmcp_stage_review')).toBeInTheDocument()
+    expect(canvas.getByText('Loaded skill: review-code')).toBeInTheDocument()
+  },
 }
 
 const CODE_ANSWER = `Here's a debounce helper:

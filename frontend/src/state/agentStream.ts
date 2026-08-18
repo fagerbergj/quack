@@ -111,7 +111,7 @@ export interface AgentStreamHandlers {
   // Agent-run lifecycle + typed activity (flat; each carries node_id + run_id).
   onAgentStart?: (d: AgentStartPayload) => void
   onAgentThinking?: (runId: string, text: string, nodeId?: string) => void
-  onAgentToolCall?: (runId: string, callId: string, name: string, args: Record<string, unknown>, nodeId?: string) => void
+  onAgentToolCall?: (runId: string, callId: string, name: string, args: Record<string, unknown>, nodeId?: string, title?: string) => void
   onAgentToolResult?: (runId: string, callId: string, name: string, result: unknown, nodeId?: string) => void
   onAgentToken?: (runId: string, text: string, nodeId?: string) => void
   onAgentComplete?: (d: AgentCompletePayload) => void
@@ -190,9 +190,11 @@ function dispatchAgentEvent(
       return true
     }
     case 'agent_tool_call': {
-      const p = parsed as { run_id?: string; call_id?: string; name?: string; args?: Record<string, unknown> }
+      // ACP relay sends title for kind "other" calls where name alone is
+      // meaningless (#959) - read it best-effort like p.args.
+      const p = parsed as { run_id?: string; call_id?: string; name?: string; args?: Record<string, unknown>; title?: string }
       if (typeof p.name === 'string') {
-        handlers.onAgentToolCall?.(p.run_id ?? '', p.call_id ?? '', p.name, p.args ?? {}, nodeIdOf(parsed))
+        handlers.onAgentToolCall?.(p.run_id ?? '', p.call_id ?? '', p.name, p.args ?? {}, nodeIdOf(parsed), typeof p.title === 'string' ? p.title : undefined)
       }
       return true
     }
