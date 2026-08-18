@@ -133,7 +133,9 @@ func registerReviewTools(srv *mcp.Server, review *vetting.ReviewStage) {
 		if event != "approve" && event != "request_changes" && event != "comment" {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "stage_review event must be approve, request_changes, or comment"}}}, nil, nil
 		}
-		review.SetVerdict(event, args.Body)
+		if err := review.SetVerdict(event, args.Body); err != nil {
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil, nil
+		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "staged"}}}, nil, nil
 	})
 }
