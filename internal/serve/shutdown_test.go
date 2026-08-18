@@ -109,7 +109,7 @@ func TestDrainActiveRuns_FinishesWithinGrace(t *testing.T) {
 		hub.UnregisterRun(chatID) // simulates the run's own goroutine finishing normally
 	}()
 
-	DrainActiveRuns(hub, 2*time.Second)
+	DrainActiveRuns(hub, nil, 2*time.Second)
 
 	if cancelled {
 		t.Error("run was force-cancelled despite finishing within the grace window")
@@ -137,15 +137,17 @@ func TestDrainActiveRuns_ForceCancelsPastGrace(t *testing.T) {
 		close(unregistered)
 	}()
 
-	DrainActiveRuns(hub, 100*time.Millisecond)
+	DrainActiveRuns(hub, nil, 100*time.Millisecond)
 
 	select {
 	case <-unregistered:
 	default:
 		t.Fatal("run was not force-cancelled and cleaned up within the settle window")
 	}
-	if !hub.WasInterrupted(chatID) {
-		t.Error("run past grace should have been marked interrupted before the force-cancel")
+	// Shutdown never marks a chat interrupted any more (#962): the nodes are
+	// paused, and boot resumes them.
+	if hub.WasInterrupted(chatID) {
+		t.Error("shutdown marked the chat interrupted; it should only pause its nodes")
 	}
 }
 

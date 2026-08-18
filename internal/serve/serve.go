@@ -213,7 +213,7 @@ func Run(ctx context.Context, configPath string, port int) error {
 	// Before srv.Shutdown: DrainActiveRuns' first act is Hub.BeginDraining, so
 	// a request landing in this window is rejected, not started unattended.
 	if hooks.hub != nil {
-		DrainActiveRuns(hooks.hub, hooks.grace)
+		DrainActiveRuns(hooks.hub, hooks.pauser, hooks.grace)
 	}
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -263,8 +263,11 @@ func InProcessFromConfig(ctx context.Context, cfg *config.Config) (baseURL strin
 // SIGTERM (DrainActiveRuns) - avoids growing buildFromConfig's return arity
 // across its ~25 early error returns. nil skips draining (InProcess's CLI use).
 type shutdownHooks struct {
-	hub   *stream.Hub
-	grace time.Duration
+	hub *stream.Hub
+	// pauser is the live executor: the drain pauses its running nodes rather
+	// than cancelling the runs (#962).
+	pauser nodePauser
+	grace  time.Duration
 }
 
 // build loads config and constructs the HTTP handler, shared by Run and InProcess.
@@ -339,27 +342,25 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("store open failed: %w", err)
 	}
+	var resumeNodes []store.ResumableNode
 	if reconcile {
 		id, err := store.LoadOrCreateInstanceID(cfg.Workspace.Root)
 		if err != nil {
 			return nil, nil, "", fmt.Errorf("instance id init failed: %w", err)
 		}
 		st.SetInstanceID(id)
-		if n, err := st.FailStaleDagNodes(context.Background()); err != nil {
-			slog.Error("fail stale dag nodes", "component", "store", "err", err)
-		} else if n > 0 {
-			slog.Info("marked orphaned dag nodes failed (previous process killed mid-run)", "component", "store", "count", n)
-		}
-		// Chat-level counterpart to FailStaleDagNodes - no re-dispatch here,
-		// just a clean status and a log line the operator can act on.
-		if ids, err := st.ScanOrphanedRuns(context.Background()); err != nil {
-			slog.Error("scan orphaned runs", "component", "store", "err", err)
-		} else {
-			for _, id := range ids {
-				slog.Warn("chat left mid-run by a previous process; marked interrupted - resend the message or re-apply the trigger label to resume",
-					"component", "startup", "chat", id)
+		// Boot's half of #962. Runs here, before anything can register a run
+		// with the Hub, and before the memory consolidator's own boot sweep
+		// is started further down - resume gets the DB to a settled state
+		// first, the sweep goroutines start after.
+		resumeNodes = reconcileNodes(context.Background(), st, func(chatID string) (bool, string) {
+			// A resumable node was provisioned a chat scope dir; if the
+			// workspace is gone the run cannot pick up where it left off.
+			if _, rerr := jail.Resolve(st.SessionUserForChat(context.Background(), chatID), chatID, "."); rerr != nil {
+				return false, "workspace dir is gone"
 			}
-		}
+			return true, ""
+		})
 	}
 
 	artifactSvc, err := buildArtifactService(cfg)
@@ -446,6 +447,10 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		s.SetOpsLog(storeOpsLog{st})
 		return s, nil
 	}
+	// Consolidation sweeps sweep on their first tick, immediately. Deferred
+	// into this slice and started after the resumed nodes are dispatched, so
+	// a boot resume never contends with #961's sweep for the same chat.
+	var startSweeps []func()
 	var taskStore, userStore *memory.Store
 	if rm, ok := cfg.MemoryStore("stage_memory"); ok {
 		s, err := openMemory(rm, "task")
@@ -455,7 +460,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		taskStore = s
 		slog.Info("semantic memory enabled", "component", "startup", "collection", rm.Collection,
 			"embedder", rm.Embedder.Model, "consolidation", rm.Consolidation.Model)
-		startConsolidationSweep(ctx, s, rm)
+		startSweeps = append(startSweeps, func() { startConsolidationSweep(ctx, s, rm) })
 	}
 	if slices.Contains(cfg.Orchestrator.Tools, "commit_memory") {
 		if rm, ok := cfg.MemoryStore("commit_memory"); ok {
@@ -465,7 +470,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 			}
 			userStore = s
 			slog.Info("user memory enabled", "component", "startup", "collection", rm.Collection)
-			startConsolidationSweep(ctx, s, rm)
+			startSweeps = append(startSweeps, func() { startConsolidationSweep(ctx, s, rm) })
 		}
 	}
 
@@ -595,6 +600,16 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
 	orch.SetMaxActiveRuns(cfg.Dag.MaxActiveRuns)
 	orchRef.Store(orch)
+	if hooks != nil {
+		hooks.pauser = executor
+	}
+	// After the orchestrator exists: re-enter each resumed node's graph. The
+	// store-side reconcile already ran at boot, so a crash here leaves the
+	// nodes paused and the next boot picks them up again.
+	startResumedNodes(ctx, resumeNodes, orch, st, runHub)
+	for _, start := range startSweeps {
+		start()
+	}
 	if err := startSDKExtensions(ctx, sdkExts); err != nil {
 		return nil, nil, "", fmt.Errorf("sdk extensions start failed: %w", err)
 	}

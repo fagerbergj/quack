@@ -18,6 +18,11 @@ const (
 	// force-cancel, or a boot scan finding a killed process's leftover) -
 	// distinct from RunStatusFailed; wire-surfaces as ChatStatusFailed.
 	RunStatusInterrupted = "interrupted"
+	// RunStatusPaused marks a chat whose nodes the server itself suspended
+	// (shutdown drain, or a hard kill reconciled at boot) and intends to
+	// resume on its own. Distinct from RunStatusInterrupted: nothing is asked
+	// of the user, so it must not wire-surface as failed (#962).
+	RunStatusPaused = "paused"
 )
 
 // MarkRunActive records that chatID has turnID in flight, so a crash before StampRunOutcome
@@ -81,28 +86,68 @@ func (s *Store) StampTerminalOutcome(ctx context.Context, appName, userID, chatI
 	return status, question
 }
 
-// ScanOrphanedRuns (re-)stamps RunStatusInterrupted on every chat a killed
-// process left mid-run (ActiveTurnID set, or already interrupted). Call at
-// boot alongside FailStaleDagNodes; returned ids are for the caller to log.
+// ScanOrphanedRuns reconciles every chat a killed process left mid-run
+// (ActiveTurnID set, or already interrupted/paused). A chat with suspended
+// nodes is stamped RunStatusPaused - the server resumes those itself, so
+// calling it interrupted would tell the user to resend a message that is
+// already coming back. Everything else keeps the old RunStatusInterrupted.
+//
+// It deliberately does not touch pending_question: the node row owns the HITL
+// question now, and blanking the chat's copy destroyed resume state (#957).
+// Returns the paused chat ids and the interrupted ones, for the caller to log.
 //
 // Startup-only: the scan is table-wide with no per-chat liveness check, so
-// calling it once the Hub has registered runs would stamp a live chat as
-// interrupted.
-func (s *Store) ScanOrphanedRuns(ctx context.Context) ([]string, error) {
+// calling it once the Hub has registered runs would stamp a live chat.
+func (s *Store) ScanOrphanedRuns(ctx context.Context) (paused, interrupted []string, err error) {
 	var chats []Chat
 	if err := s.db.WithContext(ctx).
-		Where("active_turn_id <> ? OR run_status = ?", "", RunStatusInterrupted).
+		Where("active_turn_id <> ? OR run_status IN ?", "", []string{RunStatusInterrupted, RunStatusPaused}).
 		Find(&chats).Error; err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	ids := make([]string, 0, len(chats))
+	suspended, err := s.chatsWithPausedNodes(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
 	for _, c := range chats {
-		ids = append(ids, c.ID)
-		if err := s.StampRunOutcome(ctx, c.ID, RunStatusInterrupted, ""); err != nil {
+		status := RunStatusInterrupted
+		if suspended[c.ID] {
+			status = RunStatusPaused
+			paused = append(paused, c.ID)
+		} else {
+			interrupted = append(interrupted, c.ID)
+		}
+		if err := s.stampRunStatusKeepingQuestion(ctx, c.ID, status); err != nil {
 			slog.Warn("scan orphaned runs: stamp failed", "component", "store", "chat", c.ID, "err", err)
 		}
 	}
-	return ids, nil
+	return paused, interrupted, nil
+}
+
+// stampRunStatusKeepingQuestion is StampRunOutcome minus the pending_question
+// write - see ScanOrphanedRuns (#957).
+func (s *Store) stampRunStatusKeepingQuestion(ctx context.Context, chatID, status string) error {
+	return s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", chatID).Updates(map[string]any{
+		"run_status":     status,
+		"active_turn_id": "",
+		"updated_at":     time.Now().UTC(),
+	}).Error
+}
+
+// chatsWithPausedNodes indexes the chats that currently own a suspended node.
+func (s *Store) chatsWithPausedNodes(ctx context.Context) (map[string]bool, error) {
+	nodes, err := s.ListPausedDagNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, n := range nodes {
+		var p DagPlan
+		if e := s.db.WithContext(ctx).Where("id = ?", n.PlanID).First(&p).Error; e == nil {
+			out[p.ChatID] = true
+		}
+	}
+	return out, nil
 }
 
 func hasFailedDagNode(nodes []DagNode) bool {

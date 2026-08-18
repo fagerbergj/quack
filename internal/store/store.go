@@ -862,16 +862,104 @@ func (s *Store) TrimChatEvents(ctx context.Context, chatID string, upToSeq int64
 // staleNodeCeiling: dead-man's-switch for orphaned nodes. Generous (runs finish in minutes).
 const staleNodeCeiling = 12 * time.Hour
 
-// FailStaleDagNodes marks orphaned queued/running nodes as failed. Uses dag constants
-// (bulk SQL can't invoke CanTransition per row).
-func (s *Store) FailStaleDagNodes(ctx context.Context) (int64, error) {
+// ResumableNode names one node a boot reconcile decided to hand back to the
+// scheduler, with the chat it belongs to.
+type ResumableNode struct {
+	ChatID, PlanID, NodeID string
+	Reason                 dag.PauseReason
+}
+
+// UnresumableNode is a node the reconcile could not hand back, and why.
+type UnresumableNode struct {
+	PlanID, NodeID, Reason string
+}
+
+// ResumeReport is what a boot reconcile did, for the caller to log and act on.
+type ResumeReport struct {
+	Start         []ResumableNode   // paused/user | paused/shutdown | hard-kill orphans - re-enter the graph
+	AwaitingInput []ResumableNode   // paused/awaiting_input - re-armed, NOT started; needs an answer
+	Failed        []UnresumableNode // genuinely unresumable, marked failed with the reason in `error`
+}
+
+// ResumePausedDagNodes is boot's counterpart to serve.DrainActiveRuns, and
+// replaces the old FailStaleDagNodes: a node the last process left suspended
+// is state to resume, not damage to write off.
+//
+//   - status paused/needs_input (any reason) -> resumable; awaiting_input goes
+//     to AwaitingInput (it needs an answer first), everything else to Start.
+//   - status running belonging to THIS instance's previous life, or past
+//     staleNodeCeiling: a hard kill. Re-stamped paused/shutdown and resumed
+//     the same way - the process died, the work didn't.
+//   - queued nodes are left alone: the resumed graph re-enters at the paused
+//     node and walks its descendants, which is what schedules them.
+//
+// resumable, when non-nil, is the caller's liveness check for a node's
+// workspace (serve passes a clone-dir check); a false verdict, or a missing
+// plan row, is the only path left to `failed`, with the reason in `error`.
+func (s *Store) ResumePausedDagNodes(ctx context.Context, resumable func(chatID string) (bool, string)) (ResumeReport, error) {
+	var rep ResumeReport
 	cutoff := time.Now().UTC().Add(-staleNodeCeiling)
-	res := s.db.WithContext(ctx).Model(&DagNode{}).
-		Where("status IN ?", []string{string(dag.StatusQueued), string(dag.StatusRunning)}).
-		// IS NULL covers ALTER TABLE ADD COLUMN no-default rows.
-		Where("instance_id IS NULL OR instance_id = ? OR instance_id = ? OR updated_at < ?", "", s.instanceID, cutoff).
-		Updates(map[string]any{"status": string(dag.StatusFailed), "error": "server restarted mid-run"})
-	return res.RowsAffected, res.Error
+	var nodes []DagNode
+	err := s.db.WithContext(ctx).Model(&DagNode{}).
+		Where(s.db.Where("status IN ?", []string{string(dag.StatusPaused), string(dag.StatusNeedsInput)}).
+			Or(s.db.Where("status = ?", string(dag.StatusRunning)).
+				// IS NULL covers ALTER TABLE ADD COLUMN no-default rows.
+				Where("instance_id IS NULL OR instance_id = ? OR instance_id = ? OR updated_at < ?", "", s.instanceID, cutoff))).
+		Find(&nodes).Error
+	if err != nil {
+		return rep, err
+	}
+
+	chatOf := map[string]string{} // planID -> chatID, "" = plan row gone
+	for _, n := range nodes {
+		chatID, ok := chatOf[n.PlanID]
+		if !ok {
+			var p DagPlan
+			if e := s.db.WithContext(ctx).Where("id = ?", n.PlanID).First(&p).Error; e == nil {
+				chatID = p.ChatID
+			}
+			chatOf[n.PlanID] = chatID
+		}
+		if chatID == "" {
+			rep.Failed = append(rep.Failed, s.failUnresumable(ctx, n, "plan row is gone"))
+			continue
+		}
+		if resumable != nil {
+			if ok, why := resumable(chatID); !ok {
+				rep.Failed = append(rep.Failed, s.failUnresumable(ctx, n, why))
+				continue
+			}
+		}
+		reason := dag.PauseReason(n.PauseReason)
+		if n.Status == string(dag.StatusRunning) {
+			// Hard kill: no shutdown ran, so nothing stamped the pause. Do it now.
+			reason = dag.PauseShutdown
+			if e := s.SetNodeStatus(ctx, n.PlanID, n.NodeID, dag.StatusPaused, reason, n.PendingQuestion); e != nil {
+				slog.Warn("resume paused dag nodes: hard-kill re-stamp failed", "component", "store",
+					"plan", n.PlanID, "node", n.NodeID, "err", e)
+				continue
+			}
+		}
+		rn := ResumableNode{ChatID: chatID, PlanID: n.PlanID, NodeID: n.NodeID, Reason: reason}
+		if reason == dag.PauseAwaitingInput || n.Status == string(dag.StatusNeedsInput) {
+			rep.AwaitingInput = append(rep.AwaitingInput, rn)
+			continue
+		}
+		rep.Start = append(rep.Start, rn)
+	}
+	return rep, nil
+}
+
+// failUnresumable marks one node failed with why in `error` - the only
+// remaining path to `failed` at boot.
+func (s *Store) failUnresumable(ctx context.Context, n DagNode, why string) UnresumableNode {
+	if err := s.db.WithContext(ctx).Model(&DagNode{}).
+		Where("plan_id = ? AND node_id = ?", n.PlanID, n.NodeID).
+		Updates(map[string]any{"status": string(dag.StatusFailed), "error": "cannot resume: " + why}).Error; err != nil {
+		slog.Warn("resume paused dag nodes: fail stamp failed", "component", "store",
+			"plan", n.PlanID, "node", n.NodeID, "err", err)
+	}
+	return UnresumableNode{PlanID: n.PlanID, NodeID: n.NodeID, Reason: why}
 }
 
 // GetDagNodes returns all nodes for a plan.
