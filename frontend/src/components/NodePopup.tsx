@@ -88,7 +88,9 @@ export function NodePopup({
   const running = state.status === 'running'
   // Answering resumes the node now; queueing waits for its next turn
   // boundary - same input widget, chosen by which state the node is in.
-  const answering = state.status === 'needs_input' && state.question != null
+  // needs_input is the legacy DB/SSE spelling; paused/awaiting_input is the
+  // wire-normalized one the REST read model returns - both mean "parked on a question".
+  const answering = (state.status === 'needs_input' || state.pauseReason === 'awaiting_input') && state.question != null
   const queue = state.queue ?? []
 
   function submitInput() {

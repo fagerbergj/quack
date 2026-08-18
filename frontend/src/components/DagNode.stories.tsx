@@ -224,7 +224,7 @@ export const Paused: Story = {
   render: () => (
     <DagNode
       node={wrNode}
-      state={{ status: 'paused', startedAt: Date.now() - 20_000 }}
+      state={{ status: 'paused', pauseReason: 'user', startedAt: Date.now() - 20_000 }}
       runs={[workerDone(researchActivity)]}
       answer="Best months to visit Dublin so far: **May–September** (draft, paused before the judge round)."
       isFinal={false}
@@ -232,6 +232,44 @@ export const Paused: Story = {
       onCancel={() => {}}
     />
   ),
+}
+
+// #962: the three pause_reason values, each with its own header label -
+// "paused · by you" / "paused · shutdown" / "paused · awaiting input".
+export const PausedByUser: Story = { ...Paused }
+
+export const PausedShutdown: Story = {
+  render: () => (
+    <DagNode
+      node={wrNode}
+      state={{ status: 'paused', pauseReason: 'shutdown', startedAt: Date.now() - 20_000 }}
+      runs={[workerDone(researchActivity)]}
+      answer="Best months to visit Dublin so far: **May–September** (draft, paused for a server restart)."
+      isFinal={false}
+      onResume={() => {}}
+      onCancel={() => {}}
+    />
+  ),
+}
+
+// paused/awaiting_input: the wire-normalized spelling of the legacy
+// needs_input status - the node's own pending_question, answered via
+// onAnswerQuestion (start with the answer as NodeStartBody.content).
+export const PausedAwaitingInput: Story = {
+  args: {
+    node: wrNode,
+    state: {
+      status: 'paused', pauseReason: 'awaiting_input',
+      question: 'Should I include hostel prices, or hotels only?',
+      startedAt: Date.now() - 6_000,
+    },
+    runs: [{ runId: 'r1', agent: 'web-researcher', stage: 'worker', done: false, activity: researchActivity.slice(0, 1) }],
+    answer: '',
+    isFinal: false,
+    onCancel: () => {},
+    onResume: () => {},
+    onAnswerQuestion: () => {},
+  },
 }
 
 // A running node with a queued (not-yet-delivered) message showing the ✉
