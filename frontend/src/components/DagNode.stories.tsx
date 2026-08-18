@@ -51,7 +51,7 @@ const judgeRun = (round: number, score: number, passed: boolean, feedback: strin
 export const Queued: Story = {
   args: {
     node: wrNode, state: { status: 'queued' }, runs: [], answer: '', isFinal: false,
-    onCancel: () => {}, onEditTask: () => {},
+    onCancel: () => {}, onResume: () => {}, onEditTask: () => {},
   },
 }
 
