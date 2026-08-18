@@ -1052,7 +1052,7 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 	return schema.Turn{
 		Id:        tc.ID,
 		CreatedAt: tc.CreatedAt,
-		Input:     schema.TurnInput{Role: schema.User, Content: tc.UserText},
+		Input:     schema.TurnInput{Role: schema.TurnInputRoleUser, Content: tc.UserText},
 		Output:    output,
 		Usage:     usage,
 		// Persisted on the turn row at run end (ADK drops ModelVersion). Nil for DAG turns.

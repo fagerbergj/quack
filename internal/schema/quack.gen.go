@@ -230,6 +230,27 @@ func (e OutputTextPartType) Valid() bool {
 	}
 }
 
+// Defines values for PauseReason.
+const (
+	PauseReasonAwaitingInput PauseReason = "awaiting_input"
+	PauseReasonShutdown      PauseReason = "shutdown"
+	PauseReasonUser          PauseReason = "user"
+)
+
+// Valid indicates whether the value is a known member of the PauseReason enum.
+func (e PauseReason) Valid() bool {
+	switch e {
+	case PauseReasonAwaitingInput:
+		return true
+	case PauseReasonShutdown:
+		return true
+	case PauseReasonUser:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReasoningPartType.
 const (
 	Reasoning ReasoningPartType = "reasoning"
@@ -262,13 +283,13 @@ func (e ResponseStatus) Valid() bool {
 
 // Defines values for TurnInputRole.
 const (
-	User TurnInputRole = "user"
+	TurnInputRoleUser TurnInputRole = "user"
 )
 
 // Valid indicates whether the value is a known member of the TurnInputRole enum.
 func (e TurnInputRole) Valid() bool {
 	switch e {
-	case User:
+	case TurnInputRoleUser:
 		return true
 	default:
 		return false
@@ -481,10 +502,19 @@ type DagNodeState struct {
 	JudgeRounds      *int     `json:"judge_rounds,omitempty"`
 	Model            *string  `json:"model,omitempty"`
 	OutputPreview    *string  `json:"output_preview,omitempty"`
-	PromptTokens     *int     `json:"prompt_tokens,omitempty"`
-	ReasoningTokens  *int     `json:"reasoning_tokens,omitempty"`
-	ServerDurationMs *int     `json:"server_duration_ms,omitempty"`
-	StartedAtMs      *int     `json:"started_at_ms,omitempty"`
+
+	// PauseReason Why a node sits in the `paused` status.
+	PauseReason *PauseReason `json:"pause_reason,omitempty"`
+
+	// PendingQuestion The unanswered question blocking this node, present only when pause_reason is "awaiting_input".
+	PendingQuestion *string `json:"pending_question,omitempty"`
+	PromptTokens    *int    `json:"prompt_tokens,omitempty"`
+
+	// QueuedMessages The node's steer queue - messages waiting for its next turn boundary.
+	QueuedMessages   *[]QueuedMessage `json:"queued_messages,omitempty"`
+	ReasoningTokens  *int             `json:"reasoning_tokens,omitempty"`
+	ServerDurationMs *int             `json:"server_duration_ms,omitempty"`
+	StartedAtMs      *int             `json:"started_at_ms,omitempty"`
 
 	// Status A DAG node's canonical lifecycle state. Legal transitions (enforced
 	// server-side by internal/dag.CanTransition):
@@ -600,6 +630,12 @@ type MessageOutputItem struct {
 // MessageOutputItemType defines model for MessageOutputItem.Type.
 type MessageOutputItemType string
 
+// NodeStartBody defines model for NodeStartBody.
+type NodeStartBody struct {
+	// Content Answer to the node's pending_question, required only when the node is paused with pause_reason "awaiting_input" - the same field name SendMessageBody uses, since a node's question and the chat's are answered the same way. Ignored for every other pause reason.
+	Content *string `json:"content,omitempty"`
+}
+
 // NodeStatus A DAG node's canonical lifecycle state. Legal transitions (enforced
 // server-side by internal/dag.CanTransition):
 //
@@ -616,6 +652,9 @@ type NodeStatus string
 type NodeStatusUpdateBody struct {
 	// Guidance Optional and folded into the node's task when status is "queued" (retry, or resuming a paused node via a fresh re-run). Unused for "cancelled" and "paused". To steer a RUNNING node, queue a message instead (POST .../nodes/{node_id}/queue) - it is delivered at the node's next turn boundary, not mid-turn.
 	Guidance *string `json:"guidance,omitempty"`
+
+	// Reason Why a node sits in the `paused` status.
+	Reason *PauseReason `json:"reason,omitempty"`
 
 	// Status A DAG node's canonical lifecycle state. Legal transitions (enforced
 	// server-side by internal/dag.CanTransition):
@@ -642,6 +681,9 @@ type OutputTextPart struct {
 
 // OutputTextPartType defines model for OutputTextPart.Type.
 type OutputTextPartType string
+
+// PauseReason Why a node sits in the `paused` status.
+type PauseReason string
 
 // QueueMessageBody defines model for QueueMessageBody.
 type QueueMessageBody struct {
@@ -848,6 +890,9 @@ type QueueNodeMessageJSONRequestBody = QueueMessageBody
 
 // EditQueuedMessageJSONRequestBody defines body for EditQueuedMessage for application/json ContentType.
 type EditQueuedMessageJSONRequestBody = QueueMessageBody
+
+// StartNodeJSONRequestBody defines body for StartNode for application/json ContentType.
+type StartNodeJSONRequestBody = NodeStartBody
 
 // UpdateNodeStatusJSONRequestBody defines body for UpdateNodeStatus for application/json ContentType.
 type UpdateNodeStatusJSONRequestBody = NodeStatusUpdateBody
@@ -1104,9 +1149,15 @@ type ServerInterface interface {
 	// Edit a queued message that has not yet been delivered
 	// (PATCH /api/v1/chats/{chat_id}/nodes/{node_id}/queue/{message_id})
 	EditQueuedMessage(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID, messageId MessageID)
+	// Start a node - queued or paused, either way, into running
+	// (POST /api/v1/chats/{chat_id}/nodes/{node_id}/start)
+	StartNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
 	// Transition a DAG node's status (cancel, pause/resume, or retry)
 	// (PUT /api/v1/chats/{chat_id}/nodes/{node_id}/status)
 	UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
+	// Stop a node - any non-terminal status, into cancelled
+	// (POST /api/v1/chats/{chat_id}/nodes/{node_id}/stop)
+	StopNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
 	// Download a chat's replay-ledger recording bundle
 	// (GET /api/v1/chats/{chat_id}/recording)
 	GetChatRecording(w http.ResponseWriter, r *http.Request, chatId ChatID)
@@ -1209,9 +1260,21 @@ func (_ Unimplemented) EditQueuedMessage(w http.ResponseWriter, r *http.Request,
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// Start a node - queued or paused, either way, into running
+// (POST /api/v1/chats/{chat_id}/nodes/{node_id}/start)
+func (_ Unimplemented) StartNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // Transition a DAG node's status (cancel, pause/resume, or retry)
 // (PUT /api/v1/chats/{chat_id}/nodes/{node_id}/status)
 func (_ Unimplemented) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Stop a node - any non-terminal status, into cancelled
+// (POST /api/v1/chats/{chat_id}/nodes/{node_id}/stop)
+func (_ Unimplemented) StopNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1792,6 +1855,49 @@ func (siw *ServerInterfaceWrapper) EditQueuedMessage(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// StartNode operation middleware
+func (siw *ServerInterfaceWrapper) StartNode(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chat_id" -------------
+	var chatId ChatID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chat_id", chi.URLParam(r, "chat_id"), &chatId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "node_id" -------------
+	var nodeId NodeID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "node_id", chi.URLParam(r, "node_id"), &nodeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "node_id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartNode(w, r, chatId, nodeId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // UpdateNodeStatus operation middleware
 func (siw *ServerInterfaceWrapper) UpdateNodeStatus(w http.ResponseWriter, r *http.Request) {
 
@@ -1826,6 +1932,49 @@ func (siw *ServerInterfaceWrapper) UpdateNodeStatus(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateNodeStatus(w, r, chatId, nodeId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StopNode operation middleware
+func (siw *ServerInterfaceWrapper) StopNode(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chat_id" -------------
+	var chatId ChatID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chat_id", chi.URLParam(r, "chat_id"), &chatId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "node_id" -------------
+	var nodeId NodeID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "node_id", chi.URLParam(r, "node_id"), &nodeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "node_id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StopNode(w, r, chatId, nodeId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2355,7 +2504,13 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Patch(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}/queue/{message_id}", wrapper.EditQueuedMessage)
 	})
 	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}/start", wrapper.StartNode)
+	})
+	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}/status", wrapper.UpdateNodeStatus)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}/stop", wrapper.StopNode)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/chats/{chat_id}/recording", wrapper.GetChatRecording)
