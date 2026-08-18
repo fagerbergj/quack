@@ -152,5 +152,16 @@ jobs:
         with:
           context: .
           push: false
+          load: true
+          tags: quack:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # #951: `quack sandbox check` constructs the SAME Caps/WrapArgv/spawnEnv
+      # an ACP agent gets, so a sandbox regression fails CI instead of the
+      # next live review discovering it. --network none matches the probes'
+      # own "no live network" expectations (go build offline, git push denied).
+      - name: quack sandbox check
+        run: |
+          docker run --rm --network none \
+            -e QUACK_WORKSPACE_ROOT=/tmp/workspace \
+            quack:ci sandbox check --agent code-reviewer
