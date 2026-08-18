@@ -18,7 +18,7 @@ func TestOpencodeEnvMcpServersShape(t *testing.T) {
 	env := opencodeEnv(config.ProviderConfig{}, config.AgentConfig{
 		Model: "m",
 		Acp:   &config.AcpAgentConfig{Command: []string{"opencode", "acp"}, McpServers: []string{"https://mcp.context7.com/mcp"}},
-	}, nil, workspace.SandboxLandlock)
+	}, nil, workspace.Caps{Sandbox: workspace.SandboxLandlock})
 	if len(env) != 1 || !strings.HasPrefix(env[0], "OPENCODE_CONFIG_CONTENT=") {
 		t.Fatalf("unexpected env: %v", env)
 	}
@@ -49,7 +49,7 @@ func TestOpencodeEnvMcpServersShape(t *testing.T) {
 // opencodePermissions decodes the generated config's permission block.
 func opencodePermissions(t *testing.T, ac config.AgentConfig, sandbox workspace.SandboxMode) (bash map[string]string, extDir map[string]string) {
 	t.Helper()
-	env := opencodeEnv(config.ProviderConfig{}, ac, nil, sandbox)
+	env := opencodeEnv(config.ProviderConfig{}, ac, nil, workspace.Caps{Sandbox: sandbox})
 	raw := strings.TrimPrefix(env[0], "OPENCODE_CONFIG_CONTENT=")
 	var cfg struct {
 		Permission struct {
@@ -156,6 +156,41 @@ func TestOpencodeEnvReadOnlyAloneDoesNotAllowClone(t *testing.T) {
 			}, mode)
 			assertClosedShape(t, bash, extDir)
 		})
+	}
+}
+
+// TestOpencodeEnvAllowsTmpAndHomeWrites: the native write/edit tool must agree
+// with the environment block (internal/acp/environment.go), which names
+// $TMPDIR and the agent home as writable for every ACP agent, clone or not
+// (#949 - the old "*": "deny" left the native tool denying what bash already
+// permits). "**" matters, not "*": opencode's matcher doesn't cross "/", so
+// "opencode/*" misses "opencode/probe/x" - only "opencode/**" covers a
+// subdirectory a probe writes into.
+func TestOpencodeEnvAllowsTmpAndHomeWrites(t *testing.T) {
+	tmp := t.TempDir()
+	home := t.TempDir()
+	env := opencodeEnv(config.ProviderConfig{}, config.AgentConfig{
+		Model: "m",
+		Acp:   &config.AcpAgentConfig{Command: []string{"opencode", "acp"}, ReadOnly: true},
+	}, nil, workspace.Caps{Sandbox: workspace.SandboxLandlock, ScratchDir: tmp, HomeDir: home})
+	raw := strings.TrimPrefix(env[0], "OPENCODE_CONFIG_CONTENT=")
+	var cfg struct {
+		Permission struct {
+			ExternalDirectory map[string]string `json:"external_directory"`
+		} `json:"permission"`
+	}
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatalf("OPENCODE_CONFIG_CONTENT: %v:\n%s", err, raw)
+	}
+	extDir := cfg.Permission.ExternalDirectory
+	if got := extDir[tmp+"/**"]; got != "allow" {
+		t.Errorf("external_directory[%q] = %q, want %q (a write under $TMPDIR, e.g. opencode/probe/x)", tmp+"/**", got, "allow")
+	}
+	if got := extDir[home+"/**"]; got != "allow" {
+		t.Errorf("external_directory[%q] = %q, want %q", home+"/**", got, "allow")
+	}
+	if extDir["*"] != "deny" {
+		t.Errorf(`external_directory["*"] = %q, want "deny" - an arbitrary outside path (~/.ssh, ~/.aws) must stay denied`, extDir["*"])
 	}
 }
 

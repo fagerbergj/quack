@@ -934,7 +934,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			}
 			wsBlock := workspace.PromptBlock(workspaceCaps, cfg.Workspace.CheckCommands)
 			preamble := promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, nil, skillFms, behaviour, grading, wsBlock)
-			env := opencodeEnv(prov, ac, acpSkillPaths(cfg.Skills.Plugins), workspaceCaps.Sandbox)
+			env := opencodeEnv(prov, ac, acpSkillPaths(cfg.Skills.Plugins), workspaceCaps)
 			env = append(env, acpChildEnv(cfg.Workspace.Env, ac.Acp.Env)...)
 			var permJudge func(ctx context.Context, toolName, title string, input map[string]any) (bool, string)
 			if safetyJudge != nil {
@@ -1169,7 +1169,7 @@ func acpChildEnv(workspaceEnv, agentEnv map[string]string) []string {
 }
 
 // opencodeEnv generates OPENCODE_CONFIG_CONTENT for an ACP agent: provider, model, headless permission policy.
-func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths []string, sandbox workspace.SandboxMode) []string {
+func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths []string, caps workspace.Caps) []string {
 	type m = map[string]any
 	apiKey := prov.APIKey
 	if apiKey == "" {
@@ -1192,14 +1192,21 @@ func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths [
 	// bwrap, both of which WrapArgv wraps (#921). Under `none` there is no
 	// boundary at all, so allow_clone degrades to denied rather than to
 	// unbounded.
-	allowClone := ac.Acp != nil && ac.Acp.AllowClone && workspace.EnforcesBoundary(sandbox)
+	allowClone := ac.Acp != nil && ac.Acp.AllowClone && workspace.EnforcesBoundary(caps.Sandbox)
 	if ac.Acp != nil && ac.Acp.AllowClone && !allowClone {
 		slog.Warn("acp.allow_clone ignored: clone needs the read-only work tree OS-enforced, which sandbox: none cannot do for the ACP child",
-			"component", "acp", "sandbox", sandbox)
+			"component", "acp", "sandbox", caps.Sandbox)
 	}
 	bash := m{
 		"*": "allow",
 	}
+	// external_directory governs opencode's native write/edit tool, not bash -
+	// bash writes already reach $TMPDIR/opencode and caps.HomeDir (the OS
+	// filesystem permits it), but this map was `deny` for both, so the native
+	// tool disagreed with the environment block that calls them writable
+	// (#949). "**" (not "*") matches across path separators, since opencode's
+	// matcher treats "*" the way most globs do - opencode/* did not match
+	// opencode/probe/…, only opencode's direct children.
 	extDir := m{"*": "deny"}
 	if allowClone {
 		extDir = m{"*": "allow"}
@@ -1208,6 +1215,12 @@ func opencodeEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths [
 		bash["git clone *"] = "deny"
 		bash["gh repo clone"] = "deny"
 		bash["gh repo clone *"] = "deny"
+		if tmp := workspace.SandboxTmpDir(caps); tmp != "" {
+			extDir[tmp+"/**"] = "allow"
+		}
+		if caps.HomeDir != "" {
+			extDir[caps.HomeDir+"/**"] = "allow"
+		}
 	}
 	cfg := m{
 		"provider": m{"quack": m{

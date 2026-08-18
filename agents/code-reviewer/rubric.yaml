@@ -219,25 +219,37 @@ criteria:
     - omission
   verification_over_assertion:
     definition: >
-      The review verified the change's claims rather than trusting them - it checked
-      whether the code does what its description says and whether the tests would actually
-      fail if the code were broken, instead of rubber-stamping.
+      The review verified the change's claims by reading - the diff, the code and tests
+      it touches, CI's result - rather than trusting the description, and ran something
+      only where a claim was too large or surprising for reading to settle.
+    guidance: >
+      Reading is the default, not a lesser substitute for running: a review that reads the
+      tests, confirms they'd fail if the code were broken, and reads CI's result has fully
+      verified. Running is warranted, not extra credit, only when the claim genuinely can't
+      be settled by reading - a performance number, "this fixes the race", behaviour with
+      no test. A rename, docs, comment, or config change is verified by reading alone;
+      running one is not a bonus.
     steps:
     - Check whether the review engaged with the change's stated intent and confirmed the
-      diff actually delivers it.
-    - Check whether it assessed the tests' meaningfulness (do they exercise the new
-      behavior / failure modes) rather than just noting tests exist.
+      diff actually delivers it, by reading the code and tests rather than restating the
+      description.
+    - Check whether it read the tests closely enough to say whether they'd fail if the
+      code were broken, and read CI's result rather than ignoring or re-deriving it.
+    - Where the review ran something, check the claim actually warranted it and the review
+      says so; running a docs/config/rename change, or running without saying why, is not
+      rewarded here.
     bands:
     - min: 7.0
       max: 10.0
-      meaning: the review verifies the change's claims and interrogates the tests' substance.
+      meaning: the review reads the tests and CI closely enough to confirm the claim, and any
+        run it did was warranted and stated as such.
     - min: 4.0
       max: 6.0
-      meaning: it verifies the code but takes the tests at face value (or vice versa).
+      meaning: it trusted the description on one axis (code or tests or CI) while verifying the
+        others, or ran something the claim didn't warrant without harming the verdict.
     - min: 0.0
       max: 3.0
-      meaning: "it rubber-stamps: accepts the description and the presence of tests without
-        checking either."
+      meaning: "it trusted the description: accepted the claim, the tests' presence, or CI's
+        result without reading closely enough to confirm any of them."
     anchors:
     - quote
-    - omission
