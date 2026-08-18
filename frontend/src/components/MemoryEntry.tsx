@@ -151,7 +151,7 @@ export function MemoryEntry({ memory, onForget }: MemoryEntryProps) {
             title="Forget this memory"
             className="w-7 h-7 flex items-center justify-center rounded text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
           >
-            <span aria-hidden="true">🗑</span>
+            <span aria-hidden="true">✕</span>
           </button>
         )}
       </div>
