@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, DeleteMemoryData, DeleteMemoryErrors, DeleteMemoryResponses, EditNodeTaskData, EditNodeTaskErrors, EditNodeTaskResponses, EditQueuedMessageData, EditQueuedMessageErrors, EditQueuedMessageResponses, GetChatArtifactData, GetChatArtifactErrors, GetChatArtifactResponses, GetChatData, GetChatErrors, GetChatRecordingData, GetChatRecordingErrors, GetChatRecordingResponses, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatArtifactsData, ListChatArtifactsErrors, ListChatArtifactsResponses, ListChatsData, ListChatsErrors, ListChatsResponses, ListExtensionsData, ListExtensionsResponses, ListMemoriesData, ListMemoriesErrors, ListMemoriesResponses, ListRecordingsData, ListRecordingsErrors, ListRecordingsResponses, QueueNodeMessageData, QueueNodeMessageErrors, QueueNodeMessageResponses, RemoveQueuedMessageData, RemoveQueuedMessageErrors, RemoveQueuedMessageResponses, SendChatMessageData, SendChatMessageErrors, SendChatMessageResponse, SendChatMessageResponses, SubscribeChatStreamData, SubscribeChatStreamErrors, SubscribeChatStreamResponse, SubscribeChatStreamResponses, UpdateChatData, UpdateChatErrors, UpdateChatResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses } from './types.gen';
+import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, DeleteMemoryData, DeleteMemoryErrors, DeleteMemoryResponses, EditNodeTaskData, EditNodeTaskErrors, EditNodeTaskResponses, EditQueuedMessageData, EditQueuedMessageErrors, EditQueuedMessageResponses, GetChatArtifactData, GetChatArtifactErrors, GetChatArtifactResponses, GetChatData, GetChatErrors, GetChatRecordingData, GetChatRecordingErrors, GetChatRecordingResponses, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatArtifactsData, ListChatArtifactsErrors, ListChatArtifactsResponses, ListChatsData, ListChatsErrors, ListChatsResponses, ListExtensionsData, ListExtensionsResponses, ListMemoriesData, ListMemoriesErrors, ListMemoriesResponses, ListRecordingsData, ListRecordingsErrors, ListRecordingsResponses, QueueNodeMessageData, QueueNodeMessageErrors, QueueNodeMessageResponses, RemoveQueuedMessageData, RemoveQueuedMessageErrors, RemoveQueuedMessageResponses, SendChatMessageData, SendChatMessageErrors, SendChatMessageResponse, SendChatMessageResponses, StartNodeData, StartNodeErrors, StartNodeResponses, StopNodeData, StopNodeErrors, StopNodeResponses, SubscribeChatStreamData, SubscribeChatStreamErrors, SubscribeChatStreamResponse, SubscribeChatStreamResponses, UpdateChatData, UpdateChatErrors, UpdateChatResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -301,6 +301,49 @@ export const updateNodeStatus = <ThrowOnError extends boolean = false>(options: 
         'Content-Type': 'application/json',
         ...options.headers
     }
+});
+
+/**
+ * Start a node - queued or paused, either way, into running
+ *
+ * The explicit per-node form of what shutdown/startup do to every node
+ * at once (#962): `queued` → running is a fresh dispatch; `paused` →
+ * running re-enters the stashed plan's graph at this node. If the node
+ * is paused with `pause_reason: awaiting_input`, `content` carries the
+ * answer to its parked question - the same field SendMessageBody uses,
+ * since answering a node's question and answering the chat are the same
+ * shape. Any other pause reason (`user`, `shutdown`) needs no `content`;
+ * it resumes at its last gate boundary.
+ *
+ * Illegal from any other status (409, naming the allowed targets). The
+ * resumed/dispatched run streams over the chat's existing SSE
+ * connection - this endpoint does not open a new one.
+ *
+ */
+export const startNode = <ThrowOnError extends boolean = false>(options: Options<StartNodeData, ThrowOnError>): RequestResult<StartNodeResponses, StartNodeErrors, ThrowOnError> => (options.client ?? client).post<StartNodeResponses, StartNodeErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/chats/{chat_id}/nodes/{node_id}/start',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Stop a node - any non-terminal status, into cancelled
+ *
+ * The explicit per-node "stop everything now" transition: legal from
+ * `queued`, `running`, or `paused`, always landing on the terminal
+ * `cancelled`. Cooperative for a running node (stops at its next safe
+ * point); immediate for `queued`/`paused`. No resume - retry (PUT
+ * .../status with `{"status":"queued"}`) is the way back.
+ *
+ */
+export const stopNode = <ThrowOnError extends boolean = false>(options: Options<StopNodeData, ThrowOnError>): RequestResult<StopNodeResponses, StopNodeErrors, ThrowOnError> => (options.client ?? client).post<StopNodeResponses, StopNodeErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/chats/{chat_id}/nodes/{node_id}/stop',
+    ...options
 });
 
 /**
