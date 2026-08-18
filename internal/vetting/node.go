@@ -282,6 +282,23 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		promptEmit = nil
 	}
 
+	// Multi-reviewer plans (#867): every reviewer node must resolve its
+	// terminal outcome into the run's ReviewFanout, not just the ones that
+	// reach commitDelivery below. delivered is set true once commitDelivery
+	// has handled that; any other return path (worker error, ErrNodeEmpty,
+	// cancel) needs to register as a failed sibling here instead, so a dead
+	// reviewer node can never block the run's delivery forever. A paused
+	// node is not terminal - it may still resume, so it's excluded.
+	delivered := false
+	if cfg.IsReviewer && cfg.ReviewFanout != nil {
+		defer func() {
+			if delivered || errors.Is(err, ErrNodePaused) {
+				return
+			}
+			resolveAbortedReviewer(nodeCtx, sink, cfg, nodeID)
+		}()
+	}
+
 	// Gate-stage boundary control check.
 	basePrompt := prompt
 	queueAttempt := 0
@@ -547,6 +564,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			commitMemoryOnPass(ctx, nodeCtx, cfg, nodeID, answer, act.staged)
 		}
 		// Deliver even on judge FAIL (graceful degradation). Memory stays pass-only.
+		delivered = true
 		commitDelivery(nodeCtx, sink, cfg, nodeID, act, res)
 		return answer, res, nil
 	}
@@ -673,6 +691,30 @@ func commitMemoryOnPass(ctx adkagent.Context, spanCtx context.Context, cfg Confi
 
 // commitDelivery: posts final staged delivery exactly once. Blocking (delivery failure is user-visible).
 func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config, nodeID string, act workerActivity, res GateResult) {
+	// Multi-reviewer plan (#867): this node's own review never goes out on
+	// its own - it's handed to the run's ReviewFanout, which delivers the
+	// merged, worst-of-verdict review exactly once, when every reviewer
+	// node in the plan has finished.
+	if cfg.ReviewFanout != nil {
+		item, hasItem := act.stagedDelivery["review"]
+		if hasItem {
+			clone := make(map[string]StagedDelivery, len(act.stagedDelivery)-1)
+			for k, v := range act.stagedDelivery {
+				if k != "review" {
+					clone[k] = v
+				}
+			}
+			act.stagedDelivery = clone
+		}
+		merged, deliverNow := cfg.ReviewFanout.Finish(nodeID, item, hasItem, false)
+		if deliverNow {
+			deliverMergedReview(ctx, sink, cfg, nodeID, merged)
+		}
+		if len(act.stagedDelivery) == 0 {
+			recordDeliveryOutcomeMetric(cfg, res, false, false)
+			return
+		}
+	}
 	if cfg.Deliver == nil || len(act.stagedDelivery) == 0 {
 		recordDeliveryOutcomeMetric(cfg, res, false, false)
 		// Phantom-success: delivery-capable node with judge-passed work that staged nothing.
@@ -783,6 +825,34 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 		return
 	}
 	slog.Info("delivery committed", "component", "vetting", "node", nodeID, "count", len(dc.Items))
+}
+
+// deliverMergedReview: posts the fan-in's merged review as this node's own
+// single-item delivery. cfg.ReviewFanout is cleared first so the recursive
+// commitDelivery call goes straight through instead of re-intercepting.
+// A merge with nothing valid in it (every reviewer node failed/staged
+// nothing) posts nothing - there is nothing true to tell the reader.
+func deliverMergedReview(ctx context.Context, sink func(stream.SSEEvent), cfg Config, nodeID string, merged StagedDelivery) {
+	cfg.ReviewFanout.forget()
+	if strings.TrimSpace(merged.Body) == "" && len(merged.Comments) == 0 {
+		slog.Warn("review fan-in produced nothing to deliver; every reviewer node failed or staged nothing",
+			"component", "vetting", "node", nodeID)
+		return
+	}
+	cfg.ReviewFanout = nil
+	act := workerActivity{stagedDelivery: map[string]StagedDelivery{"review": merged}}
+	commitDelivery(ctx, sink, cfg, nodeID, act, GateResult{Passed: true})
+}
+
+// resolveAbortedReviewer: registers a reviewer node that never reached
+// commitDelivery (worker error, ErrNodeEmpty, or cancel) as a failed
+// terminal in the run's ReviewFanout, so a dead sibling can't block the
+// merged review forever (#867).
+func resolveAbortedReviewer(ctx context.Context, sink func(stream.SSEEvent), cfg Config, nodeID string) {
+	merged, deliverNow := cfg.ReviewFanout.Finish(nodeID, StagedDelivery{}, false, true)
+	if deliverNow {
+		deliverMergedReview(ctx, sink, cfg, nodeID, merged)
+	}
 }
 
 // partitionByAllowedKinds: splits staged items by the delivery-kind

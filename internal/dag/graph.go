@@ -80,6 +80,13 @@ func nodeGateConfig(plan Plan, node Node, worker adkagent.Agent, cfgFor func(str
 	cfg.AllowedDeliveryKinds = plan.AllowedDeliveryKinds
 	// code-reviewer nodes are always review-delivery nodes by construction.
 	cfg.IsReviewer = node.AgentName == reviewerAgent
+	// >1 reviewer node: review delivery is run-scoped, not node-scoped (#867) -
+	// see vetting.ReviewFanout. A single reviewer node keeps today's behavior.
+	if cfg.IsReviewer {
+		if n := reviewerNodeCount(plan); n > 1 {
+			cfg.ReviewFanout = vetting.GetReviewFanout(plan.ID, n)
+		}
+	}
 	cfg.Task = node.Task
 	cfg.DeriveChecks = node.AgentName == implementerAgent
 	cfg.ChatID = chatID
@@ -147,7 +154,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 						ms.Staged = &vetting.MemStage{}
 					}
 					if reviewNode {
-						ms.Review = &vetting.ReviewStage{}
+						ms.Review = vetting.NewReviewStage(cfg.ReviewFanout)
 					}
 					if prNode {
 						ms.PRStage = &vetting.PRStage{}
@@ -190,6 +197,17 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			return answer, err
 		},
 		workflow.NodeConfig{})
+}
+
+// reviewerNodeCount: how many nodes in the plan are code-reviewer nodes.
+func reviewerNodeCount(plan Plan) int {
+	n := 0
+	for _, node := range plan.Nodes {
+		if node.AgentName == reviewerAgent {
+			n++
+		}
+	}
+	return n
 }
 
 // markGateFailed: flags node with no answer for continue-but-warn.

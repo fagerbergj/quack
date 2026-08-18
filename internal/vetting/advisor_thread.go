@@ -78,6 +78,15 @@ type ReviewStage struct {
 	set      bool
 	comments []StagedReviewComment
 	seq      map[string]int // "path:line" → highest #n; stale ids error rather than resolving to wrong comment
+	// fanout: non-nil only for a reviewer node in a multi-reviewer plan
+	// (#867) - staging seam defense-in-depth, mirrors cfg.ReviewFanout.
+	fanout *ReviewFanout
+}
+
+// NewReviewStage builds a review stage for one node. fanout is nil for
+// single-reviewer plans (no early-approve guard needed).
+func NewReviewStage(fanout *ReviewFanout) *ReviewStage {
+	return &ReviewStage{fanout: fanout}
 }
 
 func (s *ReviewStage) AddComment(path string, line int, body string) string {
@@ -114,10 +123,19 @@ func (s *ReviewStage) RemoveComment(id string) (ok bool) {
 	return ok
 }
 
-func (s *ReviewStage) SetVerdict(event, body string) {
+// SetVerdict stages the overall event+body. Refuses to stage "approve"
+// while sibling reviewer nodes are still running (#867 defense-in-depth) -
+// a request_changes may still stage early, since it can only ever tighten
+// the run's worst-of verdict.
+func (s *ReviewStage) SetVerdict(event, body string) error {
+	if event == "approve" && s.fanout != nil && s.fanout.SiblingsPending() {
+		return fmt.Errorf("a sibling reviewer node is still running - only request_changes may stage early; " +
+			"approve waits until every reviewer node in this run has finished")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.event, s.body, s.set = event, body, true
+	return nil
 }
 
 func (s *ReviewStage) Snapshot() (StagedDelivery, bool) {

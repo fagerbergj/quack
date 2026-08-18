@@ -50,10 +50,15 @@ type Config struct {
 	RubricSpecs map[string]criterionSpec
 	// RubricFixes: declared fix text per deterministic criterion the rubric
 	// names (rubricyaml.go's rubricDocFixes) - nil for a raw prose override.
-	RubricFixes        map[string]string
-	RequireRetrieval   bool            // zero retrieval = ungrounded
-	ReadOnly           bool            // no delivery tools - completion is review/exploration
-	IsReviewer         bool            // stamped from node agent, never from task wording
+	RubricFixes      map[string]string
+	RequireRetrieval bool // zero retrieval = ungrounded
+	ReadOnly         bool // no delivery tools - completion is review/exploration
+	IsReviewer       bool // stamped from node agent, never from task wording
+	// ReviewFanout: non-nil only for a reviewer node in a plan with >1
+	// reviewer node (#867). Such a node never delivers its own review -
+	// it stages into ReviewFanout, and the last reviewer node to finish
+	// delivers the merged, worst-of-verdict review exactly once.
+	ReviewFanout       *ReviewFanout
 	Memory             *memory.Store   // staged tradecraft on pass
 	CommitMemory       bool            // task-memory participant
 	MemoryRole         string          // role bucket key; empty falls back to repo then user
