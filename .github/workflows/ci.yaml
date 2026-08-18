@@ -168,4 +168,4 @@ jobs:
             -e QUACK_DATABASE_URL=postgres://ci:ci@localhost/ci \
             -e QUACK_ORCH_MODEL=ci-probe \
             -e QUACK_CODER_MODEL=ci-probe \
-            quack:ci quack sandbox check --agent code-reviewer
+            quack:ci sandbox check --agent code-reviewer
