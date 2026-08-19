@@ -13,6 +13,7 @@ import (
 	"time"
 
 	sdk "github.com/coder/acp-go-sdk"
+	oteltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/replay"
@@ -38,6 +39,17 @@ type procHandle struct {
 	// pump goroutine needs closing on every exit path, same as a real
 	// subprocess needs killing.
 	replayIO io.Closer
+}
+
+// traceparentEnv renders the active round span as a W3C TRACEPARENT env
+// entry so the subprocess (e.g. the pi-acp shim) can parent its own OTLP
+// spans under this round. Empty when ctx carries no valid span.
+func traceparentEnv(ctx context.Context) []string {
+	sc := oteltrace.SpanContextFromContext(ctx)
+	if !sc.IsValid() {
+		return nil
+	}
+	return []string{fmt.Sprintf("TRACEPARENT=00-%s-%s-%s", sc.TraceID(), sc.SpanID(), sc.TraceFlags())}
 }
 
 // wrappedArgv is the subprocess argv actually exec'd: a.opts.Command wrapped
@@ -107,7 +119,7 @@ func (a *Agent) startLive(ctx context.Context, cwd string, extraRO []string, cap
 	argv := a.wrappedArgv(cwd, extraRO, caps)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = cwd
-	cmd.Env = a.spawnEnv(caps)
+	cmd.Env = append(a.spawnEnv(caps), traceparentEnv(ctx)...)
 	// Own process group + group kill + WaitDelay: the exact hang class from the
 	// v0.5.2 run_command incident - a grandchild holding our stdout pipe keeps
 	// Wait blocked forever unless the whole group dies and the pipe is

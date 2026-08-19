@@ -56,7 +56,9 @@ createInterface({ input: process.stdin }).on("line", async (l) => {
   if (msg.type !== "prompt") return out({ type: "response", command: msg.type, success: true });
   out({ type: "response", command: "prompt", success: true });
   out({ type: "agent_start" });
+  out({ type: "message_start", message: { role: "assistant" } });
   out({ type: "message_update", usage: { totalTokens: 42 }, assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "hmm" } });
+  out({ type: "message_end", message: { role: "assistant", content: [{ type: "toolCall", id: "call_1", name: "bash" }], stopReason: "toolUse", usage: { input: 5, output: 1, totalTokens: 42 } } });
   out({ type: "tool_execution_start", toolCallId: "call_1", toolName: "bash", args: { command: "echo hi" } });
   out({ type: "tool_execution_end", toolCallId: "call_1", toolName: "bash", result: { content: [{ type: "text", text: "hi\n" }] }, isError: false });
   const cfg = extCfg();
@@ -66,7 +68,9 @@ createInterface({ input: process.stdin }).on("line", async (l) => {
     await guardedCall(cfg, "read", { path: "app/.env" });                // ask -> allow
     await guardedCall(cfg, "read", { path: "app/.env.prod" });           // ask -> deny
   }
+  out({ type: "message_start", message: { role: "assistant" } });
   out({ type: "message_update", usage: { totalTokens: 99 }, assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "done: hi" } });
+  out({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "done: hi" }], stopReason: "stop", usage: { input: 10, output: 2, totalTokens: 99 } } });
   out({ type: "agent_end", messages: [], willRetry: false });
   out({ type: "agent_settled" });
 });

@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { McpClient } from "./mcp-client.mjs";
+import { Otel } from "./otel.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -127,6 +128,10 @@ export default function (pi: any) {
 `);
 }
 
+// One exporter per shim process; spans parent under quack's round span via
+// TRACEPARENT (proc.go traceparentEnv). Endpoint from OTEL_EXPORTER_OTLP_ENDPOINT.
+let otel;
+
 const KIND = {
   bash: "execute", read: "read", edit: "edit", write: "edit",
   grep: "search", find: "search", ls: "search", fetch: "fetch",
@@ -156,10 +161,20 @@ function textOf(content) {
   return (content || []).filter((c) => c.type === "text").map((c) => c.text).join("");
 }
 
+let lastUsage = null;
+
 function onPiEvent(ev) {
   switch (ev.type) {
+    case "message_start":
+      if (ev.message?.role === "assistant") otel.genStart();
+      break;
+    case "message_end":
+      if (ev.message?.role === "assistant") otel.genEnd(ev.message, lastUsage);
+      break;
     case "message_update": {
       const e = ev.assistantMessageEvent || {};
+      if (ev.usage) lastUsage = ev.usage;
+      if (e.type === "thinking_delta") otel.addThinking(e.delta);
       if (e.type === "text_delta")
         notify({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: e.delta } });
       else if (e.type === "thinking_delta")
@@ -169,6 +184,7 @@ function onPiEvent(ev) {
       break;
     }
     case "tool_execution_start":
+      otel.toolStart(ev.toolCallId, ev.toolName, ev.args);
       notify({
         sessionUpdate: "tool_call", toolCallId: ev.toolCallId,
         title: ev.toolName, kind: KIND[ev.toolName] || "other",
@@ -177,6 +193,7 @@ function onPiEvent(ev) {
       break;
     case "tool_execution_end": {
       const txt = textOf(ev.result?.content);
+      otel.toolEnd(ev.toolCallId, txt, !!ev.isError);
       notify({
         sessionUpdate: "tool_call_update", toolCallId: ev.toolCallId,
         status: ev.isError ? "failed" : "completed",
@@ -186,6 +203,7 @@ function onPiEvent(ev) {
       break;
     }
     case "agent_settled":
+      otel.flush();
       if (promptReq !== null) {
         out({ jsonrpc: "2.0", id: promptReq, result: { stopReason: cancelled ? "cancelled" : "end_turn" } });
         promptReq = null;
@@ -196,6 +214,7 @@ function onPiEvent(ev) {
 }
 
 function startPi(cwd) {
+  otel = new Otel(prov?.model);
   const cmd = process.env.PI_ACP_PI_CMD || "pi";
   const args = process.env.PI_ACP_PI_CMD
     ? []
@@ -264,4 +283,4 @@ createInterface({ input: process.stdin }).on("line", (l) => {
   }
   handle(msg);
 });
-process.stdin.on("end", () => { pi?.kill("SIGKILL"); process.exit(0); });
+process.stdin.on("end", async () => { pi?.kill("SIGKILL"); await otel?.flush(); process.exit(0); });

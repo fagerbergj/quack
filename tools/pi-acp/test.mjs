@@ -20,6 +20,24 @@ if (!env.OPENCODE_CONFIG_CONTENT)
     skills: { paths: ["/opt/quack/skills"] },
   });
 
+// Stub OTLP collector: records every span POSTed to /v1/traces.
+const otlpSpans = [];
+const otlpSrv = createServer((req, res) => {
+  let body = "";
+  req.on("data", (c) => (body += c));
+  req.on("end", () => {
+    for (const rs of JSON.parse(body).resourceSpans || [])
+      for (const ss of rs.scopeSpans || []) otlpSpans.push(...ss.spans);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+});
+await new Promise((r) => otlpSrv.listen(0, "127.0.0.1", r));
+const TRACE_ID = "0af7651916cd43dd8448eb211c80319c";
+const PARENT_ID = "b7ad6b7169203331";
+env.OTEL_EXPORTER_OTLP_ENDPOINT = `http://127.0.0.1:${otlpSrv.address().port}`;
+env.TRACEPARENT = `00-${TRACE_ID}-${PARENT_ID}-01`;
+
 // Fake quackmcp: minimal MCP streamable-HTTP server, records tools/call.
 const mcpCalls = [];
 const fakeTools = [
@@ -142,6 +160,28 @@ if (!process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
   assert.equal(tu.rawOutput.output, "hi\n");
   assert.ok(updates.some((u) => u.sessionUpdate === "usage_update" && u.used === 99));
 }
-console.log("ok -", updates.length, "updates, turn completed,", mcpCalls.length, "mcp call(s) landed");
+// OTLP assertions: flush is fire-and-forget on agent_settled, so wait for it.
+if (!process.env.ACP_CMD) {
+  for (let i = 0; i < 50 && otlpSpans.length === 0; i++) await new Promise((r) => setTimeout(r, 100));
+  assert.ok(otlpSpans.length > 0, "no spans reached the stub OTLP collector");
+  assert.ok(otlpSpans.every((sp) => sp.traceId === TRACE_ID), "span not under quack's trace id");
+  assert.ok(otlpSpans.every((sp) => sp.parentSpanId === PARENT_ID), "span not parented under the round span");
+  const gens = otlpSpans.filter((sp) => sp.name.startsWith("chat "));
+  const av = (sp, k) => sp.attributes.find((a) => a.key === k)?.value;
+  if (process.env.PI_ACP_REAL) {
+    assert.ok(gens.length >= 1, "no generation span posted from real pi");
+  } else {
+    assert.equal(gens.length, 2, `generation count != LLM calls: ${gens.map((g) => g.name)}`);
+    assert.equal(av(gens[1], "gen_ai.usage.input_tokens").intValue, "10");
+    assert.equal(av(gens[1], "gen_ai.usage.output_tokens").intValue, "2");
+    assert.ok(av(gens[0], "quack.thinking").stringValue.includes("hmm"));
+    const toolSpans = otlpSpans.filter((sp) => sp.name.startsWith("execute_tool "));
+    assert.ok(toolSpans.some((sp) => sp.name.includes("quackmcp_")), "no quackmcp tool span");
+    const pushSpan = toolSpans.find((sp) => av(sp, "gen_ai.tool.call.arguments")?.stringValue.includes("git push"));
+    assert.equal(pushSpan.status.code, 2, "blocked git push span not marked error");
+  }
+}
+console.log("ok -", updates.length, "updates,", mcpCalls.length, "mcp call(s),", otlpSpans.length, "otlp span(s)");
 shim.stdin.end();
 mcpSrv.close();
+otlpSrv.close();

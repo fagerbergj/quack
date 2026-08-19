@@ -87,38 +87,53 @@ extension now guards every tool call:
 Tested in the fake leg: git push refused with zero permission requests observed; two
 `.env` reads raise asks — the judge-allowed one completes, the rejected one fails.
 
-## Observability
+## Observability (route 2: shim-side OTLP — done)
 
-Status quo: under opencode, worker LLM calls were invisible to Langfuse (ACP node token
-counts were zero). The shim's `usage_update` already fixes the counts — quack's
-translator (translate.go:88) turns pi's cumulative `usage.totalTokens` into the node's
-UsageMetadata, so per-node totals now land in the ledger and Langfuse.
+pi workers now have span-level parity with native agents. Three pieces:
 
-Per-LLM-call generations were investigated, not implemented:
+1. **Go (the one authorized change)**: `traceparentEnv` in `internal/acp/proc.go` —
+   `startLive` appends `TRACEPARENT=00-<traceid>-<spanid>-<flags>` from the round span's
+   context to the child env (tested: `TestTraceparentEnv`, proc_test.go). Harmless for
+   any other ACP agent; opencode ignores it.
+2. **Shim exporter** (`otel.mjs`, plain fetch, no SDK): OTLP/HTTP JSON to
+   `OTEL_EXPORTER_OTLP_ENDPOINT` — quack does not forward its own
+   `observability.otel.endpoint` into child env, so set the standard variable in
+   `workspace.env` or `agents.<name>.acp.env` (both merge into the child env,
+   serve.go `acpChildEnv`). Unset ⇒ exporter disabled, zero overhead.
+3. **Span emission** from pi RPC events: all spans carry quack's trace id and parent
+   directly under the `acp.round` span. Buffered; flushed fire-and-forget on
+   `agent_settled` and shim shutdown; export failures drop with a stderr note and
+   never touch the RPC loop.
 
-- **pi native (route 1): not a config win.** `@earendil-works/pi-telemetry` is
-  contracts-only — an explicit `TelemetryContext`/`TelemetrySpan` interface with "no
-  exporter, no global state, no backend dependency" (its README's words). `pi-agent` and
-  `pi-ai` accept a context, but the coding-agent CLI never wires one and greps clean of
-  OTLP/OTEL/opentelemetry: there is no env or config that makes `pi --mode rpc` emit
-  spans. Native telemetry would mean re-basing the shim on the SDK (`AgentSession` +
-  a custom adapter) instead of RPC — not worth it for this.
-- **Shim-side OTLP (route 2): the viable follow-up.** The shim already sees everything a
-  generation span needs: model (from `OPENCODE_CONFIG_CONTENT`), `message_start`/
-  `message_end` boundaries, per-update cumulative usage, tool events. Emitting
-  OTLP/HTTP JSON to `http://otel-collector:4318/v1/traces` is plain fetch, ~80 lines, no
-  deps. The one missing piece is trace parentage: nothing quack sends into the
-  subprocess carries a trace id — `session/new` params are only `{cwd, mcpServers}`
-  (acp.go:191) and `spawnEnv` (proc.go:60) sets no OTEL vars. **The one Go-side change
-  worth making**: put the round span's W3C `TRACEPARENT` into the child env in
-  `startLive` (proc.go, one line with `ctx` already in hand); the shim forwards it as
-  the parent of its generation spans.
+Per round, Langfuse now shows under quack.run → acp.round:
+- one `chat <model>` span per LLM call (`message_start`/`message_end` boundaries,
+  role=assistant),
+- one `execute_tool <name>` span per tool execution — built-ins and bridged
+  `quackmcp_*` alike — with args/result and error status,
+- reasoning as a truncated `quack.thinking` attribute on its generation span.
 
-**Recommendation**: ship with `usage_update` only (per-node totals restored — already
-better than opencode). Add the shim-side OTLP emitter plus the one-line TRACEPARENT env
-when per-call generations are wanted; Langfuse would then show, under each quack.run
-review node: one generation span per pi LLM call with model, input/output/total tokens,
-and latency, plus the tool executions between them.
+### Attribute parity audit: native generation (emit.go) vs shim span
+
+| attribute | native (gen_ai log event, emit.go) | shim span (otel.mjs) |
+|---|---|---|
+| `gen_ai.operation.name` | `chat` | `chat` — same |
+| `gen_ai.provider.name` | `openai` | `openai` — same |
+| `gen_ai.request.model` | model name | same (from OPENCODE_CONFIG_CONTENT) |
+| `gen_ai.semconv.version` | `1.41.0` | same |
+| `gen_ai.output.messages` | full response JSON | pi's `message_end.message.content` JSON, truncated 8KB |
+| `gen_ai.usage.input_tokens` / `output_tokens` | from UsageMetadata | pi's per-message `usage.input`/`usage.output` — same fidelity |
+| `gen_ai.response.finish_reasons` | `[finishReason]` | `[message.stopReason]` (pi vocabulary: `stop`/`toolUse`) |
+| `gen_ai.input.messages` | full request contents | **unattainable** — pi RPC never surfaces the outbound request; nearest recovery is a pi extension on its request hook |
+| `gen_ai.system_instructions` + prompt hash | request system prompt | **unattainable** — same reason; pi builds its own system prompt |
+| `gen_ai.request.temperature/max_tokens/seed` | request config | **unattainable** — sampling params live inside pi |
+| `gen_ai.agent.name` / `gen_ai.prompt.name` | ledger Coords | **not carried** — quack doesn't pass the agent name into the child; the parent round span already carries it, so dashboards can join |
+| `gen_ai.response.model` / `response.id` | provider response | not in pi's RPC events |
+| tool spans: `gen_ai.tool.name/call.arguments/call.result` | tools emit.go vocabulary | same keys, truncated, error ⇒ span status ERROR |
+| reasoning | native has none (no thinking models in prod) | `quack.thinking` truncated attr — shim-only bonus |
+
+Token *metrics* (`gen_ai.client.token.usage`, `gen_ai.client.cost`) stay native-only:
+quack's translator already books the round totals via `usage_update` → UsageMetadata,
+so cost accounting flows through the existing per-node path, not the shim.
 
 ## Still stubbed / accepted losses
 
