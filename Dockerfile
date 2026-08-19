@@ -14,7 +14,7 @@ RUN npm run build
 # 1b) Mermaid validator deps (#574): mermaid.parse() run for real, not the Go
 # reimplementation it replaces (internal/vetting/mermaid.go). npm install
 # only - no bundler - the image already carries the Go toolchain, node, and
-# opencode, so ~180MB of node_modules here is not a meaningful addition.
+# pi, so ~180MB of node_modules here is not a meaningful addition.
 FROM node:24-bookworm-slim AS mermaid-validator
 WORKDIR /app/scripts
 COPY scripts/package.json scripts/package-lock.json ./
@@ -43,13 +43,13 @@ RUN ./scripts/plugins.sh
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /quack ./cmd/quack
 
-# 2b) The external ACP coding agent (internal/acp, docs/acp-coder.md): one
-# self-contained binary, extracted in its own stage so the runtime layer gets
-# the binary without the tarball. PINNED - the ACP surface is integration-
-# tested per release (internal/acp/live_test.go), so bump deliberately.
-FROM debian:bookworm-slim AS opencode
-ADD https://github.com/sst/opencode/releases/download/v1.18.3/opencode-linux-x64.tar.gz /tmp/opencode.tar.gz
-RUN tar -xzf /tmp/opencode.tar.gz -C /usr/local/bin opencode
+# 2b) The external ACP coding agent: pi, driven through the tools/pi-acp shim
+# (tools/pi-acp/MIGRATION.md). PINNED - the RPC surface is integration-tested
+# per release, so bump deliberately. ~145MB node_modules vs the 170MB opencode
+# binary it replaced (node was already in the image for mermaid/frontend).
+FROM node:24-bookworm-slim AS pi
+WORKDIR /opt/pi
+RUN npm install --no-fund --no-audit @earendil-works/pi-coding-agent@0.84.2
 
 # 3) Minimal runtime. The git tools (internal/tools/git.go) exec the real git
 # binary, which dynamically links against libcurl/libssl/libpcre2/zlib - those
@@ -91,11 +91,13 @@ COPY --from=backend /usr/local/go /usr/local/go
 # uid 65532 can read it with no chown - and Go still fails loudly, not
 # silently online, on any module go.sum doesn't already cover.
 COPY --from=backend /go/pkg/mod /usr/local/go/pkg/mod
-# The ACP coding agent (agents.<name>.acp: ["opencode", "acp"] - resolved via
-# the server's PATH). Its per-round state/caches land under the subprocess
-# $HOME quack sets (the jail home on the workspace volume), and its first round
-# fetches the @ai-sdk provider package over the network into that cache.
-COPY --from=opencode /usr/local/bin/opencode /usr/local/bin/opencode
+# The ACP coding agent (agents.<name>.acp: ["node", "/opt/quack/pi-acp/pi-acp.mjs"]
+# - resolved via the server's PATH). The shim writes pi's per-round config
+# (models.json/settings.json/extensions) into TMPDIR; session state is off
+# (--no-session).
+COPY --from=pi /opt/pi/node_modules /opt/pi/node_modules
+RUN ln -s /opt/pi/node_modules/.bin/pi /usr/local/bin/pi
+COPY tools/pi-acp/pi-acp.mjs tools/pi-acp/mcp-client.mjs /opt/quack/pi-acp/
 COPY --from=frontend /usr/local/bin/node /usr/local/bin/node
 COPY --from=frontend /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
