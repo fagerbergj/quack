@@ -55,10 +55,16 @@ const pending = new Map();
 const updates = [];
 let nextId = 1;
 
+// quack's clientHandler side of permission asks: allow first, deny the rest.
+const permAsks = [];
 createInterface({ input: shim.stdout }).on("line", (l) => {
   const m = JSON.parse(l);
   if (m.method === "session/update") updates.push(m.params.update);
-  else if (m.id !== undefined) {
+  else if (m.method === "session/request_permission") {
+    permAsks.push(m.params);
+    const optionId = permAsks.length === 1 ? "allow" : "reject";
+    shim.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { outcome: { outcome: "selected", optionId } } }) + "\n");
+  } else if (m.id !== undefined) {
     const { resolve, reject } = pending.get(m.id);
     m.error ? reject(new Error(m.error.message)) : resolve(m.result);
   }
@@ -118,6 +124,15 @@ if (!process.env.ACP_CMD) {
   assert.ok(kinds.includes("usage_update"), "usage_update missing - quack metrics would go dark");
 }
 if (!process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
+  // permission bridge: git push blocked locally (no ask), .env reads asked -
+  // one allowed, one denied.
+  const end = (id) => updates.find((u) => u.sessionUpdate === "tool_call_update" && u.toolCallId === id);
+  assert.equal(end("call_g1").status, "failed", "git push not blocked");
+  assert.ok(!permAsks.some((p) => JSON.stringify(p).includes("git push")), "config-deny went through an ACP round-trip");
+  assert.equal(permAsks.length, 2, `expected 2 permission asks, got ${permAsks.length}`);
+  assert.equal(permAsks[0].toolCall.rawInput.path, "app/.env");
+  assert.equal(end("call_g2").status, "completed", ".env read not allowed after judge approval");
+  assert.equal(end("call_g3").status, "failed", "denied .env read not refused");
   assert.ok(kinds.includes("agent_thought_chunk"));
   const tc = updates.find((u) => u.sessionUpdate === "tool_call");
   assert.equal(tc.kind, "execute");

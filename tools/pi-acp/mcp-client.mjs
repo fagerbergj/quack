@@ -54,3 +54,18 @@ export class McpClient {
     return this.rpc("tools/call", { name, arguments: args || {} });
   }
 }
+
+// Permission policy - the pi translation of the opencode config quack
+// generates (serve.go opencodeEnv): hard denies never leave the process,
+// "ask" escalates to quack's safety judge via the shim's loopback endpoint.
+const DENY = [/^git push(\s|$)/, /^git clone(\s|$)/, /^gh repo clone(\s|$)/];
+const ENV_FILE = /(^|\/)[^/]*\.env(\.[^/]*)?$/;
+
+export function checkPolicy(toolName, input = {}) {
+  if (toolName === "bash") {
+    const cmd = (input.command || "").trim();
+    if (DENY.some((re) => re.test(cmd))) return { block: `denied by policy: ${cmd.split(" ").slice(0, 3).join(" ")} (delivery is gate-owned)` };
+  }
+  if (toolName === "read" && ENV_FILE.test(input.path || "")) return { ask: `read ${input.path}` };
+  return null;
+}

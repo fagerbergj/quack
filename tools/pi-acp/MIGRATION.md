@@ -48,7 +48,7 @@ else (provider, model, skills, MCP tools) flows through channels quack already e
 | `session/prompt` `{sessionId, prompt:[text]}` | `acp.go:207` — turn completion = this RPC returning; `stopReason == "refusal"` is an error (`acp.go:250`) |
 | `session/cancel` notification | `acp.go:296` on ctx cancel or idle timeout → pi `abort` |
 | notif `session/update`: `agent_message_chunk`, `agent_thought_chunk`, `tool_call`, `tool_call_update`, `usage_update` | `translate.go:40-92`; final answer = message text since last tool call (`translate.go:97`) |
-| client method `session/request_permission` | `proc.go:222` → PermissionJudge — **not exercised under pi** (see HITL below) |
+| client method `session/request_permission` | `proc.go:222` → PermissionJudge — raised by the shim's permission bridge (see HITL below) |
 
 ## What the model sees: pi vs opencode tool schemas
 
@@ -67,35 +67,66 @@ Drivability of the bridged tools is equivalent-or-better under pi:
   opencode's set); the shim maps them onto quack's ledger vocabulary by ACP `kind`
   (execute/read/edit/search/fetch) in `KIND`.
 
-## Gated: HITL / permission asks (implementer only)
+## HITL / permission bridge (done)
 
-Plain pi RPC has no permission callback: pi executes tools without asking the client, so
-quack's `session/request_permission` → PermissionJudge tier never fires. Reviewer and
-explorer don't need it; **the implementer migration is gated on this**.
+Plain pi RPC has no permission callback, but pi extensions do: `pi.on("tool_call",
+handler)` is the documented interception point and may return `{block: true, reason}`
+(extensions.md marks it `tool_call (can block)` in the lifecycle). The generated
+extension now guards every tool call:
 
-Design note for the follow-up (all shim-side, no Go changes):
+1. `checkPolicy(toolName, input)` (`mcp-client.mjs`) is the pi translation of the
+   opencode permission config quack generates (serve.go:1041): `git push` / `git clone` /
+   `gh repo clone` bash commands are **denied locally** — blocked with a reason, no ACP
+   round-trip, because delivery is gate-owned. `.env` / `.env.*` reads escalate as asks.
+2. An ask POSTs `{toolName, title, input}` to a loopback HTTP endpoint the shim opens
+   before spawning pi (port in `quackmcp.json`; stdout is unusable — pi owns it for RPC).
+3. The shim raises ACP `session/request_permission` (allow_once/reject_once options) on
+   the already-open connection; quack's clientHandler routes it to the safety judge
+   (proc.go:222). Deny (or a failed ask) becomes `{block: true, reason}` in pi.
 
-1. Extend the generated extension with `pi.on("tool_call", handler)` — pi's documented
-   interception point, which may return `{block: true, reason}` (extensions.md Quick
-   Start shows exactly this for `rm -rf`).
-2. The handler POSTs `{toolName, input}` to a tiny loopback HTTP server the *shim* opens
-   before spawning pi (port passed to the extension via `quackmcp.json`). This is the
-   extension→shim channel; stdout is not usable because pi owns it for RPC events.
-3. The shim translates that POST into an ACP `session/request_permission` request to
-   quack (the connection is already open; quack's clientHandler routes it to the safety
-   judge, proc.go:222) and answers the extension with allow/deny; deny becomes
-   `{block: true, reason}`.
-4. Scope it like opencode's generated permission config (serve.go:1041): auto-allow
-   everything except the deny-listed patterns (`git push`, `git clone`, `.env` reads,
-   escapes outside cwd) so the judge only sees the exceptional ask, same as today.
+Tested in the fake leg: git push refused with zero permission requests observed; two
+`.env` reads raise asks — the judge-allowed one completes, the rejected one fails.
+
+## Observability
+
+Status quo: under opencode, worker LLM calls were invisible to Langfuse (ACP node token
+counts were zero). The shim's `usage_update` already fixes the counts — quack's
+translator (translate.go:88) turns pi's cumulative `usage.totalTokens` into the node's
+UsageMetadata, so per-node totals now land in the ledger and Langfuse.
+
+Per-LLM-call generations were investigated, not implemented:
+
+- **pi native (route 1): not a config win.** `@earendil-works/pi-telemetry` is
+  contracts-only — an explicit `TelemetryContext`/`TelemetrySpan` interface with "no
+  exporter, no global state, no backend dependency" (its README's words). `pi-agent` and
+  `pi-ai` accept a context, but the coding-agent CLI never wires one and greps clean of
+  OTLP/OTEL/opentelemetry: there is no env or config that makes `pi --mode rpc` emit
+  spans. Native telemetry would mean re-basing the shim on the SDK (`AgentSession` +
+  a custom adapter) instead of RPC — not worth it for this.
+- **Shim-side OTLP (route 2): the viable follow-up.** The shim already sees everything a
+  generation span needs: model (from `OPENCODE_CONFIG_CONTENT`), `message_start`/
+  `message_end` boundaries, per-update cumulative usage, tool events. Emitting
+  OTLP/HTTP JSON to `http://otel-collector:4318/v1/traces` is plain fetch, ~80 lines, no
+  deps. The one missing piece is trace parentage: nothing quack sends into the
+  subprocess carries a trace id — `session/new` params are only `{cwd, mcpServers}`
+  (acp.go:191) and `spawnEnv` (proc.go:60) sets no OTEL vars. **The one Go-side change
+  worth making**: put the round span's W3C `TRACEPARENT` into the child env in
+  `startLive` (proc.go, one line with `ctx` already in hand); the shim forwards it as
+  the parent of its generation spans.
+
+**Recommendation**: ship with `usage_update` only (per-node totals restored — already
+better than opencode). Add the shim-side OTLP emitter plus the one-line TRACEPARENT env
+when per-call generations are wanted; Langfuse would then show, under each quack.run
+review node: one generation span per pi LLM call with model, input/output/total tokens,
+and latency, plus the tool executions between them.
 
 ## Still stubbed / accepted losses
 
 - Refusal stop reason: pi has no refusal signal; shim always reports `end_turn`.
 - Edit fidelity: no ACP diff blocks; pi edits land as `write_file {path}` in the ledger
   (quack's `edit_file` mapping wants a diff — translate.go:122).
-- Permission policy config (serve.go:1041 denies) is not translated — lands with the
-  HITL extension above. The bwrap sandbox (`workspace.WrapArgv`) applies unchanged.
+- Directory-escape asks: checkPolicy covers the deny-list and `.env` reads; escapes
+  outside cwd rely on the bwrap sandbox (`workspace.WrapArgv`), which applies unchanged.
 - Skills assertion covers the settings plumbing, not pi's discovery of a real SKILL.md
   tree (the test path doesn't exist locally; pi ignores missing roots).
 - Hermetic child PATH (proc.go:60): `node` and `pi` must be on ChildPath/Caps.ExtraPath.
@@ -128,9 +159,12 @@ The real-pi leg drives an actual `pi --mode rpc`: the stub LLM answers with a
 the test asserts it landed on the fake quack MCP server.
 
 Against the real llm-swap, swap the baseURL for `http://llm-swap:11436/v1` and the model
-for `qwen3.8-27b`. **Before any release: run the #964 review experiment** (reviewer agent
-on a known PR set) against a pi-backed reviewer and compare verdict/comment quality with
-the opencode baseline.
+for `qwen3.8-27b`.
+
+Remaining release gates (all agents including the implementer migrate in one release;
+opencode leaves the image entirely): the #964 validation run (reviewer agent on a known
+PR set, verdict/comment quality vs the opencode baseline) and the writer-diff/refusal
+cosmetics listed under accepted losses.
 
 Agent card change per agent:
 
