@@ -172,5 +172,5 @@ Agent card change per agent:
 agents:
   code-reviewer:
     acp:
-      command: ["node", "/opt/quack/pi-acp/pi-acp.mjs"]
+      command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
 ```

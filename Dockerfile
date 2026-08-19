@@ -91,13 +91,15 @@ COPY --from=backend /usr/local/go /usr/local/go
 # uid 65532 can read it with no chown - and Go still fails loudly, not
 # silently online, on any module go.sum doesn't already cover.
 COPY --from=backend /go/pkg/mod /usr/local/go/pkg/mod
-# The ACP coding agent (agents.<name>.acp: ["node", "/opt/quack/pi-acp/pi-acp.mjs"]
+# Under /usr (not /opt): the bwrap jail ro-binds /usr whole; /opt is invisible
+# to worker subprocesses (EACCES at spawn).
+# The ACP coding agent (agents.<name>.acp: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
 # - resolved via the server's PATH). The shim writes pi's per-round config
 # (models.json/settings.json/extensions) into TMPDIR; session state is off
 # (--no-session).
-COPY --from=pi /opt/pi/node_modules /opt/pi/node_modules
-RUN ln -s /opt/pi/node_modules/.bin/pi /usr/local/bin/pi
-COPY tools/pi-acp/pi-acp.mjs tools/pi-acp/mcp-client.mjs /opt/quack/pi-acp/
+COPY --from=pi /opt/pi/node_modules /usr/local/lib/pi/node_modules
+RUN ln -s /usr/local/lib/pi/node_modules/.bin/pi /usr/local/bin/pi
+COPY tools/pi-acp/pi-acp.mjs tools/pi-acp/mcp-client.mjs /usr/local/lib/pi-acp/
 COPY --from=frontend /usr/local/bin/node /usr/local/bin/node
 COPY --from=frontend /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
