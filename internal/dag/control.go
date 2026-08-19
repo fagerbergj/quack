@@ -133,7 +133,8 @@ func (c *nodeControl) resume() {
 	c.mu.Lock()
 	c.paused, c.reason = false, ""
 	c.mu.Unlock()
-	c.persistStatus(StatusQueued, "", "")
+	// running, not queued: the node is live, and it's the table's legal target.
+	c.persistStatus(StatusRunning, "", "")
 }
 
 func (c *nodeControl) persistStatus(status NodeStatus, reason PauseReason, question string) {
@@ -170,16 +171,22 @@ func (c *nodeControl) enqueue(text string) queuedMsg {
 	return *m
 }
 
-// restore rebuilds a fresh control from dag_nodes (steer queue + pause) so a
-// node re-registered after a restart still carries its undelivered messages.
+// restore rebuilds a fresh control's steer queue from dag_nodes so a node
+// re-registered after a restart still carries its undelivered messages. A
+// persisted pause is NOT rehydrated - a registering node is starting, so the
+// pause is cleared instead (paused|needs_input → running, the legal resume
+// target), keeping row and memory agreed before the first gate check.
 func (c *nodeControl) restore() {
 	if c.store == nil {
 		return
 	}
-	status, reason, _, queueJSON, err := c.store.GetNodeState(context.Background(), c.chatID, c.nodeID)
+	status, _, _, queueJSON, err := c.store.GetNodeState(context.Background(), c.chatID, c.nodeID)
 	if err != nil {
 		slog.Warn("nodeControl: restore failed", "component", "dag", "chat", c.chatID, "node", c.nodeID, "err", err)
 		return
+	}
+	if IsPaused(NodeStatus(status)) {
+		c.persistStatus(StatusRunning, "", "")
 	}
 	var msgs []queuedMsg
 	if queueJSON != "" {
@@ -192,9 +199,6 @@ func (c *nodeControl) restore() {
 			m := msgs[i]
 			c.queue = append(c.queue, &m)
 		}
-	}
-	if IsPaused(NodeStatus(status)) {
-		c.paused, c.reason = true, PauseReason(reason)
 	}
 }
 
@@ -354,10 +358,13 @@ func (r *runControls) setOverrideIfNotStarted(chatID, nodeID, task string) bool 
 	return true
 }
 
-// register builds the control and rehydrates its persisted queue/pause state.
+// register builds the control and rehydrates its persisted queue. Starting is
+// the resume transition: restore() clears any persisted pause, and the sticky
+// pause flag goes with it so the stream can't relabel the new run as paused.
 func (r *runControls) register(chatID, nodeID string) (*nodeControl, string, bool) {
 	c, override, ok := r.registerAndTakeOverride(chatID, nodeID)
 	c.restore()
+	r.clearPausedSticky(chatID, nodeID)
 	return c, override, ok
 }
 

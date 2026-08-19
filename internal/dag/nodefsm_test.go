@@ -3,6 +3,7 @@ package dag
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -23,11 +24,20 @@ func newFakeNodeStore() *fakeNodeStore {
 	}
 }
 
+// SetNodeStatusForChat enforces CanTransition like the real store, so an
+// illegal write fails the test instead of silently landing.
 func (f *fakeNodeStore) SetNodeStatusForChat(_ context.Context, chatID, nodeID, status, reason, question string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	k := chatID + "/" + nodeID
 	if status != "" {
+		from := NodeStatus(f.status[k])
+		if from == "" {
+			from = StatusQueued
+		}
+		if to := NodeStatus(status); from != to && !CanTransition(from, to) {
+			return fmt.Errorf("fakeNodeStore: illegal transition %s → %s (node %s)", from, to, nodeID)
+		}
 		f.status[k] = status
 	}
 	f.reason[k], f.question[k] = reason, question
@@ -46,6 +56,14 @@ func (f *fakeNodeStore) GetNodeState(_ context.Context, chatID, nodeID string) (
 	defer f.mu.Unlock()
 	k := chatID + "/" + nodeID
 	return f.status[k], f.reason[k], f.question[k], f.queue[k], nil
+}
+
+// set stamps a row's status directly, standing in for the stream-driven
+// node_start upsert (runlog), which isn't wired in these tests.
+func (f *fakeNodeStore) set(chatID, nodeID string, status NodeStatus) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.status[chatID+"/"+nodeID] = string(status)
 }
 
 func (f *fakeNodeStore) get(chatID, nodeID string) (status, reason, question string) {
@@ -99,6 +117,7 @@ func TestPauseNodePersistsReason(t *testing.T) {
 
 	go func() {
 		<-stub.started
+		fake.set("chat", "n1", StatusRunning) // runlog's node_start would have landed by now
 		if !ex.PauseNode("chat", "n1", PauseUser) {
 			t.Error("PauseNode returned false for a LIVE node")
 		}
@@ -169,5 +188,52 @@ func TestQueuedSteerSurvivesRestart(t *testing.T) {
 	}
 	if len(msgs) != 1 || !msgs[0].Delivered {
 		t.Errorf("persisted queue = %+v; want one delivered message", msgs)
+	}
+}
+
+// TestResumedNodeActuallyRuns: pause a live node (row lands paused/user),
+// throw the executor away (restart), re-run the plan against the same store -
+// the re-registered node must clear the persisted pause and do real work, not
+// rehydrate the pause and re-park itself before its first worker round.
+func TestResumedNodeActuallyRuns(t *testing.T) {
+	fake := newFakeNodeStore()
+	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
+	ex, plan := newCoopExecutor(t, stub, 1)
+	ex.SetNodeStateStore(fake)
+
+	go func() {
+		<-stub.started
+		fake.set("chat", "n1", StatusRunning) // runlog's node_start would have landed by now
+		ex.PauseNode("chat", "n1", PauseUser)
+		close(stub.unblock)
+	}()
+	events, _ := runPlanSSE(t, ex, plan, "chat")
+	if got := nodeEnd(events, "n1"); got != stream.EventNodePaused {
+		t.Fatalf("n1 ended as %q; want node_paused", got)
+	}
+	if status, _, _ := fake.get("chat", "n1"); status != string(StatusPaused) {
+		t.Fatalf("persisted status %q; want paused", status)
+	}
+
+	// "Restart": fresh executor, same store, resume the node.
+	stub2 := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
+	close(stub2.unblock)
+	ex2, plan2 := newCoopExecutor(t, stub2, 1)
+	ex2.SetNodeStateStore(fake)
+	ex2.StartNode("chat", "n1")
+	events2, _ := runPlanSSE(t, ex2, plan2, "chat")
+
+	stub2.mu.Lock()
+	workerRan := stub2.workerCalls
+	stub2.mu.Unlock()
+	if workerRan == 0 {
+		t.Fatal("resumed node never reached its worker - it re-parked on the persisted pause")
+	}
+	if got := nodeEnd(events2, "n1"); got != stream.EventNodeDone {
+		t.Fatalf("resumed n1 ended as %q; want node_done", got)
+	}
+	status, reason, _ := fake.get("chat", "n1")
+	if status != string(StatusRunning) || reason != "" {
+		t.Errorf("persisted (%q, %q) after resume; want (running, \"\")", status, reason)
 	}
 }
