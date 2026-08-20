@@ -53,7 +53,9 @@ export class Otel {
       attr("gen_ai.semconv.version", "1.41.0"),
     ];
     if (message?.content) attrs.push(attr("gen_ai.output.messages", JSON.stringify(message.content)));
-    if (message?.stopReason) attrs.push(attr("gen_ai.response.finish_reasons", JSON.stringify([message.stopReason])));
+    // Native emits a string array; keep the value type identical (emit.go).
+    if (message?.stopReason)
+      attrs.push({ key: "gen_ai.response.finish_reasons", value: { arrayValue: { values: [{ stringValue: String(message.stopReason) }] } } });
     if (u.input) attrs.push(attr("gen_ai.usage.input_tokens", u.input));
     if (u.output) attrs.push(attr("gen_ai.usage.output_tokens", u.output));
     if (this.gen.thinking) attrs.push(attr("quack.thinking", this.gen.thinking));
