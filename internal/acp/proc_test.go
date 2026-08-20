@@ -2,6 +2,7 @@ package acp
 
 import (
 	"bufio"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	oteltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -344,5 +347,23 @@ func TestSpawnEnvSetsGoCacheVars(t *testing.T) {
 		if fi, err := os.Stat(got[k]); err != nil || !fi.IsDir() {
 			t.Errorf("%s = %q is not a directory that exists: %v", k, got[k], err)
 		}
+	}
+}
+
+// TestTraceparentEnv proves the round span's context reaches the subprocess
+// env as a W3C traceparent, and that a span-less ctx adds nothing.
+func TestTraceparentEnv(t *testing.T) {
+	if got := traceparentEnv(context.Background()); len(got) != 0 {
+		t.Errorf("no-span ctx: got %v, want empty", got)
+	}
+	tid, _ := oteltrace.TraceIDFromHex("0af7651916cd43dd8448eb211c80319c")
+	sid, _ := oteltrace.SpanIDFromHex("b7ad6b7169203331")
+	ctx := oteltrace.ContextWithSpanContext(context.Background(), oteltrace.NewSpanContext(oteltrace.SpanContextConfig{
+		TraceID: tid, SpanID: sid, TraceFlags: oteltrace.FlagsSampled,
+	}))
+	got := traceparentEnv(ctx)
+	want := "TRACEPARENT=00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("traceparentEnv = %v, want [%s]", got, want)
 	}
 }
