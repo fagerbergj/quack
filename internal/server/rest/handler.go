@@ -915,10 +915,15 @@ func optimisticNodeState(dn *store.DagNode, target dag.NodeStatus) schema.DagNod
 
 // allowedStatuses converts dag.AllowedTargets to the wire enum for a 409 body.
 func allowedStatuses(from dag.NodeStatus) []schema.NodeStatus {
-	targets := dag.AllowedTargets(from)
-	out := make([]schema.NodeStatus, len(targets))
-	for i, t := range targets {
-		out[i] = schema.NodeStatus(t)
+	var out []schema.NodeStatus
+	seen := map[schema.NodeStatus]bool{}
+	for _, t := range dag.AllowedTargets(from) {
+		// One wire vocabulary: needs_input is served as paused everywhere else.
+		w := wireStatus(t)
+		if !seen[w] {
+			seen[w] = true
+			out = append(out, w)
+		}
 	}
 	return out
 }
