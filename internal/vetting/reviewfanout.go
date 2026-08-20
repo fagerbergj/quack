@@ -20,6 +20,14 @@ type ReviewFanout struct {
 	total     int
 	terminal  map[string]reviewFanoutEntry
 	delivered bool
+
+	// A downstream synthesizer node owns the final consolidated review
+	// (#965): delivery waits for it, and its answer becomes the summary
+	// body. On synthesizer failure the merge falls back to the per-node
+	// concatenation so nothing is stranded.
+	synthWanted bool
+	synthDone   bool
+	synthBody   string
 }
 
 type reviewFanoutEntry struct {
@@ -71,11 +79,38 @@ func (f *ReviewFanout) Finish(nodeID string, item StagedDelivery, ok, failed boo
 		f.terminal = map[string]reviewFanoutEntry{}
 	}
 	f.terminal[nodeID] = reviewFanoutEntry{item: item, ok: ok, failed: failed}
-	if len(f.terminal) < f.total || f.delivered {
+	return f.deliverIfReady()
+}
+
+// ExpectSynthesis marks the plan as having a synthesizer node downstream of
+// the reviewers: delivery waits for FinishSynthesis. Called during graph
+// assembly, before any node runs.
+func (f *ReviewFanout) ExpectSynthesis() {
+	f.mu.Lock()
+	f.synthWanted = true
+	f.mu.Unlock()
+}
+
+// FinishSynthesis records the synthesizer node's terminal outcome. answer is
+// its consolidated review ("" if it failed or produced nothing - the merge
+// then falls back to the per-node concatenation). Same exactly-once deliver
+// contract as Finish.
+func (f *ReviewFanout) FinishSynthesis(answer string) (merged StagedDelivery, deliver bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.synthDone = true
+	f.synthBody = strings.TrimSpace(answer)
+	return f.deliverIfReady()
+}
+
+// deliverIfReady (mu held): all reviewers terminal, synthesizer too when one
+// is expected, exactly once.
+func (f *ReviewFanout) deliverIfReady() (StagedDelivery, bool) {
+	if len(f.terminal) < f.total || (f.synthWanted && !f.synthDone) || f.delivered {
 		return StagedDelivery{}, false
 	}
 	f.delivered = true
-	return mergeReviews(f.terminal), true
+	return mergeReviews(f.terminal, f.synthBody), true
 }
 
 // verdictRank: worst-of ordering - request_changes beats approve beats a
@@ -83,10 +118,12 @@ func (f *ReviewFanout) Finish(nodeID string, item StagedDelivery, ok, failed boo
 var verdictRank = map[string]int{"comment": 0, "approve": 1, "request_changes": 2}
 
 // mergeReviews: worst-of verdict, findings merged and attributed per node.
+// A non-empty synthBody (the synthesizer's consolidated review) replaces the
+// per-node section concatenation as the summary body (#965).
 // A failed/cancelled sibling contributes no verdict but is named in the
 // body rather than silently dropped - the point of this fix is that
 // nothing gets swept under the rug.
-func mergeReviews(terminal map[string]reviewFanoutEntry) StagedDelivery {
+func mergeReviews(terminal map[string]reviewFanoutEntry, synthBody string) StagedDelivery {
 	ids := make([]string, 0, len(terminal))
 	for id := range terminal {
 		ids = append(ids, id)
@@ -121,6 +158,9 @@ func mergeReviews(terminal map[string]reviewFanoutEntry) StagedDelivery {
 			c.Body = fmt.Sprintf("[%s] %s", id, c.Body)
 			comments = append(comments, c)
 		}
+	}
+	if synthBody != "" {
+		sections = []string{synthBody}
 	}
 	if len(notes) > 0 {
 		sections = append(sections, "### Incomplete\n"+strings.Join(notes, "\n"))

@@ -191,6 +191,8 @@ type workerActivity struct {
 
 	ranCommand bool
 
+	answer string // the node's final answer (set just before commitDelivery; the synthesizer's is its review body, #965)
+
 	stagedDelivery map[string]StagedDelivery
 	currentBranch  string
 	// ponytail: prefer plan.Setup's PR/issue number over ledger inference.

@@ -31,7 +31,10 @@ func (e *PlanRejectedError) Error() string {
 }
 
 const implementerAgent = "code-implementer"
-const reviewerAgent = "code-reviewer"
+const (
+	reviewerAgent    = "code-reviewer"
+	synthesizerAgent = "synthesizer"
+)
 const explorerAgent = "code-explorer"
 
 // reviewChurnThreshold: max lines before reviewer must fan out.
@@ -334,19 +337,19 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 	if len(plan.Nodes) > 1 {
 		hasSynth := false
 		for _, n := range plan.Nodes {
-			if n.AgentName == "synthesizer" {
+			if n.AgentName == synthesizerAgent {
 				hasSynth = true
 				break
 			}
 		}
 		for i, n := range plan.Nodes {
-			if n.AgentName != "synthesizer" {
+			if n.AgentName != synthesizerAgent {
 				continue
 			}
 			down := descendants(plan.Nodes, n.ID)
 			var deps []string
 			for _, m := range plan.Nodes {
-				if m.ID == n.ID || m.AgentName == "synthesizer" || down[m.ID] {
+				if m.ID == n.ID || m.AgentName == synthesizerAgent || down[m.ID] {
 					continue
 				}
 				deps = append(deps, m.ID)
@@ -354,7 +357,7 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 			plan.Nodes[i].DependsOn = deps
 		}
 		// Append a synthesizer fan-in when the orchestrator omits it and multi-terminal would fail.
-		synthInfo, hasSynthAgent := known["synthesizer"]
+		synthInfo, hasSynthAgent := known[synthesizerAgent]
 		if !hasSynth && hasSynthAgent && len(terminalIDs(plan.Nodes)) > 1 {
 			// Appended fan-in is safe: nothing depends on it, no descendants to cycle into.
 			var all []string
@@ -363,7 +366,7 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 			}
 			plan.Nodes = append(plan.Nodes, Node{
 				ID:            "synthesize",
-				AgentName:     "synthesizer",
+				AgentName:     synthesizerAgent,
 				Task:          "Combine the findings from every preceding node into one complete, well-cited answer to the user's request.",
 				DependsOn:     all,
 				ContextWindow: synthInfo.ContextWindow,

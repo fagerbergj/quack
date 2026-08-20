@@ -82,9 +82,16 @@ func nodeGateConfig(plan Plan, node Node, worker adkagent.Agent, cfgFor func(str
 	cfg.IsReviewer = node.AgentName == reviewerAgent
 	// >1 reviewer node: review delivery is run-scoped, not node-scoped (#867) -
 	// see vetting.ReviewFanout. A single reviewer node keeps today's behavior.
-	if cfg.IsReviewer {
-		if n := reviewerNodeCount(plan); n > 1 {
+	// The plan's single synthesizer node, when present, owns the final
+	// consolidated review (#965): reviewers stage into the fan-in without
+	// delivering, and the synthesizer's answer becomes the review body.
+	if n := reviewerNodeCount(plan); n > 1 {
+		synth := synthesizerNodeCount(plan) == 1
+		if cfg.IsReviewer || (synth && node.AgentName == synthesizerAgent) {
 			cfg.ReviewFanout = vetting.GetReviewFanout(plan.ID, n)
+			if synth {
+				cfg.ReviewFanout.ExpectSynthesis()
+			}
 		}
 	}
 	cfg.Task = node.Task
@@ -203,6 +210,17 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			return answer, err
 		},
 		workflow.NodeConfig{})
+}
+
+// synthesizerNodeCount: how many nodes in the plan are synthesizer nodes.
+func synthesizerNodeCount(plan Plan) int {
+	n := 0
+	for _, node := range plan.Nodes {
+		if node.AgentName == synthesizerAgent {
+			n++
+		}
+	}
+	return n
 }
 
 // reviewerNodeCount: how many nodes in the plan are code-reviewer nodes.
