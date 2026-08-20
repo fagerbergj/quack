@@ -205,7 +205,11 @@ func StampTurn(ctx context.Context, st *store.Store, chatID, turnID string, res 
 	}
 }
 
-// PersistNodeEvent upserts DagNode state for node-lifecycle events; illegal transitions are logged, write proceeds.
+// PersistNodeEvent upserts DagNode state for node-lifecycle events; illegal
+// transitions are logged, write proceeds. Synchronous on purpose: one
+// goroutine per event gave no ordering, so a node_done write could be
+// overwritten by an earlier event's later-scheduled goroutine, leaving a
+// finished node stuck at running. Lifecycle events are a handful per node.
 func PersistNodeEvent(st *store.Store, planID string, ev stream.SSEEvent) {
 	t := time.Now().UTC()
 	var nodeID string
@@ -244,21 +248,19 @@ func PersistNodeEvent(st *store.Store, planID string, ev stream.SSEEvent) {
 	default:
 		return
 	}
-	go func() {
-		ctx := context.Background()
-		from := dag.StatusQueued
-		if prev, err := st.GetDagNode(ctx, planID, nodeID); err == nil && prev != nil {
-			from = dag.NodeStatus(prev.Status)
-		}
-		if !dag.CanTransition(from, to) {
-			slog.Warn("persistNodeEvent: illegal node-status transition", "component", "dag",
-				"plan_id", planID, "node_id", nodeID, "from", from, "to", to)
-		}
-		if err := st.UpsertDagNode(ctx, n); err != nil {
-			slog.Warn("persistNodeEvent: upsert failed", "component", "dag",
-				"plan_id", planID, "node_id", nodeID, "err", err)
-		}
-	}()
+	ctx := context.Background()
+	from := dag.StatusQueued
+	if prev, err := st.GetDagNode(ctx, planID, nodeID); err == nil && prev != nil {
+		from = dag.NodeStatus(prev.Status)
+	}
+	if !dag.CanTransition(from, to) {
+		slog.Warn("persistNodeEvent: illegal node-status transition", "component", "dag",
+			"plan_id", planID, "node_id", nodeID, "from", from, "to", to)
+	}
+	if err := st.UpsertDagNode(ctx, n); err != nil {
+		slog.Warn("persistNodeEvent: upsert failed", "component", "dag",
+			"plan_id", planID, "node_id", nodeID, "err", err)
+	}
 }
 
 // SaveDagPlan persists the plan row behind a dag_plan event.

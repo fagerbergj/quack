@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
@@ -156,17 +155,9 @@ func TestDriveResume_ReentryRunsPausedNodeOnly(t *testing.T) {
 	if ran("TASK-ONE") {
 		t.Error("done sibling n1 re-ran; re-entry must be the scoped node+descendants subset")
 	}
-	// PersistNodeEvent writes async; give the done upsert a moment to land.
-	var n2 *store.DagNode
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		n2, err = st.GetDagNode(ctx, plan.ID, "n2")
-		if err == nil && n2 != nil && n2.Status == string(dag.StatusDone) || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if n2 == nil {
+	// PersistNodeEvent is synchronous, so the row is settled when driveResume returns.
+	n2, err := st.GetDagNode(ctx, plan.ID, "n2")
+	if err != nil || n2 == nil {
 		t.Fatalf("GetDagNode n2: %v %v", n2, err)
 	}
 	if n2.Status != string(dag.StatusDone) || n2.PauseReason != "" {
