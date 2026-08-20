@@ -122,3 +122,44 @@ func TestNodeGateConfig_CarriesSource(t *testing.T) {
 		t.Errorf("cfg.ChatID = %q, want %q", cfg.ChatID, "chat1")
 	}
 }
+
+// TestReviewPlanWiresSynthesizerIntoFanout pins the #965 wiring: in a
+// two-reviewer + synthesizer plan, all three nodes share the run's
+// ReviewFanout, so the reviewers stage without delivering and the
+// synthesizer's answer becomes the one submitted review.
+func TestReviewPlanWiresSynthesizerIntoFanout(t *testing.T) {
+	plan := Plan{ID: t.Name(), Nodes: []Node{
+		{ID: "review-backend", AgentName: reviewerAgent},
+		{ID: "review-frontend", AgentName: reviewerAgent},
+		{ID: "synthesize", AgentName: synthesizerAgent, DependsOn: []string{"review-backend", "review-frontend"}},
+	}}
+	cfgFor := func(string) vetting.Config { return writableGateCfg() }
+	var fanouts []*vetting.ReviewFanout
+	for _, n := range plan.Nodes {
+		cfg := nodeGateConfig(plan, n, nil, cfgFor, "chat1", "")
+		if cfg.ReviewFanout == nil {
+			t.Fatalf("node %s: ReviewFanout = nil, want the shared fan-in", n.ID)
+		}
+		fanouts = append(fanouts, cfg.ReviewFanout)
+	}
+	if fanouts[0] != fanouts[1] || fanouts[1] != fanouts[2] {
+		t.Fatal("nodes got different fan-ins, want one shared per plan")
+	}
+}
+
+// Without a synthesizer node, reviewer-only plans keep the #867 behavior and
+// non-reviewer nodes stay out of the fan-in.
+func TestReviewPlanWithoutSynthesizerKeepsReviewerOnlyFanout(t *testing.T) {
+	plan := Plan{ID: t.Name(), Nodes: []Node{
+		{ID: "r1", AgentName: reviewerAgent},
+		{ID: "r2", AgentName: reviewerAgent},
+		{ID: "explore", AgentName: explorerAgent},
+	}}
+	cfgFor := func(string) vetting.Config { return writableGateCfg() }
+	if cfg := nodeGateConfig(plan, plan.Nodes[2], nil, cfgFor, "chat1", ""); cfg.ReviewFanout != nil {
+		t.Fatal("explorer node got a ReviewFanout, want nil")
+	}
+	if cfg := nodeGateConfig(plan, plan.Nodes[0], nil, cfgFor, "chat1", ""); cfg.ReviewFanout == nil {
+		t.Fatal("reviewer node missing its ReviewFanout")
+	}
+}

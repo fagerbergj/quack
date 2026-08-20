@@ -264,3 +264,97 @@ func TestReviewFanout_ParkedReviewerNotCountedFailedThenResumesIntoDelivery(t *t
 		t.Fatal("no delivery after the parked reviewer resumed and staged its verdict")
 	}
 }
+
+// Review plan with a downstream synthesizer (the PR #965 incident, 03:46Z):
+// two reviewer nodes finish, but the plan's synthesizer node owns the final
+// consolidated review - nothing may go to GitHub until it finishes, and the
+// one delivery must carry the synthesizer's body, worst-of verdict, and the
+// reviewers' attributed inline comments.
+func TestReviewFanout_SynthesizerOwnsDelivery(t *testing.T) {
+	done := make(chan DeliveryContext, 1)
+	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
+		select {
+		case done <- dc:
+		default:
+			t.Error("Deliver called more than once")
+		}
+		return nil, nil
+	}
+	fanout := GetReviewFanout(t.Name(), 2)
+	fanout.ExpectSynthesis()
+	cfg := Config{Deliver: deliver, ReviewFanout: fanout, IsReviewer: true}
+
+	commitDelivery(context.Background(), nil, cfg, "review-backend", workerActivity{
+		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "request_changes", Body: "backend bug",
+			Comments: []ReviewComment{{Path: "a.go", Line: 3, Body: "nil deref"}}}},
+	}, GateResult{Passed: true})
+	commitDelivery(context.Background(), nil, cfg, "review-frontend", workerActivity{
+		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "approve", Body: "frontend fine"}},
+	}, GateResult{Passed: true})
+	select {
+	case dc := <-done:
+		t.Fatalf("delivered before the synthesizer node finished: %+v", dc)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// Synthesizer node (not a reviewer, stages nothing) finishes with the
+	// consolidated review as its answer - now exactly one delivery.
+	synthCfg := Config{Deliver: deliver, ReviewFanout: fanout}
+	commitDelivery(context.Background(), nil, synthCfg, "synthesize", workerActivity{
+		answer: "Consolidated: fix the nil deref, frontend is fine.",
+	}, GateResult{Passed: true})
+
+	select {
+	case dc := <-done:
+		if len(dc.Items) != 1 || dc.Items[0].Kind != "review" {
+			t.Fatalf("Items = %+v, want exactly one review item", dc.Items)
+		}
+		item := dc.Items[0]
+		if item.Body != "Consolidated: fix the nil deref, frontend is fine." {
+			t.Fatalf("Body = %q, want the synthesizer's answer, not the raw per-node concatenation", item.Body)
+		}
+		if item.Event != "request_changes" {
+			t.Fatalf("Event = %q, want request_changes (worst-of)", item.Event)
+		}
+		if len(item.Comments) != 1 || !strings.Contains(item.Comments[0].Body, "review-backend") {
+			t.Fatalf("Comments = %+v, want the backend finding attributed", item.Comments)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no delivery after the synthesizer finished")
+	}
+}
+
+// A dead synthesizer must not strand the reviews: the fan-in falls back to
+// the merged per-node concatenation instead of delivering nothing.
+func TestReviewFanout_SynthesizerAbortFallsBackToConcat(t *testing.T) {
+	done := make(chan DeliveryContext, 1)
+	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
+		done <- dc
+		return nil, nil
+	}
+	fanout := GetReviewFanout(t.Name(), 2)
+	fanout.ExpectSynthesis()
+	cfg := Config{Deliver: deliver, ReviewFanout: fanout, IsReviewer: true}
+
+	commitDelivery(context.Background(), nil, cfg, "r1", workerActivity{
+		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "approve", Body: "fine"}},
+	}, GateResult{Passed: true})
+	commitDelivery(context.Background(), nil, cfg, "r2", workerActivity{
+		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "approve", Body: "also fine"}},
+	}, GateResult{Passed: true})
+
+	// Synthesizer errored before producing an answer.
+	resolveAbortedReviewer(context.Background(), nil, Config{Deliver: deliver, ReviewFanout: fanout}, "synthesize")
+
+	select {
+	case dc := <-done:
+		if len(dc.Items) != 1 {
+			t.Fatalf("Items = %+v, want the merged reviews delivered anyway", dc.Items)
+		}
+		if !strings.Contains(dc.Items[0].Body, "fine") {
+			t.Fatalf("Body = %q, want the reviewers' own findings as fallback", dc.Items[0].Body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("aborted synthesizer stranded the staged reviews")
+	}
+}

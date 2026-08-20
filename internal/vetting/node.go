@@ -298,7 +298,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	// Registering a merely-parked node as "failed" would let the fan-in
 	// deliver without it, then silently discard its verdict on resume.
 	delivered := false
-	if cfg.IsReviewer && cfg.ReviewFanout != nil {
+	if cfg.ReviewFanout != nil {
 		defer func() {
 			if delivered || isReviewerPauseSentinel(err) {
 				return
@@ -573,6 +573,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		}
 		// Deliver even on judge FAIL (graceful degradation). Memory stays pass-only.
 		delivered = true
+		act.answer = answer
 		commitDelivery(nodeCtx, sink, cfg, nodeID, act, res)
 		return answer, res, nil
 	}
@@ -718,6 +719,19 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	// its own - it's handed to the run's ReviewFanout, which delivers the
 	// merged, worst-of-verdict review exactly once, when every reviewer
 	// node in the plan has finished.
+	if cfg.ReviewFanout != nil && !cfg.IsReviewer {
+		// Synthesizer node (#965): its answer is the plan's consolidated
+		// review - hand it to the fan-in, which delivers exactly once.
+		merged, deliverNow := cfg.ReviewFanout.FinishSynthesis(act.answer)
+		if deliverNow {
+			deliverMergedReview(ctx, sink, cfg, nodeID, merged)
+		}
+		if len(act.stagedDelivery) == 0 {
+			recordDeliveryOutcomeMetric(cfg, res, false, false)
+			return
+		}
+		cfg.ReviewFanout = nil
+	}
 	if cfg.ReviewFanout != nil {
 		item, hasItem := act.stagedDelivery["review"]
 		if hasItem {
@@ -882,8 +896,16 @@ func isReviewerPauseSentinel(err error) bool {
 // commitDelivery (worker error, ErrNodeEmpty, or cancel) as a failed
 // terminal in the run's ReviewFanout, so a dead sibling can't block the
 // merged review forever (#867).
+// A dead synthesizer resolves via FinishSynthesis(""), which falls the merge
+// back to the per-node concatenation (#965).
 func resolveAbortedReviewer(ctx context.Context, sink func(stream.SSEEvent), cfg Config, nodeID string) {
-	merged, deliverNow := cfg.ReviewFanout.Finish(nodeID, StagedDelivery{}, false, true)
+	var merged StagedDelivery
+	var deliverNow bool
+	if cfg.IsReviewer {
+		merged, deliverNow = cfg.ReviewFanout.Finish(nodeID, StagedDelivery{}, false, true)
+	} else {
+		merged, deliverNow = cfg.ReviewFanout.FinishSynthesis("")
+	}
 	if deliverNow {
 		deliverMergedReview(ctx, sink, cfg, nodeID, merged)
 	}
