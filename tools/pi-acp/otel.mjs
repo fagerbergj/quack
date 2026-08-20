@@ -12,6 +12,14 @@ const attr = (key, v) =>
     ? { key, value: Number.isInteger(v) ? { intValue: String(v) } : { doubleValue: v } }
     : { key, value: { stringValue: cut(String(v)) } };
 
+// Mirrors quack's Go convention (otelobs.signalURL, #814): an endpoint that
+// already names a path is the full signal URL; only a bare host gets /v1/traces.
+function signalURL(endpoint) {
+  const t = endpoint.replace(/\/+$/, "");
+  const rest = t.includes("://") ? t.slice(t.indexOf("://") + 3) : t;
+  return rest.includes("/") ? endpoint : t + "/v1/traces";
+}
+
 export class Otel {
   constructor(model) {
     this.model = model || "unknown";
@@ -96,7 +104,7 @@ export class Otel {
       }],
     });
     try {
-      const res = await fetch(this.endpoint.replace(/\/$/, "") + "/v1/traces", {
+      const res = await fetch(signalURL(this.endpoint), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body,
