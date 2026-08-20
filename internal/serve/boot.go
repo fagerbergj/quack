@@ -94,6 +94,13 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 
 	var res runlog.DriveResult
 	for _, n := range nodes {
+		if n.PlanID != plan.ID {
+			// A node paused under an older plan isn't in the latest graph;
+			// re-entering would silently run zero nodes, forever.
+			slog.Warn("resume: node belongs to a non-latest plan, skipping", "component", "startup",
+				"chat", chatID, "node", n.NodeID, "plan", n.PlanID, "latest", plan.ID)
+			continue
+		}
 		res = runlog.Drive(plan.TurnID, st, pub, orch.RetryNode(runCtx, userID, chatID, seededOutputs(runCtx, st, plan.ID), n.NodeID, ""), func(err error) {
 			slog.Warn("resume run error", "component", "startup", "chat", chatID, "node", n.NodeID, "err", err)
 		})
@@ -108,7 +115,12 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 // seededOutputs collects the plan's stored node outputs so a subset re-run
 // reads finished siblings instead of re-running them.
 func seededOutputs(ctx context.Context, st *store.Store, planID string) map[string]string {
-	rows, _ := st.GetDagNodes(ctx, planID)
+	rows, err := st.GetDagNodes(ctx, planID)
+	if err != nil {
+		// An empty seed map would make the subset re-run every finished sibling.
+		slog.Warn("resume: reading node outputs failed; finished siblings may re-run",
+			"component", "startup", "plan", planID, "err", err)
+	}
 	seeded := make(map[string]string, len(rows))
 	for _, r := range rows {
 		if r.Output != "" {
