@@ -2,10 +2,13 @@
 package workspace
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -91,7 +94,7 @@ func (j *Jail) ScratchDir(userID, chatID, nodeID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(home, "tmp", chatID+"__"+nodeID)
+	dir := filepath.Join(home, "tmp", ChatDirName(chatID)+"__"+nodeID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("workspace: create scratch dir %q: %w", dir, err)
 	}
@@ -156,6 +159,22 @@ func isSafePathComponent(id string) bool {
 	return filepath.Clean(id) == id
 }
 
+// Path/shell-hostile runes for a directory name (':' breaks node module resolution and PATH-style parsing).
+var hostileRunes = regexp.MustCompile(`[^A-Za-z0-9._-]`)
+
+// ChatDirName maps a chat id to its on-disk directory component. Hostile runes
+// become '-', with a short hash of the raw id appended so rewritten ids can't
+// collide (ext:a:b vs ext-a-b). Clean ids map to themselves. The chat id itself
+// (DB/API/UI) never changes - only the directory name.
+func ChatDirName(chatID string) string {
+	clean := hostileRunes.ReplaceAllString(chatID, "-")
+	if clean == chatID {
+		return chatID
+	}
+	sum := sha256.Sum256([]byte(chatID))
+	return clean + "-" + hex.EncodeToString(sum[:4])
+}
+
 // Directory a (userID, chatID) pair resolves paths under. chatID="" falls back to per-user root.
 func (j *Jail) scopeRoot(userID, chatID string) (string, error) {
 	userRoot, err := j.UserRoot(userID)
@@ -168,7 +187,14 @@ func (j *Jail) scopeRoot(userID, chatID string) (string, error) {
 	if !isSafePathComponent(chatID) {
 		return "", ErrInvalidChatID
 	}
-	return filepath.Join(userRoot, chatID), nil
+	dir := ChatDirName(chatID)
+	if dir != chatID {
+		// Zero-migration: chats from before sanitization keep their raw-named dir.
+		if fi, err := os.Stat(filepath.Join(userRoot, chatID)); err == nil && fi.IsDir() {
+			dir = chatID
+		}
+	}
+	return filepath.Join(userRoot, dir), nil
 }
 
 // Path-resolution for every filesystem/git tool: joins relPath under scope root, resolves symlinks, verifies containment.

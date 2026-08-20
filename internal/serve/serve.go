@@ -692,7 +692,16 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		HomeMaxBytes: int64(cfg.Workspace.GC.HomeMaxMB) * 1024 * 1024,
 		Interval:     time.Duration(cfg.Workspace.GC.IntervalHours) * time.Hour,
 	}
-	go workspace.RunGC(ctx, jail, gcCfg, runHub.HasRegisteredRun, func(pctx context.Context, dir string) error {
+	// GC sees on-disk dir names; match them against active chat ids raw or via ChatDirName.
+	gcActive := func(chatDir string) bool {
+		for _, id := range runHub.ActiveChatIDs() {
+			if id == chatDir || workspace.ChatDirName(id) == chatDir {
+				return true
+			}
+		}
+		return false
+	}
+	go workspace.RunGC(ctx, jail, gcCfg, gcActive, func(pctx context.Context, dir string) error {
 		return tools.PruneWorktree(pctx, dir, gcCaps)
 	})
 
