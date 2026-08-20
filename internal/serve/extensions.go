@@ -18,7 +18,6 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/model"
-	"google.golang.org/adk/v2/tool"
 	"google.golang.org/genai"
 	"gopkg.in/yaml.v3"
 
@@ -220,10 +219,12 @@ func extensionDescriptors(exts []builtSDKExtension) []schema.ExtensionInfo {
 
 // sdkExtensionTools joins every extension's Tools() into the agents' shared
 // tool set, exactly like the GitHub extension's extTools does today.
-func sdkExtensionTools(exts []builtSDKExtension) []tool.Tool {
-	var out []tool.Tool
+func sdkExtensionTools(exts []builtSDKExtension) []extTool {
+	var out []extTool
 	for _, e := range exts {
-		out = append(out, e.ext.Tools()...)
+		for _, t := range e.ext.Tools() {
+			out = append(out, extTool{provider: e.name, tool: t})
+		}
 	}
 	return out
 }

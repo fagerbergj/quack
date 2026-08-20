@@ -755,7 +755,7 @@ func (a gitCredentialAdapter) GitCredential(ctx context.Context, rawURL string) 
 }
 
 // buildAgents loads each agent bundle, builds its model and tools, exposes over A2A, returns client map.
-func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []tool.Tool, pluginSkillDirs []string, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, setupOut *dag.SetupFunc, artifacts artifact.Service) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, model.LLM, error) {
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, pluginSkillDirs []string, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, setupOut *dag.SetupFunc, artifacts artifact.Service) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, model.LLM, error) {
 	nodeServers := newPerNodeServers()
 
 	nodeScope := func(ctx context.Context) memory.Scope {
@@ -919,17 +919,10 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 	modelMap := make(map[string]model.LLM, len(cfg.Agents))
 	gateCfgs := make(map[string]vetting.Config, len(cfg.Agents))
 
-	extToolsByName := make(map[string]tool.Tool, len(extTools))
-	for _, t := range extTools {
-		// Plugin MCP tool names come from third-party mcp.json authors, so a
-		// collision with an SDK extension's tool is plausible and silent -
-		// last-wins would shadow it with no trace.
-		if _, dup := extToolsByName[t.Name()]; dup {
-			slog.Warn("extension tool name collision; the later registration wins",
-				"component", "startup", "tool", t.Name())
-		}
-		extToolsByName[t.Name()] = t
-	}
+	// Plugin MCP tool names come from third-party mcp.json authors, so a
+	// collision with an SDK extension's tool is plausible and silent -
+	// indexExtTools prefixes colliding names and makes bare use an error.
+	extToolsByName := indexExtTools(extTools)
 
 	for _, name := range names {
 		ac := cfg.Agents[name]
