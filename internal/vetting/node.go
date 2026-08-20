@@ -74,6 +74,9 @@ type NodeControl interface {
 	Cancelled() bool
 	Paused() bool
 	TakeQueued() string
+	// PauseForInput parks the node on a worker question, persisting it
+	// before the pause is acted on (dag.PauseAwaitingInput).
+	PauseForInput(question string)
 }
 
 const AskToolName = "ask_user"
@@ -289,11 +292,11 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	// cancel) needs to register as a failed sibling here instead, so a dead
 	// reviewer node can never block the run's delivery forever. A paused
 	// node is NOT terminal - it may still resume and stage its real verdict
-	// later, so both pause sentinels are excluded: ErrNodePaused (cooperative
-	// cancel/pause/queue checks) and workflow.ErrNodeInterrupted (ADK's own
-	// park signal, returned by pauseIfWorkerRaisedHITL's three call sites) -
-	// registering a merely-parked node as "failed" would let the fan-in
-	// delivered without it, then silently discard its verdict on resume.
+	// later, so a pause sentinel is excluded: every quack pause now returns
+	// ErrNodePaused (HITL parks wrap ADK's workflow.ErrNodeInterrupted in it),
+	// and a bare ErrNodeInterrupted can still surface from ADK's own scheduler.
+	// Registering a merely-parked node as "failed" would let the fan-in
+	// deliver without it, then silently discard its verdict on resume.
 	delivered := false
 	if cfg.IsReviewer && cfg.ReviewFanout != nil {
 		defer func() {
@@ -372,8 +375,8 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		}
 
 		// HITL/guard pause: park when ask_user or guard confirmation raised. Draft discarded; resume re-runs with Q&A.
-		if paused, ierr := pauseIfWorkerRaisedHITL(ctx, nodeID, emit, log); paused {
-			return "", GateResult{}, ierr // ErrNodeInterrupted → park
+		if paused, ierr := pauseIfWorkerRaisedHITL(ctx, nodeID, ctrl, emit, log); paused {
+			return "", GateResult{}, ierr // ErrNodePaused (wrapping ADK's park sentinel)
 		}
 
 		// Continuation loop: tool-bearing turns until work is done (not until model emits text). Tested against cfg.Task.
@@ -397,9 +400,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				// A continuation is where the worker finally proposes its guarded delivery
 				// step (git_commit/git_push) - park the node for the human exactly as the
 				// draft and revise paths do.
-				if paused, ierr := pauseIfWorkerRaisedHITL(ctx, nodeID, emit, log); paused {
+				if paused, ierr := pauseIfWorkerRaisedHITL(ctx, nodeID, ctrl, emit, log); paused {
 					contSpan.End()
-					return "", GateResult{}, ierr // ErrNodeInterrupted → park
+					return "", GateResult{}, ierr // ErrNodePaused (wrapping ADK's park sentinel)
 				}
 			}
 			contSpan.SetAttributes(attribute.Int("attempts", contAttempts))
@@ -539,8 +542,8 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				return answer, res, nil // revision failed; keep the prior answer
 			}
 			// A revision can itself raise ask_user/guard confirmation - park exactly as draft-time check does.
-			if paused, ierr := pauseIfWorkerRaisedHITL(ctx, nodeID, emit, log); paused {
-				return "", GateResult{}, ierr // ErrNodeInterrupted → park
+			if paused, ierr := pauseIfWorkerRaisedHITL(ctx, nodeID, ctrl, emit, log); paused {
+				return "", GateResult{}, ierr // ErrNodePaused (wrapping ADK's park sentinel)
 			}
 			if strings.TrimSpace(revised) != "" {
 				answer = revised
@@ -576,7 +579,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 }
 
 // pauseIfWorkerRaisedHITL: parks node on new ask_user/guard confirmation. Runs after every worker run.
-func pauseIfWorkerRaisedHITL(ctx adkagent.Context, nodeID string, emit func(*session.Event) error, log *slog.Logger) (bool, error) {
+func pauseIfWorkerRaisedHITL(ctx adkagent.Context, nodeID string, ctrl NodeControl, emit func(*session.Event) error, log *slog.Logger) (bool, error) {
 	if emit == nil {
 		return false, nil
 	}
@@ -587,7 +590,7 @@ func pauseIfWorkerRaisedHITL(ctx adkagent.Context, nodeID string, emit func(*ses
 			InterruptID: hitlInterruptID(nodeID, scan.pauses+1),
 			Message:     q,
 		})
-		return true, ierr
+		return true, parkForInput(ctrl, q, ierr)
 	}
 	if cscan := scanNodeConfirms(ctx.Session(), ctx.InvocationID(), nodeID); len(cscan.turns) > cscan.pauses {
 		t := cscan.turns[len(cscan.turns)-1]
@@ -602,9 +605,24 @@ func pauseIfWorkerRaisedHITL(ctx adkagent.Context, nodeID string, emit func(*ses
 			InterruptID: confirmInterruptID(nodeID, cscan.pauses+1),
 			Message:     msg,
 		})
-		return true, ierr
+		return true, parkForInput(ctrl, msg, ierr)
 	}
 	return false, nil
+}
+
+// parkForInput folds an ADK HITL park into the node state machine: mark the
+// control paused/awaiting_input with the question (persisted before the park
+// is acted on), then wrap ADK's sentinel in ErrNodePaused so quack code sees
+// one sentinel. ErrNodeInterrupted stays in the chain because ADK's engine
+// keys the park itself off it - dropping it would fail the node instead.
+func parkForInput(ctrl NodeControl, question string, ierr error) error {
+	if !errors.Is(ierr, workflow.ErrNodeInterrupted) {
+		return ierr // emit failure, not a park
+	}
+	if ctrl != nil {
+		ctrl.PauseForInput(question)
+	}
+	return fmt.Errorf("%w: %w", ErrNodePaused, ierr)
 }
 
 // stagedCandidate: parses stage_memory args into memory candidate. Bucket routes the write.
@@ -851,9 +869,9 @@ func deliverMergedReview(ctx context.Context, sink func(stream.SSEEvent), cfg Co
 
 // isReviewerPauseSentinel: true when err means "parked, may still resume" -
 // not a terminal outcome for the review fan-in. Both of RunGatedRefine's own
-// early-return sentinel (ErrNodePaused, the cooperative cancel/pause/queue
-// checks) and ADK's workflow.ErrNodeInterrupted (returned by
-// pauseIfWorkerRaisedHITL's three call sites, on an ask_user/guard park) mean
+// early-return sentinel ErrNodePaused (every quack pause, HITL included) and
+// ADK's own workflow.ErrNodeInterrupted (which the scheduler can still raise
+// on its own, so it stays recognised here) mean
 // the node is not done - registering it as failed here would let the fan-in
 // deliver without it, then silently discard its real verdict on resume.
 func isReviewerPauseSentinel(err error) bool {

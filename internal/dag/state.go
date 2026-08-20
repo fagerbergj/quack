@@ -71,3 +71,17 @@ func AllowedTargets(from NodeStatus) []NodeStatus {
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
 }
+
+// PauseReason says why a node sits in StatusPaused; empty for any other status.
+type PauseReason string
+
+const (
+	PauseUser          PauseReason = "user"           // a human hit pause
+	PauseShutdown      PauseReason = "shutdown"       // the process is draining (PR 2)
+	PauseAwaitingInput PauseReason = "awaiting_input" // HITL: the worker asked the user something
+)
+
+// IsPaused reports whether a persisted status means "suspended, resumable".
+// StatusNeedsInput is the legacy wire spelling of paused/awaiting_input; the
+// REST surface still emits it, so both spellings answer here.
+func IsPaused(s NodeStatus) bool { return s == StatusPaused || s == StatusNeedsInput }

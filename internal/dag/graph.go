@@ -115,7 +115,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			var ctrl vetting.NodeControl
 			effectiveNode := node
 			if controls != nil {
-				nc, override, ok := controls.registerAndTakeOverride(chatID, node.ID)
+				nc, override, ok := controls.register(chatID, node.ID)
 				defer controls.unregister(chatID, node.ID)
 				ctrl = nc
 				if ok {
@@ -182,6 +182,12 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			}
 			if errors.Is(err, vetting.ErrNodePaused) {
 				markGateFailed(ctx, node.ID)
+				// A HITL park wraps ADK's own sentinel: the engine keys the
+				// park (and the persisted RequestInput a resume reads) off it,
+				// so it must propagate. Every other pause stops here.
+				if errors.Is(err, workflow.ErrNodeInterrupted) {
+					return answer, err
+				}
 				return answer, nil
 			}
 			if err == nil {

@@ -322,7 +322,7 @@ func TestExecute_PauseNodeStopsBeforeJudge(t *testing.T) {
 
 	go func() {
 		<-stub.started
-		if !ex.PauseNode("chat", "n1") {
+		if !ex.PauseNode("chat", "n1", PauseUser) {
 			t.Error("PauseNode returned false for a LIVE node")
 		}
 		close(stub.unblock)

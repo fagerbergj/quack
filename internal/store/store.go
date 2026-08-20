@@ -151,6 +151,15 @@ type DagNode struct {
 	JudgeRounds      int32      `json:"judge_rounds"`
 	JudgeFinalScore  float64    `json:"judge_final_score"`
 	JudgePassed      bool       `json:"judge_passed"`
+	// Lifecycle columns below are written only by SetNodeStatus/SetNodeQueue;
+	// UpsertDagNode omits them so a stream-driven upsert can never blank a
+	// pause a resume depends on.
+	// Why a paused node is paused: user | shutdown | awaiting_input.
+	PauseReason string `gorm:"column:pause_reason" json:"pause_reason,omitempty"`
+	// HITL question this node is parked on (node-scoped; chats.pending_question is the legacy chat-scoped copy).
+	PendingQuestion string `gorm:"column:pending_question" json:"pending_question,omitempty"`
+	// JSON []dag.QueuedMessage - the steer queue, so a queued message survives a restart.
+	QueuedMessages string `gorm:"column:queued_messages" json:"-"`
 	// Stamped when a node is queued/running for ownership tracking.
 	InstanceID string `gorm:"column:instance_id" json:"-"`
 	// Bumped on every write; fallback for FailStaleDagNodes when no InstanceID matches.
@@ -823,7 +832,7 @@ func (s *Store) UpsertDagNode(ctx context.Context, node DagNode) error {
 	}
 	t := time.Now().UTC()
 	node.UpdatedAt = &t
-	return db.Save(&node).Error
+	return db.Omit("pause_reason", "pending_question", "queued_messages").Save(&node).Error
 }
 
 // InsertChatEvent persists one run event. Caller assigns Seq and serializes inserts.
