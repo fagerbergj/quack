@@ -143,6 +143,13 @@ func (o *Orchestrator) SetNodeTaskOverride(chatID, nodeID, task string) bool {
 // RetryNode re-runs a finished node and its descendants with optional guidance.
 func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, seeded map[string]string, nodeID, guidance string) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
+		// A retry (or a boot resume, which rides this path) counts against
+		// MaxActiveRuns like any other run.
+		release, acquired := o.acquireRun(ctx)
+		defer release()
+		if !acquired {
+			return
+		}
 		plan, ok := o.stashedPlan(ctx, userID, chatID)
 		if !ok {
 			yield(stream.Errorf("retry: no plan in session to retry"), nil)
@@ -155,6 +162,9 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, see
 				}
 			}
 		}
+		// Lead with the plan snapshot so runlog.Drive-based callers (boot
+		// resume) persist the re-run nodes' state; REST persists per-event.
+		yield(tools.DagPlanEvent(plan), nil)
 		nodeOutputs := make(map[string]string)
 		retryNode := workflow.NewDynamicNode[any, string]("__retry",
 			func(nctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {

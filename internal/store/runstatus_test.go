@@ -28,7 +28,7 @@ func TestScanOrphanedRuns_FlipsCrashedActiveTurnID(t *testing.T) {
 		t.Fatalf("MarkRunActive: %v", err)
 	}
 
-	ids, err := st.ScanOrphanedRuns(ctx)
+	_, ids, err := st.ScanOrphanedRuns(ctx)
 	if err != nil {
 		t.Fatalf("ScanOrphanedRuns: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestScanOrphanedRuns_ReSurfacesAlreadyInterrupted(t *testing.T) {
 		t.Fatalf("StampRunOutcome: %v", err)
 	}
 
-	ids, err := st.ScanOrphanedRuns(ctx)
+	_, ids, err := st.ScanOrphanedRuns(ctx)
 	if err != nil {
 		t.Fatalf("ScanOrphanedRuns: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestScanOrphanedRuns_ClearsInterruptedWithLeftoverTurnID(t *testing.T) {
 		t.Fatalf("MarkRunActive: %v", err)
 	}
 
-	if _, err := st.ScanOrphanedRuns(ctx); err != nil {
+	if _, _, err := st.ScanOrphanedRuns(ctx); err != nil {
 		t.Fatalf("ScanOrphanedRuns: %v", err)
 	}
 
@@ -120,7 +120,7 @@ func TestScanOrphanedRuns_LeavesHealthyChatsAlone(t *testing.T) {
 		}
 	}
 
-	ids, err := st.ScanOrphanedRuns(ctx)
+	_, ids, err := st.ScanOrphanedRuns(ctx)
 	if err != nil {
 		t.Fatalf("ScanOrphanedRuns: %v", err)
 	}
