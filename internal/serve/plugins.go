@@ -25,7 +25,7 @@ import (
 
 // mcpEnumerateTimeout bounds the one blocking connect+ListTools a declared
 // server gets at boot. Per-call contexts govern everything after.
-const mcpEnumerateTimeout = 20 * time.Second
+var mcpEnumerateTimeout = 20 * time.Second // var so tests can shrink it
 
 // checkPluginModules matches every module a plugin declares under quack's
 // namespace against the modules actually linked into this binary. Go has no
