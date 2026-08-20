@@ -12,6 +12,14 @@ const attr = (key, v) =>
     ? { key, value: Number.isInteger(v) ? { intValue: String(v) } : { doubleValue: v } }
     : { key, value: { stringValue: cut(String(v)) } };
 
+// Mirrors quack's Go convention (otelobs.signalURL, #814): an endpoint that
+// already names a path is the full signal URL; only a bare host gets /v1/traces.
+function signalURL(endpoint) {
+  const t = endpoint.replace(/\/+$/, "");
+  const rest = t.includes("://") ? t.slice(t.indexOf("://") + 3) : t;
+  return rest.includes("/") ? endpoint : t + "/v1/traces";
+}
+
 export class Otel {
   constructor(model) {
     this.model = model || "unknown";
@@ -45,7 +53,9 @@ export class Otel {
       attr("gen_ai.semconv.version", "1.41.0"),
     ];
     if (message?.content) attrs.push(attr("gen_ai.output.messages", JSON.stringify(message.content)));
-    if (message?.stopReason) attrs.push(attr("gen_ai.response.finish_reasons", JSON.stringify([message.stopReason])));
+    // Native emits a string array; keep the value type identical (emit.go).
+    if (message?.stopReason)
+      attrs.push({ key: "gen_ai.response.finish_reasons", value: { arrayValue: { values: [{ stringValue: String(message.stopReason) }] } } });
     if (u.input) attrs.push(attr("gen_ai.usage.input_tokens", u.input));
     if (u.output) attrs.push(attr("gen_ai.usage.output_tokens", u.output));
     if (this.gen.thinking) attrs.push(attr("quack.thinking", this.gen.thinking));
@@ -96,7 +106,7 @@ export class Otel {
       }],
     });
     try {
-      const res = await fetch(this.endpoint.replace(/\/$/, "") + "/v1/traces", {
+      const res = await fetch(signalURL(this.endpoint), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body,

@@ -65,7 +65,6 @@ func (c *nodeControl) Paused() bool {
 // TakeQueued drains pending messages into one guidance block; only delivery path at gate boundaries.
 func (c *nodeControl) TakeQueued() string {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	var out []string
 	for _, m := range c.queue {
 		if !m.Delivered {
@@ -74,11 +73,15 @@ func (c *nodeControl) TakeQueued() string {
 		}
 	}
 	if len(out) == 0 {
+		c.mu.Unlock()
 		return ""
 	}
 	c.drained = append(c.drained, out)
 	joined := strings.Join(out, "\n\n")
-	go c.persistQueue() // delivery flags only; never on the pause-critical path
+	c.mu.Unlock()
+	// Synchronous: an async snapshot could land after a newer enqueue's write
+	// and drop a steer from the row (the restart-survival guarantee).
+	c.persistQueue()
 	return joined
 }
 

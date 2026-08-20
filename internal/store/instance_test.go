@@ -263,3 +263,40 @@ func TestResumePausedDagNodes_StaleNodeCeilingCatchesPermanentOrphan(t *testing.
 		t.Fatalf("permanent orphan not reconciled past staleNodeCeiling: got %d", n)
 	}
 }
+
+// TestResumePausedDagNodes_PeerPausedNodeUntouched pins the ownership guard on
+// the paused/needs_input branch: a booting instance must not resume a live
+// peer's user-paused node (#683) - only the running branch was tested before.
+func TestResumePausedDagNodes_PeerPausedNodeUntouched(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "quack.db")
+	ctx := context.Background()
+
+	server, err := New("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("New (server): %v", err)
+	}
+	server.SetInstanceID("live-server")
+	if err := server.UpsertDagNode(ctx, DagNode{NodeID: "n1", PlanID: "p1", Status: string(dag.StatusRunning), InstanceID: server.InstanceID()}); err != nil {
+		t.Fatalf("UpsertDagNode: %v", err)
+	}
+	// UpsertDagNode omits lifecycle columns; stamp the pause the legal way.
+	if err := server.SetNodeStatus(ctx, "p1", "n1", dag.StatusPaused, dag.PauseUser, ""); err != nil {
+		t.Fatalf("SetNodeStatus: %v", err)
+	}
+
+	other, err := New("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("New (other): %v", err)
+	}
+	rep, err := other.ResumePausedDagNodes(ctx, nil)
+	if err != nil {
+		t.Fatalf("ResumePausedDagNodes: %v", err)
+	}
+	if n := len(rep.Start) + len(rep.AwaitingInput) + len(rep.Failed); n != 0 {
+		t.Fatalf("peer reconciliation touched %d nodes, want 0", n)
+	}
+	got, err := server.GetDagNode(ctx, "p1", "n1")
+	if err != nil || got == nil || got.Status != string(dag.StatusPaused) || got.PauseReason != string(dag.PauseUser) {
+		t.Fatalf("peer node = %+v err=%v, want paused/user untouched", got, err)
+	}
+}
