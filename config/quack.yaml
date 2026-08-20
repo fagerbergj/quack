@@ -293,19 +293,24 @@ artifacts: {}
 # artifacts:
 #   store: default_postgres
 
-# Skill-library plugin roots, beyond quack's own shipped skills/, merged into
-# both the native skill toolset and each ACP agent's opencode skills.paths.
+# Agent Plugins roots (https://agent-plugins.org/), beyond quack's own shipped
+# skills/. A root can contribute skills (<root>/skills, merged into both the
+# native skill toolset and each ACP agent's skills.paths), MCP servers
+# (<root>/mcp.json), and quack extension declarations (plugin.json's
+# extensions["io.github.fagerbergj.quack"]) - see docs/agent-plugins.md.
+#
 # Each root is resolved once at startup (internal/plugin) via: a root
-# plugin.json (Agent Plugins, https://agent-plugins.org/ - skills at the
-# conventional <root>/skills) else .codex-plugin/plugin.json (Codex - explicit
+# plugin.json (Agent Plugins) else .codex-plugin/plugin.json (Codex - explicit
 # "skills" field) else skipped with a warning naming the root. A missing,
 # unreadable, or malformed plugin never fails startup - it just loses that
-# plugin's skills. Order is preserved and never deduped; own skills/ always
-# takes precedence, then each root below in listed order.
-skills:
-  plugins:
-    - .agents/vendor/dotagents   # general-purpose skills (vendored)
-    - .agents/vendor/ponytail    # YAGNI/lazy-senior-dev discipline (vendored; Codex format)
+# plugin's components. Order is preserved and never deduped; own skills/
+# always takes precedence, then each root below in listed order.
+#
+# skills.plugins: is the deprecated spelling of this key and is still read.
+plugins:
+  - .agents/vendor/dotagents   # general-purpose skills (vendored)
+  - .agents/vendor/ponytail    # YAGNI/lazy-senior-dev discipline (vendored; Codex format)
+  - .agents/plugins/usage      # manifest for the compiled-in usage extension
 
 # workflows: a top-level key (not nested under skills:) that either teaches
 # plan-work's "Common workflows" table a deployment-specific DAG shape, or -

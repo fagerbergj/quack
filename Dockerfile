@@ -118,8 +118,9 @@ COPY config/ /config/
 COPY agents/ /agents/
 # Orchestrator skill bundles (SKILL.md directories), read at startup.
 COPY skills/ /skills/
-# Skill-library plugins, resolved as plugin roots against CWD / (config's
-# skills.plugins). From the builder: the context has no vendor trees.
+# Agent Plugins roots, resolved against CWD / (config's plugins:): fetched
+# trees under .agents/vendor, first-party manifests under .agents/plugins.
+# From the builder: the context has no vendor trees.
 COPY --from=backend /app/.agents/ /.agents/
 # The startup refresh re-runs this against the pins in .agents/vendor.
 COPY scripts/plugins.sh /scripts/plugins.sh
