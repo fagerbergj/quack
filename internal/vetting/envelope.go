@@ -46,7 +46,9 @@ type criterionSpec struct {
 // anchorSpec: where in the answer a criticism points. Typed per #941; kind
 // determines which of the other fields apply.
 type anchorSpec struct {
-	Kind string `json:"kind"` // quote | path | omission
+	// Kind is optional on the way in: judges near-miss it (trace 9ea8cbee), so
+	// aggregateVerdict infers it from whichever payload field is set.
+	Kind string `json:"kind,omitempty"` // quote | path | omission
 
 	Text string `json:"text,omitempty"` // quote
 

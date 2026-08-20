@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	otellog "go.opentelemetry.io/otel/log"
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
@@ -214,11 +215,50 @@ type verdictArgs struct {
 	Findings []findingVerdict          `json:"findings,omitempty"`
 }
 
+// lenientVerdictSchema: verdictArgs schema with every optional string property
+// also accepting null. Judges intermittently send `"shortfall": null` for a
+// string field (trace 9ea8cbee); strict validation rejected the whole verdict
+// and the round ended unvetted. null unmarshals to "" so semantics are identical.
+func lenientVerdictSchema() (*jsonschema.Schema, error) {
+	s, err := jsonschema.For[verdictArgs](nil)
+	if err != nil {
+		return nil, err
+	}
+	allowNullOptionalStrings(s)
+	return s, nil
+}
+
+func allowNullOptionalStrings(s *jsonschema.Schema) {
+	if s == nil {
+		return
+	}
+	required := make(map[string]bool, len(s.Required))
+	for _, r := range s.Required {
+		required[r] = true
+	}
+	for name, p := range s.Properties {
+		if p == nil {
+			continue
+		}
+		if p.Type == "string" && !required[name] {
+			p.Type, p.Types = "", []string{"null", "string"}
+		}
+		allowNullOptionalStrings(p)
+	}
+	allowNullOptionalStrings(s.Items)
+	allowNullOptionalStrings(s.AdditionalProperties)
+}
+
 // newSubmitVerdictTool: builds structured-termination tool (mirrors ADK exitlooptool).
 func newSubmitVerdictTool(sink *verdict) (tool.Tool, error) {
+	schema, err := lenientVerdictSchema()
+	if err != nil {
+		return nil, err
+	}
 	return functiontool.New(functiontool.Config{
 		Name:        submitVerdictTool,
 		Description: "Record your final verdict and end the evaluation. Call this exactly once, after independently verifying the answer against every rubric criterion - and, when the prompt lists staged findings to verify, after recording a result for each one in `findings`.",
+		InputSchema: schema,
 	}, func(ctx adkagent.Context, args verdictArgs) (map[string]any, error) {
 		v := verdict{Score: args.Score, Criteria: args.Criteria, Feedback: args.Feedback, Findings: args.Findings}
 		normalizeScale(&v)
@@ -1039,6 +1079,23 @@ func normalizeScale(v *verdict) {
 	}
 }
 
+// inferAnchorKind fills a missing anchor kind from whichever payload field is
+// set (judges near-miss the schema by omitting it, trace 9ea8cbee). Ambiguous
+// or empty anchors are left as-is; sanitizeAnchors drops them later.
+func inferAnchorKind(a *anchorSpec) {
+	if a == nil || a.Kind != "" {
+		return
+	}
+	switch {
+	case a.Text != "" && a.Path == "" && a.Expected == "":
+		a.Kind = "quote"
+	case a.Path != "" && a.Text == "" && a.Expected == "":
+		a.Kind = "path"
+	case a.Expected != "" && a.Text == "" && a.Path == "":
+		a.Kind = "omission"
+	}
+}
+
 // aggregateVerdict: weakest-link gating - lowest criterion is the overall score. Clamped [0,1].
 func aggregateVerdict(v verdict) verdict {
 	applyFindingsVerdict(&v)
@@ -1049,6 +1106,7 @@ func aggregateVerdict(v verdict) verdict {
 			c.Shortfall = c.Reason
 			v.Criteria[name] = c
 		}
+		inferAnchorKind(c.Anchor)
 	}
 	// Weakest-link gating: lowest criterion is the score.
 	if len(v.Criteria) > 0 {
