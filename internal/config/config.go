@@ -803,6 +803,9 @@ func (c *Config) validate() error {
 		if a.Acp != nil && a.Acp.AllowClone && !a.Acp.ReadOnly {
 			return fmt.Errorf("config: agent %q sets acp.allow_clone without acp.read_only", name)
 		}
+		if a.Acp != nil && len(a.Skills) > 0 {
+			slog.Warn("agent skills: has no effect on an ACP-harness agent; ACP workers always get the full skill library", "component", "config", "agent", name)
+		}
 	}
 	for name := range c.Stores {
 		s, ok := c.Store(name)

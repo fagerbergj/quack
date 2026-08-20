@@ -29,7 +29,7 @@ or by mentioning it in a comment:
 |---|---|
 | `quack:plan` | Plans once when applied. While present, revises the plan on an explicit `/quack …` address or quote-reply. |
 | `quack:implement` | Implements the approved plan once, commits locally, and opens a PR pre-labeled for review. Add `quack:partial-fix` first if the PR shouldn't auto-close the issue. |
-| `quack:review` (configurable) | Reviews the PR once. Also fires automatically on PR open if the `pr_opened` trigger is enabled. |
+| `quack:review` (configurable) | Reviews the PR once. Also fires automatically on PR open if the `pr_opened` trigger is enabled. While the label is present, a PR comment consisting of `/review` (from a write/admin author) re-runs the review - GitHub coalesces a fast label remove+add into no webhook, so cycling the label can't. |
 | `quack:fix` | Keeps the PR green: fixes it on **any** CI/CD failure while it carries this label, not only when freshly applied - re-applying it re-arms after a stop and, if CI is already failing, fixes it immediately. One fix attempt per failure (see "CI auto-heal" below). |
 | `quack:merge` | Squash-merges the PR - but only at the intersection of a human applying this label **and** quack's own latest review having approved it. Anything else gets an explanatory comment instead of a merge. |
 
