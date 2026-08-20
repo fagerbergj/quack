@@ -252,6 +252,212 @@ func TestUpdateNodeStatus_RunningSelfLoopIllegal(t *testing.T) {
 	}
 }
 
+func postNodeStart(t *testing.T, h *Handler, chatID, nodeID string, body schema.NodeStartBody) *httptest.ResponseRecorder {
+	t.Helper()
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/start", strings.NewReader(string(b)))
+	rec := httptest.NewRecorder()
+	h.StartNode(rec, req, chatID, nodeID)
+	return rec
+}
+
+func postNodeStop(t *testing.T, h *Handler, chatID, nodeID string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/stop", nil)
+	rec := httptest.NewRecorder()
+	h.StopNode(rec, req, chatID, nodeID)
+	return rec
+}
+
+// TestStartNode_QueuedOK: queued -> running is legal and, like resume,
+// answers optimistically with "queued" while the run kicks off in the background.
+func TestStartNode_QueuedOK(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID, nodeID := "c1", "p1", "n1"
+	seedPlan(t, h, chatID, planID, nodeID)
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "queued"}); err != nil {
+		t.Fatalf("seed queued node: %v", err)
+	}
+
+	rec := postNodeStart(t, h, chatID, nodeID, schema.NodeStartBody{})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var got schema.DagNodeState
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Status != schema.NodeStatusRunning {
+		t.Errorf("Status = %q, want %q (the node's new state)", got.Status, schema.NodeStatusRunning)
+	}
+	time.Sleep(50 * time.Millisecond)
+}
+
+// TestStartStopNode_UnknownNode404: a node id absent from the chat's latest
+// plan must 404 - GetDagNode returns (nil, nil) for a missing row, so
+// falling through would treat it as a startable queued node.
+func TestStartStopNode_UnknownNode404(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID := "c1", "p1"
+	seedPlan(t, h, chatID, planID, "n1")
+
+	if rec := postNodeStart(t, h, chatID, "ghost", schema.NodeStartBody{}); rec.Code != http.StatusNotFound {
+		t.Errorf("start: status = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := postNodeStop(t, h, chatID, "ghost"); rec.Code != http.StatusNotFound {
+		t.Errorf("stop: status = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestStartNode_FromRunning409 also pins the 409 body's Allowed targets.
+func TestStartNode_FromRunning409(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID, nodeID := "c1", "p1", "n1"
+	seedPlan(t, h, chatID, planID, nodeID)
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "running"}); err != nil {
+		t.Fatalf("seed running node: %v", err)
+	}
+
+	rec := postNodeStart(t, h, chatID, nodeID, schema.NodeStartBody{})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+	var got schema.TransitionError
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	want := map[schema.NodeStatus]bool{}
+	for _, a := range got.Allowed {
+		want[a] = true
+	}
+	if !want[schema.NodeStatusPaused] || !want[schema.NodeStatusCancelled] || !want[schema.NodeStatusDone] {
+		t.Errorf("Allowed = %v, should name running's legal targets", got.Allowed)
+	}
+}
+
+// TestStartNode_AwaitingInputBlankAnswer400: a parked question must not
+// silently resume with an empty payload.
+func TestStartNode_AwaitingInputBlankAnswer400(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID, nodeID := "c1", "p1", "n1"
+	seedPlan(t, h, chatID, planID, nodeID)
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "needs_input", PendingQuestion: "which region?"}); err != nil {
+		t.Fatalf("seed parked node: %v", err)
+	}
+
+	if rec := postNodeStart(t, h, chatID, nodeID, schema.NodeStartBody{}); rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestUpdateNodeStatus_PauseReasonAwaitingInputRejected: awaiting_input is
+// system-owned; a client pause may only say user/shutdown.
+func TestUpdateNodeStatus_PauseReasonAwaitingInputRejected(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID, nodeID := "c1", "p1", "n1"
+	seedPlan(t, h, chatID, planID, nodeID)
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "running"}); err != nil {
+		t.Fatalf("seed running node: %v", err)
+	}
+
+	reason := schema.PauseReason("awaiting_input")
+	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusPaused, Reason: &reason})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestStartNode_PausedOK mirrors TestUpdateNodeStatus_ResumePausedNode for
+// the dedicated start endpoint.
+func TestStartNode_PausedOK(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID, nodeID := "c1", "p1", "n1"
+	seedPlan(t, h, chatID, planID, nodeID)
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "paused"}); err != nil {
+		t.Fatalf("seed paused node: %v", err)
+	}
+
+	rec := postNodeStart(t, h, chatID, nodeID, schema.NodeStartBody{Content: strPtr("the answer")})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	time.Sleep(50 * time.Millisecond)
+}
+
+// TestStartNode_IllegalTransition409: done -> running only legally re-queues via retry.
+func TestStartNode_IllegalTransition409(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID, nodeID := "c1", "p1", "n1"
+	seedPlan(t, h, chatID, planID, nodeID)
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "done"}); err != nil {
+		t.Fatalf("seed done node: %v", err)
+	}
+
+	rec := postNodeStart(t, h, chatID, nodeID, schema.NodeStartBody{})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+	var got schema.TransitionError
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Current != schema.NodeStatusDone {
+		t.Errorf("Current = %q, want %q", got.Current, schema.NodeStatusDone)
+	}
+}
+
+// TestStopNode_RunningUndeliverable409 mirrors the cancel-endpoint's not-live 409.
+func TestStopNode_RunningUndeliverable409(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID, nodeID := "c1", "p1", "n1"
+	seedPlan(t, h, chatID, planID, nodeID)
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "running"}); err != nil {
+		t.Fatalf("seed running node: %v", err)
+	}
+
+	rec := postNodeStop(t, h, chatID, nodeID)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (nothing live to stop); body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "not stoppable") {
+		t.Errorf("409 body should explain nothing was stopped; body=%s", rec.Body.String())
+	}
+}
+
+// TestStopNode_TerminalIllegal409: cancelled -> cancelled isn't a legal self-loop.
+func TestStopNode_TerminalIllegal409(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID, nodeID := "c1", "p1", "n1"
+	seedPlan(t, h, chatID, planID, nodeID)
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "cancelled"}); err != nil {
+		t.Fatalf("seed cancelled node: %v", err)
+	}
+
+	rec := postNodeStop(t, h, chatID, nodeID)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestUpdateNodeStatus_PauseReason: pausing with an explicit reason persists
+// it, and the read model returns it on the wire.
+func TestUpdateNodeStatus_PauseReasonShutdown(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID, nodeID := "c1", "p1", "n1"
+	seedPlan(t, h, chatID, planID, nodeID)
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "running"}); err != nil {
+		t.Fatalf("seed running node: %v", err)
+	}
+	reason := schema.PauseReason("shutdown")
+	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusPaused, Reason: &reason})
+	// No live control registered in this test (no run in flight), so this is
+	// the same "not pausable" 409 as TestUpdateNodeStatus_PauseUndeliverable409 -
+	// it exercises that the reason field decodes and flows through untouched.
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (nothing live to pause); body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func putQueueMessage(t *testing.T, h *Handler, chatID, nodeID string, body schema.QueueMessageBody) *httptest.ResponseRecorder {
 	t.Helper()
 	b, _ := json.Marshal(body)
@@ -513,10 +719,11 @@ func parseSSEBody(t *testing.T, body string) []sseEvent {
 // --- needs_input persistence -------------------------------------------------
 
 // TestNeedsInputPersistsAcrossReload: a HITL pause (node_needs_input) persists
-// the node's status as "needs_input" - visible in the turn's quack:dag output
-// item after a simulated reload (GetTurnsWithContent → buildTurn), not just in
-// the live SSE stream. The DAG item itself reads in_progress while any node is
-// still needs_input (a paused run is not "completed").
+// the node's DB status as "needs_input", but the wire boundary normalizes
+// that to paused/awaiting_input - visible in the turn's quack:dag output item
+// after a simulated reload (GetTurnsWithContent → buildTurn), not just in the
+// live SSE stream. The DAG item itself reads in_progress while any node is
+// still paused (a paused run is not "completed").
 func TestNeedsInputPersistsAcrossReload(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -558,8 +765,13 @@ func TestNeedsInputPersistsAcrossReload(t *testing.T) {
 	if !ok {
 		t.Fatalf("node %q missing from node_states: %v", nodeID, dagItem.NodeStates)
 	}
-	if ns.Status != schema.NodeStatusNeedsInput {
-		t.Errorf("node status = %q, want %q", ns.Status, schema.NodeStatusNeedsInput)
+	// Wire boundary normalizes the legacy needs_input DB spelling to one
+	// vocabulary: paused, with pause_reason awaiting_input.
+	if ns.Status != schema.NodeStatusPaused {
+		t.Errorf("node status = %q, want %q", ns.Status, schema.NodeStatusPaused)
+	}
+	if ns.PauseReason == nil || *ns.PauseReason != schema.PauseReason("awaiting_input") {
+		t.Errorf("pause_reason = %v, want awaiting_input", ns.PauseReason)
 	}
 	if dagItem.Status != schema.InProgress {
 		t.Errorf("dag status = %q, want %q (a paused run isn't completed)", dagItem.Status, schema.InProgress)

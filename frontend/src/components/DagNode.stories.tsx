@@ -51,7 +51,7 @@ const judgeRun = (round: number, score: number, passed: boolean, feedback: strin
 export const Queued: Story = {
   args: {
     node: wrNode, state: { status: 'queued' }, runs: [], answer: '', isFinal: false,
-    onCancel: () => {}, onEditTask: () => {},
+    onCancel: () => {}, onResume: () => {}, onEditTask: () => {},
   },
 }
 
@@ -224,7 +224,7 @@ export const Paused: Story = {
   render: () => (
     <DagNode
       node={wrNode}
-      state={{ status: 'paused', startedAt: Date.now() - 20_000 }}
+      state={{ status: 'paused', pauseReason: 'user', startedAt: Date.now() - 20_000 }}
       runs={[workerDone(researchActivity)]}
       answer="Best months to visit Dublin so far: **May–September** (draft, paused before the judge round)."
       isFinal={false}
@@ -232,6 +232,42 @@ export const Paused: Story = {
       onCancel={() => {}}
     />
   ),
+}
+
+// #962: Paused above already covers pause_reason "user" ("paused · by you");
+// the other two reasons get their own header labels below.
+export const PausedShutdown: Story = {
+  render: () => (
+    <DagNode
+      node={wrNode}
+      state={{ status: 'paused', pauseReason: 'shutdown', startedAt: Date.now() - 20_000 }}
+      runs={[workerDone(researchActivity)]}
+      answer="Best months to visit Dublin so far: **May–September** (draft, paused for a server restart)."
+      isFinal={false}
+      onResume={() => {}}
+      onCancel={() => {}}
+    />
+  ),
+}
+
+// paused/awaiting_input: the wire-normalized spelling of the legacy
+// needs_input status - the node's own pending_question, answered via
+// onAnswerQuestion (start with the answer as NodeStartBody.content).
+export const PausedAwaitingInput: Story = {
+  args: {
+    node: wrNode,
+    state: {
+      status: 'paused', pauseReason: 'awaiting_input',
+      question: 'Should I include hostel prices, or hotels only?',
+      startedAt: Date.now() - 6_000,
+    },
+    runs: [{ runId: 'r1', agent: 'web-researcher', stage: 'worker', done: false, activity: researchActivity.slice(0, 1) }],
+    answer: '',
+    isFinal: false,
+    onCancel: () => {},
+    onResume: () => {},
+    onAnswerQuestion: () => {},
+  },
 }
 
 // A running node with a queued (not-yet-delivered) message showing the ✉
@@ -307,7 +343,7 @@ export const NeedsInput: Story = {
   },
 }
 
-// The ⋮ menu opened on a running node: Pause + Cancel one click away, plus
+// The ⋮ menu opened on a running node: Pause + Stop one click away, plus
 // "Queue a message…" (opens the popup - it needs the input).
 export const OverflowMenuRunning: Story = {
   render: () => (
@@ -328,7 +364,7 @@ export const OverflowMenuRunning: Story = {
   },
 }
 
-// The ⋮ menu opened on a paused node: Resume + Cancel.
+// The ⋮ menu opened on a paused node: Start + Stop.
 export const OverflowMenuPaused: Story = {
   render: () => (
     <DagNode
@@ -347,7 +383,7 @@ export const OverflowMenuPaused: Story = {
   },
 }
 
-// The ⋮ menu opened on a needs_input node: Cancel + "Answer question…".
+// The ⋮ menu opened on a needs_input node: Stop + "Answer question…".
 export const OverflowMenuNeedsInput: Story = {
   render: () => (
     <DagNode

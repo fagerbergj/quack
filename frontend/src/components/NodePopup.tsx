@@ -7,8 +7,8 @@ import type { NodeState, QueuedMessage } from '../state/chatStore'
 // not a bespoke modal: the node's prompt renders through the same
 // BubbleHeader + AssistantText markdown treatment as every chat bubble, with
 // no standalone header or section dividers of its own - only a light
-// overlay + close affordance to pop it out. Pause/cancel live one click away
-// in DagNode's ⋮ menu now; this surface is for what needs the input/editor -
+// overlay + close affordance to pop it out. Start/stop/pause live one click
+// away in DagNode's ⋮ menu now; this surface is for what needs the input/editor -
 // queueing a message, editing a not-yet-started prompt, or answering a
 // pending mid-node question.
 interface Props {
@@ -19,9 +19,9 @@ interface Props {
   onEditQueuedMessage?: (nodeId: string, messageId: string, text: string) => void
   onRemoveQueuedMessage?: (nodeId: string, messageId: string) => void
   onEditTask?: (nodeId: string, task: string) => void
-  // Answers a paused node's mid-node question (needs_input) via the same
-  // resume path the main chat's QuestionBubble uses (chatStore.submit -
-  // the next chat message is delivered to the node as its answer).
+  // Answers a parked node's mid-node question via the same path the main
+  // chat's QuestionBubble uses: chatStore.startNode, with the answer as
+  // NodeStartBody.content.
   onAnswerQuestion?: (nodeId: string, answer: string) => void
 }
 
@@ -88,7 +88,9 @@ export function NodePopup({
   const running = state.status === 'running'
   // Answering resumes the node now; queueing waits for its next turn
   // boundary - same input widget, chosen by which state the node is in.
-  const answering = state.status === 'needs_input' && state.question != null
+  // needs_input is the legacy DB/SSE spelling; paused/awaiting_input is the
+  // wire-normalized one the REST read model returns - both mean "parked on a question".
+  const answering = (state.status === 'needs_input' || state.pauseReason === 'awaiting_input') && state.question != null
   const queue = state.queue ?? []
 
   function submitInput() {

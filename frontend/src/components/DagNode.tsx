@@ -9,8 +9,8 @@ import { previewLine, fmtTokenCount } from './toolFormat'
 import { type DagNodeDef } from '../state/agentStream'
 import { fmtMs, LiveTimer } from '../utils/timer'
 
-// NodeMenu is the node's ⋮ overflow menu: one click for pause/resume/cancel
-// (no popup round-trip), with "queue a message…" / "edit prompt" / "answer
+// NodeMenu is the node's ⋮ overflow menu: one click for pause/start/stop (no
+// popup round-trip), with "queue a message…" / "edit prompt" / "answer
 // question…" opening the popup only when they need its input/editor. Hidden
 // entirely on a terminal node (done/failed/cancelled) - nothing left to do.
 function NodeMenu({
@@ -45,8 +45,11 @@ function NodeMenu({
   if (terminal) return null
 
   const running = status === 'running'
-  const paused = status === 'paused'
-  const cancellable = running || paused || status === 'queued' || status === 'needs_input'
+  // needs_input is the legacy DB/SSE spelling of paused/awaiting_input - both
+  // are "paused" for transition purposes (dag.CanTransition treats them alike).
+  const paused = status === 'paused' || status === 'needs_input'
+  const startable = paused || status === 'queued'
+  const cancellable = running || startable
   const hasSecondary = canAnswer || canQueue || canEdit
 
   return (
@@ -67,14 +70,14 @@ function NodeMenu({
               ⏸ Pause
             </button>
           )}
-          {paused && onResume && (
+          {startable && onResume && (
             <button role="menuitem" onClick={() => { onResume(nodeId); setOpen(false) }} className="w-full text-left px-3 py-1.5 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700">
-              ▶ Resume
+              ▶ Start
             </button>
           )}
           {cancellable && onCancel && (
             <button role="menuitem" onClick={() => { onCancel(nodeId); setOpen(false) }} className="w-full text-left px-3 py-1.5 text-red-500 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700">
-              ✕ Cancel
+              ✕ Stop
             </button>
           )}
           {hasSecondary && <div className="my-1 border-t border-gray-100 dark:border-gray-700" />}
@@ -111,6 +114,16 @@ function QueuedBadge({ count }: { count: number }) {
       ✉ {count}
     </span>
   )
+}
+
+// pausedStatusLabel renders "paused · <why>" for the node header - the three
+// pause_reason values a human can meaningfully tell apart.
+function pausedStatusLabel(reason: NodeState['pauseReason']): string {
+  switch (reason) {
+    case 'awaiting_input': return 'paused · awaiting input'
+    case 'shutdown':       return 'paused · shutdown'
+    default:                return 'paused · by you'
+  }
 }
 
 // (Per-run "spinner" dots were removed - redundant with the node header's
@@ -503,6 +516,8 @@ export const DagNode = memo(function DagNode({
   const activeIdx = running ? runs.map(r => r.done).lastIndexOf(false) : -1
   const [popupOpen, setPopupOpen] = useState(false)
   const pendingQueueCount = (state.queue ?? []).filter(m => !m.delivered).length
+  const isPaused = state.status === 'paused' || state.status === 'needs_input'
+  const pauseLabel = isPaused ? pausedStatusLabel(state.pauseReason) : null
 
   return (
     <div className={`group rounded-xl border shadow-sm overflow-hidden ${
@@ -516,6 +531,9 @@ export const DagNode = memo(function DagNode({
         <span className="text-xs font-semibold text-gray-700 dark:text-gray-200">
           {agentLabel(node.agent)}
         </span>
+        {pauseLabel && (
+          <span className="text-[10px] font-medium text-blue-600 dark:text-blue-400">{pauseLabel}</span>
+        )}
         {isAcpAgent(node.agent) && <AcpBadge />}
         <QueuedBadge count={pendingQueueCount} />
         {state.steers && state.steers.length > 0 && (
@@ -571,7 +589,7 @@ export const DagNode = memo(function DagNode({
             onResume={onResume}
             canQueue={running && !!onQueueMessage}
             canEdit={notStarted && !!onEditTask}
-            canAnswer={state.status === 'needs_input' && !!onAnswerQuestion}
+            canAnswer={(state.status === 'needs_input' || state.pauseReason === 'awaiting_input') && !!onAnswerQuestion}
             onOpenPopup={() => setPopupOpen(true)}
           />
         </div>

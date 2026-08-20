@@ -517,18 +517,60 @@ describe('ChatStore - mid-node steering', () => {
     expect(store.get('c').live?.text).toBe('second attempt answer')
   })
 
-  it('cancelNode and pauseNode PUT the node status endpoint', () => {
+  it('stopNode POSTs to the stop endpoint and pauseNode PUTs the status endpoint with a reason', () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 200 }))
-    store.cancelNode('c', 'a')
+    store.stopNode('c', 'a')
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/chats/c/nodes/a/status',
-      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ status: 'cancelled' }) }),
+      '/api/v1/chats/c/nodes/a/stop',
+      expect.objectContaining({ method: 'POST' }),
     )
     store.pauseNode('c', 'a')
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/chats/c/nodes/a/status',
-      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ status: 'paused' }) }),
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ status: 'paused', reason: undefined }) }),
     )
+    store.pauseNode('c', 'a', 'shutdown')
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/chats/c/nodes/a/status',
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ status: 'paused', reason: 'shutdown' }) }),
+    )
+  })
+
+  it('startNode POSTs an answer to the start endpoint', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    FakeEventSource.last = null
+    const sse = [
+      `event: dag_plan\ndata: ${JSON.stringify({ plan_id: 'p', nodes: [{ id: 'a', agent: 'r', task: 't', depends_on: [] }], edges: [] })}\n\n`,
+      `event: node_needs_input\ndata: {"node_id":"a","interrupt_id":"i1","message":"which region?"}\n\n`,
+      `event: done\ndata: {}\n\n`,
+    ].join('')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'go')
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ status: 'queued' }), { status: 200 }))
+    store.startNode('c', 'a', 'the answer')
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/chats/c/nodes/a/start',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ content: 'the answer' }) }),
+    )
+  })
+
+  it('startNode mid-stream is refused with a node error note, not a silent no-op', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    FakeEventSource.last = null
+    // Stream stays OPEN (no close, no done): the run is mid-flight when
+    // startNode is called, so submit is deliberately not awaited.
+    const sse = `event: dag_plan\ndata: ${JSON.stringify({ plan_id: 'p', nodes: [{ id: 'a', agent: 'r', task: 't', depends_on: [] }], edges: [] })}\n\nevent: node_paused\ndata: {"node_id":"a"}\n\n`
+    const open = new ReadableStream({ start(ctrl) { ctrl.enqueue(new TextEncoder().encode(sse)) } })
+    fetchMock.mockResolvedValueOnce(new Response(open, { status: 200, headers: { 'Content-Type': 'text/event-stream' } }))
+    void store.submit('c', 'go')
+    await new Promise(r => setTimeout(r, 20))
+    expect(store.get('c').live?.streaming).toBe(true)
+
+    fetchMock.mockClear()
+    store.startNode('c', 'a')
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(store.get('c').live?.dag?.nodeStates['a']?.error).toMatch(/still streaming/)
   })
 
   it('queueNodeMessage POSTs to the queue endpoint and ignores empty text', async () => {
@@ -834,6 +876,11 @@ describe('answer-bubble attribution helpers', () => {
 
   it('pendingNodeQuestion finds a paused node awaiting an answer, credited to its own agent', () => {
     const d = dag({ a: { status: 'done' }, b: { status: 'needs_input', question: 'Which time zone?' } })
+    expect(pendingNodeQuestion(d)).toEqual({ nodeId: 'b', agent: 'synthesizer', question: 'Which time zone?' })
+  })
+
+  it('pendingNodeQuestion matches the wire-normalized paused/awaiting_input spelling (post-reload)', () => {
+    const d = dag({ a: { status: 'done' }, b: { status: 'paused', pauseReason: 'awaiting_input', question: 'Which time zone?' } })
     expect(pendingNodeQuestion(d)).toEqual({ nodeId: 'b', agent: 'synthesizer', question: 'Which time zone?' })
   })
 

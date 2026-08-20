@@ -231,6 +231,19 @@ export type NodeStatusUpdateBody = {
      * Optional and folded into the node's task when status is "queued" (retry, or resuming a paused node via a fresh re-run). Unused for "cancelled" and "paused". To steer a RUNNING node, queue a message instead (POST .../nodes/{node_id}/queue) - it is delivered at the node's next turn boundary, not mid-turn.
      */
     guidance?: string;
+    reason?: PauseReason;
+};
+
+/**
+ * Why a node sits in the `paused` status.
+ */
+export type PauseReason = 'user' | 'shutdown' | 'awaiting_input';
+
+export type NodeStartBody = {
+    /**
+     * Answer to the node's pending_question. Required when the node is paused with pause_reason "awaiting_input" (a blank answer is a 400) - the same field name SendMessageBody uses, since a node's question and the chat's are answered the same way. Ignored for every other status; a non-awaiting start is a fresh scoped re-run of the node and its descendants.
+     */
+    content?: string;
 };
 
 export type QueuedMessage = {
@@ -404,6 +417,15 @@ export type DagEdge = {
 
 export type DagNodeState = {
     status: NodeStatus;
+    pause_reason?: PauseReason;
+    /**
+     * The unanswered question blocking this node, present only when pause_reason is "awaiting_input".
+     */
+    pending_question?: string;
+    /**
+     * The node's steer queue - messages waiting for its next turn boundary.
+     */
+    queued_messages?: Array<QueuedMessage>;
     output_preview?: string;
     error?: string;
     started_at_ms?: number;
@@ -839,6 +861,70 @@ export type UpdateNodeStatusResponses = {
 };
 
 export type UpdateNodeStatusResponse = UpdateNodeStatusResponses[keyof UpdateNodeStatusResponses];
+
+export type StartNodeData = {
+    body?: NodeStartBody;
+    path: {
+        chat_id: string;
+        node_id: string;
+    };
+    query?: never;
+    url: '/api/v1/chats/{chat_id}/nodes/{node_id}/start';
+};
+
+export type StartNodeErrors = {
+    /**
+     * No such node
+     */
+    404: ErrorResponse;
+    /**
+     * Illegal transition; body names the allowed target statuses for the node's current status
+     */
+    409: TransitionError;
+};
+
+export type StartNodeError = StartNodeErrors[keyof StartNodeErrors];
+
+export type StartNodeResponses = {
+    /**
+     * The node's new state
+     */
+    200: DagNodeState;
+};
+
+export type StartNodeResponse = StartNodeResponses[keyof StartNodeResponses];
+
+export type StopNodeData = {
+    body?: never;
+    path: {
+        chat_id: string;
+        node_id: string;
+    };
+    query?: never;
+    url: '/api/v1/chats/{chat_id}/nodes/{node_id}/stop';
+};
+
+export type StopNodeErrors = {
+    /**
+     * No such node
+     */
+    404: ErrorResponse;
+    /**
+     * Illegal transition (already terminal), or nothing live to act on (e.g. a queued node not yet dispatched); body names the allowed target statuses for the node's current status
+     */
+    409: TransitionError;
+};
+
+export type StopNodeError = StopNodeErrors[keyof StopNodeErrors];
+
+export type StopNodeResponses = {
+    /**
+     * The node's new state
+     */
+    200: DagNodeState;
+};
+
+export type StopNodeResponse = StopNodeResponses[keyof StopNodeResponses];
 
 export type EditNodeTaskData = {
     body: EditNodeTaskBody;

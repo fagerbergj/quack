@@ -581,6 +581,87 @@ paths:
               schema:
                 $ref: "#/components/schemas/TransitionError"
 
+  /api/v1/chats/{chat_id}/nodes/{node_id}/start:
+    post:
+      operationId: startNode
+      summary: Start a node - queued or paused, either way, into running
+      description: |
+        The explicit per-node form of what shutdown/startup do to every node
+        at once (#962): `queued` → running is a fresh dispatch; `paused` →
+        running re-enters the stashed plan's graph at this node. If the node
+        is paused with `pause_reason: awaiting_input`, `content` carries the
+        answer to its parked question - the same field SendMessageBody uses,
+        since answering a node's question and answering the chat are the same
+        shape. Any other pause reason (`user`, `shutdown`) needs no `content`;
+        it resumes at its last gate boundary.
+
+        Illegal from any other status (409, naming the allowed targets). The
+        resumed/dispatched run streams over the chat's existing SSE
+        connection - this endpoint does not open a new one.
+      parameters:
+        - $ref: "#/components/parameters/ChatID"
+        - $ref: "#/components/parameters/NodeID"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NodeStartBody"
+      responses:
+        "200":
+          description: The node's new state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DagNodeState"
+        "404":
+          description: No such node
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Illegal transition; body names the allowed target statuses
+            for the node's current status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TransitionError"
+
+  /api/v1/chats/{chat_id}/nodes/{node_id}/stop:
+    post:
+      operationId: stopNode
+      summary: Stop a node - any non-terminal status, into cancelled
+      description: |
+        The explicit per-node "stop everything now" transition: legal from
+        `queued`, `running`, or `paused`, always landing on the terminal
+        `cancelled`. Cooperative for a running node (stops at its next safe
+        point); immediate for `queued`/`paused`. No resume - retry (PUT
+        .../status with `{"status":"queued"}`) is the way back.
+      parameters:
+        - $ref: "#/components/parameters/ChatID"
+        - $ref: "#/components/parameters/NodeID"
+      responses:
+        "200":
+          description: The node's new state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DagNodeState"
+        "404":
+          description: No such node
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Illegal transition (already terminal), or nothing
+            live to act on (e.g. a queued node not yet dispatched); body
+            names the allowed target statuses for the node's current status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TransitionError"
+
   /api/v1/chats/{chat_id}/nodes/{node_id}:
     patch:
       operationId: editNodeTask
@@ -1199,6 +1280,28 @@ components:
             Unused for "cancelled" and "paused". To steer a RUNNING node,
             queue a message instead (POST .../nodes/{node_id}/queue) - it is
             delivered at the node's next turn boundary, not mid-turn.
+        reason:
+          $ref: "#/components/schemas/PauseReason"
+          description: Only meaningful when status is "paused". Defaults to
+            "user" (a human hit pause). Clients may send only "user" or
+            "shutdown" - "awaiting_input" is system-owned (400).
+
+    PauseReason:
+      type: string
+      description: Why a node sits in the `paused` status.
+      enum: [user, shutdown, awaiting_input]
+
+    NodeStartBody:
+      type: object
+      properties:
+        content:
+          type: string
+          description: Answer to the node's pending_question. Required when
+            the node is paused with pause_reason "awaiting_input" (a blank
+            answer is a 400) - the same field name SendMessageBody uses,
+            since a node's question and the chat's are answered the same
+            way. Ignored for every other status; a non-awaiting start is a
+            fresh scoped re-run of the node and its descendants.
 
     QueuedMessage:
       type: object
@@ -1507,6 +1610,22 @@ components:
       properties:
         status:
           $ref: "#/components/schemas/NodeStatus"
+        pause_reason:
+          $ref: "#/components/schemas/PauseReason"
+          description: Why the node is paused, present only when status is
+            "paused". The wire boundary always normalizes here - a node
+            stored as the legacy `needs_input` status reads as
+            `paused`/`awaiting_input`.
+        pending_question:
+          type: string
+          description: The unanswered question blocking this node, present
+            only when pause_reason is "awaiting_input".
+        queued_messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/QueuedMessage"
+          description: The node's steer queue - messages waiting for its next
+            turn boundary.
         output_preview:
           type: string
         error:

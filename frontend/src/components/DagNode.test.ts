@@ -219,6 +219,66 @@ describe('DagNode - token badge shows cached tokens alongside the total', () => 
   })
 })
 
+// #962: the ⋮ menu's Start/Pause/Stop verb enablement per node status - the
+// wire's legal-transition table (dag.CanTransition), read off the opened
+// menu's actual button labels.
+describe('DagNode - verb enablement per status (#962)', () => {
+  let root: ReturnType<typeof createRoot> | undefined
+  let host: HTMLDivElement | undefined
+
+  afterEach(() => {
+    act(() => root?.unmount())
+    host?.remove()
+    root = undefined
+    host = undefined
+  })
+
+  function openMenuLabels(status: NodeState['status']): string[] {
+    // @ts-expect-error react act environment flag
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    act(() => {
+      root!.render(createElement(DagNode, {
+        node, state: { status }, runs: [], answer: '', isFinal: false,
+        onCancel: () => {}, onPause: () => {}, onResume: () => {}, onQueueMessage: () => {},
+      }))
+    })
+    const toggle = Array.from(host.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Node actions')
+    if (!toggle) return [] // no menu at all - terminal status
+    act(() => { toggle.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    return Array.from(host.querySelectorAll('[role="menuitem"]')).map(b => b.textContent ?? '')
+  }
+
+  it('queued: Start + Stop, no Pause', () => {
+    const labels = openMenuLabels('queued')
+    expect(labels.some(l => l.includes('Start'))).toBe(true)
+    expect(labels.some(l => l.includes('Stop'))).toBe(true)
+    expect(labels.some(l => l.includes('Pause'))).toBe(false)
+  })
+
+  it('running: Pause + Stop, no Start', () => {
+    const labels = openMenuLabels('running')
+    expect(labels.some(l => l.includes('Pause'))).toBe(true)
+    expect(labels.some(l => l.includes('Stop'))).toBe(true)
+    expect(labels.some(l => l.includes('Start'))).toBe(false)
+  })
+
+  it('paused: Start + Stop, no Pause', () => {
+    const labels = openMenuLabels('paused')
+    expect(labels.some(l => l.includes('Start'))).toBe(true)
+    expect(labels.some(l => l.includes('Stop'))).toBe(true)
+    expect(labels.some(l => l.includes('Pause'))).toBe(false)
+  })
+
+  it('done/failed/cancelled: no ⋮ menu at all - nothing legal', () => {
+    for (const status of ['done', 'failed', 'cancelled'] as const) {
+      expect(openMenuLabels(status)).toEqual([])
+    }
+  })
+})
+
 describe('DagNode - context meter', () => {
   const meterNode: DagNodeDef = { ...node, context_window: 262_144 }
 
