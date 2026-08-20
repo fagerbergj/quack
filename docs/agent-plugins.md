@@ -99,6 +99,23 @@ it. quack:
   (`workspace.WrapArgv`) — the plugin root read-only, `PLUGIN_DATA` writable,
   a hermetic `PATH`, nothing else reachable.
 
+### One deliberate divergence: `cwd`
+
+§7.2.1 defaults a server's working directory to the plugin root and permits
+`${PLUGIN_ROOT}`-rooted values. quack instead puts `cwd` inside `PLUGIN_DATA`
+always, and refuses a `cwd` that names the plugin root.
+
+A sandboxed child's own working directory is necessarily writable — under
+landlock the work grant *is* the cwd, and landlock unions per-path rules, so
+listing the root as read-only alongside it would not take the write away. A
+server that can write its own root can rewrite the `skills/` that get injected
+into agent prompts, and its own `mcp.json` across restarts. Read-only root
+wins over the cwd default.
+
+The blast radius is small: the root stays readable, so `./bin/...` commands,
+`${PLUGIN_ROOT}` arguments, and `${PLUGIN_ROOT}` env values all work
+unchanged. Only the working directory differs.
+
 This half is portable on purpose. A quack plugin whose capability is a tool
 is installable by any conformant Agent Plugins host, unchanged.
 
@@ -155,6 +172,7 @@ quack follows it everywhere the failure only costs a capability:
 | `mcp.json` broken or version-mismatched | Warn, MCP disabled for that plugin only |
 | One `mcp.json` server entry invalid | Warn, skip that entry |
 | MCP server fails to start or list tools | Warn, its tools are absent |
+| MCP server hangs on connect or listing | Warn after 20s, its tools are absent |
 | Foreign `extensions` namespace, any contents | Ignored, never validated (§8) |
 | **Our namespace block malformed** | **Boot error** |
 | **Declared module not linked** | **Boot error** |

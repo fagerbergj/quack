@@ -55,8 +55,13 @@ func TestCheckPluginConfig(t *testing.T) {
 		t.Errorf("configured required plugin: %v", err)
 	}
 	// Present-but-empty is the failure the namespace block is declaring.
+	// The shape an operator actually types is `extensions: {usage: {}}` - a
+	// mapping node with no content, not a zero Node.
+	if err := checkPluginConfig([]plugin.Plugin{required}, map[string]yaml.Node{"usage": node(t, "{}")}); err == nil {
+		t.Error("empty mapping for config:required = nil, want a boot error")
+	}
 	if err := checkPluginConfig([]plugin.Plugin{required}, map[string]yaml.Node{"usage": {}}); err == nil {
-		t.Error("empty block for config:required = nil, want a boot error")
+		t.Error("zero node for config:required = nil, want a boot error")
 	}
 	// A skill-only or optional-config plugin keeps warn-and-skip semantics.
 	if err := checkPluginConfig([]plugin.Plugin{optional}, map[string]yaml.Node{"noop": {}}); err != nil {

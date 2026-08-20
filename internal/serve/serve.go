@@ -85,9 +85,9 @@ const (
 // plugin root's skills directory (internal/plugin discovery) - the disk-only
 // view both newSkillSource and acpSkillPaths compare the embedded dotagents
 // fallback against.
-func resolvedSkillSource(pluginRoots []string) skill.Source {
+func resolvedSkillSource(skillDirs []string) skill.Source {
 	sources := []skill.Source{skill.NewFileSystemSource(bundledir.SubFS("skills"))}
-	for _, dir := range plugin.ResolveSkillDirs(pluginRoots) {
+	for _, dir := range skillDirs {
 		sources = append(sources, skill.NewFileSystemSource(os.DirFS(dir)))
 	}
 	return skill.NewMergedSource(sources...)
@@ -99,9 +99,9 @@ func resolvedSkillSource(pluginRoots []string) skill.Source {
 // unconditionally, since a dotagents plugin root that DID resolve from disk
 // must never also get the embedded copy (MergedSource errors on a skill
 // defined by two sources at once).
-func missingDotagentsSkillNames(pluginRoots []string) []string {
+func missingDotagentsSkillNames(skillDirs []string) []string {
 	have := map[string]bool{}
-	if fms, err := resolvedSkillSource(pluginRoots).ListFrontmatters(context.Background()); err == nil {
+	if fms, err := resolvedSkillSource(skillDirs).ListFrontmatters(context.Background()); err == nil {
 		for _, fm := range fms {
 			have[fm.Name] = true
 		}
@@ -121,9 +121,9 @@ func missingDotagentsSkillNames(pluginRoots []string) []string {
 // newSkillSource builds the skill toolset Source: resolvedSkillSource, then
 // dotagentsEmbeddedSkills backfills any names discovery didn't resolve from
 // disk, so a standalone install with no repo checkout still gets it.
-func newSkillSource(pluginRoots []string) skill.Source {
-	resolved := resolvedSkillSource(pluginRoots)
-	backfill := missingDotagentsSkillNames(pluginRoots)
+func newSkillSource(skillDirs []string) skill.Source {
+	resolved := resolvedSkillSource(skillDirs)
+	backfill := missingDotagentsSkillNames(skillDirs)
 	if len(backfill) == 0 {
 		return resolved
 	}
@@ -414,7 +414,8 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		return nil, nil, "", err
 	}
 
-	builtinSkillSrc := newSkillSource(cfg.PluginRoots())
+	pluginSkillDirs := plugin.SkillDirs(plugins)
+	builtinSkillSrc := newSkillSource(pluginSkillDirs)
 	builtinSkillSrc = workflowcatalog.Wrap(builtinSkillSrc, workflowcatalog.FromConfig(cfg.Workflows, cfg.Revision))
 	skillSrc := skillsource.New(builtinSkillSrc, jail, localUserID)
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
@@ -547,7 +548,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	}
 
 	var setupFn dag.SetupFunc
-	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(cfg, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, deliver, nodeCancelled, &setupFn, artifacts)
+	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(cfg, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, pluginSkillDirs, deliver, nodeCancelled, &setupFn, artifacts)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("agent build failed: %w", err)
 	}
@@ -738,7 +739,7 @@ func (a gitCredentialAdapter) GitCredential(ctx context.Context, rawURL string) 
 }
 
 // buildAgents loads each agent bundle, builds its model and tools, exposes over A2A, returns client map.
-func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []tool.Tool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, setupOut *dag.SetupFunc, artifacts artifact.Service) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, model.LLM, error) {
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []tool.Tool, pluginSkillDirs []string, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, setupOut *dag.SetupFunc, artifacts artifact.Service) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, model.LLM, error) {
 	nodeServers := newPerNodeServers()
 
 	nodeScope := func(ctx context.Context) memory.Scope {
@@ -904,6 +905,13 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 
 	extToolsByName := make(map[string]tool.Tool, len(extTools))
 	for _, t := range extTools {
+		// Plugin MCP tool names come from third-party mcp.json authors, so a
+		// collision with an SDK extension's tool is plausible and silent -
+		// last-wins would shadow it with no trace.
+		if _, dup := extToolsByName[t.Name()]; dup {
+			slog.Warn("extension tool name collision; the later registration wins",
+				"component", "startup", "tool", t.Name())
+		}
 		extToolsByName[t.Name()] = t
 	}
 
@@ -955,7 +963,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			}
 			wsBlock := workspace.PromptBlock(workspaceCaps, cfg.Workspace.CheckCommands)
 			preamble := promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, nil, skillFms, behaviour, grading, wsBlock)
-			env := opencodeEnv(prov, ac, acpSkillPaths(cfg.PluginRoots()), workspaceCaps)
+			env := opencodeEnv(prov, ac, acpSkillPaths(pluginSkillDirs), workspaceCaps)
 			env = append(env, acpChildEnv(cfg.Workspace.Env, ac.Acp.Env)...)
 			var permJudge func(ctx context.Context, toolName, title string, input map[string]any) (bool, string)
 			if safetyJudge != nil {
@@ -988,7 +996,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				Env:             env,
 				Replay:          acpReplay,
 				Caps:            workspaceCaps,
-				ExtraRO:         acpSkillPaths(cfg.PluginRoots()),
+				ExtraRO:         acpSkillPaths(pluginSkillDirs),
 				Home:            workspaceCaps.HomeDir,
 				Preamble:        preamble,
 				Jail:            jail,
@@ -1359,16 +1367,16 @@ func ensureExtractedDotagentsSkillNames(missing []string) {
 // with dotagents checked out on disk must not also get the extracted copy,
 // since opencode's skill loader may error (or worse, silently shadow) on a
 // duplicate name.
-func acpSkillPaths(pluginRoots []string) []string {
+func acpSkillPaths(skillDirs []string) []string {
 	var out []string
 	if abs, err := filepath.Abs("skills"); err == nil {
 		if st, err := os.Stat(abs); err == nil && st.IsDir() {
 			out = append(out, abs)
 		}
 	}
-	out = append(out, plugin.ResolveSkillDirs(pluginRoots)...)
+	out = append(out, skillDirs...)
 
-	if missing := missingDotagentsSkillNames(pluginRoots); len(missing) > 0 {
+	if missing := missingDotagentsSkillNames(skillDirs); len(missing) > 0 {
 		ensureExtractedDotagentsSkillNames(missing)
 		if st, err := os.Stat(extractedDotagentsSkillsDir); err == nil && st.IsDir() {
 			out = append(out, extractedDotagentsSkillsDir)

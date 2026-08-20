@@ -134,6 +134,13 @@ func parseMCPEntry(raw json.RawMessage) (*MCPServer, error) {
 // client-managed data directory (§9), and resolves command and cwd to
 // absolute, contained paths. env is returned as KEY=VALUE overlay entries
 // with the two reserved variables appended last, as §9.1 requires.
+//
+// cwd is always inside PLUGIN_DATA. §7.2.1 defaults it to the plugin root and
+// allows ${PLUGIN_ROOT}-rooted values, but a sandboxed child's own working
+// directory is necessarily writable, and a server that can rewrite its root
+// can rewrite the skills/ that reach agent prompts. quack keeps the root
+// read-only and diverges here on purpose - the root stays readable, so ./bin
+// commands and ${PLUGIN_ROOT} references are unaffected.
 func (s MCPServer) Launch(root, data string) (argv []string, env []string, cwd string, err error) {
 	expand := strings.NewReplacer("${"+envPluginRoot+"}", root, "${"+envPluginData+"}", data).Replace
 
@@ -153,19 +160,13 @@ func (s MCPServer) Launch(root, data string) (argv []string, env []string, cwd s
 	}
 	env = append(env, envPluginRoot+"="+root, envPluginData+"="+data)
 
-	// §7.2.1: cwd is plugin-relative, ${PLUGIN_ROOT}-rooted, or
-	// ${PLUGIN_DATA}-rooted, and must stay inside whichever base it names.
 	switch {
 	case s.Cwd == "":
-		cwd = root
-	case strings.HasPrefix(s.Cwd, "./"):
-		cwd, err = containedPath(root, s.Cwd)
+		cwd = data
 	case s.Cwd == "${"+envPluginData+"}" || strings.HasPrefix(s.Cwd, "${"+envPluginData+"}/"):
 		cwd, err = containedPath(data, strings.TrimPrefix(expand(s.Cwd), data))
-	case s.Cwd == "${"+envPluginRoot+"}" || strings.HasPrefix(s.Cwd, "${"+envPluginRoot+"}/"):
-		cwd, err = containedPath(root, strings.TrimPrefix(expand(s.Cwd), root))
 	default:
-		err = fmt.Errorf("cwd %q is not plugin-relative or rooted at a plugin variable", s.Cwd)
+		err = fmt.Errorf("cwd %q must be ${%s} or a path under it", s.Cwd, envPluginData)
 	}
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("cwd: %w", err)

@@ -118,14 +118,31 @@ func TestLaunch_ExpandsPlaceholdersAndSuppliesReservedVars(t *testing.T) {
 
 func TestLaunch_RejectsEscapingPaths(t *testing.T) {
 	for name, s := range map[string]MCPServer{
-		"command escapes": {Command: "./../../bin/sh"},
-		"cwd escapes":     {Command: "v", Cwd: "./../../etc"},
-		"cwd unrooted":    {Command: "v", Cwd: "/etc"},
+		"command escapes":  {Command: "./../../bin/sh"},
+		"cwd escapes data": {Command: "v", Cwd: "${PLUGIN_DATA}/../../etc"},
+		"cwd absolute":     {Command: "v", Cwd: "/etc"},
+		// The plugin root is read-only, so a cwd there is refused rather than
+		// silently made writable - see MCPServer.Launch.
+		"cwd at plugin root":    {Command: "v", Cwd: "${PLUGIN_ROOT}"},
+		"cwd plugin-relative":   {Command: "v", Cwd: "./work"},
+		"cwd under plugin root": {Command: "v", Cwd: "${PLUGIN_ROOT}/work"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, _, _, err := s.Launch("/p/root", "/p/data"); err == nil {
-				t.Fatal("Launch = nil error, want a containment error")
+				t.Fatal("Launch = nil error, want a cwd error")
 			}
 		})
+	}
+}
+
+// An omitted cwd lands in PLUGIN_DATA, not the plugin root: a child's working
+// directory is necessarily writable, and the root must stay read-only.
+func TestLaunch_DefaultCwdIsPluginData(t *testing.T) {
+	_, _, cwd, err := MCPServer{Command: "v"}.Launch("/p/root", "/p/data")
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if cwd != "/p/data" {
+		t.Errorf("cwd = %q, want /p/data", cwd)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"time"
 
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -21,6 +22,10 @@ import (
 	"github.com/fagerbergj/quack/internal/plugin"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
+
+// mcpEnumerateTimeout bounds the one blocking connect+ListTools a declared
+// server gets at boot. Per-call contexts govern everything after.
+const mcpEnumerateTimeout = 20 * time.Second
 
 // checkPluginModules matches every module a plugin declares under quack's
 // namespace against the modules actually linked into this binary. Go has no
@@ -115,8 +120,13 @@ func mcpServerTools(ctx context.Context, p plugin.Plugin, s plugin.MCPServer, da
 		return nil, err
 	}
 
-	// The plugin root is read-only to its own server; only PLUGIN_DATA is
-	// writable, which is what §9.1 promises the subprocess.
+	// WorkRoot pins the writable grant to PLUGIN_DATA. Without it
+	// landlockGrants falls back to cwd, and since landlock UNIONS per-path
+	// rules a root appearing in both lists would stay writable - a server
+	// able to rewrite the skills/ that reach agent prompts. cwd is inside
+	// data (see MCPServer.Launch) so the root is never re-added as an
+	// outside-cwd grant either.
+	caps.WorkRoot = data
 	wrapped := workspace.WrapArgv(cwd, argv, caps, []string{p.Root}, []string{data})
 	cmd := exec.Command(wrapped[0], wrapped[1:]...)
 	cmd.Dir = cwd
@@ -134,7 +144,11 @@ func mcpServerTools(ctx context.Context, p plugin.Plugin, s plugin.MCPServer, da
 	if err != nil {
 		return nil, err
 	}
-	return ts.Tools(bootToolCtx{ctx})
+	// §7.2.2 rule 5: a server that hangs on spawn, handshake, or listing must
+	// cost only its own tools. The startup context has no deadline of its own.
+	enumCtx, cancel := context.WithTimeout(ctx, mcpEnumerateTimeout)
+	defer cancel()
+	return ts.Tools(bootToolCtx{enumCtx})
 }
 
 // bootToolCtx satisfies agent.ReadonlyContext for the one call that needs it:

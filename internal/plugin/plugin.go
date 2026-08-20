@@ -127,13 +127,7 @@ func Resolve(roots []string) ([]Plugin, error) {
 // boot surfaces the same error through Resolve.
 func ResolveSkillDirs(roots []string) []string {
 	plugins, _ := Resolve(roots)
-	var dirs []string
-	for _, p := range plugins {
-		if p.SkillsDir != "" {
-			dirs = append(dirs, p.SkillsDir)
-		}
-	}
-	return dirs
+	return SkillDirs(plugins)
 }
 
 // resolveRoot returns nil, nil for a root that is skipped.
@@ -264,4 +258,17 @@ func containedPath(base, rel string) (string, error) {
 		return "", fmt.Errorf("%q escapes %q", rel, base)
 	}
 	return p, nil
+}
+
+// SkillDirs is the skills directories of already-resolved plugins, in order
+// and never deduped. Callers that resolved once at boot use this instead of
+// ResolveSkillDirs, which would re-read every manifest.
+func SkillDirs(plugins []Plugin) []string {
+	var dirs []string
+	for _, p := range plugins {
+		if p.SkillsDir != "" {
+			dirs = append(dirs, p.SkillsDir)
+		}
+	}
+	return dirs
 }
