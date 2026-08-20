@@ -237,3 +237,32 @@ func TestResumedNodeActuallyRuns(t *testing.T) {
 		t.Errorf("persisted (%q, %q) after resume; want (running, \"\")", status, reason)
 	}
 }
+
+// TestStartNodeOnLiveControlPersistsRunning: StartNode against a LIVE control
+// goes through resume(), whose store write (paused -> running) no other
+// store-wired test reaches - both restart tests use a fresh executor.
+func TestStartNodeOnLiveControlPersistsRunning(t *testing.T) {
+	fake := newFakeNodeStore()
+	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
+	ex, plan := newCoopExecutor(t, stub, 1)
+	ex.SetNodeStateStore(fake)
+
+	go func() {
+		<-stub.started
+		fake.set("chat", "n1", StatusRunning) // runlog's node_start would have landed by now
+		ex.PauseNode("chat", "n1", PauseUser)
+		if _, ok := ex.StartNode("chat", "n1"); !ok {
+			t.Error("StartNode returned false for a live node")
+		}
+		close(stub.unblock)
+	}()
+	events, _ := runPlanSSE(t, ex, plan, "chat")
+
+	if got := nodeEnd(events, "n1"); got != stream.EventNodeDone {
+		t.Fatalf("n1 ended as %q; want node_done (pause was cleared before the gate)", got)
+	}
+	status, reason, _ := fake.get("chat", "n1")
+	if status != string(StatusRunning) || reason != "" {
+		t.Errorf("persisted (%q, %q); want (running, \"\") - resume() must persist the legal target", status, reason)
+	}
+}
