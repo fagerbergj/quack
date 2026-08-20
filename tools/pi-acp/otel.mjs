@@ -75,6 +75,7 @@ export class Otel {
     const attrs = [
       attr("gen_ai.operation.name", "execute_tool"),
       attr("gen_ai.tool.name", t.name),
+      attr("tool_call_id", id),
       attr("gen_ai.tool.call.arguments", JSON.stringify(t.args ?? {})),
     ];
     if (resultText) attrs.push(attr("gen_ai.tool.call.result", resultText));
