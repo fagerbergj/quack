@@ -99,7 +99,7 @@ COPY --from=backend /go/pkg/mod /usr/local/go/pkg/mod
 # (--no-session).
 COPY --from=pi /opt/pi/node_modules /usr/local/lib/pi/node_modules
 RUN ln -s /usr/local/lib/pi/node_modules/.bin/pi /usr/local/bin/pi
-COPY tools/pi-acp/pi-acp.mjs tools/pi-acp/mcp-client.mjs /usr/local/lib/pi-acp/
+COPY tools/pi-acp/pi-acp.mjs tools/pi-acp/mcp-client.mjs tools/pi-acp/otel.mjs /usr/local/lib/pi-acp/
 COPY --from=frontend /usr/local/bin/node /usr/local/bin/node
 COPY --from=frontend /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
