@@ -632,7 +632,7 @@ type MessageOutputItemType string
 
 // NodeStartBody defines model for NodeStartBody.
 type NodeStartBody struct {
-	// Content Answer to the node's pending_question, required only when the node is paused with pause_reason "awaiting_input" - the same field name SendMessageBody uses, since a node's question and the chat's are answered the same way. Ignored for every other pause reason.
+	// Content Answer to the node's pending_question. Required when the node is paused with pause_reason "awaiting_input" (a blank answer is a 400) - the same field name SendMessageBody uses, since a node's question and the chat's are answered the same way. Ignored for every other status; a non-awaiting start is a fresh scoped re-run of the node and its descendants.
 	Content *string `json:"content,omitempty"`
 }
 

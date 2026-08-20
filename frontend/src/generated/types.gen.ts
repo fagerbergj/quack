@@ -241,7 +241,7 @@ export type PauseReason = 'user' | 'shutdown' | 'awaiting_input';
 
 export type NodeStartBody = {
     /**
-     * Answer to the node's pending_question, required only when the node is paused with pause_reason "awaiting_input" - the same field name SendMessageBody uses, since a node's question and the chat's are answered the same way. Ignored for every other pause reason.
+     * Answer to the node's pending_question. Required when the node is paused with pause_reason "awaiting_input" (a blank answer is a 400) - the same field name SendMessageBody uses, since a node's question and the chat's are answered the same way. Ignored for every other status; a non-awaiting start is a fresh scoped re-run of the node and its descendants.
      */
     content?: string;
 };
@@ -910,7 +910,7 @@ export type StopNodeErrors = {
      */
     404: ErrorResponse;
     /**
-     * Illegal transition (already terminal); body names the allowed target statuses for the node's current status
+     * Illegal transition (already terminal), or nothing live to act on (e.g. a queued node not yet dispatched); body names the allowed target statuses for the node's current status
      */
     409: TransitionError;
 };
