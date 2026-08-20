@@ -1,7 +1,9 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1894,5 +1896,43 @@ workflows:
 	}
 	if shape.Nodes[1].Agent != "synthesizer" || len(shape.Nodes[1].DependsOn) != 1 || shape.Nodes[1].DependsOn[0] != "transcribe" {
 		t.Errorf("summarize node = %+v", shape.Nodes[1])
+	}
+}
+
+// TestAcpAgentSkillsWarns: skills: on an ACP-harness agent is silently
+// ignored at runtime (workers get the full library), so loading must warn.
+func TestAcpAgentSkillsWarns(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+
+	_, err := LoadForSandbox(writeTemp(t, `
+providers:
+  default:
+    kind: openai
+    endpoint: ${QUACK_LLM_ENDPOINT}
+stores:
+  main: { kind: sqlite, url: ${QUACK_DATABASE_URL} }
+session: { store: main }
+orchestrator:
+  provider: default
+  model: ${QUACK_ORCH_MODEL}
+agents:
+  code-reviewer:
+    bundle: agents/code-reviewer
+    provider: default
+    model: ${QUACK_CODER_MODEL}
+    skills: [contribute]
+    acp: { command: ["opencode", "acp"], read_only: true }
+workspace:
+  root: /tmp/quack-acp-skills-warn-test
+`))
+	if err != nil {
+		t.Fatalf("LoadForSandbox: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "no effect on an ACP-harness agent") || !strings.Contains(out, "agent=code-reviewer") {
+		t.Errorf("expected a warning naming code-reviewer, got: %q", out)
 	}
 }
