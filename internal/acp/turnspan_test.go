@@ -2,6 +2,7 @@ package acp
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	sdk "github.com/coder/acp-go-sdk"
@@ -118,5 +119,55 @@ func TestTurnSpans_UnfinishedToolCallStillExports(t *testing.T) {
 	turns.closeAll() // idempotent
 	if n := len(exp.GetSpans()); n != 1 {
 		t.Errorf("second closeAll produced %d spans, want 1", n)
+	}
+}
+
+// TestTurnSpans_ToolCallDetailAttributes: the span carries the actual call -
+// arguments from rawInput, result from the terminal update - so a runaway
+// tool call is diagnosable from Langfuse without querying chat_events.
+func TestTurnSpans_ToolCallDetailAttributes(t *testing.T) {
+	exp := withTestTracer(t)
+	turns := newTurnSpans(context.Background(), "code-reviewer")
+
+	turns.observe(sdk.StartToolCall("t1", "go test ./...",
+		sdk.WithStartKind(sdk.ToolKindExecute),
+		sdk.WithStartRawInput(map[string]any{"command": "go test ./..."})))
+	turns.observe(sdk.UpdateToolCall("t1",
+		sdk.WithUpdateStatus(sdk.ToolCallStatusCompleted),
+		sdk.WithUpdateRawOutput(map[string]any{"output": "ok\tquack\t0.1s"})))
+
+	attrs := attrsOf(spanByName(t, exp, "quack.acp.tool.execute"))
+	if got := attrs[otelobs.GenAIToolCallArguments]; got != `{"command":"go test ./..."}` {
+		t.Errorf("%s = %q, want the rawInput JSON", otelobs.GenAIToolCallArguments, got)
+	}
+	if got := attrs[otelobs.GenAIToolCallResult]; got != "{\"output\":\"ok\\tquack\\t0.1s\"}" {
+		t.Errorf("%s = %q, want the rawOutput JSON", otelobs.GenAIToolCallResult, got)
+	}
+}
+
+// TestTurnSpans_ContentFallbackAndTruncation: with no rawOutput the result
+// comes from the content text blocks, and oversized values are capped at
+// attrCap with the shim's truncation marker.
+func TestTurnSpans_ContentFallbackAndTruncation(t *testing.T) {
+	exp := withTestTracer(t)
+	turns := newTurnSpans(context.Background(), "code-reviewer")
+
+	big := strings.Repeat("x", attrCap+100)
+	turns.observe(sdk.StartToolCall("t1", "cat big.log",
+		sdk.WithStartKind(sdk.ToolKindExecute),
+		sdk.WithStartRawInput(map[string]any{"command": big})))
+	turns.observe(sdk.UpdateToolCall("t1",
+		sdk.WithUpdateStatus(sdk.ToolCallStatusCompleted),
+		sdk.WithUpdateContent([]sdk.ToolCallContent{sdk.ToolContent(sdk.TextBlock(big))})))
+
+	attrs := attrsOf(spanByName(t, exp, "quack.acp.tool.execute"))
+	for _, k := range []string{otelobs.GenAIToolCallArguments, otelobs.GenAIToolCallResult} {
+		v := attrs[k]
+		if !strings.HasSuffix(v, "…[truncated]") {
+			t.Errorf("%s does not end with the truncation marker: ...%q", k, v[len(v)-20:])
+		}
+		if len(v) > attrCap+len("…[truncated]") {
+			t.Errorf("%s is %d bytes, want at most attrCap+marker", k, len(v))
+		}
 	}
 }
