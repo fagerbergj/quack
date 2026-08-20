@@ -234,10 +234,8 @@ export const Paused: Story = {
   ),
 }
 
-// #962: the three pause_reason values, each with its own header label -
-// "paused · by you" / "paused · shutdown" / "paused · awaiting input".
-export const PausedByUser: Story = { ...Paused }
-
+// #962: Paused above already covers pause_reason "user" ("paused · by you");
+// the other two reasons get their own header labels below.
 export const PausedShutdown: Story = {
   render: () => (
     <DagNode
@@ -345,7 +343,7 @@ export const NeedsInput: Story = {
   },
 }
 
-// The ⋮ menu opened on a running node: Pause + Cancel one click away, plus
+// The ⋮ menu opened on a running node: Pause + Stop one click away, plus
 // "Queue a message…" (opens the popup - it needs the input).
 export const OverflowMenuRunning: Story = {
   render: () => (
@@ -366,7 +364,7 @@ export const OverflowMenuRunning: Story = {
   },
 }
 
-// The ⋮ menu opened on a paused node: Resume + Cancel.
+// The ⋮ menu opened on a paused node: Start + Stop.
 export const OverflowMenuPaused: Story = {
   render: () => (
     <DagNode
@@ -385,7 +383,7 @@ export const OverflowMenuPaused: Story = {
   },
 }
 
-// The ⋮ menu opened on a needs_input node: Cancel + "Answer question…".
+// The ⋮ menu opened on a needs_input node: Stop + "Answer question…".
 export const OverflowMenuNeedsInput: Story = {
   render: () => (
     <DagNode

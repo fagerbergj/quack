@@ -287,10 +287,84 @@ func TestStartNode_QueuedOK(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got.Status != schema.NodeStatusQueued {
-		t.Errorf("Status = %q, want %q (optimistic dispatch)", got.Status, schema.NodeStatusQueued)
+	if got.Status != schema.NodeStatusRunning {
+		t.Errorf("Status = %q, want %q (the node's new state)", got.Status, schema.NodeStatusRunning)
 	}
 	time.Sleep(50 * time.Millisecond)
+}
+
+// TestStartStopNode_UnknownNode404: a node id absent from the chat's latest
+// plan must 404 - GetDagNode returns (nil, nil) for a missing row, so
+// falling through would treat it as a startable queued node.
+func TestStartStopNode_UnknownNode404(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID := "c1", "p1"
+	seedPlan(t, h, chatID, planID, "n1")
+
+	if rec := postNodeStart(t, h, chatID, "ghost", schema.NodeStartBody{}); rec.Code != http.StatusNotFound {
+		t.Errorf("start: status = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := postNodeStop(t, h, chatID, "ghost"); rec.Code != http.StatusNotFound {
+		t.Errorf("stop: status = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestStartNode_FromRunning409 also pins the 409 body's Allowed targets.
+func TestStartNode_FromRunning409(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID, nodeID := "c1", "p1", "n1"
+	seedPlan(t, h, chatID, planID, nodeID)
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "running"}); err != nil {
+		t.Fatalf("seed running node: %v", err)
+	}
+
+	rec := postNodeStart(t, h, chatID, nodeID, schema.NodeStartBody{})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+	var got schema.TransitionError
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	want := map[schema.NodeStatus]bool{}
+	for _, a := range got.Allowed {
+		want[a] = true
+	}
+	if !want[schema.NodeStatusPaused] || !want[schema.NodeStatusCancelled] || !want[schema.NodeStatusDone] {
+		t.Errorf("Allowed = %v, should name running's legal targets", got.Allowed)
+	}
+}
+
+// TestStartNode_AwaitingInputBlankAnswer400: a parked question must not
+// silently resume with an empty payload.
+func TestStartNode_AwaitingInputBlankAnswer400(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID, nodeID := "c1", "p1", "n1"
+	seedPlan(t, h, chatID, planID, nodeID)
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "needs_input", PendingQuestion: "which region?"}); err != nil {
+		t.Fatalf("seed parked node: %v", err)
+	}
+
+	if rec := postNodeStart(t, h, chatID, nodeID, schema.NodeStartBody{}); rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestUpdateNodeStatus_PauseReasonAwaitingInputRejected: awaiting_input is
+// system-owned; a client pause may only say user/shutdown.
+func TestUpdateNodeStatus_PauseReasonAwaitingInputRejected(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID, nodeID := "c1", "p1", "n1"
+	seedPlan(t, h, chatID, planID, nodeID)
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "running"}); err != nil {
+		t.Fatalf("seed running node: %v", err)
+	}
+
+	reason := schema.PauseReason("awaiting_input")
+	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusPaused, Reason: &reason})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
 }
 
 // TestStartNode_PausedOK mirrors TestUpdateNodeStatus_ResumePausedNode for

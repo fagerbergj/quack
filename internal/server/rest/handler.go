@@ -645,6 +645,54 @@ func (h *Handler) UpdateResponseStatus(w http.ResponseWriter, r *http.Request, c
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// loadPlanNode is the shared prologue for the node lifecycle endpoints:
+// resolve the chat's latest plan, 404 unless nodeID is actually in it
+// (GetDagNode returns (nil, nil) for a missing row, so the row alone cannot
+// prove existence), and read the persisted status (missing row = queued).
+// ok=false means the response has been written.
+func (h *Handler) loadPlanNode(w http.ResponseWriter, r *http.Request, chatID, nodeID string) (dp *store.DagPlan, dn *store.DagNode, current dag.NodeStatus, ok bool) {
+	dp, err := h.store.GetLatestDagPlan(r.Context(), chatID)
+	if err != nil || dp == nil {
+		errMsg(w, http.StatusNotFound, "no plan for this chat")
+		return nil, nil, "", false
+	}
+	var planData stream.DagPlanData
+	if err := json.Unmarshal([]byte(dp.PlanJSON), &planData); err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return nil, nil, "", false
+	}
+	nodeFound := false
+	for _, n := range planData.Nodes {
+		if n.ID == nodeID {
+			nodeFound = true
+			break
+		}
+	}
+	if !nodeFound {
+		errMsg(w, http.StatusNotFound, "no such node in the plan")
+		return nil, nil, "", false
+	}
+	dn, err = h.store.GetDagNode(r.Context(), dp.ID, nodeID)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return nil, nil, "", false
+	}
+	current = dag.StatusQueued
+	if dn != nil {
+		current = dag.NodeStatus(dn.Status)
+	}
+	return dp, dn, current, true
+}
+
+// wireStatus maps the legacy needs_input spelling to paused, the same
+// normalization dagNodeState applies - 409 bodies must speak it too.
+func wireStatus(s dag.NodeStatus) schema.NodeStatus {
+	if s == dag.StatusNeedsInput {
+		return schema.NodeStatusPaused
+	}
+	return schema.NodeStatus(s)
+}
+
 // Transitions one DAG node's status via dag.CanTransition; illegal transitions 409 with the allowed targets.
 func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
 	var body schema.NodeStatusUpdateBody
@@ -658,43 +706,15 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 	}
 	target := dag.NodeStatus(body.Status)
 
-	// Load plan/node defs (to confirm node exists) and persisted outputs a retry reuses.
-	dp, err := h.store.GetLatestDagPlan(r.Context(), chatID)
-	if err != nil || dp == nil {
-		errMsg(w, http.StatusNotFound, "no plan for this chat")
+	dp, dn, current, ok := h.loadPlanNode(w, r, chatID, nodeID)
+	if !ok {
 		return
-	}
-	var planData stream.DagPlanData
-	if err := json.Unmarshal([]byte(dp.PlanJSON), &planData); err != nil {
-		httpError(w, http.StatusInternalServerError, err)
-		return
-	}
-	nodeFound := false
-	for _, n := range planData.Nodes {
-		if n.ID == nodeID {
-			nodeFound = true
-			break
-		}
-	}
-	if !nodeFound {
-		errMsg(w, http.StatusNotFound, "no such node in the plan")
-		return
-	}
-
-	dn, err := h.store.GetDagNode(r.Context(), dp.ID, nodeID)
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, err)
-		return
-	}
-	current := dag.StatusQueued
-	if dn != nil {
-		current = dag.NodeStatus(dn.Status)
 	}
 
 	if !dag.CanTransition(current, target) {
 		writeJSON(w, http.StatusConflict, schema.TransitionError{
 			Error:   fmt.Sprintf("illegal transition: %s -> %s", current, target),
-			Current: schema.NodeStatus(current),
+			Current: wireStatus(current),
 			Allowed: allowedStatuses(current),
 		})
 		return
@@ -707,7 +727,7 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 		if !h.orch.CancelNode(chatID, nodeID) {
 			writeJSON(w, http.StatusConflict, schema.TransitionError{
 				Error:   "node is not cancellable right now (no live run - it may be queued but not yet dispatched, or already finished); nothing was cancelled",
-				Current: schema.NodeStatus(current),
+				Current: wireStatus(current),
 				Allowed: allowedStatuses(current),
 			})
 			return
@@ -718,10 +738,16 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 		if body.Reason != nil && *body.Reason != "" {
 			reason = dag.PauseReason(*body.Reason)
 		}
+		// awaiting_input is system-owned (the worker's interrupt sets it, and
+		// markPaused treats it specially); clients may only pause as user/shutdown.
+		if reason != dag.PauseUser && reason != dag.PauseShutdown {
+			errMsg(w, http.StatusBadRequest, "reason must be \"user\" or \"shutdown\"")
+			return
+		}
 		if !h.orch.PauseNode(chatID, nodeID, reason) {
 			writeJSON(w, http.StatusConflict, schema.TransitionError{
 				Error:   "node is not pausable right now (no live run); nothing was paused",
-				Current: schema.NodeStatus(current),
+				Current: wireStatus(current),
 				Allowed: allowedStatuses(current),
 			})
 			return
@@ -754,24 +780,14 @@ func (h *Handler) StartNode(w http.ResponseWriter, r *http.Request, chatID schem
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&body) // optional body - no answer needed outside awaiting_input
 	}
-	dp, err := h.store.GetLatestDagPlan(r.Context(), chatID)
-	if err != nil || dp == nil {
-		errMsg(w, http.StatusNotFound, "no plan for this chat")
+	dp, dn, current, ok := h.loadPlanNode(w, r, chatID, nodeID)
+	if !ok {
 		return
-	}
-	dn, err := h.store.GetDagNode(r.Context(), dp.ID, nodeID)
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, err)
-		return
-	}
-	current := dag.StatusQueued
-	if dn != nil {
-		current = dag.NodeStatus(dn.Status)
 	}
 	if !dag.CanTransition(current, dag.StatusRunning) {
 		writeJSON(w, http.StatusConflict, schema.TransitionError{
 			Error:   fmt.Sprintf("illegal transition: %s -> running", current),
-			Current: schema.NodeStatus(current),
+			Current: wireStatus(current),
 			Allowed: allowedStatuses(current),
 		})
 		return
@@ -784,38 +800,33 @@ func (h *Handler) StartNode(w http.ResponseWriter, r *http.Request, chatID schem
 	if body.Content != nil {
 		content = strings.TrimSpace(*body.Content)
 	}
+	awaiting := dn != nil && (current == dag.StatusNeedsInput || dag.PauseReason(dn.PauseReason) == dag.PauseAwaitingInput)
+	if awaiting && content == "" {
+		errMsg(w, http.StatusBadRequest, "content is required: this node is paused on a question and must not resume with a blank answer")
+		return
+	}
 	// Only a HITL park re-enters via Orchestrator.StartNode (the answer must
 	// reach ADK's Resume). Any other start is the scoped node+descendants
 	// re-run - a full-plan re-entry would re-execute done siblings (#964).
-	if dn != nil && (dag.NodeStatus(dn.Status) == dag.StatusNeedsInput || dag.PauseReason(dn.PauseReason) == dag.PauseAwaitingInput) {
+	if awaiting {
 		h.startNodeAsync(dp, chatID, nodeID, content)
 	} else {
 		h.retryNodeAsync(dp, chatID, nodeID, "")
 	}
-	writeJSON(w, http.StatusOK, schema.DagNodeState{Status: schema.NodeStatusQueued})
+	writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusRunning))
 }
 
 // StopNode is the explicit per-node "stop" transition: any non-terminal
 // status -> cancelled. Cooperative for a running node; immediate otherwise.
 func (h *Handler) StopNode(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
-	dp, err := h.store.GetLatestDagPlan(r.Context(), chatID)
-	if err != nil || dp == nil {
-		errMsg(w, http.StatusNotFound, "no plan for this chat")
+	_, dn, current, ok := h.loadPlanNode(w, r, chatID, nodeID)
+	if !ok {
 		return
-	}
-	dn, err := h.store.GetDagNode(r.Context(), dp.ID, nodeID)
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, err)
-		return
-	}
-	current := dag.StatusQueued
-	if dn != nil {
-		current = dag.NodeStatus(dn.Status)
 	}
 	if !dag.CanTransition(current, dag.StatusCancelled) {
 		writeJSON(w, http.StatusConflict, schema.TransitionError{
 			Error:   fmt.Sprintf("illegal transition: %s -> cancelled", current),
-			Current: schema.NodeStatus(current),
+			Current: wireStatus(current),
 			Allowed: allowedStatuses(current),
 		})
 		return
@@ -823,7 +834,7 @@ func (h *Handler) StopNode(w http.ResponseWriter, r *http.Request, chatID schema
 	if !h.orch.StopNode(chatID, nodeID) {
 		writeJSON(w, http.StatusConflict, schema.TransitionError{
 			Error:   "node is not stoppable right now (no live run - it may be queued but not yet dispatched, or already finished); nothing was stopped",
-			Current: schema.NodeStatus(current),
+			Current: wireStatus(current),
 			Allowed: allowedStatuses(current),
 		})
 		return

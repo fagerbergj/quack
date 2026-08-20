@@ -728,7 +728,9 @@ export default function Chat() {
                             </summary>
                             <div className="p-2 space-y-3">
                               {orchActivity.length > 0 && <ActivityList activity={orchActivity} />}
-                              <DagView dag={liveDag} onRetryNode={handleRetryNode} />
+                              {/* Start/Stop stay wired post-run: a paused node ends the
+                                  turn, so this is exactly where Start must work. */}
+                              <DagView dag={liveDag} onRetryNode={handleRetryNode} onResumeNode={handleResumeNode} onCancelNode={handleCancelNode} onAnswerNodeQuestion={handleAnswerNode} />
                             </div>
                           </details>
                         ) : (
@@ -738,7 +740,6 @@ export default function Chat() {
                               dag={liveDag}
                               onCancelNode={handleCancelNode}
                               onPauseNode={handlePauseNode}
-                              onResumeNode={handleResumeNode}
                               onQueueNodeMessage={handleQueueNodeMessage}
                               onEditQueuedMessage={handleEditQueuedMessage}
                               onRemoveQueuedMessage={handleRemoveQueuedMessage}

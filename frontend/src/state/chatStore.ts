@@ -316,7 +316,11 @@ export class ChatStore {
   // terminal cancelled state; the rest of the DAG keeps going
   // (continue-but-warn). The local stream stays open.
   stopNode(chatId: string, nodeId: string): void {
-    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/stop`, { method: 'POST' }).catch(() => {})
+    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/stop`, { method: 'POST' }).then(async res => {
+      if (res.ok) return
+      const body = (await res.json().catch(() => ({}))) as { error?: string }
+      this.markNodeError(chatId, nodeId, body.error || `stop rejected (HTTP ${res.status})`)
+    }).catch(() => {})
   }
 
   // pauseNode suspends one running node at its next turn boundary, keeping its
@@ -341,7 +345,14 @@ export class ChatStore {
   // Mirrors retryNode's optimistic local reset + resubscribe.
   startNode(chatId: string, nodeId: string, answer?: string): void {
     const s = this.states.get(chatId)
-    if (!s?.live?.dag || s.live.streaming) return
+    if (!s?.live?.dag) return
+    if (s.live.streaming) {
+      // Mid-run start would race the open stream's run; say so instead of
+      // silently eating the click (the menu hides Start while streaming, but
+      // popup/bubble paths can still land here).
+      this.markNodeError(chatId, nodeId, 'a run is still streaming; wait for it to finish before starting this node')
+      return
+    }
     const dag = s.live.dag
     const affected = retrySet(dag.edges, nodeId)
     const nodeStates = { ...dag.nodeStates }
@@ -1131,7 +1142,7 @@ export function plainReplyAttribution(turn: Turn): Attribution {
 export function pendingNodeQuestion(dag: DagTurnState): { nodeId: string; agent: string; question: string } | undefined {
   for (const n of dag.nodes) {
     const st = dag.nodeStates[n.id]
-    if (st?.status === 'needs_input' && st.question) {
+    if ((st?.status === 'needs_input' || (st?.status === 'paused' && st.pauseReason === 'awaiting_input')) && st.question) {
       return { nodeId: n.id, agent: n.agent, question: st.question }
     }
   }

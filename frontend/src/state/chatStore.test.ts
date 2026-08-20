@@ -555,6 +555,24 @@ describe('ChatStore - mid-node steering', () => {
     )
   })
 
+  it('startNode mid-stream is refused with a node error note, not a silent no-op', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    FakeEventSource.last = null
+    // Stream stays OPEN (no close, no done): the run is mid-flight when
+    // startNode is called, so submit is deliberately not awaited.
+    const sse = `event: dag_plan\ndata: ${JSON.stringify({ plan_id: 'p', nodes: [{ id: 'a', agent: 'r', task: 't', depends_on: [] }], edges: [] })}\n\nevent: node_paused\ndata: {"node_id":"a"}\n\n`
+    const open = new ReadableStream({ start(ctrl) { ctrl.enqueue(new TextEncoder().encode(sse)) } })
+    fetchMock.mockResolvedValueOnce(new Response(open, { status: 200, headers: { 'Content-Type': 'text/event-stream' } }))
+    void store.submit('c', 'go')
+    await new Promise(r => setTimeout(r, 20))
+    expect(store.get('c').live?.streaming).toBe(true)
+
+    fetchMock.mockClear()
+    store.startNode('c', 'a')
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(store.get('c').live?.dag?.nodeStates['a']?.error).toMatch(/still streaming/)
+  })
+
   it('queueNodeMessage POSTs to the queue endpoint and ignores empty text', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ id: 'q1', text: 'do X', delivered: false, created_at: '2026-01-01T00:00:00Z' }), { status: 200 }))
     await store.queueNodeMessage('c', 'a', '  do X  ')
@@ -858,6 +876,11 @@ describe('answer-bubble attribution helpers', () => {
 
   it('pendingNodeQuestion finds a paused node awaiting an answer, credited to its own agent', () => {
     const d = dag({ a: { status: 'done' }, b: { status: 'needs_input', question: 'Which time zone?' } })
+    expect(pendingNodeQuestion(d)).toEqual({ nodeId: 'b', agent: 'synthesizer', question: 'Which time zone?' })
+  })
+
+  it('pendingNodeQuestion matches the wire-normalized paused/awaiting_input spelling (post-reload)', () => {
+    const d = dag({ a: { status: 'done' }, b: { status: 'paused', pauseReason: 'awaiting_input', question: 'Which time zone?' } })
     expect(pendingNodeQuestion(d)).toEqual({ nodeId: 'b', agent: 'synthesizer', question: 'Which time zone?' })
   })
 
