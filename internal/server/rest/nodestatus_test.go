@@ -792,3 +792,23 @@ func waitForDagNodeStatus(t *testing.T, h *Handler, planID, nodeID, want string)
 	}
 	t.Fatalf("node %q in plan %q never reached status %q", nodeID, planID, want)
 }
+
+// TestStopNode_ParkedPausedCancelsRow: a parked node (paused, turn over, no
+// live control) must still be stoppable - the row is cancelled directly.
+func TestStopNode_ParkedPausedCancelsRow(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID, nodeID := "c1", "p1", "n1"
+	seedPlan(t, h, chatID, planID, nodeID)
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "paused", PauseReason: "user"}); err != nil {
+		t.Fatalf("seed paused node: %v", err)
+	}
+
+	rec := postNodeStop(t, h, chatID, nodeID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	dn, err := h.store.GetDagNode(context.Background(), planID, nodeID)
+	if err != nil || dn == nil || dn.Status != "cancelled" {
+		t.Fatalf("row = %+v err=%v, want cancelled", dn, err)
+	}
+}

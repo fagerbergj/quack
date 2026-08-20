@@ -819,7 +819,7 @@ func (h *Handler) StartNode(w http.ResponseWriter, r *http.Request, chatID schem
 // StopNode is the explicit per-node "stop" transition: any non-terminal
 // status -> cancelled. Cooperative for a running node; immediate otherwise.
 func (h *Handler) StopNode(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
-	_, dn, current, ok := h.loadPlanNode(w, r, chatID, nodeID)
+	dp, dn, current, ok := h.loadPlanNode(w, r, chatID, nodeID)
 	if !ok {
 		return
 	}
@@ -832,6 +832,17 @@ func (h *Handler) StopNode(w http.ResponseWriter, r *http.Request, chatID schema
 		return
 	}
 	if !h.orch.StopNode(chatID, nodeID) {
+		// A parked node has no live control (it unregisters when the gate
+		// closure returns), so cancel it on the row directly - otherwise the
+		// legal paused -> cancelled transition is unreachable.
+		if dag.IsPaused(current) {
+			if err := h.store.SetNodeStatus(r.Context(), dp.ID, nodeID, dag.StatusCancelled, "", ""); err != nil {
+				httpError(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusCancelled))
+			return
+		}
 		writeJSON(w, http.StatusConflict, schema.TransitionError{
 			Error:   "node is not stoppable right now (no live run - it may be queued but not yet dispatched, or already finished); nothing was stopped",
 			Current: wireStatus(current),
