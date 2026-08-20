@@ -900,11 +900,14 @@ func (s *Store) ResumePausedDagNodes(ctx context.Context, resumable func(chatID 
 	var rep ResumeReport
 	cutoff := time.Now().UTC().Add(-staleNodeCeiling)
 	var nodes []DagNode
+	// IS NULL covers ALTER TABLE ADD COLUMN no-default rows. The ownership
+	// guard applies to both branches: in a shared DB (#683) a booting
+	// instance must not resume a live peer's nodes; a dead peer's nodes are
+	// picked up past staleNodeCeiling.
+	owned := s.db.Where("instance_id IS NULL OR instance_id = ? OR instance_id = ? OR updated_at < ?", "", s.instanceID, cutoff)
 	err := s.db.WithContext(ctx).Model(&DagNode{}).
-		Where(s.db.Where("status IN ?", []string{string(dag.StatusPaused), string(dag.StatusNeedsInput)}).
-			Or(s.db.Where("status = ?", string(dag.StatusRunning)).
-				// IS NULL covers ALTER TABLE ADD COLUMN no-default rows.
-				Where("instance_id IS NULL OR instance_id = ? OR instance_id = ? OR updated_at < ?", "", s.instanceID, cutoff))).
+		Where("status IN ?", []string{string(dag.StatusPaused), string(dag.StatusNeedsInput), string(dag.StatusRunning)}).
+		Where(owned).
 		Find(&nodes).Error
 	if err != nil {
 		return rep, err

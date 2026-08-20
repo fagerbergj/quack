@@ -652,17 +652,14 @@ func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrato
 	// same tail, so an extension-dispatched chat gets it too.
 	runlog.StampTurn(runCtx, st, chatID, turnID, res)
 
-	// Shutdown cut this run - skip RunEnded entirely so a deploy never posts a
-	// PR comment for work the process didn't get to finish. Hub.Draining is
-	// the signal now: the drain pauses nodes instead of marking the chat
-	// interrupted (#962), so the chat stamps paused and boot resumes it.
-	if hub.Draining() || hub.WasInterrupted(chatID) {
+	// Shutdown force-cancelled this run - skip RunEnded entirely so a deploy
+	// never posts a PR comment for work the process didn't get to finish.
+	// Per-chat marker, not global Draining: a run that finishes normally
+	// during the drain window keeps its RunEnded. The drain pauses nodes
+	// (#962), so the chat stamps paused and boot resumes it.
+	if hub.WasInterrupted(chatID) {
 		stampCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-		cutStatus := store.RunStatusPaused
-		if !hub.Draining() {
-			cutStatus = store.RunStatusInterrupted
-		}
-		if err := st.StampRunOutcome(stampCtx, chatID, cutStatus, ""); err != nil {
+		if err := st.StampRunOutcome(stampCtx, chatID, store.RunStatusPaused, ""); err != nil {
 			slog.Warn("extension run: interrupted stamp failed", "component", "ext."+name, "chat", chatID, "err", err)
 		}
 		cancel()

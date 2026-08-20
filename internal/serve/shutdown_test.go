@@ -38,7 +38,7 @@ func newShutdownTestStore(t *testing.T) *store.Store {
 
 // TestDriveExtensionRunEvents_InterruptedSkipsRunEnded proves a run whose
 // context dies via Hub.MarkInterrupted+CancelRun never reaches RunEnded and
-// gets stamped RunStatusInterrupted instead.
+// gets stamped RunStatusPaused (#962: the drain paused its nodes; boot resumes).
 func TestDriveExtensionRunEvents_InterruptedSkipsRunEnded(t *testing.T) {
 	st := newShutdownTestStore(t)
 	hub := stream.NewHub()
@@ -86,8 +86,8 @@ func TestDriveExtensionRunEvents_InterruptedSkipsRunEnded(t *testing.T) {
 	if err != nil || c == nil {
 		t.Fatalf("GetChat: %v, %v", c, err)
 	}
-	if c.RunStatus != store.RunStatusInterrupted {
-		t.Errorf("RunStatus = %q, want %q", c.RunStatus, store.RunStatusInterrupted)
+	if c.RunStatus != store.RunStatusPaused {
+		t.Errorf("RunStatus = %q, want %q", c.RunStatus, store.RunStatusPaused)
 	}
 	if c.ActiveTurnID != "" {
 		t.Errorf("ActiveTurnID = %q, want cleared", c.ActiveTurnID)
@@ -144,10 +144,11 @@ func TestDrainActiveRuns_ForceCancelsPastGrace(t *testing.T) {
 	default:
 		t.Fatal("run was not force-cancelled and cleaned up within the settle window")
 	}
-	// Shutdown never marks a chat interrupted any more (#962): the nodes are
-	// paused, and boot resumes them.
-	if hub.WasInterrupted(chatID) {
-		t.Error("shutdown marked the chat interrupted; it should only pause its nodes")
+	// A force-cancel sets the per-chat cut marker so the run's own tail skips
+	// RunEnded and stamps the chat paused (#962); runs that finish on their
+	// own during the drain never get it (see TestDrainActiveRuns_FinishesWithinGrace).
+	if !hub.WasInterrupted(chatID) {
+		t.Error("force-cancel did not set the per-chat cut marker")
 	}
 }
 

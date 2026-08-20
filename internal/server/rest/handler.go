@@ -1213,11 +1213,12 @@ func (h *Handler) terminalStatus(ctx context.Context, chatID string, turns []sto
 func (h *Handler) stampRunOutcome(parent context.Context, chatID string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 	defer cancel()
-	// Shutdown force-cancelled this run - report that, not whatever
-	// DeriveTerminalStatus would guess from a cut-off turn.
+	// Shutdown force-cancelled this run - its nodes are paused/shutdown on
+	// disk (#962) and boot resumes them, so the chat stamps paused, not
+	// whatever DeriveTerminalStatus would guess from a cut-off turn.
 	if h.hub.WasInterrupted(chatID) {
-		if err := h.store.StampRunOutcome(ctx, chatID, store.RunStatusInterrupted, ""); err != nil {
-			slog.Warn("stamp run outcome: interrupted persist failed", "component", "rest", "chat", chatID, "err", err)
+		if err := h.store.StampRunOutcome(ctx, chatID, store.RunStatusPaused, ""); err != nil {
+			slog.Warn("stamp run outcome: paused persist failed", "component", "rest", "chat", chatID, "err", err)
 		}
 		return
 	}

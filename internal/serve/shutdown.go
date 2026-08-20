@@ -62,6 +62,7 @@ func DrainActiveRuns(hub *stream.Hub, ex nodePauser, grace time.Duration) {
 			continue // reached a boundary on its own within the grace window
 		}
 		forced++
+		hub.MarkInterrupted(chatID) // per-chat cut marker: only force-cancelled runs skip their RunEnded tail
 		hub.CancelRun(chatID)
 	}
 	if forced == 0 {
