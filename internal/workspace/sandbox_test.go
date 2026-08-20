@@ -391,8 +391,39 @@ func TestHomeTmpDirRejectsACrossDeviceHomeDir(t *testing.T) {
 	defer func() { sameDeviceHook = restore }()
 
 	caps := Caps{HomeDir: t.TempDir(), WorkRoot: t.TempDir()}
+	want := filepath.Join(caps.WorkRoot, workRootTmpDirName)
+	if got := homeTmpDir(caps); got != want {
+		t.Errorf("homeTmpDir() = %q, want the WorkRoot-derived %q when HOME/tmp is reported cross-device", got, want)
+	}
+	if info, err := os.Stat(want); err != nil || !info.IsDir() {
+		t.Errorf("workspace-derived scratch dir %q was not created: %v", want, err)
+	}
+}
+
+// TestHomeTmpDirCrossDeviceReadOnlySkipsWorkRoot: a ReadOnly node's tree must
+// stay wholly immutable, so the WorkRoot last resort is skipped - "" (shared
+// /tmp, loudly) as before. ACP read-only nodes never reach this: resolveNode
+// always sets Caps.ScratchDir for them.
+func TestHomeTmpDirCrossDeviceReadOnlySkipsWorkRoot(t *testing.T) {
+	restore := sameDeviceHook
+	sameDeviceHook = func(a, b string) (bool, error) { return false, nil }
+	defer func() { sameDeviceHook = restore }()
+
+	caps := Caps{HomeDir: t.TempDir(), WorkRoot: t.TempDir(), ReadOnly: true}
 	if got := homeTmpDir(caps); got != "" {
-		t.Errorf("homeTmpDir() = %q, want \"\" when HOME/tmp is reported cross-device from WorkRoot", got)
+		t.Errorf("homeTmpDir() = %q, want \"\" for a ReadOnly node with cross-device HOME", got)
+	}
+}
+
+// TestHomeTmpDirNoHomeFallsBackToWorkRoot: no HomeDir at all (the boot
+// warning's other trigger) still yields a workspace-filesystem scratch dir
+// when a WorkRoot exists, so landlockTmpDir's shared-/tmp warning stops
+// firing on a setup that has a workspace.
+func TestHomeTmpDirNoHomeFallsBackToWorkRoot(t *testing.T) {
+	caps := Caps{WorkRoot: t.TempDir()}
+	want := filepath.Join(caps.WorkRoot, workRootTmpDirName)
+	if got := homeTmpDir(caps); got != want {
+		t.Errorf("homeTmpDir() = %q, want %q", got, want)
 	}
 }
 
