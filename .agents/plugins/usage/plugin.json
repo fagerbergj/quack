@@ -1,0 +1,21 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.1.0/plugin.schema.json",
+  "name": "usage",
+  "version": "0.1.0",
+  "description": "In-app usage dashboard backed by Prometheus.",
+  "license": "MIT",
+  "repository": "https://github.com/fagerbergj/quack-extensions",
+  "keywords": ["quack", "observability", "usage"],
+  "extensions": {
+    "io.github.fagerbergj.quack": {
+      "schemaVersion": 1,
+      "modules": [
+        {
+          "name": "usage",
+          "path": "github.com/fagerbergj/quack-extensions/usage"
+        }
+      ],
+      "config": "required"
+    }
+  }
+}

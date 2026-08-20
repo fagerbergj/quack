@@ -26,6 +26,11 @@ type Config struct {
 	Server       ServerConfig              `yaml:"server"`
 	Workspace    WorkspaceConfig           `yaml:"workspace"`
 	Skills       SkillsConfig              `yaml:"skills"`
+	// Plugins are the Agent Plugins roots quack loads. A root contributes
+	// skills, MCP servers, and quack's own extension declarations, so it is
+	// no longer a skills-only concern - skills.plugins stays readable as a
+	// deprecated alias.
+	Plugins []string `yaml:"plugins"`
 	// Workflows is a top-level key, not nested under skills: - it's a
 	// binding mechanism onto the DAG planner, not a skill-library concern
 	// (skills.plugins is a different axis entirely).
@@ -47,12 +52,26 @@ type Config struct {
 	skipRuntimeValidation bool
 }
 
-// SkillsConfig names skill-library plugin roots beyond quack's own shipped
-// skills/ - each resolved at startup via internal/plugin's Agent Plugins /
-// Codex discovery order. A root that fails to resolve is a startup warning,
-// never an error. Order is preserved and never deduped.
+// SkillsConfig is the deprecated home of the plugin-root list; use the
+// top-level plugins: key instead. Still read so existing quack.yaml files
+// keep working.
 type SkillsConfig struct {
 	Plugins []string `yaml:"plugins"`
+}
+
+// PluginRoots is the effective plugin-root list: the top-level plugins: key,
+// else the deprecated skills.plugins, else the defaults. Each root is
+// resolved at startup via internal/plugin's Agent Plugins / Codex discovery
+// order. A root that fails to resolve is a startup warning, never an error.
+// Order is preserved and never deduped.
+func (c *Config) PluginRoots() []string {
+	if c.Plugins != nil {
+		return c.Plugins
+	}
+	if c.Skills.Plugins != nil {
+		return c.Skills.Plugins
+	}
+	return append([]string{}, defaultSkillPlugins...)
 }
 
 // WorkflowShape teaches plan-work's "Common workflows" table a deployment-
@@ -181,7 +200,11 @@ func workflowNodesAcyclic(nodes []WorkflowNode) bool {
 	return placed == len(nodes)
 }
 
-var defaultSkillPlugins = []string{".agents/vendor/dotagents", ".agents/vendor/ponytail"}
+// defaultSkillPlugins are the plugin roots a stock quack loads: two vendored
+// skill libraries, plus the first-party manifest declaring the usage
+// extension. .agents/plugins/ holds quack's own manifests; .agents/vendor/
+// holds fetched trees.
+var defaultSkillPlugins = []string{".agents/vendor/dotagents", ".agents/vendor/ponytail", ".agents/plugins/usage"}
 
 type ObservabilityConfig struct {
 	Otel      OtelConfig      `yaml:"otel"`
@@ -947,8 +970,12 @@ func (c *Config) validate() error {
 	if err := c.Workspace.applyDefaults(); err != nil {
 		return err
 	}
-	if c.Skills.Plugins == nil {
-		c.Skills.Plugins = append([]string{}, defaultSkillPlugins...)
+	if c.Plugins != nil && c.Skills.Plugins != nil {
+		slog.Warn("both plugins: and skills.plugins are set; skills.plugins is ignored", "component", "config")
+	}
+	c.Plugins = c.PluginRoots()
+	if c.Skills.Plugins != nil {
+		slog.Warn("skills.plugins is deprecated; rename it to the top-level plugins:", "component", "config")
 	}
 	if err := c.validateWorkflows(); err != nil {
 		return err

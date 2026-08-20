@@ -400,7 +400,21 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		slog.Info("skill plugins resolved", "component", "startup", "revisions", plugin.Summary(pluginRevs))
 	}
 
-	builtinSkillSrc := newSkillSource(cfg.Skills.Plugins)
+	// One resolution of the plugin roots drives all three component types.
+	// The module and config checks run before anything is constructed, so a
+	// manifest promising code this binary doesn't carry fails here, named.
+	plugins, err := plugin.Resolve(cfg.PluginRoots())
+	if err != nil {
+		return nil, nil, "", err
+	}
+	if err := checkPluginModules(plugins); err != nil {
+		return nil, nil, "", err
+	}
+	if err := checkPluginConfig(plugins, cfg.Extensions.Modules); err != nil {
+		return nil, nil, "", err
+	}
+
+	builtinSkillSrc := newSkillSource(cfg.PluginRoots())
 	builtinSkillSrc = workflowcatalog.Wrap(builtinSkillSrc, workflowcatalog.FromConfig(cfg.Workflows, cfg.Revision))
 	skillSrc := skillsource.New(builtinSkillSrc, jail, localUserID)
 	skillTS, err := skilltoolset.New(context.Background(), skilltoolset.Config{Source: skillSrc})
@@ -477,6 +491,13 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		return nil, nil, "", err
 	}
 	extTools := sdkExtensionTools(sdkExts)
+	// Plugin-declared MCP servers are the portable half of the same tool
+	// surface: out of process, jailed, and folded in by name like any other.
+	if mcpCaps, err := pluginSpawnCaps(cfg, jail); err != nil {
+		slog.Warn("plugin MCP servers skipped; sandbox caps unavailable", "component", "startup", "err", err)
+	} else {
+		extTools = append(extTools, pluginMCPTools(ctx, plugins, cfg.Workspace.Root, mcpCaps)...)
+	}
 
 	// The SDK inverse interfaces' first real consumer: whichever compiled,
 	// configured module implements them (github, today) supplies quack's
@@ -934,7 +955,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			}
 			wsBlock := workspace.PromptBlock(workspaceCaps, cfg.Workspace.CheckCommands)
 			preamble := promptbuilder.Agent(bundle.Card.Name, bundle.Card.Description, nil, skillFms, behaviour, grading, wsBlock)
-			env := opencodeEnv(prov, ac, acpSkillPaths(cfg.Skills.Plugins), workspaceCaps)
+			env := opencodeEnv(prov, ac, acpSkillPaths(cfg.PluginRoots()), workspaceCaps)
 			env = append(env, acpChildEnv(cfg.Workspace.Env, ac.Acp.Env)...)
 			var permJudge func(ctx context.Context, toolName, title string, input map[string]any) (bool, string)
 			if safetyJudge != nil {
@@ -967,7 +988,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				Env:             env,
 				Replay:          acpReplay,
 				Caps:            workspaceCaps,
-				ExtraRO:         acpSkillPaths(cfg.Skills.Plugins),
+				ExtraRO:         acpSkillPaths(cfg.PluginRoots()),
 				Home:            workspaceCaps.HomeDir,
 				Preamble:        preamble,
 				Jail:            jail,
