@@ -163,7 +163,7 @@ if (!process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
 // OTLP assertions: flush is fire-and-forget on agent_settled, so wait for it.
 if (!process.env.ACP_CMD) {
   for (let i = 0; i < 50 && otlpSpans.length === 0; i++) await new Promise((r) => setTimeout(r, 100));
-  assert.ok(otlpSpans.length > 0, "no spans reached the stub OTLP collector");
+  assert.equal(otlpSpans.length, 7, `expected the 7 parity spans, got ${otlpSpans.length}`);
   assert.ok(otlpSpans.every((sp) => sp.traceId === TRACE_ID), "span not under quack's trace id");
   assert.ok(otlpSpans.every((sp) => sp.parentSpanId === PARENT_ID), "span not parented under the round span");
   const gens = otlpSpans.filter((sp) => sp.name.startsWith("chat "));
