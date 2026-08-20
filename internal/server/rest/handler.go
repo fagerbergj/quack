@@ -784,7 +784,14 @@ func (h *Handler) StartNode(w http.ResponseWriter, r *http.Request, chatID schem
 	if body.Content != nil {
 		content = strings.TrimSpace(*body.Content)
 	}
-	h.startNodeAsync(dp, chatID, nodeID, content)
+	// Only a HITL park re-enters via Orchestrator.StartNode (the answer must
+	// reach ADK's Resume). Any other start is the scoped node+descendants
+	// re-run - a full-plan re-entry would re-execute done siblings (#964).
+	if dn != nil && (dag.NodeStatus(dn.Status) == dag.StatusNeedsInput || dag.PauseReason(dn.PauseReason) == dag.PauseAwaitingInput) {
+		h.startNodeAsync(dp, chatID, nodeID, content)
+	} else {
+		h.retryNodeAsync(dp, chatID, nodeID, "")
+	}
 	writeJSON(w, http.StatusOK, schema.DagNodeState{Status: schema.NodeStatusQueued})
 }
 
