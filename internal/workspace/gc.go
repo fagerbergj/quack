@@ -24,8 +24,9 @@ type GCConfig struct {
 	Interval     time.Duration
 }
 
-// ActiveChatFunc reports whether chatID has a run in flight. nil skips every chat.
-type ActiveChatFunc func(chatID string) bool
+// ActiveChatFunc reports whether the chat behind an on-disk directory name
+// (raw chat id or its ChatDirName rewrite) has a run in flight. nil skips every chat.
+type ActiveChatFunc func(chatDir string) bool
 
 // WorktreePruner detaches a linked worktree before GC removes it. nil = remove-only.
 type WorktreePruner func(ctx context.Context, dir string) error
@@ -125,23 +126,23 @@ func sweepChatScopes(ctx context.Context, jail *Jail, ttl time.Duration, isActiv
 			continue
 		}
 		for _, ce := range chatEntries {
-			chatID := ce.Name()
-			if !ce.IsDir() || chatID == homeDirName {
+			chatDir := ce.Name()
+			if !ce.IsDir() || chatDir == homeDirName {
 				continue
 			}
-			if isActive == nil || isActive(chatID) {
+			if isActive == nil || isActive(chatDir) {
 				continue
 			}
-			scope := filepath.Join(userRoot, chatID)
+			scope := filepath.Join(userRoot, chatDir)
 			fi, err := os.Stat(scope)
 			if err != nil || fi.ModTime().After(cutoff) {
 				continue
 			}
 			sz := dirSize(scope)
 			pruneWorktreesUnder(ctx, scope, prune)
-			if err := jail.RemoveChatScope(userID, chatID); err != nil {
+			if err := jail.RemoveChatScope(userID, chatDir); err != nil {
 				slog.Warn("workspace gc: remove chat scope failed", "component", "workspace",
-					"user", userID, "chat", chatID, "err", err)
+					"user", userID, "chat", chatDir, "err", err)
 				continue
 			}
 			removed++
