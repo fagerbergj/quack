@@ -89,6 +89,9 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 				return nil, fmt.Errorf("tools: build %q: %w", name, err)
 			}
 		} else if et, ok := d.ExtTools[name]; ok {
+			if et == nil {
+				return nil, fmt.Errorf("tools: tool name %q is provided by more than one extension; use its <plugin>_%s prefixed form", name, name)
+			}
 			t = et
 		} else {
 			return nil, fmt.Errorf("tools: unknown builtin tool %q", name)

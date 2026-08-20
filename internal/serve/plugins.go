@@ -86,8 +86,8 @@ func pluginSpawnCaps(cfg *config.Config, jail *workspace.Jail) (workspace.Caps, 
 // out of process through the SAME sandbox seam ACP workers use
 // (workspace.WrapArgv), and a server that fails to start, connect, or list
 // tools costs only its own tools (spec §7.2.2 rule 5) - never the boot.
-func pluginMCPTools(ctx context.Context, plugins []plugin.Plugin, dataRoot string, caps workspace.Caps) []tool.Tool {
-	var out []tool.Tool
+func pluginMCPTools(ctx context.Context, plugins []plugin.Plugin, dataRoot string, caps workspace.Caps) []extTool {
+	var out []extTool
 	for _, p := range plugins {
 		names := make([]string, 0, len(p.MCPServers))
 		for name := range p.MCPServers {
@@ -102,7 +102,9 @@ func pluginMCPTools(ctx context.Context, plugins []plugin.Plugin, dataRoot strin
 				continue
 			}
 			slog.Info("plugin MCP server loaded", "component", "startup", "plugin", p.Name, "server", name, "tools", len(tools))
-			out = append(out, tools...)
+			for _, t := range tools {
+				out = append(out, extTool{provider: p.Name, tool: t})
+			}
 		}
 	}
 	return out
