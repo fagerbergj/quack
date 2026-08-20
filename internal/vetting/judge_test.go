@@ -13,6 +13,7 @@ import (
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/genai"
@@ -1184,5 +1185,128 @@ func TestRunJudgeAgent_NormalRoundKeepsTools(t *testing.T) {
 	}
 	if v.Score != 0.8 {
 		t.Errorf("verdict score = %v, want 0.8", v.Score)
+	}
+}
+
+// verdictToolCtx: minimal agent.Context for driving submit_verdict directly.
+type verdictToolCtx struct {
+	adkagent.ContextMock
+	actions session.EventActions
+}
+
+func (c *verdictToolCtx) Actions() *session.EventActions { return &c.actions }
+func (c *verdictToolCtx) Context() context.Context       { return context.Background() }
+
+// runVerdictTool drives the tool's Run (not part of the public tool.Tool interface).
+func runVerdictTool(t *testing.T, tl tool.Tool, args map[string]any) (map[string]any, error) {
+	t.Helper()
+	r, ok := tl.(interface {
+		Run(adkagent.Context, any) (map[string]any, error)
+	})
+	if !ok {
+		t.Fatalf("tool %T does not expose Run", tl)
+	}
+	return r.Run(&verdictToolCtx{}, args)
+}
+
+// TestSubmitVerdict_NearMissPayloads pins the two prod near-misses that made the
+// judge "end without a verdict" (Langfuse trace 9ea8cbee38735f00ec66252922acf2aa):
+// an anchor missing `kind`, and `shortfall`/`fix` sent as JSON null. Both must
+// now validate and yield a usable verdict.
+func TestSubmitVerdict_NearMissPayloads(t *testing.T) {
+	t.Run("anchor missing kind", func(t *testing.T) {
+		var sink verdict
+		submit, err := newSubmitVerdictTool(&sink)
+		if err != nil {
+			t.Fatalf("newSubmitVerdictTool: %v", err)
+		}
+		args := map[string]any{
+			"score": 4.0,
+			"criteria": map[string]any{
+				"cites_sources": map[string]any{
+					"shortfall": "claim about foo.go is uncited",
+					"fix":       "cite internal/foo.go",
+					"score":     4.0,
+					"anchor":    map[string]any{"text": "foo handles retries"},
+				},
+			},
+			"feedback": "cite the repo claim",
+		}
+		if _, err := runVerdictTool(t, submit, args); err != nil {
+			t.Fatalf("Run rejected payload with anchor missing kind: %v", err)
+		}
+		v := aggregateVerdict(sink)
+		c, ok := v.Criteria["cites_sources"]
+		if !ok {
+			t.Fatal("criterion lost")
+		}
+		if c.Anchor == nil || c.Anchor.Kind != "quote" {
+			t.Fatalf("anchor kind not inferred as quote: %+v", c.Anchor)
+		}
+		if c.Shortfall != "claim about foo.go is uncited" {
+			t.Fatalf("shortfall = %q", c.Shortfall)
+		}
+	})
+
+	t.Run("null shortfall and fix", func(t *testing.T) {
+		var sink verdict
+		submit, err := newSubmitVerdictTool(&sink)
+		if err != nil {
+			t.Fatalf("newSubmitVerdictTool: %v", err)
+		}
+		args := map[string]any{
+			"score": 9.0,
+			"criteria": map[string]any{
+				"completeness": map[string]any{"shortfall": nil, "fix": nil, "score": 9.0},
+			},
+			"feedback": "",
+		}
+		if _, err := runVerdictTool(t, submit, args); err != nil {
+			t.Fatalf("Run rejected payload with null shortfall: %v", err)
+		}
+		v := aggregateVerdict(sink)
+		c, ok := v.Criteria["completeness"]
+		if !ok {
+			t.Fatal("criterion lost")
+		}
+		if c.Shortfall != "" || c.Score != 0.9 {
+			t.Fatalf("got shortfall=%q score=%v, want empty/0.9", c.Shortfall, c.Score)
+		}
+	})
+
+	// A genuinely malformed payload must still fail - and Run's error text is
+	// what ADK hands back to the model as the tool result, so the in-round
+	// retry sees WHY it was rejected.
+	t.Run("still rejects wrong-typed criteria", func(t *testing.T) {
+		var sink verdict
+		submit, err := newSubmitVerdictTool(&sink)
+		if err != nil {
+			t.Fatalf("newSubmitVerdictTool: %v", err)
+		}
+		if _, err := runVerdictTool(t, submit, map[string]any{"score": 1.0, "criteria": []any{"nope"}}); err == nil {
+			t.Fatal("want validation error for array criteria")
+		}
+	})
+}
+
+// TestInferAnchorKind pins the inference table, ambiguity included.
+func TestInferAnchorKind(t *testing.T) {
+	cases := []struct {
+		in   anchorSpec
+		want string
+	}{
+		{anchorSpec{Text: "q"}, "quote"},
+		{anchorSpec{Path: "a/b.go"}, "path"},
+		{anchorSpec{Expected: "a changelog"}, "omission"},
+		{anchorSpec{Text: "q", Path: "a"}, ""},        // ambiguous: leave for sanitizeAnchors
+		{anchorSpec{}, ""},                            // empty: nothing to infer
+		{anchorSpec{Kind: "path", Text: "q"}, "path"}, // explicit kind wins
+	}
+	for _, tc := range cases {
+		a := tc.in
+		inferAnchorKind(&a)
+		if a.Kind != tc.want {
+			t.Errorf("inferAnchorKind(%+v) kind = %q, want %q", tc.in, a.Kind, tc.want)
+		}
 	}
 }
