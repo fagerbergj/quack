@@ -287,10 +287,13 @@ func tmpArgs(caps Caps) []string {
 // else falls back to the shared caps.HomeDir/tmp (created on demand),
 // verified against caps.WorkRoot's device (sameDeviceHook) so a HomeDir that
 // turns out to live on a different filesystem is rejected rather than handed
-// out as TMPDIR (#936). "" when nothing usable is derivable - the caller
-// warns and falls back to a shared /tmp. The ScratchDir path is NOT
-// re-verified: it is already the workspace-scoped dir (Jail.ScratchDir under
-// /workspace), so this is the common, already-correct case, unchanged.
+// out as TMPDIR (#936). Last resort before "": a scratch dir derived from
+// caps.WorkRoot itself (workRootTmpDir) - same filesystem as the workspace by
+// construction, so hardlinking git ops and exec-from-TMPDIR both work even
+// when HOME lives on another device. "" when nothing usable is derivable -
+// the caller warns and falls back to a shared /tmp. The ScratchDir path is
+// NOT re-verified: it is already the workspace-scoped dir (Jail.ScratchDir
+// under /workspace), so this is the common, already-correct case, unchanged.
 func homeTmpDir(caps Caps) string {
 	if caps.ScratchDir != "" {
 		if err := os.MkdirAll(caps.ScratchDir, 0o700); err != nil {
@@ -301,23 +304,47 @@ func homeTmpDir(caps Caps) string {
 		}
 	}
 	if caps.HomeDir == "" {
-		return ""
+		return workRootTmpDir(caps)
 	}
 	tmp := filepath.Join(caps.HomeDir, "tmp")
 	if err := os.MkdirAll(tmp, 0o700); err != nil {
-		slog.Warn("could not create the sandbox tmp dir; falling back to a shared /tmp",
+		slog.Warn("could not create the sandbox tmp dir; falling back to a workspace-derived scratch dir",
 			"component", "workspace", "dir", tmp, "err", err)
-		return ""
+		return workRootTmpDir(caps)
 	}
 	// Can't verify without a WorkRoot to compare against (e.g. caps.WorkRoot
 	// unset) - trust the dir as before rather than reject it on no evidence.
 	if same, err := sameDeviceHook(tmp, caps.WorkRoot); err == nil && !same {
 		slog.Warn("HOME/tmp is on a different filesystem than the workspace; using it as TMPDIR would break "+
-			"hardlinking git operations (clone --local, worktree add) with a confusing EXDEV error - falling "+
-			"back to a shared /tmp instead", "component", "workspace", "dir", tmp, "workroot", caps.WorkRoot)
-		return ""
+			"hardlinking git operations (clone --local, worktree add) with a confusing EXDEV error - deriving "+
+			"a scratch dir from the workspace instead", "component", "workspace", "dir", tmp, "workroot", caps.WorkRoot)
+		return workRootTmpDir(caps)
 	}
 	return tmp
+}
+
+// workRootTmpDirName under caps.WorkRoot: dot-prefixed so it reads as
+// infrastructure, and constant so repeated spawns reuse one dir.
+const workRootTmpDirName = ".quack-tmp"
+
+// workRootTmpDir is homeTmpDir's last resort: a scratch dir INSIDE the
+// node's own work root, on the workspace filesystem by construction. Skipped
+// for a ReadOnly node (its tree must stay wholly immutable - but every ACP
+// node, read-only included, already gets Caps.ScratchDir from resolveNode,
+// so this branch never fires for them). Untracked inside a cloned repo is
+// acceptable: git push moves committed refs only, and the alternative was a
+// shared /tmp that breaks hardlinks (EXDEV) and may be noexec.
+func workRootTmpDir(caps Caps) string {
+	if caps.WorkRoot == "" || caps.ReadOnly {
+		return ""
+	}
+	dir := filepath.Join(caps.WorkRoot, workRootTmpDirName)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		slog.Warn("could not create the workspace-derived scratch dir; falling back to a shared /tmp",
+			"component", "workspace", "dir", dir, "err", err)
+		return ""
+	}
+	return dir
 }
 
 // RO-binds operator exec_path entries + a bin/'s FHS siblings (lib, libexec, share).

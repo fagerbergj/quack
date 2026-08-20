@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -212,5 +213,24 @@ func TestWrapArgvScratchDirUnwrappedUnderNone(t *testing.T) {
 		if strings.Contains(strings.Join(got, " "), scratch) {
 			t.Errorf("mode %q: WrapArgv leaked the scratch path into argv", mode)
 		}
+	}
+}
+
+// TestLandlockTmpDirWorkRootFallbackIsSilent: with a WorkRoot to derive
+// scratch from, landlockTmpDir must return the workspace-filesystem dir and
+// NOT emit the shared-/tmp boot warning.
+func TestLandlockTmpDirWorkRootFallbackIsSilent(t *testing.T) {
+	var buf strings.Builder
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	workRoot := t.TempDir()
+	got := landlockTmpDir(Caps{WorkRoot: workRoot})
+	slog.SetDefault(restore)
+
+	if want := filepath.Join(workRoot, workRootTmpDirName); got != want {
+		t.Errorf("landlockTmpDir() = %q, want %q", got, want)
+	}
+	if strings.Contains(buf.String(), "no workspace-scoped scratch dir available") {
+		t.Errorf("boot warning fired despite a WorkRoot-derived scratch dir: %s", buf.String())
 	}
 }

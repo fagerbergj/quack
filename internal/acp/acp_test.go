@@ -434,3 +434,33 @@ func TestRequestPermission_JudgeRouting(t *testing.T) {
 		t.Fatalf("allowing judge must allow, picked %q", got)
 	}
 }
+
+// TestRunPrompt_RemovesScratchDirAfterRound: the per-node scratch dir (the
+// child's TMPDIR, minted by resolveNode before spawn) must not outlive the
+// round - runPrompt removes it instead of leaving it for the gc TTL sweep.
+func TestRunPrompt_RemovesScratchDirAfterRound(t *testing.T) {
+	a := testAgent(t, "echo")
+	token := vetting.AdvisorThreadToken("plan-1", "impl-scratch")
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{NodeID: "impl-scratch", WorkspaceNodeID: "impl-scratch", SessionID: "s1"})
+	defer vetting.UnregisterAdvisorThread(token)
+
+	scratch, err := a.opts.Jail.ScratchDir("u1", "s1", "impl-scratch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := runner.New(runner.Config{
+		AppName: "test", Agent: a, SessionService: session.InMemoryService(), AutoCreateSession: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "add the feature\n\n" + vetting.AdvisorThreadMarker(token)}}}
+	for _, err := range r.Run(t.Context(), "u1", "s1", task, adkagent.RunConfig{}) {
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	}
+	if _, statErr := os.Stat(scratch); !os.IsNotExist(statErr) {
+		t.Errorf("scratch dir %q must be removed after the round, stat err = %v", scratch, statErr)
+	}
+}
