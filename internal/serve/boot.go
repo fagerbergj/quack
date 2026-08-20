@@ -2,7 +2,6 @@ package serve
 
 import (
 	"context"
-	"iter"
 	"log/slog"
 	"time"
 
@@ -50,48 +49,71 @@ func reconcileNodes(ctx context.Context, st *store.Store, resumable func(chatID 
 }
 
 // startResumedNodes re-enters each resumable node's graph on a server-lifetime
-// context, the same shape rest.Handler.startRun uses. At most one node per
-// chat: a re-entry walks the node's descendants, and the Hub registers one run
-// per chat anyway.
+// context, the same shape rest.Handler.startRun uses. One run per chat (the
+// Hub registers one run per chat), driving every resumable node of that chat
+// in turn - each re-entry is the scoped "node + descendants" subset, so a
+// second paused sibling is not covered by the first node's walk.
 func startResumedNodes(ctx context.Context, nodes []store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub) {
-	seen := map[string]bool{}
+	byChat := map[string][]store.ResumableNode{}
+	var order []string
 	for _, n := range nodes {
-		if seen[n.ChatID] {
-			continue
+		if len(byChat[n.ChatID]) == 0 {
+			order = append(order, n.ChatID)
 		}
-		seen[n.ChatID] = true
-		go driveResume(ctx, n, orch, st, hub)
+		byChat[n.ChatID] = append(byChat[n.ChatID], n)
+	}
+	for _, chatID := range order {
+		go driveResume(ctx, chatID, byChat[chatID], orch, st, hub)
 	}
 }
 
-func driveResume(ctx context.Context, n store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub) {
-	plan, err := st.GetLatestDagPlan(ctx, n.ChatID)
+// driveResume re-enters one chat's resumable nodes. Each node goes through
+// the same scoped subset path as a REST retry (RetryNode → runDAGSubset:
+// node + descendants, siblings seeded from their stored outputs) - a fresh
+// full-plan run would re-execute done nodes.
+func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub) {
+	plan, err := st.GetLatestDagPlan(ctx, chatID)
 	if err != nil || plan == nil {
-		slog.Warn("resume: plan lookup failed", "component", "startup", "chat", n.ChatID, "err", err)
+		slog.Warn("resume: plan lookup failed", "component", "startup", "chat", chatID, "err", err)
 		return
 	}
-	userID := st.SessionUserForChat(ctx, n.ChatID)
+	userID := st.SessionUserForChat(ctx, chatID)
 	runCtx, cancelRun := context.WithTimeout(context.WithoutCancel(ctx), 24*time.Hour)
-	hub.RegisterRun(n.ChatID, plan.TurnID, cancelRun)
-	_ = st.MarkRunActive(runCtx, n.ChatID, plan.TurnID)
-	defer hub.Close(n.ChatID)
+	hub.RegisterRun(chatID, plan.TurnID, cancelRun)
+	_ = st.MarkRunActive(runCtx, chatID, plan.TurnID)
+	defer hub.Close(chatID)
 	defer func() {
 		cancelRun()
-		hub.UnregisterRun(n.ChatID)
+		hub.UnregisterRun(chatID)
 	}()
 
-	// No eventLog.Reset: this continues the interrupted run's stream, it does
-	// not start a new one.
-	pub := runlog.NewPublisher(hub, runlog.NewEventLog(st), n.ChatID)
-	run := func(yield func(stream.SSEEvent, error) bool) {
-		orch.StartNode(runCtx, userID, n.ChatID, n.NodeID, "", yield)
+	eventLog := runlog.NewEventLog(st)
+	eventLog.Reset(runCtx, chatID) // old run's (chat_id, seq) rows would PK-collide with the new publisher
+	pub := runlog.NewPublisher(hub, eventLog, chatID)
+	pub.Publish(stream.ResponseCreated(plan.TurnID))
+
+	var res runlog.DriveResult
+	for _, n := range nodes {
+		res = runlog.Drive(plan.TurnID, st, pub, orch.RetryNode(runCtx, userID, chatID, seededOutputs(runCtx, st, plan.ID), n.NodeID, ""), func(err error) {
+			slog.Warn("resume run error", "component", "startup", "chat", chatID, "node", n.NodeID, "err", err)
+		})
 	}
-	res := runlog.Drive(plan.TurnID, st, pub, iter.Seq2[stream.SSEEvent, error](run), func(err error) {
-		slog.Warn("resume run error", "component", "startup", "chat", n.ChatID, "node", n.NodeID, "err", err)
-	})
 	pub.Publish(stream.Done())
-	runlog.StampTurn(runCtx, st, n.ChatID, plan.TurnID, res)
-	st.StampTerminalOutcome(runCtx, orchestrator.AppName, userID, n.ChatID, func() (string, bool) {
-		return orch.PendingQuestion(runCtx, userID, n.ChatID)
+	runlog.StampTurn(runCtx, st, chatID, plan.TurnID, res)
+	st.StampTerminalOutcome(runCtx, orchestrator.AppName, userID, chatID, func() (string, bool) {
+		return orch.PendingQuestion(runCtx, userID, chatID)
 	})
+}
+
+// seededOutputs collects the plan's stored node outputs so a subset re-run
+// reads finished siblings instead of re-running them.
+func seededOutputs(ctx context.Context, st *store.Store, planID string) map[string]string {
+	rows, _ := st.GetDagNodes(ctx, planID)
+	seeded := make(map[string]string, len(rows))
+	for _, r := range rows {
+		if r.Output != "" {
+			seeded[r.NodeID] = r.Output
+		}
+	}
+	return seeded
 }
