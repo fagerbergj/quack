@@ -910,6 +910,10 @@ func optimisticNodeState(dn *store.DagNode, target dag.NodeStatus) schema.DagNod
 		ns = dagNodeState(*dn)
 	}
 	ns.Status = schema.NodeStatus(target)
+	if target != dag.StatusPaused {
+		// The spec scopes these to paused nodes; don't echo stale row values.
+		ns.PauseReason, ns.PendingQuestion = nil, nil
+	}
 	return ns
 }
 
