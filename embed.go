@@ -7,8 +7,10 @@ package quack
 
 import "embed"
 
-// The dotagents skills are vendored in-tree (.agents/vendor/plugins.yaml
-// records upstream), so a plain clone builds - no fetch step, no network.
+// .agents/vendor/dotagents is NOT in git: .agents/vendor/plugins.yaml pins it
+// and `make plugins` fetches it. On a fresh clone, run that first or this
+// embed fails with "pattern all:.agents/vendor/dotagents/skills: no matching
+// files found" (make build/test do it for you).
 //
 //go:embed all:agents all:skills all:.agents/vendor/dotagents/skills
 var Embedded embed.FS

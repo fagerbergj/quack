@@ -11,9 +11,11 @@ My motivation for building it this way: getting more real use out of smaller ope
 ## Quickstart
 
 ```bash
-make build      # compiles the frontend, embeds it, builds ./quack
+make build      # fetches skill plugins, compiles the frontend, embeds both, builds ./quack
 ./quack init
 ```
+
+On a fresh clone, bare `go build`/`go test` need `make plugins` first: `embed.go` embeds skill trees under `.agents/vendor` that are pinned, not committed. `make build`/`make test` handle it.
 
 `quack init` asks a short sequence of questions, in order:
 
