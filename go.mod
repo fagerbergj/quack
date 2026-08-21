@@ -33,7 +33,7 @@ require (
 	github.com/qdrant/go-client v1.19.0
 	github.com/spf13/cobra v1.10.2
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
-	github.com/zitadel/oidc/v3 v3.48.1
+	github.com/zitadel/oidc/v3 v3.49.2
 	go.opentelemetry.io/otel v1.45.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.20.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.45.0
