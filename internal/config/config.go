@@ -387,15 +387,17 @@ type CompactionConfig struct {
 	EventRetentionSize int    `yaml:"event_retention_size"`
 }
 
-// defaultMaxActiveNodes: permissive host-resource ceiling, not a GPU limiter
-// (#1007's Admission object bounds GPU concurrency) - jails/clones cost host
-// CPU/RAM the GPU pool knows nothing about.
+// defaultMaxActiveNodes: permissive PER-RUN host-resource ceiling (each run
+// gets its own semaphore, see rundag.go/nativegraph.go), not a GPU limiter
+// (#1007's Admission object bounds that) - jails/clones cost host CPU/RAM
+// the GPU pool knows nothing about.
 const defaultMaxActiveNodes = 32
 
 type DagConfig struct {
-	// MaxActiveNodes caps concurrently-running nodes as a host-resource guard
-	// (jail/clone CPU+RAM), NOT the GPU concurrency knob - that's
-	// models.<m>.limits.sessions/kv_tokens and providers.<p>.limits.active (#1007).
+	// MaxActiveNodes caps concurrently-running nodes WITHIN ONE RUN (each run
+	// gets its own semaphore) as a host-resource guard (jail/clone CPU+RAM),
+	// NOT the GPU concurrency knob - that's models.<m>.limits.sessions/kv_tokens
+	// and providers.<p>.limits.active (#1007).
 	MaxActiveNodes int `yaml:"max_active_nodes"`
 }
 

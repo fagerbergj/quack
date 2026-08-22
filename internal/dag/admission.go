@@ -79,11 +79,8 @@ func (a *Admission) Admit(ctx context.Context, spec AdmissionSpec, onQueued func
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if a.fits(spec) {
-		a.reserve(spec)
-		return true
-	}
-
+	// Register as a waiter BEFORE the fits check - an aged waiter must gate
+	// even a brand-new request that would otherwise fast-path past it.
 	a.seq++
 	mySeq := a.seq
 	arrived := time.Now()
@@ -111,17 +108,18 @@ func (a *Admission) Admit(ctx context.Context, spec AdmissionSpec, onQueued func
 		if ctx.Err() != nil {
 			return false
 		}
-		if !queuedFired && onQueued != nil {
-			queuedFired = true
-			a.mu.Unlock()
-			onQueued()
-			a.mu.Lock()
-		}
 		if a.oldestSeqLocked() == mySeq || !a.agingActiveLocked() {
 			if a.fits(spec) {
 				a.reserve(spec)
 				return true
 			}
+		}
+		if !queuedFired && onQueued != nil {
+			queuedFired = true
+			a.mu.Unlock()
+			onQueued()
+			a.mu.Lock()
+			continue // re-check fits: state may have changed while unlocked
 		}
 		a.cond.Wait()
 	}

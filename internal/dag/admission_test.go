@@ -163,6 +163,43 @@ func TestAgingStopsBackfillAndAdmitsOldest(t *testing.T) {
 	a.Release(fat)
 }
 
+// The aged-waiter check must gate Admit's fast path too - a brand-new small
+// request arriving AFTER the oldest waiter has already aged must not jump the
+// queue just because it happens to fit. Distinct from TestAgingStopsBackfillAndAdmitsOldest,
+// which only proves the fat waiter itself isn't starved.
+func TestAgingActuallyBlocksLaterBackfill(t *testing.T) {
+	a := NewAdmission(nil, map[string]int{"m": 100}, nil, 30*time.Millisecond)
+	filler := AdmissionSpec{Model: "m", KVTokens: 100}
+	mustAdmit(t, a, filler)
+
+	fat := AdmissionSpec{Model: "m", KVTokens: 100}
+	fatCtx, fatCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer fatCancel()
+	fatDone := make(chan bool, 1)
+	go func() { fatDone <- a.Admit(fatCtx, fat, nil) }()
+	time.Sleep(10 * time.Millisecond) // fat registers as the oldest waiter
+
+	a.Release(filler)                 // capacity opens up
+	time.Sleep(50 * time.Millisecond) // > 30ms aging threshold: fat is now aged
+	small := AdmissionSpec{Model: "m", KVTokens: 5}
+	smallCtx, smallCancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer smallCancel()
+	// small ARRIVES after fat is already aged - the fast path must not admit it.
+	if a.Admit(smallCtx, small, nil) {
+		t.Fatal("a brand-new request fast-pathed past an already-aged waiter")
+	}
+
+	select {
+	case ok := <-fatDone:
+		if !ok {
+			t.Fatal("aged fat node was never admitted")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("aged fat node was starved")
+	}
+	a.Release(fat)
+}
+
 // Release must return capacity even when the caller path is an abort/panic
 // recovery, not just clean completion - exercised here via defer+recover,
 // mirroring how newGatedNode's `defer admission.Release(spec)` behaves.

@@ -64,7 +64,7 @@ gates:
     context_window: 65536
 
 dag:
-  max_active_nodes: 32  # host-resource ceiling only; GPU concurrency is models/providers limits (#1007)
+  max_active_nodes: 32  # PER-RUN host-resource ceiling only; GPU concurrency is models/providers limits (#1007)
 
 server:
   addr: ":8080"

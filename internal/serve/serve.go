@@ -85,6 +85,11 @@ const (
 // plugin root's skills directory (internal/plugin discovery) - the disk-only
 // view both newSkillSource and acpSkillPaths compare the embedded dotagents
 // fallback against.
+// defaultMaxActiveRuns: fixed host-disk/CPU guard on concurrent run SETUP
+// (clone/jail), independent of #1007's GPU-capacity Admission ledger - not a
+// config knob, since #1007 deliberately removed dag.max_active_runs as one.
+const defaultMaxActiveRuns = 8
+
 // activeKey mirrors dag.AdmissionSpec.residencyKey (provider+role) for
 // ProviderConfig.Limits.Active, which is keyed by role alone within one provider.
 func activeKey(provider, role string) string { return provider + "\x00" + role }
@@ -689,7 +694,11 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	executor.SetNodeStateStore(st) // write-through node state machine (#962)
 	executorRef.Store(executor)
 	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
-	// #1007: a run consumes nothing, only its nodes do - dag.max_active_runs
+	// #1007 deleted the tunable (a run's NODES are what cost GPU capacity,
+	// bounded by Admission), but a run's SETUP (workspace clone/jail) still
+	// costs host disk/CPU before any node ever reaches admission - a burst of
+	// runs must still be bounded, so keep a fixed, generous run-count guard.
+	orch.SetMaxActiveRuns(defaultMaxActiveRuns)
 	// is gone, capacity bounds throughput naturally via the Admission ledger.
 	orchRef.Store(orch)
 	if hooks != nil {
