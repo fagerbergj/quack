@@ -314,11 +314,7 @@ func TestExecute_QueueNodeMessageReRunsWithGuidance(t *testing.T) {
 }
 
 // TestExecute_QueueNodeMessageDeliversLiveVsBoundary (#998): with a live-steer
-// hook registered for the running node, a queued message is forwarded
-// immediately and marked delivered - the worker sees exactly one run (no
-// TakeQueued re-run at the boundary). Without a hook, the existing
-// boundary-fallback path (TestExecute_QueueNodeMessageReRunsWithGuidance)
-// still re-runs the worker with the guidance folded in.
+// hook registered, a message delivers immediately with no boundary re-run.
 func TestExecute_QueueNodeMessageDeliversLiveVsBoundary(t *testing.T) {
 	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
 	ex, plan := newCoopExecutor(t, stub, 1)

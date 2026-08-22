@@ -43,13 +43,11 @@ func runFakeAgent(mode string) {
 type fakeAgent struct {
 	mode string
 	conn *sdk.AgentSideConnection
-	// steerCh: mode "steer" blocks Prompt on this until HandleExtensionMethod
-	// delivers the forwarded text (#998) - never nil for that mode.
+	// steerCh: mode "steer" blocks Prompt on this until steer text arrives.
 	steerCh chan string
 }
 
-// HandleExtensionMethod: the agent side of the _quack/steer extension - the
-// only extension method a real agent ever gets from quack (acp.go's round).
+// HandleExtensionMethod is the agent side of the _quack/steer extension.
 func (f *fakeAgent) HandleExtensionMethod(ctx context.Context, method string, params json.RawMessage) (any, error) {
 	if method == steerExtMethod && f.steerCh != nil {
 		var p steerParams
@@ -121,9 +119,7 @@ func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 		send(sdk.UpdateAgentMessageText("done"))
 		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
 	case "steer":
-		// Blocks until the _quack/steer extension delivers a forwarded
-		// message (#998), proving the round can be reached WHILE this
-		// Prompt RPC is still outstanding - never a boundary re-run.
+		// Blocks until the extension delivers a forwarded message mid-round.
 		text := <-f.steerCh
 		send(sdk.UpdateAgentMessageText("steered: " + text))
 		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil

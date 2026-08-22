@@ -12,9 +12,7 @@ import (
 )
 
 // TestRound_ForwardsLiveSteerIntoTheRunningSession (#998): a message handed
-// to the forward func RegisterLiveSteer captured reaches the still-running
-// Prompt RPC via the _quack/steer ACP extension - not parked for a boundary
-// that never comes in this test (the fake agent only replies once steered).
+// to the captured forward func reaches the still-running Prompt RPC.
 func TestRound_ForwardsLiveSteerIntoTheRunningSession(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {

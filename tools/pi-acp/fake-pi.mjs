@@ -53,9 +53,7 @@ async function guardedCall(cfg, toolName, args) {
 
 createInterface({ input: process.stdin }).on("line", async (l) => {
   const msg = JSON.parse(l);
-  // Mirrors pi's real RPC "steer" command (#998): folds a message into the
-  // live turn instead of a new prompt - echoed as a message chunk so a test
-  // can see it arrived mid-round.
+  // Mirrors pi's "steer" command (#998), echoed as a chunk for the test to see.
   if (msg.type === "steer") {
     out({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: `[steered: ${msg.message}]` } });
     return;

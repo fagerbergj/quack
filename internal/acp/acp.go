@@ -51,10 +51,8 @@ type Options struct {
 	ModelName string
 	// Pricing: nil = no price table entry for ModelName, cost metric skipped.
 	Pricing *config.ModelPricing
-	// RegisterLiveSteer/UnregisterLiveSteer hook this round's live-delivery
-	// path into the node's steer queue (dag.Executor.Set/ClearNodeLiveSteer)
-	// so a queued message lands mid-round instead of waiting for the next
-	// gate boundary (#998). Either nil ⇒ steers always park (old behavior).
+	// RegisterLiveSteer/UnregisterLiveSteer let a queued message land
+	// mid-round instead of at the next gate boundary (#998). nil = park always.
 	RegisterLiveSteer   func(chatID, nodeID string, forward func(text string) bool)
 	UnregisterLiveSteer func(chatID, nodeID string)
 }
@@ -201,11 +199,7 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 	}
 }
 
-// steerExtMethod is an ACP extension method (leading "_" per the spec) that
-// forwards a mid-round steer to the shim - pi's own RPC protocol has a native
-// "steer" command that folds a message into the live turn (#998); no ACP
-// core method covers this, so the extension seam is the smallest way to
-// reach it without a protocol redesign.
+// steerExtMethod: ACP extension (#998) forwarding a mid-round steer to the shim.
 const steerExtMethod = "_quack/steer"
 
 type steerParams struct {
@@ -268,8 +262,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 	otelobs.End(handshakeSpan, nil)
 	a.log.Info("acp round started", "cwd", cwd, "session", sess.SessionId)
 
-	// Live-steer window: only once the session exists, only until this round
-	// ends - a message queued before/after has nothing live to forward into.
+	// Live only for this round's duration - nothing to forward into before/after.
 	if a.opts.RegisterLiveSteer != nil && coords.ChatID != "" && coords.Node != "" {
 		conn := h.conn
 		a.opts.RegisterLiveSteer(coords.ChatID, coords.Node, func(text string) bool {

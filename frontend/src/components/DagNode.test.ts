@@ -315,9 +315,7 @@ describe('DagNode - context meter', () => {
   })
 })
 
-// #998: a steer delivered into the live round is marked delivered right
-// away (dag.nodeControl.enqueue) - the badge only ever counts what's
-// genuinely parked for the node's next turn boundary.
+// #998: badge counts only parked messages, not ones delivered live.
 describe('DagNode - queued-message badge counts only parked (undelivered) messages (#998)', () => {
   function withQueue(queue: NodeState['queue']): string {
     return renderToStaticMarkup(createElement(DagNode, {

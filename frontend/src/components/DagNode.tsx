@@ -102,10 +102,7 @@ function NodeMenu({
   )
 }
 
-// QueuedBadge indicates one or more parked (not-yet-delivered) queued
-// messages - a steer that reached the live round is marked delivered right
-// away (#998) and drops out of this count, so what's left here is genuinely
-// waiting for the node's next turn boundary.
+// QueuedBadge counts only parked messages - live-delivered ones (#998) don't count.
 function QueuedBadge({ count }: { count: number }) {
   if (count === 0) return null
   return (

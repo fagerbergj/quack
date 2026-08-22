@@ -130,9 +130,7 @@ const promptPromise = call("session/prompt", {
   prompt: [{ type: "text", text: prompt }],
 });
 if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
-  // #998: a steer sent while the prompt is still outstanding must reach the
-  // live round (fake-pi echoes it as a message chunk) instead of erroring
-  // or waiting for the round to finish.
+  // #998: a steer sent mid-prompt must reach the live round, not error or wait.
   shim.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "_quack/steer", params: { text: "focus on X" } }) + "\n");
 }
 const resp = await promptPromise;
