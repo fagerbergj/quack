@@ -56,11 +56,9 @@ func (o *OpenAIModel) Name() string {
 	return o.ModelName
 }
 
-// reasoningUsage fills in ThoughtsTokenCount from a provider-reported count
-// (llama-server has none: #968) when one wasn't already supplied, and
-// subtracts it from completionTokens so output means answer, not
-// answer+reasoning. Falls back to a chars/4 estimate, logged as such -
-// llama-server's usage block has no exact per-part token count to prefer.
+// reasoningUsage subtracts reasoning tokens from completionTokens so output
+// means answer, not answer+reasoning. Estimates chars/4 when the provider
+// doesn't report reasoning_tokens (llama-server: #968).
 func reasoningUsage(ctx context.Context, model string, completionTokens, reasoningTokens int32, reasoningText string) (candidates, thoughts int32) {
 	if reasoningTokens == 0 && reasoningText != "" {
 		reasoningTokens = int32((len(reasoningText) + 3) / 4)

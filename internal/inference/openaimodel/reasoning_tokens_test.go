@@ -9,9 +9,8 @@ import (
 )
 
 // TestGenerate_EstimatesReasoningTokensWhenUsageOmitsThem covers #968:
-// llama-server's usage has no completion_tokens_details.reasoning_tokens, so
-// the adapter must estimate reasoning tokens from reasoning_content (chars/4)
-// and subtract them from CandidatesTokenCount so output means answer.
+// llama-server reports no reasoning_tokens, so the adapter estimates
+// chars/4 from reasoning_content and subtracts it from candidates.
 func TestGenerate_EstimatesReasoningTokensWhenUsageOmitsThem(t *testing.T) {
 	// 40-char reasoning_content -> chars/4 = 10 estimated reasoning tokens.
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"the answer","reasoning_content":"0123456789012345678901234567890123456789"}}],"usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}`)
@@ -38,11 +37,9 @@ func TestGenerate_EstimatesReasoningTokensWhenUsageOmitsThem(t *testing.T) {
 	}
 }
 
-// TestGenerate_SubtractsProviderReportedReasoningTokens covers the case
-// where usage already carries an exact reasoning_tokens count: the adapter
-// must pass ThoughtsTokenCount through unmodified (never re-estimating over
-// an exact value) but still subtract it from CandidatesTokenCount, since
-// completion_tokens already includes reasoning_tokens on these backends.
+// TestGenerate_SubtractsProviderReportedReasoningTokens: an exact
+// reasoning_tokens count passes through untouched but is still subtracted
+// from CandidatesTokenCount (completion_tokens already includes it).
 func TestGenerate_SubtractsProviderReportedReasoningTokens(t *testing.T) {
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"the answer","reasoning_content":"some reasoning text here"}}],"usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150,"completion_tokens_details":{"reasoning_tokens":30}}}`)
 	defer srv.Close()
@@ -95,11 +92,8 @@ func TestGenerate_NoReasoningLeavesUsageUnchanged(t *testing.T) {
 	}
 }
 
-// TestStreaming_EstimatesReasoningTokensWhenUsageOmitsThem is the streaming
-// counterpart: the final usage-only chunk carries completion_tokens with no
-// reasoning split, and the aggregated reasoning_content deltas must be used
-// to estimate and subtract reasoning tokens the same way the non-streaming
-// path does.
+// TestStreaming_EstimatesReasoningTokensWhenUsageOmitsThem: same estimate
+// path, but reasoning_content arrives as aggregated streaming deltas.
 func TestStreaming_EstimatesReasoningTokensWhenUsageOmitsThem(t *testing.T) {
 	srv := sseServer(t,
 		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"reasoning_content":"0123456789012345678901234567890123456789"}}]}`,
@@ -122,10 +116,8 @@ func TestStreaming_EstimatesReasoningTokensWhenUsageOmitsThem(t *testing.T) {
 	}
 }
 
-// TestStreaming_SubtractsProviderReportedReasoningTokens is the streaming
-// counterpart to TestGenerate_SubtractsProviderReportedReasoningTokens: the
-// final usage-only chunk carries an exact reasoning_tokens count, which must
-// pass through untouched but still be subtracted from CandidatesTokenCount.
+// TestStreaming_SubtractsProviderReportedReasoningTokens: streaming
+// counterpart of the exact-count-passthrough case above.
 func TestStreaming_SubtractsProviderReportedReasoningTokens(t *testing.T) {
 	srv := sseServer(t,
 		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"reasoning_content":"some reasoning text here"}}]}`,
