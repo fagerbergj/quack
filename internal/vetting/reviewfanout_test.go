@@ -188,6 +188,41 @@ func TestReviewFanout_FailedSiblingDoesNotBlockDelivery(t *testing.T) {
 	}
 }
 
+// #942: in a multi-reviewer fanout, a killed sibling's staged review must
+// reach the merge as real content, not just a "did not complete" note.
+func TestResolveAbortedReviewer_KilledSiblingStagedReviewReachesMerge(t *testing.T) {
+	done := make(chan DeliveryContext, 1)
+	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
+		done <- dc
+		return nil, nil
+	}
+	fanout := GetReviewFanout(t.Name(), 2)
+	cfg := Config{Deliver: deliver, ReviewFanout: fanout, IsReviewer: true}
+
+	commitDelivery(context.Background(), nil, cfg, "r1", workerActivity{
+		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "comment", Body: "looks fine"}},
+	}, GateResult{Passed: true})
+
+	// r2 was killed after staging - its real verdict/body must survive, not
+	// get replaced by an empty item marked failed.
+	resolveAbortedReviewer(context.Background(), nil, cfg, "r2", workerActivity{
+		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "approve", Body: "regression covered by TestFooBar1729"}},
+	})
+
+	select {
+	case dc := <-done:
+		body := dc.Items[0].Body
+		if !strings.Contains(body, "TestFooBar1729") {
+			t.Fatalf("Body = %q, want the killed sibling's staged content in the merge", body)
+		}
+		if strings.Contains(body, "did not complete") {
+			t.Fatalf("Body = %q, staged content should not be reported as failed", body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a killed sibling's staged review must reach delivery")
+	}
+}
+
 // #942: a single-reviewer plan (no ReviewFanout) whose round dies (killed,
 // timed out, errored) after quackmcp_stage_review already staged the full
 // verdict must deliver that staged review, flagged as abnormal - not discard
