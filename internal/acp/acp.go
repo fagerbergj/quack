@@ -51,6 +51,12 @@ type Options struct {
 	ModelName string
 	// Pricing: nil = no price table entry for ModelName, cost metric skipped.
 	Pricing *config.ModelPricing
+	// RegisterLiveSteer/UnregisterLiveSteer hook this round's live-delivery
+	// path into the node's steer queue (dag.Executor.Set/ClearNodeLiveSteer)
+	// so a queued message lands mid-round instead of waiting for the next
+	// gate boundary (#998). Either nil ⇒ steers always park (old behavior).
+	RegisterLiveSteer   func(chatID, nodeID string, forward func(text string) bool)
+	UnregisterLiveSteer func(chatID, nodeID string)
 }
 
 // Agent is an adkagent.Agent backed by an external ACP subprocess.
@@ -195,6 +201,17 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 	}
 }
 
+// steerExtMethod is an ACP extension method (leading "_" per the spec) that
+// forwards a mid-round steer to the shim - pi's own RPC protocol has a native
+// "steer" command that folds a message into the live turn (#998); no ACP
+// core method covers this, so the extension seam is the smallest way to
+// reach it without a protocol redesign.
+const steerExtMethod = "_quack/steer"
+
+type steerParams struct {
+	Text string `json:"text"`
+}
+
 // promptDone carries the Prompt RPC's outcome off the goroutine in round.
 type promptDone struct {
 	resp sdk.PromptResponse
@@ -250,6 +267,18 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 	handshakeSpan.SetAttributes(attribute.String("session_id", string(sess.SessionId)))
 	otelobs.End(handshakeSpan, nil)
 	a.log.Info("acp round started", "cwd", cwd, "session", sess.SessionId)
+
+	// Live-steer window: only once the session exists, only until this round
+	// ends - a message queued before/after has nothing live to forward into.
+	if a.opts.RegisterLiveSteer != nil && coords.ChatID != "" && coords.Node != "" {
+		conn := h.conn
+		a.opts.RegisterLiveSteer(coords.ChatID, coords.Node, func(text string) bool {
+			return conn.NotifyExtension(context.Background(), steerExtMethod, steerParams{Text: text}) == nil
+		})
+		if a.opts.UnregisterLiveSteer != nil {
+			defer a.opts.UnregisterLiveSteer(coords.ChatID, coords.Node)
+		}
+	}
 
 	finalPrompt := mcpToolsBlock(toolNames) + "\n\n" + outbound
 

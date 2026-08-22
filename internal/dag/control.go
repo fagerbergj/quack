@@ -45,9 +45,29 @@ type nodeControl struct {
 	queue     []*queuedMsg
 	drained   [][]string // one entry per TakeQueued() drain, in order - generation N (the -sN run suffix) reads drained[N-1]
 
+	// liveSteer forwards a new message straight into the node's running ACP
+	// round (acp.Agent.round registers it for the round's lifetime) instead
+	// of parking it for the next gate boundary. nil whenever the node isn't
+	// mid-round (or isn't ACP-backed) - enqueue then falls back to the queue.
+	liveSteer func(text string) bool
+
 	// Write-through coordinates; nil store = in-memory only (tests).
 	store          NodeStateStore
 	chatID, nodeID string
+}
+
+// setLiveSteer/clearLiveSteer: the live round's forward hook, registered for
+// the round's duration only - see acp.Agent.round.
+func (c *nodeControl) setLiveSteer(f func(text string) bool) {
+	c.mu.Lock()
+	c.liveSteer = f
+	c.mu.Unlock()
+}
+
+func (c *nodeControl) clearLiveSteer() {
+	c.mu.Lock()
+	c.liveSteer = nil
+	c.mu.Unlock()
 }
 
 func (c *nodeControl) Cancelled() bool {
@@ -165,11 +185,19 @@ func (c *nodeControl) persistQueue() {
 	}
 }
 
-// enqueue appends a new queued message and returns a copy.
+// enqueue appends a new queued message and returns a copy. If the node's
+// round is live (liveSteer set) it tries delivering straight into the
+// running session first - only a forward failure (or no live round) falls
+// back to the round-boundary queue.
 func (c *nodeControl) enqueue(text string) queuedMsg {
 	c.mu.Lock()
+	live := c.liveSteer
+	c.mu.Unlock()
+	delivered := live != nil && live(text)
+
+	c.mu.Lock()
 	defer c.mu.Unlock()
-	m := &queuedMsg{ID: newMsgID(), Text: text, CreatedAt: time.Now().UTC()}
+	m := &queuedMsg{ID: newMsgID(), Text: text, Delivered: delivered, CreatedAt: time.Now().UTC()}
 	c.queue = append(c.queue, m)
 	return *m
 }
@@ -437,6 +465,23 @@ func (e *Executor) NodePauseReason(chatID, nodeID string) PauseReason {
 	e.controls.mu.Lock()
 	defer e.controls.mu.Unlock()
 	return e.controls.paused[chatID][nodeID]
+}
+
+// SetNodeLiveSteer registers a running round's forward hook so a steer
+// queued while the round is live is delivered immediately instead of parked
+// until the next gate boundary (#998). No-op if the node isn't registered
+// (round hasn't started yet, or already ended).
+func (e *Executor) SetNodeLiveSteer(chatID, nodeID string, f func(text string) bool) {
+	if c := e.controls.get(chatID, nodeID); c != nil {
+		c.setLiveSteer(f)
+	}
+}
+
+// ClearNodeLiveSteer un-registers the live-delivery hook at round end.
+func (e *Executor) ClearNodeLiveSteer(chatID, nodeID string) {
+	if c := e.controls.get(chatID, nodeID); c != nil {
+		c.clearLiveSteer()
+	}
 }
 
 // QueueNodeMessage appends a message to a running node's queue.

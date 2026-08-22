@@ -1313,8 +1313,9 @@ components:
           type: string
         delivered:
           type: boolean
-          description: True once handed to the node at a turn boundary - no
-            longer editable or removable.
+          description: True once handed to the node - immediately if its round
+            was live (#998), otherwise at the next turn boundary; no longer
+            editable or removable either way.
         created_at:
           type: string
           format: date-time

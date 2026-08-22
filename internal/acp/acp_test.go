@@ -2,6 +2,7 @@ package acp
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -31,6 +32,9 @@ func TestMain(m *testing.M) {
 
 func runFakeAgent(mode string) {
 	ag := &fakeAgent{mode: mode}
+	if mode == "steer" {
+		ag.steerCh = make(chan string, 1)
+	}
 	conn := sdk.NewAgentSideConnection(ag, os.Stdout, os.Stdin)
 	ag.conn = conn
 	<-conn.Done()
@@ -39,6 +43,20 @@ func runFakeAgent(mode string) {
 type fakeAgent struct {
 	mode string
 	conn *sdk.AgentSideConnection
+	// steerCh: mode "steer" blocks Prompt on this until HandleExtensionMethod
+	// delivers the forwarded text (#998) - never nil for that mode.
+	steerCh chan string
+}
+
+// HandleExtensionMethod: the agent side of the _quack/steer extension - the
+// only extension method a real agent ever gets from quack (acp.go's round).
+func (f *fakeAgent) HandleExtensionMethod(ctx context.Context, method string, params json.RawMessage) (any, error) {
+	if method == steerExtMethod && f.steerCh != nil {
+		var p steerParams
+		_ = json.Unmarshal(params, &p)
+		f.steerCh <- p.Text
+	}
+	return map[string]any{}, nil
 }
 
 func (f *fakeAgent) Initialize(ctx context.Context, _ sdk.InitializeRequest) (sdk.InitializeResponse, error) {
@@ -101,6 +119,13 @@ func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 		}}, nil
 	case "usage-none":
 		send(sdk.UpdateAgentMessageText("done"))
+		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
+	case "steer":
+		// Blocks until the _quack/steer extension delivers a forwarded
+		// message (#998), proving the round can be reached WHILE this
+		// Prompt RPC is still outstanding - never a boundary re-run.
+		text := <-f.steerCh
+		send(sdk.UpdateAgentMessageText("steered: " + text))
 		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
 	}
 	send(sdk.UpdateAgentThoughtText("planning"))

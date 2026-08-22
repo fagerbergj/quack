@@ -313,6 +313,44 @@ func TestExecute_QueueNodeMessageReRunsWithGuidance(t *testing.T) {
 	}
 }
 
+// TestExecute_QueueNodeMessageDeliversLiveVsBoundary (#998): with a live-steer
+// hook registered for the running node, a queued message is forwarded
+// immediately and marked delivered - the worker sees exactly one run (no
+// TakeQueued re-run at the boundary). Without a hook, the existing
+// boundary-fallback path (TestExecute_QueueNodeMessageReRunsWithGuidance)
+// still re-runs the worker with the guidance folded in.
+func TestExecute_QueueNodeMessageDeliversLiveVsBoundary(t *testing.T) {
+	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
+	ex, plan := newCoopExecutor(t, stub, 1)
+
+	var forwarded string
+	go func() {
+		<-stub.started
+		ex.SetNodeLiveSteer("chat", "n1", func(text string) bool {
+			forwarded = text
+			return true
+		})
+		m, ok := ex.QueueNodeMessage("chat", "n1", "focus on cost")
+		if !ok {
+			t.Error("QueueNodeMessage returned false for a LIVE node")
+		}
+		if !m.Delivered {
+			t.Error("message forwarded via a live steer hook should be marked delivered immediately")
+		}
+		close(stub.unblock)
+	}()
+	drain(t, ex, plan)
+
+	if forwarded != "focus on cost" {
+		t.Errorf("live steer hook never got the message; got %q", forwarded)
+	}
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if stub.workerCalls != 1 {
+		t.Errorf("worker ran %d times; a live-delivered steer must not also trigger a boundary re-run", stub.workerCalls)
+	}
+}
+
 // TestExecute_PauseNodeStopsBeforeJudgeAndKeepsAnswer: pausing a running node
 // stops it at its next gate-stage boundary (like cancel) but the answer
 // propagates as a paused node, resumable - not cancelled.

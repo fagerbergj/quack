@@ -102,14 +102,16 @@ function NodeMenu({
   )
 }
 
-// QueuedBadge indicates one or more not-yet-delivered queued messages -
-// visible at a glance on the card, edited/removed in the popup.
+// QueuedBadge indicates one or more parked (not-yet-delivered) queued
+// messages - a steer that reached the live round is marked delivered right
+// away (#998) and drops out of this count, so what's left here is genuinely
+// waiting for the node's next turn boundary.
 function QueuedBadge({ count }: { count: number }) {
   if (count === 0) return null
   return (
     <span
       className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400"
-      title={`${count} queued message${count === 1 ? '' : 's'} - delivered at the node's next turn boundary`}
+      title={`${count} parked message${count === 1 ? '' : 's'} - delivers when the current round ends`}
     >
       ✉ {count}
     </span>

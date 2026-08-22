@@ -62,6 +62,12 @@ function QueuedMessageRow({ msg, onEdit, onRemove }: {
   return (
     <li className="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-200">
       <span className="flex-1 min-w-0">{msg.text}</span>
+      <span
+        title="Parks until the current round ends - not delivered mid-turn for this node"
+        className="shrink-0 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+      >
+        parked
+      </span>
       {onEdit && <button onClick={() => setEditing(true)} aria-label="Edit" title="Edit" className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300">✎</button>}
       {onRemove && <button onClick={onRemove} aria-label="Remove" title="Remove" className="text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400">✕</button>}
     </li>
@@ -181,7 +187,7 @@ export function NodePopup({
               Queued messages
             </span>
             <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5 mb-2">
-              Delivered at the node's next turn boundary - never mid-turn.
+              Delivered into the live round when possible; "parked" ones wait for the node's next turn boundary.
             </p>
             <ul className="space-y-1.5">
               {queue.map(m => (
