@@ -74,6 +74,8 @@ providers:
     kind: openai
     endpoint: ${QUACK_LLM_ENDPOINT}
     api_key: ${QUACK_LLM_API_KEY}
+models:
+  m: { provider: default, role: worker }
 stores:
   main: { kind: postgres, url: ${QUACK_DATABASE_URL} }
 session: { store: main }
@@ -117,6 +119,8 @@ func TestLoadRejectsUnknownProviderKind(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
   default: { kind: anthropic, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
 stores:
   main: { kind: postgres, url: u }
 session: { store: main }
@@ -139,6 +143,8 @@ providers:
     fork_mode: fork
     fork_from: node-a
     live: { kind: openai, endpoint: http://x, api_key: k }
+models:
+  m: { provider: default, role: worker }
 stores:
   main: { kind: postgres, url: u }
 session: { store: main }
@@ -160,6 +166,8 @@ func TestLoadRejectsReplayForkModeWithoutLive(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
   default: { kind: replay, bundle: /tmp/bundle.zip, fork_mode: fork }
+models:
+  m: { provider: default, role: worker }
 stores:
   main: { kind: postgres, url: u }
 session: { store: main }
@@ -174,6 +182,8 @@ func TestLoadRejectsReplayForkModeUnknownValue(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
   default: { kind: replay, bundle: /tmp/bundle.zip, fork_mode: bogus }
+models:
+  m: { provider: default, role: worker }
 stores:
   main: { kind: postgres, url: u }
 session: { store: main }
@@ -188,6 +198,8 @@ func TestLoadRejectsMissingOrchestratorProvider(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
   default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
 stores:
   main: { kind: postgres, url: u }
 session: { store: main }
@@ -202,6 +214,8 @@ func TestLoadRejectsUserMemoryHookMissingModel(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
   default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
 stores:
   main: { kind: postgres, url: u }
 session: { store: main }
@@ -219,6 +233,8 @@ func TestLoadRejectsUserMemoryHookUnknownProvider(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
   default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
 stores:
   main: { kind: postgres, url: u }
 session: { store: main }
@@ -246,6 +262,8 @@ func TestLoadRejectsUnknownStoreKind(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
   default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
 stores:
   bad: { kind: mysql, url: u }
 session: { store: bad }
@@ -260,6 +278,8 @@ func TestLoadRejectsUnknownSessionStore(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
   default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
 stores:
   main: { kind: postgres, url: u }
 session: { store: nope }
@@ -277,6 +297,7 @@ func TestLoadParsesAgentsAndTools(t *testing.T) {
 providers:
   default: { kind: openai, endpoint: http://x }
 models:
+  m: { provider: default, role: worker }
   r-model: { provider: default, role: worker }
 stores:
   main: { kind: postgres, url: u }
@@ -385,6 +406,10 @@ func TestConsolidationSchedule(t *testing.T) {
 	const cfg = `
 providers:
   default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
+  e: { provider: default, role: embed }
+  c: { provider: default, role: worker }
 stores:
   main: { kind: postgres, url: u }
   vec:
@@ -427,6 +452,8 @@ func TestStoreExtends(t *testing.T) {
 	c, err := Load(writeTemp(t, `
 providers:
   default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
 stores:
   base: { kind: postgres, url: pg }
   doc:  { extends: base, collection: documents }
@@ -454,6 +481,10 @@ func TestMemoryStore(t *testing.T) {
 	const cfg = `
 providers:
   default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
+  e: { provider: default, role: embed }
+  c: { provider: default, role: worker }
 stores:
   main: { kind: postgres, url: u }
   vec:
@@ -506,6 +537,7 @@ func TestLoadParsesPerAgentJudgeRounds(t *testing.T) {
 providers:
   default: { kind: openai, endpoint: http://x }
 models:
+  m: { provider: default, role: worker }
   c-model: { provider: default, role: worker }
   s-model: { provider: default, role: worker }
 stores:
@@ -637,6 +669,8 @@ auth:
 const baseConfig = `
 providers:
   default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
 stores:
   main: { kind: postgres, url: u }
 session: { store: main }
@@ -651,7 +685,7 @@ func TestRealConfigLoads(t *testing.T) {
 	for _, kv := range [][2]string{
 		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"}, {"QUACK_DATABASE_URL", "postgres://localhost/db"},
 		{"QUACK_ORCH_MODEL", "m"}, {"QUACK_RESEARCHER_MODEL", "qwen3.8-27b"}, {"QUACK_MEDIA_MODEL", "qwen3-omni-30b"}, {"QUACK_IMAGE_MODEL", "qwen3-vl-32b"},
-		{"QUACK_JUDGE_MODEL", "j"}, {"QUACK_EMBED_MODEL", "e"}, {"QUACK_SEARXNG_URL", "http://s"}, {"QUACK_CRAWL4AI_URL", "http://c"},
+		{"QUACK_JUDGE_MODEL", "gemma4-26b-a4b"}, {"QUACK_EMBED_MODEL", "qwen3-embed"}, {"QUACK_SEARXNG_URL", "http://s"}, {"QUACK_CRAWL4AI_URL", "http://c"},
 	} {
 		t.Setenv(kv[0], kv[1])
 	}
@@ -677,7 +711,7 @@ func TestRealConfigWorkersHaveNoDirectGitHubMutation(t *testing.T) {
 	for _, kv := range [][2]string{
 		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"}, {"QUACK_DATABASE_URL", "postgres://localhost/db"},
 		{"QUACK_ORCH_MODEL", "m"}, {"QUACK_RESEARCHER_MODEL", "qwen3.8-27b"}, {"QUACK_MEDIA_MODEL", "qwen3-omni-30b"}, {"QUACK_IMAGE_MODEL", "qwen3-vl-32b"},
-		{"QUACK_JUDGE_MODEL", "j"}, {"QUACK_EMBED_MODEL", "e"}, {"QUACK_SEARXNG_URL", "http://s"}, {"QUACK_CRAWL4AI_URL", "http://c"},
+		{"QUACK_JUDGE_MODEL", "gemma4-26b-a4b"}, {"QUACK_EMBED_MODEL", "qwen3-embed"}, {"QUACK_SEARXNG_URL", "http://s"}, {"QUACK_CRAWL4AI_URL", "http://c"},
 	} {
 		t.Setenv(kv[0], kv[1])
 	}
@@ -727,7 +761,7 @@ func TestRealConfigWorkersHaveNoDirectGitHubMutation(t *testing.T) {
 func TestManagedConfigLoads(t *testing.T) {
 	for _, kv := range [][2]string{
 		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"},
-		{"QUACK_ORCH_MODEL", "m"}, {"QUACK_RESEARCHER_MODEL", "r"},
+		{"QUACK_ORCH_MODEL", "r"}, {"QUACK_RESEARCHER_MODEL", "r"}, // managed.yaml's own doc: reuse the worker model
 		{"QUACK_JUDGE_MODEL", "j"}, {"QUACK_EMBED_MODEL", "e"},
 	} {
 		t.Setenv(kv[0], kv[1])
@@ -1205,7 +1239,7 @@ gates:
   deterministic_checks: { max_rounds: 4 }
   judge:
     provider: default
-    model: judge-m
+    model: m
     max_rounds: 1
 `))
 	if err != nil {
@@ -1244,7 +1278,7 @@ func TestLoadGatesJudgeMaxOutputTokensRoundTrips(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 gates:
   rubric: "be good"
-  judge: { provider: default, model: judge-m, max_rounds: 1, max_output_tokens: 4096 }
+  judge: { provider: default, model: m, max_rounds: 1, max_output_tokens: 4096 }
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -1283,9 +1317,16 @@ gates: { rubric: r, judge: { provider: default, model: j, max_rounds: 1, max_out
 func TestCoderModelFallsBackToResearcherModel(t *testing.T) {
 	t.Setenv("QUACK_RESEARCHER_MODEL", "researcher-model")
 	// Deliberately NOT setting QUACK_CODER_MODEL.
-	c, err := Load(writeTemp(t, baseConfig+`
+	c, err := Load(writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://x }
 models:
+  m: { provider: default, role: worker }
   researcher-model: { provider: default, role: worker }
+stores:
+  main: { kind: postgres, url: u }
+session: { store: main }
+orchestrator: { provider: default, model: m }
 agents:
   code-implementer: { bundle: agents/code-implementer, provider: default, model: ${QUACK_CODER_MODEL}, tools: [] }
 `))
@@ -1302,9 +1343,16 @@ agents:
 func TestCoderModelExplicitOverridesFallback(t *testing.T) {
 	t.Setenv("QUACK_RESEARCHER_MODEL", "researcher-model")
 	t.Setenv("QUACK_CODER_MODEL", "coder-model")
-	c, err := Load(writeTemp(t, baseConfig+`
+	c, err := Load(writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://x }
 models:
+  m: { provider: default, role: worker }
   coder-model: { provider: default, role: worker }
+stores:
+  main: { kind: postgres, url: u }
+session: { store: main }
+orchestrator: { provider: default, model: m }
 agents:
   code-implementer: { bundle: agents/code-implementer, provider: default, model: ${QUACK_CODER_MODEL}, tools: [] }
 `))
@@ -1368,6 +1416,8 @@ func TestKnownFieldsRejectsUnknownTopLevel(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
   default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
 stores:
   main: { kind: postgres, url: u }
 session: { store: main }
@@ -1425,6 +1475,8 @@ func TestKnownFieldsRejectsMemoryRoleRename(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
   default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
 stores:
   main: { kind: postgres, url: u }
 session: { store: main }
@@ -1454,6 +1506,8 @@ func TestAllowCloneRequiresReadOnly(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
   default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
 stores:
   main: { kind: postgres, url: u }
 session: { store: main }
@@ -1478,10 +1532,18 @@ agents:
 // TestValidConfigStillLoads ensures KnownFields(true) doesn't regress on a config that
 // contains every valid known field (the exact set the struct defines).
 func TestValidConfigStillLoads(t *testing.T) {
-	c, err := Load(writeTemp(t, baseConfig+`
+	c, err := Load(writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://x }
+stores:
+  main: { kind: postgres, url: u }
+session: { store: main }
+orchestrator: { provider: default, model: m }
 server:
   addr: ":9999"
 models:
+  m: { provider: default, role: worker }
+  j-model: { provider: default, role: worker }
   r-model:
     provider: default
     role: worker
@@ -1567,6 +1629,8 @@ func baseObservabilityYAML(t *testing.T, observability string) string {
 	return writeTemp(t, `
 providers:
   default: { kind: openai, endpoint: ${QUACK_LLM_ENDPOINT}, api_key: ${QUACK_LLM_API_KEY} }
+models:
+  m: { provider: default, role: worker }
 stores:
   main: { kind: postgres, url: ${QUACK_DATABASE_URL} }
   ledger: { kind: filesystem, root: /tmp/quack-recordings }
@@ -1648,6 +1712,8 @@ func TestFilesystemStoreDefaultsRoot(t *testing.T) {
 	c, err := Load(writeTemp(t, `
 providers:
   default: { kind: openai, endpoint: ${QUACK_LLM_ENDPOINT}, api_key: ${QUACK_LLM_API_KEY} }
+models:
+  m: { provider: default, role: worker }
 stores:
   main: { kind: postgres, url: ${QUACK_DATABASE_URL} }
   ledger2: { kind: filesystem }
@@ -1666,8 +1732,6 @@ orchestrator: { provider: default, model: ${QUACK_ORCH_MODEL} }
 // workflowAgentConfig is a minimal agents: block a workflow shape's agents
 // list can reference.
 const workflowAgentConfig = `
-models:
-  m: { provider: default, role: worker }
 agents:
   document-classifier:
     bundle: agents/document-classifier
@@ -1896,7 +1960,7 @@ func TestRealConfigDocumentIngestWorkflowExampleLoads(t *testing.T) {
 	for _, kv := range [][2]string{
 		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"}, {"QUACK_DATABASE_URL", "postgres://localhost/db"},
 		{"QUACK_ORCH_MODEL", "m"}, {"QUACK_RESEARCHER_MODEL", "qwen3.8-27b"}, {"QUACK_MEDIA_MODEL", "qwen3-omni-30b"}, {"QUACK_IMAGE_MODEL", "qwen3-vl-32b"},
-		{"QUACK_JUDGE_MODEL", "j"}, {"QUACK_EMBED_MODEL", "e"}, {"QUACK_SEARXNG_URL", "http://s"}, {"QUACK_CRAWL4AI_URL", "http://c"},
+		{"QUACK_JUDGE_MODEL", "gemma4-26b-a4b"}, {"QUACK_EMBED_MODEL", "qwen3-embed"}, {"QUACK_SEARXNG_URL", "http://s"}, {"QUACK_CRAWL4AI_URL", "http://c"},
 		{"RMFAKECLOUD_URL", "https://rm.example.com"}, {"RMFAKECLOUD_EMAIL", "a@example.com"}, {"RMFAKECLOUD_PASSWORD", "pw"},
 	} {
 		t.Setenv(kv[0], kv[1])
@@ -2030,7 +2094,7 @@ models:
     cost: { input_per_mtok: 0.6, output_per_mtok: 3.6 }
 stores: { main: { kind: postgres, url: u } }
 session: { store: main }
-orchestrator: { provider: default, model: m }
+orchestrator: { provider: default, model: w1 }
 agents:
   worker: { bundle: agents/worker, model: w1, context_window: 65536 }
 `,
@@ -2049,6 +2113,8 @@ orchestrator: { provider: default, model: m }
 		{
 			name: "agent model not in registry",
 			yaml: providers + `
+models:
+  m: { provider: default, role: worker }
 stores: { main: { kind: postgres, url: u } }
 session: { store: main }
 orchestrator: { provider: default, model: m }
@@ -2064,7 +2130,7 @@ models:
   w1: { provider: default, role: worker, context_window: 32768 }
 stores: { main: { kind: postgres, url: u } }
 session: { store: main }
-orchestrator: { provider: default, model: m }
+orchestrator: { provider: default, model: w1 }
 agents:
   worker: { bundle: agents/worker, model: w1, context_window: 65536 }
 `,
@@ -2077,7 +2143,7 @@ models:
   w1: { provider: default, role: worker, context_window: 131072, limits: { kv_tokens: 32768 } }
 stores: { main: { kind: postgres, url: u } }
 session: { store: main }
-orchestrator: { provider: default, model: m }
+orchestrator: { provider: default, model: w1 }
 agents:
   worker: { bundle: agents/worker, model: w1, context_window: 65536 }
 `,
@@ -2092,7 +2158,7 @@ models:
   w1: { provider: default, role: worker }
 stores: { main: { kind: postgres, url: u } }
 session: { store: main }
-orchestrator: { provider: default, model: m }
+orchestrator: { provider: default, model: w1 }
 `,
 			wantErr: `model "w1" role "worker" is not a key of provider "default" limits.active`,
 		},
@@ -2106,7 +2172,7 @@ models:
   w1: { provider: default, role: worker }
 stores: { main: { kind: postgres, url: u } }
 session: { store: main }
-orchestrator: { provider: default, model: m }
+orchestrator: { provider: default, model: w1 }
 agents:
   worker: { bundle: agents/worker, provider: other, model: w1 }
 `,
@@ -2156,7 +2222,7 @@ models:
   w1: { provider: default, role: worker }
 stores: { main: { kind: postgres, url: u } }
 session: { store: main }
-orchestrator: { provider: default, model: m }
+orchestrator: { provider: default, model: w1 }
 agents:
   worker: { bundle: agents/worker, model: w1 }
 `))
@@ -2180,7 +2246,7 @@ models:
   unpriced: { provider: default, role: worker }
 stores: { main: { kind: postgres, url: u } }
 session: { store: main }
-orchestrator: { provider: default, model: m }
+orchestrator: { provider: default, model: priced }
 `))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -2194,5 +2260,27 @@ orchestrator: { provider: default, model: m }
 	}
 	if got := c.ModelCost("nonexistent"); got != nil {
 		t.Errorf("ModelCost(nonexistent) = %+v, want nil", got)
+	}
+}
+
+// TestDuplicateModelKeyGetsHelpfulHint: two roles resolving to the same
+// model name (common with an env-var-keyed models: registry) hits a raw
+// YAML duplicate-key error; it should still name the model and hint why.
+func TestDuplicateModelKeyGetsHelpfulHint(t *testing.T) {
+	_, err := Load(writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://x }
+models:
+  shared: { provider: default, role: worker }
+  shared: { provider: default, role: judge }
+stores: { main: { kind: postgres, url: u } }
+session: { store: main }
+orchestrator: { provider: default, model: shared }
+`))
+	if err == nil {
+		t.Fatal("expected an error for a duplicate models: key")
+	}
+	if !strings.Contains(err.Error(), "shared") || !strings.Contains(err.Error(), "resolved to the same model name") {
+		t.Errorf("error should name the key and hint at the ${ENV} collision: %v", err)
 	}
 }

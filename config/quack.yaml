@@ -50,6 +50,9 @@ models:
     provider: default
     role: embed
     context_window: 4096
+  ${QUACK_ORCH_MODEL}:         # the thin dispatcher; usually reuses a worker model above
+    provider: default
+    role: worker
 
 # Named backend registry (like providers): consumers reference a store by name.
 # `kind` selects the adapter (the portability seam). A vector store also carries
@@ -184,7 +187,7 @@ agents:
     skills: [format-markdown, present-coding-plan, pr-authoring, mermaid-authoring]
     provider: default
     model: ${QUACK_RESEARCHER_MODEL}
-    context_window: 65536       # same model as web-researcher
+    context_window: 131072      # 6-node synthesis measured 47,341 prompt tokens (~7.9k/upstream node); 65536 was too tight for a 10-node plan
     judge_rounds: 1             # just combines already-vetted upstream node outputs; re-revising is low value
     tools: [check_mermaid]
   media-reader:

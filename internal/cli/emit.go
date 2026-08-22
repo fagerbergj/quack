@@ -193,8 +193,9 @@ func emitTool(b *strings.Builder, name, kind, url string) {
 	fmt.Fprintf(b, "  %s:\n    kind: %s\n    url: %s\n", name, kind, url)
 }
 
-// emitModels renders the models: registry entry for every distinct model an
-// agent below actually references - each agent's model must resolve to one.
+// emitModels renders the models: registry entry for every distinct model
+// referenced below - by an agent, gates.judge, or the vector store's
+// embedder - each such reference must resolve to a registry entry.
 func emitModels(b *strings.Builder, a InitAnswers) {
 	coder := a.CoderModel
 	if coder == "" {
@@ -202,12 +203,15 @@ func emitModels(b *strings.Builder, a InitAnswers) {
 	}
 	seen := map[string]bool{}
 	b.WriteString("models:\n")
-	for _, m := range []string{a.MainModel, a.AudioModel, a.VisionModel, coder} {
-		if m == "" || seen[m] {
+	for _, mr := range []struct{ model, role string }{
+		{a.MainModel, "worker"}, {a.AudioModel, "worker"}, {a.VisionModel, "worker"}, {coder, "worker"},
+		{a.JudgeModel, "judge"}, {a.EmbedModel, "embed"},
+	} {
+		if mr.model == "" || seen[mr.model] {
 			continue
 		}
-		seen[m] = true
-		fmt.Fprintf(b, "  %s:\n    provider: default\n    role: worker\n", m)
+		seen[mr.model] = true
+		fmt.Fprintf(b, "  %s:\n    provider: default\n    role: %s\n", mr.model, mr.role)
 	}
 	b.WriteString("\n")
 }

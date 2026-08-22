@@ -529,6 +529,20 @@ type ModelPricing struct {
 	OutputPerMTok float64 `yaml:"output_per_mtok"`
 }
 
+// checkModelRegistered errors if a non-empty model reference (from any of
+// the several Provider+Model fields outside agents:) isn't in the registry -
+// ModelCost is a silent map lookup, so an unregistered judge/embed/etc model
+// would otherwise load clean and quietly drop its cost metric forever.
+func (c *Config) checkModelRegistered(field, model string) error {
+	if model == "" {
+		return nil
+	}
+	if _, ok := c.Models[model]; !ok {
+		return fmt.Errorf("config: %s %q is not defined under models", field, model)
+	}
+	return nil
+}
+
 // ModelCost resolves a model's price table by its registry name. nil means
 // no pricing configured, not free.
 func (c *Config) ModelCost(name string) *ModelPricing {
@@ -775,6 +789,9 @@ func load(path string, skipRuntimeValidation bool) (*Config, error) {
 	dec := yaml.NewDecoder(bytes.NewReader([]byte(expanded)))
 	dec.KnownFields(true)
 	if err := dec.Decode(&c); err != nil {
+		if strings.Contains(err.Error(), "mapping key") && strings.Contains(err.Error(), "already defined") {
+			return nil, fmt.Errorf("parse config %q: %w (if models: is keyed by ${ENV} vars, two roles likely resolved to the same model name)", path, err)
+		}
 		return nil, fmt.Errorf("parse config %q: %w", path, err)
 	}
 	sum := sha256.Sum256(raw)
@@ -858,6 +875,9 @@ func (c *Config) validate() error {
 	if c.Orchestrator.Model == "" && !c.skipRuntimeValidation {
 		return fmt.Errorf("config: orchestrator.model is empty")
 	}
+	if err := c.checkModelRegistered("orchestrator.model", c.Orchestrator.Model); err != nil {
+		return err
+	}
 	if c.Orchestrator.UserMemoryHook.Enabled {
 		h := c.Orchestrator.UserMemoryHook
 		if _, ok := c.Providers[h.Provider]; !ok {
@@ -865,6 +885,9 @@ func (c *Config) validate() error {
 		}
 		if h.Model == "" {
 			return fmt.Errorf("config: orchestrator.user_memory_hook.model is empty")
+		}
+		if err := c.checkModelRegistered("orchestrator.user_memory_hook.model", h.Model); err != nil {
+			return err
 		}
 	}
 	for name, a := range c.Agents {
@@ -905,6 +928,9 @@ func (c *Config) validate() error {
 		if s.Embedder == nil || s.URL == "" {
 			continue
 		}
+		if err := c.checkModelRegistered(fmt.Sprintf("store %q embedder.model", name), s.Embedder.Model); err != nil {
+			return err
+		}
 		if s.TopK == 0 {
 			s.TopK = 5
 		}
@@ -923,6 +949,9 @@ func (c *Config) validate() error {
 	for name, s := range c.Stores {
 		if s.Consolidation == nil {
 			continue
+		}
+		if err := c.checkModelRegistered(fmt.Sprintf("store %q consolidation.model", name), s.Consolidation.Model); err != nil {
+			return err
 		}
 		if s.Consolidation.Schedule == nil {
 			d := defaultConsolidationSchedule
@@ -1008,6 +1037,9 @@ func (c *Config) validate() error {
 			if _, ok := c.Providers[g.Judge.Provider]; !ok {
 				return fmt.Errorf("config: gates.judge.provider %q is not defined under providers", g.Judge.Provider)
 			}
+			if err := c.checkModelRegistered("gates.judge.model", g.Judge.Model); err != nil {
+				return err
+			}
 			if g.Judge.Threshold == 0 {
 				g.Judge.Threshold = 0.7
 			}
@@ -1033,6 +1065,9 @@ func (c *Config) validate() error {
 		if cc.Model != "" {
 			if _, ok := c.Providers[cc.Provider]; !ok {
 				return fmt.Errorf("config: session.compaction.provider %q is not defined under providers", cc.Provider)
+			}
+			if err := c.checkModelRegistered("session.compaction.model", cc.Model); err != nil {
+				return err
 			}
 		}
 	}
