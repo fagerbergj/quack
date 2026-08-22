@@ -38,10 +38,12 @@ func TestGenerate_EstimatesReasoningTokensWhenUsageOmitsThem(t *testing.T) {
 	}
 }
 
-// TestGenerate_UntouchedWhenProviderReportsReasoningTokens covers the case
+// TestGenerate_SubtractsProviderReportedReasoningTokens covers the case
 // where usage already carries an exact reasoning_tokens count: the adapter
-// must pass it through unmodified, never re-estimating over an exact value.
-func TestGenerate_UntouchedWhenProviderReportsReasoningTokens(t *testing.T) {
+// must pass ThoughtsTokenCount through unmodified (never re-estimating over
+// an exact value) but still subtract it from CandidatesTokenCount, since
+// completion_tokens already includes reasoning_tokens on these backends.
+func TestGenerate_SubtractsProviderReportedReasoningTokens(t *testing.T) {
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"the answer","reasoning_content":"some reasoning text here"}}],"usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150,"completion_tokens_details":{"reasoning_tokens":30}}}`)
 	defer srv.Close()
 	m := NewOpenAIModel("m", srv.URL, "k")
@@ -61,8 +63,8 @@ func TestGenerate_UntouchedWhenProviderReportsReasoningTokens(t *testing.T) {
 	if u.ThoughtsTokenCount != 30 {
 		t.Errorf("ThoughtsTokenCount = %d, want 30 (provider-supplied, untouched)", u.ThoughtsTokenCount)
 	}
-	if u.CandidatesTokenCount != 50 {
-		t.Errorf("CandidatesTokenCount = %d, want 50 (unmodified - provider count already exact)", u.CandidatesTokenCount)
+	if u.CandidatesTokenCount != 20 {
+		t.Errorf("CandidatesTokenCount = %d, want 20 (50 completion - 30 reasoning, provider count already included in completion_tokens)", u.CandidatesTokenCount)
 	}
 }
 
@@ -117,5 +119,61 @@ func TestStreaming_EstimatesReasoningTokensWhenUsageOmitsThem(t *testing.T) {
 	}
 	if usage.CandidatesTokenCount != 40 {
 		t.Errorf("CandidatesTokenCount = %d, want 40 (50 completion - 10 reasoning)", usage.CandidatesTokenCount)
+	}
+}
+
+// TestStreaming_SubtractsProviderReportedReasoningTokens is the streaming
+// counterpart to TestGenerate_SubtractsProviderReportedReasoningTokens: the
+// final usage-only chunk carries an exact reasoning_tokens count, which must
+// pass through untouched but still be subtracted from CandidatesTokenCount.
+func TestStreaming_SubtractsProviderReportedReasoningTokens(t *testing.T) {
+	srv := sseServer(t,
+		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"reasoning_content":"some reasoning text here"}}]}`,
+		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"the answer"}}]}`,
+		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[],"usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150,"completion_tokens_details":{"reasoning_tokens":30}}}`,
+	)
+	defer srv.Close()
+	m := NewOpenAIModel("m", srv.URL, "k")
+
+	_, _, usage := collect(t, m)
+	if usage == nil {
+		t.Fatal("no usage metadata")
+	}
+	if usage.ThoughtsTokenCount != 30 {
+		t.Errorf("ThoughtsTokenCount = %d, want 30 (provider-supplied, untouched)", usage.ThoughtsTokenCount)
+	}
+	if usage.CandidatesTokenCount != 20 {
+		t.Errorf("CandidatesTokenCount = %d, want 20 (50 completion - 30 reasoning)", usage.CandidatesTokenCount)
+	}
+}
+
+// TestGenerate_EstimateClampsAtZero covers the estimate path when chars/4
+// exceeds completion_tokens: CandidatesTokenCount must clamp at 0, not go
+// negative.
+func TestGenerate_EstimateClampsAtZero(t *testing.T) {
+	// 200-char reasoning_content -> chars/4 = 50 estimated, > completion_tokens (10).
+	longReasoning := ""
+	for i := 0; i < 200; i++ {
+		longReasoning += "0"
+	}
+	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"the answer","reasoning_content":"`+longReasoning+`"}}],"usage":{"prompt_tokens":100,"completion_tokens":10,"total_tokens":110}}`)
+	defer srv.Close()
+	m := NewOpenAIModel("m", srv.URL, "k")
+
+	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
+	var final *model.LLMResponse
+	for resp, err := range m.GenerateContent(context.Background(), req, false) {
+		if err != nil {
+			t.Fatalf("GenerateContent: %v", err)
+		}
+		final = resp
+	}
+	if final == nil || final.UsageMetadata == nil {
+		t.Fatal("no usage metadata")
+	}
+	u := final.UsageMetadata
+	if u.CandidatesTokenCount != 0 {
+		t.Errorf("CandidatesTokenCount = %d, want 0 (clamped, estimate exceeded completion_tokens)", u.CandidatesTokenCount)
 	}
 }

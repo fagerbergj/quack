@@ -62,17 +62,16 @@ func (o *OpenAIModel) Name() string {
 // answer+reasoning. Falls back to a chars/4 estimate, logged as such -
 // llama-server's usage block has no exact per-part token count to prefer.
 func reasoningUsage(ctx context.Context, model string, completionTokens, reasoningTokens int32, reasoningText string) (candidates, thoughts int32) {
-	if reasoningTokens > 0 || reasoningText == "" {
-		return completionTokens, reasoningTokens
+	if reasoningTokens == 0 && reasoningText != "" {
+		reasoningTokens = int32((len(reasoningText) + 3) / 4)
+		slog.DebugContext(ctx, "estimated reasoning tokens from reasoning_content chars/4 (no reasoning_tokens in usage)",
+			"component", "inference", "model", model, "reasoning_tokens_estimated", reasoningTokens, "chars", len(reasoningText))
 	}
-	estimated := int32((len(reasoningText) + 3) / 4)
-	candidates = completionTokens - estimated
+	candidates = completionTokens - reasoningTokens
 	if candidates < 0 {
 		candidates = 0
 	}
-	slog.InfoContext(ctx, "estimated reasoning tokens from reasoning_content chars/4 (no reasoning_tokens in usage)",
-		"component", "inference", "model", model, "reasoning_tokens_estimated", estimated, "chars", len(reasoningText))
-	return candidates, estimated
+	return candidates, reasoningTokens
 }
 
 // apiErr logs an OpenAI-compatible API failure with the model's HTTP status and
