@@ -56,6 +56,25 @@ func (o *OpenAIModel) Name() string {
 	return o.ModelName
 }
 
+// reasoningUsage fills in ThoughtsTokenCount from a provider-reported count
+// (llama-server has none: #968) when one wasn't already supplied, and
+// subtracts it from completionTokens so output means answer, not
+// answer+reasoning. Falls back to a chars/4 estimate, logged as such -
+// llama-server's usage block has no exact per-part token count to prefer.
+func reasoningUsage(ctx context.Context, model string, completionTokens, reasoningTokens int32, reasoningText string) (candidates, thoughts int32) {
+	if reasoningTokens > 0 || reasoningText == "" {
+		return completionTokens, reasoningTokens
+	}
+	estimated := int32((len(reasoningText) + 3) / 4)
+	candidates = completionTokens - estimated
+	if candidates < 0 {
+		candidates = 0
+	}
+	slog.InfoContext(ctx, "estimated reasoning tokens from reasoning_content chars/4 (no reasoning_tokens in usage)",
+		"component", "inference", "model", model, "reasoning_tokens_estimated", estimated, "chars", len(reasoningText))
+	return candidates, estimated
+}
+
 // apiErr logs an OpenAI-compatible API failure with the model's HTTP status and
 // response body, then returns an enriched error. The log is the load-bearing part:
 // ADK's runner catches a sub-agent's yielded error and can hand the caller empty
@@ -149,7 +168,7 @@ func (o *OpenAIModel) generate(ctx context.Context, req *model.LLMRequest) iter.
 			return
 		}
 
-		llmResp, err := convertChatCompletionResponse(resp)
+		llmResp, err := convertChatCompletionResponse(ctx, resp)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -200,6 +219,7 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 					CandidatesTokenCount:    int32(chunk.Usage.CompletionTokens),
 					TotalTokenCount:         int32(chunk.Usage.TotalTokens),
 					CachedContentTokenCount: int32(chunk.Usage.PromptTokensDetails.CachedTokens),
+					ThoughtsTokenCount:      int32(chunk.Usage.CompletionTokensDetails.ReasoningTokens),
 				}
 			}
 
@@ -422,6 +442,17 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 					"had_thinking", hadThinking, "completion_tokens", compl)
 			}
 		}
+		if usageMetadata != nil {
+			var reasoningText strings.Builder
+			for _, p := range aggregatedContent.Parts {
+				if p.Thought && p.Text != "" {
+					reasoningText.WriteString(p.Text)
+				}
+			}
+			usageMetadata.CandidatesTokenCount, usageMetadata.ThoughtsTokenCount = reasoningUsage(ctx, modelVersion,
+				usageMetadata.CandidatesTokenCount, usageMetadata.ThoughtsTokenCount, reasoningText.String())
+		}
+
 		yield(&model.LLMResponse{
 			Content:       aggregatedContent,
 			UsageMetadata: usageMetadata,
@@ -677,7 +708,7 @@ func toOpenAIChatCompletionMessage(content *genai.Content) ([]openai.ChatComplet
 	return append(toolRespMessages, msg), nil
 }
 
-func convertChatCompletionResponse(resp *openai.ChatCompletion) (*model.LLMResponse, error) {
+func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatCompletion) (*model.LLMResponse, error) {
 	if len(resp.Choices) == 0 {
 		return nil, ErrNoChoicesInResponse
 	}
@@ -766,11 +797,14 @@ func convertChatCompletionResponse(resp *openai.ChatCompletion) (*model.LLMRespo
 
 	var usageMetadata *genai.GenerateContentResponseUsageMetadata
 	if resp.Usage.TotalTokens > 0 {
+		candidates, thoughts := reasoningUsage(ctx, resp.Model, int32(resp.Usage.CompletionTokens),
+			int32(resp.Usage.CompletionTokensDetails.ReasoningTokens), reasoningText)
 		usageMetadata = &genai.GenerateContentResponseUsageMetadata{
 			PromptTokenCount:        int32(resp.Usage.PromptTokens),
-			CandidatesTokenCount:    int32(resp.Usage.CompletionTokens),
+			CandidatesTokenCount:    candidates,
 			TotalTokenCount:         int32(resp.Usage.TotalTokens),
 			CachedContentTokenCount: int32(resp.Usage.PromptTokensDetails.CachedTokens),
+			ThoughtsTokenCount:      thoughts,
 		}
 	}
 
