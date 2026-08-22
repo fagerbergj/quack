@@ -13,6 +13,7 @@ import (
 
 	sdk "github.com/coder/acp-go-sdk"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
@@ -422,6 +423,50 @@ func TestReviewMCP_ToolNamesUnprefixed(t *testing.T) {
 		}
 	}
 }
+
+// TestMcpToolNames_AnnouncesEveryRegisteredTool guards the announcement-gap
+// class of bug (read_artifact was registered on the loopback server but
+// missing from mcpToolNames, so the agent never learned it existed): for a
+// fully-populated session, every tool the server actually registers must
+// appear in mcpToolNames's output. Add a field to this session when adding
+// the next MCP tool and this test enforces the announcement stays in sync.
+func TestMcpToolNames_AnnouncesEveryRegisteredTool(t *testing.T) {
+	secret := mustMemSecret(t)
+	sess := vetting.MemSession{
+		Memory:    &memory.Store{},
+		Staged:    &vetting.MemStage{},
+		Review:    &vetting.ReviewStage{},
+		PRStage:   &vetting.PRStage{},
+		Artifacts: artifactStub{},
+		AppName:   "quack", UserID: "u1", ChatID: "chat-a",
+	}
+	vetting.RegisterMemSession(secret, sess)
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+
+	announced := map[string]bool{}
+	for _, name := range mcpToolNames(sess, true) {
+		announced[name] = true
+	}
+	for _, tl := range res.Tools {
+		full := mcpServerName + "_" + tl.Name
+		if !announced[full] {
+			t.Errorf("tool %q is registered on the loopback server but mcpToolNames never announces it - the agent can't discover it", tl.Name)
+		}
+	}
+}
+
+// artifactStub is a no-op artifact.Service satisfying MemSession.Artifacts
+// for tests that only need Artifacts != nil to enable read_artifact's registration.
+type artifactStub struct{ artifact.Service }
 
 func toolResultText(t *testing.T, res *mcp.CallToolResult) string {
 	t.Helper()

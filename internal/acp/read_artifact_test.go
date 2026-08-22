@@ -1,6 +1,7 @@
 package acp
 
 import (
+	"bytes"
 	"context"
 	"net/http/httptest"
 	"strings"
@@ -76,6 +77,112 @@ func TestReadArtifactMCP_CrossSessionDenied(t *testing.T) {
 	}
 	if !res.IsError {
 		t.Fatalf("read_artifact must fail for another chat's artifact, got: %s", toolResultText(t, res))
+	}
+}
+
+// TestReadArtifactMCP_ScopedToRegisteredSession pins scope selection itself:
+// the same filename exists in both chats with different content, so a broken
+// scope that resolves to *something* (not just "nothing") would still be caught.
+func TestReadArtifactMCP_ScopedToRegisteredSession(t *testing.T) {
+	ctx := context.Background()
+	svc := artifact.InMemoryService()
+	for chat, content := range map[string]string{
+		"chat-a": "chat a's shared.txt",
+		"chat-b": "chat b's shared.txt",
+	} {
+		if _, err := svc.Save(ctx, &artifact.SaveRequest{
+			AppName: "quack", UserID: "u1", SessionID: chat, FileName: "shared.txt",
+			Part: genai.NewPartFromBytes([]byte(content), "text/plain"),
+		}); err != nil {
+			t.Fatalf("Save(%s): %v", chat, err)
+		}
+	}
+
+	secret := mustMemSecret(t)
+	vetting.RegisterMemSession(secret, vetting.MemSession{Artifacts: svc, AppName: "quack", UserID: "u1", ChatID: "chat-a"})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "read_artifact", Arguments: map[string]any{"name": "shared.txt"}})
+	if err != nil {
+		t.Fatalf("CallTool read_artifact: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("read_artifact returned an error: %s", toolResultText(t, res))
+	}
+	text := toolResultText(t, res)
+	if !strings.Contains(text, "chat a's shared.txt") {
+		t.Fatalf("read_artifact result = %q, want chat-a's content", text)
+	}
+	if strings.Contains(text, "chat b's shared.txt") {
+		t.Fatalf("read_artifact result = %q, leaked chat-b's content", text)
+	}
+}
+
+// TestReadArtifactMCP_OversizedContentIsCapped: an artifact past the size
+// limit is refused with a clear marker instead of dumping raw bytes into context.
+func TestReadArtifactMCP_OversizedContentIsCapped(t *testing.T) {
+	ctx := context.Background()
+	svc := artifact.InMemoryService()
+	big := bytes.Repeat([]byte("x"), readArtifactMaxBytes+1)
+	if _, err := svc.Save(ctx, &artifact.SaveRequest{
+		AppName: "quack", UserID: "u1", SessionID: "chat-a", FileName: "big.bin",
+		Part: genai.NewPartFromBytes(big, "application/octet-stream"),
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	secret := mustMemSecret(t)
+	vetting.RegisterMemSession(secret, vetting.MemSession{Artifacts: svc, AppName: "quack", UserID: "u1", ChatID: "chat-a"})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "read_artifact", Arguments: map[string]any{"name": "big.bin"}})
+	if err != nil {
+		t.Fatalf("CallTool read_artifact: %v", err)
+	}
+	text := toolResultText(t, res)
+	if strings.Contains(text, strings.Repeat("x", 100)) {
+		t.Fatalf("read_artifact returned raw oversized content instead of a refusal")
+	}
+	if !strings.Contains(text, "too large") {
+		t.Fatalf("read_artifact result = %q, want a size-limit refusal marker", text)
+	}
+}
+
+// TestReadArtifactMCP_AtSizeLimitIsReturned: the boundary itself (exactly at
+// the cap) must still succeed - only content strictly over the cap is refused.
+func TestReadArtifactMCP_AtSizeLimitIsReturned(t *testing.T) {
+	ctx := context.Background()
+	svc := artifact.InMemoryService()
+	atLimit := bytes.Repeat([]byte("y"), readArtifactMaxBytes)
+	if _, err := svc.Save(ctx, &artifact.SaveRequest{
+		AppName: "quack", UserID: "u1", SessionID: "chat-a", FileName: "atlimit.txt",
+		Part: genai.NewPartFromBytes(atLimit, "text/plain"),
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	secret := mustMemSecret(t)
+	vetting.RegisterMemSession(secret, vetting.MemSession{Artifacts: svc, AppName: "quack", UserID: "u1", ChatID: "chat-a"})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "read_artifact", Arguments: map[string]any{"name": "atlimit.txt"}})
+	if err != nil {
+		t.Fatalf("CallTool read_artifact: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("read_artifact at exactly the size limit must succeed, got: %s", toolResultText(t, res))
 	}
 }
 

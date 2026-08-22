@@ -58,6 +58,10 @@ const (
 	toolReadArtifact = "read_artifact"
 )
 
+// readArtifactMaxBytes bounds the raw artifact bytes returned inline, so a
+// large artifact (e.g. video) can't flood the agent's context.
+const readArtifactMaxBytes = 256 * 1024
+
 // readArtifactInput is the read_artifact tool's input.
 type readArtifactInput struct {
 	Name     string `json:"name" jsonschema:"artifact filename to read"`
@@ -76,11 +80,18 @@ func registerReadArtifactTool(srv *mcp.Server, svc artifact.Service, appName, us
 		if err != nil {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "read_artifact: " + err.Error()}}}, nil, nil
 		}
-		if resp.Part.InlineData == nil {
+		if resp.Part == nil || resp.Part.InlineData == nil {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "read_artifact: artifact has no inline content"}}}, nil, nil
 		}
 		mime := resp.Part.InlineData.MIMEType
 		data := resp.Part.InlineData.Data
+		// Cap before it lands in the agent's context - an artifact can be arbitrarily
+		// large (e.g. a video), and the repo already paid for one unbounded-output incident.
+		if len(data) > readArtifactMaxBytes {
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(
+				"mime: %s\nsize: %d bytes (exceeds %d byte read_artifact limit)\n\nread_artifact: content too large to return inline; work with it on disk instead.",
+				mime, len(data), readArtifactMaxBytes)}}}, nil, nil
+		}
 		text := string(data)
 		if !strings.HasPrefix(mime, "text/") && mime != "application/json" {
 			text = base64.StdEncoding.EncodeToString(data)

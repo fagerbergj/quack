@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"iter"
 	"strings"
@@ -16,6 +17,28 @@ import (
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/stream"
 )
+
+// failingListService: List always errors, everything else delegates - stands
+// in for a real store outage (e.g. the artifact-DB connection down).
+type failingListService struct{ artifact.Service }
+
+func (failingListService) List(context.Context, *artifact.ListRequest) (*artifact.ListResponse, error) {
+	return nil, errors.New("artifact store unreachable")
+}
+
+// TestFailSoftListArtifacts_DegradesToEmpty proves a List failure (which would
+// otherwise fail the whole orchestrator turn via loadartifactstool) degrades
+// to "no artifacts offered" instead of propagating.
+func TestFailSoftListArtifacts_DegradesToEmpty(t *testing.T) {
+	wrapped := failSoftListArtifacts{failingListService{artifact.InMemoryService()}}
+	resp, err := wrapped.List(context.Background(), &artifact.ListRequest{AppName: AppName, UserID: "u1", SessionID: "c1"})
+	if err != nil {
+		t.Fatalf("List: %v, want nil error (fail-soft)", err)
+	}
+	if len(resp.FileNames) != 0 {
+		t.Fatalf("FileNames = %v, want empty on a failed List", resp.FileNames)
+	}
+}
 
 // loadArtifactsStub: first call requests load_artifacts, second call replies
 // with whatever text the tool's result carried back on the request.
