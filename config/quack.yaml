@@ -33,8 +33,9 @@ stores:
     consolidation:
       provider: default
       model: ${QUACK_JUDGE_MODEL}       # reuse the always-warm judge (gemma) for extract/vet/consolidate
-      # interval_minutes: 60  # minutes between periodic burst-dedupe sweeps; 0/absent disables
-      # retention_days: 30    # hard-delete invalidated points + memory_ops rows past this age; 0 = forever
+      # schedule: "0 2 * * *"  # standard 5-field cron, local time; never runs at boot
+                               # (issue #961). Unset ⇒ this default; "" disables.
+      # retention_days: 30  # hard-delete invalidated points + memory_ops rows past this age; 0 = forever
     top_k: 5
     min_score: 0.5                # drop recall hits below this cosine similarity (0 disables)
   default_ledger:

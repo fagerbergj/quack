@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 )
 
@@ -510,19 +511,18 @@ type StoreConfig struct {
 	Root          string               `yaml:"root"`
 }
 
-// ConsolidationConfig binds the model driving both the gated-commit reconcile
-// and the periodic sweep (design doc docs/memory-lifecycle.md §4(c)), plus
-// the sweep's own schedule. IntervalMinutes 0/absent disables the periodic
-// sweep entirely - matching ledger.RunRetentionSweep's retentionDays<=0
-// convention, not this struct's own RetentionDays. RetentionDays 0 keeps
-// invalidated points and memory_ops rows forever (explicit, not implicit -
-// see design doc §6).
+// ConsolidationConfig binds the model for the gated-commit reconcile and
+// periodic sweep (docs/memory-lifecycle.md §4(c)). Schedule nil defaults to
+// defaultConsolidationSchedule; "" disables the sweep (issue #961).
 type ConsolidationConfig struct {
-	Provider        string `yaml:"provider"`
-	Model           string `yaml:"model"`
-	IntervalMinutes int    `yaml:"interval_minutes"`
-	RetentionDays   int    `yaml:"retention_days"`
+	Provider      string  `yaml:"provider"`
+	Model         string  `yaml:"model"`
+	Schedule      *string `yaml:"schedule"`
+	RetentionDays int     `yaml:"retention_days"`
 }
+
+// defaultConsolidationSchedule: daily at 02:00, standard 5-field cron.
+const defaultConsolidationSchedule = "0 2 * * *"
 
 const defaultLedgerRoot = "./recordings"
 
@@ -850,8 +850,13 @@ func (c *Config) validate() error {
 		if s.Consolidation == nil {
 			continue
 		}
-		if s.Consolidation.IntervalMinutes < 0 {
-			return fmt.Errorf("config: store %q consolidation.interval_minutes must be >= 0", name)
+		if s.Consolidation.Schedule == nil {
+			d := defaultConsolidationSchedule
+			s.Consolidation.Schedule = &d
+		} else if *s.Consolidation.Schedule != "" {
+			if _, err := cron.ParseStandard(*s.Consolidation.Schedule); err != nil {
+				return fmt.Errorf("config: store %q consolidation.schedule invalid cron %q: %w", name, *s.Consolidation.Schedule, err)
+			}
 		}
 		if s.Consolidation.RetentionDays < 0 {
 			return fmt.Errorf("config: store %q consolidation.retention_days must be >= 0", name)

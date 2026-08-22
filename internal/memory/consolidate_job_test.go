@@ -299,11 +299,9 @@ func TestRetentionOnce_ZeroRetentionRemovesNothing(t *testing.T) {
 	}
 }
 
-// TestRunConsolidationSweep_IntervalZeroIsNoop covers the config's
-// 0/absent-disables convention (matching ledger.RunRetentionSweep): interval
-// <= 0 returns immediately without touching the store, even when retention
-// would otherwise have work to do.
-func TestRunConsolidationSweep_IntervalZeroIsNoop(t *testing.T) {
+// TestRunConsolidationSweep_ScheduleEmptyIsNoop: an empty schedule is a
+// no-op, even when retention would otherwise have work to do.
+func TestRunConsolidationSweep_ScheduleEmptyIsNoop(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
 	ops := &fakeOpsLog{}
@@ -313,44 +311,26 @@ func TestRunConsolidationSweep_IntervalZeroIsNoop(t *testing.T) {
 	seedMemory(t, s, point{ID: "ancient", Content: "very old", Scope: "repo:r", Author: "a", Timestamp: "t",
 		Status: string(StatusInvalidated), ValidFrom: "t", InvalidatedAt: ancient, InvalidationReason: "stale"})
 
-	s.RunConsolidationSweep(ctx, 0, 30) // synchronous: a real sweep would block on the ticker loop
+	s.RunConsolidationSweep(ctx, "", 30) // synchronous: a real sweep would block on the timer loop
 
 	remaining, _, err := s.List(ctx, []string{"repo:r"}, 0, 10, true)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
 	if len(remaining) != 1 {
-		t.Fatalf("interval=0 did work; remaining = %+v, want untouched", remaining)
+		t.Fatalf("schedule=\"\" did work; remaining = %+v, want untouched", remaining)
 	}
 	if len(ops.pruneCalls) != 0 {
 		t.Fatalf("PruneMemoryOps calls = %d, want 0", len(ops.pruneCalls))
 	}
 }
 
-// TestRunConsolidationSweep_RunsImmediatelyThenTicks mirrors
-// ledger.TestRunRetentionSweepRunsImmediatelyThenTicks: the first sweep fires
-// before the first tick, so a tick interval far longer than the test's own
-// deadline still observes the retention work done.
-func TestRunConsolidationSweep_RunsImmediatelyThenTicks(t *testing.T) {
+// TestRunConsolidationSweep_InvalidScheduleIsNoop: a malformed cron (should
+// never reach here past config validation) must fail closed, not panic.
+func TestRunConsolidationSweep_InvalidScheduleIsNoop(t *testing.T) {
+	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
-	ops := &fakeOpsLog{}
-	s.SetOpsLog(ops)
-
-	old := time.Now().Add(-40 * 24 * time.Hour).UTC().Format(time.RFC3339)
-	seedMemory(t, s, point{ID: "old", Content: "expired", Scope: "repo:r", Author: "a", Timestamp: "t",
-		Status: string(StatusInvalidated), ValidFrom: "t", InvalidatedAt: old, InvalidationReason: "stale"})
-
-	runCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	s.RunConsolidationSweep(runCtx, time.Hour, 30)
-
-	remaining, _, err := s.List(context.Background(), []string{"repo:r"}, 0, 10, true)
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(remaining) != 0 {
-		t.Fatalf("expected the immediate sweep to remove the expired point; got %+v", remaining)
-	}
+	s.RunConsolidationSweep(ctx, "not a cron", 30) // must return, not panic or hang
 }
 
 // TestConsolidateOnce_ClusterErrorContinuesToNextCluster covers the sweep's

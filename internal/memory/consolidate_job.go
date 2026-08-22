@@ -6,6 +6,8 @@ import (
 	"slices"
 	"sort"
 	"time"
+
+	"github.com/robfig/cron/v3"
 )
 
 // clusterWindow is the temporal-proximity threshold the burst-dedupe cluster
@@ -39,24 +41,25 @@ func (s *Store) forEachSweepPage(ctx context.Context, includeInvalidated bool, f
 	}
 }
 
-// RunConsolidationSweep runs the periodic burst-dedupe pass (design doc
-// §4(c)) plus retention (design doc §6) - once immediately, then every
-// interval, until ctx is done. Mirrors ledger.RunRetentionSweep's shape and
-// disable convention: interval <= 0 is a no-op, no goroutine or ticker at
-// all. retentionDays <= 0 disables only the hard-delete half; the
-// consolidation half still runs on interval.
-func (s *Store) RunConsolidationSweep(ctx context.Context, interval time.Duration, retentionDays int) {
-	if interval <= 0 {
+// RunConsolidationSweep runs the sweep (design doc §4(c), §6) on schedule (a
+// standard 5-field cron expression), until ctx is done. schedule == ""
+// disables it. Never runs at boot (issue #961) - waits for the first Next.
+func (s *Store) RunConsolidationSweep(ctx context.Context, schedule string, retentionDays int) {
+	if schedule == "" {
 		return
 	}
-	s.sweepOnce(ctx, retentionDays)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	sched, err := cron.ParseStandard(schedule)
+	if err != nil {
+		s.log.Warn("consolidation sweep: invalid schedule, sweep disabled", "schedule", schedule, "err", err)
+		return
+	}
 	for {
+		timer := time.NewTimer(time.Until(sched.Next(time.Now())))
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			s.sweepOnce(ctx, retentionDays)
 		}
 	}

@@ -377,6 +377,48 @@ func TestServerTopology(t *testing.T) {
 	}
 }
 
+// TestConsolidationSchedule checks schedule is honored when set explicitly
+// (including the "" opt-out), defaults when absent, and rejects a bad cron.
+func TestConsolidationSchedule(t *testing.T) {
+	const cfg = `
+providers:
+  default: { kind: openai, endpoint: http://x }
+stores:
+  main: { kind: postgres, url: u }
+  vec:
+    kind: qdrant
+    url: qdrant:6334
+    embedder: { provider: default, model: e }
+    consolidation: { provider: default, model: c, schedule: %s }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+tools:
+  stage_memory: { store: vec, collection: task_memory }
+`
+	c, err := Load(writeTemp(t, fmt.Sprintf(cfg, `"30 3 * * *"`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rm, ok := c.MemoryStore("stage_memory")
+	if !ok || rm.Consolidation.Schedule == nil || *rm.Consolidation.Schedule != "30 3 * * *" {
+		t.Errorf("explicit schedule should be honored, got %+v", rm.Consolidation)
+	}
+
+	c, err = Load(writeTemp(t, fmt.Sprintf(cfg, `""`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rm, ok = c.MemoryStore("stage_memory")
+	if !ok || rm.Consolidation.Schedule == nil || *rm.Consolidation.Schedule != "" {
+		t.Errorf(`explicit schedule: "" should be honored as opt-out, got %+v`, rm.Consolidation)
+	}
+
+	_, err = Load(writeTemp(t, fmt.Sprintf(cfg, `"not a cron"`)))
+	if err == nil {
+		t.Fatal("malformed schedule should fail validation")
+	}
+}
+
 // TestStoreExtends checks a child store inherits the parent's connection and
 // overrides only the fields it sets.
 func TestStoreExtends(t *testing.T) {
@@ -433,6 +475,9 @@ tools:
 	}
 	if rm.Collection != "task_memory" || rm.TopK != 5 || rm.MinScore != 0.5 {
 		t.Errorf("resolved = %+v, want collection/top_k/min_score defaults", rm)
+	}
+	if rm.Consolidation.Schedule == nil || *rm.Consolidation.Schedule != defaultConsolidationSchedule {
+		t.Errorf("consolidation.schedule = %v, want default %q", rm.Consolidation.Schedule, defaultConsolidationSchedule)
 	}
 	// Empty URL (QUACK_QDRANT_URL unset) ⇒ memory self-disables.
 	c, err = Load(writeTemp(t, fmt.Sprintf(cfg, "")))
