@@ -28,7 +28,7 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/landlock-lsm/go-landlock v0.9.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
-	github.com/oapi-codegen/runtime v1.6.0
+	github.com/oapi-codegen/runtime v1.7.0
 	github.com/openai/openai-go/v3 v3.50.0
 	github.com/qdrant/go-client v1.19.0
 	github.com/spf13/cobra v1.10.2
