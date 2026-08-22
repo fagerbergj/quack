@@ -299,11 +299,9 @@ func TestRetentionOnce_ZeroRetentionRemovesNothing(t *testing.T) {
 	}
 }
 
-// TestRunConsolidationSweep_DailyAtEmptyIsNoop covers the config's
-// ""-disables convention (matching ledger.RunRetentionSweep): an empty
-// dailyAt returns immediately without touching the store, even when
-// retention would otherwise have work to do.
-func TestRunConsolidationSweep_DailyAtEmptyIsNoop(t *testing.T) {
+// TestRunConsolidationSweep_ScheduleEmptyIsNoop: an empty schedule is a
+// no-op, even when retention would otherwise have work to do.
+func TestRunConsolidationSweep_ScheduleEmptyIsNoop(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
 	ops := &fakeOpsLog{}
@@ -313,59 +311,26 @@ func TestRunConsolidationSweep_DailyAtEmptyIsNoop(t *testing.T) {
 	seedMemory(t, s, point{ID: "ancient", Content: "very old", Scope: "repo:r", Author: "a", Timestamp: "t",
 		Status: string(StatusInvalidated), ValidFrom: "t", InvalidatedAt: ancient, InvalidationReason: "stale"})
 
-	s.RunConsolidationSweep(ctx, "", 30) // synchronous: a real sweep would block on the timer/ticker loop
+	s.RunConsolidationSweep(ctx, "", 30) // synchronous: a real sweep would block on the timer loop
 
 	remaining, _, err := s.List(ctx, []string{"repo:r"}, 0, 10, true)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
 	if len(remaining) != 1 {
-		t.Fatalf("dailyAt=\"\" did work; remaining = %+v, want untouched", remaining)
+		t.Fatalf("schedule=\"\" did work; remaining = %+v, want untouched", remaining)
 	}
 	if len(ops.pruneCalls) != 0 {
 		t.Fatalf("PruneMemoryOps calls = %d, want 0", len(ops.pruneCalls))
 	}
 }
 
-// TestRunConsolidationSweep_InvalidDailyAtIsNoop covers a malformed dailyAt
-// (should never reach here past config validation, but the scheduler must
-// still fail closed rather than panic or busy-loop).
-func TestRunConsolidationSweep_InvalidDailyAtIsNoop(t *testing.T) {
+// TestRunConsolidationSweep_InvalidScheduleIsNoop: a malformed cron (should
+// never reach here past config validation) must fail closed, not panic.
+func TestRunConsolidationSweep_InvalidScheduleIsNoop(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
-	s.RunConsolidationSweep(ctx, "not-a-time", 30) // must return, not panic or hang
-}
-
-// TestNextDailyTick covers the next-occurrence math directly (no real
-// waiting): before today's target, after it, and exactly at it all must
-// resolve to a time strictly after now, so boot landing precisely on the
-// mark never re-triggers a run (issue #961).
-func TestNextDailyTick(t *testing.T) {
-	loc := time.UTC
-	day := time.Date(2026, 8, 20, 0, 0, 0, 0, loc)
-
-	tests := []struct {
-		name       string
-		now        time.Time
-		hour, min  int
-		wantOffset time.Duration // want - now
-	}{
-		{"before today's target", day.Add(1 * time.Hour), 2, 0, time.Hour},     // 01:00 -> 02:00 today
-		{"after today's target", day.Add(3 * time.Hour), 2, 0, 23 * time.Hour}, // 03:00 -> 02:00 tomorrow
-		{"exactly at target", day.Add(2 * time.Hour), 2, 0, 24 * time.Hour},    // 02:00 -> 02:00 tomorrow, not now
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := nextDailyTick(tc.now, tc.hour, tc.min)
-			if !got.After(tc.now) {
-				t.Fatalf("nextDailyTick(%v, %d, %d) = %v, want strictly after now", tc.now, tc.hour, tc.min, got)
-			}
-			want := tc.now.Add(tc.wantOffset)
-			if !got.Equal(want) {
-				t.Fatalf("nextDailyTick(%v, %d, %d) = %v, want %v", tc.now, tc.hour, tc.min, got, want)
-			}
-		})
-	}
+	s.RunConsolidationSweep(ctx, "not a cron", 30) // must return, not panic or hang
 }
 
 // TestConsolidateOnce_ClusterErrorContinuesToNextCluster covers the sweep's

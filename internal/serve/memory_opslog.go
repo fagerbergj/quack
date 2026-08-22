@@ -23,15 +23,12 @@ func (o storeOpsLog) PruneMemoryOps(ctx context.Context, cutoff time.Time) (int,
 	return o.st.PruneMemoryOps(ctx, cutoff)
 }
 
-// startConsolidationSweep launches s's daily burst-dedupe + retention job
-// (design doc §4(c)/§6, memory.Store.RunConsolidationSweep) next to
-// ledger.RunRetentionSweep's own bootstrap call. Gated on daily_at != "" -
-// otherwise nothing starts, matching the ledger sweep's disable convention.
+// startConsolidationSweep launches s's cron-scheduled burst-dedupe +
+// retention job. Validate() always fills Schedule, so it's never nil here.
 func startConsolidationSweep(ctx context.Context, s *memory.Store, rm config.ResolvedMemory) {
-	// Validate() always fills DailyAt (default config.defaultConsolidationDailyAt), so this is never nil.
-	dailyAt := *rm.Consolidation.DailyAt
-	if dailyAt == "" {
+	schedule := *rm.Consolidation.Schedule
+	if schedule == "" {
 		return
 	}
-	go s.RunConsolidationSweep(ctx, dailyAt, rm.Consolidation.RetentionDays)
+	go s.RunConsolidationSweep(ctx, schedule, rm.Consolidation.RetentionDays)
 }

@@ -33,10 +33,8 @@ stores:
     consolidation:
       provider: default
       model: ${QUACK_JUDGE_MODEL}       # reuse the always-warm judge (gemma) for extract/vet/consolidate
-      # daily_at: "02:00"  # HH:MM, container's local time (UTC on this deployment); the burst-dedupe
-                           # sweep runs once at this time each day and never at boot, so a restart
-                           # can't shift the cadence or contend with the first post-deploy run
-                           # (issue #961). Unset ⇒ defaults to 02:00; "" explicitly disables the sweep.
+      # schedule: "0 2 * * *"  # standard 5-field cron, local time; never runs at boot
+                               # (issue #961). Unset ⇒ this default; "" disables.
       # retention_days: 30  # hard-delete invalidated points + memory_ops rows past this age; 0 = forever
     top_k: 5
     min_score: 0.5                # drop recall hits below this cosine similarity (0 disables)
