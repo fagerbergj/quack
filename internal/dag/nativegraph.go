@@ -169,7 +169,7 @@ func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userI
 	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, source,
 		func(nodeID string, score float64, passed bool, rounds int) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds)
-		})
+		}, e.admission, e.specFor)
 	if err != nil {
 		return false, err
 	}
@@ -177,6 +177,8 @@ func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userI
 	if err != nil {
 		return false, err
 	}
+	// e.maxActive is a host-resource ceiling (jail/clone CPU+RAM), not the GPU
+	// limiter - the Admission ledger inside each gate node (#1007) is the real one.
 	wf, err := workflow.New(planWrapperName, edges, workflow.WithMaxConcurrency(e.maxActive))
 	if err != nil {
 		return false, fmt.Errorf("dag: plan graph: %w", err)

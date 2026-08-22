@@ -275,12 +275,12 @@ gates:
 
 # DAG execution policy.
 dag:
-  max_active_runs: 3    # orchestrator RUNS concurrent server-wide; a burst queues (1-GPU: lower it)
-  max_active_nodes: 2   # how many nodes run concurrently; extras queue. Matched to the
-                        # worker server's --parallel 2 (2 KV slots @ 65536 tokens each);
-                        # the GPU judge (gemma4-26b-a4b, co-resident with the worker)
-                        # is also --parallel 2. Raising this past the worker's slot
-                        # count just queues requests at the model.
+  # PER-RUN host-resource ceiling (jail/clone CPU+RAM), each run gets its own
+  # semaphore - NOT the GPU concurrency knob. GPU concurrency is bounded by
+  # models.<m>.limits.{sessions,kv_tokens} and providers.<p>.limits.active
+  # (#1007); raise this only if the host itself can't take more concurrent
+  # clones/checks within a single run.
+  max_active_nodes: 32
 
 server:
   addr: ":8080"

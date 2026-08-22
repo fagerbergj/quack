@@ -218,6 +218,12 @@ type NodeQueuedData struct {
 	NodeID string `json:"node_id"`
 }
 
+// NodeQueued builds a node_queued event, emitted at admission-attempt time so
+// a node waiting on capacity (#1007) reads as "waiting", not hung.
+func NodeQueued(nodeID string) SSEEvent {
+	return SSEEvent{Name: EventNodeQueued, Data: NodeQueuedData{NodeID: nodeID}}
+}
+
 // `node_start` event payload.
 type NodeStartData struct {
 	NodeID string `json:"node_id"`

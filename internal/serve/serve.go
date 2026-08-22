@@ -85,6 +85,69 @@ const (
 // plugin root's skills directory (internal/plugin discovery) - the disk-only
 // view both newSkillSource and acpSkillPaths compare the embedded dotagents
 // fallback against.
+// defaultMaxActiveRuns: fixed host-disk/CPU guard on concurrent run SETUP
+// (clone/jail), independent of #1007's GPU-capacity Admission ledger - not a
+// config knob, since #1007 deliberately removed dag.max_active_runs as one.
+const defaultMaxActiveRuns = 8
+
+// activeKey mirrors dag.AdmissionSpec.residencyKey (provider+role) for
+// ProviderConfig.Limits.Active, which is keyed by role alone within one provider.
+func activeKey(provider, role string) string { return provider + "\x00" + role }
+
+// buildAdmission builds the #1007 capacity ledger from the models/providers
+// registries. Absent limits (nil ModelLimits/ProviderLimits, or a role/model
+// missing from them) are omitted from the maps, which Admission treats as unlimited.
+func buildAdmission(cfg *config.Config) *dag.Admission {
+	sessions := map[string]int{}
+	kv := map[string]int{}
+	for name, mc := range cfg.Models {
+		if mc.Limits == nil {
+			continue
+		}
+		if mc.Limits.Sessions > 0 {
+			sessions[name] = mc.Limits.Sessions
+		}
+		if mc.Limits.KVTokens > 0 {
+			kv[name] = mc.Limits.KVTokens
+		}
+	}
+	active := map[string]int{}
+	for provider, pc := range cfg.Providers {
+		if pc.Limits == nil {
+			continue
+		}
+		for role, n := range pc.Limits.Active {
+			active[activeKey(provider, role)] = n
+		}
+	}
+	return dag.NewAdmission(sessions, kv, active, 0)
+}
+
+// admissionSpecFor resolves one agent's AdmissionSpec: its model's provider/role
+// for residency, and its effective context window (agent override, else the
+// model's default) as the kv_tokens reservation.
+func admissionSpecFor(cfg *config.Config) func(agentName string) dag.AdmissionSpec {
+	return func(agentName string) dag.AdmissionSpec {
+		ac, ok := cfg.Agents[agentName]
+		if !ok || ac.Model == "" {
+			return dag.AdmissionSpec{}
+		}
+		mc, ok := cfg.Models[ac.Model]
+		if !ok {
+			return dag.AdmissionSpec{}
+		}
+		ctxWindow := ac.ContextWindow
+		if ctxWindow == 0 {
+			ctxWindow = mc.ContextWindow
+		}
+		spec := dag.AdmissionSpec{Model: ac.Model, KVTokens: ctxWindow, Provider: mc.Provider, Role: mc.Role}
+		if mc.Limits == nil || mc.Limits.KVTokens == 0 {
+			spec.KVTokens = 0 // absent kv_tokens = context isn't a scheduling dimension
+		}
+		return spec
+	}
+}
+
 func resolvedSkillSource(skillDirs []string) skill.Source {
 	sources := []skill.Source{skill.NewFileSystemSource(bundledir.SubFS("skills"))}
 	for _, dir := range skillDirs {
@@ -625,12 +688,18 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	cfgFor := func(name string) vetting.Config { return gateCfgs[name] }
 	executor := dag.NewExecutor(st.Sessions, clientMap, modelMap, judgeFactory, cfgFor, mediaAgents)
 	executor.SetMaxActive(cfg.Dag.MaxActiveNodes)
+	executor.SetAdmission(buildAdmission(cfg), admissionSpecFor(cfg))
 	executor.SetSetup(setupFn)
 	executor.SetArtifacts(artifacts)
 	executor.SetNodeStateStore(st) // write-through node state machine (#962)
 	executorRef.Store(executor)
 	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
-	orch.SetMaxActiveRuns(cfg.Dag.MaxActiveRuns)
+	// #1007 deleted the tunable (a run's NODES are what cost GPU capacity,
+	// bounded by Admission), but a run's SETUP (workspace clone/jail) still
+	// costs host disk/CPU before any node ever reaches admission - a burst of
+	// runs must still be bounded, so keep a fixed, generous run-count guard.
+	orch.SetMaxActiveRuns(defaultMaxActiveRuns)
+	// is gone, capacity bounds throughput naturally via the Admission ledger.
 	orchRef.Store(orch)
 	if hooks != nil {
 		hooks.pauser = executor

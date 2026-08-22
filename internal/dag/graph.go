@@ -12,6 +12,7 @@ import (
 	"google.golang.org/adk/v2/workflow"
 
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
@@ -29,7 +30,7 @@ type nodeScopedWorker interface {
 
 // buildGateNodes: one gated node per plan node. source: the run's origin
 // (extension name or a fixed app value) - observability only, see vetting.Config.Source.
-func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int)) (map[string]workflow.Node, []adkagent.Agent, error) {
+func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int), admission *Admission, specFor func(agentName string) AdmissionSpec) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
@@ -59,7 +60,11 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		}
 		node := n
 		cfg := nodeGateConfig(plan, node, worker, cfgFor, chatID, source)
-		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release)
+		var spec AdmissionSpec
+		if specFor != nil {
+			spec = specFor(node.AgentName)
+		}
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec)
 	}
 	return nodesByID, subAgents, nil
 }
@@ -113,11 +118,21 @@ func nodeGateConfig(plan Plan, node Node, worker adkagent.Agent, cfgFor func(str
 }
 
 // newGatedNode: assembles worker prompt, runs trust-gate refine loop.
-func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, worker adkagent.Agent, workerTools []tool.Tool, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int), release func()) workflow.Node {
+func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, worker adkagent.Agent, workerTools []tool.Tool, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int), release func(), admission *Admission, spec AdmissionSpec) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
 		func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
 			if release != nil {
 				defer release()
+			}
+			if admission != nil {
+				onQueued := func() {}
+				if yield, ok := stream.YieldFromContext(ctx); ok {
+					onQueued = func() { yield(stream.NodeQueued(node.ID)) }
+				}
+				if !admission.Admit(ctx, spec, onQueued) {
+					return "", ctx.Err()
+				}
+				defer admission.Release(spec)
 			}
 			var ctrl vetting.NodeControl
 			effectiveNode := node

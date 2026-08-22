@@ -139,8 +139,8 @@ gates:
     threshold: 0.6
 
 dag:
-  max_active_runs: 3    # orchestrator RUNS concurrent server-wide; a burst queues (1-GPU: lower it)
-  max_active_nodes: 2
+  max_active_nodes: 32  # PER-RUN host-resource ceiling only (jail/clone CPU+RAM); GPU concurrency
+                        # is models.<m>.limits + providers.<p>.limits.active (#1007)
 
 server:
   addr: ":8080"
