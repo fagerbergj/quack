@@ -298,13 +298,8 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	// Registering a merely-parked node as "failed" would let the fan-in
 	// deliver without it, then silently discard its verdict on resume.
 	delivered := false
-	// #942: a round can die (killed/timeout) after quackmcp_stage_review
-	// already staged the full verdict - that staged content lives in
-	// ReviewStage, owned by this process, not the dying ACP subprocess, so
-	// it survives the kill. Every non-terminal return path below (worker
-	// error, ErrNodeEmpty, cancel) must still get a chance to deliver it
-	// instead of discarding it. A paused node is NOT terminal - it may
-	// resume and stage its real verdict later.
+	// Must run unconditionally (#942): a staged review lives in this
+	// process, not the dying ACP subprocess, so it survives a kill.
 	defer func() {
 		if delivered || isReviewerPauseSentinel(err) {
 			return
@@ -897,23 +892,13 @@ func isReviewerPauseSentinel(err error) bool {
 	return errors.Is(err, ErrNodePaused) || errors.Is(err, workflow.ErrNodeInterrupted)
 }
 
-// abortedRoundNote: prefixed onto a staged review's body when it's delivered
-// off the back of a round that never returned normally (#942) - the reader
-// gets the real verdict, flagged as coming from an abnormal end rather than
-// a clean pass.
+// abortedRoundNote: flags a delivered review as coming from a dead round,
+// not a clean pass (#942).
 const abortedRoundNote = "_The round that produced this review ended abnormally (worker error, timeout, or cancel) after the verdict below was staged. Delivering it as-is rather than discarding it._\n\n"
 
-// resolveAbortedReviewer: a node that never reached commitDelivery (worker
-// error, ErrNodeEmpty, or cancel) may still have staged its full verdict via
-// the review MCP before dying (#942) - act carries whatever ReviewStage still
-// holds, since that lives in this process, not the killed subprocess. Prefer
-// delivering it (flagged as abnormal) over discarding it. With no
-// ReviewFanout (single-reviewer plan), deliver directly; with one, resolve
-// this node's terminal slot in the run's ReviewFanout so a dead sibling can't
-// block the merged review forever (#867), carrying the real staged item
-// instead of an empty one.
-// A dead synthesizer resolves via FinishSynthesis(""), which falls the merge
-// back to the per-node concatenation (#965).
+// resolveAbortedReviewer: delivers a dead node's staged review (#942) instead
+// of discarding it. No ReviewFanout → deliver directly; otherwise resolve
+// this node's fanout slot so a dead sibling can't block the merge (#867).
 func resolveAbortedReviewer(ctx context.Context, sink func(stream.SSEEvent), cfg Config, nodeID string, act workerActivity) {
 	item, hasItem := act.stagedDelivery["review"]
 	if hasItem {
@@ -931,6 +916,7 @@ func resolveAbortedReviewer(ctx context.Context, sink func(stream.SSEEvent), cfg
 	if cfg.IsReviewer {
 		merged, deliverNow = cfg.ReviewFanout.Finish(nodeID, item, hasItem, !hasItem)
 	} else {
+		// Empty answer falls the merge back to per-node concatenation (#965).
 		merged, deliverNow = cfg.ReviewFanout.FinishSynthesis("")
 	}
 	if deliverNow {
