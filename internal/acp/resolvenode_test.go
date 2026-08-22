@@ -29,7 +29,7 @@ func TestResolveNodeWorktreeParentInvokesWorktreeHook(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	cwd, _, _, _, _, err := a.resolveNode(context.Background(), "review the PR\n\n"+vetting.AdvisorThreadMarker(token))
+	cwd, _, _, _, _, _, _, err := a.resolveNode(context.Background(), "review the PR\n\n"+vetting.AdvisorThreadMarker(token))
 	if err != nil {
 		t.Fatalf("resolveNode: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestResolveNodeUsesChatIDNotSessionIDOnRetry(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	if _, _, _, _, _, err := a.resolveNode(context.Background(), "review the PR\n\n"+vetting.AdvisorThreadMarker(token)); err != nil {
+	if _, _, _, _, _, _, _, err := a.resolveNode(context.Background(), "review the PR\n\n"+vetting.AdvisorThreadMarker(token)); err != nil {
 		t.Fatalf("resolveNode: %v", err)
 	}
 	if gotChat != "chat1" {
@@ -86,7 +86,7 @@ func TestResolveNodeWorktreeParentWithoutHookErrors(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	_, _, _, _, _, err := a.resolveNode(context.Background(), "review\n\n"+vetting.AdvisorThreadMarker(token))
+	_, _, _, _, _, _, _, err := a.resolveNode(context.Background(), "review\n\n"+vetting.AdvisorThreadMarker(token))
 	if err == nil {
 		t.Fatal("resolveNode: want an error - the node needs a worktree but none is configured")
 	}
@@ -108,7 +108,7 @@ func TestResolveNodeNonWorktreeNodeUsesJail(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	cwd, _, _, _, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
+	cwd, _, _, _, _, _, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
 	if err != nil {
 		t.Fatalf("resolveNode: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestResolveNodeReturnsAdvisorTaskReadOnly(t *testing.T) {
 		vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
 			NodeID: "impl1", WorkspaceNodeID: "impl1", ChatID: "chat1", SessionID: "chat1", ReadOnly: want,
 		})
-		_, _, _, _, got, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
+		_, _, _, _, got, _, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
 		vetting.UnregisterAdvisorThread(token)
 		if err != nil {
 			t.Fatalf("resolveNode: %v", err)
@@ -165,7 +165,7 @@ func TestResolveNodeGrantsContextDir(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	_, _, ctxDir, _, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
+	_, _, ctxDir, _, _, _, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
 	if err != nil {
 		t.Fatalf("resolveNode: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestResolveNodeNoJailNoContextDir(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	_, _, ctxDir, _, _, err := a.resolveNode(context.Background(), "review\n\n"+vetting.AdvisorThreadMarker(token))
+	_, _, ctxDir, _, _, _, _, err := a.resolveNode(context.Background(), "review\n\n"+vetting.AdvisorThreadMarker(token))
 	if err != nil {
 		t.Fatalf("resolveNode: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestResolveNodeGrantsScratchDir(t *testing.T) {
 		vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
 			NodeID: "impl1", WorkspaceNodeID: "impl1", ChatID: "chat1", SessionID: "chat1", ReadOnly: readOnly,
 		})
-		cwd, _, _, scratchDir, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
+		cwd, _, _, scratchDir, _, _, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
 		vetting.UnregisterAdvisorThread(token)
 		if err != nil {
 			t.Fatalf("resolveNode (readOnly=%v): %v", readOnly, err)
@@ -257,11 +257,40 @@ func TestResolveNodeNoJailNoScratchDir(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	_, _, _, scratchDir, _, err := a.resolveNode(context.Background(), "review\n\n"+vetting.AdvisorThreadMarker(token))
+	_, _, _, scratchDir, _, _, _, err := a.resolveNode(context.Background(), "review\n\n"+vetting.AdvisorThreadMarker(token))
 	if err != nil {
 		t.Fatalf("resolveNode: %v", err)
 	}
 	if scratchDir != "" {
 		t.Errorf("scratchDir = %q, want \"\" with no Jail configured", scratchDir)
+	}
+}
+
+// TestResolveNodeChatAndNodeIDKeyOffAdvisorThread (#998 review): a setup
+// chain's writer node has WorkspaceNodeID collapsed to the shared repo scope
+// (dag.workspaceNodeID) while NodeID stays the plan node's own id - the
+// executor's controls (and REST QueueNodeMessage) are keyed by the LATTER, so
+// resolveNode must return the advisor thread's own ChatID/NodeID (the real
+// chat scope, not the ADK SessionID a retry aliases - see AdvisorTask.ChatID)
+// and never the workspace scope, or the live-steer hook registers under a
+// key nothing looks up.
+func TestResolveNodeChatAndNodeIDKeyOffAdvisorThread(t *testing.T) {
+	jail, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{opts: Options{UserID: "u1", Jail: jail}}
+	token := vetting.AdvisorThreadToken("plan-1", "impl2")
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
+		NodeID: "impl2", WorkspaceNodeID: workspace.SharedRepoScope, ChatID: "chat1", SessionID: "chat1::retry",
+	})
+	defer vetting.UnregisterAdvisorThread(token)
+
+	_, _, _, _, _, chatID, nodeID, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
+	if err != nil {
+		t.Fatalf("resolveNode: %v", err)
+	}
+	if chatID != "chat1" || nodeID != "impl2" {
+		t.Errorf("resolveNode chat/node = (%q,%q), want (chat1,impl2) - not the shared workspace scope %q or the retry session id", chatID, nodeID, workspace.SharedRepoScope)
 	}
 }

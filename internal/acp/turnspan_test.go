@@ -62,7 +62,7 @@ func TestRound_ToolSpansEndInsideTheRound(t *testing.T) {
 	exp := withTestTracer(t)
 	a := testAgent(t, "happy")
 	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "c1", Node: "n1", Agent: "code-implementer", User: "u1"})
-	if err := a.round(ctx, t.TempDir(), "", nil, workspace.Caps{}, "add the feature", func(eventSpec) bool { return true }); err != nil {
+	if err := a.round(ctx, t.TempDir(), "", nil, workspace.Caps{}, "add the feature", "", "", func(eventSpec) bool { return true }); err != nil {
 		t.Fatalf("round: %v", err)
 	}
 
