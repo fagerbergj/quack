@@ -149,13 +149,14 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			memParticipant := cfg.ExternalWorker && cfg.CommitMemory && cfg.Memory != nil
 			reviewNode := cfg.ExternalWorker && cfg.ReadOnly && cfg.IsReviewer
 			prNode := cfg.ExternalWorker && !cfg.ReadOnly && cfg.Deliver != nil
-			if memParticipant || reviewNode || prNode {
+			artifactsAvail := cfg.ExternalWorker && vetting.ArtifactsEnabled()
+			if memParticipant || reviewNode || prNode || artifactsAvail {
 				if secret, serr := vetting.NewMemSecret(); serr != nil {
 					slog.Warn("acp MCP secret unavailable; node runs without its memory/review tools",
 						"component", "dag", "node", node.ID, "err", serr)
 				} else {
 					task.MemSecret = secret
-					ms := vetting.MemSession{}
+					ms := vetting.MemSession{AppName: task.AppName, UserID: task.UserID, ChatID: task.ChatID}
 					if memParticipant {
 						ms.Memory = cfg.Memory
 						ms.Scope = vetting.MemoryScope(ctx, cfg, node.ID)

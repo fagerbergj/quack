@@ -1,12 +1,15 @@
 package vetting
 
 import (
+	"context"
 	crand "crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"regexp"
 	"sync"
+
+	"google.golang.org/adk/v2/artifact"
 
 	"github.com/fagerbergj/quack/internal/memory"
 )
@@ -57,6 +60,11 @@ type MemSession struct {
 	Review     *ReviewStage // non-nil for review-delivery nodes
 	PRStage    *PRStage     // non-nil for implement-delivery nodes
 	ExistingPR bool         // PRStage != nil and the run pushes onto an already-open PR - offer stage_push, not stage_pr
+	// AppName/UserID/ChatID scope read_artifact to this node's own chat -
+	// fixed at registration, never from a tool argument (#1010 groundwork).
+	AppName string
+	UserID  string
+	ChatID  string
 }
 
 // MemStage: per-node staging buffer for stage_memory.
@@ -268,6 +276,33 @@ func UnregisterMemSession(secret string) {
 	if _, connected := memSessionsConnected.LoadAndDelete(secret); !connected {
 		slog.Warn("acp: loopback MCP session torn down having never connected - tools were offered but unreachable", "component", "vetting")
 	}
+}
+
+// artifactSvc: the process's one artifact backend, set once at boot
+// (mirrors dag.Executor.SetArtifacts) - "" AppName in a MemSession means
+// this node predates artifact scoping, not "read anything".
+var artifactSvc artifact.Service
+
+// SetArtifactService wires the boot-time artifact backend for read_artifact.
+// nil (never wired) leaves ArtifactsEnabled false - the ACP tool then stays
+// unregistered rather than erroring on every call.
+func SetArtifactService(svc artifact.Service) { artifactSvc = svc }
+
+// ArtifactsEnabled reports whether read_artifact has anything to read from -
+// callers use this to decide whether a node's MemSession needs chat scope at all.
+func ArtifactsEnabled() bool { return artifactSvc != nil }
+
+// LoadArtifact reads name's latest revision, scoped by the MemSession's own
+// AppName/UserID/ChatID - never by a tool argument, so a node can only ever
+// reach its own chat's artifacts.
+func LoadArtifact(ctx context.Context, s MemSession, name string) (*artifact.LoadResponse, error) {
+	if artifactSvc == nil {
+		return nil, fmt.Errorf("no artifact service configured")
+	}
+	if s.AppName == "" && s.UserID == "" && s.ChatID == "" {
+		return nil, fmt.Errorf("this node has no artifact scope")
+	}
+	return artifactSvc.Load(ctx, &artifact.LoadRequest{AppName: s.AppName, UserID: s.UserID, SessionID: s.ChatID, FileName: name})
 }
 
 var advisorThreads sync.Map // token → AdvisorTask

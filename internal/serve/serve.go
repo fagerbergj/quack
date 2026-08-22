@@ -631,6 +631,13 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	executorRef.Store(executor)
 	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
 	orch.SetMaxActiveRuns(cfg.Dag.MaxActiveRuns)
+	if slices.Contains(cfg.Orchestrator.Tools, "load_artifacts") {
+		orch.SetArtifacts(artifacts)
+	}
+	// ACP nodes' read_artifact reaches the same backend regardless of the
+	// orchestrator's own tool config - a worker's artifact access isn't gated
+	// on whether the thin dispatcher also got load_artifacts.
+	vetting.SetArtifactService(artifacts)
 	orchRef.Store(orch)
 	if hooks != nil {
 		hooks.pauser = executor

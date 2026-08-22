@@ -51,9 +51,35 @@ const mcpServerName = "quackmcp"
 
 // Tool names shared between registrations and mcpToolNames.
 const (
-	toolLoadMemory  = "load_memory"
-	toolStageMemory = "stage_memory"
+	toolLoadMemory   = "load_memory"
+	toolStageMemory  = "stage_memory"
+	toolReadArtifact = "read_artifact"
 )
+
+// readArtifactInput is the read_artifact tool's input.
+type readArtifactInput struct {
+	Name string `json:"name" jsonschema:"the artifact's file name, e.g. \"comments\""`
+}
+
+// registerReadArtifactTool exposes sess's OWN chat's artifacts by name -
+// scope comes from the registered MemSession, never from args, so one node
+// can never read another chat's artifacts (#1010 groundwork).
+func registerReadArtifactTool(srv *mcp.Server, sess vetting.MemSession) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        toolReadArtifact,
+		Description: "Read one artifact belonging to this chat by name (e.g. an issue thread's comments or event summary). Returns its latest content, or an error if it doesn't exist.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args readArtifactInput) (*mcp.CallToolResult, any, error) {
+		resp, err := vetting.LoadArtifact(ctx, sess, args.Name)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil, nil
+		}
+		text := ""
+		if resp != nil && resp.Part != nil && resp.Part.InlineData != nil {
+			text = string(resp.Part.InlineData.Data)
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil, nil
+	})
+}
 
 // loadMemoryInput is the load_memory tool's input.
 type loadMemoryInput struct {
@@ -131,6 +157,9 @@ func memoryMCPHandler() http.Handler {
 			} else {
 				registerPRTool(srv, sess.PRStage)
 			}
+		}
+		if sess.AppName != "" || sess.UserID != "" || sess.ChatID != "" {
+			registerReadArtifactTool(srv, sess)
 		}
 		return srv
 	}, nil)
