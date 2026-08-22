@@ -276,6 +276,8 @@ func TestLoadParsesAgentsAndTools(t *testing.T) {
 	c, err := Load(writeTemp(t, `
 providers:
   default: { kind: openai, endpoint: http://x }
+models:
+  r-model: { provider: default, role: worker }
 stores:
   main: { kind: postgres, url: u }
 session: { store: main }
@@ -503,6 +505,9 @@ func TestLoadParsesPerAgentJudgeRounds(t *testing.T) {
 	c, err := Load(writeTemp(t, `
 providers:
   default: { kind: openai, endpoint: http://x }
+models:
+  c-model: { provider: default, role: worker }
+  s-model: { provider: default, role: worker }
 stores:
   main: { kind: postgres, url: u }
 session: { store: main }
@@ -645,7 +650,7 @@ orchestrator: { provider: default, model: m }
 func TestRealConfigLoads(t *testing.T) {
 	for _, kv := range [][2]string{
 		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"}, {"QUACK_DATABASE_URL", "postgres://localhost/db"},
-		{"QUACK_ORCH_MODEL", "m"}, {"QUACK_RESEARCHER_MODEL", "r"}, {"QUACK_MEDIA_MODEL", "md"}, {"QUACK_IMAGE_MODEL", "im"},
+		{"QUACK_ORCH_MODEL", "m"}, {"QUACK_RESEARCHER_MODEL", "qwen3.8-27b"}, {"QUACK_MEDIA_MODEL", "qwen3-omni-30b"}, {"QUACK_IMAGE_MODEL", "qwen3-vl-32b"},
 		{"QUACK_JUDGE_MODEL", "j"}, {"QUACK_EMBED_MODEL", "e"}, {"QUACK_SEARXNG_URL", "http://s"}, {"QUACK_CRAWL4AI_URL", "http://c"},
 	} {
 		t.Setenv(kv[0], kv[1])
@@ -671,7 +676,7 @@ func TestRealConfigLoads(t *testing.T) {
 func TestRealConfigWorkersHaveNoDirectGitHubMutation(t *testing.T) {
 	for _, kv := range [][2]string{
 		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"}, {"QUACK_DATABASE_URL", "postgres://localhost/db"},
-		{"QUACK_ORCH_MODEL", "m"}, {"QUACK_RESEARCHER_MODEL", "r"}, {"QUACK_MEDIA_MODEL", "md"}, {"QUACK_IMAGE_MODEL", "im"},
+		{"QUACK_ORCH_MODEL", "m"}, {"QUACK_RESEARCHER_MODEL", "qwen3.8-27b"}, {"QUACK_MEDIA_MODEL", "qwen3-omni-30b"}, {"QUACK_IMAGE_MODEL", "qwen3-vl-32b"},
 		{"QUACK_JUDGE_MODEL", "j"}, {"QUACK_EMBED_MODEL", "e"}, {"QUACK_SEARXNG_URL", "http://s"}, {"QUACK_CRAWL4AI_URL", "http://c"},
 	} {
 		t.Setenv(kv[0], kv[1])
@@ -1279,6 +1284,8 @@ func TestCoderModelFallsBackToResearcherModel(t *testing.T) {
 	t.Setenv("QUACK_RESEARCHER_MODEL", "researcher-model")
 	// Deliberately NOT setting QUACK_CODER_MODEL.
 	c, err := Load(writeTemp(t, baseConfig+`
+models:
+  researcher-model: { provider: default, role: worker }
 agents:
   code-implementer: { bundle: agents/code-implementer, provider: default, model: ${QUACK_CODER_MODEL}, tools: [] }
 `))
@@ -1296,6 +1303,8 @@ func TestCoderModelExplicitOverridesFallback(t *testing.T) {
 	t.Setenv("QUACK_RESEARCHER_MODEL", "researcher-model")
 	t.Setenv("QUACK_CODER_MODEL", "coder-model")
 	c, err := Load(writeTemp(t, baseConfig+`
+models:
+  coder-model: { provider: default, role: worker }
 agents:
   code-implementer: { bundle: agents/code-implementer, provider: default, model: ${QUACK_CODER_MODEL}, tools: [] }
 `))
@@ -1472,6 +1481,17 @@ func TestValidConfigStillLoads(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 server:
   addr: ":9999"
+models:
+  r-model:
+    provider: default
+    role: worker
+    context_window: 65536
+    limits:
+      sessions: 4
+      kv_tokens: 65536
+    cost:
+      input_per_mtok: 0.6
+      output_per_mtok: 3.6
 agents:
   code-reviewer:
     bundle: agents/code-reviewer
@@ -1646,6 +1666,8 @@ orchestrator: { provider: default, model: ${QUACK_ORCH_MODEL} }
 // workflowAgentConfig is a minimal agents: block a workflow shape's agents
 // list can reference.
 const workflowAgentConfig = `
+models:
+  m: { provider: default, role: worker }
 agents:
   document-classifier:
     bundle: agents/document-classifier
@@ -1873,7 +1895,7 @@ workflows:
 func TestRealConfigDocumentIngestWorkflowExampleLoads(t *testing.T) {
 	for _, kv := range [][2]string{
 		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"}, {"QUACK_DATABASE_URL", "postgres://localhost/db"},
-		{"QUACK_ORCH_MODEL", "m"}, {"QUACK_RESEARCHER_MODEL", "r"}, {"QUACK_MEDIA_MODEL", "md"}, {"QUACK_IMAGE_MODEL", "im"},
+		{"QUACK_ORCH_MODEL", "m"}, {"QUACK_RESEARCHER_MODEL", "qwen3.8-27b"}, {"QUACK_MEDIA_MODEL", "qwen3-omni-30b"}, {"QUACK_IMAGE_MODEL", "qwen3-vl-32b"},
 		{"QUACK_JUDGE_MODEL", "j"}, {"QUACK_EMBED_MODEL", "e"}, {"QUACK_SEARXNG_URL", "http://s"}, {"QUACK_CRAWL4AI_URL", "http://c"},
 		{"RMFAKECLOUD_URL", "https://rm.example.com"}, {"RMFAKECLOUD_EMAIL", "a@example.com"}, {"RMFAKECLOUD_PASSWORD", "pw"},
 	} {
@@ -1979,5 +2001,198 @@ workspace:
 	out := buf.String()
 	if !strings.Contains(out, "no effect on an ACP-harness agent") || !strings.Contains(out, "agent=code-reviewer") {
 		t.Errorf("expected a warning naming code-reviewer, got: %q", out)
+	}
+}
+
+// TestModelsRegistry pins the #1007 config-layer prerequisite: the models:
+// registry, its validation rules, and provider derivation. Each case is a
+// full config; failure cases assert both an error and that it names the
+// offender.
+func TestModelsRegistry(t *testing.T) {
+	const providers = `
+providers:
+  default: { kind: openai, endpoint: http://x }
+`
+	for _, tc := range []struct {
+		name    string
+		yaml    string
+		wantErr string // substring; "" ⇒ expect success
+	}{
+		{
+			name: "valid: provider derived from model, limits parsed",
+			yaml: providers + `
+models:
+  w1:
+    provider: default
+    role: worker
+    context_window: 131072
+    limits: { sessions: 4, kv_tokens: 131072 }
+    cost: { input_per_mtok: 0.6, output_per_mtok: 3.6 }
+stores: { main: { kind: postgres, url: u } }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+agents:
+  worker: { bundle: agents/worker, model: w1, context_window: 65536 }
+`,
+		},
+		{
+			name: "model references unknown provider",
+			yaml: providers + `
+models:
+  w1: { provider: nope, role: worker }
+stores: { main: { kind: postgres, url: u } }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+`,
+			wantErr: `model "w1" provider "nope" is not defined under providers`,
+		},
+		{
+			name: "agent model not in registry",
+			yaml: providers + `
+stores: { main: { kind: postgres, url: u } }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+agents:
+  worker: { bundle: agents/worker, provider: default, model: ghost }
+`,
+			wantErr: `agent "worker" model "ghost" is not defined under models`,
+		},
+		{
+			name: "agent context_window exceeds model context_window",
+			yaml: providers + `
+models:
+  w1: { provider: default, role: worker, context_window: 32768 }
+stores: { main: { kind: postgres, url: u } }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+agents:
+  worker: { bundle: agents/worker, model: w1, context_window: 65536 }
+`,
+			wantErr: `agent "worker" context_window 65536 exceeds model "w1" context_window 32768`,
+		},
+		{
+			name: "agent context_window exceeds model kv_tokens (deadlock guard)",
+			yaml: providers + `
+models:
+  w1: { provider: default, role: worker, context_window: 131072, limits: { kv_tokens: 32768 } }
+stores: { main: { kind: postgres, url: u } }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+agents:
+  worker: { bundle: agents/worker, model: w1, context_window: 65536 }
+`,
+			wantErr: `agent "worker" context_window 65536 exceeds model "w1" limits.kv_tokens 32768`,
+		},
+		{
+			name: `model role not a key of provider limits.active`,
+			yaml: `
+providers:
+  default: { kind: openai, endpoint: http://x, limits: { active: { judge: 1 } } }
+models:
+  w1: { provider: default, role: worker }
+stores: { main: { kind: postgres, url: u } }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+`,
+			wantErr: `model "w1" role "worker" is not a key of provider "default" limits.active`,
+		},
+		{
+			name: "agent provider disagrees with model's provider",
+			yaml: `
+providers:
+  default: { kind: openai, endpoint: http://x }
+  other: { kind: openai, endpoint: http://y }
+models:
+  w1: { provider: default, role: worker }
+stores: { main: { kind: postgres, url: u } }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+agents:
+  worker: { bundle: agents/worker, provider: other, model: w1 }
+`,
+			wantErr: `agent "worker" provider "other" disagrees with model "w1"'s provider "default"`,
+		},
+		{
+			name: "old-shape provider-nested pricing is a migration error, not silently dropped",
+			yaml: `
+providers:
+  default:
+    kind: openai
+    endpoint: http://x
+    models:
+      w1: { input_per_mtok: 0.6, output_per_mtok: 3.6 }
+stores: { main: { kind: postgres, url: u } }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+`,
+			wantErr: `providers.default.models is no longer supported`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(writeTemp(t, tc.yaml))
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Load: unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("Load: expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error = %q, want it to contain %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestAgentProviderDerivedFromModel proves an agent that omits provider:
+// resolves it from its model's registry entry.
+func TestAgentProviderDerivedFromModel(t *testing.T) {
+	c, err := Load(writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://x }
+models:
+  w1: { provider: default, role: worker }
+stores: { main: { kind: postgres, url: u } }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+agents:
+  worker: { bundle: agents/worker, model: w1 }
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := c.Agents["worker"].Provider; got != "default" {
+		t.Errorf("agent provider = %q, want derived %q", got, "default")
+	}
+}
+
+// TestModelCostResolvesThroughNewPath proves cost lookup now reads
+// models.<name>.cost - the location gen_ai.client.cost/Langfuse readers must
+// use post-#1007-config-layer - not the old providers.<p>.models path.
+func TestModelCostResolvesThroughNewPath(t *testing.T) {
+	c, err := Load(writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://x }
+models:
+  priced: { provider: default, role: worker, cost: { input_per_mtok: 0.6, output_per_mtok: 3.6 } }
+  unpriced: { provider: default, role: worker }
+stores: { main: { kind: postgres, url: u } }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	cost := c.ModelCost("priced")
+	if cost == nil || cost.InputPerMTok != 0.6 || cost.OutputPerMTok != 3.6 {
+		t.Errorf("ModelCost(priced) = %+v, want {0.6 3.6}", cost)
+	}
+	if got := c.ModelCost("unpriced"); got != nil {
+		t.Errorf("ModelCost(unpriced) = %+v, want nil (no cost: block ⇒ no guessed price)", got)
+	}
+	if got := c.ModelCost("nonexistent"); got != nil {
+		t.Errorf("ModelCost(nonexistent) = %+v, want nil", got)
 	}
 }

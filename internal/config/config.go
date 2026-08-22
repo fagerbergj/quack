@@ -16,17 +16,21 @@ import (
 )
 
 type Config struct {
-	Providers    map[string]ProviderConfig `yaml:"providers"`
-	Stores       map[string]StoreConfig    `yaml:"stores"`
-	Session      SessionConfig             `yaml:"session"`
-	Orchestrator OrchestratorConfig        `yaml:"orchestrator"`
-	Agents       map[string]AgentConfig    `yaml:"agents"`
-	Tools        map[string]ToolConfig     `yaml:"tools"`
-	Gates        GatesConfig               `yaml:"gates"`
-	Dag          DagConfig                 `yaml:"dag"`
-	Server       ServerConfig              `yaml:"server"`
-	Workspace    WorkspaceConfig           `yaml:"workspace"`
-	Skills       SkillsConfig              `yaml:"skills"`
+	Providers map[string]ProviderConfig `yaml:"providers"`
+	// Models is the canonical model registry (sibling of providers/agents):
+	// each entry binds a provider, a scheduling role, a default context
+	// window, admission limits (inert pending #1007), and cost.
+	Models       map[string]ModelConfig `yaml:"models"`
+	Stores       map[string]StoreConfig `yaml:"stores"`
+	Session      SessionConfig          `yaml:"session"`
+	Orchestrator OrchestratorConfig     `yaml:"orchestrator"`
+	Agents       map[string]AgentConfig `yaml:"agents"`
+	Tools        map[string]ToolConfig  `yaml:"tools"`
+	Gates        GatesConfig            `yaml:"gates"`
+	Dag          DagConfig              `yaml:"dag"`
+	Server       ServerConfig           `yaml:"server"`
+	Workspace    WorkspaceConfig        `yaml:"workspace"`
+	Skills       SkillsConfig           `yaml:"skills"`
 	// Plugins are the Agent Plugins roots quack loads. A root contributes
 	// skills, MCP servers, and quack's own extension declarations, so it is
 	// no longer a skills-only concern - skills.plugins stays readable as a
@@ -422,7 +426,9 @@ func (g GatesConfig) Enabled() bool {
 }
 
 type AgentConfig struct {
-	Bundle        string          `yaml:"bundle"`
+	Bundle string `yaml:"bundle"`
+	// Provider is optional: when empty it's derived from Model's entry in
+	// the models registry. Setting both is only valid when they agree.
 	Provider      string          `yaml:"provider"`
 	Model         string          `yaml:"model"`
 	ContextWindow int             `yaml:"context_window"`
@@ -486,17 +492,50 @@ type ProviderConfig struct {
 	ForkMode string          `yaml:"fork_mode"`
 	ForkFrom string          `yaml:"fork_from"`
 	Live     *ProviderConfig `yaml:"live"`
-	// Models: optional per-model USD price table, keyed by model name as
-	// passed to inference.NewModel. A model absent here gets no cost metric -
-	// quack never guesses a price.
-	Models map[string]ModelPricing `yaml:"models"`
+	// Limits caps how many DISTINCT models per role may be resident at once
+	// (#1007, inert until the scheduler lands). Absent = any number of
+	// models resident.
+	Limits *ProviderLimits `yaml:"limits"`
 }
 
-// ModelPricing: USD per million tokens. Zero value (a model absent from
-// ProviderConfig.Models) means "no pricing configured", not "free".
+// ProviderLimits.Active is keyed by role (matched against models.<m>.role);
+// a role absent here is unbounded, not zero.
+type ProviderLimits struct {
+	Active map[string]int `yaml:"active"`
+}
+
+// ModelConfig is a models: registry entry - the canonical binding of a model
+// name to its provider, scheduling role, default context window, admission
+// limits (#1007, inert until the scheduler enforces them), and cost.
+type ModelConfig struct {
+	Provider      string        `yaml:"provider"`
+	Role          string        `yaml:"role"`
+	ContextWindow int           `yaml:"context_window"`
+	Limits        *ModelLimits  `yaml:"limits"`
+	Cost          *ModelPricing `yaml:"cost"`
+}
+
+// ModelLimits gates admission (#1007, not yet enforced). Absent = unlimited:
+// no Sessions cap, and a nil/zero KVTokens means context never blocks scheduling.
+type ModelLimits struct {
+	Sessions int `yaml:"sessions"`
+	KVTokens int `yaml:"kv_tokens"`
+}
+
+// ModelPricing: USD per million tokens, used for gen_ai.client.cost /
+// Langfuse. Absent means "no pricing configured", not "free".
 type ModelPricing struct {
 	InputPerMTok  float64 `yaml:"input_per_mtok"`
 	OutputPerMTok float64 `yaml:"output_per_mtok"`
+}
+
+// ModelCost resolves a model's price table by its registry name. nil means
+// no pricing configured, not free.
+func (c *Config) ModelCost(name string) *ModelPricing {
+	if m, ok := c.Models[name]; ok {
+		return m.Cost
+	}
+	return nil
 }
 
 type StoreConfig struct {
@@ -728,6 +767,9 @@ func load(path string, skipRuntimeValidation bool) (*Config, error) {
 		return nil, err
 	}
 	expanded := os.Expand(string(raw), expandEnv)
+	if err := detectOldPricingShape(expanded); err != nil {
+		return nil, err
+	}
 
 	var c Config
 	dec := yaml.NewDecoder(bytes.NewReader([]byte(expanded)))
@@ -742,6 +784,27 @@ func load(path string, skipRuntimeValidation bool) (*Config, error) {
 		return nil, err
 	}
 	return &c, nil
+}
+
+// detectOldPricingShape rejects the pre-#1007 shape (per-model USD prices
+// nested under providers.<p>.models) with a migration hint instead of
+// KnownFields(true) silently dropping the prices as an unknown field.
+func detectOldPricingShape(expanded string) error {
+	var generic map[string]any
+	if err := yaml.Unmarshal([]byte(expanded), &generic); err != nil {
+		return nil // let the real decode below surface this parse error
+	}
+	providers, _ := generic["providers"].(map[string]any)
+	for name, raw := range providers {
+		p, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, ok := p["models"]; ok {
+			return fmt.Errorf("config: providers.%s.models is no longer supported — move per-model pricing to the top-level models.<name>.cost.{input_per_mtok,output_per_mtok}", name)
+		}
+	}
+	return nil
 }
 
 func (c *Config) validate() error {
@@ -776,6 +839,17 @@ func (c *Config) validate() error {
 			}
 		default:
 			return fmt.Errorf("config: provider %q has unsupported kind %q (only %q and %q are implemented)", name, p.Kind, "openai", "replay")
+		}
+	}
+	for name, m := range c.Models {
+		p, ok := c.Providers[m.Provider]
+		if !ok {
+			return fmt.Errorf("config: model %q provider %q is not defined under providers", name, m.Provider)
+		}
+		if p.Limits != nil {
+			if _, ok := p.Limits.Active[m.Role]; !ok {
+				return fmt.Errorf("config: model %q role %q is not a key of provider %q limits.active", name, m.Role, m.Provider)
+			}
 		}
 	}
 	if _, ok := c.Providers[c.Orchestrator.Provider]; !ok {
@@ -880,6 +954,29 @@ func (c *Config) validate() error {
 		}
 	}
 	for name, a := range c.Agents {
+		if a.Model != "" {
+			mc, ok := c.Models[a.Model]
+			if !ok {
+				return fmt.Errorf("config: agent %q model %q is not defined under models", name, a.Model)
+			}
+			if a.Provider == "" {
+				a.Provider = mc.Provider
+			} else if a.Provider != mc.Provider {
+				return fmt.Errorf("config: agent %q provider %q disagrees with model %q's provider %q", name, a.Provider, a.Model, mc.Provider)
+			}
+			// Effective window: the agent's own, or the model's default when unset.
+			eff := a.ContextWindow
+			if eff == 0 {
+				eff = mc.ContextWindow
+			}
+			if mc.ContextWindow > 0 && eff > mc.ContextWindow {
+				return fmt.Errorf("config: agent %q context_window %d exceeds model %q context_window %d", name, eff, a.Model, mc.ContextWindow)
+			}
+			if mc.Limits != nil && mc.Limits.KVTokens > 0 && eff > mc.Limits.KVTokens {
+				return fmt.Errorf("config: agent %q context_window %d exceeds model %q limits.kv_tokens %d - it could never be admitted", name, eff, a.Model, mc.Limits.KVTokens)
+			}
+			c.Agents[name] = a
+		}
 		if _, ok := c.Providers[a.Provider]; !ok {
 			return fmt.Errorf("config: agent %q provider %q is not defined under providers", name, a.Provider)
 		}

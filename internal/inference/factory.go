@@ -18,14 +18,12 @@ import (
 // NewModel constructs an ADK model for the given provider and model name.
 // "openai" is wrapped in hydratingModel (hydrate.go) then tracedModel
 // (traced.go) - the one factory, the one place to hook both.
-func NewModel(p config.ProviderConfig, modelName string, artifacts artifact.Service) (model.LLM, error) {
+func NewModel(p config.ProviderConfig, modelName string, artifacts artifact.Service, cost *config.ModelPricing) (model.LLM, error) {
 	switch p.Kind {
 	case "openai":
 		live := &hydratingModel{LLM: openaimodel.NewOpenAIModel(modelName, p.Endpoint, p.APIKey), artifacts: artifacts}
 		tm := &tracedModel{LLM: live, name: modelName}
-		if pr, ok := p.Models[modelName]; ok {
-			tm.pricing = &pr
-		}
+		tm.pricing = cost
 		return tm, nil
 	case "replay":
 		sess, err := replay.Load(p.Bundle)
@@ -38,7 +36,7 @@ func NewModel(p config.ProviderConfig, modelName string, artifacts artifact.Serv
 		// Fork-replay (#605): p.Live is the caller's REAL provider config,
 		// built through this SAME factory - wrapped like any other model.
 		sess.EnableFork(p.ForkFrom)
-		live, err := NewModel(*p.Live, modelName, artifacts)
+		live, err := NewModel(*p.Live, modelName, artifacts, cost)
 		if err != nil {
 			return nil, fmt.Errorf("inference: replay provider: live delegate: %w", err)
 		}
@@ -58,8 +56,8 @@ type Embedder interface {
 // NewEmbedder constructs an Embedder for the given provider and embedding
 // model, reusing NewModel's switch. artifacts is only for signature
 // symmetry with NewModel - Embed never sees attachment parts.
-func NewEmbedder(p config.ProviderConfig, modelName string, artifacts artifact.Service) (Embedder, error) {
-	m, err := NewModel(p, modelName, artifacts)
+func NewEmbedder(p config.ProviderConfig, modelName string, artifacts artifact.Service, cost *config.ModelPricing) (Embedder, error) {
+	m, err := NewModel(p, modelName, artifacts, cost)
 	if err != nil {
 		return nil, err
 	}

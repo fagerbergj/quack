@@ -371,7 +371,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	st.SetArtifactService(artifacts)
 
 	prov, _ := cfg.Provider(cfg.Orchestrator.Provider)
-	llm, err := inference.NewModel(prov, cfg.Orchestrator.Model, artifacts)
+	llm, err := inference.NewModel(prov, cfg.Orchestrator.Model, artifacts, cfg.ModelCost(cfg.Orchestrator.Model))
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("inference model init failed: %w", err)
 	}
@@ -433,7 +433,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		if !ok {
 			return nil, fmt.Errorf("embedder provider %q not found", rm.Embedder.Provider)
 		}
-		embedder, err := inference.NewEmbedder(eprov, rm.Embedder.Model, artifacts)
+		embedder, err := inference.NewEmbedder(eprov, rm.Embedder.Model, artifacts, cfg.ModelCost(rm.Embedder.Model))
 		if err != nil {
 			return nil, fmt.Errorf("embedder: %w", err)
 		}
@@ -446,7 +446,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		if !ok {
 			return nil, fmt.Errorf("consolidation provider %q not found", rm.Consolidation.Provider)
 		}
-		consolidator, err := inference.NewModel(cprov, rm.Consolidation.Model, artifacts)
+		consolidator, err := inference.NewModel(cprov, rm.Consolidation.Model, artifacts, cfg.ModelCost(rm.Consolidation.Model))
 		if err != nil {
 			return nil, fmt.Errorf("consolidation model: %w", err)
 		}
@@ -531,7 +531,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	var advisorAgent adkagent.Agent
 	if cfg.Gates.JudgeEnabled() {
 		if aprov, ok := cfg.Provider(cfg.Gates.Judge.Provider); ok {
-			if am, merr := inference.NewModel(aprov, cfg.Gates.Judge.Model, artifacts); merr != nil {
+			if am, merr := inference.NewModel(aprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model)); merr != nil {
 				slog.Warn("advisor model build failed; ask_advisor disabled", "component", "startup", "err", merr)
 			} else if ab, berr := agent.LoadBundle("agents/advisor"); berr != nil {
 				slog.Warn("advisor bundle load failed; ask_advisor disabled", "component", "startup", "err", berr)
@@ -738,7 +738,7 @@ func buildUserMemoryHookAgent(h config.UserMemoryHookConfig, cfg *config.Config,
 	if !ok {
 		return nil, fmt.Errorf("provider %q not found", h.Provider)
 	}
-	m, err := inference.NewModel(prov, h.Model, artifacts)
+	m, err := inference.NewModel(prov, h.Model, artifacts, cfg.ModelCost(h.Model))
 	if err != nil {
 		return nil, fmt.Errorf("model: %w", err)
 	}
@@ -854,7 +854,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			if !ok {
 				return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("gates.judge: provider %q not found", cfg.Gates.Judge.Provider)
 			}
-			judge, err := inference.NewModel(jprov, cfg.Gates.Judge.Model, artifacts)
+			judge, err := inference.NewModel(jprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model))
 			if err != nil {
 				return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("gates.judge: model: %w", err)
 			}
@@ -906,7 +906,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("compaction: provider %q not found", compCfg.Provider)
 		}
 		var err error
-		if fallbackSummarizer, err = inference.NewModel(cprov, compCfg.Model, artifacts); err != nil {
+		if fallbackSummarizer, err = inference.NewModel(cprov, compCfg.Model, artifacts, cfg.ModelCost(compCfg.Model)); err != nil {
 			return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("compaction: model: %w", err)
 		}
 		// Only ever used when ResolveSummarizer has no active worker model - rare, but
@@ -950,15 +950,10 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		if !ok {
 			return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "provider %q not found", ac.Provider)
 		}
-		m, err := inference.NewModel(prov, ac.Model, artifacts)
+		acpPricing := cfg.ModelCost(ac.Model)
+		m, err := inference.NewModel(prov, ac.Model, artifacts, acpPricing)
 		if err != nil {
 			return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "model: %v", err)
-		}
-		// m's pricing (above) never surfaces - ACP's workerModel is never invoked,
-		// so resolve pricing again here the way inference.NewModel does.
-		var acpPricing *config.ModelPricing
-		if pr, ok := prov.Models[ac.Model]; ok {
-			acpPricing = &pr
 		}
 
 		if ac.Acp != nil {
@@ -1102,7 +1097,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		}
 
 		buildWorker := func() (adkagent.Agent, model.LLM, []tool.Tool, error) {
-			wm, err := inference.NewModel(prov, ac.Model, artifacts)
+			wm, err := inference.NewModel(prov, ac.Model, artifacts, cfg.ModelCost(ac.Model))
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("model: %w", err)
 			}

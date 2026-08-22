@@ -71,6 +71,8 @@ func EmitServerConfig(a InitAnswers) string {
 	emitOrchTools(&b, a)
 	b.WriteString("\n")
 
+	emitModels(&b, a)
+
 	b.WriteString("agents:\n")
 	researcherTools := "[web_search, web_fetch, summarize, current_date"
 	if a.EmbedModel != "" {
@@ -189,6 +191,25 @@ func emitTool(b *strings.Builder, name, kind, url string) {
 		return
 	}
 	fmt.Fprintf(b, "  %s:\n    kind: %s\n    url: %s\n", name, kind, url)
+}
+
+// emitModels renders the models: registry entry for every distinct model an
+// agent below actually references - each agent's model must resolve to one.
+func emitModels(b *strings.Builder, a InitAnswers) {
+	coder := a.CoderModel
+	if coder == "" {
+		coder = a.MainModel
+	}
+	seen := map[string]bool{}
+	b.WriteString("models:\n")
+	for _, m := range []string{a.MainModel, a.AudioModel, a.VisionModel, coder} {
+		if m == "" || seen[m] {
+			continue
+		}
+		seen[m] = true
+		fmt.Fprintf(b, "  %s:\n    provider: default\n    role: worker\n", m)
+	}
+	b.WriteString("\n")
 }
 
 func emitOrchTools(b *strings.Builder, a InitAnswers) {
