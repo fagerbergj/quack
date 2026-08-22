@@ -169,7 +169,7 @@ func TestReviewFanout_FailedSiblingDoesNotBlockDelivery(t *testing.T) {
 
 	// r2 errored/was cancelled - never reaches commitDelivery. The abort path
 	// (resolveAbortedReviewer, wired via RunGatedRefine's defer) registers it.
-	resolveAbortedReviewer(context.Background(), nil, cfg, "r2")
+	resolveAbortedReviewer(context.Background(), nil, cfg, "r2", workerActivity{})
 
 	select {
 	case dc := <-done:
@@ -185,6 +185,91 @@ func TestReviewFanout_FailedSiblingDoesNotBlockDelivery(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("a failed sibling must not block delivery forever")
+	}
+}
+
+// #942: in a multi-reviewer fanout, a killed sibling's staged review must
+// reach the merge as real content, not just a "did not complete" note.
+func TestResolveAbortedReviewer_KilledSiblingStagedReviewReachesMerge(t *testing.T) {
+	done := make(chan DeliveryContext, 1)
+	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
+		done <- dc
+		return nil, nil
+	}
+	fanout := GetReviewFanout(t.Name(), 2)
+	cfg := Config{Deliver: deliver, ReviewFanout: fanout, IsReviewer: true}
+
+	commitDelivery(context.Background(), nil, cfg, "r1", workerActivity{
+		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "comment", Body: "looks fine"}},
+	}, GateResult{Passed: true})
+
+	// r2 was killed after staging - its real verdict/body must survive, not
+	// get replaced by an empty item marked failed.
+	resolveAbortedReviewer(context.Background(), nil, cfg, "r2", workerActivity{
+		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "approve", Body: "regression covered by TestFooBar1729"}},
+	})
+
+	select {
+	case dc := <-done:
+		body := dc.Items[0].Body
+		if !strings.Contains(body, "TestFooBar1729") {
+			t.Fatalf("Body = %q, want the killed sibling's staged content in the merge", body)
+		}
+		if strings.Contains(body, "did not complete") {
+			t.Fatalf("Body = %q, staged content should not be reported as failed", body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a killed sibling's staged review must reach delivery")
+	}
+}
+
+// #942: a single-reviewer plan (no ReviewFanout) whose round dies (killed,
+// timed out, errored) after quackmcp_stage_review already staged the full
+// verdict must deliver that staged review, flagged as abnormal - not discard
+// it and not substitute anything else.
+func TestResolveAbortedReviewer_SoloReviewerDeliversStagedReviewInsteadOfDiscarding(t *testing.T) {
+	done := make(chan DeliveryContext, 1)
+	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
+		done <- dc
+		return nil, nil
+	}
+	cfg := Config{Deliver: deliver, IsReviewer: true}
+	act := workerActivity{stagedDelivery: map[string]StagedDelivery{
+		"review": {Kind: "review", Event: "approve", Body: "verified end to end, holds up"},
+	}}
+
+	resolveAbortedReviewer(context.Background(), nil, cfg, "review-935", act)
+
+	select {
+	case dc := <-done:
+		if len(dc.Items) != 1 || dc.Items[0].Event != "approve" {
+			t.Fatalf("Items = %+v, want the staged approve delivered", dc.Items)
+		}
+		if !strings.Contains(dc.Items[0].Body, "verified end to end") {
+			t.Fatalf("Body = %q, want the staged verdict preserved", dc.Items[0].Body)
+		}
+		if !strings.Contains(dc.Items[0].Body, "abnormally") {
+			t.Fatalf("Body = %q, want a note that the round ended abnormally", dc.Items[0].Body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a staged review must be delivered when the round that produced it dies")
+	}
+}
+
+// A solo reviewer's round that dies with nothing staged must deliver nothing
+// (no ReviewFanout to fall back on, and nothing true to say).
+func TestResolveAbortedReviewer_SoloReviewerNothingStagedDeliversNothing(t *testing.T) {
+	deliverCalled := false
+	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
+		deliverCalled = true
+		return nil, nil
+	}
+	cfg := Config{Deliver: deliver, IsReviewer: true}
+
+	resolveAbortedReviewer(context.Background(), nil, cfg, "review-936", workerActivity{})
+
+	if deliverCalled {
+		t.Fatal("nothing was staged; Deliver must not be called")
 	}
 }
 
@@ -344,7 +429,7 @@ func TestReviewFanout_SynthesizerAbortFallsBackToConcat(t *testing.T) {
 	}, GateResult{Passed: true})
 
 	// Synthesizer errored before producing an answer.
-	resolveAbortedReviewer(context.Background(), nil, Config{Deliver: deliver, ReviewFanout: fanout}, "synthesize")
+	resolveAbortedReviewer(context.Background(), nil, Config{Deliver: deliver, ReviewFanout: fanout}, "synthesize", workerActivity{})
 
 	select {
 	case dc := <-done:

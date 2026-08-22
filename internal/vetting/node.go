@@ -298,14 +298,14 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	// Registering a merely-parked node as "failed" would let the fan-in
 	// deliver without it, then silently discard its verdict on resume.
 	delivered := false
-	if cfg.ReviewFanout != nil {
-		defer func() {
-			if delivered || isReviewerPauseSentinel(err) {
-				return
-			}
-			resolveAbortedReviewer(nodeCtx, sink, cfg, nodeID)
-		}()
-	}
+	// Must run unconditionally (#942): a staged review lives in this
+	// process, not the dying ACP subprocess, so it survives a kill.
+	defer func() {
+		if delivered || isReviewerPauseSentinel(err) {
+			return
+		}
+		resolveAbortedReviewer(nodeCtx, sink, cfg, nodeID, actFor(answer))
+	}()
 
 	// Gate-stage boundary control check.
 	basePrompt := prompt
@@ -892,18 +892,31 @@ func isReviewerPauseSentinel(err error) bool {
 	return errors.Is(err, ErrNodePaused) || errors.Is(err, workflow.ErrNodeInterrupted)
 }
 
-// resolveAbortedReviewer: registers a reviewer node that never reached
-// commitDelivery (worker error, ErrNodeEmpty, or cancel) as a failed
-// terminal in the run's ReviewFanout, so a dead sibling can't block the
-// merged review forever (#867).
-// A dead synthesizer resolves via FinishSynthesis(""), which falls the merge
-// back to the per-node concatenation (#965).
-func resolveAbortedReviewer(ctx context.Context, sink func(stream.SSEEvent), cfg Config, nodeID string) {
+// abortedRoundNote: flags a delivered review as coming from a dead round,
+// not a clean pass (#942).
+const abortedRoundNote = "_The round that produced this review ended abnormally (worker error, timeout, or cancel) after the verdict below was staged. Delivering it as-is rather than discarding it._\n\n"
+
+// resolveAbortedReviewer: delivers a dead node's staged review (#942) instead
+// of discarding it. No ReviewFanout → deliver directly; otherwise resolve
+// this node's fanout slot so a dead sibling can't block the merge (#867).
+func resolveAbortedReviewer(ctx context.Context, sink func(stream.SSEEvent), cfg Config, nodeID string, act workerActivity) {
+	item, hasItem := act.stagedDelivery["review"]
+	if hasItem {
+		item.Body = abortedRoundNote + item.Body
+	}
+	if cfg.ReviewFanout == nil {
+		if !hasItem {
+			return
+		}
+		commitDelivery(ctx, sink, cfg, nodeID, workerActivity{stagedDelivery: map[string]StagedDelivery{"review": item}}, GateResult{})
+		return
+	}
 	var merged StagedDelivery
 	var deliverNow bool
 	if cfg.IsReviewer {
-		merged, deliverNow = cfg.ReviewFanout.Finish(nodeID, StagedDelivery{}, false, true)
+		merged, deliverNow = cfg.ReviewFanout.Finish(nodeID, item, hasItem, !hasItem)
 	} else {
+		// Empty answer falls the merge back to per-node concatenation (#965).
 		merged, deliverNow = cfg.ReviewFanout.FinishSynthesis("")
 	}
 	if deliverNow {
