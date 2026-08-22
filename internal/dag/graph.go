@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
@@ -30,7 +31,7 @@ type nodeScopedWorker interface {
 
 // buildGateNodes: one gated node per plan node. source: the run's origin
 // (extension name or a fixed app value) - observability only, see vetting.Config.Source.
-func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int), admission *Admission, specFor func(agentName string) AdmissionSpec) (map[string]workflow.Node, []adkagent.Agent, error) {
+func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int), admission *Admission, specFor func(agentName string) AdmissionSpec, artifacts artifact.Service) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
@@ -64,6 +65,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		if specFor != nil {
 			spec = specFor(node.AgentName)
 		}
+		cfg.Artifacts = artifacts
 		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec)
 	}
 	return nodesByID, subAgents, nil
@@ -164,7 +166,8 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			memParticipant := cfg.ExternalWorker && cfg.CommitMemory && cfg.Memory != nil
 			reviewNode := cfg.ExternalWorker && cfg.ReadOnly && cfg.IsReviewer
 			prNode := cfg.ExternalWorker && !cfg.ReadOnly && cfg.Deliver != nil
-			if memParticipant || reviewNode || prNode {
+			artifactReader := cfg.ExternalWorker && cfg.Artifacts != nil
+			if memParticipant || reviewNode || prNode || artifactReader {
 				if secret, serr := vetting.NewMemSecret(); serr != nil {
 					slog.Warn("acp MCP secret unavailable; node runs without its memory/review tools",
 						"component", "dag", "node", node.ID, "err", serr)
@@ -182,6 +185,10 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 					if prNode {
 						ms.PRStage = &vetting.PRStage{}
 						ms.ExistingPR = cfg.ExistingPR
+					}
+					if artifactReader {
+						ms.Artifacts = cfg.Artifacts
+						ms.AppName, ms.UserID, ms.ChatID = task.AppName, task.UserID, chatID
 					}
 					vetting.RegisterMemSession(secret, ms)
 					defer vetting.UnregisterMemSession(secret)

@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"sync"
 
+	"google.golang.org/adk/v2/artifact"
+
 	"github.com/fagerbergj/quack/internal/memory"
 )
 
@@ -57,6 +59,13 @@ type MemSession struct {
 	Review     *ReviewStage // non-nil for review-delivery nodes
 	PRStage    *PRStage     // non-nil for implement-delivery nodes
 	ExistingPR bool         // PRStage != nil and the run pushes onto an already-open PR - offer stage_push, not stage_pr
+	// Artifacts/AppName/UserID/ChatID: read_artifact scope. nil Artifacts
+	// disables the tool; AppName/UserID/ChatID are never client-supplied,
+	// so a node can only ever read its own chat's artifacts.
+	Artifacts artifact.Service
+	AppName   string
+	UserID    string
+	ChatID    string
 }
 
 // MemStage: per-node staging buffer for stage_memory.

@@ -17,11 +17,13 @@ import (
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/agent/workflowagent"
+	"google.golang.org/adk/v2/artifact"
 	adkmemory "google.golang.org/adk/v2/memory"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/runner"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/loadartifactstool"
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
@@ -56,10 +58,16 @@ type Orchestrator struct {
 	userMem     *memory.Store
 	taskMem     *memory.Store
 	memAgent    adkagent.Agent
+	artifacts   artifact.Service
 	runDeadline time.Duration
 	runSem      chan struct{}
 	queuedChats sync.Map
 }
+
+// SetArtifacts wires an artifact.Service into the orchestrator's own runner
+// and, when load_artifacts is in orchestrator.tools, exposes the load_artifacts
+// tool. Mirrors dag.Executor.SetArtifacts.
+func (o *Orchestrator) SetArtifacts(svc artifact.Service) { o.artifacts = svc }
 
 func (o *Orchestrator) SetUserMemoryHook(memAgent adkagent.Agent) {
 	o.memAgent = memAgent
@@ -434,6 +442,9 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			toolList = append(toolList, memory.NewPreload(), commitTool)
 			memSvc = o.userMem.View(memory.Scope{User: userID, Legacy: userID}, nil)
 		}
+		if o.artifacts != nil {
+			toolList = append(toolList, loadartifactstool.New())
+		}
 
 		ag, err := llmagent.New(llmagent.Config{
 			Name:        orchestratorName,
@@ -468,6 +479,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			Agent:             wf,
 			SessionService:    conversationSessions{o.sessions},
 			MemoryService:     memSvc,
+			ArtifactService:   o.artifacts,
 			AutoCreateSession: true,
 		})
 		if err != nil {

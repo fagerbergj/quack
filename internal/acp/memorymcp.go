@@ -2,6 +2,7 @@ package acp
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net"
@@ -11,6 +12,7 @@ import (
 
 	sdk "github.com/coder/acp-go-sdk"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"google.golang.org/adk/v2/artifact"
 
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -51,9 +53,41 @@ const mcpServerName = "quackmcp"
 
 // Tool names shared between registrations and mcpToolNames.
 const (
-	toolLoadMemory  = "load_memory"
-	toolStageMemory = "stage_memory"
+	toolLoadMemory   = "load_memory"
+	toolStageMemory  = "stage_memory"
+	toolReadArtifact = "read_artifact"
 )
+
+// readArtifactInput is the read_artifact tool's input.
+type readArtifactInput struct {
+	Name     string `json:"name" jsonschema:"artifact filename to read"`
+	Revision int64  `json:"revision,omitempty" jsonschema:"specific revision; omit for the latest"`
+}
+
+// registerReadArtifactTool exposes one node's own chat artifacts. Scope
+// (app/user/chat) comes only from the registered session, never the caller -
+// a node can never name another chat's artifacts.
+func registerReadArtifactTool(srv *mcp.Server, svc artifact.Service, appName, userID, chatID string) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        toolReadArtifact,
+		Description: "Read an artifact previously saved to this chat by name. Text content is returned inline; binary content is base64-encoded.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args readArtifactInput) (*mcp.CallToolResult, any, error) {
+		resp, err := svc.Load(ctx, &artifact.LoadRequest{AppName: appName, UserID: userID, SessionID: chatID, FileName: args.Name, Version: args.Revision})
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "read_artifact: " + err.Error()}}}, nil, nil
+		}
+		if resp.Part.InlineData == nil {
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "read_artifact: artifact has no inline content"}}}, nil, nil
+		}
+		mime := resp.Part.InlineData.MIMEType
+		data := resp.Part.InlineData.Data
+		text := string(data)
+		if !strings.HasPrefix(mime, "text/") && mime != "application/json" {
+			text = base64.StdEncoding.EncodeToString(data)
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("mime: %s\n\n%s", mime, text)}}}, nil, nil
+	})
+}
 
 // loadMemoryInput is the load_memory tool's input.
 type loadMemoryInput struct {
@@ -121,6 +155,9 @@ func memoryMCPHandler() http.Handler {
 				sess.Staged.Add(memory.Candidate{Content: args.Content, Metadata: map[string]string{"bucket": args.Kind}})
 				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "staged"}}}, nil, nil
 			})
+		}
+		if sess.Artifacts != nil {
+			registerReadArtifactTool(srv, sess.Artifacts, sess.AppName, sess.UserID, sess.ChatID)
 		}
 		if sess.Review != nil {
 			registerReviewTools(srv, sess.Review)

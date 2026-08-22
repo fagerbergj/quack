@@ -103,7 +103,7 @@ orchestrator:
   skills: [plan-work, format-markdown, present-coding-plan, contribute, mermaid-authoring]
   provider: default
   model: ${QUACK_ORCH_MODEL}            # the thin dispatcher: routes requests to agents
-  tools: [commit_memory]         # bind commit_memory to enable user memory (recall + commit of per-user preferences)
+  tools: [commit_memory, load_artifacts]  # commit_memory: user memory; load_artifacts: read artifacts saved to this chat's session
   # End-of-turn memory hook (#262): the orchestrator model won't reliably call
   # commit_memory itself, so a dedicated memory-agent bundle (agents/memory-agent)
   # extracts durable preferences from the user's message and commits them

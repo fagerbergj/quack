@@ -694,12 +694,14 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	executor.SetNodeStateStore(st) // write-through node state machine (#962)
 	executorRef.Store(executor)
 	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
+	if slices.Contains(cfg.Orchestrator.Tools, "load_artifacts") {
+		orch.SetArtifacts(artifacts)
+	}
 	// #1007 deleted the tunable (a run's NODES are what cost GPU capacity,
 	// bounded by Admission), but a run's SETUP (workspace clone/jail) still
 	// costs host disk/CPU before any node ever reaches admission - a burst of
 	// runs must still be bounded, so keep a fixed, generous run-count guard.
 	orch.SetMaxActiveRuns(defaultMaxActiveRuns)
-	// is gone, capacity bounds throughput naturally via the Admission ledger.
 	orchRef.Store(orch)
 	if hooks != nil {
 		hooks.pauser = executor
