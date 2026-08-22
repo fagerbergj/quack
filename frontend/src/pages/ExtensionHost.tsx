@@ -55,7 +55,9 @@ export default function ExtensionHost({ name: nameOverride, initialExtensions }:
     <iframe
       src={ext.href}
       title={ext.title ?? ext.name}
-      sandbox="allow-same-origin allow-scripts allow-forms"
+      // allow-top-navigation-by-user-activation: lets a click link out to a
+      // real SPA route (e.g. remarkable's doc -> chat), but never the extension itself.
+      sandbox="allow-same-origin allow-scripts allow-forms allow-top-navigation-by-user-activation"
       className="flex-1 w-full h-full border-0"
     />
   )

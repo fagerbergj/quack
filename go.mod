@@ -14,7 +14,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/fagerbergj/quack-extensions/github v0.6.0
 	github.com/fagerbergj/quack-extensions/noop v0.2.0
-	github.com/fagerbergj/quack-extensions/remarkable v0.1.1
+	github.com/fagerbergj/quack-extensions/remarkable v0.2.0
 	github.com/fagerbergj/quack-extensions/sdk v0.6.0
 	github.com/fagerbergj/quack-extensions/usage v0.3.2
 	github.com/glebarez/go-sqlite v1.23.0
