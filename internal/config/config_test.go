@@ -684,7 +684,7 @@ orchestrator: { provider: default, model: m }
 func TestRealConfigLoads(t *testing.T) {
 	for _, kv := range [][2]string{
 		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"}, {"QUACK_DATABASE_URL", "postgres://localhost/db"},
-		{"QUACK_ORCH_MODEL", "m"}, {"QUACK_RESEARCHER_MODEL", "qwen3.8-27b"}, {"QUACK_MEDIA_MODEL", "qwen3-omni-30b"}, {"QUACK_IMAGE_MODEL", "qwen3-vl-32b"},
+		{"QUACK_ORCH_MODEL", "qwen3.8-27b"}, {"QUACK_RESEARCHER_MODEL", "qwen3.8-27b"}, {"QUACK_MEDIA_MODEL", "qwen3-omni-30b"}, {"QUACK_IMAGE_MODEL", "qwen3-vl-32b"},
 		{"QUACK_JUDGE_MODEL", "gemma4-26b-a4b"}, {"QUACK_EMBED_MODEL", "qwen3-embed"}, {"QUACK_SEARXNG_URL", "http://s"}, {"QUACK_CRAWL4AI_URL", "http://c"},
 	} {
 		t.Setenv(kv[0], kv[1])
@@ -710,7 +710,7 @@ func TestRealConfigLoads(t *testing.T) {
 func TestRealConfigWorkersHaveNoDirectGitHubMutation(t *testing.T) {
 	for _, kv := range [][2]string{
 		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"}, {"QUACK_DATABASE_URL", "postgres://localhost/db"},
-		{"QUACK_ORCH_MODEL", "m"}, {"QUACK_RESEARCHER_MODEL", "qwen3.8-27b"}, {"QUACK_MEDIA_MODEL", "qwen3-omni-30b"}, {"QUACK_IMAGE_MODEL", "qwen3-vl-32b"},
+		{"QUACK_ORCH_MODEL", "qwen3.8-27b"}, {"QUACK_RESEARCHER_MODEL", "qwen3.8-27b"}, {"QUACK_MEDIA_MODEL", "qwen3-omni-30b"}, {"QUACK_IMAGE_MODEL", "qwen3-vl-32b"},
 		{"QUACK_JUDGE_MODEL", "gemma4-26b-a4b"}, {"QUACK_EMBED_MODEL", "qwen3-embed"}, {"QUACK_SEARXNG_URL", "http://s"}, {"QUACK_CRAWL4AI_URL", "http://c"},
 	} {
 		t.Setenv(kv[0], kv[1])
@@ -1959,7 +1959,7 @@ workflows:
 func TestRealConfigDocumentIngestWorkflowExampleLoads(t *testing.T) {
 	for _, kv := range [][2]string{
 		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"}, {"QUACK_DATABASE_URL", "postgres://localhost/db"},
-		{"QUACK_ORCH_MODEL", "m"}, {"QUACK_RESEARCHER_MODEL", "qwen3.8-27b"}, {"QUACK_MEDIA_MODEL", "qwen3-omni-30b"}, {"QUACK_IMAGE_MODEL", "qwen3-vl-32b"},
+		{"QUACK_ORCH_MODEL", "qwen3.8-27b"}, {"QUACK_RESEARCHER_MODEL", "qwen3.8-27b"}, {"QUACK_MEDIA_MODEL", "qwen3-omni-30b"}, {"QUACK_IMAGE_MODEL", "qwen3-vl-32b"},
 		{"QUACK_JUDGE_MODEL", "gemma4-26b-a4b"}, {"QUACK_EMBED_MODEL", "qwen3-embed"}, {"QUACK_SEARXNG_URL", "http://s"}, {"QUACK_CRAWL4AI_URL", "http://c"},
 		{"RMFAKECLOUD_URL", "https://rm.example.com"}, {"RMFAKECLOUD_EMAIL", "a@example.com"}, {"RMFAKECLOUD_PASSWORD", "pw"},
 	} {
@@ -2282,5 +2282,122 @@ orchestrator: { provider: default, model: shared }
 	}
 	if !strings.Contains(err.Error(), "shared") || !strings.Contains(err.Error(), "resolved to the same model name") {
 		t.Errorf("error should name the key and hint at the ${ENV} collision: %v", err)
+	}
+}
+
+// TestModelRegistrationCoversNonAgentRefs pins each of the six non-agent
+// Provider+Model fields (orchestrator, user_memory_hook, gates.judge,
+// session.compaction, store embedder/consolidation) against an unregistered
+// model, one per checkModelRegistered call site - each error must name that
+// field.
+func TestModelRegistrationCoversNonAgentRefs(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name: "orchestrator.model",
+			yaml: `
+providers:
+  default: { kind: openai, endpoint: http://x }
+stores: { main: { kind: postgres, url: u } }
+session: { store: main }
+orchestrator: { provider: default, model: ghost }
+`,
+			wantErr: `orchestrator.model "ghost" is not defined under models`,
+		},
+		{
+			name: "orchestrator.user_memory_hook.model",
+			yaml: `
+providers:
+  default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
+stores: { main: { kind: postgres, url: u } }
+session: { store: main }
+orchestrator:
+  provider: default
+  model: m
+  user_memory_hook: { enabled: true, provider: default, model: ghost }
+`,
+			wantErr: `orchestrator.user_memory_hook.model "ghost" is not defined under models`,
+		},
+		{
+			name: "gates.judge.model",
+			yaml: `
+providers:
+  default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
+stores: { main: { kind: postgres, url: u } }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+gates:
+  rubric: "be good"
+  judge: { provider: default, model: ghost, max_rounds: 1 }
+`,
+			wantErr: `gates.judge.model "ghost" is not defined under models`,
+		},
+		{
+			name: "session.compaction.model",
+			yaml: `
+providers:
+  default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
+stores: { main: { kind: postgres, url: u } }
+session:
+  store: main
+  compaction: { enabled: true, provider: default, model: ghost }
+orchestrator: { provider: default, model: m }
+`,
+			wantErr: `session.compaction.model "ghost" is not defined under models`,
+		},
+		{
+			name: "store embedder.model",
+			yaml: `
+providers:
+  default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
+stores:
+  main: { kind: postgres, url: u }
+  vec: { kind: qdrant, url: qdrant:6334, embedder: { provider: default, model: ghost } }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+`,
+			wantErr: `store "vec" embedder.model "ghost" is not defined under models`,
+		},
+		{
+			name: "store consolidation.model",
+			yaml: `
+providers:
+  default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
+  e: { provider: default, role: embed }
+stores:
+  main: { kind: postgres, url: u }
+  vec:
+    kind: qdrant
+    url: qdrant:6334
+    embedder: { provider: default, model: e }
+    consolidation: { provider: default, model: ghost }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+`,
+			wantErr: `store "vec" consolidation.model "ghost" is not defined under models`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(writeTemp(t, tc.yaml))
+			if err == nil {
+				t.Fatal("Load: expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error = %q, want it to contain %q", err.Error(), tc.wantErr)
+			}
+		})
 	}
 }

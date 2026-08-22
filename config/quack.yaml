@@ -50,9 +50,9 @@ models:
     provider: default
     role: embed
     context_window: 4096
-  ${QUACK_ORCH_MODEL}:         # the thin dispatcher; usually reuses a worker model above
-    provider: default
-    role: worker
+  # No separate entry for QUACK_ORCH_MODEL: it usually reuses a worker model
+  # above (e.g. qwen3.8-27b). Pointing it at a genuinely different model?
+  # Add its own entry here too - the orchestrator's model must be registered.
 
 # Named backend registry (like providers): consumers reference a store by name.
 # `kind` selects the adapter (the portability seam). A vector store also carries
