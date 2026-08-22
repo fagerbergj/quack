@@ -2,6 +2,7 @@ package acp
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -14,6 +15,34 @@ import (
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
+
+// toolCheckMermaid: stateless, offered to every session regardless of
+// Memory/Review/PRStage - see mcpToolNames.
+const toolCheckMermaid = "check_mermaid"
+
+// checkMermaidInput is check_mermaid's input.
+type checkMermaidInput struct {
+	Diagram string `json:"diagram" jsonschema:"one mermaid diagram's source, without the surrounding fence"`
+}
+
+// registerCheckMermaidTool validates a diagram against the same parser the
+// delivery gate runs (vetting.CheckMermaid) - pass-tool == pass-gate.
+func registerCheckMermaidTool(srv *mcp.Server) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        toolCheckMermaid,
+		Description: "Validate one mermaid diagram's source before including it in your final answer. Returns \"ok\" or a parse error with line/column. Call this on every mermaid diagram before submitting.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, args checkMermaidInput) (*mcp.CallToolResult, any, error) {
+		ok, line, col, msg := vetting.CheckMermaid(args.Diagram)
+		if ok {
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil, nil
+		}
+		text := "invalid: " + msg
+		if line > 0 {
+			text = fmt.Sprintf("invalid (line %d, column %d): %s", line, col, msg)
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil, nil
+	})
+}
 
 // Memory MCP surface: per-run loopback server scoped by unguessable per-node secret.
 
@@ -63,6 +92,7 @@ func memoryMCPHandler() http.Handler {
 	return mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		secret := strings.Trim(r.URL.Path, "/")
 		srv := mcp.NewServer(&mcp.Implementation{Name: mcpServerName, Version: "0.1.0"}, nil)
+		registerCheckMermaidTool(srv) // stateless, offered even to an unknown/expired session
 		sess, ok := vetting.LookupMemSession(secret)
 		if !ok {
 			slog.Warn("acp: loopback MCP request for unknown/expired session", "component", "acp")

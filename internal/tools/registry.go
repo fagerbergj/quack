@@ -44,17 +44,18 @@ type Deps struct {
 type constructor func(Deps) (tool.Tool, error)
 
 var registry = map[string]constructor{
-	"web_search":   newWebSearch,
-	"web_fetch":    newFetch,
-	"summarize":    newSummarize,
-	"current_date": newCurrentDate,
-	"stage_memory": newStageMemory,
-	"ask_user":     func(Deps) (tool.Tool, error) { return NewAskUserTool() },
-	"ask_advisor":  func(d Deps) (tool.Tool, error) { return NewAskAdvisorTool(d.Advisor, d.Sessions) },
-	"read_file":    newReadFile,
-	"list_dir":     newListDir,
-	"glob":         newGlob,
-	"grep":         newGrep,
+	"web_search":    newWebSearch,
+	"web_fetch":     newFetch,
+	"summarize":     newSummarize,
+	"current_date":  newCurrentDate,
+	"stage_memory":  newStageMemory,
+	"ask_user":      func(Deps) (tool.Tool, error) { return NewAskUserTool() },
+	"ask_advisor":   func(d Deps) (tool.Tool, error) { return NewAskAdvisorTool(d.Advisor, d.Sessions) },
+	"read_file":     newReadFile,
+	"list_dir":      newListDir,
+	"glob":          newGlob,
+	"grep":          newGrep,
+	"check_mermaid": newCheckMermaid,
 }
 
 // Build: resolves tool names to ADK tools.

@@ -364,6 +364,18 @@ func TestMergeDeterministic_WeakestLinkUnchanged(t *testing.T) {
 	}
 }
 
+// TestMergeDeterministic_MermaidFixMentionsCheckTool: the agent-facing fix text
+// for a mermaid_valid failure must point at check_mermaid - models follow an
+// instruction embedded in the error they're reacting to far more reliably than
+// an upfront prompt nudge (the main lever against a full-answer regeneration).
+func TestMergeDeterministic_MermaidFixMentionsCheckTool(t *testing.T) {
+	det := map[string]criterionScore{"mermaid_valid": {Score: 0, Reason: "deterministic: invalid mermaid diagram at line 12: parse error"}}
+	got := mergeDeterministic(verdict{}, det, Config{})
+	if !strings.Contains(got.Criteria["mermaid_valid"].Fix, "check_mermaid") {
+		t.Fatalf("mermaid_valid Fix = %q, want it to mention check_mermaid", got.Criteria["mermaid_valid"].Fix)
+	}
+}
+
 // stubPassJudge always submits a high score with no per-criterion detail - a
 // judge stub for tests that only care whether the GATE passes, not why.
 type stubPassJudge struct{}

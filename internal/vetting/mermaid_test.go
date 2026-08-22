@@ -241,6 +241,50 @@ func TestMermaidError(t *testing.T) {
 	}
 }
 
+// TestCheckMermaid_ValidDiagramPasses covers the check_mermaid tool's happy path.
+func TestCheckMermaid_ValidDiagramPasses(t *testing.T) {
+	requireMermaidValidator(t)
+	ok, line, col, msg := CheckMermaid("flowchart TD\n    A[Start] --> B[Finish]")
+	if !ok || line != 0 || col != 0 || msg != "" {
+		t.Fatalf("CheckMermaid(valid) = (%v, %d, %d, %q), want (true, 0, 0, \"\")", ok, line, col, msg)
+	}
+}
+
+// TestCheckMermaid_InvalidDiagramReportsLocation covers the tool's failure path:
+// ok=false plus a located line/column pulled out of the same message the gate shows.
+func TestCheckMermaid_InvalidDiagramReportsLocation(t *testing.T) {
+	requireMermaidValidator(t)
+	ok, line, col, msg := CheckMermaid(`flowchart TD
+    G[Node (parens)] --> H[End]`)
+	if ok {
+		t.Fatal("want ok=false - unquoted parens inside a label")
+	}
+	if line == 0 || col == 0 {
+		t.Fatalf("line/col = %d/%d, want both located", line, col)
+	}
+	if !strings.Contains(msg, "parse error") {
+		t.Fatalf("msg = %q, want it to carry the parse error", msg)
+	}
+}
+
+// TestCheckMermaid_SharesValidatorWithGate proves the tool and mermaidCriterion
+// (the gate's wiring) agree on the same diagram - one source of truth, not two
+// implementations that could drift apart.
+func TestCheckMermaid_SharesValidatorWithGate(t *testing.T) {
+	requireMermaidValidator(t)
+	body := "A[Start] --> B[Finish]" // no diagram-type declaration: invalid
+	toolOK, _, _, _ := CheckMermaid(body)
+	_, gateFlagged := mermaidCriterion("", workerActivity{stagedDelivery: map[string]StagedDelivery{
+		"pr": {Kind: "pull_request", Body: "```mermaid\n" + body + "\n```"},
+	}})
+	if toolOK {
+		t.Fatal("want the tool to flag this diagram invalid")
+	}
+	if !gateFlagged {
+		t.Fatal("want the gate to also flag this diagram invalid")
+	}
+}
+
 // mermaidCriterion is the gate wiring: it must find an invalid diagram in
 // either the answer text or a staged delivery body, and stay inapplicable
 // (ok=false) when nothing invalid is present anywhere.

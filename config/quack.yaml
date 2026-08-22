@@ -151,7 +151,7 @@ agents:
     model: ${QUACK_RESEARCHER_MODEL}
     context_window: 65536       # same model as web-researcher
     judge_rounds: 1             # just combines already-vetted upstream node outputs; re-revising is low value
-    tools: []
+    tools: [check_mermaid]
   media-reader:
     bundle: agents/media-reader
     skills: [format-markdown]
