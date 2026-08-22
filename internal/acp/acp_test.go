@@ -231,7 +231,7 @@ func TestRound_MCPToolsBlockLeadsThePrompt(t *testing.T) {
 func TestRunPrompt_EnvironmentBlockTrailsTheTask(t *testing.T) {
 	a := testAgent(t, "echo")
 	token := vetting.AdvisorThreadToken("plan-1", "impl1")
-	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{NodeID: "impl1", WorkspaceNodeID: "impl1", SessionID: "s1"})
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{NodeID: "impl1", WorkspaceNodeID: "impl1", ChatID: "s1", SessionID: "s1"})
 	defer vetting.UnregisterAdvisorThread(token)
 
 	r, err := runner.New(runner.Config{
@@ -271,7 +271,7 @@ func TestRunPrompt_EnvironmentBlockTrailsTheTask(t *testing.T) {
 func TestRunPrompt_EnvironmentBlockDisclosesReadOnly(t *testing.T) {
 	a := testAgent(t, "echo")
 	token := vetting.AdvisorThreadToken("plan-1", "review1")
-	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{NodeID: "review1", WorkspaceNodeID: "review1", SessionID: "s1", ReadOnly: true})
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{NodeID: "review1", WorkspaceNodeID: "review1", ChatID: "s1", SessionID: "s1", ReadOnly: true})
 	defer vetting.UnregisterAdvisorThread(token)
 
 	r, err := runner.New(runner.Config{
@@ -441,7 +441,7 @@ func TestRequestPermission_JudgeRouting(t *testing.T) {
 func TestRunPrompt_RemovesScratchDirAfterRound(t *testing.T) {
 	a := testAgent(t, "echo")
 	token := vetting.AdvisorThreadToken("plan-1", "impl-scratch")
-	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{NodeID: "impl-scratch", WorkspaceNodeID: "impl-scratch", SessionID: "s1"})
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{NodeID: "impl-scratch", WorkspaceNodeID: "impl-scratch", ChatID: "s1", SessionID: "s1"})
 	defer vetting.UnregisterAdvisorThread(token)
 
 	scratch, err := a.opts.Jail.ScratchDir("u1", "s1", "impl-scratch")

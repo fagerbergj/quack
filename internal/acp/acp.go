@@ -126,11 +126,11 @@ func (a *Agent) resolveNode(ctx context.Context, prompt string) (cwd, memSecret,
 		return "", "", "", "", false, fmt.Errorf("acp: advisor thread %q not registered", token)
 	}
 	if a.opts.Jail != nil {
-		ctxDir, _ = a.opts.Jail.Resolve(a.opts.UserID, at.SessionID, workspace.ContextDirScope)
+		ctxDir, _ = a.opts.Jail.Resolve(a.opts.UserID, at.ChatID, workspace.ContextDirScope)
 		// A read-only reviewer needs this exactly as much as a writer does
 		// (TMPDIR/mktemp/heredocs don't care whether the round can touch its
 		// own tree) - scoped per node so concurrent rounds never collide.
-		scratchDir, err = a.opts.Jail.ScratchDir(a.opts.UserID, at.SessionID, at.WorkspaceNodeID)
+		scratchDir, err = a.opts.Jail.ScratchDir(a.opts.UserID, at.ChatID, at.WorkspaceNodeID)
 		if err != nil {
 			return "", "", "", "", false, fmt.Errorf("acp: scratch dir: %w", err)
 		}
@@ -139,10 +139,10 @@ func (a *Agent) resolveNode(ctx context.Context, prompt string) (cwd, memSecret,
 		if a.opts.Worktree == nil {
 			return "", "", "", "", false, fmt.Errorf("acp: node %q needs a git worktree but no worktree executor is configured", at.NodeID)
 		}
-		cwd, err = a.opts.Worktree(ctx, a.opts.UserID, at.SessionID, at.WorktreeParent, at.WorkspaceNodeID)
+		cwd, err = a.opts.Worktree(ctx, a.opts.UserID, at.ChatID, at.WorktreeParent, at.WorkspaceNodeID)
 		return cwd, at.MemSecret, ctxDir, scratchDir, at.ReadOnly, err
 	}
-	cwd, err = a.opts.Jail.EnsureDir(a.opts.UserID, at.SessionID, workspace.NodeDir(at.WorkspaceNodeID))
+	cwd, err = a.opts.Jail.EnsureDir(a.opts.UserID, at.ChatID, workspace.NodeDir(at.WorkspaceNodeID))
 	return cwd, at.MemSecret, ctxDir, scratchDir, at.ReadOnly, err
 }
 
