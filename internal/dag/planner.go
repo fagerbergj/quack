@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -313,7 +314,8 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 		}
 		agentInfo, ok := known[n.Agent]
 		if !ok {
-			return nil, fmt.Errorf("unknown agent %q for node %q", n.Agent, n.ID)
+			return nil, fmt.Errorf("unknown agent %q for node %q; valid agents: %s%s",
+				n.Agent, n.ID, strings.Join(sortedKeys(known), ", "), didYouMean(n.Agent, sortedKeys(known)))
 		}
 		if len(n.Checks) > 0 {
 			if err := validateChecks(n.Checks, checkCommands); err != nil {
@@ -414,6 +416,65 @@ func validateDelivery(d *Delivery) error {
 		return fmt.Errorf("delivery.kind %q must be one of pull_request, review, comment", d.Kind)
 	}
 	return nil
+}
+
+// sortedKeys: stable, compact rendering of a valid-value set for error messages.
+func sortedKeys(m map[string]AgentInfo) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// didYouMean: cheap near-miss hint - only when exactly one candidate is within
+// edit distance 2, so a genuinely ambiguous typo stays silent rather than guessing.
+func didYouMean(got string, candidates []string) string {
+	var best string
+	matches := 0
+	for _, c := range candidates {
+		if d := editDistance(got, c); d <= 2 {
+			best = c
+			matches++
+		}
+	}
+	if matches == 1 {
+		return fmt.Sprintf(" (did you mean %q?)", best)
+	}
+	return ""
+}
+
+// editDistance: classic Levenshtein, used only for short agent/node names.
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min3(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(b)]
+}
+
+func min3(a, b, c int) int {
+	m := a
+	if b < m {
+		m = b
+	}
+	if c < m {
+		m = c
+	}
+	return m
 }
 
 // descendants: nodes transitively depending on id (downstream).

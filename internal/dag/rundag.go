@@ -2,6 +2,8 @@ package dag
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -106,14 +108,18 @@ func topoLayers(plan Plan) ([][]string, error) {
 	indeg := make(map[string]int, len(plan.Nodes))
 	dependents := map[string][]string{}
 	known := make(map[string]bool, len(plan.Nodes))
+	ids := make([]string, 0, len(plan.Nodes))
 	for _, n := range plan.Nodes {
 		known[n.ID] = true
+		ids = append(ids, n.ID)
 	}
+	sort.Strings(ids)
 	for _, n := range plan.Nodes {
 		indeg[n.ID] = len(n.DependsOn)
 		for _, d := range n.DependsOn {
 			if !known[d] {
-				return nil, fmt.Errorf("dag: node %q depends on unknown node %q", n.ID, d)
+				return nil, fmt.Errorf("dag: node %q depends on unknown node %q; declared node ids: %s",
+					n.ID, d, strings.Join(ids, ", "))
 			}
 			dependents[d] = append(dependents[d], n.ID)
 		}
@@ -141,7 +147,14 @@ func topoLayers(plan Plan) ([][]string, error) {
 		cur = next
 	}
 	if placed != len(plan.Nodes) {
-		return nil, fmt.Errorf("dag: dependency cycle among %d nodes", len(plan.Nodes)-placed)
+		var stuck []string
+		for id, d := range indeg {
+			if d > 0 {
+				stuck = append(stuck, id)
+			}
+		}
+		sort.Strings(stuck)
+		return nil, fmt.Errorf("dag: dependency cycle among nodes: %s", strings.Join(stuck, ", "))
 	}
 	return layers, nil
 }

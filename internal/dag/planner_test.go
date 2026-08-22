@@ -103,6 +103,38 @@ func TestBuildRejectsBadPlans(t *testing.T) {
 	}
 }
 
+// TestBuildErrorsEnumerateValidOptions: an unknown-agent rejection must name
+// every valid agent, not just the bad guess - retrying blind costs a full
+// planning round (regression: prod hit "unknown agent \"code-explementer\"").
+func TestBuildErrorsEnumerateValidOptions(t *testing.T) {
+	p := testPlanner()
+	cases := map[string]struct {
+		nodes []RawNode
+		want  []string
+	}{
+		"unknown agent": {
+			nodes: []RawNode{{ID: "explore-core", Agent: "code-explementer", Task: "x"}},
+			want:  []string{`"code-explementer"`, "code-implementer", "synthesizer", "web-researcher"},
+		},
+		"unknown depends_on": {
+			nodes: []RawNode{{ID: "n1", Agent: "web-researcher", Task: "x", DependsOn: []string{"ghost"}}},
+			want:  []string{`"ghost"`, "n1"},
+		},
+	}
+	for name, tc := range cases {
+		_, err := p.Build(context.Background(), tc.nodes, nil, nil, nil, "m", nil, nil)
+		if err == nil {
+			t.Errorf("%s: expected error, got nil", name)
+			continue
+		}
+		for _, want := range tc.want {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: error %q does not contain %q", name, err.Error(), want)
+			}
+		}
+	}
+}
+
 // TestBuildBoundProducesExactPlanWithoutJudge is test case 1 (workflow
 // binding): a shaped catalog entry's nodes render into the exact
 // expected Plan, and - unlike Build - never touch the plan judge, proving
