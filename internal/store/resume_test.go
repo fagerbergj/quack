@@ -24,12 +24,8 @@ func resumeTestStore(t *testing.T) *Store {
 	return st
 }
 
-// TestSaveDagPlan_DuplicateIsSkippedNotAnError pins #997's secondary symptom:
-// a boot resume re-yields the same stashed plan (same planID) through
-// runlog.SaveDagPlan, and a second Create for that id used to fail with
-// "duplicate key value violates unique constraint dag_plans_pkey" - benign
-// but noisy on every resume. SaveDagPlan must skip the duplicate insert
-// instead of erroring, and leave the original row alone.
+// TestSaveDagPlan_DuplicateIsSkippedNotAnError pins #997: a resumed boot
+// re-saves the same planID, which used to error on the unique constraint.
 func TestSaveDagPlan_DuplicateIsSkippedNotAnError(t *testing.T) {
 	st := resumeTestStore(t)
 	ctx := context.Background()

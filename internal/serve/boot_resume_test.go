@@ -229,16 +229,9 @@ func TestDriveResume_ReentryRunsPausedNodeOnly(t *testing.T) {
 	}
 }
 
-// TestDriveResume_ReachesWorkerInOriginalScope pins #997: a paused ext-chat
-// node's boot re-entry runs through RetryNode, whose ADK session id is a
-// synthetic "chatID::retry" (see orchestrator.RetryNode) - distinct from the
-// real chat id the extension's setup clone was provisioned under. Before the
-// fix, that synthetic id leaked into the workspace/jail scope (AdvisorTask
-// only carried one SessionID field, reused for both), so a resumed node's
-// fs tools resolved into a scope the clone was never provisioned in ("no
-// such file or directory"). With ChatID split out, the resumed node's
-// read_file must still find the file the original dispatch left behind, at
-// the real chat scope.
+// TestDriveResume_ReachesWorkerInOriginalScope pins #997: RetryNode's
+// synthetic "chatID::retry" session id must not leak into workspace/jail
+// scope - the resumed node's read_file must still find the original clone.
 func TestDriveResume_ReachesWorkerInOriginalScope(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
