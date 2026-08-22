@@ -40,17 +40,34 @@ func (s *Store) forEachSweepPage(ctx context.Context, includeInvalidated bool, f
 }
 
 // RunConsolidationSweep runs the periodic burst-dedupe pass (design doc
-// §4(c)) plus retention (design doc §6) - once immediately, then every
-// interval, until ctx is done. Mirrors ledger.RunRetentionSweep's shape and
-// disable convention: interval <= 0 is a no-op, no goroutine or ticker at
-// all. retentionDays <= 0 disables only the hard-delete half; the
-// consolidation half still runs on interval.
-func (s *Store) RunConsolidationSweep(ctx context.Context, interval time.Duration, retentionDays int) {
-	if interval <= 0 {
+// §4(c)) plus retention (design doc §6) once a day at dailyAt (container
+// local time, "HH:MM"), until ctx is done. dailyAt == "" is a no-op, no
+// goroutine or timer at all - matching ledger.RunRetentionSweep's disable
+// convention. retentionDays <= 0 disables only the hard-delete half; the
+// consolidation half still runs daily.
+//
+// Boot is never itself an occasion to run (issue #961): the first sweep
+// waits for the next occurrence of dailyAt, then repeats every 24h from
+// there, regardless of when the process started or how many times it's
+// restarted in between.
+func (s *Store) RunConsolidationSweep(ctx context.Context, dailyAt string, retentionDays int) {
+	if dailyAt == "" {
 		return
 	}
+	t, err := time.Parse(dailyAtLayout, dailyAt)
+	if err != nil {
+		s.log.Warn("consolidation sweep: invalid daily_at, sweep disabled", "daily_at", dailyAt, "err", err)
+		return
+	}
+	timer := time.NewTimer(time.Until(nextDailyTick(time.Now(), t.Hour(), t.Minute())))
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-timer.C:
+	}
 	s.sweepOnce(ctx, retentionDays)
-	ticker := time.NewTicker(interval)
+	ticker := time.NewTicker(24 * time.Hour)
 	defer ticker.Stop()
 	for {
 		select {
@@ -60,6 +77,22 @@ func (s *Store) RunConsolidationSweep(ctx context.Context, interval time.Duratio
 			s.sweepOnce(ctx, retentionDays)
 		}
 	}
+}
+
+// dailyAtLayout is the config format for consolidation.daily_at: "HH:MM" in
+// the container's local time.
+const dailyAtLayout = "15:04"
+
+// nextDailyTick returns the next occurrence of hour:min strictly after now,
+// today if it hasn't happened yet, tomorrow otherwise (including the exact
+// instant now == hour:min, so a restart landing precisely on the mark
+// doesn't run again immediately - it waits for tomorrow's).
+func nextDailyTick(now time.Time, hour, min int) time.Time {
+	next := time.Date(now.Year(), now.Month(), now.Day(), hour, min, 0, 0, now.Location())
+	if !next.After(now) {
+		next = next.Add(24 * time.Hour)
+	}
+	return next
 }
 
 func (s *Store) sweepOnce(ctx context.Context, retentionDays int) {

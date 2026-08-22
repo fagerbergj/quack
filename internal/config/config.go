@@ -10,6 +10,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -512,17 +513,29 @@ type StoreConfig struct {
 
 // ConsolidationConfig binds the model driving both the gated-commit reconcile
 // and the periodic sweep (design doc docs/memory-lifecycle.md §4(c)), plus
-// the sweep's own schedule. IntervalMinutes 0/absent disables the periodic
-// sweep entirely - matching ledger.RunRetentionSweep's retentionDays<=0
-// convention, not this struct's own RetentionDays. RetentionDays 0 keeps
+// the sweep's own schedule. DailyAt nil defaults to defaultConsolidationDailyAt
+// so an out-of-the-box deployment gets a working schedule; an explicit ""
+// disables the sweep entirely (mirrors ledger.RunRetentionSweep's
+// retentionDays<=0 disable convention, not this struct's own RetentionDays).
+// Set, it's "HH:MM" in the container's local time (this deployment runs
+// UTC): the sweep runs once at that time and again every 24h, never at boot
+// and never shifted by a restart (issue #961). RetentionDays 0 keeps
 // invalidated points and memory_ops rows forever (explicit, not implicit -
 // see design doc §6).
 type ConsolidationConfig struct {
-	Provider        string `yaml:"provider"`
-	Model           string `yaml:"model"`
-	IntervalMinutes int    `yaml:"interval_minutes"`
-	RetentionDays   int    `yaml:"retention_days"`
+	Provider      string  `yaml:"provider"`
+	Model         string  `yaml:"model"`
+	DailyAt       *string `yaml:"daily_at"`
+	RetentionDays int     `yaml:"retention_days"`
 }
+
+// defaultConsolidationDailyAt is applied when daily_at is absent: a
+// deployment gets a working default sweep schedule instead of a silently
+// disabled one.
+const defaultConsolidationDailyAt = "02:00"
+
+// dailyAtLayout is the "HH:MM" format consolidation.daily_at must parse as.
+const dailyAtLayout = "15:04"
 
 const defaultLedgerRoot = "./recordings"
 
@@ -850,8 +863,13 @@ func (c *Config) validate() error {
 		if s.Consolidation == nil {
 			continue
 		}
-		if s.Consolidation.IntervalMinutes < 0 {
-			return fmt.Errorf("config: store %q consolidation.interval_minutes must be >= 0", name)
+		if s.Consolidation.DailyAt == nil {
+			d := defaultConsolidationDailyAt
+			s.Consolidation.DailyAt = &d
+		} else if *s.Consolidation.DailyAt != "" {
+			if _, err := time.Parse(dailyAtLayout, *s.Consolidation.DailyAt); err != nil {
+				return fmt.Errorf("config: store %q consolidation.daily_at must be \"HH:MM\", got %q", name, *s.Consolidation.DailyAt)
+			}
 		}
 		if s.Consolidation.RetentionDays < 0 {
 			return fmt.Errorf("config: store %q consolidation.retention_days must be >= 0", name)
