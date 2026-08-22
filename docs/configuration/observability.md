@@ -57,7 +57,7 @@ All under the `quack.*` namespace (`internal/otelobs/metrics.go`), meter name `g
 | Metric | Type | Attributes | What it's for |
 | --- | --- | --- | --- |
 | `quack.runs.active` | UpDownCounter | — | Orchestrator runs currently holding a concurrency slot. |
-| `quack.runs.queued` | UpDownCounter | — | Runs admitted but waiting on `dag.max_active_runs`. |
+| `quack.runs.queued` | UpDownCounter | — | Runs admitted but waiting on a server-wide run slot (unbounded by default since #1007; nodes queue on model/provider capacity instead). |
 | `quack.nodes.active` | UpDownCounter | — | DAG nodes currently in flight. |
 | `quack.worker.round.duration` | Histogram (s) | `agent`, `model`, `stage` (`worker`/`judge`/`revise`) | Per-round wall time, drawn from the same window as `quack.worker.round`'s span so the two can never disagree. |
 | `quack.judge.score` | Histogram (0–1) | `agent` | The weakest-link score from every judge round, any agent. |

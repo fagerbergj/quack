@@ -19,7 +19,7 @@ type Config struct {
 	Providers map[string]ProviderConfig `yaml:"providers"`
 	// Models is the canonical model registry (sibling of providers/agents):
 	// each entry binds a provider, a scheduling role, a default context
-	// window, admission limits (inert pending #1007), and cost.
+	// window, admission limits (enforced by dag.Admission, #1007), and cost.
 	Models       map[string]ModelConfig `yaml:"models"`
 	Stores       map[string]StoreConfig `yaml:"stores"`
 	Session      SessionConfig          `yaml:"session"`
@@ -387,9 +387,16 @@ type CompactionConfig struct {
 	EventRetentionSize int    `yaml:"event_retention_size"`
 }
 
+// defaultMaxActiveNodes: permissive host-resource ceiling, not a GPU limiter
+// (#1007's Admission object bounds GPU concurrency) - jails/clones cost host
+// CPU/RAM the GPU pool knows nothing about.
+const defaultMaxActiveNodes = 32
+
 type DagConfig struct {
+	// MaxActiveNodes caps concurrently-running nodes as a host-resource guard
+	// (jail/clone CPU+RAM), NOT the GPU concurrency knob - that's
+	// models.<m>.limits.sessions/kv_tokens and providers.<p>.limits.active (#1007).
 	MaxActiveNodes int `yaml:"max_active_nodes"`
-	MaxActiveRuns  int `yaml:"max_active_runs"`
 }
 
 type GatesConfig struct {
@@ -493,7 +500,7 @@ type ProviderConfig struct {
 	ForkFrom string          `yaml:"fork_from"`
 	Live     *ProviderConfig `yaml:"live"`
 	// Limits caps how many DISTINCT models per role may be resident at once
-	// (#1007, inert until the scheduler lands). Absent = any number of
+	// (#1007, enforced by dag.Admission). Absent = any number of
 	// models resident.
 	Limits *ProviderLimits `yaml:"limits"`
 }
@@ -506,7 +513,7 @@ type ProviderLimits struct {
 
 // ModelConfig is a models: registry entry - the canonical binding of a model
 // name to its provider, scheduling role, default context window, admission
-// limits (#1007, inert until the scheduler enforces them), and cost.
+// limits (#1007, enforced by dag.Admission), and cost.
 type ModelConfig struct {
 	Provider      string        `yaml:"provider"`
 	Role          string        `yaml:"role"`
@@ -515,7 +522,7 @@ type ModelConfig struct {
 	Cost          *ModelPricing `yaml:"cost"`
 }
 
-// ModelLimits gates admission (#1007, not yet enforced). Absent = unlimited:
+// ModelLimits gates admission (#1007, enforced by dag.Admission). Absent = unlimited:
 // no Sessions cap, and a nil/zero KVTokens means context never blocks scheduling.
 type ModelLimits struct {
 	Sessions int `yaml:"sessions"`
@@ -1082,13 +1089,7 @@ func (c *Config) validate() error {
 		}
 	}
 	if c.Dag.MaxActiveNodes == 0 {
-		c.Dag.MaxActiveNodes = 2
-	}
-	if c.Dag.MaxActiveRuns == 0 {
-		c.Dag.MaxActiveRuns = 3
-	}
-	if c.Dag.MaxActiveRuns < 1 {
-		return fmt.Errorf("config: dag.max_active_runs must be >= 1")
+		c.Dag.MaxActiveNodes = defaultMaxActiveNodes
 	}
 	if c.Dag.MaxActiveNodes < 1 {
 		return fmt.Errorf("config: dag.max_active_nodes must be >= 1")

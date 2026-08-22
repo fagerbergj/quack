@@ -8,7 +8,9 @@ import (
 	"google.golang.org/adk/v2/workflow"
 )
 
-// runDAGSubset runs retry-set nodes with seeded outputs for the rest.
+// runDAGSubset runs retry-set nodes with seeded outputs for the rest. maxActive
+// is a host-resource ceiling (jail/clone CPU+RAM), not the GPU limiter - each
+// gated node's Admission.Admit call (#1007) is the real one.
 // ponytail: migrate to native graph if ADK grows per-node seeding.
 func runDAGSubset(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow.Node, maxActive int, seeded map[string]string, run map[string]bool) (map[string]string, error) {
 	if maxActive < 1 {

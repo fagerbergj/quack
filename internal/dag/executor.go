@@ -31,8 +31,16 @@ type Executor struct {
 	maxActive   int
 	setupFn     SetupFunc
 	artifacts   artifact.Service // ADK's own artifact tools/debug console; see SetArtifacts
+	admission   *Admission
+	specFor     func(agentName string) AdmissionSpec
 
 	gateResults sync.Map
+}
+
+// SetAdmission wires the #1007 capacity ledger and its per-agent spec
+// resolver. Nil admission (the zero Executor) runs unbounded, same as before #1007.
+func (e *Executor) SetAdmission(admission *Admission, specFor func(agentName string) AdmissionSpec) {
+	e.admission, e.specFor = admission, specFor
 }
 
 // SetMaxActive: sets concurrent-node cap (no-op for n < 1).
@@ -148,7 +156,7 @@ func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, node
 	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, source,
 		func(nodeID string, score float64, passed bool, rounds int) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds)
-		})
+		}, e.admission, e.specFor)
 	if err != nil {
 		return nil, err
 	}
