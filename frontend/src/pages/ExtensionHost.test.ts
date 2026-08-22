@@ -62,13 +62,15 @@ describe('ExtensionHost', () => {
     expect(iframe!.getAttribute('title')).toBe('usage')
   })
 
-  it('sandboxes the iframe to same-origin/scripts/forms only', () => {
+  it('sandboxes the iframe to same-origin/scripts/forms/user-activated top nav only', () => {
     render({
       name: 'usage',
       initialExtensions: [{ name: 'usage', href: '/usage' }],
     })
     const iframe = host!.querySelector('iframe')!
-    expect(iframe.getAttribute('sandbox')).toBe('allow-same-origin allow-scripts allow-forms')
+    expect(iframe.getAttribute('sandbox')).toBe(
+      'allow-same-origin allow-scripts allow-forms allow-top-navigation-by-user-activation',
+    )
   })
 
   it('shows a not-found message for a name with no matching href-bearing extension', () => {

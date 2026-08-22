@@ -114,6 +114,8 @@ github.com/fagerbergj/quack-extensions/noop v0.2.0 h1:Or3gYcjGMP/tPzzgemUX11jwHM
 github.com/fagerbergj/quack-extensions/noop v0.2.0/go.mod h1:IxUsCKZGXXSNwyYwkSLtbM9FW6vQhnyGUgoQ6omRB60=
 github.com/fagerbergj/quack-extensions/remarkable v0.1.1 h1:CrPRUCRVptHR87o+VBSYR2NxaWKWOIiZMcaDbd0oOLw=
 github.com/fagerbergj/quack-extensions/remarkable v0.1.1/go.mod h1:i0AqOLF3PueQ5V5nQZqxsQPlS5MvhSWuvImNQXs6w6A=
+github.com/fagerbergj/quack-extensions/remarkable v0.1.2-0.20260822123135-d7981829c37c h1:e9VJm5qumtwGyar3UNg0p/TPQy+Ew5ql3unwZk/vHjs=
+github.com/fagerbergj/quack-extensions/remarkable v0.1.2-0.20260822123135-d7981829c37c/go.mod h1:CH0wLxwFd1lzkq/xOPMxJtWXqco/tfKIMG4jCIvxHwc=
 github.com/fagerbergj/quack-extensions/sdk v0.6.0 h1:+8Ob3wO/R+QEjTECDk4jaIWebJUcjugZa+0pOCH2FMo=
 github.com/fagerbergj/quack-extensions/sdk v0.6.0/go.mod h1:fp+3J6PT73ww7q73Zu4uaOCihbsihnarw+YT8F//GCI=
 github.com/fagerbergj/quack-extensions/usage v0.3.2 h1:0q6TtU2dSq9KFzUtDj9g7+TLjQRr/+otiKELXezAFVs=
