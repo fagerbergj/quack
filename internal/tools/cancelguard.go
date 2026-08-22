@@ -72,5 +72,5 @@ func nodeScope(ctx agent.Context) (chatID, nodeID string) {
 	if !ok {
 		return "", ""
 	}
-	return at.SessionID, at.NodeID
+	return at.ChatID, at.NodeID
 }

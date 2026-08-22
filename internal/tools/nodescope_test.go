@@ -30,7 +30,7 @@ func (c *gatedCtx) UserContent() *genai.Content {
 func newGatedCtx(t *testing.T, planID, nodeID, chatID string) *gatedCtx {
 	t.Helper()
 	token := vetting.AdvisorThreadToken(planID, nodeID)
-	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{SessionID: chatID, NodeID: nodeID})
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{ChatID: chatID, SessionID: chatID, NodeID: nodeID})
 	t.Cleanup(func() { vetting.UnregisterAdvisorThread(token) })
 	return &gatedCtx{fakeCtx: *newFakeCtx(), prompt: "do the task\n\n" + vetting.AdvisorThreadMarker(token)}
 }

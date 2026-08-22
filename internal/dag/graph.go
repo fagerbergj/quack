@@ -141,6 +141,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				WorktreeParent:  worktreeParentID(plan, node),
 				ReadOnly:        cfg.ReadOnly,
 				InvocationID:    ctx.InvocationID(),
+				ChatID:          chatID, // real chat scope; the ADK session id below is a retry-only alias
 			}
 			if sess := ctx.Session(); sess != nil {
 				task.AppName, task.UserID, task.SessionID = sess.AppName(), sess.UserID(), sess.ID()

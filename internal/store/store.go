@@ -813,11 +813,14 @@ func (s *Store) ListTurns(ctx context.Context, chatID string) ([]ChatTurn, error
 	return turns, err
 }
 
-// SaveDagPlan persists a DAG plan linked to a turn.
+// SaveDagPlan persists a DAG plan linked to a turn. Skip-if-exists: a boot
+// resume re-yields the same stashed plan (same planID) through this same
+// path, and a plan's content never changes after the fact - a duplicate
+// insert would just be noise (dag_plans_pkey), not new data.
 func (s *Store) SaveDagPlan(ctx context.Context, chatID, planID, turnID, planJSON string) error {
 	now := time.Now().UTC()
 	p := &DagPlan{ID: planID, ChatID: chatID, TurnID: turnID, PlanJSON: planJSON, CreatedAt: now}
-	return s.db.WithContext(ctx).Create(p).Error
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(p).Error
 }
 
 // UpsertDagNode creates or updates a DAG node's execution state.

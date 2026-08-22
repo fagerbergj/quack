@@ -31,13 +31,13 @@ func newMarkedCtx(prompt string) *markedCtx {
 
 // TestScopeFromContext mirrors guard.go's guardSession derivation: the
 // advisor-thread marker in the worker's prompt keys the registry entry the gate
-// wrote at node entry - the per-chat workspace scope is that entry's SessionID
-// (== the chat id, since the DAG runs in the chat session) and the node's own
-// working dir is its NodeID.
+// wrote at node entry - the per-chat workspace scope is that entry's ChatID
+// (distinct from SessionID, the ADK session id, which a retry re-derives) and
+// the node's own working dir is its NodeID.
 func TestScopeFromContext(t *testing.T) {
 	const planID, nodeID = "plan-xyz", "node-1"
 	token := vetting.AdvisorThreadToken(planID, nodeID)
-	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{SessionID: "chat-abc", NodeID: nodeID})
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{ChatID: "chat-abc", SessionID: "chat-abc::retry", NodeID: nodeID})
 	t.Cleanup(func() { vetting.UnregisterAdvisorThread(token) })
 
 	// A worker prompt with the trailing marker resolves to the chat id + node dir.

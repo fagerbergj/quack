@@ -47,7 +47,7 @@ func scopeFromContext(ctx agent.Context) (chatID, nodeDir string) {
 	if wsID == "" {
 		wsID = at.NodeID
 	}
-	return at.SessionID, workspace.NodeDir(wsID)
+	return at.ChatID, workspace.NodeDir(wsID)
 }
 
 // jailPath: turns a model-written path into the chat-relative path Jail.Resolve takes.

@@ -24,6 +24,20 @@ func resumeTestStore(t *testing.T) *Store {
 	return st
 }
 
+// TestSaveDagPlan_DuplicateIsSkippedNotAnError pins #997's secondary symptom:
+// a boot resume re-yields the same stashed plan (same planID) through
+// runlog.SaveDagPlan, and a second Create for that id used to fail with
+// "duplicate key value violates unique constraint dag_plans_pkey" - benign
+// but noisy on every resume. SaveDagPlan must skip the duplicate insert
+// instead of erroring, and leave the original row alone.
+func TestSaveDagPlan_DuplicateIsSkippedNotAnError(t *testing.T) {
+	st := resumeTestStore(t)
+	ctx := context.Background()
+	if err := st.SaveDagPlan(ctx, "c1", "p1", "t1", "{}"); err != nil {
+		t.Fatalf("SaveDagPlan (duplicate re-insert): %v", err)
+	}
+}
+
 // TestResumePausedDagNodes_HardKillBecomesPausedNotFailed: no shutdown ran,
 // so the node is still "running" and owned by this instance. That is a hard
 // kill, and a hard kill is resumable state, not a failure.
