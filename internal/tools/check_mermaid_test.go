@@ -6,18 +6,28 @@ import (
 	"testing"
 
 	"google.golang.org/adk/v2/tool/toolconfirmation"
+
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 type checkMermaidToolCtx struct{ *fakeCtx }
 
 func (checkMermaidToolCtx) ToolConfirmation() *toolconfirmation.ToolConfirmation { return nil }
 
-// requireNode skips when the mermaid validator's runtime isn't available -
-// mirrors vetting's requireMermaidValidator posture for this package.
+// requireNode provisions the SAME scripts/node_modules as vetting's
+// requireMermaidValidator (via vetting.EnsureMermaidValidatorDeps), so the two
+// packages' test binaries - run in parallel by `go test ./...` - don't race
+// each other with independent `npm ci` runs in the same directory.
 func requireNode(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("SKIPPING check_mermaid test: node not on PATH")
+	}
+	if _, err := exec.LookPath("npm"); err != nil {
+		t.Skip("SKIPPING check_mermaid test: npm not on PATH")
+	}
+	if err := vetting.EnsureMermaidValidatorDeps(); err != nil {
+		t.Skipf("SKIPPING check_mermaid test: could not provision scripts/node_modules: %v", err)
 	}
 }
 

@@ -1,38 +1,17 @@
 package vetting
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 )
 
-// installMermaidDeps runs `npm ci` in scripts/ once per test binary if
-// node_modules is missing - a fresh clone lacks it (gitignored), and the
-// validator needs jsdom + mermaid. Cached after the first run.
-var installMermaidDeps = sync.OnceValue(func() error {
-	dir := filepath.Dir(mermaidValidatorPath)
-	if _, err := os.Stat(filepath.Join(dir, "node_modules")); err == nil {
-		return nil
-	}
-	if _, err := os.Stat(filepath.Join(dir, "package-lock.json")); err != nil {
-		return fmt.Errorf("no package-lock.json in %s", dir)
-	}
-	cmd := exec.Command("npm", "ci")
-	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("npm ci in %s failed: %v\n%s", dir, err, out)
-	}
-	return nil
-})
-
-// requireMermaidValidator provisions scripts/node_modules (npm ci) so the
-// tests just work on a fresh clone, and skips rather than fail meaninglessly
-// when node/npm is absent or the install can't run (e.g. offline) - mirrors
-// sandbox_test.go's posture for a missing bubblewrap.
+// requireMermaidValidator provisions scripts/node_modules (npm ci, shared
+// with internal/tools via EnsureMermaidValidatorDeps) so the tests just work
+// on a fresh clone, and skips rather than fail meaninglessly when node/npm is
+// absent or the install can't run (e.g. offline) - mirrors sandbox_test.go's
+// posture for a missing bubblewrap.
 func requireMermaidValidator(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("node"); err != nil {
@@ -44,7 +23,7 @@ func requireMermaidValidator(t *testing.T) {
 	if _, err := exec.LookPath("npm"); err != nil {
 		t.Skip("SKIPPING mermaid validator test: npm not on PATH (run `cd scripts && npm ci` some other way)")
 	}
-	if err := installMermaidDeps(); err != nil {
+	if err := EnsureMermaidValidatorDeps(); err != nil {
 		t.Skipf("SKIPPING mermaid validator test: could not provision scripts/node_modules (fix with `cd scripts && npm ci`): %v", err)
 	}
 }
