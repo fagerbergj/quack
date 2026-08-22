@@ -250,7 +250,7 @@ export type QueuedMessage = {
     id: string;
     text: string;
     /**
-     * True once handed to the node at a turn boundary - no longer editable or removable.
+     * True once handed to the node - immediately if its round was live (#998), otherwise at the next turn boundary; no longer editable or removable either way.
      */
     delivered: boolean;
     created_at: string;

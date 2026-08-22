@@ -694,7 +694,7 @@ type QueueMessageBody struct {
 type QueuedMessage struct {
 	CreatedAt time.Time `json:"created_at"`
 
-	// Delivered True once handed to the node at a turn boundary - no longer editable or removable.
+	// Delivered True once handed to the node - immediately if its round was live (#998), otherwise at the next turn boundary; no longer editable or removable either way.
 	Delivered bool   `json:"delivered"`
 	Id        string `json:"id"`
 	Text      string `json:"text"`

@@ -267,6 +267,12 @@ async function handle(msg) {
       cancelled = true;
       pi?.stdin.write(JSON.stringify({ type: "abort" }) + "\n");
       break;
+    // _quack/steer (#998): forwards a queued message into pi's native "steer" command.
+    case "_quack/steer":
+      if (promptReq === null || !pi) { if (msg.id !== undefined) fail("no live round to steer"); break; }
+      pi.stdin.write(JSON.stringify({ type: "steer", message: msg.params?.text || "" }) + "\n");
+      if (msg.id !== undefined) reply({});
+      break;
     default:
       if (msg.id !== undefined)
         out({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: `method not found: ${msg.method}` } });

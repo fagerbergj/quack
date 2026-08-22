@@ -53,6 +53,11 @@ async function guardedCall(cfg, toolName, args) {
 
 createInterface({ input: process.stdin }).on("line", async (l) => {
   const msg = JSON.parse(l);
+  // Mirrors pi's "steer" command (#998), echoed as a chunk for the test to see.
+  if (msg.type === "steer") {
+    out({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: `[steered: ${msg.message}]` } });
+    return;
+  }
   if (msg.type !== "prompt") return out({ type: "response", command: msg.type, success: true });
   out({ type: "response", command: "prompt", success: true });
   out({ type: "agent_start" });

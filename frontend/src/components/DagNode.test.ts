@@ -314,3 +314,26 @@ describe('DagNode - context meter', () => {
     expect(out).not.toContain('tokens of context used')
   })
 })
+
+// #998: badge counts only parked messages, not ones delivered live.
+describe('DagNode - queued-message badge counts only parked (undelivered) messages (#998)', () => {
+  function withQueue(queue: NodeState['queue']): string {
+    return renderToStaticMarkup(createElement(DagNode, {
+      node, state: { status: 'running', startedAt: 0, queue }, runs: [], answer: '', isFinal: false,
+    }))
+  }
+
+  it('shows no badge once every queued message has been delivered (live or boundary)', () => {
+    const out = withQueue([{ id: 'm1', text: 'focus on cost', delivered: true, created_at: '' }])
+    expect(out).not.toContain('✉')
+  })
+
+  it('shows a badge counting only the parked (undelivered) messages', () => {
+    const out = withQueue([
+      { id: 'm1', text: 'delivered live', delivered: true, created_at: '' },
+      { id: 'm2', text: 'still parked', delivered: false, created_at: '' },
+    ])
+    expect(out).toContain('✉ 1')
+    expect(out).toContain('delivers when the current round ends')
+  })
+})

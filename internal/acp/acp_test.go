@@ -2,6 +2,8 @@ package acp
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -31,6 +33,9 @@ func TestMain(m *testing.M) {
 
 func runFakeAgent(mode string) {
 	ag := &fakeAgent{mode: mode}
+	if mode == "steer" {
+		ag.steerCh = make(chan string, 1)
+	}
 	conn := sdk.NewAgentSideConnection(ag, os.Stdout, os.Stdin)
 	ag.conn = conn
 	<-conn.Done()
@@ -39,6 +44,26 @@ func runFakeAgent(mode string) {
 type fakeAgent struct {
 	mode string
 	conn *sdk.AgentSideConnection
+	// steerCh: mode "steer" blocks Prompt on this until steer text arrives.
+	steerCh chan string
+}
+
+// HandleExtensionMethod is the agent side of the _quack/steer extension.
+// mode "steer-reject" mimics the shim once it has already settled the round
+// (promptReq nil) - it errors every call, same as pi-acp.mjs's fail() path.
+func (f *fakeAgent) HandleExtensionMethod(ctx context.Context, method string, params json.RawMessage) (any, error) {
+	if method != steerExtMethod {
+		return map[string]any{}, nil
+	}
+	if f.mode == "steer-reject" {
+		return nil, errors.New("no live round to steer")
+	}
+	if f.steerCh != nil {
+		var p steerParams
+		_ = json.Unmarshal(params, &p)
+		f.steerCh <- p.Text
+	}
+	return map[string]any{}, nil
 }
 
 func (f *fakeAgent) Initialize(ctx context.Context, _ sdk.InitializeRequest) (sdk.InitializeResponse, error) {
@@ -102,6 +127,11 @@ func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 	case "usage-none":
 		send(sdk.UpdateAgentMessageText("done"))
 		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
+	case "steer":
+		// Blocks until the extension delivers a forwarded message mid-round.
+		text := <-f.steerCh
+		send(sdk.UpdateAgentMessageText("steered: " + text))
+		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
 	}
 	send(sdk.UpdateAgentThoughtText("planning"))
 	send(sdk.StartToolCall("t1", "go test ./...",
@@ -160,7 +190,7 @@ func testAgent(t *testing.T, mode string) *Agent {
 func TestRound_FullPromptRound(t *testing.T) {
 	a := testAgent(t, "happy")
 	var specs []eventSpec
-	err := a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "add the feature", func(s eventSpec) bool {
+	err := a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "add the feature", "", "", func(s eventSpec) bool {
 		specs = append(specs, s)
 		return true
 	})
@@ -204,7 +234,7 @@ func TestRound_MCPToolsBlockLeadsThePrompt(t *testing.T) {
 	defer vetting.UnregisterMemSession(secret)
 
 	var specs []eventSpec
-	err = a.round(context.Background(), t.TempDir(), secret, nil, workspace.Caps{}, "review this PR", func(s eventSpec) bool {
+	err = a.round(context.Background(), t.TempDir(), secret, nil, workspace.Caps{}, "review this PR", "", "", func(s eventSpec) bool {
 		specs = append(specs, s)
 		return true
 	})
@@ -305,7 +335,7 @@ func TestRunPrompt_EnvironmentBlockDisclosesReadOnly(t *testing.T) {
 func TestRound_MCPToolsBlockSaysNoneWhenNoSurface(t *testing.T) {
 	a := testAgent(t, "echo")
 	var specs []eventSpec
-	err := a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "add the feature", func(s eventSpec) bool {
+	err := a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "add the feature", "", "", func(s eventSpec) bool {
 		specs = append(specs, s)
 		return true
 	})
@@ -323,7 +353,7 @@ func TestRound_CancelGraceful(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(300 * time.Millisecond); cancel() }()
 	t0 := time.Now()
-	err := a.round(ctx, t.TempDir(), "", nil, workspace.Caps{}, "loop forever", func(eventSpec) bool { return true })
+	err := a.round(ctx, t.TempDir(), "", nil, workspace.Caps{}, "loop forever", "", "", func(eventSpec) bool { return true })
 	if err == nil || !strings.Contains(err.Error(), "context canceled") {
 		t.Fatalf("want context cancellation, got %v", err)
 	}
@@ -343,7 +373,7 @@ func TestRound_StubbornAgentIsKilled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(300 * time.Millisecond); cancel() }()
 	t0 := time.Now()
-	err := a.round(ctx, t.TempDir(), "", nil, workspace.Caps{}, "loop forever", func(eventSpec) bool { return true })
+	err := a.round(ctx, t.TempDir(), "", nil, workspace.Caps{}, "loop forever", "", "", func(eventSpec) bool { return true })
 	if err == nil {
 		t.Fatal("want an error from a cancelled round")
 	}
@@ -365,7 +395,7 @@ func TestRound_IdleTimeout(t *testing.T) {
 
 	result := make(chan error, 1)
 	go func() {
-		result <- a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "wedge forever", func(eventSpec) bool { return true })
+		result <- a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "wedge forever", "", "", func(eventSpec) bool { return true })
 	}()
 
 	select {
@@ -385,7 +415,7 @@ func TestRound_IdleTimeoutDoesNotFireOnSlowButAlive(t *testing.T) {
 	a.opts.IdleTimeout = 150 * time.Millisecond // each update gap is 80ms
 
 	var specs []eventSpec
-	err := a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "take your time", func(s eventSpec) bool {
+	err := a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "take your time", "", "", func(s eventSpec) bool {
 		specs = append(specs, s)
 		return true
 	})

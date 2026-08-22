@@ -51,6 +51,10 @@ type Options struct {
 	ModelName string
 	// Pricing: nil = no price table entry for ModelName, cost metric skipped.
 	Pricing *config.ModelPricing
+	// RegisterLiveSteer/UnregisterLiveSteer let a queued message land
+	// mid-round instead of at the next gate boundary (#998). nil = park always.
+	RegisterLiveSteer   func(chatID, nodeID string, forward func(text string) bool)
+	UnregisterLiveSteer func(chatID, nodeID string)
 }
 
 // Agent is an adkagent.Agent backed by an external ACP subprocess.
@@ -115,16 +119,21 @@ func (a *Agent) RunNode(ctx adkagent.Context, nodeInput any) iter.Seq2[*session.
 // GitHub context-dir grant, and per-node scratch dir from the advisor-thread
 // marker in the prompt. memSecret is resolved separately in the memSessions
 // registry - the advisor-thread token never doubles as the MCP bearer
-// credential.
-func (a *Agent) resolveNode(ctx context.Context, prompt string) (cwd, memSecret, ctxDir, scratchDir string, readOnly bool, err error) {
+// credential. chatID/nodeID are the advisor thread's own (at.ChatID,
+// at.NodeID) - the executor's controls key (dag's controls.register(chatID,
+// node.ID)), unlike cfg.NodeID (which collapses to the shared workspace scope
+// on a setup chain's writer node) or at.SessionID (the ADK session id, a
+// retry-only alias - see AdvisorTask.ChatID).
+func (a *Agent) resolveNode(ctx context.Context, prompt string) (cwd, memSecret, ctxDir, scratchDir string, readOnly bool, chatID, nodeID string, err error) {
 	token, ok := vetting.ParseAdvisorThread(prompt)
 	if !ok {
-		return "", "", "", "", false, errors.New("acp: prompt carries no workspace-scope marker (is this agent running outside the gate?)")
+		return "", "", "", "", false, "", "", errors.New("acp: prompt carries no workspace-scope marker (is this agent running outside the gate?)")
 	}
 	at, ok := vetting.LookupAdvisorThread(token)
 	if !ok {
-		return "", "", "", "", false, fmt.Errorf("acp: advisor thread %q not registered", token)
+		return "", "", "", "", false, "", "", fmt.Errorf("acp: advisor thread %q not registered", token)
 	}
+	chatID, nodeID = at.ChatID, at.NodeID
 	if a.opts.Jail != nil {
 		ctxDir, _ = a.opts.Jail.Resolve(a.opts.UserID, at.ChatID, workspace.ContextDirScope)
 		// A read-only reviewer needs this exactly as much as a writer does
@@ -132,18 +141,18 @@ func (a *Agent) resolveNode(ctx context.Context, prompt string) (cwd, memSecret,
 		// own tree) - scoped per node so concurrent rounds never collide.
 		scratchDir, err = a.opts.Jail.ScratchDir(a.opts.UserID, at.ChatID, at.WorkspaceNodeID)
 		if err != nil {
-			return "", "", "", "", false, fmt.Errorf("acp: scratch dir: %w", err)
+			return "", "", "", "", false, chatID, nodeID, fmt.Errorf("acp: scratch dir: %w", err)
 		}
 	}
 	if at.WorktreeParent != "" {
 		if a.opts.Worktree == nil {
-			return "", "", "", "", false, fmt.Errorf("acp: node %q needs a git worktree but no worktree executor is configured", at.NodeID)
+			return "", "", "", "", false, chatID, nodeID, fmt.Errorf("acp: node %q needs a git worktree but no worktree executor is configured", at.NodeID)
 		}
 		cwd, err = a.opts.Worktree(ctx, a.opts.UserID, at.ChatID, at.WorktreeParent, at.WorkspaceNodeID)
-		return cwd, at.MemSecret, ctxDir, scratchDir, at.ReadOnly, err
+		return cwd, at.MemSecret, ctxDir, scratchDir, at.ReadOnly, chatID, nodeID, err
 	}
 	cwd, err = a.opts.Jail.EnsureDir(a.opts.UserID, at.ChatID, workspace.NodeDir(at.WorkspaceNodeID))
-	return cwd, at.MemSecret, ctxDir, scratchDir, at.ReadOnly, err
+	return cwd, at.MemSecret, ctxDir, scratchDir, at.ReadOnly, chatID, nodeID, err
 }
 
 // runPrompt is one full round: spawn, handshake, prompt, stream translation, shutdown.
@@ -153,7 +162,7 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 			yield(nil, errors.New("acp: empty prompt"))
 			return
 		}
-		cwd, memSecret, ctxDir, scratchDir, readOnly, err := a.resolveNode(ctx, prompt)
+		cwd, memSecret, ctxDir, scratchDir, readOnly, steerChatID, steerNodeID, err := a.resolveNode(ctx, prompt)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -182,7 +191,7 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 			extraRO = []string{ctxDir}
 		}
 		stopped := false
-		err = a.round(ctx, cwd, memSecret, extraRO, caps, outbound, func(spec eventSpec) bool {
+		err = a.round(ctx, cwd, memSecret, extraRO, caps, outbound, steerChatID, steerNodeID, func(spec eventSpec) bool {
 			if !yield(a.newEvent(ctx, spec), nil) {
 				stopped = true
 				return false
@@ -195,6 +204,13 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 	}
 }
 
+// steerExtMethod: ACP extension (#998) forwarding a mid-round steer to the shim.
+const steerExtMethod = "_quack/steer"
+
+type steerParams struct {
+	Text string `json:"text"`
+}
+
 // promptDone carries the Prompt RPC's outcome off the goroutine in round.
 type promptDone struct {
 	resp sdk.PromptResponse
@@ -205,7 +221,11 @@ type promptDone struct {
 // caps is the node's EFFECTIVE caps (ReadOnly already resolved by the
 // caller) - the one thing that can legitimately differ per round for an
 // otherwise-static agent (#754).
-func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []string, caps workspace.Caps, outbound string, emit func(eventSpec) bool) (err error) {
+// steerChatID/steerNodeID key the live-steer hook: the advisor thread's
+// SessionID/NodeID (round()'s callers resolve these), NOT ledger.Coords -
+// cfg.NodeID collapses to the shared workspace scope for a setup-chain's
+// writer node, which would silently no-op the hook (#998 review).
+func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []string, caps workspace.Caps, outbound string, steerChatID, steerNodeID string, emit func(eventSpec) bool) (err error) {
 	ctx, roundSpan := otelobs.Start(ctx, "acp.round", attribute.String("agent", a.name), attribute.String("cwd", cwd))
 	defer func() { otelobs.End(roundSpan, err) }()
 
@@ -250,6 +270,23 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 	handshakeSpan.SetAttributes(attribute.String("session_id", string(sess.SessionId)))
 	otelobs.End(handshakeSpan, nil)
 	a.log.Info("acp round started", "cwd", cwd, "session", sess.SessionId)
+
+	// Live only for this round's duration - nothing to forward into before/after.
+	// CallExtension (an acked request), not NotifyExtension: between the
+	// shim settling and the deferred Unregister below the connection is
+	// still open, so a fire-and-forget notify would report delivered while
+	// the shim silently drops it (promptReq already nil). A failed/errored
+	// call reports false, and enqueue's caller parks it instead (#998 review).
+	if a.opts.RegisterLiveSteer != nil && steerChatID != "" && steerNodeID != "" {
+		conn := h.conn
+		a.opts.RegisterLiveSteer(steerChatID, steerNodeID, func(text string) bool {
+			_, err := conn.CallExtension(context.Background(), steerExtMethod, steerParams{Text: text})
+			return err == nil
+		})
+		if a.opts.UnregisterLiveSteer != nil {
+			defer a.opts.UnregisterLiveSteer(steerChatID, steerNodeID)
+		}
+	}
 
 	finalPrompt := mcpToolsBlock(toolNames) + "\n\n" + outbound
 

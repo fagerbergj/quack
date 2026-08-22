@@ -125,11 +125,20 @@ if (!process.env.ACP_CMD) {
 const prompt = process.env.PI_ACP_REAL
   ? "Call the quackmcp_stage_review tool with verdict approve, then reply done."
   : "do the thing";
-const resp = await call("session/prompt", {
+const promptPromise = call("session/prompt", {
   sessionId: sess.sessionId,
   prompt: [{ type: "text", text: prompt }],
 });
+if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
+  // #998: a steer sent mid-prompt must reach the live round, not error or wait.
+  shim.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "_quack/steer", params: { text: "focus on X" } }) + "\n");
+}
+const resp = await promptPromise;
 assert.equal(resp.stopReason, "end_turn");
+if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
+  const steered = updates.find((u) => u.sessionUpdate === "agent_message_chunk" && u.content?.text?.includes("[steered: focus on X]"));
+  assert.ok(steered, "mid-round steer never reached the live session");
+}
 
 const kinds = updates.map((u) => u.sessionUpdate);
 assert.ok(kinds.includes("agent_message_chunk"), `no message chunk in ${kinds}`);
