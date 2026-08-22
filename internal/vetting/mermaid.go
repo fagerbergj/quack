@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -273,6 +274,27 @@ func unrecognizedMermaidError(raw string) string {
 	return "parse error: " + located +
 		"if a node label contains punctuation such as ( ) [ ] { } | \" , wrapping it in double quotes " +
 		"(e.g. G[\"...\"]) usually fixes it. Raw parser error:\n" + raw
+}
+
+// mermaidLocatedRe pulls line/column back out of translateMermaidError's/
+// unrecognizedMermaidError's "diagram line N, column C:" prefix.
+var mermaidLocatedRe = regexp.MustCompile(`^parse error: diagram line (\d+), column (\d+):`)
+
+// CheckMermaid validates one mermaid diagram's source (no fence wrapper) via
+// the SAME validator the delivery gate runs (mermaidError) - so a worker
+// calling this tool before submitting gets exactly the gate's verdict, not a
+// second reimplementation that could disagree with it. line/column are 1-based,
+// 0 when the error has no known location.
+func CheckMermaid(source string) (ok bool, line, column int, message string) {
+	msg := mermaidError(source)
+	if msg == "" {
+		return true, 0, 0, ""
+	}
+	if m := mermaidLocatedRe.FindStringSubmatch(msg); m != nil {
+		line, _ = strconv.Atoi(m[1])
+		column, _ = strconv.Atoi(m[2])
+	}
+	return false, line, column, msg
 }
 
 // mermaidCriterion scans the answer and staged delivery bodies for invalid ```mermaid blocks.
