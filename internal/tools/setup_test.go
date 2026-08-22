@@ -146,7 +146,7 @@ func TestReadFileResolvesSetupCloneLeadingSlash(t *testing.T) {
 
 	token := vetting.AdvisorThreadToken("plan-1", "reviewer-node")
 	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
-		NodeID: "reviewer-node", WorkspaceNodeID: workspace.SharedRepoScope, SessionID: "c1",
+		NodeID: "reviewer-node", WorkspaceNodeID: workspace.SharedRepoScope, ChatID: "c1", SessionID: "c1",
 	})
 	t.Cleanup(func() { vetting.UnregisterAdvisorThread(token) })
 	ctx := &gatedCtx{fakeCtx: *newFakeCtx(), prompt: "review the PR\n\n" + vetting.AdvisorThreadMarker(token)}

@@ -43,7 +43,8 @@ type AdvisorTask struct {
 	ReadOnly        bool   // this node's effective vetting.Config.ReadOnly (#754: sandbox grant, not just prompt)
 	AppName         string
 	UserID          string
-	SessionID       string
+	SessionID       string // ADK session id (sessions.Get lookups only - diverges from ChatID on a retry, see ChatID)
+	ChatID          string // workspace/jail scope - the real chat id, stable across a retry's synthetic ADK session
 	InvocationID    string
 	MemSecret       string // unguessable per-node credential for ACP memory
 }

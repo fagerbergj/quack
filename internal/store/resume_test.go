@@ -24,6 +24,16 @@ func resumeTestStore(t *testing.T) *Store {
 	return st
 }
 
+// TestSaveDagPlan_DuplicateIsSkippedNotAnError pins #997: a resumed boot
+// re-saves the same planID, which used to error on the unique constraint.
+func TestSaveDagPlan_DuplicateIsSkippedNotAnError(t *testing.T) {
+	st := resumeTestStore(t)
+	ctx := context.Background()
+	if err := st.SaveDagPlan(ctx, "c1", "p1", "t1", "{}"); err != nil {
+		t.Fatalf("SaveDagPlan (duplicate re-insert): %v", err)
+	}
+}
+
 // TestResumePausedDagNodes_HardKillBecomesPausedNotFailed: no shutdown ran,
 // so the node is still "running" and owned by this instance. That is a hard
 // kill, and a hard kill is resumable state, not a failure.

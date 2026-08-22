@@ -782,7 +782,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		}
 		sc := memory.Scope{User: at.UserID}
 		if jail != nil {
-			sc.Repo = jail.RepoKey(localUserID, at.SessionID)
+			sc.Repo = jail.RepoKey(localUserID, at.ChatID)
 		}
 		return sc
 	}

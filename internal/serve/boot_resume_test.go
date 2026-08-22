@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"iter"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/vetting"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // resumeStubLLM answers judge calls with a passing verdict and records every
@@ -35,18 +37,41 @@ func (*resumeStubLLM) Name() string { return "resumeStub" }
 func (s *resumeStubLLM) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		if req.Config != nil {
+			var hasReadFile, hasSubmitVerdict bool
 			for _, tl := range req.Config.Tools {
 				if tl == nil {
 					continue
 				}
 				for _, fd := range tl.FunctionDeclarations {
-					if fd != nil && fd.Name == "submit_verdict" {
-						yield(&model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{
-							FunctionCall: &genai.FunctionCall{Name: "submit_verdict", Args: map[string]any{"score": 0.9, "feedback": ""}},
-						}}}, FinishReason: genai.FinishReasonStop, TurnComplete: true}, nil)
-						return
+					if fd == nil {
+						continue
+					}
+					switch fd.Name {
+					case "submit_verdict":
+						hasSubmitVerdict = true
+					case "read_file":
+						hasReadFile = true
 					}
 				}
+			}
+			if hasSubmitVerdict {
+				yield(&model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{
+					FunctionCall: &genai.FunctionCall{Name: "submit_verdict", Args: map[string]any{"score": 0.9, "feedback": ""}},
+				}}}, FinishReason: genai.FinishReasonStop, TurnComplete: true}, nil)
+				return
+			}
+			// A worker with a read_file tool: call it once (proving the workspace
+			// scope resolved), then answer with whatever it read back.
+			if hasReadFile && !hasFunctionResponse(req.Contents) {
+				yield(&model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{
+					FunctionCall: &genai.FunctionCall{Name: "read_file", Args: map[string]any{"path": "README.md"}},
+				}}}, FinishReason: genai.FinishReasonStop, TurnComplete: true}, nil)
+				return
+			}
+			if hasReadFile {
+				yield(&model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: "read: " + functionResponseText(req.Contents)}}},
+					FinishReason: genai.FinishReasonStop, TurnComplete: true}, nil)
+				return
 			}
 		}
 		var b strings.Builder
@@ -66,6 +91,42 @@ func (s *resumeStubLLM) GenerateContent(_ context.Context, req *model.LLMRequest
 		yield(&model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: "resumed output"}}},
 			FinishReason: genai.FinishReasonStop, TurnComplete: true}, nil)
 	}
+}
+
+// hasFunctionResponse reports whether req.Contents already carries a tool
+// result - i.e. this is the round after the stub's own function call.
+func hasFunctionResponse(contents []*genai.Content) bool {
+	for _, c := range contents {
+		if c == nil {
+			continue
+		}
+		for _, p := range c.Parts {
+			if p != nil && p.FunctionResponse != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// functionResponseText extracts the read_file tool's "content" result field.
+func functionResponseText(contents []*genai.Content) string {
+	for _, c := range contents {
+		if c == nil {
+			continue
+		}
+		for _, p := range c.Parts {
+			if p == nil || p.FunctionResponse == nil {
+				continue
+			}
+			if v, ok := p.FunctionResponse.Response["content"]; ok {
+				if s, ok := v.(string); ok {
+					return s
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func (s *resumeStubLLM) workerPrompts() []string {
@@ -165,5 +226,85 @@ func TestDriveResume_ReentryRunsPausedNodeOnly(t *testing.T) {
 	}
 	if n1, _ := st.GetDagNode(ctx, plan.ID, "n1"); n1 == nil || n1.Output != "ONE-OUT" {
 		t.Errorf("n1 output changed; the seeded output should have been reused")
+	}
+}
+
+// TestDriveResume_ReachesWorkerInOriginalScope pins #997: RetryNode's
+// synthetic "chatID::retry" session id must not leak into workspace/jail
+// scope - the resumed node's read_file must still find the original clone.
+func TestDriveResume_ReachesWorkerInOriginalScope(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	chatID := "ext:github:chat-boot-resume-scope"
+	if err := st.SetChatOrigin(ctx, chatID, "u1", ""); err != nil {
+		t.Fatalf("SetChatOrigin: %v", err)
+	}
+	userID := st.SessionUserForChat(ctx, chatID)
+
+	jail, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewJail: %v", err)
+	}
+	// The repo the (unrelated to this test) extension setup left behind at
+	// original dispatch, under the node's own workspace dir in the REAL chat
+	// scope - never re-cloned on resume.
+	repoDir, err := jail.EnsureDir(userID, chatID, workspace.NodeDir("n1"))
+	if err != nil {
+		t.Fatalf("EnsureDir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("REPO-MARKER"), 0o644); err != nil {
+		t.Fatalf("seed README.md: %v", err)
+	}
+
+	plan := dag.Plan{ID: "plan-scope", UserMessage: "x", Nodes: []dag.Node{
+		{ID: "n1", AgentName: "reader", Task: "READ-TASK"},
+	}}
+	planJSON, _ := json.Marshal(plan)
+	if err := st.SaveDagPlan(ctx, chatID, plan.ID, "turn-1", string(planJSON)); err != nil {
+		t.Fatalf("SaveDagPlan: %v", err)
+	}
+	if err := st.UpsertDagNode(ctx, store.DagNode{PlanID: plan.ID, NodeID: "n1", Status: string(dag.StatusPaused), PauseReason: string(dag.PauseShutdown)}); err != nil {
+		t.Fatalf("UpsertDagNode n1: %v", err)
+	}
+	if err := st.SetNodeStatusForChat(ctx, chatID, "n1", string(dag.StatusPaused), string(dag.PauseShutdown), ""); err != nil {
+		t.Fatalf("persist pause: %v", err)
+	}
+
+	stub := &resumeStubLLM{}
+	sessions := session.InMemoryService()
+
+	readFileTool, err := tools.Build([]string{"read_file"}, tools.Deps{
+		Workspace: jail, WorkspaceUserID: userID, WorkspaceCaps: workspace.DefaultCaps(),
+	})
+	if err != nil {
+		t.Fatalf("tools.Build: %v", err)
+	}
+	ag, err := llmagent.New(llmagent.Config{Name: "reader", Model: stub, Description: "reader",
+		Instruction: "ROLE:reader Read README.md and answer.", Tools: readFileTool})
+	if err != nil {
+		t.Fatalf("agent: %v", err)
+	}
+	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"reader": ag}, nil,
+		vetting.NewJudgeFactory(stub, nil, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	ex.SetNodeStateStore(st)
+
+	orch := orchestrator.New(sessions, nil, "", nil, ex, nil, nil, nil)
+	if _, err := sessions.Create(ctx, &session.CreateRequest{AppName: orchestrator.AppName, UserID: userID, SessionID: chatID,
+		State: map[string]any{tools.ExecPlanKey: string(planJSON)}}); err != nil {
+		t.Fatalf("session create: %v", err)
+	}
+
+	driveResume(ctx, chatID, []store.ResumableNode{{ChatID: chatID, PlanID: plan.ID, NodeID: "n1", Reason: dag.PauseShutdown}},
+		orch, st, stream.NewHub())
+
+	n1, err := st.GetDagNode(ctx, plan.ID, "n1")
+	if err != nil || n1 == nil {
+		t.Fatalf("GetDagNode n1: %v %v", n1, err)
+	}
+	if !strings.Contains(n1.Output, "REPO-MARKER") {
+		t.Fatalf("resumed node's output = %q, want it to contain REPO-MARKER - fs tools did not land in the original chat scope", n1.Output)
 	}
 }

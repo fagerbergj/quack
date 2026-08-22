@@ -25,7 +25,7 @@ func TestResolveNodeWorktreeParentInvokesWorktreeHook(t *testing.T) {
 	}}
 	token := vetting.AdvisorThreadToken("plan-1", "review1")
 	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
-		NodeID: "review1", WorkspaceNodeID: "review1", WorktreeParent: workspace.SharedRepoScope, SessionID: "chat1",
+		NodeID: "review1", WorkspaceNodeID: "review1", WorktreeParent: workspace.SharedRepoScope, ChatID: "chat1", SessionID: "chat1",
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
@@ -41,6 +41,38 @@ func TestResolveNodeWorktreeParentInvokesWorktreeHook(t *testing.T) {
 	}
 }
 
+// TestResolveNodeUsesChatIDNotSessionIDOnRetry pins #997: RetryNode (both
+// REST retry and boot-resume ride it) runs the re-entered node under a
+// synthetic ADK session id ("chatID::retry", see orchestrator.RetryNode) -
+// distinct from the real chat scope the setup clone was provisioned under.
+// resolveNode must key every workspace call off ChatID, never SessionID,
+// or a retried worktree/reviewer/explorer node resolves into a scope the
+// clone was never provisioned in (the issue's "worktree add ... no such
+// file or directory").
+func TestResolveNodeUsesChatIDNotSessionIDOnRetry(t *testing.T) {
+	var gotChat string
+	a := &Agent{opts: Options{
+		UserID: "u1",
+		Worktree: func(ctx context.Context, userID, chatID, parentNodeID, nodeID string) (string, error) {
+			gotChat = chatID
+			return "/resolved/worktree/dir", nil
+		},
+	}}
+	token := vetting.AdvisorThreadToken("plan-1", "review1")
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
+		NodeID: "review1", WorkspaceNodeID: "review1", WorktreeParent: workspace.SharedRepoScope,
+		ChatID: "chat1", SessionID: "chat1::retry",
+	})
+	defer vetting.UnregisterAdvisorThread(token)
+
+	if _, _, _, _, _, err := a.resolveNode(context.Background(), "review the PR\n\n"+vetting.AdvisorThreadMarker(token)); err != nil {
+		t.Fatalf("resolveNode: %v", err)
+	}
+	if gotChat != "chat1" {
+		t.Errorf("Worktree called with chatID=%q, want the real chat scope %q (not the retry session id)", gotChat, "chat1")
+	}
+}
+
 // TestResolveNodeWorktreeParentWithoutHookErrors: a node that needs a
 // worktree but has no Worktree executor configured is a wiring bug - fail
 // loudly, mirroring dag.SetupFunc's nil-executor error, rather than silently
@@ -50,7 +82,7 @@ func TestResolveNodeWorktreeParentWithoutHookErrors(t *testing.T) {
 	a := &Agent{opts: Options{UserID: "u1"}}
 	token := vetting.AdvisorThreadToken("plan-1", "review1")
 	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
-		NodeID: "review1", WorkspaceNodeID: "review1", WorktreeParent: workspace.SharedRepoScope, SessionID: "chat1",
+		NodeID: "review1", WorkspaceNodeID: "review1", WorktreeParent: workspace.SharedRepoScope, ChatID: "chat1", SessionID: "chat1",
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
@@ -72,7 +104,7 @@ func TestResolveNodeNonWorktreeNodeUsesJail(t *testing.T) {
 	a := &Agent{opts: Options{UserID: "u1", Jail: jail}}
 	token := vetting.AdvisorThreadToken("plan-1", "impl1")
 	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
-		NodeID: "impl1", WorkspaceNodeID: "impl1", SessionID: "chat1",
+		NodeID: "impl1", WorkspaceNodeID: "impl1", ChatID: "chat1", SessionID: "chat1",
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
@@ -103,7 +135,7 @@ func TestResolveNodeReturnsAdvisorTaskReadOnly(t *testing.T) {
 	for _, want := range []bool{true, false} {
 		token := vetting.AdvisorThreadToken("plan-1", "impl1")
 		vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
-			NodeID: "impl1", WorkspaceNodeID: "impl1", SessionID: "chat1", ReadOnly: want,
+			NodeID: "impl1", WorkspaceNodeID: "impl1", ChatID: "chat1", SessionID: "chat1", ReadOnly: want,
 		})
 		_, _, _, _, got, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
 		vetting.UnregisterAdvisorThread(token)
@@ -129,7 +161,7 @@ func TestResolveNodeGrantsContextDir(t *testing.T) {
 	a := &Agent{opts: Options{UserID: "u1", Jail: jail}}
 	token := vetting.AdvisorThreadToken("plan-1", "impl1")
 	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
-		NodeID: "impl1", WorkspaceNodeID: "impl1", SessionID: "chat1",
+		NodeID: "impl1", WorkspaceNodeID: "impl1", ChatID: "chat1", SessionID: "chat1",
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
@@ -158,7 +190,7 @@ func TestResolveNodeNoJailNoContextDir(t *testing.T) {
 	}}
 	token := vetting.AdvisorThreadToken("plan-1", "review1")
 	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
-		NodeID: "review1", WorkspaceNodeID: "review1", WorktreeParent: workspace.SharedRepoScope, SessionID: "chat1",
+		NodeID: "review1", WorkspaceNodeID: "review1", WorktreeParent: workspace.SharedRepoScope, ChatID: "chat1", SessionID: "chat1",
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
@@ -187,7 +219,7 @@ func TestResolveNodeGrantsScratchDir(t *testing.T) {
 	for _, readOnly := range []bool{true, false} {
 		token := vetting.AdvisorThreadToken("plan-1", "impl1")
 		vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
-			NodeID: "impl1", WorkspaceNodeID: "impl1", SessionID: "chat1", ReadOnly: readOnly,
+			NodeID: "impl1", WorkspaceNodeID: "impl1", ChatID: "chat1", SessionID: "chat1", ReadOnly: readOnly,
 		})
 		cwd, _, _, scratchDir, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
 		vetting.UnregisterAdvisorThread(token)
@@ -221,7 +253,7 @@ func TestResolveNodeNoJailNoScratchDir(t *testing.T) {
 	}}
 	token := vetting.AdvisorThreadToken("plan-1", "review1")
 	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
-		NodeID: "review1", WorkspaceNodeID: "review1", WorktreeParent: workspace.SharedRepoScope, SessionID: "chat1",
+		NodeID: "review1", WorkspaceNodeID: "review1", WorktreeParent: workspace.SharedRepoScope, ChatID: "chat1", SessionID: "chat1",
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
