@@ -204,6 +204,22 @@ func TestEmitServerConfigRoundTrip(t *testing.T) {
 	if cfg.Providers["default"].Endpoint != a.Endpoint {
 		t.Errorf("endpoint = %q, want %q hardcoded", cfg.Providers["default"].Endpoint, a.Endpoint)
 	}
+	// Every model referenced anywhere below (agents, gates.judge, the vector
+	// store's embedder) must have its own models: registry entry, or Load
+	// above would already have failed.
+	for model, role := range map[string]string{
+		a.MainModel: "worker", a.AudioModel: "worker", a.VisionModel: "worker",
+		a.JudgeModel: "judge", a.EmbedModel: "embed",
+	} {
+		mc, ok := cfg.Models[model]
+		if !ok {
+			t.Errorf("emitted models: is missing %q", model)
+			continue
+		}
+		if mc.Role != role {
+			t.Errorf("models[%q].role = %q, want %q", model, mc.Role, role)
+		}
+	}
 }
 
 // TestEmitServerConfigTextOnly: a text-only setup (no vision/audio) gets a lean

@@ -23,6 +23,10 @@ providers:
 orchestrator:
   provider: default
   model: m
+models:
+  m:
+    provider: default
+    role: worker
 agents:
   code-reviewer:
     bundle: agents/code-reviewer

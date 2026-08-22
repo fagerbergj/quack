@@ -5,16 +5,54 @@ providers:
     kind: openai            # API protocol; the endpoint picks the actual server
     endpoint: ${QUACK_LLM_ENDPOINT}
     api_key: ${QUACK_LLM_API_KEY}
-    # Optional per-model USD price table for gen_ai.client.cost - keyed by the
-    # RESOLVED model name (e.g. QUACK_CODER_MODEL's actual value, not the env
-    # var), since that's the name inference.NewModel is called with. A model
-    # absent here gets token usage but no cost metric - never a guessed price.
-    # models:
-    #   qwen3-coder-30b:
-    #     input_per_mtok: 0.20
-    #     output_per_mtok: 0.80
-    #   qwen3-embed:               # an embed model only ever bills input_per_mtok
-    #     input_per_mtok: 0.02
+    limits:
+      active:                # how many DISTINCT models per role may be resident at once (#1007, not yet enforced)
+        worker: 1
+        judge: 1
+        embed: 1
+
+# The canonical model registry, keyed by the RESOLVED model name (e.g.
+# QUACK_CODER_MODEL's actual value, not the env var) - that's the name
+# inference.NewModel is called with. context_window is the DEFAULT window
+# handed to an agent that doesn't declare its own; limits (sessions,
+# kv_tokens) are the #1007 admission pool, parsed and validated here but not
+# yet enforced by a scheduler. cost is the optional USD price table for
+# gen_ai.client.cost - a model without cost: gets token usage but no cost
+# metric, never a guessed price.
+models:
+  qwen3.8-27b:                # workhorse: web-researcher/synthesizer, and the coder/reviewer/explorer's model
+    provider: default
+    role: worker
+    context_window: 262144
+    limits:
+      sessions: 4
+      kv_tokens: 262144
+    cost:
+      input_per_mtok: 0.60
+      output_per_mtok: 3.60
+  qwen3-vl-32b:                # image-reader's specialist vision model
+    provider: default
+    role: worker
+    context_window: 32768
+  qwen3-omni-30b:              # media-reader (Qwen3-Omni llm-swap group)
+    provider: default
+    role: worker
+    context_window: 32768
+    limits:
+      sessions: 1
+  gemma4-26b-a4b:              # the always-warm judge/consolidation/memory-hook model
+    provider: default
+    role: judge
+    context_window: 131072
+    limits:
+      sessions: 2
+  qwen3-embed:                 # memory store's embedder
+    provider: default
+    role: embed
+    context_window: 4096
+  # No separate entry for QUACK_ORCH_MODEL: it usually reuses a worker model
+  # above (e.g. qwen3.8-27b). Pointing it at a genuinely different model?
+  # Add its own entry here too - the orchestrator's model must be registered.
 
 # Named backend registry (like providers): consumers reference a store by name.
 # `kind` selects the adapter (the portability seam). A vector store also carries
@@ -149,7 +187,7 @@ agents:
     skills: [format-markdown, present-coding-plan, pr-authoring, mermaid-authoring]
     provider: default
     model: ${QUACK_RESEARCHER_MODEL}
-    context_window: 65536       # same model as web-researcher
+    context_window: 131072      # 6-node synthesis measured 47,341 prompt tokens (~7.9k/upstream node); 65536 was too tight for a 10-node plan
     judge_rounds: 1             # just combines already-vetted upstream node outputs; re-revising is low value
     tools: [check_mermaid]
   media-reader:

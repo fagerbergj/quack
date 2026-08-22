@@ -18,6 +18,24 @@ providers:
     endpoint: ${QUACK_LLM_ENDPOINT}
     api_key: ${QUACK_LLM_API_KEY}
 
+# Model registry, keyed by each RESOLVED env var so this preset stays
+# generic - add an entry here for any *_MODEL you point at a distinct
+# model (e.g. a separate QUACK_CODER_MODEL from QUACK_RESEARCHER_MODEL).
+models:
+  ${QUACK_RESEARCHER_MODEL}:
+    provider: default
+    role: worker
+  ${QUACK_JUDGE_MODEL}:
+    provider: default
+    role: judge
+  ${QUACK_EMBED_MODEL}:
+    provider: default
+    role: embed
+  # No separate entry for QUACK_ORCH_MODEL: this preset's own usage (above)
+  # sets it equal to QUACK_RESEARCHER_MODEL, so it resolves to the worker
+  # entry already registered. Set it to a genuinely different model? Add its
+  # own entry here too.
+
 stores:
   # The managed stack publishes Postgres on localhost:5432 and Qdrant on :6334.
   default_postgres:
