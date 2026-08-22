@@ -49,7 +49,7 @@ require (
 	google.golang.org/adk/v2 v2.2.0
 	google.golang.org/genai v1.67.0
 	gopkg.in/yaml.v3 v3.0.1
-	gorm.io/driver/postgres v1.6.0
+	gorm.io/driver/postgres v1.6.2
 	gorm.io/gorm v1.31.2
 )
 
