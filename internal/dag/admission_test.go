@@ -165,30 +165,33 @@ func TestAgingStopsBackfillAndAdmitsOldest(t *testing.T) {
 
 // The aged-waiter check must gate Admit's fast path too - a brand-new small
 // request arriving AFTER the oldest waiter has already aged must not jump the
-// queue just because it happens to fit. Distinct from TestAgingStopsBackfillAndAdmitsOldest,
-// which only proves the fat waiter itself isn't starved.
+// queue just because it happens to fit. Leaves real headroom (80/100 used,
+// not 100/100) so the block is explained ONLY by aging, never by "no
+// capacity" - a prior version of this test filled capacity to 100%, which
+// passed even with the aging gate fully bypassed (mutated to `if true`).
 func TestAgingActuallyBlocksLaterBackfill(t *testing.T) {
-	a := NewAdmission(nil, map[string]int{"m": 100}, nil, 30*time.Millisecond)
-	filler := AdmissionSpec{Model: "m", KVTokens: 100}
-	mustAdmit(t, a, filler)
+	a := NewAdmission(nil, map[string]int{"m": 100}, nil, 40*time.Millisecond)
+	occupant := AdmissionSpec{Model: "m", KVTokens: 80}
+	mustAdmit(t, a, occupant) // 80/100 used, 20 free
 
 	fat := AdmissionSpec{Model: "m", KVTokens: 100}
+	fatDone := make(chan bool, 1)
 	fatCtx, fatCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer fatCancel()
-	fatDone := make(chan bool, 1)
 	go func() { fatDone <- a.Admit(fatCtx, fat, nil) }()
-	time.Sleep(10 * time.Millisecond) // fat registers as the oldest waiter
+	time.Sleep(10 * time.Millisecond) // fat = sole/oldest waiter
 
-	a.Release(filler)                 // capacity opens up
-	time.Sleep(50 * time.Millisecond) // > 30ms aging threshold: fat is now aged
-	small := AdmissionSpec{Model: "m", KVTokens: 5}
-	smallCtx, smallCancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer smallCancel()
-	// small ARRIVES after fat is already aged - the fast path must not admit it.
-	if a.Admit(smallCtx, small, nil) {
-		t.Fatal("a brand-new request fast-pathed past an already-aged waiter")
-	}
+	smallA := AdmissionSpec{Model: "m", KVTokens: 15}
+	mustAdmit(t, a, smallA) // pre-aging backfill: 80+15=95<=100, fits
+	a.Release(smallA)       // back to 80/100 used, 20 free again
 
+	time.Sleep(60 * time.Millisecond) // fat now aged (>40ms)
+
+	smallB := AdmissionSpec{Model: "m", KVTokens: 15} // would fit (95<=100) if backfill still allowed
+	cancel := mustBlock(t, a, smallB)                 // capacity exists - only aging can explain a block
+	cancel()
+
+	a.Release(occupant)
 	select {
 	case ok := <-fatDone:
 		if !ok {
