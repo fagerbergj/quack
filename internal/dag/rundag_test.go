@@ -31,11 +31,17 @@ func TestTopoLayers(t *testing.T) {
 	if len(layers) != 3 || len(layers[0]) != 1 || layers[0][0] != "a" || len(layers[1]) != 2 || len(layers[2]) != 1 || layers[2][0] != "d" {
 		t.Fatalf("bad layers: %v", layers)
 	}
-	if _, err := topoLayers(Plan{Nodes: []Node{{ID: "x", DependsOn: []string{"y"}}, {ID: "y", DependsOn: []string{"x"}}}}); err == nil {
+	_, err = topoLayers(Plan{Nodes: []Node{{ID: "x", DependsOn: []string{"y"}}, {ID: "y", DependsOn: []string{"x"}}}})
+	if err == nil {
 		t.Error("want cycle error")
+	} else if !strings.Contains(err.Error(), "x") || !strings.Contains(err.Error(), "y") {
+		t.Errorf("cycle error %q must name the involved node ids", err.Error())
 	}
-	if _, err := topoLayers(Plan{Nodes: []Node{{ID: "x", DependsOn: []string{"missing"}}}}); err == nil {
+	_, err = topoLayers(Plan{Nodes: []Node{{ID: "x", DependsOn: []string{"missing"}}}})
+	if err == nil {
 		t.Error("want unknown-dep error")
+	} else if !strings.Contains(err.Error(), `"missing"`) || !strings.Contains(err.Error(), "x") {
+		t.Errorf("unknown-dep error %q must name the bad id and declared node ids", err.Error())
 	}
 }
 
