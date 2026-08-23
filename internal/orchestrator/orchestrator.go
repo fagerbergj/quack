@@ -105,10 +105,9 @@ func (o *Orchestrator) acquireRun(ctx context.Context) (release func(), acquired
 	return func() { o.runAdmit.Release(runAdmissionSpec) }, true
 }
 
-// newSafeYield serializes concurrent node goroutines onto one yield and
-// stops after a panicking call, instead of letting a second goroutine call
-// the already-panicked yield again (which replaces the real panic with
-// Go's "range function continued iteration after loop body panic", #1016).
+// newSafeYield serializes concurrent node goroutines onto one yield and stops
+// after a panicking call: a second goroutine re-entering the panicked yield
+// makes Go replace the real panic value and kill the process (#1016).
 func newSafeYield(yield func(stream.SSEEvent, error) bool) func(stream.SSEEvent, error) bool {
 	var mu sync.Mutex
 	stopped := false

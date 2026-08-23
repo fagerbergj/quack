@@ -115,9 +115,8 @@ func (a *Admission) Admit(ctx context.Context, spec AdmissionSpec, onQueued func
 			a.reserve(spec)
 			return true
 		}
-		// Contention (not fitting) is "queued" regardless of ctx state - a
-		// caller cancelled the instant it hit a full queue was still queued.
-		// Firing here can never lead to a reservation, unlike the old
+		// Contention (not fitting) is "queued" regardless of ctx state, and
+		// firing here can never lead to a reservation - unlike the old
 		// ctx-after-fits ordering this replaced.
 		if !queuedFired && onQueued != nil {
 			queuedFired = true
