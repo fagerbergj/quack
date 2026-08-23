@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"strings"
 
+	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/model"
@@ -14,6 +16,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
@@ -143,8 +146,10 @@ func logCompaction(ctx adkagent.Context, path string, beforeMsgs, beforeTokens i
 
 // emitCompaction forwards a node-scoped compaction event to the SSE stream,
 // via the same yield-ctx escape hatch the plan tool uses - a no-op outside a
-// DAG node run (e.g. unit tests, or the advisor's own nested runner).
+// DAG node run (e.g. unit tests, or the advisor's own nested runner). Also
+// marks the round's active OTel span so the compaction shows up in traces.
 func emitCompaction(ctx adkagent.Context, before, after int) {
+	oteltrace.SpanFromContext(ctx).SetAttributes(attribute.Bool(otelobs.GenAIConversationCompacted, true))
 	sink, ok := stream.YieldFromContext(ctx)
 	if !ok {
 		return
