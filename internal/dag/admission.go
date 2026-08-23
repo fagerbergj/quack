@@ -105,21 +105,28 @@ func (a *Admission) Admit(ctx context.Context, spec AdmissionSpec, onQueued func
 	defer agingTimer.Stop()
 
 	for {
-		if ctx.Err() != nil {
-			return false
-		}
-		if a.oldestSeqLocked() == mySeq || !a.agingActiveLocked() {
-			if a.fits(spec) {
-				a.reserve(spec)
-				return true
+		fits := (a.oldestSeqLocked() == mySeq || !a.agingActiveLocked()) && a.fits(spec)
+		if fits {
+			// Never reserve on a dead ctx, even if capacity happens to be free -
+			// cancelled work must not proceed, no matter how it got here (#1016).
+			if ctx.Err() != nil {
+				return false
 			}
+			a.reserve(spec)
+			return true
 		}
+		// Contention (not fitting) is "queued" regardless of ctx state, and
+		// firing here can never lead to a reservation - unlike the old
+		// ctx-after-fits ordering this replaced.
 		if !queuedFired && onQueued != nil {
 			queuedFired = true
 			a.mu.Unlock()
 			onQueued()
 			a.mu.Lock()
 			continue // re-check fits: state may have changed while unlocked
+		}
+		if ctx.Err() != nil {
+			return false
 		}
 		a.cond.Wait()
 	}

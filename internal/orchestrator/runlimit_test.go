@@ -169,7 +169,7 @@ func TestAcquireRunContractDistinguishesQueuedFromAcquired(t *testing.T) {
 	defer hold()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // already cancelled: the second acquireRun must not block on runSem
+	cancel() // already cancelled: the second acquireRun must not block on the admission queue
 	rel, acquired := o.acquireRun(ctx)
 	if acquired {
 		t.Fatal("acquireRun reported acquired despite the slot being held and ctx cancelled")

@@ -2,7 +2,9 @@ package runlog
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -129,5 +131,58 @@ func TestPersistNodeEventCopiesAllTokenFields(t *testing.T) {
 	if n.PromptTokens != 100 || n.CompletionTokens != 40 || n.ReasoningTokens != 8 ||
 		n.TotalTokens != 148 || n.CachedTokens != 60 || n.Model != "m" {
 		t.Errorf("persisted node = %+v, want all token fields copied (cached=60)", n)
+	}
+}
+
+// A genuine iter.Seq2 range loop, not a fake counting yield: proves Drive's
+// recover holds against real rangefunc poisoning (#1016), which a plain
+// closure test cannot exercise (see orchestrator's TestSafeYieldConcurrent*).
+//
+// Mirrors orchestrator.newSafeYield: recovers a real loop-body panic (Drive's
+// own onErr call, triggered by a non-nil err event - not a synthetic
+// closure), then keeps calling yield exactly like orchestrator.Run does
+// after a recovered node panic during RunPlanAsGraph. That second call
+// either re-panics with "range function continued iteration after loop body
+// panic", or - if it never fires - Drive's own return triggers "range
+// function recovered a loop body panic and did not resume panicking". Both
+// are verified reproducible with a minimal Go 1.23+ program outside this
+// repo; Drive's defer/recover must catch whichever one actually happens here.
+func TestDriveRecoversPoisonedRangeState(t *testing.T) {
+	const boom = "distinctive-drive-loop-body-panic"
+	safeYield := func(yield func(stream.SSEEvent, error) bool) func(stream.SSEEvent, error) bool {
+		var mu sync.Mutex
+		stopped := false
+		return func(ev stream.SSEEvent, err error) (ok bool) {
+			mu.Lock()
+			defer mu.Unlock()
+			if stopped {
+				return false
+			}
+			defer func() {
+				if recover() != nil {
+					stopped = true
+					ok = false
+				}
+			}()
+			return yield(ev, err)
+		}
+	}
+
+	run := func(yield func(stream.SSEEvent, error) bool) {
+		sy := safeYield(yield)
+		sy(stream.SSEEvent{}, errors.New("trigger")) // Drive's own onErr(err) panics inside its loop body
+		sy(stream.Done(), nil)                       // re-enters the now-poisoned range state
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Drive("turn-1", nil, nil, run, func(error) { panic(boom) })
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Drive never returned - a poisoned rangefunc panic likely killed this goroutine")
 	}
 }

@@ -253,11 +253,15 @@ func TestLatestPendingNodeInterrupt(t *testing.T) {
 // behind others spent its whole budget WAITING and hit the wall having
 // delivered nothing. The clock must start only once a run slot is held.
 func TestRunDeadlineExcludesQueueWait(t *testing.T) {
-	o := &Orchestrator{runSem: make(chan struct{}, 1)}
+	o := &Orchestrator{}
+	o.SetMaxActiveRuns(1)
 	o.SetRunDeadline(50 * time.Millisecond)
 
 	// Occupy the only slot, so the next acquire has to wait.
-	o.runSem <- struct{}{}
+	holderRelease, acquired := o.acquireRun(context.Background())
+	if !acquired {
+		t.Fatal("failed to occupy the only slot")
+	}
 
 	waited := make(chan bool, 1)
 	go func() {
@@ -271,7 +275,7 @@ func TestRunDeadlineExcludesQueueWait(t *testing.T) {
 	// Hold the slot for well past the run deadline. If the deadline covered the
 	// wait, the acquire below would never succeed.
 	time.Sleep(150 * time.Millisecond)
-	<-o.runSem
+	holderRelease()
 
 	select {
 	case acquired := <-waited:

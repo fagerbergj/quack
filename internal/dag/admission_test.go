@@ -163,12 +163,9 @@ func TestAgingStopsBackfillAndAdmitsOldest(t *testing.T) {
 	a.Release(fat)
 }
 
-// The aged-waiter check must gate Admit's fast path too - a brand-new small
-// request arriving AFTER the oldest waiter has already aged must not jump the
-// queue just because it happens to fit. Leaves real headroom (80/100 used,
-// not 100/100) so the block is explained ONLY by aging, never by "no
-// capacity" - a prior version of this test filled capacity to 100%, which
-// passed even with the aging gate fully bypassed (mutated to `if true`).
+// The aged-waiter check must gate Admit's fast path too, not just the
+// blocking path. Headroom stays at 80/100 (not 100/100) so the block can
+// only be explained by aging, never by capacity.
 func TestAgingActuallyBlocksLaterBackfill(t *testing.T) {
 	a := NewAdmission(nil, map[string]int{"m": 100}, nil, 40*time.Millisecond)
 	occupant := AdmissionSpec{Model: "m", KVTokens: 80}
@@ -246,3 +243,22 @@ func TestAdmitHonoursContextCancel(t *testing.T) {
 
 // activeKeyTest mirrors serve.activeKey / AdmissionSpec.residencyKey.
 func activeKeyTest(provider, role string) string { return provider + "\x00" + role }
+
+// An already-cancelled ctx must never reserve capacity, even if it fits
+// immediately (#1021: a prior reorder checked fits/reserve before ctx.Err()).
+// Verified by exhausting the freed capacity afterward at full limit.
+func TestAdmitAlreadyCancelledNeverReserves(t *testing.T) {
+	a := NewAdmission(map[string]int{"m": 1}, nil, nil, time.Hour)
+	spec := AdmissionSpec{Model: "m"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancelled before Admit is ever called - capacity is free
+
+	if a.Admit(ctx, spec, nil) {
+		t.Fatal("Admit succeeded on an already-cancelled ctx")
+	}
+
+	// If the cancelled call had reserved anyway, this would block/fail.
+	mustAdmit(t, a, spec)
+	a.Release(spec)
+}
