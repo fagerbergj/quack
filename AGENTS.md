@@ -18,6 +18,20 @@ Always:
 - Run `go test ./...` and `cd frontend && npm test` before marking a task done.
 - Run `make vet && make fmt` before committing Go changes.
 
+## Talking to quack
+
+The `quack` CLI is your primary interface for interacting with a running quack - creating chats, sending messages, inspecting runs, and controlling nodes mid-run. Reach for it before hand-rolling `curl` against the REST API. See [`docs/cli.md`](docs/cli.md) for the full command map.
+
+```bash
+quack chat new                       # create a chat, print its id
+quack chat send <id> "<msg>"         # send a message (also answers a paused question)
+quack chat show <id> -f              # status snapshot; -f follows a live run
+quack chat list                      # chats and their status
+quack chat node retry <id> <node>    # re-run a finished node and everything downstream
+```
+
+Exit codes make it scriptable: `0` answered, `1` failed, `2` paused on a question. `quack api [method] <path>` is a `gh api`-style passthrough when a command for what you need does not exist yet - if you find yourself using it often, that gap is worth filing.
+
 ## Commands
 
 ```bash
