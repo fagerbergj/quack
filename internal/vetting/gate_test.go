@@ -420,7 +420,8 @@ func TestNormalizeScaleLeaves0To1Untouched(t *testing.T) {
 // feedback must point at BOTH ways out (retrieve, or ask_user).
 func TestFoldDeterministic_RequireRetrievalHardFail(t *testing.T) {
 	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
-	got := foldDeterministic(context.Background(), v, "Which city are you moving to?", workerActivity{}, Config{RequireRetrieval: true})
+	det, _ := computeDeterministicCriteria(context.Background(), "Which city are you moving to?", workerActivity{}, Config{RequireRetrieval: true})
+	got := mergeDeterministic(v, det, Config{RequireRetrieval: true})
 	if got.Score != 0 {
 		t.Fatalf("score = %v, want 0 (weakest-link on grounded_in_retrieval)", got.Score)
 	}
@@ -438,7 +439,8 @@ func TestFoldDeterministic_RequireRetrievalHardFail(t *testing.T) {
 // re-cites upstream URLs (the pre-existing citationScore abstention stands).
 func TestFoldDeterministic_NoRetrievalOKForSynthesizer(t *testing.T) {
 	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
-	got := foldDeterministic(context.Background(), v, "Combined findings: [x](https://ex.com/a).", workerActivity{}, Config{})
+	det, _ := computeDeterministicCriteria(context.Background(), "Combined findings: [x](https://ex.com/a).", workerActivity{}, Config{})
+	got := mergeDeterministic(v, det, Config{})
 	if _, present := got.Criteria["grounded_in_retrieval"]; present {
 		t.Fatal("grounded_in_retrieval applied to a non-retrieval agent")
 	}
@@ -456,7 +458,8 @@ func TestFoldDeterministic_WorkspaceGroundingSatisfiesRetrieval(t *testing.T) {
 		"reads": {paths: map[string]bool{"repo/main.go": true}},
 	} {
 		v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
-		got := foldDeterministic(context.Background(), v, "The entrypoint is [main.go](repo/main.go).", act, Config{RequireRetrieval: true})
+		det, _ := computeDeterministicCriteria(context.Background(), "The entrypoint is [main.go](repo/main.go).", act, Config{RequireRetrieval: true})
+		got := mergeDeterministic(v, det, Config{RequireRetrieval: true})
 		if _, present := got.Criteria["grounded_in_retrieval"]; present {
 			t.Errorf("%s: grounded_in_retrieval penalty applied despite workspace grounding", name)
 		}
@@ -469,7 +472,8 @@ func TestFoldDeterministic_WorkspaceGroundingSatisfiesRetrieval(t *testing.T) {
 func TestFoldDeterministic_RetrievalPresentNotPenalized(t *testing.T) {
 	act := workerActivity{seen: map[string]string{"https://ex.com/a": "snippet"}}
 	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
-	got := foldDeterministic(context.Background(), v, "Answer citing [x](https://ex.com/a).", act, Config{RequireRetrieval: true})
+	det, _ := computeDeterministicCriteria(context.Background(), "Answer citing [x](https://ex.com/a).", act, Config{RequireRetrieval: true})
+	got := mergeDeterministic(v, det, Config{RequireRetrieval: true})
 	if _, present := got.Criteria["grounded_in_retrieval"]; present {
 		t.Fatal("grounded_in_retrieval penalty applied despite recorded retrieval")
 	}

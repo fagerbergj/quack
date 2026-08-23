@@ -1226,12 +1226,6 @@ func mergeDeterministic(v verdict, det map[string]criterionScore, cfg Config) ve
 	return aggregateVerdict(v)
 }
 
-// foldDeterministic: compute then merge in one step.
-func foldDeterministic(ctx context.Context, v verdict, answer string, act workerActivity, cfg Config) verdict {
-	det, _ := computeDeterministicCriteria(ctx, answer, act, cfg)
-	return mergeDeterministic(v, det, cfg)
-}
-
 // composeFeedback builds the #941 structured envelope from v and a rendered
 // one-paragraph summary for callers that still want prose: AgentCompleteData.Feedback
 // (kept for one release so the UI does not blank) and GateResult.Feedback (the
@@ -1330,11 +1324,6 @@ func writtenRel(nodeDir, cwd, p string) string {
 		return strings.TrimPrefix(p, "/")
 	}
 	return joinWritten(nodeDir, joinWritten(cwd, p))
-}
-
-// activityFromSession: replays session with no node scope.
-func activityFromSession(sess session.Session) workerActivity {
-	return activityFromSessionAt(sess, "")
 }
 
 // activityFromSessionAt: replays worker's session inside nodeDir. Paths come back chat-relative.
