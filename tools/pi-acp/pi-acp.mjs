@@ -21,12 +21,17 @@ const ocCfg = process.env.OPENCODE_CONFIG_CONTENT
 const prov = (() => {
   const p = ocCfg.provider?.quack;
   if (!p) return null;
-  return { baseUrl: p.options.baseURL, apiKey: p.options.apiKey || "unused", model: Object.keys(p.models)[0] };
+  const model = Object.keys(p.models)[0];
+  return { baseUrl: p.options.baseURL, apiKey: p.options.apiKey || "unused", model, contextWindow: p.models[model]?.limit?.context };
 })();
 
 // pi config dir (models.json, settings.json, extensions/) - fresh per run.
 const piDir = mkdtempSync(join(tmpdir(), "pi-acp-"));
 if (prov) {
+  const modelEntry = { id: prov.model };
+  // omit rather than write 0/undefined: pi's provider-composer rejects
+  // contextWindow <= 0 and falls back to its own 128000 default anyway.
+  if (prov.contextWindow > 0) modelEntry.contextWindow = prov.contextWindow;
   writeFileSync(join(piDir, "models.json"), JSON.stringify({
     providers: {
       quack: {
@@ -34,7 +39,7 @@ if (prov) {
         api: "openai-completions",
         apiKey: prov.apiKey,
         compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
-        models: [{ id: prov.model }],
+        models: [modelEntry],
       },
     },
   }));
