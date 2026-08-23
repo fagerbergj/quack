@@ -733,7 +733,7 @@ func TestNeedsInputPersistsAcrossReload(t *testing.T) {
 	// A real HITL pause always follows node_start (running); persist that first
 	// and wait for it to land so the needs_input write below is a legal
 	// running → needs_input transition, not queued → needs_input.
-	runlog.PersistNodeEvent(h.store, planID, stream.NodeStart(nodeID, "a"))
+	runlog.PersistNodeEvent(h.store, planID, stream.NodeStart(nodeID, "a", "", ""))
 	waitForDagNodeStatus(t, h, planID, nodeID, "running")
 
 	runlog.PersistNodeEvent(h.store, planID, stream.NodeNeedsInput(nodeID, "int-1", "which region?"))

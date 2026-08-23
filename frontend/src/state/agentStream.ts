@@ -22,6 +22,9 @@ interface AgentStartPayload {
   // Server wall-clock (epoch ms) the run began - anchors the sub-step timer
   // across reconnect/replay, mirroring node_start's started_at_ms.
   startedAtMs?: number
+  // Cross-references into the OTel trace for this run; absent when otel is disabled.
+  traceId?: string
+  spanId?: string
 }
 
 // AgentCompletePayload closes an agent run with its stage-specific result.
@@ -92,6 +95,9 @@ interface DagPlanPayload {
   nodes: DagNodeDef[]
   edges: DagEdgeDef[]
   started_at_ms?: number // server start time, for a reconnect-stable total timer
+  // Cross-references into the OTel trace for this plan; absent when otel is disabled.
+  trace_id?: string
+  span_id?: string
 }
 
 // DeliveryResultPayload is one staged item's ACTUAL outward-boundary outcome
@@ -126,7 +132,7 @@ export interface AgentStreamHandlers {
   // DAG lifecycle
   onDagPlan?: (plan: DagPlanPayload) => void
   onNodeQueued?: (nodeId: string) => void
-  onNodeStart?: (nodeId: string, agent: string, startedAtMs?: number) => void
+  onNodeStart?: (nodeId: string, agent: string, startedAtMs?: number, traceId?: string, spanId?: string) => void
   onNodeDone?: (nodeId: string, preview: string, meta: NodeDoneMeta) => void
   onNodeFailed?: (nodeId: string, error: string) => void
   // The node was stopped by the user (PUT node status {"status":"cancelled"}) -
@@ -171,7 +177,7 @@ function dispatchAgentEvent(
 ): boolean {
   switch (event) {
     case 'agent_start': {
-      const p = parsed as { run_id?: string; agent?: string; stage?: string; round?: number; started_at_ms?: number }
+      const p = parsed as { run_id?: string; agent?: string; stage?: string; round?: number; started_at_ms?: number; trace_id?: string; span_id?: string }
       if (typeof p.run_id === 'string') {
         handlers.onAgentStart?.({
           nodeId: nodeIdOf(parsed),
@@ -180,6 +186,8 @@ function dispatchAgentEvent(
           stage: (p.stage ?? 'worker') as Stage,
           round: typeof p.round === 'number' ? p.round : undefined,
           startedAtMs: typeof p.started_at_ms === 'number' ? p.started_at_ms : undefined,
+          traceId: typeof p.trace_id === 'string' ? p.trace_id : undefined,
+          spanId: typeof p.span_id === 'string' ? p.span_id : undefined,
         })
       }
       return true
@@ -256,12 +264,14 @@ function dispatchAgentEvent(
       return true
     // DAG lifecycle events (M3)
     case 'dag_plan': {
-      const p = parsed as { plan_id?: string; nodes?: unknown[]; edges?: unknown[]; started_at_ms?: number }
+      const p = parsed as { plan_id?: string; nodes?: unknown[]; edges?: unknown[]; started_at_ms?: number; trace_id?: string; span_id?: string }
       handlers.onDagPlan?.({
         plan_id: typeof p.plan_id === 'string' ? p.plan_id : '',
         nodes: (p.nodes ?? []) as DagNodeDef[],
         edges: (p.edges ?? []) as DagEdgeDef[],
         started_at_ms: typeof p.started_at_ms === 'number' ? p.started_at_ms : undefined,
+        trace_id: typeof p.trace_id === 'string' ? p.trace_id : undefined,
+        span_id: typeof p.span_id === 'string' ? p.span_id : undefined,
       })
       return true
     }
@@ -269,10 +279,12 @@ function dispatchAgentEvent(
       if (hasStringField(parsed, 'node_id')) handlers.onNodeQueued?.(parsed.node_id)
       return true
     case 'node_start': {
-      const p = parsed as { node_id?: string; agent?: string; started_at_ms?: number }
+      const p = parsed as { node_id?: string; agent?: string; started_at_ms?: number; trace_id?: string; span_id?: string }
       if (typeof p.node_id === 'string') {
         handlers.onNodeStart?.(p.node_id, typeof p.agent === 'string' ? p.agent : '',
-          typeof p.started_at_ms === 'number' ? p.started_at_ms : undefined)
+          typeof p.started_at_ms === 'number' ? p.started_at_ms : undefined,
+          typeof p.trace_id === 'string' ? p.trace_id : undefined,
+          typeof p.span_id === 'string' ? p.span_id : undefined)
       }
       return true
     }

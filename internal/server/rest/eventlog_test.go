@@ -16,7 +16,7 @@ import (
 // marshalEvent → unmarshalEvent must round-trip to the identical wire bytes the
 // live stream sends (Data stays raw JSON), so a replayed event is indistinguishable.
 func TestEventCodecRoundTrip(t *testing.T) {
-	orig := stream.NodeStart("n1", "researcher")
+	orig := stream.NodeStart("n1", "researcher", "", "")
 	js, err := runlog.MarshalEvent(orig)
 	if err != nil {
 		t.Fatalf("marshalEvent: %v", err)
@@ -51,7 +51,7 @@ func TestSubscribeColdReplay(t *testing.T) {
 	}
 	chatID := c.ID
 	for i, ev := range []stream.SSEEvent{
-		stream.NodeStart("n1", "researcher"),
+		stream.NodeStart("n1", "researcher", "", ""),
 		stream.NodeDone("n1", stream.NodeDoneData{}),
 		stream.Done(),
 	} {

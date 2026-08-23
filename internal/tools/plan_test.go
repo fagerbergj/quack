@@ -317,7 +317,7 @@ func TestDagPlanEventCarriesContextWindow(t *testing.T) {
 		{ID: "a", AgentName: "web-researcher", ContextWindow: 131072},
 		{ID: "b", AgentName: "synthesizer"}, // unconfigured limit -> 0
 	}}
-	ev := DagPlanEvent(p)
+	ev := DagPlanEvent(context.Background(), p)
 	data, ok := ev.Data.(stream.DagPlanData)
 	if !ok {
 		t.Fatalf("event data is %T, want stream.DagPlanData", ev.Data)

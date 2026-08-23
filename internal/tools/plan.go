@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -98,7 +99,7 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 
 			// Emit dag_plan so the frontend sees the plan before execution starts.
 			if yieldFn, ok := stream.YieldFromContext(tc); ok {
-				yieldFn(DagPlanEvent(*p))
+				yieldFn(DagPlanEvent(tc, *p))
 			}
 
 			emitPlanEvent(tc, p)
@@ -108,12 +109,12 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 }
 
 // DagPlanEvent: builds the dag_plan SSE event. Shared by plan tool and HITL resume path.
-func DagPlanEvent(p dag.Plan) stream.SSEEvent {
+func DagPlanEvent(ctx context.Context, p dag.Plan) stream.SSEEvent {
 	nodes := make([]stream.DagNodeDef, len(p.Nodes))
 	for i, n := range p.Nodes {
 		nodes[i] = stream.DagNodeDef{ID: n.ID, Agent: n.AgentName, Task: n.Task, DependsOn: n.DependsOn, ContextWindow: n.ContextWindow}
 	}
-	return stream.DagPlan(p.ID, nodes, planEdges(p.Nodes))
+	return stream.DagPlan(p.ID, nodes, planEdges(p.Nodes), otelobs.TraceIDOf(ctx), otelobs.SpanIDOf(ctx))
 }
 
 // planEdges: projects DependsOn into the wire edge list for the dag_plan event.

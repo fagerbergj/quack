@@ -164,7 +164,7 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, see
 		}
 		// Lead with the plan snapshot so runlog.Drive-based callers (boot
 		// resume) persist the re-run nodes' state; REST persists per-event.
-		yield(tools.DagPlanEvent(plan), nil)
+		yield(tools.DagPlanEvent(ctx, plan), nil)
 		nodeOutputs := make(map[string]string)
 		retryNode := workflow.NewDynamicNode[any, string]("__retry",
 			func(nctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
@@ -275,7 +275,7 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 		o.executor.ResetNodeCancels(sessionID)
 
 		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { yield(ev, nil) })
-		yield(tools.DagPlanEvent(plan), nil)
+		yield(tools.DagPlanEvent(ctx, plan), nil)
 
 		// A bound plan never passes through the execute tool (no orchestrator
 		// LLM turn exists to revise from), so provisioning failure here has no
@@ -497,6 +497,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		const orchRunID = "orchestrator"
 		yield(stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{
 			RunID: orchRunID, Agent: "orchestrator", Stage: stream.StageWorker, StartedAtMs: time.Now().UnixMilli(),
+			TraceID: otelobs.TraceIDOf(ctx), SpanID: otelobs.SpanIDOf(ctx),
 		}}, nil)
 
 		var mu sync.Mutex
@@ -729,7 +730,7 @@ func (o *Orchestrator) startNodeRun(ctx context.Context, userID, sessionID, mess
 	var mu sync.Mutex
 	safeYield := func(ev stream.SSEEvent, e error) bool { mu.Lock(); defer mu.Unlock(); return yield(ev, e) }
 	ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
-	safeYield(tools.DagPlanEvent(plan), nil)
+	safeYield(tools.DagPlanEvent(ctx, plan), nil)
 	// awaiting_input: the message is the answer to the parked question.
 	// user/shutdown pause: nothing to deliver, just re-enter the graph.
 	var content *genai.Content

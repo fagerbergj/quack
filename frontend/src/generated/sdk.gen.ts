@@ -175,8 +175,10 @@ export const getChatArtifact = <ThrowOnError extends boolean = false>(options: O
  * (`agent_tool_call` / `agent_tool_result`) within the worker's own run.
  *
  * Agent-run events: `agent_start` ({"node_id","run_id","agent","stage","round",
- * "started_at_ms"}) opens a run - `started_at_ms` is the server wall-clock
- * (epoch ms) it began, anchoring the run's timer across reconnect/replay;
+ * "started_at_ms","trace_id","span_id"}) opens a run - `started_at_ms` is the
+ * server wall-clock (epoch ms) it began, anchoring the run's timer across
+ * reconnect/replay; `trace_id`/`span_id` cross-reference the OTel trace for
+ * the run, empty when otel is disabled;
  * `agent_thinking` ({"node_id","run_id","text"}) is reasoning;
  * `agent_tool_call` ({"node_id","run_id","call_id","name","args"}) and
  * `agent_tool_result` ({"node_id","run_id","call_id","name","result"}) are
@@ -189,9 +191,10 @@ export const getChatArtifact = <ThrowOnError extends boolean = false>(options: O
  * `status:"no_verdict"` when it ran but never committed a verdict), model
  * runs carry `finish_reason` + token usage.
  *
- * DAG events: `dag_plan` ({"plan_id","nodes","edges"}) signals a quack:dag
- * output item has been added; `node_queued` ({"node_id"}), `node_start`
- * ({"node_id","agent"}), `node_done` ({"node_id",...metadata}),
+ * DAG events: `dag_plan` ({"plan_id","nodes","edges","trace_id","span_id"})
+ * signals a quack:dag output item has been added; `node_queued`
+ * ({"node_id"}), `node_start` ({"node_id","agent","trace_id","span_id"}),
+ * `node_done` ({"node_id",...metadata}),
  * `node_failed` ({"node_id","error"}), `node_cancelled` ({"node_id"}), and
  * `node_paused` ({"node_id"}) track node lifecycle. `node_steered`
  * ({"node_id","guidance"}) fires when a node's queued message(s) are

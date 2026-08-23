@@ -30,6 +30,7 @@ func startStageSpan(spanCtx context.Context, sink func(stream.SSEEvent), cfg Con
 		attribute.String("run_id", runID), attribute.String("agent", cfg.Agent), attribute.Int("round", round))
 	emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{
 		RunID: runID, Agent: sseAgent, Stage: stage, Round: round, StartedAtMs: time.Now().UnixMilli(),
+		TraceID: otelobs.TraceIDOf(ctx), SpanID: otelobs.SpanIDOf(ctx),
 	}})
 	return ctx, &stageSpan{span: span, sink: sink, nodeID: nodeID}
 }

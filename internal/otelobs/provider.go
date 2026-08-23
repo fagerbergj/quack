@@ -200,3 +200,12 @@ func TraceIDOf(ctx context.Context) string {
 	}
 	return sc.TraceID().String()
 }
+
+// SpanIDOf returns the span id of ctx's active span for cross-referencing.
+func SpanIDOf(ctx context.Context) string {
+	sc := oteltrace.SpanContextFromContext(ctx)
+	if !sc.IsValid() {
+		return ""
+	}
+	return sc.SpanID().String()
+}
