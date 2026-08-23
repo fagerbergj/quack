@@ -516,7 +516,11 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			return
 		}
 
-		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { yield(ev, nil) })
+		// Concurrent DAG nodes funnel through this one yield (#1016); ctx
+		// consumers like onQueued call it from a node goroutine, so it must be
+		// the wrapped one - #1021 fixed the other three entrypoints but missed Run().
+		safeYield := newSafeYield(yield)
+		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
 
 		text := message
 		if desc := dag.AttachmentDesc(attachments); desc != "" {
@@ -536,11 +540,9 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		translator := stream.NewTranslator()
 
 		const orchRunID = "orchestrator"
-		yield(stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{
+		safeYield(stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{
 			RunID: orchRunID, Agent: "orchestrator", Stage: stream.StageWorker, StartedAtMs: time.Now().UnixMilli(),
 		}}, nil)
-
-		safeYield := newSafeYield(yield)
 
 		invoke := func(content *genai.Content) (produced, stop bool) {
 			for ev, err := range r.Run(ctx, userID, sessionID, content, adkagent.RunConfig{}) {
