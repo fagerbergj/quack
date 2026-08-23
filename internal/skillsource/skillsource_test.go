@@ -133,17 +133,6 @@ func TestNoProjectDirsUnchanged(t *testing.T) {
 	}
 }
 
-func TestClaudeSkillsDirAlsoDiscovered(t *testing.T) {
-	j, userRoot, builtin := setup(t, nil)
-	writeSkill(t, filepath.Join(userRoot, "chatA", "myrepo", ".claude", "skills"), "claude-skill", "from .claude", "body")
-
-	fms := ProjectSkills(j, "u1", "chatA", "myrepo")
-	if len(fms) != 1 || fms[0].Name != "claude-skill" {
-		t.Errorf("ProjectSkills = %+v, want the .claude/skills one", fms)
-	}
-	_ = builtin
-}
-
 func TestNilJailReturnsBuiltin(t *testing.T) {
 	builtinDir := t.TempDir()
 	writeSkill(t, builtinDir, "x", "d", "b")

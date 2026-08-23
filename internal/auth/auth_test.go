@@ -12,7 +12,7 @@ import (
 
 func echoIdentityHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, ok := FromContext(r.Context())
+		id, ok := r.Context().Value(identityCtxKey{}).(Identity)
 		if !ok {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("no-identity"))

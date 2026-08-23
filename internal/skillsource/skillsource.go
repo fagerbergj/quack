@@ -27,16 +27,6 @@ func New(builtin skill.Source, jail *workspace.Jail, userID string) skill.Source
 	return &projectAware{builtin: builtin, jail: jail, userID: userID}
 }
 
-// ProjectSkills lists skills for one repo root within a per-chat scope (for `cd`'s on-entry report). Best-effort.
-func ProjectSkills(jail *workspace.Jail, userID, chatID, repoRel string) []*skill.Frontmatter {
-	src := skill.NewMergedSource(sourcesUnder(jail, userID, chatID, repoRel)...)
-	fms, err := src.ListFrontmatters(context.Background())
-	if err != nil {
-		return nil
-	}
-	return fms
-}
-
 // sourcesUnder returns a FileSystemSource for each existing project skills dir under the scope.
 func sourcesUnder(jail *workspace.Jail, userID, chatID, repoRel string) []skill.Source {
 	if jail == nil {

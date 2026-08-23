@@ -32,15 +32,6 @@ func parseAnswerReview(answer string) (event string, comments []ReviewComment, o
 	return event, comments, true
 }
 
-// StripVerdictTail: removes machine-parseable tail for human-facing text.
-func StripVerdictTail(answer string) string {
-	s := fallbackPreambleRe.ReplaceAllString(answer, "")
-	if loc := verdictRe.FindStringIndex(s); loc != nil {
-		s = s[:loc[0]]
-	}
-	return strings.TrimSpace(s)
-}
-
 // augmentFromReviewStage: folds tool-staged review into activity (runs before augmentFromAnswer, Snapshot - non-clearing).
 func augmentFromReviewStage(act *workerActivity, advisorToken string) {
 	if advisorToken == "" {
