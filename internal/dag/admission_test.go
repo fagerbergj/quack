@@ -262,3 +262,31 @@ func TestAdmitAlreadyCancelledNeverReserves(t *testing.T) {
 	mustAdmit(t, a, spec)
 	a.Release(spec)
 }
+
+// A panicking onQueued (arbitrary consumer code, runs unlocked) must not
+// leave Admit's deferred Unlock double-unlocking into a fatal "unlock of
+// unlocked mutex" (#1016 prod crash). A real panic is fine; only the fatal isn't.
+func TestAdmitOnQueuedPanicNeverDoubleUnlocks(t *testing.T) {
+	a := NewAdmission(map[string]int{"m": 1}, nil, nil, time.Hour)
+	occupant := AdmissionSpec{Model: "m"}
+	mustAdmit(t, a, occupant) // fill the one slot so the second call contends
+
+	boom := "distinctive-onQueued-panic"
+	func() {
+		defer func() {
+			if r := recover(); r != boom {
+				t.Fatalf("recovered %v, want the original onQueued panic %q", r, boom)
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		a.Admit(ctx, occupant, func() { panic(boom) })
+		t.Fatal("Admit returned normally; expected the onQueued panic to propagate")
+	}()
+
+	// The mutex must still be usable - a double-unlock would have already
+	// crashed the process before reaching here.
+	a.Release(occupant)
+	mustAdmit(t, a, occupant)
+	a.Release(occupant)
+}
