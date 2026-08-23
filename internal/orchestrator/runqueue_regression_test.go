@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -98,6 +99,56 @@ func TestSafeYieldLogsOriginalPanicValue(t *testing.T) {
 	sy(stream.SSEEvent{}, nil)
 
 	if !strings.Contains(buf.String(), marker) {
+		t.Fatalf("original panic value missing from logs: %q", buf.String())
+	}
+}
+
+
+// The real bug (#1016): >=2 goroutines yield concurrently through the same
+// mutex, and a panicking loop body used to let another goroutine - blocked
+// on that same mutex, not called sequentially after - acquire it and call
+// the already-panicked yield again. A sequential two-call test cannot
+// exercise that; this one forces genuine goroutine overlap via a gate
+// channel (no sleeps) so every caller contends for the mutex at once.
+func TestSafeYieldConcurrentPanicIsolatesAllCallers(t *testing.T) {
+	const n = 8
+	var buf strings.Builder
+	restore := redirectSlogForTest(&buf)
+	defer restore()
+
+	var calls int32
+	const boom = "distinctive-concurrent-panic-value"
+	sy := newSafeYield(func(stream.SSEEvent, error) bool {
+		atomic.AddInt32(&calls, 1) // mutex-serialized: only ever reached once, by whichever caller wins the race
+		panic(boom)
+	})
+
+	start := make(chan struct{})
+	var ready, done sync.WaitGroup
+	ready.Add(n)
+	done.Add(n)
+	results := make([]bool, n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer done.Done()
+			ready.Done()
+			<-start // released together: forces real mutex contention, not a sequence
+			results[i] = sy(stream.SSEEvent{}, nil)
+		}(i)
+	}
+	ready.Wait() // every goroutine parked at the gate before any of them runs
+	close(start)
+	done.Wait()
+
+	for i, ok := range results {
+		if ok {
+			t.Errorf("goroutine %d returned true - a panic must stop every caller, not just the one that hit it", i)
+		}
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("yield body invoked %d times across %d concurrent callers, want exactly 1 - a second invocation into an already-panicked stream is the masking bug", got, n)
+	}
+	if !strings.Contains(buf.String(), boom) {
 		t.Fatalf("original panic value missing from logs: %q", buf.String())
 	}
 }
