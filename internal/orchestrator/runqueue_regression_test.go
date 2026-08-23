@@ -103,7 +103,6 @@ func TestSafeYieldLogsOriginalPanicValue(t *testing.T) {
 	}
 }
 
-
 // The real bug (#1016): >=2 goroutines yield concurrently through the same
 // mutex, and a panicking loop body used to let another goroutine - blocked
 // on that same mutex, not called sequentially after - acquire it and call
