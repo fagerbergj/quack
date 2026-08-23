@@ -311,7 +311,7 @@ observability:
     sample: 1.0                                # trace sample ratio in (0,1]
     environment: ${QUACK_OTEL_ENVIRONMENT}     # unset ⇒ production; deployment.environment.name on every span
     # logs: true   # ALSO ship slog via OTLP - needs a collector logs pipeline (default: stdout only)
-    # content: true # ALSO put prompts/model output on span attributes (default: off) - ships raw message content to the OTLP endpoint
+    # capture_content: true # ALSO put user prompts and model responses (plus ACP tool-call args/output) on span attributes (default: off) - ships raw content to the OTLP endpoint
   # The replay ledger (.quack/replay-log.md): every gen_ai.* log event, appended
   # to default_ledger as one JSONL line per session. Rides the otel logger
   # provider above, so it can only be on when otel is.

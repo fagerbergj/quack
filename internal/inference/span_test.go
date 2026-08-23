@@ -12,6 +12,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
 func withTestTracer(t *testing.T) *tracetest.InMemoryExporter {
@@ -27,13 +28,13 @@ func withTestTracer(t *testing.T) *tracetest.InMemoryExporter {
 	return exp
 }
 
-// withContentCapture flips captureContent for the duration of one test,
-// restoring the previous value on cleanup.
+// withContentCapture flips otelobs' shared capture-content flag for the
+// duration of one test, restoring the previous value on cleanup.
 func withContentCapture(t *testing.T, enabled bool) {
 	t.Helper()
-	prev := captureContent.Load()
-	captureContent.Store(enabled)
-	t.Cleanup(func() { captureContent.Store(prev) })
+	prev := otelobs.CaptureContentEnabled()
+	otelobs.SetCaptureContent(enabled)
+	t.Cleanup(func() { otelobs.SetCaptureContent(prev) })
 }
 
 func spanAttrsOf(s tracetest.SpanStub) map[string]string {
@@ -146,7 +147,8 @@ func TestSpanAttrs_ContentCaptureOffByDefault(t *testing.T) {
 	withContentCapture(t, false)
 	exp := withTestTracer(t)
 
-	ctx, span := otel.Tracer("test").Start(context.Background(), "generate_content test-model")
+	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "chat-123"})
+	ctx, span := otel.Tracer("test").Start(ctx, "generate_content test-model")
 	req := &model.LLMRequest{
 		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}},
 	}
@@ -159,5 +161,9 @@ func TestSpanAttrs_ContentCaptureOffByDefault(t *testing.T) {
 		if _, ok := attrs[k]; ok {
 			t.Errorf("attribute %q present with content capture off, want absent", k)
 		}
+	}
+	// conversation.id is a correlation key, not content - stays ungated (see setRequestSpanAttrs).
+	if got := attrs["gen_ai.conversation.id"]; got != "chat-123" {
+		t.Errorf("gen_ai.conversation.id = %q, want chat-123 (should not be gated by content capture)", got)
 	}
 }

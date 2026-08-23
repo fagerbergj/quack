@@ -89,6 +89,9 @@ func (t *turnSpans) record(id string, rawInput, rawOutput any, content []sdk.Too
 	if !ok {
 		return
 	}
+	if !span.IsRecording() || !otelobs.CaptureContentEnabled() {
+		return // opt-in only - tool args/output are message content (observability.otel.capture_content)
+	}
 	if v, ok := jsonAttr(rawInput); ok {
 		span.SetAttributes(attribute.String(otelobs.GenAIToolCallArguments, v))
 	}
@@ -132,8 +135,10 @@ func (t *turnSpans) start(id string, kind sdk.ToolKind, title string, rawInput a
 		attribute.String("tool_call_id", id),
 		attribute.String("tool_title", title),
 	}
-	if v, ok := jsonAttr(rawInput); ok {
-		attrs = append(attrs, attribute.String(otelobs.GenAIToolCallArguments, v))
+	if otelobs.CaptureContentEnabled() {
+		if v, ok := jsonAttr(rawInput); ok {
+			attrs = append(attrs, attribute.String(otelobs.GenAIToolCallArguments, v))
+		}
 	}
 	_, span := otelobs.Start(t.ctx, "acp.tool."+name, attrs...)
 	t.open[id] = span
