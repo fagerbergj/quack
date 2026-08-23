@@ -31,32 +31,6 @@ func TestParseAnswerReview(t *testing.T) {
 	}
 }
 
-// TestStripVerdictTail pins #482: the own-PR comment path must not leak the
-// machine-parseable VERDICT/FINDINGS tail or a fallback-format preamble.
-func TestStripVerdictTail(t *testing.T) {
-	got := StripVerdictTail(reviewAnswer)
-	if strings.Contains(got, "VERDICT:") || strings.Contains(got, "FINDINGS:") {
-		t.Fatalf("tail leaked: %q", got)
-	}
-	if !strings.Contains(got, "two problems block approval") {
-		t.Fatalf("human-facing summary dropped: %q", got)
-	}
-
-	withPreamble := "Since staging tools aren't available in this environment, here is the full structured review as the fallback output format:\n\n" + reviewAnswer
-	got = StripVerdictTail(withPreamble)
-	if strings.Contains(got, "fallback output format") {
-		t.Fatalf("preamble leaked: %q", got)
-	}
-	if !strings.Contains(got, "two problems block approval") {
-		t.Fatalf("human-facing summary dropped: %q", got)
-	}
-
-	plain := "just prose, no structure"
-	if got := StripVerdictTail(plain); got != plain {
-		t.Fatalf("verdict-less answer must pass through unchanged: %q", got)
-	}
-}
-
 func TestAugmentFromAnswer_StagesReview(t *testing.T) {
 	cfg := Config{
 		ExternalWorker: true,

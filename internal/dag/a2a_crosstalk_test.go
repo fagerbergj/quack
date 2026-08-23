@@ -93,7 +93,7 @@ func TestConcurrentNodes_SameAgentOverA2A_KeepTheirOwnTask(t *testing.T) {
 		t.Fatalf("a2a serve: %v", err)
 	}
 	t.Cleanup(func() { _ = srv.Close() })
-	client, err := srv.Client()
+	client, err := srv.ClientForNode("test-node")
 	if err != nil {
 		t.Fatalf("a2a client: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestNodeOverA2A_ResumesItsOwnRemoteSessionAcrossRounds(t *testing.T) {
 		t.Fatalf("a2a serve: %v", err)
 	}
 	t.Cleanup(func() { _ = srv.Close() })
-	client, err := srv.Client()
+	client, err := srv.ClientForNode("test-node")
 	if err != nil {
 		t.Fatalf("a2a client: %v", err)
 	}

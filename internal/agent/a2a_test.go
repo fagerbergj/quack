@@ -121,7 +121,7 @@ func TestA2ARoundTripPreservesEventVocabulary(t *testing.T) {
 	}
 	defer srv.Close()
 
-	client, err := srv.Client()
+	client, err := srv.ClientForNode("test-node")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestOrchestratorTransfersToA2ASubAgent(t *testing.T) {
 	}
 	defer srv.Close()
 
-	client, err := srv.Client()
+	client, err := srv.ClientForNode("test-node")
 	if err != nil {
 		t.Fatal(err)
 	}

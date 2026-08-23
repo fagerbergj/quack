@@ -4,8 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/fagerbergj/quack/internal/plugin"
 )
 
 // TestAcpSkillPathsBackfillsEmbeddedDotagents proves #943: with no plugin
@@ -37,7 +35,7 @@ func TestAcpSkillPathsNoDuplicateWhenOnDisk(t *testing.T) {
 	writePluginManifest(t, vendor, "review-code-standin")
 	writeVendorSkill(t, filepath.Join(vendor, "skills"), "review-code", "standin for the vendored review-code skill")
 
-	paths := acpSkillPaths(plugin.ResolveSkillDirs([]string{vendor}))
+	paths := acpSkillPaths(resolveSkillDirs([]string{vendor}))
 
 	count := 0
 	for _, p := range paths {

@@ -68,12 +68,12 @@ func TestDeliveryCriterionDoesNotFireOnResearchTask(t *testing.T) {
 
 // Only SUCCESSFUL calls count: a git_commit that errored delivered nothing.
 func TestDeliveryCriterionFailsWhenCommitErrored(t *testing.T) {
-	act := activityFromSession(newTestSession(t,
+	act := activityFromSessionAt(newTestSession(t,
 		fnCall("1", "write_file", map[string]any{"path": "games/app/flappy.tsx"}),
 		fnResp("1", "write_file", map[string]any{"bytes": float64(120), "created": true}),
 		fnCall("2", "git_commit", map[string]any{"dir": "games", "message": "feat: flappy bird"}),
 		fnResp("2", "git_commit", map[string]any{"error": "nothing to commit, working tree clean"}),
-	))
+	), "")
 	if act.committed {
 		t.Fatal("activityFromSession recorded a FAILED git_commit as committed")
 	}
@@ -85,14 +85,14 @@ func TestDeliveryCriterionFailsWhenCommitErrored(t *testing.T) {
 
 // The ledger records the delivery actions that DID happen, from the session.
 func TestActivityFromSessionRecordsDelivery(t *testing.T) {
-	act := activityFromSession(newTestSession(t,
+	act := activityFromSessionAt(newTestSession(t,
 		fnCall("1", "git_commit", map[string]any{"dir": "games", "message": "feat: flappy bird"}),
 		fnResp("1", "git_commit", map[string]any{"sha": "abc123", "files_changed": float64(3)}),
 		fnCall("2", "git_push", map[string]any{"dir": "games"}),
 		fnResp("2", "git_push", map[string]any{"remote": "origin", "branch": "add-flappy-bird-quack-v4", "sha": "abc123"}),
 		fnCall("3", "github_pull_request", map[string]any{"owner": "fagerbergj", "repo": "games", "title": "Add Flappy Bird", "head": "add-flappy-bird-quack-v4"}),
 		fnResp("3", "github_pull_request", map[string]any{"url": "https://github.com/fagerbergj/games/pull/7"}),
-	))
+	), "")
 	if !act.committed || !act.pushed {
 		t.Errorf("committed=%v pushed=%v, want all true", act.committed, act.pushed)
 	}
@@ -192,7 +192,8 @@ func TestFoldDeterministicHardFailsUndeliveredNode(t *testing.T) {
 	v := verdict{Score: 0.7, Criteria: map[string]criterionScore{"task_completeness": {Score: 0.7}}}
 	// A terminal node: it has a delivery target, so the demand still applies.
 	deliver := func(context.Context, DeliveryContext) ([]DeliveryItemOutcome, error) { return nil, nil }
-	got := foldDeterministic(context.Background(), v, strings.Repeat("the game is done. ", 40), workerActivity{written: []string{"a.ts"}}, Config{Task: prTask, Deliver: deliver})
+	det, _ := computeDeterministicCriteria(context.Background(), strings.Repeat("the game is done. ", 40), workerActivity{written: []string{"a.ts"}}, Config{Task: prTask, Deliver: deliver})
+	got := mergeDeterministic(v, det, Config{Task: prTask, Deliver: deliver})
 	if c, ok := got.Criteria["delivery_complete"]; !ok || c.Score != 0 {
 		t.Fatalf("delivery_complete = %+v (present=%v), want a hard 0", c, ok)
 	}
@@ -377,12 +378,12 @@ func TestReviewCriterionKeysOnIsReviewerNotTaskText(t *testing.T) {
 
 // Only SUCCESSFUL calls count: a github_submit_review that errored posted nothing.
 func TestReviewCriterionFailsWhenSubmitErrored(t *testing.T) {
-	act := activityFromSession(newTestSession(t,
+	act := activityFromSessionAt(newTestSession(t,
 		fnCall("1", "github_add_review_comment", map[string]any{"owner": "fagerbergj", "repo": "games", "pull_number": float64(4), "path": "app/games.ts", "line": float64(12)}),
 		fnResp("1", "github_add_review_comment", map[string]any{"index": float64(0), "draft_count": float64(1)}),
 		fnCall("2", "github_submit_review", map[string]any{"owner": "fagerbergj", "repo": "games", "pull_number": float64(4), "event": "REQUEST_CHANGES"}),
 		fnResp("2", "github_submit_review", map[string]any{"error": "422 Unprocessable Entity"}),
-	))
+	), "")
 	if act.reviewSubmitted {
 		t.Fatal("activityFromSession recorded a FAILED github_submit_review as submitted")
 	}
@@ -396,12 +397,12 @@ func TestReviewCriterionFailsWhenSubmitErrored(t *testing.T) {
 }
 
 func TestActivityFromSessionRecordsReview(t *testing.T) {
-	act := activityFromSession(newTestSession(t,
+	act := activityFromSessionAt(newTestSession(t,
 		fnCall("1", "github_add_review_comment", map[string]any{"owner": "fagerbergj", "repo": "games", "pull_number": float64(4), "path": "app/games.ts", "line": float64(12)}),
 		fnResp("1", "github_add_review_comment", map[string]any{"index": float64(0), "draft_count": float64(1)}),
 		fnCall("2", "github_submit_review", map[string]any{"owner": "fagerbergj", "repo": "games", "pull_number": float64(4), "event": "REQUEST_CHANGES"}),
 		fnResp("2", "github_submit_review", map[string]any{"url": "https://github.com/fagerbergj/games/pull/4#pullrequestreview-1", "comments": float64(1)}),
-	))
+	), "")
 	if !act.reviewCommented || !act.reviewSubmitted {
 		t.Errorf("reviewCommented=%v reviewSubmitted=%v, want both true", act.reviewCommented, act.reviewSubmitted)
 	}
@@ -450,12 +451,12 @@ func TestWorkIncompleteOnAnUnpostedReview(t *testing.T) {
 
 func TestBehaviourCriterionFailsOnAReadOnlyReview(t *testing.T) {
 	// Only reads: exactly the run that missed the bug.
-	act := activityFromSession(newTestSession(t,
+	act := activityFromSessionAt(newTestSession(t,
 		fnCall("1", "git_checkout", map[string]any{"dir": "games", "ref": "add-flappy-bird-openhands"}),
 		fnResp("1", "git_checkout", map[string]any{"branch": "add-flappy-bird-openhands", "head": "abc1234"}),
 		fnCall("2", "read_file", map[string]any{"path": "games/app/flappy/game.ts"}),
 		fnResp("2", "read_file", map[string]any{"content": "export function step() {}"}),
-	))
+	), "")
 	got, ok := behaviourCriterion(reviewTask, act, true)
 	if !ok {
 		t.Fatal("behaviour_verified must apply to a review of a real code change")
@@ -472,12 +473,12 @@ func TestBehaviourCriterionFailsOnAReadOnlyReview(t *testing.T) {
 }
 
 func TestBehaviourCriterionPassesWhenTheReviewerRanTheCode(t *testing.T) {
-	act := activityFromSession(newTestSession(t,
+	act := activityFromSessionAt(newTestSession(t,
 		fnCall("1", "read_file", map[string]any{"path": "games/app/flappy/game.ts"}),
 		fnResp("1", "read_file", map[string]any{"content": "export function step() {}"}),
 		fnCall("2", "run_command", map[string]any{"dir": "games", "command": "npx tsx /tmp/probe.ts"}),
 		fnResp("2", "run_command", map[string]any{"exit_code": float64(0), "stdout": "Start Y: 285.0, Final Y: 285.0"}),
-	))
+	), "")
 	if !act.ranCommand {
 		t.Fatal("activityFromSession must record a successful run_command")
 	}
@@ -490,12 +491,12 @@ func TestBehaviourCriterionPassesWhenTheReviewerRanTheCode(t *testing.T) {
 // A run_command that ERRORED never executed anything - same rule as
 // written/committed/pushed: successful calls only.
 func TestBehaviourCriterionFailsWhenTheCommandErrored(t *testing.T) {
-	act := activityFromSession(newTestSession(t,
+	act := activityFromSessionAt(newTestSession(t,
 		fnCall("1", "read_file", map[string]any{"path": "games/app/flappy/game.ts"}),
 		fnResp("1", "read_file", map[string]any{"content": "export function step() {}"}),
 		fnCall("2", "run_command", map[string]any{"dir": "games", "command": "npm test"}),
 		fnResp("2", "run_command", map[string]any{"error": "command not allowed"}),
-	))
+	), "")
 	if act.ranCommand {
 		t.Fatal("a FAILED run_command must not count as an execution")
 	}
@@ -526,12 +527,12 @@ func TestBehaviourCriterionDoesNotFireOnProseTask(t *testing.T) {
 // A review of a change with no runnable surface (docs/config only) is exempt:
 // there is nothing to execute, so demanding an execution would deadlock it.
 func TestBehaviourCriterionExemptsADocsOnlyReview(t *testing.T) {
-	act := activityFromSession(newTestSession(t,
+	act := activityFromSessionAt(newTestSession(t,
 		fnCall("1", "read_file", map[string]any{"path": "games/README.md"}),
 		fnResp("1", "read_file", map[string]any{"content": "# Games"}),
 		fnCall("2", "read_file", map[string]any{"path": "games/.github/workflows/ci.yaml"}),
 		fnResp("2", "read_file", map[string]any{"content": "on: push"}),
-	))
+	), "")
 	if _, ok := behaviourCriterion(reviewTask, act, true); ok {
 		t.Error("behaviour_verified must not fire on a review whose change has no runnable surface (.md/.yaml only)")
 	}
@@ -546,7 +547,8 @@ func TestBehaviourCriterionExemptsADocsOnlyReview(t *testing.T) {
 // judge thought of the prose.
 func TestFoldDeterministicHardFailsUnpostedReview(t *testing.T) {
 	v := verdict{Score: 0.9, Criteria: map[string]criterionScore{"review_quality": {Score: 0.9}}}
-	got := foldDeterministic(context.Background(), v, "I could not access the PR's code.", workerActivity{}, Config{Task: reviewTask, IsReviewer: true})
+	det, _ := computeDeterministicCriteria(context.Background(), "I could not access the PR's code.", workerActivity{}, Config{Task: reviewTask, IsReviewer: true})
+	got := mergeDeterministic(v, det, Config{Task: reviewTask, IsReviewer: true})
 	if c := got.Criteria["review_posted"]; c.Score != 0 {
 		t.Fatalf("review_posted = %+v, want Score 0", c)
 	}

@@ -28,12 +28,12 @@ import (
 // staged set exactly once, and only when the gate's judge round passes.
 
 func TestStagedDeliveryTargetUpsertAndUnstage(t *testing.T) {
-	act := activityFromSession(newTestSession(t,
+	act := activityFromSessionAt(newTestSession(t,
 		fnCall("1", "stage_pr", map[string]any{"title": "Add flappy bird", "body": "first draft"}),
 		fnCall("2", "stage_pr", map[string]any{"title": "Add flappy bird v2", "body": "revised"}),
 		fnCall("3", "stage_comment", map[string]any{"slot": "progress", "body": "halfway done"}),
 		fnCall("4", "unstage", map[string]any{"target": "comment:progress"}),
-	))
+	), "")
 	if len(act.stagedDelivery) != 1 {
 		t.Fatalf("stagedDelivery = %+v, want exactly the surviving pr entry", act.stagedDelivery)
 	}
@@ -49,10 +49,10 @@ func TestStagedDeliveryTargetUpsertAndUnstage(t *testing.T) {
 // A comment staged then unstaged before the gate ever reads the set must never
 // be handed to Deliver - commitDelivery only ever sees the FINAL map.
 func TestStagedThenUnstagedItemNeverReachesDeliver(t *testing.T) {
-	act := activityFromSession(newTestSession(t,
+	act := activityFromSessionAt(newTestSession(t,
 		fnCall("1", "stage_comment", map[string]any{"slot": "progress", "body": "halfway"}),
 		fnCall("2", "unstage", map[string]any{"target": "comment:progress"}),
-	))
+	), "")
 	var called int32
 	commitDelivery(context.Background(), nil, Config{Deliver: func(context.Context, DeliveryContext) ([]DeliveryItemOutcome, error) {
 		atomic.AddInt32(&called, 1)

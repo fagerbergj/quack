@@ -27,14 +27,6 @@ func withIdentity(ctx context.Context, id Identity) context.Context {
 	return context.WithValue(ctx, identityCtxKey{}, id)
 }
 
-// FromContext returns the identity the auth middleware attached to the
-// request. ok is false when auth is disabled, or the handler runs outside the
-// middleware (e.g. /health, the SPA).
-func FromContext(ctx context.Context) (Identity, bool) {
-	id, ok := ctx.Value(identityCtxKey{}).(Identity)
-	return id, ok
-}
-
 // Auth enforces the configured policy. A nil *Auth (auth: absent from config)
 // is valid, and Middleware on it is a passthrough.
 type Auth struct {

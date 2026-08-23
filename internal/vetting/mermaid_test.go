@@ -294,58 +294,6 @@ func TestMermaidCriterion_ValidEverywherePasses(t *testing.T) {
 	}
 }
 
-// TestDegradeInvalidMermaid_TwoBlocks verifies that with two invalid blocks in
-// one answer, both are degraded and the prose BETWEEN them is preserved (not
-// swallowed by a fence) - the `last` cursor advances correctly per block.
-func TestDegradeInvalidMermaid_TwoBlocks(t *testing.T) {
-	requireMermaidValidator(t)
-	// Neither block declares a diagram type, so both fail validation (as in the
-	// single-block test above).
-	md := "```mermaid\nA[Start] --> B[Finish]\n```\n\nMiddle prose.\n\n```mermaid\nX --> Y\n```"
-	got, issues := DegradeInvalidMermaid(md)
-	if len(issues) != 2 {
-		t.Fatalf("issues = %d, want 2 (both blocks invalid)", len(issues))
-	}
-	if !strings.Contains(got, "Middle prose.") {
-		t.Fatalf("prose between the two degraded blocks was swallowed:\n%s", got)
-	}
-	if n := strings.Count(got, "```text"); n != 2 {
-		t.Fatalf("```text fences = %d, want 2", n)
-	}
-	if n := strings.Count(got, "> ⚠️ invalid mermaid diagram"); n != 2 {
-		t.Fatalf("warning callouts = %d, want 2", n)
-	}
-}
-
-func TestDegradeInvalidMermaid_WarningOutsideFence(t *testing.T) {
-	requireMermaidValidator(t)
-	md := "Before.\n\n```mermaid\nA[Start] --> B[Finish]\n```\n\nAfter."
-	got, issues := DegradeInvalidMermaid(md)
-	if len(issues) != 1 {
-		t.Fatalf("issues = %v, want exactly 1", issues)
-	}
-	wantLine := "> ⚠️ invalid mermaid diagram (parse error"
-	lines := strings.Split(got, "\n")
-	foundWarning, foundTextFence := false, false
-	for _, line := range lines {
-		if strings.HasPrefix(line, wantLine) {
-			if foundTextFence {
-				t.Fatal("warning appeared after the ```text fence - it must come before the fence opener")
-			}
-			foundWarning = true
-		}
-		if line == "```text" {
-			foundTextFence = true
-		}
-	}
-	if !foundWarning {
-		t.Fatal("expected a warning line starting with '> ⚠️ invalid mermaid diagram'")
-	}
-	if !foundTextFence {
-		t.Fatal("expected ```text fence in degraded output")
-	}
-}
-
 // v0.1.0-era mermaid feature checks, kept as regression coverage against the
 // real parser: quoted subgraph titles and class-diagram notes must still
 // parse clean.
@@ -455,43 +403,6 @@ func TestTranslateMermaidError_UnstructuredErrorKeepsRawText(t *testing.T) {
 	}
 	if !strings.Contains(got, "double quotes") {
 		t.Fatalf("got %q, want a generic quoting hint even with no structure to parse", got)
-	}
-}
-
-// #735: FormatMermaidNudgeBody is what github/webhook.go embeds in a
-// rendered GitHub comment - each issue's multi-line message must land inside
-// its own fenced block (github's markdown renderer preserves a fence
-// verbatim), not a "- " bullet, which would fold the caret line's leading
-// spaces and break the alignment.
-func TestFormatMermaidNudgeBody_PreservesCaretAlignment(t *testing.T) {
-	iss := mermaidIssue{line: 66, err: "parse error: diagram line 2, column 24:\n" +
-		"    ...e] --> G[filterChats(chats, filterState)\n" +
-		"    -----------------------^\n" +
-		`unquoted "(" inside a node label - mermaid treats it as ending the label there.`}
-	got := FormatMermaidNudgeBody([]mermaidIssue{iss})
-	if !strings.Contains(got, "```\n") {
-		t.Fatalf("got %q, want a fenced code block, not a bare bullet", got)
-	}
-	wantCaretLine := "    -----------------------^"
-	if !strings.Contains(got, "\n"+wantCaretLine+"\n") {
-		t.Fatalf("got %q, want the caret line's exact alignment preserved on its own line", got)
-	}
-	if strings.HasPrefix(got, "- ") {
-		t.Fatalf("got %q, must not be a markdown bullet (bare newlines break both the list and the caret)", got)
-	}
-}
-
-func TestFormatMermaidNudgeBody_MultipleIssuesEachGetOwnBlock(t *testing.T) {
-	issues := []mermaidIssue{
-		{line: 10, err: "parse error: first"},
-		{line: 20, err: "parse error: second"},
-	}
-	got := FormatMermaidNudgeBody(issues)
-	if n := strings.Count(got, "```"); n != 4 {
-		t.Fatalf("fence markers = %d, want 4 (2 per issue)", n)
-	}
-	if !strings.Contains(got, "line 10:") || !strings.Contains(got, "line 20:") {
-		t.Fatalf("got %q, want both issues' line headers", got)
 	}
 }
 

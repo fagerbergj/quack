@@ -88,28 +88,9 @@ func buildSkills(ag adkagent.Agent) []a2a.AgentSkill {
 	return adka2a.BuildAgentSkills(ag)
 }
 
-// Client returns an ADK agent that dispatches to this server over A2A.
-func (s *A2AServer) Client() (adkagent.Agent, error) {
-	base, err := s.clientNamed(s.Card.Name)
-	if err != nil {
-		return nil, err
-	}
-	return nodeClient{Agent: base, srv: s}, nil
-}
-
-// nodeClient is an A2A client agent with per-node identity (ForNode).
-type nodeClient struct {
-	adkagent.Agent
-	srv *A2AServer
-}
-
-// ForNode returns a client identity unique to nodeKey, working around an ADK
-// remote-session collision bug for concurrent sibling nodes.
-func (c nodeClient) ForNode(nodeKey string) (adkagent.Agent, error) {
-	return c.srv.clientNamed(c.srv.Card.Name + "#" + nodeKey)
-}
-
-// ClientForNode is Client() with the per-node identity fix pre-applied.
+// ClientForNode returns an ADK agent that dispatches to this server over A2A,
+// under an identity unique to nodeKey (works around an ADK remote-session
+// collision bug for concurrent sibling nodes).
 func (s *A2AServer) ClientForNode(nodeKey string) (adkagent.Agent, error) {
 	return s.clientNamed(s.Card.Name + "#" + nodeKey)
 }
