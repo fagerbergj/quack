@@ -120,9 +120,7 @@ func (a *Admission) Admit(ctx context.Context, spec AdmissionSpec, onQueued func
 		// ctx-after-fits ordering this replaced.
 		if !queuedFired && onQueued != nil {
 			queuedFired = true
-			a.mu.Unlock()
-			onQueued()
-			a.mu.Lock()
+			a.fireUnlocked(onQueued)
 			continue // re-check fits: state may have changed while unlocked
 		}
 		if ctx.Err() != nil {
@@ -130,6 +128,15 @@ func (a *Admission) Admit(ctx context.Context, spec AdmissionSpec, onQueued func
 		}
 		a.cond.Wait()
 	}
+}
+
+// fireUnlocked calls fn with a.mu released (fn is arbitrary consumer code -
+// a stream yield - so it must never run under the lock). Its own defer
+// relocks even if fn panics, so Admit's deferred Unlock never double-unlocks.
+func (a *Admission) fireUnlocked(fn func()) {
+	a.mu.Unlock()
+	defer a.mu.Lock()
+	fn()
 }
 
 // Release returns spec's reserved capacity and wakes any blocked waiters.
