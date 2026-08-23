@@ -7,6 +7,7 @@ import (
 	"iter"
 	"log/slog"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -57,7 +58,7 @@ type Orchestrator struct {
 	taskMem     *memory.Store
 	memAgent    adkagent.Agent
 	runDeadline time.Duration
-	runSem      chan struct{}
+	runAdmit    *dag.Admission
 	queuedChats sync.Map
 }
 
@@ -68,38 +69,68 @@ func (o *Orchestrator) SetUserMemoryHook(memAgent adkagent.Agent) {
 // SetRunDeadline bounds execution time, not queue wait. Zero = unbounded.
 func (o *Orchestrator) SetRunDeadline(d time.Duration) { o.runDeadline = d }
 
-// SetMaxActiveRuns caps concurrent runs server-wide.
+// runAdmissionSpec: a fake "model" key run-level scheduling counts against
+// via dag.Admission's sessions dimension (a plain per-key counting cap -
+// unlike the residency dimension, which caps distinct models, not count).
+var runAdmissionSpec = dag.AdmissionSpec{Model: "orchestrator-run"}
+
+// SetMaxActiveRuns caps concurrent runs server-wide via the same admission
+// queue (dag.Admission) node scheduling uses, instead of a second
+// parallel implementation.
 func (o *Orchestrator) SetMaxActiveRuns(n int) {
 	if n >= 1 {
-		o.runSem = make(chan struct{}, n)
+		o.runAdmit = dag.NewAdmission(map[string]int{runAdmissionSpec.Model: n}, nil, nil, 0)
 	}
 }
 
+// acquireRun blocks until a run slot is free, or ctx is cancelled while
+// queued. A cancelled wait never reserves a slot: the caller must check
+// acquired and return without executing.
 func (o *Orchestrator) acquireRun(ctx context.Context) (release func(), acquired bool) {
-	if o.runSem == nil {
+	if o.runAdmit == nil {
 		return func() {}, true
-	}
-	select {
-	case o.runSem <- struct{}{}:
-		return func() { <-o.runSem }, true
-	default:
 	}
 	// Only spanned once it actually blocks. Without this a queued run that never
 	// acquires emits a childless "quack.run" root whose latency is pure waiting.
-	ctx, span := otelobs.Start(ctx, "run.queue")
-	defer func() {
+	var span oteltrace.Span
+	onQueued := func() { _, span = otelobs.Start(ctx, "run.queue") }
+	acquired = o.runAdmit.Admit(ctx, runAdmissionSpec, onQueued)
+	if span != nil {
 		span.SetAttributes(attribute.Bool("acquired", acquired))
 		otelobs.End(span, nil)
-	}()
-	select {
-	case o.runSem <- struct{}{}:
-		return func() { <-o.runSem }, true
-	case <-ctx.Done():
+	}
+	if !acquired {
 		return func() {}, false
+	}
+	return func() { o.runAdmit.Release(runAdmissionSpec) }, true
+}
+
+// newSafeYield serializes concurrent node goroutines onto one yield and
+// stops after a panicking call, instead of letting a second goroutine call
+// the already-panicked yield again (which replaces the real panic with
+// Go's "range function continued iteration after loop body panic", #1016).
+func newSafeYield(yield func(stream.SSEEvent, error) bool) func(stream.SSEEvent, error) bool {
+	var mu sync.Mutex
+	stopped := false
+	return func(ev stream.SSEEvent, e error) (ok bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		if stopped {
+			return false
+		}
+		defer func() {
+			if r := recover(); r != nil {
+				stopped = true
+				slog.Error("orchestrator: panic in stream consumer, run aborted",
+					"component", "orchestrator", "panic", r, "stack", string(debug.Stack()))
+				ok = false
+			}
+		}()
+		return yield(ev, e)
 	}
 }
 
-// Queued reports whether chatID is waiting on runSem (queued), not yet executing.
+// Queued reports whether chatID is waiting to be admitted (queued), not yet executing.
 func (o *Orchestrator) Queued(chatID string) bool {
 	_, ok := o.queuedChats.Load(chatID)
 	return ok
@@ -148,6 +179,7 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, see
 		release, acquired := o.acquireRun(ctx)
 		defer release()
 		if !acquired {
+			yield(stream.Errorf("orchestrator: run cancelled while queued"), nil)
 			return
 		}
 		plan, ok := o.stashedPlan(ctx, userID, chatID)
@@ -188,8 +220,7 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, see
 			yield(stream.Errorf("orchestrator: retry runner: "+err.Error()), nil)
 			return
 		}
-		var mu sync.Mutex
-		safeYield := func(ev stream.SSEEvent, e error) bool { mu.Lock(); defer mu.Unlock(); return yield(ev, e) }
+		safeYield := newSafeYield(yield)
 		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
 		ds := o.executor.NewDagStream(ctx, plan, AppName, userID, runSess, chatID, safeYield, nodeOutputs)
 		ds.ScopeToRetry(nodeID)
@@ -261,16 +292,20 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 
 		release, acquired := o.acquireRun(ctx)
 		defer release()
-		if acquired {
-			o.queuedChats.Delete(sessionID)
-			otelobs.RunUnqueued()
-			queued = false
-			otelobs.RunStarted()
-			if o.runDeadline > 0 {
-				var deadlineCancel context.CancelFunc
-				ctx, deadlineCancel = context.WithTimeout(ctx, o.runDeadline)
-				defer deadlineCancel()
-			}
+		if !acquired {
+			// Queued run's ctx was cancelled before a slot freed: never execute
+			// on a dead context (#1016).
+			yield(stream.Errorf("orchestrator: run cancelled while queued"), nil)
+			return
+		}
+		o.queuedChats.Delete(sessionID)
+		otelobs.RunUnqueued()
+		queued = false
+		otelobs.RunStarted()
+		if o.runDeadline > 0 {
+			var deadlineCancel context.CancelFunc
+			ctx, deadlineCancel = context.WithTimeout(ctx, o.runDeadline)
+			defer deadlineCancel()
 		}
 		o.executor.ResetNodeCancels(sessionID)
 
@@ -374,16 +409,20 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 
 		release, acquired := o.acquireRun(ctx)
 		defer release()
-		if acquired {
-			o.queuedChats.Delete(sessionID)
-			otelobs.RunUnqueued()
-			queued = false
-			otelobs.RunStarted()
-			if o.runDeadline > 0 {
-				var deadlineCancel context.CancelFunc
-				ctx, deadlineCancel = context.WithTimeout(ctx, o.runDeadline)
-				defer deadlineCancel()
-			}
+		if !acquired {
+			// Queued run's ctx was cancelled before a slot freed: never execute
+			// on a dead context (#1016).
+			yield(stream.Errorf("orchestrator: run cancelled while queued"), nil)
+			return
+		}
+		o.queuedChats.Delete(sessionID)
+		otelobs.RunUnqueued()
+		queued = false
+		otelobs.RunStarted()
+		if o.runDeadline > 0 {
+			var deadlineCancel context.CancelFunc
+			ctx, deadlineCancel = context.WithTimeout(ctx, o.runDeadline)
+			defer deadlineCancel()
 		}
 		o.executor.ResetNodeCancels(sessionID)
 		planCache := tools.NewPlanCache()
@@ -499,8 +538,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			RunID: orchRunID, Agent: "orchestrator", Stage: stream.StageWorker, StartedAtMs: time.Now().UnixMilli(),
 		}}, nil)
 
-		var mu sync.Mutex
-		safeYield := func(ev stream.SSEEvent, e error) bool { mu.Lock(); defer mu.Unlock(); return yield(ev, e) }
+		safeYield := newSafeYield(yield)
 
 		invoke := func(content *genai.Content) (produced, stop bool) {
 			for ev, err := range r.Run(ctx, userID, sessionID, content, adkagent.RunConfig{}) {
@@ -726,8 +764,7 @@ func (o *Orchestrator) startNodeRun(ctx context.Context, userID, sessionID, mess
 		yield(stream.Errorf("resume: no plan in session to resume"), nil)
 		return
 	}
-	var mu sync.Mutex
-	safeYield := func(ev stream.SSEEvent, e error) bool { mu.Lock(); defer mu.Unlock(); return yield(ev, e) }
+	safeYield := newSafeYield(yield)
 	ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
 	safeYield(tools.DagPlanEvent(plan), nil)
 	// awaiting_input: the message is the answer to the parked question.

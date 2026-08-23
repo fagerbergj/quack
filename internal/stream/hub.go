@@ -41,7 +41,7 @@ func (h *Hub) CancelRun(chatID string) bool {
 	return true
 }
 
-// Reports whether chatID has a run registered (queued or executing). Unlike Active, covers runs still waiting on runSem. Used by workspace GC.
+// Reports whether chatID has a run registered (queued or executing). Unlike Active, covers runs still waiting to be admitted. Used by workspace GC.
 func (h *Hub) HasRegisteredRun(chatID string) bool {
 	_, ok := h.runs.Load(chatID)
 	return ok
