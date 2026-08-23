@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,20 +12,54 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
+// syncRecorder guards httptest.ResponseRecorder, whose bytes.Buffer is not safe
+// for the concurrent write/read these live-tail tests do (handler goroutine
+// writes while the test polls). Only the live tests need it.
+type syncRecorder struct {
+	mu sync.Mutex
+	*httptest.ResponseRecorder
+}
+
+func newSyncRecorder() *syncRecorder {
+	return &syncRecorder{ResponseRecorder: httptest.NewRecorder()}
+}
+
+func (s *syncRecorder) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ResponseRecorder.Write(p)
+}
+
+func (s *syncRecorder) WriteHeader(code int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ResponseRecorder.WriteHeader(code)
+}
+
+func (s *syncRecorder) Flush() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ResponseRecorder.Flush()
+}
+
+func (s *syncRecorder) body() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ResponseRecorder.Body.String()
+}
+
 // waitForBody polls the recorder's accumulated body until it contains want, or
-// fails the test after a short timeout. httptest.ResponseRecorder's bytes.Buffer
-// isn't safe for concurrent read/write, but this package writes+reads only
-// strings, in a tight poll loop - fine for a test racing a background writer.
-func waitForBody(t *testing.T, rec *httptest.ResponseRecorder, want string) {
+// fails the test after a short timeout.
+func waitForBody(t *testing.T, rec *syncRecorder, want string) {
 	t.Helper()
 	deadline := time.After(2 * time.Second)
 	for {
-		if strings.Contains(rec.Body.String(), want) {
+		if strings.Contains(rec.body(), want) {
 			return
 		}
 		select {
 		case <-deadline:
-			t.Fatalf("timed out waiting for %q in body:\n%s", want, rec.Body.String())
+			t.Fatalf("timed out waiting for %q in body:\n%s", want, rec.body())
 		case <-time.After(5 * time.Millisecond):
 		}
 	}
@@ -48,7 +83,7 @@ func TestSubscribeLiveTail(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/v1/chats/"+chatID+"/stream", nil)
 	ctx, cancel := context.WithCancel(req.Context())
 	req = req.WithContext(ctx)
-	rec := httptest.NewRecorder()
+	rec := newSyncRecorder()
 	done := make(chan struct{})
 	go func() {
 		h.SubscribeChatStream(rec, req, chatID)
@@ -129,7 +164,7 @@ func TestSubscribeLiveReconnectByLastEventID(t *testing.T) {
 	req.Header.Set("Last-Event-ID", "1")
 	ctx, cancel := context.WithCancel(req.Context())
 	req = req.WithContext(ctx)
-	rec := httptest.NewRecorder()
+	rec := newSyncRecorder()
 	done := make(chan struct{})
 	go func() {
 		h.SubscribeChatStream(rec, req, chatID)
@@ -137,8 +172,8 @@ func TestSubscribeLiveReconnectByLastEventID(t *testing.T) {
 	}()
 
 	waitForBody(t, rec, "id: 2")
-	if strings.Contains(rec.Body.String(), "id: 1\n") {
-		t.Errorf("reconnect from seq 1 must not resend seq 1 (dup); body:\n%s", rec.Body.String())
+	if strings.Contains(rec.body(), "id: 1\n") {
+		t.Errorf("reconnect from seq 1 must not resend seq 1 (dup); body:\n%s", rec.body())
 	}
 
 	pub.Publish(stream.NodeDone("n1", stream.NodeDoneData{})) // seq 3, live
