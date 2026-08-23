@@ -290,6 +290,37 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 	writeJSON(w, http.StatusOK, detail)
 }
 
+// terminalNodeID returns the plan's terminal node - the one no other node
+// depends on. Its output IS the turn's answer, mirroring the frontend's
+// terminalNodeId/liveDagFinalText.
+func terminalNodeID(plan stream.DagPlanData) string {
+	hasSuccessor := make(map[string]bool, len(plan.Edges))
+	for _, e := range plan.Edges {
+		hasSuccessor[e.From] = true
+	}
+	for _, n := range plan.Nodes {
+		if !hasSuccessor[n.ID] {
+			return n.ID
+		}
+	}
+	return ""
+}
+
+// terminalNodeOutput returns the terminal node's full vetted output, or ""
+// when the plan has no terminal node with output yet.
+func terminalNodeOutput(plan stream.DagPlanData, nodes []store.DagNode) string {
+	id := terminalNodeID(plan)
+	if id == "" {
+		return ""
+	}
+	for _, n := range nodes {
+		if n.NodeID == id {
+			return strings.TrimSpace(n.Output)
+		}
+	}
+	return ""
+}
+
 // usageAggregateToSchema always populates every field (unlike Turn.usage,
 // which is sparse) - ChatDetail.usage is the chat-wide total, meaningfully
 // zero rather than absent.
@@ -1112,17 +1143,34 @@ func lastEventID(r *http.Request) int64 {
 }
 
 func buildTurn(tc store.TurnContent) schema.Turn {
+	// planData is the turn's DAG shape; unmarshaled once for both the DAG
+	// output item and the answer bubble's text below.
+	var planData stream.DagPlanData
+	planOK := tc.Plan != nil && json.Unmarshal([]byte(tc.Plan.PlanJSON), &planData) == nil
+
+	// DAG turns: the answer bubble carries the terminal node's OUTPUT - what
+	// the live stream rendered (chatStore's liveDagFinalText) - not the
+	// orchestrator's planning narration. Persisting that narration made a
+	// reload swap the bubble for the chatter the live view already discards,
+	// so a review read differently after refresh than it did live.
+	bubbleText := tc.AsstText
+	if planOK {
+		if out := terminalNodeOutput(planData, tc.Nodes); out != "" {
+			bubbleText = out
+		}
+	}
+
 	var msgItem schema.OutputItem
-	if tc.AsstText != "" || tc.AsstThink != "" {
+	if bubbleText != "" || tc.AsstThink != "" {
 		content := make([]schema.ContentPart, 0, 2)
 		if tc.AsstThink != "" {
 			var cp schema.ContentPart
 			_ = cp.FromReasoningPart(schema.ReasoningPart{Text: tc.AsstThink})
 			content = append(content, cp)
 		}
-		if tc.AsstText != "" {
+		if bubbleText != "" {
 			var cp schema.ContentPart
-			_ = cp.FromOutputTextPart(schema.OutputTextPart{Text: tc.AsstText})
+			_ = cp.FromOutputTextPart(schema.OutputTextPart{Text: bubbleText})
 			content = append(content, cp)
 		}
 		_ = msgItem.FromMessageOutputItem(schema.MessageOutputItem{
@@ -1133,40 +1181,37 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 	}
 
 	var dagItem *schema.OutputItem
-	if tc.Plan != nil {
-		var planData stream.DagPlanData
-		if err := json.Unmarshal([]byte(tc.Plan.PlanJSON), &planData); err == nil {
-			nodes := make([]schema.DagNodeDef, len(planData.Nodes))
-			for i, n := range planData.Nodes {
-				nodes[i] = schema.DagNodeDef{Id: n.ID, Agent: n.Agent, Task: n.Task, DependsOn: n.DependsOn, ContextWindow: intPtr(n.ContextWindow)}
-			}
-			edges := make([]schema.DagEdge, len(planData.Edges))
-			for i, e := range planData.Edges {
-				edges[i] = schema.DagEdge{From: e.From, To: e.To}
-			}
-			nodeStates := make(map[string]schema.DagNodeState, len(tc.Nodes))
-			for _, n := range tc.Nodes {
-				nodeStates[n.NodeID] = dagNodeState(n)
-			}
-			// Completed if all nodes are done/failed/cancelled, in_progress otherwise.
-			dagStatus := schema.Completed
-			for _, ns := range nodeStates {
-				if ns.Status == schema.NodeStatusRunning || ns.Status == schema.NodeStatusQueued || ns.Status == schema.NodeStatusNeedsInput || ns.Status == schema.NodeStatusPaused {
-					dagStatus = schema.InProgress
-					break
-				}
-			}
-			item := new(schema.OutputItem)
-			_ = item.FromDagOutputItem(schema.DagOutputItem{
-				Id:         tc.Plan.ID,
-				Status:     dagStatus,
-				PlanId:     tc.Plan.ID,
-				Nodes:      nodes,
-				Edges:      edges,
-				NodeStates: nodeStates,
-			})
-			dagItem = item
+	if planOK {
+		nodes := make([]schema.DagNodeDef, len(planData.Nodes))
+		for i, n := range planData.Nodes {
+			nodes[i] = schema.DagNodeDef{Id: n.ID, Agent: n.Agent, Task: n.Task, DependsOn: n.DependsOn, ContextWindow: intPtr(n.ContextWindow)}
 		}
+		edges := make([]schema.DagEdge, len(planData.Edges))
+		for i, e := range planData.Edges {
+			edges[i] = schema.DagEdge{From: e.From, To: e.To}
+		}
+		nodeStates := make(map[string]schema.DagNodeState, len(tc.Nodes))
+		for _, n := range tc.Nodes {
+			nodeStates[n.NodeID] = dagNodeState(n)
+		}
+		// Completed if all nodes are done/failed/cancelled, in_progress otherwise.
+		dagStatus := schema.Completed
+		for _, ns := range nodeStates {
+			if ns.Status == schema.NodeStatusRunning || ns.Status == schema.NodeStatusQueued || ns.Status == schema.NodeStatusNeedsInput || ns.Status == schema.NodeStatusPaused {
+				dagStatus = schema.InProgress
+				break
+			}
+		}
+		item := new(schema.OutputItem)
+		_ = item.FromDagOutputItem(schema.DagOutputItem{
+			Id:         tc.Plan.ID,
+			Status:     dagStatus,
+			PlanId:     tc.Plan.ID,
+			Nodes:      nodes,
+			Edges:      edges,
+			NodeStates: nodeStates,
+		})
+		dagItem = item
 	}
 
 	var activityItem *schema.OutputItem
@@ -1197,7 +1242,7 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 	if dagItem != nil {
 		output = append(output, *dagItem)
 	}
-	if tc.AsstText != "" || tc.AsstThink != "" {
+	if bubbleText != "" || tc.AsstThink != "" {
 		output = append(output, msgItem)
 	}
 
