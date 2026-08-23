@@ -45,6 +45,15 @@ func spanByName(t *testing.T, exp *tracetest.InMemoryExporter, name string) trac
 	return tracetest.SpanStub{}
 }
 
+// withContentCapture flips otelobs' shared capture-content flag for the
+// duration of one test, restoring the previous value on cleanup.
+func withContentCapture(t *testing.T, enabled bool) {
+	t.Helper()
+	prev := otelobs.CaptureContentEnabled()
+	otelobs.SetCaptureContent(enabled)
+	t.Cleanup(func() { otelobs.SetCaptureContent(prev) })
+}
+
 func attrsOf(s tracetest.SpanStub) map[string]string {
 	out := map[string]string{}
 	for _, kv := range s.Attributes {
@@ -126,6 +135,7 @@ func TestTurnSpans_UnfinishedToolCallStillExports(t *testing.T) {
 // arguments from rawInput, result from the terminal update - so a runaway
 // tool call is diagnosable from Langfuse without querying chat_events.
 func TestTurnSpans_ToolCallDetailAttributes(t *testing.T) {
+	withContentCapture(t, true)
 	exp := withTestTracer(t)
 	turns := newTurnSpans(context.Background(), "code-reviewer")
 
@@ -145,10 +155,34 @@ func TestTurnSpans_ToolCallDetailAttributes(t *testing.T) {
 	}
 }
 
+// TestTurnSpans_ToolCallDetailAbsentByDefault: with capture off (the deploy
+// default), tool call arguments/output never reach the span, even though it
+// is recording - ACP does most of the tool-calling in this codebase, so this
+// is the invariant that actually matters.
+func TestTurnSpans_ToolCallDetailAbsentByDefault(t *testing.T) {
+	exp := withTestTracer(t)
+	turns := newTurnSpans(context.Background(), "code-reviewer")
+
+	turns.observe(sdk.StartToolCall("t1", "go test ./...",
+		sdk.WithStartKind(sdk.ToolKindExecute),
+		sdk.WithStartRawInput(map[string]any{"command": "go test ./..."})))
+	turns.observe(sdk.UpdateToolCall("t1",
+		sdk.WithUpdateStatus(sdk.ToolCallStatusCompleted),
+		sdk.WithUpdateRawOutput(map[string]any{"output": "ok\tquack\t0.1s"})))
+
+	attrs := attrsOf(spanByName(t, exp, "quack.acp.tool.execute"))
+	for _, k := range []string{otelobs.GenAIToolCallArguments, otelobs.GenAIToolCallResult} {
+		if v, ok := attrs[k]; ok {
+			t.Errorf("attribute %q = %q present with content capture off, want absent", k, v)
+		}
+	}
+}
+
 // TestTurnSpans_ContentFallbackAndTruncation: with no rawOutput the result
 // comes from the content text blocks, and oversized values are capped at
 // attrCap with the shim's truncation marker.
 func TestTurnSpans_ContentFallbackAndTruncation(t *testing.T) {
+	withContentCapture(t, true)
 	exp := withTestTracer(t)
 	turns := newTurnSpans(context.Background(), "code-reviewer")
 

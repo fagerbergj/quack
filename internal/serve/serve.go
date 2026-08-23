@@ -380,6 +380,10 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		}
 	})
 	slog.SetDefault(slog.New(otelobs.WrapHandler(slog.Default().Handler())))
+	otelobs.SetCaptureContent(cfg.Observability.Otel.Content)
+	if cfg.Observability.Otel.IsEnabled() && cfg.Observability.Otel.OTLPEndpoint != "" && !cfg.Observability.Otel.Content {
+		slog.Info("span content capture is off (observability.otel.capture_content) - generation spans export with no prompt/response text", "component", "otelobs")
+	}
 
 	go ledger.RunRetentionSweep(ctx, ledgerStore, cfg.Observability.Recording.RetentionDays, 24*time.Hour)
 
