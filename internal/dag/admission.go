@@ -105,15 +105,20 @@ func (a *Admission) Admit(ctx context.Context, spec AdmissionSpec, onQueued func
 	defer agingTimer.Stop()
 
 	for {
-		if a.oldestSeqLocked() == mySeq || !a.agingActiveLocked() {
-			if a.fits(spec) {
-				a.reserve(spec)
-				return true
+		fits := (a.oldestSeqLocked() == mySeq || !a.agingActiveLocked()) && a.fits(spec)
+		if fits {
+			// Never reserve on a dead ctx, even if capacity happens to be free -
+			// cancelled work must not proceed, no matter how it got here (#1016).
+			if ctx.Err() != nil {
+				return false
 			}
+			a.reserve(spec)
+			return true
 		}
-		// onQueued before the cancellation check: a caller that contended for
-		// a full slot and then had ctx cancelled was still queued, and callers
-		// (e.g. run-level tracing) need that signalled even though it never waits.
+		// Contention (not fitting) is "queued" regardless of ctx state - a
+		// caller cancelled the instant it hit a full queue was still queued.
+		// Firing here can never lead to a reservation, unlike the old
+		// ctx-after-fits ordering this replaced.
 		if !queuedFired && onQueued != nil {
 			queuedFired = true
 			a.mu.Unlock()

@@ -246,3 +246,23 @@ func TestAdmitHonoursContextCancel(t *testing.T) {
 
 // activeKeyTest mirrors serve.activeKey / AdmissionSpec.residencyKey.
 func activeKeyTest(provider, role string) string { return provider + "\x00" + role }
+
+// An already-cancelled ctx must never reserve capacity, even when the spec
+// fits on the very first check (#1021 review: a prior reorder broke this by
+// checking fits/reserve before ctx.Err()). Verified by exhausting the freed
+// capacity afterward at full limit.
+func TestAdmitAlreadyCancelledNeverReserves(t *testing.T) {
+	a := NewAdmission(map[string]int{"m": 1}, nil, nil, time.Hour)
+	spec := AdmissionSpec{Model: "m"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancelled before Admit is ever called - capacity is free
+
+	if a.Admit(ctx, spec, nil) {
+		t.Fatal("Admit succeeded on an already-cancelled ctx")
+	}
+
+	// If the cancelled call had reserved anyway, this would block/fail.
+	mustAdmit(t, a, spec)
+	a.Release(spec)
+}
