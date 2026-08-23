@@ -21,11 +21,9 @@ func redirectSlogForTest(buf *strings.Builder) func() {
 	return func() { slog.SetDefault(prev) }
 }
 
-// A run queued behind a full MaxActiveRuns cap, then cancelled before a slot
-// frees, must never fall through to plan execution (#1016). Before the fix,
-// Run ignored acquireRun's acquired=false and ran the whole plan on a dead
-// ctx - here that would dereference the zero-value Orchestrator's nil
-// executor and panic instead of returning a clean error.
+// A run cancelled while queued must never fall through to execution (#1016).
+// Before the fix, acquireRun's acquired=false was ignored and the plan ran
+// on a dead ctx - here that dereferences the zero-value Orchestrator's nil executor.
 func TestRunNeverExecutesOnCancelledQueuedContext(t *testing.T) {
 	o := &Orchestrator{}
 	o.SetMaxActiveRuns(1)
@@ -59,13 +57,8 @@ func TestRunNeverExecutesOnCancelledQueuedContext(t *testing.T) {
 	}
 }
 
-// The panic-masking bug (#1016): with >=2 goroutines yielding concurrently
-// through the same mutex-guarded yield, a panicking loop body used to let a
-// second, still-blocked goroutine call the same (already-panicked) yield
-// again - Go's runtime then replaces the original panic with "range function
-// continued iteration after loop body panic", destroying the diagnosis and
-// killing the process. newSafeYield must recover the panic once, log the
-// original value, and never invoke yield again on that stream.
+// The stopped latch (#1016): a panicking yield must be recovered once and
+// never invoke yield again on the same call sequence.
 func TestSafeYieldIsolatesPanicAndSurvives(t *testing.T) {
 	var calls int32
 	boom := errors.New("distinctive-original-panic-42")
@@ -103,12 +96,8 @@ func TestSafeYieldLogsOriginalPanicValue(t *testing.T) {
 	}
 }
 
-// The real bug (#1016): >=2 goroutines yield concurrently through the same
-// mutex, and a panicking loop body used to let another goroutine - blocked
-// on that same mutex, not called sequentially after - acquire it and call
-// the already-panicked yield again. A sequential two-call test cannot
-// exercise that; this one forces genuine goroutine overlap via a gate
-// channel (no sleeps) so every caller contends for the mutex at once.
+// A sequential two-call test cannot exercise the real bug (#1016): the second
+// caller must be blocked on the mutex while the first panics, not called after.
 func TestSafeYieldConcurrentPanicIsolatesAllCallers(t *testing.T) {
 	const n = 8
 	var buf strings.Builder
