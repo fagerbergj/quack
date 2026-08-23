@@ -536,7 +536,15 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			// builds on them instead of redoing the change from scratch.
 			resetCloneToNodeBase(cfg, v)
 			revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, env, act, citationOnlyFailure(v, cfg.Threshold))) + markerLine
-			revised, rerr := runWorkerNodeTraced(ctx, nodeCtx, cfg, workerModel, workerNode, revisePrompt, fmt.Sprintf("worker-r%d%s", round, sfx), "revise", promptEmit)
+			reviseRunID := fmt.Sprintf("worker-r%d%s", round, sfx)
+			// gate.revise spans the round the same way gate.judge does; the matching
+			// agent_start/complete SSE already comes from dagStream off this run's
+			// own session events (see stream vocabulary doc), so no emitJudge here.
+			reviseCtx, rspan := otelobs.Start(nodeCtx, "gate.revise",
+				attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID),
+				attribute.String("run_id", reviseRunID), attribute.String(otelobs.GenAIAgentName, cfg.Agent), attribute.Int("round", round))
+			revised, rerr := runWorkerNodeTraced(ctx, reviseCtx, cfg, workerModel, workerNode, revisePrompt, reviseRunID, "revise", promptEmit)
+			otelobs.End(rspan, rerr)
 			if rerr != nil {
 				log.Error("revision worker failed; keeping prior answer", "round", round, "err", rerr)
 				return answer, res, nil // revision failed; keep the prior answer
