@@ -16,7 +16,7 @@ const env = { ...process.env };
 if (!process.env.PI_ACP_REAL) env.PI_ACP_PI_CMD = join(here, "fake-pi.mjs");
 if (!env.OPENCODE_CONFIG_CONTENT)
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
-    provider: { quack: { options: { baseURL: "http://127.0.0.1:1/v1", apiKey: "unused" }, models: { stub: {} } } },
+    provider: { quack: { options: { baseURL: "http://127.0.0.1:1/v1", apiKey: "unused" }, models: { stub: { limit: { context: 65536 } } } } },
     skills: { paths: ["/opt/quack/skills"] },
   });
 
@@ -120,6 +120,9 @@ if (!process.env.ACP_CMD) {
   assert.equal(bridge.prefix, "quackmcp");
   assert.equal(bridge.tools[0].name, "stage_review");
   readFileSync(join(piDir, "extensions", "quackmcp.ts")); // extension generated
+
+  const models = JSON.parse(readFileSync(join(piDir, "models.json"), "utf8"));
+  assert.equal(models.providers.quack.models[0].contextWindow, 65536, "contextWindow not plumbed from config's limit.context");
 }
 
 const prompt = process.env.PI_ACP_REAL
@@ -196,3 +199,19 @@ console.log("ok -", updates.length, "updates,", mcpCalls.length, "mcp call(s),",
 shim.stdin.end();
 mcpSrv.close();
 otlpSrv.close();
+
+// no limit.context configured -> omit contextWindow rather than write 0, so
+// pi keeps its own default instead of tripping provider-composer's reject.
+if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
+  const before = new Set(readdirSync(tmpdir()).filter((d) => d.startsWith("pi-acp-")));
+  const noLimitEnv = { ...env, OPENCODE_CONFIG_CONTENT: JSON.stringify({
+    provider: { quack: { options: { baseURL: "http://127.0.0.1:1/v1", apiKey: "unused" }, models: { stub: {} } } },
+  }) };
+  const shim2 = spawn(argv[0], argv.slice(1), { env: noLimitEnv, stdio: ["pipe", "ignore", "inherit"] });
+  await new Promise((r) => setTimeout(r, 300));
+  const piDir2 = readdirSync(tmpdir()).filter((d) => d.startsWith("pi-acp-") && !before.has(d))
+    .map((d) => join(tmpdir(), d))[0];
+  const models2 = JSON.parse(readFileSync(join(piDir2, "models.json"), "utf8"));
+  assert.ok(!("contextWindow" in models2.providers.quack.models[0]), "contextWindow written when unset");
+  shim2.kill();
+}
