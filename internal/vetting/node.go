@@ -208,13 +208,13 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	nodeCtx, span := otelobs.StartNode(ctx,
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID),
 		attribute.String("node_id", nodeID),
-		attribute.String("agent", cfg.Agent),
+		attribute.String(otelobs.GenAIAgentName, cfg.Agent),
 		attribute.String(otelobs.QuackModel, modelName(workerModel)),
 	)
 	defer func() {
 		span.SetAttributes(
 			attribute.Bool("verdict_passed", res.Passed),
-			attribute.Float64("verdict_score", res.Score),
+			attribute.Float64(otelobs.GenAIEvaluationScore, res.Score),
 			attribute.Int("gate_rounds", res.Rounds),
 		)
 		otelobs.EndNode(span, err)
@@ -1060,7 +1060,7 @@ func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Conf
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID),
 		attribute.String("node_id", cfg.NodeID),
 		attribute.String("run_id", runID),
-		attribute.String("agent", cfg.Agent),
+		attribute.String(otelobs.GenAIAgentName, cfg.Agent),
 		attribute.String(otelobs.QuackModel, modelName(workerModel)),
 		attribute.String("stage", stage),
 	)

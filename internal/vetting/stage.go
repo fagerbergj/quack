@@ -27,7 +27,7 @@ type stageSpan struct {
 func startStageSpan(spanCtx context.Context, sink func(stream.SSEEvent), cfg Config, nodeID, sseAgent, stage, runID string, round int) (context.Context, *stageSpan) {
 	ctx, span := otelobs.Start(spanCtx, "gate."+stage,
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID),
-		attribute.String("run_id", runID), attribute.String("agent", cfg.Agent), attribute.Int("round", round))
+		attribute.String("run_id", runID), attribute.String(otelobs.GenAIAgentName, cfg.Agent), attribute.Int("round", round))
 	emitJudge(sink, nodeID, stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{
 		RunID: runID, Agent: sseAgent, Stage: stage, Round: round, StartedAtMs: time.Now().UnixMilli(),
 	}})

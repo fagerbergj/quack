@@ -129,8 +129,8 @@ func (t *turnSpans) start(id string, kind sdk.ToolKind, title string, rawInput a
 	// makes a trace readable without opening every span.
 	attrs := []attribute.KeyValue{
 		attribute.String("agent", t.agent),
-		attribute.String("tool_call_id", id),
-		attribute.String("tool_title", title),
+		attribute.String(otelobs.GenAIToolCallID, id),
+		attribute.String("tool_title", title), // human label from ACP's ToolCall.Title, distinct from the tool name
 	}
 	if v, ok := jsonAttr(rawInput); ok {
 		attrs = append(attrs, attribute.String(otelobs.GenAIToolCallArguments, v))

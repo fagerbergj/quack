@@ -74,7 +74,7 @@ func TestStageSpan_SingleRaiseProducesBothProjections(t *testing.T) {
 	for _, kv := range s.Attributes {
 		attrs[string(kv.Key)] = kv.Value.Emit()
 	}
-	if attrs["node_id"] != "node-1" || attrs["run_id"] != "judge-r1" || attrs["agent"] != "code-reviewer" || attrs["round"] != "1" {
+	if attrs["node_id"] != "node-1" || attrs["run_id"] != "judge-r1" || attrs["gen_ai.agent.name"] != "code-reviewer" || attrs["round"] != "1" {
 		t.Errorf("span attrs = %+v, missing/wrong identity", attrs)
 	}
 	if attrs["score"] != "0.9" || attrs["passed"] != "true" {

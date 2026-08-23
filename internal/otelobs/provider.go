@@ -36,9 +36,10 @@ const (
 	langfuseRelease           = "langfuse.release"
 )
 
-// ChatIDKey is the standard span attribute for chat/run in scope. Start also
-// mirrors it onto GenAIConversationID, which is what OTel-native tooling
-// (Langfuse sessions) groups a trace by; chat_id stays for existing queries.
+// ChatIDKey is the input-side key callers pass to name the chat/run in scope;
+// sessionAttrs consumes it and exports only gen_ai.conversation.id (what
+// OTel-native tooling, e.g. Langfuse sessions, groups a trace by) - it never
+// reaches the span itself.
 const ChatIDKey = "chat_id"
 
 // Providers holds the process-wide OTel wiring; emission-only - Grafana owns viewing.
@@ -151,15 +152,23 @@ func tracer() oteltrace.Tracer { return otel.Tracer(tracerName) }
 
 // sessionAttrs adds gen_ai.conversation.id (from the explicit chat_id attr, else
 // ctx coords - the same source EmitLog reads) and user.id, so every quack span
-// carries the session identity OTel consumers resolve traces by.
+// carries the session identity OTel consumers resolve traces by. The bare
+// chat_id attr callers pass is consumed here, not re-exported - gen_ai.conversation.id
+// is the one identifier that reaches the span.
 func sessionAttrs(ctx context.Context, attrs []attribute.KeyValue) []attribute.KeyValue {
 	c := ledger.CoordsFromContext(ctx)
 	chatID := c.ChatID
+	out := attrs[:0:0]
 	for _, kv := range attrs {
-		if kv.Key == ChatIDKey && kv.Value.AsString() != "" {
-			chatID = kv.Value.AsString()
+		if kv.Key == ChatIDKey {
+			if kv.Value.AsString() != "" {
+				chatID = kv.Value.AsString()
+			}
+			continue
 		}
+		out = append(out, kv)
 	}
+	attrs = out
 	if chatID != "" {
 		attrs = append(attrs, attribute.String(GenAIConversationID, chatID))
 	}

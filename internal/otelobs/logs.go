@@ -40,9 +40,11 @@ const (
 	GenAIToolType              = string(semconv.GenAIToolTypeKey)
 	GenAIToolCallArguments     = string(semconv.GenAIToolCallArgumentsKey)
 	GenAIToolCallResult        = string(semconv.GenAIToolCallResultKey)
+	GenAIToolCallID            = string(semconv.GenAIToolCallIDKey)
 	GenAIPromptName            = string(semconv.GenAIPromptNameKey)
 	GenAIPromptVersion         = "gen_ai.prompt.version" // not yet a registered semconv attribute
 	GenAIWorkflowName          = string(semconv.GenAIWorkflowNameKey)
+	GenAIConversationCompacted = "gen_ai.conversation.compacted" // not present in the pinned v1.41.0 Go module
 	GenAIEvaluationName        = string(semconv.GenAIEvaluationNameKey)
 	GenAIEvaluationScore       = string(semconv.GenAIEvaluationScoreValueKey)
 	GenAIEvaluationExplain     = string(semconv.GenAIEvaluationExplanationKey)
@@ -66,6 +68,9 @@ const (
 	// under. Vendor-namespaced on purpose: Langfuse types any span with a
 	// model-named attribute ("model", gen_ai.request.model, ...) as a
 	// GENERATION, and these spans make no model call (#927).
+	// ponytail: never rename to gen_ai.request.model - ADK's own span already
+	// carries the real GENERATION (model/tokens/cost); renaming this would
+	// double-count both against it.
 	QuackModel = "quack.model"
 )
 
