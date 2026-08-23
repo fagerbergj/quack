@@ -267,6 +267,10 @@ type OtelConfig struct {
 	// Logs opts into OTLP log export. Off by default: logs need a collector
 	// logs pipeline most deployments don't run (slog/stdout is the sink).
 	Logs bool `yaml:"logs"`
+	// Content opts into putting prompt/response text on span attributes.
+	// Off by default: an existing deployment that only wired traces/metrics
+	// must not silently start shipping message content on upgrade.
+	Content bool `yaml:"content"`
 	// Environment lands on the OTel resource as deployment.environment.name -
 	// what trace backends split dev traffic from the deployed server by.
 	Environment string `yaml:"environment"`

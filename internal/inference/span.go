@@ -3,6 +3,7 @@ package inference
 import (
 	"context"
 	"encoding/json"
+	"sync/atomic"
 
 	"go.opentelemetry.io/otel/attribute"
 	oteltrace "go.opentelemetry.io/otel/trace"
@@ -11,6 +12,15 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
+
+// captureContent gates span content decoration on observability.otel.content
+// (default off - see the config field doc). Set once at startup, read on
+// every model call; a package-level atomic mirrors otelobs' own global state.
+var captureContent atomic.Bool
+
+// SetCaptureContent wires observability.otel.content into the span
+// decorators below - call once at startup, before serving traffic.
+func SetCaptureContent(enabled bool) { captureContent.Store(enabled) }
 
 // langfuse.observation.* have no OTel semconv form; Langfuse doesn't read
 // gen_ai.input/output.messages yet (langfuse#12657), so content needs both.
@@ -57,6 +67,9 @@ func setRequestSpanAttrs(ctx context.Context, req *model.LLMRequest) {
 	if !span.IsRecording() {
 		return // nothing exporting - skip building the (possibly large) payload
 	}
+	if !captureContent.Load() {
+		return // opt-in only - see captureContent doc comment
+	}
 	var attrs []attribute.KeyValue
 	if v, ok := redactedSpanAttr(req.Contents); ok {
 		attrs = append(attrs,
@@ -88,6 +101,9 @@ func setRequestSpanAttrs(ctx context.Context, req *model.LLMRequest) {
 func setResponseSpanAttrs(ctx context.Context, resp *model.LLMResponse) {
 	span := oteltrace.SpanFromContext(ctx)
 	if !span.IsRecording() {
+		return
+	}
+	if !captureContent.Load() {
 		return
 	}
 	if v, ok := redactedSpanAttr(resp.Content); ok {

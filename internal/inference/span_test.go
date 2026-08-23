@@ -27,6 +27,15 @@ func withTestTracer(t *testing.T) *tracetest.InMemoryExporter {
 	return exp
 }
 
+// withContentCapture flips captureContent for the duration of one test,
+// restoring the previous value on cleanup.
+func withContentCapture(t *testing.T, enabled bool) {
+	t.Helper()
+	prev := captureContent.Load()
+	captureContent.Store(enabled)
+	t.Cleanup(func() { captureContent.Store(prev) })
+}
+
 func spanAttrsOf(s tracetest.SpanStub) map[string]string {
 	out := map[string]string{}
 	for _, kv := range s.Attributes {
@@ -44,6 +53,7 @@ func spanAttrsOf(s tracetest.SpanStub) map[string]string {
 // no output-message attribute recorded - SetAttributes on an ended span is a
 // silent no-op, so a naive regression would NOT panic, it would just vanish.
 func TestTracedModel_DecoratesSpanBeforeADKEndsIt(t *testing.T) {
+	withContentCapture(t, true)
 	exp := withTestTracer(t)
 
 	ctx, span := otel.Tracer("test").Start(context.Background(), "generate_content test-model")
@@ -88,6 +98,7 @@ func TestTracedModel_DecoratesSpanBeforeADKEndsIt(t *testing.T) {
 // processor, so redactedSpanAttr is the only thing standing between a
 // secret-keyed field and an exported OTLP span.
 func TestSetRequestSpanAttrs_Redacts(t *testing.T) {
+	withContentCapture(t, true)
 	exp := withTestTracer(t)
 
 	ctx, span := otel.Tracer("test").Start(context.Background(), "generate_content test-model")
@@ -115,6 +126,7 @@ func TestSetRequestSpanAttrs_Redacts(t *testing.T) {
 // TestSetRequestSpanAttrs_ConversationID reuses ledger.Coords for
 // gen_ai.conversation.id rather than inventing a new lookup.
 func TestSetRequestSpanAttrs_ConversationID(t *testing.T) {
+	withContentCapture(t, true)
 	exp := withTestTracer(t)
 
 	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "chat-123"})
@@ -124,5 +136,28 @@ func TestSetRequestSpanAttrs_ConversationID(t *testing.T) {
 
 	if got := spanAttrsOf(exp.GetSpans()[0])["gen_ai.conversation.id"]; got != "chat-123" {
 		t.Errorf("gen_ai.conversation.id = %q, want chat-123", got)
+	}
+}
+
+// TestSpanAttrs_ContentCaptureOffByDefault proves the new invariant: with
+// captureContent unset (the deploy default), no message content reaches span
+// attributes even though the span is recording.
+func TestSpanAttrs_ContentCaptureOffByDefault(t *testing.T) {
+	withContentCapture(t, false)
+	exp := withTestTracer(t)
+
+	ctx, span := otel.Tracer("test").Start(context.Background(), "generate_content test-model")
+	req := &model.LLMRequest{
+		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}},
+	}
+	setRequestSpanAttrs(ctx, req)
+	setResponseSpanAttrs(ctx, &model.LLMResponse{Content: &genai.Content{Parts: []*genai.Part{{Text: "the answer"}}}})
+	span.End()
+
+	attrs := spanAttrsOf(exp.GetSpans()[0])
+	for _, k := range []string{"gen_ai.input.messages", "gen_ai.output.messages", "langfuse.observation.input", "langfuse.observation.output"} {
+		if _, ok := attrs[k]; ok {
+			t.Errorf("attribute %q present with content capture off, want absent", k)
+		}
 	}
 }

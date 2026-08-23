@@ -380,6 +380,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		}
 	})
 	slog.SetDefault(slog.New(otelobs.WrapHandler(slog.Default().Handler())))
+	inference.SetCaptureContent(cfg.Observability.Otel.Content)
 
 	go ledger.RunRetentionSweep(ctx, ledgerStore, cfg.Observability.Recording.RetentionDays, 24*time.Hour)
 
