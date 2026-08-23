@@ -18,6 +18,33 @@ Always:
 - Run `go test ./...` and `cd frontend && npm test` before marking a task done.
 - Run `make vet && make fmt` before committing Go changes.
 
+## Talking to quack
+
+The `quack` CLI is your primary interface for interacting with a running quack - creating chats, sending messages, inspecting runs, and controlling nodes mid-run. Reach for it before hand-rolling `curl` against the REST API. See [`docs/cli.md`](docs/cli.md) for the full command map.
+
+```bash
+quack chat new                       # create a chat, print its id
+quack chat send <id> "<msg>"         # send a message (also answers a paused question)
+quack chat show <id> -f              # status snapshot; -f follows a live run
+quack chat list                      # chats and their status
+quack chat node retry <id> <node>    # re-run a finished node and everything downstream
+```
+
+Exit codes make it scriptable: `0` answered, `1` failed, `2` paused on a question. `quack api [method] <path>` is a `gh api`-style passthrough when a command for what you need does not exist yet - if you find yourself using it often, that gap is worth filing.
+
+## QA before opening a pull request
+
+A feature is not ready for review until it has been exercised on a **non-production** quack server. Never QA against prod.
+
+Work these in order, stopping when you have the answer:
+
+1. **The UI**, driven through the Chrome MCP - it is the surface users actually touch, and it catches wiring and rendering faults nothing else does.
+2. **The CLI** (see above) - drive chats and nodes directly, and check exit codes.
+3. **OTel data** - traces and spans for what actually ran, how long it took, and where a run stalled.
+4. **Logs** - last resort, for detail the first three could not give you.
+
+Say in the PR what you exercised and what you saw. "Tests pass" is not QA: the crash in #1016 shipped through a green suite.
+
 ## Commands
 
 ```bash
