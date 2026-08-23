@@ -43,10 +43,10 @@ RUN ./scripts/plugins.sh
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /quack ./cmd/quack
 
-# 2b) The external ACP coding agent: pi, driven through the tools/pi-acp shim
-# (tools/pi-acp/MIGRATION.md). PINNED - the RPC surface is integration-tested
-# per release, so bump deliberately. ~145MB node_modules vs the 170MB opencode
-# binary it replaced (node was already in the image for mermaid/frontend).
+# 2b) The external ACP coding agent: pi, driven through the tools/pi-acp shim.
+# PINNED - the RPC surface is integration-tested per release, so bump
+# deliberately. ~145MB node_modules vs the 170MB opencode binary it replaced
+# (node was already in the image for mermaid/frontend).
 FROM node:24-bookworm-slim AS pi
 WORKDIR /opt/pi
 RUN npm install --no-fund --no-audit @earendil-works/pi-coding-agent@0.84.2

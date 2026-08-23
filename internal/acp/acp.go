@@ -31,7 +31,7 @@ import (
 
 // Options configures one external ACP agent.
 type Options struct {
-	Command []string // argv to spawn, e.g. ["opencode", "acp"]
+	Command []string // argv to spawn, e.g. the pi-acp shim: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
 	Env     []string
 	Caps    workspace.Caps
 	ExtraRO []string

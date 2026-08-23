@@ -42,7 +42,7 @@ quack runs two different kinds of worker:
 
 `agents/advisor` is also a native bundle but isn't bound through the `agents:` map like the others: `internal/serve/serve.go` loads it once at startup, tool-less, bound to the judge's model (not its own), and wires it in as the backing agent for the `ask_advisor` tool a gated worker calls mid-run — it's never dispatched as a node in its own right. See [trust-gate.md](trust-gate.md#the-advisor-is-not-a-gate-stage).
 
-**ACP agents** — `code-implementer`, `code-reviewer`, `code-explorer` — are EXTERNAL subprocesses speaking the [Agent Client Protocol](https://agentclientprotocol.com) (`opencode acp` by default). They carry an `acp:` block instead of a `tools:` list:
+**ACP agents** — `code-implementer`, `code-reviewer`, `code-explorer` — are EXTERNAL subprocesses speaking the [Agent Client Protocol](https://agentclientprotocol.com) (the `tools/pi-acp` shim driving pi, by default). They carry an `acp:` block instead of a `tools:` list:
 
 ```yaml
 code-implementer:
@@ -50,7 +50,7 @@ code-implementer:
   provider: default
   model: ${QUACK_CODER_MODEL}
   acp:
-    command: ["opencode", "acp"]
+    command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
     mcp_servers:
       - https://mcp.context7.com/mcp
 ```
@@ -61,7 +61,7 @@ code-implementer:
 - `read_only` — set on `code-reviewer` and `code-explorer`: the agent never commits or pushes, so the gate skips the commit/push delivery demand and instead reads its verdict out of its final answer.
 - `allow_clone` — set on `code-explorer` only: lifts the `git clone`/`gh repo clone` deny (and the cwd-only `external_directory` boundary) so it can shallow-clone a third-party repo into `$TMPDIR` and read it locally. Requires `read_only`; config validation rejects it otherwise. Takes effect only under `workspace.sandbox: landlock` or `bwrap` — the read-only work tree that makes the wider `external_directory` safe is OS-enforced on the ACP subprocess in those two modes and nowhere else, so under `none` the flag has no effect and clone stays denied. `git push` stays denied for every agent in every mode.
 
-An ACP agent has **no quack tools at all** — it brings its own (opencode's built-in edit/read/shell tools), with the model bound via a generated `OPENCODE_CONFIG_CONTENT` and `git push` denied inside the subprocess (delivery is gate-owned; see [trust-gate.md](trust-gate.md)). quack's skill library is injected via opencode's `skills.paths`, so the same `agents/skills/` content (e.g. the ponytail coding-discipline skills) is available to an ACP worker without it needing quack tool access to read it.
+An ACP agent has **no quack tools at all** — it brings its own (pi's built-in edit/read/shell tools), with the model bound via a generated `OPENCODE_CONFIG_CONTENT` (parsed by the `pi-acp.mjs` shim) and `git push` denied inside the subprocess (delivery is gate-owned; see [trust-gate.md](trust-gate.md)). quack's skill library is injected via the env's `skills.paths`, so the same `agents/skills/` content (e.g. the ponytail coding-discipline skills) is available to an ACP worker without it needing quack tool access to read it.
 
 Each ACP round's preamble also carries a generated workspace/toolchain block: OS, sandbox mode, available toolchains, the `check_commands` allowlist, and the address-space limit, rendered from the resolved workspace caps at startup. Each toolchain line is probed, not just read from config — an unverifiable toolchain gets no line at all, so the agent reports it couldn't verify something instead of trusting a tool that isn't actually reachable.
 

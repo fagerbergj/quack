@@ -38,7 +38,7 @@ cd frontend && npm test && npx tsc --noEmit && npx eslint src/
 
 ## CI / CD
 
-- **CI** (`.github/workflows/ci.yaml`) runs on every PR and push: `go vet`, `go test`, `gofmt -l`, `tsc --noEmit`, `eslint`, `npm run build`, `npm test`, OpenAPI lint, codegen-drift, and a docker build. **All must pass** - `main` is branch-protected.
+- **CI** (`.github/workflows/ci.yaml`) runs on every PR and push: `go vet`, `deadcode`, `go test`, `gofmt -l`, `tsc --noEmit`, `eslint`, `knip`, `npm run build`, `npm test`, OpenAPI lint, codegen-drift, and a docker build. **All must pass** - `main` is branch-protected.
 - **CD** (`.github/workflows/cd.yaml`) publishes the image `ghcr.io/fagerbergj/quack`:
   - **Every merge to `main`** moves **`:latest`** (+ `sha-<sha>`). The home-server deployment (`home-server/quack/`) runs `:latest` and **Watchtower auto-deploys** each merge.
   - **A version tag** publishes an **immutable pinned snapshot** - cut one with `git tag vX.Y.Z && git push origin vX.Y.Z` → `X.Y.Z`, `X.Y`, `sha-<sha>`.

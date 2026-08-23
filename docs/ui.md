@@ -5,7 +5,7 @@ The web SPA (`frontend/`, React 19 + Vite + Tailwind) is a graphical front end o
 ## Running it
 
 - **Production / everyday use** - `quack server run` serves it already; the frontend build is compiled and embedded into the Go binary (`make build` / `make frontend-build`), so it's just whatever address the server listens on, no separate process.
-- **Frontend development** - `cd frontend && npm run dev` for a hot-reload dev server on `:5173`, talking to a `quack server run` instance for its API.
+- **Frontend development** - `cd frontend && npm run dev` for a hot-reload dev server on `:3000` (`frontend/vite.config.ts`), talking to a `quack server run` instance for its API.
 
 ## What it can do
 

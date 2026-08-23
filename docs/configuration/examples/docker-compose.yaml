@@ -10,6 +10,30 @@ providers:
     endpoint: http://host.docker.internal:11436/v1   # reaches an LLM server on the host from inside the container
     api_key: unused
 
+# models: the registry every model reference must resolve into. The names are
+# the resolved *_MODEL defaults from docker-compose.yml/.env.example.
+models:
+  qwen3.6-35b:            # workhorse: orchestrator, web-researcher, synthesizer, and the 3× coding agents
+    provider: default
+    role: worker
+    context_window: 262144
+  qwen3-omni-30b:         # media-reader (audio)
+    provider: default
+    role: worker
+    context_window: 32768
+  qwen3-vl-32b:           # image-reader
+    provider: default
+    role: worker
+    context_window: 32768
+  gemma4-26b-a4b:         # judge + store consolidation + session compaction
+    provider: default
+    role: judge
+    context_window: 131072
+  qwen3-embed:            # memory embedder
+    provider: default
+    role: embed
+    context_window: 4096
+
 stores:
   default_postgres:
     kind: postgres
@@ -58,7 +82,7 @@ agents:
       bucket: coding
     judge_rounds: 1
     acp:
-      command: ["opencode", "acp"]
+      command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
   code-reviewer:
     bundle: agents/code-reviewer
     provider: default
@@ -68,7 +92,7 @@ agents:
       bucket: coding
     judge_rounds: 1
     acp:
-      command: ["opencode", "acp"]
+      command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       read_only: true
   code-explorer:
     bundle: agents/code-explorer
@@ -79,7 +103,7 @@ agents:
       bucket: coding
     judge_rounds: 2
     acp:
-      command: ["opencode", "acp"]
+      command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       read_only: true
       allow_clone: true
   synthesizer:

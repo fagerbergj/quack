@@ -44,7 +44,7 @@ go test ./internal/vetting/...
 make vet
 make fmt          # gofmt -w internal cmd
 
-# Frontend dev server (hot-reload at :5173)
+# Frontend dev server (hot-reload at :3000)
 cd frontend && npm run dev
 
 # Frontend tests (vitest)
@@ -67,7 +67,7 @@ make docker-up
 make docker-down
 ```
 
-CI checks: `go vet`, `go test ./...`, `gofmt -l`, `tsc --noEmit`, `eslint`, `npm run build`, `npm test`, OpenAPI lint, and a codegen-drift check (`git diff --exit-code -- internal/schema frontend/src/generated`).
+CI checks: `go vet`, `deadcode` (`.github/workflows/ci.yaml`), `go test ./...`, `gofmt -l`, `tsc --noEmit`, `eslint`, `knip` (`npm run knip`), `npm run build`, `npm test`, OpenAPI lint, and a codegen-drift check (`git diff --exit-code -- internal/schema frontend/src/generated`).
 
 ## Architecture
 
@@ -101,7 +101,7 @@ A GitHub webhook run enters differently: it's an SDK extension module (`quack-ex
 
 - `plan.go` - `Plan` and `Node` structs; `Node.DependsOn` encodes edges; `Plan.Setup` (repo/base/branch) declares the pre-provisioned clone.
 - `planner.go` - one LLM call decomposes a request into a `Plan`, with a per-node acceptance rubric.
-- `nativegraph.go`/`graph.go` - the plan runs as ONE native ADK workflow graph under one runner (`WithMaxConcurrency`); all nodes share one workflow session (id = chatID), isolated by branch + isolation scope. `buildGateNodes` wraps each node's worker in `vetting.RunGatedRefine`. Continue-but-warn on gate-failed dependencies.
+- `nativegraph.go`/`graph.go` - the plan runs as ONE native ADK workflow graph under one runner (`WithMaxConcurrency`); all nodes share one workflow session (id = chatID), isolated by branch + isolation scope. `buildGateNodes` wraps each node's worker in `vetting.RunGatedRefine` and wires the per-node `AdmissionSpec` (model sessions/kv_tokens/provider residency, from `models.<m>.limits` + `providers.<p>.limits.active`) into the shared `Admission` ledger (`admission.go`), gating every gated node on capacity before it starts. Continue-but-warn on gate-failed dependencies.
 - `executor.go` - `dagStream` translates raw ADK session events (by `NodeInfo.Path` + `worker-rN` run ids) into the SSE vocabulary.
 
 ### Trust gate (`internal/vetting/`)
@@ -111,6 +111,7 @@ A GitHub webhook run enters differently: it's an SDK extension module (`quack-ex
 1. **Continuation** - mechanical completion signals (empty answer, undelivered commit, unposted review) hand the worker another tool-bearing round, up to 4.
 2. **Deterministic checks** - citation backing, length, delivery/review/behaviour criteria, and `checksPassCriterion` (checks.go): the repo's own build/vet/test commands derived from the clone and run via `workspace.RunPipeline` (allowlist `workspace.check_commands`, default ON, toolchain-gated).
 3. **Independent judge** (judge.go) - a separate model scores G-Eval style; weakest-link (lowest criterion), threshold default `0.7`. Judge/revise rounds re-prompt the worker with self-contained feedback.
+4. **Adversarial skeptic pass** (adversarial.go) - inside the judge round, load-bearing criteria earn their score only after independent skeptics (`cfg.Skeptic`/`cfg.SkepticRounds`) try to refute them; a refuted criterion is downgraded before the round scores.
 
 Ground-truth probes for external (ACP) workers: `augmentFromRepo` (gitprobe.go) reads commits/changed files off the clone and synthesizes the staged PR; `augmentFromAnswer` (answerreview.go) parses a reviewer's `VERDICT:`/`FINDINGS:` tail into the staged review with inline comments. Delivery is gate-owned (`commitDelivery` → the GitHub extension), fires exactly once, and a gate-failed PR opens as a draft. `commitDelivery` also partitions staged items against the run's `vetting.Config.AllowedDeliveryKinds` (nil for a non-GitHub run, which permits everything) before they reach the extension - an ungranted item is refused, logged at Error, and reported as a failed `delivery_result`, never silently dropped or silently shipped.
 
@@ -122,9 +123,9 @@ A GitHub webhook dispatch computes the allowed-kinds list once, from the labels 
 
 ### Agents: external ACP subprocesses + native bundles (`internal/acp/`, `internal/agent/`, `agents/`)
 
-ALL code agents (code-implementer, code-reviewer, code-explorer) run as EXTERNAL subprocesses speaking the Agent Client Protocol (`internal/acp`) - `opencode acp` by default, spawned per worker round, model bound via generated `OPENCODE_CONFIG_CONTENT`, `git push` denied, quack's skill library injected via opencode `skills.paths`. They have NO quack tools; the gate's probes read their work off the clone/answer. Configured per agent with `acp: {command, env, read_only}`.
+ALL code agents (code-implementer, code-reviewer, code-explorer) run as EXTERNAL subprocesses speaking the Agent Client Protocol (`internal/acp`) - the `tools/pi-acp` shim driving pi by default, spawned per worker round, model bound via generated `OPENCODE_CONFIG_CONTENT` (which the shim parses), `git push` denied, quack's skill library injected via that env's `skills.paths`. They have NO quack tools; the gate's probes read their work off the clone/answer. Configured per agent with `acp: {command, env, read_only}`.
 
-Native (llmagent) bundles remain for the non-code agents (web-researcher, synthesizer, media/image readers, advisor, orchestrator):
+Native (llmagent) bundles remain for the non-code agents (web-researcher, synthesizer, media/image readers, memory-agent, advisor, orchestrator):
 
 ```text
 agents/<name>/

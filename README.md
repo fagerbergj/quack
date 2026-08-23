@@ -27,7 +27,7 @@ On a fresh clone, bare `go build`/`go test` need `make plugins` first: `embed.go
    - **Embedding** - semantic memory; None disables memory.
    - **Vision** / **Audio** - the image-reader / media-reader agents.
 4. **Optional features** (multi-select) - web search, web fetch, coding agents.
-   - Picking "Coding agents" adds two more questions: a coder model and the workspace sandbox mode (`bwrap` or `none`). The coding agents run as external [opencode](https://opencode.ai) processes over ACP, so `opencode` has to be on the server's PATH.
+   - Picking "Coding agents" adds two more questions: a coder model and the workspace sandbox mode (`bwrap` or `none`). The coding agents run as external [pi](https://github.com/earendil-works/pi) processes over ACP (through the `tools/pi-acp` shim), so `node` and the shim have to be on the server's PATH.
 5. **Stores** - session storage (sqlite by default), plus a memory store if you set an embedding model, and search/fetch backends for whichever features you picked. Defaults are sane; enter accepts them.
 6. **Review** - a summary of every answer above, then confirm to write `quack.yaml`.
 
