@@ -288,13 +288,16 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 			}
 			return origYield(ev, err)
 		}
+		// Concurrent DAG nodes below all funnel through this one yield (#1016);
+		// Run/RetryNode wrap it, RunBoundPlan must too.
+		safeYield := newSafeYield(yield)
 
 		release, acquired := o.acquireRun(ctx)
 		defer release()
 		if !acquired {
 			// Queued run's ctx was cancelled before a slot freed: never execute
 			// on a dead context (#1016).
-			yield(stream.Errorf("orchestrator: run cancelled while queued"), nil)
+			safeYield(stream.Errorf("orchestrator: run cancelled while queued"), nil)
 			return
 		}
 		o.queuedChats.Delete(sessionID)
@@ -308,21 +311,21 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 		}
 		o.executor.ResetNodeCancels(sessionID)
 
-		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { yield(ev, nil) })
-		yield(tools.DagPlanEvent(plan), nil)
+		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
+		safeYield(tools.DagPlanEvent(plan), nil)
 
 		// A bound plan never passes through the execute tool (no orchestrator
 		// LLM turn exists to revise from), so provisioning failure here has no
 		// tool call to fail into - surface the human form directly on the stream.
 		if perr := o.executor.Provision(ctx, userID, sessionID, &plan); perr != nil {
-			yield(stream.Errorf("orchestrator: bound plan setup: "+perr.Error()), nil)
+			safeYield(stream.Errorf("orchestrator: bound plan setup: "+perr.Error()), nil)
 			return
 		}
 
 		nodeOutputs := make(map[string]string)
-		paused, err := o.executor.RunPlanAsGraph(ctx, plan, AppName, userID, sessionID, nil, yield, nodeOutputs, nil)
+		paused, err := o.executor.RunPlanAsGraph(ctx, plan, AppName, userID, sessionID, nil, safeYield, nodeOutputs, nil)
 		if err != nil {
-			yield(stream.Errorf("orchestrator: bound plan run: "+err.Error()), nil)
+			safeYield(stream.Errorf("orchestrator: bound plan run: "+err.Error()), nil)
 			return
 		}
 		// Stashed exactly like the execute tool stashes a model-authored plan,
@@ -335,7 +338,7 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 			answer := o.finalizeAnswer(ctx, plan, nodeOutputs, sessionID)
 			o.persistAnswer(ctx, userID, sessionID, answer)
 		}
-		yield(stream.Done(), nil)
+		safeYield(stream.Done(), nil)
 	}
 }
 
@@ -576,7 +579,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			return
 		}
 		model, promptTokens, completionTokens, reasoningTokens, totalTokens, cachedTokens, finishReason := translator.Usage()
-		yield(stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{
+		safeYield(stream.SSEEvent{Name: stream.EventAgentComplete, Data: stream.AgentCompleteData{
 			RunID: orchRunID, Stage: stream.StageWorker,
 			Model: model, PromptTokens: promptTokens, CompletionTokens: completionTokens,
 			ReasoningTokens: reasoningTokens, TotalTokens: totalTokens, CachedTokens: cachedTokens, FinishReason: finishReason,
@@ -606,7 +609,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 						"component", "orchestrator", "chat", sessionID, "rejections", count, "reason", reason)
 					safeYield(stream.Errorf(planExhaustedNotice), nil)
 					o.persistAnswer(ctx, userID, sessionID, planExhaustedNotice)
-					yield(stream.Done(), nil)
+					safeYield(stream.Done(), nil)
 					return
 				}
 			}
@@ -627,7 +630,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		}
 
 		o.persistAnswer(ctx, userID, sessionID, planCache.Delivered())
-		yield(stream.Done(), nil)
+		safeYield(stream.Done(), nil)
 	}
 }
 
