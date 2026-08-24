@@ -41,6 +41,8 @@ A chat is a session; a message on it kicks off a run.
 | `quack chat export <id>` | Export a chat transcript. |
 | `quack chat stop <id>` | Stop a chat's active run. |
 | `quack chat delete <id>` | Delete a chat (irreversible). |
+| `quack chat artifact list <id>` | List a chat's artifacts and their revision history. |
+| `quack chat artifact download <id> <name> [--revision N] [-o file]` | Download one artifact revision's bytes (default: latest). |
 
 ## Node control
 
@@ -66,6 +68,15 @@ Runs can be recorded to a replay ledger and re-driven later - the basis for regr
 | `quack recording list` / `export` | Inspect and export replay-ledger recordings. |
 | `quack replay` | Replay a recorded run offline (strict) or live from a changed node (fork). |
 | `quack eval` | Re-run a recorded conversation live with a swapped model and compare judge scores. |
+
+## Memory
+
+Browse or invalidate what quack has remembered (memory lifecycle design doc); `forget` is the CLI verb for the manual-delete remediation path a memory-poisoning incident needs.
+
+| Command | Does |
+| --- | --- |
+| `quack memory list [--bucket <b>] [--q <query>] [--limit N] [--include-invalidated]` | List or (with `--q`) embedding-search memories. |
+| `quack memory forget <memory-id> [--reason <text>]` | Invalidate (soft-delete) one memory. |
 
 ## Sandbox
 
