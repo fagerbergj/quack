@@ -341,6 +341,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 					workerInput(withUserAnswer(prompt, turns), attachments),
 					fmt.Sprintf("worker-hitl-r%d%s", scan.pauses, sfx), "hitl", promptEmit)
 				if err != nil {
+					if cancelled() {
+						return "", GateResult{}, nil // ACP round aborted mid-flight by CancelNode, not a real failure
+					}
 					log.Error("post-answer worker run failed", "err", err)
 					return "", GateResult{}, err
 				}
@@ -359,6 +362,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 						workerInput(withConfirmDecision(prompt, turns), attachments),
 						fmt.Sprintf("worker-confirm-r%d%s", cscan.pauses, sfx), "confirm", promptEmit)
 					if err != nil {
+						if cancelled() {
+							return "", GateResult{}, nil // ACP round aborted mid-flight by CancelNode, not a real failure
+						}
 						log.Error("post-decision worker run failed", "err", err)
 						return "", GateResult{}, err
 					}
@@ -368,6 +374,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		if !resumed {
 			answer, err = runWorkerNodeTraced(ctx, nodeCtx, cfg, workerModel, workerNode, workerInput(prompt, attachments), "worker-r0"+sfx, "draft", promptEmit)
 			if err != nil {
+				if cancelled() {
+					return "", GateResult{}, nil // ACP round aborted mid-flight by CancelNode, not a real failure
+				}
 				// Log before returning (ADK swallows node errors into silent empty completion).
 				log.Error("worker draft failed", "run", "worker-r0", "err", err)
 				return "", GateResult{}, err
@@ -393,6 +402,10 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				answer, err = runWorkerNodeTraced(ctx, nodeCtx, cfg, workerModel, workerNode, buildContinuationPrompt(cfg.Task, act, cfg.Checks, cfg.ReadOnly, hasDeliverTarget, cfg.IsReviewer, cfg.ExistingPR)+markerLine,
 					fmt.Sprintf("worker-cont%d%s", attempt, sfx), "continuation", promptEmit)
 				if err != nil {
+					if cancelled() {
+						contSpan.End()
+						return "", GateResult{}, nil // ACP round aborted mid-flight by CancelNode, not a real failure
+					}
 					log.Error("worker continuation failed", "attempt", attempt, "err", err)
 					contSpan.End()
 					return "", GateResult{}, err

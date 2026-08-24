@@ -49,6 +49,11 @@ type nodeControl struct {
 	// it. nil when the node isn't mid-round.
 	liveSteer func(text string) bool
 
+	// roundAbort aborts the in-flight ACP round via its own session/cancel
+	// RPC (#1030) - cancel only, not pause: pause must keep whatever the
+	// round has accumulated so it can resume, so it never calls this.
+	roundAbort context.CancelFunc
+
 	// Write-through coordinates; nil store = in-memory only (tests).
 	store          NodeStateStore
 	chatID, nodeID string
@@ -65,6 +70,20 @@ func (c *nodeControl) setLiveSteer(f func(text string) bool) {
 func (c *nodeControl) clearLiveSteer() {
 	c.mu.Lock()
 	c.liveSteer = nil
+	c.mu.Unlock()
+}
+
+// setRoundAbort/clearRoundAbort: registered for the round's duration only,
+// same lifecycle as setLiveSteer/clearLiveSteer - see acp.Agent.round.
+func (c *nodeControl) setRoundAbort(cancel context.CancelFunc) {
+	c.mu.Lock()
+	c.roundAbort = cancel
+	c.mu.Unlock()
+}
+
+func (c *nodeControl) clearRoundAbort() {
+	c.mu.Lock()
+	c.roundAbort = nil
 	c.mu.Unlock()
 }
 
@@ -141,7 +160,11 @@ func (c *nodeControl) PauseReason() PauseReason {
 func (c *nodeControl) markCancelled() {
 	c.mu.Lock()
 	c.cancelled = true
+	abort := c.roundAbort
 	c.mu.Unlock()
+	if abort != nil {
+		abort() // context.CancelFunc is idempotent - safe if the round already ended or this fires twice
+	}
 	c.persistStatus(StatusCancelled, "", "")
 }
 
@@ -482,6 +505,26 @@ func (e *Executor) NodePauseReason(chatID, nodeID string) PauseReason {
 func (e *Executor) SetNodeLiveSteer(chatID, nodeID string, f func(text string) bool) {
 	if c := e.controls.get(chatID, nodeID); c != nil {
 		c.setLiveSteer(f)
+	}
+}
+
+// SetNodeRoundAbort registers the in-flight round's cancel func (#1030). If
+// the node was already cancelled before the round reached this point, fires
+// it immediately instead of leaving the round to run until its next
+// boundary check.
+func (e *Executor) SetNodeRoundAbort(chatID, nodeID string, cancel context.CancelFunc) {
+	if c := e.controls.get(chatID, nodeID); c != nil {
+		c.setRoundAbort(cancel)
+		if c.Cancelled() {
+			cancel()
+		}
+	}
+}
+
+// ClearNodeRoundAbort un-registers the abort func at round end.
+func (e *Executor) ClearNodeRoundAbort(chatID, nodeID string) {
+	if c := e.controls.get(chatID, nodeID); c != nil {
+		c.clearRoundAbort()
 	}
 }
 

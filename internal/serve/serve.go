@@ -628,9 +628,19 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 			ex.ClearNodeLiveSteer(chatID, nodeID)
 		}
 	}
+	registerRoundAbort := func(chatID, nodeID string, cancel context.CancelFunc) {
+		if ex := executorRef.Load(); ex != nil {
+			ex.SetNodeRoundAbort(chatID, nodeID, cancel)
+		}
+	}
+	unregisterRoundAbort := func(chatID, nodeID string) {
+		if ex := executorRef.Load(); ex != nil {
+			ex.ClearNodeRoundAbort(chatID, nodeID)
+		}
+	}
 
 	var setupFn dag.SetupFunc
-	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(cfg, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, pluginSkillDirs, deliver, nodeCancelled, registerLiveSteer, unregisterLiveSteer, &setupFn, artifacts)
+	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(cfg, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, pluginSkillDirs, deliver, nodeCancelled, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, &setupFn, artifacts)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("agent build failed: %w", err)
 	}
@@ -861,7 +871,7 @@ func (a gitCredentialAdapter) GitCredential(ctx context.Context, rawURL string) 
 }
 
 // buildAgents loads each agent bundle, builds its model and tools, exposes over A2A, returns client map.
-func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, pluginSkillDirs []string, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, model.LLM, error) {
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, pluginSkillDirs []string, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, model.LLM, error) {
 	nodeServers := newPerNodeServers()
 
 	nodeScope := func(ctx context.Context) memory.Scope {
@@ -1116,20 +1126,22 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				}
 			}
 			ag, err := acp.New(name, bundle.Card.Description, acp.Options{
-				Command:             ac.Acp.Command,
-				Env:                 env,
-				Replay:              acpReplay,
-				Caps:                workspaceCaps,
-				ExtraRO:             acpSkillPaths(pluginSkillDirs),
-				Home:                workspaceCaps.HomeDir,
-				Preamble:            preamble,
-				Jail:                jail,
-				UserID:              localUserID,
-				PermissionJudge:     permJudge,
-				ModelName:           ac.Model,
-				Pricing:             acpPricing,
-				RegisterLiveSteer:   registerLiveSteer,
-				UnregisterLiveSteer: unregisterLiveSteer,
+				Command:              ac.Acp.Command,
+				Env:                  env,
+				Replay:               acpReplay,
+				Caps:                 workspaceCaps,
+				ExtraRO:              acpSkillPaths(pluginSkillDirs),
+				Home:                 workspaceCaps.HomeDir,
+				Preamble:             preamble,
+				Jail:                 jail,
+				UserID:               localUserID,
+				PermissionJudge:      permJudge,
+				ModelName:            ac.Model,
+				Pricing:              acpPricing,
+				RegisterLiveSteer:    registerLiveSteer,
+				UnregisterLiveSteer:  unregisterLiveSteer,
+				RegisterRoundAbort:   registerRoundAbort,
+				UnregisterRoundAbort: unregisterRoundAbort,
 				Worktree: func(ctx context.Context, userID, chatID, parentNodeID, nodeID string) (string, error) {
 					parentDir, err := jail.Resolve(userID, chatID, workspace.NodeDir(parentNodeID))
 					if err != nil {

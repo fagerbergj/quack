@@ -471,3 +471,58 @@ func TestExecute_EditRemoveQueuedMessage(t *testing.T) {
 		t.Errorf("re-run prompt still contains the removed message: %q", stub.prompts[1])
 	}
 }
+
+// TestCancelNode_FiresRegisteredRoundAbort (#1030): CancelNode must reach a
+// round already mid-flight via the abort func an ACP round registers with
+// SetNodeRoundAbort, not just the cancelled flag - that flag alone is
+// invisible to acp.Agent.round until the round returns on its own.
+func TestCancelNode_FiresRegisteredRoundAbort(t *testing.T) {
+	ex := &Executor{controls: newRunControls()}
+	ex.controls.register("chat", "n1")
+
+	fired := make(chan struct{}, 1)
+	ex.SetNodeRoundAbort("chat", "n1", func() { fired <- struct{}{} })
+
+	if !ex.CancelNode("chat", "n1") {
+		t.Fatal("CancelNode returned false for a registered node")
+	}
+	select {
+	case <-fired:
+	default:
+		t.Fatal("CancelNode did not fire the registered round-abort func")
+	}
+}
+
+// TestCancelNode_RoundAbortIdempotentAndUnregistered: a cancel that arrives
+// before any round registers an abort func must not panic (falls back to
+// the cooperative flag, checked at the next boundary as before); a cancel
+// after the abort func is cleared (round already ended) is likewise a
+// harmless no-op.
+func TestCancelNode_RoundAbortIdempotentAndUnregistered(t *testing.T) {
+	ex := &Executor{controls: newRunControls()}
+	ex.controls.register("chat", "n1")
+
+	// No round registered yet - CancelNode must still succeed and set the flag.
+	if !ex.CancelNode("chat", "n1") {
+		t.Fatal("CancelNode returned false")
+	}
+	if !ex.NodeCancelled("chat", "n1") {
+		t.Fatal("cancelled flag not set")
+	}
+
+	// A late registration on an already-cancelled node fires immediately -
+	// the round must not be left to run to its own conclusion.
+	fired := make(chan struct{}, 1)
+	ex.SetNodeRoundAbort("chat", "n1", func() { fired <- struct{}{} })
+	select {
+	case <-fired:
+	default:
+		t.Fatal("SetNodeRoundAbort on an already-cancelled node did not fire immediately")
+	}
+
+	// Round end: unregister, then a second CancelNode call - must not panic.
+	ex.ClearNodeRoundAbort("chat", "n1")
+	if !ex.CancelNode("chat", "n1") {
+		t.Fatal("second CancelNode call returned false")
+	}
+}
