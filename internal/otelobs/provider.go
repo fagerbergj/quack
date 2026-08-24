@@ -58,14 +58,16 @@ type Providers struct {
 // posts to / instead, which loses telemetry silently - and the deployed
 // endpoint is path-less (http://otel-collector:4318). An endpoint that already
 // names a path is left alone.
+// signalURL appends the OTLP signal path to an endpoint. It appends
+// unconditionally - a base URL that carries a path (Langfuse's
+// /api/public/otel) still needs /v1/traces on the end, and the old
+// path-detection rule made such endpoints unusable for every signal (#1045).
+// An endpoint already ending in the signal path is left alone so an
+// explicitly-specified full URL does not double up.
 func signalURL(endpoint, path string) string {
 	trimmed := strings.TrimRight(endpoint, "/")
-	if i := strings.Index(trimmed, "://"); i >= 0 {
-		if strings.Contains(trimmed[i+3:], "/") {
-			return endpoint
-		}
-	} else if strings.Contains(trimmed, "/") {
-		return endpoint
+	if strings.HasSuffix(trimmed, path) {
+		return trimmed
 	}
 	return trimmed + path
 }
@@ -100,22 +102,27 @@ func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledge
 	}
 	mpOpts := []metric.Option{metric.WithResource(res)}
 	var shutdowns []func(context.Context) error
-	if cfg.Otel.OTLPEndpoint != "" {
-		texp, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(signalURL(cfg.Otel.OTLPEndpoint, "/v1/traces")))
-		if err != nil {
-			return nil, nil, fmt.Errorf("otelobs: otlp trace exporter: %w", err)
+	// One exporter per destination per signal: a trace backend and a metrics
+	// collector are usually different systems (#1045).
+	for _, e := range cfg.Otel.Exporters {
+		if e.Wants(config.SignalTraces) {
+			texp, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(signalURL(e.Endpoint, "/v1/traces")))
+			if err != nil {
+				return nil, nil, fmt.Errorf("otelobs: otlp trace exporter (%s): %w", e.Endpoint, err)
+			}
+			bsp := sdktrace.NewBatchSpanProcessor(texp)
+			tpOpts = append(tpOpts, sdktrace.WithSpanProcessor(bsp))
+			shutdowns = append(shutdowns, bsp.Shutdown)
 		}
-		bsp := sdktrace.NewBatchSpanProcessor(texp)
-		tpOpts = append(tpOpts, sdktrace.WithSpanProcessor(bsp))
-		shutdowns = append(shutdowns, bsp.Shutdown)
-
-		mexp, err := otlpmetrichttp.New(ctx, otlpmetrichttp.WithEndpointURL(signalURL(cfg.Otel.OTLPEndpoint, "/v1/metrics")))
-		if err != nil {
-			return nil, nil, fmt.Errorf("otelobs: otlp metric exporter: %w", err)
+		if e.Wants(config.SignalMetrics) {
+			mexp, err := otlpmetrichttp.New(ctx, otlpmetrichttp.WithEndpointURL(signalURL(e.Endpoint, "/v1/metrics")))
+			if err != nil {
+				return nil, nil, fmt.Errorf("otelobs: otlp metric exporter (%s): %w", e.Endpoint, err)
+			}
+			periodic := metric.NewPeriodicReader(mexp)
+			mpOpts = append(mpOpts, metric.WithReader(periodic))
+			shutdowns = append(shutdowns, periodic.Shutdown)
 		}
-		periodic := metric.NewPeriodicReader(mexp)
-		mpOpts = append(mpOpts, metric.WithReader(periodic))
-		shutdowns = append(shutdowns, periodic.Shutdown)
 	}
 	tp := sdktrace.NewTracerProvider(tpOpts...)
 	otel.SetTracerProvider(tp)

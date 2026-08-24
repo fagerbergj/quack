@@ -142,8 +142,11 @@ func initLogs(ctx context.Context, res *resource.Resource, cfg config.Observabil
 	}
 	// Opt-in, unlike traces/metrics: exporting logs at a collector with no
 	// logs pipeline 404s on every batch (and #814's path pinning applies here too).
-	if cfg.Otel.Logs && cfg.Otel.OTLPEndpoint != "" {
-		lexp, err := otlploghttp.New(ctx, otlploghttp.WithEndpointURL(signalURL(cfg.Otel.OTLPEndpoint, "/v1/logs")))
+	for _, e := range cfg.Otel.Exporters {
+		if !e.Wants(config.SignalLogs) {
+			continue
+		}
+		lexp, err := otlploghttp.New(ctx, otlploghttp.WithEndpointURL(signalURL(e.Endpoint, "/v1/logs")))
 		if err != nil {
 			return nil, nil, fmt.Errorf("otelobs: otlp log exporter: %w", err)
 		}

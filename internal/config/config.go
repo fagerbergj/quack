@@ -260,13 +260,28 @@ type TrustedHeadersConfig struct {
 	Groups string `yaml:"groups"`
 }
 
+// OtelSignal names one OTLP signal. An exporter declares which it wants, so
+// traces can go to a trace backend while metrics go to a collector.
+type OtelSignal string
+
+const (
+	SignalTraces  OtelSignal = "traces"
+	SignalMetrics OtelSignal = "metrics"
+	SignalLogs    OtelSignal = "logs"
+)
+
+// OtelExporter: one OTLP destination and the signals sent to it. The signal
+// path (/v1/traces etc) is always appended to Endpoint, so a base URL carrying
+// a path - Langfuse's /api/public/otel - works like any other (#1045).
+type OtelExporter struct {
+	Endpoint string       `yaml:"endpoint"`
+	Signals  []OtelSignal `yaml:"signals"`
+}
+
 type OtelConfig struct {
-	Enabled      *bool   `yaml:"enabled"`
-	OTLPEndpoint string  `yaml:"otlp_endpoint"`
-	Sample       float64 `yaml:"sample"`
-	// Logs opts into OTLP log export. Off by default: logs need a collector
-	// logs pipeline most deployments don't run (slog/stdout is the sink).
-	Logs bool `yaml:"logs"`
+	Enabled   *bool          `yaml:"enabled"`
+	Exporters []OtelExporter `yaml:"exporters"`
+	Sample    float64        `yaml:"sample"`
 	// Content opts into putting prompt/tool/response text on span attributes -
 	// both the model-call spans (internal/inference) and ACP tool-call spans
 	// (internal/acp/turnspan.go). Off by default: an existing deployment that
@@ -304,7 +319,39 @@ func (o *OtelConfig) applyDefaults() error {
 	if t := o.TraceURLTemplate; t != "" && !strings.HasPrefix(t, "https://") && !strings.HasPrefix(t, "http://") {
 		return fmt.Errorf("config: otel.trace_url_template must start with https:// or http://")
 	}
+	// An endpoint that interpolated to "" means the deployment did not set that
+	// env var - the long-standing way to say "build providers, export nothing".
+	// Drop it rather than refusing to start; serve logs when nothing exports.
+	kept := o.Exporters[:0]
+	for _, e := range o.Exporters {
+		if strings.TrimSpace(e.Endpoint) != "" {
+			kept = append(kept, e)
+		}
+	}
+	o.Exporters = kept
+	for i, e := range o.Exporters {
+		if len(e.Signals) == 0 {
+			return fmt.Errorf("config: otel.exporters[%d] (%s) lists no signals; use any of traces, metrics, logs", i, e.Endpoint)
+		}
+		for _, sig := range e.Signals {
+			switch sig {
+			case SignalTraces, SignalMetrics, SignalLogs:
+			default:
+				return fmt.Errorf("config: otel.exporters[%d] (%s): unknown signal %q; use traces, metrics or logs", i, e.Endpoint, sig)
+			}
+		}
+	}
 	return nil
+}
+
+// Wants reports whether this exporter carries sig.
+func (e OtelExporter) Wants(sig OtelSignal) bool {
+	for _, s := range e.Signals {
+		if s == sig {
+			return true
+		}
+	}
+	return false
 }
 
 // ExtensionsConfig is the extensions: block - every top-level key is opaque

@@ -183,7 +183,9 @@ server:
 observability:
   otel:
     enabled: true
-    otlp_endpoint: ${QUACK_OTEL_OTLP_ENDPOINT}   # e.g. http://otel-collector:4318 — actually ships spans/metrics
+    exporters:                                   # one OTLP destination per entry; signal path is always appended
+      - endpoint: ${QUACK_OTEL_OTLP_ENDPOINT}    # e.g. http://otel-collector:4318
+        signals: [traces, metrics]
     sample: 1.0
   recording:
     enabled: ${QUACK_RECORDING_ENABLED}   # unset ⇒ follows otel.enabled
