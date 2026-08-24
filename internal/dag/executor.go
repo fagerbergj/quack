@@ -527,14 +527,28 @@ func segRun(seg string) string {
 	return ""
 }
 
-// stageRound: maps run ID to SSE stage + round.
+// stageRound: maps run ID to SSE stage + round. A queued round carries a
+// "-s%d" suffix (node.go's sfx) that must come off before the round parses.
 func stageRound(runID string) (string, int) {
 	if strings.HasPrefix(runID, "worker-r") {
-		if n := toInt(runID[len("worker-r"):]); n > 0 {
+		if n := toInt(trimQueueSuffix(runID[len("worker-r"):])); n > 0 {
 			return stream.StageRevise, n
 		}
 	}
 	return stream.StageWorker, 0
+}
+
+// trimQueueSuffix drops a trailing "-s<digits>" and nothing else.
+func trimQueueSuffix(s string) string {
+	i := strings.LastIndex(s, "-s")
+	if i < 0 {
+		return s
+	}
+	digits := s[i+2:]
+	if digits == "" || strings.TrimLeft(digits, "0123456789") != "" {
+		return s
+	}
+	return s[:i]
 }
 
 func outputString(o any) string {

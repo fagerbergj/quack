@@ -58,9 +58,20 @@ func setRequestSpanAttrs(ctx context.Context, req *model.LLMRequest) {
 		return // nothing exporting - skip building the (possibly large) payload
 	}
 	var attrs []attribute.KeyValue
-	// conversation.id is a correlation key, not content - stays outside the gate below.
+	// Correlation keys, not content - these stay outside the gate below. ADK
+	// names the span but never says which node ran it; without node/agent a
+	// multi-node trace can't be narrowed to the card the user clicked.
 	if c := ledger.CoordsFromContext(ctx); c.ChatID != "" {
 		attrs = append(attrs, attribute.String(otelobs.GenAIConversationID, c.ChatID))
+		// Node ids are free text from the orchestrator's plan (planner.assemble
+		// checks only non-empty and unique), so a verbose one could carry
+		// message-derived text onto a span the content gate doesn't cover.
+		if isSlug(c.Node) {
+			attrs = append(attrs, attribute.String(otelobs.QuackNode, c.Node))
+		}
+		if c.Agent != "" {
+			attrs = append(attrs, attribute.String(otelobs.GenAIAgentName, c.Agent))
+		}
 	}
 	if !otelobs.CaptureContentEnabled() {
 		if len(attrs) > 0 {
@@ -106,4 +117,20 @@ func setResponseSpanAttrs(ctx context.Context, resp *model.LLMResponse) {
 			attribute.String(langfuseObservationOutput, v),
 		)
 	}
+}
+
+// isSlug reports whether s is short and slug-shaped - the plan's own
+// convention, and the only shape safe to export unredacted.
+func isSlug(s string) bool {
+	if s == "" || len(s) > 64 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+		default:
+			return false
+		}
+	}
+	return true
 }

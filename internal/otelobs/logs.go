@@ -63,7 +63,12 @@ const (
 	// the ledger record of a rejection reason that must never reach the user reply.
 	GenAIOperationPlanRejected = "plan_rejected"
 
-	quackNodeKey  = "quack.node"
+	// QuackNode identifies the DAG node a span or record belongs to. Exported
+	// so the generation span carries the same key the log records do - it is
+	// what makes a Langfuse trace filterable down to one node.
+	QuackNode = "quack.node"
+
+	quackNodeKey  = QuackNode
 	quackRoundKey = "quack.round"
 
 	// QuackModel carries the model a wrapper span (node, worker round) ran
