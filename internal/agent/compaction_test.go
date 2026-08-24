@@ -7,9 +7,12 @@ import (
 	"strings"
 	"testing"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
@@ -285,6 +288,65 @@ func TestCompactionEmitsNodeScopedEvent(t *testing.T) {
 	}
 	if d.TokensBefore <= d.TokensAfter {
 		t.Fatalf("compaction event tokens_before=%d tokens_after=%d, want a real shrink", d.TokensBefore, d.TokensAfter)
+	}
+}
+
+// withTestTracer installs an in-memory span recorder as the global tracer -
+// proves the attribute lands on a real recording span, not the no-op one a
+// stale context would silently return (#1024).
+func withTestTracer(t *testing.T) *tracetest.InMemoryExporter {
+	t.Helper()
+	exp := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp))
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		_ = tp.Shutdown(context.Background())
+		otel.SetTracerProvider(prev)
+	})
+	return exp
+}
+
+// TestCompactionEmitsCompactedSpan: a compacted round must raise a real OTel
+// span carrying gen_ai.conversation.compacted=true - not silently no-op the
+// way oteltrace.SpanFromContext(ctx) would from inside this callback (RunNode
+// rebuilds the context this runs under, same reason SetLedgerCoords exists).
+func TestCompactionEmitsCompactedSpan(t *testing.T) {
+	exp := withTestTracer(t)
+	llm := &fakeLLM{text: "## Goal\n- compacted"}
+
+	contents := []*genai.Content{textContent(genai.RoleUser, "the self-contained task")}
+	for i := 0; i < 30; i++ {
+		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 2_000)))
+	}
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: budgetWindow(contents, defaultEventRetentionSize), Enabled: true})
+
+	ctx := newFakeCtx()
+	ctx.Ctx = ledger.WithCoords(context.Background(), ledger.Coords{Node: "n1", Round: "worker-r0"})
+
+	req := &model.LLMRequest{Contents: append([]*genai.Content{}, contents...)}
+	if _, err := cb(ctx, req); err != nil {
+		t.Fatalf("callback err: %v", err)
+	}
+
+	var found bool
+	for _, s := range exp.GetSpans() {
+		if s.Name != "quack.compaction" {
+			continue
+		}
+		found = true
+		for _, kv := range s.Attributes {
+			if string(kv.Key) == otelobs.GenAIConversationCompacted {
+				if !kv.Value.AsBool() {
+					t.Errorf("%s = false, want true", otelobs.GenAIConversationCompacted)
+				}
+				return
+			}
+		}
+		t.Fatalf("quack.compaction span attrs = %+v, missing %s", s.Attributes, otelobs.GenAIConversationCompacted)
+	}
+	if !found {
+		t.Fatal("no quack.compaction span recorded")
 	}
 }
 

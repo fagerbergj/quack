@@ -338,13 +338,15 @@ func RecordCost(model, agent, user, source string, usd float64) {
 
 // genAIUsageAttrs builds the shared attribute set for token.usage/cost,
 // omitting any empty field rather than stamping a zero-value placeholder.
+// agent stays the bare "agent" label here (not gen_ai.agent.name) - these two
+// instruments already ship with that label and renaming it breaks dashboards.
 func genAIUsageAttrs(model, agent, user, source, tokenType string) []attribute.KeyValue {
 	attrs := make([]attribute.KeyValue, 0, 5)
 	if model != "" {
 		attrs = append(attrs, attribute.String(GenAIRequestModel, model))
 	}
 	if agent != "" {
-		attrs = append(attrs, attrAgent(agent))
+		attrs = append(attrs, attribute.String("agent", agent))
 	}
 	if user != "" {
 		attrs = append(attrs, attrUser(user))
@@ -358,8 +360,8 @@ func genAIUsageAttrs(model, agent, user, source, tokenType string) []attribute.K
 	return attrs
 }
 
-func attrAgent(v string) attribute.KeyValue          { return attribute.String("agent", v) }
-func attrModel(v string) attribute.KeyValue          { return attribute.String("model", v) }
+func attrAgent(v string) attribute.KeyValue          { return attribute.String(GenAIAgentName, v) }
+func attrModel(v string) attribute.KeyValue          { return attribute.String(GenAIRequestModel, v) }
 func attrStage(v string) attribute.KeyValue          { return attribute.String("stage", v) }
 func attrBool(key string, v bool) attribute.KeyValue { return attribute.Bool(key, v) }
 func attrUser(v string) attribute.KeyValue           { return attribute.String("user", v) }

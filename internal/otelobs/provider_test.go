@@ -157,11 +157,10 @@ func spanAttrs(t *testing.T, exp *tracetest.InMemoryExporter, name string) map[s
 	return nil
 }
 
-// TestStart_EmitsConversationIDAlongsideChatID: Langfuse (and OTel-native
-// tooling generally) derives a trace's session from gen_ai.conversation.id and
-// never from a vendor key, so every quack span must carry it - while chat_id
-// stays for the queries already written against it.
-func TestStart_EmitsConversationIDAlongsideChatID(t *testing.T) {
+// TestStart_EmitsConversationIDNotChatID: Langfuse (and OTel-native tooling
+// generally) derives a trace's session from gen_ai.conversation.id and never
+// from a vendor key; chat_id is consumed to compute it, not re-exported.
+func TestStart_EmitsConversationIDNotChatID(t *testing.T) {
 	exp := withTestTracer(t)
 
 	_, span := Start(context.Background(), "run", attribute.String(ChatIDKey, "ext:github:quack-919"))
@@ -171,8 +170,8 @@ func TestStart_EmitsConversationIDAlongsideChatID(t *testing.T) {
 	if got := attrs[GenAIConversationID]; got != "ext:github:quack-919" {
 		t.Errorf("%s = %q, want the chat id", GenAIConversationID, got)
 	}
-	if got := attrs[ChatIDKey]; got != "ext:github:quack-919" {
-		t.Errorf("%s = %q, want it retained", ChatIDKey, got)
+	if _, ok := attrs[ChatIDKey]; ok {
+		t.Errorf("%s should not be exported on the span, want only %s", ChatIDKey, GenAIConversationID)
 	}
 }
 

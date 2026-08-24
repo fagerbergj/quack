@@ -226,7 +226,7 @@ type promptDone struct {
 // cfg.NodeID collapses to the shared workspace scope for a setup-chain's
 // writer node, which would silently no-op the hook (#998 review).
 func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []string, caps workspace.Caps, outbound string, steerChatID, steerNodeID string, emit func(eventSpec) bool) (err error) {
-	ctx, roundSpan := otelobs.Start(ctx, "acp.round", attribute.String("agent", a.name), attribute.String("cwd", cwd))
+	ctx, roundSpan := otelobs.Start(ctx, "acp.round", attribute.String(otelobs.GenAIAgentName, a.name), attribute.String("cwd", cwd))
 	defer func() { otelobs.End(roundSpan, err) }()
 
 	// Snapshot now, before any subprocess I/O - see SetLedgerCoords.
@@ -234,7 +234,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 	coords := a.coords
 	a.mu.Unlock()
 
-	spawnCtx, spawnSpan := otelobs.Start(ctx, "acp.spawn", attribute.String("agent", a.name))
+	spawnCtx, spawnSpan := otelobs.Start(ctx, "acp.spawn", attribute.String(otelobs.GenAIAgentName, a.name))
 	_ = spawnCtx
 	h, err := a.start(ctx, cwd, extraRO, caps)
 	otelobs.End(spawnSpan, err)
@@ -246,7 +246,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 
 	ictx, cancelInit := context.WithTimeout(ctx, a.opts.StartTimeout)
 	defer cancelInit()
-	handshakeCtx, handshakeSpan := otelobs.Start(ctx, "acp.handshake", attribute.String("agent", a.name))
+	handshakeCtx, handshakeSpan := otelobs.Start(ctx, "acp.handshake", attribute.String(otelobs.GenAIAgentName, a.name))
 	_ = handshakeCtx
 	initResp, err := h.conn.Initialize(ictx, sdk.InitializeRequest{
 		ProtocolVersion:    sdk.ProtocolVersionNumber,
@@ -291,7 +291,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 	finalPrompt := mcpToolsBlock(toolNames) + "\n\n" + outbound
 
 	done := make(chan promptDone, 1)
-	promptCtx, promptSpan := otelobs.Start(ctx, "acp.prompt", attribute.String("agent", a.name), attribute.String("session_id", string(sess.SessionId)))
+	promptCtx, promptSpan := otelobs.Start(ctx, "acp.prompt", attribute.String(otelobs.GenAIAgentName, a.name), attribute.String("session_id", string(sess.SessionId)))
 	defer promptSpan.End() // safety net for the relay-stopped/cancel exits below; the done-branch sets the real status first
 	// Per-tool-call child spans, ended as their updates arrive - the only
 	// telemetry that reaches a collector before the round finishes (#924).
@@ -365,7 +365,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 			}
 			final := finalSpec(tr)
 			a.log.Info("acp round done", "stop", string(d.resp.StopReason), "answer_len", len(final.parts[0].Text))
-			promptSpan.SetAttributes(attribute.String("stop_reason", string(d.resp.StopReason)))
+			promptSpan.SetAttributes(attribute.StringSlice(otelobs.GenAIResponseFinishReasons, []string{string(d.resp.StopReason)}))
 			endPrompt(nil)
 			emit(final)
 			return nil
