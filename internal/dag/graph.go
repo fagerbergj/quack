@@ -50,17 +50,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		var workerTools []tool.Tool
 		var release func()
 		if scoped, ok := ag.(nodeScopedWorker); ok {
-			nodeID := n.ID
-			drain := func() string {
-				if controls == nil {
-					return ""
-				}
-				if c := controls.get(chatID, nodeID); c != nil {
-					return c.TakeQueued()
-				}
-				return ""
-			}
-			w, m, wt, rel, err := scoped.ForNode(plan.ID+":"+n.ID, drain)
+			w, m, wt, rel, err := scoped.ForNode(plan.ID+":"+n.ID, liveSteerDrain(controls, chatID, n.ID))
 			if err != nil {
 				return nil, nil, fmt.Errorf("dag: node %q: per-node agent construction: %w", n.ID, err)
 			}
@@ -79,6 +69,21 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec)
 	}
 	return nodesByID, subAgents, nil
+}
+
+// liveSteerDrain: the per-node hook that delivers a steer into a RUNNING round
+// (#1029). It PEEKS - consuming here would burn the -sN generation the UI
+// resolves and rob the gate boundary of its durable delivery.
+func liveSteerDrain(controls *runControls, chatID, nodeID string) func() string {
+	return func() string {
+		if controls == nil {
+			return ""
+		}
+		if c := controls.get(chatID, nodeID); c != nil {
+			return c.PeekQueued()
+		}
+		return ""
+	}
 }
 
 // nodeGateConfig assembles one node's trust-gate config from the agent's base

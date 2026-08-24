@@ -80,6 +80,21 @@ func (c *nodeControl) Paused() bool {
 	return c.paused
 }
 
+// PeekQueued returns pending messages WITHOUT consuming them. Live delivery
+// only nudges the running round; the gate boundary still owns durable delivery
+// - the prompt fold, the -sN generation record and persistence (#1029).
+func (c *nodeControl) PeekQueued() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []string
+	for _, m := range c.queue {
+		if !m.Delivered {
+			out = append(out, m.Text)
+		}
+	}
+	return strings.Join(out, "\n\n")
+}
+
 // TakeQueued drains pending messages into one guidance block; only delivery path at gate boundaries.
 func (c *nodeControl) TakeQueued() string {
 	c.mu.Lock()

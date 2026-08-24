@@ -2,6 +2,7 @@ package agent
 
 import (
 	"strings"
+	"sync"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
@@ -70,12 +71,23 @@ func build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, c
 // next model call. Without it a steer waits for the next gate boundary, which
 // for a long native round is minutes away or never (#1029).
 func steerCallback(drain func() string) llmagent.BeforeModelCallback {
+	// Peeked text stays pending until the gate drains it, so without this the
+	// same steer would be re-injected on every model call of the round.
+	var mu sync.Mutex
+	seen := map[string]bool{}
 	return func(_ adkagent.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
 		if drain == nil || req == nil {
 			return nil, nil
 		}
 		q := strings.TrimSpace(drain())
 		if q == "" {
+			return nil, nil
+		}
+		mu.Lock()
+		dup := seen[q]
+		seen[q] = true
+		mu.Unlock()
+		if dup {
 			return nil, nil
 		}
 		req.Contents = append(req.Contents, &genai.Content{
