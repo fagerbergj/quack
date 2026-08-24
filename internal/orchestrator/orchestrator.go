@@ -119,13 +119,22 @@ func newSafeYield(yield func(stream.SSEEvent, error) bool) func(stream.SSEEvent,
 		}
 		defer func() {
 			if r := recover(); r != nil {
+				// Log the real value, then resume: swallowing a loop-body panic
+				// makes the runtime panic at the range site instead (#1033).
+				// stopped keeps racing nodes out of the dead yield (#1016).
 				stopped = true
 				slog.Error("orchestrator: panic in stream consumer, run aborted",
 					"component", "orchestrator", "panic", r, "stack", string(debug.Stack()))
-				ok = false
+				panic(r)
 			}
 		}()
-		return yield(ev, e)
+		// A false return means the consumer stopped ranging (client gone); calling
+		// the exhausted closure again is itself a panic (#1033).
+		if !yield(ev, e) {
+			stopped = true
+			return false
+		}
+		return true
 	}
 }
 

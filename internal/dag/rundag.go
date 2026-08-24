@@ -49,6 +49,13 @@ func runDAGSubset(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow
 			wg.Add(1)
 			go func(i int, nid string) {
 				defer wg.Done()
+				// ADK recovers node panics on its own scheduler goroutines; this one
+				// is ours, so an unrecovered panic here takes the process (#1033).
+				defer func() {
+					if r := recover(); r != nil {
+						errs[i] = fmt.Errorf("node %q panicked: %v", nid, r)
+					}
+				}()
 				sem <- struct{}{}
 				defer func() { <-sem }()
 

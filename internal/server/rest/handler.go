@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -577,6 +578,18 @@ func (h *Handler) saveAttachment(ctx context.Context, userID, chatID, turnID, na
 	return artifactref.Encode(userID, chatID, name, resp.Version, mimeType), nil
 }
 
+// recoverRun keeps a panicking run from taking the process with it. All three
+// run goroutines outlive the HTTP request, so chi's Recoverer never sees them -
+// the gap that made #1033 fatal. Registered FIRST so it unwinds LAST, covering
+// panics raised by the cleanup defers themselves.
+func recoverRun(chatID schema.ChatID, turnID string) {
+	if r := recover(); r != nil {
+		slog.Error("chat run panicked; run abandoned, process survives",
+			"component", "rest", "chat", chatID, "turn", turnID,
+			"panic", r, "stack", string(debug.Stack()))
+	}
+}
+
 // Launches a chat turn as server-side work on a server-lifetime context (not the HTTP request's). Outlives its initiating client.
 func (h *Handler) startRun(chatID, turnID, content string, attachments []*genai.Part) {
 	runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
@@ -585,6 +598,7 @@ func (h *Handler) startRun(chatID, turnID, content string, attachments []*genai.
 	// Marks the chat in-flight so a crash before stampRunOutcome runs is detectable (#738).
 	_ = h.store.MarkRunActive(runCtx, chatID, turnID)
 	go func() {
+		defer recoverRun(chatID, turnID)
 		// Close done LAST so the run is off the registry by the time viewers see the stream close.
 		defer h.hub.Close(chatID)
 		defer func() {
@@ -984,6 +998,7 @@ func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message stri
 		runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
 		h.hub.RegisterRun(chatID, dp.TurnID, cancelRun)
 		_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
+		defer recoverRun(chatID, dp.TurnID)
 		defer func() {
 			cancelRun()
 			h.hub.UnregisterRun(chatID)
@@ -1029,6 +1044,7 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 		runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
 		h.hub.RegisterRun(chatID, dp.TurnID, cancelRun)
 		_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
+		defer recoverRun(chatID, dp.TurnID)
 		defer func() {
 			cancelRun()
 			h.hub.UnregisterRun(chatID)
