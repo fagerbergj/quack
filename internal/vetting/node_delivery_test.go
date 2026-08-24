@@ -390,3 +390,47 @@ func TestCommitDeliveryFiresOnFailWithCaveat(t *testing.T) {
 		t.Fatal("Deliver never fired on a judge fail - delivery must be graceful, not gated")
 	}
 }
+
+// #1059: a multi-reviewer plan's merged review is delivered by the
+// synthesizer node, which never clones anything itself - its own cfg/act
+// carry no clone URL. The merged delivery must still carry the URL one of
+// the actual reviewer nodes cloned, or Deliver has nothing to post against.
+func TestReviewFanoutMergedDeliveryCarriesReviewerCloneURL(t *testing.T) {
+	const planID = "plan-1059"
+	fanout := GetReviewFanout(planID, 2)
+	fanout.ExpectSynthesis()
+	defer ResetReviewFanout(planID)
+
+	done := make(chan DeliveryContext, 1)
+	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
+		done <- dc
+		return nil, nil
+	}
+
+	reviewerCfg := Config{Deliver: deliver, IsReviewer: true, ReviewFanout: fanout}
+	commitDelivery(context.Background(), nil, reviewerCfg, "r1", workerActivity{
+		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "approve", Body: "lgtm"}},
+		clonedRepos:    []string{"https://github.com/fagerbergj/quack"},
+		currentBranch:  "feat/x",
+	}, GateResult{Passed: true})
+	commitDelivery(context.Background(), nil, reviewerCfg, "r2", workerActivity{
+		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "comment", Body: "nit"}},
+		clonedRepos:    []string{"https://github.com/fagerbergj/quack"},
+		currentBranch:  "feat/x",
+	}, GateResult{Passed: true})
+
+	// The synthesizer node: never clones anything, matching production.
+	synthCfg := Config{Deliver: deliver, IsReviewer: false, ReviewFanout: fanout}
+	commitDelivery(context.Background(), nil, synthCfg, "synthesize", workerActivity{
+		answer: "consolidated review",
+	}, GateResult{Passed: true})
+
+	select {
+	case dc := <-done:
+		if dc.CloneURL != "https://github.com/fagerbergj/quack" {
+			t.Fatalf("CloneURL = %q, want the reviewer nodes' clone URL carried through the fan-in", dc.CloneURL)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Deliver never fired")
+	}
+}

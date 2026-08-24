@@ -28,6 +28,35 @@ type ReviewFanout struct {
 	synthWanted bool
 	synthDone   bool
 	synthBody   string
+
+	// cloneURL/branch: the repo a reviewer node actually cloned (#1059). The
+	// synthesizer node that ends up delivering the merged review never
+	// clones anything itself, so it has no clone coordinates of its own -
+	// first reviewer to report one wins, the rest are the same repo/PR.
+	cloneURL string
+	branch   string
+}
+
+// RecordClone captures the repo/branch a reviewer node cloned, first one
+// wins. Called before Finish/FinishSynthesis so the eventual deliverer -
+// possibly a synthesizer node with no clone of its own - has coordinates
+// to deliver against (#1059).
+func (f *ReviewFanout) RecordClone(cloneURL, branch string) {
+	if cloneURL == "" {
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.cloneURL == "" {
+		f.cloneURL, f.branch = cloneURL, branch
+	}
+}
+
+// Clone returns the recorded reviewer clone coordinates, if any.
+func (f *ReviewFanout) Clone() (cloneURL, branch string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.cloneURL, f.branch
 }
 
 type reviewFanoutEntry struct {
