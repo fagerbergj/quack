@@ -105,7 +105,7 @@ func newRootCmd() *cobra.Command {
 	root.Flags().StringSlice("attach", nil, "with -p: attach file(s) - image/audio - to the prompt (repeatable)")
 	root.Flags().Bool("json", false, "with -p: print one JSON result object instead of plain text (same exit codes)")
 
-	root.AddCommand(newInitCmd(), newChatCmd(), newRecordingCmd(), newServerCmd(), newAPICmd(), newVersionCmd(), newGitAskpassCmd(), newReplayCmd(), newEvalCmd(), newSandboxCmd())
+	root.AddCommand(newInitCmd(), newChatCmd(), newRecordingCmd(), newServerCmd(), newAPICmd(), newVersionCmd(), newGitAskpassCmd(), newReplayCmd(), newEvalCmd(), newSandboxCmd(), newMemoryCmd())
 	return root
 }
 
@@ -148,6 +148,9 @@ func newChatCmd() *cobra.Command {
 		newNodeEditCmd(), newNodeRetryCmd(),
 	)
 
+	artifact := &cobra.Command{Use: "artifact", Short: "List and download a chat's artifacts"}
+	artifact.AddCommand(newArtifactListCmd(), newArtifactDownloadCmd())
+
 	c.AddCommand(
 		newChatNewCmd(),
 		newChatSendCmd(),
@@ -157,7 +160,42 @@ func newChatCmd() *cobra.Command {
 		newChatStopCmd(),
 		newChatDeleteCmd(),
 		node,
+		artifact,
 	)
+	return c
+}
+
+func newArtifactListCmd() *cobra.Command {
+	var asJSON bool
+	c := &cobra.Command{
+		Use:   "list <chat-id>",
+		Short: "List a chat's artifacts and their revision history",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunArtifactList(cmd.Context(), cmd.OutOrStdout(), t, args[0], asJSON)
+			})
+		},
+	}
+	asJSONFlag(c, &asJSON)
+	return c
+}
+
+func newArtifactDownloadCmd() *cobra.Command {
+	var revision int
+	var output string
+	c := &cobra.Command{
+		Use:   "download <chat-id> <artifact-name>",
+		Short: "Download one artifact revision's bytes (default: latest)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunArtifactDownload(cmd.Context(), cmd.OutOrStdout(), t, args[0], args[1], revision, output)
+			})
+		},
+	}
+	c.Flags().IntVar(&revision, "revision", 0, "which revision to fetch (default: latest)")
+	c.Flags().StringVarP(&output, "output", "o", "", "output file path (default: the artifact's own name)")
 	return c
 }
 
@@ -350,6 +388,53 @@ func newRecordingExportCmd() *cobra.Command {
 		},
 	}
 	c.Flags().StringVarP(&output, "output", "o", "", "output file path (default: <chat-id>.zip)")
+	return c
+}
+
+// newMemoryCmd: browse and invalidate the server's memory store (#849's
+// remediation path - `quack api DELETE /api/v1/memories/<id>` by hand - gets
+// a real verb).
+func newMemoryCmd() *cobra.Command {
+	c := &cobra.Command{Use: "memory", Short: "Browse and invalidate remembered facts"}
+	c.AddCommand(newMemoryListCmd(), newMemoryForgetCmd())
+	return c
+}
+
+func newMemoryListCmd() *cobra.Command {
+	var asJSON, includeInvalidated bool
+	var bucket, q string
+	var limit int
+	c := &cobra.Command{
+		Use:   "list",
+		Short: "List or search memories",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunMemoryList(cmd.Context(), cmd.OutOrStdout(), t, bucket, q, limit, includeInvalidated, asJSON)
+			})
+		},
+	}
+	asJSONFlag(c, &asJSON)
+	c.Flags().StringVar(&bucket, "bucket", "", "restrict to one bucket (e.g. repo:quack, role:coding, user:jason)")
+	c.Flags().StringVar(&q, "q", "", "embedding search instead of listing")
+	c.Flags().IntVar(&limit, "limit", 0, "max memories to return (server default 50, capped at 200)")
+	c.Flags().BoolVar(&includeInvalidated, "include-invalidated", false, "include invalidated memories")
+	return c
+}
+
+func newMemoryForgetCmd() *cobra.Command {
+	var reason string
+	c := &cobra.Command{
+		Use:   "forget <memory-id>",
+		Short: "Invalidate (soft-delete) one memory",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunMemoryForget(cmd.Context(), cmd.OutOrStdout(), t, args[0], reason)
+			})
+		},
+	}
+	c.Flags().StringVar(&reason, "reason", "", "why this memory is being invalidated (default: \"manual delete\")")
 	return c
 }
 
