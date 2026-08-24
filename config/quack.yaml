@@ -301,16 +301,22 @@ server:
 
 # OTel tracing/metrics - emission-only (Tempo/Grafana, the home-server
 # monitoring stack, own trace/metric viewing; quack keeps no local store of
-# its own). enabled defaults to true; otlp_endpoint is what actually ships
-# spans/metrics anywhere - unset, providers are built but nothing exports.
+# its own). enabled defaults to true; `exporters` is what actually ships
+# anything - with none listed, providers are built but nothing exports.
 observability:
   otel:
     enabled: ${QUACK_OTEL_ENABLED}             # unset ⇒ true
-    otlp_endpoint: ${QUACK_OTEL_OTLP_ENDPOINT} # unset ⇒ providers built, nothing exported
-    # otlp_endpoint: http://otel-collector:4318  # the deployed home-server collector
+    # Each exporter names one OTLP destination and the signals sent to it, so a
+    # trace backend and a metrics collector can be different systems. The signal
+    # path (/v1/traces etc) is always appended, so a base URL carrying a path -
+    # Langfuse's /api/public/otel - works like any other.
+    exporters:
+      - endpoint: ${QUACK_OTEL_OTLP_ENDPOINT}  # e.g. http://otel-collector:4318
+        signals: [traces, metrics]             # add `logs` to ALSO ship slog via OTLP (needs a collector logs pipeline; default is stdout only)
+    #  - endpoint: http://langfuse:3008/api/public/otel
+    #    signals: [traces]                     # Langfuse ingests traces only
     sample: 1.0                                # trace sample ratio in (0,1]
     environment: ${QUACK_OTEL_ENVIRONMENT}     # unset ⇒ production; deployment.environment.name on every span
-    # logs: true   # ALSO ship slog via OTLP - needs a collector logs pipeline (default: stdout only)
     # capture_content: true # ALSO put user prompts and model responses (plus ACP tool-call args/output) on span attributes (default: off) - ships raw content to the OTLP endpoint
     # trace_url_template: "https://tracing.example.com/trace/{trace_id}"  # unset ⇒ no deep link rendered in the UI
   # The replay ledger (.quack/replay-log.md): every gen_ai.* log event, appended
