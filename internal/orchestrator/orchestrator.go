@@ -143,6 +143,12 @@ func (o *Orchestrator) SetNodeTaskOverride(chatID, nodeID, task string) bool {
 // RetryNode re-runs a finished node and its descendants with optional guidance.
 func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, seeded map[string]string, nodeID, guidance string) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
+		// A retry/resume is its own run, not a continuation of whatever
+		// finished run left this node retryable - it needs its own trace so
+		// a stale trace_id from the earlier run is never mistaken for this one.
+		var span oteltrace.Span
+		ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, chatID))
+		defer otelobs.End(span, nil)
 		// A retry (or a boot resume, which rides this path) counts against
 		// MaxActiveRuns like any other run.
 		release, acquired := o.acquireRun(ctx)
@@ -164,7 +170,7 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, see
 		}
 		// Lead with the plan snapshot so runlog.Drive-based callers (boot
 		// resume) persist the re-run nodes' state; REST persists per-event.
-		yield(tools.DagPlanEvent(plan), nil)
+		yield(tools.DagPlanEvent(ctx, plan), nil)
 		nodeOutputs := make(map[string]string)
 		retryNode := workflow.NewDynamicNode[any, string]("__retry",
 			func(nctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
@@ -275,7 +281,7 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 		o.executor.ResetNodeCancels(sessionID)
 
 		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { yield(ev, nil) })
-		yield(tools.DagPlanEvent(plan), nil)
+		yield(tools.DagPlanEvent(ctx, plan), nil)
 
 		// A bound plan never passes through the execute tool (no orchestrator
 		// LLM turn exists to revise from), so provisioning failure here has no
@@ -497,6 +503,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		const orchRunID = "orchestrator"
 		yield(stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{
 			RunID: orchRunID, Agent: "orchestrator", Stage: stream.StageWorker, StartedAtMs: time.Now().UnixMilli(),
+			TraceID: otelobs.TraceIDOf(ctx),
 		}}, nil)
 
 		var mu sync.Mutex
@@ -721,6 +728,12 @@ func (o *Orchestrator) StartNode(ctx context.Context, userID, sessionID, nodeID,
 }
 
 func (o *Orchestrator) startNodeRun(ctx context.Context, userID, sessionID, message string, pend *pendingInterrupt, nodeID string, yield func(stream.SSEEvent, error) bool) {
+	// Single choke point for both StartNode (fresh dispatch, bare ctx) and
+	// Run's resumeNodeRun (already inside Run's "run" span) - a nested span
+	// here is harmless (same trace) and gives the bare-ctx caller a real one.
+	var span oteltrace.Span
+	ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, sessionID))
+	defer otelobs.End(span, nil)
 	plan, ok := o.stashedPlan(ctx, userID, sessionID)
 	if !ok {
 		yield(stream.Errorf("resume: no plan in session to resume"), nil)
@@ -729,7 +742,7 @@ func (o *Orchestrator) startNodeRun(ctx context.Context, userID, sessionID, mess
 	var mu sync.Mutex
 	safeYield := func(ev stream.SSEEvent, e error) bool { mu.Lock(); defer mu.Unlock(); return yield(ev, e) }
 	ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
-	safeYield(tools.DagPlanEvent(plan), nil)
+	safeYield(tools.DagPlanEvent(ctx, plan), nil)
 	// awaiting_input: the message is the answer to the parked question.
 	// user/shutdown pause: nothing to deliver, just re-enter the graph.
 	var content *genai.Content

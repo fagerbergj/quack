@@ -233,7 +233,7 @@ func TestTracedModel_Embed_RecordsDuration(t *testing.T) {
 	if !ok || len(hist.DataPoints) == 0 {
 		t.Fatal("quack.model.call.duration has no data points")
 	}
-	if got := attrVal(hist.DataPoints[0].Attributes, "model"); got != "qwen3-embed" {
+	if got := attrVal(hist.DataPoints[0].Attributes, otelobs.GenAIRequestModel); got != "qwen3-embed" {
 		t.Errorf("model = %q, want qwen3-embed", got)
 	}
 }

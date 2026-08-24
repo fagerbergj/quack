@@ -8,6 +8,7 @@ import { agentLabel, type Activity, type AgentRun } from './messageParts'
 import { previewLine, fmtTokenCount } from './toolFormat'
 import { type DagNodeDef } from '../state/agentStream'
 import { fmtMs, LiveTimer } from '../utils/timer'
+import { traceUrl } from '../state/clientConfig'
 
 // NodeMenu is the node's ⋮ overflow menu: one click for pause/start/stop (no
 // popup round-trip), with "queue a message…" / "edit prompt" / "answer
@@ -569,6 +570,17 @@ export const DagNode = memo(function DagNode({
                 <span title={`${state.cachedTokens.toLocaleString()} tokens served from cache`}> ({state.cachedTokens.toLocaleString()} cached)</span>
               )}
             </span>
+          )}
+          {traceUrl(state.traceId) && (
+            <a
+              href={traceUrl(state.traceId)}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[10px] text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 underline"
+              title="Open this run's trace in the tracing backend (whole run, not just this node)"
+            >
+              run trace
+            </a>
           )}
           <ContextMeter used={state.contextTokens ?? 0} limit={node.context_window ?? 0} />
           {/* A finished node shows the server-measured duration (reconnect-proof);

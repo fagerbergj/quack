@@ -267,9 +267,18 @@ type OtelConfig struct {
 	// Logs opts into OTLP log export. Off by default: logs need a collector
 	// logs pipeline most deployments don't run (slog/stdout is the sink).
 	Logs bool `yaml:"logs"`
+	// Content opts into putting prompt/tool/response text on span attributes -
+	// both the model-call spans (internal/inference) and ACP tool-call spans
+	// (internal/acp/turnspan.go). Off by default: an existing deployment that
+	// only wired traces/metrics must not silently start shipping message
+	// content on upgrade.
+	Content bool `yaml:"capture_content"`
 	// Environment lands on the OTel resource as deployment.environment.name -
 	// what trace backends split dev traffic from the deployed server by.
 	Environment string `yaml:"environment"`
+	// TraceURLTemplate builds a per-node trace deep link for the frontend; the
+	// literal "{trace_id}" is substituted. Empty (default) = no link rendered.
+	TraceURLTemplate string `yaml:"trace_url_template"`
 }
 
 const otelDefaultSample = 1.0
@@ -289,6 +298,11 @@ func (o *OtelConfig) applyDefaults() error {
 	}
 	if o.Sample < 0 || o.Sample > 1 {
 		return fmt.Errorf("config: otel.sample must be in (0,1]")
+	}
+	// The template becomes an href in the UI; anything but http(s) would let a
+	// javascript: URL render as a clickable link.
+	if t := o.TraceURLTemplate; t != "" && !strings.HasPrefix(t, "https://") && !strings.HasPrefix(t, "http://") {
+		return fmt.Errorf("config: otel.trace_url_template must start with https:// or http://")
 	}
 	return nil
 }

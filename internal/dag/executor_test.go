@@ -14,7 +14,7 @@ import (
 // events it produced. scoreOf is fixed so node_done carries a known judge result.
 func drive(evs []*session.Event, agentByID map[string]string, score gateScore) []stream.SSEEvent {
 	var got []stream.SSEEvent
-	ds := newDagStream(agentByID,
+	ds := newDagStream("", agentByID,
 		func(ev stream.SSEEvent, _ error) bool { got = append(got, ev); return true },
 		map[string]string{},
 		func(string) gateScore { return score },
@@ -182,7 +182,7 @@ func equalStrings(a, b []string) bool {
 func TestDagStream_SteeredRunEmitsNodeSteered(t *testing.T) {
 	agentByID := map[string]string{"n1": "web-researcher"}
 	var got []stream.SSEEvent
-	ds := newDagStream(agentByID,
+	ds := newDagStream("", agentByID,
 		func(e stream.SSEEvent, _ error) bool { got = append(got, e); return true },
 		map[string]string{},
 		func(string) gateScore { return gateScore{} },

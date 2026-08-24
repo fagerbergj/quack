@@ -91,6 +91,8 @@ type AgentStartData struct {
 	Round  int    `json:"round,omitempty"`
 	// Server wall-clock (epoch ms) the run began - anchors the per-run timer across reconnect/replay.
 	StartedAtMs int64 `json:"started_at_ms,omitempty"`
+	// TraceID cross-references the OTel trace for this run; "" when otel is disabled.
+	TraceID string `json:"trace_id,omitempty"`
 }
 
 // Reasoning streamed during a run.
@@ -211,6 +213,8 @@ type DagPlanData struct {
 	Edges  []DagEdgeDef `json:"edges"`
 	// Server wall-clock (epoch ms) the run began - anchors total-run timer across reconnect/replay.
 	StartedAtMs int64 `json:"started_at_ms,omitempty"`
+	// TraceID cross-references the OTel trace for this run; "" when otel is disabled.
+	TraceID string `json:"trace_id,omitempty"`
 }
 
 // `node_queued` event payload.
@@ -230,6 +234,8 @@ type NodeStartData struct {
 	Agent  string `json:"agent"`
 	// Server wall-clock (epoch ms) the node began - anchors per-node timer across reconnect/replay.
 	StartedAtMs int64 `json:"started_at_ms,omitempty"`
+	// TraceID cross-references the OTel trace for this node; "" when otel is disabled.
+	TraceID string `json:"trace_id,omitempty"`
 }
 
 // `node_done` event payload. Completion stats are summed across all runs; omitted when zero.
@@ -352,6 +358,29 @@ func NodeStart(nodeID, agent string) SSEEvent {
 	return SSEEvent{Name: EventNodeStart, Data: NodeStartData{
 		NodeID: nodeID, Agent: agent, StartedAtMs: time.Now().UnixMilli(),
 	}}
+}
+
+// WithTrace stamps a trace id onto a wire event's payload post-construction,
+// same pattern as ScopeToNode/ScopeToRun. Events without a TraceID field are
+// unchanged. Only the raw id travels the wire - never a rendered URL, so a
+// durable/replayed event stays correct even after the operator's trace
+// backend or URL template changes (the frontend renders the link at read time).
+func WithTrace(ev SSEEvent, traceID string) SSEEvent {
+	if traceID == "" {
+		return ev
+	}
+	switch d := ev.Data.(type) {
+	case AgentStartData:
+		d.TraceID = traceID
+		ev.Data = d
+	case NodeStartData:
+		d.TraceID = traceID
+		ev.Data = d
+	case DagPlanData:
+		d.TraceID = traceID
+		ev.Data = d
+	}
+	return ev
 }
 
 // NodeDone builds a node_done event.
