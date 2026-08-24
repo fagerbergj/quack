@@ -10,6 +10,31 @@ providers:
     endpoint: ${QUACK_LLM_ENDPOINT}
     api_key: ${QUACK_LLM_API_KEY}
 
+# models: the registry every *_MODEL reference must resolve into — point the
+# QUACK_*_MODEL env vars at the names below (config/quack.yaml's registry is
+# the canonical reference), or add entries for your own model names.
+models:
+  qwen3.8-27b:            # workhorse: orchestrator, web-researcher, synthesizer, and the 3× coding agents
+    provider: default
+    role: worker
+    context_window: 262144
+  qwen3-omni-30b:         # media-reader (audio)
+    provider: default
+    role: worker
+    context_window: 32768
+  qwen3-vl-32b:           # image-reader
+    provider: default
+    role: worker
+    context_window: 32768
+  gemma4-26b-a4b:         # judge + store consolidation + session compaction
+    provider: default
+    role: judge
+    context_window: 131072
+  qwen3-embed:            # memory embedder
+    provider: default
+    role: embed
+    context_window: 4096
+
 stores:
   default_postgres:
     kind: postgres
@@ -62,7 +87,7 @@ agents:
       bucket: coding
     judge_rounds: 1
     acp:
-      command: ["opencode", "acp"]
+      command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       mcp_servers:
         - https://mcp.context7.com/mcp
   code-reviewer:
@@ -74,7 +99,7 @@ agents:
       bucket: coding
     judge_rounds: 1
     acp:
-      command: ["opencode", "acp"]
+      command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       read_only: true
   code-explorer:
     bundle: agents/code-explorer
@@ -85,7 +110,7 @@ agents:
       bucket: coding
     judge_rounds: 2
     acp:
-      command: ["opencode", "acp"]
+      command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       mcp_servers:
         - https://mcp.context7.com/mcp
       read_only: true

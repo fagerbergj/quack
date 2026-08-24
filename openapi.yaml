@@ -444,6 +444,7 @@ paths:
         - node_paused
         - node_steered
         - delivery_result
+        - compaction
         - chat_title
         - done
         - error
@@ -519,6 +520,7 @@ paths:
         - node_paused
         - node_steered
         - delivery_result
+        - compaction
         - chat_title
         - done
         - error

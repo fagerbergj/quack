@@ -39,6 +39,13 @@ func TestSkillsLoad(t *testing.T) {
 	}
 }
 
+// resolveSkillDirs composes plugin.Resolve+plugin.SkillDirs, the way boot
+// does - tests want the resolved dirs without asserting on the error return.
+func resolveSkillDirs(roots []string) []string {
+	plugins, _ := plugin.Resolve(roots)
+	return plugin.SkillDirs(plugins)
+}
+
 // writeVendorSkill lays down one SKILL.md under dir/<name>/ in the exact
 // layout the vendored ponytail skills/ dir ships (and the shipped skills/
 // library uses).
@@ -76,7 +83,7 @@ func TestNewSkillSourceMergesVendoredSkills(t *testing.T) {
 	writeVendorSkill(t, filepath.Join(vendor, "skills"), "ponytail", "Forces the laziest solution that actually works.")
 	writeVendorSkill(t, filepath.Join(vendor, "skills"), "ponytail-review", "Code review focused exclusively on over-engineering.")
 
-	src := newSkillSource(plugin.ResolveSkillDirs([]string{vendor}))
+	src := newSkillSource(resolveSkillDirs([]string{vendor}))
 	ctx := context.Background()
 
 	for _, name := range []string{"ponytail", "ponytail-review"} {
@@ -105,7 +112,7 @@ func TestNewSkillSourceMergesVendoredSkills(t *testing.T) {
 // skills.plugins at a path they never created) never fails the run - it's
 // just absent from the merged source, and quack's own shipped skills resolve.
 func TestNewSkillSourceMissingPluginRoot(t *testing.T) {
-	src := newSkillSource(plugin.ResolveSkillDirs([]string{filepath.Join(t.TempDir(), "does-not-exist")}))
+	src := newSkillSource(resolveSkillDirs([]string{filepath.Join(t.TempDir(), "does-not-exist")}))
 	if _, err := src.LoadFrontmatter(context.Background(), "plan-work"); err != nil {
 		t.Errorf("LoadFrontmatter(plan-work): %v", err)
 	}
@@ -138,7 +145,7 @@ func TestNewSkillSourceNoPluginsConfigured(t *testing.T) {
 // them, and before dotagentsEmbeddedSkills existed, losing disk access to
 // dotagents meant losing the server entirely, not just a skill.
 func TestNewSkillSourceDotagentsMissingOnDisk(t *testing.T) {
-	src := newSkillSource(plugin.ResolveSkillDirs([]string{filepath.Join(t.TempDir(), "does-not-exist")}))
+	src := newSkillSource(resolveSkillDirs([]string{filepath.Join(t.TempDir(), "does-not-exist")}))
 	ctx := context.Background()
 	for _, name := range []string{"format-markdown", "plan-work"} {
 		if _, err := src.LoadFrontmatter(ctx, name); err != nil {
@@ -157,7 +164,7 @@ func TestNewSkillSourceDotagentsOnDiskNoDuplicate(t *testing.T) {
 	if st, err := os.Stat(dotagents + "/skills"); err != nil || !st.IsDir() {
 		t.Fatalf("vendored dotagents skills missing at %s/skills", dotagents)
 	}
-	src := newSkillSource(plugin.ResolveSkillDirs([]string{dotagents}))
+	src := newSkillSource(resolveSkillDirs([]string{dotagents}))
 	if _, err := src.ListFrontmatters(context.Background()); err != nil {
 		t.Fatalf("ListFrontmatters: %v (embedded fallback likely double-added dotagents)", err)
 	}
@@ -171,7 +178,7 @@ func TestAcpSkillPathsResolvesDotagents(t *testing.T) {
 	root := repoRoot(t)
 	t.Chdir(root)
 
-	paths := acpSkillPaths(plugin.ResolveSkillDirs([]string{".agents/vendor/dotagents", ".agents/vendor/ponytail"}))
+	paths := acpSkillPaths(resolveSkillDirs([]string{".agents/vendor/dotagents", ".agents/vendor/ponytail"}))
 
 	wantDotagents := filepath.Join(root, ".agents", "vendor", "dotagents", "skills")
 	if !slices.Contains(paths, wantDotagents) {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"iter"
 	"log/slog"
+	"runtime/debug"
 	"time"
 
 	"github.com/fagerbergj/quack/internal/dag"
@@ -170,8 +171,16 @@ func (res *DriveResult) Step(st *store.Store, chatID, turnID string, persist boo
 // iterator yields; the loop keeps draining regardless (never fatal). pub may
 // be nil (a caller with no store to persist against, e.g. a test double) -
 // persistence/publish are skipped, but plan/pause/usage tracking still runs.
-func Drive(turnID string, st *store.Store, pub *Publisher, run iter.Seq2[stream.SSEEvent, error], onErr func(error)) DriveResult {
-	var res DriveResult
+func Drive(turnID string, st *store.Store, pub *Publisher, run iter.Seq2[stream.SSEEvent, error], onErr func(error)) (res DriveResult) {
+	// A recovered node-yield panic still poisons range-over-func state (#1016):
+	// the next yield, or this loop's own exit, re-panics per Go's rangefunc
+	// contract. REST has chi's Recoverer; extension/boot drive goroutines don't.
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("runlog: drive panicked; run aborted, not the process",
+				"component", "runlog", "turn", turnID, "panic", r, "stack", string(debug.Stack()))
+		}
+	}()
 	for ev, err := range run {
 		if err != nil {
 			if onErr != nil {

@@ -328,6 +328,63 @@ func TestBuildTurnUsageNilWhenAbsent(t *testing.T) {
 	}
 }
 
+// TestBuildTurnDAGAnswerBubble: a DAG turn's answer bubble carries the
+// terminal node's OUTPUT (matching what the live stream rendered), not the
+// orchestrator's planning narration - the GitHub-review double-render fix.
+func TestBuildTurnDAGAnswerBubble(t *testing.T) {
+	planJSON := `{"nodes":[{"id":"explore","agent":"code-explorer","task":"read","depends_on":[]},{"id":"post","agent":"code-reviewer","task":"review","depends_on":["explore"]}],"edges":[{"from":"explore","to":"post"}]}`
+	tc := store.TurnContent{
+		ID:        "t1",
+		CreatedAt: time.Now(),
+		UserText:  "please review this PR",
+		AsstText:  "I'll handle this review directly - planning chatter",
+		Plan:      &store.DagPlan{ID: "p1", TurnID: "t1", PlanJSON: planJSON},
+		Nodes: []store.DagNode{
+			{NodeID: "explore", Status: "done", Output: "explorer notes"},
+			{NodeID: "post", Status: "done", Output: "VERDICT: approve\n\nThe changes look good."},
+		},
+	}
+
+	turn := buildTurn(tc)
+
+	var msg schema.MessageOutputItem
+	found := false
+	for _, o := range turn.Output {
+		if m, err := o.AsMessageOutputItem(); err == nil && len(m.Content) > 0 {
+			msg, found = m, true
+			break
+		}
+	}
+	if !found || len(msg.Content) == 0 {
+		t.Fatal("no message output item with content")
+	}
+	text, err := msg.Content[0].AsOutputTextPart()
+	if err != nil {
+		t.Fatalf("AsOutputTextPart: %v", err)
+	}
+	if text.Text != "VERDICT: approve\n\nThe changes look good." {
+		t.Errorf("bubble text = %q, want the terminal node's output, not the orchestrator narration", text.Text)
+	}
+}
+
+// TestBuildTurnPlainReplyKeepsNarration: a non-DAG turn's bubble stays the
+// orchestrator's own AsstText - terminalNodeOutput only applies to DAG turns.
+func TestBuildTurnPlainReplyKeepsNarration(t *testing.T) {
+	tc := store.TurnContent{ID: "t2", CreatedAt: time.Now(), UserText: "hi", AsstText: "direct reply"}
+	turn := buildTurn(tc)
+	msg, err := turn.Output[0].AsMessageOutputItem()
+	if err != nil || len(msg.Content) == 0 {
+		t.Fatalf("no message output item: %v", err)
+	}
+	text, err := msg.Content[0].AsOutputTextPart()
+	if err != nil {
+		t.Fatalf("AsOutputTextPart: %v", err)
+	}
+	if text.Text != "direct reply" {
+		t.Errorf("bubble text = %q, want the plain AsstText", text.Text)
+	}
+}
+
 // --- UpdateChat (manual rename) ----------------------------------------------
 
 func patchUpdateChat(t *testing.T, h *Handler, chatID string, body schema.UpdateChatBody) *httptest.ResponseRecorder {

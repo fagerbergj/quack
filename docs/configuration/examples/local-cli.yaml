@@ -13,6 +13,17 @@ providers:
     endpoint: ${QUACK_LLM_ENDPOINT}   # e.g. http://localhost:11436/v1 (llama-swap/Ollama/vLLM), or a hosted API
     api_key: ${QUACK_LLM_API_KEY}     # blank if the endpoint needs none
 
+# models: the registry every *_MODEL reference must resolve into — the run
+# command above sets QUACK_ORCH_MODEL and QUACK_RESEARCHER_MODEL to a name
+# registered here (config/quack.yaml's registry is the canonical reference).
+models:
+  qwen3.8-27b:            # worker: orchestrator + web-researcher/synthesizer
+    provider: default
+    role: worker
+  gemma4-26b-a4b:         # judge: gates.judge (empty QUACK_JUDGE_MODEL ⇒ judge disabled)
+    provider: default
+    role: judge
+
 stores:
   default_sqlite:
     kind: sqlite

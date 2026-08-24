@@ -334,8 +334,9 @@ function groupWorkerRuns(runs: AgentRun[], activeIdx: number): RunGroup[] {
 // (#385/#399), extended to the answer (0.9.0 feedback): a truncated preview by
 // default, the full answer in a popup on click (maintainer call: the answer
 // reads better full-size than height-locked inline). Shown for every node so
-// each specialist's answer is inspectable - not just the final one (whose
-// answer also appears in the main message bubble).
+// each specialist's answer is inspectable - except the final node, whose
+// answer IS the turn's answer and renders in full in the message bubble
+// below the DAG (a card row here would be a second copy of the same text).
 function NodeAnswer({ answer }: { answer: string }) {
   const [open, setOpen] = useState(false)
   if (!answer) return null
@@ -650,7 +651,7 @@ export const DagNode = memo(function DagNode({
       })}
 
       {/* Vetted answer (below the stage cards, for every node) */}
-      <NodeAnswer answer={answer} />
+      {!isFinal && <NodeAnswer answer={answer} />}
 
       {/* Failed state */}
       {state.status === 'failed' && state.error && (

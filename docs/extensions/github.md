@@ -59,7 +59,7 @@ Computed once per dispatch, from the labels currently on the issue/PR, whether q
 
 ### How review actually works
 
-The code-reviewer is an **external ACP agent** (opencode, spawned per round) - it has no quack tools of its own, so it can't build up a review with API calls. Instead it reads the diff with its own tools and ends its answer with a structured tail:
+The code-reviewer is an **external ACP agent** (pi through the `pi-acp` shim, spawned per round) - it has no quack tools of its own, so it can't build up a review with API calls. Instead it reads the diff with its own tools and ends its answer with a structured tail:
 
 ```text
 VERDICT: approve | request_changes | comment

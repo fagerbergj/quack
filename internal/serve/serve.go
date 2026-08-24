@@ -1398,7 +1398,7 @@ func mcpServerName(raw string, i int) string {
 }
 
 // extractedDotagentsSkillsDir is where the embedded dotagents skills are
-// materialised on disk for the sandboxed ACP child (opencode reads
+// materialised on disk for the sandboxed ACP child (the pi-acp shim reads
 // skills.paths off disk; it has no access to the binary's embedded FS,
 // unlike the in-process skill toolset newSkillSource feeds). Under
 // os.TempDir(), not caps.HomeDir: extraction happens once at startup, before

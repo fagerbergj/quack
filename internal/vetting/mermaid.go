@@ -22,7 +22,7 @@ var fenceOpenRe = regexp.MustCompile(`(?i)^( {0,3})(` + "`{3,}|~{3,}" + `)[ \t]*
 
 // mermaidLineRe matches jison's fixed "Parse error on line N:" header - part
 // of jison's own generated-parser boilerplate, not mermaid's prose about the
-// diagram (#735).
+// diagram.
 var mermaidLineRe = regexp.MustCompile(`^Parse error on line (\d+):$`)
 
 // mermaidGotTokenRe pulls the terminal jison actually saw out of its
@@ -72,25 +72,6 @@ func (i mermaidIssue) Feedback() string {
 	return fmt.Sprintf("line %d: %s", i.line, i.err)
 }
 
-// FeedbackBlock renders one issue as a markdown fenced block: github/webhook.go's
-// revise nudge embeds this in a GitHub comment, where bare newlines inside a
-// "- " bullet break the list AND misalign the parser's caret (#735).
-func (i mermaidIssue) FeedbackBlock() string {
-	return fmt.Sprintf("line %d:\n```\n%s\n```", i.line, i.err)
-}
-
-// FormatMermaidNudgeBody joins each issue as its own fenced markdown block -
-// github/webhook.go's revise nudge embeds this in a GitHub comment, where a
-// "- " bullet list would break on the issues' embedded newlines and misalign
-// the parser's caret (#735).
-func FormatMermaidNudgeBody(issues []mermaidIssue) string {
-	blocks := make([]string, len(issues))
-	for i, iss := range issues {
-		blocks[i] = iss.FeedbackBlock()
-	}
-	return strings.Join(blocks, "\n\n")
-}
-
 // walkMermaidBlocks visits each top-level ```mermaid block with its body text.
 func walkMermaidBlocks(lines []string, visit func(openLine, closeLine int, body string)) {
 	for i := 0; i < len(lines); {
@@ -109,35 +90,6 @@ func walkMermaidBlocks(lines []string, visit func(openLine, closeLine int, body 
 		}
 		i = close + 1
 	}
-}
-
-// DegradeInvalidMermaid rewrites invalid ```mermaid fences to ```text with a warning (last-resort ceiling).
-func DegradeInvalidMermaid(md string) (string, []mermaidIssue) {
-	if !strings.Contains(md, "```") && !strings.Contains(md, "~~~") {
-		return md, nil
-	}
-	lines := strings.Split(md, "\n")
-	var issues []mermaidIssue
-	out := make([]string, 0, len(lines))
-	last := 0
-	walkMermaidBlocks(lines, func(openLine, closeLine int, body string) {
-		reason := mermaidError(body)
-		if reason == "" {
-			return
-		}
-		issues = append(issues, mermaidIssue{line: openLine + 1, err: reason})
-		out = append(out, lines[last:openLine]...)
-		m := fenceOpenRe.FindStringSubmatch(lines[openLine])
-		out = append(out, fmt.Sprintf("> ⚠️ invalid mermaid diagram (%s) - shown as text, not rendered", reason))
-		out = append(out, m[1]+m[2]+"text")
-		out = append(out, lines[openLine+1:closeLine+1]...)
-		last = closeLine + 1
-	})
-	if len(issues) == 0 {
-		return md, nil
-	}
-	out = append(out, lines[last:]...)
-	return strings.Join(out, "\n"), issues
 }
 
 // findFenceClose searches for a closing fence line from start (CommonMark rules).

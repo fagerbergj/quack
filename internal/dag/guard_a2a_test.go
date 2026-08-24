@@ -170,7 +170,7 @@ func newGuardA2ARun(t *testing.T) *guardA2ARun {
 		t.Fatalf("a2a serve: %v", err)
 	}
 	t.Cleanup(func() { _ = srv.Close() })
-	client, err := srv.Client()
+	client, err := srv.ClientForNode("test-node")
 	if err != nil {
 		t.Fatalf("a2a client: %v", err)
 	}
@@ -400,7 +400,7 @@ func TestGuardConfirm_OverA2A_RaisedDuringRevision(t *testing.T) {
 		t.Fatalf("a2a serve: %v", err)
 	}
 	t.Cleanup(func() { _ = srv.Close() })
-	client, err := srv.Client()
+	client, err := srv.ClientForNode("test-node")
 	if err != nil {
 		t.Fatalf("a2a client: %v", err)
 	}

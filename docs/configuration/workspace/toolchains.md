@@ -4,7 +4,7 @@ The runtime image ships **Go and Node only** — enough for the trust gate's det
 
 ## How `exec_path` and `env` work
 
-`exec_path` puts directories on the `PATH` every `run_command`/check/git child sees — and, under `sandbox: bwrap`, into the child's *filesystem*. `env` hands those same children, plus the ACP coding-agent subprocess (`opencode`), extra environment variables. Toolchains routinely need both: `PATH` alone finds `javac`, but Gradle also needs `JAVA_HOME`, and the Android Gradle Plugin needs `ANDROID_HOME` — a directory to look things up *in*, not a command to run.
+`exec_path` puts directories on the `PATH` every `run_command`/check/git child sees — and, under `sandbox: bwrap`, into the child's *filesystem*. `env` hands those same children, plus the ACP coding-agent subprocess (the `pi-acp` shim), extra environment variables. Toolchains routinely need both: `PATH` alone finds `javac`, but Gradle also needs `JAVA_HOME`, and the Android Gradle Plugin needs `ANDROID_HOME` — a directory to look things up *in*, not a command to run.
 
 **Precedence.** `workspace.env` is deployment-wide. An agent's own `acp: {env: ...}` (see [agents.md](../agents.md)) is more specific and wins on a shared key — e.g. one code-implementer pinned to a different JDK than the deployment default. `PATH` and `HOME` are reserved in `workspace.env`: they have dedicated knobs (`exec_path`, and the jail's isolated per-user home), and setting them here is a startup error rather than a silent override.
 
@@ -104,7 +104,7 @@ List the SDK root as well as its `bin/`. Under `sandbox: bwrap`, `exec_path` ent
 
 `GOPATH`/`GOCACHE` need no special handling: they default under `$HOME`, and unlike the JVM, Go honours it.
 
-**`GOTOOLCHAIN` and `GOMODCACHE` default to `local` and `/usr/local/go/pkg/mod`.** The sandbox has no network, so `GOTOOLCHAIN=auto` (Go's own default) would try and fail to download any toolchain newer than the image's; `local` fails fast with Go's own error instead. `$HOME/go/pkg/mod` (Go's default module cache location) is a fresh, empty per-job directory every run, so `GOMODCACHE` is pointed at the copy of `go mod download`'s output baked into the image under `GOROOT` instead — the one path outside `$HOME` the sandbox can actually reach read-only. Both are plain `workspace.env` defaults (`internal/config/config.go`), so a deployment pinning its own Go version via `GOROOT` above should set `GOMODCACHE` alongside it, pointing at that toolchain's own pre-seeded module cache if it has one, or drop the override to fall back to `$HOME` if it doesn't.
+**`GOTOOLCHAIN` is pinned to `local` and `GOMODCACHE` is always a writable dir under `$HOME`.** The sandbox has no network, so `GOTOOLCHAIN=auto` (Go's own default) would try and fail to download any toolchain newer than the image's; `local` fails fast with Go's own error instead. `GOMODCACHE` points at `$HOME/go/pkg/mod`, farmed the first time with one symlink per entry of the read-only copy of `go mod download`'s output baked into the image (see `internal/workspace/sandbox.go`) — pointing it straight at that preseed fails because Go writes `cache/lock` even when it downloads nothing. Both are appended to every child's env **last** (`internal/workspace/exec.go`), so they win over any `workspace.env` value: do not set `GOMODCACHE` or `GOTOOLCHAIN` in `workspace.env` expecting a pinned Go version to be honored — the override is unconditional. A self-pinned toolchain is a `GOROOT`/`exec_path` concern; its module cache preseed is not honored at all.
 
 ## Verifying
 

@@ -57,6 +57,16 @@ describe('DagNode - answer collapses to a one-line preview (#385/#399 ethos)', (
     expect(out).toContain('## Heading Visit in **May**. - one - two') // previewLine flattens whitespace
   })
 
+  it('omits the answer row on the FINAL node - its answer is the turn bubble below the DAG', () => {
+    const out = renderToStaticMarkup(createElement(DagNode, {
+      node, state: { status: 'done', startedAt: 0, finishedAt: 1000 },
+      runs: [{ runId: 'w', agent: 'web-researcher', stage: 'worker', done: true, activity }],
+      answer, isFinal: true,
+    }))
+    expect(out).not.toContain('<span class="shrink-0">answer</span>')
+    expect(out).not.toContain('## Heading')
+  })
+
   it('does not render the answer as markdown inline (that only happens in the popup, on click)', () => {
     expect(out).not.toContain('<h2>Heading</h2>')
     expect(out).not.toContain('role="dialog"')

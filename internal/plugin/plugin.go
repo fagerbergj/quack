@@ -121,15 +121,6 @@ func Resolve(roots []string) ([]Plugin, error) {
 	return out, nil
 }
 
-// ResolveSkillDirs returns just the skills directories of the resolved roots,
-// in order and never deduped: callers control precedence via root order. A
-// namespace error is ignored here - the skills path stays warn-and-skip, and
-// boot surfaces the same error through Resolve.
-func ResolveSkillDirs(roots []string) []string {
-	plugins, _ := Resolve(roots)
-	return SkillDirs(plugins)
-}
-
 // resolveRoot returns nil, nil for a root that is skipped.
 func resolveRoot(root string) (*Plugin, error) {
 	abs, err := filepath.Abs(root)

@@ -324,7 +324,7 @@ func TestActivityWrittenTracksCwd(t *testing.T) {
 		fnCall("w2", "write_file", map[string]any{"path": "/toplevel.ts"}),
 		fnResp("w2", "write_file", map[string]any{"bytes": 10, "created": true}),
 	)
-	act := activityFromSession(sess)
+	act := activityFromSessionAt(sess, "")
 	want := []string{"repo/app/logic.ts", "toplevel.ts"}
 	if len(act.written) != len(want) {
 		t.Fatalf("written = %v, want %v", act.written, want)
@@ -371,7 +371,7 @@ func TestGitCloneCountsAsRetrieval(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	act := activityFromSession(sess)
+	act := activityFromSessionAt(sess, "")
 
 	// The clone is recorded structurally: URL + local dir.
 	if len(act.clonedRepos) != 1 || act.clonedRepos[0] != repoURL {
@@ -382,7 +382,8 @@ func TestGitCloneCountsAsRetrieval(t *testing.T) {
 	}
 	// The clone is retrieval: grounded_in_retrieval must not fire on it.
 	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
-	got := foldDeterministic(ctx, v, "The repo's entrypoint is cmd/main.go.", act, Config{RequireRetrieval: true})
+	det, _ := computeDeterministicCriteria(ctx, "The repo's entrypoint is cmd/main.go.", act, Config{RequireRetrieval: true})
+	got := mergeDeterministic(v, det, Config{RequireRetrieval: true})
 	if _, present := got.Criteria["grounded_in_retrieval"]; present {
 		t.Error("grounded_in_retrieval fired despite a recorded clone")
 	}
@@ -423,7 +424,7 @@ func TestGitCloneFailureGetsNoRetrievalCredit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	act := activityFromSession(sess)
+	act := activityFromSessionAt(sess, "")
 	if len(act.clonedRepos) != 0 || len(act.clonedDirs) != 0 {
 		t.Errorf("a FAILED clone must not earn retrieval credit (clonedRepos=%v clonedDirs=%v)", act.clonedRepos, act.clonedDirs)
 	}
@@ -484,7 +485,7 @@ func TestWebFetchEntersWorkspaceLedger(t *testing.T) {
 		fnCall("f1", "web_fetch", map[string]any{"url": url}),
 		fnResp("f1", "web_fetch", map[string]any{"result": "package tools\n// exa.go contents"}),
 	)
-	act := activityFromSession(sess)
+	act := activityFromSessionAt(sess, "")
 
 	if len(act.workspace) != 1 || act.workspace[0].tool != "web_fetch" {
 		t.Fatalf("workspace ledger = %+v, want one web_fetch op recorded", act.workspace)

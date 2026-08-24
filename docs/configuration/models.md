@@ -17,7 +17,7 @@ providers:
         embed: 1
 ```
 
-`limits.active` is parsed and validated but not yet enforced - it's the config-layer prerequisite for issue #1007 (capacity-based admission); a role omitted from `active` is unbounded, and a provider without a `limits:` block accepts any number of resident models.
+`limits.active` caps how many DISTINCT models per role may be resident at once (issue #1007, enforced by `dag.Admission`); a role omitted from `active` is unbounded, and a provider without a `limits:` block accepts any number of resident models.
 
 ## Models registry
 
@@ -30,14 +30,14 @@ models:
     role: worker             # matched against provider.limits.active's keys
     context_window: 262144   # the DEFAULT window handed to an agent that omits its own
     limits:
-      sessions: 4             # max concurrent requests to this model (#1007, inert)
+      sessions: 4             # max concurrent requests to this model (enforced by dag.Admission, #1007)
       kv_tokens: 262144        # admission pool; absent ⇒ context isn't a scheduling dimension
     cost:
       input_per_mtok: 0.60    # USD per million tokens, for gen_ai.client.cost / Langfuse
       output_per_mtok: 3.60
 ```
 
-`limits` is entirely optional and, like `providers.<p>.limits`, inert until #1007: absent means unlimited, never a conservative default. A model with no `limits:` gets arbitrary concurrent sessions at full context; a model with `limits` but no `kv_tokens` never participates in admission by context. `cost` is optional too - a model without it gets token usage but no cost metric, never a guessed price.
+`limits` is entirely optional: absent means unlimited, never a conservative default. A model with no `limits:` gets arbitrary concurrent sessions at full context; a model with `limits` but no `kv_tokens` never participates in admission by context. Both `models.<m>.limits` and `providers.<p>.limits.active` are enforced by `dag.Admission` (#1007) on every gated node. `cost` is optional too - a model without it gets token usage but no cost metric, never a guessed price.
 
 ## Per-agent inference
 

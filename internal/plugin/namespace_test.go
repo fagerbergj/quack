@@ -94,7 +94,7 @@ func TestResolve_OurNamespaceInvalidIsAnError(t *testing.T) {
 // the skills path never fails the run, boot surfaces the error separately.
 func TestResolveSkillDirs_SurvivesNamespaceError(t *testing.T) {
 	root := manifest(t, `{"$schema":"x","name":"p","extensions":{"`+Namespace+`":{"schemaVersion":99}}}`)
-	if dirs := ResolveSkillDirs([]string{root}); len(dirs) != 0 {
+	if dirs := resolveSkillDirs([]string{root}); len(dirs) != 0 {
 		t.Fatalf("dirs = %v, want none", dirs)
 	}
 }

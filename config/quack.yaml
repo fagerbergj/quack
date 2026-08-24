@@ -139,13 +139,13 @@ agents:
     model: ${QUACK_CODER_MODEL}       # falls back to QUACK_RESEARCHER_MODEL if unset (internal/config's expandEnv)
     context_window: 65536
     judge_rounds: 1             # 1 while we diagnose the judge: the revise grind (was 8) masked a miscalibrated gate. Raise once the rubric reliably passes a correct implementation.
-    # The worker is an EXTERNAL coding agent over ACP (internal/acp):
-    # opencode drives the model bound above (OPENCODE_CONFIG_CONTENT: OpenAI-compatible
-    # endpoint, headless permissions, git push DENIED - delivery stays gate-owned). The
-    # gate reads its commits off the clone itself (vetting.augmentFromRepo) and quack's
-    # skill library is injected via opencode's skills.paths. No quack tools, no memory.
+    # The worker is an EXTERNAL coding agent over ACP (internal/acp): the pi-acp shim
+    # drives pi from OPENCODE_CONFIG_CONTENT (OpenAI-compatible endpoint, headless
+    # permissions, git push DENIED - delivery stays gate-owned). The gate reads its
+    # commits off the clone itself (vetting.augmentFromRepo); the shim maps the env's
+    # skills.paths onto pi's settings. No quack tools, no memory.
     acp:
-      command: ["opencode", "acp"]
+      command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       mcp_servers:
         - https://mcp.context7.com/mcp
   code-reviewer:
@@ -161,7 +161,7 @@ agents:
     # VERDICT/FINDINGS tail into a staged review with inline comments
     # (vetting.augmentFromAnswer) and posts it exactly once, gate-owned.
     acp:
-      command: ["opencode", "acp"]
+      command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       read_only: true
   code-explorer:
     bundle: agents/code-explorer      # card + prompt.md (ACP preamble: read-only exploration, cite <repo>@<path>) + rubric.yaml
@@ -175,7 +175,7 @@ agents:
     # allow_clone, shallow-clones third-party repos into $TMPDIR to read those too.
     # Never commits. Judged by its bundle rubric (exploration quality), not web citations.
     acp:
-      command: ["opencode", "acp"]
+      command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       mcp_servers:
         - https://mcp.context7.com/mcp
       read_only: true
@@ -455,7 +455,7 @@ workspace:
   #   - /home/user/sdk/go1.25.0            # a GOROOT outside /usr: bind the whole SDK
 
   # env: extra environment for the SAME children exec_path targets, PLUS the
-  # ACP coding-agent subprocess (opencode) - the half exec_path doesn't cover:
+  # ACP coding-agent subprocess (the pi-acp shim) - the half exec_path doesn't cover:
   # a toolchain that must be FOUND, not just be on PATH (JAVA_HOME for
   # Gradle, ANDROID_HOME/ANDROID_SDK_ROOT for AGP, a GOROOT outside /usr).
   # Deployment-wide; a matching key in an agent's own `acp: {env: ...}` wins
@@ -531,7 +531,7 @@ workspace:
     chat_ttl_hours: 168      # 7 days; a chat scope idle longer than this is removed (never one with a run in flight)
     scratch_ttl_hours: 6     # gate baseline worktrees + .quack-home/tmp entries idle longer than this are removed
     interval_hours: 1        # sweep cadence
-    home_max_mb: 500         # ACP agent's shared $HOME (opencode.db, snapshot, tool-output, log) is reset whole past this, only while no chat has a round in flight
+    home_max_mb: 500         # ACP agent's shared $HOME (agent state, snapshot, tool-output, log) is reset whole past this, only while no chat has a round in flight
 
 # Bundled integrations (inbound + outbound). Optional; each is off unless its
 # sub-section is present. Commented out here because dev/local runs typically
