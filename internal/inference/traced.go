@@ -49,8 +49,9 @@ func (t *tracedModel) SetDefaultAgent(name string) {
 	t.defaultAgent = name
 }
 
-// SetLedgerCoords stamps coordinates for subsequent GenerateContent calls,
-// taking precedence over ctx (needed because RunNode rebuilds child context).
+// SetLedgerCoords stamps coordinates for GenerateContent calls whose ctx
+// carries none - RunNode rebuilds the child context and drops them. A call that
+// DOES carry its own coords keeps them (#1039).
 func (t *tracedModel) SetLedgerCoords(c ledger.Coords) {
 	t.mu.Lock()
 	t.coords = c
@@ -59,11 +60,16 @@ func (t *tracedModel) SetLedgerCoords(c ledger.Coords) {
 
 // GenerateContent times the full iteration and emits a gen_ai ledger event.
 func (t *tracedModel) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
-	t.mu.Lock()
-	c := t.coords
-	t.mu.Unlock()
-	if c != (ledger.Coords{}) {
-		ctx = ledger.WithCoords(ctx, c)
+	// ctx coords win: the stamp is one shared field, so a concurrent sibling
+	// node's stamp would otherwise steal this call's attribution (#1039). The
+	// stamp remains the fallback for RunNode, which drops ctx coords.
+	if ledger.CoordsFromContext(ctx) == (ledger.Coords{}) {
+		t.mu.Lock()
+		c := t.coords
+		t.mu.Unlock()
+		if c != (ledger.Coords{}) {
+			ctx = ledger.WithCoords(ctx, c)
+		}
 	}
 	// Decorate ADK's own generate_content span while it's still open - see
 	// setRequestSpanAttrs's doc comment for why this can't move into the
