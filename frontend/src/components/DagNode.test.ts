@@ -334,14 +334,14 @@ describe('DagNode - queued-message badge counts only parked (undelivered) messag
   }
 
   it('shows no badge once every queued message has been delivered (live or boundary)', () => {
-    const out = withQueue([{ id: 'm1', text: 'focus on cost', delivered: true, created_at: '' }])
+    const out = withQueue([{ id: 'm1', text: 'focus on cost', status: 'drained', delivered: true, created_at: '' }])
     expect(out).not.toContain('✉')
   })
 
   it('shows a badge counting only the parked (undelivered) messages', () => {
     const out = withQueue([
-      { id: 'm1', text: 'delivered live', delivered: true, created_at: '' },
-      { id: 'm2', text: 'still parked', delivered: false, created_at: '' },
+      { id: 'm1', text: 'delivered live', status: 'forwarded', delivered: true, created_at: '' },
+      { id: 'm2', text: 'still parked', status: 'queued', delivered: false, created_at: '' },
     ])
     expect(out).toContain('✉ 1')
     expect(out).toContain('delivers when the current round ends')

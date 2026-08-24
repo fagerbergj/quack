@@ -2,6 +2,7 @@ package dag
 
 import (
 	"context"
+	"encoding/json"
 	"iter"
 	"strings"
 	"sync"
@@ -469,5 +470,92 @@ func TestExecute_EditRemoveQueuedMessage(t *testing.T) {
 	}
 	if strings.Contains(stub.prompts[1], "will be removed") {
 		t.Errorf("re-run prompt still contains the removed message: %q", stub.prompts[1])
+	}
+}
+
+// TestQueuedMsg_StatusTransitions (steer-status enum): covers the four ways a
+// message's Status is set, including deriving from a pre-enum persisted row
+// that only carried the old Delivered bool.
+func TestQueuedMsg_StatusTransitions(t *testing.T) {
+	t.Run("enqueue without a live round queues", func(t *testing.T) {
+		c := &nodeControl{}
+		m := c.enqueue("hello")
+		if m.Status != MsgQueued {
+			t.Errorf("Status = %q, want %q", m.Status, MsgQueued)
+		}
+	})
+
+	t.Run("enqueue with a live forward hook forwards", func(t *testing.T) {
+		c := &nodeControl{}
+		c.setLiveSteer(func(string) bool { return true })
+		m := c.enqueue("hello")
+		if m.Status != MsgForwarded {
+			t.Errorf("Status = %q, want %q", m.Status, MsgForwarded)
+		}
+	})
+
+	t.Run("gate drain marks drained", func(t *testing.T) {
+		c := &nodeControl{}
+		c.enqueue("hello")
+		if got := c.TakeQueued(); got != "hello" {
+			t.Fatalf("TakeQueued() = %q, want %q", got, "hello")
+		}
+		if c.queue[0].Status != MsgDrained {
+			t.Errorf("Status = %q, want %q", c.queue[0].Status, MsgDrained)
+		}
+	})
+
+	t.Run("a pre-enum persisted row derives its status from Delivered", func(t *testing.T) {
+		cases := []struct {
+			name string
+			json string
+			want MsgStatus
+		}{
+			{"delivered true derives drained", `{"ID":"a","Text":"x","Delivered":true}`, MsgDrained},
+			{"delivered false derives queued", `{"ID":"a","Text":"x","Delivered":false}`, MsgQueued},
+			{"no delivered field derives queued", `{"ID":"a","Text":"x"}`, MsgQueued},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				var m queuedMsg
+				if err := json.Unmarshal([]byte(tc.json), &m); err != nil {
+					t.Fatalf("Unmarshal: %v", err)
+				}
+				if m.Status != tc.want {
+					t.Errorf("Status = %q, want %q", m.Status, tc.want)
+				}
+			})
+		}
+	})
+}
+
+// A row written by this binary must stay correct when an OLDER binary reads it
+// back after a rollback: without the legacy bool it would look still-queued and
+// be re-delivered to the node.
+func TestQueuedMsg_MarshalKeepsLegacyDeliveredForRollback(t *testing.T) {
+	for _, tc := range []struct {
+		status MsgStatus
+		want   bool
+	}{{MsgQueued, false}, {MsgForwarded, true}, {MsgDrained, true}} {
+		b, err := json.Marshal(queuedMsg{ID: "m1", Text: "hi", Status: tc.status})
+		if err != nil {
+			t.Fatalf("marshal(%s): %v", tc.status, err)
+		}
+		var old struct {
+			ID        string
+			Text      string
+			Delivered bool
+		}
+		if err := json.Unmarshal(b, &old); err != nil {
+			t.Fatalf("old-binary unmarshal(%s): %v", tc.status, err)
+		}
+		if old.Delivered != tc.want {
+			t.Errorf("status %s -> old Delivered = %v, want %v (rollback would re-deliver)", tc.status, old.Delivered, tc.want)
+		}
+		// And the new shape must still round-trip through our own decoder.
+		var back queuedMsg
+		if err := json.Unmarshal(b, &back); err != nil || back.Status != tc.status {
+			t.Errorf("round-trip(%s) = %q, err %v", tc.status, back.Status, err)
+		}
 	}
 }

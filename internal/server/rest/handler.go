@@ -970,6 +970,7 @@ func queuedMessageWire(m dag.QueuedMessage) schema.QueuedMessage {
 	return schema.QueuedMessage{
 		Id:        m.ID,
 		Text:      m.Text,
+		Status:    schema.QueuedMessageStatus(m.Status),
 		Delivered: m.Delivered,
 		CreatedAt: m.CreatedAt,
 	}

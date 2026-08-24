@@ -278,7 +278,7 @@ export const RunningWithQueuedMessage: Story = {
       node={wrNode}
       state={{
         status: 'running', startedAt: Date.now() - 9_000,
-        queue: [{ id: 'q1', text: 'Also check winter rainfall.', delivered: false, created_at: new Date().toISOString() }],
+        queue: [{ id: 'q1', text: 'Also check winter rainfall.', status: 'queued', delivered: false, created_at: new Date().toISOString() }],
       }}
       runs={[{ runId: 'r1', agent: 'web-researcher', stage: 'worker', done: false, activity: researchActivity }]}
       answer=""

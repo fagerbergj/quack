@@ -258,7 +258,11 @@ export type QueuedMessage = {
     id: string;
     text: string;
     /**
-     * True once handed to the node - immediately if its round was live (#998), otherwise at the next turn boundary; no longer editable or removable either way.
+     * queued - accepted, not yet picked up. forwarded - injected straight into a live round (#998). drained - consumed at a gate boundary.
+     */
+    status: 'queued' | 'forwarded' | 'drained';
+    /**
+     * Derived from status (true for forwarded and drained). True once handed to the node - immediately if its round was live (#998), otherwise at the next turn boundary; no longer editable or removable either way. Kept for existing consumers; prefer status for the forwarded-vs-drained distinction.
      */
     delivered: boolean;
     created_at: string;

@@ -22,12 +22,60 @@ type NodeStateStore interface {
 	GetNodeState(ctx context.Context, chatID, nodeID string) (status, pauseReason, pendingQuestion, queueJSON string, err error)
 }
 
-// queuedMsg: one message in a running node's queue. Delivered messages are kept but immutable.
+// MsgStatus is a queued steer message's lifecycle state.
+type MsgStatus string
+
+const (
+	MsgQueued    MsgStatus = "queued"    // accepted, nothing has picked it up yet
+	MsgForwarded MsgStatus = "forwarded" // injected into the live round (native BeforeModelCallback or ACP stdin)
+	MsgDrained   MsgStatus = "drained"   // consumed at a gate boundary (the slow path)
+)
+
+// queuedMsg: one message in a running node's queue. Non-queued messages are kept but immutable.
 type queuedMsg struct {
 	ID        string
 	Text      string
-	Delivered bool
+	Status    MsgStatus
 	CreatedAt time.Time
+}
+
+// UnmarshalJSON derives Status from a legacy row that only has the old
+// Delivered bool: true meant "drained" for the vast majority of historical
+// rows (the gate-boundary path predates live delivery, #1029/#1042).
+func (m *queuedMsg) UnmarshalJSON(b []byte) error {
+	var shape struct {
+		ID        string
+		Text      string
+		Status    MsgStatus
+		Delivered *bool
+		CreatedAt time.Time
+	}
+	if err := json.Unmarshal(b, &shape); err != nil {
+		return err
+	}
+	m.ID, m.Text, m.CreatedAt = shape.ID, shape.Text, shape.CreatedAt
+	switch {
+	case shape.Status != "":
+		m.Status = shape.Status
+	case shape.Delivered != nil && *shape.Delivered:
+		m.Status = MsgDrained
+	default:
+		m.Status = MsgQueued
+	}
+	return nil
+}
+
+// MarshalJSON also writes the legacy Delivered bool so a row written here and
+// read back by an OLDER binary (a rollback) is not seen as still-queued and
+// re-delivered to the node.
+func (m queuedMsg) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		ID        string
+		Text      string
+		Status    MsgStatus
+		Delivered bool
+		CreatedAt time.Time
+	}{m.ID, m.Text, m.Status, m.Status != MsgQueued, m.CreatedAt})
 }
 
 func newMsgID() string {
@@ -88,7 +136,7 @@ func (c *nodeControl) PeekQueued() string {
 	defer c.mu.Unlock()
 	var out []string
 	for _, m := range c.queue {
-		if !m.Delivered {
+		if m.Status == MsgQueued {
 			out = append(out, m.Text)
 		}
 	}
@@ -100,8 +148,8 @@ func (c *nodeControl) TakeQueued() string {
 	c.mu.Lock()
 	var out []string
 	for _, m := range c.queue {
-		if !m.Delivered {
-			m.Delivered = true
+		if m.Status == MsgQueued {
+			m.Status = MsgDrained
 			out = append(out, m.Text)
 		}
 	}
@@ -204,11 +252,16 @@ func (c *nodeControl) enqueue(text string) queuedMsg {
 	c.mu.Lock()
 	live := c.liveSteer
 	c.mu.Unlock()
-	delivered := live != nil && live(text)
+	// liveSteer is ACP-only (native rounds inject via steerCallback's own peek+dedupe),
+	// so a native round's steer stays "queued" here even after that callback injects it.
+	status := MsgQueued
+	if live != nil && live(text) {
+		status = MsgForwarded
+	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	m := &queuedMsg{ID: newMsgID(), Text: text, Delivered: delivered, CreatedAt: time.Now().UTC()}
+	m := &queuedMsg{ID: newMsgID(), Text: text, Status: status, CreatedAt: time.Now().UTC()}
 	c.queue = append(c.queue, m)
 	return *m
 }
@@ -237,7 +290,7 @@ func (c *nodeControl) restore() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for i := range msgs {
-		if !msgs[i].Delivered {
+		if msgs[i].Status == MsgQueued {
 			m := msgs[i]
 			c.queue = append(c.queue, &m)
 		}
@@ -250,7 +303,7 @@ func (c *nodeControl) editQueued(id, text string) bool {
 	defer c.mu.Unlock()
 	for _, m := range c.queue {
 		if m.ID == id {
-			if m.Delivered {
+			if m.Status != MsgQueued {
 				return false
 			}
 			m.Text = text
@@ -266,7 +319,7 @@ func (c *nodeControl) removeQueued(id string) bool {
 	defer c.mu.Unlock()
 	for i, m := range c.queue {
 		if m.ID == id {
-			if m.Delivered {
+			if m.Status != MsgQueued {
 				return false
 			}
 			c.queue = append(c.queue[:i], c.queue[i+1:]...)
@@ -552,16 +605,18 @@ func (e *Executor) NodeQueue(chatID, nodeID string) []QueuedMessage {
 	return out
 }
 
-// QueuedMessage is the REST/SSE-facing shape.
+// QueuedMessage is the REST/SSE-facing shape. Delivered is derived (true for
+// forwarded and drained) for old wire consumers; Status carries the detail.
 type QueuedMessage struct {
 	ID        string
 	Text      string
+	Status    MsgStatus
 	Delivered bool
 	CreatedAt time.Time
 }
 
 func toQueuedMessage(m queuedMsg) QueuedMessage {
-	return QueuedMessage{ID: m.ID, Text: m.Text, Delivered: m.Delivered, CreatedAt: m.CreatedAt}
+	return QueuedMessage{ID: m.ID, Text: m.Text, Status: m.Status, Delivered: m.Status != MsgQueued, CreatedAt: m.CreatedAt}
 }
 
 // SetNodeTaskOverride edits a not-yet-started node's task. Atomic against the start race.
