@@ -150,11 +150,13 @@ func logCompaction(ctx adkagent.Context, path string, beforeMsgs, beforeTokens i
 // The round's own OTel span is unreachable from here: RunNode rebuilds the
 // child context this callback runs under (the SetLedgerCoords-not-ctx pattern
 // elsewhere in this codebase exists for the same reason), so
-// oteltrace.SpanFromContext(ctx) would silently return the no-op span. Raise
-// a standalone "compaction" span instead - always a real recording span.
+// oteltrace.SpanFromContext(ctx) would silently return the no-op span. Coords
+// carries the round's SpanContext captured before that rebuild (runWorkerNodeTraced);
+// link to it instead of rooting a disconnected trace. A zero SpanContext (no
+// linkage available) still raises an orphan span rather than none at all.
 func emitCompaction(ctx adkagent.Context, before, after int) {
 	coords := ledger.CoordsFromContext(ctx)
-	_, span := otelobs.Start(ctx, "compaction",
+	_, span := otelobs.StartLinked(ctx, "compaction", coords.SpanContext,
 		attribute.String("node_id", coords.Node), attribute.String("run_id", coords.Round),
 		attribute.Bool(otelobs.GenAIConversationCompacted, true))
 	span.End()

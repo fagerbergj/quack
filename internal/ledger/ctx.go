@@ -1,6 +1,10 @@
 package ledger
 
-import "context"
+import (
+	"context"
+
+	oteltrace "go.opentelemetry.io/otel/trace"
+)
 
 type Coords struct {
 	ChatID string
@@ -14,6 +18,10 @@ type Coords struct {
 	// extension-dispatched run, or a fixed value for direct UI/REST/MCP
 	// chats. Bounded cardinality by construction; never chat_id or node_id.
 	Source string
+	// SpanContext: the round's OTel span, captured before ADK rebuilds the
+	// ctx (SpanFromContext no-ops past that point). Zero value is a valid
+	// "no linkage available" state - consumers must degrade gracefully.
+	SpanContext oteltrace.SpanContext
 }
 
 type coordsKey struct{}
@@ -54,7 +62,17 @@ func FillBlankCoords(ctx, stamp Coords) Coords {
 	if ctx.Source == "" {
 		ctx.Source = stamp.Source
 	}
+	if !ctx.SpanContext.IsValid() {
+		ctx.SpanContext = stamp.SpanContext
+	}
 	return ctx
+}
+
+// IsZero reports whether c is the unset value. SpanContext isn't Go-comparable
+// (its TraceState wraps a slice), so this can't be a plain `== Coords{}`.
+func (c Coords) IsZero() bool {
+	return c.ChatID == "" && c.Node == "" && c.Agent == "" && c.Round == "" &&
+		c.User == "" && c.Source == "" && !c.SpanContext.IsValid()
 }
 
 // CoordSetter lets emission wrappers be re-stamped with fresh coordinates after construction.

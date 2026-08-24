@@ -350,6 +350,77 @@ func TestCompactionEmitsCompactedSpan(t *testing.T) {
 	}
 }
 
+// TestCompactionSpanLinksToRoundSpan: when Coords carries the round's
+// SpanContext (runWorkerNodeTraced's stamp), the compaction span must link to
+// it rather than root a disconnected trace (#1024 follow-up).
+func TestCompactionSpanLinksToRoundSpan(t *testing.T) {
+	exp := withTestTracer(t)
+	llm := &fakeLLM{text: "## Goal\n- compacted"}
+
+	contents := []*genai.Content{textContent(genai.RoleUser, "the self-contained task")}
+	for i := 0; i < 30; i++ {
+		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 2_000)))
+	}
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: budgetWindow(contents, defaultEventRetentionSize), Enabled: true})
+
+	roundCtx, roundSpan := otelobs.Start(context.Background(), "worker.round")
+	parentSC := roundSpan.SpanContext()
+	roundSpan.End()
+	_ = roundCtx
+
+	ctx := newFakeCtx()
+	ctx.Ctx = ledger.WithCoords(context.Background(), ledger.Coords{Node: "n1", Round: "worker-r0", SpanContext: parentSC})
+
+	req := &model.LLMRequest{Contents: append([]*genai.Content{}, contents...)}
+	if _, err := cb(ctx, req); err != nil {
+		t.Fatalf("callback err: %v", err)
+	}
+
+	for _, s := range exp.GetSpans() {
+		if s.Name != "quack.compaction" {
+			continue
+		}
+		if len(s.Links) != 1 || s.Links[0].SpanContext.TraceID() != parentSC.TraceID() {
+			t.Fatalf("quack.compaction links = %+v, want a link to round trace %s", s.Links, parentSC.TraceID())
+		}
+		return
+	}
+	t.Fatal("no quack.compaction span recorded")
+}
+
+// TestCompactionSpanOrphanWithoutLinkage: no SpanContext in Coords (zero
+// value) must still raise the compaction span, just without a link - an
+// orphan span beats no span at all.
+func TestCompactionSpanOrphanWithoutLinkage(t *testing.T) {
+	exp := withTestTracer(t)
+	llm := &fakeLLM{text: "## Goal\n- compacted"}
+
+	contents := []*genai.Content{textContent(genai.RoleUser, "the self-contained task")}
+	for i := 0; i < 30; i++ {
+		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 2_000)))
+	}
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: budgetWindow(contents, defaultEventRetentionSize), Enabled: true})
+
+	ctx := newFakeCtx()
+	ctx.Ctx = ledger.WithCoords(context.Background(), ledger.Coords{Node: "n1", Round: "worker-r0"})
+
+	req := &model.LLMRequest{Contents: append([]*genai.Content{}, contents...)}
+	if _, err := cb(ctx, req); err != nil {
+		t.Fatalf("callback err: %v", err)
+	}
+
+	for _, s := range exp.GetSpans() {
+		if s.Name != "quack.compaction" {
+			continue
+		}
+		if len(s.Links) != 0 {
+			t.Fatalf("quack.compaction links = %+v, want none without a round SpanContext", s.Links)
+		}
+		return
+	}
+	t.Fatal("no quack.compaction span recorded")
+}
+
 // TestCompactionNoYieldNoPanic: outside a DAG node run (no yield-ctx attached
 // - unit tests, the advisor's own nested runner), compaction must still work;
 // emitting the event is best-effort, never a hard dependency.
