@@ -143,6 +143,12 @@ func (o *Orchestrator) SetNodeTaskOverride(chatID, nodeID, task string) bool {
 // RetryNode re-runs a finished node and its descendants with optional guidance.
 func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, seeded map[string]string, nodeID, guidance string) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
+		// A retry/resume is its own run, not a continuation of whatever
+		// finished run left this node retryable - it needs its own trace so
+		// a stale trace_id from the earlier run is never mistaken for this one.
+		var span oteltrace.Span
+		ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, chatID))
+		defer otelobs.End(span, nil)
 		// A retry (or a boot resume, which rides this path) counts against
 		// MaxActiveRuns like any other run.
 		release, acquired := o.acquireRun(ctx)
@@ -722,6 +728,12 @@ func (o *Orchestrator) StartNode(ctx context.Context, userID, sessionID, nodeID,
 }
 
 func (o *Orchestrator) startNodeRun(ctx context.Context, userID, sessionID, message string, pend *pendingInterrupt, nodeID string, yield func(stream.SSEEvent, error) bool) {
+	// Single choke point for both StartNode (fresh dispatch, bare ctx) and
+	// Run's resumeNodeRun (already inside Run's "run" span) - a nested span
+	// here is harmless (same trace) and gives the bare-ctx caller a real one.
+	var span oteltrace.Span
+	ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, sessionID))
+	defer otelobs.End(span, nil)
 	plan, ok := o.stashedPlan(ctx, userID, sessionID)
 	if !ok {
 		yield(stream.Errorf("resume: no plan in session to resume"), nil)

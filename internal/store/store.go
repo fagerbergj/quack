@@ -153,6 +153,9 @@ type DagNode struct {
 	JudgePassed      bool       `json:"judge_passed"`
 	// OTel trace id for a deep link (see stream.NodeStartData); "" when otel is disabled.
 	TraceID string `gorm:"column:trace_id" json:"trace_id,omitempty"`
+	// node_start owns trace_id and must be able to clear a previous run's id;
+	// every other upsert simply omits the column.
+	TraceIDSet bool `gorm:"-" json:"-"`
 	// Lifecycle columns below are written only by SetNodeStatus/SetNodeQueue;
 	// UpsertDagNode omits them so a stream-driven upsert can never blank a
 	// pause a resume depends on.
@@ -825,21 +828,22 @@ func (s *Store) SaveDagPlan(ctx context.Context, chatID, planID, turnID, planJSO
 
 // UpsertDagNode creates or updates a DAG node's execution state.
 func (s *Store) UpsertDagNode(ctx context.Context, node DagNode) error {
-	db := s.db.WithContext(ctx)
+	// One Omit call: gorm's Omit REPLACES the list rather than appending, so
+	// chained calls silently drop every earlier guard.
+	omit := []string{"pause_reason", "pending_question", "queued_messages"}
 	// Never let a nil StartedAt/InstanceID erase a real one from an earlier write.
 	if node.StartedAt == nil {
-		db = db.Omit("started_at")
+		omit = append(omit, "started_at")
 	}
 	if node.InstanceID == "" {
-		db = db.Omit("instance_id")
+		omit = append(omit, "instance_id")
 	}
-	// A later upsert (e.g. node_done) never carries trace_id - don't blank the id node_start set.
-	if node.TraceID == "" {
-		db = db.Omit("trace_id")
+	if !node.TraceIDSet {
+		omit = append(omit, "trace_id")
 	}
 	t := time.Now().UTC()
 	node.UpdatedAt = &t
-	return db.Omit("pause_reason", "pending_question", "queued_messages").Save(&node).Error
+	return s.db.WithContext(ctx).Omit(omit...).Save(&node).Error
 }
 
 // InsertChatEvent persists one run event. Caller assigns Seq and serializes inserts.
