@@ -128,7 +128,7 @@ func (t *turnSpans) start(id string, kind sdk.ToolKind, title string, rawInput a
 	// Kind in the span name (a fixed protocol enum, so bounded cardinality)
 	// makes a trace readable without opening every span.
 	attrs := []attribute.KeyValue{
-		attribute.String("agent", t.agent),
+		attribute.String(otelobs.GenAIAgentName, t.agent),
 		attribute.String(otelobs.GenAIToolCallID, id),
 		attribute.String("tool_title", title), // human label from ACP's ToolCall.Title, distinct from the tool name
 	}

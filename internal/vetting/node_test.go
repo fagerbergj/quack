@@ -62,6 +62,7 @@ func (m *stubModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ 
 // end on the real ADK v2 workflow engine (runner + workflowagent + Start→node) and
 // asserts the worker→judge refine loop revises once, then passes.
 func TestGatedWorkerNode_RefineLoopConverges(t *testing.T) {
+	exp := withTestTracer(t)
 	stub := &stubModel{}
 	worker, err := llmagent.New(llmagent.Config{
 		Name: "web-researcher", Model: stub, Description: "researcher",
@@ -120,6 +121,30 @@ func TestGatedWorkerNode_RefineLoopConverges(t *testing.T) {
 	}
 	if stub.judgeCalls != 2 {
 		t.Errorf("judge calls = %d, want 2 (fail then pass)", stub.judgeCalls)
+	}
+
+	// #4: the revise round gets its own "gate.revise" span, exactly one - not
+	// zero (startStageSpan never called) and not two (a duplicate alongside
+	// dagStream's own SSE-driving worker.round span for the same run).
+	var reviseSpans int
+	for _, s := range exp.GetSpans() {
+		if s.Name != "quack.gate.revise" {
+			continue
+		}
+		reviseSpans++
+		attrs := map[string]string{}
+		for _, kv := range s.Attributes {
+			attrs[string(kv.Key)] = kv.Value.Emit()
+		}
+		if attrs["run_id"] != "worker-r1" {
+			t.Errorf("gate.revise span run_id = %q, want worker-r1", attrs["run_id"])
+		}
+		if attrs["round"] != "1" {
+			t.Errorf("gate.revise span round = %q, want 1", attrs["round"])
+		}
+	}
+	if reviseSpans != 1 {
+		t.Errorf("quack.gate.revise spans = %d, want exactly 1", reviseSpans)
 	}
 }
 

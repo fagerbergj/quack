@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
-	oteltrace "go.opentelemetry.io/otel/trace"
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/model"
@@ -146,15 +145,24 @@ func logCompaction(ctx adkagent.Context, path string, beforeMsgs, beforeTokens i
 
 // emitCompaction forwards a node-scoped compaction event to the SSE stream,
 // via the same yield-ctx escape hatch the plan tool uses - a no-op outside a
-// DAG node run (e.g. unit tests, or the advisor's own nested runner). Also
-// marks the round's active OTel span so the compaction shows up in traces.
+// DAG node run (e.g. unit tests, or the advisor's own nested runner).
+//
+// The round's own OTel span is unreachable from here: RunNode rebuilds the
+// child context this callback runs under (the SetLedgerCoords-not-ctx pattern
+// elsewhere in this codebase exists for the same reason), so
+// oteltrace.SpanFromContext(ctx) would silently return the no-op span. Raise
+// a standalone "compaction" span instead - always a real recording span.
 func emitCompaction(ctx adkagent.Context, before, after int) {
-	oteltrace.SpanFromContext(ctx).SetAttributes(attribute.Bool(otelobs.GenAIConversationCompacted, true))
+	coords := ledger.CoordsFromContext(ctx)
+	_, span := otelobs.Start(ctx, "compaction",
+		attribute.String("node_id", coords.Node), attribute.String("run_id", coords.Round),
+		attribute.Bool(otelobs.GenAIConversationCompacted, true))
+	span.End()
+
 	sink, ok := stream.YieldFromContext(ctx)
 	if !ok {
 		return
 	}
-	coords := ledger.CoordsFromContext(ctx)
 	sink(stream.Compaction(coords.Node, coords.Round, int32(before), int32(after)))
 }
 

@@ -537,14 +537,13 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			resetCloneToNodeBase(cfg, v)
 			revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, env, act, citationOnlyFailure(v, cfg.Threshold))) + markerLine
 			reviseRunID := fmt.Sprintf("worker-r%d%s", round, sfx)
-			// gate.revise spans the round the same way gate.judge does; the matching
-			// agent_start/complete SSE already comes from dagStream off this run's
-			// own session events (see stream vocabulary doc), so no emitJudge here.
-			reviseCtx, rspan := otelobs.Start(nodeCtx, "gate.revise",
-				attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID),
-				attribute.String("run_id", reviseRunID), attribute.String(otelobs.GenAIAgentName, cfg.Agent), attribute.Int("round", round))
+			// gate.revise spans the round through the same choke point gate.judge
+			// uses. sink is nil: the matching agent_start/complete SSE for this run
+			// already comes from dagStream off the worker's own session events, so
+			// this raises only the span half.
+			reviseCtx, rspan := startStageSpan(nodeCtx, nil, cfg, nodeID, "revise", stream.StageRevise, reviseRunID, round)
 			revised, rerr := runWorkerNodeTraced(ctx, reviseCtx, cfg, workerModel, workerNode, revisePrompt, reviseRunID, "revise", promptEmit)
-			otelobs.End(rspan, rerr)
+			rspan.end(stream.AgentCompleteData{RunID: reviseRunID, Stage: stream.StageRevise, Round: round}, rerr)
 			if rerr != nil {
 				log.Error("revision worker failed; keeping prior answer", "round", round, "err", rerr)
 				return answer, res, nil // revision failed; keep the prior answer
@@ -705,7 +704,7 @@ func commitMemoryOnPass(ctx adkagent.Context, spanCtx context.Context, cfg Confi
 		defer cancel()
 		// Own trace root (detached ctx, no coords) - name the chat explicitly.
 		cctx, commitSpan := otelobs.StartLinked(cctx, "memory.commit", parentSC,
-			attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("agent", author))
+			attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String(otelobs.GenAIAgentName, author))
 		n, err := cfg.Memory.Commit(cctx, sc, author, prov, staged, answer)
 		otelobs.End(commitSpan, err)
 		if err != nil {
