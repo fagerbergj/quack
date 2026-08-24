@@ -749,8 +749,11 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		}
 	}
 
+	restHandler := rest.NewHandler(st, orch, llm, jail, runHub, ledgerStore, Version, taskStore, userStore, artifacts, extensionDescriptors(sdkExts))
+	restHandler.SetTraceURLTemplate(cfg.Observability.Otel.TraceURLTemplate)
+
 	handler = server.New(server.Options{
-		REST:          rest.NewHandler(st, orch, llm, jail, runHub, ledgerStore, Version, taskStore, userStore, artifacts, extensionDescriptors(sdkExts)),
+		REST:          restHandler,
 		MCP:           mcpserver.Handler(orch),
 		SPA:           spa,
 		SDKExtensions: sdkExtensionMounts(sdkExts),

@@ -19,6 +19,7 @@ func TestNodeDoneReportsDurationAndGateResult(t *testing.T) {
 	const node = "explorer-goose"
 
 	ds := newDagStream(
+		"",
 		map[string]string{node: "code-explorer"},
 		func(stream.SSEEvent, error) bool { return true },
 		map[string]string{node: "goose registers tools via ExtensionManager…"},

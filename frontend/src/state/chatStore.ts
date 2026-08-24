@@ -53,6 +53,8 @@ export interface NodeState {
   judgeRounds?: number
   judgeFinalScore?: number
   judgePassed?: boolean
+  // OTel trace id for this node's run; render via clientConfig.traceUrl(). ""/absent when otel is disabled.
+  traceId?: string
   steers?: string[]   // guidance folded in when a queued message was delivered, in order
   // Local, optimistic tracking of the node's message queue (add/edit/remove
   // responses tell the caller what changed; there's no separate SSE sync
@@ -871,20 +873,20 @@ export class ChatStore {
           const nodeStates: Record<string, NodeState> = {}
           for (const n of plan.nodes) nodeStates[n.id] = { status: 'queued' }
           const dag: DagTurnState = {
-            planId: plan.plan_id,
+            planId: plan.planId,
             nodes: plan.nodes,
             edges: plan.edges,
             nodeStates,
             nodeRuns: {},
             nodeAnswer: {},
-            startedAt: anchorTime(plan.started_at_ms),
+            startedAt: anchorTime(plan.startedAtMs),
           }
           this.write(chatId, { ...s, live: { ...s.live, dag, text: '', runs: [] } })
         },
         onNodeQueued: nodeId => updateNodeState(nodeId, { status: 'queued' }),
         // Anchor timers to the server's start time (epoch ms) so a reconnect/replay
         // shows true elapsed time instead of restarting from the replay moment.
-        onNodeStart: (nodeId, _agent, startedAtMs) => updateNodeState(nodeId, { status: 'running', startedAt: anchorTime(startedAtMs) }),
+        onNodeStart: (nodeId, _agent, startedAtMs, traceId) => updateNodeState(nodeId, { status: 'running', startedAt: anchorTime(startedAtMs), traceId }),
         onNodeDone: (nodeId, preview, meta: NodeDoneMeta) => {
           // Freeze any run still counting - the node is done, so no run is live.
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
@@ -943,6 +945,15 @@ export class ChatStore {
           const s = this.states.get(chatId)
           const prevSteers = s?.live?.dag?.nodeStates[nodeId]?.steers ?? []
           updateNodeState(nodeId, { status: 'running', error: undefined, steers: [...prevSteers, guidance], queue: [] })
+        },
+        // Was parsed and dropped before (#1018 review): a delivery can carry a
+        // trace id even when node_start's didn't reach the client (e.g. a
+        // reconnect mid-run) - fill it in rather than leaving the link dark.
+        onDeliveryResult: d => {
+          if (!d.traceId) return
+          const s = this.states.get(chatId)
+          if (s?.live?.dag?.nodeStates[d.nodeId]?.traceId) return
+          updateNodeState(d.nodeId, { traceId: d.traceId })
         },
       }
   }
@@ -1027,6 +1038,7 @@ export function dagTurnStateFromItem(item: DagOutputItem): DagTurnState {
       pauseReason: ns.pause_reason,
       question: ns.pending_question,
       queue: ns.queued_messages,
+      traceId: ns.trace_id,
     }
     if (ns.started_at_ms != null)
       startedAt = startedAt == null ? ns.started_at_ms : Math.min(startedAt, ns.started_at_ms)
