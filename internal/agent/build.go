@@ -8,6 +8,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
+	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/promptbuilder"
 )
@@ -21,8 +22,8 @@ import (
 // agent's declared skill scope (promptbuilder.Agent); grading is the
 // pre-rendered trust-gate contract (promptbuilder.GradingFacts), "" when
 // ungated or judge-less.
-func Build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, comp Compaction, memoryGuidance string, skills []*skill.Frontmatter, grading string) (adkagent.Agent, error) {
-	return build(b, m, tools, toolsets, comp, memoryGuidance, skills, grading, "")
+func Build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, comp Compaction, memoryGuidance string, skills []*skill.Frontmatter, grading string, drain func() string) (adkagent.Agent, error) {
+	return build(b, m, tools, toolsets, comp, memoryGuidance, skills, grading, "", drain)
 }
 
 // BuildChat is Build with the agent's delegation mode PINNED to ModeChat at
@@ -34,10 +35,10 @@ func Build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, c
 // unset mode, defaulting to single-turn task mode inside a workflow
 // AgentNode, which is what the gate wants.
 func BuildChat(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, comp Compaction, memoryGuidance string, skills []*skill.Frontmatter, grading string) (adkagent.Agent, error) {
-	return build(b, m, tools, toolsets, comp, memoryGuidance, skills, grading, llmagent.ModeChat)
+	return build(b, m, tools, toolsets, comp, memoryGuidance, skills, grading, llmagent.ModeChat, nil)
 }
 
-func build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, comp Compaction, memoryGuidance string, skills []*skill.Frontmatter, grading string, mode llmagent.Mode) (adkagent.Agent, error) {
+func build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, comp Compaction, memoryGuidance string, skills []*skill.Frontmatter, grading string, mode llmagent.Mode, drain func() string) (adkagent.Agent, error) {
 	name, desc, behaviour := b.Card.Name, b.Card.Description, b.Prompt
 	if g := strings.TrimSpace(memoryGuidance); g != "" {
 		behaviour = behaviour + "\n\n" + g
@@ -56,9 +57,31 @@ func build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, c
 		Toolsets: toolsets,
 		Mode:     mode,
 	}
+	// Steer first, so compaction's budget accounts for the injected message.
+	cfg.BeforeModelCallbacks = []llmagent.BeforeModelCallback{steerCallback(drain)}
 	if comp.Enabled && comp.ContextWindow > 0 && comp.Summarizer != nil {
-		cfg.BeforeModelCallbacks = []llmagent.BeforeModelCallback{compactionCallback(comp)}
+		cfg.BeforeModelCallbacks = append(cfg.BeforeModelCallbacks, compactionCallback(comp))
 		cfg.AfterModelCallbacks = []llmagent.AfterModelCallback{recordUsage()}
 	}
 	return llmagent.New(cfg)
+}
+
+// steerCallback delivers a message queued against a RUNNING node on the round's
+// next model call. Without it a steer waits for the next gate boundary, which
+// for a long native round is minutes away or never (#1029).
+func steerCallback(drain func() string) llmagent.BeforeModelCallback {
+	return func(_ adkagent.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
+		if drain == nil || req == nil {
+			return nil, nil
+		}
+		q := strings.TrimSpace(drain())
+		if q == "" {
+			return nil, nil
+		}
+		req.Contents = append(req.Contents, &genai.Content{
+			Role:  genai.RoleUser,
+			Parts: []*genai.Part{{Text: q}},
+		})
+		return nil, nil
+	}
 }

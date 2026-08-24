@@ -1172,7 +1172,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			}
 		}
 
-		buildWorker := func() (adkagent.Agent, model.LLM, []tool.Tool, error) {
+		buildWorker := func(drain func() string) (adkagent.Agent, model.LLM, []tool.Tool, error) {
 			wm, err := inference.NewModel(prov, ac.Model, artifacts, cfg.ModelCost(ac.Model))
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("model: %w", err)
@@ -1207,21 +1207,21 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				}
 			}
 			comp := compactionFor(ac, wm)
-			wag, err := agent.Build(bundle, wm, builtins, []tool.Toolset{agentSkillTS}, comp, memGuidance, skillFms, grading)
+			wag, err := agent.Build(bundle, wm, builtins, []tool.Toolset{agentSkillTS}, comp, memGuidance, skillFms, grading, drain)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("build: %w", err)
 			}
 			return wag, wm, builtins, nil
 		}
 
-		protoAgent, _, _, err := buildWorker()
+		protoAgent, _, _, err := buildWorker(nil)
 		if err != nil {
 			return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "%v", err)
 		}
 		clientMap[name] = nativeAgent{
 			Agent: protoAgent,
-			build: func(nodeKey string) (adkagent.Agent, model.LLM, []tool.Tool, func(), error) {
-				wag, wm, builtins, err := buildWorker()
+			build: func(nodeKey string, drain func() string) (adkagent.Agent, model.LLM, []tool.Tool, func(), error) {
+				wag, wm, builtins, err := buildWorker(drain)
 				if err != nil {
 					return nil, nil, nil, nil, err
 				}

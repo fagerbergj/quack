@@ -100,7 +100,7 @@ type nodeScopedStub struct {
 	cachedT []tool.Tool
 }
 
-func (s *nodeScopedStub) ForNode(nodeKey string) (adkagent.Agent, model.LLM, []tool.Tool, func(), error) {
+func (s *nodeScopedStub) ForNode(nodeKey string, _ func() string) (adkagent.Agent, model.LLM, []tool.Tool, func(), error) {
 	s.mu.Lock()
 	s.calls++
 	m, builtins := s.cachedM, s.cachedT
