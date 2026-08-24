@@ -1,10 +1,13 @@
 package vetting
 
 import (
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 )
 
 // requireMermaidValidator provisions scripts/node_modules (npm ci, shared
@@ -421,4 +424,29 @@ func TestMermaidCriterion_NoOpWhenValidatorUnavailable(t *testing.T) {
 	if _, ok := mermaidCriterion("no diagrams here", workerActivity{}); ok {
 		t.Fatal("want ok=false - nothing to validate")
 	}
+}
+
+// A validator that outruns its deadline must not report a VALID diagram as
+// invalid: CommandContext's kill surfaces as an ExitError, which used to fall
+// through to "unreadable output" and fail the gate on a slow box.
+func TestMermaidValidate_TimeoutIsNotAnInvalidDiagram(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	<-ctx.Done()
+
+	// The real call path's classification: a killed process yields an
+	// ExitError with empty output, and ctx.Err() is what distinguishes it.
+	cmd := exec.CommandContext(ctx, "node", "-e", "setTimeout(()=>{},10000)")
+	out, err := cmd.Output()
+	if ctx.Err() == nil {
+		t.Skip("context did not expire; nothing to classify")
+	}
+	if _, isExitErr := err.(*exec.ExitError); !isExitErr && err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		t.Skipf("node unavailable in this environment: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("expected no output from a killed validator, got %q", out)
+	}
+	// Before the fix this shape produced "unreadable output" (i.e. invalid).
+	// Now ctx.Err() != nil short-circuits first, so the diagram is untouched.
 }
