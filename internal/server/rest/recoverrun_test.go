@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fagerbergj/quack/internal/store"
 )
 
 // #1033: the run goroutines outlive the HTTP request, so chi's Recoverer never
@@ -59,28 +61,39 @@ func TestRecoverRun_LeavesCleanupDefersRunning(t *testing.T) {
 // any `defer recoverRun(...)` line leaves those green but kills the process
 // here, because a panicking run's cleanup defers never run and the hub topic
 // stays open - subscribers hang forever instead of seeing the stream close.
-func TestStartRunPanic_StillClosesHubTopic(t *testing.T) {
-	var buf strings.Builder
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	defer slog.SetDefault(prev)
+func TestRunGoroutinePanic_StillClosesHubTopic(t *testing.T) {
+	dp := &store.DagPlan{ID: "p1", TurnID: "t1"}
+	for _, tc := range []struct {
+		name  string
+		start func(*Handler, string)
+	}{
+		{"startRun", func(h *Handler, c string) { h.startRun(c, "t1", "hi", nil) }},
+		{"startNodeAsync", func(h *Handler, c string) { h.startNodeAsync(dp, c, "n1", "") }},
+		{"retryNodeAsync", func(h *Handler, c string) { h.retryNodeAsync(dp, c, "n1", "") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&strings.Builder{}, nil)))
+			defer slog.SetDefault(prev)
 
-	h := newTestHandler(t)
-	chatID := mustCreateChat(t, h)
-	_, live, cancel, _ := h.hub.Subscribe(string(chatID))
-	defer cancel()
+			h := newTestHandler(t)
+			chatID := mustCreateChat(t, h)
+			_, live, cancel, _ := h.hub.Subscribe(chatID)
+			defer cancel()
 
-	h.orch = nil // ranging a nil orchestrator panics inside runChat
-	h.startRun(chatID, "t1", "hi", nil)
+			h.orch = nil // ranging a nil orchestrator panics inside the run goroutine
+			tc.start(h, chatID)
 
-	for {
-		select {
-		case _, ok := <-live:
-			if !ok {
-				return // topic closed: the cleanup defers ran after the recover
+			for {
+				select {
+				case _, ok := <-live:
+					if !ok {
+						return // topic closed: the cleanup defers ran after the recover
+					}
+				case <-time.After(10 * time.Second):
+					t.Fatal("hub topic never closed after a panicking run - subscribers hang")
+				}
 			}
-		case <-time.After(5 * time.Second):
-			t.Fatal("hub topic never closed after a panicking run - subscribers hang")
-		}
+		})
 	}
 }

@@ -580,7 +580,8 @@ func (h *Handler) saveAttachment(ctx context.Context, userID, chatID, turnID, na
 
 // recoverRun keeps a panicking run from taking the process with it. All three
 // run goroutines outlive the HTTP request, so chi's Recoverer never sees them -
-// the gap that made #1033 fatal. Deferred LAST so cleanup defers still run.
+// the gap that made #1033 fatal. Registered FIRST so it unwinds LAST, covering
+// panics raised by the cleanup defers themselves.
 func recoverRun(chatID schema.ChatID, turnID string) {
 	if r := recover(); r != nil {
 		slog.Error("chat run panicked; run abandoned, process survives",
@@ -597,13 +598,13 @@ func (h *Handler) startRun(chatID, turnID, content string, attachments []*genai.
 	// Marks the chat in-flight so a crash before stampRunOutcome runs is detectable (#738).
 	_ = h.store.MarkRunActive(runCtx, chatID, turnID)
 	go func() {
+		defer recoverRun(chatID, turnID)
 		// Close done LAST so the run is off the registry by the time viewers see the stream close.
 		defer h.hub.Close(chatID)
 		defer func() {
 			cancelRun()
 			h.hub.UnregisterRun(chatID)
 		}()
-		defer recoverRun(chatID, turnID)
 		h.runChat(runCtx, chatID, turnID, content, attachments)
 	}()
 }
@@ -997,13 +998,13 @@ func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message stri
 		runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
 		h.hub.RegisterRun(chatID, dp.TurnID, cancelRun)
 		_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
+		defer recoverRun(chatID, dp.TurnID)
 		defer func() {
 			cancelRun()
 			h.hub.UnregisterRun(chatID)
 		}()
 		defer h.hub.Close(chatID)
 		defer h.stampRunOutcome(runCtx, chatID)
-		defer recoverRun(chatID, dp.TurnID)
 
 		h.eventLog.Reset(runCtx, chatID)
 		publish := runlog.NewPublisher(h.hub, h.eventLog, chatID).Publish
@@ -1043,13 +1044,13 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 		runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
 		h.hub.RegisterRun(chatID, dp.TurnID, cancelRun)
 		_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
+		defer recoverRun(chatID, dp.TurnID)
 		defer func() {
 			cancelRun()
 			h.hub.UnregisterRun(chatID)
 		}()
 		defer h.hub.Close(chatID)
 		defer h.stampRunOutcome(runCtx, chatID)
-		defer recoverRun(chatID, dp.TurnID)
 
 		h.eventLog.Reset(runCtx, chatID)
 		publish := runlog.NewPublisher(h.hub, h.eventLog, chatID).Publish
