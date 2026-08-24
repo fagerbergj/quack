@@ -14,6 +14,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/stream"
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // planWrapperName: top agent wrapping the plan graph; must not collide with node IDs.
@@ -156,11 +157,15 @@ func graphNodeNameFromPath(path string, known map[string]bool) string {
 
 // RunPlanAsGraph: runs plan as a native ADK graph.
 func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userID, chatID string, content *genai.Content, yield func(stream.SSEEvent, error) bool, nodeOutputs map[string]string, resumeNodes []string) (paused bool, err error) {
-	// Empty resumeNodes = fresh run; setup runs once, never on resume.
+	// Empty resumeNodes = fresh run; setup runs once, never on resume. Same
+	// signal clears any review fan-in left by a previous aborted run of this
+	// plan ID (#1040) - a resume/retry must NOT reset it, since a peer
+	// reviewer already staged is not a descendant and never re-runs.
 	if len(resumeNodes) == 0 {
 		if serr := e.runPlanSetup(ctx, userID, chatID, plan); serr != nil {
 			return false, fmt.Errorf("dag: plan setup: %w", serr)
 		}
+		vetting.ResetReviewFanout(plan.ID)
 	}
 	// Source travels on ctx up to THIS point only (buildGateNodes is called
 	// synchronously, before workflow.RunNode ever schedules a child) - past
