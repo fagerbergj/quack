@@ -49,8 +49,9 @@ func (t *tracedModel) SetDefaultAgent(name string) {
 	t.defaultAgent = name
 }
 
-// SetLedgerCoords stamps coordinates for subsequent GenerateContent calls,
-// taking precedence over ctx (needed because RunNode rebuilds child context).
+// SetLedgerCoords stamps coordinates for calls whose ctx cannot carry their own
+// - RunNode rebuilds the child context and drops node/agent/round. Fields the
+// caller did put in ctx are never overwritten by it (#1039).
 func (t *tracedModel) SetLedgerCoords(c ledger.Coords) {
 	t.mu.Lock()
 	t.coords = c
@@ -59,11 +60,14 @@ func (t *tracedModel) SetLedgerCoords(c ledger.Coords) {
 
 // GenerateContent times the full iteration and emits a gen_ai ledger event.
 func (t *tracedModel) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
+	// ctx fields win field-by-field; the shared stamp only FILLS BLANKS. The
+	// outer run ctx already carries partial coords (chat/user/source), so an
+	// all-or-nothing check would drop node/agent/round on the worker path.
 	t.mu.Lock()
-	c := t.coords
+	stamp := t.coords
 	t.mu.Unlock()
-	if c != (ledger.Coords{}) {
-		ctx = ledger.WithCoords(ctx, c)
+	if stamp != (ledger.Coords{}) {
+		ctx = ledger.WithCoords(ctx, fillBlankCoords(ledger.CoordsFromContext(ctx), stamp))
 	}
 	// Decorate ADK's own generate_content span while it's still open - see
 	// setRequestSpanAttrs's doc comment for why this can't move into the
@@ -175,4 +179,29 @@ func (t *tracedModel) recordEmbedUsage(ctx context.Context, u openaimodel.EmbedU
 		cost := float64(u.PromptTokens) / 1e6 * t.pricing.InputPerMTok
 		otelobs.RecordCost(t.name, agent, c.User, c.Source, cost)
 	}
+}
+
+// fillBlankCoords: ctx wins per field, stamp fills what ctx left empty. The
+// stamp is shared by every node on one model, so letting it overwrite a field
+// the caller set attributes that call to whichever node stamped last (#1039).
+func fillBlankCoords(ctx, stamp ledger.Coords) ledger.Coords {
+	if ctx.ChatID == "" {
+		ctx.ChatID = stamp.ChatID
+	}
+	if ctx.Node == "" {
+		ctx.Node = stamp.Node
+	}
+	if ctx.Agent == "" {
+		ctx.Agent = stamp.Agent
+	}
+	if ctx.Round == "" {
+		ctx.Round = stamp.Round
+	}
+	if ctx.User == "" {
+		ctx.User = stamp.User
+	}
+	if ctx.Source == "" {
+		ctx.Source = stamp.Source
+	}
+	return ctx
 }
