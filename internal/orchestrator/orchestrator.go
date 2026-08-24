@@ -779,12 +779,18 @@ func (o *Orchestrator) StartNode(ctx context.Context, userID, sessionID, nodeID,
 }
 
 func (o *Orchestrator) startNodeRun(ctx context.Context, userID, sessionID, message string, pend *pendingInterrupt, nodeID string, yield func(stream.SSEEvent, error) bool) {
-	// Single choke point for both StartNode (fresh dispatch, bare ctx) and
-	// Run's resumeNodeRun (already inside Run's "run" span) - a nested span
-	// here is harmless (same trace) and gives the bare-ctx caller a real one.
+	// Single choke point for both StartNode (fresh dispatch, bare ctx, needs a
+	// real span) and Run's resumeNodeRun (already inside Run's "run" span) -
+	// skip opening a redundant child so resumed-node traces don't show run-under-run.
 	var span oteltrace.Span
-	ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, sessionID))
-	defer otelobs.End(span, nil)
+	if !oteltrace.SpanFromContext(ctx).SpanContext().IsValid() {
+		ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, sessionID))
+	}
+	defer func() {
+		if span != nil {
+			otelobs.End(span, nil)
+		}
+	}()
 	plan, ok := o.stashedPlan(ctx, userID, sessionID)
 	if !ok {
 		yield(stream.Errorf("resume: no plan in session to resume"), nil)
