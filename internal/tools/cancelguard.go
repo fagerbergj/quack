@@ -9,6 +9,7 @@ import (
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
@@ -35,6 +36,13 @@ func (c *cancelGuard) Description() string { return c.inner.Description() }
 func (c *cancelGuard) IsLongRunning() bool { return c.inner.IsLongRunning() }
 
 func (c *cancelGuard) Declaration() *genai.FunctionDeclaration { return c.inner.Declaration() }
+
+// SetLedgerCoords: pass-through wrapper, forward to inner (#1052).
+func (c *cancelGuard) SetLedgerCoords(coords ledger.Coords) {
+	if cs, ok := c.inner.(ledger.CoordSetter); ok {
+		cs.SetLedgerCoords(coords)
+	}
+}
 
 // ProcessRequest packs the wrapper into the request's tool map.
 func (c *cancelGuard) ProcessRequest(ctx agent.Context, req *model.LLMRequest) error {
