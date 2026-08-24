@@ -31,10 +31,6 @@ type nodeScopedWorker interface {
 // buildGateNodes: one gated node per plan node. source: the run's origin
 // (extension name or a fixed app value) - observability only, see vetting.Config.Source.
 func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int), admission *Admission, specFor func(agentName string) AdmissionSpec) (map[string]workflow.Node, []adkagent.Agent, error) {
-	// One fan-in per RUN, not per plan ID: a retry re-assembles the same plan
-	// and would otherwise inherit an interrupted run's state (#1040).
-	vetting.ResetReviewFanout(plan.ID)
-
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
