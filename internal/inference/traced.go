@@ -67,7 +67,7 @@ func (t *tracedModel) GenerateContent(ctx context.Context, req *model.LLMRequest
 	stamp := t.coords
 	t.mu.Unlock()
 	if stamp != (ledger.Coords{}) {
-		ctx = ledger.WithCoords(ctx, fillBlankCoords(ledger.CoordsFromContext(ctx), stamp))
+		ctx = ledger.WithCoords(ctx, ledger.FillBlankCoords(ledger.CoordsFromContext(ctx), stamp))
 	}
 	// Decorate ADK's own generate_content span while it's still open - see
 	// setRequestSpanAttrs's doc comment for why this can't move into the
@@ -179,29 +179,4 @@ func (t *tracedModel) recordEmbedUsage(ctx context.Context, u openaimodel.EmbedU
 		cost := float64(u.PromptTokens) / 1e6 * t.pricing.InputPerMTok
 		otelobs.RecordCost(t.name, agent, c.User, c.Source, cost)
 	}
-}
-
-// fillBlankCoords: ctx wins per field, stamp fills what ctx left empty. The
-// stamp is shared by every node on one model, so letting it overwrite a field
-// the caller set attributes that call to whichever node stamped last (#1039).
-func fillBlankCoords(ctx, stamp ledger.Coords) ledger.Coords {
-	if ctx.ChatID == "" {
-		ctx.ChatID = stamp.ChatID
-	}
-	if ctx.Node == "" {
-		ctx.Node = stamp.Node
-	}
-	if ctx.Agent == "" {
-		ctx.Agent = stamp.Agent
-	}
-	if ctx.Round == "" {
-		ctx.Round = stamp.Round
-	}
-	if ctx.User == "" {
-		ctx.User = stamp.User
-	}
-	if ctx.Source == "" {
-		ctx.Source = stamp.Source
-	}
-	return ctx
 }
