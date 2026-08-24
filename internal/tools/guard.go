@@ -2,9 +2,11 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 
 	"google.golang.org/genai"
 
@@ -14,6 +16,7 @@ import (
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/toolutils"
 
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
@@ -51,6 +54,9 @@ type guardedTool struct {
 	tier     guardTier
 	judge    SafetyJudge
 	sessions session.Service
+
+	mu     sync.Mutex
+	coords ledger.Coords
 }
 
 // newGuardedTool wraps inner with tier; fails loudly if not runnable.
@@ -60,6 +66,18 @@ func newGuardedTool(inner tool.Tool, tier guardTier, judge SafetyJudge, sessions
 		return nil, fmt.Errorf("tool %q does not support the guard ladder (not a runnable function tool)", inner.Name())
 	}
 	return &guardedTool{inner: rt, tier: tier, judge: judge, sessions: sessions}, nil
+}
+
+// SetLedgerCoords: learned after Build, same as emitTool - #1052's fix so the
+// safety judge (which runs on ctx alone; RunNode drops WithAgentContext
+// stamps) gets this node's coords rather than blank attribution.
+func (g *guardedTool) SetLedgerCoords(c ledger.Coords) {
+	g.mu.Lock()
+	g.coords = c
+	g.mu.Unlock()
+	if cs, ok := g.inner.(ledger.CoordSetter); ok {
+		cs.SetLedgerCoords(c)
+	}
 }
 
 func (g *guardedTool) Name() string        { return g.inner.Name() }
@@ -173,7 +191,39 @@ func (g *guardedTool) runSafetyJudge(ctx agent.Context, args map[string]any) (al
 			}
 		}
 	}
-	return g.judge(ctx, "", task, g.Name(), args, activity)
+	// ctx alone carries no node/agent (RunNode drops the WithAgentContext
+	// stamp); fill from the coords SetLedgerCoords learned. ctx fields win.
+	g.mu.Lock()
+	stamp := g.coords
+	g.mu.Unlock()
+	jctx := context.Context(ctx)
+	if stamp != (ledger.Coords{}) {
+		jctx = ledger.WithCoords(jctx, fillBlankCoords(ledger.CoordsFromContext(jctx), stamp))
+	}
+	return g.judge(jctx, "", task, g.Name(), args, activity)
+}
+
+// fillBlankCoords: c's blank fields take stamp's value; non-blank fields win.
+func fillBlankCoords(c, stamp ledger.Coords) ledger.Coords {
+	if c.ChatID == "" {
+		c.ChatID = stamp.ChatID
+	}
+	if c.Node == "" {
+		c.Node = stamp.Node
+	}
+	if c.Agent == "" {
+		c.Agent = stamp.Agent
+	}
+	if c.Round == "" {
+		c.Round = stamp.Round
+	}
+	if c.User == "" {
+		c.User = stamp.User
+	}
+	if c.Source == "" {
+		c.Source = stamp.Source
+	}
+	return c
 }
 
 // guardThread: resolves the gated node from the prompt marker; ("", "") for un-gated invocations.

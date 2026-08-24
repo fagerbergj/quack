@@ -10,6 +10,8 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/ledger"
 )
 
 // repeatGuard: breaks identical-call loops - refuses the 3rd+ consecutive identical call.
@@ -83,6 +85,13 @@ func newRepeatGuard(inner tool.Tool, states *repeatStates) (tool.Tool, error) {
 func (g *repeatGuard) Name() string        { return g.inner.Name() }
 func (g *repeatGuard) Description() string { return g.inner.Description() }
 func (g *repeatGuard) IsLongRunning() bool { return g.inner.IsLongRunning() }
+
+// SetLedgerCoords: pass-through wrapper, forward to inner (#1052).
+func (g *repeatGuard) SetLedgerCoords(c ledger.Coords) {
+	if cs, ok := g.inner.(ledger.CoordSetter); ok {
+		cs.SetLedgerCoords(c)
+	}
+}
 
 func (g *repeatGuard) Declaration() *genai.FunctionDeclaration { return g.inner.Declaration() }
 
