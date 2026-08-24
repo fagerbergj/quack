@@ -357,7 +357,9 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 			}
 			// The Prompt RPC returns exactly once per round with its own
 			// (not cumulative) usage - the round's usage is known here, once.
-			recordUsage(a.opts.ModelName, coords, a.opts.Pricing, d.resp.Usage)
+			// ctx wins per field, the shared stamp only fills blanks (#1048) -
+			// same rule as traced.go's tracedModel and tools/emit.go's emitTool.
+			recordUsage(a.opts.ModelName, ledger.FillBlankCoords(ledger.CoordsFromContext(ctx), coords), a.opts.Pricing, d.resp.Usage)
 			if d.resp.StopReason == sdk.StopReasonRefusal {
 				refusalErr := errors.New("acp: agent refused the prompt")
 				endPrompt(refusalErr)
