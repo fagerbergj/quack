@@ -14,6 +14,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"google.golang.org/genai"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -75,7 +76,10 @@ func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service) (
 	mux.Handle(a2asrv.WellKnownAgentCardPath, a2asrv.NewStaticAgentCardHandler(card))
 	mux.Handle(invokePath, a2asrv.NewJSONRPCHandler(a2asrv.NewHandler(executor)))
 
-	go func() { _ = http.Serve(listener, mux) }()
+	// otelhttp extracts the client's traceparent header so the request ctx's
+	// span (see clientNamed's transport) continues the caller's trace instead
+	// of rooting a fresh one (#1046).
+	go func() { _ = http.Serve(listener, otelhttp.NewHandler(mux, "a2a.invoke")) }()
 
 	return &A2AServer{Card: card, listener: listener}, nil
 }
@@ -97,8 +101,10 @@ func (s *A2AServer) ClientForNode(nodeKey string) (adkagent.Agent, error) {
 
 // clientNamed builds a remote agent for this server under the given local name.
 func (s *A2AServer) clientNamed(name string) (adkagent.Agent, error) {
+	// otelhttp injects the caller's traceparent header so the per-node A2A
+	// server's handler continues this trace instead of starting a new one (#1046).
 	factory := a2aclient.NewFactory(
-		a2aclient.WithJSONRPCTransport(&http.Client{Transport: httpx.NewTransport(nil)}),
+		a2aclient.WithJSONRPCTransport(&http.Client{Transport: httpx.NewTransport(otelhttp.NewTransport(nil))}),
 	)
 	base := remoteagent.NewA2AClientProvider(factory)
 	return remoteagent.NewA2A(remoteagent.A2AConfig{

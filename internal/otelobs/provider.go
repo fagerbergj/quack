@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -119,6 +120,10 @@ func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledge
 	}
 	tp := sdktrace.NewTracerProvider(tpOpts...)
 	otel.SetTracerProvider(tp)
+	// otelhttp (agent/a2a.go's per-node client+server) reads the global
+	// propagator to inject/extract traceparent - unset, it's a no-op and every
+	// A2A hop starts a fresh trace root (#1046).
+	otel.SetTextMapPropagator(propagation.TraceContext{})
 
 	mp := metric.NewMeterProvider(mpOpts...)
 	otel.SetMeterProvider(mp)
