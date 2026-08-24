@@ -720,6 +720,19 @@ func commitMemoryOnPass(ctx adkagent.Context, spanCtx context.Context, cfg Confi
 	}()
 }
 
+// resolveCloneCoordinates: the repo/branch this node itself cloned, setup-provisioned
+// or not. Shared by commitDelivery's own dc-building and the review fan-in's
+// RecordClone (#1059) - same precedence, single source of truth.
+func resolveCloneCoordinates(cfg Config, act workerActivity) (cloneURL, branch string) {
+	if cfg.Setup != nil {
+		return cfg.Setup.Repo, cfg.Setup.WorkBranch
+	}
+	if len(act.clonedRepos) > 0 {
+		return act.clonedRepos[0], act.currentBranch
+	}
+	return "", act.currentBranch
+}
+
 // commitDelivery: posts final staged delivery exactly once. Blocking (delivery failure is user-visible).
 func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config, nodeID string, act workerActivity, res GateResult) {
 	// Multi-reviewer plan (#867): this node's own review never goes out on
@@ -750,6 +763,8 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 			}
 			act.stagedDelivery = clone
 		}
+		cloneURL, branch := resolveCloneCoordinates(cfg, act)
+		cfg.ReviewFanout.RecordClone(cloneURL, branch)
 		merged, deliverNow := cfg.ReviewFanout.Finish(nodeID, item, hasItem, false)
 		if deliverNow {
 			deliverMergedReview(ctx, sink, cfg, nodeID, merged)
@@ -776,10 +791,9 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 		NodeID: nodeID, ChatID: cfg.ChatID, Items: sortedStagedDelivery(act.stagedDelivery), IssueNumber: act.prNumber,
 		GatePassed: res.Passed, GateFeedback: res.Feedback, ChecksSkipNote: checksSkipNote(res.ChecksSkipReason),
 	}
+	dc.CloneURL, dc.Branch = resolveCloneCoordinates(cfg, act)
 	if cfg.Setup != nil {
 		// Deliver on setup branch (worker's git-tracking ledger is off-limits for setup-provisioned workers).
-		dc.Branch = cfg.Setup.WorkBranch
-		dc.CloneURL = cfg.Setup.Repo
 		if cfg.Workspace != nil {
 			// Use cfg.NodeID (workspace scope), not nodeID argument.
 			if abs, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID)); err == nil {
@@ -877,6 +891,7 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 // A merge with nothing valid in it (every reviewer node failed/staged
 // nothing) posts nothing - there is nothing true to tell the reader.
 func deliverMergedReview(ctx context.Context, sink func(stream.SSEEvent), cfg Config, nodeID string, merged StagedDelivery) {
+	cloneURL, branch := cfg.ReviewFanout.Clone()
 	cfg.ReviewFanout.forget()
 	if strings.TrimSpace(merged.Body) == "" && len(merged.Comments) == 0 {
 		slog.Warn("review fan-in produced nothing to deliver; every reviewer node failed or staged nothing",
@@ -884,7 +899,12 @@ func deliverMergedReview(ctx context.Context, sink func(stream.SSEEvent), cfg Co
 		return
 	}
 	cfg.ReviewFanout = nil
-	act := workerActivity{stagedDelivery: map[string]StagedDelivery{"review": merged}}
+	// The delivering node (often a synthesizer) may have cloned nothing
+	// itself - fall back to a reviewer sibling's clone coordinates (#1059).
+	act := workerActivity{stagedDelivery: map[string]StagedDelivery{"review": merged}, currentBranch: branch}
+	if cloneURL != "" {
+		act.clonedRepos = []string{cloneURL}
+	}
 	commitDelivery(ctx, sink, cfg, nodeID, act, GateResult{Passed: true})
 }
 
