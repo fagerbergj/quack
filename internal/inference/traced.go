@@ -66,7 +66,7 @@ func (t *tracedModel) GenerateContent(ctx context.Context, req *model.LLMRequest
 	t.mu.Lock()
 	stamp := t.coords
 	t.mu.Unlock()
-	if stamp != (ledger.Coords{}) {
+	if !stamp.IsZero() {
 		ctx = ledger.WithCoords(ctx, ledger.FillBlankCoords(ledger.CoordsFromContext(ctx), stamp))
 	}
 	// Decorate ADK's own generate_content span while it's still open - see

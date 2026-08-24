@@ -1063,7 +1063,7 @@ func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Conf
 		attribute.String(otelobs.QuackModel, modelName(workerModel)),
 		attribute.String("stage", stage),
 	)
-	coords := ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, Round: runID, User: cfg.User, Source: cfg.Source}
+	coords := ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, Round: runID, User: cfg.User, Source: cfg.Source, SpanContext: ts.Span.SpanContext()}
 	gctx := ctx.WithAgentContext(ledger.WithCoords(ctx, coords))
 	// WithAgentContext stamp does not survive RunNode scheduling; inference models get stamped directly.
 	if cs, ok := workerModel.(interface{ SetLedgerCoords(ledger.Coords) }); ok {
