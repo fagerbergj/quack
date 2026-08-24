@@ -43,7 +43,7 @@ func TestSubscribeLiveTail(t *testing.T) {
 	chatID := mustCreateChat(t, h)
 	pub := runlog.NewPublisher(h.hub, h.eventLog, chatID)
 	pub.Publish(stream.ResponseCreated("t1"))
-	pub.Publish(stream.NodeStart("n1", "researcher", "", ""))
+	pub.Publish(stream.NodeStart("n1", "researcher"))
 
 	req := httptest.NewRequest("GET", "/api/v1/chats/"+chatID+"/stream", nil)
 	ctx, cancel := context.WithCancel(req.Context())
@@ -89,7 +89,7 @@ func TestSubscribeIdleSnapshotsAndCloses(t *testing.T) {
 	chatID := mustCreateChat(t, h)
 	pub := runlog.NewPublisher(h.hub, h.eventLog, chatID)
 	pub.Publish(stream.ResponseCreated("t1"))
-	pub.Publish(stream.NodeStart("n1", "researcher", "", ""))
+	pub.Publish(stream.NodeStart("n1", "researcher"))
 	pub.Publish(stream.NodeDone("n1", stream.NodeDoneData{}))
 	pub.Publish(stream.Done())
 	h.hub.Close(chatID)
@@ -122,8 +122,8 @@ func TestSubscribeLiveReconnectByLastEventID(t *testing.T) {
 	h := newTestHandler(t)
 	chatID := mustCreateChat(t, h)
 	pub := runlog.NewPublisher(h.hub, h.eventLog, chatID)
-	pub.Publish(stream.ResponseCreated("t1"))         // seq 1
-	pub.Publish(stream.NodeStart("n1", "rs", "", "")) // seq 2
+	pub.Publish(stream.ResponseCreated("t1")) // seq 1
+	pub.Publish(stream.NodeStart("n1", "rs")) // seq 2
 
 	req := httptest.NewRequest("GET", "/api/v1/chats/"+chatID+"/stream", nil)
 	req.Header.Set("Last-Event-ID", "1")

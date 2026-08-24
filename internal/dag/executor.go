@@ -90,7 +90,7 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 	}
 	return &DagStream{
 		ctx: ctx, plan: plan, agentByID: agentByID, yield: yield,
-		ds: newDagStream(ctx, agentByID, yield, nodeOutputs, func(nodeID string) gateScore {
+		ds: newDagStream(otelobs.TraceIDOf(ctx), agentByID, yield, nodeOutputs, func(nodeID string) gateScore {
 			return e.gateScore(ctx, appName, userID, sessionID, nodeID)
 		}, func(nodeID string) bool {
 			return e.controls.wasCancelled(cancelKey, nodeID)
@@ -218,7 +218,10 @@ func (e *Executor) gateScore(ctx context.Context, appName, userID, sessionID, no
 
 // dagStream converts workflow events into SSE, synthesizing per-node worker runs.
 type dagStream struct {
-	ctx        context.Context
+	// traceID is the run's OTel trace id, resolved once at construction - not
+	// per-node/per-round: every span in this plan run shares one trace, so a
+	// live context.Context (Finding 4) would add nothing but staleness risk.
+	traceID    string
 	agentByID  map[string]string
 	yield      func(stream.SSEEvent, error) bool
 	outputs    map[string]string
@@ -248,9 +251,9 @@ type runUsage struct {
 	model, finish string
 }
 
-func newDagStream(ctx context.Context, agentByID map[string]string, yield func(stream.SSEEvent, error) bool, outputs map[string]string, scoreOf func(string) gateScore, cancelled func(string) bool, userPaused func(string) bool, steerOf func(string, int) string) *dagStream {
+func newDagStream(traceID string, agentByID map[string]string, yield func(stream.SSEEvent, error) bool, outputs map[string]string, scoreOf func(string) gateScore, cancelled func(string) bool, userPaused func(string) bool, steerOf func(string, int) string) *dagStream {
 	return &dagStream{
-		ctx: ctx, agentByID: agentByID, yield: yield, outputs: outputs, scoreOf: scoreOf, cancelled: cancelled, userPaused: userPaused, steerOf: steerOf,
+		traceID: traceID, agentByID: agentByID, yield: yield, outputs: outputs, scoreOf: scoreOf, cancelled: cancelled, userPaused: userPaused, steerOf: steerOf,
 		started: map[string]bool{}, doneEmitted: map[string]bool{}, needsInput: map[string]bool{}, startedAt: map[string]time.Time{},
 		curRun: map[string]string{}, steerSeen: map[string]int{}, usage: map[string]*runUsage{}, nodeUsage: map[string]*runUsage{},
 	}
@@ -282,7 +285,7 @@ func (s *dagStream) handle(ev *session.Event) bool {
 	if !s.started[node] {
 		s.started[node] = true
 		s.startedAt[node] = time.Now()
-		if !s.emit(stream.NodeStart(node, s.agentByID[node], otelobs.TraceIDOf(s.ctx), otelobs.SpanIDOf(s.ctx))) {
+		if !s.emit(stream.WithTrace(stream.NodeStart(node, s.agentByID[node]), s.traceID)) {
 			return false
 		}
 	}
@@ -349,10 +352,10 @@ func (s *dagStream) handle(ev *session.Event) bool {
 			}
 		}
 		st, rd := stageRound(runID)
-		if !s.emit(stream.ScopeToNode(stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{
+		ev := stream.WithTrace(stream.ScopeToNode(stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{
 			RunID: runID, Agent: s.agentByID[node], Stage: st, Round: rd, StartedAtMs: time.Now().UnixMilli(),
-			TraceID: otelobs.TraceIDOf(s.ctx), SpanID: otelobs.SpanIDOf(s.ctx),
-		}}, node)) {
+		}}, node), s.traceID)
+		if !s.emit(ev) {
 			return false
 		}
 	}

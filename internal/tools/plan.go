@@ -114,7 +114,7 @@ func DagPlanEvent(ctx context.Context, p dag.Plan) stream.SSEEvent {
 	for i, n := range p.Nodes {
 		nodes[i] = stream.DagNodeDef{ID: n.ID, Agent: n.AgentName, Task: n.Task, DependsOn: n.DependsOn, ContextWindow: n.ContextWindow}
 	}
-	return stream.DagPlan(p.ID, nodes, planEdges(p.Nodes), otelobs.TraceIDOf(ctx), otelobs.SpanIDOf(ctx))
+	return stream.WithTrace(stream.DagPlan(p.ID, nodes, planEdges(p.Nodes)), otelobs.TraceIDOf(ctx))
 }
 
 // planEdges: projects DependsOn into the wire edge list for the dag_plan event.

@@ -497,7 +497,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		const orchRunID = "orchestrator"
 		yield(stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{
 			RunID: orchRunID, Agent: "orchestrator", Stage: stream.StageWorker, StartedAtMs: time.Now().UnixMilli(),
-			TraceID: otelobs.TraceIDOf(ctx), SpanID: otelobs.SpanIDOf(ctx),
+			TraceID: otelobs.TraceIDOf(ctx),
 		}}, nil)
 
 		var mu sync.Mutex

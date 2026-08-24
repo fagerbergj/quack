@@ -142,11 +142,11 @@ func TestStageSpan_SSEWireFormatUnchanged(t *testing.T) {
 	if start.StartedAtMs < before || start.StartedAtMs > after {
 		t.Errorf("agent_start.StartedAtMs = %d, want within [%d, %d]", start.StartedAtMs, before, after)
 	}
-	// Wire shape sans the timestamp and trace/span ids, which are asserted separately (real wall-clock / random hex, not pinnable).
-	if start.TraceID == "" || start.SpanID == "" {
-		t.Errorf("agent_start trace_id/span_id empty, want a real span from the test tracer")
+	// Wire shape sans the timestamp and trace id, which are asserted separately (real wall-clock / random hex, not pinnable).
+	if start.TraceID == "" {
+		t.Errorf("agent_start trace_id empty, want a real span from the test tracer")
 	}
-	start.StartedAtMs, start.TraceID, start.SpanID = 0, "", ""
+	start.StartedAtMs, start.TraceID = 0, ""
 	gotStart, err := json.Marshal(start)
 	if err != nil {
 		t.Fatalf("marshal agent_start: %v", err)
