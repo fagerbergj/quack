@@ -47,7 +47,7 @@ func (noVerdictModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ 
 }
 
 // maxTokensRecordingPlanJudge records the MaxOutputTokens the request
-// actually carried before accepting - proving the shared judge/skeptic/
+// actually carried before accepting - proving the shared judge/
 // plan-judge cap reaches the plan judge's own model request too (#889).
 type maxTokensRecordingPlanJudge struct{ got *int32 }
 
@@ -79,8 +79,8 @@ func TestPlanJudge_RequestCarriesConfiguredMaxOutputTokens(t *testing.T) {
 // deltas within ONE model call, never calling submit_plan_verdict - the
 // literal #889 incident shape (a single generation that decodes forever
 // instead of stopping), since the plan judge has no other tool available to
-// sustain a multi-turn loop across separate model calls the way the judge/
-// skeptic tests do with read_file.
+// sustain a multi-turn loop across separate model calls the way the judge
+// tests do with read_file.
 type loopingPlanJudgeModel struct{ chunks int32 }
 
 func (m *loopingPlanJudgeModel) Name() string { return "looping-plan-judge" }

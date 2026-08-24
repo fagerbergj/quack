@@ -43,7 +43,7 @@ const (
 	defaultJudgeMaxIterations = 14
 
 	// judgeBehaviour* compose the judge's behaviour prompt.
-	judgeBehaviourHead = "You are the LAST line of defense before this answer ships. You did NOT write it, and you must not trust its assertions, its self-report of what it did, OR its inline citations - an answer's own claim that it verified something is not verification. If garbage or a fabricated claim ships past you, that is YOUR failure, not the worker's: score as an adversarial, skeptical verifier whose job is to catch what a confident, fluent, possibly-wrong answer wants you to wave through. "
+	judgeBehaviourHead = "You are the LAST line of defense before this answer ships. You did NOT write it, and you must not trust its assertions, its self-report of what it did, OR its inline citations - an answer's own claim that it verified something is not verification. If garbage or a fabricated claim ships past you, that is YOUR failure, not the worker's: score as an adversarial, distrustful verifier whose job is to catch what a confident, fluent, possibly-wrong answer wants you to wave through. "
 
 	judgeNoToolsClause = "You have no tools. Judge the answer on its own merits against the rubric. "
 
@@ -133,7 +133,7 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 		judgeTools = append(judgeTools, submit)
 		a, err := llmagent.New(llmagent.Config{
 			Name:        "judge",
-			Description: "independent skeptical verifier",
+			Description: "independent adversarial verifier",
 			Model:       judgeModel,
 			InstructionProvider: func(_ adkagent.ReadonlyContext) (string, error) {
 				return promptbuilder.Judge(judgeTools, behaviour), nil
@@ -147,7 +147,7 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 	}
 }
 
-// judgeGenConfig caps a judge/skeptic/plan-judge round's own reply tokens - a
+// judgeGenConfig caps a judge/plan-judge round's own reply tokens - a
 // verdict is a few hundred tokens of JSON, but an ungoverned round can decode
 // tens of thousands looping (#889). <= 0 leaves the request uncapped.
 func judgeGenConfig(maxOutputTokens int) *genai.GenerateContentConfig {
@@ -580,7 +580,7 @@ func finishJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, que
 	return v2
 }
 
-// judgeRepeat* tune the runaway-generation guard shared by the judge, skeptic,
+// judgeRepeat* tune the runaway-generation guard shared by the judge
 // and plan judge: a degenerate loop stutters far faster than any legitimate
 // verdict grows, so watching a bounded trailing window is enough (#889: 18K+
 // tokens looped on one verdict before this existed).

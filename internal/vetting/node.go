@@ -490,9 +490,6 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				res = GateResult{Score: 0, Passed: false, Feedback: feedback, Rounds: round}
 				break
 			}
-			// Adversarial verify: load-bearing passing criteria get refuted by independent skeptics.
-			// ledgerCtx, not judgeCtx: skeptics are their own model calls and need the same coords.
-			v = adversarialVerify(ledgerCtx, cfg, question, answer, act, v, judgePartEmitter(sink, nodeID, runID+"-skeptic"))
 			v = sanitizeAnchors(v, answer, cfg)
 			v = mergeDeterministic(v, det, cfg)
 			v = applyRubricSpecs(v, cfg.RubricSpecs)

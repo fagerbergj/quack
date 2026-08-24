@@ -963,9 +963,6 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				judgeSkillsets = []tool.Toolset{skillTS}
 			}
 			judgeFactory = vetting.NewJudgeFactory(judge, judgeReadTools, judgeSkillsets)
-			if cfg.Gates.Judge.Skeptics > 0 {
-				gateCfg.Skeptic = vetting.NewSkepticFactory(judge, judgeReadTools)
-			}
 			// Own instances: gated nodes stamp per-round coords on `judge`
 			// (vetting/node.go), and these callers are not nodes - sharing it
 			// makes their calls inherit whichever node stamped last (#1049).

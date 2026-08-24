@@ -15,7 +15,6 @@ gates:
     threshold: 0.7
     max_iterations: 6
     context_window: 65536
-    skeptics: 0
 ```
 
 If both `deterministic_checks.max_rounds` and the judge are off, the gate is disabled entirely and agents are served unwrapped (`GatesConfig.Enabled`).
@@ -34,7 +33,6 @@ A separate, independently-configured model scores the answer G-Eval style agains
 - `max_rounds` bounds judge/revise cycles - the worker gets self-contained feedback and another attempt, up to this many times.
 - `max_iterations` caps the judge's own agentic model turns within a single round (it may call tools to verify claims, e.g. reading the clone).
 - `context_window` budgets the assembled judge prompt so it fits before the call, instead of discovering a 400 mid-request.
-- `skeptics` (default `0`, off) is the adversarial-verify stage: N independent skeptic calls per load-bearing *passing* criterion, with a strict majority-refute killing the finding. Each qualifying criterion costs N extra judge-model calls, so it's opt-in.
 
 ## Rubrics
 

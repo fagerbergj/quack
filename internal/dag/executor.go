@@ -617,7 +617,7 @@ func buildTask(plan Plan, node Node, upstream map[string]string, gateFailed map[
 	for _, dep := range node.DependsOn {
 		if out, ok := upstream[dep]; ok && strings.TrimSpace(out) != "" {
 			if gateFailed[dep] {
-				sb.WriteString("⚠ WARNING: the following input FAILED independent quality vetting (unverified claims or missing citations). Treat its claims skeptically and do not present them as verified:\n\n")
+				sb.WriteString("⚠ WARNING: the following input FAILED independent quality vetting (unverified claims or missing citations). Treat its claims with suspicion and do not present them as verified:\n\n")
 			}
 			sb.WriteString(out)
 			sb.WriteString("\n\n---\n\n")
