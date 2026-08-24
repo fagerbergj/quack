@@ -66,6 +66,22 @@ type Handler struct {
 	userMem      *memory.Store           // user: buckets; nil ⇒ user memory disabled
 	artifacts    *store.TurnAwareService // durable attachment bytes; nil ⇒ multipart attachments are dropped (see saveAttachment)
 	extensions   []schema.ExtensionInfo  // enabled SDK extensions for GET /api/v1/extensions; nil ⇒ empty list
+	// traceURLTemplate is otel.trace_url_template ("" ⇒ unset), served read-only
+	// via GET /api/v1/config so the frontend can render a trace_id deep link
+	// without the URL ever being baked into a wire event (see WithTrace).
+	traceURLTemplate string
+}
+
+// SetTraceURLTemplate wires otel.trace_url_template for GET /api/v1/config.
+func (h *Handler) SetTraceURLTemplate(t string) { h.traceURLTemplate = t }
+
+// GetConfig serves read-only, client-visible server config.
+func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
+	cfg := schema.ClientConfig{}
+	if h.traceURLTemplate != "" {
+		cfg.OtelTraceUrlTemplate = strPtr(h.traceURLTemplate)
+	}
+	writeJSON(w, http.StatusOK, cfg)
 }
 
 // NewHandler builds a REST handler. jail/hub/ledgerStore/taskMem/userMem/artifacts/extensions may be nil; hub defaults to a private hub.
@@ -1311,6 +1327,9 @@ func dagNodeState(n store.DagNode) schema.DagNodeState {
 		JudgeRounds:      intPtr(int(n.JudgeRounds)),
 		JudgeFinalScore:  float64Ptr(n.JudgeFinalScore),
 		JudgePassed:      boolPtr(n.JudgePassed),
+	}
+	if n.TraceID != "" {
+		ns.TraceId = strPtr(n.TraceID)
 	}
 	if reason != "" {
 		pr := schema.PauseReason(reason)

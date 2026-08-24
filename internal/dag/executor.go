@@ -15,6 +15,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
@@ -89,7 +90,7 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 	}
 	return &DagStream{
 		ctx: ctx, plan: plan, agentByID: agentByID, yield: yield,
-		ds: newDagStream(agentByID, yield, nodeOutputs, func(nodeID string) gateScore {
+		ds: newDagStream(otelobs.TraceIDOf(ctx), agentByID, yield, nodeOutputs, func(nodeID string) gateScore {
 			return e.gateScore(ctx, appName, userID, sessionID, nodeID)
 		}, func(nodeID string) bool {
 			return e.controls.wasCancelled(cancelKey, nodeID)
@@ -217,6 +218,10 @@ func (e *Executor) gateScore(ctx context.Context, appName, userID, sessionID, no
 
 // dagStream converts workflow events into SSE, synthesizing per-node worker runs.
 type dagStream struct {
+	// traceID is the run's OTel trace id, resolved once at construction - not
+	// per-node/per-round: every span in this plan run shares one trace, so a
+	// live context.Context (Finding 4) would add nothing but staleness risk.
+	traceID    string
 	agentByID  map[string]string
 	yield      func(stream.SSEEvent, error) bool
 	outputs    map[string]string
@@ -246,9 +251,9 @@ type runUsage struct {
 	model, finish string
 }
 
-func newDagStream(agentByID map[string]string, yield func(stream.SSEEvent, error) bool, outputs map[string]string, scoreOf func(string) gateScore, cancelled func(string) bool, userPaused func(string) bool, steerOf func(string, int) string) *dagStream {
+func newDagStream(traceID string, agentByID map[string]string, yield func(stream.SSEEvent, error) bool, outputs map[string]string, scoreOf func(string) gateScore, cancelled func(string) bool, userPaused func(string) bool, steerOf func(string, int) string) *dagStream {
 	return &dagStream{
-		agentByID: agentByID, yield: yield, outputs: outputs, scoreOf: scoreOf, cancelled: cancelled, userPaused: userPaused, steerOf: steerOf,
+		traceID: traceID, agentByID: agentByID, yield: yield, outputs: outputs, scoreOf: scoreOf, cancelled: cancelled, userPaused: userPaused, steerOf: steerOf,
 		started: map[string]bool{}, doneEmitted: map[string]bool{}, needsInput: map[string]bool{}, startedAt: map[string]time.Time{},
 		curRun: map[string]string{}, steerSeen: map[string]int{}, usage: map[string]*runUsage{}, nodeUsage: map[string]*runUsage{},
 	}
@@ -280,7 +285,7 @@ func (s *dagStream) handle(ev *session.Event) bool {
 	if !s.started[node] {
 		s.started[node] = true
 		s.startedAt[node] = time.Now()
-		if !s.emit(stream.NodeStart(node, s.agentByID[node])) {
+		if !s.emit(stream.WithTrace(stream.NodeStart(node, s.agentByID[node]), s.traceID)) {
 			return false
 		}
 	}
@@ -347,9 +352,10 @@ func (s *dagStream) handle(ev *session.Event) bool {
 			}
 		}
 		st, rd := stageRound(runID)
-		if !s.emit(stream.ScopeToNode(stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{
+		ev := stream.WithTrace(stream.ScopeToNode(stream.SSEEvent{Name: stream.EventAgentStart, Data: stream.AgentStartData{
 			RunID: runID, Agent: s.agentByID[node], Stage: st, Round: rd, StartedAtMs: time.Now().UnixMilli(),
-		}}, node)) {
+		}}, node), s.traceID)
+		if !s.emit(ev) {
 			return false
 		}
 	}
@@ -521,14 +527,28 @@ func segRun(seg string) string {
 	return ""
 }
 
-// stageRound: maps run ID to SSE stage + round.
+// stageRound: maps run ID to SSE stage + round. A queued round carries a
+// "-s%d" suffix (node.go's sfx) that must come off before the round parses.
 func stageRound(runID string) (string, int) {
 	if strings.HasPrefix(runID, "worker-r") {
-		if n := toInt(runID[len("worker-r"):]); n > 0 {
+		if n := toInt(trimQueueSuffix(runID[len("worker-r"):])); n > 0 {
 			return stream.StageRevise, n
 		}
 	}
 	return stream.StageWorker, 0
+}
+
+// trimQueueSuffix drops a trailing "-s<digits>" and nothing else.
+func trimQueueSuffix(s string) string {
+	i := strings.LastIndex(s, "-s")
+	if i < 0 {
+		return s
+	}
+	digits := s[i+2:]
+	if digits == "" || strings.TrimLeft(digits, "0123456789") != "" {
+		return s
+	}
+	return s[:i]
 }
 
 func outputString(o any) string {

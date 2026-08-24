@@ -65,6 +65,10 @@ func (t *tracedModel) GenerateContent(ctx context.Context, req *model.LLMRequest
 	if c != (ledger.Coords{}) {
 		ctx = ledger.WithCoords(ctx, c)
 	}
+	// Decorate ADK's own generate_content span while it's still open - see
+	// setRequestSpanAttrs's doc comment for why this can't move into the
+	// deferred emit below.
+	setRequestSpanAttrs(ctx, req)
 	inner := t.LLM.GenerateContent(ctx, req, stream)
 	return func(yield func(*model.LLMResponse, error) bool) {
 		t0 := time.Now()
@@ -81,6 +85,11 @@ func (t *tracedModel) GenerateContent(ctx context.Context, req *model.LLMRequest
 			}
 			if resp != nil {
 				last = resp
+				if !resp.Partial {
+					// Must run before yield: ADK ends its span synchronously
+					// the moment yield returns for a non-partial response.
+					setResponseSpanAttrs(ctx, resp)
+				}
 			}
 			return yield(resp, err)
 		})
