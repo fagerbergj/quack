@@ -350,10 +350,12 @@ func TestCompactionEmitsCompactedSpan(t *testing.T) {
 	}
 }
 
-// TestCompactionSpanLinksToRoundSpan: when Coords carries the round's
-// SpanContext (runWorkerNodeTraced's stamp), the compaction span must link to
-// it rather than root a disconnected trace (#1024 follow-up).
-func TestCompactionSpanLinksToRoundSpan(t *testing.T) {
+// TestCompactionSpanNestsUnderRoundSpan: when Coords carries the round's
+// SpanContext (runWorkerNodeTraced's stamp), the compaction span must be a
+// real CHILD of the round's trace - same trace id, parent span id matching
+// the round span - not merely linked to it (StartLinked forces WithNewRoot,
+// which Langfuse renders as a second disconnected trace; #1024 follow-up).
+func TestCompactionSpanNestsUnderRoundSpan(t *testing.T) {
 	exp := withTestTracer(t)
 	llm := &fakeLLM{text: "## Goal\n- compacted"}
 
@@ -363,10 +365,9 @@ func TestCompactionSpanLinksToRoundSpan(t *testing.T) {
 	}
 	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: budgetWindow(contents, defaultEventRetentionSize), Enabled: true})
 
-	roundCtx, roundSpan := otelobs.Start(context.Background(), "worker.round")
+	_, roundSpan := otelobs.Start(context.Background(), "worker.round")
 	parentSC := roundSpan.SpanContext()
 	roundSpan.End()
-	_ = roundCtx
 
 	ctx := newFakeCtx()
 	ctx.Ctx = ledger.WithCoords(context.Background(), ledger.Coords{Node: "n1", Round: "worker-r0", SpanContext: parentSC})
@@ -380,8 +381,11 @@ func TestCompactionSpanLinksToRoundSpan(t *testing.T) {
 		if s.Name != "quack.compaction" {
 			continue
 		}
-		if len(s.Links) != 1 || s.Links[0].SpanContext.TraceID() != parentSC.TraceID() {
-			t.Fatalf("quack.compaction links = %+v, want a link to round trace %s", s.Links, parentSC.TraceID())
+		if s.SpanContext.TraceID() != parentSC.TraceID() {
+			t.Fatalf("quack.compaction trace id = %s, want round trace %s (not merely linked)", s.SpanContext.TraceID(), parentSC.TraceID())
+		}
+		if s.Parent.SpanID() != parentSC.SpanID() {
+			t.Fatalf("quack.compaction parent span id = %s, want round span %s", s.Parent.SpanID(), parentSC.SpanID())
 		}
 		return
 	}

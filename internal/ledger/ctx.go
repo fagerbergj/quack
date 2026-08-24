@@ -63,6 +63,7 @@ func FillBlankCoords(ctx, stamp Coords) Coords {
 		ctx.Source = stamp.Source
 	}
 	if !ctx.SpanContext.IsValid() {
+		// stamp.SpanContext must be the round's OWN span - a wrong one silently mis-parents traces.
 		ctx.SpanContext = stamp.SpanContext
 	}
 	return ctx
