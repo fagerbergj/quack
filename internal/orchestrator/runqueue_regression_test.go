@@ -67,9 +67,16 @@ func TestSafeYieldIsolatesPanicAndSurvives(t *testing.T) {
 		panic(boom)
 	})
 
-	// First call panics inside yield; must be recovered here, not propagate.
-	if sy(stream.SSEEvent{}, nil) {
-		t.Fatal("expected false from a panicking yield")
+	// The panicking caller must see its own panic resumed: swallowing it here
+	// makes the runtime panic at the range site instead, killing the process
+	// (#1033). Survival belongs to startRun's goroutine, which owns the run.
+	var got any
+	func() {
+		defer func() { got = recover() }()
+		sy(stream.SSEEvent{}, nil)
+	}()
+	if got != boom {
+		t.Fatalf("panicking caller must observe the original panic, got %v", got)
 	}
 	// A second caller (the racing goroutine in the real bug) must be stopped
 	// cleanly, never re-invoking yield.
@@ -89,7 +96,10 @@ func TestSafeYieldLogsOriginalPanicValue(t *testing.T) {
 
 	const marker = "distinctive-panic-value-for-log-assertion"
 	sy := newSafeYield(func(stream.SSEEvent, error) bool { panic(marker) })
-	sy(stream.SSEEvent{}, nil)
+	func() {
+		defer func() { _ = recover() }() // resumed now (#1033), still logged first
+		sy(stream.SSEEvent{}, nil)
+	}()
 
 	if !strings.Contains(buf.String(), marker) {
 		t.Fatalf("original panic value missing from logs: %q", buf.String())
@@ -104,7 +114,7 @@ func TestSafeYieldConcurrentPanicIsolatesAllCallers(t *testing.T) {
 	restore := redirectSlogForTest(&buf)
 	defer restore()
 
-	var calls int32
+	var calls, panicked int32
 	const boom = "distinctive-concurrent-panic-value"
 	sy := newSafeYield(func(stream.SSEEvent, error) bool {
 		atomic.AddInt32(&calls, 1) // mutex-serialized: only ever reached once, by whichever caller wins the race
@@ -121,6 +131,13 @@ func TestSafeYieldConcurrentPanicIsolatesAllCallers(t *testing.T) {
 			defer done.Done()
 			ready.Done()
 			<-start // released together: forces real mutex contention, not a sequence
+			// Exactly one caller reaches the panicking yield and has it resumed
+			// (#1033); every other caller must be turned away with false.
+			defer func() {
+				if r := recover(); r != nil {
+					atomic.AddInt32(&panicked, 1)
+				}
+			}()
 			results[i] = sy(stream.SSEEvent{}, nil)
 		}(i)
 	}
@@ -132,6 +149,9 @@ func TestSafeYieldConcurrentPanicIsolatesAllCallers(t *testing.T) {
 		if ok {
 			t.Errorf("goroutine %d returned true - a panic must stop every caller, not just the one that hit it", i)
 		}
+	}
+	if got := atomic.LoadInt32(&panicked); got != 1 {
+		t.Errorf("want exactly 1 caller to observe the resumed panic, got %d", got)
 	}
 	if got := atomic.LoadInt32(&calls); got != 1 {
 		t.Fatalf("yield body invoked %d times across %d concurrent callers, want exactly 1 - a second invocation into an already-panicked stream is the masking bug", got, n)

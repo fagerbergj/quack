@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -590,6 +591,15 @@ func (h *Handler) startRun(chatID, turnID, content string, attachments []*genai.
 		defer func() {
 			cancelRun()
 			h.hub.UnregisterRun(chatID)
+		}()
+		// This goroutine owns the run's lifetime, so it owns surviving its panics:
+		// unrecovered here kills the whole process, not just the run (#1033).
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("chat run panicked; run abandoned, process survives",
+					"component", "rest", "chat", chatID, "turn", turnID,
+					"panic", r, "stack", string(debug.Stack()))
+			}
 		}()
 		h.runChat(runCtx, chatID, turnID, content, attachments)
 	}()
