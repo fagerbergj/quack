@@ -12,11 +12,12 @@ import {
   listMemories as sdkListMemories,
   deleteMemory as sdkDeleteMemory,
   listExtensions as sdkListExtensions,
+  getConfig as sdkGetConfig,
 } from './generated'
 
-export type { ChatSummary, ChatDetail, ChatList, Turn, Memory, MemoryList, ExtensionInfo } from './generated'
+export type { ChatSummary, ChatDetail, ChatList, Turn, Memory, MemoryList, ExtensionInfo, ClientConfig } from './generated'
 
-import type { ChatSummary, ChatDetail, ChatList, Turn, MemoryList, ExtensionInfo } from './generated'
+import type { ChatSummary, ChatDetail, ChatList, Turn, MemoryList, ExtensionInfo, ClientConfig } from './generated'
 
 type Result<T> = { data?: T; error?: unknown; response?: Response }
 
@@ -83,4 +84,6 @@ export const api = {
   },
 
   listExtensions: async (): Promise<ExtensionInfo[]> => unwrap(await sdkListExtensions()),
+
+  getConfig: async (): Promise<ClientConfig> => unwrap(await sdkGetConfig()),
 }

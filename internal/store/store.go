@@ -151,6 +151,8 @@ type DagNode struct {
 	JudgeRounds      int32      `json:"judge_rounds"`
 	JudgeFinalScore  float64    `json:"judge_final_score"`
 	JudgePassed      bool       `json:"judge_passed"`
+	// OTel trace id for a deep link (see stream.NodeStartData); "" when otel is disabled.
+	TraceID string `gorm:"column:trace_id" json:"trace_id,omitempty"`
 	// Lifecycle columns below are written only by SetNodeStatus/SetNodeQueue;
 	// UpsertDagNode omits them so a stream-driven upsert can never blank a
 	// pause a resume depends on.
@@ -830,6 +832,10 @@ func (s *Store) UpsertDagNode(ctx context.Context, node DagNode) error {
 	}
 	if node.InstanceID == "" {
 		db = db.Omit("instance_id")
+	}
+	// A later upsert (e.g. node_done) never carries trace_id - don't blank the id node_start set.
+	if node.TraceID == "" {
+		db = db.Omit("trace_id")
 	}
 	t := time.Now().UTC()
 	node.UpdatedAt = &t

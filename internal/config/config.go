@@ -270,6 +270,9 @@ type OtelConfig struct {
 	// Environment lands on the OTel resource as deployment.environment.name -
 	// what trace backends split dev traffic from the deployed server by.
 	Environment string `yaml:"environment"`
+	// TraceURLTemplate builds a per-node trace deep link for the frontend; the
+	// literal "{trace_id}" is substituted. Empty (default) = no link rendered.
+	TraceURLTemplate string `yaml:"trace_url_template"`
 }
 
 const otelDefaultSample = 1.0

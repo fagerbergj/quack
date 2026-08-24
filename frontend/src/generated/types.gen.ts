@@ -183,6 +183,14 @@ export type ExtensionInfo = {
     icon?: string;
 };
 
+export type ClientConfig = {
+    /**
+     * Raw URL template for a trace deep link, with a literal "{trace_id}" placeholder for the client to substitute - e.g. "https://tracing.example.com/trace/{trace_id}". Absent when otel.trace_url_template is unset (no link should be rendered).
+     *
+     */
+    otel_trace_url_template?: string;
+};
+
 export type ArtifactRevisionInfo = {
     revision: number;
     /**
@@ -444,6 +452,10 @@ export type DagNodeState = {
     judge_rounds?: number;
     judge_final_score?: number;
     judge_passed?: boolean;
+    /**
+     * OTel trace id for this node's run, for a deep link into the tracing backend (see GET /api/v1/config's otel_trace_url_template); empty when otel is disabled.
+     */
+    trace_id?: string;
 };
 
 export type ChatId = string;
@@ -631,6 +643,22 @@ export type ListExtensionsResponses = {
 };
 
 export type ListExtensionsResponse = ListExtensionsResponses[keyof ListExtensionsResponses];
+
+export type GetConfigData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/config';
+};
+
+export type GetConfigResponses = {
+    /**
+     * Client config
+     */
+    200: ClientConfig;
+};
+
+export type GetConfigResponse = GetConfigResponses[keyof GetConfigResponses];
 
 export type ListRecordingsData = {
     body?: never;

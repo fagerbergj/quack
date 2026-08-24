@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, DeleteMemoryData, DeleteMemoryErrors, DeleteMemoryResponses, EditNodeTaskData, EditNodeTaskErrors, EditNodeTaskResponses, EditQueuedMessageData, EditQueuedMessageErrors, EditQueuedMessageResponses, GetChatArtifactData, GetChatArtifactErrors, GetChatArtifactResponses, GetChatData, GetChatErrors, GetChatRecordingData, GetChatRecordingErrors, GetChatRecordingResponses, GetChatResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatArtifactsData, ListChatArtifactsErrors, ListChatArtifactsResponses, ListChatsData, ListChatsErrors, ListChatsResponses, ListExtensionsData, ListExtensionsResponses, ListMemoriesData, ListMemoriesErrors, ListMemoriesResponses, ListRecordingsData, ListRecordingsErrors, ListRecordingsResponses, QueueNodeMessageData, QueueNodeMessageErrors, QueueNodeMessageResponses, RemoveQueuedMessageData, RemoveQueuedMessageErrors, RemoveQueuedMessageResponses, SendChatMessageData, SendChatMessageErrors, SendChatMessageResponse, SendChatMessageResponses, StartNodeData, StartNodeErrors, StartNodeResponses, StopNodeData, StopNodeErrors, StopNodeResponses, SubscribeChatStreamData, SubscribeChatStreamErrors, SubscribeChatStreamResponse, SubscribeChatStreamResponses, UpdateChatData, UpdateChatErrors, UpdateChatResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses } from './types.gen';
+import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, DeleteMemoryData, DeleteMemoryErrors, DeleteMemoryResponses, EditNodeTaskData, EditNodeTaskErrors, EditNodeTaskResponses, EditQueuedMessageData, EditQueuedMessageErrors, EditQueuedMessageResponses, GetChatArtifactData, GetChatArtifactErrors, GetChatArtifactResponses, GetChatData, GetChatErrors, GetChatRecordingData, GetChatRecordingErrors, GetChatRecordingResponses, GetChatResponses, GetConfigData, GetConfigResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatArtifactsData, ListChatArtifactsErrors, ListChatArtifactsResponses, ListChatsData, ListChatsErrors, ListChatsResponses, ListExtensionsData, ListExtensionsResponses, ListMemoriesData, ListMemoriesErrors, ListMemoriesResponses, ListRecordingsData, ListRecordingsErrors, ListRecordingsResponses, QueueNodeMessageData, QueueNodeMessageErrors, QueueNodeMessageResponses, RemoveQueuedMessageData, RemoveQueuedMessageErrors, RemoveQueuedMessageResponses, SendChatMessageData, SendChatMessageErrors, SendChatMessageResponse, SendChatMessageResponses, StartNodeData, StartNodeErrors, StartNodeResponses, StopNodeData, StopNodeErrors, StopNodeResponses, SubscribeChatStreamData, SubscribeChatStreamErrors, SubscribeChatStreamResponse, SubscribeChatStreamResponses, UpdateChatData, UpdateChatErrors, UpdateChatResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -98,6 +98,18 @@ export const listExtensions = <ThrowOnError extends boolean = false>(options?: O
 });
 
 /**
+ * Read-only, client-visible server config
+ *
+ * Deployment-level values the SPA needs to render but must not hardcode. Currently just `otel_trace_url_template` (raw `{trace_id}` template, not a pre-rendered URL - see the `trace_id` field on `agent_start`/`node_start`/`dag_plan`/`delivery_result`). Same auth as the rest of /api/v1, no more sensitive than the config file itself.
+ *
+ */
+export const getConfig = <ThrowOnError extends boolean = false>(options?: Options<GetConfigData, ThrowOnError>): RequestResult<GetConfigResponses, unknown, ThrowOnError> => (options?.client ?? client).get<GetConfigResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/config',
+    ...options
+});
+
+/**
  * List recorded chat sessions
  *
  * Every session the replay ledger has an entry for (internal/ledger's
@@ -175,9 +187,9 @@ export const getChatArtifact = <ThrowOnError extends boolean = false>(options: O
  * (`agent_tool_call` / `agent_tool_result`) within the worker's own run.
  *
  * Agent-run events: `agent_start` ({"node_id","run_id","agent","stage","round",
- * "started_at_ms","trace_id","span_id"}) opens a run - `started_at_ms` is the
+ * "started_at_ms","trace_id"}) opens a run - `started_at_ms` is the
  * server wall-clock (epoch ms) it began, anchoring the run's timer across
- * reconnect/replay; `trace_id`/`span_id` cross-reference the OTel trace for
+ * reconnect/replay; `trace_id` cross-references the OTel trace for
  * the run, empty when otel is disabled;
  * `agent_thinking` ({"node_id","run_id","text"}) is reasoning;
  * `agent_tool_call` ({"node_id","run_id","call_id","name","args"}) and
@@ -191,9 +203,9 @@ export const getChatArtifact = <ThrowOnError extends boolean = false>(options: O
  * `status:"no_verdict"` when it ran but never committed a verdict), model
  * runs carry `finish_reason` + token usage.
  *
- * DAG events: `dag_plan` ({"plan_id","nodes","edges","trace_id","span_id"})
+ * DAG events: `dag_plan` ({"plan_id","nodes","edges","trace_id"})
  * signals a quack:dag output item has been added; `node_queued`
- * ({"node_id"}), `node_start` ({"node_id","agent","trace_id","span_id"}),
+ * ({"node_id"}), `node_start` ({"node_id","agent","trace_id"}),
  * `node_done` ({"node_id",...metadata}),
  * `node_failed` ({"node_id","error"}), `node_cancelled` ({"node_id"}), and
  * `node_paused` ({"node_id"}) track node lifecycle. `node_steered`
