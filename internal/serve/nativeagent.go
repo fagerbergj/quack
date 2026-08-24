@@ -20,11 +20,11 @@ import (
 // mutable coordinate field.
 type nativeAgent struct {
 	adkagent.Agent
-	build func(nodeKey string) (adkagent.Agent, model.LLM, []tool.Tool, func(), error)
+	build func(nodeKey string, drain func() string) (adkagent.Agent, model.LLM, []tool.Tool, func(), error)
 }
 
-func (n nativeAgent) ForNode(nodeKey string) (adkagent.Agent, model.LLM, []tool.Tool, func(), error) {
-	return n.build(nodeKey)
+func (n nativeAgent) ForNode(nodeKey string, drain func() string) (adkagent.Agent, model.LLM, []tool.Tool, func(), error) {
+	return n.build(nodeKey, drain)
 }
 
 // perNodeServers tracks currently-open per-node A2A servers (nativeAgent.

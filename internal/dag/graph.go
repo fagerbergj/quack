@@ -25,7 +25,9 @@ const (
 
 // nodeScopedWorker: fresh worker/model/tools per DAG node.
 type nodeScopedWorker interface {
-	ForNode(nodeKey string) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, release func(), err error)
+	// drain delivers a message queued against this node mid-round (#1029);
+	// it is resolved lazily because the control registers when the node runs.
+	ForNode(nodeKey string, drain func() string) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, release func(), err error)
 }
 
 // buildGateNodes: one gated node per plan node. source: the run's origin
@@ -48,7 +50,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		var workerTools []tool.Tool
 		var release func()
 		if scoped, ok := ag.(nodeScopedWorker); ok {
-			w, m, wt, rel, err := scoped.ForNode(plan.ID + ":" + n.ID)
+			w, m, wt, rel, err := scoped.ForNode(plan.ID+":"+n.ID, liveSteerDrain(controls, chatID, n.ID))
 			if err != nil {
 				return nil, nil, fmt.Errorf("dag: node %q: per-node agent construction: %w", n.ID, err)
 			}
@@ -67,6 +69,21 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec)
 	}
 	return nodesByID, subAgents, nil
+}
+
+// liveSteerDrain: the per-node hook that delivers a steer into a RUNNING round
+// (#1029). It PEEKS - consuming here would burn the -sN generation the UI
+// resolves and rob the gate boundary of its durable delivery.
+func liveSteerDrain(controls *runControls, chatID, nodeID string) func() string {
+	return func() string {
+		if controls == nil {
+			return ""
+		}
+		if c := controls.get(chatID, nodeID); c != nil {
+			return c.PeekQueued()
+		}
+		return ""
+	}
 }
 
 // nodeGateConfig assembles one node's trust-gate config from the agent's base

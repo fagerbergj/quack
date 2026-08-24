@@ -67,7 +67,7 @@ type lcScopedAgent struct {
 	tools []tool.Tool
 }
 
-func (a lcScopedAgent) ForNode(string) (adkagent.Agent, model.LLM, []tool.Tool, func(), error) {
+func (a lcScopedAgent) ForNode(string, func() string) (adkagent.Agent, model.LLM, []tool.Tool, func(), error) {
 	return a.Agent, a.model, a.tools, func() {}, nil
 }
 
