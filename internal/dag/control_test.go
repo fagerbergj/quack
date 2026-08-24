@@ -2,6 +2,7 @@ package dag
 
 import (
 	"context"
+	"encoding/json"
 	"iter"
 	"strings"
 	"sync"
@@ -470,4 +471,60 @@ func TestExecute_EditRemoveQueuedMessage(t *testing.T) {
 	if strings.Contains(stub.prompts[1], "will be removed") {
 		t.Errorf("re-run prompt still contains the removed message: %q", stub.prompts[1])
 	}
+}
+
+// TestQueuedMsg_StatusTransitions (steer-status enum): covers the four ways a
+// message's Status is set, including deriving from a pre-enum persisted row
+// that only carried the old Delivered bool.
+func TestQueuedMsg_StatusTransitions(t *testing.T) {
+	t.Run("enqueue without a live round queues", func(t *testing.T) {
+		c := &nodeControl{}
+		m := c.enqueue("hello")
+		if m.Status != MsgQueued {
+			t.Errorf("Status = %q, want %q", m.Status, MsgQueued)
+		}
+	})
+
+	t.Run("enqueue with a live forward hook forwards", func(t *testing.T) {
+		c := &nodeControl{}
+		c.setLiveSteer(func(string) bool { return true })
+		m := c.enqueue("hello")
+		if m.Status != MsgForwarded {
+			t.Errorf("Status = %q, want %q", m.Status, MsgForwarded)
+		}
+	})
+
+	t.Run("gate drain marks drained", func(t *testing.T) {
+		c := &nodeControl{}
+		c.enqueue("hello")
+		if got := c.TakeQueued(); got != "hello" {
+			t.Fatalf("TakeQueued() = %q, want %q", got, "hello")
+		}
+		if c.queue[0].Status != MsgDrained {
+			t.Errorf("Status = %q, want %q", c.queue[0].Status, MsgDrained)
+		}
+	})
+
+	t.Run("a pre-enum persisted row derives its status from Delivered", func(t *testing.T) {
+		cases := []struct {
+			name string
+			json string
+			want MsgStatus
+		}{
+			{"delivered true derives drained", `{"ID":"a","Text":"x","Delivered":true}`, MsgDrained},
+			{"delivered false derives queued", `{"ID":"a","Text":"x","Delivered":false}`, MsgQueued},
+			{"no delivered field derives queued", `{"ID":"a","Text":"x"}`, MsgQueued},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				var m queuedMsg
+				if err := json.Unmarshal([]byte(tc.json), &m); err != nil {
+					t.Fatalf("Unmarshal: %v", err)
+				}
+				if m.Status != tc.want {
+					t.Errorf("Status = %q, want %q", m.Status, tc.want)
+				}
+			})
+		}
+	})
 }

@@ -574,7 +574,7 @@ describe('ChatStore - mid-node steering', () => {
   })
 
   it('queueNodeMessage POSTs to the queue endpoint and ignores empty text', async () => {
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ id: 'q1', text: 'do X', delivered: false, created_at: '2026-01-01T00:00:00Z' }), { status: 200 }))
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ id: 'q1', text: 'do X', status: 'queued', delivered: false, created_at: '2026-01-01T00:00:00Z' }), { status: 200 }))
     await store.queueNodeMessage('c', 'a', '  do X  ')
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/chats/c/nodes/a/queue',

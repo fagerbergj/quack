@@ -46,8 +46,8 @@ export const RunningWithQueue: Story = {
     state: {
       status: 'running',
       queue: [
-        { id: 'q1', text: 'Also check winter rainfall.', delivered: false, created_at: new Date().toISOString() },
-        { id: 'q0', text: 'Use the last 10 years of data.', delivered: true, created_at: new Date().toISOString() },
+        { id: 'q1', text: 'Also check winter rainfall.', status: 'queued', delivered: false, created_at: new Date().toISOString() },
+        { id: 'q0', text: 'Use the last 10 years of data.', status: 'drained', delivered: true, created_at: new Date().toISOString() },
       ],
     },
     onClose: () => {},
