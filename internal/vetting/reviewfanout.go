@@ -47,6 +47,13 @@ func GetReviewFanout(planID string, total int) *ReviewFanout {
 	return v.(*ReviewFanout)
 }
 
+// ResetReviewFanout drops any fan-in left over from a previous run of this
+// plan. Cleanup otherwise happens on exactly one path (deliverMergedReview),
+// so an interrupted run would poison every later run of the same plan (#1040).
+func ResetReviewFanout(planID string) {
+	reviewFanouts.Delete(planID)
+}
+
 // forget drops the registry entry once delivered, mirroring
 // UnregisterMemSession - keeps the map from growing across a long process.
 func (f *ReviewFanout) forget() {
