@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 )
 
 // #1033: the run goroutines outlive the HTTP request, so chi's Recoverer never
@@ -51,5 +52,35 @@ func TestRecoverRun_LeavesCleanupDefersRunning(t *testing.T) {
 
 	if len(order) != 1 || order[0] != "cleanup" {
 		t.Fatalf("cleanup defer must still run after a recovered run panic, got %v", order)
+	}
+}
+
+// The helper tests above pin recoverRun itself; this pins the WIRING. Deleting
+// any `defer recoverRun(...)` line leaves those green but kills the process
+// here, because a panicking run's cleanup defers never run and the hub topic
+// stays open - subscribers hang forever instead of seeing the stream close.
+func TestStartRunPanic_StillClosesHubTopic(t *testing.T) {
+	var buf strings.Builder
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+
+	h := newTestHandler(t)
+	chatID := mustCreateChat(t, h)
+	_, live, cancel, _ := h.hub.Subscribe(string(chatID))
+	defer cancel()
+
+	h.orch = nil // ranging a nil orchestrator panics inside runChat
+	h.startRun(chatID, "t1", "hi", nil)
+
+	for {
+		select {
+		case _, ok := <-live:
+			if !ok {
+				return // topic closed: the cleanup defers ran after the recover
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("hub topic never closed after a panicking run - subscribers hang")
+		}
 	}
 }
