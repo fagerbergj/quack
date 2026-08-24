@@ -578,6 +578,17 @@ func (h *Handler) saveAttachment(ctx context.Context, userID, chatID, turnID, na
 	return artifactref.Encode(userID, chatID, name, resp.Version, mimeType), nil
 }
 
+// recoverRun keeps a panicking run from taking the process with it. All three
+// run goroutines outlive the HTTP request, so chi's Recoverer never sees them -
+// the gap that made #1033 fatal. Deferred LAST so cleanup defers still run.
+func recoverRun(chatID schema.ChatID, turnID string) {
+	if r := recover(); r != nil {
+		slog.Error("chat run panicked; run abandoned, process survives",
+			"component", "rest", "chat", chatID, "turn", turnID,
+			"panic", r, "stack", string(debug.Stack()))
+	}
+}
+
 // Launches a chat turn as server-side work on a server-lifetime context (not the HTTP request's). Outlives its initiating client.
 func (h *Handler) startRun(chatID, turnID, content string, attachments []*genai.Part) {
 	runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
@@ -592,15 +603,7 @@ func (h *Handler) startRun(chatID, turnID, content string, attachments []*genai.
 			cancelRun()
 			h.hub.UnregisterRun(chatID)
 		}()
-		// This goroutine owns the run's lifetime, so it owns surviving its panics:
-		// unrecovered here kills the whole process, not just the run (#1033).
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("chat run panicked; run abandoned, process survives",
-					"component", "rest", "chat", chatID, "turn", turnID,
-					"panic", r, "stack", string(debug.Stack()))
-			}
-		}()
+		defer recoverRun(chatID, turnID)
 		h.runChat(runCtx, chatID, turnID, content, attachments)
 	}()
 }
@@ -1000,6 +1003,7 @@ func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message stri
 		}()
 		defer h.hub.Close(chatID)
 		defer h.stampRunOutcome(runCtx, chatID)
+		defer recoverRun(chatID, dp.TurnID)
 
 		h.eventLog.Reset(runCtx, chatID)
 		publish := runlog.NewPublisher(h.hub, h.eventLog, chatID).Publish
@@ -1045,6 +1049,7 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 		}()
 		defer h.hub.Close(chatID)
 		defer h.stampRunOutcome(runCtx, chatID)
+		defer recoverRun(chatID, dp.TurnID)
 
 		h.eventLog.Reset(runCtx, chatID)
 		publish := runlog.NewPublisher(h.hub, h.eventLog, chatID).Publish

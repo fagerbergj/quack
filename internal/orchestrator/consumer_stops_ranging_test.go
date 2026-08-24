@@ -47,13 +47,13 @@ func planFanout() *model.LLMResponse {
 	return stubCall("plan", map[string]any{"nodes": nodes})
 }
 
-// #1033: an SSE client dropping mid-run makes the consumer break out of the
-// range, so yield returns false while node goroutines still hold the ctx-stored
-// yield. Pre-fix, the next node emit tripped "range function continued
-// iteration after function for loop body returned false", safeYield recovered
-// it without resuming, and Go killed the process at the range site. The run
-// must abandon quietly instead.
-func TestRun_ConsumerDisconnectsMidRun_ProcessSurvives(t *testing.T) {
+// #1033: the run consumer stops ranging mid-run - in REST, runChat returns on
+// an error event (handler.go:657) while sibling nodes are still live. yield
+// then returns false while node goroutines still hold the ctx-stored yield.
+// Pre-fix the next node emit tripped "range function continued iteration after
+// function for loop body returned false", safeYield recovered it without
+// resuming, and Go killed the process at the range site.
+func TestRun_ConsumerStopsRangingMidRun_ProcessSurvives(t *testing.T) {
 	stub := &slowWorkerStub{orchStub: orchStub{replies: []*model.LLMResponse{planFanout()}}}
 	agents := map[string]adkagent.Agent{}
 	models := map[string]model.LLM{}
@@ -90,11 +90,11 @@ func TestRun_ConsumerDisconnectsMidRun_ProcessSurvives(t *testing.T) {
 		_ = err
 		if ev.Name == stream.EventNodeStart {
 			sawStart = true
-			break // client disconnected
+			break // consumer stops ranging, as runChat does on an error event
 		}
 	}
 	if !sawStart {
-		t.Fatal("never reached a node_start - the disconnect path was not exercised")
+		t.Fatal("never reached a node_start - the early-exit path was not exercised")
 	}
 	// Nodes are still running; give them time to emit into the dead yield.
 	time.Sleep(500 * time.Millisecond)
