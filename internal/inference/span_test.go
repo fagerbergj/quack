@@ -195,3 +195,27 @@ func TestSetRequestSpanAttrs_NodeAndAgentSurviveContentGate(t *testing.T) {
 		t.Errorf("gen_ai.conversation.id = %q, want chat-1", got[otelobs.GenAIConversationID])
 	}
 }
+
+// A node id is free text from the orchestrator's plan. Anything that isn't
+// slug-shaped could be message-derived, and this attribute sits outside the
+// content gate, so it must not be exported.
+func TestSetRequestSpanAttrs_NonSlugNodeIDIsNotExported(t *testing.T) {
+	withContentCapture(t, false)
+	for _, node := range []string{
+		"summarize the user's bank details for acct 1234",
+		strings.Repeat("x", 65),
+		"has spaces",
+	} {
+		exp := tracetest.NewInMemoryExporter()
+		tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp))
+		ctx, span := tp.Tracer("t").Start(ledger.WithCoords(context.Background(),
+			ledger.Coords{ChatID: "c1", Node: node}), "generate_content m")
+		setRequestSpanAttrs(ctx, &model.LLMRequest{})
+		span.End()
+		for _, kv := range exp.GetSpans()[0].Attributes {
+			if string(kv.Key) == otelobs.QuackNode {
+				t.Errorf("node %q was exported as %s; want it withheld", node, kv.Key)
+			}
+		}
+	}
+}
