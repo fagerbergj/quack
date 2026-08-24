@@ -635,7 +635,18 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		return nil, nil, "", fmt.Errorf("agent build failed: %w", err)
 	}
 	if judgeModel != nil {
-		judgeModelRef.Store(&judgeModel)
+		// An SDK extension's Classify is not a node, but judgeModel is the
+		// instance gated nodes stamp - hand it an unstamped one instead (#1049).
+		classifyModel := judgeModel
+		if jprov, ok := cfg.Provider(cfg.Gates.Judge.Provider); ok {
+			if m, err := inference.NewModel(jprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model)); err == nil {
+				classifyModel = m
+			} else {
+				slog.Warn("classify: own judge model unavailable; sharing the gate's (attribution may follow another node)",
+					"component", "startup", "err", err)
+			}
+		}
+		judgeModelRef.Store(&classifyModel)
 	}
 	cleanups = append(cleanups, func() {
 		nodeServers.closeAll()
