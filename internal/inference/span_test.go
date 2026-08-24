@@ -167,3 +167,31 @@ func TestSpanAttrs_ContentCaptureOffByDefault(t *testing.T) {
 		t.Errorf("gen_ai.conversation.id = %q, want chat-123 (should not be gated by content capture)", got)
 	}
 }
+
+// The generation span is ADK's, and ADK never says which node ran it. Without
+// node/agent a multi-node trace can't be narrowed to one card - and these are
+// correlation keys, so they must survive with content capture off.
+func TestSetRequestSpanAttrs_NodeAndAgentSurviveContentGate(t *testing.T) {
+	withContentCapture(t, false)
+	exp := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp))
+	ctx, span := tp.Tracer("t").Start(ledger.WithCoords(context.Background(), ledger.Coords{
+		ChatID: "chat-1", Node: "node-2", Agent: "web-researcher",
+	}), "generate_content m")
+	setRequestSpanAttrs(ctx, &model.LLMRequest{})
+	span.End()
+
+	got := map[string]string{}
+	for _, kv := range exp.GetSpans()[0].Attributes {
+		got[string(kv.Key)] = kv.Value.Emit()
+	}
+	if got[otelobs.QuackNode] != "node-2" {
+		t.Errorf("quack.node = %q, want node-2 (trace can't be filtered to one node without it)", got[otelobs.QuackNode])
+	}
+	if got[otelobs.GenAIAgentName] != "web-researcher" {
+		t.Errorf("gen_ai.agent.name = %q, want web-researcher", got[otelobs.GenAIAgentName])
+	}
+	if got[otelobs.GenAIConversationID] != "chat-1" {
+		t.Errorf("gen_ai.conversation.id = %q, want chat-1", got[otelobs.GenAIConversationID])
+	}
+}

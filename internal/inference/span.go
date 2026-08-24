@@ -58,9 +58,17 @@ func setRequestSpanAttrs(ctx context.Context, req *model.LLMRequest) {
 		return // nothing exporting - skip building the (possibly large) payload
 	}
 	var attrs []attribute.KeyValue
-	// conversation.id is a correlation key, not content - stays outside the gate below.
+	// Correlation keys, not content - these stay outside the gate below. ADK
+	// names the span but never says which node ran it; without node/agent a
+	// multi-node trace can't be narrowed to the card the user clicked.
 	if c := ledger.CoordsFromContext(ctx); c.ChatID != "" {
 		attrs = append(attrs, attribute.String(otelobs.GenAIConversationID, c.ChatID))
+		if c.Node != "" {
+			attrs = append(attrs, attribute.String(otelobs.QuackNode, c.Node))
+		}
+		if c.Agent != "" {
+			attrs = append(attrs, attribute.String(otelobs.GenAIAgentName, c.Agent))
+		}
 	}
 	if !otelobs.CaptureContentEnabled() {
 		if len(attrs) > 0 {
