@@ -577,9 +577,9 @@ export const DagNode = memo(function DagNode({
               target="_blank"
               rel="noreferrer"
               className="text-[10px] text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 underline"
-              title="Open this node's run in the tracing backend"
+              title="Open this run's trace in the tracing backend (whole run, not just this node)"
             >
-              trace
+              run trace
             </a>
           )}
           <ContextMeter used={state.contextTokens ?? 0} limit={node.context_window ?? 0} />

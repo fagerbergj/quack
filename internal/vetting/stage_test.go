@@ -77,8 +77,8 @@ func TestStageSpan_SingleRaiseProducesBothProjections(t *testing.T) {
 	if attrs["node_id"] != "node-1" || attrs["run_id"] != "judge-r1" || attrs["gen_ai.agent.name"] != "code-reviewer" || attrs["round"] != "1" {
 		t.Errorf("span attrs = %+v, missing/wrong identity", attrs)
 	}
-	if attrs["score"] != "0.9" || attrs["passed"] != "true" {
-		t.Errorf("span attrs = %+v, want score=0.9 passed=true", attrs)
+	if attrs["gen_ai.evaluation.score.value"] != "0.9" || attrs["verdict_passed"] != "true" {
+		t.Errorf("span attrs = %+v, want gen_ai.evaluation.score.value=0.9 verdict_passed=true", attrs)
 	}
 }
 
@@ -110,7 +110,7 @@ func TestStageSpan_UnavailableJudgeOmitsScoreAttrsAndRecordsError(t *testing.T) 
 	}
 	s := spans[0]
 	for _, kv := range s.Attributes {
-		if string(kv.Key) == "score" || string(kv.Key) == "passed" {
+		if string(kv.Key) == "gen_ai.evaluation.score.value" || string(kv.Key) == "verdict_passed" {
 			t.Errorf("span carries %s attribute on an unavailable judge; want neither", kv.Key)
 		}
 	}

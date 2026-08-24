@@ -46,7 +46,7 @@ func startStageSpan(spanCtx context.Context, sink func(stream.SSEEvent), cfg Con
 func (s *stageSpan) end(d stream.AgentCompleteData, err error) {
 	emitJudge(s.sink, s.nodeID, stream.SSEEvent{Name: stream.EventAgentComplete, Data: d})
 	if d.Stage == stream.StageJudge && d.Status == "" {
-		s.span.SetAttributes(attribute.Float64("score", d.Score), attribute.Bool("passed", d.Passed))
+		s.span.SetAttributes(attribute.Float64(otelobs.GenAIEvaluationScore, d.Score), attribute.Bool("verdict_passed", d.Passed))
 	}
 	otelobs.End(s.span, err)
 }
