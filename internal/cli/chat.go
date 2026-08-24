@@ -267,7 +267,7 @@ func RunNodeStop(ctx context.Context, out io.Writer, server, chatID, nodeID stri
 	if err := c.CancelNode(ctx, chatID, nodeID); err != nil {
 		return notFoundAs(err, chatID)
 	}
-	fmt.Fprintf(out, "Stopped node %s (chat %s); the rest of the run continues.\n", nodeID, chatID)
+	fmt.Fprintf(out, "Stopping node %s (chat %s); an in-flight round is being aborted, the rest of the run continues.\n", nodeID, chatID)
 	return nil
 }
 
@@ -281,7 +281,7 @@ func RunNodePause(ctx context.Context, out io.Writer, server, chatID, nodeID str
 	if err := c.PauseNode(ctx, chatID, nodeID); err != nil {
 		return notFoundAs(err, chatID)
 	}
-	fmt.Fprintf(out, "Paused node %s (chat %s) - resume it with `quack chat node resume %s %s`.\n", nodeID, chatID, chatID, nodeID)
+	fmt.Fprintf(out, "Pausing node %s (chat %s) at its next turn boundary - resume it with `quack chat node resume %s %s`.\n", nodeID, chatID, chatID, nodeID)
 	return nil
 }
 

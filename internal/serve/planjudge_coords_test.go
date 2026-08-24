@@ -62,7 +62,7 @@ func TestBuildAgents_PlanJudgeDoesNotInheritGatedNodeStamp(t *testing.T) {
 	}
 	var setupFn dag.SetupFunc
 	_, _, nodeServers, _, planJudge, _, judgeModel, err := buildAgents(cfg, session.InMemoryService(), skillTS, builtinSkillSrc, newScopedSkillTS,
-		nil, nil, jail, nil, nil, nil, nil, nil, nil, nil, &setupFn, nil)
+		nil, nil, jail, nil, nil, nil, nil, nil, nil, nil, nil, nil, &setupFn, nil)
 	if err != nil {
 		t.Fatalf("buildAgents: %v", err)
 	}

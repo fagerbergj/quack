@@ -55,6 +55,12 @@ type Options struct {
 	// mid-round instead of at the next gate boundary (#998). nil = park always.
 	RegisterLiveSteer   func(chatID, nodeID string, forward func(text string) bool)
 	UnregisterLiveSteer func(chatID, nodeID string)
+	// RegisterRoundAbort/UnregisterRoundAbort let CancelNode reach a running
+	// round's abort RPC directly instead of waiting for the round to end
+	// (#1030). Cancel only - never wired for pause, which must preserve
+	// whatever the round has accumulated so it can resume.
+	RegisterRoundAbort   func(chatID, nodeID string, cancel context.CancelFunc)
+	UnregisterRoundAbort func(chatID, nodeID string)
 }
 
 // Agent is an adkagent.Agent backed by an external ACP subprocess.
@@ -234,6 +240,18 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 	coords := a.coords
 	a.mu.Unlock()
 
+	// abortCtx is CancelNode's direct line into this round (#1030), separate
+	// from ctx (which also carries parent shutdown) so both trigger the same
+	// graceful-cancel path below without one masking the other's cause.
+	abortCtx, abortCancel := context.WithCancel(context.Background())
+	defer abortCancel()
+	if a.opts.RegisterRoundAbort != nil && steerChatID != "" && steerNodeID != "" {
+		a.opts.RegisterRoundAbort(steerChatID, steerNodeID, abortCancel)
+		if a.opts.UnregisterRoundAbort != nil {
+			defer a.opts.UnregisterRoundAbort(steerChatID, steerNodeID)
+		}
+	}
+
 	spawnCtx, spawnSpan := otelobs.Start(ctx, "acp.spawn", attribute.String(otelobs.GenAIAgentName, a.name))
 	_ = spawnCtx
 	h, err := a.start(ctx, cwd, extraRO, caps)
@@ -374,6 +392,9 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 		case <-ctx.Done():
 			a.gracefulCancel(h, sess.SessionId, done)
 			return ctx.Err()
+		case <-abortCtx.Done():
+			a.gracefulCancel(h, sess.SessionId, done)
+			return abortCtx.Err()
 		case <-idleTimer.C:
 			a.gracefulCancel(h, sess.SessionId, done)
 			return fmt.Errorf("acp: no activity for %s - treating opencode as wedged%s", a.opts.IdleTimeout, h.stderrTail())
