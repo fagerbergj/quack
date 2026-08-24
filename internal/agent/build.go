@@ -81,6 +81,12 @@ func steerCallback(drain func() string) llmagent.BeforeModelCallback {
 		}
 		q := strings.TrimSpace(drain())
 		if q == "" {
+			// Empty means the gate drained the queue, so anything after this is
+			// a NEW steer - including the same words sent again because the
+			// first appeared to do nothing.
+			mu.Lock()
+			clear(seen)
+			mu.Unlock()
 			return nil, nil
 		}
 		mu.Lock()
