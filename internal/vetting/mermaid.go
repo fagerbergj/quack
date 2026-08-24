@@ -179,6 +179,16 @@ func mermaidError(body string) string {
 	return ""
 }
 
+// mermaidValidateTimeout bounds one node invocation. Generous on purpose: the
+// validator loads mermaid's full parser, and a timeout here is indistinguishable
+// from an invalid diagram to the caller. A var so tests can shorten it.
+var mermaidValidateTimeout = 60 * time.Second
+
+func warnMermaidValidatorTimeout() {
+	slog.Warn("mermaid validation timed out; skipping the check for this diagram",
+		"component", "vetting", "timeout", mermaidValidateTimeout)
+}
+
 // translateMermaidError turns mermaid's raw jison parse error into a message
 // a worker can act on: keep the diagram's own line/column and source excerpt
 // (the caret genuinely points at the offending column), drop the
@@ -187,16 +197,6 @@ func mermaidError(body string) string {
 // unquoted-punctuation case. Parses jison's fixed output structure, never
 // mermaid's English prose (#735) - that changes between mermaid versions,
 // the structure doesn't.
-// mermaidValidateTimeout bounds one node invocation. Generous on purpose: the
-// validator loads mermaid's full parser, and a timeout here is indistinguishable
-// from an invalid diagram to the caller.
-const mermaidValidateTimeout = 60 * time.Second
-
-func warnMermaidValidatorTimeout() {
-	slog.Warn("mermaid validation timed out; skipping the check for this diagram",
-		"component", "vetting", "timeout", mermaidValidateTimeout)
-}
-
 func translateMermaidError(raw string) string {
 	lines := strings.Split(raw, "\n")
 	if len(lines) < 4 {

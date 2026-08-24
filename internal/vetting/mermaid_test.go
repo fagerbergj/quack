@@ -1,10 +1,9 @@
 package vetting
 
 import (
-	"context"
-	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -428,25 +427,26 @@ func TestMermaidCriterion_NoOpWhenValidatorUnavailable(t *testing.T) {
 
 // A validator that outruns its deadline must not report a VALID diagram as
 // invalid: CommandContext's kill surfaces as an ExitError, which used to fall
-// through to "unreadable output" and fail the gate on a slow box.
+// through to "unreadable output" and fail the gate on a slow box. Drives the
+// real mermaidError path (not a standalone stdlib probe) so reverting the
+// ctx.Err() guard in mermaidError fails this test.
 func TestMermaidValidate_TimeoutIsNotAnInvalidDiagram(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
-	defer cancel()
-	<-ctx.Done()
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node unavailable in this environment")
+	}
 
-	// The real call path's classification: a killed process yields an
-	// ExitError with empty output, and ctx.Err() is what distinguishes it.
-	cmd := exec.CommandContext(ctx, "node", "-e", "setTimeout(()=>{},10000)")
-	out, err := cmd.Output()
-	if ctx.Err() == nil {
-		t.Skip("context did not expire; nothing to classify")
+	script := filepath.Join(t.TempDir(), "hang.mjs")
+	if err := os.WriteFile(script, []byte("setTimeout(()=>{}, 10000);\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if _, isExitErr := err.(*exec.ExitError); !isExitErr && err != nil && !errors.Is(err, context.DeadlineExceeded) {
-		t.Skipf("node unavailable in this environment: %v", err)
+	oldPath, oldTimeout := mermaidValidatorPath, mermaidValidateTimeout
+	mermaidValidatorPath = script
+	mermaidValidateTimeout = 200 * time.Millisecond
+	defer func() { mermaidValidatorPath, mermaidValidateTimeout = oldPath, oldTimeout }()
+
+	// Before the fix this produced "unreadable output" (i.e. invalid) because
+	// CommandContext's kill arrives as an *exec.ExitError with empty output.
+	if got := mermaidError("A --> B"); got != "" {
+		t.Fatalf("mermaidError = %q, want \"\" (a timeout must not mark a valid diagram invalid)", got)
 	}
-	if len(out) != 0 {
-		t.Fatalf("expected no output from a killed validator, got %q", out)
-	}
-	// Before the fix this shape produced "unreadable output" (i.e. invalid).
-	// Now ctx.Err() != nil short-circuits first, so the diagram is untouched.
 }

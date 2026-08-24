@@ -80,6 +80,46 @@ func TestRound_CancelNodeAbortsMidRound(t *testing.T) {
 	}
 }
 
+// TestRound_CancelBeforePromptSpawn (#1030 review): a cancel arriving during
+// the spawn/handshake window - before the prompt goroutine ever writes
+// session/prompt - must bail immediately instead of sending session/cancel
+// for a prompt that was never sent and then blocking for cancelGrace.
+func TestRound_CancelBeforePromptSpawn(t *testing.T) {
+	oldGrace := cancelGrace
+	cancelGrace = 3 * time.Second
+	defer func() { cancelGrace = oldGrace }()
+
+	jail, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a, err := New("code-implementer", "external coder", Options{
+		Command: []string{os.Args[0]},
+		Env:     []string{"QUACK_ACP_FAKE=hang"},
+		Home:    t.TempDir(),
+		Jail:    jail,
+		UserID:  "u1",
+		RegisterRoundAbort: func(chatID, nodeID string, cancel context.CancelFunc) {
+			// Cancel synchronously, before round() reaches the prompt spawn -
+			// reproducing the spawn/handshake-window race.
+			cancel()
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t0 := time.Now()
+	err = a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "loop forever", "chat1", "n1", func(eventSpec) bool { return true })
+	if err == nil {
+		t.Fatal("want an error from the pre-spawn cancel")
+	}
+	if d := time.Since(t0); d >= cancelGrace {
+		t.Fatalf("round took %v (>= cancelGrace %v) - it waited on gracefulCancel for a prompt that was never sent", d, cancelGrace)
+	}
+}
+
 // TestRound_CancelNodeAbortIdempotent (#1030): a second cancel() call, and a
 // cancel() call after the round already returned, must not panic or block -
 // context.CancelFunc is inherently idempotent, but the registration/cleanup

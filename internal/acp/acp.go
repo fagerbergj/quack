@@ -319,6 +319,19 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 		turns.closeAll()
 		otelobs.End(promptSpan, err)
 	}
+	// A cancel arriving during the spawn/handshake window (RegisterRoundAbort
+	// above, up to StartTimeout) has nothing to cancel yet - session/cancel
+	// for a prompt never sent is a no-op, and waiting on `done` blocks for
+	// the full cancelGrace. Bail before ever sending session/prompt (#1030 review).
+	select {
+	case <-ctx.Done():
+		endPrompt(ctx.Err())
+		return ctx.Err()
+	case <-abortCtx.Done():
+		endPrompt(abortCtx.Err())
+		return abortCtx.Err()
+	default:
+	}
 	go func() {
 		resp, perr := h.conn.Prompt(context.Background(), sdk.PromptRequest{
 			SessionId: sess.SessionId,
@@ -443,7 +456,9 @@ func mcpToolsBlock(names []string) string {
 func (a *Agent) gracefulCancel(h *procHandle, sessID sdk.SessionId, done <-chan promptDone) {
 	cctx, cancel := context.WithTimeout(context.Background(), cancelGrace)
 	defer cancel()
-	_ = h.conn.Cancel(cctx, sdk.CancelNotification{SessionId: sessID})
+	if err := h.conn.Cancel(cctx, sdk.CancelNotification{SessionId: sessID}); err != nil {
+		return // broken pipe etc - nothing more to wait for
+	}
 	select {
 	case <-done:
 	case <-cctx.Done():
