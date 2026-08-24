@@ -65,6 +65,19 @@ func (m *queuedMsg) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// MarshalJSON also writes the legacy Delivered bool so a row written here and
+// read back by an OLDER binary (a rollback) is not seen as still-queued and
+// re-delivered to the node.
+func (m queuedMsg) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		ID        string
+		Text      string
+		Status    MsgStatus
+		Delivered bool
+		CreatedAt time.Time
+	}{m.ID, m.Text, m.Status, m.Status != MsgQueued, m.CreatedAt})
+}
+
 func newMsgID() string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)

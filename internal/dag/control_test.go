@@ -528,3 +528,34 @@ func TestQueuedMsg_StatusTransitions(t *testing.T) {
 		}
 	})
 }
+
+// A row written by this binary must stay correct when an OLDER binary reads it
+// back after a rollback: without the legacy bool it would look still-queued and
+// be re-delivered to the node.
+func TestQueuedMsg_MarshalKeepsLegacyDeliveredForRollback(t *testing.T) {
+	for _, tc := range []struct {
+		status MsgStatus
+		want   bool
+	}{{MsgQueued, false}, {MsgForwarded, true}, {MsgDrained, true}} {
+		b, err := json.Marshal(queuedMsg{ID: "m1", Text: "hi", Status: tc.status})
+		if err != nil {
+			t.Fatalf("marshal(%s): %v", tc.status, err)
+		}
+		var old struct {
+			ID        string
+			Text      string
+			Delivered bool
+		}
+		if err := json.Unmarshal(b, &old); err != nil {
+			t.Fatalf("old-binary unmarshal(%s): %v", tc.status, err)
+		}
+		if old.Delivered != tc.want {
+			t.Errorf("status %s -> old Delivered = %v, want %v (rollback would re-deliver)", tc.status, old.Delivered, tc.want)
+		}
+		// And the new shape must still round-trip through our own decoder.
+		var back queuedMsg
+		if err := json.Unmarshal(b, &back); err != nil || back.Status != tc.status {
+			t.Errorf("round-trip(%s) = %q, err %v", tc.status, back.Status, err)
+		}
+	}
+}
