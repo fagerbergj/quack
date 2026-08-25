@@ -266,10 +266,7 @@ gates:
                             # (weakest-link gating, no averaging, no caps).
     max_iterations: 6       # safety cap on the judge's model turns per round
     context_window: 65536   # gemma's served slot (llm-swap --parallel 1 ⇒ full 64K/call); budgets the assembled judge prompt so it fits before the call instead of 400ing (#291)
-    skeptics: 0              # adversarial verify (#370): N independent skeptics per load-bearing
-                              # PASSING criterion, majority-refute kills it. 0 (default) = off -
-                              # each qualifying criterion costs N extra judge-model calls.
-    max_output_tokens: 8192  # cap on the judge/skeptic/plan-judge round's own reply - a runaway
+    max_output_tokens: 8192  # cap on the judge/plan-judge round's own reply - a runaway
                               # generation loop can otherwise decode tens of thousands of tokens on
                               # a verdict that should be a few hundred (#889). 0 = uncapped.
 

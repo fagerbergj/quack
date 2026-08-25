@@ -171,7 +171,6 @@ gates:
     threshold: 0.7
     max_iterations: 6
     context_window: 65536
-    skeptics: 0
 
 dag:
   max_active_nodes: 32  # PER-RUN host-resource ceiling only; GPU concurrency is models/providers limits (#1007)
