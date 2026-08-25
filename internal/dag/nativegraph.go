@@ -162,6 +162,9 @@ func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userI
 	// plan ID (#1040) - a resume/retry must NOT reset it, since a peer
 	// reviewer already staged is not a descendant and never re-runs.
 	if len(resumeNodes) == 0 {
+		// Cleared first: a push landing mid-clone must stay flagged. A resume
+		// deliberately keeps the flag - the branch is still ahead of the tree.
+		clearSetupStale(chatID)
 		if serr := e.runPlanSetup(ctx, userID, chatID, plan); serr != nil {
 			return false, fmt.Errorf("dag: plan setup: %w", serr)
 		}
@@ -174,7 +177,9 @@ func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userI
 	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, source,
 		func(nodeID string, score float64, passed bool, rounds int) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds)
-		}, e.admission, e.specFor)
+		}, e.admission, e.specFor, func(nctx context.Context, node Node, cfg vetting.Config) bool {
+			return e.refreshStaleSetup(nctx, userID, chatID, &plan, node, cfg)
+		})
 	if err != nil {
 		return false, err
 	}

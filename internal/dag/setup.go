@@ -3,11 +3,14 @@ package dag
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
+	"sync"
 
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/fagerbergj/quack/internal/otelobs"
+	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -141,3 +144,74 @@ func oneLine(err error) string {
 	}
 	return s
 }
+
+// staleSetups: chats whose clone the branch has moved under, flagged from
+// outside the run (sdk.Host.InvalidateSetup). Package-level because the
+// signal arrives on a webhook goroutine that holds no Plan.
+var staleSetups sync.Map // chatID -> struct{}
+
+// setupMu serializes the refresh check: parallel nodes share one Plan.Setup.
+var setupMu sync.Mutex
+
+// MarkSetupStale records that chatID's clone no longer matches its branch.
+// Advisory: the next safe node boundary re-clones, or the run finishes on the
+// tree it started with.
+func MarkSetupStale(chatID string) { staleSetups.Store(chatID, struct{}{}) }
+
+// clearSetupStale drops the flag. Called at fresh-run start, before setup, so
+// a push landing DURING the clone stays flagged.
+func clearSetupStale(chatID string) { staleSetups.Delete(chatID) }
+
+// refreshStaleSetup re-clones at a node boundary when the branch moved under
+// the run, and reports whether it did. Re-provisioning RemoveAll's the target,
+// so it is gated hard: read-only node, review-only plan (an implementer's
+// commits live in that tree, unpushed until delivery), and a clean tree. A
+// stale review beats a run that loses its work.
+func (e *Executor) refreshStaleSetup(ctx context.Context, userID, chatID string, plan *Plan, node Node, cfg vetting.Config) bool {
+	if plan.Setup == nil || !readOnlyQualifyingAgent(node.AgentName) || !isReviewOnlySetup(*plan) {
+		return false
+	}
+	if _, stale := staleSetups.Load(chatID); !stale {
+		return false
+	}
+	setupMu.Lock()
+	defer setupMu.Unlock()
+	if _, stale := staleSetups.Load(chatID); !stale {
+		return false
+	}
+	if !setupTreeClean(ctx, cfg) {
+		slog.Info("dag: setup invalidated but the clone has uncommitted work; keeping it",
+			"component", "dag", "chat", chatID, "node", node.ID)
+		return false
+	}
+	plan.Setup.Provisioned = false
+	if err := e.Provision(ctx, userID, chatID, plan); err != nil {
+		// Flag stays set: a later boundary can retry.
+		slog.Warn("dag: re-provisioning the invalidated clone failed",
+			"component", "dag", "chat", chatID, "node", node.ID, "err", err)
+		return false
+	}
+	staleSetups.Delete(chatID)
+	slog.Info("dag: re-cloned the run's repo at the branch's current head",
+		"component", "dag", "chat", chatID, "node", node.ID)
+	return true
+}
+
+// setupTreeClean: true only when the shared clone exists and has nothing
+// uncommitted. Any doubt (unresolvable path, git failure) reads as dirty.
+func setupTreeClean(ctx context.Context, cfg vetting.Config) bool {
+	if cfg.Workspace == nil {
+		return false
+	}
+	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(workspace.SharedRepoScope))
+	if err != nil {
+		return false
+	}
+	res, err := workspace.RunArgv(ctx, dir, []string{"git", "status", "--porcelain"}, cfg.WorkspaceCaps)
+	return err == nil && res.ExitCode == 0 && strings.TrimSpace(res.Output) == ""
+}
+
+// refreshedNote: told to the worker because an earlier node in this run read
+// the pre-push tree; without it the two halves silently disagree.
+const refreshedNote = "\n\nNote: the branch was pushed to while this run was in progress. " +
+	"The repository has been re-cloned at its current head, so any earlier node's output in this task may describe the previous state."

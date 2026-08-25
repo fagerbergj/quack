@@ -157,7 +157,7 @@ func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, node
 	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, source,
 		func(nodeID string, score float64, passed bool, rounds int) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds)
-		}, e.admission, e.specFor)
+		}, e.admission, e.specFor, nil) // retry never re-runs setup, so nothing to refresh
 	if err != nil {
 		return nil, err
 	}
