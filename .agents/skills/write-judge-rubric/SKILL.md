@@ -71,14 +71,23 @@ generate them. For agents with multiple input modalities (image + audio), list s
 modality.
 
 ### `bands` (required)
-A list of `{min, max, meaning}` objects covering the full 0–10 scale, three ranges:
-- **7–10** - criterion met (the threshold sits at 7)
-- **4–6** - criterion partially met
-- **0–3** - criterion failed
+A list of `{min, max, meaning}` objects covering the full 0–3 scale, one band per integer level - the
+scale IS the bands, so every level has a written descriptor and none is left for the judge to guess
+within:
+- **3** - clean pass, nothing to note
+- **2** - passes, but with one cosmetic/minor flaw that shouldn't block (a nit, not a defect)
+- **1** - fails: a material gap, but a touch-up rather than a rethink
+- **0** - fails: the central requirement is unmet
+
+Four levels, not three - two passing, two failing, no neutral middle. This exists specifically so a
+cosmetic issue (stray process narration, a single loosely-worded secondary claim, one buried-but-
+present finding) has somewhere to land WITHOUT sinking the run: put it at level 2, not level 1. Level
+1 is for a genuine, material shortfall the worker needs to fix, not a nitpick.
 
 Each `meaning` must describe an **observable, specific condition** - not "good", "okay", "bad". The
 judge must be able to look at the answer and match it to a band without needing to interpret vague
-language.
+language. Never widen a band to cover more than one integer - that reopens the phantom-precision
+problem the 0–3 scale exists to close (see `references/g-eval-method.md`).
 
 ### `anchors` (optional)
 A list naming what kind of evidence feedback should point at, e.g. `[quote, omission]`.
@@ -90,7 +99,7 @@ describing what concretely resolves a failure (e.g. "Fetch each source, or remov
 
 ### Per-criterion `scale` (optional)
 A criterion can carry its own `scale: {min, max, pass}` overriding the top-level one, when its
-natural unit isn't 0–10 (e.g. `cites_sources` in `agents/web-researcher/rubric.yaml` scores a 0–1
+natural unit isn't 0–3 (e.g. `cites_sources` in `agents/web-researcher/rubric.yaml` scores a 0–1
 proportion).
 
 ---

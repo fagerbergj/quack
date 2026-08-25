@@ -152,7 +152,7 @@ func bandsContain(bands []bandSpec, v float64) bool {
 }
 
 // renderRubricMarkdown renders a rubricDoc's criteria (and notes) as the
-// markdown the judge prompt carries - the "how to grade" preamble (0-10
+// markdown the judge prompt carries - the "how to grade" preamble (0-3
 // scale walkthrough, weakest-link aggregation) is judge-prompt content now
 // (judge.go), not rendered here, so this covers only the per-criterion
 // sections plus any cross-cutting Notes.

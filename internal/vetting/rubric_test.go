@@ -62,7 +62,7 @@ func TestCleanOutputRubricCatchesDeliberation(t *testing.T) {
 
 			// A deliberation-laden answer (duplicated/superseded draft) must
 			// land in the failing band.
-			if !strings.Contains(section, "duplicated") || !strings.Contains(section, "0–3") {
+			if !strings.Contains(section, "duplicated") || !strings.Contains(section, "**0**") {
 				t.Error("clean_output's failing band does not name a duplicated/superseded draft")
 			}
 			// A clean answer of equal substance (only the final version

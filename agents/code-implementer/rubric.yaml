@@ -1,549 +1,203 @@
 scale:
   min: 0
-  max: 10
-  pass: 7
+  max: 3
+  pass: 2
 notes: >
-  A note on `checks_pass`. A deterministic criterion named `checks_pass` may already
-  appear in the verdict, set by code (not by the judge) from actually running the plan
-  node's configured build/test commands. Do not duplicate that judgment here - if the
-  change compiles and its tests describe real behavior, that is enough context for the
-  criteria below; the judge is not re-running the test suite.
+  A note on `checks_pass`. A deterministic criterion named `checks_pass` may already appear in the verdict, set by code (not by the judge) from actually running the plan node's configured build/test commands. Do not duplicate that judgment here - if the change compiles and its tests describe real behavior, that is enough context for the criteria below; the judge is not re-running the test suite.
 
-  The workspace activity ledger. The judge's prompt contains a "Workspace activity"
-  section: the fs/git/run_command operations the worker ACTUALLY performed, reconstructed
-  from its session by code - not from its narration. It is ground truth. An operation or
-  outcome the answer asserts that is not in the ledger did not happen, no matter how
-  confidently it is described. `read_file` entries carry a content sample - use it to
-  spot-check quoted file content the same way you would a fetched page.
+  The workspace activity ledger. The judge's prompt contains a "Workspace activity" section: the fs/git/run_command operations the worker ACTUALLY performed, reconstructed from its session by code - not from its narration. It is ground truth. An operation or outcome the answer asserts that is not in the ledger did not happen, no matter how confidently it is described. `read_file` entries carry a content sample - use it to spot-check quoted file content the same way you would a fetched page.
 criteria:
-  change_amplification:
-    definition: >
-      A single logical requirement change is implemented in one place, not scattered
-      across many unrelated files.
-    guidance: >
-      (*Threshold: touching more than ~4 files for one conceptual change is a signal to
-      look for a missing abstraction boundary - but a genuinely repo-wide rename or a
-      config value threaded through several layers is not a violation just for touching
-      many files; judge whether the SAME concept had to be re-expressed in each one.*)
-    steps:
-    - Identify the single requirement the task describes.
-    - Count the distinct files/modules that had to change to satisfy it.
-    - For each, judge whether the change there restates the same decision (bad) or is a
-      mechanically necessary consequence (fine - e.g. a call site update after a
-      signature change).
-    bands:
-    - min: 7.0
-      max: 10.0
-      meaning: the change is localized to where the decision actually lives; any additional
-        touched files are mechanical consequences, not restatements.
-    - min: 4.0
-      max: 6.0
-      meaning: the same decision is duplicated in 2–3 places that could have shared one source
-        of truth.
-    - min: 0.0
-      max: 3.0
-      meaning: the same logic/decision is copy-pasted or re-implemented across 4+ files
-        (information leakage).
-    anchors:
-    - path
-    - omission
   claims_match_activity:
     definition: >
-      Every operation and outcome the answer asserts - a commit made, a branch created, a
-      file written or edited, tests/checks run, file contents quoted or paraphrased - is
-      present in the workspace activity ledger.
+      Every operation and outcome the answer asserts - a commit made, a branch created, a file written or edited, tests/checks run, file contents quoted or paraphrased - is present in the workspace activity ledger.
     guidance: >
-      This is the fabrication check for CODE work: an answer that narrates work it never
-      performed is worse than an answer that honestly reports being blocked.
+      This is the fabrication check for CODE work: an answer that narrates work it never performed is worse than an answer that honestly reports being blocked.
     steps:
-    - List every operation/outcome the answer asserts happened (committed, branched,
-      pushed, wrote/edited a file, ran a command, "the file says…").
-    - "For each, find the corresponding ledger entry: a claimed commit needs a
-      `git_commit` entry (and a claimed SHA must match it); a claimed test run needs a
-      `run_command` (or gate-check) entry with a matching exit; a quoted or paraphrased
-      file content needs a `read_file` entry whose sample is consistent with the quote."
-    - A claimed-but-absent operation, a claimed success over a ledgered FAILED entry, or
-      a quote inconsistent with its read sample is fabrication - score in the 0–2 band
-      regardless of everything else.
-    - "The converse is fine: ledger entries the answer doesn't mention are not a defect,
-      and honestly reported failures/blocks score well here."
-    bands: []
-    anchors:
-    - path
-    - omission
-  cohesion:
-    definition: >
-      Within a changed type/module, the methods/functions operate on the same underlying
-      data - the change doesn't bolt an unrelated responsibility onto an existing type or
-      file.
-    steps:
-    - For any type/file the change adds methods or fields to, check whether the new
-      members use the same state as the existing ones.
-    - Flag a new member that shares no data with its siblings - a sign it belongs in its
-      own type/file instead.
+    - List every operation/outcome the answer asserts happened (committed, branched, pushed, wrote/edited a file, ran a command, "the file says…").
+    - "For each, find the corresponding ledger entry: a claimed commit needs a `git_commit` entry (and a claimed SHA must match it); a claimed test run needs a `run_command` (or gate-check) entry with a matching exit; a quoted or paraphrased file content needs a `read_file` entry whose sample is consistent with the quote."
+    - A claimed-but-absent operation, a claimed success over a ledgered FAILED entry, or a quote inconsistent with its read sample is fabrication - score 0 regardless of everything else.
+    - "The converse is fine: ledger entries the answer doesn't mention are not a defect, and honestly reported failures/blocks score well here."
     bands:
-    - min: 7.0
-      max: 10.0
-      meaning: every changed type/file stays focused on one responsibility.
-    - min: 4.0
-      max: 6.0
-      meaning: one new member is a minor stretch from the type's existing purpose but still
-        plausible there.
-    - min: 0.0
+    - min: 3.0
       max: 3.0
-      meaning: the change bolts a clearly unrelated responsibility onto an existing type/file
-        (two design decisions co-located).
+      meaning: every claimed operation and outcome is present in the ledger, matching what actually happened.
+    - min: 2.0
+      max: 2.0
+      meaning: every claimed operation and outcome is present in the ledger, but one claimed detail (not an operation or outcome) is stated a little more specifically than the ledger sample strictly confirms, without contradicting it.
+    - min: 1.0
+      max: 1.0
+      meaning: a minor claimed detail (not an operation or outcome) is unconfirmed by the ledger, though nothing the answer asserts is contradicted by it.
+    - min: 0.0
+      max: 0.0
+      meaning: a claimed-but-absent operation, a claimed success over a ledgered FAILED entry, or a quote inconsistent with its read sample.
     anchors:
     - path
     - omission
-  commit_hygiene:
+  complexity_proportionate:
     definition: >
-      The branch name and commit message(s) are specific to THIS change, and the commit is
-      scoped to what the task actually needed - not a blind sweep of everything sitting in
-      the working tree.
-    steps:
-    - "Check the branch name (from the `git_branch`/`git_commit` ledger entries): does it
-      name the actual change (`fix-pagination-off-by-one`, `add-dry-run-flag`), or is it
-      generic/placeholder (`fix`, `update`, `patch`, `wip`)?"
-    - "Check the commit message: does the subject say WHAT changed, and does the body (if
-      any) say WHY - the motivating bug or requirement - or is it content-free
-      (\"changes\", \"updates\", \"wip\")?"
-    - "Check commit scope via `files_changed` and the diff: does the file count and the
-      files touched plausibly match what the task required, or does it look like it
-      swept in files never mentioned in the task or the worker's own narration? A
-      `git_commit` call that the ledger shows was REJECTED for staging too many files,
-      followed by a scoped retry (explicit `paths`) that succeeded, is not a defect -
-      that's the deterministic bulk-commit wall working as designed; score the commit
-      that actually landed."
-    - If the ledger shows no branch was ever created (a commit landed on whatever branch
-      was already checked out), treat that as a hygiene gap unless the task explicitly
-      said to work on an existing branch.
-    bands:
-    - min: 7.0
-      max: 10.0
-      meaning: branch and commit message are both specific to the change, and the commit's file
-        scope plausibly matches the task.
-    - min: 4.0
-      max: 6.0
-      meaning: one of branch/message is generic or thin, or the commit carries a small amount
-        of scope creep, but nothing that obscures what happened.
-    - min: 0.0
-      max: 3.0
-      meaning: the branch name or commit message is a meaningless placeholder (`fix`, `update`,
-        `wip`), OR the commit swept in files with no plausible connection to the task.
-    anchors:
-    - path
-    - omission
-  complexity_ceiling:
-    definition: >
-      New or changed functions stay within a sane complexity budget: cyclomatic complexity
-      (McCabe) should not exceed 10, and cognitive complexity (nesting/branching a reader
-      must hold in mind) should not exceed 15.
+      The change carries the task's essential complexity and little else (Brooks' essential vs. accidental complexity): where the problem is simple, the diff is simple; added indirection, abstraction, or configuration is justified by the task rather than by anticipation of a future need; where a removal would have served as well as an addition, it removed; and the change doesn't reach for a dependency or hand-rolled utility the standard library or platform already provides.
     guidance: >
-      Both are about the same underlying risk - a function too easy to get subtly wrong
-      when modified - measured two different ways (path count vs. nesting penalty).
+      This merges five narrower checks that were all really one judgement: is the diff the smallest one that correctly does the job, with nothing added for a future that hasn't arrived. Diff minimality (no unrelated refactors/renames/formatting churn), YAGNI (no interface/config knob/parameter built for a hypothetical caller), a sane per-function complexity budget (cyclomatic ~10, cognitive ~15, roughly 40 lines/function and 800 lines/file as soft guides - not hard walls, a table-driven or mechanically repetitive block is not the same defect as tangled logic), deletion-over-addition (prefer removing dead branches/unused params/redundant checks over working around them, and leave no commented-out or unreachable code), and native-first (stdlib/platform before a new dependency or a hand-rolled reimplementation).
     steps:
-    - For each new/changed function, estimate its branch/loop count (McCabe) and its
-      nesting depth (cognitive) by reading it.
-    - Flag any function that reads as clearly over either threshold, or nests more than
-      ~3 levels deep.
-    - Judge whether the complexity is inherent to the problem or avoidable by a
-      straightforward extraction/early-return restructuring.
+    - Identify which parts of the diff are required by the stated task; flag any hunk that changes something the task didn't ask about with no functional necessity.
+    - Audit every new abstraction (interface, base type, parameterized factory, config flag, optional parameter, new dependency) for a concrete, present-tense consumer this change actually needs.
+    - For each new/changed function, judge whether its branch/nesting/length is inherent to the problem or avoidable by a straightforward extraction or early return.
+    - Check whether the task or surrounding code offered an opportunity to delete something instead of only adding, and that the diff leaves no dead/commented-out code behind.
+    - For any new import or hand-rolled utility, check whether the standard library or an already-vendored dependency already does the job.
     bands:
-    - min: 7.0
-      max: 10.0
-      meaning: every changed function is comfortably under both thresholds.
-    - min: 4.0
-      max: 6.0
-      meaning: one function is borderline over a threshold but still followable.
-    - min: 0.0
+    - min: 3.0
       max: 3.0
-      meaning: a function is clearly over 10 McCabe or 15 cognitive complexity, or nests 4+
-        levels deep, with no comment acknowledging why.
+      meaning: the diff is the smallest one that satisfies the task, every abstraction has a concrete present-tense consumer, functions stay well within complexity/length guides, dead code is removed rather than left behind, and no dependency duplicates the stdlib.
+    - min: 2.0
+      max: 2.0
+      meaning: one dimension is mildly over - a small unrelated tidy-up, one piece of harmless unused flexibility, one function a bit long, one dependency added where the stdlib could have done it with a little more code - but nothing that obscures the change. A single mild flaw on one of the five merged dimensions (diff minimality, YAGNI, complexity budget, deletion-over-addition, native-first) is a noted issue, not a failure.
+    - min: 1.0
+      max: 1.0
+      meaning: two or more dimensions are mildly over at once, or one is moderately over (a function meaningfully past the complexity/length guide, a genuinely unused abstraction, a dependency clearly better served by the stdlib) - a real gap that would need a touch-up before merge, short of obscuring the change.
+    - min: 0.0
+      max: 0.0
+      meaning: the diff carries substantial unrelated changes, a new interface/config surface has no current caller, a function is dramatically over budget and does several unrelated things, dead/commented-out code is left in the diff, or a dependency (or hand-rolled reimplementation) duplicates what the stdlib already provides.
     anchors:
     - path
     - omission
-  deep_modules:
+  module_shape:
     definition: >
-      The change's public surface (new/changed function signatures, exported types, config
-      keys) is small relative to the complexity it hides. A shallow module with a large
-      API forces every caller to manage complexity that should have stayed internal.
+      Each changed type/file stays focused on one responsibility - the methods/functions in it operate on the same underlying data, and don't bolt an unrelated concern onto an existing type or file - and its public surface (new/changed signatures, exported types, config keys) is small relative to the complexity it hides, rather than a shallow, pass-through API that forces callers to manage complexity that should have stayed internal.
     steps:
-    - List any new or changed public functions/types/parameters.
-    - For each, check whether its implementation does non-trivial work, or is mostly a
-      pass-through that could be inlined at the call site.
-    - Judge whether the interface is smaller than what it encapsulates.
+    - For any type/file the change adds methods or fields to, check whether the new members use the same state as the existing ones; flag one that shares no data with its siblings.
+    - List any new or changed public functions/types/parameters, and check whether each does non-trivial work or is mostly a pass-through that could be inlined at the call site.
     bands:
-    - min: 7.0
-      max: 10.0
-      meaning: the public surface is minimal and clearly hides real complexity.
-    - min: 4.0
-      max: 6.0
-      meaning: the interface is a little larger than it needs to be, or exposes one detail that
-        should have stayed internal.
-    - min: 0.0
+    - min: 3.0
       max: 3.0
-      meaning: a large, shallow API added for what the implementation actually does (many
-        parameters/methods, thin bodies).
+      meaning: every changed type/file stays focused on one responsibility, and the public surface is minimal and clearly hides real complexity.
+    - min: 2.0
+      max: 2.0
+      meaning: every changed type/file stays focused and the public surface is minimal, but one new member is a minor stretch from the type's existing purpose while still plausible there.
+    - min: 1.0
+      max: 1.0
+      meaning: the interface is noticeably larger than it needs to be for what it hides, or more than one member is a stretch from the type's purpose - a real gap, short of a co-located second responsibility.
+    - min: 0.0
+      max: 0.0
+      meaning: the change bolts a clearly unrelated responsibility onto an existing type/file (two design decisions co-located), or adds a large, shallow API for what the implementation actually does.
     anchors:
     - path
     - omission
-  delegation_depth:
+  coupling:
     definition: >
-      The change doesn't introduce a new function/class whose body is just a one-line call
-      to another function (a decorator or adapter with no logic of its own) unless it's
-      genuinely earning its keep (e.g. an interface boundary a test needs, or a documented
-      seam for a near-term extension point that already has a concrete consumer).
+      The change's new/changed code keeps its dependencies proportionate to its job: no gratuitous pass-through layer (a function whose body is just a one-line call to another, with no logic or stated reason to exist as its own seam); dependency width (fan-out) matches what the function's task actually requires, not balloon coupling to unrelated modules; an interface or exported struct stays small and consumer-shaped rather than a grab bag forcing consumers to depend on methods they never call; and a public signature is self-explanatory from its types and parameter names alone, with short parameter lists and no pure pass-through parameter threaded through a layer that never reads it.
     steps:
-    - List any new function/method the change adds.
-    - For each, check whether its body does real work or just forwards its arguments to
-      one other call.
-    - If it's a pure pass-through, look for a stated reason it needs to exist as its own
-      layer.
+    - List any new function/method; for each, check whether its body does real work or just forwards its arguments, and if it's a pass-through, look for a stated reason it needs to exist as a seam.
+    - Count the distinct packages/modules a new or changed function calls into, and judge whether that width is inherent to the task or avoidable coupling.
+    - For any interface or exported type the change adds to or creates, count its public methods and check whether the change's own consumer(s) actually use most of them.
+    - "Read each new/changed public signature as if seeing only the signature: judge whether you could guess correct call sites without reading the body, flag any parameter typed `any`/`interface{}`/a loose map where a concrete type belonged, and check the parameter count and whether an intermediate function receives a parameter it never reads itself."
     bands:
-    - min: 7.0
-      max: 10.0
-      meaning: no gratuitous pass-through layers; every new function does real work or has a
-        clearly stated, concrete reason to exist as a seam.
-    - min: 4.0
-      max: 6.0
-      meaning: one thin wrapper exists without a stated reason, but it's harmless.
-    - min: 0.0
+    - min: 3.0
       max: 3.0
-      meaning: the change adds a chain of one-line delegators with no logic and no stated
-        purpose.
-    anchors:
-    - path
-    - omission
-  deletion_over_addition:
-    definition: >
-      When a correct fix could be achieved either by adding code or by removing code (dead
-      branches, an unused parameter, a redundant check, a needless wrapper), the change
-      prefers removal.
-    guidance: >
-      The change doesn't leave dead code, commented-out code, or now-unreachable branches
-      behind.
-    steps:
-    - Check whether the task or the surrounding code offered an opportunity to delete
-      something (a now-dead branch, an obsolete comment, an unused helper) instead of
-      only adding.
-    - Check the diff doesn't leave commented-out code or an unreachable branch behind.
-    bands:
-    - min: 7.0
-      max: 10.0
-      meaning: the change removes what should be removed and leaves nothing dead behind.
-    - min: 4.0
-      max: 6.0
-      meaning: one small piece of now-dead code (a stray comment, an unused import) was left
-        behind, easy to miss.
+      meaning: no gratuitous pass-through layers, dependency width matches the job, interfaces stay small and consumer-shaped, and every changed public signature is self-explanatory with short parameter lists and no unused forwarded parameters.
+    - min: 2.0
+      max: 2.0
+      meaning: one dimension is mildly over - a harmless unstated wrapper, fan-out a little wide, one interface a bit broader than consumed, one signature needing the body to disambiguate or 5-6 parameters - but nothing that obscures the design. A single mild flaw on one of the four merged dimensions (pass-through layers, fan-out, interface size, signature clarity) is a noted issue, not a failure.
+    - min: 1.0
+      max: 1.0
+      meaning: two or more dimensions are mildly over at once, or one is moderately over (a genuine unexplained wrapper chain of two, fan-out clearly wider than the job needs, an interface visibly larger than what's consumed, a signature that needs real digging to use correctly) - a real gap short of obscuring the design.
     - min: 0.0
-      max: 3.0
-      meaning: the change clearly could have deleted code instead of adding to work around it,
-        or leaves commented-out/dead code in the diff.
-    anchors:
-    - path
-    - omission
-  diff_minimality:
-    definition: >
-      The diff is the shortest one that correctly and completely satisfies the task - no
-      unrelated refactors, renames, formatting-only churn, or "while I'm here" cleanups
-      bundled in alongside the actual fix.
-    steps:
-    - Identify which parts of the diff are required by the stated task.
-    - Flag any hunk that changes something the task didn't ask about (a rename, a
-      reformat, a reorganization) with no functional necessity.
-    bands:
-    - min: 7.0
-      max: 10.0
-      meaning: every changed line serves the stated task; nothing extraneous.
-    - min: 4.0
-      max: 6.0
-      meaning: one small unrelated tidy-up is bundled in, but it's genuinely trivial (e.g. a
-        single obvious typo fix in a touched line).
-    - min: 0.0
-      max: 3.0
-      meaning: the diff carries substantial unrelated changes (renames, reformatting,
-        restructuring) alongside the actual fix.
-    anchors:
-    - path
-    - omission
-  error_handling:
-    definition: >
-      Edge cases that can be handled safely inline are - the change doesn't wrap a
-      trivial, always-recoverable case in exception/error-boilerplate that obscures the
-      happy path (e.g. a `try/catch` around one call whose only handler does `return
-      false`, when the callee could simply return that directly).
-    steps:
-    - Look for new error/exception handling blocks.
-    - For each, judge whether the case is genuinely exceptional (needs surfacing to the
-      caller) or could be defined out of existence (a safe default, a boundary check
-      inline, a normal return value).
-    bands:
-    - min: 7.0
-      max: 10.0
-      meaning: error handling is proportionate; no boilerplate wrapping a trivially-recoverable
-        case.
-    - min: 4.0
-      max: 6.0
-      meaning: one handler is heavier than the case warrants, but not confusing.
-    - min: 0.0
-      max: 3.0
-      meaning: trivial, always-safe cases are wrapped in error-handling machinery that obscures
-        the actual logic.
-    anchors:
-    - path
-    - omission
-  explicit_interfaces:
-    definition: >
-      A public function's signature alone (types, parameter names - no body, no doc
-      comment needed) makes it obvious what valid arguments look like and what it returns.
-    guidance: >
-      Avoid generic `any`/`interface{}`/untyped-map parameters where a concrete type would
-      do the same job.
-    steps:
-    - Read each new/changed public signature as if seeing only the signature.
-    - Judge whether you could guess correct call sites without reading the body.
-    - Flag any parameter typed `any`/`interface{}`/a loose map where a concrete struct
-      or narrower type was available.
-    bands:
-    - min: 7.0
-      max: 10.0
-      meaning: every changed public signature is self-explanatory from its types and names
-        alone.
-    - min: 4.0
-      max: 6.0
-      meaning: one signature needs the body or a comment to disambiguate.
-    - min: 0.0
-      max: 3.0
-      meaning: a signature is opaque (unlabeled bools, `any`/untyped-map params where a
-        concrete type belonged) and unguessable without reading the implementation.
-    anchors:
-    - path
-    - omission
-  fan_in_fan_out:
-    definition: >
-      A changed module's fan-out (how many other modules it depends on) doesn't balloon
-      relative to its fan-in (how many depend on it). *(Threshold: fan-out > 6 for a
-      single function/module, absent it being an internal framework/orchestration utility,
-      is a flag.)*
-    steps:
-    - Count the distinct packages/modules a new or changed function calls into.
-    - Judge whether that width is inherent to the task (e.g. a wiring/glue function is
-      expected to have higher fan-out) or avoidable coupling.
-    bands:
-    - min: 7.0
-      max: 10.0
-      meaning: dependency width is proportionate to the function's actual job.
-    - min: 4.0
-      max: 6.0
-      meaning: fan-out is a little wide for what the function does, but not unreasonable.
-    - min: 0.0
-      max: 3.0
-      meaning: a function reaches into 7+ unrelated modules/packages without being a deliberate
-        orchestration point.
-    anchors:
-    - path
-    - omission
-  interface_segregation:
-    definition: >
-      A changed or new interface/exported struct isn't a large, monolithic grab bag
-      forcing a consumer to depend on methods it never calls. *(Threshold: >10 public
-      methods on one interface/type that a single consumer doesn't all use is a flag.)*
-    steps:
-    - For any interface or exported type the change adds to or creates, count its public
-      methods.
-    - Check whether the change's own consumer(s) actually use most of them.
-    bands:
-    - min: 7.0
-      max: 10.0
-      meaning: interfaces stay small and consumer-shaped, or the change doesn't touch any.
-    - min: 4.0
-      max: 6.0
-      meaning: one interface is a bit broader than what's actually consumed.
-    - min: 0.0
-      max: 3.0
-      meaning: a large interface (10+ methods) is added or grown, and the actual consumer uses
-        only a fraction of it.
+      max: 0.0
+      meaning: a chain of one-line delegators with no logic or stated purpose, a function reaching into 7+ unrelated modules with no orchestration role, a large interface (10+ methods) whose consumer uses only a fraction of it, or a signature that is opaque or has 7+ parameters / a parameter threaded through multiple layers that never use it.
     anchors:
     - path
     - omission
   naming_and_comments:
     definition: >
-      Identifiers communicate intent without being unwieldy, and comments explain why
-      (business constraint, historical reason, non-obvious tradeoff) - never restate what
-      the next line already says.
+      Identifiers communicate intent without being unwieldy, and comments explain why (business constraint, historical reason, non-obvious tradeoff) - never restate what the next line already says.
     steps:
-    - Scan new/changed identifiers for vague names (`processData`, `doStuff`, `temp2`)
-      or needless abbreviation.
-    - Scan new/changed comments for ones that just narrate the following line (`i++ //
-      increment i`) versus ones that explain a real reason.
+    - Scan new/changed identifiers for vague names (`processData`, `doStuff`, `temp2`) or needless abbreviation.
+    - Scan new/changed comments for ones that just narrate the following line (`i++ // increment i`) versus ones that explain a real reason.
     bands:
-    - min: 7.0
-      max: 10.0
-      meaning: names are specific and domain-meaningful; comments (if any) earn their place by
-        explaining a non-obvious reason.
-    - min: 4.0
-      max: 6.0
-      meaning: one or two names are generic, or a comment merely restates obvious code, without
-        being actively harmful.
-    - min: 0.0
+    - min: 3.0
       max: 3.0
-      meaning: multiple unclear/misleading names, or comments that are stale, redundant, or
-        restate the code throughout the diff.
+      meaning: names are specific and domain-meaningful; comments (if any) earn their place by explaining a non-obvious reason.
+    - min: 2.0
+      max: 2.0
+      meaning: names are specific and comments earn their place, but one name is a little generic or one comment merely restates obvious code, without being actively harmful.
+    - min: 1.0
+      max: 1.0
+      meaning: several names are generic, or more than one comment merely restates obvious code.
+    - min: 0.0
+      max: 0.0
+      meaning: multiple unclear/misleading names, or comments that are stale, redundant, or restate the code throughout the diff.
     anchors:
     - path
     - omission
-  native_first:
+  error_handling:
     definition: >
-      The change reaches for the standard library and the platform's native features
-      before a third-party dependency, and before hand-rolled code that duplicates either.
+      Edge cases that can be handled safely inline are - the change doesn't wrap a trivial, always-recoverable case in exception/error-boilerplate that obscures the happy path (e.g. a `try/catch` around one call whose only handler does `return false`, when the callee could simply return that directly).
+    steps:
+    - Look for new error/exception handling blocks.
+    - For each, judge whether the case is genuinely exceptional (needs surfacing to the caller) or could be defined out of existence (a safe default, a boundary check inline, a normal return value).
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: error handling is proportionate; no boilerplate wrapping a trivially-recoverable case.
+    - min: 2.0
+      max: 2.0
+      meaning: error handling is proportionate overall, but one handler is a touch heavier than the case warrants without being confusing.
+    - min: 1.0
+      max: 1.0
+      meaning: more than one handler is heavier than its case warrants, making the happy path noticeably harder to follow, though still not confusing on its own.
+    - min: 0.0
+      max: 0.0
+      meaning: trivial, always-safe cases are wrapped in error-handling machinery that obscures the actual logic.
+    anchors:
+    - path
+    - omission
+  commit_hygiene:
+    definition: >
+      The branch name and commit message(s) are specific to THIS change, and the commit is scoped to what the task actually needed. A repo-wide rename or a config value threaded through several layers legitimately touches many files - the judge weighs whether the scope is JUSTIFIED by the task, not just how many files changed.
     guidance: >
-      A new dependency is added only when the standard library and the platform genuinely
-      can't do the job.
+      The judge prompt carries a computed evidence list - files this session wrote whose path the task text never named - ahead of this section when any exist. Use it rather than re-deriving scope from prose: for each listed file, judge whether the task's own description makes it a plausible, necessary part of the change (e.g. a genuinely repo-wide rename touching many unnamed files is fine; an unrelated file with no connection to the task is not).
     steps:
-    - List any new import, especially any new third-party dependency
-      (go.mod/package.json addition).
-    - For each, check whether the stdlib or an already-vendored dependency already
-      provides equivalent functionality.
-    - For any hand-rolled utility function, check whether it reimplements something the
-      stdlib already offers.
+    - "Check the branch name (from the `git_branch`/`git_commit` ledger entries): does it name the actual change (`fix-pagination-off-by-one`, `add-dry-run-flag`), or is it generic/placeholder (`fix`, `update`, `patch`, `wip`)?"
+    - "Check the commit message: does the subject say WHAT changed, and does the body (if any) say WHY - the motivating bug or requirement - or is it content-free (\"changes\", \"updates\", \"wip\")?"
+    - "Check the evidence list of task-unnamed touched files (if provided): for each, is it a plausible, necessary part of the task's own scope, or unconnected to it? A `git_commit` call the ledger shows was REJECTED for staging too many files, followed by a scoped retry that succeeded, is not a defect - score the commit that actually landed."
+    - If the ledger shows no branch was ever created (a commit landed on whatever branch was already checked out), treat that as a hygiene gap unless the task explicitly said to work on an existing branch.
     bands:
-    - min: 7.0
-      max: 10.0
-      meaning: no new dependency was needed, or the one added has no stdlib/ already-present
-        equivalent.
-    - min: 4.0
-      max: 6.0
-      meaning: a new dependency was added for something the stdlib could have done with a
-        little more code, but the tradeoff is defensible.
-    - min: 0.0
+    - min: 3.0
       max: 3.0
-      meaning: a new dependency (or a hand-rolled reimplementation) duplicates functionality
-        the standard library or an already-vendored package already provides.
-    anchors:
-    - path
-    - omission
-  parameter_hygiene:
-    definition: >
-      Function signatures stay short (*threshold: >4 parameters is a flag*), and no
-      parameter is a pure pass-through - threaded through an intermediate function only to
-      be forwarded, unused, to something further down the call chain.
-    steps:
-    - Check any new/changed signature's parameter count.
-    - For a long signature, check whether an intermediate function receives a parameter
-      it never reads itself, only forwards.
-    bands:
-    - min: 7.0
-      max: 10.0
-      meaning: signatures are short, and every parameter is used where it's received.
-    - min: 4.0
-      max: 6.0
-      meaning: one signature is a little long (5–6 params), or one param is forwarded through a
-        single intermediate layer.
+      meaning: branch and commit message are both specific to the change, and every task-unnamed touched file is a plausible, necessary part of the task's own scope.
+    - min: 2.0
+      max: 2.0
+      meaning: branch and message are both specific and every touched file is plausibly in scope, but one task-unnamed file's connection to the task is a stretch worth a second look, not a clear miss.
+    - min: 1.0
+      max: 1.0
+      meaning: one of branch/message is generic or thin, or a task-unnamed file's connection to the task is genuinely unclear, but nothing that obscures what happened.
     - min: 0.0
-      max: 3.0
-      meaning: a signature has 7+ parameters, or a parameter is threaded through multiple
-        layers that never use it (temporal decomposition).
-    anchors:
-    - path
-    - omission
-  sloc_limits:
-    definition: >
-      Changed/new functions stay under roughly 40 lines; changed/new files stay under
-      roughly 800 lines.
-    guidance: >
-      These are guidelines for "does a reviewer have to scroll back and forth to hold this
-      in mind," not hard walls - a table-driven function or a generated-style block that's
-      mechanically repetitive is not the same defect as genuinely tangled long logic.
-    steps:
-    - Estimate the line count of any new/changed function and any file grown
-      substantially by the change.
-    - Judge whether an over-length function is doing one cohesive thing at length (more
-      tolerable) or several things that should be split.
-    bands:
-    - min: 7.0
-      max: 10.0
-      meaning: functions and files stay within or close to the guideline, or a longer function
-        is one cohesive, hard-to-usefully-split task.
-    - min: 4.0
-      max: 6.0
-      meaning: one function or file is noticeably over the guideline and could reasonably be
-        split.
-    - min: 0.0
-      max: 3.0
-      meaning: a new/changed function is dramatically long and clearly does several unrelated
-        things in sequence.
+      max: 0.0
+      meaning: the branch name or commit message is a meaningless placeholder (`fix`, `update`, `wip`), OR the commit swept in files with no plausible connection to the task.
     anchors:
     - path
     - omission
   task_completeness:
     definition: >
-      The change is delivered as far as the task actually required - not just "code
-      compiles and is committed locally" when the task implies more (handing the work off
-      for delivery, not merely describing it).
+      The change is delivered as far as the task actually required - not just "code compiles and is committed locally" when the task implies more (handing the work off for delivery, not merely describing it).
     guidance: >
-      A code-implementer never pushes or opens a pull request itself: it commits with its
-      own git, then calls `stage_pr`/`stage_push` to hand delivery to the gate, which
-      pushes the branch and opens/updates the PR only after the answer passes. Whether
-      that hand-off call happened is a separate deterministic check elsewhere in the
-      verdict (`delivery_complete`) - this criterion is about whether the CODE itself
-      covers what the task asked, and whether the answer is honest about what it did.
+      A code-implementer never pushes or opens a pull request itself: it commits with its own git, then calls `stage_pr`/`stage_push` to hand delivery to the gate, which pushes the branch and opens/updates the PR only after the answer passes. Whether that hand-off call happened is a separate deterministic check elsewhere in the verdict (`delivery_complete`) - this criterion is about whether the CODE itself covers what the task asked, and whether the answer is honest about what it did.
     steps:
-    - "From the task description, decide what \"done\" means here: many tasks are
-      genuinely satisfied by a local commit on a branch; others explicitly or implicitly
-      need the work handed off for delivery (\"open a PR for…\", \"ship this\", \"push a
-      fix\")."
-    - "When delivery was needed, check for a successful `git_commit` entry in the
-      workspace activity ledger - the disk-probed record of the commit an ACP worker
-      made with its own git (there is no separate \"commit tool\" call to look for). Do
-      not expect a `git_push` or PR-creation entry here: the gate pushes and opens the
-      PR after this round, never during it."
-    - Treat an answer that claims to have pushed, opened a PR, or merged as a
-      fabrication - a code-implementer has no tool that does any of those itself. The
-      honest claim is "committed and handed off for delivery"; anything stronger
-      describes a capability it doesn't have.
+    - "From the task description, decide what \"done\" means here: many tasks are genuinely satisfied by a local commit on a branch; others explicitly or implicitly need the work handed off for delivery (\"open a PR for…\", \"ship this\", \"push a fix\")."
+    - "When delivery was needed, check for a successful `git_commit` entry in the workspace activity ledger - the disk-probed record of the commit an ACP worker made with its own git (there is no separate \"commit tool\" call to look for). Do not expect a `git_push` or PR-creation entry here: the gate pushes and opens the PR after this round, never during it."
+    - Treat an answer that claims to have pushed, opened a PR, or merged as a fabrication - a code-implementer has no tool that does any of those itself. The honest claim is "committed and handed off for delivery"; anything stronger describes a capability it doesn't have.
     bands:
-    - min: 7.0
-      max: 10.0
-      meaning: the task's full scope is addressed in the change, and the answer's delivery
-        claims match what a code-implementer can actually do (committed and handed off,
-        not pushed or merged).
-    - min: 4.0
-      max: 6.0
-      meaning: the core code change landed but the task's stated scope is only partially
-        covered, with no honest note about what's left.
-    - min: 0.0
+    - min: 3.0
       max: 3.0
-      meaning: the answer claims a delivery step it cannot perform itself (pushed, opened a PR,
-        merged) with no corresponding ledger entry, or stops short of the code change
-        the task actually asked for.
-    anchors:
-    - path
-    - omission
-  yagni_speculative_generality:
-    definition: >
-      *(Combines the research literature's YAGNI criterion with ponytail's "question
-      whether it needs to exist" principle - they are the same defect seen from two
-      angles.)* No interface, config knob, parameter, or code path exists to serve a
-      hypothetical future use case rather than this task's actual, concrete requirement.
-    steps:
-    - Audit every new abstraction (interface, base type, parameterized factory, config
-      flag, optional parameter).
-    - For each, look for a concrete consumer THIS change actually needs. If none exists,
-      it's speculative.
-    bands:
-    - min: 7.0
-      max: 10.0
-      meaning: every abstraction added has a concrete, present-tense consumer; nothing was
-        built "for later."
-    - min: 4.0
-      max: 6.0
-      meaning: one piece of unused flexibility exists but is cheap and harmless (e.g. an
-        unused-but-obvious optional parameter).
+      meaning: the task's full scope is addressed in the change, and the answer's delivery claims match what a code-implementer can actually do (committed and handed off, not pushed or merged).
+    - min: 2.0
+      max: 2.0
+      meaning: the task's full scope is addressed and delivery claims are accurate, but one minor sub-part of the task is covered more thinly than the rest without being dropped.
+    - min: 1.0
+      max: 1.0
+      meaning: the core code change landed but the task's stated scope is only partially covered, with no honest note about what's left.
     - min: 0.0
-      max: 3.0
-      meaning: a new interface, plugin point, or config surface exists with no current caller -
-        built to anticipate a need nobody has asked for yet.
+      max: 0.0
+      meaning: the answer claims a delivery step it cannot perform itself (pushed, opened a PR, merged) with no corresponding ledger entry, or stops short of the code change the task actually asked for.
     anchors:
     - path
     - omission
