@@ -58,7 +58,7 @@ const (
 	judgeBehaviourTail = "If an image is attached to this message, you can see it - use it to directly verify any visual claims in the answer. If there is no image, judge on internal consistency and appropriate hedging only; do NOT penalise an answer merely because you cannot see the source. " +
 		"Do NOT try to verify which URLs were fetched - WEB citation backing is checked separately by deterministic code, so score `cites_sources` only on whether claims carry followable links at all, not on whether you think a URL is real. Local file/code citations (a repo-relative path, `<repo>@path[:lines]`) get NO such deterministic check - verify those yourself per the read-tools instructions above, or judge them on internal consistency alone when you hold no tools. " +
 		"CRITICAL - the leniency below is SCOPED, not a blanket pass for citations: it protects claims about LIVE WEB or EXTERNAL content you have no way to check from here (a fresh article, an external product, a fact outside this repo) and your own world knowledge is stale and incomplete, so NEVER treat such a claim as fabricated or ungrounded merely because you do not recognize it, it sounds new, or it postdates your training - an unfamiliar title, name, product, or event is NOT evidence of fabrication there. A specific is 'invented' only when the answer's OWN text is internally inconsistent or makes a precise claim it never supports, never because it conflicts with your memory. This leniency NEVER applies to claims about the workspace/repo: when you hold read tools, verify them per the mandatory instructions above - a citation there is a pointer to go check, not proof, and an unverified in-repo claim scores as unsupported even if it 'sounds right'; when you hold no tools, judge in-repo claims on internal consistency only, same as any other unverifiable claim, without extending web-content leniency to them. " +
-		"Score EVERY criterion the rubric names - no more, no fewer. For each, reason in one or two sentences, then assign the INTEGER score (0, 1, or 2) whose scoring-band descriptor actually matches the answer. Judge substance, not style: length and fluent prose earn no credit. The answer's overall score is its WEAKEST criterion - a single failing criterion sinks it, however strong the others are. " +
+		"Score EVERY criterion the rubric names - no more, no fewer. For each, reason in one or two sentences, then assign the INTEGER score (0, 1, 2, or 3) whose scoring-band descriptor actually matches the answer. Judge substance, not style: length and fluent prose earn no credit. The answer's overall score is its WEAKEST criterion - a single failing criterion sinks it, however strong the others are. " +
 		"When - and only when - you have scored every criterion, call the submit_verdict tool exactly once with: `criteria` (an object mapping each criterion name to {shortfall, fix, anchor, score}), `score` (a fallback the gate uses only if you submit no criteria - with criteria present it derives the overall score from them, so your per-criterion reasoning is the work that counts), and `feedback` (concrete, actionable notes naming the lowest-scoring criteria and what to fix; empty when the answer passes). " +
 		"For a FAILING criterion: `shortfall` names the specific thing that failed - the claim, file, path, link, or command - never a restatement of the score; `fix` is the concrete remedy. Both are handed to the worker verbatim as its brief for the next attempt, so a shortfall that leaves the worker unable to tell WHICH item to fix has told it nothing. " +
 		"`anchor` is OPTIONAL - where in the answer the criticism points, when it is locatable. Set kind to `quote` with `text` set to the exact offending substring (verbatim, or it will be dropped); `path` with `path` (and optional `line`) for a claim about a specific file in the repo; or `omission` with `expected` describing what should be present but is absent - use omission when nothing in the answer can be quoted or pointed to, never force a quote/path anchor onto an absence. Leave anchor out entirely when no span applies. " +
@@ -164,7 +164,7 @@ func judgeGenConfig(maxOutputTokens int) *genai.GenerateContentConfig {
 // existing parseVerdict fallback picks it up exactly like a local model that skipped the tool call.
 const judgeForceCloseInstruction = "\n\nSTOP - you are out of tool budget for this round; no tools, including submit_verdict, are available on this turn. " +
 	"Using ONLY what you have already read and verified above, output your verdict now as a single JSON object and nothing else (no code fence, no other text): " +
-	`{"score": <0-2 overall fallback>, "criteria": {"<criterion name>": {"reason": "<why>", "score": <0-2>}, ...}, "feedback": "<concise, actionable - empty if it passes>"}` +
+	`{"score": <0-3 overall fallback>, "criteria": {"<criterion name>": {"reason": "<why>", "score": <0-3>}, ...}, "feedback": "<concise, actionable - empty if it passes>"}` +
 	" Score every criterion the rubric named, from what you have already verified."
 
 // forcedVerdictCallback strips all tools and appends judgeForceCloseInstruction on the round's last
@@ -1090,10 +1090,10 @@ func buildContinuationPrompt(task string, act workerActivity, checks []string, r
 	return sb.String()
 }
 
-// judgeScaleMax: the rubric's raw integer scale (0/1/2 - see rubric.yaml
+// judgeScaleMax: the rubric's raw integer scale (0/1/2/3 - see rubric.yaml
 // scale.max across every agent bundle). Shared here because normalizeScale
 // converts raw judge output to the internal 0-1 axis by this divisor.
-const judgeScaleMax = 2
+const judgeScaleMax = 3
 
 // normalizeScale: converts the judge's raw 0-judgeScaleMax rubric scale to
 // the internal 0-1 axis. Idempotent.

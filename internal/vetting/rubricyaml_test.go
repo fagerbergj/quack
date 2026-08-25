@@ -38,7 +38,10 @@ func TestBundledRubricsLoadAndValidate(t *testing.T) {
 
 // TestBundledRubricsNoEmptyBands: every non-deterministic criterion must
 // anchor its scale with written bands - an empty bands:[] leaves the score
-// entirely unanchored (#claims_grounded was shipped this way).
+// entirely unanchored (#claims_grounded was shipped this way) - and every
+// integer level of its configured scale must have its OWN descriptor, not
+// just some subset: a scale with more levels than bands is the same
+// phantom-precision bug in a different shape.
 func TestBundledRubricsNoEmptyBands(t *testing.T) {
 	matches, err := filepath.Glob("../../agents/*/rubric.yaml")
 	if err != nil {
@@ -56,6 +59,16 @@ func TestBundledRubricsNoEmptyBands(t *testing.T) {
 		for name, c := range doc.Criteria {
 			if len(c.Bands) == 0 {
 				t.Errorf("%s: criterion %q has no bands - every scoring level needs a written descriptor", path, name)
+				continue
+			}
+			scale := doc.Scale
+			if c.Scale != nil {
+				scale = *c.Scale
+			}
+			for level := scale.Min; level <= scale.Max; level++ {
+				if !bandsContain(c.Bands, level) {
+					t.Errorf("%s: criterion %q has no band descriptor for level %v of its %v-%v scale", path, name, level, scale.Min, scale.Max)
+				}
 			}
 		}
 	}

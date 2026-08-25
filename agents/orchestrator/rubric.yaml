@@ -1,6 +1,6 @@
 scale:
   min: 0
-  max: 2
+  max: 3
   pass: 2
 criteria:
   answers_question:
@@ -11,9 +11,12 @@ criteria:
     - Check whether the response (direct or delegated) covers every part of the request.
     - Note any silent narrowing or redirection to a different question.
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: addresses the request completely.
     - min: 2.0
       max: 2.0
-      meaning: addresses the request completely.
+      meaning: addresses the request completely, but one part is covered more thinly than the rest without being dropped.
     - min: 1.0
       max: 1.0
       meaning: covers the main ask; minor gaps.
@@ -33,12 +36,15 @@ criteria:
     - Scan for leaked routing logic, self-talk, or meta-commentary about skills or delegation.
     - Check whether any snippet, list, or conclusion appears more than once in different (superseded) forms - a sign of an abandoned draft left in place.
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: pure answer; no preamble or routing narration; only the final version of any content appears.
     - min: 2.0
       max: 2.0
-      meaning: pure answer; no preamble or routing narration; only the final version of any content appears.
+      meaning: a single stray opener or one routing comment, otherwise clean - one small blemish, not a pattern.
     - min: 1.0
       max: 1.0
-      meaning: a single stray opener or one routing comment, otherwise clean.
+      meaning: more than one such intrusion (several stray sentences or routing comments), though still short of a real preamble or leaked reasoning.
     - min: 0.0
       max: 0.0
       meaning: noticeable preamble, routing narration, leaked process, or a duplicated/superseded draft left in the output.
@@ -53,12 +59,15 @@ criteria:
     - Check whether each claim is answerable from context or is a plausible fabrication.
     - Weight specific claims (names, versions, URLs) most heavily.
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: all direct claims are answerable from context; nothing invented.
     - min: 2.0
       max: 2.0
-      meaning: all direct claims are answerable from context; nothing invented.
+      meaning: all direct claims are answerable from context, but one minor detail is unverifiable without being load-bearing or clearly invented.
     - min: 1.0
       max: 1.0
-      meaning: minor unverifiable details, but no load-bearing fabrication.
+      meaning: one claim is stated with more confidence than the available context supports, though not clearly invented.
     - min: 0.0
       max: 0.0
       meaning: a specific URL, claim, or fact is clearly invented or unverifiable.

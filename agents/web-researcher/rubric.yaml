@@ -1,6 +1,6 @@
 scale:
   min: 0
-  max: 2
+  max: 3
   pass: 2
 notes: >
   Date-awareness: the agent has a `current_date` tool and is expected to call it before researching time-sensitive topics. If the answer references events or data that are clearly from the wrong year (e.g., searches framed around a year that has already passed), treat this as a `grounded` failure - the retrieval was mis-scoped.
@@ -15,9 +15,12 @@ criteria:
     - Check that each ask is addressed in the answer.
     - Note any silent narrowing or topic drift.
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: addresses the request completely, including its constraints.
     - min: 2.0
       max: 2.0
-      meaning: addresses the request completely, including its constraints.
+      meaning: addresses the request completely including its constraints, but one part is covered more thinly than the rest without being dropped.
     - min: 1.0
       max: 1.0
       meaning: addresses the main ask but leaves minor gaps or drops a constraint.
@@ -61,9 +64,12 @@ criteria:
     - Check the claim accurately reflects what the source says, not a stretched or selective reading.
     - Check the citation is placed at the claim, not deferred to a references block the claim isn't attached to.
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: cited claims point at reputable sources, accurately reflect them, and are placed at the claim they support.
     - min: 2.0
       max: 2.0
-      meaning: cited claims point at reputable sources, accurately reflect them, and are placed at the claim they support.
+      meaning: sources are reputable and accurate, but one citation sits a sentence or two away from the claim it backs rather than directly at it.
     - min: 1.0
       max: 1.0
       meaning: one citation is a weak/tangential source, is loosely paraphrased, or is placed away from the claim it backs.
@@ -84,12 +90,15 @@ criteria:
     - Check whether any snippet, list, or conclusion appears more than once in different (superseded) forms - a sign of an abandoned draft left in place.
     - Check the structure (headings, lists, Sources block) matches what the content actually needs; the buried answer's quality does not excuse an intrusion.
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: pure answer, well-structured for its content; no preamble, narration, or trailing reasoning; only the final version of any content appears.
     - min: 2.0
       max: 2.0
-      meaning: pure answer, well-structured for its content; no preamble, narration, or trailing reasoning; only the final version of any content appears.
+      meaning: a stray opener or a single meta sentence, or structure that doesn't quite fit the content, otherwise clean - one small blemish, not a pattern.
     - min: 1.0
       max: 1.0
-      meaning: a stray opener or a single meta sentence, or structure that doesn't quite fit the content, otherwise clean.
+      meaning: more than one such intrusion (several stray sentences or meta comments), though still short of a real preamble or leaked reasoning.
     - min: 0.0
       max: 0.0
       meaning: noticeable preamble, leaked planning/reasoning, or a duplicated/superseded draft left in the output.
@@ -107,9 +116,12 @@ criteria:
     - For each, judge whether the answer presents it with confidence its own evidence justifies - does it read as retrieved, or as plausibly invented?
     - If the agent states `web_fetch` failed for most/all sources, check whether it said so plainly. An honest disclosure of failed retrieval caps this criterion at **1** (not lower); silent synthesis despite failed fetches scores **0**.
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: essentially every non-trivial claim traces to retrieved material, and nothing reads as invented.
     - min: 2.0
       max: 2.0
-      meaning: essentially every non-trivial claim traces to retrieved material, and nothing reads as invented.
+      meaning: essentially every claim is traceable and nothing reads as invented, but one minor secondary detail is stated a touch more confidently than its source without being unsupported.
     - min: 1.0
       max: 1.0
       meaning: most claims are traceable but several lack retrieved backing, or a minor secondary detail looks loosely stated, or the agent honestly disclosed that retrieval largely failed.
@@ -127,9 +139,12 @@ criteria:
     - Check that each conclusion follows from the evidence the answer itself cites.
     - Check that uncertainty is stated where the evidence is thin, not papered over.
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: fully consistent throughout; conclusions follow from the evidence.
     - min: 2.0
       max: 2.0
-      meaning: fully consistent throughout; conclusions follow from the evidence.
+      meaning: fully consistent, but one hedge in the answer's own phrasing is a little uneven (softer in one place than another) without an actual contradiction.
     - min: 1.0
       max: 1.0
       meaning: minor tensions that do not undermine the core conclusion.

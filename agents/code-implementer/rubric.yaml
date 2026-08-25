@@ -1,6 +1,6 @@
 scale:
   min: 0
-  max: 2
+  max: 3
   pass: 2
 notes: >
   A note on `checks_pass`. A deterministic criterion named `checks_pass` may already appear in the verdict, set by code (not by the judge) from actually running the plan node's configured build/test commands. Do not duplicate that judgment here - if the change compiles and its tests describe real behavior, that is enough context for the criteria below; the judge is not re-running the test suite.
@@ -18,9 +18,12 @@ criteria:
     - A claimed-but-absent operation, a claimed success over a ledgered FAILED entry, or a quote inconsistent with its read sample is fabrication - score 0 regardless of everything else.
     - "The converse is fine: ledger entries the answer doesn't mention are not a defect, and honestly reported failures/blocks score well here."
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every claimed operation and outcome is present in the ledger, matching what actually happened.
     - min: 2.0
       max: 2.0
-      meaning: every claimed operation and outcome is present in the ledger, matching what actually happened.
+      meaning: every claimed operation and outcome is present in the ledger, but one claimed detail (not an operation or outcome) is stated a little more specifically than the ledger sample strictly confirms, without contradicting it.
     - min: 1.0
       max: 1.0
       meaning: a minor claimed detail (not an operation or outcome) is unconfirmed by the ledger, though nothing the answer asserts is contradicted by it.
@@ -42,12 +45,15 @@ criteria:
     - Check whether the task or surrounding code offered an opportunity to delete something instead of only adding, and that the diff leaves no dead/commented-out code behind.
     - For any new import or hand-rolled utility, check whether the standard library or an already-vendored dependency already does the job.
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: the diff is the smallest one that satisfies the task, every abstraction has a concrete present-tense consumer, functions stay well within complexity/length guides, dead code is removed rather than left behind, and no dependency duplicates the stdlib.
     - min: 2.0
       max: 2.0
-      meaning: the diff is the smallest one that satisfies the task, every abstraction has a concrete present-tense consumer, functions stay well within complexity/length guides, dead code is removed rather than left behind, and no dependency duplicates the stdlib.
+      meaning: one dimension is mildly over - a small unrelated tidy-up, one piece of harmless unused flexibility, one function a bit long, one dependency added where the stdlib could have done it with a little more code - but nothing that obscures the change. A single mild flaw on one of the five merged dimensions (diff minimality, YAGNI, complexity budget, deletion-over-addition, native-first) is a noted issue, not a failure.
     - min: 1.0
       max: 1.0
-      meaning: one dimension is mildly over - a small unrelated tidy-up, one piece of harmless unused flexibility, one function a bit long, one dependency added where the stdlib could have done it with a little more code - but nothing that obscures the change.
+      meaning: two or more dimensions are mildly over at once, or one is moderately over (a function meaningfully past the complexity/length guide, a genuinely unused abstraction, a dependency clearly better served by the stdlib) - a real gap that would need a touch-up before merge, short of obscuring the change.
     - min: 0.0
       max: 0.0
       meaning: the diff carries substantial unrelated changes, a new interface/config surface has no current caller, a function is dramatically over budget and does several unrelated things, dead/commented-out code is left in the diff, or a dependency (or hand-rolled reimplementation) duplicates what the stdlib already provides.
@@ -61,12 +67,15 @@ criteria:
     - For any type/file the change adds methods or fields to, check whether the new members use the same state as the existing ones; flag one that shares no data with its siblings.
     - List any new or changed public functions/types/parameters, and check whether each does non-trivial work or is mostly a pass-through that could be inlined at the call site.
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every changed type/file stays focused on one responsibility, and the public surface is minimal and clearly hides real complexity.
     - min: 2.0
       max: 2.0
-      meaning: every changed type/file stays focused on one responsibility, and the public surface is minimal and clearly hides real complexity.
+      meaning: every changed type/file stays focused and the public surface is minimal, but one new member is a minor stretch from the type's existing purpose while still plausible there.
     - min: 1.0
       max: 1.0
-      meaning: one new member is a minor stretch from the type's existing purpose but still plausible there, or the interface is a little larger than it needs to be.
+      meaning: the interface is noticeably larger than it needs to be for what it hides, or more than one member is a stretch from the type's purpose - a real gap, short of a co-located second responsibility.
     - min: 0.0
       max: 0.0
       meaning: the change bolts a clearly unrelated responsibility onto an existing type/file (two design decisions co-located), or adds a large, shallow API for what the implementation actually does.
@@ -82,12 +91,15 @@ criteria:
     - For any interface or exported type the change adds to or creates, count its public methods and check whether the change's own consumer(s) actually use most of them.
     - "Read each new/changed public signature as if seeing only the signature: judge whether you could guess correct call sites without reading the body, flag any parameter typed `any`/`interface{}`/a loose map where a concrete type belonged, and check the parameter count and whether an intermediate function receives a parameter it never reads itself."
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: no gratuitous pass-through layers, dependency width matches the job, interfaces stay small and consumer-shaped, and every changed public signature is self-explanatory with short parameter lists and no unused forwarded parameters.
     - min: 2.0
       max: 2.0
-      meaning: no gratuitous pass-through layers, dependency width matches the job, interfaces stay small and consumer-shaped, and every changed public signature is self-explanatory with short parameter lists and no unused forwarded parameters.
+      meaning: one dimension is mildly over - a harmless unstated wrapper, fan-out a little wide, one interface a bit broader than consumed, one signature needing the body to disambiguate or 5-6 parameters - but nothing that obscures the design. A single mild flaw on one of the four merged dimensions (pass-through layers, fan-out, interface size, signature clarity) is a noted issue, not a failure.
     - min: 1.0
       max: 1.0
-      meaning: one dimension is mildly over - a harmless unstated wrapper, fan-out a little wide, one interface a bit broader than consumed, one signature needing the body to disambiguate or 5-6 parameters - but nothing that obscures the design.
+      meaning: two or more dimensions are mildly over at once, or one is moderately over (a genuine unexplained wrapper chain of two, fan-out clearly wider than the job needs, an interface visibly larger than what's consumed, a signature that needs real digging to use correctly) - a real gap short of obscuring the design.
     - min: 0.0
       max: 0.0
       meaning: a chain of one-line delegators with no logic or stated purpose, a function reaching into 7+ unrelated modules with no orchestration role, a large interface (10+ methods) whose consumer uses only a fraction of it, or a signature that is opaque or has 7+ parameters / a parameter threaded through multiple layers that never use it.
@@ -101,12 +113,15 @@ criteria:
     - Scan new/changed identifiers for vague names (`processData`, `doStuff`, `temp2`) or needless abbreviation.
     - Scan new/changed comments for ones that just narrate the following line (`i++ // increment i`) versus ones that explain a real reason.
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: names are specific and domain-meaningful; comments (if any) earn their place by explaining a non-obvious reason.
     - min: 2.0
       max: 2.0
-      meaning: names are specific and domain-meaningful; comments (if any) earn their place by explaining a non-obvious reason.
+      meaning: names are specific and comments earn their place, but one name is a little generic or one comment merely restates obvious code, without being actively harmful.
     - min: 1.0
       max: 1.0
-      meaning: one or two names are generic, or a comment merely restates obvious code, without being actively harmful.
+      meaning: several names are generic, or more than one comment merely restates obvious code.
     - min: 0.0
       max: 0.0
       meaning: multiple unclear/misleading names, or comments that are stale, redundant, or restate the code throughout the diff.
@@ -120,12 +135,15 @@ criteria:
     - Look for new error/exception handling blocks.
     - For each, judge whether the case is genuinely exceptional (needs surfacing to the caller) or could be defined out of existence (a safe default, a boundary check inline, a normal return value).
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: error handling is proportionate; no boilerplate wrapping a trivially-recoverable case.
     - min: 2.0
       max: 2.0
-      meaning: error handling is proportionate; no boilerplate wrapping a trivially-recoverable case.
+      meaning: error handling is proportionate overall, but one handler is a touch heavier than the case warrants without being confusing.
     - min: 1.0
       max: 1.0
-      meaning: one handler is heavier than the case warrants, but not confusing.
+      meaning: more than one handler is heavier than its case warrants, making the happy path noticeably harder to follow, though still not confusing on its own.
     - min: 0.0
       max: 0.0
       meaning: trivial, always-safe cases are wrapped in error-handling machinery that obscures the actual logic.
@@ -143,12 +161,15 @@ criteria:
     - "Check the evidence list of task-unnamed touched files (if provided): for each, is it a plausible, necessary part of the task's own scope, or unconnected to it? A `git_commit` call the ledger shows was REJECTED for staging too many files, followed by a scoped retry that succeeded, is not a defect - score the commit that actually landed."
     - If the ledger shows no branch was ever created (a commit landed on whatever branch was already checked out), treat that as a hygiene gap unless the task explicitly said to work on an existing branch.
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: branch and commit message are both specific to the change, and every task-unnamed touched file is a plausible, necessary part of the task's own scope.
     - min: 2.0
       max: 2.0
-      meaning: branch and commit message are both specific to the change, and every task-unnamed touched file is a plausible, necessary part of the task's own scope.
+      meaning: branch and message are both specific and every touched file is plausibly in scope, but one task-unnamed file's connection to the task is a stretch worth a second look, not a clear miss.
     - min: 1.0
       max: 1.0
-      meaning: one of branch/message is generic or thin, or one task-unnamed file's connection to the task is a stretch, but nothing that obscures what happened.
+      meaning: one of branch/message is generic or thin, or a task-unnamed file's connection to the task is genuinely unclear, but nothing that obscures what happened.
     - min: 0.0
       max: 0.0
       meaning: the branch name or commit message is a meaningless placeholder (`fix`, `update`, `wip`), OR the commit swept in files with no plausible connection to the task.
@@ -165,9 +186,12 @@ criteria:
     - "When delivery was needed, check for a successful `git_commit` entry in the workspace activity ledger - the disk-probed record of the commit an ACP worker made with its own git (there is no separate \"commit tool\" call to look for). Do not expect a `git_push` or PR-creation entry here: the gate pushes and opens the PR after this round, never during it."
     - Treat an answer that claims to have pushed, opened a PR, or merged as a fabrication - a code-implementer has no tool that does any of those itself. The honest claim is "committed and handed off for delivery"; anything stronger describes a capability it doesn't have.
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: the task's full scope is addressed in the change, and the answer's delivery claims match what a code-implementer can actually do (committed and handed off, not pushed or merged).
     - min: 2.0
       max: 2.0
-      meaning: the task's full scope is addressed in the change, and the answer's delivery claims match what a code-implementer can actually do (committed and handed off, not pushed or merged).
+      meaning: the task's full scope is addressed and delivery claims are accurate, but one minor sub-part of the task is covered more thinly than the rest without being dropped.
     - min: 1.0
       max: 1.0
       meaning: the core code change landed but the task's stated scope is only partially covered, with no honest note about what's left.

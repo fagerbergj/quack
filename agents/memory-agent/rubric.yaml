@@ -1,6 +1,6 @@
 scale:
   min: 0
-  max: 2
+  max: 3
   pass: 2
 notes: >
   Candidate quality bar. Apply this bar to every fact before you emit it as a candidate.
@@ -46,9 +46,12 @@ criteria:
     - For each candidate, find the user's own words it claims to restate.
     - Check the candidate states only what was said, not a generalization the user never made.
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every candidate traces to something the user explicitly said.
     - min: 2.0
       max: 2.0
-      meaning: every candidate traces to something the user explicitly said.
+      meaning: every candidate traces to something explicitly said, but one is phrased slightly more generally than the user's exact words while preserving their meaning.
     - min: 1.0
       max: 1.0
       meaning: one candidate is a reasonable paraphrase that slightly overreaches the user's literal words but not their meaning.
@@ -65,9 +68,12 @@ criteria:
     - For each candidate, check it describes how the user generally works or communicates, not something true only of the current task.
     - Check the candidate is non-sensitive (not health/legal/financial/political) and falls in a genuine "what to remember" category, not task content.
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every candidate is durable, correctly scoped, and non-sensitive.
     - min: 2.0
       max: 2.0
-      meaning: every candidate is durable, correctly scoped, and non-sensitive.
+      meaning: every candidate is durable and non-sensitive, but one is phrased a little more narrowly than it needs to be without actually being scoped to one task.
     - min: 1.0
       max: 1.0
       meaning: one candidate is borderline durable (plausibly recurring but stated only once) but otherwise fits.

@@ -1,6 +1,6 @@
 scale:
   min: 0
-  max: 2
+  max: 3
   pass: 2
 notes: >
   No-text handling: if the image contains no legible text and the answer honestly states this (e.g. "No text is visible in this image"), do not penalise `completeness`. Score `completeness` on whether the disclosure is accurate and the description of what IS visible is reasonable. Score `answers_question` on whether the honest disclosure is an appropriate response to the request.
@@ -13,9 +13,12 @@ criteria:
     - Check that each ask is addressed in the answer.
     - Note any silent narrowing or dropped sub-request.
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: addresses the request completely, including all sub-asks.
     - min: 2.0
       max: 2.0
-      meaning: addresses the request completely, including all sub-asks.
+      meaning: addresses every sub-ask, but one is covered more thinly than the others without actually being missed.
     - min: 1.0
       max: 1.0
       meaning: addresses the main ask but leaves a minor sub-request unanswered.
@@ -35,12 +38,15 @@ criteria:
     - Check whether any snippet, list, or conclusion appears more than once in different (superseded) forms - a sign of an abandoned draft left in place.
     - Check the structure (headings, lists) matches what the content actually needs.
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: pure answer, well-structured for its content; no preamble, narration, or trailing reasoning; only the final version of any content appears.
     - min: 2.0
       max: 2.0
-      meaning: pure answer, well-structured for its content; no preamble, narration, or trailing reasoning; only the final version of any content appears.
+      meaning: a single stray opener, one meta sentence, or structure that doesn't quite fit the content, otherwise clean - one small blemish, not a pattern.
     - min: 1.0
       max: 1.0
-      meaning: a stray opener or a single meta sentence, or structure that doesn't quite fit the content, otherwise clean.
+      meaning: more than one such intrusion (several stray sentences, or structure that gets in the reader's way), though still short of a real preamble or leaked reasoning.
     - min: 0.0
       max: 0.0
       meaning: noticeable preamble, leaked planning/reasoning, or a duplicated/superseded draft left in the output.
@@ -57,9 +63,12 @@ criteria:
     - For dense images, check that small print and secondary labels are included where the user asked for full extraction.
     - Do not penalise for omitting content the user did not ask for (e.g., if the user asked only to transcribe a heading, body text can be omitted).
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: all significant content the user asked for is present; minor incidental text may be omitted without penalty.
     - min: 2.0
       max: 2.0
-      meaning: all significant content the user asked for is present; minor incidental text may be omitted without penalty.
+      meaning: all significant content is present, but one secondary label or piece of small print is thinner than it could be without being dropped.
     - min: 1.0
       max: 1.0
       meaning: a section or label is missing that a thorough reader would include.
@@ -79,9 +88,12 @@ criteria:
     - Check whether genuinely illegible text is flagged or given as a best-guess (acceptable) versus confidently asserted as exact (not acceptable).
     - Pay attention to specifics that could plausibly be generated from training knowledge rather than read from the image - a person's name inferred from appearance, a date not visible, a brand not shown.
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: essentially every claim is traceable to the image; uncertain or unclear items are flagged or qualified; nothing reads as invented from training knowledge.
     - min: 2.0
       max: 2.0
-      meaning: essentially every claim is traceable to the image; uncertain or unclear items are flagged or qualified; nothing reads as invented from training knowledge.
+      meaning: every claim is traceable, but one secondary detail is stated slightly more confidently than the image strictly supports, without contradicting it.
     - min: 1.0
       max: 1.0
       meaning: most claims are grounded, but a few specifics or inferences are asserted without hedging where the image was ambiguous, or minor secondary details look loosely inferred.

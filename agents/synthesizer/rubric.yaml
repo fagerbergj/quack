@@ -1,6 +1,6 @@
 scale:
   min: 0
-  max: 2
+  max: 3
   pass: 2
 criteria:
   cites_sources:
@@ -40,9 +40,12 @@ criteria:
     - Check the claim accurately reflects what the source says, not a stretched or selective reading.
     - Check the citation is placed at the claim, not deferred to a references block the claim isn't attached to.
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: cited claims point at reputable sources, accurately reflect them, and are placed at the claim they support.
     - min: 2.0
       max: 2.0
-      meaning: cited claims point at reputable sources, accurately reflect them, and are placed at the claim they support.
+      meaning: sources are reputable and accurate, but one citation sits a sentence or two away from the claim it backs rather than directly at it.
     - min: 1.0
       max: 1.0
       meaning: one citation is a weak/tangential source, is loosely paraphrased, or is placed away from the claim it backs.
@@ -63,12 +66,15 @@ criteria:
     - Check whether any snippet, list, or conclusion appears more than once in different (superseded) forms - a sign of an abandoned draft left in place.
     - Check the structure (headings, lists, Sources block) matches what the content actually needs.
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: pure answer, well-structured for its content; no preamble or trailing narration; only the final version of any content appears.
     - min: 2.0
       max: 2.0
-      meaning: pure answer, well-structured for its content; no preamble or trailing narration; only the final version of any content appears.
+      meaning: a single stray opener or one meta sentence, or structure that doesn't quite fit the content, otherwise clean - one small blemish, not a pattern.
     - min: 1.0
       max: 1.0
-      meaning: a single stray opener or one meta sentence, or structure that doesn't quite fit the content, otherwise clean.
+      meaning: more than one such intrusion (several stray sentences or meta comments), though still short of a real preamble or leaked reasoning.
     - min: 0.0
       max: 0.0
       meaning: noticeable preamble, leaked planning in the output, or a duplicated/superseded draft left in place.
@@ -83,9 +89,12 @@ criteria:
     - Check whether each part is addressed in the synthesized answer.
     - Note any research angle that was visibly omitted or undercovered.
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every part of the question is addressed; all major research threads are incorporated.
     - min: 2.0
       max: 2.0
-      meaning: every part of the question is addressed; all major research threads are incorporated.
+      meaning: every part is addressed, but one minor research thread is thinner than the rest without being dropped.
     - min: 1.0
       max: 1.0
       meaning: main ask addressed; one or two sub-questions left thin or missing.
@@ -105,12 +114,15 @@ criteria:
     - For each, check whether the answer's own text - not your memory - supports the claim.
     - Flag claims stated with confidence that the answer's own evidence does not justify.
     bands:
+    - min: 3.0
+      max: 3.0
+      meaning: all claims trace to the research presented; nothing reads as added from outside.
     - min: 2.0
       max: 2.0
-      meaning: all claims trace to the research presented; nothing reads as added from outside.
+      meaning: all claims trace to the research, but one minor secondary detail is stated a little more loosely than the source text without being unsupported.
     - min: 1.0
       max: 1.0
-      meaning: minor secondary details look loosely stated; no core fact appears invented.
+      meaning: one secondary claim's confidence outruns what the research supports, though it does not read as clearly invented.
     - min: 0.0
       max: 0.0
       meaning: a name, statistic, or claim is clearly unsupported by the answer's own evidence.

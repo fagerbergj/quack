@@ -90,8 +90,8 @@ func TestJudgeFindings_ContradictedSinksGroundingCriterion(t *testing.T) {
 // verification is informational, not an automatic bonus or malus.
 func TestJudgeFindings_VerifiedFindingNoPenalty(t *testing.T) {
 	judge := scriptedFindingsJudge{
-		score:    2,
-		criteria: map[string]any{"claims_grounded": map[string]any{"score": 2, "reason": "matches the code exactly"}},
+		score:    3,
+		criteria: map[string]any{"claims_grounded": map[string]any{"score": 3, "reason": "matches the code exactly"}},
 		findings: []map[string]any{
 			{"index": 1, "path": "internal/vetting/mermaid.go", "line": 40, "status": "verified",
 				"why": "read the file: the validation call is exactly as the finding describes"},

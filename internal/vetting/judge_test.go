@@ -1019,7 +1019,7 @@ func (j *stutterJudge) GenerateContent(_ context.Context, req *model.LLMRequest,
 			yield(nil, fmt.Errorf("expected no tools on the forced closing turn, got %d req.Tools", len(req.Tools)))
 			return
 		}
-		yield(stubText(`{"score": 1, "criteria": {"accuracy": {"reason": "verified from prior reads", "score": 1}}, "feedback": ""}`), nil)
+		yield(stubText(`{"score": 3, "criteria": {"accuracy": {"reason": "verified from prior reads", "score": 3}}, "feedback": ""}`), nil)
 	}
 }
 
@@ -1039,8 +1039,8 @@ func TestRunJudgeAgent_ForcedVerdictOnRepeatedToolCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
-	if v.Score != 0.5 {
-		t.Errorf("verdict score = %v, want 0.5 (parsed from the forced-close text)", v.Score)
+	if v.Score != 1.0 {
+		t.Errorf("verdict score = %v, want 1.0 (parsed from the forced-close text)", v.Score)
 	}
 	if got := atomic.LoadInt32(&judge.calls); got != 3 {
 		t.Errorf("judge model called %d times, want 3 (two identical read_file calls + the forced no-tools close)", got)
@@ -1255,9 +1255,9 @@ func TestSubmitVerdict_NearMissPayloads(t *testing.T) {
 			t.Fatalf("newSubmitVerdictTool: %v", err)
 		}
 		args := map[string]any{
-			"score": 2.0,
+			"score": 3.0,
 			"criteria": map[string]any{
-				"completeness": map[string]any{"shortfall": nil, "fix": nil, "score": 2.0},
+				"completeness": map[string]any{"shortfall": nil, "fix": nil, "score": 3.0},
 			},
 			"feedback": "",
 		}

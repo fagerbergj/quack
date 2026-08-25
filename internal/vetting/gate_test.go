@@ -292,12 +292,12 @@ func TestNormalizeURL(t *testing.T) {
 
 func TestParseVerdictToleratesFencedJSON(t *testing.T) {
 	// Fenced block is stripped, and the raw score is normalized to 0–1.
-	v, err := parseVerdict("```json\n{\"score\": 1, \"passed\": true, \"feedback\": \"x\"}\n```")
+	v, err := parseVerdict("```json\n{\"score\": 3, \"passed\": true, \"feedback\": \"x\"}\n```")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.Score != 0.5 {
-		t.Errorf("score = %v, want 0.5 (1/2 normalized)", v.Score)
+	if v.Score != 1.0 {
+		t.Errorf("score = %v, want 1.0 (3/3 normalized)", v.Score)
 	}
 }
 
@@ -384,22 +384,22 @@ func TestAggregateVerdictMinAndClamp(t *testing.T) {
 	}
 }
 
-// The rubric asks the judge for 0/1/2 integers; the pipeline works in 0–1. A
+// The rubric asks the judge for 0/1/2/3 integers; the pipeline works in 0–1. A
 // verdict on the raw scale (any whole-number score) must be divided by
-// judgeScaleMax, so a perfect criterion (2) becomes 1.0 and the weakest
+// judgeScaleMax, so a perfect criterion (3) becomes 1.0 and the weakest
 // drives the overall.
 func TestParseVerdictNormalizesRawScale(t *testing.T) {
-	input := `{"criteria":{"grounded":{"score":1},"no_fabrication":{"score":2},"answers_question":{"score":2},"internally_consistent":{"score":1},"cites_sources":{"score":0}},"score":1,"passed":true,"feedback":""}`
+	input := `{"criteria":{"grounded":{"score":1},"no_fabrication":{"score":3},"answers_question":{"score":3},"internally_consistent":{"score":1},"cites_sources":{"score":0}},"score":1,"passed":true,"feedback":""}`
 	v, err := parseVerdict(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Lowest criterion is cites_sources=0 → 0.0 after /2.
+	// Lowest criterion is cites_sources=0 → 0.0 after /3.
 	if v.Score != 0.0 {
-		t.Errorf("score = %v, want 0.0 (lowest criterion 0/2)", v.Score)
+		t.Errorf("score = %v, want 0.0 (lowest criterion 0/3)", v.Score)
 	}
-	if g := v.Criteria["grounded"].Score; g != 0.5 {
-		t.Errorf("grounded = %v, want 0.5 (1/2)", g)
+	if g, want := v.Criteria["grounded"].Score, 1.0/3.0; g != want {
+		t.Errorf("grounded = %v, want %v (1/3)", g, want)
 	}
 }
 
@@ -413,14 +413,16 @@ func TestNormalizeScaleLeaves0To1Untouched(t *testing.T) {
 	}
 }
 
-// A raw verdict where every criterion happens to land on level 1 (all
-// "material issue") must still be divided by judgeScaleMax, not mistaken for
-// an already-normalized 0–1 verdict - level 1 is a legal raw score, not 1.0.
+// A raw verdict where every criterion happens to land on level 1 (a "deny,
+// small issues" band on the 4-level scale) must still be divided by
+// judgeScaleMax, not mistaken for an already-normalized 0–1 verdict - level 1
+// is a legal raw score, not 1.0.
 func TestNormalizeScaleAllOnesIsRawNotNormalized(t *testing.T) {
 	v := verdict{Score: 1, Criteria: map[string]criterionScore{"a": {Score: 1}, "b": {Score: 1}}}
 	normalizeScale(&v)
-	if v.Score != 0.5 || v.Criteria["a"].Score != 0.5 || v.Criteria["b"].Score != 0.5 {
-		t.Errorf("all-1 raw verdict not normalized to 0.5: %+v", v)
+	want := 1.0 / 3.0
+	if v.Score != want || v.Criteria["a"].Score != want || v.Criteria["b"].Score != want {
+		t.Errorf("all-1 raw verdict not normalized to %v: %+v", want, v)
 	}
 }
 
