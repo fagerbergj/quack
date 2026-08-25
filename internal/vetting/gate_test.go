@@ -478,3 +478,17 @@ func TestFoldDeterministic_RetrievalPresentNotPenalized(t *testing.T) {
 		t.Fatal("grounded_in_retrieval penalty applied despite recorded retrieval")
 	}
 }
+
+// TestFormatCriteriaDetail: 0.9 and 1.0 must render distinguishably - the
+// bug this guards against was %.0f collapsing both to "1" and hiding score
+// compression in the debug log.
+func TestFormatCriteriaDetail(t *testing.T) {
+	got := formatCriteriaDetail(map[string]criterionScore{
+		"grounded": {Score: 0.9, Reason: "minor gap"},
+		"accurate": {Score: 1.0, Reason: "fully correct"},
+	})
+	want := "accurate=1.00 (fully correct) | grounded=0.90 (minor gap)"
+	if got != want {
+		t.Errorf("formatCriteriaDetail = %q, want %q", got, want)
+	}
+}
