@@ -501,12 +501,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			otelobs.RecordJudgeVerdict(cfg.Agent, res.Score, res.Passed)
 			// Debug: per-criterion reasoning for diagnosable gate failures.
 			if len(v.Criteria) > 0 && log.Enabled(context.Background(), slog.LevelDebug) {
-				parts := make([]string, 0, len(v.Criteria))
-				for name, cs := range v.Criteria {
-					parts = append(parts, fmt.Sprintf("%s=%.0f (%s)", name, cs.Score, strings.TrimSpace(criterionText(cs))))
-				}
-				sort.Strings(parts)
-				log.Debug("judge verdict detail", "round", round, "criteria", strings.Join(parts, " | "), "feedback", strings.TrimSpace(v.Feedback))
+				log.Debug("judge verdict detail", "round", round, "criteria", formatCriteriaDetail(v.Criteria), "feedback", strings.TrimSpace(v.Feedback))
 			}
 			if res.Passed || round > cfg.JudgeRounds {
 				break

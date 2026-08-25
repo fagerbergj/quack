@@ -7,6 +7,7 @@ import (
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
@@ -59,5 +60,33 @@ func TestEmitEvaluationResults_DeterministicOrder(t *testing.T) {
 				break
 			}
 		}
+	}
+}
+
+// TestEmitEvaluationResults_AgentAttribute: per-criterion events must carry
+// gen_ai.agent.name (ledger's only "per agent" query key) when ctx carries
+// it - previously only response id/name/score/explanation were stamped.
+func TestEmitEvaluationResults_AgentAttribute(t *testing.T) {
+	capExp := &captureEvalExporter{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
+	restore := otelobs.SetLoggerProviderForTesting(lp)
+	defer restore()
+
+	v := verdict{Criteria: map[string]criterionScore{"accurate": {Score: 1.0, Reason: "ok"}}}
+	ctx := ledger.WithCoords(context.Background(), ledger.Coords{Agent: "reviewer"})
+	emitEvaluationResults(ctx, "judge-r1", v)
+
+	if len(capExp.records) != 1 {
+		t.Fatalf("got %d records, want 1", len(capExp.records))
+	}
+	var got string
+	capExp.records[0].WalkAttributes(func(kv otellog.KeyValue) bool {
+		if kv.Key == otelobs.GenAIAgentName {
+			got = kv.Value.AsString()
+		}
+		return true
+	})
+	if got != "reviewer" {
+		t.Errorf("gen_ai.agent.name = %q, want %q", got, "reviewer")
 	}
 }

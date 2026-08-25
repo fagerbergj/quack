@@ -26,6 +26,7 @@ import (
 	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/promptbuilder"
 	"github.com/fagerbergj/quack/internal/stream"
@@ -1134,14 +1135,20 @@ func emitEvaluationResults(ctx context.Context, responseID string, v verdict) {
 		names = append(names, name)
 	}
 	sort.Strings(names) // map iteration is random; a stable emit order matters for replay diffing
+	// gen_ai.agent.name: EmitLog stamps session/node/round only.
+	agent := ledger.CoordsFromContext(ctx).Agent
 	for _, name := range names {
 		cs := v.Criteria[name]
-		otelobs.EmitLog(ctx, judgeScope, "",
+		attrs := []otellog.KeyValue{
 			otellog.String(otelobs.GenAIResponseID, responseID),
 			otellog.String(otelobs.GenAIEvaluationName, name),
 			otellog.Float64(otelobs.GenAIEvaluationScore, cs.Score),
 			otellog.String(otelobs.GenAIEvaluationExplain, cs.Reason),
-		)
+		}
+		if agent != "" {
+			attrs = append(attrs, otellog.String(otelobs.GenAIAgentName, agent))
+		}
+		otelobs.EmitLog(ctx, judgeScope, "", attrs...)
 	}
 }
 
