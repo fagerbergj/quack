@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/model"
@@ -150,11 +151,16 @@ func logCompaction(ctx adkagent.Context, path string, beforeMsgs, beforeTokens i
 // The round's own OTel span is unreachable from here: RunNode rebuilds the
 // child context this callback runs under (the SetLedgerCoords-not-ctx pattern
 // elsewhere in this codebase exists for the same reason), so
-// oteltrace.SpanFromContext(ctx) would silently return the no-op span. Raise
-// a standalone "compaction" span instead - always a real recording span.
+// oteltrace.SpanFromContext(ctx) would silently return the no-op span. Coords
+// carries the round's SpanContext captured before that rebuild
+// (runWorkerNodeTraced); re-inject it so this span parents under the round
+// instead of rooting a disconnected trace. A zero SpanContext (no linkage
+// available) still raises an orphan span rather than none at all - do NOT
+// use StartLinked here, it forces WithNewRoot and would still fork the trace.
 func emitCompaction(ctx adkagent.Context, before, after int) {
 	coords := ledger.CoordsFromContext(ctx)
-	_, span := otelobs.Start(ctx, "compaction",
+	parentCtx := oteltrace.ContextWithSpanContext(ctx, coords.SpanContext)
+	_, span := otelobs.Start(parentCtx, "compaction",
 		attribute.String("node_id", coords.Node), attribute.String("run_id", coords.Round),
 		attribute.Bool(otelobs.GenAIConversationCompacted, true))
 	span.End()

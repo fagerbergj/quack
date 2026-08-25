@@ -341,6 +341,17 @@ func TestSDKExtensionReservedKeysToleratedByExtensionConfig(t *testing.T) {
 	}
 }
 
+// The registry is process-global and Register panics on a duplicate, so this
+// registers once per process (not per test run) to stay safe under -count>1.
+var reservedNameFactoryCalled atomic.Bool
+
+func init() {
+	extsdk.Register("chat", func(extsdk.Host, []byte) (extsdk.Extension, error) {
+		reservedNameFactoryCalled.Store(true)
+		return nil, errors.New("factory must never be called for a reserved-name collision")
+	})
+}
+
 // A registered+configured extension whose name collides with a reserved
 // route fails startup loudly, naming both the extension and the collision.
 func TestSDKExtensionReservedNameCollisionFailsStartup(t *testing.T) {
@@ -349,11 +360,6 @@ func TestSDKExtensionReservedNameCollisionFailsStartup(t *testing.T) {
 	orchRef.Store(orch)
 	var judgeModelRef atomic.Pointer[model.LLM]
 
-	extsdk.Register("chat", func(extsdk.Host, []byte) (extsdk.Extension, error) {
-		t.Fatal("factory must never be called for a reserved-name collision")
-		return nil, nil
-	})
-
 	cfg := noopModulesConfig(t, t.TempDir(), "chat:\n  key: value\n")
 	_, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef, nil, nil)
 	if err == nil {
@@ -361,6 +367,9 @@ func TestSDKExtensionReservedNameCollisionFailsStartup(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "chat") {
 		t.Errorf("err = %v, want it to name the extension", err)
+	}
+	if reservedNameFactoryCalled.Load() {
+		t.Error("factory was called for a reserved-name collision; startup must fail before construction")
 	}
 	if !strings.Contains(err.Error(), "reserved") {
 		t.Errorf("err = %v, want it to name the reserved-route collision", err)

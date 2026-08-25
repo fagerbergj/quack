@@ -357,6 +357,40 @@ describe('ChatStore - mid-node steering', () => {
     expect(ns?.question).toBe('which direction?')
   })
 
+  it('delivery_result fills in traceId when node_start never carried one (reconnect case)', async () => {
+    const sse = [
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}',
+      '',
+      'event: node_start',
+      'data: {"node_id":"a","agent":"researcher"}',
+      '',
+      'event: delivery_result',
+      'data: {"node_id":"a","outcome":"delivered","trace_id":"trace-123"}',
+      '',
+    ].join('\n')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'go')
+    expect(store.get('c').live?.dag?.nodeStates['a']?.traceId).toBe('trace-123')
+  })
+
+  it("delivery_result's traceId does not clobber one node_start already set", async () => {
+    const sse = [
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}',
+      '',
+      'event: node_start',
+      'data: {"node_id":"a","agent":"researcher","trace_id":"trace-original"}',
+      '',
+      'event: delivery_result',
+      'data: {"node_id":"a","outcome":"delivered","trace_id":"trace-stale"}',
+      '',
+    ].join('\n')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'go')
+    expect(store.get('c').live?.dag?.nodeStates['a']?.traceId).toBe('trace-original')
+  })
+
   it("a node's answer reflects only its LATEST worker/revise draft - judge commentary never leaks in, and a revision replaces (doesn't concatenate with) the draft it revised", async () => {
     const sse = [
       'event: dag_plan',
@@ -574,7 +608,7 @@ describe('ChatStore - mid-node steering', () => {
   })
 
   it('queueNodeMessage POSTs to the queue endpoint and ignores empty text', async () => {
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ id: 'q1', text: 'do X', delivered: false, created_at: '2026-01-01T00:00:00Z' }), { status: 200 }))
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ id: 'q1', text: 'do X', status: 'queued', delivered: false, created_at: '2026-01-01T00:00:00Z' }), { status: 200 }))
     await store.queueNodeMessage('c', 'a', '  do X  ')
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/chats/c/nodes/a/queue',

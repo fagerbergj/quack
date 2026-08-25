@@ -148,11 +148,18 @@ func mermaidError(body string) string {
 		warnMermaidValidatorUnavailable()
 		return ""
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), mermaidValidateTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "node", mermaidValidatorPath)
 	cmd.Stdin = strings.NewReader(body)
 	out, err := cmd.Output()
+	// A kill on timeout arrives as an ExitError, so it would otherwise fall
+	// through and report a VALID diagram as unreadable - a slow box must not
+	// fail the gate.
+	if ctx.Err() != nil {
+		warnMermaidValidatorTimeout()
+		return ""
+	}
 	if err != nil {
 		if _, isExitErr := err.(*exec.ExitError); !isExitErr {
 			warnMermaidValidatorUnavailable() // launch failure, not invalid diagram
@@ -170,6 +177,16 @@ func mermaidError(body string) string {
 		return translateMermaidError(res.Error)
 	}
 	return ""
+}
+
+// mermaidValidateTimeout bounds one node invocation. Generous on purpose: the
+// validator loads mermaid's full parser, and a timeout here is indistinguishable
+// from an invalid diagram to the caller. A var so tests can shorten it.
+var mermaidValidateTimeout = 60 * time.Second
+
+func warnMermaidValidatorTimeout() {
+	slog.Warn("mermaid validation timed out; skipping the check for this diagram",
+		"component", "vetting", "timeout", mermaidValidateTimeout)
 }
 
 // translateMermaidError turns mermaid's raw jison parse error into a message

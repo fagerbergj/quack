@@ -3,8 +3,10 @@ package vetting
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // requireMermaidValidator provisions scripts/node_modules (npm ci, shared
@@ -420,5 +422,31 @@ func TestMermaidCriterion_NoOpWhenValidatorUnavailable(t *testing.T) {
 	}
 	if _, ok := mermaidCriterion("no diagrams here", workerActivity{}); ok {
 		t.Fatal("want ok=false - nothing to validate")
+	}
+}
+
+// A validator that outruns its deadline must not report a VALID diagram as
+// invalid: CommandContext's kill surfaces as an ExitError, which used to fall
+// through to "unreadable output" and fail the gate on a slow box. Drives the
+// real mermaidError path (not a standalone stdlib probe) so reverting the
+// ctx.Err() guard in mermaidError fails this test.
+func TestMermaidValidate_TimeoutIsNotAnInvalidDiagram(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node unavailable in this environment")
+	}
+
+	script := filepath.Join(t.TempDir(), "hang.mjs")
+	if err := os.WriteFile(script, []byte("setTimeout(()=>{}, 10000);\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldPath, oldTimeout := mermaidValidatorPath, mermaidValidateTimeout
+	mermaidValidatorPath = script
+	mermaidValidateTimeout = 200 * time.Millisecond
+	defer func() { mermaidValidatorPath, mermaidValidateTimeout = oldPath, oldTimeout }()
+
+	// Before the fix this produced "unreadable output" (i.e. invalid) because
+	// CommandContext's kill arrives as an *exec.ExitError with empty output.
+	if got := mermaidError("A --> B"); got != "" {
+		t.Fatalf("mermaidError = %q, want \"\" (a timeout must not mark a valid diagram invalid)", got)
 	}
 }

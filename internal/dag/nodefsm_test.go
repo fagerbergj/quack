@@ -186,8 +186,8 @@ func TestQueuedSteerSurvivesRestart(t *testing.T) {
 	if err := json.Unmarshal([]byte(fake.queue["chat/n1"]), &msgs); err != nil {
 		t.Fatalf("queue json: %v", err)
 	}
-	if len(msgs) != 1 || !msgs[0].Delivered {
-		t.Errorf("persisted queue = %+v; want one delivered message", msgs)
+	if len(msgs) != 1 || msgs[0].Status != MsgDrained {
+		t.Errorf("persisted queue = %+v; want one drained message", msgs)
 	}
 }
 

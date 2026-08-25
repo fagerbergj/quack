@@ -197,7 +197,7 @@ func (g *guardedTool) runSafetyJudge(ctx agent.Context, args map[string]any) (al
 	stamp := g.coords
 	g.mu.Unlock()
 	jctx := context.Context(ctx)
-	if stamp != (ledger.Coords{}) {
+	if !stamp.IsZero() {
 		jctx = ledger.WithCoords(jctx, fillBlankCoords(ledger.CoordsFromContext(jctx), stamp))
 	}
 	return g.judge(jctx, "", task, g.Name(), args, activity)

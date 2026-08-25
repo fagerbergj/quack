@@ -251,6 +251,27 @@ func (e PauseReason) Valid() bool {
 	}
 }
 
+// Defines values for QueuedMessageStatus.
+const (
+	Drained   QueuedMessageStatus = "drained"
+	Forwarded QueuedMessageStatus = "forwarded"
+	Queued    QueuedMessageStatus = "queued"
+)
+
+// Valid indicates whether the value is a known member of the QueuedMessageStatus enum.
+func (e QueuedMessageStatus) Valid() bool {
+	switch e {
+	case Drained:
+		return true
+	case Forwarded:
+		return true
+	case Queued:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReasoningPartType.
 const (
 	Reasoning ReasoningPartType = "reasoning"
@@ -703,11 +724,17 @@ type QueueMessageBody struct {
 type QueuedMessage struct {
 	CreatedAt time.Time `json:"created_at"`
 
-	// Delivered True once handed to the node - immediately if its round was live (#998), otherwise at the next turn boundary; no longer editable or removable either way.
+	// Delivered Derived from status (true for forwarded and drained). True once handed to the node - immediately if its round was live (#998), otherwise at the next turn boundary; no longer editable or removable either way. Kept for existing consumers; prefer status for the forwarded-vs-drained distinction.
 	Delivered bool   `json:"delivered"`
 	Id        string `json:"id"`
-	Text      string `json:"text"`
+
+	// Status queued - accepted, not yet picked up. forwarded - injected straight into a live round (#998). drained - consumed at a gate boundary.
+	Status QueuedMessageStatus `json:"status"`
+	Text   string              `json:"text"`
 }
+
+// QueuedMessageStatus queued - accepted, not yet picked up. forwarded - injected straight into a live round (#998). drained - consumed at a gate boundary.
+type QueuedMessageStatus string
 
 // ReasoningPart defines model for ReasoningPart.
 type ReasoningPart struct {

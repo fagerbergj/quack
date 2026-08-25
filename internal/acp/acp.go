@@ -55,6 +55,12 @@ type Options struct {
 	// mid-round instead of at the next gate boundary (#998). nil = park always.
 	RegisterLiveSteer   func(chatID, nodeID string, forward func(text string) bool)
 	UnregisterLiveSteer func(chatID, nodeID string)
+	// RegisterRoundAbort/UnregisterRoundAbort let CancelNode reach a running
+	// round's abort RPC directly instead of waiting for the round to end
+	// (#1030). Cancel only - never wired for pause, which must preserve
+	// whatever the round has accumulated so it can resume.
+	RegisterRoundAbort   func(chatID, nodeID string, cancel context.CancelFunc)
+	UnregisterRoundAbort func(chatID, nodeID string)
 }
 
 // Agent is an adkagent.Agent backed by an external ACP subprocess.
@@ -234,6 +240,18 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 	coords := a.coords
 	a.mu.Unlock()
 
+	// abortCtx is CancelNode's direct line into this round (#1030), separate
+	// from ctx (which also carries parent shutdown) so both trigger the same
+	// graceful-cancel path below without one masking the other's cause.
+	abortCtx, abortCancel := context.WithCancel(context.Background())
+	defer abortCancel()
+	if a.opts.RegisterRoundAbort != nil && steerChatID != "" && steerNodeID != "" {
+		a.opts.RegisterRoundAbort(steerChatID, steerNodeID, abortCancel)
+		if a.opts.UnregisterRoundAbort != nil {
+			defer a.opts.UnregisterRoundAbort(steerChatID, steerNodeID)
+		}
+	}
+
 	spawnCtx, spawnSpan := otelobs.Start(ctx, "acp.spawn", attribute.String(otelobs.GenAIAgentName, a.name))
 	_ = spawnCtx
 	h, err := a.start(ctx, cwd, extraRO, caps)
@@ -300,6 +318,19 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 	endPrompt := func(err error) {
 		turns.closeAll()
 		otelobs.End(promptSpan, err)
+	}
+	// A cancel arriving during the spawn/handshake window (RegisterRoundAbort
+	// above, up to StartTimeout) has nothing to cancel yet - session/cancel
+	// for a prompt never sent is a no-op, and waiting on `done` blocks for
+	// the full cancelGrace. Bail before ever sending session/prompt (#1030 review).
+	select {
+	case <-ctx.Done():
+		endPrompt(ctx.Err())
+		return ctx.Err()
+	case <-abortCtx.Done():
+		endPrompt(abortCtx.Err())
+		return abortCtx.Err()
+	default:
 	}
 	go func() {
 		resp, perr := h.conn.Prompt(context.Background(), sdk.PromptRequest{
@@ -374,6 +405,9 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 		case <-ctx.Done():
 			a.gracefulCancel(h, sess.SessionId, done)
 			return ctx.Err()
+		case <-abortCtx.Done():
+			a.gracefulCancel(h, sess.SessionId, done)
+			return abortCtx.Err()
 		case <-idleTimer.C:
 			a.gracefulCancel(h, sess.SessionId, done)
 			return fmt.Errorf("acp: no activity for %s - treating opencode as wedged%s", a.opts.IdleTimeout, h.stderrTail())
@@ -422,7 +456,9 @@ func mcpToolsBlock(names []string) string {
 func (a *Agent) gracefulCancel(h *procHandle, sessID sdk.SessionId, done <-chan promptDone) {
 	cctx, cancel := context.WithTimeout(context.Background(), cancelGrace)
 	defer cancel()
-	_ = h.conn.Cancel(cctx, sdk.CancelNotification{SessionId: sessID})
+	if err := h.conn.Cancel(cctx, sdk.CancelNotification{SessionId: sessID}); err != nil {
+		return // broken pipe etc - nothing more to wait for
+	}
 	select {
 	case <-done:
 	case <-cctx.Done():

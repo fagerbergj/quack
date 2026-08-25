@@ -78,7 +78,7 @@ func (e *emitTool) Run(ctx agent.Context, args any) (map[string]any, error) {
 	coords := e.coords
 	e.mu.Unlock()
 	emitCtx := context.Context(ctx)
-	if coords != (ledger.Coords{}) {
+	if !coords.IsZero() {
 		emitCtx = ledger.WithCoords(ctx, ledger.FillBlankCoords(ledger.CoordsFromContext(ctx), coords))
 	}
 	emitToolEvent(emitCtx, e.Name(), args, result, err)
