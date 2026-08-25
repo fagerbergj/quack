@@ -90,8 +90,8 @@ func TestJudgeFindings_ContradictedSinksGroundingCriterion(t *testing.T) {
 // verification is informational, not an automatic bonus or malus.
 func TestJudgeFindings_VerifiedFindingNoPenalty(t *testing.T) {
 	judge := scriptedFindingsJudge{
-		score:    0.9,
-		criteria: map[string]any{"claims_grounded": map[string]any{"score": 9, "reason": "matches the code exactly"}},
+		score:    2,
+		criteria: map[string]any{"claims_grounded": map[string]any{"score": 2, "reason": "matches the code exactly"}},
 		findings: []map[string]any{
 			{"index": 1, "path": "internal/vetting/mermaid.go", "line": 40, "status": "verified",
 				"why": "read the file: the validation call is exactly as the finding describes"},
@@ -111,8 +111,8 @@ func TestJudgeFindings_VerifiedFindingNoPenalty(t *testing.T) {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
 	cs, ok := v.Criteria[findingsGroundingCriterion]
-	if !ok || cs.Score != 0.9 {
-		t.Fatalf("%s = %+v, want the judge's own 0.9 untouched - a verified finding must not move it", findingsGroundingCriterion, cs)
+	if !ok || cs.Score != 1.0 {
+		t.Fatalf("%s = %+v, want the judge's own 1.0 untouched - a verified finding must not move it", findingsGroundingCriterion, cs)
 	}
 	if v.Score < cfg.Threshold {
 		t.Fatalf("verdict score = %v, want >= threshold %v", v.Score, cfg.Threshold)

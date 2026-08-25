@@ -21,7 +21,7 @@ func marshalEnvelope(env verdictEnvelope) string {
 }
 
 // scaleSpec: a criterion's score range, explicit per criterion (#941) - judge
-// criteria are 0-10, deterministic checks like cites_sources keep their own
+// criteria are 0-2, deterministic checks like cites_sources keep their own
 // native scale (0-1).
 type scaleSpec struct {
 	Min float64 `json:"min"`

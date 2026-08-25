@@ -60,7 +60,7 @@ func TestCodeImplementerBundle(t *testing.T) {
 	// claims-vs-ledger fabrication criterion (live e2e 2026-07-10).
 	// "weakest-link" itself is judge-prompt content now, not rubric content
 	// (#941) - judge.go states the aggregation method once, not per rubric.
-	for _, marker := range []string{"checks_pass", "yagni_speculative_generality", "diff_minimality", "deletion_over_addition", "native_first",
+	for _, marker := range []string{"checks_pass", "complexity_proportionate", "module_shape", "coupling",
 		"claims_match_activity", "Workspace activity", "ledger"} {
 		if !strings.Contains(rubric, marker) {
 			t.Errorf("rubric missing expected marker %q", marker)

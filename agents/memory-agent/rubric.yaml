@@ -1,7 +1,7 @@
 scale:
   min: 0
-  max: 10
-  pass: 7
+  max: 2
+  pass: 2
 notes: >
   Candidate quality bar. Apply this bar to every fact before you emit it as a candidate.
   When in doubt, leave it out - a missed memory costs nothing until it recurs and gets
@@ -37,4 +37,43 @@ notes: >
   A message with nothing meeting every point above yields no candidates - not a weakened
   or hedged one.
 criteria:
-  {}
+  fact_supported:
+    definition: >
+      Each emitted candidate is explicitly stated by the user in the message, not inferred, extrapolated from a one-off request, or guessed at from tone/word choice/brevity alone.
+    guidance: >
+      This rubric is not currently wired to a judge gate - memory-agent's fire-and-forget hook has no vetting node - it exists so the criteria are ready if that changes, and as an explicit quality bar alongside the notes above.
+    steps:
+    - For each candidate, find the user's own words it claims to restate.
+    - Check the candidate states only what was said, not a generalization the user never made.
+    bands:
+    - min: 2.0
+      max: 2.0
+      meaning: every candidate traces to something the user explicitly said.
+    - min: 1.0
+      max: 1.0
+      meaning: one candidate is a reasonable paraphrase that slightly overreaches the user's literal words but not their meaning.
+    - min: 0.0
+      max: 0.0
+      meaning: a candidate is inferred, extrapolated, or guessed at with no explicit statement behind it.
+    anchors:
+    - quote
+    - omission
+  durable_and_scoped:
+    definition: >
+      Each candidate is durable (a standing preference or constraint, not scoped to one task/PR/message) and worth recalling later - a genuine work/communication preference, goal, or standing constraint, never ordinary task content or a sensitive personal fact.
+    steps:
+    - For each candidate, check it describes how the user generally works or communicates, not something true only of the current task.
+    - Check the candidate is non-sensitive (not health/legal/financial/political) and falls in a genuine "what to remember" category, not task content.
+    bands:
+    - min: 2.0
+      max: 2.0
+      meaning: every candidate is durable, correctly scoped, and non-sensitive.
+    - min: 1.0
+      max: 1.0
+      meaning: one candidate is borderline durable (plausibly recurring but stated only once) but otherwise fits.
+    - min: 0.0
+      max: 0.0
+      meaning: a candidate is transient (scoped to this task only), is ordinary task content, or is sensitive personal information.
+    anchors:
+    - quote
+    - omission

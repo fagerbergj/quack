@@ -261,9 +261,9 @@ gates:
     model: ${QUACK_JUDGE_MODEL}   # empty ⇒ judge disabled
     max_rounds: 1           # expensive model-judge/revise rounds
     threshold: 0.7          # PER-CRITERION pass bar: every rubric criterion must clear it.
-                            # On the rubric's 0-10 scale this is 7/10 ("met, with only
-                            # minor gaps"); the verdict score is the lowest criterion
-                            # (weakest-link gating, no averaging, no caps).
+                            # On the rubric's 0-2 scale this is 2/2 ("fully met"); the
+                            # verdict score is the lowest criterion (weakest-link
+                            # gating, no averaging, no caps).
     max_iterations: 6       # safety cap on the judge's model turns per round
     context_window: 65536   # gemma's served slot (llm-swap --parallel 1 ⇒ full 64K/call); budgets the assembled judge prompt so it fits before the call instead of 400ing (#291)
     max_output_tokens: 8192  # cap on the judge/plan-judge round's own reply - a runaway

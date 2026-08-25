@@ -1,7 +1,7 @@
 scale:
   min: 0
-  max: 10
-  pass: 7
+  max: 2
+  pass: 2
 criteria:
   accurate:
     definition: >
@@ -21,15 +21,15 @@ criteria:
     - Judge whether uncertainty is stated where the code was ambiguous, rather than
       papered over with false confidence.
     bands:
-    - min: 7.0
-      max: 10.0
+    - min: 2.0
+      max: 2.0
       meaning: the description matches the code; any uncertainty is flagged honestly.
-    - min: 4.0
-      max: 6.0
+    - min: 1.0
+      max: 1.0
       meaning: mostly accurate, but a secondary claim is wrong or misleading, or a guess is
         stated as fact without hedging.
     - min: 0.0
-      max: 3.0
+      max: 0.0
       meaning: a core claim about how the code works is wrong, or the answer confidently
         misrepresents the structure/behavior.
     anchors:
@@ -58,16 +58,16 @@ criteria:
       the dead end. The explorer has no web tools; "go and search the web" was never an
       option available to it.
     bands:
-    - min: 7.0
-      max: 10.0
+    - min: 2.0
+      max: 2.0
       meaning: addresses the request completely, at a depth proportionate to what was asked; or
         establishes, with evidence, that the answer is not in the reachable source, and
         says what is there instead and where the answer likely lives.
-    - min: 4.0
-      max: 6.0
+    - min: 1.0
+      max: 1.0
       meaning: addresses the main ask but leaves a sub-question thin or drops a named area.
     - min: 0.0
-      max: 3.0
+      max: 0.0
       meaning: misses the core ask, answers a generic "what is this repo" in place of the
         specific question, or reports "not found" with no account of what was searched
         and no conclusion drawn.
@@ -91,16 +91,16 @@ criteria:
       self-talk, or meta-commentary about tools/skills. Score down for each such
       intrusion; the buried content's quality does not excuse it.
     bands:
-    - min: 7.0
-      max: 10.0
+    - min: 2.0
+      max: 2.0
       meaning: precise file/symbol references, well-organized, directly actionable; pure answer
         with no preamble or leaked reasoning.
-    - min: 4.0
-      max: 6.0
+    - min: 1.0
+      max: 1.0
       meaning: useful but vague in places (an area named where a file was needed), or a stray
         opener/meta sentence mars an otherwise clean answer.
     - min: 0.0
-      max: 3.0
+      max: 0.0
       meaning: too vague to act on (no concrete references), disorganized, or noticeably marred
         by preamble/leaked planning.
     anchors:
@@ -144,17 +144,17 @@ criteria:
       substitute for a missing citation.
     - Score the proportion of claims that are backed by actual reads.
     bands:
-    - min: 7.0
-      max: 10.0
+    - min: 2.0
+      max: 2.0
       meaning: essentially every claim about the code traces to a file the worker read; quotes
         match their read samples; any run in the ledger was warranted and stated as such.
-    - min: 4.0
-      max: 6.0
+    - min: 1.0
+      max: 1.0
       meaning: most claims are grounded, but several rest on inference from names or on files
         never opened, or the answer over-quotes beyond what it read, or leans on an
         unwarranted run in place of a citation.
     - min: 0.0
-      max: 3.0
+      max: 0.0
       meaning: the answer asserts how the code works largely from guesswork - describing files
         the ledger shows were never read - or quotes content its reads cannot support, or
         substitutes a long run for reading a claim the code itself would have settled.

@@ -3,8 +3,8 @@
 # cannot hear audio, cannot see retrieval log - state it here.]
 scale:
   min: 0
-  max: 10
-  pass: 7
+  max: 2
+  pass: 2
 notes: >
   [Domain handling section - include if applicable. E.g. zero-retrieval handling:
   if the agent explicitly states it could not retrieve sources, score `grounded`
@@ -25,14 +25,14 @@ criteria:
     - "[Next step]"
     - "[Final step - assign score]"
     bands:
-    - min: 7.0
-      max: 10.0
+    - min: 2.0
+      max: 2.0
       meaning: "[specific observable condition for \"met\"]"
-    - min: 4.0
-      max: 6.0
+    - min: 1.0
+      max: 1.0
       meaning: "[specific observable condition for \"partially met\"]"
     - min: 0.0
-      max: 3.0
+      max: 0.0
       meaning: "[specific observable condition for \"failed\"]"
     anchors:
     - quote

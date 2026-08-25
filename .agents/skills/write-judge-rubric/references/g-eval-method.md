@@ -63,15 +63,15 @@ Most criteria in this repo are Task-Grounded or Behavior-Grounded. Knowledge-Gro
 
 ---
 
-## Scoring Bands vs. the 0–10 Scale
+## Scoring Bands vs. the 0–2 Scale
 
-The 0–10 scale (10 = flawless, 7 = lowest passing, 0 = total failure) is fixed and shared across all criteria. The per-criterion **scoring bands** tell the judge what "met / partially met / failed" means for that specific criterion - they map observable conditions to the three ranges (7–10, 4–6, 0–3), not to individual integers. The judge then picks the integer within the range using the global scale.
+The 0–2 scale (2 = fully met, 1 = partially met, 0 = failed) is fixed and shared across all criteria, and it exists *because* the bands do - one level per band, no range wider than a single integer. Earlier this rubric family used a 0–10 scale with the same three bands spread across wide ranges (7–10, 4–6, 0–3); that gave the judge integers with no descriptor behind them, and it reliably clustered at "9, with a nit" instead of using the full range. The fix was to shrink the scale to match the descriptor count, not to add more descriptors - see the repo's rubric-scale PR for the measured clustering and the arithmetic proof that the pass/fail boundary didn't move.
 
 ---
 
 ## Threshold
 
-The gate in this repo uses **threshold 0.6** (= score 6 on the 0–10 scale, normalised). The rubric files set **7 as the lowest passing score** in the scale description, which aligns to 0.7 after normalisation - slightly above the gate threshold, giving a small margin. Do not change the scale's "lowest passing score" annotation without also reviewing the gate threshold in `config/quack.yaml`.
+The gate uses a **normalised threshold** (0.6–0.7 depending on the config) against the 0–1 axis the rubric's 0–2 scale divides down to. The rubric's own "lowest passing score" is **2** (normalises to 1.0), sitting above the gate threshold and giving margin; the middle band (**1**, normalises to 0.5) fails outright rather than sitting close to the line. Do not change the scale's "lowest passing score" annotation without also reviewing the gate threshold in `config/quack.yaml`.
 
 ---
 

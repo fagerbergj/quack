@@ -29,16 +29,35 @@ func TestBundledRubricsLoadAndValidate(t *testing.T) {
 			if err != nil {
 				t.Fatalf("load/validate: %v", err)
 			}
-			if path == "../../agents/memory-agent/rubric.yaml" {
-				if len(doc.Criteria) != 0 {
-					t.Errorf("memory-agent rubric is prose guidance, not a scored rubric - want 0 criteria, got %d", len(doc.Criteria))
-				}
-				return
-			}
 			if len(doc.Criteria) == 0 {
 				t.Errorf("no criteria parsed from %s", path)
 			}
 		})
+	}
+}
+
+// TestBundledRubricsNoEmptyBands: every non-deterministic criterion must
+// anchor its scale with written bands - an empty bands:[] leaves the score
+// entirely unanchored (#claims_grounded was shipped this way).
+func TestBundledRubricsNoEmptyBands(t *testing.T) {
+	matches, err := filepath.Glob("../../agents/*/rubric.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range matches {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		doc, err := loadRubricYAML(raw, path)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		for name, c := range doc.Criteria {
+			if len(c.Bands) == 0 {
+				t.Errorf("%s: criterion %q has no bands - every scoring level needs a written descriptor", path, name)
+			}
+		}
 	}
 }
 
@@ -144,15 +163,15 @@ func TestRenderRubricMarkdownWebResearcherGolden(t *testing.T) {
 	for _, want := range []string{
 		"### `answers_question`",
 		"### `cites_sources`",
+		"### `citation_quality`",
 		"### `clean_output`",
 		"### `grounded`",
 		"### `internally_consistent`",
-		"### `no_fabrication`",
 		"**Evaluation steps.**",
 		"**Scoring bands.**",
-		"- **7–10** -",
-		"- **4–6** -",
-		"- **0–3** -",
+		"- **2** -",
+		"- **1** -",
+		"- **0** -",
 		"Date-awareness",
 		"Zero-retrieval handling",
 	} {
@@ -233,13 +252,12 @@ func TestGuidanceReachesJudgePromptNotEnvelope(t *testing.T) {
 	}
 }
 
-// TestMemoryAgentZeroCriteriaHandledLikeAnyOtherRubric: memory-agent's
-// rubric.yaml is prose-only guidance (criteria: {}), used as chat guidance
-// text rather than a judge rubric. loadRubric/LoadBundleRubric must still
-// render its notes as non-empty text (the judge/chat build still needs it),
-// and an envelope built from a verdict with no criteria at all must have
-// empty Passing/Deterministic/Judge arrays rather than erroring.
-func TestMemoryAgentZeroCriteriaHandledLikeAnyOtherRubric(t *testing.T) {
+// TestMemoryAgentRubricRendersNotesAlongsideCriteria: memory-agent's
+// rubric.yaml carries both cross-cutting notes (the candidate quality bar)
+// and scored criteria, ready for gating even though the fire-and-forget
+// memory hook has no vetting node today. loadRubric/LoadBundleRubric must
+// still render the notes as non-empty text (the judge/chat build needs it).
+func TestMemoryAgentRubricRendersNotesAlongsideCriteria(t *testing.T) {
 	raw, err := os.ReadFile("../../agents/memory-agent/rubric.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -248,8 +266,8 @@ func TestMemoryAgentZeroCriteriaHandledLikeAnyOtherRubric(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load/validate: %v", err)
 	}
-	if len(doc.Criteria) != 0 {
-		t.Fatalf("expected 0 criteria, got %d", len(doc.Criteria))
+	if len(doc.Criteria) == 0 {
+		t.Fatal("expected memory-agent to carry criteria, got 0")
 	}
 	rendered := renderRubricMarkdown(doc)
 	if strings.TrimSpace(rendered) == "" {
@@ -258,7 +276,13 @@ func TestMemoryAgentZeroCriteriaHandledLikeAnyOtherRubric(t *testing.T) {
 	if !strings.Contains(rendered, "Candidate quality bar") {
 		t.Errorf("rendered rubric missing its notes content:\n%s", rendered)
 	}
+}
 
+// TestEnvelopeFromCriteriaLessVerdictIsEmpty: an envelope built from a
+// verdict with no criteria at all (any agent whose rubric happens to score
+// nothing this round) must have empty Passing/Deterministic/Judge arrays
+// rather than erroring.
+func TestEnvelopeFromCriteriaLessVerdictIsEmpty(t *testing.T) {
 	env := buildEnvelope(verdict{}, 0.7, 1)
 	if len(env.Passing) != 0 || len(env.DeterministicFailures) != 0 || len(env.JudgeFailures) != 0 {
 		t.Errorf("envelope from a criteria-less verdict should have all-empty arrays, got %+v", env)
