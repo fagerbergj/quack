@@ -153,6 +153,34 @@ var staleSetups sync.Map // chatID -> struct{}
 // setupMu serializes the refresh check: parallel nodes share one Plan.Setup.
 var setupMu sync.Mutex
 
+// liveNodes counts a chat's currently-executing gate nodes. Read-only nodes
+// work in linked worktrees off the shared clone, so re-cloning it pulls the
+// gitdir out from under any sibling still running (#1064).
+var liveNodes = struct {
+	sync.Mutex
+	n map[string]int
+}{n: map[string]int{}}
+
+func enterNode(chatID string) {
+	liveNodes.Lock()
+	liveNodes.n[chatID]++
+	liveNodes.Unlock()
+}
+
+func leaveNode(chatID string) {
+	liveNodes.Lock()
+	if liveNodes.n[chatID]--; liveNodes.n[chatID] <= 0 {
+		delete(liveNodes.n, chatID)
+	}
+	liveNodes.Unlock()
+}
+
+func soleLiveNode(chatID string) bool {
+	liveNodes.Lock()
+	defer liveNodes.Unlock()
+	return liveNodes.n[chatID] == 1
+}
+
 // MarkSetupStale records that chatID's clone no longer matches its branch.
 // Advisory: the next safe node boundary re-clones, or the run finishes on the
 // tree it started with.
@@ -165,8 +193,9 @@ func clearSetupStale(chatID string) { staleSetups.Delete(chatID) }
 // refreshStaleSetup re-clones at a node boundary when the branch moved under
 // the run, and reports whether it did. Re-provisioning RemoveAll's the target,
 // so it is gated hard: read-only node, review-only plan (an implementer's
-// commits live in that tree, unpushed until delivery), and a clean tree. A
-// stale review beats a run that loses its work.
+// commits live in that tree, unpushed until delivery), no sibling node live in
+// a worktree off it, and a clean tree. A stale review beats a run that loses
+// its work.
 func (e *Executor) refreshStaleSetup(ctx context.Context, userID, chatID string, plan *Plan, node Node, cfg vetting.Config) bool {
 	if plan.Setup == nil || !readOnlyQualifyingAgent(node.AgentName) || !isReviewOnlySetup(*plan) {
 		return false
@@ -177,6 +206,11 @@ func (e *Executor) refreshStaleSetup(ctx context.Context, userID, chatID string,
 	setupMu.Lock()
 	defer setupMu.Unlock()
 	if _, stale := staleSetups.Load(chatID); !stale {
+		return false
+	}
+	if !soleLiveNode(chatID) {
+		slog.Info("dag: setup invalidated but a sibling node is running in a worktree off the clone; keeping it",
+			"component", "dag", "chat", chatID, "node", node.ID)
 		return false
 	}
 	if !setupTreeClean(ctx, cfg) {

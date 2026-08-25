@@ -110,6 +110,9 @@ func TestRefreshStaleSetupRecloneGates(t *testing.T) {
 			}
 			t.Cleanup(func() { staleSetups.Delete("c1") })
 
+			enterNode("c1")
+			t.Cleanup(func() { leaveNode("c1") })
+
 			plan := tt.plan()
 			got := e.refreshStaleSetup(context.Background(), "u1", "c1", plan, tt.node, cfg)
 			if got != tt.want {
@@ -139,6 +142,8 @@ func TestRefreshStaleSetupIsOncePerSignal(t *testing.T) {
 	MarkSetupStale("c1")
 	t.Cleanup(func() { staleSetups.Delete("c1") })
 
+	enterNode("c1")
+	t.Cleanup(func() { leaveNode("c1") })
 	plan := reviewPlan()
 	node := Node{ID: "review", AgentName: reviewerAgent}
 	if !e.refreshStaleSetup(context.Background(), "u1", "c1", plan, node, cfg) {
@@ -188,7 +193,14 @@ func TestRefreshedNodeTellsItsWorker(t *testing.T) {
 			plan := Plan{ID: "t-refresh", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: reviewerAgent}}}
 			cfg := nodeGateConfig(plan, plan.Nodes[0], nil, func(string) vetting.Config { return writableGateCfg() }, "chat1", "")
 			stub := &promptSnoopStub{}
-			runSingleNode(t, plan, cfg, stub, func(context.Context, Node, vetting.Config) bool { return refreshed })
+			var sawSole bool
+			runSingleNode(t, plan, cfg, stub, func(context.Context, Node, vetting.Config) bool {
+				sawSole = soleLiveNode("") // runSingleNode's chatID
+				return refreshed
+			})
+			if !sawSole {
+				t.Error("the node had not registered itself as live by the time the refresh ran; the sibling gate cannot see it")
+			}
 
 			stub.mu.Lock()
 			defer stub.mu.Unlock()
@@ -235,4 +247,36 @@ func TestStaleFlagClearedOnFreshRunKeptOnResume(t *testing.T) {
 	if _, stale := staleSetups.Load("chat"); !stale {
 		t.Error("flag dropped on resume, where setup never runs to justify it")
 	}
+}
+
+// TestRefreshHeldWhileASiblingNodeRuns: read-only nodes work in worktrees
+// linked off the shared clone, so re-cloning it would pull the gitdir out
+// from under a sibling mid-round. The parent tree reads clean either way -
+// the sibling's edits are in its own worktree.
+func TestRefreshHeldWhileASiblingNodeRuns(t *testing.T) {
+	e, cfg, _, calls := newInvalidateFixture(t)
+	staleSetups.Delete("c1")
+	MarkSetupStale("c1")
+	t.Cleanup(func() { staleSetups.Delete("c1") })
+
+	enterNode("c1")
+	enterNode("c1") // a sibling read-only node, still running
+	t.Cleanup(func() { leaveNode("c1"); leaveNode("c1") })
+
+	plan, node := reviewPlan(), Node{ID: "review", AgentName: reviewerAgent}
+	if e.refreshStaleSetup(context.Background(), "u1", "c1", plan, node, cfg) {
+		t.Fatal("refreshStaleSetup = true with a sibling node live, want false")
+	}
+	if calls.get() != 0 {
+		t.Fatalf("setup executor calls = %d, want 0", calls.get())
+	}
+	if _, stale := staleSetups.Load("c1"); !stale {
+		t.Error("flag cleared without a refresh; the next boundary can no longer retry")
+	}
+
+	leaveNode("c1") // sibling finishes
+	if !e.refreshStaleSetup(context.Background(), "u1", "c1", plan, node, cfg) {
+		t.Fatal("refreshStaleSetup = false once alone, want true")
+	}
+	enterNode("c1") // restore for the cleanup pair
 }

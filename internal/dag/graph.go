@@ -166,6 +166,9 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			}
 			cfg.Task = effectiveNode.Task
 
+			enterNode(chatID)
+			defer leaveNode(chatID)
+
 			// Before the prompt is built, so a refreshed tree and the note
 			// describing it reach the worker together.
 			refreshed := refreshSetup != nil && refreshSetup(ctx, node, cfg)
