@@ -49,7 +49,11 @@ func newInvalidateFixture(t *testing.T) (*Executor, vetting.Config, string, *int
 		calls.inc()
 		return nil
 	})
-	cfg := vetting.Config{Workspace: jail, WorkspaceUserID: "u1", ChatID: "c1", WorkspaceCaps: workspace.DefaultCaps()}
+	// HOME outside the clone, as serve always sets it: childEnv preseeds the Go
+	// module cache into HOME, and inside the clone that reads as a dirty tree.
+	caps := workspace.DefaultCaps()
+	caps.HomeDir = t.TempDir()
+	cfg := vetting.Config{Workspace: jail, WorkspaceUserID: "u1", ChatID: "c1", WorkspaceCaps: caps}
 	return e, cfg, clone, calls
 }
 

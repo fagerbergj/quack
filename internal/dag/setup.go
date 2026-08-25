@@ -150,7 +150,9 @@ func oneLine(err error) string {
 // signal arrives on a webhook goroutine that holds no Plan.
 var staleSetups sync.Map // chatID -> struct{}
 
-// setupMu serializes the refresh check: parallel nodes share one Plan.Setup.
+// setupMu serializes the refresh check across all chats: parallel nodes share
+// one Plan.Setup, and a slow re-clone holds it. Per-chat locks if that ever
+// costs more than the rare boundary check it delays.
 var setupMu sync.Mutex
 
 // liveNodes counts a chat's currently-executing gate nodes. Read-only nodes
@@ -209,7 +211,9 @@ func (e *Executor) refreshStaleSetup(ctx context.Context, userID, chatID string,
 		return false
 	}
 	if !soleLiveNode(chatID) {
-		slog.Info("dag: setup invalidated but a sibling node is running in a worktree off the clone; keeping it",
+		// Only node entry re-checks, so a fan-out whose siblings never run alone
+		// finishes on the stale tree and drops the signal at the next fresh run.
+		slog.Info("dag: setup invalidated but a sibling node is running in a worktree off the clone; keeping it, and this run may finish on the stale tree",
 			"component", "dag", "chat", chatID, "node", node.ID)
 		return false
 	}
