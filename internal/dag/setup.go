@@ -171,7 +171,8 @@ func enterNode(chatID string) {
 
 func leaveNode(chatID string) {
 	liveNodes.Lock()
-	if liveNodes.n[chatID]--; liveNodes.n[chatID] <= 0 {
+	liveNodes.n[chatID]--
+	if liveNodes.n[chatID] <= 0 {
 		delete(liveNodes.n, chatID)
 	}
 	liveNodes.Unlock()
