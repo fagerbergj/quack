@@ -1,6 +1,7 @@
 package dag
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -32,7 +33,8 @@ type nodeScopedWorker interface {
 
 // buildGateNodes: one gated node per plan node. source: the run's origin
 // (extension name or a fixed app value) - observability only, see vetting.Config.Source.
-func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int), admission *Admission, specFor func(agentName string) AdmissionSpec) (map[string]workflow.Node, []adkagent.Agent, error) {
+func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int), admission *Admission, specFor func(agentName string) AdmissionSpec,
+	refreshSetup func(context.Context, Node, vetting.Config) bool) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
@@ -66,7 +68,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		if specFor != nil {
 			spec = specFor(node.AgentName)
 		}
-		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec)
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec, refreshSetup)
 	}
 	return nodesByID, subAgents, nil
 }
@@ -135,7 +137,8 @@ func nodeGateConfig(plan Plan, node Node, worker adkagent.Agent, cfgFor func(str
 }
 
 // newGatedNode: assembles worker prompt, runs trust-gate refine loop.
-func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, worker adkagent.Agent, workerTools []tool.Tool, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int), release func(), admission *Admission, spec AdmissionSpec) workflow.Node {
+func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, worker adkagent.Agent, workerTools []tool.Tool, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int), release func(), admission *Admission, spec AdmissionSpec,
+	refreshSetup func(context.Context, Node, vetting.Config) bool) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
 		func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
 			if release != nil {
@@ -163,9 +166,19 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			}
 			cfg.Task = effectiveNode.Task
 
+			enterNode(chatID)
+			defer leaveNode(chatID)
+
+			// Before the prompt is built, so a refreshed tree and the note
+			// describing it reach the worker together.
+			refreshed := refreshSetup != nil && refreshSetup(ctx, node, cfg)
+
 			upstream := upstreamFromInput(in, node.DependsOn)
 			gateFailed := readGateFailed(ctx, node.DependsOn)
 			prompt := buildTask(plan, effectiveNode, upstream, gateFailed)
+			if refreshed {
+				prompt += refreshedNote
+			}
 			token := vetting.AdvisorThreadToken(plan.ID, node.ID)
 			task := vetting.AdvisorTask{
 				Task: effectiveNode.Task, Rubric: node.Rubric, NodeID: node.ID,

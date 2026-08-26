@@ -133,6 +133,10 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, or
 				return st.ArchiveChat(context.Background(), chatID, true)
 			},
 			UpdateChatOrigin: newExtUpdateChatOrigin(name, st, taskMem, userMem),
+			InvalidateSetup: func(chatID string) error {
+				dag.MarkSetupStale(chatID)
+				return nil
+			},
 			Classify: func(ctx context.Context, prompt string) (string, error) {
 				m := judgeModelRef.Load()
 				if m == nil || *m == nil {
