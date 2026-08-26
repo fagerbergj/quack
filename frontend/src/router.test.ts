@@ -1,5 +1,6 @@
+// @vitest-environment jsdom
 import { describe, it, expect } from 'vitest'
-import { routeFor } from './router'
+import { navigate, routeFor } from './router'
 
 describe('routeFor', () => {
   it('matches /memory exactly', () => {
@@ -30,5 +31,17 @@ describe('routeFor', () => {
   it('defaults everything else, including chat routes, to chat', () => {
     expect(routeFor('/')).toBe('chat')
     expect(routeFor('/chat/abc-123')).toBe('chat')
+  })
+})
+
+describe('navigate', () => {
+  it('drops the query when the path ends in a bare "?" but keeps it otherwise', () => {
+    window.history.replaceState(null, '', '/chat/a?q=x')
+    navigate('/chat/a?', { replace: true })
+    expect(window.location.search).toBe('')
+
+    window.history.replaceState(null, '', '/chat/a?q=x')
+    navigate('/chat/b', { replace: true })
+    expect(window.location.search).toBe('?q=x')
   })
 })

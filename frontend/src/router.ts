@@ -12,7 +12,9 @@ function readChatId(): string | undefined {
 // navigate(path) preserves the current query string when path doesn't specify
 // its own (no '?') - so switching chats never drops the sidebar's filter state.
 export function navigate(path: string, opts?: { replace?: boolean }) {
-  const full = path.includes('?') ? path : path + window.location.search
+  // A path ending in a bare '?' means "no query" explicitly - without that
+  // marker, clearing the last filter char would re-append the old search.
+  const full = path.includes('?') ? path.replace(/\?$/, '') : path + window.location.search
   if (opts?.replace) window.history.replaceState(null, '', full)
   else window.history.pushState(null, '', full)
   window.dispatchEvent(new PopStateEvent('popstate'))
