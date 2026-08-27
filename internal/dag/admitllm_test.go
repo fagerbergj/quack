@@ -3,7 +3,6 @@ package dag
 import (
 	"context"
 	"iter"
-	"sync"
 	"testing"
 	"time"
 
@@ -65,33 +64,38 @@ func TestAdmittingLLMReleasesBetweenTurns(t *testing.T) {
 	a.Release(spec)
 }
 
-// A cap of 1 shared between the orchestrator and its nodes must not deadlock:
-// this is the config that made the naive whole-run approach hang.
+// A cap of 1 shared between the orchestrator and its nodes must not deadlock.
+// The turn must be mid-flight when the node asks, or this proves nothing: that
+// overlap is exactly what a run-scoped reservation would never release.
 func TestAdmittingLLMDoesNotDeadlockNodesOnSameModel(t *testing.T) {
 	spec := AdmissionSpec{Model: "m"}
 	a := NewAdmission(map[string]int{"m": 1}, nil, nil, 0)
-	f := &fakeLLM{entered: make(chan struct{}, 8), release: make(chan struct{})}
+	f := &fakeLLM{entered: make(chan struct{}), release: make(chan struct{})}
 	llm := NewAdmittingLLM(f, a, spec, nil)
-	close(f.release) // turns complete immediately
 
-	var wg sync.WaitGroup
-	for range 4 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			// One orchestrator turn, then the node it "planned" - the
-			// sequence that hung when the turn held its session throughout.
-			drainLLM(llm.GenerateContent(context.Background(), nil, false))
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-			if !a.Admit(ctx, spec, func() {}) {
-				t.Error("planned node never admitted - orchestrator starved its own DAG")
-				return
-			}
+	turnDone := make(chan struct{})
+	go func() {
+		defer close(turnDone)
+		drainLLM(llm.GenerateContent(context.Background(), nil, false))
+	}()
+	<-f.entered // the turn now holds the only session
+
+	nodeAdmitted := make(chan bool, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		ok := a.Admit(ctx, spec, func() {})
+		if ok {
 			a.Release(spec)
-		}()
+		}
+		nodeAdmitted <- ok
+	}()
+
+	close(f.release) // the turn ends, as it would when the orchestrator parks
+	<-turnDone
+	if !<-nodeAdmitted {
+		t.Fatal("node never admitted: the orchestrator starved the DAG it planned")
 	}
-	wg.Wait()
 }
 
 func TestNewAdmittingLLMUnwrapsWhenUnenforced(t *testing.T) {

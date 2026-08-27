@@ -21,7 +21,9 @@ type AdmittingLLM struct {
 }
 
 // NewAdmittingLLM returns inner unwrapped when there is nothing to enforce, so
-// an unlimited model keeps its original call path. onQueued may be nil.
+// an unlimited model keeps its original call path. A spec with no Model can
+// only mean an unregistered one, which config validation already rejects.
+// onQueued may be nil.
 func NewAdmittingLLM(inner model.LLM, admission *Admission, spec AdmissionSpec, onQueued func()) model.LLM {
 	if admission == nil || spec.Model == "" {
 		return inner

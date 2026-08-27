@@ -85,11 +85,6 @@ const (
 // plugin root's skills directory (internal/plugin discovery) - the disk-only
 // view both newSkillSource and acpSkillPaths compare the embedded dotagents
 // fallback against.
-// defaultMaxActiveRuns: fixed host-disk/CPU guard on concurrent run SETUP
-// (clone/jail), independent of #1007's GPU-capacity Admission ledger - not a
-// config knob, since #1007 deliberately removed dag.max_active_runs as one.
-const defaultMaxActiveRuns = 8
-
 // activeKey mirrors dag.AdmissionSpec.residencyKey (provider+role) for
 // ProviderConfig.Limits.Active, which is keyed by role alone within one provider.
 func activeKey(provider, role string) string { return provider + "\x00" + role }
@@ -161,7 +156,14 @@ func orchestratorSpec(cfg *config.Config) dag.AdmissionSpec {
 	if !ok {
 		return dag.AdmissionSpec{}
 	}
-	return modelSpec(mc, cfg.Orchestrator.Model, 0)
+	spec := modelSpec(mc, cfg.Orchestrator.Model, cfg.Orchestrator.ContextWindow)
+	if cfg.Orchestrator.ContextWindow == 0 {
+		// Unlike an agent, the orchestrator has no declared window to fall back
+		// on: modelSpec would hand it the model's whole kv budget, so one turn
+		// would reserve the pool and block every node it planned.
+		spec.KVTokens = 0
+	}
+	return spec
 }
 
 func resolvedSkillSource(skillDirs []string) skill.Source {
@@ -738,13 +740,14 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	// The orchestrator's turns take a session from the same pool its worker
 	// nodes draw on, held only while generating - it is idle while the DAG
 	// runs, and holding across that span would deadlock its own nodes.
+	// Wraps AFTER setDefaultAgent above: that asserts on the concrete traced
+	// model, which the interface-embedding wrapper does not promote.
 	orchLLM := dag.NewAdmittingLLM(llm, admission, orchestratorSpec(cfg), nil)
 	orch := orchestrator.New(st.Sessions, orchLLM, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
-	// #1007 deleted the tunable (a run's NODES are what cost GPU capacity,
-	// bounded by Admission), but a run's SETUP (workspace clone/jail) still
-	// costs host disk/CPU before any node ever reaches admission - a burst of
-	// runs must still be bounded, so keep a fixed, generous run-count guard.
-	orch.SetMaxActiveRuns(defaultMaxActiveRuns)
+	// Bounds run SETUP (workspace clone/jail), which costs host disk/CPU before
+	// any node reaches the GPU ledger. Also the only cap on how many runs are
+	// live at once, which is what the UI shows as running (#1067).
+	orch.SetMaxActiveRuns(cfg.Dag.MaxActiveRuns)
 	// is gone, capacity bounds throughput naturally via the Admission ledger.
 	orchRef.Store(orch)
 	if hooks != nil {
