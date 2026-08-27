@@ -136,16 +136,32 @@ func admissionSpecFor(cfg *config.Config) func(agentName string) dag.AdmissionSp
 		if !ok {
 			return dag.AdmissionSpec{}
 		}
-		ctxWindow := ac.ContextWindow
-		if ctxWindow == 0 {
-			ctxWindow = mc.ContextWindow
-		}
-		spec := dag.AdmissionSpec{Model: ac.Model, KVTokens: ctxWindow, Provider: mc.Provider, Role: mc.Role}
-		if mc.Limits == nil || mc.Limits.KVTokens == 0 {
-			spec.KVTokens = 0 // absent kv_tokens = context isn't a scheduling dimension
-		}
-		return spec
+		return modelSpec(mc, ac.Model, ac.ContextWindow)
 	}
+}
+
+// modelSpec builds one AdmissionSpec from a model's registry entry.
+// ctxWindow is the caller's override; 0 falls back to the model's default.
+func modelSpec(mc config.ModelConfig, name string, ctxWindow int) dag.AdmissionSpec {
+	if ctxWindow == 0 {
+		ctxWindow = mc.ContextWindow
+	}
+	spec := dag.AdmissionSpec{Model: name, KVTokens: ctxWindow, Provider: mc.Provider, Role: mc.Role}
+	if mc.Limits == nil || mc.Limits.KVTokens == 0 {
+		spec.KVTokens = 0 // absent kv_tokens = context isn't a scheduling dimension
+	}
+	return spec
+}
+
+// orchestratorSpec: the orchestrator's own capacity spec. It shares the
+// models registry with worker agents, so when orchestrator.model reuses a
+// worker model both contend for that model's one sessions pool (#1007).
+func orchestratorSpec(cfg *config.Config) dag.AdmissionSpec {
+	mc, ok := cfg.Models[cfg.Orchestrator.Model]
+	if !ok {
+		return dag.AdmissionSpec{}
+	}
+	return modelSpec(mc, cfg.Orchestrator.Model, 0)
 }
 
 func resolvedSkillSource(skillDirs []string) skill.Source {
@@ -713,12 +729,17 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	cfgFor := func(name string) vetting.Config { return gateCfgs[name] }
 	executor := dag.NewExecutor(st.Sessions, clientMap, modelMap, judgeFactory, cfgFor, mediaAgents)
 	executor.SetMaxActive(cfg.Dag.MaxActiveNodes)
-	executor.SetAdmission(buildAdmission(cfg), admissionSpecFor(cfg))
+	admission := buildAdmission(cfg)
+	executor.SetAdmission(admission, admissionSpecFor(cfg))
 	executor.SetSetup(setupFn)
 	executor.SetArtifacts(artifacts)
 	executor.SetNodeStateStore(st) // write-through node state machine (#962)
 	executorRef.Store(executor)
-	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
+	// The orchestrator's turns take a session from the same pool its worker
+	// nodes draw on, held only while generating - it is idle while the DAG
+	// runs, and holding across that span would deadlock its own nodes.
+	orchLLM := dag.NewAdmittingLLM(llm, admission, orchestratorSpec(cfg), nil)
+	orch := orchestrator.New(st.Sessions, orchLLM, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
 	// #1007 deleted the tunable (a run's NODES are what cost GPU capacity,
 	// bounded by Admission), but a run's SETUP (workspace clone/jail) still
 	// costs host disk/CPU before any node ever reaches admission - a burst of
