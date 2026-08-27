@@ -454,7 +454,18 @@ type CompactionConfig struct {
 // the GPU pool knows nothing about.
 const defaultMaxActiveNodes = 32
 
+// defaultMaxActiveRuns: host disk/CPU ceiling on concurrent run SETUP
+// (clone/jail), which happens before any node reaches the #1007 GPU ledger.
+const defaultMaxActiveRuns = 8
+
 type DagConfig struct {
+	// MaxActiveRuns caps concurrent RUNS server-wide. #1007 removed this as a
+	// GPU knob (models.<m>.limits.sessions is that, and since #1067 it bounds
+	// orchestrator turns too); it is back only as the setup guard, and as the
+	// one way to bound how many runs are live - and so how many chats show as
+	// running - at once. 0 = defaultMaxActiveRuns.
+	MaxActiveRuns int `yaml:"max_active_runs"`
+
 	// MaxActiveNodes caps concurrently-running nodes WITHIN ONE RUN (each run
 	// gets its own semaphore) as a host-resource guard (jail/clone CPU+RAM),
 	// NOT the GPU concurrency knob - that's models.<m>.limits.sessions/kv_tokens
@@ -744,8 +755,13 @@ func mergeStore(parent, child StoreConfig) StoreConfig {
 }
 
 type OrchestratorConfig struct {
-	Provider       string               `yaml:"provider"`
-	Model          string               `yaml:"model"`
+	Provider string `yaml:"provider"`
+	Model    string `yaml:"model"`
+	// ContextWindow is the orchestrator's kv_tokens reservation (#1067), the
+	// counterpart to an agent's own context_window. Unset means context is not
+	// a scheduling dimension for its turns - NOT the model's full window, which
+	// one turn would reserve entirely, starving the workers it just planned.
+	ContextWindow  int                  `yaml:"context_window"`
 	Tools          []string             `yaml:"tools"`
 	Skills         []string             `yaml:"skills"`
 	UserMemoryHook UserMemoryHookConfig `yaml:"user_memory_hook"`
@@ -946,6 +962,16 @@ func (c *Config) validate() error {
 	}
 	if err := c.checkModelRegistered("orchestrator.model", c.Orchestrator.Model); err != nil {
 		return err
+	}
+	if ow := c.Orchestrator.ContextWindow; ow > 0 {
+		if mc, ok := c.Models[c.Orchestrator.Model]; ok {
+			if mc.ContextWindow > 0 && ow > mc.ContextWindow {
+				return fmt.Errorf("config: orchestrator.context_window %d exceeds model %q context_window %d", ow, c.Orchestrator.Model, mc.ContextWindow)
+			}
+			if mc.Limits != nil && mc.Limits.KVTokens > 0 && ow > mc.Limits.KVTokens {
+				return fmt.Errorf("config: orchestrator.context_window %d exceeds model %q limits.kv_tokens %d - its turns could never be admitted", ow, c.Orchestrator.Model, mc.Limits.KVTokens)
+			}
+		}
 	}
 	if c.Orchestrator.UserMemoryHook.Enabled {
 		h := c.Orchestrator.UserMemoryHook
@@ -1152,6 +1178,12 @@ func (c *Config) validate() error {
 	}
 	if c.Dag.MaxActiveNodes < 1 {
 		return fmt.Errorf("config: dag.max_active_nodes must be >= 1")
+	}
+	if c.Dag.MaxActiveRuns == 0 {
+		c.Dag.MaxActiveRuns = defaultMaxActiveRuns
+	}
+	if c.Dag.MaxActiveRuns < 1 {
+		return fmt.Errorf("config: dag.max_active_runs must be >= 1")
 	}
 	if c.Server.Addr == "" {
 		c.Server.Addr = ":8080"

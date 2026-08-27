@@ -85,11 +85,6 @@ const (
 // plugin root's skills directory (internal/plugin discovery) - the disk-only
 // view both newSkillSource and acpSkillPaths compare the embedded dotagents
 // fallback against.
-// defaultMaxActiveRuns: fixed host-disk/CPU guard on concurrent run SETUP
-// (clone/jail), independent of #1007's GPU-capacity Admission ledger - not a
-// config knob, since #1007 deliberately removed dag.max_active_runs as one.
-const defaultMaxActiveRuns = 8
-
 // activeKey mirrors dag.AdmissionSpec.residencyKey (provider+role) for
 // ProviderConfig.Limits.Active, which is keyed by role alone within one provider.
 func activeKey(provider, role string) string { return provider + "\x00" + role }
@@ -136,16 +131,39 @@ func admissionSpecFor(cfg *config.Config) func(agentName string) dag.AdmissionSp
 		if !ok {
 			return dag.AdmissionSpec{}
 		}
-		ctxWindow := ac.ContextWindow
-		if ctxWindow == 0 {
-			ctxWindow = mc.ContextWindow
-		}
-		spec := dag.AdmissionSpec{Model: ac.Model, KVTokens: ctxWindow, Provider: mc.Provider, Role: mc.Role}
-		if mc.Limits == nil || mc.Limits.KVTokens == 0 {
-			spec.KVTokens = 0 // absent kv_tokens = context isn't a scheduling dimension
-		}
-		return spec
+		return modelSpec(mc, ac.Model, ac.ContextWindow)
 	}
+}
+
+// modelSpec builds one AdmissionSpec from a model's registry entry.
+// ctxWindow is the caller's override; 0 falls back to the model's default.
+func modelSpec(mc config.ModelConfig, name string, ctxWindow int) dag.AdmissionSpec {
+	if ctxWindow == 0 {
+		ctxWindow = mc.ContextWindow
+	}
+	spec := dag.AdmissionSpec{Model: name, KVTokens: ctxWindow, Provider: mc.Provider, Role: mc.Role}
+	if mc.Limits == nil || mc.Limits.KVTokens == 0 {
+		spec.KVTokens = 0 // absent kv_tokens = context isn't a scheduling dimension
+	}
+	return spec
+}
+
+// orchestratorSpec: the orchestrator's own capacity spec. It shares the
+// models registry with worker agents, so when orchestrator.model reuses a
+// worker model both contend for that model's one sessions pool (#1007).
+func orchestratorSpec(cfg *config.Config) dag.AdmissionSpec {
+	mc, ok := cfg.Models[cfg.Orchestrator.Model]
+	if !ok {
+		return dag.AdmissionSpec{}
+	}
+	spec := modelSpec(mc, cfg.Orchestrator.Model, cfg.Orchestrator.ContextWindow)
+	if cfg.Orchestrator.ContextWindow == 0 {
+		// Unlike an agent, the orchestrator has no declared window to fall back
+		// on: modelSpec would hand it the model's whole kv budget, so one turn
+		// would reserve the pool and block every node it planned.
+		spec.KVTokens = 0
+	}
+	return spec
 }
 
 func resolvedSkillSource(skillDirs []string) skill.Source {
@@ -713,17 +731,23 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	cfgFor := func(name string) vetting.Config { return gateCfgs[name] }
 	executor := dag.NewExecutor(st.Sessions, clientMap, modelMap, judgeFactory, cfgFor, mediaAgents)
 	executor.SetMaxActive(cfg.Dag.MaxActiveNodes)
-	executor.SetAdmission(buildAdmission(cfg), admissionSpecFor(cfg))
+	admission := buildAdmission(cfg)
+	executor.SetAdmission(admission, admissionSpecFor(cfg))
 	executor.SetSetup(setupFn)
 	executor.SetArtifacts(artifacts)
 	executor.SetNodeStateStore(st) // write-through node state machine (#962)
 	executorRef.Store(executor)
-	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
-	// #1007 deleted the tunable (a run's NODES are what cost GPU capacity,
-	// bounded by Admission), but a run's SETUP (workspace clone/jail) still
-	// costs host disk/CPU before any node ever reaches admission - a burst of
-	// runs must still be bounded, so keep a fixed, generous run-count guard.
-	orch.SetMaxActiveRuns(defaultMaxActiveRuns)
+	// The orchestrator's turns take a session from the same pool its worker
+	// nodes draw on, held only while generating - it is idle while the DAG
+	// runs, and holding across that span would deadlock its own nodes.
+	// Wraps AFTER setDefaultAgent above: that asserts on the concrete traced
+	// model, which the interface-embedding wrapper does not promote.
+	orchLLM := dag.NewAdmittingLLM(llm, admission, orchestratorSpec(cfg), nil)
+	orch := orchestrator.New(st.Sessions, orchLLM, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
+	// Bounds run SETUP (workspace clone/jail), which costs host disk/CPU before
+	// any node reaches the GPU ledger. Also the only cap on how many runs are
+	// live at once, which is what the UI shows as running (#1067).
+	orch.SetMaxActiveRuns(cfg.Dag.MaxActiveRuns)
 	// is gone, capacity bounds throughput naturally via the Admission ledger.
 	orchRef.Store(orch)
 	if hooks != nil {

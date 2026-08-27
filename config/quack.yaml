@@ -6,7 +6,7 @@ providers:
     endpoint: ${QUACK_LLM_ENDPOINT}
     api_key: ${QUACK_LLM_API_KEY}
     limits:
-      active:                # how many DISTINCT models per role may be resident at once (#1007, not yet enforced)
+      active:                # how many DISTINCT models per role may be resident at once (#1007)
         worker: 1
         judge: 1
         embed: 1
@@ -15,8 +15,10 @@ providers:
 # QUACK_CODER_MODEL's actual value, not the env var) - that's the name
 # inference.NewModel is called with. context_window is the DEFAULT window
 # handed to an agent that doesn't declare its own; limits (sessions,
-# kv_tokens) are the #1007 admission pool, parsed and validated here but not
-# yet enforced by a scheduler. cost is the optional USD price table for
+# kv_tokens) are the #1007 admission pool, enforced by dag.Admission over
+# worker nodes AND the orchestrator's own turns - when orchestrator.model
+# reuses a worker model, both draw on that model's one sessions cap.
+# cost is the optional USD price table for
 # gen_ai.client.cost - a model without cost: gets token usage but no cost
 # metric, never a guessed price.
 models:
@@ -51,8 +53,10 @@ models:
     role: embed
     context_window: 4096
   # No separate entry for QUACK_ORCH_MODEL: it usually reuses a worker model
-  # above (e.g. qwen3.8-27b). Pointing it at a genuinely different model?
-  # Add its own entry here too - the orchestrator's model must be registered.
+  # above (e.g. qwen3.8-27b), and then shares that model's limits.sessions
+  # with the worker nodes. Pointing it at a genuinely different model? Add its
+  # own entry here too - the orchestrator's model must be registered, and
+  # without its own limits.sessions its turns are unbounded.
 
 # Named backend registry (like providers): consumers reference a store by name.
 # `kind` selects the adapter (the portability seam). A vector store also carries
