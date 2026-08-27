@@ -271,7 +271,7 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
   function setFilterState(next: { q?: string; selected?: SelectedFacets }) {
     const state = { q: next.q ?? q, selected: next.selected ?? selected }
     const qs = serializeFilterState(state)
-    navigate(window.location.pathname + (qs ? `?${qs}` : ''), { replace: true })
+    navigate(window.location.pathname + '?' + qs, { replace: true })
   }
 
   function toggleFacet(facetKey: string, value: string) {
