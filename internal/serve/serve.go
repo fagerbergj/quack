@@ -172,10 +172,10 @@ func orchestratorSpec(cfg *config.Config) dag.AdmissionSpec {
 // never fail startup for skills that DID parse (#1080).
 func resolvedSkillSource(skillDirs []string) skill.Source {
 	bundleFS := bundledir.SubFS("skills")
-	sources := []skill.Source{skillsource.Tolerant(skill.NewFileSystemSource(bundleFS), bundleFS, "bundled skills")}
+	sources := []skill.Source{skillsource.Tolerant(skillsource.NewFileSystemSource(bundleFS), bundleFS, "bundled skills")}
 	for _, dir := range skillDirs {
 		dirFS := os.DirFS(dir)
-		sources = append(sources, skillsource.Tolerant(skill.NewFileSystemSource(dirFS), dirFS, dir))
+		sources = append(sources, skillsource.Tolerant(skillsource.NewFileSystemSource(dirFS), dirFS, dir))
 	}
 	return skill.NewMergedSource(sources...)
 }
@@ -194,7 +194,7 @@ func missingDotagentsSkillNames(skillDirs []string) []string {
 		}
 	}
 	daFS := bundledir.SubFS(dotagentsEmbeddedSkills)
-	fallback := skillsource.Tolerant(skill.NewFileSystemSource(daFS), daFS, "dotagents embedded skills")
+	fallback := skillsource.Tolerant(skillsource.NewFileSystemSource(daFS), daFS, "dotagents embedded skills")
 	var missing []string
 	if fms, err := fallback.ListFrontmatters(context.Background()); err == nil {
 		for _, fm := range fms {
@@ -216,7 +216,7 @@ func newSkillSource(skillDirs []string) skill.Source {
 		return resolved
 	}
 	daFS := bundledir.SubFS(dotagentsEmbeddedSkills)
-	fallback := skillsource.Tolerant(skill.NewFileSystemSource(daFS), daFS, "dotagents embedded skills")
+	fallback := skillsource.Tolerant(skillsource.NewFileSystemSource(daFS), daFS, "dotagents embedded skills")
 	return skill.NewMergedSource(resolved, skillsource.Scoped(fallback, backfill))
 }
 

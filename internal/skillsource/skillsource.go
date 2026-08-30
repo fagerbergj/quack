@@ -46,7 +46,7 @@ func sourcesUnder(jail *workspace.Jail, userID, chatID, repoRel string) []skill.
 		if fi, err := os.Stat(real); err != nil || !fi.IsDir() {
 			continue // no such skills dir in this repo
 		}
-		out = append(out, Tolerant(skill.NewFileSystemSource(os.DirFS(real)), os.DirFS(real), real))
+		out = append(out, Tolerant(NewFileSystemSource(os.DirFS(real)), os.DirFS(real), real))
 	}
 	return out
 }
