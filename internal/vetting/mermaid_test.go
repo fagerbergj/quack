@@ -425,6 +425,26 @@ func TestMermaidCriterion_NoOpWhenValidatorUnavailable(t *testing.T) {
 	}
 }
 
+// mermaid 11.17.1's expanded shape catalog (person/folder/bucket/etc, unified
+// @{ shape: ... } syntax) and collapsible subgraphs (@{ view: collapsed })
+// parse clean - since the gate defers to the real mermaid.js parser, this
+// just proves the upgraded dependency didn't regress either.
+func TestFindInvalidMermaid_NewShapeSyntaxPasses(t *testing.T) {
+	requireMermaidValidator(t)
+	md := "```mermaid\nflowchart TD\n  A@{ shape: person, label: \"User\" }\n  B@{ shape: folder, label: \"Docs\" }\n  A --> B\n```"
+	if issues := FindInvalidMermaid(md); len(issues) != 0 {
+		t.Fatalf("issues = %v, want none for the new unified shape syntax", issues)
+	}
+}
+
+func TestFindInvalidMermaid_CollapsedSubgraphPasses(t *testing.T) {
+	requireMermaidValidator(t)
+	md := "```mermaid\nflowchart TD\n  subgraph sub1[\"Details\"]\n    X --> Y\n  end\n  sub1@{ view: collapsed }\n  A --> sub1\n```"
+	if issues := FindInvalidMermaid(md); len(issues) != 0 {
+		t.Fatalf("issues = %v, want none for a collapsed subgraph", issues)
+	}
+}
+
 // A validator that outruns its deadline must not report a VALID diagram as
 // invalid: CommandContext's kill surfaces as an ExitError, which used to fall
 // through to "unreadable output" and fail the gate on a slow box. Drives the
