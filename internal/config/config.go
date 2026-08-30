@@ -446,6 +446,14 @@ type CompactionConfig struct {
 	Model              string `yaml:"model"`
 	TokenThreshold     int    `yaml:"token_threshold"`
 	EventRetentionSize int    `yaml:"event_retention_size"`
+	// CompactionInterval is the ADK-style regular cadence trigger (in
+	// invocations/turns), independent of TokenThreshold's absolute limit.
+	// 0 disables the cadence trigger (threshold-only, prior behaviour).
+	CompactionInterval int `yaml:"compaction_interval"`
+	// OverlapSize is how many already-compacted raw events carry into the
+	// next summarization window, so a fact split across a chunk boundary
+	// isn't lost. 0 ⇒ package default.
+	OverlapSize int `yaml:"overlap_size"`
 }
 
 // defaultMaxActiveNodes: permissive PER-RUN host-resource ceiling (each run

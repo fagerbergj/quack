@@ -51,14 +51,20 @@ func (s *fakeState) All() iter.Seq2[string, any] {
 type fakeCtx struct {
 	adkagent.StrictContextMock
 	state *fakeState
+	invID string
 }
 
 func newFakeCtx() *fakeCtx {
-	return &fakeCtx{StrictContextMock: adkagent.StrictContextMock{Ctx: context.Background()}, state: &fakeState{m: map[string]any{}}}
+	return &fakeCtx{StrictContextMock: adkagent.StrictContextMock{Ctx: context.Background()}, state: &fakeState{m: map[string]any{}}, invID: "inv"}
 }
 
-func (c *fakeCtx) UserContent() *genai.Content          { return nil }
-func (c *fakeCtx) InvocationID() string                 { return "inv" }
+func (c *fakeCtx) UserContent() *genai.Content { return nil }
+func (c *fakeCtx) InvocationID() string {
+	if c.invID != "" {
+		return c.invID
+	}
+	return "inv"
+}
 func (c *fakeCtx) AgentName() string                    { return "test" }
 func (c *fakeCtx) ReadonlyState() session.ReadonlyState { return c.state }
 func (c *fakeCtx) UserID() string                       { return "u" }
@@ -741,7 +747,11 @@ func TestSummaryCarriesCodeKnowledge(t *testing.T) {
 	if _, err := cb(newFakeCtx(), req); err != nil {
 		t.Fatalf("callback err: %v", err)
 	}
-	if llm.calls != 1 {
+	// A small ContextWindow can push the head above the summariser's own
+	// input budget, splitting it into several iterative chunk calls (see
+	// TestOversizedWindowChunksIteratively) - calls >= 1 is fine here, this
+	// test only cares that every chunk prompt asks for the shape.
+	if llm.calls < 1 {
 		t.Fatalf("summariser not called: calls=%d", llm.calls)
 	}
 	for _, want := range []string{"Files & Code State", "Commands & Tools Run", "Errors & Fixes", "Repository State"} {
