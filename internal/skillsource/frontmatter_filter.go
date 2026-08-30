@@ -19,11 +19,12 @@ var knownFrontmatterKeys = func() map[string]bool {
 	keys := map[string]bool{}
 	t := reflect.TypeOf(skill.Frontmatter{})
 	for i := 0; i < t.NumField(); i++ {
-		tag := t.Field(i).Tag.Get("yaml")
-		name, _, _ := strings.Cut(tag, ",")
-		if name != "" {
-			keys[name] = true
+		field := t.Field(i)
+		name, _, _ := strings.Cut(field.Tag.Get("yaml"), ",")
+		if name == "" {
+			name = strings.ToLower(field.Name) // untagged field: yaml.v3's own default key
 		}
+		keys[name] = true
 	}
 	return keys
 }()
@@ -80,7 +81,8 @@ func (f filterFrontmatterFS) Stat(name string) (fs.FileInfo, error) {
 var lfSep = []byte("---\n")
 var crlfSep = []byte("---\r\n")
 
-// leadingSep returns whichever separator form content starts with.
+// leadingSep returns whichever separator form content starts with. A match
+// at offset 0 is trivially line-anchored.
 func leadingSep(content []byte) (sep []byte, ok bool) {
 	if bytes.HasPrefix(content, crlfSep) {
 		return crlfSep, true
@@ -91,10 +93,31 @@ func leadingSep(content []byte) (sep []byte, ok bool) {
 	return nil, false
 }
 
-// findSep returns the earliest occurrence of either separator form in b.
+// indexLineStart finds the first occurrence of sep that starts a line (index
+// 0, or immediately after a '\n'), skipping any substring hit that doesn't -
+// ADK's own Parse anchors the closing separator to a whole line
+// (bytes.Equal(line, sep)), so a mid-line "---" (inside a scalar value or a
+// block-scalar body) must never be mistaken for it.
+func indexLineStart(b, sep []byte) int {
+	off := 0
+	for {
+		i := bytes.Index(b[off:], sep)
+		if i == -1 {
+			return -1
+		}
+		idx := off + i
+		if idx == 0 || b[idx-1] == '\n' {
+			return idx
+		}
+		off = idx + 1
+	}
+}
+
+// findSep returns the earliest line-anchored occurrence of either separator
+// form in b.
 func findSep(b []byte) (idx, seplen int, ok bool) {
-	iLF := bytes.Index(b, lfSep)
-	iCRLF := bytes.Index(b, crlfSep)
+	iLF := indexLineStart(b, lfSep)
+	iCRLF := indexLineStart(b, crlfSep)
 	switch {
 	case iLF == -1 && iCRLF == -1:
 		return 0, 0, false

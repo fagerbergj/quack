@@ -216,6 +216,78 @@ func TestFilterFrontmatter_CRLFWithUnknownKeyLoads(t *testing.T) {
 	}
 }
 
+// TestFilterFrontmatter_ScalarEndingInSepIsNotAFalseBoundary proves the
+// closing-separator search is line-anchored, not a substring search: a known
+// key's plain-scalar value ending in "---" must not be mistaken for the
+// closing "---\n" line. Before line-anchoring, this content's block was
+// truncated at "bar---\n", corrupting description to "bar" and leaking the
+// real "---\n" line into the markdown body.
+func TestFilterFrontmatter_ScalarEndingInSepIsNotAFalseBoundary(t *testing.T) {
+	content := []byte("---\nname: x\nunknown: y\ndescription: bar---\n---\nbody\n")
+	out, ok := filterFrontmatter(content)
+	if !ok {
+		t.Fatal("filterFrontmatter returned ok=false")
+	}
+	fm, markdown, err := skill.ParseBytes(out)
+	if err != nil {
+		t.Fatalf("ParseBytes(filtered): %v (output: %q)", err, out)
+	}
+	if fm.Description != "bar---" {
+		t.Errorf("Description = %q, want %q", fm.Description, "bar---")
+	}
+	if markdown != "body\n" {
+		t.Errorf("markdown = %q, want %q", markdown, "body\n")
+	}
+}
+
+// TestFilterFrontmatter_BlockScalarIndentedSepIsNotAFalseBoundary covers the
+// same false-boundary bug for an indented "---" inside a folded/literal
+// block scalar, alongside an unknown key.
+func TestFilterFrontmatter_BlockScalarIndentedSepIsNotAFalseBoundary(t *testing.T) {
+	content := []byte("---\nname: x\nunknown: y\ndescription: |\n  before\n  ---\n  after\n---\nbody\n")
+	out, ok := filterFrontmatter(content)
+	if !ok {
+		t.Fatal("filterFrontmatter returned ok=false")
+	}
+	fm, markdown, err := skill.ParseBytes(out)
+	if err != nil {
+		t.Fatalf("ParseBytes(filtered): %v (output: %q)", err, out)
+	}
+	wantDesc := "before\n---\nafter\n"
+	if fm.Description != wantDesc {
+		t.Errorf("Description = %q, want %q", fm.Description, wantDesc)
+	}
+	if markdown != "body\n" {
+		t.Errorf("markdown = %q, want %q", markdown, "body\n")
+	}
+}
+
+// TestFilterFrontmatter_UnknownKeyAfterFalseBoundaryStillDropped proves the
+// gate doesn't get fooled by a false boundary either: an unknown key sitting
+// after a scalar value that contains "---" must still be found and dropped
+// (not silently missed because the truncated scan only saw known keys
+// before the false cut), and the skill must load.
+func TestFilterFrontmatter_UnknownKeyAfterFalseBoundaryStillDropped(t *testing.T) {
+	content := []byte("---\nname: x\ndescription: bar---\nunknown: y\n---\nbody\n")
+	out, ok := filterFrontmatter(content)
+	if !ok {
+		t.Fatal("filterFrontmatter returned ok=false")
+	}
+	if bytes.Contains(out, []byte("unknown")) {
+		t.Errorf("filtered output still contains dropped key: %s", out)
+	}
+	fm, markdown, err := skill.ParseBytes(out)
+	if err != nil {
+		t.Fatalf("ParseBytes(filtered): %v (output: %q)", err, out)
+	}
+	if fm.Description != "bar---" {
+		t.Errorf("Description = %q, want %q", fm.Description, "bar---")
+	}
+	if markdown != "body\n" {
+		t.Errorf("markdown = %q, want %q", markdown, "body\n")
+	}
+}
+
 // TestTolerantStillSkipsMalformedSkill proves #1085's backstop still catches
 // a genuinely broken SKILL.md (the filter only handles unknown keys).
 func TestTolerantStillSkipsMalformedSkill(t *testing.T) {
