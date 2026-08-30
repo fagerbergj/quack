@@ -231,23 +231,34 @@ func TestChecksDirFindsTheNodesOwnRepo(t *testing.T) {
 	}
 }
 
+// writeTestRepo fakes a clone: a .git dir with a config naming an origin remote.
+func writeTestRepo(t *testing.T, dir, originURL string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := "[remote \"origin\"]\n\turl = " + originURL + "\n"
+	if err := os.WriteFile(filepath.Join(dir, ".git", "config"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestChecksDirFallsBackToNodeDirForExplicitChecks pins the "fork/exec
 // /quack" bug: the planner set explicit Checks and a Workdir equal to the
 // repo name, but the clone was provisioned AT the node dir, not below a
 // subdirectory named after the repo. checksDir must fall back to the node's
-// own dir instead of returning a path that can never exist.
+// own dir - but only because that dir IS positively identifiable as the repo
+// "quack" named: it's a git repo whose origin ends in /quack.
 func TestChecksDirFallsBackToNodeDirForExplicitChecks(t *testing.T) {
 	cfg := testChecksConfig(t, []string{"go build ./..."}, "quack")
 	cfg.ChatID = "chat-1"
 	cfg.NodeID = "review"
-	nodeDir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, "review/go.mod")
+	nodeDir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, "review")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Dir(nodeDir), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(nodeDir, []byte("module quack\n"), 0o644); err != nil {
+	writeTestRepo(t, nodeDir, "git@github.com:fagerbergj/quack.git")
+	if err := os.WriteFile(filepath.Join(nodeDir, "go.mod"), []byte("module quack\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	got, ok, err := checksDir(cfg)
@@ -259,6 +270,35 @@ func TestChecksDirFallsBackToNodeDirForExplicitChecks(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, "/review") {
 		t.Errorf("checksDir = %q, want the node's own dir (…/review), not …/review/quack", got)
+	}
+}
+
+// TestChecksDirRefusesFallbackToUnrelatedRepo guards the false-pass the
+// reviewer found: a node dir already holds an unrelated buildable module (not
+// the repo the planner's Workdir named, and not even a git repo here), and
+// Workdir names a subdirectory that was never created. checksDir must NOT
+// fall back to the parent - that would silently build the wrong thing and
+// report a false pass.
+func TestChecksDirRefusesFallbackToUnrelatedRepo(t *testing.T) {
+	cfg := testChecksConfig(t, []string{"go build ./..."}, "newservice")
+	cfg.ChatID = "chat-1"
+	cfg.NodeID = "impl"
+	nodeDir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, "impl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(nodeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nodeDir, "go.mod"), []byte("module unrelated\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := checksDir(cfg)
+	if err != nil {
+		t.Fatalf("checksDir: %v", err)
+	}
+	if ok && strings.HasSuffix(got, "/impl") {
+		t.Fatalf("checksDir = %q, ok=%v: must not fall back onto the unrelated module at the node dir", got, ok)
 	}
 }
 
