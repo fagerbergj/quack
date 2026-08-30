@@ -142,6 +142,49 @@ func TestNilJailReturnsBuiltin(t *testing.T) {
 	}
 }
 
+// writeUnknownFieldSkill writes a SKILL.md carrying frontmatter keys ADK's
+// strict decoder (KnownFields(true)) doesn't recognize - the #1080 shape: a
+// third-party plugin (ponytail) added `argument-hint`, and ADK's
+// FileSystemSource.ListFrontmatters aborts its ENTIRE listing on the first
+// unparseable skill, crash-looping server startup in production 0.50.0.
+func writeUnknownFieldSkill(t *testing.T, dir, name string) {
+	t.Helper()
+	d := filepath.Join(dir, name)
+	if err := os.MkdirAll(d, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "---\nname: " + name + "\ndescription: has unknown fields\n" +
+		"argument-hint: \"[lite|full|ultra]\"\nunknown-key: surprise\n---\n\nbody\n"
+	if err := os.WriteFile(filepath.Join(d, "SKILL.md"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestTolerantSkipsUnknownFrontmatterField is the #1080 regression: a builtin/
+// plugin source wrapped in Tolerant must still list every OTHER skill when one
+// carries a field ADK's strict decoder rejects, instead of erroring the whole
+// source (the crash-loop root cause - see writeUnknownFieldSkill).
+func TestTolerantSkipsUnknownFrontmatterField(t *testing.T) {
+	dir := t.TempDir()
+	writeSkill(t, dir, "good-skill", "a valid skill", "body")
+	writeUnknownFieldSkill(t, dir, "ponytail")
+
+	fsys := os.DirFS(dir)
+	src := Tolerant(skill.NewFileSystemSource(fsys), fsys, dir)
+
+	fms, err := src.ListFrontmatters(context.Background())
+	if err != nil {
+		t.Fatalf("ListFrontmatters: %v", err)
+	}
+	got := names(fms)
+	if !got["good-skill"] {
+		t.Errorf("names = %v, want good-skill still listed", got)
+	}
+	if got["ponytail"] {
+		t.Errorf("names = %v, want the unknown-field skill skipped, not fatal", got)
+	}
+}
+
 // writeBadSkill writes a SKILL.md whose frontmatter fails validation (a
 // description over the skilltoolset's 1024-char ceiling) - the shape that took
 // every project skill down in production.

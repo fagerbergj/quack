@@ -166,10 +166,16 @@ func orchestratorSpec(cfg *config.Config) dag.AdmissionSpec {
 	return spec
 }
 
+// resolvedSkillSource wraps every source in Tolerant: a builtin/plugin
+// skill dir is server-controlled but a plugin's SKILL.md is third-party
+// content, and one field ADK's strict frontmatter parser doesn't know must
+// never fail startup for skills that DID parse (#1080).
 func resolvedSkillSource(skillDirs []string) skill.Source {
-	sources := []skill.Source{skill.NewFileSystemSource(bundledir.SubFS("skills"))}
+	bundleFS := bundledir.SubFS("skills")
+	sources := []skill.Source{skillsource.Tolerant(skill.NewFileSystemSource(bundleFS), bundleFS, "bundled skills")}
 	for _, dir := range skillDirs {
-		sources = append(sources, skill.NewFileSystemSource(os.DirFS(dir)))
+		dirFS := os.DirFS(dir)
+		sources = append(sources, skillsource.Tolerant(skill.NewFileSystemSource(dirFS), dirFS, dir))
 	}
 	return skill.NewMergedSource(sources...)
 }
@@ -187,7 +193,8 @@ func missingDotagentsSkillNames(skillDirs []string) []string {
 			have[fm.Name] = true
 		}
 	}
-	fallback := skill.NewFileSystemSource(bundledir.SubFS(dotagentsEmbeddedSkills))
+	daFS := bundledir.SubFS(dotagentsEmbeddedSkills)
+	fallback := skillsource.Tolerant(skill.NewFileSystemSource(daFS), daFS, "dotagents embedded skills")
 	var missing []string
 	if fms, err := fallback.ListFrontmatters(context.Background()); err == nil {
 		for _, fm := range fms {
@@ -208,7 +215,8 @@ func newSkillSource(skillDirs []string) skill.Source {
 	if len(backfill) == 0 {
 		return resolved
 	}
-	fallback := skill.NewFileSystemSource(bundledir.SubFS(dotagentsEmbeddedSkills))
+	daFS := bundledir.SubFS(dotagentsEmbeddedSkills)
+	fallback := skillsource.Tolerant(skill.NewFileSystemSource(daFS), daFS, "dotagents embedded skills")
 	return skill.NewMergedSource(resolved, skillsource.Scoped(fallback, backfill))
 }
 
