@@ -13,6 +13,7 @@ import (
 )
 
 // landlockABI is the minimum ABI SandboxExecMain requires. V3 adds file truncation.
+// go-landlock 0.10.0 adds V10 (UDP bind/connect/send rules); not adopted here - no network rules in scope.
 var landlockABI = landlock.V3
 
 // landlockABIVersion is landlockABI's number for the env marker.
