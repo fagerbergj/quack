@@ -231,6 +231,37 @@ func TestChecksDirFindsTheNodesOwnRepo(t *testing.T) {
 	}
 }
 
+// TestChecksDirFallsBackToNodeDirForExplicitChecks pins the "fork/exec
+// /quack" bug: the planner set explicit Checks and a Workdir equal to the
+// repo name, but the clone was provisioned AT the node dir, not below a
+// subdirectory named after the repo. checksDir must fall back to the node's
+// own dir instead of returning a path that can never exist.
+func TestChecksDirFallsBackToNodeDirForExplicitChecks(t *testing.T) {
+	cfg := testChecksConfig(t, []string{"go build ./..."}, "quack")
+	cfg.ChatID = "chat-1"
+	cfg.NodeID = "review"
+	nodeDir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, "review/go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(nodeDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(nodeDir, []byte("module quack\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := checksDir(cfg)
+	if err != nil {
+		t.Fatalf("checksDir: %v", err)
+	}
+	if !ok {
+		t.Fatal("checksDir found no dir: should fall back to the node's own dir")
+	}
+	if !strings.HasSuffix(got, "/review") {
+		t.Errorf("checksDir = %q, want the node's own dir (…/review), not …/review/quack", got)
+	}
+}
+
 // TestChecksDirIgnoresGarbageWorkdirWhenDeriving guards #620: an ACP
 // implement node with a pre-provisioned clone (plan.Setup) derives its
 // checks (cfg.Checks empty, cfg.DeriveChecks true), where Workdir is

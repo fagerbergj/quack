@@ -192,6 +192,13 @@ func checksDir(cfg Config) (string, bool, error) {
 		if nodeStart != chatStart && !isDir(nodeStart) && isDir(chatStart) {
 			return chatStart, true, nil
 		}
+		if !isDir(nodeStart) {
+			// Planner-invented workdir (e.g. the repo name) joined onto a node dir
+			// that IS the clone itself; fall back to the workdir-less node dir.
+			if nodeBare, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.NodeDir(cfg.NodeID)); err == nil && isDir(nodeBare) {
+				return nodeBare, true, nil
+			}
+		}
 		return nodeStart, true, nil
 	}
 	for _, start := range []string{nodeStart, chatStart} {
