@@ -31,10 +31,7 @@ const (
 	minPreserveTokens   = 2_000
 	summaryOutputTokens = 4_096
 
-	maxHeadChars = 120_000
-
 	defaultEventRetentionSize = 20
-	defaultOverlapSize        = 5
 
 	measuredInputKey           = "quack.compaction.measured_input"
 	estimateKey                = "quack.compaction.last_estimate"
@@ -414,10 +411,12 @@ func compact(ctx adkagent.Context, c Compaction, contents []*genai.Content, head
 	overlap := c.overlap()
 	toSummarize, keep := rest, []*genai.Content(nil)
 	if overlap > 0 {
-		if n := len(rest) - overlap; n > 0 {
-			toSummarize, keep = rest[:n], rest[n:]
-		} else {
-			toSummarize, keep = nil, rest
+		// ADK clamps overlap to what exists; never leave nothing to summarise.
+		if overlap >= len(rest) {
+			overlap = len(rest) - 1
+		}
+		if overlap > 0 {
+			toSummarize, keep = rest[:len(rest)-overlap], rest[len(rest)-overlap:]
 		}
 	}
 	if len(toSummarize) == 0 {
@@ -563,11 +562,7 @@ func serializeHead(head []*genai.Content) string {
 			}
 		}
 	}
-	s := sb.String()
-	if len(s) > maxHeadChars {
-		s = "[…older history truncated…]\n" + strings.ToValidUTF8(s[len(s)-maxHeadChars:], "")
-	}
-	return s
+	return sb.String()
 }
 
 // buildPrompt assembles the summariser user message.
