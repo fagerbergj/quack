@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
@@ -130,6 +131,88 @@ func TestFilterFrontmatter_MalformedInputPassesThroughUnfiltered(t *testing.T) {
 				t.Errorf("filterFrontmatter(%q) ok = true, want false", tt.content)
 			}
 		})
+	}
+}
+
+// TestFilterFrontmatter_MetadataScalarFidelity guards against the map
+// round-trip corruption a plain map[string]any decode+remarshal caused: YAML
+// implicit typing resolves ambiguous scalars ("007" -> int 7, "1.0" -> float
+// 1) during a generic decode, and remarshaling writes back the resolved
+// form. Ground truth is ADK's own single-hop decode of the same content with
+// the unknown key already removed by hand.
+func TestFilterFrontmatter_MetadataScalarFidelity(t *testing.T) {
+	withUnknown := []byte("---\n" +
+		"name: x\n" +
+		"description: d\n" +
+		"unknown-field: gone\n" +
+		"metadata:\n" +
+		"  version: 007\n" +
+		"  ratio: 1.0\n" +
+		"  quoted: \"1.0\"\n" +
+		"---\nbody\n")
+	groundTruth := []byte("---\n" +
+		"name: x\n" +
+		"description: d\n" +
+		"metadata:\n" +
+		"  version: 007\n" +
+		"  ratio: 1.0\n" +
+		"  quoted: \"1.0\"\n" +
+		"---\nbody\n")
+
+	wantFM, _, err := skill.ParseBytes(groundTruth)
+	if err != nil {
+		t.Fatalf("ParseBytes(groundTruth): %v", err)
+	}
+
+	out, ok := filterFrontmatter(withUnknown)
+	if !ok {
+		t.Fatal("filterFrontmatter returned ok=false")
+	}
+	gotFM, _, err := skill.ParseBytes(out)
+	if err != nil {
+		t.Fatalf("ParseBytes(filtered): %v", err)
+	}
+	if !reflect.DeepEqual(gotFM.Metadata, wantFM.Metadata) {
+		t.Errorf("Metadata = %#v, want %#v (ground truth)", gotFM.Metadata, wantFM.Metadata)
+	}
+	if gotFM.Metadata["version"] != "007" {
+		t.Errorf(`Metadata["version"] = %q, want "007"`, gotFM.Metadata["version"])
+	}
+	if gotFM.Metadata["ratio"] != "1.0" {
+		t.Errorf(`Metadata["ratio"] = %q, want "1.0"`, gotFM.Metadata["ratio"])
+	}
+}
+
+// TestFilterFrontmatter_AllKeysKnownByteIdentical proves the gate: when
+// every frontmatter key is already known, filterFrontmatter must return the
+// original bytes untouched rather than parse-and-rewrite.
+func TestFilterFrontmatter_AllKeysKnownByteIdentical(t *testing.T) {
+	content := []byte("---\nname: x\ndescription: d\nlicense: MIT\n---\nbody\n")
+	out, ok := filterFrontmatter(content)
+	if !ok {
+		t.Fatal("filterFrontmatter returned ok=false")
+	}
+	if !bytes.Equal(out, content) {
+		t.Errorf("out = %q, want byte-identical original %q", out, content)
+	}
+}
+
+// TestFilterFrontmatter_CRLFWithUnknownKeyLoads proves the "\r\n" separator
+// form (ADK's frontmatterSeparatorWin) is handled, not just "\n" - a CRLF
+// skill with an unknown key must load instead of falling through unfiltered
+// and getting skipped by Tolerant.
+func TestFilterFrontmatter_CRLFWithUnknownKeyLoads(t *testing.T) {
+	content := []byte("---\r\nname: x\r\ndescription: d\r\nunknown: y\r\n---\r\nbody\r\n")
+	out, ok := filterFrontmatter(content)
+	if !ok {
+		t.Fatal("filterFrontmatter returned ok=false for CRLF input")
+	}
+	fm, _, err := skill.ParseBytes(out)
+	if err != nil {
+		t.Fatalf("ParseBytes(filtered CRLF output): %v (output: %q)", err, out)
+	}
+	if fm.Name != "x" {
+		t.Errorf("Name = %q, want x", fm.Name)
 	}
 }
 
