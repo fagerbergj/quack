@@ -220,6 +220,13 @@ func newChildCmd(ctx context.Context, dir string, argv []string, caps Caps) (*ex
 	if len(argv) == 0 {
 		return nil, fmt.Errorf("workspace: empty command")
 	}
+	if dir != "" {
+		if fi, statErr := os.Stat(dir); statErr != nil || !fi.IsDir() {
+			// Setpgid below skips Go's os/exec chdir precheck, so a missing dir
+			// would otherwise surface as a fork/exec error naming the binary.
+			return nil, fmt.Errorf("workspace: workdir %q does not exist", dir)
+		}
+	}
 	bin, err := ResolveExecutable(dir, argv[0])
 	if err != nil {
 		return nil, fmt.Errorf("workspace: %q not found: %w", argv[0], err)

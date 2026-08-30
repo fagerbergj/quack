@@ -72,7 +72,13 @@ func (j *Jail) RepoKey(userID, chatID string) string {
 
 // Stable, clone-URL-independent identity from .git/config origin remote. Parsed from file (no git subprocess, recall hot path).
 func RepoIdentity(dir string) string {
-	f, err := os.Open(filepath.Join(dir, ".git", "config"))
+	configPath := filepath.Join(dir, ".git", "config")
+	// A linked worktree's .git is a pointer file; origin lives in the parent
+	// clone's config, reached via the commondir it names.
+	if _, common := worktreeGitDirs(dir); common != "" {
+		configPath = filepath.Join(common, "config")
+	}
+	f, err := os.Open(configPath)
 	if err != nil {
 		return ""
 	}
