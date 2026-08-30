@@ -39,6 +39,15 @@ Each section gets its own page below:
 
 The GitHub App extension (`extensions.github`) has its own page: [`../extensions/github.md`](../extensions/github.md).
 
+## Context compaction (`session.compaction`)
+
+A Go port of Google ADK's context compaction (`internal/agent/compaction.go`) — deletable once `google.golang.org/adk/v2` ships the feature natively. Two independent triggers fire a compaction round; either alone is enough:
+
+- `token_threshold` — absolute safety limit, in estimated tokens. Unset ⇒ derived from the agent's `context_window`.
+- `compaction_interval` — regular cadence, in invocations/turns. Unset (`0`) ⇒ threshold-only, the pre-ADK-port behaviour.
+
+When a round fires, the oldest events beyond `event_retention_size` (default 20) fold into a durable summary event, at a balanced tool-call boundary so a `FunctionCall` and its `FunctionResponse` never land on opposite sides of the cut. `overlap_size` (default `0`, disabled) keeps that many of the newest folded-window events raw instead of summarizing them immediately, so they're re-offered to the summariser alongside new events next round rather than being seen only once. A window whose text exceeds the summariser's own input budget is split into ordered chunks and summarised iteratively (running summary + next chunk) — history is never hard-truncated; only tool-output verbatim tails still get the existing byte-cap clamp.
+
 ## Key environment variables
 
 | Var | Purpose |

@@ -1063,6 +1063,8 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			Sessions:           sessions,
 			TokenThreshold:     compCfg.TokenThreshold,
 			EventRetentionSize: compCfg.EventRetentionSize,
+			CompactionInterval: compCfg.CompactionInterval,
+			OverlapSize:        compCfg.OverlapSize,
 		}
 	}
 
