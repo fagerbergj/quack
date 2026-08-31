@@ -79,3 +79,39 @@ func TestRefreshParsesTheRealManifest(t *testing.T) {
 		}
 	}
 }
+
+// An annotated pin (`ref: <sha>   # v4.9.0`) must compare equal to the head it
+// names; otherwise every boot reports drift for a tree that is exactly on pin.
+func TestParseManifestStripsInlineComments(t *testing.T) {
+	dir := t.TempDir()
+	tree := filepath.Join(dir, "demo")
+	if err := os.MkdirAll(tree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const sha = "0a4dd63ad4541f4f655c4108a295916f3c1d8fda"
+	if err := os.WriteFile(filepath.Join(tree, ".plugin-ref"), []byte(sha+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := writeManifest(t, dir, "plugins:\n"+
+		"  # a full-line comment, indented\n"+
+		"  - name: demo\n    url: https://example.invalid/x#frag\n"+
+		"    ref: "+sha+"   # v4.9.0\n    path: "+tree+"\n")
+
+	entries, err := parseManifest(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("want 1 entry, got %d", len(entries))
+	}
+	if entries[0].ref != sha {
+		t.Errorf("ref = %q, want the bare sha", entries[0].ref)
+	}
+	if entries[0].url != "https://example.invalid/x#frag" {
+		t.Errorf("url = %q, want the fragment preserved", entries[0].url)
+	}
+	revs := Refresh(m, "")
+	if len(revs) != 1 || revs[0].Head != revs[0].Ref {
+		t.Errorf("annotated pin reported as drift: ref=%q head=%q", revs[0].Ref, revs[0].Head)
+	}
+}
