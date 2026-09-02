@@ -250,6 +250,15 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			log.Info("recalled memory injected into the worker prompt", "bytes", len(rec))
 		}
 	}
+	// Episodic record preload (#1006): review for reviewer nodes (ancestry +
+	// per-file validity filtered), body for reMarkable-style stage nodes (no
+	// git filter - these nodes run outside a clone).
+	if p := BuildReviewPreload(nodeCtx, cfg); p != "" {
+		prompt = prompt + p
+	}
+	if p := BuildBodyPreload(nodeCtx, cfg); p != "" {
+		prompt = prompt + p
+	}
 
 	// Per-node workspace dir prevents concurrent node collision.
 	nodeDir := workspace.NodeDir(cfg.NodeID)
@@ -459,6 +468,10 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		var res GateResult
 		var checksSkipReason string // last computeDeterministicCriteria skip reason; attached to res below (#780)
 		queuedText := ""
+		// firstRoundFindings: round-1 findings, kept for the review record's
+		// critique diff (findings a revise round dropped, #1006 test case 7).
+		var firstRoundFindings []ReviewComment
+		haveFirstRoundFindings := false
 		// JudgeRounds counts revisions: round r judges, on fail revises (N rounds = N revisions / N+1 judgments).
 		for round := 1; judge != nil && cfg.JudgeRounds > 0 && round <= cfg.JudgeRounds+1; round++ {
 			// Cooperative cancel/pause/queue before each judge round.
@@ -478,6 +491,10 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				break // still nothing to judge after recovery
 			}
 			act := actFor(answer)
+			if cfg.IsReviewer && !haveFirstRoundFindings {
+				firstRoundFindings = extractReviewFindings(answer, act.stagedDelivery["review"])
+				haveFirstRoundFindings = true
+			}
 			runID := fmt.Sprintf("judge-r%d", round)
 			judgeCtx, jspan := startStageSpan(nodeCtx, sink, cfg, nodeID, "judge", stream.StageJudge, runID, round)
 			// Replay-ledger coords for judge round (via context.WithValue, not adkagent.Context).
@@ -582,6 +599,13 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		res.ChecksSkipReason = checksSkipReason
 		if res.Passed {
 			commitMemoryOnPass(ctx, nodeCtx, cfg, nodeID, answer, act.staged)
+			// Episodic records (#1006): gate-owned, fire-and-forget, never on fail.
+			if cfg.IsReviewer {
+				SaveReview(nodeCtx, cfg, answer, act.stagedDelivery["review"], firstRoundFindings)
+			}
+			if cfg.Artifact == bodyRecordName {
+				SaveBody(nodeCtx, cfg, answer)
+			}
 		}
 		// Deliver even on judge FAIL (graceful degradation). Memory stays pass-only.
 		delivered = true

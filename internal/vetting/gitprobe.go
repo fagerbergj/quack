@@ -163,6 +163,21 @@ func gitLines(dir string, caps workspace.Caps, args ...string) []string {
 	return out
 }
 
+// commitReachable reports whether sha exists in dir's history (survives a
+// force-push that dropped it). Exit-status aware, unlike gitLines' callers
+// that only read output - `git cat-file` exits non-zero on a missing object.
+func commitReachable(dir string, caps workspace.Caps, sha string) bool {
+	res, err := workspace.RunArgv(context.Background(), dir, []string{"git", "cat-file", "-e", sha + "^{commit}"}, caps)
+	return err == nil && res.ExitCode == 0
+}
+
+// fileUnchangedSince reports whether file is byte-identical between a and b -
+// the preload validity rule (#1006): `git diff --quiet` exits 0 for no diff.
+func fileUnchangedSince(dir string, caps workspace.Caps, a, b, file string) bool {
+	res, err := workspace.RunArgv(context.Background(), dir, []string{"git", "diff", "--quiet", a, b, "--", file}, caps)
+	return err == nil && res.ExitCode == 0
+}
+
 func short(sha string) string {
 	if len(sha) > 12 {
 		return sha[:12]
