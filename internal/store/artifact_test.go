@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"google.golang.org/adk/v2/artifact"
@@ -254,33 +255,63 @@ func TestArtifactService_RowBackend_SurvivesRestart(t *testing.T) {
 	}
 }
 
-// TestKeepLastRevisions proves recordstore.Client.KeepLastRevisions (built on
-// Versions + Delete(version), #1006) behaves the same over the row-backed
-// store and ADK's in-memory service - retention has no transactional
-// semantics of its own, so parity across backends is the acceptance bar.
-func TestKeepLastRevisions(t *testing.T) {
+// TestRecordstoreKeepsEveryRevision proves recordstore.Client (#1090 P2)
+// behaves the same over the row-backed store and ADK's in-memory service -
+// no retention call exists (design V4.1 #2), so every save keeps its own
+// revision on both backends.
+var registerRetentionTestKindOnce = sync.OnceFunc(func() {
+	recordstore.Register("store.retention.test", recordstore.Blob, nil)
+})
+
+func TestRecordstoreKeepsEveryRevision(t *testing.T) {
+	registerRetentionTestKindOnce()
 	for name, svc := range bothArtifactServices(t) {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
 			c := recordstore.New(svc, "app", "u", "s")
+			id := recordstore.ID("n1", "store.retention.test", "doc:1")
 			for i := 0; i < 5; i++ {
-				if _, err := c.SaveJSON(ctx, "body", map[string]int{"n": i}); err != nil {
-					t.Fatalf("SaveJSON %d: %v", i, err)
+				if _, err := c.SaveBlob(ctx, id, "store.retention.test", "text/plain", []byte{byte(i)}, recordstore.Lineage{}); err != nil {
+					t.Fatalf("SaveBlob %d: %v", i, err)
 				}
 			}
-			if err := c.KeepLastRevisions(ctx, "body", 3); err != nil {
-				t.Fatalf("KeepLastRevisions: %v", err)
-			}
-			_, rev, ok, err := c.Latest(ctx, "body")
+			_, rev, ok, err := c.Latest(ctx, id)
 			if err != nil || !ok || rev != 5 {
-				t.Fatalf("Latest after retention: rev=%d ok=%v err=%v", rev, ok, err)
-			}
-			if v, err := c.LoadVersion(ctx, "body", 1); err != nil || v != nil {
-				t.Fatalf("version 1 should be evicted: v=%s err=%v", v, err)
-			}
-			if v, err := c.LoadVersion(ctx, "body", 3); err != nil || v == nil {
-				t.Fatalf("version 3 should survive (last 3 kept): v=%s err=%v", v, err)
+				t.Fatalf("Latest: rev=%d ok=%v err=%v", rev, ok, err)
 			}
 		})
+	}
+}
+
+// TestSaveWithMetaPersistsLineage proves the row-backed store round-trips
+// kind/class/lineage through SaveWithMeta/LoadWithMeta (#1090 P2) - the
+// in-memory service in bothArtifactServices has no row, so this only runs
+// against the GORM-backed service directly.
+func TestSaveWithMetaPersistsLineage(t *testing.T) {
+	st := newTestStore(t)
+	row, err := NewRowArtifactService(st.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tas := NewTurnAwareService(row)
+	ctx := context.Background()
+	lineage := []byte(`{"node_id":"n1","round":2,"parent_revision":1}`)
+	if _, err := tas.SaveWithMeta(ctx, &artifact.SaveRequest{
+		AppName: "app", UserID: "u", SessionID: "s", FileName: "n1:code_review:pr:1", Part: mustPart("v1"),
+	}, "code_review", "structured", lineage, "turn-1"); err != nil {
+		t.Fatalf("SaveWithMeta: %v", err)
+	}
+	_, kind, class, gotLineage, err := tas.LoadWithMeta(ctx, &artifact.LoadRequest{
+		AppName: "app", UserID: "u", SessionID: "s", FileName: "n1:code_review:pr:1",
+	})
+	if err != nil {
+		t.Fatalf("LoadWithMeta: %v", err)
+	}
+	if kind != "code_review" || class != "structured" || string(gotLineage) != string(lineage) {
+		t.Fatalf("kind=%q class=%q lineage=%s", kind, class, gotLineage)
+	}
+	revs, err := tas.RevisionsByTurn(ctx, "app", "u", "s", "turn-1")
+	if err != nil || len(revs) != 1 || revs[0].Name != "n1:code_review:pr:1" {
+		t.Fatalf("RevisionsByTurn(turn-1) = %+v, err=%v - SaveWithMeta must populate turn_id like SaveForTurn does", revs, err)
 	}
 }
