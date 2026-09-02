@@ -130,16 +130,16 @@ func (a *Agent) RunNode(ctx adkagent.Context, nodeInput any) iter.Seq2[*session.
 // node.ID)), unlike cfg.NodeID (which collapses to the shared workspace scope
 // on a setup chain's writer node) or at.SessionID (the ADK session id, a
 // retry-only alias - see AdvisorTask.ChatID).
-func (a *Agent) resolveNode(ctx context.Context, prompt string) (cwd, memSecret, ctxDir, scratchDir string, readOnly bool, chatID, nodeID string, err error) {
+func (a *Agent) resolveNode(ctx context.Context, prompt string) (cwd, memSecret, ctxDir, scratchDir string, readOnly bool, chatID, nodeID, token, priorSessionID string, err error) {
 	token, ok := vetting.ParseAdvisorThread(prompt)
 	if !ok {
-		return "", "", "", "", false, "", "", errors.New("acp: prompt carries no workspace-scope marker (is this agent running outside the gate?)")
+		return "", "", "", "", false, "", "", "", "", errors.New("acp: prompt carries no workspace-scope marker (is this agent running outside the gate?)")
 	}
 	at, ok := vetting.LookupAdvisorThread(token)
 	if !ok {
-		return "", "", "", "", false, "", "", fmt.Errorf("acp: advisor thread %q not registered", token)
+		return "", "", "", "", false, "", "", "", "", fmt.Errorf("acp: advisor thread %q not registered", token)
 	}
-	chatID, nodeID = at.ChatID, at.NodeID
+	chatID, nodeID, priorSessionID = at.ChatID, at.NodeID, at.ACPSessionID
 	if a.opts.Jail != nil {
 		ctxDir, _ = a.opts.Jail.Resolve(a.opts.UserID, at.ChatID, workspace.ContextDirScope)
 		// A read-only reviewer needs this exactly as much as a writer does
@@ -147,18 +147,18 @@ func (a *Agent) resolveNode(ctx context.Context, prompt string) (cwd, memSecret,
 		// own tree) - scoped per node so concurrent rounds never collide.
 		scratchDir, err = a.opts.Jail.ScratchDir(a.opts.UserID, at.ChatID, at.WorkspaceNodeID)
 		if err != nil {
-			return "", "", "", "", false, chatID, nodeID, fmt.Errorf("acp: scratch dir: %w", err)
+			return "", "", "", "", false, chatID, nodeID, token, priorSessionID, fmt.Errorf("acp: scratch dir: %w", err)
 		}
 	}
 	if at.WorktreeParent != "" {
 		if a.opts.Worktree == nil {
-			return "", "", "", "", false, chatID, nodeID, fmt.Errorf("acp: node %q needs a git worktree but no worktree executor is configured", at.NodeID)
+			return "", "", "", "", false, chatID, nodeID, token, priorSessionID, fmt.Errorf("acp: node %q needs a git worktree but no worktree executor is configured", at.NodeID)
 		}
 		cwd, err = a.opts.Worktree(ctx, a.opts.UserID, at.ChatID, at.WorktreeParent, at.WorkspaceNodeID)
-		return cwd, at.MemSecret, ctxDir, scratchDir, at.ReadOnly, chatID, nodeID, err
+		return cwd, at.MemSecret, ctxDir, scratchDir, at.ReadOnly, chatID, nodeID, token, priorSessionID, err
 	}
 	cwd, err = a.opts.Jail.EnsureDir(a.opts.UserID, at.ChatID, workspace.NodeDir(at.WorkspaceNodeID))
-	return cwd, at.MemSecret, ctxDir, scratchDir, at.ReadOnly, chatID, nodeID, err
+	return cwd, at.MemSecret, ctxDir, scratchDir, at.ReadOnly, chatID, nodeID, token, priorSessionID, err
 }
 
 // runPrompt is one full round: spawn, handshake, prompt, stream translation, shutdown.
@@ -168,7 +168,7 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 			yield(nil, errors.New("acp: empty prompt"))
 			return
 		}
-		cwd, memSecret, ctxDir, scratchDir, readOnly, steerChatID, steerNodeID, err := a.resolveNode(ctx, prompt)
+		cwd, memSecret, ctxDir, scratchDir, readOnly, steerChatID, steerNodeID, advisorToken, priorSessionID, err := a.resolveNode(ctx, prompt)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -197,7 +197,7 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 			extraRO = []string{ctxDir}
 		}
 		stopped := false
-		err = a.round(ctx, cwd, memSecret, extraRO, caps, outbound, steerChatID, steerNodeID, func(spec eventSpec) bool {
+		err = a.round(ctx, cwd, memSecret, extraRO, caps, outbound, steerChatID, steerNodeID, advisorToken, priorSessionID, func(spec eventSpec) bool {
 			if !yield(a.newEvent(ctx, spec), nil) {
 				stopped = true
 				return false
@@ -231,7 +231,7 @@ type promptDone struct {
 // SessionID/NodeID (round()'s callers resolve these), NOT ledger.Coords -
 // cfg.NodeID collapses to the shared workspace scope for a setup-chain's
 // writer node, which would silently no-op the hook (#998 review).
-func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []string, caps workspace.Caps, outbound string, steerChatID, steerNodeID string, emit func(eventSpec) bool) (err error) {
+func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []string, caps workspace.Caps, outbound string, steerChatID, steerNodeID, advisorToken, priorSessionID string, emit func(eventSpec) bool) (err error) {
 	ctx, roundSpan := otelobs.Start(ctx, "acp.round", attribute.String(otelobs.GenAIAgentName, a.name), attribute.String("cwd", cwd))
 	defer func() { otelobs.End(roundSpan, err) }()
 
@@ -280,14 +280,42 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 	a.log.Info("acp negotiated capabilities", "mcp_http", initResp.AgentCapabilities.McpCapabilities.Http,
 		"mcp_sse", initResp.AgentCapabilities.McpCapabilities.Sse, "mcp_acp", initResp.AgentCapabilities.McpCapabilities.Acp,
 		"mcp_surface_offered", len(mcpServers) > 0, "has_mem_secret", memSecret != "", "mcp_tools", toolNames)
-	sess, err := h.conn.NewSession(ictx, sdk.NewSessionRequest{Cwd: cwd, McpServers: mcpServers})
-	if err != nil {
-		otelobs.End(handshakeSpan, err)
-		return fmt.Errorf("acp: session/new: %w%s", err, h.stderrTail())
+	// Resume the prior round's session when the agent supports it and this
+	// node (judge -> revise -> revise) already has one, so tool-call history
+	// carries forward instead of every round starting cold (#1006).
+	sessID := sdk.SessionId(priorSessionID)
+	resumed := false
+	if priorSessionID != "" && initResp.AgentCapabilities.LoadSession {
+		_, err = h.conn.LoadSession(ictx, sdk.LoadSessionRequest{Cwd: cwd, McpServers: mcpServers, SessionId: sessID})
+		resumed = err == nil
+		if err != nil {
+			a.log.Warn("acp session/load failed, starting a new session", "session", priorSessionID, "err", err)
+		}
 	}
-	handshakeSpan.SetAttributes(attribute.String("session_id", string(sess.SessionId)))
+	if priorSessionID == "" || !initResp.AgentCapabilities.LoadSession || err != nil {
+		var sess sdk.NewSessionResponse
+		sess, err = h.conn.NewSession(ictx, sdk.NewSessionRequest{Cwd: cwd, McpServers: mcpServers})
+		if err != nil {
+			otelobs.End(handshakeSpan, err)
+			return fmt.Errorf("acp: session/new: %w%s", err, h.stderrTail())
+		}
+		sessID = sess.SessionId
+	}
+	if advisorToken != "" {
+		vetting.SetAdvisorThreadSessionID(advisorToken, string(sessID))
+		if resumed {
+			// A resumed session that then errors out is probably dead server-side -
+			// don't hand the next round a session id that will just fail LoadSession again.
+			defer func() {
+				if err != nil {
+					vetting.SetAdvisorThreadSessionID(advisorToken, "")
+				}
+			}()
+		}
+	}
+	handshakeSpan.SetAttributes(attribute.String("session_id", string(sessID)))
 	otelobs.End(handshakeSpan, nil)
-	a.log.Info("acp round started", "cwd", cwd, "session", sess.SessionId)
+	a.log.Info("acp round started", "cwd", cwd, "session", sessID, "resumed", priorSessionID != "" && sessID == sdk.SessionId(priorSessionID))
 
 	// Live only for this round's duration - nothing to forward into before/after.
 	// CallExtension (an acked request), not NotifyExtension: between the
@@ -309,7 +337,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 	finalPrompt := mcpToolsBlock(toolNames) + "\n\n" + outbound
 
 	done := make(chan promptDone, 1)
-	promptCtx, promptSpan := otelobs.Start(ctx, "acp.prompt", attribute.String(otelobs.GenAIAgentName, a.name), attribute.String("session_id", string(sess.SessionId)))
+	promptCtx, promptSpan := otelobs.Start(ctx, "acp.prompt", attribute.String(otelobs.GenAIAgentName, a.name), attribute.String("session_id", string(sessID)))
 	defer promptSpan.End() // safety net for the relay-stopped/cancel exits below; the done-branch sets the real status first
 	// Per-tool-call child spans, ended as their updates arrive - the only
 	// telemetry that reaches a collector before the round finishes (#924).
@@ -334,7 +362,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 	}
 	go func() {
 		resp, perr := h.conn.Prompt(context.Background(), sdk.PromptRequest{
-			SessionId: sess.SessionId,
+			SessionId: sessID,
 			Prompt:    []sdk.ContentBlock{sdk.TextBlock(finalPrompt)},
 		})
 		done <- promptDone{resp, perr}
@@ -403,13 +431,13 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 			emit(final)
 			return nil
 		case <-ctx.Done():
-			a.gracefulCancel(h, sess.SessionId, done)
+			a.gracefulCancel(h, sessID, done)
 			return ctx.Err()
 		case <-abortCtx.Done():
-			a.gracefulCancel(h, sess.SessionId, done)
+			a.gracefulCancel(h, sessID, done)
 			return abortCtx.Err()
 		case <-idleTimer.C:
-			a.gracefulCancel(h, sess.SessionId, done)
+			a.gracefulCancel(h, sessID, done)
 			return fmt.Errorf("acp: no activity for %s - treating opencode as wedged%s", a.opts.IdleTimeout, h.stderrTail())
 		}
 	}

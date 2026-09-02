@@ -72,12 +72,28 @@ func (f *fakeAgent) Initialize(ctx context.Context, _ sdk.InitializeRequest) (sd
 		// http:true mirrors a real opencode negotiation - lets a test with a
 		// registered MemSecret exercise the actual mcpServers/mcpToolNames
 		// path (acp.go's round) instead of it short-circuiting to "none".
-		AgentCapabilities: sdk.AgentCapabilities{McpCapabilities: sdk.McpCapabilities{Http: true}},
+		// LoadSession:true only for the "resume*" modes - a real agent that
+		// never advertises it must never see session/load sent its way.
+		AgentCapabilities: sdk.AgentCapabilities{
+			McpCapabilities: sdk.McpCapabilities{Http: true},
+			LoadSession:     strings.HasPrefix(f.mode, "resume"),
+		},
 	}, nil
 }
 
 func (f *fakeAgent) NewSession(ctx context.Context, _ sdk.NewSessionRequest) (sdk.NewSessionResponse, error) {
 	return sdk.NewSessionResponse{SessionId: "s1"}, nil
+}
+
+// LoadSession: "resume" succeeds (records the id via the echoed prompt text
+// below, since fakeAgent runs in a re-exec'd subprocess with no shared
+// memory back to the test); "resume-fail"/"resume-then-fail" exercise the
+// NewSession fallback and the post-resume error path respectively.
+func (f *fakeAgent) LoadSession(ctx context.Context, req sdk.LoadSessionRequest) (sdk.LoadSessionResponse, error) {
+	if f.mode == "resume-fail" {
+		return sdk.LoadSessionResponse{}, errors.New("no such session")
+	}
+	return sdk.LoadSessionResponse{}, nil
 }
 
 func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.PromptResponse, error) {
@@ -132,6 +148,14 @@ func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 		text := <-f.steerCh
 		send(sdk.UpdateAgentMessageText("steered: " + text))
 		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
+	case "resume", "resume-fail":
+		// Echoes the session id the round actually prompted against - the
+		// only way the parent test process can observe it across the
+		// subprocess boundary.
+		send(sdk.UpdateAgentMessageText("session:" + string(p.SessionId)))
+		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
+	case "resume-then-fail":
+		return sdk.PromptResponse{}, errors.New("prompt boom")
 	}
 	send(sdk.UpdateAgentThoughtText("planning"))
 	send(sdk.StartToolCall("t1", "go test ./...",
@@ -190,7 +214,7 @@ func testAgent(t *testing.T, mode string) *Agent {
 func TestRound_FullPromptRound(t *testing.T) {
 	a := testAgent(t, "happy")
 	var specs []eventSpec
-	err := a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "add the feature", "", "", func(s eventSpec) bool {
+	err := a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "add the feature", "", "", "", "", func(s eventSpec) bool {
 		specs = append(specs, s)
 		return true
 	})
@@ -220,6 +244,78 @@ func TestRound_FullPromptRound(t *testing.T) {
 	}
 }
 
+// TestRound_ResumesPriorSessionViaLoadSession pins #1006: a round given a
+// prior session id and an agent that advertises LoadSession must resume that
+// session (session/load), not mint a new one, and must leave the advisor
+// thread's stored id unchanged.
+func TestRound_ResumesPriorSessionViaLoadSession(t *testing.T) {
+	a := testAgent(t, "resume")
+	token := "tok-resume"
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{})
+	defer vetting.UnregisterAdvisorThread(token)
+
+	var specs []eventSpec
+	err := a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "continue", "", "", token, "prior-s1", func(s eventSpec) bool {
+		specs = append(specs, s)
+		return true
+	})
+	if err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	got := specs[len(specs)-1].parts[0].Text
+	if got != "session:prior-s1" {
+		t.Fatalf("prompt targeted %q, want the resumed session prior-s1 (NewSession must not have been called)", got)
+	}
+	if task, _ := vetting.LookupAdvisorThread(token); task.ACPSessionID != "prior-s1" {
+		t.Errorf("advisor thread session id = %q, want it to stay prior-s1 after a successful resume", task.ACPSessionID)
+	}
+}
+
+// TestRound_LoadSessionFailureFallsBackToNewSession pins #1006's fallback: an
+// agent that advertises LoadSession but errors on it (session gone/expired)
+// must not fail the round - it falls back to session/new and the advisor
+// thread picks up the fresh id.
+func TestRound_LoadSessionFailureFallsBackToNewSession(t *testing.T) {
+	a := testAgent(t, "resume-fail")
+	token := "tok-resume-fail"
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{})
+	defer vetting.UnregisterAdvisorThread(token)
+
+	var specs []eventSpec
+	err := a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "continue", "", "", token, "prior-s1", func(s eventSpec) bool {
+		specs = append(specs, s)
+		return true
+	})
+	if err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	got := specs[len(specs)-1].parts[0].Text
+	if got != "session:s1" {
+		t.Fatalf("prompt targeted %q, want the fallback NewSession id s1", got)
+	}
+	if task, _ := vetting.LookupAdvisorThread(token); task.ACPSessionID != "s1" {
+		t.Errorf("advisor thread session id = %q, want the fresh NewSession id s1", task.ACPSessionID)
+	}
+}
+
+// TestRound_PromptErrorAfterResumeClearsStoredSession pins #1006's poison-id
+// guard: if a resumed session then fails mid-round, the next round must not
+// retry the same dead session - the advisor thread's id is cleared.
+func TestRound_PromptErrorAfterResumeClearsStoredSession(t *testing.T) {
+	a := testAgent(t, "resume-then-fail")
+	token := "tok-resume-then-fail"
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{ACPSessionID: "prior-s1"})
+	defer vetting.UnregisterAdvisorThread(token)
+
+	err := a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "continue", "", "", token, "prior-s1", func(eventSpec) bool { return true })
+	if err == nil {
+		t.Fatal("round: want an error from the fake agent's failing prompt")
+	}
+	if task, _ := vetting.LookupAdvisorThread(token); task.ACPSessionID != "" {
+		t.Errorf("advisor thread session id = %q, want cleared after a resumed session's prompt failed", task.ACPSessionID)
+	}
+}
+
 // TestRound_MCPToolsBlockLeadsThePrompt pins #688 end to end: what the
 // subprocess actually receives (via the echo fake agent, over a real stdio
 // round-trip) opens with the exact, generated tool names for a registered
@@ -234,7 +330,7 @@ func TestRound_MCPToolsBlockLeadsThePrompt(t *testing.T) {
 	defer vetting.UnregisterMemSession(secret)
 
 	var specs []eventSpec
-	err = a.round(context.Background(), t.TempDir(), secret, nil, workspace.Caps{}, "review this PR", "", "", func(s eventSpec) bool {
+	err = a.round(context.Background(), t.TempDir(), secret, nil, workspace.Caps{}, "review this PR", "", "", "", "", func(s eventSpec) bool {
 		specs = append(specs, s)
 		return true
 	})
@@ -335,7 +431,7 @@ func TestRunPrompt_EnvironmentBlockDisclosesReadOnly(t *testing.T) {
 func TestRound_MCPToolsBlockSaysNoneWhenNoSurface(t *testing.T) {
 	a := testAgent(t, "echo")
 	var specs []eventSpec
-	err := a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "add the feature", "", "", func(s eventSpec) bool {
+	err := a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "add the feature", "", "", "", "", func(s eventSpec) bool {
 		specs = append(specs, s)
 		return true
 	})
@@ -353,7 +449,7 @@ func TestRound_CancelGraceful(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(300 * time.Millisecond); cancel() }()
 	t0 := time.Now()
-	err := a.round(ctx, t.TempDir(), "", nil, workspace.Caps{}, "loop forever", "", "", func(eventSpec) bool { return true })
+	err := a.round(ctx, t.TempDir(), "", nil, workspace.Caps{}, "loop forever", "", "", "", "", func(eventSpec) bool { return true })
 	if err == nil || !strings.Contains(err.Error(), "context canceled") {
 		t.Fatalf("want context cancellation, got %v", err)
 	}
@@ -373,7 +469,7 @@ func TestRound_StubbornAgentIsKilled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(300 * time.Millisecond); cancel() }()
 	t0 := time.Now()
-	err := a.round(ctx, t.TempDir(), "", nil, workspace.Caps{}, "loop forever", "", "", func(eventSpec) bool { return true })
+	err := a.round(ctx, t.TempDir(), "", nil, workspace.Caps{}, "loop forever", "", "", "", "", func(eventSpec) bool { return true })
 	if err == nil {
 		t.Fatal("want an error from a cancelled round")
 	}
@@ -395,7 +491,7 @@ func TestRound_IdleTimeout(t *testing.T) {
 
 	result := make(chan error, 1)
 	go func() {
-		result <- a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "wedge forever", "", "", func(eventSpec) bool { return true })
+		result <- a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "wedge forever", "", "", "", "", func(eventSpec) bool { return true })
 	}()
 
 	select {
@@ -415,7 +511,7 @@ func TestRound_IdleTimeoutDoesNotFireOnSlowButAlive(t *testing.T) {
 	a.opts.IdleTimeout = 150 * time.Millisecond // each update gap is 80ms
 
 	var specs []eventSpec
-	err := a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "take your time", "", "", func(s eventSpec) bool {
+	err := a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "take your time", "", "", "", "", func(s eventSpec) bool {
 		specs = append(specs, s)
 		return true
 	})
