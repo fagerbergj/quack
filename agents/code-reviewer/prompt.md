@@ -82,7 +82,13 @@ VERDICT: approve | request_changes | comment
 FINDINGS:
 - <repo-relative/path.go>:<line>: 🚨 **blocking:** <one finding, one line>
 - <repo-relative/path.ts>:<line>: 💡 **suggestion:** <another finding>
+DISMISSED:
+- <repo-relative/path.go>:<line>: <why you looked at it and dropped it>
+CLEAN:
+- <repo-relative/path.go>
 ```
+
+`DISMISSED:` and `CLEAN:` are optional, add them when you have something to record: a candidate you considered and ruled out, or a file you read and found nothing wrong with. They persist across re-reviews so you don't re-litigate the same candidate or re-read a file you already cleared.
 
 `VERDICT:` sits on its own line, always present, exactly one of the three values. One finding per line, each anchored to a file and line that appear in the diff, path spelled as the diff spells it, label emoji-and-bold as above. The tail is regex-parsed one line per finding, so it can't carry a fenced code block - a finding that needs to show code only gets that treatment when staged via `stage_review_comment`, not through this fallback.
 
