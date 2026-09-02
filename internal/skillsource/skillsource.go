@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -27,16 +28,6 @@ func New(builtin skill.Source, jail *workspace.Jail, userID string) skill.Source
 	return &projectAware{builtin: builtin, jail: jail, userID: userID}
 }
 
-// ProjectSkills lists skills for one repo root within a per-chat scope (for `cd`'s on-entry report). Best-effort.
-func ProjectSkills(jail *workspace.Jail, userID, chatID, repoRel string) []*skill.Frontmatter {
-	src := skill.NewMergedSource(sourcesUnder(jail, userID, chatID, repoRel)...)
-	fms, err := src.ListFrontmatters(context.Background())
-	if err != nil {
-		return nil
-	}
-	return fms
-}
-
 // sourcesUnder returns a FileSystemSource for each existing project skills dir under the scope.
 func sourcesUnder(jail *workspace.Jail, userID, chatID, repoRel string) []skill.Source {
 	if jail == nil {
@@ -55,22 +46,32 @@ func sourcesUnder(jail *workspace.Jail, userID, chatID, repoRel string) []skill.
 		if fi, err := os.Stat(real); err != nil || !fi.IsDir() {
 			continue // no such skills dir in this repo
 		}
-		out = append(out, &tolerant{Source: skill.NewFileSystemSource(os.DirFS(real)), dir: real})
+		out = append(out, Tolerant(NewFileSystemSource(os.DirFS(real)), os.DirFS(real), real))
 	}
 	return out
 }
 
-// tolerant: a skill.Source that lists per-directory so one malformed skill doesn't abort the whole dir.
+// Tolerant wraps src (backed by fsys) so ListFrontmatters skips a single
+// malformed skill instead of failing the whole source (#1080: one plugin's
+// new frontmatter field crash-looped the server at startup). label names
+// fsys in the warning log - a real path, or a descriptive name when fsys has
+// none (an embedded FS).
+func Tolerant(src skill.Source, fsys fs.FS, label string) skill.Source {
+	return &tolerant{Source: src, fsys: fsys, label: label}
+}
+
+// tolerant: a skill.Source that lists per-entry so one malformed skill doesn't abort the whole source.
 type tolerant struct {
 	skill.Source
-	dir string // real (jail-resolved) path of the skills dir, for the warning
+	fsys  fs.FS
+	label string // path or descriptive name of fsys, for the warning
 }
 
 // warnedBadSkills dedupes malformed-skill warnings to one line per path.
 var warnedBadSkills sync.Map // skill dir path → struct{}
 
 func (t *tolerant) ListFrontmatters(ctx context.Context) ([]*skill.Frontmatter, error) {
-	entries, err := os.ReadDir(t.dir)
+	entries, err := fs.ReadDir(t.fsys, ".")
 	if err != nil {
 		return nil, nil // unreadable skills dir: no skills, not an error
 	}
@@ -82,7 +83,7 @@ func (t *tolerant) ListFrontmatters(ctx context.Context) ([]*skill.Frontmatter, 
 		fm, err := t.Source.LoadFrontmatter(ctx, e.Name())
 		if err != nil {
 			if !errors.Is(err, skill.ErrSkillNotFound) { // a dir without SKILL.md simply isn't a skill
-				path := filepath.Join(t.dir, e.Name(), "SKILL.md")
+				path := filepath.Join(t.label, e.Name(), "SKILL.md")
 				if _, dup := warnedBadSkills.LoadOrStore(path, struct{}{}); !dup {
 					slog.Warn("skipping malformed skill; other skills still load",
 						"component", "skillsource", "path", path, "err", err)

@@ -208,13 +208,13 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	nodeCtx, span := otelobs.StartNode(ctx,
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID),
 		attribute.String("node_id", nodeID),
-		attribute.String("agent", cfg.Agent),
+		attribute.String(otelobs.GenAIAgentName, cfg.Agent),
 		attribute.String(otelobs.QuackModel, modelName(workerModel)),
 	)
 	defer func() {
 		span.SetAttributes(
 			attribute.Bool("verdict_passed", res.Passed),
-			attribute.Float64("verdict_score", res.Score),
+			attribute.Float64(otelobs.GenAIEvaluationScore, res.Score),
 			attribute.Int("gate_rounds", res.Rounds),
 		)
 		otelobs.EndNode(span, err)
@@ -341,6 +341,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 					workerInput(withUserAnswer(prompt, turns), attachments),
 					fmt.Sprintf("worker-hitl-r%d%s", scan.pauses, sfx), "hitl", promptEmit)
 				if err != nil {
+					if cancelled() {
+						return "", GateResult{}, nil // ACP round aborted mid-flight by CancelNode, not a real failure
+					}
 					log.Error("post-answer worker run failed", "err", err)
 					return "", GateResult{}, err
 				}
@@ -359,6 +362,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 						workerInput(withConfirmDecision(prompt, turns), attachments),
 						fmt.Sprintf("worker-confirm-r%d%s", cscan.pauses, sfx), "confirm", promptEmit)
 					if err != nil {
+						if cancelled() {
+							return "", GateResult{}, nil // ACP round aborted mid-flight by CancelNode, not a real failure
+						}
 						log.Error("post-decision worker run failed", "err", err)
 						return "", GateResult{}, err
 					}
@@ -368,6 +374,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		if !resumed {
 			answer, err = runWorkerNodeTraced(ctx, nodeCtx, cfg, workerModel, workerNode, workerInput(prompt, attachments), "worker-r0"+sfx, "draft", promptEmit)
 			if err != nil {
+				if cancelled() {
+					return "", GateResult{}, nil // ACP round aborted mid-flight by CancelNode, not a real failure
+				}
 				// Log before returning (ADK swallows node errors into silent empty completion).
 				log.Error("worker draft failed", "run", "worker-r0", "err", err)
 				return "", GateResult{}, err
@@ -393,6 +402,10 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				answer, err = runWorkerNodeTraced(ctx, nodeCtx, cfg, workerModel, workerNode, buildContinuationPrompt(cfg.Task, act, cfg.Checks, cfg.ReadOnly, hasDeliverTarget, cfg.IsReviewer, cfg.ExistingPR)+markerLine,
 					fmt.Sprintf("worker-cont%d%s", attempt, sfx), "continuation", promptEmit)
 				if err != nil {
+					if cancelled() {
+						contSpan.End()
+						return "", GateResult{}, nil // ACP round aborted mid-flight by CancelNode, not a real failure
+					}
 					log.Error("worker continuation failed", "attempt", attempt, "err", err)
 					contSpan.End()
 					return "", GateResult{}, err
@@ -490,9 +503,6 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				res = GateResult{Score: 0, Passed: false, Feedback: feedback, Rounds: round}
 				break
 			}
-			// Adversarial verify: load-bearing passing criteria get refuted by independent skeptics.
-			// ledgerCtx, not judgeCtx: skeptics are their own model calls and need the same coords.
-			v = adversarialVerify(ledgerCtx, cfg, question, answer, act, v, judgePartEmitter(sink, nodeID, runID+"-skeptic"))
 			v = sanitizeAnchors(v, answer, cfg)
 			v = mergeDeterministic(v, det, cfg)
 			v = applyRubricSpecs(v, cfg.RubricSpecs)
@@ -504,12 +514,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			otelobs.RecordJudgeVerdict(cfg.Agent, res.Score, res.Passed)
 			// Debug: per-criterion reasoning for diagnosable gate failures.
 			if len(v.Criteria) > 0 && log.Enabled(context.Background(), slog.LevelDebug) {
-				parts := make([]string, 0, len(v.Criteria))
-				for name, cs := range v.Criteria {
-					parts = append(parts, fmt.Sprintf("%s=%.0f (%s)", name, cs.Score, strings.TrimSpace(criterionText(cs))))
-				}
-				sort.Strings(parts)
-				log.Debug("judge verdict detail", "round", round, "criteria", strings.Join(parts, " | "), "feedback", strings.TrimSpace(v.Feedback))
+				log.Debug("judge verdict detail", "round", round, "criteria", formatCriteriaDetail(v.Criteria), "feedback", strings.TrimSpace(v.Feedback))
 			}
 			if res.Passed || round > cfg.JudgeRounds {
 				break
@@ -536,7 +541,14 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			// builds on them instead of redoing the change from scratch.
 			resetCloneToNodeBase(cfg, v)
 			revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, env, act, citationOnlyFailure(v, cfg.Threshold))) + markerLine
-			revised, rerr := runWorkerNodeTraced(ctx, nodeCtx, cfg, workerModel, workerNode, revisePrompt, fmt.Sprintf("worker-r%d%s", round, sfx), "revise", promptEmit)
+			reviseRunID := fmt.Sprintf("worker-r%d%s", round, sfx)
+			// gate.revise spans the round through the same choke point gate.judge
+			// uses. sink is nil: the matching agent_start/complete SSE for this run
+			// already comes from dagStream off the worker's own session events, so
+			// this raises only the span half.
+			reviseCtx, rspan := startStageSpan(nodeCtx, nil, cfg, nodeID, "revise", stream.StageRevise, reviseRunID, round)
+			revised, rerr := runWorkerNodeTraced(ctx, reviseCtx, cfg, workerModel, workerNode, revisePrompt, reviseRunID, "revise", promptEmit)
+			rspan.end(stream.AgentCompleteData{RunID: reviseRunID, Stage: stream.StageRevise, Round: round}, rerr)
 			if rerr != nil {
 				log.Error("revision worker failed; keeping prior answer", "round", round, "err", rerr)
 				return answer, res, nil // revision failed; keep the prior answer
@@ -697,7 +709,7 @@ func commitMemoryOnPass(ctx adkagent.Context, spanCtx context.Context, cfg Confi
 		defer cancel()
 		// Own trace root (detached ctx, no coords) - name the chat explicitly.
 		cctx, commitSpan := otelobs.StartLinked(cctx, "memory.commit", parentSC,
-			attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("agent", author))
+			attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String(otelobs.GenAIAgentName, author))
 		n, err := cfg.Memory.Commit(cctx, sc, author, prov, staged, answer)
 		otelobs.End(commitSpan, err)
 		if err != nil {
@@ -711,6 +723,19 @@ func commitMemoryOnPass(ctx adkagent.Context, spanCtx context.Context, cfg Confi
 				"count", n, "repo", sc.Repo, "role", sc.Role, "user", sc.User)
 		}
 	}()
+}
+
+// resolveCloneCoordinates: the repo/branch this node itself cloned, setup-provisioned
+// or not. Shared by commitDelivery's own dc-building and the review fan-in's
+// RecordClone (#1059) - same precedence, single source of truth.
+func resolveCloneCoordinates(cfg Config, act workerActivity) (cloneURL, branch string) {
+	if cfg.Setup != nil {
+		return cfg.Setup.Repo, cfg.Setup.WorkBranch
+	}
+	if len(act.clonedRepos) > 0 {
+		return act.clonedRepos[0], act.currentBranch
+	}
+	return "", act.currentBranch
 }
 
 // commitDelivery: posts final staged delivery exactly once. Blocking (delivery failure is user-visible).
@@ -743,6 +768,8 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 			}
 			act.stagedDelivery = clone
 		}
+		cloneURL, branch := resolveCloneCoordinates(cfg, act)
+		cfg.ReviewFanout.RecordClone(cloneURL, branch)
 		merged, deliverNow := cfg.ReviewFanout.Finish(nodeID, item, hasItem, false)
 		if deliverNow {
 			deliverMergedReview(ctx, sink, cfg, nodeID, merged)
@@ -769,10 +796,9 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 		NodeID: nodeID, ChatID: cfg.ChatID, Items: sortedStagedDelivery(act.stagedDelivery), IssueNumber: act.prNumber,
 		GatePassed: res.Passed, GateFeedback: res.Feedback, ChecksSkipNote: checksSkipNote(res.ChecksSkipReason),
 	}
+	dc.CloneURL, dc.Branch = resolveCloneCoordinates(cfg, act)
 	if cfg.Setup != nil {
 		// Deliver on setup branch (worker's git-tracking ledger is off-limits for setup-provisioned workers).
-		dc.Branch = cfg.Setup.WorkBranch
-		dc.CloneURL = cfg.Setup.Repo
 		if cfg.Workspace != nil {
 			// Use cfg.NodeID (workspace scope), not nodeID argument.
 			if abs, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID)); err == nil {
@@ -870,6 +896,7 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 // A merge with nothing valid in it (every reviewer node failed/staged
 // nothing) posts nothing - there is nothing true to tell the reader.
 func deliverMergedReview(ctx context.Context, sink func(stream.SSEEvent), cfg Config, nodeID string, merged StagedDelivery) {
+	cloneURL, branch := cfg.ReviewFanout.Clone()
 	cfg.ReviewFanout.forget()
 	if strings.TrimSpace(merged.Body) == "" && len(merged.Comments) == 0 {
 		slog.Warn("review fan-in produced nothing to deliver; every reviewer node failed or staged nothing",
@@ -877,7 +904,12 @@ func deliverMergedReview(ctx context.Context, sink func(stream.SSEEvent), cfg Co
 		return
 	}
 	cfg.ReviewFanout = nil
-	act := workerActivity{stagedDelivery: map[string]StagedDelivery{"review": merged}}
+	// The delivering node (often a synthesizer) may have cloned nothing
+	// itself - fall back to a reviewer sibling's clone coordinates (#1059).
+	act := workerActivity{stagedDelivery: map[string]StagedDelivery{"review": merged}, currentBranch: branch}
+	if cloneURL != "" {
+		act.clonedRepos = []string{cloneURL}
+	}
 	commitDelivery(ctx, sink, cfg, nodeID, act, GateResult{Passed: true})
 }
 
@@ -1052,11 +1084,11 @@ func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Conf
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID),
 		attribute.String("node_id", cfg.NodeID),
 		attribute.String("run_id", runID),
-		attribute.String("agent", cfg.Agent),
+		attribute.String(otelobs.GenAIAgentName, cfg.Agent),
 		attribute.String(otelobs.QuackModel, modelName(workerModel)),
 		attribute.String("stage", stage),
 	)
-	coords := ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, Round: runID, User: cfg.User, Source: cfg.Source}
+	coords := ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, Round: runID, User: cfg.User, Source: cfg.Source, SpanContext: ts.Span.SpanContext()}
 	gctx := ctx.WithAgentContext(ledger.WithCoords(ctx, coords))
 	// WithAgentContext stamp does not survive RunNode scheduling; inference models get stamped directly.
 	if cs, ok := workerModel.(interface{ SetLedgerCoords(ledger.Coords) }); ok {
@@ -1226,12 +1258,6 @@ func mergeDeterministic(v verdict, det map[string]criterionScore, cfg Config) ve
 	return aggregateVerdict(v)
 }
 
-// foldDeterministic: compute then merge in one step.
-func foldDeterministic(ctx context.Context, v verdict, answer string, act workerActivity, cfg Config) verdict {
-	det, _ := computeDeterministicCriteria(ctx, answer, act, cfg)
-	return mergeDeterministic(v, det, cfg)
-}
-
 // composeFeedback builds the #941 structured envelope from v and a rendered
 // one-paragraph summary for callers that still want prose: AgentCompleteData.Feedback
 // (kept for one release so the UI does not blank) and GateResult.Feedback (the
@@ -1330,11 +1356,6 @@ func writtenRel(nodeDir, cwd, p string) string {
 		return strings.TrimPrefix(p, "/")
 	}
 	return joinWritten(nodeDir, joinWritten(cwd, p))
-}
-
-// activityFromSession: replays session with no node scope.
-func activityFromSession(sess session.Session) workerActivity {
-	return activityFromSessionAt(sess, "")
 }
 
 // activityFromSessionAt: replays worker's session inside nodeDir. Paths come back chat-relative.

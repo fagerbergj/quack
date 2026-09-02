@@ -1,53 +1,40 @@
 scale:
   min: 0
-  max: 10
-  pass: 7
+  max: 3
+  pass: 2
 notes: >
-  Date-awareness: the agent has a `current_date` tool and is expected to call it before
-  researching time-sensitive topics. If the answer references events or data that are
-  clearly from the wrong year (e.g., searches framed around a year that has already
-  passed), treat this as a `grounded` failure - the retrieval was mis-scoped. It is not a
-  `no_fabrication` failure unless specific wrong details were invented.
+  Date-awareness: the agent has a `current_date` tool and is expected to call it before researching time-sensitive topics. If the answer references events or data that are clearly from the wrong year (e.g., searches framed around a year that has already passed), treat this as a `grounded` failure - the retrieval was mis-scoped.
 
-  Zero-retrieval handling: if the agent explicitly states it could not retrieve sources
-  (all fetches errored, bot-walls blocked every URL, no search results), score `grounded`
-  and `cites_sources` at 0 but grade `answers_question` and `internally_consistent` on the
-  honesty and completeness of the disclosure itself, not on the absent content. If the
-  agent synthesised silently despite failed retrieval, score `grounded` at 0 as a hard
-  failure.
+  Zero-retrieval handling: if the agent explicitly states it could not retrieve sources (all fetches errored, bot-walls blocked every URL, no search results), score `grounded` and `cites_sources` at 0 but grade `answers_question` and `internally_consistent` on the honesty and completeness of the disclosure itself, not on the absent content. If the agent synthesised silently despite failed retrieval, score `grounded` at 0 as a hard failure.
 criteria:
   answers_question:
     definition: >
-      The response addresses exactly what the user asked, in full - not a related-but-
-      different question, and not a partial answer that drops part of the request.
+      The response addresses exactly what the user asked, in full - not a related-but-different question, and not a partial answer that drops part of the request.
     steps:
-    - Decompose the user's question into its distinct asks (including constraints like
-      location, timeframe, budget, audience).
+    - Decompose the user's question into its distinct asks (including constraints like location, timeframe, budget, audience).
     - Check that each ask is addressed in the answer.
     - Note any silent narrowing or topic drift.
     bands:
-    - min: 7.0
-      max: 10.0
+    - min: 3.0
+      max: 3.0
       meaning: addresses the request completely, including its constraints.
-    - min: 4.0
-      max: 6.0
+    - min: 2.0
+      max: 2.0
+      meaning: addresses the request completely including its constraints, but one part is covered more thinly than the rest without being dropped.
+    - min: 1.0
+      max: 1.0
       meaning: addresses the main ask but leaves minor gaps or drops a constraint.
     - min: 0.0
-      max: 3.0
+      max: 0.0
       meaning: misses the core ask or redirects to a different question.
     anchors:
     - quote
     - omission
   cites_sources:
     definition: >
-      Claims carry followable links: attach inline URLs to non-trivial claims, not just
-      named sources ("According to TechCrunch...") - a name cannot be checked but a link
-      can.
+      Claims carry followable links: attach inline URLs to non-trivial claims, not just named sources ("According to TechCrunch...") - a name cannot be checked but a link can.
     guidance: >
-      The quality of those links - whether each cited URL was actually fetched or searched
-      this session - is graded separately by deterministic code, which overrides this
-      criterion's score. So here, judge only the presence/absence of links; do not reason
-      about whether a given URL is real.
+      This criterion is fully computed by deterministic code from what the research session actually fetched/searched - it checks EXISTENCE and resolution of the citation, not its quality. `citation_quality` below is the judge-scored companion that covers reputability, accuracy, and placement.
     steps:
     - Count the answer's non-trivial claims.
     - Count how many carry an inline, followable URL (not just a source name).
@@ -69,133 +56,101 @@ criteria:
       min: 0
       max: 1
       pass: 0.85
+  citation_quality:
+    definition: >
+      Cited sources are reputable for the claim they back, cited accurately (the source actually says what the claim attributes to it), and placed at the claim they support rather than deferred to an unrelated list. `cites_sources` above is a deterministic existence check; this criterion is the judge's own read on quality and placement, and does not re-derive existence.
+    steps:
+    - For each cited claim, check the source is a reasonable authority for that claim, not a tangential or low-quality page.
+    - Check the claim accurately reflects what the source says, not a stretched or selective reading.
+    - Check the citation is placed at the claim, not deferred to a references block the claim isn't attached to.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: cited claims point at reputable sources, accurately reflect them, and are placed at the claim they support.
+    - min: 2.0
+      max: 2.0
+      meaning: sources are reputable and accurate, but one citation sits a sentence or two away from the claim it backs rather than directly at it.
+    - min: 1.0
+      max: 1.0
+      meaning: one citation is a weak/tangential source, is loosely paraphrased, or is placed away from the claim it backs.
+    - min: 0.0
+      max: 0.0
+      meaning: a citation misrepresents its source, or citations are only deferred to a references block with no inline placement.
+    anchors:
+    - quote
+    - omission
   clean_output:
     definition: >
-      The response is ONLY the answer - it begins directly with the answer (its title or
-      first sentence) and ends with the answer (or its `Sources` section).
+      The response is formatted for the reader it is addressed to: it begins directly with the answer (its title or first sentence) and ends with the answer (or its `Sources` section).
     guidance: >
-      No preamble, no process narration, no planning or self-talk, no meta-commentary
-      about formatting/skills/rules, and no leftover reasoning. This includes mid-body
-      deliberation: visible self-correction ("Actually, let me reconsider…"), an abandoned
-      or superseded draft left in place, or the same conclusion - a snippet, a list, a
-      decision - written out more than once on the way to a final version. The reader sees
-      the reply verbatim, so anything like "Let me…", "I see, I made a typo…", "Actually,
-      wait…", "the skill says…", or trailing drafting notes is a defect - even when the
-      buried content is excellent.
+      No preamble, no process narration, no planning or self-talk, no meta-commentary about formatting/skills/rules, and no leftover reasoning. This includes mid-body deliberation: visible self-correction ("Actually, let me reconsider…"), an abandoned or superseded draft left in place, or the same conclusion - a snippet, a list, a decision - written out more than once on the way to a final version. The reader sees the reply verbatim, so anything like "Let me…", "I see, I made a typo…", "Actually, wait…", "the skill says…", or trailing drafting notes is a defect - even when the buried content is excellent.
     steps:
-    - "Read the first sentence: does the answer begin directly, or with a preamble /
-      process narration?"
+    - "Read the first sentence: does the answer begin directly, or with a preamble / process narration?"
     - Scan the body and tail for leaked planning, self-talk, or meta-commentary.
-    - Check whether any snippet, list, or conclusion appears more than once in different
-      (superseded) forms - a sign of an abandoned draft left in place.
-    - Score down for each intrusion; the buried answer's quality does not excuse it.
+    - Check whether any snippet, list, or conclusion appears more than once in different (superseded) forms - a sign of an abandoned draft left in place.
+    - Check the structure (headings, lists, Sources block) matches what the content actually needs; the buried answer's quality does not excuse an intrusion.
     bands:
-    - min: 7.0
-      max: 10.0
-      meaning: pure answer; no preamble, narration, or trailing reasoning; only the final
-        version of any content appears.
-    - min: 4.0
-      max: 6.0
-      meaning: a stray opener or a single meta sentence, otherwise clean.
-    - min: 0.0
+    - min: 3.0
       max: 3.0
-      meaning: noticeable preamble, leaked planning/reasoning, or a duplicated/superseded draft
-        left in the output.
+      meaning: pure answer, well-structured for its content; no preamble, narration, or trailing reasoning; only the final version of any content appears.
+    - min: 2.0
+      max: 2.0
+      meaning: a stray opener or a single meta sentence, or structure that doesn't quite fit the content, otherwise clean - one small blemish, not a pattern.
+    - min: 1.0
+      max: 1.0
+      meaning: more than one such intrusion (several stray sentences or meta comments), though still short of a real preamble or leaked reasoning.
+    - min: 0.0
+      max: 0.0
+      meaning: noticeable preamble, leaked planning/reasoning, or a duplicated/superseded draft left in the output.
     anchors:
     - quote
     - omission
   grounded:
     definition: >
-      Every non-trivial factual claim traces to a URL, page, or search result the agent
-      actually fetched this session. General knowledge or prior training does not count as
-      retrieved.
+      Every non-trivial factual claim traces to a URL, page, or search result the agent actually fetched this session - general knowledge or prior training does not count as retrieved - and nothing reads as invented: every specific (name, price, address, rating, date, statistic, quote) is stated with confidence the answer's own evidence supports.
     guidance: >
-      You cannot see the agent's retrieval log, and your own knowledge may be stale or
-      incomplete. Judge grounding by whether each non-trivial claim **carries an inline
-      citation** to a source - treat a cited claim as grounded. Do **NOT** lower this
-      score because a cited fact is unfamiliar, recent, or absent from your own knowledge;
-      that is not evidence it is ungrounded.
+      Two failure modes, one criterion: missing retrieval backing, and a specific stated with more confidence than the evidence supports. You cannot see the agent's retrieval log, and your own knowledge may be stale or incomplete. Judge grounding by whether each non-trivial claim **carries an inline citation** to a source - treat a cited claim as grounded. Do **NOT** lower this score because a cited fact is unfamiliar, recent, or absent from your own knowledge, or because it postdates your training; that is not evidence it is ungrounded or fabricated. A specific is "invented" only when the answer's own text is internally inconsistent or makes a precise claim it never supports.
     steps:
-    - List the answer's non-trivial factual claims.
-    - For each, check whether it carries an inline citation (an attribution to a
-      retrieved page or search result), not whether you personally believe it.
-    - If the agent states `web_fetch` failed for most/all sources, check whether it said
-      so plainly. An honest disclosure of failed retrieval caps this criterion at **5**
-      (not lower); silent synthesis despite failed fetches scores **0–2**.
-    - Score the proportion of claims that carry a citation.
+    - List the answer's non-trivial factual claims and specifics (prices, counts, ratings, distances, hours, operator/business names, addresses).
+    - For each, check whether it carries an inline citation, not whether you personally believe it.
+    - For each, judge whether the answer presents it with confidence its own evidence justifies - does it read as retrieved, or as plausibly invented?
+    - If the agent states `web_fetch` failed for most/all sources, check whether it said so plainly. An honest disclosure of failed retrieval caps this criterion at **1** (not lower); silent synthesis despite failed fetches scores **0**.
     bands:
-    - min: 7.0
-      max: 10.0
-      meaning: essentially every non-trivial claim traces to retrieved material.
-    - min: 4.0
-      max: 6.0
-      meaning: most claims are traceable, but several lack retrieved backing, or the agent
-        honestly disclosed that retrieval largely failed.
-    - min: 0.0
+    - min: 3.0
       max: 3.0
-      meaning: the majority of claims have no retrieved backing and no disclaimer.
+      meaning: essentially every non-trivial claim traces to retrieved material, and nothing reads as invented.
+    - min: 2.0
+      max: 2.0
+      meaning: essentially every claim is traceable and nothing reads as invented, but one minor secondary detail is stated a touch more confidently than its source without being unsupported.
+    - min: 1.0
+      max: 1.0
+      meaning: most claims are traceable but several lack retrieved backing, or a minor secondary detail looks loosely stated, or the agent honestly disclosed that retrieval largely failed.
+    - min: 0.0
+      max: 0.0
+      meaning: the majority of claims have no retrieved backing and no disclaimer, or a name/price/statistic is clearly fabricated or wildly unsupported by the answer's own evidence.
     anchors:
     - quote
     - omission
   internally_consistent:
     definition: >
-      The answer does not contradict itself, and its conclusions follow from the evidence
-      it presents.
+      The answer does not contradict itself, and its conclusions follow from the evidence it presents.
     steps:
     - Check for self-contradiction across the answer (a claim undercut later).
     - Check that each conclusion follows from the evidence the answer itself cites.
     - Check that uncertainty is stated where the evidence is thin, not papered over.
     bands:
-    - min: 7.0
-      max: 10.0
+    - min: 3.0
+      max: 3.0
       meaning: fully consistent throughout; conclusions follow from the evidence.
-    - min: 4.0
-      max: 6.0
+    - min: 2.0
+      max: 2.0
+      meaning: fully consistent, but one hedge in the answer's own phrasing is a little uneven (softer in one place than another) without an actual contradiction.
+    - min: 1.0
+      max: 1.0
       meaning: minor tensions that do not undermine the core conclusion.
     - min: 0.0
-      max: 3.0
+      max: 0.0
       meaning: clear contradictions, or conclusions the evidence does not support.
-    anchors:
-    - quote
-    - omission
-  no_fabrication:
-    definition: >
-      Nothing reads as invented: every specific (name, price, address, rating, date,
-      statistic, quote) is stated with confidence the answer's own evidence supports.
-    guidance: >
-      Web answers make fabrication both easy to commit and harmful, because users act on
-      the specifics.
-
-      Do not try to verify which URLs were fetched - citation backing is graded separately
-      by deterministic code, which overrides cites_sources. Here, judge only invented-
-      looking specifics on the answer's internal merits.
-
-      Recency caveat - critical. The agent retrieved live web content that you do not
-      have, and your own knowledge is stale and incomplete. Do NOT flag a claim as
-      fabricated merely because you don't recognize it, it sounds new, or it postdates
-      your training - an unfamiliar movie, show, product, person, or event is not evidence
-      of fabrication. A specific is invented only when the answer's own text is internally
-      inconsistent or makes a precise claim it never supports - never because it conflicts
-      with your memory. When in doubt about an unfamiliar-but-cited specific, do not dock
-      this criterion.
-    steps:
-    - Identify every specific quantitative or named claim (prices, counts, ratings,
-      distances, hours, operator/business names, addresses).
-    - For each, judge whether the answer presents it with confidence its own evidence
-      does not justify - does it read as retrieved, or as plausibly invented?
-    - Weight load-bearing specifics (the ones a reader would act on) most heavily.
-    bands:
-    - min: 7.0
-      max: 10.0
-      meaning: nothing reads as invented; specifics are stated with appropriate confidence.
-    - min: 4.0
-      max: 6.0
-      meaning: minor secondary details look approximate or loosely stated; no core name, price,
-        or statistic appears fabricated.
-    - min: 0.0
-      max: 3.0
-      meaning: a name, price, or statistic is clearly fabricated or wildly unsupported by the
-        answer's own evidence.
     anchors:
     - quote
     - omission

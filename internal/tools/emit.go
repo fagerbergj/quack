@@ -46,6 +46,11 @@ func (e *emitTool) SetLedgerCoords(c ledger.Coords) {
 	e.mu.Lock()
 	e.coords = c
 	e.mu.Unlock()
+	// Forward through the wrapper chain so a guard ladder nested below (not
+	// itself in StampCoords' item list) learns node identity too (#1052).
+	if cs, ok := e.inner.(ledger.CoordSetter); ok {
+		cs.SetLedgerCoords(c)
+	}
 }
 
 func (e *emitTool) Name() string        { return e.inner.Name() }
@@ -73,8 +78,8 @@ func (e *emitTool) Run(ctx agent.Context, args any) (map[string]any, error) {
 	coords := e.coords
 	e.mu.Unlock()
 	emitCtx := context.Context(ctx)
-	if coords != (ledger.Coords{}) {
-		emitCtx = ledger.WithCoords(ctx, coords)
+	if !coords.IsZero() {
+		emitCtx = ledger.WithCoords(ctx, ledger.FillBlankCoords(ledger.CoordsFromContext(ctx), coords))
 	}
 	emitToolEvent(emitCtx, e.Name(), args, result, err)
 	return result, err

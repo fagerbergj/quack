@@ -68,7 +68,7 @@ func sumAgents(t *testing.T, reader *metric.ManualReader, name string) map[strin
 	}
 	out := map[string]bool{}
 	for _, dp := range sum.DataPoints {
-		if v, ok := dp.Attributes.Value(attribute.Key("agent")); ok {
+		if v, ok := dp.Attributes.Value(attribute.Key("gen_ai.agent.name")); ok {
 			out[v.AsString()] = true
 		}
 	}
@@ -83,7 +83,7 @@ func histogramAgents(t *testing.T, reader *metric.ManualReader, name string) map
 	}
 	out := map[string]bool{}
 	for _, dp := range h.DataPoints {
-		if v, ok := dp.Attributes.Value(attribute.Key("agent")); ok {
+		if v, ok := dp.Attributes.Value(attribute.Key("gen_ai.agent.name")); ok {
 			out[v.AsString()] = true
 		}
 	}

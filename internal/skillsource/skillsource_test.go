@@ -133,23 +133,55 @@ func TestNoProjectDirsUnchanged(t *testing.T) {
 	}
 }
 
-func TestClaudeSkillsDirAlsoDiscovered(t *testing.T) {
-	j, userRoot, builtin := setup(t, nil)
-	writeSkill(t, filepath.Join(userRoot, "chatA", "myrepo", ".claude", "skills"), "claude-skill", "from .claude", "body")
-
-	fms := ProjectSkills(j, "u1", "chatA", "myrepo")
-	if len(fms) != 1 || fms[0].Name != "claude-skill" {
-		t.Errorf("ProjectSkills = %+v, want the .claude/skills one", fms)
-	}
-	_ = builtin
-}
-
 func TestNilJailReturnsBuiltin(t *testing.T) {
 	builtinDir := t.TempDir()
 	writeSkill(t, builtinDir, "x", "d", "b")
 	builtin := skill.NewFileSystemSource(os.DirFS(builtinDir))
 	if New(builtin, nil, "u1") != builtin {
 		t.Error("New with a nil jail should return the built-in source unchanged")
+	}
+}
+
+// writeUnknownFieldSkill writes a SKILL.md carrying frontmatter keys ADK's
+// strict decoder (KnownFields(true)) doesn't recognize - the #1080 shape: a
+// third-party plugin (ponytail) added `argument-hint`, and ADK's
+// FileSystemSource.ListFrontmatters aborts its ENTIRE listing on the first
+// unparseable skill, crash-looping server startup in production 0.50.0.
+func writeUnknownFieldSkill(t *testing.T, dir, name string) {
+	t.Helper()
+	d := filepath.Join(dir, name)
+	if err := os.MkdirAll(d, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "---\nname: " + name + "\ndescription: has unknown fields\n" +
+		"argument-hint: \"[lite|full|ultra]\"\nunknown-key: surprise\n---\n\nbody\n"
+	if err := os.WriteFile(filepath.Join(d, "SKILL.md"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestTolerantSkipsUnknownFrontmatterField is the #1080 regression: a builtin/
+// plugin source wrapped in Tolerant must still list every OTHER skill when one
+// carries a field ADK's strict decoder rejects, instead of erroring the whole
+// source (the crash-loop root cause - see writeUnknownFieldSkill).
+func TestTolerantSkipsUnknownFrontmatterField(t *testing.T) {
+	dir := t.TempDir()
+	writeSkill(t, dir, "good-skill", "a valid skill", "body")
+	writeUnknownFieldSkill(t, dir, "ponytail")
+
+	fsys := os.DirFS(dir)
+	src := Tolerant(skill.NewFileSystemSource(fsys), fsys, dir)
+
+	fms, err := src.ListFrontmatters(context.Background())
+	if err != nil {
+		t.Fatalf("ListFrontmatters: %v", err)
+	}
+	got := names(fms)
+	if !got["good-skill"] {
+		t.Errorf("names = %v, want good-skill still listed", got)
+	}
+	if got["ponytail"] {
+		t.Errorf("names = %v, want the unknown-field skill skipped, not fatal", got)
 	}
 }
 

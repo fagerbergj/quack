@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -192,6 +193,14 @@ func checksDir(cfg Config) (string, bool, error) {
 		if nodeStart != chatStart && !isDir(nodeStart) && isDir(chatStart) {
 			return chatStart, true, nil
 		}
+		if !isDir(nodeStart) {
+			// Only fall back to the bare node dir when it IS the repo the discarded
+			// workdir segment named - otherwise an uncreated subdir silently falls
+			// back onto an unrelated module and reports a false pass (quack#1083).
+			if nodeBare, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.NodeDir(cfg.NodeID)); err == nil && repoNameMatches(nodeBare, workdir) {
+				return nodeBare, true, nil
+			}
+		}
 		return nodeStart, true, nil
 	}
 	for _, start := range []string{nodeStart, chatStart} {
@@ -203,6 +212,20 @@ func checksDir(cfg Config) (string, bool, error) {
 		}
 	}
 	return "", false, nil
+}
+
+// repoNameMatches reports whether dir is a git repo whose origin identity
+// ends in the same name as workdir's last segment, i.e. dir positively IS
+// the repo the discarded workdir was trying to name (not just any repo).
+func repoNameMatches(dir, workdir string) bool {
+	if workdir == "" || !isDir(dir) {
+		return false
+	}
+	identity := workspace.RepoIdentity(dir)
+	if identity == "" {
+		return false
+	}
+	return strings.EqualFold(path.Base(identity), path.Base(filepath.ToSlash(workdir)))
 }
 
 func isDir(p string) bool {

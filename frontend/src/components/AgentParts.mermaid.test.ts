@@ -11,6 +11,11 @@ import { AssistantText } from './AgentParts'
 ;(SVGElement.prototype as unknown as { getBBox: () => DOMRect }).getBBox = () =>
   ({ x: 0, y: 0, width: 100, height: 20, top: 0, right: 0, bottom: 0, left: 0, toJSON: () => '' }) as DOMRect
 
+// Must exceed waitFor's own budget below, or vitest kills the test while
+// waitFor still thinks it has time - mermaid's ~1MB import is genuinely slow
+// under full-suite concurrency.
+const mermaidTestTimeout = 20_000
+
 async function waitFor(check: () => boolean, timeoutMs = 8000) {
   const start = Date.now()
   while (!check()) {
@@ -47,7 +52,7 @@ describe('AssistantText mermaid wiring', () => {
     mount('Here:\n\n```mermaid\nflowchart TD\n  A --> B\n```\n')
     await waitFor(() => host!.querySelector('[data-testid="mermaid-diagram"] svg') != null)
     expect(host!.querySelector('[data-testid="mermaid-diagram"] svg')).not.toBeNull()
-  })
+  }, mermaidTestTimeout)
 
   it('does not attempt to render an unclosed (streaming) mermaid block', async () => {
     mount('Here:\n\n```mermaid\nflowchart TD\n  A --> B')
@@ -60,7 +65,7 @@ describe('AssistantText mermaid wiring', () => {
     // Falls back to the plain streaming code block - the fence content is still visible as text.
     expect(host!.querySelector('pre')).not.toBeNull()
     expect(host!.textContent).toContain('flowchart TD')
-  })
+  }, mermaidTestTimeout)
 
   it('renders normal markdown untouched when there is no mermaid block', () => {
     mount('**bold** text and a [link](https://example.com)')

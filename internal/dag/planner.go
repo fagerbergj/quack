@@ -99,7 +99,7 @@ func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, deli
 	if err != nil {
 		return nil, err
 	}
-	span.SetAttributes(attribute.String("plan_id", plan.ID), attribute.Int("node_count", len(plan.Nodes)))
+	span.SetAttributes(attribute.String(otelobs.GenAIWorkflowName, plan.ID), attribute.Int("node_count", len(plan.Nodes)))
 	if err = checkReviewDeliverable(plan); err != nil {
 		return nil, err
 	}
@@ -132,7 +132,7 @@ func (p *Planner) BuildBound(ctx context.Context, nodes []RawNode, setup *Setup,
 	if err != nil {
 		return nil, err
 	}
-	span.SetAttributes(attribute.String("plan_id", plan.ID), attribute.Int("node_count", len(plan.Nodes)))
+	span.SetAttributes(attribute.String(otelobs.GenAIWorkflowName, plan.ID), attribute.Int("node_count", len(plan.Nodes)))
 	plan.UserMessage = message
 	plan.Attachments = attachments
 	return plan, nil

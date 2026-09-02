@@ -30,6 +30,10 @@ run: build
 test: plugins
 	go test ./...
 
+## test-race: run Go tests under the race detector (what CI gates on)
+test-race: plugins
+	go test -race ./...
+
 ## vet: go vet
 vet:
 	go vet ./...

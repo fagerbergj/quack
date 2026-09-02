@@ -22,27 +22,31 @@ const GenAISemConvVersion = "1.41.0"
 
 // gen_ai.* attribute keys drawn from OTel's semconv; quack.* attrs have no semconv equivalent.
 const (
-	GenAIOperationName         = string(semconv.GenAIOperationNameKey)
-	GenAIProviderName          = string(semconv.GenAIProviderNameKey)
-	GenAIConversationID        = string(semconv.GenAIConversationIDKey)
-	GenAIAgentName             = string(semconv.GenAIAgentNameKey)
-	GenAIRequestModel          = string(semconv.GenAIRequestModelKey)
-	GenAIRequestTemperature    = string(semconv.GenAIRequestTemperatureKey)
-	GenAIRequestMaxTokens      = string(semconv.GenAIRequestMaxTokensKey)
-	GenAIRequestSeed           = string(semconv.GenAIRequestSeedKey)
-	GenAIResponseModel         = string(semconv.GenAIResponseModelKey)
-	GenAIResponseID            = string(semconv.GenAIResponseIDKey)
-	GenAIInputMessages         = string(semconv.GenAIInputMessagesKey)
-	GenAIOutputMessages        = string(semconv.GenAIOutputMessagesKey)
-	GenAISystemInstructions    = string(semconv.GenAISystemInstructionsKey)
-	GenAIToolDefinitions       = string(semconv.GenAIToolDefinitionsKey)
-	GenAIToolName              = string(semconv.GenAIToolNameKey)
-	GenAIToolType              = string(semconv.GenAIToolTypeKey)
-	GenAIToolCallArguments     = string(semconv.GenAIToolCallArgumentsKey)
-	GenAIToolCallResult        = string(semconv.GenAIToolCallResultKey)
-	GenAIPromptName            = string(semconv.GenAIPromptNameKey)
-	GenAIPromptVersion         = "gen_ai.prompt.version" // not yet a registered semconv attribute
+	GenAIOperationName      = string(semconv.GenAIOperationNameKey)
+	GenAIProviderName       = string(semconv.GenAIProviderNameKey)
+	GenAIConversationID     = string(semconv.GenAIConversationIDKey)
+	GenAIAgentName          = string(semconv.GenAIAgentNameKey)
+	GenAIRequestModel       = string(semconv.GenAIRequestModelKey)
+	GenAIRequestTemperature = string(semconv.GenAIRequestTemperatureKey)
+	GenAIRequestMaxTokens   = string(semconv.GenAIRequestMaxTokensKey)
+	GenAIRequestSeed        = string(semconv.GenAIRequestSeedKey)
+	GenAIResponseModel      = string(semconv.GenAIResponseModelKey)
+	GenAIResponseID         = string(semconv.GenAIResponseIDKey)
+	GenAIInputMessages      = string(semconv.GenAIInputMessagesKey)
+	GenAIOutputMessages     = string(semconv.GenAIOutputMessagesKey)
+	GenAISystemInstructions = string(semconv.GenAISystemInstructionsKey)
+	GenAIToolDefinitions    = string(semconv.GenAIToolDefinitionsKey)
+	GenAIToolName           = string(semconv.GenAIToolNameKey)
+	GenAIToolType           = string(semconv.GenAIToolTypeKey)
+	GenAIToolCallArguments  = string(semconv.GenAIToolCallArgumentsKey)
+	GenAIToolCallResult     = string(semconv.GenAIToolCallResultKey)
+	GenAIToolCallID         = string(semconv.GenAIToolCallIDKey)
+	GenAIPromptName         = string(semconv.GenAIPromptNameKey)
+	GenAIPromptVersion      = "gen_ai.prompt.version" // not yet a registered semconv attribute
+	// ponytail: holds plan.ID (a UUID) where semconv wants a low-cardinality
+	// name; matches what the planner already logs. Give plans real names first.
 	GenAIWorkflowName          = string(semconv.GenAIWorkflowNameKey)
+	GenAIConversationCompacted = "gen_ai.conversation.compacted" // not present in the pinned v1.41.0 Go module
 	GenAIEvaluationName        = string(semconv.GenAIEvaluationNameKey)
 	GenAIEvaluationScore       = string(semconv.GenAIEvaluationScoreValueKey)
 	GenAIEvaluationExplain     = string(semconv.GenAIEvaluationExplanationKey)
@@ -59,13 +63,21 @@ const (
 	// the ledger record of a rejection reason that must never reach the user reply.
 	GenAIOperationPlanRejected = "plan_rejected"
 
-	quackNodeKey  = "quack.node"
+	// QuackNode identifies the DAG node a span or record belongs to. Exported
+	// so the generation span carries the same key the log records do - it is
+	// what makes a Langfuse trace filterable down to one node.
+	QuackNode = "quack.node"
+
+	quackNodeKey  = QuackNode
 	quackRoundKey = "quack.round"
 
 	// QuackModel carries the model a wrapper span (node, worker round) ran
 	// under. Vendor-namespaced on purpose: Langfuse types any span with a
 	// model-named attribute ("model", gen_ai.request.model, ...) as a
 	// GENERATION, and these spans make no model call (#927).
+	// ponytail: never rename to gen_ai.request.model - ADK's own span already
+	// carries the real GENERATION (model/tokens/cost); renaming this would
+	// double-count both against it.
 	QuackModel = "quack.model"
 )
 
@@ -130,8 +142,11 @@ func initLogs(ctx context.Context, res *resource.Resource, cfg config.Observabil
 	}
 	// Opt-in, unlike traces/metrics: exporting logs at a collector with no
 	// logs pipeline 404s on every batch (and #814's path pinning applies here too).
-	if cfg.Otel.Logs && cfg.Otel.OTLPEndpoint != "" {
-		lexp, err := otlploghttp.New(ctx, otlploghttp.WithEndpointURL(signalURL(cfg.Otel.OTLPEndpoint, "/v1/logs")))
+	for _, e := range cfg.Otel.Exporters {
+		if !e.Wants(config.SignalLogs) {
+			continue
+		}
+		lexp, err := otlploghttp.New(ctx, otlploghttp.WithEndpointURL(signalURL(e.Endpoint, "/v1/logs")))
 		if err != nil {
 			return nil, nil, fmt.Errorf("otelobs: otlp log exporter: %w", err)
 		}

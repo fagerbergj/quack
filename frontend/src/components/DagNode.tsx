@@ -8,6 +8,7 @@ import { agentLabel, type Activity, type AgentRun } from './messageParts'
 import { previewLine, fmtTokenCount } from './toolFormat'
 import { type DagNodeDef } from '../state/agentStream'
 import { fmtMs, LiveTimer } from '../utils/timer'
+import { traceUrl } from '../state/clientConfig'
 
 // NodeMenu is the node's ⋮ overflow menu: one click for pause/start/stop (no
 // popup round-trip), with "queue a message…" / "edit prompt" / "answer
@@ -333,8 +334,9 @@ function groupWorkerRuns(runs: AgentRun[], activeIdx: number): RunGroup[] {
 // (#385/#399), extended to the answer (0.9.0 feedback): a truncated preview by
 // default, the full answer in a popup on click (maintainer call: the answer
 // reads better full-size than height-locked inline). Shown for every node so
-// each specialist's answer is inspectable - not just the final one (whose
-// answer also appears in the main message bubble).
+// each specialist's answer is inspectable - except the final node, whose
+// answer IS the turn's answer and renders in full in the message bubble
+// below the DAG (a card row here would be a second copy of the same text).
 function NodeAnswer({ answer }: { answer: string }) {
   const [open, setOpen] = useState(false)
   if (!answer) return null
@@ -570,6 +572,17 @@ export const DagNode = memo(function DagNode({
               )}
             </span>
           )}
+          {traceUrl(state.traceId) && (
+            <a
+              href={traceUrl(state.traceId)}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[10px] text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 underline"
+              title="Open this run's trace in the tracing backend (whole run, not just this node)"
+            >
+              run trace
+            </a>
+          )}
           <ContextMeter used={state.contextTokens ?? 0} limit={node.context_window ?? 0} />
           {/* A finished node shows the server-measured duration (reconnect-proof);
               a running one ticks live from the server start time. */}
@@ -638,7 +651,7 @@ export const DagNode = memo(function DagNode({
       })}
 
       {/* Vetted answer (below the stage cards, for every node) */}
-      <NodeAnswer answer={answer} />
+      {!isFinal && <NodeAnswer answer={answer} />}
 
       {/* Failed state */}
       {state.status === 'failed' && state.error && (

@@ -11,6 +11,7 @@ Every command has its own `--help`; this page is the map.
 | `quack init` | Onboarding wizard: run a server locally (writes `quack.yaml`, then registers `localhost`) or register a remote one someone else runs. |
 | `quack server init` | Just the config wizard - LLM provider, endpoint, model roles, optional features, stores. Writes `quack.yaml` without touching the client registry. |
 | `quack server use <name>` / `add <name> <url>` / `list` / `remove <name>` | Manage the set of servers this CLI knows about and which one is active. |
+| `quack server validate` | Load and validate a `quack.yaml` without starting the server. |
 | `quack server login <name> --issuer <url> --client-id <id>` | Log in to a registered server that requires [OIDC auth](configuration/auth.md#cli-login-quack-server-login), via the authorization code flow with PKCE (needs a local browser - doesn't work headless/over SSH). |
 
 Once logged in, `quack chat`/`quack api`/`-p` attach the stored access token to every request against that server automatically (refreshed silently as it nears expiry) - nothing else to pass on the command line.
@@ -40,6 +41,8 @@ A chat is a session; a message on it kicks off a run.
 | `quack chat export <id>` | Export a chat transcript. |
 | `quack chat stop <id>` | Stop a chat's active run. |
 | `quack chat delete <id>` | Delete a chat (irreversible). |
+| `quack chat artifact list <id>` | List a chat's artifacts and their revision history. |
+| `quack chat artifact download <id> <name> [--revision N] [-o file]` | Download one artifact revision's bytes (default: latest). |
 
 ## Node control
 
@@ -55,6 +58,41 @@ Mid-run control over one node in the active DAG (`quack chat node <verb> <chat-i
 | `queue-remove <message-id>` | Remove a not-yet-delivered queued message. |
 | `edit <task>` | Edit a not-yet-started node's prompt. |
 | `retry` | Re-run a finished node (done/failed/cancelled) and everything downstream of it. |
+
+## Recording, replay, and eval
+
+Runs can be recorded to a replay ledger and re-driven later - the basis for regression-checking a prompt or model change against real traffic.
+
+| Command | Does |
+| --- | --- |
+| `quack recording list` / `export` | Inspect and export replay-ledger recordings. |
+| `quack replay` | Replay a recorded run offline (strict) or live from a changed node (fork). |
+| `quack eval` | Re-run a recorded conversation live with a swapped model and compare judge scores. |
+
+## Memory
+
+Browse or invalidate what quack has remembered (memory lifecycle design doc); `forget` is the CLI verb for the manual-delete remediation path a memory-poisoning incident needs.
+
+| Command | Does |
+| --- | --- |
+| `quack memory list [--bucket <b>] [--q <query>] [--limit N] [--include-invalidated]` | List or (with `--q`) embedding-search memories. |
+| `quack memory forget <memory-id> [--reason <text>]` | Invalidate (soft-delete) one memory. |
+
+## Sandbox
+
+`quack sandbox` enters or probes the real agent jail - the same caps, argv wrapping, and spawn env an ACP agent gets, which is what makes it useful for reproducing "works for me, fails in the jail" bugs.
+
+| Command | Does |
+| --- | --- |
+| `quack sandbox` | Enter the jail interactively. |
+| `quack sandbox info` | Print the resolved jail (mode, cwd, tmp, home, grants, env) without running anything. |
+| `quack sandbox check` | Run the built-in jail probes; non-zero exit on any FAIL. |
+
+See [`docs/sandbox-cli.md`](sandbox-cli.md) for the detail.
+
+## Misc
+
+`quack version` prints the version. `quack git-askpass` is a helper quack invokes for itself during git operations - not something you run directly.
 
 ## Raw API access
 

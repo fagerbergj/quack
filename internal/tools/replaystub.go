@@ -60,7 +60,7 @@ func (r *replayToolStub) ProcessRequest(_ agent.Context, req *model.LLMRequest) 
 
 func (r *replayToolStub) Run(ctx agent.Context, args any) (map[string]any, error) {
 	coords := r.coords
-	if coords == (ledger.Coords{}) {
+	if coords.IsZero() {
 		coords = ledger.CoordsFromContext(ctx)
 	}
 	res, err := r.session.NextToolResult(coords, r.name, args)

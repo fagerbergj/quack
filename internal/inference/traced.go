@@ -49,8 +49,9 @@ func (t *tracedModel) SetDefaultAgent(name string) {
 	t.defaultAgent = name
 }
 
-// SetLedgerCoords stamps coordinates for subsequent GenerateContent calls,
-// taking precedence over ctx (needed because RunNode rebuilds child context).
+// SetLedgerCoords stamps coordinates for calls whose ctx cannot carry their own
+// - RunNode rebuilds the child context and drops node/agent/round. Fields the
+// caller did put in ctx are never overwritten by it (#1039).
 func (t *tracedModel) SetLedgerCoords(c ledger.Coords) {
 	t.mu.Lock()
 	t.coords = c
@@ -59,12 +60,19 @@ func (t *tracedModel) SetLedgerCoords(c ledger.Coords) {
 
 // GenerateContent times the full iteration and emits a gen_ai ledger event.
 func (t *tracedModel) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
+	// ctx fields win field-by-field; the shared stamp only FILLS BLANKS. The
+	// outer run ctx already carries partial coords (chat/user/source), so an
+	// all-or-nothing check would drop node/agent/round on the worker path.
 	t.mu.Lock()
-	c := t.coords
+	stamp := t.coords
 	t.mu.Unlock()
-	if c != (ledger.Coords{}) {
-		ctx = ledger.WithCoords(ctx, c)
+	if !stamp.IsZero() {
+		ctx = ledger.WithCoords(ctx, ledger.FillBlankCoords(ledger.CoordsFromContext(ctx), stamp))
 	}
+	// Decorate ADK's own generate_content span while it's still open - see
+	// setRequestSpanAttrs's doc comment for why this can't move into the
+	// deferred emit below.
+	setRequestSpanAttrs(ctx, req)
 	inner := t.LLM.GenerateContent(ctx, req, stream)
 	return func(yield func(*model.LLMResponse, error) bool) {
 		t0 := time.Now()
@@ -81,6 +89,11 @@ func (t *tracedModel) GenerateContent(ctx context.Context, req *model.LLMRequest
 			}
 			if resp != nil {
 				last = resp
+				if !resp.Partial {
+					// Must run before yield: ADK ends its span synchronously
+					// the moment yield returns for a non-partial response.
+					setResponseSpanAttrs(ctx, resp)
+				}
 			}
 			return yield(resp, err)
 		})

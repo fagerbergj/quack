@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"strings"
 
+	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/model"
@@ -14,6 +16,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
@@ -28,13 +31,14 @@ const (
 	minPreserveTokens   = 2_000
 	summaryOutputTokens = 4_096
 
-	maxHeadChars = 120_000
-
 	defaultEventRetentionSize = 20
 
-	measuredInputKey = "quack.compaction.measured_input"
-	estimateKey      = "quack.compaction.last_estimate"
-	overheadKey      = "quack.compaction.overhead"
+	measuredInputKey           = "quack.compaction.measured_input"
+	estimateKey                = "quack.compaction.last_estimate"
+	overheadKey                = "quack.compaction.overhead"
+	invocationCountKey         = "quack.compaction.invocation_count"
+	lastInvocationIDKey        = "quack.compaction.last_invocation_id"
+	lastCompactedInvocationKey = "quack.compaction.last_compacted_invocation"
 
 	defaultCalibrationRatio = 1.3
 )
@@ -46,6 +50,12 @@ type Compaction struct {
 	Sessions           session.Service
 	TokenThreshold     int
 	EventRetentionSize int
+	// CompactionInterval is ADK's regular-cadence trigger (in invocations),
+	// on top of TokenThreshold's absolute limit. 0 disables the cadence trigger.
+	CompactionInterval int
+	// OverlapSize is how many already-windowed raw events carry into the next
+	// summarization pass, so a fact split across the cut isn't lost. 0 = default.
+	OverlapSize int
 }
 
 // ResolveSummarizer prefers the active worker model for compaction (swap-free), falling back to the configured one.
@@ -78,6 +88,40 @@ func (c Compaction) retention() int {
 	return defaultEventRetentionSize
 }
 
+// overlap is opt-in: 0 (unset) preserves the pre-ADK-port behaviour of
+// folding the whole window into the summary every time.
+func (c Compaction) overlap() int {
+	return c.OverlapSize
+}
+
+// intervalTrigger reports whether the invocation cadence (ADK's
+// compaction_interval) is due, advancing the per-session invocation counter
+// at most once per distinct invocation ID and firing at most once per
+// invocation that lands on the interval.
+func intervalTrigger(ctx adkagent.Context, c Compaction) bool {
+	interval := c.CompactionInterval
+	if interval <= 0 {
+		return false
+	}
+	cur := ctx.InvocationID()
+	if last, err := ctx.State().Get(lastInvocationIDKey); err != nil || last != cur {
+		if e := ctx.State().Set(invocationCountKey, intState(ctx, invocationCountKey)+1); e != nil {
+			slog.Warn("compaction: record invocation count", "component", "agent", "err", e)
+		}
+		if e := ctx.State().Set(lastInvocationIDKey, cur); e != nil {
+			slog.Warn("compaction: record invocation id", "component", "agent", "err", e)
+		}
+	}
+	count := intState(ctx, invocationCountKey)
+	if count == 0 || count%interval != 0 || intState(ctx, lastCompactedInvocationKey) == count {
+		return false
+	}
+	if e := ctx.State().Set(lastCompactedInvocationKey, count); e != nil {
+		slog.Warn("compaction: record last compacted invocation", "component", "agent", "err", e)
+	}
+	return true
+}
+
 // compactionCallback returns a BeforeModelCallback that enforces the budget.
 func compactionCallback(c Compaction) llmagent.BeforeModelCallback {
 	threshold, retention := c.threshold(), c.retention()
@@ -104,8 +148,14 @@ func enforceBudget(ctx adkagent.Context, c Compaction, threshold, retention int,
 	filtered := len(view) != len(req.Contents)
 	req.Contents = view
 
+	// Two independent triggers, as in ADK: token_threshold is the absolute
+	// safety limit, compaction_interval is the regular cadence regardless of
+	// size. Either alone is enough to fire a compaction round.
+	due := intervalTrigger(ctx, c)
+	exceeds := !fits(ctx, threshold, req.Contents)
+
 	switch {
-	case fits(ctx, threshold, req.Contents):
+	case !exceeds && !due:
 		if filtered {
 			logCompaction(ctx, "filtered_existing", beforeMsgs, beforeTokens, req.Contents, threshold)
 		}
@@ -113,7 +163,11 @@ func enforceBudget(ctx adkagent.Context, c Compaction, threshold, retention int,
 		if headEnd, ok := boundary(req.Contents, retention); ok {
 			if out, ok2 := compact(ctx, c, req.Contents, headEnd); ok2 {
 				req.Contents = out
-				logCompaction(ctx, "event_appended", beforeMsgs, beforeTokens, req.Contents, threshold)
+				path := "event_appended"
+				if !exceeds {
+					path = "interval_appended"
+				}
+				logCompaction(ctx, path, beforeMsgs, beforeTokens, req.Contents, threshold)
 				emitCompaction(ctx, beforeTokens, estimateTokens(req.Contents))
 			}
 		}
@@ -144,12 +198,28 @@ func logCompaction(ctx adkagent.Context, path string, beforeMsgs, beforeTokens i
 // emitCompaction forwards a node-scoped compaction event to the SSE stream,
 // via the same yield-ctx escape hatch the plan tool uses - a no-op outside a
 // DAG node run (e.g. unit tests, or the advisor's own nested runner).
+//
+// The round's own OTel span is unreachable from here: RunNode rebuilds the
+// child context this callback runs under (the SetLedgerCoords-not-ctx pattern
+// elsewhere in this codebase exists for the same reason), so
+// oteltrace.SpanFromContext(ctx) would silently return the no-op span. Coords
+// carries the round's SpanContext captured before that rebuild
+// (runWorkerNodeTraced); re-inject it so this span parents under the round
+// instead of rooting a disconnected trace. A zero SpanContext (no linkage
+// available) still raises an orphan span rather than none at all - do NOT
+// use StartLinked here, it forces WithNewRoot and would still fork the trace.
 func emitCompaction(ctx adkagent.Context, before, after int) {
+	coords := ledger.CoordsFromContext(ctx)
+	parentCtx := oteltrace.ContextWithSpanContext(ctx, coords.SpanContext)
+	_, span := otelobs.Start(parentCtx, "compaction",
+		attribute.String("node_id", coords.Node), attribute.String("run_id", coords.Round),
+		attribute.Bool(otelobs.GenAIConversationCompacted, true))
+	span.End()
+
 	sink, ok := stream.YieldFromContext(ctx)
 	if !ok {
 		return
 	}
-	coords := ledger.CoordsFromContext(ctx)
 	sink(stream.Compaction(coords.Node, coords.Round, int32(before), int32(after)))
 }
 
@@ -324,7 +394,11 @@ func longestSelfContainedPrefix(contents []*genai.Content) int {
 	return lastBalanced
 }
 
-// compact summarises contents[1:headEnd] into a durable sentinel, returning [task, sentinel, ...tail].
+// compact summarises contents[1:headEnd] into a durable sentinel, returning
+// [task, sentinel, ...overlap, ...tail]. The last overlap() events of the
+// window are kept raw rather than folded in now (ADK's overlap_size): they
+// stay visible verbatim and are re-offered to the summariser next round, so a
+// fact that lands right at a chunk boundary is never seen only once.
 func compact(ctx adkagent.Context, c Compaction, contents []*genai.Content, headEnd int) ([]*genai.Content, bool) {
 	if c.Summarizer == nil {
 		return contents, false
@@ -333,7 +407,24 @@ func compact(ctx adkagent.Context, c Compaction, contents []*genai.Content, head
 	tail := contents[headEnd:]
 
 	prevSummary, rest := extractSentinel(head)
-	summary, err := summarizeHead(ctx, c.Summarizer, buildPrompt(prevSummary, serializeHead(rest)))
+
+	overlap := c.overlap()
+	toSummarize, keep := rest, []*genai.Content(nil)
+	if overlap > 0 {
+		// ADK clamps overlap to what exists; never leave nothing to summarise.
+		if overlap >= len(rest) {
+			overlap = len(rest) - 1
+		}
+		if overlap > 0 {
+			toSummarize, keep = rest[:len(rest)-overlap], rest[len(rest)-overlap:]
+		}
+	}
+	if len(toSummarize) == 0 {
+		return contents, false
+	}
+
+	budgetChars := usable(c.ContextWindow) * charsPerToken
+	summary, err := summarizeChunks(ctx, c.Summarizer, prevSummary, chunkByBudget(toSummarize, budgetChars))
 	if err != nil || strings.TrimSpace(summary) == "" {
 		slog.Warn("compaction summarise failed; continuing uncompacted", "component", "agent", "err", err)
 		return contents, false
@@ -342,9 +433,54 @@ func compact(ctx adkagent.Context, c Compaction, contents []*genai.Content, head
 	sentinel := &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: compactionNotice + summary}}}
 	appendSummaryEvent(ctx, c.Sessions, sentinel)
 
-	out := make([]*genai.Content, 0, 2+len(tail))
+	out := make([]*genai.Content, 0, 2+len(keep)+len(tail))
 	out = append(out, contents[0], sentinel)
+	out = append(out, keep...)
 	return append(out, tail...), true
+}
+
+// chunkByBudget splits head into ordered sub-slices whose serialized text
+// each fits budgetChars, cut at balanced tool-call boundaries where possible.
+// No hard truncation: an oversized single event still gets its own chunk.
+func chunkByBudget(head []*genai.Content, budgetChars int) [][]*genai.Content {
+	if budgetChars <= 0 || len(head) == 0 {
+		return [][]*genai.Content{head}
+	}
+	var chunks [][]*genai.Content
+	start := 0
+	for start < len(head) {
+		end, size := start+1, contentBytes(head[start])
+		for end < len(head) {
+			next := contentBytes(head[end])
+			if size+next > budgetChars {
+				break
+			}
+			size += next
+			end++
+		}
+		if bal := start + longestSelfContainedPrefix(head[start:end]); bal > start {
+			end = bal
+		}
+		chunks = append(chunks, head[start:end])
+		start = end
+	}
+	return chunks
+}
+
+// summarizeChunks folds chunks into a running summary, iterating rather than
+// truncating when a window exceeds the summariser's input budget.
+func summarizeChunks(ctx context.Context, summarizer model.LLM, prevSummary string, chunks [][]*genai.Content) (string, error) {
+	running := prevSummary
+	for _, chunk := range chunks {
+		s, err := summarizeHead(ctx, summarizer, buildPrompt(running, serializeHead(chunk)))
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(s) != "" {
+			running = s
+		}
+	}
+	return running, nil
 }
 
 // extractSentinel returns the sentinel's summary text and the remaining contents.
@@ -426,11 +562,7 @@ func serializeHead(head []*genai.Content) string {
 			}
 		}
 	}
-	s := sb.String()
-	if len(s) > maxHeadChars {
-		s = "[…older history truncated…]\n" + strings.ToValidUTF8(s[len(s)-maxHeadChars:], "")
-	}
-	return s
+	return sb.String()
 }
 
 // buildPrompt assembles the summariser user message.

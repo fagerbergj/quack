@@ -26,6 +26,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
@@ -67,7 +68,7 @@ type lcScopedAgent struct {
 	tools []tool.Tool
 }
 
-func (a lcScopedAgent) ForNode(string) (adkagent.Agent, model.LLM, []tool.Tool, func(), error) {
+func (a lcScopedAgent) ForNode(string, func() string) (adkagent.Agent, model.LLM, []tool.Tool, func(), error) {
 	return a.Agent, a.model, a.tools, func() {}, nil
 }
 
@@ -182,7 +183,14 @@ func TestRunPlanAsGraph_LedgerCoordsReachModelAndTool(t *testing.T) {
 	const chatID = "ledger-coords-chat"
 	plan := dag.Plan{ID: "t", UserMessage: "what's today's date?", Nodes: []dag.Node{{ID: "n1", AgentName: "w", Task: "answer"}}}
 
-	ctx := stream.WithYield(context.Background(), func(stream.SSEEvent) {})
+	// Start from the run's PARTIAL coords, the way production does
+	// (orchestrator.go stamps ChatID/User/Source before any node runs). Starting
+	// from a bare context is what let a broken coords-precedence fix through
+	// review: node/agent/round were dropped on every worker call and this test
+	// still passed (#1039).
+	ctx := stream.WithYield(
+		ledger.WithCoords(context.Background(), ledger.Coords{ChatID: chatID, User: "u", Source: "ui"}),
+		func(stream.SSEEvent) {})
 	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: plan.UserMessage}}}
 	if _, err := ex.RunPlanAsGraph(ctx, plan, "quack", "u", chatID, content, func(stream.SSEEvent, error) bool { return true }, map[string]string{}, nil); err != nil {
 		t.Fatalf("run: %v", err)

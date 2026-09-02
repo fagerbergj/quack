@@ -34,7 +34,6 @@ func FromConfig(c config.GatesConfig) (Config, error) {
 		Rubric:               rubric,
 		RubricSpecs:          specs,
 		RubricFixes:          fixes,
-		SkepticRounds:        c.Judge.Skeptics,
 		JudgeMaxOutputTokens: c.Judge.MaxOutputTokens,
 	}, nil
 }

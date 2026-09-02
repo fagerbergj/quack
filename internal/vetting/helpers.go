@@ -17,7 +17,7 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// judgeSessionID: real chat id groups a judge/skeptic/writer run under the chat that
+// judgeSessionID: real chat id groups a judge/writer run under the chat that
 // caused it in Langfuse (ADK stamps gen_ai.conversation.id from this session id).
 // Each caller gets its own throwaway InMemoryService per run, so reusing chatID
 // across calls can't leak conversation state between them (only observability
@@ -41,7 +41,7 @@ type Config struct {
 	Threshold            float64 // pass score in (0,1]
 	JudgeMaxIterations   int     // cap on judge model turns per round
 	JudgeContextWindow   int     // context window in tokens; 0 ⇒ default
-	JudgeMaxOutputTokens int     // cap on judge/skeptic/plan-judge reply tokens; <= 0 = uncapped
+	JudgeMaxOutputTokens int     // cap on judge/plan-judge reply tokens; <= 0 = uncapped
 	Constitution         string  // global principles for judge prompt
 	Rubric               string  // scoring guide; global default or per-agent override; rendered markdown for the judge prompt
 	// RubricSpecs: per-criterion definition/scale/bands, only when Rubric was
@@ -85,11 +85,9 @@ type Config struct {
 	// AllowedDeliveryKinds: nil = unrestricted (no trigger governs this run);
 	// non-nil (including empty) restricts staged delivery to exactly these kinds.
 	AllowedDeliveryKinds []string
-	ExternalWorker       bool           // ACP-backed; gate supplements session ledger
-	Setup                *SetupBranch   // pre-cloned checkout; delivery on this branch
-	ExistingPR           bool           // run pushes onto an already-open PR; stage_push offered instead of stage_pr
-	Skeptic              SkepticFactory // adversarial verify; nil = disabled
-	SkepticRounds        int            // skeptics per finding; <= 0 = disabled
+	ExternalWorker       bool         // ACP-backed; gate supplements session ledger
+	Setup                *SetupBranch // pre-cloned checkout; delivery on this branch
+	ExistingPR           bool         // run pushes onto an already-open PR; stage_push offered instead of stage_pr
 	// JudgeModel: the raw model behind judge (set once at startup, same
 	// instance NewJudgeFactory closes over) - stamped with per-round coords
 	// the same way workerModel is, so its metrics don't rely on ctx alone.

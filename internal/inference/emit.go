@@ -32,21 +32,21 @@ func emitChatEvent(ctx context.Context, name string, req *model.LLMRequest, resp
 		otellog.String(otelobs.GenAIProviderName, otelobs.GenAIProviderOpenAI),
 		otellog.String(otelobs.GenAIRequestModel, name),
 	}
-	if b, err := json.Marshal(req.Contents); err == nil {
-		attrs = append(attrs, otellog.String(otelobs.GenAIInputMessages, string(b)))
+	if v, ok := marshalAttr(req.Contents); ok {
+		attrs = append(attrs, otellog.String(otelobs.GenAIInputMessages, v))
 	}
 	if names := toolNames(req.Tools); len(names) > 0 {
-		if b, err := json.Marshal(names); err == nil {
-			attrs = append(attrs, otellog.String(otelobs.GenAIToolDefinitions, string(b)))
+		if v, ok := marshalAttr(names); ok {
+			attrs = append(attrs, otellog.String(otelobs.GenAIToolDefinitions, v))
 		}
 	}
 
 	var sysHash string
 	if req.Config != nil {
 		if req.Config.SystemInstruction != nil {
-			if b, err := json.Marshal(req.Config.SystemInstruction); err == nil {
-				attrs = append(attrs, otellog.String(otelobs.GenAISystemInstructions, string(b)))
-				sysHash = contentHash(b)
+			if v, ok := marshalAttr(req.Config.SystemInstruction); ok {
+				attrs = append(attrs, otellog.String(otelobs.GenAISystemInstructions, v))
+				sysHash = contentHash([]byte(v))
 			}
 		}
 		if req.Config.Temperature != nil {
@@ -75,8 +75,8 @@ func emitChatEvent(ctx context.Context, name string, req *model.LLMRequest, resp
 	}
 
 	if resp != nil {
-		if b, err := json.Marshal(resp.Content); err == nil {
-			attrs = append(attrs, otellog.String(otelobs.GenAIOutputMessages, string(b)))
+		if v, ok := marshalAttr(resp.Content); ok {
+			attrs = append(attrs, otellog.String(otelobs.GenAIOutputMessages, v))
 		}
 		if resp.ModelVersion != "" {
 			attrs = append(attrs, otellog.String(otelobs.GenAIResponseModel, resp.ModelVersion))
@@ -103,6 +103,20 @@ func emitChatEvent(ctx context.Context, name string, req *model.LLMRequest, resp
 	}
 
 	otelobs.EmitLog(ctx, inferenceScope, "", attrs...)
+}
+
+// marshalAttr JSON-marshals v for a gen_ai attribute value; shared by the log
+// path (emitChatEvent) and the span path (span.go) so both render the same
+// bytes for the same field. false when there is nothing worth recording.
+func marshalAttr(v any) (string, bool) {
+	if v == nil {
+		return "", false
+	}
+	b, err := json.Marshal(v)
+	if err != nil || len(b) == 0 || string(b) == "null" {
+		return "", false
+	}
+	return string(b), true
 }
 
 // toolNames extracts the sorted tool names offered on the request. req.Tools

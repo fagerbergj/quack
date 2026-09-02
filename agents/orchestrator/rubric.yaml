@@ -1,80 +1,75 @@
 scale:
   min: 0
-  max: 10
-  pass: 7
+  max: 3
+  pass: 2
 criteria:
   answers_question:
     definition: >
-      The response addresses exactly what the user asked, in full. For routing decisions,
-      the delegated response addresses the question; for direct answers, the
-      orchestrator's own output addresses it.
+      The response addresses exactly what the user asked, in full. For routing decisions, the delegated response addresses the question; for direct answers, the orchestrator's own output addresses it.
     steps:
     - Identify what the user asked.
     - Check whether the response (direct or delegated) covers every part of the request.
     - Note any silent narrowing or redirection to a different question.
     bands:
-    - min: 7.0
-      max: 10.0
+    - min: 3.0
+      max: 3.0
       meaning: addresses the request completely.
-    - min: 4.0
-      max: 6.0
+    - min: 2.0
+      max: 2.0
+      meaning: addresses the request completely, but one part is covered more thinly than the rest without being dropped.
+    - min: 1.0
+      max: 1.0
       meaning: covers the main ask; minor gaps.
     - min: 0.0
-      max: 3.0
+      max: 0.0
       meaning: misses the core ask or redirects to a different question.
     anchors:
     - quote
     - omission
   clean_output:
     definition: >
-      The response begins directly with the answer - no preamble, no meta-commentary, no
-      process narration. The orchestrator never exposes its routing logic to the user.
+      The response is formatted for the reader it is addressed to: it begins directly with the answer - no preamble, no meta-commentary, no process narration - and the orchestrator never exposes its routing logic to the user.
     guidance: >
-      This includes mid-body deliberation: visible self-correction ("Actually, let me
-      reconsider…"), an abandoned or superseded draft left in place, or the same
-      conclusion - a snippet, a list, a decision - written out more than once on the way
-      to a final version.
+      This includes mid-body deliberation: visible self-correction ("Actually, let me reconsider…"), an abandoned or superseded draft left in place, or the same conclusion - a snippet, a list, a decision - written out more than once on the way to a final version.
     steps:
-    - "Read the first sentence: direct content, or a preamble / \"let me route this
-      to…\"?"
-    - Scan for leaked routing logic, self-talk, or meta-commentary about skills or
-      delegation.
-    - Check whether any snippet, list, or conclusion appears more than once in different
-      (superseded) forms - a sign of an abandoned draft left in place.
-    - Score down for each intrusion.
+    - "Read the first sentence: direct content, or a preamble / \"let me route this to…\"?"
+    - Scan for leaked routing logic, self-talk, or meta-commentary about skills or delegation.
+    - Check whether any snippet, list, or conclusion appears more than once in different (superseded) forms - a sign of an abandoned draft left in place.
     bands:
-    - min: 7.0
-      max: 10.0
-      meaning: pure answer; no preamble or routing narration; only the final version of any
-        content appears.
-    - min: 4.0
-      max: 6.0
-      meaning: a single stray opener or one routing comment, otherwise clean.
-    - min: 0.0
+    - min: 3.0
       max: 3.0
-      meaning: noticeable preamble, routing narration, leaked process, or a
-        duplicated/superseded draft left in the output.
+      meaning: pure answer; no preamble or routing narration; only the final version of any content appears.
+    - min: 2.0
+      max: 2.0
+      meaning: a single stray opener or one routing comment, otherwise clean - one small blemish, not a pattern.
+    - min: 1.0
+      max: 1.0
+      meaning: more than one such intrusion (several stray sentences or routing comments), though still short of a real preamble or leaked reasoning.
+    - min: 0.0
+      max: 0.0
+      meaning: noticeable preamble, routing narration, leaked process, or a duplicated/superseded draft left in the output.
     anchors:
     - quote
     - omission
-  no_fabrication:
+  grounded:
     definition: >
-      When the orchestrator answers directly (conversational queries), it does not invent
-      facts, URLs, or specific details it cannot know from context.
+      When the orchestrator answers directly (conversational queries), every claim traces to context it actually has - it does not invent facts, URLs, or specific details it cannot know.
     steps:
-    - Identify claims the orchestrator made in its own direct response (not via a
-      specialist).
+    - Identify claims the orchestrator made in its own direct response (not via a specialist).
     - Check whether each claim is answerable from context or is a plausible fabrication.
     - Weight specific claims (names, versions, URLs) most heavily.
     bands:
-    - min: 7.0
-      max: 10.0
-      meaning: all direct claims are answerable from context; nothing invented.
-    - min: 4.0
-      max: 6.0
-      meaning: minor unverifiable details, but no load-bearing fabrication.
-    - min: 0.0
+    - min: 3.0
       max: 3.0
+      meaning: all direct claims are answerable from context; nothing invented.
+    - min: 2.0
+      max: 2.0
+      meaning: all direct claims are answerable from context, but one minor detail is unverifiable without being load-bearing or clearly invented.
+    - min: 1.0
+      max: 1.0
+      meaning: one claim is stated with more confidence than the available context supports, though not clearly invented.
+    - min: 0.0
+      max: 0.0
       meaning: a specific URL, claim, or fact is clearly invented or unverifiable.
     anchors:
     - quote

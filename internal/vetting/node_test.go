@@ -62,6 +62,7 @@ func (m *stubModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ 
 // end on the real ADK v2 workflow engine (runner + workflowagent + Start→node) and
 // asserts the worker→judge refine loop revises once, then passes.
 func TestGatedWorkerNode_RefineLoopConverges(t *testing.T) {
+	exp := withTestTracer(t)
 	stub := &stubModel{}
 	worker, err := llmagent.New(llmagent.Config{
 		Name: "web-researcher", Model: stub, Description: "researcher",
@@ -120,6 +121,30 @@ func TestGatedWorkerNode_RefineLoopConverges(t *testing.T) {
 	}
 	if stub.judgeCalls != 2 {
 		t.Errorf("judge calls = %d, want 2 (fail then pass)", stub.judgeCalls)
+	}
+
+	// #4: the revise round gets its own "gate.revise" span, exactly one - not
+	// zero (startStageSpan never called) and not two (a duplicate alongside
+	// dagStream's own SSE-driving worker.round span for the same run).
+	var reviseSpans int
+	for _, s := range exp.GetSpans() {
+		if s.Name != "quack.gate.revise" {
+			continue
+		}
+		reviseSpans++
+		attrs := map[string]string{}
+		for _, kv := range s.Attributes {
+			attrs[string(kv.Key)] = kv.Value.Emit()
+		}
+		if attrs["run_id"] != "worker-r1" {
+			t.Errorf("gate.revise span run_id = %q, want worker-r1", attrs["run_id"])
+		}
+		if attrs["round"] != "1" {
+			t.Errorf("gate.revise span round = %q, want 1", attrs["round"])
+		}
+	}
+	if reviseSpans != 1 {
+		t.Errorf("quack.gate.revise spans = %d, want exactly 1", reviseSpans)
 	}
 }
 
@@ -203,26 +228,7 @@ func TestRunGatedRefine_DeterministicFailureReachesJudgeBeforeVerdict(t *testing
 	}
 }
 
-// skepticCoordsSpy captures the ctx a skeptic round runs under, so a test can
-// check it against the judge round that spawned it. called is tracked
-// separately from captured since a zero-value Coords is itself the bug.
-type skepticCoordsSpy struct {
-	called   bool
-	captured ledger.Coords
-}
-
-func (s *skepticCoordsSpy) Name() string { return "skeptic-coords-spy" }
-
-func (s *skepticCoordsSpy) GenerateContent(ctx context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		s.called = true
-		s.captured = ledger.CoordsFromContext(ctx)
-		yield(stubCall(submitSkepticVerdictTool, map[string]any{"refuted": false, "reason": "checks out"}), nil)
-	}
-}
-
-// onePassJudge always submits one load-bearing PASSING criterion, so
-// adversarialVerify's skeptic dispatch fires exactly once.
+// onePassJudge always submits one load-bearing PASSING criterion.
 type onePassJudge struct{}
 
 func (onePassJudge) Name() string { return "one-pass-judge" }
@@ -233,61 +239,6 @@ func (onePassJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bo
 			"score":    1.0,
 			"criteria": map[string]any{"accuracy": map[string]any{"score": 1.0, "reason": "solid"}},
 		}), nil)
-	}
-}
-
-// TestRunGatedRefine_SkepticRoundCarriesJudgeLedgerCoords pins the fix: a
-// skeptic call (adversarialVerify) must see the SAME ledger coords as the
-// judge round that spawned it - before the fix it ran under a ctx built from
-// judgeCtx (span-only), not ledgerCtx, so agent/user/source came back empty.
-func TestRunGatedRefine_SkepticRoundCarriesJudgeLedgerCoords(t *testing.T) {
-	spy := &skepticCoordsSpy{}
-	worker, err := llmagent.New(llmagent.Config{
-		Name: "web-researcher", Model: stubFixedAnswerModel{text: "the answer"},
-		Description: "researcher", Instruction: "Answer.",
-	})
-	if err != nil {
-		t.Fatalf("worker: %v", err)
-	}
-	// User is deliberately left unset - RunGatedRefine resolves it from the
-	// ADK session (the runner's userID "u" below), never from cfg directly.
-	cfg := Config{
-		JudgeRounds: 1, Threshold: 0.5, Rubric: "score 0-10",
-		ChatID: "chat1", Agent: "web-researcher", Source: "github",
-		Skeptic: NewSkepticFactory(spy, nil), SkepticRounds: 1,
-	}
-	var res GateResult
-	node, err := newTestGatedNodeCapture("gate", worker, stubFixedAnswerModel{}, NewJudgeFactory(onePassJudge{}, nil, nil), cfg, &res)
-	if err != nil {
-		t.Fatalf("node: %v", err)
-	}
-	root, err := workflowagent.New(workflowagent.Config{
-		Name: "root", SubAgents: []adkagent.Agent{worker}, Edges: workflow.Chain(workflow.Start, node),
-	})
-	if err != nil {
-		t.Fatalf("root: %v", err)
-	}
-	r, err := runner.New(runner.Config{AppName: "test", Agent: root, SessionService: session.InMemoryService(), AutoCreateSession: true})
-	if err != nil {
-		t.Fatalf("runner: %v", err)
-	}
-	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "question"}}}
-	for _, err := range r.Run(t.Context(), "u", "s", task, adkagent.RunConfig{}) {
-		if err != nil {
-			t.Fatalf("run: %v", err)
-		}
-	}
-	if !spy.called {
-		t.Fatal("skeptic never ran - the finding must have been load-bearing to reach it")
-	}
-	if spy.captured.Agent != "judge" {
-		t.Errorf("skeptic ctx Agent = %q, want %q", spy.captured.Agent, "judge")
-	}
-	if spy.captured.ChatID != "chat1" {
-		t.Errorf("skeptic ctx ChatID = %q, want %q", spy.captured.ChatID, "chat1")
-	}
-	if spy.captured.User != "u" || spy.captured.Source != "github" {
-		t.Errorf("skeptic ctx User/Source = %q/%q, want u/github", spy.captured.User, spy.captured.Source)
 	}
 }
 

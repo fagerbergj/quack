@@ -83,11 +83,11 @@ agents:
     model: ${QUACK_CODER_MODEL}       # falls back to QUACK_RESEARCHER_MODEL if unset
     context_window: 65536
     judge_rounds: 8             # coding needs iterate-until-tests-pass; the judge+revise grind is where quack converges on correct code (tunable)
-    # External ACP coder (internal/acp): opencode drives the model above via
+    # External ACP coder (internal/acp): the pi-acp shim drives pi from
     # OPENCODE_CONFIG_CONTENT; git push is denied in the subprocess (delivery is
     # gate-owned) and the gate reads commits off the clone (augmentFromRepo).
     acp:
-      command: ["opencode", "acp"]
+      command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
   code-reviewer:
     bundle: agents/code-reviewer      # card + prompt.md (values + VERDICT/FINDINGS contract) + rubric.yaml
     provider: default
@@ -99,7 +99,7 @@ agents:
     # External ACP reviewer, read_only: runs the change with its own tools, never
     # commits; the gate parses its VERDICT/FINDINGS tail into the posted review.
     acp:
-      command: ["opencode", "acp"]
+      command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       read_only: true
   code-explorer:
     bundle: agents/code-explorer      # card + prompt.md (read-only exploration) + rubric.yaml
@@ -110,7 +110,7 @@ agents:
     context_window: 65536
     judge_rounds: 2             # exploration is largely one-pass; 2 rounds is plenty
     acp:
-      command: ["opencode", "acp"]
+      command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       read_only: true
       allow_clone: true   # clones third-party repos into $TMPDIR; needs sandbox landlock or bwrap (this preset's default), git push stays denied
   synthesizer:

@@ -52,7 +52,7 @@ func (s *advisorSnoopStub) GenerateContent(_ context.Context, req *model.LLMRequ
 
 // runSingleNode is the TestRunDAG_Layers harness, trimmed to one node - the
 // shared plumbing for the two tests below.
-func runSingleNode(t *testing.T, plan Plan, cfg vetting.Config, stub model.LLM) {
+func runSingleNode(t *testing.T, plan Plan, cfg vetting.Config, stub model.LLM, refresh func(context.Context, Node, vetting.Config) bool) {
 	t.Helper()
 	ag, err := llmagent.New(llmagent.Config{Name: "w", Model: stub, Description: "w", Instruction: "ROLE:w Answer."})
 	if err != nil {
@@ -63,7 +63,7 @@ func runSingleNode(t *testing.T, plan Plan, cfg vetting.Config, stub model.LLM) 
 		t.Fatal(err)
 	}
 	gateNodes := map[string]workflow.Node{
-		plan.Nodes[0].ID: newGatedNode(plan, plan.Nodes[0], wn, nil, nil, nil, vetting.NewJudgeFactory(stub, nil, nil), cfg, nil, nil, "", nil, nil, nil, AdmissionSpec{}),
+		plan.Nodes[0].ID: newGatedNode(plan, plan.Nodes[0], wn, nil, nil, nil, vetting.NewJudgeFactory(stub, nil, nil), cfg, nil, nil, "", nil, nil, nil, AdmissionSpec{}, refresh),
 	}
 	orchestrate := workflow.NewDynamicNode[any, string]("orch",
 		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
@@ -102,7 +102,7 @@ func TestPlanOnlyAdvisorTaskIsReadOnly(t *testing.T) {
 	}
 
 	stub := &advisorSnoopStub{}
-	runSingleNode(t, plan, cfg, stub)
+	runSingleNode(t, plan, cfg, stub, nil)
 
 	stub.mu.Lock()
 	defer stub.mu.Unlock()
@@ -126,7 +126,7 @@ func TestNonPlanRunAdvisorTaskIsWritable(t *testing.T) {
 	}
 
 	stub := &advisorSnoopStub{}
-	runSingleNode(t, plan, cfg, stub)
+	runSingleNode(t, plan, cfg, stub, nil)
 
 	stub.mu.Lock()
 	defer stub.mu.Unlock()

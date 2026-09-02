@@ -141,6 +141,23 @@ func TestRunArgvMissingBinaryErrors(t *testing.T) {
 	}
 }
 
+// TestRunArgvMissingDirNamesTheDirectory pins the fork/exec-vs-chdir bug: with
+// Setpgid set, Go's os/exec skips its clear chdir precheck and a nonexistent
+// Dir surfaces as a PathError naming the binary instead of the missing dir.
+func TestRunArgvMissingDirNamesTheDirectory(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	_, err := RunArgv(context.Background(), missing, []string{"go", "build", "./..."}, DefaultCaps())
+	if err == nil {
+		t.Fatal("RunArgv: want error for a missing workdir")
+	}
+	if !strings.Contains(err.Error(), missing) {
+		t.Errorf("RunArgv error = %q, want it to name the missing dir %q", err.Error(), missing)
+	}
+	if strings.Contains(err.Error(), "fork/exec") {
+		t.Errorf("RunArgv error = %q, want no fork/exec (that names the binary, not the dir)", err.Error())
+	}
+}
+
 // TestRunArgvResolvesRepoRelativeExecutable pins #638: a plain exec.LookPath
 // on "./gradlew" resolves against THIS PROCESS's cwd (the package dir), not
 // dir - so without ResolveExecutable, a repo-relative wrapper is never found

@@ -260,16 +260,40 @@ type TrustedHeadersConfig struct {
 	Groups string `yaml:"groups"`
 }
 
+// OtelSignal names one OTLP signal. An exporter declares which it wants, so
+// traces can go to a trace backend while metrics go to a collector.
+type OtelSignal string
+
+const (
+	SignalTraces  OtelSignal = "traces"
+	SignalMetrics OtelSignal = "metrics"
+	SignalLogs    OtelSignal = "logs"
+)
+
+// OtelExporter: one OTLP destination and the signals sent to it. The signal
+// path (/v1/traces etc) is always appended to Endpoint, so a base URL carrying
+// a path - Langfuse's /api/public/otel - works like any other (#1045).
+type OtelExporter struct {
+	Endpoint string       `yaml:"endpoint"`
+	Signals  []OtelSignal `yaml:"signals"`
+}
+
 type OtelConfig struct {
-	Enabled      *bool   `yaml:"enabled"`
-	OTLPEndpoint string  `yaml:"otlp_endpoint"`
-	Sample       float64 `yaml:"sample"`
-	// Logs opts into OTLP log export. Off by default: logs need a collector
-	// logs pipeline most deployments don't run (slog/stdout is the sink).
-	Logs bool `yaml:"logs"`
+	Enabled   *bool          `yaml:"enabled"`
+	Exporters []OtelExporter `yaml:"exporters"`
+	Sample    float64        `yaml:"sample"`
+	// Content opts into putting prompt/tool/response text on span attributes -
+	// both the model-call spans (internal/inference) and ACP tool-call spans
+	// (internal/acp/turnspan.go). Off by default: an existing deployment that
+	// only wired traces/metrics must not silently start shipping message
+	// content on upgrade.
+	Content bool `yaml:"capture_content"`
 	// Environment lands on the OTel resource as deployment.environment.name -
 	// what trace backends split dev traffic from the deployed server by.
 	Environment string `yaml:"environment"`
+	// TraceURLTemplate builds a per-node trace deep link for the frontend; the
+	// literal "{trace_id}" is substituted. Empty (default) = no link rendered.
+	TraceURLTemplate string `yaml:"trace_url_template"`
 }
 
 const otelDefaultSample = 1.0
@@ -290,7 +314,44 @@ func (o *OtelConfig) applyDefaults() error {
 	if o.Sample < 0 || o.Sample > 1 {
 		return fmt.Errorf("config: otel.sample must be in (0,1]")
 	}
+	// The template becomes an href in the UI; anything but http(s) would let a
+	// javascript: URL render as a clickable link.
+	if t := o.TraceURLTemplate; t != "" && !strings.HasPrefix(t, "https://") && !strings.HasPrefix(t, "http://") {
+		return fmt.Errorf("config: otel.trace_url_template must start with https:// or http://")
+	}
+	// An endpoint that interpolated to "" means the deployment did not set that
+	// env var - the long-standing way to say "build providers, export nothing".
+	// Drop it rather than refusing to start; serve logs when nothing exports.
+	kept := o.Exporters[:0]
+	for _, e := range o.Exporters {
+		if strings.TrimSpace(e.Endpoint) != "" {
+			kept = append(kept, e)
+		}
+	}
+	o.Exporters = kept
+	for i, e := range o.Exporters {
+		if len(e.Signals) == 0 {
+			return fmt.Errorf("config: otel.exporters[%d] (%s) lists no signals; use any of traces, metrics, logs", i, e.Endpoint)
+		}
+		for _, sig := range e.Signals {
+			switch sig {
+			case SignalTraces, SignalMetrics, SignalLogs:
+			default:
+				return fmt.Errorf("config: otel.exporters[%d] (%s): unknown signal %q; use traces, metrics or logs", i, e.Endpoint, sig)
+			}
+		}
+	}
 	return nil
+}
+
+// Wants reports whether this exporter carries sig.
+func (e OtelExporter) Wants(sig OtelSignal) bool {
+	for _, s := range e.Signals {
+		if s == sig {
+			return true
+		}
+	}
+	return false
 }
 
 // ExtensionsConfig is the extensions: block - every top-level key is opaque
@@ -385,6 +446,14 @@ type CompactionConfig struct {
 	Model              string `yaml:"model"`
 	TokenThreshold     int    `yaml:"token_threshold"`
 	EventRetentionSize int    `yaml:"event_retention_size"`
+	// CompactionInterval is the ADK-style regular cadence trigger (in
+	// invocations/turns), independent of TokenThreshold's absolute limit.
+	// 0 disables the cadence trigger (threshold-only, prior behaviour).
+	CompactionInterval int `yaml:"compaction_interval"`
+	// OverlapSize is how many already-compacted raw events carry into the
+	// next summarization window, so a fact split across a chunk boundary
+	// isn't lost. 0 ⇒ package default.
+	OverlapSize int `yaml:"overlap_size"`
 }
 
 // defaultMaxActiveNodes: permissive PER-RUN host-resource ceiling (each run
@@ -393,7 +462,18 @@ type CompactionConfig struct {
 // the GPU pool knows nothing about.
 const defaultMaxActiveNodes = 32
 
+// defaultMaxActiveRuns: host disk/CPU ceiling on concurrent run SETUP
+// (clone/jail), which happens before any node reaches the #1007 GPU ledger.
+const defaultMaxActiveRuns = 8
+
 type DagConfig struct {
+	// MaxActiveRuns caps concurrent RUNS server-wide. #1007 removed this as a
+	// GPU knob (models.<m>.limits.sessions is that, and since #1067 it bounds
+	// orchestrator turns too); it is back only as the setup guard, and as the
+	// one way to bound how many runs are live - and so how many chats show as
+	// running - at once. 0 = defaultMaxActiveRuns.
+	MaxActiveRuns int `yaml:"max_active_runs"`
+
 	// MaxActiveNodes caps concurrently-running nodes WITHIN ONE RUN (each run
 	// gets its own semaphore) as a host-resource guard (jail/clone CPU+RAM),
 	// NOT the GPU concurrency knob - that's models.<m>.limits.sessions/kv_tokens
@@ -421,8 +501,7 @@ type JudgeConfig struct {
 	Threshold     float64 `yaml:"threshold"`
 	MaxIterations int     `yaml:"max_iterations"`
 	ContextWindow int     `yaml:"context_window"`
-	Skeptics      int     `yaml:"skeptics"`
-	// MaxOutputTokens caps the judge/skeptic/plan-judge round's own reply
+	// MaxOutputTokens caps the judge/plan-judge round's own reply
 	// tokens - 0 (the Go zero value, e.g. an older config that predates this
 	// field) leaves it uncapped like before #889. quack.yaml's own default is 8192.
 	MaxOutputTokens int `yaml:"max_output_tokens"`
@@ -684,8 +763,13 @@ func mergeStore(parent, child StoreConfig) StoreConfig {
 }
 
 type OrchestratorConfig struct {
-	Provider       string               `yaml:"provider"`
-	Model          string               `yaml:"model"`
+	Provider string `yaml:"provider"`
+	Model    string `yaml:"model"`
+	// ContextWindow is the orchestrator's kv_tokens reservation (#1067), the
+	// counterpart to an agent's own context_window. Unset means context is not
+	// a scheduling dimension for its turns - NOT the model's full window, which
+	// one turn would reserve entirely, starving the workers it just planned.
+	ContextWindow  int                  `yaml:"context_window"`
 	Tools          []string             `yaml:"tools"`
 	Skills         []string             `yaml:"skills"`
 	UserMemoryHook UserMemoryHookConfig `yaml:"user_memory_hook"`
@@ -887,6 +971,16 @@ func (c *Config) validate() error {
 	if err := c.checkModelRegistered("orchestrator.model", c.Orchestrator.Model); err != nil {
 		return err
 	}
+	if ow := c.Orchestrator.ContextWindow; ow > 0 {
+		if mc, ok := c.Models[c.Orchestrator.Model]; ok {
+			if mc.ContextWindow > 0 && ow > mc.ContextWindow {
+				return fmt.Errorf("config: orchestrator.context_window %d exceeds model %q context_window %d", ow, c.Orchestrator.Model, mc.ContextWindow)
+			}
+			if mc.Limits != nil && mc.Limits.KVTokens > 0 && ow > mc.Limits.KVTokens {
+				return fmt.Errorf("config: orchestrator.context_window %d exceeds model %q limits.kv_tokens %d - its turns could never be admitted", ow, c.Orchestrator.Model, mc.Limits.KVTokens)
+			}
+		}
+	}
 	if c.Orchestrator.UserMemoryHook.Enabled {
 		h := c.Orchestrator.UserMemoryHook
 		if _, ok := c.Providers[h.Provider]; !ok {
@@ -1061,9 +1155,6 @@ func (c *Config) validate() error {
 			if g.Judge.MaxIterations < 1 {
 				return fmt.Errorf("config: gates.judge.max_iterations must be >= 1")
 			}
-			if g.Judge.Skeptics < 0 {
-				return fmt.Errorf("config: gates.judge.skeptics must be >= 0")
-			}
 			if g.Judge.MaxOutputTokens < 0 {
 				return fmt.Errorf("config: gates.judge.max_output_tokens must be >= 0")
 			}
@@ -1095,6 +1186,12 @@ func (c *Config) validate() error {
 	}
 	if c.Dag.MaxActiveNodes < 1 {
 		return fmt.Errorf("config: dag.max_active_nodes must be >= 1")
+	}
+	if c.Dag.MaxActiveRuns == 0 {
+		c.Dag.MaxActiveRuns = defaultMaxActiveRuns
+	}
+	if c.Dag.MaxActiveRuns < 1 {
+		return fmt.Errorf("config: dag.max_active_runs must be >= 1")
 	}
 	if c.Server.Addr == "" {
 		c.Server.Addr = ":8080"

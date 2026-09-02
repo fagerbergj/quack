@@ -183,6 +183,14 @@ export type ExtensionInfo = {
     icon?: string;
 };
 
+export type ClientConfig = {
+    /**
+     * Raw URL template for a trace deep link, with a literal "{trace_id}" placeholder for the client to substitute - e.g. "https://tracing.example.com/trace/{trace_id}". Absent when otel.trace_url_template is unset (no link should be rendered).
+     *
+     */
+    otel_trace_url_template?: string;
+};
+
 export type ArtifactRevisionInfo = {
     revision: number;
     /**
@@ -250,7 +258,11 @@ export type QueuedMessage = {
     id: string;
     text: string;
     /**
-     * True once handed to the node - immediately if its round was live (#998), otherwise at the next turn boundary; no longer editable or removable either way.
+     * queued - accepted, not yet picked up. forwarded - injected straight into a live round (#998). drained - consumed at a gate boundary.
+     */
+    status: 'queued' | 'forwarded' | 'drained';
+    /**
+     * Derived from status (true for forwarded and drained). True once handed to the node - immediately if its round was live (#998), otherwise at the next turn boundary; no longer editable or removable either way. Kept for existing consumers; prefer status for the forwarded-vs-drained distinction.
      */
     delivered: boolean;
     created_at: string;
@@ -444,6 +456,10 @@ export type DagNodeState = {
     judge_rounds?: number;
     judge_final_score?: number;
     judge_passed?: boolean;
+    /**
+     * OTel trace id for this node's run, for a deep link into the tracing backend (see GET /api/v1/config's otel_trace_url_template); empty when otel is disabled.
+     */
+    trace_id?: string;
 };
 
 export type ChatId = string;
@@ -631,6 +647,22 @@ export type ListExtensionsResponses = {
 };
 
 export type ListExtensionsResponse = ListExtensionsResponses[keyof ListExtensionsResponses];
+
+export type GetConfigData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/config';
+};
+
+export type GetConfigResponses = {
+    /**
+     * Client config
+     */
+    200: ClientConfig;
+};
+
+export type GetConfigResponse = GetConfigResponses[keyof GetConfigResponses];
 
 export type ListRecordingsData = {
     body?: never;

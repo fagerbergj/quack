@@ -1,34 +1,19 @@
 scale:
   min: 0
-  max: 10
-  pass: 7
+  max: 3
+  pass: 2
 criteria:
   cites_sources:
     definition: >
-      Every significant claim carries an inline citation to the source that backs it, in
-      whichever form the upstream research used: a web URL as an inline Markdown link, or
-      a repo-relative code citation (<repo>@path/to/file.go, optionally :start-end, or
-      [label](path/to/file.go#L42)). Source names alone do not count - a name cannot be
-      followed, only a link or a path can.
+      Every significant claim carries an inline citation to the source that backs it, in whichever form the upstream research used: a web URL as an inline Markdown link, or a repo-relative code citation (<repo>@path/to/file.go, optionally :start-end, or [label](path/to/file.go#L42)). Source names alone do not count - a name cannot be followed, only a link or a path can.
     guidance: >
-      The synthesizer doesn't create sources - it preserves the citations the research it
-      received already carried. Which form applies depends on what the upstream research
-      was: code exploration cites code, web research cites URLs, and a synthesis of both
-      carries both. Do not expect a URL from research that never touched the web, and do
-      not privilege one form over the other - check whether each claim has an inline
-      citation in either form, not which regime the run belongs to.
+      The synthesizer doesn't create sources - it preserves the citations the research it received already carried. Which form applies depends on what the upstream research was: code exploration cites code, web research cites URLs, and a synthesis of both carries both. Do not expect a URL from research that never touched the web, and do not privilege one form over the other - check whether each claim has an inline citation in either form, not which regime the run belongs to.
 
-      Whether a cited URL was actually fetched/searched is checked separately by
-      deterministic code and can override this score. A cited code path gets no such
-      deterministic check - verify it yourself when you hold read tools (grep/read_file),
-      or judge it on internal consistency alone when you don't. Either way, here judge
-      only whether claims carry an inline citation in one of the two forms.
+      This criterion is fully computed by deterministic code from what the research session actually fetched/searched - it checks EXISTENCE and resolution of the citation, not its quality. `citation_quality` below is the judge-scored companion that covers reputability, accuracy, and placement.
     steps:
     - Count the answer's non-trivial factual claims.
-    - For each, check whether it carries an inline citation - a followable URL or a
-      repo-relative code reference - next to the claim, not deferred to a Sources block.
-    - A Sources/References block does not, by itself, back a claim it isn't attached to
-      - a placeholder or unlinked entry there does not rescue an uncited claim.
+    - For each, check whether it carries an inline citation - a followable URL or a repo-relative code reference - next to the claim, not deferred to a Sources block.
+    - A Sources/References block does not, by itself, back a claim it isn't attached to - a placeholder or unlinked entry there does not rescue an uncited claim.
     - Score the proportion of claims that carry an inline citation in either form.
     bands:
     - min: 0.75
@@ -47,86 +32,99 @@ criteria:
       min: 0
       max: 1
       pass: 0.85
+  citation_quality:
+    definition: >
+      Cited sources are reputable for the claim they back, cited accurately (the source actually says what the claim attributes to it), and placed at the claim they support rather than deferred to an unrelated list. `cites_sources` above is a deterministic existence check; this criterion is the judge's own read on quality and placement, and does not re-derive existence.
+    steps:
+    - For each cited claim, check the source is a reasonable authority for that claim, not a tangential or low-quality page.
+    - Check the claim accurately reflects what the source says, not a stretched or selective reading.
+    - Check the citation is placed at the claim, not deferred to a references block the claim isn't attached to.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: cited claims point at reputable sources, accurately reflect them, and are placed at the claim they support.
+    - min: 2.0
+      max: 2.0
+      meaning: sources are reputable and accurate, but one citation sits a sentence or two away from the claim it backs rather than directly at it.
+    - min: 1.0
+      max: 1.0
+      meaning: one citation is a weak/tangential source, is loosely paraphrased, or is placed away from the claim it backs.
+    - min: 0.0
+      max: 0.0
+      meaning: a citation misrepresents its source, or citations are only deferred to a references block with no inline placement.
+    anchors:
+    - quote
+    - omission
   clean_output:
     definition: >
-      The response is ONLY the synthesized answer - it begins directly with the answer
-      content (title or first sentence) and ends with the answer or its Sources block. No
-      preamble, no process narration, no meta-commentary about skills or formatting rules.
+      The response is formatted for the reader it is addressed to: it begins directly with the answer content (title or first sentence) and ends with the answer or its Sources block - no preamble, no process narration, no meta-commentary about skills or formatting rules.
     guidance: >
-      This includes mid-body deliberation: visible self-correction ("Actually, let me
-      reconsider…"), an abandoned or superseded draft left in place, or the same
-      conclusion - a snippet, a list, a decision - written out more than once on the way
-      to a final version.
+      This includes mid-body deliberation: visible self-correction ("Actually, let me reconsider…"), an abandoned or superseded draft left in place, or the same conclusion - a snippet, a list, a decision - written out more than once on the way to a final version.
     steps:
-    - "Read the first sentence: direct answer content, or a preamble (\"Let me
-      compile…\", \"Based on the research…\")?"
+    - "Read the first sentence: direct answer content, or a preamble (\"Let me compile…\", \"Based on the research…\")?"
     - Scan the body and tail for leaked planning, self-talk, or meta-commentary.
-    - Check whether any snippet, list, or conclusion appears more than once in different
-      (superseded) forms - a sign of an abandoned draft left in place.
-    - Score down for each intrusion.
+    - Check whether any snippet, list, or conclusion appears more than once in different (superseded) forms - a sign of an abandoned draft left in place.
+    - Check the structure (headings, lists, Sources block) matches what the content actually needs.
     bands:
-    - min: 7.0
-      max: 10.0
-      meaning: pure answer; no preamble or trailing narration; only the final version of any
-        content appears.
-    - min: 4.0
-      max: 6.0
-      meaning: a single stray opener or one meta sentence, otherwise clean.
-    - min: 0.0
+    - min: 3.0
       max: 3.0
-      meaning: noticeable preamble, leaked planning in the output, or a duplicated/superseded
-        draft left in place.
+      meaning: pure answer, well-structured for its content; no preamble or trailing narration; only the final version of any content appears.
+    - min: 2.0
+      max: 2.0
+      meaning: a single stray opener or one meta sentence, or structure that doesn't quite fit the content, otherwise clean - one small blemish, not a pattern.
+    - min: 1.0
+      max: 1.0
+      meaning: more than one such intrusion (several stray sentences or meta comments), though still short of a real preamble or leaked reasoning.
+    - min: 0.0
+      max: 0.0
+      meaning: noticeable preamble, leaked planning in the output, or a duplicated/superseded draft left in place.
     anchors:
     - quote
     - omission
   complete_synthesis:
     definition: >
-      The answer addresses every distinct part of the original question, drawing on all
-      relevant research provided. No research output is silently ignored.
+      The answer addresses every distinct part of the original question, drawing on all relevant research provided. No research output is silently ignored.
     steps:
     - Identify the original question's distinct parts or sub-questions.
     - Check whether each part is addressed in the synthesized answer.
     - Note any research angle that was visibly omitted or undercovered.
     bands:
-    - min: 7.0
-      max: 10.0
-      meaning: every part of the question is addressed; all major research threads are
-        incorporated.
-    - min: 4.0
-      max: 6.0
+    - min: 3.0
+      max: 3.0
+      meaning: every part of the question is addressed; all major research threads are incorporated.
+    - min: 2.0
+      max: 2.0
+      meaning: every part is addressed, but one minor research thread is thinner than the rest without being dropped.
+    - min: 1.0
+      max: 1.0
       meaning: main ask addressed; one or two sub-questions left thin or missing.
     - min: 0.0
-      max: 3.0
+      max: 0.0
       meaning: core parts of the question are missed, or major research outputs ignored.
     anchors:
     - quote
     - omission
-  no_fabrication:
+  grounded:
     definition: >
-      The synthesizer must not introduce information not present in the research provided
-      to it. Every specific (name, number, claim, URL) must trace back to the research it
-      received - not to training-data knowledge.
+      The synthesizer must not introduce information not present in the research provided to it. Every specific (name, number, claim, URL) must trace back to the research it received - not to training-data knowledge.
     guidance: >
-      **Caveat - judge's knowledge is stale.** The synthesizer received live research you
-      cannot see. Do **NOT** flag a claim as fabricated merely because it is unfamiliar or
-      postdates your training. A specific is "invented" only when the synthesizer's own
-      output is internally inconsistent or makes a precise claim that its own stated
-      evidence does not support.
+      **Caveat - judge's knowledge is stale.** The synthesizer received live research you cannot see. Do **NOT** flag a claim as fabricated merely because it is unfamiliar or postdates your training. A specific is "invented" only when the synthesizer's own output is internally inconsistent or makes a precise claim that its own stated evidence does not support.
     steps:
     - Identify the named specifics and factual claims in the synthesized answer.
-    - For each, check whether the answer's own text - not your memory - supports the
-      claim.
-    - Flag claims stated with confidence that the answer's own evidence does not
-      justify.
+    - For each, check whether the answer's own text - not your memory - supports the claim.
+    - Flag claims stated with confidence that the answer's own evidence does not justify.
     bands:
-    - min: 7.0
-      max: 10.0
-      meaning: all claims trace to the research presented; nothing reads as added from outside.
-    - min: 4.0
-      max: 6.0
-      meaning: minor secondary details look loosely stated; no core fact appears invented.
-    - min: 0.0
+    - min: 3.0
       max: 3.0
+      meaning: all claims trace to the research presented; nothing reads as added from outside.
+    - min: 2.0
+      max: 2.0
+      meaning: all claims trace to the research, but one minor secondary detail is stated a little more loosely than the source text without being unsupported.
+    - min: 1.0
+      max: 1.0
+      meaning: one secondary claim's confidence outruns what the research supports, though it does not read as clearly invented.
+    - min: 0.0
+      max: 0.0
       meaning: a name, statistic, or claim is clearly unsupported by the answer's own evidence.
     anchors:
     - quote

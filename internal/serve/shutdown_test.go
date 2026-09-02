@@ -139,9 +139,11 @@ func TestDrainActiveRuns_ForceCancelsPastGrace(t *testing.T) {
 
 	DrainActiveRuns(hub, nil, 100*time.Millisecond)
 
+	// unregistered closes on its own goroutine, one statement after the
+	// hub state DrainActiveRuns polled on; wait for it instead of racing it.
 	select {
 	case <-unregistered:
-	default:
+	case <-time.After(2 * time.Second):
 		t.Fatal("run was not force-cancelled and cleaned up within the settle window")
 	}
 	// A force-cancel sets the per-chat cut marker so the run's own tail skips

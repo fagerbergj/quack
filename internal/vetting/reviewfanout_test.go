@@ -24,7 +24,7 @@ func TestReviewFanout_DeliversOnceWorstOfWhenAllTerminal(t *testing.T) {
 		}
 		return nil, nil
 	}
-	fanout := GetReviewFanout(t.Name(), 3)
+	fanout := freshFanout(t, 3)
 	cfg := Config{Deliver: deliver, ReviewFanout: fanout, IsReviewer: true}
 
 	// First reviewer stages approve and finishes - nothing delivered yet.
@@ -79,7 +79,7 @@ func TestReviewFanout_AllApprovesDeliverApprove(t *testing.T) {
 		done <- dc
 		return nil, nil
 	}
-	fanout := GetReviewFanout(t.Name(), 2)
+	fanout := freshFanout(t, 2)
 	cfg := Config{Deliver: deliver, ReviewFanout: fanout, IsReviewer: true}
 
 	commitDelivery(context.Background(), nil, cfg, "r1", workerActivity{
@@ -125,7 +125,7 @@ func TestReviewFanout_SingleReviewerPlanUnchanged(t *testing.T) {
 // Staging seam defense-in-depth: an approve must not stage while a sibling
 // reviewer node is still running, but a request_changes may.
 func TestReviewStage_RefusesEarlyApproveAllowsEarlyRequestChanges(t *testing.T) {
-	fanout := GetReviewFanout(t.Name(), 2) // 2 reviewers, neither terminal yet
+	fanout := freshFanout(t, 2) // 2 reviewers, neither terminal yet
 	stage := NewReviewStage(fanout)
 
 	if err := stage.SetVerdict("approve", "looks good"); err == nil {
@@ -159,7 +159,7 @@ func TestReviewFanout_FailedSiblingDoesNotBlockDelivery(t *testing.T) {
 		done <- dc
 		return nil, nil
 	}
-	fanout := GetReviewFanout(t.Name(), 2)
+	fanout := freshFanout(t, 2)
 	cfg := Config{Deliver: deliver, ReviewFanout: fanout, IsReviewer: true}
 
 	// r1 finishes normally with a request_changes.
@@ -196,7 +196,7 @@ func TestResolveAbortedReviewer_KilledSiblingStagedReviewReachesMerge(t *testing
 		done <- dc
 		return nil, nil
 	}
-	fanout := GetReviewFanout(t.Name(), 2)
+	fanout := freshFanout(t, 2)
 	cfg := Config{Deliver: deliver, ReviewFanout: fanout, IsReviewer: true}
 
 	commitDelivery(context.Background(), nil, cfg, "r1", workerActivity{
@@ -306,7 +306,7 @@ func TestReviewFanout_ParkedReviewerNotCountedFailedThenResumesIntoDelivery(t *t
 		done <- dc
 		return nil, nil
 	}
-	fanout := GetReviewFanout(t.Name(), 2)
+	fanout := freshFanout(t, 2)
 	cfg := Config{Deliver: deliver, ReviewFanout: fanout, IsReviewer: true}
 
 	// r1 finishes normally with request_changes.
@@ -365,7 +365,7 @@ func TestReviewFanout_SynthesizerOwnsDelivery(t *testing.T) {
 		}
 		return nil, nil
 	}
-	fanout := GetReviewFanout(t.Name(), 2)
+	fanout := freshFanout(t, 2)
 	fanout.ExpectSynthesis()
 	cfg := Config{Deliver: deliver, ReviewFanout: fanout, IsReviewer: true}
 
@@ -417,7 +417,7 @@ func TestReviewFanout_SynthesizerAbortFallsBackToConcat(t *testing.T) {
 		done <- dc
 		return nil, nil
 	}
-	fanout := GetReviewFanout(t.Name(), 2)
+	fanout := freshFanout(t, 2)
 	fanout.ExpectSynthesis()
 	cfg := Config{Deliver: deliver, ReviewFanout: fanout, IsReviewer: true}
 
@@ -442,4 +442,13 @@ func TestReviewFanout_SynthesizerAbortFallsBackToConcat(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("aborted synthesizer stranded the staged reviews")
 	}
+}
+
+// freshFanout: the fan-in registry is process-global, and these tests key it
+// on t.Name(), so -count>1 inherits the previous iteration without this.
+func freshFanout(t *testing.T, total int) *ReviewFanout {
+	t.Helper()
+	ResetReviewFanout(t.Name())
+	t.Cleanup(func() { ResetReviewFanout(t.Name()) })
+	return GetReviewFanout(t.Name(), total)
 }

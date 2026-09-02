@@ -28,12 +28,12 @@ import (
 // staged set exactly once, and only when the gate's judge round passes.
 
 func TestStagedDeliveryTargetUpsertAndUnstage(t *testing.T) {
-	act := activityFromSession(newTestSession(t,
+	act := activityFromSessionAt(newTestSession(t,
 		fnCall("1", "stage_pr", map[string]any{"title": "Add flappy bird", "body": "first draft"}),
 		fnCall("2", "stage_pr", map[string]any{"title": "Add flappy bird v2", "body": "revised"}),
 		fnCall("3", "stage_comment", map[string]any{"slot": "progress", "body": "halfway done"}),
 		fnCall("4", "unstage", map[string]any{"target": "comment:progress"}),
-	))
+	), "")
 	if len(act.stagedDelivery) != 1 {
 		t.Fatalf("stagedDelivery = %+v, want exactly the surviving pr entry", act.stagedDelivery)
 	}
@@ -49,10 +49,10 @@ func TestStagedDeliveryTargetUpsertAndUnstage(t *testing.T) {
 // A comment staged then unstaged before the gate ever reads the set must never
 // be handed to Deliver - commitDelivery only ever sees the FINAL map.
 func TestStagedThenUnstagedItemNeverReachesDeliver(t *testing.T) {
-	act := activityFromSession(newTestSession(t,
+	act := activityFromSessionAt(newTestSession(t,
 		fnCall("1", "stage_comment", map[string]any{"slot": "progress", "body": "halfway"}),
 		fnCall("2", "unstage", map[string]any{"target": "comment:progress"}),
-	))
+	), "")
 	var called int32
 	commitDelivery(context.Background(), nil, Config{Deliver: func(context.Context, DeliveryContext) ([]DeliveryItemOutcome, error) {
 		atomic.AddInt32(&called, 1)
@@ -388,5 +388,49 @@ func TestCommitDeliveryFiresOnFailWithCaveat(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Deliver never fired on a judge fail - delivery must be graceful, not gated")
+	}
+}
+
+// #1059: a multi-reviewer plan's merged review is delivered by the
+// synthesizer node, which never clones anything itself - its own cfg/act
+// carry no clone URL. The merged delivery must still carry the URL one of
+// the actual reviewer nodes cloned, or Deliver has nothing to post against.
+func TestReviewFanoutMergedDeliveryCarriesReviewerCloneURL(t *testing.T) {
+	const planID = "plan-1059"
+	fanout := GetReviewFanout(planID, 2)
+	fanout.ExpectSynthesis()
+	defer ResetReviewFanout(planID)
+
+	done := make(chan DeliveryContext, 1)
+	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
+		done <- dc
+		return nil, nil
+	}
+
+	reviewerCfg := Config{Deliver: deliver, IsReviewer: true, ReviewFanout: fanout}
+	commitDelivery(context.Background(), nil, reviewerCfg, "r1", workerActivity{
+		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "approve", Body: "lgtm"}},
+		clonedRepos:    []string{"https://github.com/fagerbergj/quack"},
+		currentBranch:  "feat/x",
+	}, GateResult{Passed: true})
+	commitDelivery(context.Background(), nil, reviewerCfg, "r2", workerActivity{
+		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "comment", Body: "nit"}},
+		clonedRepos:    []string{"https://github.com/fagerbergj/quack"},
+		currentBranch:  "feat/x",
+	}, GateResult{Passed: true})
+
+	// The synthesizer node: never clones anything, matching production.
+	synthCfg := Config{Deliver: deliver, IsReviewer: false, ReviewFanout: fanout}
+	commitDelivery(context.Background(), nil, synthCfg, "synthesize", workerActivity{
+		answer: "consolidated review",
+	}, GateResult{Passed: true})
+
+	select {
+	case dc := <-done:
+		if dc.CloneURL != "https://github.com/fagerbergj/quack" {
+			t.Fatalf("CloneURL = %q, want the reviewer nodes' clone URL carried through the fan-in", dc.CloneURL)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Deliver never fired")
 	}
 }

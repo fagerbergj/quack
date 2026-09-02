@@ -1,6 +1,7 @@
 package dag
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -26,12 +27,15 @@ const (
 
 // nodeScopedWorker: fresh worker/model/tools per DAG node.
 type nodeScopedWorker interface {
-	ForNode(nodeKey string) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, release func(), err error)
+	// drain delivers a message queued against this node mid-round (#1029);
+	// it is resolved lazily because the control registers when the node runs.
+	ForNode(nodeKey string, drain func() string) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, release func(), err error)
 }
 
 // buildGateNodes: one gated node per plan node. source: the run's origin
 // (extension name or a fixed app value) - observability only, see vetting.Config.Source.
-func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int), admission *Admission, specFor func(agentName string) AdmissionSpec, artifacts artifact.Service) (map[string]workflow.Node, []adkagent.Agent, error) {
+func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int), admission *Admission, specFor func(agentName string) AdmissionSpec, artifacts artifact.Service,
+	refreshSetup func(context.Context, Node, vetting.Config) bool) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
@@ -49,7 +53,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		var workerTools []tool.Tool
 		var release func()
 		if scoped, ok := ag.(nodeScopedWorker); ok {
-			w, m, wt, rel, err := scoped.ForNode(plan.ID + ":" + n.ID)
+			w, m, wt, rel, err := scoped.ForNode(plan.ID+":"+n.ID, liveSteerDrain(controls, chatID, n.ID))
 			if err != nil {
 				return nil, nil, fmt.Errorf("dag: node %q: per-node agent construction: %w", n.ID, err)
 			}
@@ -66,9 +70,24 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 			spec = specFor(node.AgentName)
 		}
 		cfg.Artifacts = artifacts
-		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec)
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec, refreshSetup)
 	}
 	return nodesByID, subAgents, nil
+}
+
+// liveSteerDrain: the per-node hook that delivers a steer into a RUNNING round
+// (#1029). It PEEKS - consuming here would burn the -sN generation the UI
+// resolves and rob the gate boundary of its durable delivery.
+func liveSteerDrain(controls *runControls, chatID, nodeID string) func() string {
+	return func() string {
+		if controls == nil {
+			return ""
+		}
+		if c := controls.get(chatID, nodeID); c != nil {
+			return c.PeekQueued()
+		}
+		return ""
+	}
 }
 
 // nodeGateConfig assembles one node's trust-gate config from the agent's base
@@ -120,7 +139,8 @@ func nodeGateConfig(plan Plan, node Node, worker adkagent.Agent, cfgFor func(str
 }
 
 // newGatedNode: assembles worker prompt, runs trust-gate refine loop.
-func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, worker adkagent.Agent, workerTools []tool.Tool, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int), release func(), admission *Admission, spec AdmissionSpec) workflow.Node {
+func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, worker adkagent.Agent, workerTools []tool.Tool, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int), release func(), admission *Admission, spec AdmissionSpec,
+	refreshSetup func(context.Context, Node, vetting.Config) bool) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
 		func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
 			if release != nil {
@@ -148,9 +168,19 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			}
 			cfg.Task = effectiveNode.Task
 
+			enterNode(chatID)
+			defer leaveNode(chatID)
+
+			// Before the prompt is built, so a refreshed tree and the note
+			// describing it reach the worker together.
+			refreshed := refreshSetup != nil && refreshSetup(ctx, node, cfg)
+
 			upstream := upstreamFromInput(in, node.DependsOn)
 			gateFailed := readGateFailed(ctx, node.DependsOn)
 			prompt := buildTask(plan, effectiveNode, upstream, gateFailed)
+			if refreshed {
+				prompt += refreshedNote
+			}
 			token := vetting.AdvisorThreadToken(plan.ID, node.ID)
 			task := vetting.AdvisorTask{
 				Task: effectiveNode.Task, Rubric: node.Rubric, NodeID: node.ID,

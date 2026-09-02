@@ -1019,7 +1019,7 @@ func (j *stutterJudge) GenerateContent(_ context.Context, req *model.LLMRequest,
 			yield(nil, fmt.Errorf("expected no tools on the forced closing turn, got %d req.Tools", len(req.Tools)))
 			return
 		}
-		yield(stubText(`{"score": 9, "criteria": {"accuracy": {"reason": "verified from prior reads", "score": 9}}, "feedback": ""}`), nil)
+		yield(stubText(`{"score": 3, "criteria": {"accuracy": {"reason": "verified from prior reads", "score": 3}}, "feedback": ""}`), nil)
 	}
 }
 
@@ -1039,8 +1039,8 @@ func TestRunJudgeAgent_ForcedVerdictOnRepeatedToolCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
-	if v.Score != 0.9 {
-		t.Errorf("verdict score = %v, want 0.9 (parsed from the forced-close text)", v.Score)
+	if v.Score != 1.0 {
+		t.Errorf("verdict score = %v, want 1.0 (parsed from the forced-close text)", v.Score)
 	}
 	if got := atomic.LoadInt32(&judge.calls); got != 3 {
 		t.Errorf("judge model called %d times, want 3 (two identical read_file calls + the forced no-tools close)", got)
@@ -1255,9 +1255,9 @@ func TestSubmitVerdict_NearMissPayloads(t *testing.T) {
 			t.Fatalf("newSubmitVerdictTool: %v", err)
 		}
 		args := map[string]any{
-			"score": 9.0,
+			"score": 3.0,
 			"criteria": map[string]any{
-				"completeness": map[string]any{"shortfall": nil, "fix": nil, "score": 9.0},
+				"completeness": map[string]any{"shortfall": nil, "fix": nil, "score": 3.0},
 			},
 			"feedback": "",
 		}
@@ -1269,8 +1269,8 @@ func TestSubmitVerdict_NearMissPayloads(t *testing.T) {
 		if !ok {
 			t.Fatal("criterion lost")
 		}
-		if c.Shortfall != "" || c.Score != 0.9 {
-			t.Fatalf("got shortfall=%q score=%v, want empty/0.9", c.Shortfall, c.Score)
+		if c.Shortfall != "" || c.Score != 1.0 {
+			t.Fatalf("got shortfall=%q score=%v, want empty/1.0", c.Shortfall, c.Score)
 		}
 	})
 
@@ -1308,5 +1308,26 @@ func TestInferAnchorKind(t *testing.T) {
 		if a.Kind != tc.want {
 			t.Errorf("inferAnchorKind(%+v) kind = %q, want %q", tc.in, a.Kind, tc.want)
 		}
+	}
+}
+
+// TestCommitHygieneEvidenceSection: a file the task text never mentions (by
+// path or basename) is flagged as evidence; a named one, and the no-files
+// case, produce no section.
+func TestCommitHygieneEvidenceSection(t *testing.T) {
+	act := workerActivity{written: []string{"internal/foo/bar.go", "internal/foo/baz_test.go"}}
+	got := commitHygieneEvidenceSection("Fix the off-by-one bug in bar.go", act)
+	if !strings.Contains(got, "internal/foo/baz_test.go") {
+		t.Errorf("evidence missing unnamed file: %q", got)
+	}
+	if strings.Contains(got, "internal/foo/bar.go") {
+		t.Errorf("evidence wrongly flagged a task-named file: %q", got)
+	}
+
+	if got := commitHygieneEvidenceSection("t", workerActivity{}); got != "" {
+		t.Errorf("no written files should yield no section, got %q", got)
+	}
+	if got := commitHygieneEvidenceSection("touch a.go and b.go", workerActivity{written: []string{"a.go", "b.go"}}); got != "" {
+		t.Errorf("all-named files should yield no section, got %q", got)
 	}
 }

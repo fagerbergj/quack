@@ -251,6 +251,27 @@ func (e PauseReason) Valid() bool {
 	}
 }
 
+// Defines values for QueuedMessageStatus.
+const (
+	Drained   QueuedMessageStatus = "drained"
+	Forwarded QueuedMessageStatus = "forwarded"
+	Queued    QueuedMessageStatus = "queued"
+)
+
+// Valid indicates whether the value is a known member of the QueuedMessageStatus enum.
+func (e QueuedMessageStatus) Valid() bool {
+	switch e {
+	case Drained:
+		return true
+	case Forwarded:
+		return true
+	case Queued:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReasoningPartType.
 const (
 	Reasoning ReasoningPartType = "reasoning"
@@ -462,6 +483,12 @@ type ChatSummary struct {
 // ChatSummaryGithubState Current state of the originating GitHub issue/PR. Only set when quack has observed the resource at dispatch time; absent otherwise.
 type ChatSummaryGithubState string
 
+// ClientConfig defines model for ClientConfig.
+type ClientConfig struct {
+	// OtelTraceUrlTemplate Raw URL template for a trace deep link, with a literal "{trace_id}" placeholder for the client to substitute - e.g. "https://tracing.example.com/trace/{trace_id}". Absent when otel.trace_url_template is unset (no link should be rendered).
+	OtelTraceUrlTemplate *string `json:"otel_trace_url_template,omitempty"`
+}
+
 // ContentPart defines model for ContentPart.
 type ContentPart struct {
 	union json.RawMessage
@@ -527,6 +554,9 @@ type DagNodeState struct {
 	//   cancelled   → queued (retry)
 	Status      NodeStatus `json:"status"`
 	TotalTokens *int       `json:"total_tokens,omitempty"`
+
+	// TraceId OTel trace id for this node's run, for a deep link into the tracing backend (see GET /api/v1/config's otel_trace_url_template); empty when otel is disabled.
+	TraceId *string `json:"trace_id,omitempty"`
 }
 
 // DagOutputItem defines model for DagOutputItem.
@@ -694,11 +724,17 @@ type QueueMessageBody struct {
 type QueuedMessage struct {
 	CreatedAt time.Time `json:"created_at"`
 
-	// Delivered True once handed to the node - immediately if its round was live (#998), otherwise at the next turn boundary; no longer editable or removable either way.
+	// Delivered Derived from status (true for forwarded and drained). True once handed to the node - immediately if its round was live (#998), otherwise at the next turn boundary; no longer editable or removable either way. Kept for existing consumers; prefer status for the forwarded-vs-drained distinction.
 	Delivered bool   `json:"delivered"`
 	Id        string `json:"id"`
-	Text      string `json:"text"`
+
+	// Status queued - accepted, not yet picked up. forwarded - injected straight into a live round (#998). drained - consumed at a gate boundary.
+	Status QueuedMessageStatus `json:"status"`
+	Text   string              `json:"text"`
 }
+
+// QueuedMessageStatus queued - accepted, not yet picked up. forwarded - injected straight into a live round (#998). drained - consumed at a gate boundary.
+type QueuedMessageStatus string
 
 // ReasoningPart defines model for ReasoningPart.
 type ReasoningPart struct {
@@ -1173,6 +1209,9 @@ type ServerInterface interface {
 	// Subscribe to a chat's live response stream
 	// (GET /api/v1/chats/{chat_id}/stream)
 	SubscribeChatStream(w http.ResponseWriter, r *http.Request, chatId ChatID)
+	// Read-only, client-visible server config
+	// (GET /api/v1/config)
+	GetConfig(w http.ResponseWriter, r *http.Request)
 	// List enabled extensions for SPA nav
 	// (GET /api/v1/extensions)
 	ListExtensions(w http.ResponseWriter, r *http.Request)
@@ -1305,6 +1344,12 @@ func (_ Unimplemented) UpdateResponseStatus(w http.ResponseWriter, r *http.Reque
 // Subscribe to a chat's live response stream
 // (GET /api/v1/chats/{chat_id}/stream)
 func (_ Unimplemented) SubscribeChatStream(w http.ResponseWriter, r *http.Request, chatId ChatID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Read-only, client-visible server config
+// (GET /api/v1/config)
+func (_ Unimplemented) GetConfig(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2172,6 +2217,28 @@ func (siw *ServerInterfaceWrapper) SubscribeChatStream(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// GetConfig operation middleware
+func (siw *ServerInterfaceWrapper) GetConfig(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetConfig(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListExtensions operation middleware
 func (siw *ServerInterfaceWrapper) ListExtensions(w http.ResponseWriter, r *http.Request) {
 
@@ -2526,6 +2593,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/chats/{chat_id}/stream", wrapper.SubscribeChatStream)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/config", wrapper.GetConfig)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/extensions", wrapper.ListExtensions)

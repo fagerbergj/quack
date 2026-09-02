@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -36,9 +37,10 @@ const (
 	langfuseRelease           = "langfuse.release"
 )
 
-// ChatIDKey is the standard span attribute for chat/run in scope. Start also
-// mirrors it onto GenAIConversationID, which is what OTel-native tooling
-// (Langfuse sessions) groups a trace by; chat_id stays for existing queries.
+// ChatIDKey is the input-side key callers pass to name the chat/run in scope;
+// sessionAttrs consumes it and exports only gen_ai.conversation.id (what
+// OTel-native tooling, e.g. Langfuse sessions, groups a trace by) - it never
+// reaches the span itself.
 const ChatIDKey = "chat_id"
 
 // Providers holds the process-wide OTel wiring; emission-only - Grafana owns viewing.
@@ -57,14 +59,16 @@ type Providers struct {
 // posts to / instead, which loses telemetry silently - and the deployed
 // endpoint is path-less (http://otel-collector:4318). An endpoint that already
 // names a path is left alone.
+// signalURL appends the OTLP signal path to an endpoint. It appends
+// unconditionally - a base URL that carries a path (Langfuse's
+// /api/public/otel) still needs /v1/traces on the end, and the old
+// path-detection rule made such endpoints unusable for every signal (#1045).
+// An endpoint already ending in the signal path is left alone so an
+// explicitly-specified full URL does not double up.
 func signalURL(endpoint, path string) string {
 	trimmed := strings.TrimRight(endpoint, "/")
-	if i := strings.Index(trimmed, "://"); i >= 0 {
-		if strings.Contains(trimmed[i+3:], "/") {
-			return endpoint
-		}
-	} else if strings.Contains(trimmed, "/") {
-		return endpoint
+	if strings.HasSuffix(trimmed, path) {
+		return trimmed
 	}
 	return trimmed + path
 }
@@ -99,25 +103,34 @@ func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledge
 	}
 	mpOpts := []metric.Option{metric.WithResource(res)}
 	var shutdowns []func(context.Context) error
-	if cfg.Otel.OTLPEndpoint != "" {
-		texp, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(signalURL(cfg.Otel.OTLPEndpoint, "/v1/traces")))
-		if err != nil {
-			return nil, nil, fmt.Errorf("otelobs: otlp trace exporter: %w", err)
+	// One exporter per destination per signal: a trace backend and a metrics
+	// collector are usually different systems (#1045).
+	for _, e := range cfg.Otel.Exporters {
+		if e.Wants(config.SignalTraces) {
+			texp, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(signalURL(e.Endpoint, "/v1/traces")))
+			if err != nil {
+				return nil, nil, fmt.Errorf("otelobs: otlp trace exporter (%s): %w", e.Endpoint, err)
+			}
+			bsp := sdktrace.NewBatchSpanProcessor(texp)
+			tpOpts = append(tpOpts, sdktrace.WithSpanProcessor(bsp))
+			shutdowns = append(shutdowns, bsp.Shutdown)
 		}
-		bsp := sdktrace.NewBatchSpanProcessor(texp)
-		tpOpts = append(tpOpts, sdktrace.WithSpanProcessor(bsp))
-		shutdowns = append(shutdowns, bsp.Shutdown)
-
-		mexp, err := otlpmetrichttp.New(ctx, otlpmetrichttp.WithEndpointURL(signalURL(cfg.Otel.OTLPEndpoint, "/v1/metrics")))
-		if err != nil {
-			return nil, nil, fmt.Errorf("otelobs: otlp metric exporter: %w", err)
+		if e.Wants(config.SignalMetrics) {
+			mexp, err := otlpmetrichttp.New(ctx, otlpmetrichttp.WithEndpointURL(signalURL(e.Endpoint, "/v1/metrics")))
+			if err != nil {
+				return nil, nil, fmt.Errorf("otelobs: otlp metric exporter (%s): %w", e.Endpoint, err)
+			}
+			periodic := metric.NewPeriodicReader(mexp)
+			mpOpts = append(mpOpts, metric.WithReader(periodic))
+			shutdowns = append(shutdowns, periodic.Shutdown)
 		}
-		periodic := metric.NewPeriodicReader(mexp)
-		mpOpts = append(mpOpts, metric.WithReader(periodic))
-		shutdowns = append(shutdowns, periodic.Shutdown)
 	}
 	tp := sdktrace.NewTracerProvider(tpOpts...)
 	otel.SetTracerProvider(tp)
+	// otelhttp (agent/a2a.go's per-node client+server) reads the global
+	// propagator to inject/extract traceparent - unset, it's a no-op and every
+	// A2A hop starts a fresh trace root (#1046).
+	otel.SetTextMapPropagator(propagation.TraceContext{})
 
 	mp := metric.NewMeterProvider(mpOpts...)
 	otel.SetMeterProvider(mp)
@@ -151,15 +164,23 @@ func tracer() oteltrace.Tracer { return otel.Tracer(tracerName) }
 
 // sessionAttrs adds gen_ai.conversation.id (from the explicit chat_id attr, else
 // ctx coords - the same source EmitLog reads) and user.id, so every quack span
-// carries the session identity OTel consumers resolve traces by.
+// carries the session identity OTel consumers resolve traces by. The bare
+// chat_id attr callers pass is consumed here, not re-exported - gen_ai.conversation.id
+// is the one identifier that reaches the span.
 func sessionAttrs(ctx context.Context, attrs []attribute.KeyValue) []attribute.KeyValue {
 	c := ledger.CoordsFromContext(ctx)
 	chatID := c.ChatID
+	out := attrs[:0:0]
 	for _, kv := range attrs {
-		if kv.Key == ChatIDKey && kv.Value.AsString() != "" {
-			chatID = kv.Value.AsString()
+		if kv.Key == ChatIDKey {
+			if kv.Value.AsString() != "" {
+				chatID = kv.Value.AsString()
+			}
+			continue
 		}
+		out = append(out, kv)
 	}
+	attrs = out
 	if chatID != "" {
 		attrs = append(attrs, attribute.String(GenAIConversationID, chatID))
 	}

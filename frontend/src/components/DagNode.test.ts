@@ -57,6 +57,16 @@ describe('DagNode - answer collapses to a one-line preview (#385/#399 ethos)', (
     expect(out).toContain('## Heading Visit in **May**. - one - two') // previewLine flattens whitespace
   })
 
+  it('omits the answer row on the FINAL node - its answer is the turn bubble below the DAG', () => {
+    const out = renderToStaticMarkup(createElement(DagNode, {
+      node, state: { status: 'done', startedAt: 0, finishedAt: 1000 },
+      runs: [{ runId: 'w', agent: 'web-researcher', stage: 'worker', done: true, activity }],
+      answer, isFinal: true,
+    }))
+    expect(out).not.toContain('<span class="shrink-0">answer</span>')
+    expect(out).not.toContain('## Heading')
+  })
+
   it('does not render the answer as markdown inline (that only happens in the popup, on click)', () => {
     expect(out).not.toContain('<h2>Heading</h2>')
     expect(out).not.toContain('role="dialog"')
@@ -324,14 +334,14 @@ describe('DagNode - queued-message badge counts only parked (undelivered) messag
   }
 
   it('shows no badge once every queued message has been delivered (live or boundary)', () => {
-    const out = withQueue([{ id: 'm1', text: 'focus on cost', delivered: true, created_at: '' }])
+    const out = withQueue([{ id: 'm1', text: 'focus on cost', status: 'drained', delivered: true, created_at: '' }])
     expect(out).not.toContain('✉')
   })
 
   it('shows a badge counting only the parked (undelivered) messages', () => {
     const out = withQueue([
-      { id: 'm1', text: 'delivered live', delivered: true, created_at: '' },
-      { id: 'm2', text: 'still parked', delivered: false, created_at: '' },
+      { id: 'm1', text: 'delivered live', status: 'forwarded', delivered: true, created_at: '' },
+      { id: 'm2', text: 'still parked', status: 'queued', delivered: false, created_at: '' },
     ])
     expect(out).toContain('✉ 1')
     expect(out).toContain('delivers when the current round ends')

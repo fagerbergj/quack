@@ -463,7 +463,7 @@ func TestRunNodePause(t *testing.T) {
 	if gotBody.Status != schema.NodeStatusPaused {
 		t.Errorf("pause sent status %q, want %q", gotBody.Status, schema.NodeStatusPaused)
 	}
-	if !strings.Contains(out.String(), "Paused node n2") {
+	if !strings.Contains(out.String(), "Pausing node n2") {
 		t.Errorf("pause output %q lacks confirmation", out.String())
 	}
 }

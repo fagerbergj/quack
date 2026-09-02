@@ -7,9 +7,12 @@ import (
 	"strings"
 	"testing"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
@@ -48,14 +51,20 @@ func (s *fakeState) All() iter.Seq2[string, any] {
 type fakeCtx struct {
 	adkagent.StrictContextMock
 	state *fakeState
+	invID string
 }
 
 func newFakeCtx() *fakeCtx {
-	return &fakeCtx{StrictContextMock: adkagent.StrictContextMock{Ctx: context.Background()}, state: &fakeState{m: map[string]any{}}}
+	return &fakeCtx{StrictContextMock: adkagent.StrictContextMock{Ctx: context.Background()}, state: &fakeState{m: map[string]any{}}, invID: "inv"}
 }
 
-func (c *fakeCtx) UserContent() *genai.Content          { return nil }
-func (c *fakeCtx) InvocationID() string                 { return "inv" }
+func (c *fakeCtx) UserContent() *genai.Content { return nil }
+func (c *fakeCtx) InvocationID() string {
+	if c.invID != "" {
+		return c.invID
+	}
+	return "inv"
+}
 func (c *fakeCtx) AgentName() string                    { return "test" }
 func (c *fakeCtx) ReadonlyState() session.ReadonlyState { return c.state }
 func (c *fakeCtx) UserID() string                       { return "u" }
@@ -286,6 +295,140 @@ func TestCompactionEmitsNodeScopedEvent(t *testing.T) {
 	if d.TokensBefore <= d.TokensAfter {
 		t.Fatalf("compaction event tokens_before=%d tokens_after=%d, want a real shrink", d.TokensBefore, d.TokensAfter)
 	}
+}
+
+// withTestTracer installs an in-memory span recorder as the global tracer -
+// proves the attribute lands on a real recording span, not the no-op one a
+// stale context would silently return (#1024).
+func withTestTracer(t *testing.T) *tracetest.InMemoryExporter {
+	t.Helper()
+	exp := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp))
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		_ = tp.Shutdown(context.Background())
+		otel.SetTracerProvider(prev)
+	})
+	return exp
+}
+
+// TestCompactionEmitsCompactedSpan: a compacted round must raise a real OTel
+// span carrying gen_ai.conversation.compacted=true - not silently no-op the
+// way oteltrace.SpanFromContext(ctx) would from inside this callback (RunNode
+// rebuilds the context this runs under, same reason SetLedgerCoords exists).
+func TestCompactionEmitsCompactedSpan(t *testing.T) {
+	exp := withTestTracer(t)
+	llm := &fakeLLM{text: "## Goal\n- compacted"}
+
+	contents := []*genai.Content{textContent(genai.RoleUser, "the self-contained task")}
+	for i := 0; i < 30; i++ {
+		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 2_000)))
+	}
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: budgetWindow(contents, defaultEventRetentionSize), Enabled: true})
+
+	ctx := newFakeCtx()
+	ctx.Ctx = ledger.WithCoords(context.Background(), ledger.Coords{Node: "n1", Round: "worker-r0"})
+
+	req := &model.LLMRequest{Contents: append([]*genai.Content{}, contents...)}
+	if _, err := cb(ctx, req); err != nil {
+		t.Fatalf("callback err: %v", err)
+	}
+
+	var found bool
+	for _, s := range exp.GetSpans() {
+		if s.Name != "quack.compaction" {
+			continue
+		}
+		found = true
+		for _, kv := range s.Attributes {
+			if string(kv.Key) == otelobs.GenAIConversationCompacted {
+				if !kv.Value.AsBool() {
+					t.Errorf("%s = false, want true", otelobs.GenAIConversationCompacted)
+				}
+				return
+			}
+		}
+		t.Fatalf("quack.compaction span attrs = %+v, missing %s", s.Attributes, otelobs.GenAIConversationCompacted)
+	}
+	if !found {
+		t.Fatal("no quack.compaction span recorded")
+	}
+}
+
+// TestCompactionSpanNestsUnderRoundSpan: when Coords carries the round's
+// SpanContext (runWorkerNodeTraced's stamp), the compaction span must be a
+// real CHILD of the round's trace - same trace id, parent span id matching
+// the round span - not merely linked to it (StartLinked forces WithNewRoot,
+// which Langfuse renders as a second disconnected trace; #1024 follow-up).
+func TestCompactionSpanNestsUnderRoundSpan(t *testing.T) {
+	exp := withTestTracer(t)
+	llm := &fakeLLM{text: "## Goal\n- compacted"}
+
+	contents := []*genai.Content{textContent(genai.RoleUser, "the self-contained task")}
+	for i := 0; i < 30; i++ {
+		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 2_000)))
+	}
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: budgetWindow(contents, defaultEventRetentionSize), Enabled: true})
+
+	_, roundSpan := otelobs.Start(context.Background(), "worker.round")
+	parentSC := roundSpan.SpanContext()
+	roundSpan.End()
+
+	ctx := newFakeCtx()
+	ctx.Ctx = ledger.WithCoords(context.Background(), ledger.Coords{Node: "n1", Round: "worker-r0", SpanContext: parentSC})
+
+	req := &model.LLMRequest{Contents: append([]*genai.Content{}, contents...)}
+	if _, err := cb(ctx, req); err != nil {
+		t.Fatalf("callback err: %v", err)
+	}
+
+	for _, s := range exp.GetSpans() {
+		if s.Name != "quack.compaction" {
+			continue
+		}
+		if s.SpanContext.TraceID() != parentSC.TraceID() {
+			t.Fatalf("quack.compaction trace id = %s, want round trace %s (not merely linked)", s.SpanContext.TraceID(), parentSC.TraceID())
+		}
+		if s.Parent.SpanID() != parentSC.SpanID() {
+			t.Fatalf("quack.compaction parent span id = %s, want round span %s", s.Parent.SpanID(), parentSC.SpanID())
+		}
+		return
+	}
+	t.Fatal("no quack.compaction span recorded")
+}
+
+// TestCompactionSpanOrphanWithoutLinkage: no SpanContext in Coords (zero
+// value) must still raise the compaction span, just without a link - an
+// orphan span beats no span at all.
+func TestCompactionSpanOrphanWithoutLinkage(t *testing.T) {
+	exp := withTestTracer(t)
+	llm := &fakeLLM{text: "## Goal\n- compacted"}
+
+	contents := []*genai.Content{textContent(genai.RoleUser, "the self-contained task")}
+	for i := 0; i < 30; i++ {
+		contents = append(contents, textContent(genai.RoleModel, strings.Repeat("y", 2_000)))
+	}
+	cb := compactionCallback(Compaction{Summarizer: llm, ContextWindow: budgetWindow(contents, defaultEventRetentionSize), Enabled: true})
+
+	ctx := newFakeCtx()
+	ctx.Ctx = ledger.WithCoords(context.Background(), ledger.Coords{Node: "n1", Round: "worker-r0"})
+
+	req := &model.LLMRequest{Contents: append([]*genai.Content{}, contents...)}
+	if _, err := cb(ctx, req); err != nil {
+		t.Fatalf("callback err: %v", err)
+	}
+
+	for _, s := range exp.GetSpans() {
+		if s.Name != "quack.compaction" {
+			continue
+		}
+		if len(s.Links) != 0 {
+			t.Fatalf("quack.compaction links = %+v, want none without a round SpanContext", s.Links)
+		}
+		return
+	}
+	t.Fatal("no quack.compaction span recorded")
 }
 
 // TestCompactionNoYieldNoPanic: outside a DAG node run (no yield-ctx attached
@@ -604,7 +747,11 @@ func TestSummaryCarriesCodeKnowledge(t *testing.T) {
 	if _, err := cb(newFakeCtx(), req); err != nil {
 		t.Fatalf("callback err: %v", err)
 	}
-	if llm.calls != 1 {
+	// A small ContextWindow can push the head above the summariser's own
+	// input budget, splitting it into several iterative chunk calls (see
+	// TestOversizedWindowChunksIteratively) - calls >= 1 is fine here, this
+	// test only cares that every chunk prompt asks for the shape.
+	if llm.calls < 1 {
 		t.Fatalf("summariser not called: calls=%d", llm.calls)
 	}
 	for _, want := range []string{"Files & Code State", "Commands & Tools Run", "Errors & Fixes", "Repository State"} {

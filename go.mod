@@ -4,7 +4,7 @@ go 1.26.5
 
 require (
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.2
-	github.com/a2aproject/a2a-go/v2 v2.4.0
+	github.com/a2aproject/a2a-go/v2 v2.5.0
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/cenkalti/backoff/v5 v5.0.3
 	github.com/charmbracelet/bubbletea v1.3.10
@@ -12,29 +12,30 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/coder/acp-go-sdk v0.13.5
 	github.com/creack/pty v1.1.24
-	github.com/fagerbergj/quack-extensions/github v0.6.0
+	github.com/fagerbergj/quack-extensions/github v0.7.0
 	github.com/fagerbergj/quack-extensions/noop v0.2.0
 	github.com/fagerbergj/quack-extensions/remarkable v0.2.0
-	github.com/fagerbergj/quack-extensions/sdk v0.6.0
+	github.com/fagerbergj/quack-extensions/sdk v0.7.0
 	github.com/fagerbergj/quack-extensions/usage v0.3.2
 	github.com/glebarez/go-sqlite v1.23.0
 	github.com/glebarez/sqlite v1.11.0
-	github.com/go-chi/chi/v5 v5.3.1
+	github.com/go-chi/chi/v5 v5.3.2
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/jsonschema-go v0.4.3
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/landlock-lsm/go-landlock v0.9.0
+	github.com/landlock-lsm/go-landlock v0.10.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/oapi-codegen/runtime v1.7.0
-	github.com/openai/openai-go/v3 v3.50.0
+	github.com/openai/openai-go/v3 v3.54.0
 	github.com/qdrant/go-client v1.19.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
 	github.com/zitadel/oidc/v3 v3.49.2
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.70.0
 	go.opentelemetry.io/otel v1.45.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.20.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.45.0
@@ -158,7 +159,6 @@ require (
 	github.com/zitadel/schema v1.3.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/detectors/gcp v1.44.0 // indirect
-	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.45.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
 	golang.org/x/crypto v0.54.0 // indirect

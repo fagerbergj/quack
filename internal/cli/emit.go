@@ -120,17 +120,17 @@ func EmitServerConfig(a InitAnswers) string {
 }
 
 // emitCodingAgents renders the three coding agents, mirroring the reference
-// config/quack.yaml roster: each is an EXTERNAL agent over ACP (opencode drives
-// the model bound here), explorer and reviewer read-only. quack has no native
-// repo/exec tools - they left the registry with the ACP switch - so these
-// agents carry no tools: list at all.
+// config/quack.yaml roster: each is an EXTERNAL agent over ACP (the pi-acp shim
+// drives the model bound here), explorer and reviewer read-only. quack has no
+// native repo/exec tools - they left the registry with the ACP switch - so
+// these agents carry no tools: list at all.
 func emitCodingAgents(b *strings.Builder, a InitAnswers) {
 	model := a.CoderModel
 	if model == "" {
 		model = a.MainModel
 	}
 	acp := func(readOnly bool) {
-		b.WriteString("    acp:\n      command: [opencode, acp]   # needs opencode on PATH\n")
+		b.WriteString("    acp:\n      command: [node, /usr/local/lib/pi-acp/pi-acp.mjs]   # needs node + the pi-acp shim (tools/pi-acp/ in the repo, /usr/local/lib/pi-acp/ in the image)\n")
 		if readOnly {
 			b.WriteString("      read_only: true\n")
 		}

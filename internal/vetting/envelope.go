@@ -2,6 +2,7 @@ package vetting
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"sort"
@@ -20,7 +21,7 @@ func marshalEnvelope(env verdictEnvelope) string {
 }
 
 // scaleSpec: a criterion's score range, explicit per criterion (#941) - judge
-// criteria are 0-10, deterministic checks like cites_sources keep their own
+// criteria are 0-3, deterministic checks like cites_sources keep their own
 // native scale (0-1).
 type scaleSpec struct {
 	Min float64 `json:"min"`
@@ -109,6 +110,18 @@ func criterionText(c criterionScore) string {
 		return c.Shortfall
 	}
 	return c.Reason
+}
+
+// formatCriteriaDetail renders the DEBUG per-criterion line. Score is 0-1
+// (see aggregateVerdict); %.0f collapsed 0.9 and 1.0 to the same "1", which
+// hid the score-compression pattern the log exists to surface.
+func formatCriteriaDetail(criteria map[string]criterionScore) string {
+	parts := make([]string, 0, len(criteria))
+	for name, cs := range criteria {
+		parts = append(parts, fmt.Sprintf("%s=%.2f (%s)", name, cs.Score, strings.TrimSpace(criterionText(cs))))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, " | ")
 }
 
 // buildEnvelope replaces composeFeedback's prose rendering: it turns a

@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -95,6 +96,67 @@ func (c *Client) ListRecordings(ctx context.Context) ([]schema.RecordingSummary,
 		return nil, err
 	}
 	return out.Data, nil
+}
+
+// ListChatArtifacts returns every artifact name visible to a chat, each with
+// its full revision history. 404 (unknown chat) surfaces as ErrNotFound.
+func (c *Client) ListChatArtifacts(ctx context.Context, chatID string) ([]schema.ArtifactSummary, error) {
+	var out schema.ArtifactList
+	if err := c.getJSON(ctx, "/api/v1/chats/"+chatID+"/artifacts", &out); err != nil {
+		return nil, err
+	}
+	return out.Data, nil
+}
+
+// FetchArtifact downloads one artifact revision's bytes - latest when
+// revision is 0. 404 (unknown chat/artifact/revision) surfaces as ErrNotFound.
+func (c *Client) FetchArtifact(ctx context.Context, chatID, artifactName string, revision int) ([]byte, error) {
+	path := "/api/v1/chats/" + chatID + "/artifacts/" + url.PathEscape(artifactName)
+	if revision > 0 {
+		path += "?revision=" + strconv.Itoa(revision)
+	}
+	status, body, err := c.Request(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if status == http.StatusNotFound {
+		return nil, ErrNotFound
+	}
+	if status >= 400 {
+		return nil, fmt.Errorf("GET .../artifacts/%s: %s", artifactName, errStatus(status, body))
+	}
+	return body, nil
+}
+
+// ListMemories browses or (with q) searches the server's configured memory
+// stores. One request, no auto-paging - callers wanting more pass a larger
+// limit or repeat with page_token via `quack api`.
+func (c *Client) ListMemories(ctx context.Context, bucket, q string, limit int, includeInvalidated bool) (schema.MemoryList, error) {
+	var out schema.MemoryList
+	path := "/api/v1/memories?"
+	q2 := url.Values{}
+	if bucket != "" {
+		q2.Set("bucket", bucket)
+	}
+	if q != "" {
+		q2.Set("q", q)
+	}
+	if limit > 0 {
+		q2.Set("limit", strconv.Itoa(limit))
+	}
+	if includeInvalidated {
+		q2.Set("include_invalidated", "true")
+	}
+	path += q2.Encode()
+	err := c.getJSON(ctx, path, &out)
+	return out, err
+}
+
+// ForgetMemory invalidates (soft-deletes) one memory. 404 (unknown id)
+// surfaces as ErrNotFound.
+func (c *Client) ForgetMemory(ctx context.Context, memoryID, reason string) error {
+	b, _ := json.Marshal(schema.DeleteMemoryBody{Reason: &reason})
+	return c.sendBody(ctx, http.MethodDelete, "/api/v1/memories/"+memoryID, b)
 }
 
 // GetChat returns a chat with its turns.

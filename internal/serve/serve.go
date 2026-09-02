@@ -85,11 +85,6 @@ const (
 // plugin root's skills directory (internal/plugin discovery) - the disk-only
 // view both newSkillSource and acpSkillPaths compare the embedded dotagents
 // fallback against.
-// defaultMaxActiveRuns: fixed host-disk/CPU guard on concurrent run SETUP
-// (clone/jail), independent of #1007's GPU-capacity Admission ledger - not a
-// config knob, since #1007 deliberately removed dag.max_active_runs as one.
-const defaultMaxActiveRuns = 8
-
 // activeKey mirrors dag.AdmissionSpec.residencyKey (provider+role) for
 // ProviderConfig.Limits.Active, which is keyed by role alone within one provider.
 func activeKey(provider, role string) string { return provider + "\x00" + role }
@@ -136,22 +131,51 @@ func admissionSpecFor(cfg *config.Config) func(agentName string) dag.AdmissionSp
 		if !ok {
 			return dag.AdmissionSpec{}
 		}
-		ctxWindow := ac.ContextWindow
-		if ctxWindow == 0 {
-			ctxWindow = mc.ContextWindow
-		}
-		spec := dag.AdmissionSpec{Model: ac.Model, KVTokens: ctxWindow, Provider: mc.Provider, Role: mc.Role}
-		if mc.Limits == nil || mc.Limits.KVTokens == 0 {
-			spec.KVTokens = 0 // absent kv_tokens = context isn't a scheduling dimension
-		}
-		return spec
+		return modelSpec(mc, ac.Model, ac.ContextWindow)
 	}
 }
 
+// modelSpec builds one AdmissionSpec from a model's registry entry.
+// ctxWindow is the caller's override; 0 falls back to the model's default.
+func modelSpec(mc config.ModelConfig, name string, ctxWindow int) dag.AdmissionSpec {
+	if ctxWindow == 0 {
+		ctxWindow = mc.ContextWindow
+	}
+	spec := dag.AdmissionSpec{Model: name, KVTokens: ctxWindow, Provider: mc.Provider, Role: mc.Role}
+	if mc.Limits == nil || mc.Limits.KVTokens == 0 {
+		spec.KVTokens = 0 // absent kv_tokens = context isn't a scheduling dimension
+	}
+	return spec
+}
+
+// orchestratorSpec: the orchestrator's own capacity spec. It shares the
+// models registry with worker agents, so when orchestrator.model reuses a
+// worker model both contend for that model's one sessions pool (#1007).
+func orchestratorSpec(cfg *config.Config) dag.AdmissionSpec {
+	mc, ok := cfg.Models[cfg.Orchestrator.Model]
+	if !ok {
+		return dag.AdmissionSpec{}
+	}
+	spec := modelSpec(mc, cfg.Orchestrator.Model, cfg.Orchestrator.ContextWindow)
+	if cfg.Orchestrator.ContextWindow == 0 {
+		// Unlike an agent, the orchestrator has no declared window to fall back
+		// on: modelSpec would hand it the model's whole kv budget, so one turn
+		// would reserve the pool and block every node it planned.
+		spec.KVTokens = 0
+	}
+	return spec
+}
+
+// resolvedSkillSource wraps every source in Tolerant: a builtin/plugin
+// skill dir is server-controlled but a plugin's SKILL.md is third-party
+// content, and one field ADK's strict frontmatter parser doesn't know must
+// never fail startup for skills that DID parse (#1080).
 func resolvedSkillSource(skillDirs []string) skill.Source {
-	sources := []skill.Source{skill.NewFileSystemSource(bundledir.SubFS("skills"))}
+	bundleFS := bundledir.SubFS("skills")
+	sources := []skill.Source{skillsource.Tolerant(skillsource.NewFileSystemSource(bundleFS), bundleFS, "bundled skills")}
 	for _, dir := range skillDirs {
-		sources = append(sources, skill.NewFileSystemSource(os.DirFS(dir)))
+		dirFS := os.DirFS(dir)
+		sources = append(sources, skillsource.Tolerant(skillsource.NewFileSystemSource(dirFS), dirFS, dir))
 	}
 	return skill.NewMergedSource(sources...)
 }
@@ -169,7 +193,8 @@ func missingDotagentsSkillNames(skillDirs []string) []string {
 			have[fm.Name] = true
 		}
 	}
-	fallback := skill.NewFileSystemSource(bundledir.SubFS(dotagentsEmbeddedSkills))
+	daFS := bundledir.SubFS(dotagentsEmbeddedSkills)
+	fallback := skillsource.Tolerant(skillsource.NewFileSystemSource(daFS), daFS, "dotagents embedded skills")
 	var missing []string
 	if fms, err := fallback.ListFrontmatters(context.Background()); err == nil {
 		for _, fm := range fms {
@@ -190,7 +215,8 @@ func newSkillSource(skillDirs []string) skill.Source {
 	if len(backfill) == 0 {
 		return resolved
 	}
-	fallback := skill.NewFileSystemSource(bundledir.SubFS(dotagentsEmbeddedSkills))
+	daFS := bundledir.SubFS(dotagentsEmbeddedSkills)
+	fallback := skillsource.Tolerant(skillsource.NewFileSystemSource(daFS), daFS, "dotagents embedded skills")
 	return skill.NewMergedSource(resolved, skillsource.Scoped(fallback, backfill))
 }
 
@@ -380,6 +406,10 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		}
 	})
 	slog.SetDefault(slog.New(otelobs.WrapHandler(slog.Default().Handler())))
+	otelobs.SetCaptureContent(cfg.Observability.Otel.Content)
+	if cfg.Observability.Otel.IsEnabled() && len(cfg.Observability.Otel.Exporters) > 0 && !cfg.Observability.Otel.Content {
+		slog.Info("span content capture is off (observability.otel.capture_content) - generation spans export with no prompt/response text", "component", "otelobs")
+	}
 
 	go ledger.RunRetentionSweep(ctx, ledgerStore, cfg.Observability.Recording.RetentionDays, 24*time.Hour)
 
@@ -624,14 +654,35 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 			ex.ClearNodeLiveSteer(chatID, nodeID)
 		}
 	}
+	registerRoundAbort := func(chatID, nodeID string, cancel context.CancelFunc) {
+		if ex := executorRef.Load(); ex != nil {
+			ex.SetNodeRoundAbort(chatID, nodeID, cancel)
+		}
+	}
+	unregisterRoundAbort := func(chatID, nodeID string) {
+		if ex := executorRef.Load(); ex != nil {
+			ex.ClearNodeRoundAbort(chatID, nodeID)
+		}
+	}
 
 	var setupFn dag.SetupFunc
-	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(cfg, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, pluginSkillDirs, deliver, nodeCancelled, registerLiveSteer, unregisterLiveSteer, &setupFn, artifacts)
+	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(cfg, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, pluginSkillDirs, deliver, nodeCancelled, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, &setupFn, artifacts)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("agent build failed: %w", err)
 	}
 	if judgeModel != nil {
-		judgeModelRef.Store(&judgeModel)
+		// An SDK extension's Classify is not a node, but judgeModel is the
+		// instance gated nodes stamp - hand it an unstamped one instead (#1049).
+		classifyModel := judgeModel
+		if jprov, ok := cfg.Provider(cfg.Gates.Judge.Provider); ok {
+			if m, err := inference.NewModel(jprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model)); err == nil {
+				classifyModel = m
+			} else {
+				slog.Warn("classify: own judge model unavailable; sharing the gate's (attribution may follow another node)",
+					"component", "startup", "err", err)
+			}
+		}
+		judgeModelRef.Store(&classifyModel)
 	}
 	cleanups = append(cleanups, func() {
 		nodeServers.closeAll()
@@ -688,20 +739,27 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	cfgFor := func(name string) vetting.Config { return gateCfgs[name] }
 	executor := dag.NewExecutor(st.Sessions, clientMap, modelMap, judgeFactory, cfgFor, mediaAgents)
 	executor.SetMaxActive(cfg.Dag.MaxActiveNodes)
-	executor.SetAdmission(buildAdmission(cfg), admissionSpecFor(cfg))
+	admission := buildAdmission(cfg)
+	executor.SetAdmission(admission, admissionSpecFor(cfg))
 	executor.SetSetup(setupFn)
 	executor.SetArtifacts(artifacts)
 	executor.SetNodeStateStore(st) // write-through node state machine (#962)
 	executorRef.Store(executor)
-	orch := orchestrator.New(st.Sessions, llm, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
+	// The orchestrator's turns take a session from the same pool its worker
+	// nodes draw on, held only while generating - it is idle while the DAG
+	// runs, and holding across that span would deadlock its own nodes.
+	// Wraps AFTER setDefaultAgent above: that asserts on the concrete traced
+	// model, which the interface-embedding wrapper does not promote.
+	orchLLM := dag.NewAdmittingLLM(llm, admission, orchestratorSpec(cfg), nil)
+	orch := orchestrator.New(st.Sessions, orchLLM, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
 	if slices.Contains(cfg.Orchestrator.Tools, "load_artifacts") {
 		orch.SetArtifacts(artifacts)
 	}
-	// #1007 deleted the tunable (a run's NODES are what cost GPU capacity,
-	// bounded by Admission), but a run's SETUP (workspace clone/jail) still
-	// costs host disk/CPU before any node ever reaches admission - a burst of
-	// runs must still be bounded, so keep a fixed, generous run-count guard.
-	orch.SetMaxActiveRuns(defaultMaxActiveRuns)
+	// Bounds run SETUP (workspace clone/jail), which costs host disk/CPU before
+	// any node reaches the GPU ledger. Also the only cap on how many runs are
+	// live at once, which is what the UI shows as running (#1067).
+	orch.SetMaxActiveRuns(cfg.Dag.MaxActiveRuns)
+	// is gone, capacity bounds throughput naturally via the Admission ledger.
 	orchRef.Store(orch)
 	if hooks != nil {
 		hooks.pauser = executor
@@ -747,8 +805,11 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		}
 	}
 
+	restHandler := rest.NewHandler(st, orch, llm, jail, runHub, ledgerStore, Version, taskStore, userStore, artifacts, extensionDescriptors(sdkExts))
+	restHandler.SetTraceURLTemplate(cfg.Observability.Otel.TraceURLTemplate)
+
 	handler = server.New(server.Options{
-		REST:          rest.NewHandler(st, orch, llm, jail, runHub, ledgerStore, Version, taskStore, userStore, artifacts, extensionDescriptors(sdkExts)),
+		REST:          restHandler,
 		MCP:           mcpserver.Handler(orch),
 		SPA:           spa,
 		SDKExtensions: sdkExtensionMounts(sdkExts),
@@ -845,7 +906,7 @@ func (a gitCredentialAdapter) GitCredential(ctx context.Context, rawURL string) 
 }
 
 // buildAgents loads each agent bundle, builds its model and tools, exposes over A2A, returns client map.
-func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, pluginSkillDirs []string, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, model.LLM, error) {
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, pluginSkillDirs []string, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, model.LLM, error) {
 	nodeServers := newPerNodeServers()
 
 	nodeScope := func(ctx context.Context) memory.Scope {
@@ -947,11 +1008,22 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				judgeSkillsets = []tool.Toolset{skillTS}
 			}
 			judgeFactory = vetting.NewJudgeFactory(judge, judgeReadTools, judgeSkillsets)
-			if cfg.Gates.Judge.Skeptics > 0 {
-				gateCfg.Skeptic = vetting.NewSkepticFactory(judge, judgeReadTools)
+			// Own instances: gated nodes stamp per-round coords on `judge`
+			// (vetting/node.go), and these callers are not nodes - sharing it
+			// makes their calls inherit whichever node stamped last (#1049).
+			unstamped := func() (model.LLM, error) {
+				return inference.NewModel(jprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model))
 			}
-			safetyJudge = tools.NewSafetyJudge(judge)
-			planJudge = vetting.NewPlanJudge(judge, cfg.Gates.Judge.MaxOutputTokens)
+			safetyModel, err := unstamped()
+			if err != nil {
+				return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("gates.judge: safety judge model: %w", err)
+			}
+			planModel, err := unstamped()
+			if err != nil {
+				return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("gates.judge: plan judge model: %w", err)
+			}
+			safetyJudge = tools.NewSafetyJudge(safetyModel)
+			planJudge = vetting.NewPlanJudge(planModel, cfg.Gates.Judge.MaxOutputTokens)
 		}
 		slog.Info("trust gate enabled", "component", "startup",
 			"deterministic_rounds", gateCfg.DeterministicRounds,
@@ -1002,6 +1074,8 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			Sessions:           sessions,
 			TokenThreshold:     compCfg.TokenThreshold,
 			EventRetentionSize: compCfg.EventRetentionSize,
+			CompactionInterval: compCfg.CompactionInterval,
+			OverlapSize:        compCfg.OverlapSize,
 		}
 	}
 
@@ -1086,20 +1160,22 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				}
 			}
 			ag, err := acp.New(name, bundle.Card.Description, acp.Options{
-				Command:             ac.Acp.Command,
-				Env:                 env,
-				Replay:              acpReplay,
-				Caps:                workspaceCaps,
-				ExtraRO:             acpSkillPaths(pluginSkillDirs),
-				Home:                workspaceCaps.HomeDir,
-				Preamble:            preamble,
-				Jail:                jail,
-				UserID:              localUserID,
-				PermissionJudge:     permJudge,
-				ModelName:           ac.Model,
-				Pricing:             acpPricing,
-				RegisterLiveSteer:   registerLiveSteer,
-				UnregisterLiveSteer: unregisterLiveSteer,
+				Command:              ac.Acp.Command,
+				Env:                  env,
+				Replay:               acpReplay,
+				Caps:                 workspaceCaps,
+				ExtraRO:              acpSkillPaths(pluginSkillDirs),
+				Home:                 workspaceCaps.HomeDir,
+				Preamble:             preamble,
+				Jail:                 jail,
+				UserID:               localUserID,
+				PermissionJudge:      permJudge,
+				ModelName:            ac.Model,
+				Pricing:              acpPricing,
+				RegisterLiveSteer:    registerLiveSteer,
+				UnregisterLiveSteer:  unregisterLiveSteer,
+				RegisterRoundAbort:   registerRoundAbort,
+				UnregisterRoundAbort: unregisterRoundAbort,
 				Worktree: func(ctx context.Context, userID, chatID, parentNodeID, nodeID string) (string, error) {
 					parentDir, err := jail.Resolve(userID, chatID, workspace.NodeDir(parentNodeID))
 					if err != nil {
@@ -1167,7 +1243,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			}
 		}
 
-		buildWorker := func() (adkagent.Agent, model.LLM, []tool.Tool, error) {
+		buildWorker := func(drain func() string) (adkagent.Agent, model.LLM, []tool.Tool, error) {
 			wm, err := inference.NewModel(prov, ac.Model, artifacts, cfg.ModelCost(ac.Model))
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("model: %w", err)
@@ -1202,21 +1278,21 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				}
 			}
 			comp := compactionFor(ac, wm)
-			wag, err := agent.Build(bundle, wm, builtins, []tool.Toolset{agentSkillTS}, comp, memGuidance, skillFms, grading)
+			wag, err := agent.Build(bundle, wm, builtins, []tool.Toolset{agentSkillTS}, comp, memGuidance, skillFms, grading, drain)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("build: %w", err)
 			}
 			return wag, wm, builtins, nil
 		}
 
-		protoAgent, _, _, err := buildWorker()
+		protoAgent, _, _, err := buildWorker(nil)
 		if err != nil {
 			return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "%v", err)
 		}
 		clientMap[name] = nativeAgent{
 			Agent: protoAgent,
-			build: func(nodeKey string) (adkagent.Agent, model.LLM, []tool.Tool, func(), error) {
-				wag, wm, builtins, err := buildWorker()
+			build: func(nodeKey string, drain func() string) (adkagent.Agent, model.LLM, []tool.Tool, func(), error) {
+				wag, wm, builtins, err := buildWorker(drain)
 				if err != nil {
 					return nil, nil, nil, nil, err
 				}
@@ -1393,7 +1469,7 @@ func mcpServerName(raw string, i int) string {
 }
 
 // extractedDotagentsSkillsDir is where the embedded dotagents skills are
-// materialised on disk for the sandboxed ACP child (opencode reads
+// materialised on disk for the sandboxed ACP child (the pi-acp shim reads
 // skills.paths off disk; it has no access to the binary's embedded FS,
 // unlike the in-process skill toolset newSkillSource feeds). Under
 // os.TempDir(), not caps.HomeDir: extraction happens once at startup, before

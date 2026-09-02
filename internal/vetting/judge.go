@@ -26,6 +26,7 @@ import (
 	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/promptbuilder"
 	"github.com/fagerbergj/quack/internal/stream"
@@ -43,7 +44,7 @@ const (
 	defaultJudgeMaxIterations = 14
 
 	// judgeBehaviour* compose the judge's behaviour prompt.
-	judgeBehaviourHead = "You are the LAST line of defense before this answer ships. You did NOT write it, and you must not trust its assertions, its self-report of what it did, OR its inline citations - an answer's own claim that it verified something is not verification. If garbage or a fabricated claim ships past you, that is YOUR failure, not the worker's: score as an adversarial, skeptical verifier whose job is to catch what a confident, fluent, possibly-wrong answer wants you to wave through. "
+	judgeBehaviourHead = "You are the LAST line of defense before this answer ships. You did NOT write it, and you must not trust its assertions, its self-report of what it did, OR its inline citations - an answer's own claim that it verified something is not verification. If garbage or a fabricated claim ships past you, that is YOUR failure, not the worker's: score as an adversarial, distrustful verifier whose job is to catch what a confident, fluent, possibly-wrong answer wants you to wave through. "
 
 	judgeNoToolsClause = "You have no tools. Judge the answer on its own merits against the rubric. "
 
@@ -57,7 +58,7 @@ const (
 	judgeBehaviourTail = "If an image is attached to this message, you can see it - use it to directly verify any visual claims in the answer. If there is no image, judge on internal consistency and appropriate hedging only; do NOT penalise an answer merely because you cannot see the source. " +
 		"Do NOT try to verify which URLs were fetched - WEB citation backing is checked separately by deterministic code, so score `cites_sources` only on whether claims carry followable links at all, not on whether you think a URL is real. Local file/code citations (a repo-relative path, `<repo>@path[:lines]`) get NO such deterministic check - verify those yourself per the read-tools instructions above, or judge them on internal consistency alone when you hold no tools. " +
 		"CRITICAL - the leniency below is SCOPED, not a blanket pass for citations: it protects claims about LIVE WEB or EXTERNAL content you have no way to check from here (a fresh article, an external product, a fact outside this repo) and your own world knowledge is stale and incomplete, so NEVER treat such a claim as fabricated or ungrounded merely because you do not recognize it, it sounds new, or it postdates your training - an unfamiliar title, name, product, or event is NOT evidence of fabrication there. A specific is 'invented' only when the answer's OWN text is internally inconsistent or makes a precise claim it never supports, never because it conflicts with your memory. This leniency NEVER applies to claims about the workspace/repo: when you hold read tools, verify them per the mandatory instructions above - a citation there is a pointer to go check, not proof, and an unverified in-repo claim scores as unsupported even if it 'sounds right'; when you hold no tools, judge in-repo claims on internal consistency only, same as any other unverifiable claim, without extending web-content leniency to them. " +
-		"Score EVERY criterion the rubric names - no more, no fewer. For each, reason in one or two sentences, then assign an INTEGER score from 0 to 10 using the rubric's scoring bands (10 = the criterion is fully met, 0 = total failure; use the intermediate values for partial quality - do not snap to 0, 5, or 10). Choosing within a band: pick the higher number when the criterion is met more completely or the flaw is more trivial, the lower number when it only just clears the band. Judge substance, not style: length and fluent prose earn no credit. Each criterion is an independent requirement: the answer's overall score is its WEAKEST criterion, so a single failing criterion sinks it - do not let a strong dimension excuse a failing one. " +
+		"Score EVERY criterion the rubric names - no more, no fewer. For each, reason in one or two sentences, then assign the INTEGER score (0, 1, 2, or 3) whose scoring-band descriptor actually matches the answer. Judge substance, not style: length and fluent prose earn no credit. The answer's overall score is its WEAKEST criterion - a single failing criterion sinks it, however strong the others are. " +
 		"When - and only when - you have scored every criterion, call the submit_verdict tool exactly once with: `criteria` (an object mapping each criterion name to {shortfall, fix, anchor, score}), `score` (a fallback the gate uses only if you submit no criteria - with criteria present it derives the overall score from them, so your per-criterion reasoning is the work that counts), and `feedback` (concrete, actionable notes naming the lowest-scoring criteria and what to fix; empty when the answer passes). " +
 		"For a FAILING criterion: `shortfall` names the specific thing that failed - the claim, file, path, link, or command - never a restatement of the score; `fix` is the concrete remedy. Both are handed to the worker verbatim as its brief for the next attempt, so a shortfall that leaves the worker unable to tell WHICH item to fix has told it nothing. " +
 		"`anchor` is OPTIONAL - where in the answer the criticism points, when it is locatable. Set kind to `quote` with `text` set to the exact offending substring (verbatim, or it will be dropped); `path` with `path` (and optional `line`) for a claim about a specific file in the repo; or `omission` with `expected` describing what should be present but is absent - use omission when nothing in the answer can be quoted or pointed to, never force a quote/path anchor onto an absence. Leave anchor out entirely when no span applies. " +
@@ -133,7 +134,7 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 		judgeTools = append(judgeTools, submit)
 		a, err := llmagent.New(llmagent.Config{
 			Name:        "judge",
-			Description: "independent skeptical verifier",
+			Description: "independent adversarial verifier",
 			Model:       judgeModel,
 			InstructionProvider: func(_ adkagent.ReadonlyContext) (string, error) {
 				return promptbuilder.Judge(judgeTools, behaviour), nil
@@ -147,7 +148,7 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 	}
 }
 
-// judgeGenConfig caps a judge/skeptic/plan-judge round's own reply tokens - a
+// judgeGenConfig caps a judge/plan-judge round's own reply tokens - a
 // verdict is a few hundred tokens of JSON, but an ungoverned round can decode
 // tens of thousands looping (#889). <= 0 leaves the request uncapped.
 func judgeGenConfig(maxOutputTokens int) *genai.GenerateContentConfig {
@@ -163,7 +164,7 @@ func judgeGenConfig(maxOutputTokens int) *genai.GenerateContentConfig {
 // existing parseVerdict fallback picks it up exactly like a local model that skipped the tool call.
 const judgeForceCloseInstruction = "\n\nSTOP - you are out of tool budget for this round; no tools, including submit_verdict, are available on this turn. " +
 	"Using ONLY what you have already read and verified above, output your verdict now as a single JSON object and nothing else (no code fence, no other text): " +
-	`{"score": <0-10 overall fallback>, "criteria": {"<criterion name>": {"reason": "<why>", "score": <0-10>}, ...}, "feedback": "<concise, actionable - empty if it passes>"}` +
+	`{"score": <0-3 overall fallback>, "criteria": {"<criterion name>": {"reason": "<why>", "score": <0-3>}, ...}, "feedback": "<concise, actionable - empty if it passes>"}` +
 	" Score every criterion the rubric named, from what you have already verified."
 
 // forcedVerdictCallback strips all tools and appends judgeForceCloseInstruction on the round's last
@@ -307,7 +308,35 @@ func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Con
 		sb.WriteString("\n\n")
 		sb.WriteString(knownFailures)
 	}
+	if ev := commitHygieneEvidenceSection(nodeTask, act); ev != "" {
+		sb.WriteString("\n\n")
+		sb.WriteString(ev)
+	}
 	return sb.String()
+}
+
+// commitHygieneEvidenceSection: files this session wrote whose path (or basename) never appears in the
+// task text - computed here, not left for the judge to re-derive, since "was this file in scope" is a
+// checkable fact, not a judgement call. The judge still rules on whether the scope is JUSTIFIED (a
+// repo-wide rename legitimately touches many files); this only hands it the list.
+func commitHygieneEvidenceSection(nodeTask string, act workerActivity) string {
+	var unnamed []string
+	for _, p := range act.written {
+		base := p
+		if i := strings.LastIndex(p, "/"); i >= 0 {
+			base = p[i+1:]
+		}
+		if !strings.Contains(nodeTask, p) && !strings.Contains(nodeTask, base) {
+			unnamed = append(unnamed, p)
+		}
+	}
+	if len(unnamed) == 0 {
+		return ""
+	}
+	sort.Strings(unnamed)
+	return "Files touched this session that the task text never named (evidence for commit_hygiene - " +
+		"judge whether that scope is justified, e.g. a repo-wide rename legitimately touches many files):\n- " +
+		strings.Join(unnamed, "\n- ")
 }
 
 // judgeKnownFailuresHeader: tells judge not to re-score already-failed criteria.
@@ -580,7 +609,7 @@ func finishJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, que
 	return v2
 }
 
-// judgeRepeat* tune the runaway-generation guard shared by the judge, skeptic,
+// judgeRepeat* tune the runaway-generation guard shared by the judge
 // and plan judge: a degenerate loop stutters far faster than any legitimate
 // verdict grows, so watching a bounded trailing window is enough (#889: 18K+
 // tokens looped on one verdict before this existed).
@@ -1061,22 +1090,49 @@ func buildContinuationPrompt(task string, act workerActivity, checks []string, r
 	return sb.String()
 }
 
-// normalizeScale: converts 0-10 rubric scale to internal 0-1 axis. Idempotent.
+// judgeScaleMax: the rubric's raw integer scale (0/1/2/3 - see rubric.yaml
+// scale.max across every agent bundle). Shared here because normalizeScale
+// converts raw judge output to the internal 0-1 axis by this divisor.
+const judgeScaleMax = 3
+
+// normalizeScale: converts the judge's raw 0-judgeScaleMax rubric scale to
+// the internal 0-1 axis. Idempotent.
 func normalizeScale(v *verdict) {
-	maxScore := v.Score
-	for _, c := range v.Criteria {
-		if c.Score > maxScore {
-			maxScore = c.Score
-		}
+	if verdictAlreadyNormalized(v) {
+		return
 	}
-	if maxScore <= 1.0 {
-		return // already on the 0–1 axis
-	}
-	v.Score /= 10
+	v.Score /= judgeScaleMax
 	for name, c := range v.Criteria {
-		c.Score /= 10
+		c.Score /= judgeScaleMax
 		v.Criteria[name] = c
 	}
+}
+
+// verdictAlreadyNormalized reports whether every score in v is a fraction
+// strictly between 0 and 1 - the signature of a model that ignored the
+// integer-scale instruction and answered directly on 0-1. A whole-number
+// score is always treated as raw scale, even when it equals 1, since 1 is
+// itself a legal raw level (do not conflate it with a legacy "full marks").
+func verdictAlreadyNormalized(v *verdict) bool {
+	found := false
+	check := func(s float64) bool {
+		if s < 0 || s >= 1 {
+			return false
+		}
+		if s != 0 {
+			found = true
+		}
+		return true
+	}
+	if !check(v.Score) {
+		return false
+	}
+	for _, c := range v.Criteria {
+		if !check(c.Score) {
+			return false
+		}
+	}
+	return found
 }
 
 // inferAnchorKind fills a missing anchor kind from whichever payload field is
@@ -1134,14 +1190,20 @@ func emitEvaluationResults(ctx context.Context, responseID string, v verdict) {
 		names = append(names, name)
 	}
 	sort.Strings(names) // map iteration is random; a stable emit order matters for replay diffing
+	// gen_ai.agent.name: EmitLog stamps session/node/round only.
+	agent := ledger.CoordsFromContext(ctx).Agent
 	for _, name := range names {
 		cs := v.Criteria[name]
-		otelobs.EmitLog(ctx, judgeScope, "",
+		attrs := []otellog.KeyValue{
 			otellog.String(otelobs.GenAIResponseID, responseID),
 			otellog.String(otelobs.GenAIEvaluationName, name),
 			otellog.Float64(otelobs.GenAIEvaluationScore, cs.Score),
 			otellog.String(otelobs.GenAIEvaluationExplain, cs.Reason),
-		)
+		}
+		if agent != "" {
+			attrs = append(attrs, otellog.String(otelobs.GenAIAgentName, agent))
+		}
+		otelobs.EmitLog(ctx, judgeScope, "", attrs...)
 	}
 }
 

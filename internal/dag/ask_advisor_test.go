@@ -463,7 +463,7 @@ func TestAskAdvisor_OverA2A(t *testing.T) {
 		t.Fatalf("a2a serve: %v", err)
 	}
 	defer srv.Close()
-	client, err := srv.Client()
+	client, err := srv.ClientForNode("test-node")
 	if err != nil {
 		t.Fatalf("a2a client: %v", err)
 	}

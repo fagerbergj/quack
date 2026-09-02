@@ -21,6 +21,25 @@ type AdmissionSpec struct {
 
 func (s AdmissionSpec) residencyKey() string { return s.Provider + "\x00" + s.Role }
 
+// waiter: a blocked Admit call. The spec is kept so aging only holds back
+// waiters that actually contend with it (#1038).
+type waiter struct {
+	at   time.Time
+	spec AdmissionSpec
+}
+
+// contends: whether two waiters compete for any same dimension. Aging between
+// non-contending waiters is starvation protection nobody asked for - it stalls
+// a node while the capacity it wants sits idle (#1038).
+func contends(x, y AdmissionSpec) bool {
+	if x.Model != "" && x.Model == y.Model {
+		return true
+	}
+	xr := x.Provider != "" || x.Role != ""
+	yr := y.Provider != "" || y.Role != ""
+	return xr && yr && x.residencyKey() == y.residencyKey()
+}
+
 // Admission is a mutex-guarded, reclaimable capacity ledger shared by both
 // DAG execution paths (rundag.go and nativegraph.go both run through
 // newGatedNode, so wiring Admit/Release there covers both). It replaces
@@ -42,7 +61,7 @@ type Admission struct {
 
 	agingThreshold time.Duration
 	seq            int64
-	waiting        map[int64]time.Time // seq -> arrival time, present only while blocked in Admit
+	waiting        map[int64]waiter // seq -> waiter, present only while blocked in Admit
 }
 
 // NewAdmission builds an Admission ledger from the config's models/providers
@@ -59,7 +78,7 @@ func NewAdmission(sessionsLimit, kvLimit, activeLimit map[string]int, agingThres
 		activeLimit:    activeLimit,
 		residents:      map[string]map[string]int{},
 		agingThreshold: agingThreshold,
-		waiting:        map[int64]time.Time{},
+		waiting:        map[int64]waiter{},
 	}
 	a.cond = sync.NewCond(&a.mu)
 	return a
@@ -84,7 +103,7 @@ func (a *Admission) Admit(ctx context.Context, spec AdmissionSpec, onQueued func
 	a.seq++
 	mySeq := a.seq
 	arrived := time.Now()
-	a.waiting[mySeq] = arrived
+	a.waiting[mySeq] = waiter{at: arrived, spec: spec}
 	defer delete(a.waiting, mySeq)
 	queuedFired := false
 
@@ -105,24 +124,38 @@ func (a *Admission) Admit(ctx context.Context, spec AdmissionSpec, onQueued func
 	defer agingTimer.Stop()
 
 	for {
+		fits := (a.oldestContendingSeqLocked(spec) == mySeq || !a.agingActiveLocked(spec)) && a.fits(spec)
+		if fits {
+			// Never reserve on a dead ctx, even if capacity happens to be free -
+			// cancelled work must not proceed, no matter how it got here (#1016).
+			if ctx.Err() != nil {
+				return false
+			}
+			a.reserve(spec)
+			return true
+		}
+		// Contention (not fitting) is "queued" regardless of ctx state, and
+		// firing here can never lead to a reservation - unlike the old
+		// ctx-after-fits ordering this replaced.
+		if !queuedFired && onQueued != nil {
+			queuedFired = true
+			a.fireUnlocked(onQueued)
+			continue // re-check fits: state may have changed while unlocked
+		}
 		if ctx.Err() != nil {
 			return false
 		}
-		if a.oldestSeqLocked() == mySeq || !a.agingActiveLocked() {
-			if a.fits(spec) {
-				a.reserve(spec)
-				return true
-			}
-		}
-		if !queuedFired && onQueued != nil {
-			queuedFired = true
-			a.mu.Unlock()
-			onQueued()
-			a.mu.Lock()
-			continue // re-check fits: state may have changed while unlocked
-		}
 		a.cond.Wait()
 	}
+}
+
+// fireUnlocked calls fn with a.mu released (fn is arbitrary consumer code -
+// a stream yield - so it must never run under the lock). Its own defer
+// relocks even if fn panics, so Admit's deferred Unlock never double-unlocks.
+func (a *Admission) fireUnlocked(fn func()) {
+	a.mu.Unlock()
+	defer a.mu.Lock()
+	fn()
 }
 
 // Release returns spec's reserved capacity and wakes any blocked waiters.
@@ -198,23 +231,29 @@ func (a *Admission) reserve(spec AdmissionSpec) {
 }
 
 // oldestSeqLocked: the lowest (earliest-arrived) currently-waiting seq, or 0 if none.
-func (a *Admission) oldestSeqLocked() int64 {
+// oldestContendingSeqLocked: the oldest waiter competing with spec, itself
+// included. seq breaks ties - two waiters registered in the same instant would
+// otherwise flap on map iteration order.
+func (a *Admission) oldestContendingSeqLocked(spec AdmissionSpec) int64 {
 	var oldest int64
 	var oldestT time.Time
-	for seq, t := range a.waiting {
-		if oldest == 0 || t.Before(oldestT) {
-			oldest, oldestT = seq, t
+	for seq, w := range a.waiting {
+		if !contends(w.spec, spec) {
+			continue
+		}
+		if oldest == 0 || w.at.Before(oldestT) || (w.at.Equal(oldestT) && seq < oldest) {
+			oldest, oldestT = seq, w.at
 		}
 	}
 	return oldest
 }
 
-// agingActiveLocked: whether the oldest waiter has aged past the threshold -
-// if so, only it may be admitted next (no backfill past it).
-func (a *Admission) agingActiveLocked() bool {
-	oldest := a.oldestSeqLocked()
+// agingActiveLocked: whether the oldest CONTENDING waiter has aged past the
+// threshold - if so, only it may be admitted next (no backfill past it).
+func (a *Admission) agingActiveLocked(spec AdmissionSpec) bool {
+	oldest := a.oldestContendingSeqLocked(spec)
 	if oldest == 0 {
 		return false
 	}
-	return time.Since(a.waiting[oldest]) > a.agingThreshold
+	return time.Since(a.waiting[oldest].at) > a.agingThreshold
 }

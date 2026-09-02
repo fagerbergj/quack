@@ -39,7 +39,7 @@ Quack's own spans are named `quack.<name>` (ADK's, above, are not). The vocabula
 | `quack.plan` / `quack.plan.judge` | DAG planning and the plan judge's pass over it. |
 | `quack.setup.clone` | Repo provisioning for a plan's `Setup` (the pre-provisioned clone). |
 | `quack.delivery` | The gate-owned delivery step (commit/push/PR/review). |
-| `quack.acp.spawn` / `.handshake` / `.prompt` / `.round` | The external ACP subprocess lifecycle (`opencode acp`) for code-implementer/reviewer/explorer nodes. |
+| `quack.acp.spawn` / `.handshake` / `.prompt` / `.round` | The external ACP subprocess lifecycle (the `pi-acp` shim driving pi) for code-implementer/reviewer/explorer nodes. |
 | `quack.acp.tool.<kind>` | One tool call the ACP subprocess made, from its `session/update` to its terminal status — a child of `quack.acp.prompt`. `<kind>` is the ACP tool kind (`execute`, `read`, `edit`, `search`, …). |
 
 Quack's spans wrap work, not model calls — the model calls are ADK's `generate_content` spans nested inside them. So a quack span never carries `model` or `gen_ai.request.model`: OTel consumers (Langfuse among them) read a model-named attribute as "this is a model call" and would fold node and round wall-clock into every per-model latency and cost aggregate. Where the model a wrapper ran under is still worth having (`quack.node`, `quack.worker.round`), it goes under `quack.model`.

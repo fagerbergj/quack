@@ -25,7 +25,7 @@ This is what `quack chat` / `quack chat node` ([`cli.md`](cli.md)) and the [web 
 
 `POST .../responses` and `GET .../stream` both emit `text/event-stream`: `event: <name>` followed by `data: <json>`. The DAG (`dag_plan` + `node_*` events) is the static structure; within a node, the trust gate runs a sequence of agent invocations ("runs") - the worker draft, each judge round, each revision - each delimited by `agent_start`/`agent_complete` and carrying a `run_id` + `stage` (`worker`/`judge`/`revise`).
 
-Event names: `response_created`, `agent_start`, `agent_thinking`, `agent_tool_call`, `agent_tool_result`, `agent_token`, `agent_complete`, `dag_plan`, `node_queued`, `node_start`, `node_done`, `node_failed`, `node_cancelled`, `node_needs_input`, `node_paused`, `node_steered`, `delivery_result`, `chat_title`, `done`, `error`. Full shapes are on `sendChatMessage`'s description and `x-sse-events` in `openapi.yaml`.
+Event names: `response_created`, `agent_start`, `agent_thinking`, `agent_tool_call`, `agent_tool_result`, `agent_token`, `agent_complete`, `dag_plan`, `node_queued`, `node_start`, `node_done`, `node_failed`, `node_cancelled`, `node_needs_input`, `node_paused`, `node_steered`, `delivery_result`, `compaction`, `chat_title`, `done`, `error`. Full shapes are on `sendChatMessage`'s description and `x-sse-events` in `openapi.yaml`.
 
 ## MCP
 
