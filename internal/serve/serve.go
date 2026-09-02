@@ -752,6 +752,9 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	// model, which the interface-embedding wrapper does not promote.
 	orchLLM := dag.NewAdmittingLLM(llm, admission, orchestratorSpec(cfg), nil)
 	orch := orchestrator.New(st.Sessions, orchLLM, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
+	if slices.Contains(cfg.Orchestrator.Tools, "load_artifacts") {
+		orch.SetArtifacts(artifacts)
+	}
 	// Bounds run SETUP (workspace clone/jail), which costs host disk/CPU before
 	// any node reaches the GPU ledger. Also the only cap on how many runs are
 	// live at once, which is what the UI shows as running (#1067).

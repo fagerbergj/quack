@@ -428,6 +428,9 @@ func mcpToolNames(sess vetting.MemSession, offered bool) []string {
 		add(toolLoadMemory)
 		add(toolStageMemory)
 	}
+	if sess.Artifacts != nil {
+		add(toolReadArtifact)
+	}
 	if sess.Review != nil {
 		add(toolStageReviewComment)
 		add(toolListReviewComments)

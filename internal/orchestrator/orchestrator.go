@@ -18,11 +18,13 @@ import (
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/agent/workflowagent"
+	"google.golang.org/adk/v2/artifact"
 	adkmemory "google.golang.org/adk/v2/memory"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/runner"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/loadartifactstool"
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
@@ -57,9 +59,31 @@ type Orchestrator struct {
 	userMem     *memory.Store
 	taskMem     *memory.Store
 	memAgent    adkagent.Agent
+	artifacts   artifact.Service
 	runDeadline time.Duration
 	runAdmit    *dag.Admission
 	queuedChats sync.Map
+}
+
+// SetArtifacts wires an artifact.Service into the orchestrator's own runner
+// and, when load_artifacts is in orchestrator.tools, exposes the load_artifacts
+// tool. Mirrors dag.Executor.SetArtifacts.
+func (o *Orchestrator) SetArtifacts(svc artifact.Service) { o.artifacts = svc }
+
+// failSoftListArtifacts: load_artifacts calls List on every LLM request
+// (ADK's loadartifactstool.ProcessRequest), and a List error fails the whole
+// orchestrator turn - not just artifact loading. A transient artifact-store
+// outage shouldn't take down ordinary chat, so List degrades to "no
+// artifacts" instead of erroring; Load/Save/Delete/Versions pass through.
+type failSoftListArtifacts struct{ artifact.Service }
+
+func (s failSoftListArtifacts) List(ctx context.Context, req *artifact.ListRequest) (*artifact.ListResponse, error) {
+	resp, err := s.Service.List(ctx, req)
+	if err != nil {
+		slog.Warn("orchestrator: artifact List failed; offering no artifacts this turn", "err", err)
+		return &artifact.ListResponse{}, nil
+	}
+	return resp, nil
 }
 
 func (o *Orchestrator) SetUserMemoryHook(memAgent adkagent.Agent) {
@@ -490,6 +514,11 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			toolList = append(toolList, memory.NewPreload(), commitTool)
 			memSvc = o.userMem.View(memory.Scope{User: userID, Legacy: userID}, nil)
 		}
+		var artifacts artifact.Service
+		if o.artifacts != nil {
+			toolList = append(toolList, loadartifactstool.New())
+			artifacts = failSoftListArtifacts{o.artifacts}
+		}
 
 		ag, err := llmagent.New(llmagent.Config{
 			Name:        orchestratorName,
@@ -524,6 +553,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			Agent:             wf,
 			SessionService:    conversationSessions{o.sessions},
 			MemoryService:     memSvc,
+			ArtifactService:   artifacts,
 			AutoCreateSession: true,
 		})
 		if err != nil {
