@@ -88,6 +88,10 @@ type RawNode struct {
 	DependsOn []string `json:"depends_on"`
 	Checks    []string `json:"checks,omitempty"`
 	Workdir   string   `json:"workdir,omitempty"`
+	// Artifact: episodic record name this node writes on gate pass (#1006).
+	// Only ever set by workflowcatalog.Bind from config.WorkflowNode.Artifact -
+	// the LLM planner never emits this field.
+	Artifact string `json:"artifact,omitempty"`
 }
 
 // Build: validates submitted nodes into a Plan and stamps turn context.
@@ -332,6 +336,7 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 			Checks:        n.Checks,
 			Workdir:       n.Workdir,
 			ContextWindow: agentInfo.ContextWindow,
+			Artifact:      n.Artifact,
 		})
 	}
 

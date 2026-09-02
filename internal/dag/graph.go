@@ -121,6 +121,7 @@ func nodeGateConfig(plan Plan, node Node, worker adkagent.Agent, cfgFor func(str
 		}
 	}
 	cfg.Task = node.Task
+	cfg.Artifact = node.Artifact
 	cfg.DeriveChecks = node.AgentName == implementerAgent
 	cfg.ChatID = chatID
 	cfg.Source = source
