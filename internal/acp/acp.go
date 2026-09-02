@@ -284,8 +284,13 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 	// node (judge -> revise -> revise) already has one, so tool-call history
 	// carries forward instead of every round starting cold (#1006).
 	sessID := sdk.SessionId(priorSessionID)
+	resumed := false
 	if priorSessionID != "" && initResp.AgentCapabilities.LoadSession {
 		_, err = h.conn.LoadSession(ictx, sdk.LoadSessionRequest{Cwd: cwd, McpServers: mcpServers, SessionId: sessID})
+		resumed = err == nil
+		if err != nil {
+			a.log.Warn("acp session/load failed, starting a new session", "session", priorSessionID, "err", err)
+		}
 	}
 	if priorSessionID == "" || !initResp.AgentCapabilities.LoadSession || err != nil {
 		var sess sdk.NewSessionResponse
@@ -298,6 +303,15 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 	}
 	if advisorToken != "" {
 		vetting.SetAdvisorThreadSessionID(advisorToken, string(sessID))
+		if resumed {
+			// A resumed session that then errors out is probably dead server-side -
+			// don't hand the next round a session id that will just fail LoadSession again.
+			defer func() {
+				if err != nil {
+					vetting.SetAdvisorThreadSessionID(advisorToken, "")
+				}
+			}()
+		}
 	}
 	handshakeSpan.SetAttributes(attribute.String("session_id", string(sessID)))
 	otelobs.End(handshakeSpan, nil)
