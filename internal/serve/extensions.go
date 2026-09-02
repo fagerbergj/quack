@@ -27,7 +27,6 @@ import (
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/otelobs"
-	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/server"
@@ -133,7 +132,7 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, or
 			ArchiveChat: func(chatID string) error {
 				return st.ArchiveChat(context.Background(), chatID, true)
 			},
-			UpdateChatOrigin: newExtUpdateChatOrigin(name, st, taskMem, userMem, artifacts),
+			UpdateChatOrigin: newExtUpdateChatOrigin(name, st, taskMem, userMem),
 			InvalidateSetup: func(chatID string) error {
 				dag.MarkSetupStale(chatID)
 				return nil
@@ -530,7 +529,7 @@ func ensureExtChatTitle(ctx context.Context, st *store.Store, chatID, title stri
 // State transition to a memory outcome, and which stores that outcome
 // touches, is core's own call - memory concepts never cross the SDK
 // boundary. taskMem/userMem stay nil-tolerant like every other Host field.
-func newExtUpdateChatOrigin(name string, st *store.Store, taskMem, userMem *memory.Store, artifacts *store.TurnAwareService) func(localID string, origin extsdk.ChatOrigin) error {
+func newExtUpdateChatOrigin(name string, st *store.Store, taskMem, userMem *memory.Store) func(localID string, origin extsdk.ChatOrigin) error {
 	return func(localID string, origin extsdk.ChatOrigin) error {
 		chatID := fmt.Sprintf("ext:%s:%s", name, localID)
 		ctx := context.Background()
@@ -550,28 +549,7 @@ func newExtUpdateChatOrigin(name string, st *store.Store, taskMem, userMem *memo
 			return fmt.Errorf("extensions.%s: update chat origin: %w", name, err)
 		}
 		applyMemoryOutcome(ctx, name, chatID, prevState, origin.State, taskMem, userMem)
-		deleteReviewRecordsOnClose(ctx, name, chatID, c.SessionUser, origin.State, artifacts)
 		return nil
-	}
-}
-
-// deleteReviewRecordsOnClose deletes the "review" episodic record on
-// merged/closed (#1006 §4.5) - same hook applyMemoryOutcome uses. Reopen
-// (SubjectOpen) is a no-op: a reopened chat starts with no prior review.
-// nil-tolerant (artifacts unset ⇒ records were never written); fail open,
-// never blocks the origin update.
-func deleteReviewRecordsOnClose(ctx context.Context, name, chatID, userID string, state extsdk.SubjectState, artifacts *store.TurnAwareService) {
-	if artifacts == nil {
-		return
-	}
-	switch state {
-	case extsdk.SubjectMerged, extsdk.SubjectClosed:
-	default:
-		return
-	}
-	c := recordstore.New(artifacts, artifactref.AppName, userID, chatID)
-	if err := c.DeleteAll(ctx, "review"); err != nil {
-		slog.Warn("delete review records on chat close failed", "component", "ext."+name, "chat", chatID, "err", err)
 	}
 }
 

@@ -920,7 +920,7 @@ func TestSDKExtensionUpdateChatOriginRefreshesBadge(t *testing.T) {
 	orchRef.Store(orch)
 	var extHolder atomic.Pointer[extsdk.Extension]
 	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
-	updateOrigin := newExtUpdateChatOrigin("noop", st, nil, nil, nil)
+	updateOrigin := newExtUpdateChatOrigin("noop", st, nil, nil)
 
 	const localID = "badge-fixture"
 	const chatID = "ext:noop:" + localID
@@ -974,7 +974,7 @@ func TestSDKExtensionUpdateChatOriginRefreshesBadge(t *testing.T) {
 // extsdk.ErrUnknownChat, never a silently-created bare chat row.
 func TestSDKExtensionUpdateChatOriginUnknownChatErrors(t *testing.T) {
 	st, _, _, _, _ := newExtTestStack(t)
-	updateOrigin := newExtUpdateChatOrigin("noop", st, nil, nil, nil)
+	updateOrigin := newExtUpdateChatOrigin("noop", st, nil, nil)
 
 	err := updateOrigin("never-dispatched", extsdk.ChatOrigin{Extension: "noop", Label: "x", Badge: "closed"})
 	if !errors.Is(err, extsdk.ErrUnknownChat) {
