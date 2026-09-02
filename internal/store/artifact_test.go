@@ -260,7 +260,10 @@ func TestArtifactService_RowBackend_SurvivesRestart(t *testing.T) {
 // no retention call exists (design V4.1 #2), so every save keeps its own
 // revision on both backends.
 var registerRetentionTestKindOnce = sync.OnceFunc(func() {
-	recordstore.Register("store.retention.test", recordstore.Blob, nil)
+	recordstore.Register("store.retention.test", recordstore.KindSpec{
+		Class:    recordstore.Blob,
+		Identity: func(_ []byte, hint string) (string, error) { return hint, nil },
+	})
 })
 
 func TestRecordstoreKeepsEveryRevision(t *testing.T) {
@@ -269,9 +272,11 @@ func TestRecordstoreKeepsEveryRevision(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
 			c := recordstore.New(svc, "app", "u", "s")
-			id := recordstore.ID("n1", "store.retention.test", "doc:1")
+			var id string
 			for i := 0; i < 5; i++ {
-				if _, err := c.SaveBlob(ctx, id, "store.retention.test", "text/plain", []byte{byte(i)}, recordstore.Lineage{}); err != nil {
+				var err error
+				id, _, err = c.SaveBlob(ctx, "store.retention.test", []byte{byte(i)}, "text/plain", "doc:1", recordstore.Lineage{})
+				if err != nil {
 					t.Fatalf("SaveBlob %d: %v", i, err)
 				}
 			}

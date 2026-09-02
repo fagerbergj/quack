@@ -1,10 +1,14 @@
-// Package recordstore is a typed-JSON record store over the ADK artifact.Service.
-// It is record-type-agnostic: a record is identified by a name and holds one
-// JSON document per auto-versioned revision under a fixed (app, user, session) key.
+// Package recordstore is a typed record store over the ADK artifact.Service
+// (#1090 P2). A record is identified by a kind/instance id; the id is never
+// composed by a caller - the kind registry derives it from the saved content
+// (via the kind's registered Identity func) and Save returns it. Two content
+// classes share the store: structured (JSON, validated against a registered
+// kind) and blob (raw bytes + mime, e.g. markdown/text/PDF). Kind naming,
+// schemas, and identity functions live with each record type's own package
+// (e.g. internal/vetting/reviewrecord.go); recordstore only holds the registry.
 package recordstore
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +16,8 @@ import (
 	"io/fs"
 	"log/slog"
 	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/adk/v2/artifact"
@@ -21,6 +27,111 @@ import (
 // isNotFound reports whether err is the artifact.Service "no such
 // artifact/version" sentinel, which every backend wraps around fs.ErrNotExist.
 func isNotFound(err error) bool { return errors.Is(err, fs.ErrNotExist) }
+
+// idSep joins kind/instance (design's logical shape uses "/", but ADK's
+// artifact.Service rejects "/" and "\" in FileName - validateFileName - so
+// the physical record id substitutes ":". An instance value may itself
+// contain ":" (e.g. "pr:123"); KindOf/id only ever split on the first
+// separator, so that's safe.
+const idSep = ":"
+
+// KindOf extracts the kind segment from an id, "" if malformed.
+func KindOf(id string) string {
+	kind, _, ok := strings.Cut(id, idSep)
+	if !ok {
+		return ""
+	}
+	return kind
+}
+
+// Class is an artifact's content class.
+type Class string
+
+const (
+	Structured Class = "structured" // JSON body, validated against the registered kind
+	Blob       Class = "blob"       // raw bytes + mime, no validation beyond size
+)
+
+// IdentityFunc derives a kind's instance segment from the content being
+// saved (already marshaled to bytes) and an optional hint the caller
+// supplies (e.g. the chat's external subject identity) - never from a
+// caller-composed string. A finding's identity ignores hint entirely and
+// hashes fields inside content, so it comes out the same regardless of
+// which node or hint produced it.
+type IdentityFunc func(content []byte, hint string) (instance string, err error)
+
+// KindSpec is one registered kind's shape: content class, schema version and
+// JSON Schema text (for #1091's generated write_<kind> tools - "" for a blob
+// kind, which has no schema), a validator (nil for a blob kind), and the
+// identity function that derives its instance segment.
+type KindSpec struct {
+	Class         Class
+	SchemaVersion int
+	JSONSchema    string // #1091 tool generation input; unused by P2 itself
+	Validate      func(json.RawMessage) error
+	Identity      IdentityFunc
+}
+
+var (
+	registryMu sync.RWMutex
+	registry   = map[string]KindSpec{}
+)
+
+// Register declares kind's shape (§4.3/§4.4). Call once (package init) per
+// kind from the record type's own package - #1090 P2's registered kinds are
+// code_review, finding, document, pr_body, text, bytes. Panics on a
+// duplicate registration or a spec missing Identity (a wiring bug, not a
+// runtime error - every kind must derive its own id).
+func Register(kind string, spec KindSpec) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	if _, ok := registry[kind]; ok {
+		panic("recordstore: kind " + kind + " already registered")
+	}
+	if spec.Identity == nil {
+		panic("recordstore: kind " + kind + " registered with no Identity func")
+	}
+	registry[kind] = spec
+}
+
+func lookupKind(kind string) (KindSpec, error) {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	spec, ok := registry[kind]
+	if !ok {
+		return KindSpec{}, fmt.Errorf("recordstore: kind %q is not registered", kind)
+	}
+	return spec, nil
+}
+
+// Lineage is the per-revision provenance envelope (#1090 §4.2), stamped on
+// the store row rather than inside the bytes - so blob kinds carry it too.
+// NodeID is provenance only (the node that authored this revision), never
+// part of the artifact's id.
+type Lineage struct {
+	NodeID            string    `json:"node_id"`
+	Round             int       `json:"round"`
+	ParentRevision    int       `json:"parent_revision"`
+	TriggerAnnotation string    `json:"trigger_annotation,omitempty"`
+	HeadSHA           string    `json:"head_sha,omitempty"`
+	SavedAt           time.Time `json:"saved_at"`
+	Author            string    `json:"author"`
+	// TurnID targets the store row's existing turn_id column (internal/store's
+	// TurnAwareService.SaveForTurn concept), not the lineage JSON blob -
+	// excluded from marshaling so it isn't duplicated in both places.
+	TurnID string `json:"-"`
+}
+
+// metaSaver/metaLoader are implemented by *store.TurnAwareService (checked
+// structurally, so recordstore never imports internal/store). A plain
+// artifact.Service without them - artifact.InMemoryService(), used by most
+// tests - still saves/loads fine; kind/class/lineage just don't persist.
+type metaSaver interface {
+	SaveWithMeta(ctx context.Context, req *artifact.SaveRequest, kind, class string, lineageJSON []byte, turnID string) (*artifact.SaveResponse, error)
+}
+type metaLoader interface {
+	LoadWithMeta(ctx context.Context, req *artifact.LoadRequest) (*artifact.LoadResponse, string, string, []byte, error)
+}
 
 // Client scopes record reads/writes to one (appName, userID, sessionID).
 type Client struct {
@@ -34,172 +145,185 @@ func New(svc artifact.Service, appName, userID, sessionID string) *Client {
 	return &Client{svc: svc, appName: appName, userID: userID, sessionID: sessionID}
 }
 
-// SaveJSON stores doc as a new revision of name (auto-revision, mime
-// application/json) and returns the stored revision.
-func (c *Client) SaveJSON(ctx context.Context, name string, doc any) (int, error) {
-	raw, err := json.Marshal(doc)
+func (c *Client) save(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage) (int, error) {
+	lineageJSON, err := json.Marshal(lineage)
 	if err != nil {
-		return 0, fmt.Errorf("recordstore: marshal %s: %w", name, err)
+		return 0, fmt.Errorf("recordstore: marshal lineage for %s: %w", id, err)
 	}
-	resp, err := c.svc.Save(ctx, &artifact.SaveRequest{
-		AppName:   c.appName,
-		UserID:    c.userID,
-		SessionID: c.sessionID,
-		FileName:  name,
-		Part:      &genai.Part{InlineData: &genai.Blob{Data: raw, MIMEType: "application/json"}},
-	})
+	req := &artifact.SaveRequest{
+		AppName: c.appName, UserID: c.userID, SessionID: c.sessionID, FileName: id,
+		Part: &genai.Part{InlineData: &genai.Blob{Data: data, MIMEType: mime}},
+	}
+	if ms, ok := c.svc.(metaSaver); ok {
+		resp, err := ms.SaveWithMeta(ctx, req, kind, string(class), lineageJSON, lineage.TurnID)
+		if err != nil {
+			return 0, fmt.Errorf("recordstore: save %s: %w", id, err)
+		}
+		return int(resp.Version), nil
+	}
+	resp, err := c.svc.Save(ctx, req)
 	if err != nil {
-		return 0, fmt.Errorf("recordstore: save %s: %w", name, err)
+		return 0, fmt.Errorf("recordstore: save %s: %w", id, err)
 	}
 	return int(resp.Version), nil
 }
 
-// SaveJSONAsync is the fire-and-forget form: it saves in a goroutine with its
-// own timeout and logs a Warn on error. Fail-open, same as commitMemoryOnPass.
-func (c *Client) SaveJSONAsync(ctx context.Context, name string, doc any) {
+// SaveStructured validates doc against kind's registered validator, derives
+// its id via the kind's Identity func (hint feeds identity for kinds whose
+// instance comes from outside the content, e.g. a subject id; ignored by a
+// content-hashed kind like finding), and saves it as a new JSON revision.
+// Returns the derived id and the new revision.
+func (c *Client) SaveStructured(ctx context.Context, kind string, doc any, hint string, lineage Lineage) (string, int, error) {
+	spec, err := lookupKind(kind)
+	if err != nil {
+		return "", 0, err
+	}
+	if spec.Class != Structured {
+		return "", 0, fmt.Errorf("recordstore: kind %q is not structured", kind)
+	}
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		return "", 0, fmt.Errorf("recordstore: marshal %s: %w", kind, err)
+	}
+	if spec.Validate != nil {
+		if err := spec.Validate(raw); err != nil {
+			return "", 0, fmt.Errorf("recordstore: %s failed validation: %w", kind, err)
+		}
+	}
+	instance, err := spec.Identity(raw, hint)
+	if err != nil {
+		return "", 0, fmt.Errorf("recordstore: %s identity: %w", kind, err)
+	}
+	id := kind + idSep + instance
+	rev, err := c.save(ctx, id, kind, Structured, "application/json", raw, lineage)
+	return id, rev, err
+}
+
+// SaveBlob saves data (any mime, no validation beyond the size bound callers
+// already enforce) as a new revision, deriving its id via the kind's
+// Identity func the same way SaveStructured does.
+func (c *Client) SaveBlob(ctx context.Context, kind string, data []byte, mime, hint string, lineage Lineage) (string, int, error) {
+	spec, err := lookupKind(kind)
+	if err != nil {
+		return "", 0, err
+	}
+	if spec.Class != Blob {
+		return "", 0, fmt.Errorf("recordstore: kind %q is not a blob", kind)
+	}
+	instance, err := spec.Identity(data, hint)
+	if err != nil {
+		return "", 0, fmt.Errorf("recordstore: %s identity: %w", kind, err)
+	}
+	id := kind + idSep + instance
+	rev, err := c.save(ctx, id, kind, Blob, mime, data, lineage)
+	return id, rev, err
+}
+
+// SaveStructuredAsync/SaveBlobAsync are the fire-and-forget forms: they save
+// in a goroutine with their own timeout and log a Warn on error. Fail-open,
+// same as commitMemoryOnPass - the caller never blocks or sees the error (or
+// the derived id; call IdentityFor first if the id is needed synchronously).
+func (c *Client) SaveStructuredAsync(ctx context.Context, kind string, doc any, hint string, lineage Lineage) {
 	go func() {
 		saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
-		if _, err := c.SaveJSON(saveCtx, name, doc); err != nil {
-			slog.Warn("recordstore: async save failed", "component", "recordstore", "name", name, "err", err)
+		if _, _, err := c.SaveStructured(saveCtx, kind, doc, hint, lineage); err != nil {
+			slog.Warn("recordstore: async structured save failed", "component", "recordstore", "kind", kind, "err", err)
 		}
 	}()
 }
 
-// Latest returns the newest revision of name as raw JSON plus its revision.
-// ok is false when no revision exists.
-func (c *Client) Latest(ctx context.Context, name string) ([]byte, int, bool, error) {
-	resp, err := c.svc.Load(ctx, &artifact.LoadRequest{
-		AppName: c.appName, UserID: c.userID, SessionID: c.sessionID, FileName: name,
-	})
-	if err != nil {
-		if isNotFound(err) {
-			return nil, 0, false, nil
+func (c *Client) SaveBlobAsync(ctx context.Context, kind string, data []byte, mime, hint string, lineage Lineage) {
+	go func() {
+		saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		if _, _, err := c.SaveBlob(saveCtx, kind, data, mime, hint, lineage); err != nil {
+			slog.Warn("recordstore: async blob save failed", "component", "recordstore", "kind", kind, "err", err)
 		}
-		return nil, 0, false, fmt.Errorf("recordstore: load %s: %w", name, err)
-	}
-	if resp == nil || resp.Part == nil || resp.Part.InlineData == nil {
-		return nil, 0, false, nil
-	}
-	vresp, err := c.svc.Versions(ctx, &artifact.VersionsRequest{
-		AppName: c.appName, UserID: c.userID, SessionID: c.sessionID, FileName: name,
-	})
-	rev := 0
-	if err == nil && vresp != nil {
-		for _, v := range vresp.Versions {
-			if int(v) > rev {
-				rev = int(v)
-			}
-		}
-	}
-	return resp.Part.InlineData.Data, rev, true, nil
+	}()
 }
 
-// LoadVersion returns a specific revision of name as raw JSON, nil if absent.
-func (c *Client) LoadVersion(ctx context.Context, name string, version int) ([]byte, error) {
-	resp, err := c.svc.Load(ctx, &artifact.LoadRequest{
-		AppName: c.appName, UserID: c.userID, SessionID: c.sessionID, FileName: name, Version: int64(version),
+// IdentityFor computes what SaveStructured would derive as the id for doc,
+// without saving - pure and synchronous, so a caller can know an id (e.g.
+// for its own in-memory bookkeeping across rounds) before firing an async
+// save. This is the only sanctioned way to obtain an id outside a save: the
+// registry's Identity func is still the sole place identity logic lives.
+func IdentityFor(kind string, doc any, hint string) (string, error) {
+	spec, err := lookupKind(kind)
+	if err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		return "", fmt.Errorf("recordstore: marshal %s: %w", kind, err)
+	}
+	instance, err := spec.Identity(raw, hint)
+	if err != nil {
+		return "", fmt.Errorf("recordstore: %s identity: %w", kind, err)
+	}
+	return kind + idSep + instance, nil
+}
+
+// versionsDesc returns id's saved revisions, newest first, nil if none.
+func (c *Client) versionsDesc(ctx context.Context, id string) ([]int64, error) {
+	vresp, err := c.svc.Versions(ctx, &artifact.VersionsRequest{
+		AppName: c.appName, UserID: c.userID, SessionID: c.sessionID, FileName: id,
 	})
 	if err != nil {
 		if isNotFound(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("recordstore: load %s@%d: %w", name, version, err)
+		return nil, fmt.Errorf("recordstore: versions %s: %w", id, err)
 	}
-	if resp == nil || resp.Part == nil || resp.Part.InlineData == nil {
+	if vresp == nil {
 		return nil, nil
 	}
-	return resp.Part.InlineData.Data, nil
+	versions := append([]int64(nil), vresp.Versions...)
+	sort.Slice(versions, func(i, j int) bool { return versions[i] > versions[j] })
+	return versions, nil
 }
 
-// KeepLastRevisions deletes every revision of name older than the last keep.
-// Built on Versions + per-old-revision Delete; log-and-continue, no transaction.
-func (c *Client) KeepLastRevisions(ctx context.Context, name string, keep int) error {
-	vresp, err := c.svc.Versions(ctx, &artifact.VersionsRequest{
-		AppName: c.appName, UserID: c.userID, SessionID: c.sessionID, FileName: name,
-	})
+// Latest returns the newest revision of id as raw bytes plus its revision.
+// ok is false when no revision exists.
+func (c *Client) Latest(ctx context.Context, id string) ([]byte, int, bool, error) {
+	raw, _, rev, ok, err := c.LatestWithMeta(ctx, id)
+	return raw, rev, ok, err
+}
+
+// LatestWithMeta is Latest, also returning the row's lineage when the
+// wrapped service supports it (zero Lineage otherwise - #1090 known ceiling
+// for a non-Postgres backend, e.g. artifact.InMemoryService() in tests).
+func (c *Client) LatestWithMeta(ctx context.Context, id string) ([]byte, Lineage, int, bool, error) {
+	req := &artifact.LoadRequest{AppName: c.appName, UserID: c.userID, SessionID: c.sessionID, FileName: id}
+	var resp *artifact.LoadResponse
+	var lineageJSON []byte
+	var err error
+	if ml, ok := c.svc.(metaLoader); ok {
+		resp, _, _, lineageJSON, err = ml.LoadWithMeta(ctx, req)
+	} else {
+		resp, err = c.svc.Load(ctx, req)
+	}
 	if err != nil {
 		if isNotFound(err) {
-			return nil
+			return nil, Lineage{}, 0, false, nil
 		}
-		return fmt.Errorf("recordstore: versions %s: %w", name, err)
+		return nil, Lineage{}, 0, false, fmt.Errorf("recordstore: load %s: %w", id, err)
 	}
-	if vresp == nil || len(vresp.Versions) <= keep {
-		return nil
+	if resp == nil || resp.Part == nil || resp.Part.InlineData == nil {
+		return nil, Lineage{}, 0, false, nil
 	}
-	versions := append([]int64(nil), vresp.Versions...)
-	sort.Slice(versions, func(i, j int) bool { return versions[i] < versions[j] })
-	toDrop := versions[:len(versions)-keep]
-	for _, v := range toDrop {
-		if err := c.svc.Delete(ctx, &artifact.DeleteRequest{
-			AppName: c.appName, UserID: c.userID, SessionID: c.sessionID, FileName: name, Version: v,
-		}); err != nil {
-			slog.Warn("recordstore: retention delete failed", "component", "recordstore", "name", name, "version", v, "err", err)
-		}
+	var lineage Lineage
+	_ = json.Unmarshal(lineageJSON, &lineage) // best-effort; zero value if absent/malformed
+	versions, err := c.versionsDesc(ctx, id)
+	rev := 0
+	if err == nil && len(versions) > 0 {
+		rev = int(versions[0])
 	}
-	return nil
+	return resp.Part.InlineData.Data, lineage, rev, true, nil
 }
 
-// DeleteAll deletes every revision of name (Delete Version 0 deletes all).
-func (c *Client) DeleteAll(ctx context.Context, name string) error {
-	if err := c.svc.Delete(ctx, &artifact.DeleteRequest{
-		AppName: c.appName, UserID: c.userID, SessionID: c.sessionID, FileName: name,
-	}); err != nil {
-		return fmt.Errorf("recordstore: delete %s: %w", name, err)
-	}
-	return nil
-}
-
-// Status marks a key's relation to the stored previous revision.
-type Status string
-
-const (
-	Added     Status = "added"
-	Changed   Status = "changed"
-	Unchanged Status = "unchanged"
-)
-
-// Diff returns one status per top-level key of candidate, compared against
-// the stored latest revision of name (or version, if > 0).
-func (c *Client) Diff(ctx context.Context, name string, version int, candidate any) (map[string]Status, error) {
-	candRaw, err := json.Marshal(candidate)
-	if err != nil {
-		return nil, fmt.Errorf("recordstore: marshal candidate for diff %s: %w", name, err)
-	}
-	var candMap map[string]json.RawMessage
-	if err := json.Unmarshal(candRaw, &candMap); err != nil {
-		return nil, fmt.Errorf("recordstore: candidate for diff %s is not a JSON object: %w", name, err)
-	}
-
-	var prevRaw []byte
-	var ok bool
-	if version > 0 {
-		prevRaw, err = c.LoadVersion(ctx, name, version)
-		ok = prevRaw != nil
-	} else {
-		prevRaw, _, ok, err = c.Latest(ctx, name)
-	}
-	if err != nil {
-		return nil, err
-	}
-	prevMap := map[string]json.RawMessage{}
-	if ok {
-		if err := json.Unmarshal(prevRaw, &prevMap); err != nil {
-			return nil, fmt.Errorf("recordstore: prior revision of %s is not a JSON object: %w", name, err)
-		}
-	}
-
-	out := make(map[string]Status, len(candMap))
-	for k, v := range candMap {
-		prev, existed := prevMap[k]
-		switch {
-		case !existed:
-			out[k] = Added
-		case bytes.Equal(prev, v):
-			out[k] = Unchanged
-		default:
-			out[k] = Changed
-		}
-	}
-	return out, nil
-}
+// ponytail: no delete/retention/list surface. Design V4.1 dropped
+// delete-on-merged/closed and document retention outright - artifacts live
+// until the chat itself is hard-deleted, so there is nothing here for those
+// to call yet. Add back (KeepLastRevisions, DeleteAll, DeleteByKind, Names)
+// when a real caller needs one - a chat hard-delete path, most likely.
