@@ -47,6 +47,7 @@ type AdvisorTask struct {
 	ChatID          string // workspace/jail scope - the real chat id, stable across a retry's synthetic ADK session
 	InvocationID    string
 	MemSecret       string // unguessable per-node credential for ACP memory
+	ACPSessionID    string // last round's ACP protocol session id, for cross-round resume (judge -> revise -> revise)
 }
 
 // MemSession: ACP memory MCP resolution for one node.
@@ -287,4 +288,17 @@ func LookupAdvisorThread(token string) (AdvisorTask, bool) {
 
 func UnregisterAdvisorThread(token string) {
 	advisorThreads.Delete(token)
+}
+
+// SetAdvisorThreadSessionID records the ACP session id a round established,
+// so the next round for this same node (judge -> revise -> revise) can
+// resume it instead of starting a cold session (#1006 tool-call amnesia).
+func SetAdvisorThreadSessionID(token, sessionID string) {
+	v, ok := advisorThreads.Load(token)
+	if !ok {
+		return
+	}
+	t := v.(AdvisorTask)
+	t.ACPSessionID = sessionID
+	advisorThreads.Store(token, t)
 }
