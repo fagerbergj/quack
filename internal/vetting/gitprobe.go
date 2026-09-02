@@ -178,6 +178,25 @@ func fileUnchangedSince(dir string, caps workspace.Caps, a, b, file string) bool
 	return err == nil && res.ExitCode == 0
 }
 
+// fileLineAt returns one line (1-based) of file as it read at sha, "" on any
+// failure (missing sha/file/line - the finding-hash snippet input degrades
+// gracefully, never blocks the write). Used instead of reading off disk
+// because HEAD may have moved past sha by the time this runs.
+func fileLineAt(dir string, caps workspace.Caps, sha, file string, line int) string {
+	if sha == "" || line <= 0 {
+		return ""
+	}
+	res, err := workspace.RunArgv(context.Background(), dir, []string{"git", "show", sha + ":" + file}, caps)
+	if err != nil || res.ExitCode != 0 {
+		return ""
+	}
+	lines := strings.Split(res.Output, "\n")
+	if line > len(lines) {
+		return ""
+	}
+	return lines[line-1]
+}
+
 func short(sha string) string {
 	if len(sha) > 12 {
 		return sha[:12]

@@ -386,12 +386,12 @@ plugins:
 #       - id: transcribe
 #         agent: image-reader
 #         task: "Transcribe this document's full content, preserving structure (headings, lists, sketches described in words).\n\n{{ask}}"
-#         artifact: body   # #1006: episodic record of this stage's output, preloaded on re-ingest
+#         artifact: document   # #1006/#1090: episodic record of this stage's output, preloaded on re-ingest
 #       - id: summarize
 #         agent: synthesizer
 #         depends_on: [transcribe]
 #         task: "Write a structured Markdown summary of the transcribed document above: key facts, decisions, and action items.\n\n{{ask}}"
-#         artifact: body
+#         artifact: document
 #   # rmfakecloud documents arrive as application/pdf; the OpenAI backend
 #   # (internal/inference/openaimodel) doesn't decode inline PDF data yet, so
 #   # this shape is the intended wiring, not yet an end-to-end working one.

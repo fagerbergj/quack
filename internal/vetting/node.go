@@ -230,6 +230,11 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	// cfg is a per-call copy; stamping only reaches this node's judge rounds.
 	cfg.AdvisorToken = advisorToken
 	cfg.NodeBaseSHA = cloneHeadSHA(cfg)
+	// turnID: closest available stand-in for the store row's turn_id column
+	// (#1090 V4.2 point 2) - no chat-turn id is plumbed this deep today
+	// (dag/orchestrator carry none either), so the ADK invocation id is the
+	// best per-run identity RunGatedRefine actually has.
+	turnID := ctx.InvocationID()
 	// User attribution: the ADK session identity (mirrors MemoryScope below) -
 	// not caller-set, so a node can never claim to run as someone it isn't.
 	if s := ctx.Session(); s != nil {
@@ -253,10 +258,10 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	// Episodic record preload (#1006): review for reviewer nodes (ancestry +
 	// per-file validity filtered), body for reMarkable-style stage nodes (no
 	// git filter - these nodes run outside a clone).
-	if p := BuildReviewPreload(nodeCtx, cfg); p != "" {
+	if p := BuildReviewPreload(nodeCtx, cfg, nodeID); p != "" {
 		prompt = prompt + p
 	}
-	if p := BuildBodyPreload(nodeCtx, cfg); p != "" {
+	if p := BuildBodyPreload(nodeCtx, cfg, nodeID); p != "" {
 		prompt = prompt + p
 	}
 
@@ -468,10 +473,11 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		var res GateResult
 		var checksSkipReason string // last computeDeterministicCriteria skip reason; attached to res below (#780)
 		queuedText := ""
-		// firstRoundFindings: round-1 findings, kept for the review record's
-		// critique diff (findings a revise round dropped, #1006 test case 7).
-		var firstRoundFindings []ReviewComment
-		haveFirstRoundFindings := false
+		// prevFindings: the last round's live findings by hash id, threaded
+		// into saveEpisodicRound so a dropped id gets one final "resolved"
+		// revision instead of every round rewriting every finding (#1090 P2).
+		prevFindings := map[string]FindingRecord{}
+		episodicRoundsWritten := 0
 		// JudgeRounds counts revisions: round r judges, on fail revises (N rounds = N revisions / N+1 judgments).
 		for round := 1; judge != nil && cfg.JudgeRounds > 0 && round <= cfg.JudgeRounds+1; round++ {
 			// Cooperative cancel/pause/queue before each judge round.
@@ -491,9 +497,11 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				break // still nothing to judge after recovery
 			}
 			act := actFor(answer)
-			if cfg.IsReviewer && !haveFirstRoundFindings {
-				firstRoundFindings = extractReviewFindings(answer, act.stagedDelivery["review"])
-				haveFirstRoundFindings = true
+			// Every judge round writes a revision, gate-passed or not - only
+			// delivery stays gate-passed-only (#1090 P2: rounds are history).
+			if cfg.IsReviewer || cfg.Artifact != "" {
+				prevFindings = saveEpisodicRound(nodeCtx, cfg, nodeID, turnID, round, answer, act.stagedDelivery["review"], prevFindings)
+				episodicRoundsWritten++
 			}
 			runID := fmt.Sprintf("judge-r%d", round)
 			judgeCtx, jspan := startStageSpan(nodeCtx, sink, cfg, nodeID, "judge", stream.StageJudge, runID, round)
@@ -599,13 +607,12 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		res.ChecksSkipReason = checksSkipReason
 		if res.Passed {
 			commitMemoryOnPass(ctx, nodeCtx, cfg, nodeID, answer, act.staged)
-			// Episodic records (#1006): gate-owned, fire-and-forget, never on fail.
-			if cfg.IsReviewer {
-				SaveReview(nodeCtx, cfg, answer, act.stagedDelivery["review"], firstRoundFindings)
-			}
-			if cfg.Artifact == bodyRecordName {
-				SaveBody(nodeCtx, cfg, answer)
-			}
+		}
+		// A judge-less node (JudgeRounds == 0, e.g. a deterministic-only
+		// reMarkable stage) never entered the round loop above - write its
+		// one round here so it still gets a code_review/document record.
+		if episodicRoundsWritten == 0 && (cfg.IsReviewer || cfg.Artifact != "") {
+			saveEpisodicRound(nodeCtx, cfg, nodeID, turnID, 1, answer, act.stagedDelivery["review"], nil)
 		}
 		// Deliver even on judge FAIL (graceful degradation). Memory stays pass-only.
 		delivered = true
