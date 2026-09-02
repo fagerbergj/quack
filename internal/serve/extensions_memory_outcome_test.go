@@ -17,8 +17,10 @@ import (
 
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 
+	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
+	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
 // fixedEmbedder returns the same unit vector for every text - enough to
@@ -165,7 +167,7 @@ func TestUpdateChatOriginOpenToClosedInvalidatesBothStores(t *testing.T) {
 
 	taskMem, _ := newMemStoreForTest(t, "task")
 	userMem, _ := newMemStoreForTest(t, "user")
-	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, userMem)
+	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, userMem, nil)
 
 	const localID = "closes-unmerged"
 	chatID := "ext:noop:" + localID
@@ -209,6 +211,50 @@ func TestUpdateChatOriginOpenToClosedInvalidatesBothStores(t *testing.T) {
 	}
 }
 
+// TestUpdateChatOriginMergedDeletesReview covers #1006 test case 5: a
+// merged/closed transition deletes the chat's "review" episodic record,
+// open is a no-op, and a nil artifacts client never panics (fail-open).
+func TestUpdateChatOriginMergedDeletesReview(t *testing.T) {
+	st, orch, hub, artifacts, jail := newExtTestStack(t)
+	_ = jail
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+	var extHolder atomic.Pointer[extsdk.Extension]
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+	updateOrigin := newExtUpdateChatOrigin("noop", st, nil, nil, artifacts)
+
+	const localID = "merges-with-review"
+	chatID := "ext:noop:" + localID
+	origin := &extsdk.ChatOrigin{Extension: "noop", Label: "acme/widgets#11", Kind: "pull_request", Badge: "open", State: extsdk.SubjectOpen}
+	req := extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID, Origin: origin}, Ask: extsdk.Ask{Message: "hi"}}
+	if err := dispatch(context.Background(), req); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	waitRunSettled(t, st, chatID)
+
+	user := st.SessionUserForChat(context.Background(), chatID)
+	rc := recordstore.New(artifacts, artifactref.AppName, user, chatID)
+	if _, err := rc.SaveJSON(context.Background(), "review", map[string]any{"head_sha": "deadbeef"}); err != nil {
+		t.Fatalf("seed review record: %v", err)
+	}
+	if _, _, ok, _ := rc.Latest(context.Background(), "review"); !ok {
+		t.Fatal("seeded review record not found before close")
+	}
+
+	if err := updateOrigin(localID, extsdk.ChatOrigin{Extension: "noop", Label: "acme/widgets#11", Kind: "pull_request", Badge: "merged", State: extsdk.SubjectMerged}); err != nil {
+		t.Fatalf("updateOrigin: %v", err)
+	}
+	if _, _, ok, _ := rc.Latest(context.Background(), "review"); ok {
+		t.Fatal("review record survived a merged transition")
+	}
+
+	// Nil artifacts client (in-memory-only deployments, or tests) must not panic.
+	nilClientUpdate := newExtUpdateChatOrigin("noop", st, nil, nil, nil)
+	if err := nilClientUpdate(localID, extsdk.ChatOrigin{Extension: "noop", Label: "acme/widgets#11", Kind: "pull_request", Badge: "closed", State: extsdk.SubjectClosed}); err != nil {
+		t.Fatalf("updateOrigin with nil artifacts client: %v", err)
+	}
+}
+
 // TestUpdateChatOriginOpenToMergedReinforces covers design doc §7 case 2 at
 // the wiring level: a State transition to merged reinforces (unverified →
 // reinforced, count 0→1), and a second update at the same State is a no-op
@@ -222,7 +268,7 @@ func TestUpdateChatOriginOpenToMergedReinforces(t *testing.T) {
 	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
 
 	taskMem, _ := newMemStoreForTest(t, "task")
-	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, nil)
+	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, nil, nil)
 
 	const localID = "merges-clean"
 	chatID := "ext:noop:" + localID
@@ -277,7 +323,7 @@ func TestUpdateChatOriginRepeatedClosedAppliesNothing(t *testing.T) {
 	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
 
 	taskMem, _ := newMemStoreForTest(t, "task")
-	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, nil)
+	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, nil, nil)
 
 	const localID = "already-closed"
 	chatID := "ext:noop:" + localID
@@ -319,7 +365,7 @@ func TestUpdateChatOriginStatelessOriginAppliesNothing(t *testing.T) {
 	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
 
 	taskMem, _ := newMemStoreForTest(t, "task")
-	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, nil)
+	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, nil, nil)
 
 	const localID = "stateless-origin"
 	chatID := "ext:noop:" + localID
@@ -363,7 +409,7 @@ func TestUpdateChatOriginFollowsStateNotBadge(t *testing.T) {
 	taskMem, _ := newMemStoreForTest(t, "task")
 	ops := &fakeOpsLog{}
 	taskMem.SetOpsLog(ops)
-	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, nil)
+	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, nil, nil)
 
 	const localID = "badge-lies"
 	chatID := "ext:noop:" + localID
@@ -403,7 +449,7 @@ func TestUpdateChatOriginSucceedsDespiteMemoryStoreFailure(t *testing.T) {
 	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
 
 	taskMem, taskPath := newMemStoreForTest(t, "task")
-	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, nil) // userMem absent (nil)
+	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, nil, nil) // userMem absent (nil)
 
 	const localID = "store-breaks"
 	chatID := "ext:noop:" + localID

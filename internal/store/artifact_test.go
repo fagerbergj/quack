@@ -9,6 +9,8 @@ import (
 
 	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
 // bothArtifactServices returns the row-backed GORM service and ADK's own
@@ -249,5 +251,36 @@ func TestArtifactService_RowBackend_SurvivesRestart(t *testing.T) {
 	}
 	if got := string(loaded.Part.InlineData.Data); got != "survives" {
 		t.Errorf("loaded after restart = %q, want %q", got, "survives")
+	}
+}
+
+// TestKeepLastRevisions proves recordstore.Client.KeepLastRevisions (built on
+// Versions + Delete(version), #1006) behaves the same over the row-backed
+// store and ADK's in-memory service - retention has no transactional
+// semantics of its own, so parity across backends is the acceptance bar.
+func TestKeepLastRevisions(t *testing.T) {
+	for name, svc := range bothArtifactServices(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			c := recordstore.New(svc, "app", "u", "s")
+			for i := 0; i < 5; i++ {
+				if _, err := c.SaveJSON(ctx, "body", map[string]int{"n": i}); err != nil {
+					t.Fatalf("SaveJSON %d: %v", i, err)
+				}
+			}
+			if err := c.KeepLastRevisions(ctx, "body", 3); err != nil {
+				t.Fatalf("KeepLastRevisions: %v", err)
+			}
+			_, rev, ok, err := c.Latest(ctx, "body")
+			if err != nil || !ok || rev != 5 {
+				t.Fatalf("Latest after retention: rev=%d ok=%v err=%v", rev, ok, err)
+			}
+			if v, err := c.LoadVersion(ctx, "body", 1); err != nil || v != nil {
+				t.Fatalf("version 1 should be evicted: v=%s err=%v", v, err)
+			}
+			if v, err := c.LoadVersion(ctx, "body", 3); err != nil || v == nil {
+				t.Fatalf("version 3 should survive (last 3 kept): v=%s err=%v", v, err)
+			}
+		})
 	}
 }
