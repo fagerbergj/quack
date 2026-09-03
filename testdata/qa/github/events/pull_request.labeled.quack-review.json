@@ -1,17 +1,19 @@
 {
   "action": "labeled",
-  "issue": {
-    "number": 1,
+  "number": 1,
+  "pull_request": {
     "title": "Fix the flaky retry loop",
-    "body": "Fixture issue for QA - not a real GitHub object.",
+    "head": {"sha": "9b1fbe794923ec1086c98f3617e2063c013dbfa3"},
     "state": "open",
-    "labels": [{"name": "quack:review"}]
+    "merged": false
   },
   "label": {"name": "quack:review"},
   "repository": {
     "name": "quack-qa",
     "full_name": "fagerbergj/quack-qa",
-    "owner": {"login": "fagerbergj"}
+    "owner": {"login": "fagerbergj"},
+    "clone_url": "https://github.com/fagerbergj/quack.git",
+    "default_branch": "main"
   },
   "sender": {"login": "fagerbergj"},
   "installation": {"id": 999001}

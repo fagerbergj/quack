@@ -14,8 +14,9 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 gh_mock="$repo_root/../quack-extensions/github"
 fixtures="$repo_root/testdata/qa/github"
 
-url="http://localhost:8080/api/v1/github/webhook"
-fixture="$fixtures/events/issues.labeled.quack-review.json"
+url="http://localhost:8080/github/webhook"
+fixture="$fixtures/events/pull_request.labeled.quack-review.json"
+event="pull_request"
 secret=""
 chat_id=""
 
@@ -37,7 +38,7 @@ fi
 echo "== sending $fixture =="
 ( cd "$gh_mock" && go run ./cmd/qa-mock send \
     --fixture "$fixture" \
-    --event issues \
+    --event "$event" \
     --secret "$secret" \
     --url "$url" )
 

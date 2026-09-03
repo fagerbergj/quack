@@ -39,11 +39,19 @@ Fire a webhook at the running quack server:
 
 ```bash
 go run ./cmd/qa-mock send \
-  --fixture ../../agent-researcher/testdata/qa/github/events/issues.labeled.quack-review.json \
-  --event issues \
+  --fixture ../../agent-researcher/testdata/qa/github/events/pull_request.labeled.quack-review.json \
+  --event pull_request \
   --secret "$QUACK_QA_WEBHOOK_SECRET" \
-  --url http://localhost:8080/api/v1/github/webhook
+  --url http://localhost:8080/github/webhook
 ```
+
+`quack:review` only fires from a `pull_request` "labeled" event
+(`handlePullRequest`) - an `issues` "labeled" event only drives the
+`issue_plan`/`issue_implement` triggers, never review, no matter what label
+name it carries. The webhook is mounted at `/<extension-name>/webhook`
+(`/github/webhook` here), not under `/api/v1/` - verified against a live
+server; `docs/extensions/github.md`'s `/api/v1/github/webhook` is wrong and
+tracked separately.
 
 Check what quack tried to post back to GitHub:
 
@@ -90,11 +98,27 @@ scripts/qa/e2e-review.sh --secret "$QUACK_QA_WEBHOOK_SECRET" [--url URL] [--fixt
 ```
 
 Sends the fixture `quack:review` webhook (default fixture
-`testdata/qa/github/events/issues.labeled.quack-review.json`, default url
-`http://localhost:8080/api/v1/github/webhook`). There's no chat id in the
+`testdata/qa/github/events/pull_request.labeled.quack-review.json`, default
+url `http://localhost:8080/github/webhook`). There's no chat id in the
 webhook response or the mock's recorded delivery - quack replies 202 before
 the run is created - so without `--chat` the script lists `/api/v1/chats`
 and asks you to re-run with the new id. With `--chat`, it polls `quack api
 /api/v1/chats/<id>` until the run leaves `running`, then dumps `/artifacts`
 and the mock's `deliveries.jsonl`. Requires both mocks and a QA quack server
 already up per the config above - it does not start them.
+
+**Live-verified 2026-09-03** against a QA server built from this branch +
+main (github v0.9.0 not yet cut, so the build used a local `replace` to this
+branch's checkout - a real deploy needs that tag first): webhook accepted
+(202), `github run dispatched`, a real chat created
+(`ext:github:github-fagerbergj-quack-qa-1`), a real `git clone`+checkout of
+the fixture's `clone_url`/head SHA, a code-implementer ACP round, two judge
+rounds, and a revision, ending `idle` with `dag_plan`/`judge_round`/`text`
+artifacts recorded. The three checked-in GET fixtures only cover the
+`issues/1` meta call; `pulls/1` needed a fourth (`get/062e6861d63c49a7.json`,
+added here) and `pulls/1/{files,commits,comments,reviews}`,
+`issues/1/comments`, `commits/<sha>/check-runs`, and `GET /app` still 404 -
+harmless, since every one of those fetches is best-effort and the extension
+degrades gracefully instead of aborting, but a from-scratch `--record` pass
+against a real PR is worth doing before relying on this fixture set for
+anything beyond the review-only path exercised here.

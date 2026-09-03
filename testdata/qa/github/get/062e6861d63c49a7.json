@@ -1,0 +1,10 @@
+{
+  "title": "Fix the flaky retry loop",
+  "body": "Fixture PR for QA - not a real GitHub object.",
+  "state": "open",
+  "draft": false,
+  "merged_at": null,
+  "head": {"ref": "qa/github-remarkable-mocks", "sha": "9b1fbe794923ec1086c98f3617e2063c013dbfa3", "repo": {"full_name": "fagerbergj/quack"}},
+  "base": {"ref": "main", "repo": {"full_name": "fagerbergj/quack"}},
+  "labels": [{"name": "quack:review"}]
+}
