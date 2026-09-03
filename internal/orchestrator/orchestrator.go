@@ -29,10 +29,12 @@ import (
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/otelobs"
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
 )
@@ -538,6 +540,24 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		if o.artifacts != nil {
 			toolList = append(toolList, loadartifactstool.New())
 			artifacts = failSoftListArtifacts{o.artifacts}
+			rc := recordstore.New(o.artifacts, artifactref.AppName, userID, sessionID)
+			listTool, err := tools.NewListArtifactsTool(rc)
+			if err != nil {
+				yield(stream.Errorf("orchestrator: list_artifacts tool: "+err.Error()), nil)
+				return
+			}
+			editTool, err := tools.NewEditArtifactTool(rc, orchestratorName)
+			if err != nil {
+				yield(stream.Errorf("orchestrator: edit_artifact tool: "+err.Error()), nil)
+				return
+			}
+			writeTool, err := tools.NewWriteArtifactTool(rc, orchestratorName)
+			if err != nil {
+				yield(stream.Errorf("orchestrator: write_artifact tool: "+err.Error()), nil)
+				return
+			}
+			toolList = append(toolList, listTool, editTool, writeTool)
+			toolList = append(toolList, tools.NewWriteKindTools(rc, orchestratorName)...)
 		}
 
 		ag, err := llmagent.New(llmagent.Config{
