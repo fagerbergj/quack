@@ -11,6 +11,7 @@ import { api } from '../api'
 import type { ArtifactSummary, ArtifactRevisionInfo } from '../api'
 import { CopyButton } from './CopyButton'
 import { CopyablePre } from './CopyablePre'
+import { escapeUnmatchedBackticks } from '../lib/backticks'
 
 // JudgeRoundContent is the JSON body of a `judge_round` artifact (design V4
 // §4.3) - the only place a note's line anchor lives. Fetched and parsed
@@ -675,6 +676,45 @@ const mdSchema = {
 // to cover the elements a judge quote is actually likely to land inside.
 const BLOCK_TAGS = ['p', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'td', 'th', 'blockquote'] as const
 
+// HEADING_CLASS sizes headings explicitly rather than trusting the ambient
+// `.prose h1` cascade (review #1139 cosmetic follow-up: headings rendered at
+// body size) - this tree sits inside DagView's `<div className="... not-
+// prose">` (escaping an ANCESTOR .prose bubble further up), and Tailwind
+// Typography's own selector (`.prose :where(h1):not(:where([class~="not-
+// prose"] *))`) excludes EVERY descendant of a not-prose ancestor from ANY
+// .prose styling, including a nested one - so relying on the cascade here
+// was never going to work as long as this component renders inside DagView.
+const HEADING_CLASS: Record<string, string> = {
+  h1: 'text-base font-bold mt-3 mb-1.5',
+  h2: 'text-sm font-bold mt-3 mb-1.5',
+  h3: 'text-sm font-semibold mt-2 mb-1',
+  h4: 'text-xs font-semibold mt-2 mb-1',
+  h5: 'text-xs font-semibold mt-2 mb-1',
+  h6: 'text-xs font-semibold mt-2 mb-1 text-gray-500 dark:text-gray-400',
+}
+
+// notesInRange attaches a note to the block whose source range CONTAINS the
+// anchor line, not just the block whose FIRST line matches it (review
+// #1139: a note anchored mid-paragraph used to render nowhere in the
+// default markdown view and wasn't listed as unanchored either, since
+// anchorNotes had already placed it in byLine - just under a line index
+// this component never checked). blockquote is excluded: CommonMark nests a
+// `> quote` as <blockquote><p>...</p></blockquote>, and both wrapper and
+// child share the same line range, so blockquote would double-render every
+// note its inner paragraph already claims.
+function notesInRange(byLine: Map<number, JudgeNote[]>, tag: string, node: Element | undefined): JudgeNote[] {
+  if (tag === 'blockquote') return []
+  const start = node?.position?.start.line
+  const end = node?.position?.end?.line ?? start
+  if (start == null) return []
+  const notes: JudgeNote[] = []
+  for (let line = start; line <= (end as number); line++) {
+    const found = byLine.get(line - 1)
+    if (found) notes.push(...found)
+  }
+  return notes
+}
+
 // ArtifactMarkdown renders a blob artifact through the same react-markdown
 // pipeline AssistantText uses (headings, tables, code blocks with highlight +
 // copy - #1114), while keeping judge notes anchorable: remark/rehype already
@@ -693,14 +733,14 @@ function ArtifactMarkdown({ text, byLine, activeNote, onSelectNote }: {
     function block(tag: string) {
       return function Block({ node, children, ...rest }: any) {
         const line = (node as Element | undefined)?.position?.start.line
-        const notes = line != null ? byLine.get(line - 1) : undefined
-        const highlighted = !!notes && notes.length > 0
+        const notes = notesInRange(byLine, tag, node as Element | undefined)
+        const highlighted = notes.length > 0
         return createElement(
           tag,
           {
             ...rest,
             'data-line': line,
-            className: highlighted ? 'bg-amber-100 dark:bg-amber-900/30 rounded px-1 -mx-1' : undefined,
+            className: [HEADING_CLASS[tag], highlighted ? 'bg-amber-100 dark:bg-amber-900/30 rounded px-1 -mx-1' : ''].filter(Boolean).join(' ') || undefined,
           },
           children,
           notes?.map((n, ni) => (
@@ -727,13 +767,19 @@ function ArtifactMarkdown({ text, byLine, activeNote, onSelectNote }: {
     return map
   }, [byLine, activeNote, onSelectNote])
 
+  // escapeUnmatchedBackticks (#746) only inserts a `\` before an isolated
+  // backtick within its line - it never adds/removes a newline, so line
+  // numbers (what byLine/data-line anchor on) are unaffected; only within-
+  // line offsets shift, which nothing here reads.
+  const fixed = useMemo(() => escapeUnmatchedBackticks(text), [text])
+
   return (
     <div className="prose prose-sm dark:prose-invert max-w-none break-words bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-3">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSchema], rehypeHighlight]}
         components={components}
-      >{text}</ReactMarkdown>
+      >{fixed}</ReactMarkdown>
     </div>
   )
 }
@@ -797,10 +843,17 @@ function judgeRoundSummary(data: unknown) {
           {d.passed ? '✓ passed' : '✗ failed'}
         </span>
       )}
+      {/* d.score (JudgeRoundRecord.Score) is a real 0-1 fraction - a percentage
+          is correct here. Per-criterion scores are NOT: judge criteria are
+          0-3 by design (#941 scaleSpec, internal/vetting/envelope.go) while a
+          deterministic check like cites_sources keeps its own native 0-1
+          scale, and buildJudgeRoundRecord copies criteria[].score through
+          un-normalized with no scale field to convert by - a raw number
+          (e.g. "evidence 2.5") is the only display that isn't a guess. */}
       {d.score != null && <span className="text-gray-500 dark:text-gray-400">{(d.score * 100).toFixed(0)}%</span>}
       {d.criteria?.map((c, i) => (
         <span key={i} title={c.name} className="rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-0.5">
-          {c.name}{c.score != null ? ` ${(c.score * 100).toFixed(0)}%` : ''}
+          {c.name}{c.score != null ? ` ${c.score}` : ''}
         </span>
       ))}
     </div>
@@ -832,6 +885,15 @@ function fmtRelative(iso: string): string {
     if (abs >= ms || unit === 'second') return rtf.format(Math.round(diffMs / ms), unit)
   }
   return rtf.format(0, 'second')
+}
+
+// fmtAbsoluteShort renders "Jun 21, 14:32" - shown INLINE next to the
+// relative time (review #1139: a hover-only `title` tooltip is unreachable
+// on a touch device, and this panel's own mobile pass makes touch the
+// primary surface, not an edge case). The full ISO string still lives in
+// `title` for a pointer user who wants to copy it exactly.
+function fmtAbsoluteShort(iso: string): string {
+  return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
 // MetaRow is one key/value line, same visual language as JsonNode's leaves -
@@ -901,7 +963,9 @@ function ArtifactMetadata({ summary, revision, revisionCount, onSelectTriggerAnn
         {l?.author && <MetaRow label="author">{l.author}</MetaRow>}
         {revision.created_at && (
           <MetaRow label="saved">
-            <span title={revision.created_at}>{fmtRelative(revision.created_at)}</span>
+            <span title={revision.created_at}>
+              {fmtRelative(revision.created_at)} · {fmtAbsoluteShort(revision.created_at)}
+            </span>
           </MetaRow>
         )}
       </div>

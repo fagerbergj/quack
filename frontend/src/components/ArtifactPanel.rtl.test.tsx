@@ -21,12 +21,18 @@ function stubFetch() {
   const otherV1 = JSON.stringify({ path: 'b.go', title: 'unused import', rationale: 'b is never read' })
   // A blob (markdown) artifact - #1114 renders these through react-markdown
   // instead of the raw line list, with a heading + a line the judge quotes.
-  const reviewMd = '# Review summary\n\nMostly solid, but the apple pie recipe needs a citation.\n'
+  // Two-line paragraph (no blank line between) - the second line, not the
+  // block's first, is where the judge's quote actually lands (review #1139:
+  // notes used to anchor only to a block's opening line).
+  const reviewMd = '# Review summary\n\nFirst line of the paragraph.\nSecond line quotes the apple pie recipe here.\n'
   const judgeRound = JSON.stringify({
     round: 1,
     passed: false,
     score: 0.5,
-    criteria: [{ name: 'evidence', score: 0.4 }, { name: 'coverage', score: 0.6 }],
+    // Judge criteria are 0-3 by design (#941 scaleSpec) - a realistic score
+    // here, not a 0-1 fraction, so the criteria-score-scale bug (review
+    // #1139: rendered as "250%") is actually reachable by a test.
+    criteria: [{ name: 'evidence', score: 2.5 }, { name: 'coverage', score: 1 }],
     notes: [
       { ref: { artifact_id: 'finding:abc123', revision: 1, snippet: 'x may be nil here' }, text: 'Needs a concrete repro.', criterion: 'evidence' },
       // Same line as the note above (both match "x may be nil here") -
@@ -233,6 +239,11 @@ describe('ArtifactPanel', () => {
     // Rendered as markdown, not a raw "# Review summary" line of text.
     const heading = await screen.findByRole('heading', { level: 1, name: 'Review summary' })
     expect(heading).toBeTruthy()
+    // Review #1139 cosmetic follow-up: headings rendered at body size (the
+    // ambient .prose cascade is blocked by DagView's ancestor not-prose
+    // wrapper) - sized explicitly instead of trusting the cascade.
+    expect(heading.className).toMatch(/text-base/)
+    expect(heading.className).toMatch(/font-bold/)
 
     // The paragraph quoting "apple pie recipe" (source line 3) carries a
     // real data-line attribute, and its note is reachable there.
@@ -255,6 +266,11 @@ describe('ArtifactPanel', () => {
     // Header summary: passed/failed + one chip per criterion name.
     expect(await screen.findByText('✗ failed')).toBeTruthy()
     expect(screen.getAllByText(/evidence/).length).toBeGreaterThan(0)
+
+    // Review #1139 finding #2: a criterion's raw 0-3 score must render as
+    // the raw number, never as score*100% (2.5 -> "250%" is meaningless).
+    expect(screen.getByText('evidence 2.5')).toBeTruthy()
+    expect(screen.queryByText(/250%/)).toBeNull()
 
     // "notes" (4 entries) is an array of objects - its own <details>, open by default.
     const notesSummaryText = await screen.findByText('Array(4)')

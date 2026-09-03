@@ -22,7 +22,8 @@ function stubFetch() {
     round: 1,
     passed: false,
     score: 0.6,
-    criteria: [{ name: 'evidence', score: 0.4 }, { name: 'coverage', score: 0.8 }],
+    // Judge criteria are 0-3 by design (#941), not a 0-1 fraction (#1139).
+    criteria: [{ name: 'evidence', score: 1.5 }, { name: 'coverage', score: 2.5 }],
     notes: [
       { ref: { artifact_id: 'finding:abc123', revision: 1, snippet: 'x may be nil here' }, text: 'This rationale needs a concrete repro.', criterion: 'evidence' },
       { ref: { artifact_id: 'finding:abc123', revision: 1, line_hint: 99 }, text: 'Unanchored: line_hint out of range in this fixture.' },
