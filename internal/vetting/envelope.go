@@ -20,6 +20,16 @@ func marshalEnvelope(env verdictEnvelope) string {
 	return string(b)
 }
 
+// marshalNotes renders a judge_round record's notes for the revise prompt
+// (#1092) - same fallback-on-error contract as marshalEnvelope.
+func marshalNotes(notes []JudgeNote) string {
+	b, err := json.MarshalIndent(notes, "", "  ")
+	if err != nil {
+		return `{"error": "failed to render notes"}`
+	}
+	return string(b)
+}
+
 // scaleSpec: a criterion's score range, explicit per criterion (#941) - judge
 // criteria are 0-3, deterministic checks like cites_sources keep their own
 // native scale (0-1).
