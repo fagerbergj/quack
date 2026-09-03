@@ -240,6 +240,10 @@ type dagStream struct {
 	nodeUsage   map[string]*runUsage // cumulative across the node's whole life (worker-r0, worker-r1, ...); feeds node_done
 	last        string
 	stopped     bool
+
+	// toolCallSeen dedups agent_tool_call per node: ACP's start+completion
+	// updates both carry the FunctionCall part for the same call_id.
+	toolCallSeen map[string]stream.SeenCalls
 }
 
 type runUsage struct {
@@ -383,6 +387,14 @@ func (s *dagStream) part(node, runID string, p *genai.Part) bool {
 		if p.FunctionCall.Name == "transfer_to_agent" {
 			return true
 		}
+		if s.toolCallSeen == nil {
+			s.toolCallSeen = map[string]stream.SeenCalls{}
+		}
+		seen := s.toolCallSeen[node]
+		if seen.Add(p.FunctionCall.ID) {
+			return true
+		}
+		s.toolCallSeen[node] = seen
 		return s.emit(stream.ScopeToNode(stream.SSEEvent{Name: stream.EventAgentToolCall, Data: stream.AgentToolCallData{
 			RunID: runID, CallID: p.FunctionCall.ID, Name: p.FunctionCall.Name, Args: p.FunctionCall.Args,
 		}}, node))

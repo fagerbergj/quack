@@ -22,6 +22,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
+	"github.com/fagerbergj/quack/internal/stream"
 )
 
 // stubModel is a deterministic model.LLM for driving the gated-worker node offline.
@@ -1119,5 +1120,27 @@ func TestWrapperSpans_ReportNoModel(t *testing.T) {
 		if got := attrs[otelobs.GenAIRequestModel]; got != "stub-fixed" {
 			t.Errorf("generation span %s = %q, want stub-fixed", otelobs.GenAIRequestModel, got)
 		}
+	}
+}
+
+// TestJudgePartEmitterDedupsToolCallByID: same fix as the orchestrator
+// Translator and dagStream - ACP's start+completion updates both carry the
+// FunctionCall part for one call_id (PR #1102 review finding).
+func TestJudgePartEmitterDedupsToolCallByID(t *testing.T) {
+	var got []stream.SSEEvent
+	emit := judgePartEmitter(func(ev stream.SSEEvent) { got = append(got, ev) }, "n1", "judge-r0")
+
+	call := &genai.Part{FunctionCall: &genai.FunctionCall{ID: "c1", Name: "read_file", Args: map[string]any{}}}
+	emit(call)
+	emit(call) // completion update re-pairs the same FunctionCall part
+	emit(&genai.Part{FunctionResponse: &genai.FunctionResponse{ID: "c1", Name: "read_file", Response: map[string]any{}}})
+
+	var names []string
+	for _, e := range got {
+		names = append(names, e.Name)
+	}
+	want := []string{stream.EventAgentToolCall, stream.EventAgentToolResult}
+	if len(names) != len(want) || names[0] != want[0] || names[1] != want[1] {
+		t.Fatalf("events = %v, want %v (exactly one agent_tool_call)", names, want)
 	}
 }
