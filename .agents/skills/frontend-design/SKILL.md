@@ -6,9 +6,11 @@ description: |
   for streaming chat (extract input/list, memoize turns) instead of virtualization, optimistic-first
   store writes so loading indicators show instantly, global theming via Tailwind v4 `@theme` scale
   overrides, markdown code-block highlight + copy through the rehype pipeline, native-CSS-first inputs,
-  accessibility for streamed content, and stories-vs-tests placement.
-  Use when restyling or extending the chat UI under frontend/src (pages/Chat.tsx, components/, state/),
-  fixing typing lag or render jank, adding a chat feature, or deciding build-vs-reuse for a UI request.
+  accessibility, stories-vs-tests placement, and mobile-first responsive design (Material 3 breakpoints,
+  off-canvas nav, 44px touch targets, dialogs-as-sheets on compact width).
+  Use when restyling/extending the chat UI under frontend/src (pages/Chat.tsx, components/, state/),
+  fixing typing lag or render jank, fixing a mobile/responsive/small-viewport layout defect, adding a
+  chat feature, or deciding build-vs-reuse for a UI request.
   Do NOT use for backend/API-contract changes, openapi.yaml, agent prompts, or non-frontend work.
 license: MIT
 ---
@@ -39,7 +41,7 @@ How to make changes to quack's chat frontend that fit its grain: lean stack, str
 
 ## Core principles
 
-0. **Inventory before building.** Streaming, an always-visible Stop button, markdown+GFM, sticky input, Enter/Shift+Enter, mobile sidebar, dark mode, per-response model names, and the DAG view already exist. Grep first; ship the gap, not a rebuild.
+0. **Inventory before building.** Streaming, an always-visible Stop button, markdown+GFM, sticky input, Enter/Shift+Enter, mobile sidebar, dark mode, per-response model names, and the DAG view already exist - including the collapse/toggle mechanisms a mobile-nav fix would otherwise reinvent: `NavRail`'s "Collapse navigation" button (narrows, doesn't hide) and the chat-list drawer's existing slide-in panel (a working off-canvas pattern to reuse for other drawers). Grep first; ship the gap, not a rebuild.
 
 1. **Typing lag is a re-render problem, not a DOM-count problem - isolate, don't virtualize.** Move draft state into its own component so keystrokes don't re-render the turn list; memoize completed turns so they don't re-parse markdown while a later turn streams; key any sibling-derived `useMemo` to a ref that's stable during streaming. Reach for `react-virtuoso` only if node count alone still lags afterward. → recipe in references.
 
@@ -53,7 +55,9 @@ How to make changes to quack's chat frontend that fit its grain: lean stack, str
 
 6. **Accessibility is not optional.** `role="log"`/`aria-live` on the streamed region, `role="status"` on spinner bubbles, `aria-label` on every icon-only button (text buttons need none).
 
-7. **Stories vs tests.** Add a co-located `*.stories.tsx` for newly extracted/changed surfaces. Tests run **node-env, logic-only** (no `@testing-library/react`) - write store/reducer tests; do **not** stand up jsdom + a render lib to assert a one-line filter or a clipboard call.
+7. **Mobile-first.** Design compact (<600px) first, enhance upward with `sm:`/`md:` - never shrink a desktop layout down. Three non-negotiables: no horizontal page scroll, 44px touch targets on repeatedly-tapped controls, and drawers/sheets (not narrowed-but-persistent chrome) for nav and dialogs on compact width. → decision rules, sourced principles, and the #1131 audit's before/after fixes in `references/mobile-first.md`.
+
+8. **Stories vs tests.** Add a co-located `*.stories.tsx` for newly extracted/changed surfaces. Tests run **node-env, logic-only** (no `@testing-library/react`) - write store/reducer tests; do **not** stand up jsdom + a render lib to assert a one-line filter or a clipboard call.
 
 ## Gotchas
 
@@ -79,3 +83,4 @@ Then confirm behaviour in `npm run dev` (and `npm run storybook` for new stories
 ## Resources
 
 - `references/recipes.md` - concrete file-level recipes and code (the Composer/TurnView/ChatList extraction, the `useMemo`/`memo` wiring, the optimistic-write reorder in `chatStore.submit`, the `@theme` override, the rehype-highlight + `CopyablePre` setup). **Read it when implementing** any of the principles above, not when only deciding the approach.
+- `references/mobile-first.md` - sourced mobile-first decision rules (Material 3 breakpoints, NN/g nav research, WCAG 2.2 target size, MDN/Tailwind v4 responsive design), quack-specific mappings, the #1131 audit's before/after fixes, and the emulate-and-verify validation loop. **Read it when** fixing a mobile/responsive layout defect, adding a compact-width variant to nav/dialogs/cards, or auditing touch-target sizes.
