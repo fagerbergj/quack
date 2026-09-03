@@ -346,10 +346,14 @@ export default function Chat() {
     }
   }, [activeChatId])
 
-  // #1138: fetch this chat's artifact list once per chat to build the
-  // turn -> image-thumbnail map. Separate from the getChat effect above -
-  // this is a nice-to-have preview, not something a failure should block
-  // seeding turns on.
+  // #1138: fetch this chat's artifact list to build the turn -> image-
+  // thumbnail map. Re-fetches on every new archived turn (state.turns.length),
+  // not just on chat open - a turn just sent with an attachment archives into
+  // state.turns as soon as the NEXT turn is sent (see the live path below),
+  // and without this the map is stale for it: the thumbnail vanishes and the
+  // bubble falls back to the "[User attached: ...]" text placeholder, the
+  // exact bug this fixes. Separate from the getChat effect above - this is a
+  // nice-to-have preview, not something a failure should block seeding turns on.
   useEffect(() => {
     setTurnImages({})
     if (!activeChatId) return
@@ -358,7 +362,7 @@ export default function Chat() {
       if (!cancelled) setTurnImages(imageAttachmentsByTurn(activeChatId, artifacts))
     }).catch(() => {})
     return () => { cancelled = true }
-  }, [activeChatId])
+  }, [activeChatId, state.turns.length])
 
  // #499/#738: poll the chat list so the sidebar stays current without a refresh. Skipped
   // while the tab is hidden (a backgrounded tab has nothing to show anyway) and resumed
