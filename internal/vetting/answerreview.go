@@ -11,25 +11,88 @@ import (
 var (
 	verdictRe = regexp.MustCompile(`(?mi)^\s*VERDICT:\s*(approve|request_changes|comment)\s*$`)
 	findingRe = regexp.MustCompile(`(?m)^\s*[-*]\s+([^\s:]+):(\d+):\s*(.+)$`)
+	// sectionHeaderRe: a tail section header line (FINDINGS:/DISMISSED:/CLEAN:),
+	// used to bound each section so one header's lines don't bleed into another's.
+	sectionHeaderRe = regexp.MustCompile(`(?mi)^\s*(FINDINGS|DISMISSED|CLEAN):\s*$`)
+	// cleanLineRe: a CLEAN: section entry, bare path (no line number).
+	cleanLineRe = regexp.MustCompile(`(?m)^\s*[-*]\s+(\S+)\s*$`)
 	// Matches reviewer's fallback preamble (explanation for us, not human reader).
 	fallbackPreambleRe = regexp.MustCompile(`(?mi)^.*\bstaging tools?\b.*\bfallback\b.*$\n?`)
 )
 
-// parseAnswerReview: extracts verdict + findings from reviewer answer. Falls back to comment-review.
-func parseAnswerReview(answer string) (event string, comments []ReviewComment, ok bool) {
-	m := verdictRe.FindStringSubmatch(answer)
-	if m == nil {
-		return "", nil, false
+// AnswerReview: parsed sections of a reviewer's answer tail.
+type AnswerReview struct {
+	Event     string
+	Findings  []ReviewComment
+	Dismissed []ReviewComment // DISMISSED: "- path:line: why dropped"
+	Clean     []string        // CLEAN: "- path"
+	OK        bool
+}
+
+// sectionBody returns the text of the named section (up to the next header or
+// end of answer), or "" if the header is absent.
+func sectionBody(answer, header string) string {
+	locs := sectionHeaderRe.FindAllStringSubmatchIndex(answer, -1)
+	for i, loc := range locs {
+		if !strings.EqualFold(answer[loc[2]:loc[3]], header) {
+			continue
+		}
+		start := loc[1]
+		end := len(answer)
+		if i+1 < len(locs) {
+			end = locs[i+1][0]
+		}
+		return answer[start:end]
 	}
-	event = strings.ToLower(m[1])
-	for _, f := range findingRe.FindAllStringSubmatch(answer, -1) {
+	return ""
+}
+
+func parseFindingLines(body string) []ReviewComment {
+	var out []ReviewComment
+	for _, f := range findingRe.FindAllStringSubmatch(body, -1) {
 		line, err := strconv.Atoi(f[2])
 		if err != nil || line <= 0 {
 			continue
 		}
-		comments = append(comments, ReviewComment{Path: f[1], Line: line, Body: strings.TrimSpace(f[3])})
+		out = append(out, ReviewComment{Path: f[1], Line: line, Body: strings.TrimSpace(f[3])})
 	}
-	return event, comments, true
+	return out
+}
+
+// parseAnswerReview: extracts verdict + findings from reviewer answer. Falls back to comment-review.
+// Widened (#1006) to also read DISMISSED:/CLEAN: sections; kept for existing
+// callers as a (event, comments, ok) view onto ParseAnswerReviewSections.
+func parseAnswerReview(answer string) (event string, comments []ReviewComment, ok bool) {
+	r := ParseAnswerReviewSections(answer)
+	return r.Event, r.Findings, r.OK
+}
+
+// ParseAnswerReviewSections is the section-aware parse (VERDICT/FINDINGS/
+// DISMISSED/CLEAN). When a FINDINGS: header is present, findings come only
+// from that section; otherwise the unscoped whole-answer scan is the
+// fallback (today's behavior, kept so unstructured answers still work).
+func ParseAnswerReviewSections(answer string) AnswerReview {
+	m := verdictRe.FindStringSubmatch(answer)
+	if m == nil {
+		return AnswerReview{}
+	}
+	r := AnswerReview{Event: strings.ToLower(m[1]), OK: true}
+
+	if fb := sectionBody(answer, "FINDINGS"); fb != "" {
+		r.Findings = parseFindingLines(fb)
+	} else if !sectionHeaderRe.MatchString(answer) {
+		// No structured sections at all: unscoped fallback (pre-#1006 behavior).
+		r.Findings = parseFindingLines(answer)
+	}
+	if db := sectionBody(answer, "DISMISSED"); db != "" {
+		r.Dismissed = parseFindingLines(db)
+	}
+	if cb := sectionBody(answer, "CLEAN"); cb != "" {
+		for _, m := range cleanLineRe.FindAllStringSubmatch(cb, -1) {
+			r.Clean = append(r.Clean, m[1])
+		}
+	}
+	return r
 }
 
 // augmentFromReviewStage: folds tool-staged review into activity (runs before augmentFromAnswer, Snapshot - non-clearing).

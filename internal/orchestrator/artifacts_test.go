@@ -40,6 +40,40 @@ func TestFailSoftListArtifacts_DegradesToEmpty(t *testing.T) {
 	}
 }
 
+// TestFailSoftListArtifacts_LoadBounded proves load_artifacts (the ADK-native
+// read path) rejects an oversized artifact instead of dumping it into model
+// context unbounded (#1006 item 7) - the same cap shape read_artifact (ACP,
+// internal/acp/memorymcp.go readArtifactMaxBytes) already enforces.
+func TestFailSoftListArtifacts_LoadBounded(t *testing.T) {
+	ctx := context.Background()
+	svc := artifact.InMemoryService()
+	big := make([]byte, loadArtifactMaxBytes+1)
+	if _, err := svc.Save(ctx, &artifact.SaveRequest{
+		AppName: AppName, UserID: "u1", SessionID: "c1", FileName: "big.bin",
+		Part: genai.NewPartFromBytes(big, "application/octet-stream"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Save(ctx, &artifact.SaveRequest{
+		AppName: AppName, UserID: "u1", SessionID: "c1", FileName: "small.txt",
+		Part: genai.NewPartFromBytes([]byte("fits fine"), "text/plain"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	wrapped := failSoftListArtifacts{svc}
+
+	if _, err := wrapped.Load(ctx, &artifact.LoadRequest{AppName: AppName, UserID: "u1", SessionID: "c1", FileName: "big.bin"}); err == nil {
+		t.Fatal("Load of an oversized artifact should error, not return the bytes")
+	}
+	resp, err := wrapped.Load(ctx, &artifact.LoadRequest{AppName: AppName, UserID: "u1", SessionID: "c1", FileName: "small.txt"})
+	if err != nil {
+		t.Fatalf("Load small.txt: %v", err)
+	}
+	if string(resp.Part.InlineData.Data) != "fits fine" {
+		t.Fatalf("small.txt content = %q", resp.Part.InlineData.Data)
+	}
+}
+
 // loadArtifactsStub: first call requests load_artifacts, second call replies
 // with whatever text the tool's result carried back on the request.
 type loadArtifactsStub struct {
