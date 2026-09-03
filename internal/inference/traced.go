@@ -74,6 +74,7 @@ func (t *tracedModel) GenerateContent(ctx context.Context, req *model.LLMRequest
 	// deferred emit below.
 	setRequestSpanAttrs(ctx, req)
 	inner := t.LLM.GenerateContent(ctx, req, stream)
+	callCoords := ledger.CoordsFromContext(ctx)
 	return func(yield func(*model.LLMResponse, error) bool) {
 		t0 := time.Now()
 		var last *model.LLMResponse
@@ -82,6 +83,8 @@ func (t *tracedModel) GenerateContent(ctx context.Context, req *model.LLMRequest
 			otelobs.RecordModelCallDuration(t.name, time.Since(t0))
 			emitChatEvent(ctx, t.name, req, last, callErr)
 			recordUsageMetrics(ctx, t.name, t.defaultAgent, t.pricing, last)
+			// Outlives ADK's own error handling - see failure.go's doc comment.
+			RecordCallResult(callCoords.ChatID, callCoords.Node, callErr)
 		}()
 		inner(func(resp *model.LLMResponse, err error) bool {
 			if err != nil {

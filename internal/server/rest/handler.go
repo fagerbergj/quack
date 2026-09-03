@@ -1470,7 +1470,7 @@ func (h *Handler) chatStatus(ctx context.Context, chatID string, turns []store.T
 // stamps on its chat row once it ends (#738).
 func (h *Handler) terminalStatus(ctx context.Context, chatID string, turns []store.TurnContent) (schema.ChatStatus, *string) {
 	q, hasQ := h.orch.PendingQuestion(ctx, h.sessionUser(ctx, chatID), chatID)
-	status, question := store.DeriveTerminalStatus(turns, q, hasQ)
+	status, question, _ := store.DeriveTerminalStatus(turns, q, hasQ)
 	if status == store.RunStatusNeedsInput {
 		return schema.ChatStatusNeedsInput, &question
 	}

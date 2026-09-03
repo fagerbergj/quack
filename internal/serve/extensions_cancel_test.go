@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"iter"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -38,7 +39,7 @@ func TestMapExtRunOutcome(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out := mapExtRunOutcome(tt.status, "what next?", "partial answer", true, needsInput, tt.timedOut, tt.cancelled)
+			out := mapExtRunOutcome(tt.status, "what next?", "", "partial answer", true, needsInput, tt.timedOut, tt.cancelled)
 			if out.Status != tt.wantStatus {
 				t.Errorf("Status = %q, want %q", out.Status, tt.wantStatus)
 			}
@@ -51,6 +52,35 @@ func TestMapExtRunOutcome(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestMapExtRunOutcome_FailedWithNodeErrorFillsEmptyAnswer is #1105's fix:
+// extsdk.RunOutcome has no Error field, so a failed run's real cause rides
+// in Answer instead of leaving it empty for the extension's silent-gap text.
+func TestMapExtRunOutcome_FailedWithNodeErrorFillsEmptyAnswer(t *testing.T) {
+	needsInput := stream.NodeNeedsInputData{}
+	out := mapExtRunOutcome(store.RunStatusFailed, "", "model gateway failed 5 consecutive attempts over 48m0s: 502 Bad Gateway",
+		"", true, needsInput, false, false)
+	if out.Status != extsdk.RunFailed {
+		t.Fatalf("Status = %q, want RunFailed", out.Status)
+	}
+	if out.Answer == "" {
+		t.Fatalf("Answer left empty; the extension would report this as a silent gap instead of a known cause")
+	}
+	if !strings.Contains(out.Answer, "502 Bad Gateway") || !strings.Contains(out.Answer, "5 consecutive attempts") {
+		t.Errorf("Answer = %q, want it to name the error class and attempt count", out.Answer)
+	}
+}
+
+// TestMapExtRunOutcome_TrueSilentGapAnswerStaysEmpty proves the #568 path is
+// untouched: no failed-node error means Answer stays empty for the
+// extension's own silent-gap text.
+func TestMapExtRunOutcome_TrueSilentGapAnswerStaysEmpty(t *testing.T) {
+	needsInput := stream.NodeNeedsInputData{}
+	out := mapExtRunOutcome(store.RunStatusIdle, "", "", "", true, needsInput, false, false)
+	if out.Answer != "" {
+		t.Fatalf("Answer = %q, want empty for a genuine silent gap", out.Answer)
 	}
 }
 

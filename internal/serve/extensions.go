@@ -692,23 +692,31 @@ func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrato
 func buildExtRunOutcome(parent context.Context, orch *orchestrator.Orchestrator, st *store.Store, userID, chatID string, planRan bool, needsInput stream.NodeNeedsInputData, timedOut, cancelled bool) extsdk.RunOutcome {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 	defer cancel()
-	status, question := st.StampTerminalOutcome(ctx, orchestrator.AppName, userID, chatID, func() (string, bool) {
+	status, question, nodeError := st.StampTerminalOutcome(ctx, orchestrator.AppName, userID, chatID, func() (string, bool) {
 		return orch.PendingQuestion(ctx, userID, chatID)
 	})
 	answer := strings.TrimSpace(orch.LatestAnswer(ctx, userID, chatID))
-	return mapExtRunOutcome(status, question, answer, planRan, needsInput, timedOut, cancelled)
+	return mapExtRunOutcome(status, question, nodeError, answer, planRan, needsInput, timedOut, cancelled)
 }
 
 // mapExtRunOutcome is buildExtRunOutcome's classification step, split out so
 // it's testable without a live store/orch. cancelled wins over status - it
-// interrupted whatever DeriveTerminalStatus derived from the turn.
-func mapExtRunOutcome(status, question, answer string, planRan bool, needsInput stream.NodeNeedsInputData, timedOut, cancelled bool) extsdk.RunOutcome {
+// interrupted whatever DeriveTerminalStatus derived from the turn. nodeError
+// is the failed node's own error text (#1105) - "" for a true silent gap.
+func mapExtRunOutcome(status, question, nodeError, answer string, planRan bool, needsInput stream.NodeNeedsInputData, timedOut, cancelled bool) extsdk.RunOutcome {
 	out := extsdk.RunOutcome{PlanRan: planRan, TimedOut: timedOut, Answer: answer}
 	switch {
 	case cancelled:
 		out.Status = extsdk.RunCancelled
 	case status == store.RunStatusFailed:
 		out.Status = extsdk.RunFailed
+		// extsdk.RunOutcome has no Error field yet (a needed sdk follow-up,
+		// see #1105) - fold the failed node's real cause into Answer so an
+		// empty answer never falls through to the extension's silent-gap
+		// text for a run that in fact failed with a known cause.
+		if out.Answer == "" && nodeError != "" {
+			out.Answer = fmt.Sprintf("quack's run failed: %s\n\nRetry once the gateway is healthy.", nodeError)
+		}
 	case status == store.RunStatusNeedsInput:
 		out.Status = extsdk.RunNeedsInput
 		out.Question = question

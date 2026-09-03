@@ -105,6 +105,41 @@ func TestScanOrphanedRuns_ClearsInterruptedWithLeftoverTurnID(t *testing.T) {
 	}
 }
 
+// TestDeriveTerminalStatus_FailedNodeCarriesItsErrorText is #1105's core
+// contract: a failed node's own error string rides along on the derived
+// status, so a run that died on a repeated gateway error can be reported as
+// such instead of collapsing into the generic silent-gap message.
+func TestDeriveTerminalStatus_FailedNodeCarriesItsErrorText(t *testing.T) {
+	turns := []TurnContent{{
+		AsstText: "",
+		Nodes: []DagNode{
+			{NodeID: "n1", Status: "done"},
+			{NodeID: "n2", Status: "failed", Error: "model gateway failed 5 consecutive attempts over 48m0s: 502 Bad Gateway"},
+		},
+	}}
+	status, question, nodeError := DeriveTerminalStatus(turns, "", false)
+	if status != RunStatusFailed {
+		t.Fatalf("status = %q, want %q", status, RunStatusFailed)
+	}
+	if question != "" {
+		t.Errorf("question = %q, want empty", question)
+	}
+	if nodeError != "model gateway failed 5 consecutive attempts over 48m0s: 502 Bad Gateway" {
+		t.Errorf("nodeError = %q, want the failed node's own Error text", nodeError)
+	}
+}
+
+// TestDeriveTerminalStatus_TrueSilentGapStaysUntouched is the negative case
+// (#568): an empty answer with no failed node must still report idle with no
+// error text - a run that legitimately had nothing to say.
+func TestDeriveTerminalStatus_TrueSilentGapStaysUntouched(t *testing.T) {
+	turns := []TurnContent{{AsstText: "", Nodes: []DagNode{{NodeID: "n1", Status: "done"}}}}
+	status, _, nodeError := DeriveTerminalStatus(turns, "", false)
+	if status != RunStatusIdle || nodeError != "" {
+		t.Fatalf("status/nodeError = %q/%q, want idle/\"\" for a true silent gap", status, nodeError)
+	}
+}
+
 // TestScanOrphanedRuns_LeavesHealthyChatsAlone is the negative case: idle,
 // failed, and needs_input chats with no ActiveTurnID must never be touched.
 func TestScanOrphanedRuns_LeavesHealthyChatsAlone(t *testing.T) {

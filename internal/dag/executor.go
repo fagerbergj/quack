@@ -14,6 +14,7 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/stream"
@@ -101,7 +102,7 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 	}
 	return &DagStream{
 		ctx: ctx, plan: plan, agentByID: agentByID, yield: yield,
-		ds: newDagStream(otelobs.TraceIDOf(ctx), agentByID, yield, nodeOutputs, func(nodeID string) gateScore {
+		ds: newDagStream(otelobs.TraceIDOf(ctx), cancelKey, agentByID, yield, nodeOutputs, func(nodeID string) gateScore {
 			return e.gateScore(ctx, appName, userID, sessionID, nodeID)
 		}, func(nodeID string) bool {
 			return e.controls.wasCancelled(cancelKey, nodeID)
@@ -155,7 +156,7 @@ func (s *DagStream) Finish() {
 			continue
 		}
 		if strings.TrimSpace(s.ds.outputs[n.ID]) == "" {
-			s.yield(stream.NodeFailed(n.ID, "produced no answer"), nil)
+			s.yield(stream.NodeFailed(n.ID, emptyNodeError(s.ds.chatID, n.ID)), nil)
 			continue
 		}
 		s.yield(stream.NodeDone(n.ID, s.ds.nodeDoneData(n.ID)), nil)
@@ -185,6 +186,17 @@ type gateScore struct {
 	score  float64
 	passed bool
 	rounds int
+}
+
+// emptyNodeError names a node's empty completion: the real cause when ADK's
+// runner swallowed a worker's repeated gateway errors into a silent empty
+// output (#1105), or the true silent-gap text when no failure was recorded.
+func emptyNodeError(chatID, nodeID string) string {
+	if err, streak, since, ok := inference.LastFailure(chatID, nodeID); ok && streak > 0 {
+		inference.ClearFailure(chatID, nodeID)
+		return fmt.Sprintf("model gateway failed %d consecutive attempts over %s: %s", streak, since.Round(time.Second), err)
+	}
+	return "produced no answer"
 }
 
 // gateResultKey: keys gateResults scoped by chat id.
@@ -232,7 +244,11 @@ type dagStream struct {
 	// traceID is the run's OTel trace id, resolved once at construction - not
 	// per-node/per-round: every span in this plan run shares one trace, so a
 	// live context.Context (Finding 4) would add nothing but staleness risk.
-	traceID    string
+	traceID string
+	// chatID: real chat scope (both NewDagStream call sites pass their
+	// cancelKey, which is always the chat id) - used to look up a
+	// gateway-failure record when a node's output comes back empty (#1105).
+	chatID     string
 	agentByID  map[string]string
 	yield      func(stream.SSEEvent, error) bool
 	outputs    map[string]string
@@ -266,9 +282,9 @@ type runUsage struct {
 	model, finish string
 }
 
-func newDagStream(traceID string, agentByID map[string]string, yield func(stream.SSEEvent, error) bool, outputs map[string]string, scoreOf func(string) gateScore, cancelled func(string) bool, userPaused func(string) bool, steerOf func(string, int) string) *dagStream {
+func newDagStream(traceID, chatID string, agentByID map[string]string, yield func(stream.SSEEvent, error) bool, outputs map[string]string, scoreOf func(string) gateScore, cancelled func(string) bool, userPaused func(string) bool, steerOf func(string, int) string) *dagStream {
 	return &dagStream{
-		traceID: traceID, agentByID: agentByID, yield: yield, outputs: outputs, scoreOf: scoreOf, cancelled: cancelled, userPaused: userPaused, steerOf: steerOf,
+		traceID: traceID, chatID: chatID, agentByID: agentByID, yield: yield, outputs: outputs, scoreOf: scoreOf, cancelled: cancelled, userPaused: userPaused, steerOf: steerOf,
 		started: map[string]bool{}, doneEmitted: map[string]bool{}, needsInput: map[string]bool{}, startedAt: map[string]time.Time{},
 		curRun: map[string]string{}, steerSeen: map[string]int{}, usage: map[string]*runUsage{}, nodeUsage: map[string]*runUsage{},
 	}
@@ -335,7 +351,7 @@ func (s *dagStream) handle(ev *session.Event) bool {
 					return false
 				}
 			default:
-				if !s.emit(stream.NodeFailed(node, "produced no answer")) {
+				if !s.emit(stream.NodeFailed(node, emptyNodeError(s.chatID, node))) {
 					return false
 				}
 			}

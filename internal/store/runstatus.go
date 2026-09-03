@@ -54,18 +54,22 @@ func (s *Store) StampRunOutcome(ctx context.Context, chatID, status, pendingQues
 
 // DeriveTerminalStatus computes a chat's terminal status from its turns and whether a
 // question is still pending. Shared by the REST and GitHub run drivers so both stamp the
-// same rule the read path relies on (#738).
-func DeriveTerminalStatus(turns []TurnContent, pendingQuestion string, hasPendingQuestion bool) (status, question string) {
+// same rule the read path relies on (#738). nodeError is the failed node's own DagNode.Error
+// (#1105) - "" for every other status, including a genuine silent gap (empty answer, no
+// failed node) so that path stays exactly as it was.
+func DeriveTerminalStatus(turns []TurnContent, pendingQuestion string, hasPendingQuestion bool) (status, question, nodeError string) {
 	if hasPendingQuestion {
-		return RunStatusNeedsInput, pendingQuestion
+		return RunStatusNeedsInput, pendingQuestion, ""
 	}
 	if n := len(turns); n > 0 {
 		last := turns[n-1]
-		if strings.TrimSpace(last.AsstText) == "" && hasFailedDagNode(last.Nodes) {
-			return RunStatusFailed, ""
+		if strings.TrimSpace(last.AsstText) == "" {
+			if errText, failed := failedDagNodeError(last.Nodes); failed {
+				return RunStatusFailed, "", errText
+			}
 		}
 	}
-	return RunStatusIdle, ""
+	return RunStatusIdle, "", ""
 }
 
 // StampTerminalOutcome loads turns, derives the terminal status via
@@ -73,17 +77,17 @@ func DeriveTerminalStatus(turns []TurnContent, pendingQuestion string, hasPendin
 // path (REST, SDK extensions, GitHub webhook) runs once a run's events stop
 // draining. pendingQuestion is the caller's own PendingQuestion lookup, kept
 // as a func value so callers don't need to share a concrete runner type.
-func (s *Store) StampTerminalOutcome(ctx context.Context, appName, userID, chatID string, pendingQuestion func() (string, bool)) (status, question string) {
+func (s *Store) StampTerminalOutcome(ctx context.Context, appName, userID, chatID string, pendingQuestion func() (string, bool)) (status, question, nodeError string) {
 	turns, err := s.GetTurnsWithContent(ctx, appName, userID, chatID)
 	if err != nil {
 		slog.Warn("stamp terminal outcome: turns load failed", "component", "store", "chat", chatID, "err", err)
 	}
 	q, hasQ := pendingQuestion()
-	status, question = DeriveTerminalStatus(turns, q, hasQ)
+	status, question, nodeError = DeriveTerminalStatus(turns, q, hasQ)
 	if err := s.StampRunOutcome(ctx, chatID, status, question); err != nil {
 		slog.Warn("stamp terminal outcome: persist failed", "component", "store", "chat", chatID, "err", err)
 	}
-	return status, question
+	return status, question, nodeError
 }
 
 // ScanOrphanedRuns reconciles every chat a killed process left mid-run
@@ -150,11 +154,14 @@ func (s *Store) chatsWithPausedNodes(ctx context.Context) (map[string]bool, erro
 	return out, nil
 }
 
-func hasFailedDagNode(nodes []DagNode) bool {
+// failedDagNodeError reports the first failed node's own error text, so a
+// gateway failure the node recorded (#1105) survives past DeriveTerminalStatus
+// instead of collapsing into a bare "failed" with nothing to say why.
+func failedDagNodeError(nodes []DagNode) (errText string, failed bool) {
 	for _, n := range nodes {
 		if n.Status == "failed" {
-			return true
+			return n.Error, true
 		}
 	}
-	return false
+	return "", false
 }

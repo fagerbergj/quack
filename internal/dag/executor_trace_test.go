@@ -31,7 +31,7 @@ func TestDagStream_TraceIDFromRealSpan(t *testing.T) {
 
 	agentByID := map[string]string{"n1": "web-researcher", "n2": "code-explorer"}
 	var got []stream.SSEEvent
-	ds := newDagStream(traceID, agentByID,
+	ds := newDagStream(traceID, "", agentByID,
 		func(e stream.SSEEvent, _ error) bool { got = append(got, e); return true },
 		map[string]string{},
 		func(string) gateScore { return gateScore{} },

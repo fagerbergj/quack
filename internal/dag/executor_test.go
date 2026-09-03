@@ -1,12 +1,15 @@
 package dag
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
@@ -14,7 +17,7 @@ import (
 // events it produced. scoreOf is fixed so node_done carries a known judge result.
 func drive(evs []*session.Event, agentByID map[string]string, score gateScore) []stream.SSEEvent {
 	var got []stream.SSEEvent
-	ds := newDagStream("", agentByID,
+	ds := newDagStream("", "", agentByID,
 		func(ev stream.SSEEvent, _ error) bool { got = append(got, ev); return true },
 		map[string]string{},
 		func(string) gateScore { return score },
@@ -101,6 +104,66 @@ func TestDagStream_WorkerActivityAndNodeDone(t *testing.T) {
 	}
 	if nd.JudgeFinalScore != 0.9 || !nd.JudgePassed || nd.JudgeRounds != 2 {
 		t.Fatalf("node_done judge fields = %+v", nd)
+	}
+}
+
+// TestDagStream_EmptyNodeReportsRecordedGatewayFailure is #1105's regression
+// guard: a node whose model call failed repeatedly (recorded by
+// inference.RecordCallResult, the wire tracedModel.GenerateContent uses)
+// still surfaces the real cause on node_failed once ADK's runner swallows the
+// worker's error into an empty completion - instead of the generic
+// "produced no answer" a true silent gap gets.
+func TestDagStream_EmptyNodeReportsRecordedGatewayFailure(t *testing.T) {
+	const chatID, node = "chat-1105", "n1"
+	t.Cleanup(func() { inference.ClearFailure(chatID, node) })
+	gwErr := errors.New(`openai qwen3.8-27b (generate): status 502: POST "http://llm-swap:11436/v1/chat/completions": 502 Bad Gateway`)
+	for i := 0; i < 5; i++ {
+		inference.RecordCallResult(chatID, node, gwErr)
+	}
+
+	const npath = "quack-dag-p@1/n1@rr"
+	var got []stream.SSEEvent
+	ds := newDagStream("", chatID, map[string]string{node: "web-researcher"},
+		func(ev stream.SSEEvent, _ error) bool { got = append(got, ev); return true },
+		map[string]string{},
+		func(string) gateScore { return gateScore{} },
+		func(string) bool { return false },
+		func(string) bool { return false },
+		func(string, int) string { return "" },
+	)
+	ds.handle(&session.Event{NodeInfo: &session.NodeInfo{Path: npath}, Output: ""})
+	ds.flush()
+
+	var nf *stream.NodeFailedData
+	for _, ev := range got {
+		if d, ok := ev.Data.(stream.NodeFailedData); ok {
+			nf = &d
+		}
+	}
+	if nf == nil {
+		t.Fatalf("no node_failed event emitted; got %v", names(got))
+	}
+	if nf.Error == "produced no answer" {
+		t.Fatalf("node_failed.Error = %q, want the recorded gateway error, not the generic silent-gap text", nf.Error)
+	}
+	if !strings.Contains(nf.Error, "502 Bad Gateway") || !strings.Contains(nf.Error, "5 consecutive attempts") {
+		t.Fatalf("node_failed.Error = %q, want it to name the error class and attempt count", nf.Error)
+	}
+}
+
+// TestDagStream_EmptyNodeWithNoRecordedFailureStaysSilentGap proves the true
+// silent-gap path (#568) is untouched: no tracked failure means the generic message stands.
+func TestDagStream_EmptyNodeWithNoRecordedFailureStaysSilentGap(t *testing.T) {
+	const npath = "quack-dag-p@1/n1@rr"
+	got := drive([]*session.Event{{NodeInfo: &session.NodeInfo{Path: npath}, Output: ""}}, map[string]string{"n1": "web-researcher"}, gateScore{})
+	var nf *stream.NodeFailedData
+	for _, ev := range got {
+		if d, ok := ev.Data.(stream.NodeFailedData); ok {
+			nf = &d
+		}
+	}
+	if nf == nil || nf.Error != "produced no answer" {
+		t.Fatalf("node_failed = %+v, want the unchanged silent-gap message", nf)
 	}
 }
 
@@ -212,7 +275,7 @@ func equalStrings(a, b []string) bool {
 func TestDagStream_SteeredRunEmitsNodeSteered(t *testing.T) {
 	agentByID := map[string]string{"n1": "web-researcher"}
 	var got []stream.SSEEvent
-	ds := newDagStream("", agentByID,
+	ds := newDagStream("", "", agentByID,
 		func(e stream.SSEEvent, _ error) bool { got = append(got, e); return true },
 		map[string]string{},
 		func(string) gateScore { return gateScore{} },
