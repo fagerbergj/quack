@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -113,9 +114,13 @@ func lookupKind(kind string) (KindSpec, error) {
 // NodeID is provenance only (the node that authored this revision), never
 // part of the artifact's id.
 type Lineage struct {
-	NodeID            string    `json:"node_id"`
-	Round             int       `json:"round"`
-	ParentRevision    int       `json:"parent_revision"`
+	NodeID         string `json:"node_id"`
+	Round          int    `json:"round"`
+	ParentRevision int    `json:"parent_revision"`
+	// BaseRevision is the revision the editor last read (Edit's caller-supplied
+	// base_revision) - advisory only, recorded for observability; the merge
+	// itself always targets whatever is actually latest (see Edit).
+	BaseRevision      int       `json:"base_revision"`
 	TriggerAnnotation string    `json:"trigger_annotation,omitempty"`
 	HeadSHA           string    `json:"head_sha,omitempty"`
 	SavedAt           time.Time `json:"saved_at"`
@@ -410,6 +415,17 @@ func (c *Client) Edit(ctx context.Context, id string, baseRevision int, ops []Ed
 	if !ok {
 		return 0, nil, fmt.Errorf("recordstore: edit %s: no revision exists", id)
 	}
+	if baseRevision < 0 {
+		return 0, nil, fmt.Errorf("recordstore: edit %s: base_revision must be >= 0", id)
+	}
+	if baseRevision > latestRev {
+		return 0, nil, fmt.Errorf("recordstore: edit %s: base_revision %d exceeds latest revision %d", id, baseRevision, latestRev)
+	}
+	if baseRevision != latestRev {
+		// Worth observing in aggregate: how often edit_artifact merges against a
+		// stale base rather than applying directly.
+		slog.Debug("recordstore: edit merged against a newer revision than base_revision", "id", id, "base_revision", baseRevision, "latest_revision", latestRev)
+	}
 	merged, err := applyEdits(raw, ops)
 	if err != nil {
 		return 0, nil, &EditConflict{ID: id, Revision: latestRev, Content: raw}
@@ -425,6 +441,7 @@ func (c *Client) Edit(ctx context.Context, id string, baseRevision int, ops []Ed
 		}
 	}
 	lineage.ParentRevision = latestRev
+	lineage.BaseRevision = baseRevision
 	rev, err := c.save(ctx, id, kind, spec.Class, mime, merged, lineage)
 	if err != nil {
 		return 0, nil, err

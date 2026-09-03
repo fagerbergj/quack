@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 
 	"google.golang.org/adk/v2/artifact"
@@ -39,6 +40,46 @@ func init() {
 func newTestClient(t *testing.T) *Client {
 	t.Helper()
 	return New(artifact.InMemoryService(), "quack", "user1", "chat1")
+}
+
+// metaAwareInMemory implements the optional SaveWithMeta/LoadWithMeta pair
+// over artifact.InMemoryService() - production always wraps a store that
+// supports these (internal/store.TurnAwareService); this stands in for that
+// so a test can read back real lineage without a database.
+type metaAwareInMemory struct {
+	artifact.Service
+	mu   sync.Mutex
+	meta map[string][]byte
+}
+
+func newMetaAwareInMemory() *metaAwareInMemory {
+	return &metaAwareInMemory{Service: artifact.InMemoryService(), meta: map[string][]byte{}}
+}
+
+func metaKey(appName, userID, sessionID, fileName string) string {
+	return appName + "\x00" + userID + "\x00" + sessionID + "\x00" + fileName
+}
+
+func (m *metaAwareInMemory) SaveWithMeta(ctx context.Context, req *artifact.SaveRequest, kind, class string, lineageJSON []byte, turnID string) (*artifact.SaveResponse, error) {
+	resp, err := m.Service.Save(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.meta[metaKey(req.AppName, req.UserID, req.SessionID, req.FileName)] = lineageJSON
+	return resp, nil
+}
+
+func (m *metaAwareInMemory) LoadWithMeta(ctx context.Context, req *artifact.LoadRequest) (*artifact.LoadResponse, string, string, []byte, error) {
+	resp, err := m.Service.Load(ctx, req)
+	if err != nil {
+		return nil, "", "", nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	lineageJSON := m.meta[metaKey(req.AppName, req.UserID, req.SessionID, req.FileName)]
+	return resp, "", "", lineageJSON, nil
 }
 
 func TestKindOf(t *testing.T) {
@@ -258,6 +299,73 @@ func TestEditStaleBaseConflictsWhenIntersecting(t *testing.T) {
 	}
 	if _, _, _, latestRev, _, _ := c.LatestWithMeta(ctx, id); latestRev != rev1+1 {
 		t.Fatalf("failed edit must not write - latest revision = %d, want %d", latestRev, rev1+1)
+	}
+}
+
+// TestEditRejectsNegativeBaseRevision covers #1091 adversarial review
+// suggestion #3: base_revision was accepted but never validated.
+func TestEditRejectsNegativeBaseRevision(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	id, _, err := c.SaveStructured(ctx, "test.structured", doc{A: "hello", B: 1}, "main", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c.Edit(ctx, id, -1, []EditOp{{Old: `"a":"hello"`, New: `"a":"world"`}}, Lineage{}); err == nil {
+		t.Fatal("Edit with base_revision -1 should fail")
+	}
+}
+
+// TestEditRejectsBaseRevisionAboveLatest covers #1091 adversarial review
+// suggestion #3: a base_revision greater than the actual latest revision is
+// nonsensical (it names a revision that doesn't exist yet) and must error
+// rather than silently proceeding.
+func TestEditRejectsBaseRevisionAboveLatest(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	id, rev, err := c.SaveStructured(ctx, "test.structured", doc{A: "hello", B: 1}, "main", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c.Edit(ctx, id, rev+5, []EditOp{{Old: `"a":"hello"`, New: `"a":"world"`}}, Lineage{}); err == nil {
+		t.Fatal("Edit with base_revision above latest should fail")
+	}
+	if _, _, _, latestRev, _, _ := c.LatestWithMeta(ctx, id); latestRev != rev {
+		t.Fatalf("rejected edit must not write - latest revision = %d, want %d", latestRev, rev)
+	}
+}
+
+// TestEditRecordsBaseRevisionInLineage covers #1091 adversarial review
+// suggestion #3: base_revision is no longer silently dropped - it lands in
+// the written revision's lineage, distinct from parent_revision (the real
+// latest the merge targeted) whenever the two differ (a merge, not a direct apply).
+func TestEditRecordsBaseRevisionInLineage(t *testing.T) {
+	ctx := context.Background()
+	// LatestWithMeta only returns real lineage when the wrapped service
+	// implements metaSaver/metaLoader (InMemoryService, used by newTestClient,
+	// doesn't) - mirror internal/vetting's metaAwareInMemory test double.
+	c := New(newMetaAwareInMemory(), "quack", "user1", "chat1")
+	id, rev1, err := c.SaveStructured(ctx, "test.structured", doc{A: "hello", B: 1}, "main", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev2, _, err := c.Edit(ctx, id, rev1, []EditOp{{Old: `"b":1`, New: `"b":2`}}, Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Stale base (rev1) merges against the real latest (rev2).
+	if _, _, err := c.Edit(ctx, id, rev1, []EditOp{{Old: `"a":"hello"`, New: `"a":"world"`}}, Lineage{}); err != nil {
+		t.Fatalf("Edit with stale base should merge, got: %v", err)
+	}
+	_, _, lineage, _, ok, err := c.LatestWithMeta(ctx, id)
+	if err != nil || !ok {
+		t.Fatalf("LatestWithMeta: ok=%v err=%v", ok, err)
+	}
+	if lineage.BaseRevision != rev1 {
+		t.Fatalf("lineage.BaseRevision = %d, want the caller's base_revision %d", lineage.BaseRevision, rev1)
+	}
+	if lineage.ParentRevision != rev2 {
+		t.Fatalf("lineage.ParentRevision = %d, want the real latest merged against (%d)", lineage.ParentRevision, rev2)
 	}
 }
 
