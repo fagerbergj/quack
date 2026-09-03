@@ -100,6 +100,14 @@ func init() {
 	recordstore.Register(kindBytes, recordstore.KindSpec{Class: recordstore.Blob, Identity: contentOrHintIdentity})
 	recordstore.Register(kindJudgeRound, recordstore.KindSpec{
 		Class: recordstore.Structured,
+		// Gate-written only (buildJudgeRoundRecord/saveJudgeRoundRecord) - no
+		// worker ever calls write_judge_round, so the schema stays a permissive
+		// object rather than mirroring JudgeRoundRecord's full shape field for
+		// field. It still needs one so the generic write_<kind> tool generator
+		// (#1091) doesn't silently skip registering it (every registered
+		// Structured kind is expected to expose a write_<kind> tool).
+		JSONSchema: `{"type":"object"}`,
+		Validate:   validateJSONObject[JudgeRoundRecord],
 		// Instance = hint verbatim ("<turn_id>-<node_id>-<round>", #1092 design
 		// V4 §4.1/§4.3) - the gate computes it, never derived from content.
 		// turnID (ctx.InvocationID()) is shared by every node in a run, so

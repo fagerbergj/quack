@@ -59,6 +59,11 @@ type AdvisorTask struct {
 	Round   int
 	TurnID  string
 	HeadSHA string
+	// TriggerAnnotation: the prior round's judge_round id, refreshed alongside
+	// Round/TurnID/HeadSHA (SetAdvisorThreadRound) so a tool-initiated write
+	// carries the same trigger_annotation chain as gate-written artifacts
+	// (design V4 §7 case 3, #1092).
+	TriggerAnnotation string
 }
 
 // MemSession: ACP memory MCP resolution for one node.
@@ -391,12 +396,12 @@ func SetAdvisorThreadSessionID(token, sessionID string) {
 // round (write_finding et al, looked up via the registered MemSession's
 // AdvisorToken) stamps real lineage instead of zero values (#1091
 // adversarial review finding #4).
-func SetAdvisorThreadRound(token string, round int, turnID, headSHA string) {
+func SetAdvisorThreadRound(token string, round int, turnID, headSHA, triggerAnnotation string) {
 	v, ok := advisorThreads.Load(token)
 	if !ok {
 		return
 	}
 	t := v.(AdvisorTask)
-	t.Round, t.TurnID, t.HeadSHA = round, turnID, headSHA
+	t.Round, t.TurnID, t.HeadSHA, t.TriggerAnnotation = round, turnID, headSHA, triggerAnnotation
 	advisorThreads.Store(token, t)
 }

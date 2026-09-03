@@ -70,9 +70,10 @@ type editArtifactEdit struct {
 // round concept (e.g. the top-level orchestrator agent) rather than a
 // hardcoded literal (#1091 adversarial review finding #4).
 type RoundCoords struct {
-	Round   int
-	TurnID  string
-	HeadSHA string
+	Round             int
+	TurnID            string
+	HeadSHA           string
+	TriggerAnnotation string
 }
 
 func NewEditArtifactTool(c *recordstore.Client, nodeID string, coords RoundCoords) (tool.Tool, error) {
@@ -91,7 +92,7 @@ func NewEditArtifactTool(c *recordstore.Client, nodeID string, coords RoundCoord
 			for i, e := range a.Edits {
 				ops[i] = recordstore.EditOp{Old: e.Old, New: e.New}
 			}
-			lineage := recordstore.Lineage{NodeID: nodeID, Round: coords.Round, TurnID: coords.TurnID, HeadSHA: coords.HeadSHA, Author: "worker", SavedAt: time.Now().UTC()}
+			lineage := recordstore.Lineage{NodeID: nodeID, Round: coords.Round, TurnID: coords.TurnID, HeadSHA: coords.HeadSHA, TriggerAnnotation: coords.TriggerAnnotation, Author: "worker", SavedAt: time.Now().UTC()}
 			rev, _, err := c.Edit(ctx, a.ID, a.BaseRevision, ops, lineage)
 			if err != nil {
 				var conflict *recordstore.EditConflict
@@ -155,7 +156,7 @@ func NewWriteArtifactTool(c *recordstore.Client, nodeID string, coords RoundCoor
 					data = b
 				}
 			}
-			lineage := recordstore.Lineage{NodeID: nodeID, Round: coords.Round, TurnID: coords.TurnID, HeadSHA: coords.HeadSHA, Author: "worker", SavedAt: time.Now().UTC()}
+			lineage := recordstore.Lineage{NodeID: nodeID, Round: coords.Round, TurnID: coords.TurnID, HeadSHA: coords.HeadSHA, TriggerAnnotation: coords.TriggerAnnotation, Author: "worker", SavedAt: time.Now().UTC()}
 			// Only a hint-requiring blob kind (document, pr_body) gets hint - a
 			// hint-optional kind (text, bytes) must keep deriving its id from
 			// content, or every write from this session collapses onto one id
@@ -189,7 +190,7 @@ func NewWriteKindTool(c *recordstore.Client, nodeID, kind string, spec recordsto
 			InputSchema: &schema,
 		},
 		func(ctx agent.Context, args map[string]any) (string, error) {
-			lineage := recordstore.Lineage{NodeID: nodeID, Round: coords.Round, TurnID: coords.TurnID, HeadSHA: coords.HeadSHA, Author: "worker", SavedAt: time.Now().UTC()}
+			lineage := recordstore.Lineage{NodeID: nodeID, Round: coords.Round, TurnID: coords.TurnID, HeadSHA: coords.HeadSHA, TriggerAnnotation: coords.TriggerAnnotation, Author: "worker", SavedAt: time.Now().UTC()}
 			structuredHint := ""
 			if spec.RequiresHint {
 				structuredHint = hint

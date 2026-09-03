@@ -646,7 +646,7 @@ func TestSetAdvisorThreadRound_ToolWriteGetsRealLineageAndPreloads(t *testing.T)
 	token := "tok-1091-f4"
 	RegisterAdvisorThread(token, AdvisorTask{})
 	defer UnregisterAdvisorThread(token)
-	SetAdvisorThreadRound(token, 2, "turn-abc", cfg.NodeBaseSHA)
+	SetAdvisorThreadRound(token, 2, "turn-abc", cfg.NodeBaseSHA, "")
 
 	task, ok := LookupAdvisorThread(token)
 	if !ok {
@@ -687,6 +687,49 @@ func TestSetAdvisorThreadRound_ToolWriteGetsRealLineageAndPreloads(t *testing.T)
 	block := BuildReviewPreload(context.Background(), cfg, cfg.NodeID)
 	if !strings.Contains(block, "mid-round finding") {
 		t.Fatalf("BuildReviewPreload dropped the tool-written finding (empty HeadSHA would do this): %q", block)
+	}
+}
+
+// TestSetAdvisorThreadRound_ToolWriteCarriesTriggerAnnotation covers the
+// #1112 follow-up: a tool-initiated write (write_finding et al, via the
+// registered AdvisorTask) must chain the same trigger_annotation a
+// gate-written artifact gets (the PRIOR round's judge_round id) - not leave
+// it empty just because the write bypassed saveCodeReviewRound.
+func TestSetAdvisorThreadRound_ToolWriteCarriesTriggerAnnotation(t *testing.T) {
+	token := "tok-1112-trigger"
+	RegisterAdvisorThread(token, AdvisorTask{})
+	defer UnregisterAdvisorThread(token)
+
+	// Round 1: no prior judge_round yet.
+	SetAdvisorThreadRound(token, 1, "turn-x", "sha1", "")
+	// Round 2: node.go stamps round 2's trigger with round 1's judge_round id.
+	SetAdvisorThreadRound(token, 2, "turn-x", "sha1", "jr-round1")
+
+	task, ok := LookupAdvisorThread(token)
+	if !ok {
+		t.Fatal("advisor task not registered")
+	}
+	if task.TriggerAnnotation != "jr-round1" {
+		t.Fatalf("AdvisorTask.TriggerAnnotation = %q, want %q", task.TriggerAnnotation, "jr-round1")
+	}
+
+	// Mirrors internal/acp/memorymcp.go's currentRound + registerWriteKindTool:
+	// a round-2 tool write must stamp round 1's judge_round id as its trigger.
+	svc := newMetaAwareInMemory()
+	cfg := reviewerCfgWithArtifacts(t, svc, true)
+	rc := recordClient(cfg)
+	rec := FindingRecord{Path: "a.go", Title: "round-2 tool finding", State: "new"}
+	lineage := recordstore.Lineage{NodeID: cfg.NodeID, Round: task.Round, TurnID: task.TurnID, HeadSHA: task.HeadSHA, TriggerAnnotation: task.TriggerAnnotation, Author: "worker"}
+	id, _, err := rc.SaveStructured(context.Background(), kindFinding, rec, "", lineage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, gotLineage, _, ok, err := rc.LatestWithMeta(context.Background(), id)
+	if err != nil || !ok {
+		t.Fatalf("LatestWithMeta: ok=%v err=%v", ok, err)
+	}
+	if gotLineage.TriggerAnnotation != "jr-round1" {
+		t.Fatalf("stored lineage.TriggerAnnotation = %q, want %q", gotLineage.TriggerAnnotation, "jr-round1")
 	}
 }
 

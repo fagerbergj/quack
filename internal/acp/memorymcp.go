@@ -71,15 +71,15 @@ const (
 // (SetAdvisorThreadRound, refreshed by the gate at the start of every round) -
 // zero values if there's no advisor thread (sess.AdvisorToken == "") or it
 // has already been unregistered (#1091 adversarial review finding #4).
-func currentRound(sess vetting.MemSession) (round int, turnID, headSHA string) {
+func currentRound(sess vetting.MemSession) (round int, turnID, headSHA, triggerAnnotation string) {
 	if sess.AdvisorToken == "" {
-		return 0, "", ""
+		return 0, "", "", ""
 	}
 	t, ok := vetting.LookupAdvisorThread(sess.AdvisorToken)
 	if !ok {
-		return 0, "", ""
+		return 0, "", "", ""
 	}
-	return t.Round, t.TurnID, t.HeadSHA
+	return t.Round, t.TurnID, t.HeadSHA, t.TriggerAnnotation
 }
 
 // readArtifactMaxBytes bounds the raw artifact bytes returned inline, so a
@@ -194,8 +194,8 @@ func registerEditArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vetti
 		for i, e := range args.Edits {
 			ops[i] = recordstore.EditOp{Old: e.Old, New: e.New}
 		}
-		round, turnID, headSHA := currentRound(sess)
-		lineage := recordstore.Lineage{NodeID: sess.NodeID, Round: round, TurnID: turnID, HeadSHA: headSHA, Author: "worker", SavedAt: time.Now().UTC()}
+		round, turnID, headSHA, trigger := currentRound(sess)
+		lineage := recordstore.Lineage{NodeID: sess.NodeID, Round: round, TurnID: turnID, HeadSHA: headSHA, TriggerAnnotation: trigger, Author: "worker", SavedAt: time.Now().UTC()}
 		rev, _, err := c.Edit(ctx, args.ID, args.BaseRevision, ops, lineage)
 		if err != nil {
 			var conflict *recordstore.EditConflict
@@ -247,8 +247,8 @@ func registerWriteArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vett
 				data = b
 			}
 		}
-		round, turnID, headSHA := currentRound(sess)
-		lineage := recordstore.Lineage{NodeID: sess.NodeID, Round: round, TurnID: turnID, HeadSHA: headSHA, Author: "worker", SavedAt: time.Now().UTC()}
+		round, turnID, headSHA, trigger := currentRound(sess)
+		lineage := recordstore.Lineage{NodeID: sess.NodeID, Round: round, TurnID: turnID, HeadSHA: headSHA, TriggerAnnotation: trigger, Author: "worker", SavedAt: time.Now().UTC()}
 		// Only a hint-requiring blob kind (document, pr_body) gets the session's
 		// subject hint - a hint-optional kind (text, bytes) must keep deriving its
 		// id from content, or every write from this chat would collapse onto one
@@ -287,8 +287,8 @@ func registerWriteKindTool(srv *mcp.Server, c *recordstore.Client, sess vetting.
 		Description: fmt.Sprintf("Write a new revision of a %q artifact. The registry validates the body and derives the id.", kind),
 		InputSchema: &schema,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
-		round, turnID, headSHA := currentRound(sess)
-		lineage := recordstore.Lineage{NodeID: sess.NodeID, Round: round, TurnID: turnID, HeadSHA: headSHA, Author: "worker", SavedAt: time.Now().UTC()}
+		round, turnID, headSHA, trigger := currentRound(sess)
+		lineage := recordstore.Lineage{NodeID: sess.NodeID, Round: round, TurnID: turnID, HeadSHA: headSHA, TriggerAnnotation: trigger, Author: "worker", SavedAt: time.Now().UTC()}
 		// code_review's Identity requires a non-empty hint (vetting.requireHint);
 		// derive it from the registered session, same as the gate - never a tool arg.
 		var hint string
