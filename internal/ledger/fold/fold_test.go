@@ -97,32 +97,38 @@ func TestLastRevision_NoEntries(t *testing.T) {
 	}
 }
 
-// TestFold_NodeStatesLaterWins: a node's final status is its LAST node.*
-// entry, not its first.
+// TestFold_NodeStatesLaterWins: a node's terminal status is its LAST
+// node.done/failed entry; its StartedSeq is INDEPENDENTLY kept even after
+// the node reaches a terminal state (#1121 - rebuild needs both).
 func TestFold_NodeStatesLaterWins(t *testing.T) {
 	s := newFSStore(t)
-	mustAppend := func(kind string) {
+	mustAppend := func(kind string) int64 {
 		payload, _ := json.Marshal(struct {
 			NodeID string `json:"node_id"`
 			Turn   string `json:"turn"`
 			Round  int    `json:"round"`
 		}{NodeID: "n1", Turn: "t1", Round: 2})
-		if _, err := s.AppendIntent(context.Background(), ledger.Entry{
+		seq, err := s.AppendIntent(context.Background(), ledger.Entry{
 			ChatID: "chat1", Kind: kind, Payload: payload,
-		}); err != nil {
+		})
+		if err != nil {
 			t.Fatalf("AppendIntent %s: %v", kind, err)
 		}
+		return seq
 	}
-	mustAppend(ledger.KindNodeStarted)
-	mustAppend(ledger.KindNodeDone)
+	startedSeq := mustAppend(ledger.KindNodeStarted)
+	doneSeq := mustAppend(ledger.KindNodeDone)
 
 	res, err := Fold(context.Background(), s, "chat1", 0)
 	if err != nil {
 		t.Fatalf("Fold: %v", err)
 	}
 	n := res.Nodes["n1\x00t1"]
-	if n == nil || n.Status != "done" {
-		t.Fatalf("node state = %+v, want status done", n)
+	if n == nil || n.TerminalStatus != "done" || n.TerminalSeq != doneSeq {
+		t.Fatalf("node state = %+v, want terminal status done at seq %d", n, doneSeq)
+	}
+	if n.StartedSeq != startedSeq {
+		t.Fatalf("node state = %+v, want StartedSeq %d preserved alongside the terminal state", n, startedSeq)
 	}
 }
 

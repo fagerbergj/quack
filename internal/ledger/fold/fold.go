@@ -81,16 +81,20 @@ func (a *Artifact) Latest() (ArtifactRevision, bool) {
 	return a.Revisions[len(a.Revisions)-1], true
 }
 
-// NodeState is one node+turn's lifecycle, derived from the last node.* entry
-// seen for it - richer per-round fields (tokens, output, model) never made
-// it into the skinny node.* payload, so this is a lossy reconstruction, not
-// a byte-for-byte replay of the SSE table's node_done event.
+// NodeState is one node+turn's lifecycle - richer per-round fields (tokens,
+// output, model) never made it into the skinny node.* payload, so this is a
+// lossy reconstruction, not a byte-for-byte replay of the SSE table's real
+// events. StartedSeq and Terminal* are tracked INDEPENDENTLY (each is its
+// own "later entry wins" slot, same rule as an artifact revision key) so a
+// node that has already reached done/failed still reports its node.started
+// seq too - #1121: a rebuild must be able to regenerate BOTH the node_start
+// and node_done/failed rows, not just the terminal one.
 type NodeState struct {
 	NodeID, TurnID string
-	Status         string // "started", "done", "failed"
+	StartedSeq     int64  // 0 = no node.started entry seen
+	TerminalStatus string // "" | "done" | "failed"
+	TerminalSeq    int64
 	Round          int
-	At             time.Time
-	Seq            int64
 }
 
 // JudgeRound is one judge.round entry.
@@ -169,13 +173,21 @@ func applyEntries(entries []ledger.Entry) *Result {
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
 				continue
 			}
-			status := "started"
-			if e.Kind == ledger.KindNodeDone {
-				status = "done"
-			} else if e.Kind == ledger.KindNodeFailed {
-				status = "failed"
+			key := p.NodeID + "\x00" + p.Turn
+			n, ok := res.Nodes[key]
+			if !ok {
+				n = &NodeState{NodeID: p.NodeID, TurnID: p.Turn}
+				res.Nodes[key] = n
 			}
-			res.Nodes[p.NodeID+"\x00"+p.Turn] = &NodeState{NodeID: p.NodeID, TurnID: p.Turn, Status: status, Round: p.Round, At: e.At, Seq: e.Seq}
+			n.Round = p.Round
+			switch e.Kind {
+			case ledger.KindNodeStarted:
+				n.StartedSeq = e.Seq
+			case ledger.KindNodeDone:
+				n.TerminalStatus, n.TerminalSeq = "done", e.Seq
+			case ledger.KindNodeFailed:
+				n.TerminalStatus, n.TerminalSeq = "failed", e.Seq
+			}
 		case ledger.KindJudgeRound:
 			res.JudgeRounds = append(res.JudgeRounds, JudgeRound{ID: e.Key, NodeID: e.NodeID, TurnID: e.TurnID, Payload: e.Payload, At: e.At, Seq: e.Seq})
 		}
