@@ -32,8 +32,12 @@ type Executor struct {
 	maxActive   int
 	setupFn     SetupFunc
 	artifacts   artifact.Service // ADK's own artifact tools/debug console; see SetArtifacts
-	admission   *Admission
-	specFor     func(agentName string) AdmissionSpec
+	// walLedger: the WAL's fail-closed AppendIntent path (#1090 §4.9/#1100),
+	// gated to a postgres-backed ledger only by SetWALLedger's caller - see
+	// vetting.Config.Ledger's doc. nil = no WAL.
+	walLedger ledger.LedgerStore
+	admission *Admission
+	specFor   func(agentName string) AdmissionSpec
 
 	gateResults sync.Map
 }
@@ -55,6 +59,13 @@ func (e *Executor) SetMaxActive(n int) {
 // reachable via adkagent.Context.Artifacts(). Node attachments are rerouted
 // separately, at the REST/plan entry boundary (internal/artifactref).
 func (e *Executor) SetArtifacts(svc artifact.Service) { e.artifacts = svc }
+
+// SetWALLedger wires the WAL's fail-closed AppendIntent path into every gate
+// node this executor builds (#1090 §4.9/#1100). Callers must pass nil unless
+// store is a postgres-backed LedgerStore - the filesystem ledger's
+// AppendIntent is best-effort/non-transactional and cannot back the WAL's
+// fail-closed guarantee (see internal/vetting Config.Ledger's doc).
+func (e *Executor) SetWALLedger(store ledger.LedgerStore) { e.walLedger = store }
 
 // ResetNodeCancels: clears user-cancelled node flags for the next turn.
 func (e *Executor) ResetNodeCancels(chatID string) { e.controls.resetCancelled(chatID) }
@@ -157,7 +168,7 @@ func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, node
 	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, source,
 		func(nodeID string, score float64, passed bool, rounds int) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds)
-		}, e.admission, e.specFor, e.artifacts, nil) // retry never re-runs setup, so nothing to refresh
+		}, e.admission, e.specFor, e.artifacts, e.walLedger, nil) // retry never re-runs setup, so nothing to refresh
 	if err != nil {
 		return nil, err
 	}

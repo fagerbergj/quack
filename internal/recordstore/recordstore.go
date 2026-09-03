@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -21,6 +22,8 @@ import (
 
 	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/ledger"
 )
 
 // isNotFound reports whether err is the artifact.Service "no such
@@ -136,6 +139,11 @@ type metaLoader interface {
 type Client struct {
 	svc                        artifact.Service
 	appName, userID, sessionID string
+	// ledgerStore: the WAL's fail-closed AppendIntent path (#1090 §4.9/#1100).
+	// nil = no WAL; Save* behaves exactly as before #1100. Set only via
+	// WithLedger, by a caller that has already restricted it to a
+	// transactional (postgres) backend - see vetting.Config.Ledger's doc.
+	ledgerStore ledger.LedgerStore
 }
 
 // New scopes a client to one session over svc (the artifact.Service the
@@ -144,7 +152,87 @@ func New(svc artifact.Service, appName, userID, sessionID string) *Client {
 	return &Client{svc: svc, appName: appName, userID: userID, sessionID: sessionID}
 }
 
+// WithLedger arms the fail-closed WAL path on c and returns c. store should
+// already be filtered to a transactional backend by the caller (see
+// vetting.Config.Ledger) - recordstore itself doesn't inspect the backend
+// kind, it just trusts a non-nil store to make AppendIntent atomic.
+func (c *Client) WithLedger(store ledger.LedgerStore) *Client {
+	c.ledgerStore = store
+	return c
+}
+
+// lastRevision returns the highest revision recorded in an artifact.revision
+// WAL entry for id, 0 if none. A full per-chat scan (ponytail: O(entries),
+// fine at WAL-groundwork volumes; index by key if this shows up in profiles).
+func lastRevision(ctx context.Context, store ledger.LedgerStore, chatID, id string) (int, error) {
+	entries, err := store.ReadEntries(ctx, chatID, 0)
+	if err != nil {
+		return 0, err
+	}
+	var payload struct {
+		Revision int `json:"revision"`
+	}
+	rev := 0
+	for _, e := range entries {
+		if e.Kind != ledger.KindArtifactRevision || e.Key != id {
+			continue
+		}
+		if err := json.Unmarshal(e.Payload, &payload); err != nil {
+			continue
+		}
+		rev = payload.Revision
+	}
+	return rev, nil
+}
+
+// artifactRevisionPayload is the artifact.revision WAL entry's payload
+// (#1090 §4.9): bytes_ref is the store row's key (the id), never the bytes,
+// so a large blob is one small entry.
+type artifactRevisionPayload struct {
+	ID             string  `json:"id"`
+	Revision       int     `json:"revision"`
+	ParentRevision int     `json:"parent_revision"`
+	Kind           string  `json:"kind"`
+	Class          Class   `json:"class"`
+	Lineage        Lineage `json:"lineage"`
+	BytesRef       string  `json:"bytes_ref"`
+}
+
 func (c *Client) save(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage) (int, error) {
+	if c.ledgerStore != nil {
+		parentRev, err := lastRevision(ctx, c.ledgerStore, c.sessionID, id)
+		if err != nil {
+			return 0, fmt.Errorf("recordstore: read ledger parent revision for %s: %w", id, err)
+		}
+		if parentRev != lineage.ParentRevision {
+			slog.Warn("recordstore: ledger parent_revision disagrees with caller-tracked revision", "component", "recordstore", "id", id, "ledger_parent", parentRev, "caller_parent", lineage.ParentRevision)
+		}
+		lineage.ParentRevision = parentRev // ledger is read, never computed (#1090 §4.9)
+		nextRev := parentRev + 1
+		payload, err := json.Marshal(artifactRevisionPayload{ID: id, Revision: nextRev, ParentRevision: parentRev, Kind: kind, Class: class, Lineage: lineage, BytesRef: id})
+		if err != nil {
+			return 0, fmt.Errorf("recordstore: marshal artifact.revision payload for %s: %w", id, err)
+		}
+		if _, err := c.ledgerStore.AppendIntent(ctx, ledger.Entry{
+			ChatID: c.sessionID, TurnID: lineage.TurnID, NodeID: lineage.NodeID,
+			Kind: ledger.KindArtifactRevision, Key: id, At: time.Now().UTC(), Payload: payload,
+		}); err != nil {
+			// Fail-closed (#1090 §4.9 case 11): no entry, no row.
+			return 0, fmt.Errorf("recordstore: WAL append failed for %s, row not written: %w", id, err)
+		}
+		rev, err := c.saveRow(ctx, id, kind, class, mime, data, lineage)
+		if err != nil {
+			return 0, err
+		}
+		if rev != nextRev {
+			slog.Warn("recordstore: store-assigned revision disagrees with the WAL's", "component", "recordstore", "id", id, "wal_revision", nextRev, "store_revision", rev)
+		}
+		return rev, nil
+	}
+	return c.saveRow(ctx, id, kind, class, mime, data, lineage)
+}
+
+func (c *Client) saveRow(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage) (int, error) {
 	lineageJSON, err := json.Marshal(lineage)
 	if err != nil {
 		return 0, fmt.Errorf("recordstore: marshal lineage for %s: %w", id, err)

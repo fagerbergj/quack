@@ -4,10 +4,63 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"sync"
 	"testing"
+	"time"
 
 	"google.golang.org/adk/v2/artifact"
+
+	"github.com/fagerbergj/quack/internal/ledger"
 )
+
+// fakeLedger is a minimal, in-memory ledger.LedgerStore double for the WAL
+// hook tests (#1100): AppendIntent allocates a gapless per-chat seq exactly
+// like PGStore's real transaction, and failNext forces the next AppendIntent
+// to fail closed without touching the entry log.
+type fakeLedger struct {
+	mu       sync.Mutex
+	seqs     map[string]int64
+	entries  map[string][]ledger.Entry
+	failNext bool
+}
+
+func newFakeLedger() *fakeLedger {
+	return &fakeLedger{seqs: map[string]int64{}, entries: map[string][]ledger.Entry{}}
+}
+
+func (f *fakeLedger) Append(context.Context, string, []byte) error { return nil }
+func (f *fakeLedger) ReadStream(context.Context, string) (io.ReadCloser, error) {
+	return nil, nil
+}
+func (f *fakeLedger) List(context.Context) ([]ledger.SessionRef, error) { return nil, nil }
+func (f *fakeLedger) Delete(context.Context, string) error              { return nil }
+
+func (f *fakeLedger) AppendIntent(_ context.Context, e ledger.Entry) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failNext {
+		f.failNext = false
+		return 0, errors.New("fakeLedger: forced AppendIntent failure")
+	}
+	f.seqs[e.ChatID]++
+	e.Seq = f.seqs[e.ChatID]
+	e.At = time.Now().UTC()
+	f.entries[e.ChatID] = append(f.entries[e.ChatID], e)
+	return e.Seq, nil
+}
+
+func (f *fakeLedger) ReadEntries(_ context.Context, chatID string, fromSeq int64) ([]ledger.Entry, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []ledger.Entry
+	for _, e := range f.entries[chatID] {
+		if e.Seq >= fromSeq {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
 
 type doc struct {
 	A string `json:"a"`
@@ -180,5 +233,91 @@ func TestContentHashIgnoresHint(t *testing.T) {
 	}
 	if id1 != id2 {
 		t.Fatalf("same content under different hints produced different ids: %q vs %q", id1, id2)
+	}
+}
+
+// TestWALAppendFailureBlocksRowWrite is V4 §7 case 11: an AppendIntent
+// failure must leave the store row unwritten and return the error - never a
+// partial write.
+func TestWALAppendFailureBlocksRowWrite(t *testing.T) {
+	svc := artifact.InMemoryService()
+	fl := newFakeLedger()
+	fl.failNext = true
+	c := New(svc, "quack", "user1", "chat1").WithLedger(fl)
+	ctx := context.Background()
+
+	id, rev, err := c.SaveBlob(ctx, "test.blob", []byte("v1"), "text/plain", "doc:wal", Lineage{})
+	if err == nil {
+		t.Fatalf("SaveBlob succeeded despite a forced WAL append failure: id=%q rev=%d", id, rev)
+	}
+	// No row should exist: Latest on the id the save would have used.
+	wantID, idErr := IdentityFor("test.blob", nil, "doc:wal")
+	if idErr != nil {
+		t.Fatal(idErr)
+	}
+	if _, _, ok, lerr := c.Latest(ctx, wantID); lerr != nil || ok {
+		t.Fatalf("Latest after failed WAL append: ok=%v err=%v, want ok=false", ok, lerr)
+	}
+}
+
+// TestWALParentRevisionReadFromLedger is V4 §7's parent_revision contract
+// (#1090 §4.9): the second save's parent_revision must come from the
+// ledger's own artifact.revision entry, not be recomputed by the caller.
+func TestWALParentRevisionReadFromLedger(t *testing.T) {
+	svc := artifact.InMemoryService()
+	fl := newFakeLedger()
+	c := New(svc, "quack", "user1", "chat1").WithLedger(fl)
+	ctx := context.Background()
+
+	id, rev1, err := c.SaveBlob(ctx, "test.blob", []byte("v1"), "text/plain", "doc:parent", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rev1 != 1 {
+		t.Fatalf("first save revision = %d, want 1", rev1)
+	}
+	// Deliberately pass a WRONG ParentRevision (as if the caller's own
+	// tracking drifted) - the ledger's own read must still win.
+	id2, rev2, err := c.SaveBlob(ctx, "test.blob", []byte("v2"), "text/plain", "doc:parent", Lineage{ParentRevision: 99})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id2 != id || rev2 != 2 {
+		t.Fatalf("second save: id=%q rev=%d, want id=%q rev=2", id2, rev2, id)
+	}
+	entries, err := fl.ReadEntries(ctx, "chat1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawParent2 bool
+	for _, e := range entries {
+		if e.Key != id {
+			continue
+		}
+		var p artifactRevisionPayload
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			t.Fatal(err)
+		}
+		if p.Revision == 2 {
+			sawParent2 = true
+			if p.ParentRevision != 1 {
+				t.Fatalf("revision 2's parent_revision = %d, want 1 (read from the ledger, not the caller's 99)", p.ParentRevision)
+			}
+		}
+	}
+	if !sawParent2 {
+		t.Fatal("no artifact.revision entry for revision 2 found in the ledger")
+	}
+}
+
+// TestNoLedgerConfiguredUnchanged is V4 §7's "with no ledger, nothing
+// changes" requirement: WithLedger never called, save behaves exactly as
+// before #1100 (no error, no ledger dependency).
+func TestNoLedgerConfiguredUnchanged(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	_, rev, err := c.SaveBlob(ctx, "test.blob", []byte("v1"), "text/plain", "doc:no-ledger", Lineage{})
+	if err != nil || rev != 1 {
+		t.Fatalf("SaveBlob with no ledger configured: rev=%d err=%v, want rev=1 err=nil", rev, err)
 	}
 }
