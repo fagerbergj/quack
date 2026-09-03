@@ -235,11 +235,14 @@ func appendNodeEvent(ctx context.Context, cfg Config, nodeID, turnID, kind strin
 // non-nil error means the caller must treat this round as failed-closed - it
 // must not start another revise round on this verdict, mirroring the
 // existing judge-unavailable path just above.
+// appendJudgeRound's Ledger==nil no-op is intentional fail-open, matching
+// every other episodic write: recording happens independently of whether a
+// Postgres-backed ledger is configured, not only when one is present.
 func appendJudgeRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, passed bool, score float64, scored []ScoredRef) error {
 	if cfg.Ledger == nil {
 		return nil
 	}
-	id := fmt.Sprintf("%s-%d", turnID, round)
+	id := judgeRoundHint(turnID, nodeID, round)
 	payload, err := json.Marshal(struct {
 		ID     string      `json:"id"`
 		Passed bool        `json:"passed"`
@@ -624,8 +627,12 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				res.Feedback = fmt.Sprintf("Round %d %s (score %.2f) but could not be recorded in the write-ahead log; treating as failed.", round, verdictWord, v.Score)
 				break
 			}
-			// judge_round record (#1092): materializes the WAL entry just
-			// appended above - always after it, never before (§4.9 ordering).
+			// judge_round record (#1092): written right after the WAL entry
+			// above (§4.9 ordering), but independently of it - a nil cfg.Ledger
+			// made the WAL append a no-op just above, yet this record and both
+			// SSE events below still fire. Intentional fail-open, same as every
+			// other episodic write, not a bug: every non-Postgres deploy still
+			// gets the record even with no WAL to materialize.
 			jr := buildJudgeRoundRecord(turnID, round, res.Passed, res.Score, scored, v, det, answer)
 			jrID, _ := saveJudgeRoundRecord(nodeCtx, cfg, nodeID, turnID, round, jr)
 			for _, sr := range scored {

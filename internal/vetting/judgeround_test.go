@@ -5,7 +5,6 @@ package vetting
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -18,12 +17,13 @@ import (
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-func judgeRoundID(turnID string, round int) string {
-	id, err := recordstore.IdentityFor(kindJudgeRound, nil, fmt.Sprintf("%s-%d", turnID, round))
+func judgeRoundID(turnID, nodeID string, round int) string {
+	id, err := recordstore.IdentityFor(kindJudgeRound, nil, judgeRoundHint(turnID, nodeID, round))
 	if err != nil {
 		panic(err)
 	}
@@ -58,8 +58,8 @@ CLEAN:
 	if jr1ID == "" || jr1Rev != 1 {
 		t.Fatalf("round 1 judge_round save: id=%q rev=%d", jr1ID, jr1Rev)
 	}
-	if jr1ID != judgeRoundID(turnID, 1) {
-		t.Fatalf("judge_round id = %q, want %q", jr1ID, judgeRoundID(turnID, 1))
+	if jr1ID != judgeRoundID(turnID, cfg.NodeID, 1) {
+		t.Fatalf("judge_round id = %q, want %q", jr1ID, judgeRoundID(turnID, cfg.NodeID, 1))
 	}
 	st.triggerAnnotation = jr1ID // node.go's round-loop wiring
 
@@ -113,6 +113,77 @@ CLEAN:
 		if loaded.Scored[i] != want {
 			t.Fatalf("round 1 judge_round.Scored[%d] = %+v, want %+v", i, loaded.Scored[i], want)
 		}
+	}
+}
+
+// TestJudgeRoundIdentityIncludesNodeID is the BLOCKING #1092 adversarial
+// review finding: turnID (ctx.InvocationID()) is shared by every node in one
+// run, so two fan-out nodes' round 1 must not resolve to the same judge_round
+// id, WAL key, or clobber each other's revision.
+func TestJudgeRoundIdentityIncludesNodeID(t *testing.T) {
+	svc := newMetaAwareInMemory()
+	cfg := reviewerCfgWithArtifacts(t, svc, true)
+	fl := newFakeGateLedger()
+	cfg.Ledger = fl
+	turnID := "t7"
+
+	recA := JudgeRoundRecord{Turn: turnID, Round: 1, Passed: true, Score: 0.9}
+	recB := JudgeRoundRecord{Turn: turnID, Round: 1, Passed: false, Score: 0.1}
+
+	if err := appendJudgeRound(context.Background(), cfg, "review-1", turnID, 1, true, 0.9, nil); err != nil {
+		t.Fatalf("appendJudgeRound(review-1): %v", err)
+	}
+	if err := appendJudgeRound(context.Background(), cfg, "review-2", turnID, 1, false, 0.1, nil); err != nil {
+		t.Fatalf("appendJudgeRound(review-2): %v", err)
+	}
+	idA, revA := saveJudgeRoundRecord(context.Background(), cfg, "review-1", turnID, 1, recA)
+	idB, revB := saveJudgeRoundRecord(context.Background(), cfg, "review-2", turnID, 1, recB)
+	if idA == "" || idB == "" {
+		t.Fatalf("saveJudgeRoundRecord failed: idA=%q idB=%q", idA, idB)
+	}
+	if idA == idB {
+		t.Fatalf("round 1 ids for two different nodes must differ: both are %q", idA)
+	}
+	if idA != judgeRoundID(turnID, "review-1", 1) || idB != judgeRoundID(turnID, "review-2", 1) {
+		t.Fatalf("unexpected ids: idA=%q idB=%q", idA, idB)
+	}
+
+	// WAL keys (ledger.Entry.Key) for the judge.round kind must differ too, or
+	// the second append would clobber the first's WAL row for the same
+	// (chat, turn, round).
+	var judgeRoundKeys []string
+	for _, e := range fl.entries {
+		if e.Kind == ledger.KindJudgeRound {
+			judgeRoundKeys = append(judgeRoundKeys, e.Key)
+		}
+	}
+	if len(judgeRoundKeys) != 2 || judgeRoundKeys[0] == judgeRoundKeys[1] {
+		t.Fatalf("judge.round WAL keys must differ per node: %v", judgeRoundKeys)
+	}
+
+	// Each record must still load with its own (distinct) revision - neither
+	// node's round 1 clobbered the other's.
+	rc := recordClient(cfg)
+	rawA, _, gotRevA, ok, err := rc.LatestWithMeta(context.Background(), idA)
+	if err != nil || !ok || gotRevA != revA {
+		t.Fatalf("load idA: ok=%v err=%v rev=%d want %d", ok, err, gotRevA, revA)
+	}
+	rawB, _, gotRevB, ok, err := rc.LatestWithMeta(context.Background(), idB)
+	if err != nil || !ok || gotRevB != revB {
+		t.Fatalf("load idB: ok=%v err=%v rev=%d want %d", ok, err, gotRevB, revB)
+	}
+	var loadedA, loadedB JudgeRoundRecord
+	if err := json.Unmarshal(rawA, &loadedA); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(rawB, &loadedB); err != nil {
+		t.Fatal(err)
+	}
+	if loadedA.Passed != true || loadedA.Score != 0.9 {
+		t.Fatalf("node A's record was clobbered: %+v", loadedA)
+	}
+	if loadedB.Passed != false || loadedB.Score != 0.1 {
+		t.Fatalf("node B's record was clobbered: %+v", loadedB)
 	}
 }
 

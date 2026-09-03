@@ -64,11 +64,22 @@ func init() {
 	recordstore.Register(kindBytes, recordstore.KindSpec{Class: recordstore.Blob, Identity: contentOrHintIdentity})
 	recordstore.Register(kindJudgeRound, recordstore.KindSpec{
 		Class: recordstore.Structured,
-		// Instance = hint verbatim ("<turn_id>-<round>", #1090 §4.1) - the gate
-		// computes it, never derived from content, since two different rounds
-		// can otherwise judge byte-identical output.
+		// Instance = hint verbatim ("<turn_id>-<node_id>-<round>", #1092 design
+		// V4 §4.1/§4.3) - the gate computes it, never derived from content.
+		// turnID (ctx.InvocationID()) is shared by every node in a run, so
+		// node_id must be in the instance or two fan-out nodes' round 1 both
+		// resolve to the same id and clobber each other's revisions/WAL key.
 		Identity: func(_ []byte, hint string) (string, error) { return requireHint(hint) },
 	})
+}
+
+// judgeRoundHint builds the judge_round identity's instance (#1092 design V4
+// §4.1/§4.3): node_id must be included since turnID alone is shared by every
+// node in one run (dag/graph.go's InvocationID), so two fan-out nodes' round
+// 1 would otherwise collide. Shared by the WAL key (node.go) and the record's
+// own identity hint so both point at the same round.
+func judgeRoundHint(turnID, nodeID string, round int) string {
+	return fmt.Sprintf("%s-%s-%d", turnID, nodeID, round)
 }
 
 func requireHint(hint string) (string, error) {
@@ -333,8 +344,8 @@ type JudgeCriterion struct {
 }
 
 // NoteRef anchors a note to the exact artifact revision and line it
-// concerns. LineHint is a best-effort string-search result within the
-// referenced revision's own content, "" when Snippet wasn't found there.
+// concerns. LineHint is a best-effort string-search result, 0 when Snippet
+// wasn't found - never a stale/wrong guess (see buildJudgeRoundRecord).
 type NoteRef struct {
 	ArtifactID string `json:"artifact_id"`
 	Revision   int    `json:"revision"`
@@ -396,6 +407,13 @@ type JudgeClaim struct {
 // artifact - code_review or document) as the closest available revision
 // reference (#1090 §9 note anchoring; a criterion's own finer-grained
 // artifact isn't resolvable from the anchor alone).
+// ponytail: for a review node, primaryScored points at the code_review JSON
+// artifact, but the quote is searched in the raw answer text, not that
+// artifact's own serialized bytes - so review-node snippets are never found
+// there (LineHint stays 0) even when the quote is real. Works for document
+// nodes only, where answer IS the artifact's content. Upgrade path: search
+// the referenced revision's serialized content (fetch it via recordstore)
+// instead of answer.
 func buildJudgeRoundRecord(turnID string, round int, passed bool, score float64, scored []ScoredRef, v verdict, det map[string]criterionScore, answer string) JudgeRoundRecord {
 	rec := JudgeRoundRecord{Turn: turnID, Round: round, Passed: passed, Score: score, Scored: scored}
 
@@ -442,18 +460,21 @@ func buildJudgeRoundRecord(turnID string, round int, passed bool, score float64,
 	return rec
 }
 
-// saveJudgeRoundRecord writes rec as this round's judge_round revision,
-// AFTER the caller has already appended the judge.round WAL entry (#1092
-// scope: the record is a materialization of that entry, same ordering rule
-// artifact.revision entries already follow). Returns the saved id/revision,
-// "" if there's no artifact client or the save failed - fail-open, matching
-// every other episodic write in this file.
+// saveJudgeRoundRecord writes rec as this round's judge_round revision, AFTER
+// the caller has already appended the judge.round WAL entry (#1092 scope:
+// same ordering rule artifact.revision entries already follow) - but this
+// write happens independently of whether that WAL append actually did
+// anything. A nil cfg.Ledger makes the WAL append a no-op, yet this record
+// still gets written: recording is intentional fail-open, not gated on
+// ledger presence. Returns the saved id/revision, "" if there's no artifact
+// client or the save failed - fail-open, matching every other episodic write
+// in this file.
 func saveJudgeRoundRecord(ctx context.Context, cfg Config, nodeID, turnID string, round int, rec JudgeRoundRecord) (id string, revision int) {
 	c := recordClient(cfg)
 	if c == nil {
 		return "", 0
 	}
-	hint := fmt.Sprintf("%s-%d", turnID, round)
+	hint := judgeRoundHint(turnID, nodeID, round)
 	lineage := recordstore.Lineage{NodeID: nodeID, Round: round, HeadSHA: cfg.NodeBaseSHA, SavedAt: time.Now().UTC(), Author: "judge", TurnID: turnID}
 	id, rev, err := c.SaveStructured(ctx, kindJudgeRound, rec, hint, lineage)
 	if err != nil {
