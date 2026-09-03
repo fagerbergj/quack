@@ -54,7 +54,7 @@ func TestBuildRevisionContentBounded(t *testing.T) {
 		act.workspace = append(act.workspace, wsOp{tool: "read_file", detail: huge('L', 400), sample: huge('S', 300)})
 	}
 
-	got := contentPlainText(buildRevisionContent("principles", question, answer, env, act, false))
+	got := contentPlainText(buildRevisionContent("principles", question, answer, env, act, false, nil))
 
 	// Fixed scaffolding (directive + principles + labels) plus the four capped
 	// sections plus the markers - comfortably under a documented ceiling.
@@ -72,7 +72,7 @@ func TestBuildRevisionContentBounded(t *testing.T) {
 		Passed: false, Score: 0, Threshold: 0.7, Scoring: scoringLowestCriterion, Round: 1,
 		JudgeFailures: []failureEntry{{Criterion: criterionSpec{Name: "x"}, Shortfall: "be precise"}},
 	}
-	small := contentPlainText(buildRevisionContent("", smallQ, "4", smallEnv, workerActivity{}, false))
+	small := contentPlainText(buildRevisionContent("", smallQ, "4", smallEnv, workerActivity{}, false, nil))
 	if strings.Contains(small, "truncated to fit the context window") {
 		t.Fatalf("small revise inputs were needlessly truncated: %q", small)
 	}
