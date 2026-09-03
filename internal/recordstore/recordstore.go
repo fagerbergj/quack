@@ -110,6 +110,12 @@ func Register(kind string, spec KindSpec) {
 	if spec.Identity == nil {
 		panic("recordstore: kind " + kind + " registered with no Identity func")
 	}
+	if spec.Class == Structured && spec.JSONSchema == "" {
+		// An empty schema on a structured kind survives startup but then makes
+		// the two write_<kind> generators diverge - MCP Warns-and-skips, ADK
+		// hard-fails the whole run (#1108 L1) - so reject it here instead.
+		panic("recordstore: kind " + kind + " registered as structured without a JSONSchema")
+	}
 	if spec.JSONSchema != "" {
 		var schema jsonschema.Schema
 		if err := json.Unmarshal([]byte(spec.JSONSchema), &schema); err != nil {
@@ -657,12 +663,18 @@ func (c *Client) Edit(ctx context.Context, id string, baseRevision int, ops []Ed
 
 // Kinds returns every registered structured kind's name and JSONSchema, for
 // #1091's generated write_<kind> tools - one per structured kind.
-func Kinds() []KindSpec {
+func Kinds() []KindSpec { return KindsForClass(Structured) }
+
+// KindsForClass returns every registered spec of class, name populated,
+// sorted by name - the only enumerator that can see Blob kinds (Kinds() only
+// ever returned Structured, so write_artifact's kind list rendered empty;
+// #1108 finding 2 regression).
+func KindsForClass(class Class) []KindSpec {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 	out := make([]KindSpec, 0, len(registry))
 	for name, spec := range registry {
-		if spec.Class != Structured {
+		if spec.Class != class {
 			continue
 		}
 		spec.name = name

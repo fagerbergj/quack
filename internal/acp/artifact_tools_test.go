@@ -367,6 +367,21 @@ func TestWriteArtifactMCP_Blob(t *testing.T) {
 	}
 }
 
+// TestWriteArtifactDescription_ListsBlobKinds: the write_artifact tool
+// description must name every registered blob kind (#1108 B1 - Kinds() used
+// to return structured kinds only, so this list silently rendered empty).
+func TestWriteArtifactDescription_ListsBlobKinds(t *testing.T) {
+	desc := writeArtifactDescription()
+	for _, spec := range recordstore.KindsForClass(recordstore.Blob) {
+		if !strings.Contains(desc, spec.Name()) {
+			t.Errorf("write_artifact description = %q, want it to name blob kind %q", desc, spec.Name())
+		}
+	}
+	if len(recordstore.KindsForClass(recordstore.Blob)) == 0 {
+		t.Fatal("no blob kinds registered - test can't verify the list is non-empty")
+	}
+}
+
 // TestWriteCodeReviewMCP_UsesSessionSubjectHint: write_code_review (#1108
 // finding 1) must succeed for a github-derived chat id and mint exactly the
 // id vetting.SubjectHint + code_review's Identity func (requireHint) produce -

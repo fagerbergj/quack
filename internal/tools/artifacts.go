@@ -82,7 +82,8 @@ func NewEditArtifactTool(c *recordstore.Client, nodeID string, coords RoundCoord
 			Name: "edit_artifact",
 			Description: "Edit an existing artifact by search/replace. Optimistic locking: if base_revision is stale, " +
 				"your edits are still applied to the current latest content as long as each `old` string still matches " +
-				"exactly once; a real conflict fails and returns the current content and revision to retry against.",
+				"exactly once; a real conflict fails and returns the current content and revision to retry against. " +
+				"Structured artifacts are re-validated before the write.",
 		},
 		func(ctx agent.Context, a editArtifactArgs) (string, error) {
 			if len(a.Edits) == 0 {
@@ -130,10 +131,8 @@ type writeArtifactArgs struct {
 // actually holds (#1108 finding 2, mirrors internal/acp/memorymcp.go).
 func writeArtifactDescription() string {
 	var kinds []string
-	for _, spec := range recordstore.Kinds() {
-		if spec.Class == recordstore.Blob {
-			kinds = append(kinds, spec.Name())
-		}
+	for _, spec := range recordstore.KindsForClass(recordstore.Blob) {
+		kinds = append(kinds, spec.Name())
 	}
 	return fmt.Sprintf("Write a new revision of a blob artifact (%s - not a structured kind; use write_<kind> for those). The registry derives the id.", strings.Join(kinds, ", "))
 }

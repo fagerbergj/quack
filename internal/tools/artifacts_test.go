@@ -117,6 +117,22 @@ func TestNewWriteKindTools_EveryKindRegistersWithoutError(t *testing.T) {
 	}
 }
 
+// TestWriteArtifactDescription_ListsBlobKinds: the write_artifact tool
+// description must name every registered blob kind (#1108 B1 - Kinds() used
+// to return structured kinds only, so this list silently rendered empty).
+func TestWriteArtifactDescription_ListsBlobKinds(t *testing.T) {
+	desc := writeArtifactDescription()
+	blobKinds := recordstore.KindsForClass(recordstore.Blob)
+	if len(blobKinds) == 0 {
+		t.Fatal("no blob kinds registered - test can't verify the list is non-empty")
+	}
+	for _, spec := range blobKinds {
+		if !strings.Contains(desc, spec.Name()) {
+			t.Errorf("write_artifact description = %q, want it to name blob kind %q", desc, spec.Name())
+		}
+	}
+}
+
 // TestNewEditArtifactTool_ConflictIsStructuredSuccess: edit_artifact was
 // already a success (not a tool error) on the ADK surface for a real
 // conflict; this pins the JSON payload shape ({"conflict":true,"revision":N,

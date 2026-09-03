@@ -225,10 +225,8 @@ type writeArtifactInput struct {
 // actually holds (#1108 finding 2).
 func writeArtifactDescription() string {
 	var kinds []string
-	for _, spec := range recordstore.Kinds() {
-		if spec.Class == recordstore.Blob {
-			kinds = append(kinds, spec.Name())
-		}
+	for _, spec := range recordstore.KindsForClass(recordstore.Blob) {
+		kinds = append(kinds, spec.Name())
 	}
 	return fmt.Sprintf("Write a new revision of a blob artifact (%s - not a structured kind; use write_<kind> for those). The registry derives the id.", strings.Join(kinds, ", "))
 }

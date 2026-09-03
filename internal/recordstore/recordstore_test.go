@@ -75,7 +75,8 @@ func hintIdentity(_ []byte, hint string) (string, error) { return hint, nil }
 
 func init() {
 	Register("test.structured", KindSpec{
-		Class: Structured,
+		Class:      Structured,
+		JSONSchema: `{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"integer"}}}`,
 		Validate: func(raw json.RawMessage) error {
 			var d doc
 			if err := json.Unmarshal(raw, &d); err != nil {
@@ -748,6 +749,28 @@ func TestRegisterPanicsOnInvalidJSONSchema(t *testing.T) {
 		Class:      Structured,
 		JSONSchema: `{not valid json`,
 		Identity:   func(_ []byte, hint string) (string, error) { return hint, nil },
+	})
+}
+
+// TestRegisterPanicsOnEmptySchemaForStructuredKind: #1108 L1 - an empty
+// JSONSchema on a structured kind used to pass Register (the "" guard was
+// meant for blob kinds, which have no schema), then made MCP silently skip
+// the write_<kind> tool while ADK hard-failed the whole run for the same
+// registry state. Reject it at registration instead, same as an invalid one.
+func TestRegisterPanicsOnEmptySchemaForStructuredKind(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("Register did not panic on a structured kind with an empty JSONSchema")
+		}
+		msg, _ := r.(string)
+		if !containsAll(msg, "test_empty_schema_kind", "without a JSONSchema") {
+			t.Fatalf("panic message = %q, want it to name the kind and the problem", msg)
+		}
+	}()
+	Register("test_empty_schema_kind", KindSpec{
+		Class:    Structured,
+		Identity: func(_ []byte, hint string) (string, error) { return hint, nil },
 	})
 }
 
