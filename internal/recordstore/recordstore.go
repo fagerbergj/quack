@@ -205,20 +205,27 @@ func (c *Client) WithLedger(store ledger.LedgerStore) *Client {
 	return c
 }
 
-// revisionLocks/revisionLockFor: a process-local per-(chat,id) mutex, held
-// around read-parent + AppendIntent + saveRow so the WAL's next revision and
-// the store's assigned revision are computed under the same lock. The key is
-// deliberately COARSER than the store's own four-part lock key (appName +
-// userID + sessionID + name, internal/store/artifact.go's
-// artifactRevisionLocks) - sessionID (chat) + id is a superset of what the
-// store serializes. Do not "fix" this toward the finer key: two different
-// users' saves under the same (chat, id) must still serialize here, or their
-// WAL entries can race the same way a same-user race would, breaking the
-// parent chain.
-var revisionLocks sync.Map // key -> *sync.Mutex
+// idLocks/lockFor: the ONE process-local per-(chat,id) mutex serializing
+// revision allocation for an id - held across read-parent, WAL append, edit
+// merge and row write (#1107 consolidates what used to be three separate
+// locks: this one, a second recordstore map keyed the same way around
+// saveLocked's WAL section, and internal/store's own four-part
+// artifactRevisionLocks). The key is deliberately COARSER than a
+// (appName, userID, sessionID, id) key: sessionID (chat) + id is a superset
+// of what the store serializes. Do not "fix" this toward the finer key: two
+// different users' saves under the same (chat, id) must still serialize
+// here, or their WAL entries can race the same way a same-user race would,
+// breaking the parent chain.
+//
+// ponytail: process-local only - fine for quack's single-process server.
+// Cross-process (a second replica) needs a Postgres advisory lock keyed on
+// (app, user, session, id) via pg_advisory_xact_lock(hashtext(...)); until
+// then internal/store's retry-on-duplicate-key loop is the safety net for a
+// direct artifact.Service caller racing across processes.
+var idLocks sync.Map // "chatID\x00id" -> *sync.Mutex
 
-func revisionLockFor(chatID, id string) *sync.Mutex {
-	v, _ := revisionLocks.LoadOrStore(chatID+"\x00"+id, &sync.Mutex{})
+func (c *Client) lockFor(id string) *sync.Mutex {
+	v, _ := idLocks.LoadOrStore(c.sessionID+"\x00"+id, &sync.Mutex{})
 	return v.(*sync.Mutex)
 }
 
@@ -279,15 +286,13 @@ func (c *Client) save(ctx context.Context, id, kind string, class Class, mime st
 	return c.saveLocked(ctx, id, kind, class, mime, data, lineage)
 }
 
+// saveLocked does the write, assuming the caller already holds id's lockFor
+// mutex (save and Edit both do) - never call this directly. Held across
+// read-parent + AppendIntent + saveRow: otherwise two concurrent saves for
+// the same id can both read the same parent and both claim the same next
+// revision in the WAL (adversarial review finding on #1100).
 func (c *Client) saveLocked(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage) (int, error) {
 	if c.ledgerStore != nil {
-		// Held across read-parent + AppendIntent + saveRow: otherwise two
-		// concurrent saves for the same id can both read the same parent and
-		// both claim the same next revision in the WAL (adversarial review
-		// finding on #1100).
-		mu := revisionLockFor(c.sessionID, id)
-		mu.Lock()
-		defer mu.Unlock()
 		parentRev, err := lastRevision(ctx, c.ledgerStore, c.sessionID, id)
 		if err != nil {
 			return 0, fmt.Errorf("recordstore: read ledger parent revision for %s: %w", id, err)
@@ -576,18 +581,6 @@ type EditConflict struct {
 
 func (e *EditConflict) Error() string {
 	return fmt.Sprintf("recordstore: edit %s: no unique match against revision %d", e.ID, e.Revision)
-}
-
-// idLocks serializes revision allocation per (session, id) so two concurrent
-// editors of the same artifact never race to the same next revision number -
-// ponytail: process-local mutex, fine for quack's single-process server;
-// upgrade to a DB-level lock only if a second server process joins.
-var idLocks sync.Map // "app/user/session/id" -> *sync.Mutex
-
-func (c *Client) lockFor(id string) *sync.Mutex {
-	key := c.appName + "/" + c.userID + "/" + c.sessionID + "/" + id
-	v, _ := idLocks.LoadOrStore(key, &sync.Mutex{})
-	return v.(*sync.Mutex)
 }
 
 // applyEdits applies ops to content in order; each Old must appear exactly
