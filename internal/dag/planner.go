@@ -15,6 +15,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/otelobs"
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -88,10 +89,35 @@ type RawNode struct {
 	DependsOn []string `json:"depends_on"`
 	Checks    []string `json:"checks,omitempty"`
 	Workdir   string   `json:"workdir,omitempty"`
-	// Artifact: episodic record name this node writes on gate pass (#1006).
-	// Only ever set by workflowcatalog.Bind from config.WorkflowNode.Artifact -
-	// the LLM planner never emits this field.
+	// Artifact: registered recordstore kind this node's output is saved as on
+	// gate pass (#1006). Set either by workflowcatalog.Bind from
+	// config.WorkflowNode.Artifact or directly by the LLM planner - assemble
+	// validates it against ArtifactKindNames() either way (#1128: a planner
+	// once put free text here, which reached SaveBlob and errored unregistered).
 	Artifact string `json:"artifact,omitempty"`
+}
+
+// ArtifactKindNames returns the sorted names of every registered blob-class
+// recordstore kind - the closed set a node's `artifact` field may select,
+// since saveDocumentRound writes it via SaveBlob (#1128).
+func ArtifactKindNames() []string {
+	specs := recordstore.KindsForClass(recordstore.Blob)
+	names := make([]string, len(specs))
+	for i, s := range specs {
+		names[i] = s.Name()
+	}
+	return names
+}
+
+// validateArtifactKind rejects an artifact selector that isn't one of
+// ArtifactKindNames() - the planner-facing guard for #1128.
+func validateArtifactKind(kind string) error {
+	for _, name := range ArtifactKindNames() {
+		if name == kind {
+			return nil
+		}
+	}
+	return fmt.Errorf("artifact %q is not a registered kind; valid kinds: %s", kind, strings.Join(ArtifactKindNames(), ", "))
 }
 
 // Build: validates submitted nodes into a Plan and stamps turn context.
@@ -323,6 +349,11 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 		}
 		if len(n.Checks) > 0 {
 			if err := validateChecks(n.Checks, checkCommands); err != nil {
+				return nil, fmt.Errorf("node %q: %w", n.ID, err)
+			}
+		}
+		if n.Artifact != "" {
+			if err := validateArtifactKind(n.Artifact); err != nil {
 				return nil, fmt.Errorf("node %q: %w", n.ID, err)
 			}
 		}
