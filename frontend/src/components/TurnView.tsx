@@ -3,6 +3,7 @@ import { AssistantText, ActivityList, BubbleHeader } from './AgentParts'
 import { QuestionBubble } from './QuestionBubble'
 import { DagView, DagBubbleHeader } from './DagView'
 import { TriggerMessage } from './TriggerEnvelope'
+import { AttachmentPreviews, type AttachmentPreview } from './AttachmentUI'
 import { dagFromTurn, textFromTurn, activityFromTurn, dagAnswerAttribution, plainReplyAttribution, dagTurnStateFromItem } from '../state/chatStore'
 import { pendingChoice, type Activity } from './messageParts'
 import type { Turn } from '../generated'
@@ -30,6 +31,10 @@ export interface TurnViewProps {
   // so a GitHub trigger's <comments> section can accumulate this turn's delta onto
   // the running history instead of showing just this trigger's slice (#730).
   priorContents: string[]
+  // #1138: this turn's attached images, resolved from the chat's own artifact
+  // store (turn_id-tagged revisions) - undefined/empty means no thumbnail,
+  // never an error state.
+  imageAttachments?: AttachmentPreview[]
   onChoice: (option: string) => void
   onCopy: (key: string, text: string) => void
   onDownload: (text: string, idx: number) => void
@@ -39,7 +44,7 @@ export interface TurnViewProps {
 // this stops re-rendering (and re-parsing markdown/DAG) on every streaming token of
 // a later turn - the props only change for the one turn being copied/answered.
 export const TurnView = memo(function TurnView({
-  turn, idx, chatId, choiceAnswer, isChoiceAnswer, submittingChoice, isCopied, priorContents, onChoice, onCopy, onDownload,
+  turn, idx, chatId, choiceAnswer, isChoiceAnswer, submittingChoice, isCopied, priorContents, imageAttachments, onChoice, onCopy, onDownload,
 }: TurnViewProps) {
   const dagItem = dagFromTurn(turn)
   const dagState = dagItem ? dagTurnStateFromItem(dagItem) : undefined
@@ -63,7 +68,11 @@ export const TurnView = memo(function TurnView({
           turn has no typed message, just its synthesized task (rendered in
           the DAG bubble below), so there's nothing for this bubble to show. */}
       {!isChoiceAnswer && turn.input.content && (
-        <TriggerMessage content={turn.input.content} priorContents={priorContents} />
+        <TriggerMessage
+          content={turn.input.content}
+          priorContents={priorContents}
+          attachments={imageAttachments?.length ? <AttachmentPreviews previews={imageAttachments} /> : undefined}
+        />
       )}
       {/* Assistant response: DAG bubble → answer bubble, as siblings */}
       <div className="flex justify-start">

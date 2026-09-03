@@ -15,6 +15,7 @@ import { AttachmentPreviews } from '../components/AttachmentUI'
 import { GitHubLink } from '../components/GitHubLink'
 import { TriggerMessage } from '../components/TriggerEnvelope'
 import { ChatMenu } from '../components/ChatMenu'
+import { imageAttachmentsByTurn } from '../lib/turnAttachments'
 
 // liveDagFinalText extracts the answer from the terminal node's accumulated answer.
 // This IS the DAG turn's answer - never mix in the orchestrator's own top-level
@@ -204,6 +205,11 @@ export default function Chat() {
   const [submittingChoice, setSubmittingChoice] = useState(false)
   const [liveAttachmentPreviews, setLiveAttachmentPreviews] = useState<{url: string; mime: string; name: string}[]>([])
   const scrollRef = useRef<HTMLDivElement>(null)
+  // #1138: turn_id -> image previews, from this chat's own artifact store -
+  // lets a persisted turn show a real thumbnail instead of only the
+  // "[User attached: ...]" text placeholder. Best-effort: an empty/failed
+  // fetch just means no turn gets a thumbnail, never an error state.
+  const [turnImages, setTurnImages] = useState<Record<string, { url: string; mime: string; name: string }[]>>({})
 
   // Open a chat scrolled to the latest message (and snap down as turns complete),
   // not pinned to the top of a long history. Keyed on turn count so it fires after
@@ -338,6 +344,20 @@ export default function Chat() {
       cancelled = true
       store.detachStream(activeChatId)
     }
+  }, [activeChatId])
+
+  // #1138: fetch this chat's artifact list once per chat to build the
+  // turn -> image-thumbnail map. Separate from the getChat effect above -
+  // this is a nice-to-have preview, not something a failure should block
+  // seeding turns on.
+  useEffect(() => {
+    setTurnImages({})
+    if (!activeChatId) return
+    let cancelled = false
+    api.listChatArtifacts(activeChatId).then(artifacts => {
+      if (!cancelled) setTurnImages(imageAttachmentsByTurn(activeChatId, artifacts))
+    }).catch(() => {})
+    return () => { cancelled = true }
   }, [activeChatId])
 
  // #499/#738: poll the chat list so the sidebar stays current without a refresh. Skipped
@@ -540,8 +560,8 @@ export default function Chat() {
     // Earlier turns' raw envelope text, oldest first - lets this turn's
     // TriggerMessage fold a GitHub <comments> delta onto the running history (#730).
     const priorContents = arr.slice(0, idx).map(t => t.input.content)
-    return { turn, idx, choiceAnswer, isChoiceAnswer, priorContents }
-  }), [state.turns, liveUserText])
+    return { turn, idx, choiceAnswer, isChoiceAnswer, priorContents, imageAttachments: turnImages[turn.id] }
+  }), [state.turns, liveUserText, turnImages])
 
   // The live turn is a clarification answer when the last completed turn asked one.
   const lastTurn = state.turns[state.turns.length - 1]
@@ -648,7 +668,7 @@ export default function Chat() {
             </div>
           )}
 
-          {turnViews.map(({ turn, idx, choiceAnswer, isChoiceAnswer, priorContents }) => (
+          {turnViews.map(({ turn, idx, choiceAnswer, isChoiceAnswer, priorContents, imageAttachments }) => (
             <TurnView
               key={turn.id}
               turn={turn}
@@ -659,6 +679,7 @@ export default function Chat() {
               submittingChoice={submittingChoice}
               isCopied={copied === `turn-${turn.id}`}
               priorContents={priorContents}
+              imageAttachments={imageAttachments}
               onChoice={handleChoice}
               onCopy={handleCopy}
               onDownload={handleDownload}

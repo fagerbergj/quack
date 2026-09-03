@@ -1,27 +1,86 @@
+import { useRef } from 'react'
+
 export type AttachmentItem = { file: File; url: string }
 
 export type AttachmentPreview = { url: string; mime: string; name: string }
 
-/** Compact collapsible chip shown in the user message bubble. */
+// ImageThumbnail (#1138) is the one place an attached image renders: a
+// bounded, object-fit thumbnail that opens the full-size image in a native
+// <dialog> on click - shared by the composer's staged-file strip and the
+// message-bubble preview so both look and behave the same way.
+function ImageThumbnail({
+  src, alt, className = 'h-16 w-16',
+}: {
+  src: string
+  alt: string
+  className?: string
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => dialogRef.current?.showModal()}
+        aria-label={`View ${alt} full size`}
+        title={alt}
+        className={`block rounded-lg overflow-hidden border border-gray-300 dark:border-gray-600 ${className}`}
+      >
+        <img src={src} alt={alt} className="h-full w-full object-cover" />
+      </button>
+      {/* Native <dialog> per the epic's dialogs-become-sheets guidance - full-
+          viewport backdrop, Esc/backdrop-click close for free. */}
+      <dialog
+        ref={dialogRef}
+        aria-label={alt}
+        className="max-w-[92vw] max-h-[92vh] bg-transparent p-0 backdrop:bg-black/70"
+        onClick={e => { if (e.target === dialogRef.current) dialogRef.current?.close() }}
+      >
+        <div className="relative">
+          <img src={src} alt={alt} className="max-w-[92vw] max-h-[92vh] object-contain" />
+          <button
+            type="button"
+            onClick={() => dialogRef.current?.close()}
+            aria-label="Close"
+            className="absolute top-2 right-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full bg-black/60 text-white text-xl"
+          >
+            ×
+          </button>
+        </div>
+      </dialog>
+    </>
+  )
+}
+
+/** Attachments shown in the user message bubble: real thumbnails for images
+    (click to view full size), a text chip for anything else. Always visible -
+    no longer hidden behind a collapsed <details>, since an image the user
+    can't see defeats the point (#1138). */
 export function AttachmentPreviews({ previews }: { previews: AttachmentPreview[] }) {
   if (!previews.length) return null
-  const label = previews.length === 1 ? '1 attachment' : `${previews.length} attachments`
+  const images = previews.filter(p => p.mime.startsWith('image/'))
+  const others = previews.filter(p => !p.mime.startsWith('image/'))
   return (
-    <details className="mb-2 text-xs text-blue-100">
-      <summary className="cursor-pointer select-none opacity-80 hover:opacity-100">
-        📎 {label}
-      </summary>
-      <ul className="mt-1 ml-4 space-y-0.5 opacity-90">
-        {previews.map((p, i) => (
-          <li key={i} className="truncate max-w-xs">
-            {p.mime.startsWith('image/') ? '🖼' : '🎵'}{' '}
-            <a href={p.url} download={p.name} className="underline underline-offset-2 hover:opacity-100">
-              {p.name}
-            </a>
-          </li>
-        ))}
-      </ul>
-    </details>
+    <div className="mb-2 space-y-1.5">
+      {images.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {images.map((p, i) => (
+            <ImageThumbnail key={i} src={p.url} alt={p.name} />
+          ))}
+        </div>
+      )}
+      {others.length > 0 && (
+        <ul className="space-y-0.5 text-xs text-blue-100 opacity-90">
+          {others.map((p, i) => (
+            <li key={i} className="truncate max-w-xs">
+              🎵{' '}
+              <a href={p.url} download={p.name} className="underline underline-offset-2 hover:opacity-100">
+                {p.name}
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }
 
@@ -39,8 +98,7 @@ export function AttachmentStrip({
       {attachments.map((a, i) => (
         <div key={i} className="relative group">
           {a.file.type.startsWith('image/') ? (
-            <img src={a.url} alt={a.file.name}
-              className="h-16 w-16 object-cover rounded-lg border border-gray-300 dark:border-gray-600" />
+            <ImageThumbnail src={a.url} alt={a.file.name} className="h-16 w-16" />
           ) : (
             <div className="h-16 w-24 flex items-center justify-center rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-xs text-gray-500 dark:text-gray-400 px-1 text-center">
               {a.file.name}
