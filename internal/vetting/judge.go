@@ -1015,6 +1015,8 @@ func buildRevisionContent(constitution string, question *genai.Content, answer s
 		sb.WriteString("An independent reviewer evaluated your previous answer and it must be improved before it can be returned. " +
 			"Below is the structured verdict: each failing criterion's definition, scoring bands, and (where locatable) an anchor into your answer, plus a concrete fix. " +
 			"Address every failure - use your tools to fix the gaps: re-fetch and verify sources, correct or remove unsupported claims, add missing citations. " +
+			"If you wrote any artifact last round (list_artifacts shows your prior revision), read_artifact it and edit_artifact the specific parts this verdict flags - " +
+			"don't regenerate it from scratch; write_<kind> stays available as a full-replace fallback when an edit genuinely doesn't fit. " +
 			"If you're unsure how to address this feedback, consult your advisor (ask_advisor) before revising - it knows this task's goal and can help you tell what actually needs to change. " +
 			"Then output only the corrected answer with no preamble or commentary.\n\n")
 	}
