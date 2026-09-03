@@ -136,10 +136,11 @@ func (s *FSStore) AppendIntent(ctx context.Context, entry Entry) (int64, error) 
 	if entry.ChatID == "" || entry.Kind == "" {
 		return 0, fmt.Errorf("ledger: intent needs chat_id and kind")
 	}
-	s.seqMu.Lock()
-	s.seqs[entry.ChatID]++
-	entry.Seq = s.seqs[entry.ChatID]
-	s.seqMu.Unlock()
+	seq, err := s.nextIntentSeq(ctx, entry.ChatID)
+	if err != nil {
+		return 0, err
+	}
+	entry.Seq = seq
 
 	if entry.At.IsZero() {
 		entry.At = time.Now().UTC()
@@ -152,6 +153,30 @@ func (s *FSStore) AppendIntent(ctx context.Context, entry Entry) (int64, error) 
 		return 0, err
 	}
 	return entry.Seq, nil
+}
+
+// nextIntentSeq lazily seeds a chat's in-memory counter from the file's own
+// max seq the first time it's touched in this process - otherwise a
+// restart would restart every chat's seq at 1 and collide with whatever
+// seq numbers are already on disk.
+func (s *FSStore) nextIntentSeq(ctx context.Context, chatID string) (int64, error) {
+	s.seqMu.Lock()
+	defer s.seqMu.Unlock()
+	if _, seeded := s.seqs[chatID]; !seeded {
+		existing, err := s.ReadEntries(ctx, chatID, 0)
+		if err != nil {
+			return 0, err
+		}
+		var max int64
+		for _, e := range existing {
+			if e.Seq > max {
+				max = e.Seq
+			}
+		}
+		s.seqs[chatID] = max
+	}
+	s.seqs[chatID]++
+	return s.seqs[chatID], nil
 }
 
 // ReadEntries decodes each JSONL line as an Entry, skipping lines that

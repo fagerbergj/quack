@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"time"
 
@@ -185,6 +186,12 @@ func (s *PGStore) ReadStream(ctx context.Context, sessionID string) (io.ReadClos
 		Where("chat_id = ?", sessionID).
 		Order("seq asc").Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("ledger: read stream for chat %q: %w", sessionID, err)
+	}
+	if len(rows) == 0 {
+		// Match FSStore: a chat with no recording (never ran, GC'd, or
+		// recording was off) is fs.ErrNotExist, not an empty stream - the
+		// GetChatRecording handler's 404 depends on errors.Is matching.
+		return nil, fmt.Errorf("ledger: no recording for chat %q: %w", sessionID, fs.ErrNotExist)
 	}
 	var buf bytes.Buffer
 	for _, r := range rows {

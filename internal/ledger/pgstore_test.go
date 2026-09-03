@@ -3,8 +3,10 @@ package ledger
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"strings"
 	"sync"
 	"testing"
@@ -184,6 +186,19 @@ func TestPGStoreReadEntriesReturnsInOrder(t *testing.T) {
 	}
 	if len(fromMiddle) != 1 || fromMiddle[0].Seq != lastSeq {
 		t.Errorf("ReadEntries fromSeq=%d = %+v, want exactly seq %d", lastSeq, fromMiddle, lastSeq)
+	}
+}
+
+// TestPGStoreReadStreamUnknownChatIsErrNotExist: a chat with zero rows must
+// look like FSStore's missing file to callers checking errors.Is(err,
+// fs.ErrNotExist) - GetChatRecording's 404 depends on this, not on the
+// stream merely being empty.
+func TestPGStoreReadStreamUnknownChatIsErrNotExist(t *testing.T) {
+	t.Parallel()
+	store := newTestPGStore(t)
+	_, err := store.ReadStream(context.Background(), "never-recorded")
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("ReadStream unknown chat err = %v, want fs.ErrNotExist", err)
 	}
 }
 
