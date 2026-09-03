@@ -237,7 +237,11 @@ func recordClient(cfg Config) *recordstore.Client {
 	if cfg.Artifacts == nil || cfg.ChatID == "" {
 		return nil
 	}
-	return recordstore.New(cfg.Artifacts, artifactref.AppName, cfg.User, cfg.ChatID)
+	c := recordstore.New(cfg.Artifacts, artifactref.AppName, cfg.User, cfg.ChatID)
+	if cfg.Ledger != nil {
+		c = c.WithLedger(cfg.Ledger)
+	}
+	return c
 }
 
 func splitFirstSentence(s string) (title, rest string) {
@@ -308,6 +312,18 @@ type episodicRoundState struct {
 	findingRev   map[string]int           // every finding id ever seen -> its last WRITTEN revision
 	reviewRev    int
 	documentRev  int
+	// roundWrites: ids+revisions this call to saveEpisodicRound actually
+	// wrote (reset each call) - feeds the gate's judge.round WAL entry
+	// (#1100 scope item 2: "scored" = the code_review/finding ids this
+	// round wrote).
+	roundWrites []ScoredRef
+}
+
+// ScoredRef is one artifact revision a judge round scored (#1090 §4.9
+// judge.round payload's "scored" list).
+type ScoredRef struct {
+	ArtifactID string `json:"artifact_id"`
+	Revision   int    `json:"revision"`
 }
 
 // loadEpisodicRoundState seeds state from the store for a fresh invocation
@@ -362,6 +378,7 @@ func saveEpisodicRound(ctx context.Context, cfg Config, nodeID, turnID string, r
 	if st == nil {
 		st = loadEpisodicRoundState(ctx, cfg)
 	}
+	st.roundWrites = nil
 	if cfg.IsReviewer {
 		saveCodeReviewRound(ctx, cfg, nodeID, turnID, round, answer, staged, st)
 	}
@@ -464,6 +481,7 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 		}
 		st.findingRev[id] = rev
 		st.findingState[id] = rec.State
+		st.roundWrites = append(st.roundWrites, ScoredRef{ArtifactID: id, Revision: rev})
 	}
 
 	// Findings the worker already wrote directly via write_finding this
@@ -538,6 +556,9 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 		return
 	}
 	st.reviewRev = rev
+	if id, idErr := recordstore.IdentityFor(kindCodeReview, nil, subjectHint(cfg.ChatID)); idErr == nil {
+		st.roundWrites = append(st.roundWrites, ScoredRef{ArtifactID: id, Revision: rev})
+	}
 }
 
 // saveDocumentRound saves one "document" (or other blob-kind) revision per
