@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -27,6 +28,7 @@ import (
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/otelobs"
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/server"
@@ -119,12 +121,11 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, or
 
 		var extHolder atomic.Pointer[extsdk.Extension]
 		host := extsdk.Host{
-			Dispatch: newExtDispatch(name, orchRef, st, hub, &extHolder, shapes, artifacts),
-			Log:      slog.Default().With("component", "ext."+name),
-			DataDir:  dataDir,
-			EnsureContextDir: func(userID, chatID string) (string, error) {
-				return jail.EnsureDir(userID, chatID, workspace.ContextDirScope)
-			},
+			Dispatch:      newExtDispatch(name, orchRef, st, hub, &extHolder, shapes, artifacts),
+			Log:           slog.Default().With("component", "ext."+name),
+			DataDir:       dataDir,
+			ReadArtifact:  readExtInputArtifact(st, artifacts),
+			WriteArtifact: writeExtInputArtifact(st, artifacts),
 			ChatUser: func(chatID string) (string, bool) {
 				u := st.SessionUserForChat(context.Background(), chatID)
 				return u, u != ""
@@ -467,6 +468,70 @@ func toDagContextItems(items []extsdk.NamedContext) []dag.ContextItem {
 		out[i] = dag.ContextItem{Name: it.Name, Detail: it.Detail}
 	}
 	return out
+}
+
+// inputArtifactKind is the recordstore kind every dispatch input artifact is
+// saved under (#1010 P3) - callers address them by name alone (ReadArtifact/
+// WriteArtifact take no kind), so the kind must be the same constant on both
+// the read and write side regardless of mime; "bytes" is the generic blob
+// kind already registered by internal/vetting/reviewrecord.go.
+const inputArtifactKind = "bytes"
+
+// inputArtifactLineage stamps every dispatch input artifact the same way:
+// author=dispatch (#1090 §4.3), no parent chain - inputs are never revised
+// mid-run, only re-seeded on the next dispatch.
+func inputArtifactLineage() recordstore.Lineage {
+	return recordstore.Lineage{Author: "dispatch", SavedAt: time.Now()}
+}
+
+// readExtInputArtifact backs Host.ReadArtifact: the latest bytes for a named
+// input artifact in chatID, or ok=false when none exists yet (first
+// dispatch - no baseline to diff against).
+func readExtInputArtifact(st *store.Store, artifacts *store.TurnAwareService) func(chatID, name string) ([]byte, bool) {
+	return func(chatID, name string) ([]byte, bool) {
+		if artifacts == nil {
+			return nil, false
+		}
+		userID := st.SessionUserForChat(context.Background(), chatID)
+		if userID == "" {
+			return nil, false
+		}
+		client := recordstore.New(artifacts, artifactref.AppName, userID, chatID)
+		data, _, ok, err := client.Latest(context.Background(), inputArtifactKind+":"+name)
+		if err != nil {
+			slog.Warn("ext input artifact: read failed", "component", "startup", "chat", chatID, "artifact", name, "err", err)
+			return nil, false
+		}
+		return data, ok
+	}
+}
+
+// writeExtInputArtifact backs Host.WriteArtifact: saves a new revision only
+// when data changed since the latest one (recordstore.SaveBlob always
+// writes a revision - the byte comparison happens here so an unchanged
+// input artifact never advances turn_id/lineage.saved_at for no reason).
+func writeExtInputArtifact(st *store.Store, artifacts *store.TurnAwareService) func(chatID, name, mimeType string, data []byte) (int64, bool, error) {
+	return func(chatID, name, mimeType string, data []byte) (int64, bool, error) {
+		if artifacts == nil {
+			return 0, false, fmt.Errorf("no artifact service configured")
+		}
+		userID := st.SessionUserForChat(context.Background(), chatID)
+		if userID == "" {
+			return 0, false, fmt.Errorf("write input artifact %q: chat %s has no known user", name, chatID)
+		}
+		client := recordstore.New(artifacts, artifactref.AppName, userID, chatID)
+		id := inputArtifactKind + ":" + name
+		ctx := context.Background()
+		prev, prevRev, ok, err := client.Latest(ctx, id)
+		if err != nil {
+			slog.Warn("ext input artifact: baseline read failed; writing unconditionally", "component", "startup", "chat", chatID, "artifact", name, "err", err)
+		}
+		if ok && bytes.Equal(prev, data) {
+			return int64(prevRev), false, nil
+		}
+		_, rev, err := client.SaveBlob(ctx, inputArtifactKind, data, mimeType, name, inputArtifactLineage())
+		return int64(rev), true, err
+	}
 }
 
 // saveExtAttachment mirrors rest.Handler.saveAttachment: durably store the

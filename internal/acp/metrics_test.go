@@ -134,7 +134,7 @@ func TestRound_UsageEmitsOncePerRound(t *testing.T) {
 	a := usageTestAgent(t, "usage", nil)
 	a.SetLedgerCoords(ledger.Coords{Agent: "code-implementer", User: "local", Source: "github"})
 
-	err := a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "add the feature", "", "", "", "", func(eventSpec) bool { return true })
+	err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "add the feature", "", "", "", "", func(eventSpec) bool { return true })
 	if err != nil {
 		t.Fatalf("round: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestRound_UsageAbsent_NoMetrics(t *testing.T) {
 	a := usageTestAgent(t, "usage-none", nil)
 	a.SetLedgerCoords(ledger.Coords{Agent: "code-implementer"})
 
-	if err := a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "add the feature", "", "", "", "", func(eventSpec) bool { return true }); err != nil {
+	if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "add the feature", "", "", "", "", func(eventSpec) bool { return true }); err != nil {
 		t.Fatalf("round: %v", err)
 	}
 	if _, ok := collectMetric(t, reader, "gen_ai.client.token.usage"); ok {
@@ -197,7 +197,7 @@ func TestRound_Cost_ComputedFromConfiguredPricing(t *testing.T) {
 	a := usageTestAgent(t, "usage", pricing)
 	a.SetLedgerCoords(ledger.Coords{Agent: "code-implementer"})
 
-	if err := a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "add the feature", "", "", "", "", func(eventSpec) bool { return true }); err != nil {
+	if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "add the feature", "", "", "", "", func(eventSpec) bool { return true }); err != nil {
 		t.Fatalf("round: %v", err)
 	}
 	dp, ok := costPoint(t, reader)
@@ -218,7 +218,7 @@ func TestRound_NoPricing_NoCostMetric(t *testing.T) {
 	a := usageTestAgent(t, "usage", nil)
 	a.SetLedgerCoords(ledger.Coords{Agent: "code-implementer"})
 
-	if err := a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "add the feature", "", "", "", "", func(eventSpec) bool { return true }); err != nil {
+	if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "add the feature", "", "", "", "", func(eventSpec) bool { return true }); err != nil {
 		t.Fatalf("round: %v", err)
 	}
 	if _, ok := costPoint(t, reader); ok {
@@ -232,7 +232,7 @@ func TestRound_NoCoords_AttributionOmitted(t *testing.T) {
 	reader := newUsageTestMeter(t)
 	a := usageTestAgent(t, "usage", nil)
 
-	if err := a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "add the feature", "", "", "", "", func(eventSpec) bool { return true }); err != nil {
+	if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "add the feature", "", "", "", "", func(eventSpec) bool { return true }); err != nil {
 		t.Fatalf("round: %v", err)
 	}
 	points := tokenUsagePoints(t, reader)
@@ -263,7 +263,7 @@ func TestNoDoubleCounting_NativeAndACPEmitIndependently(t *testing.T) {
 	// ACP side: this package's round() seam.
 	a := usageTestAgent(t, "usage", nil)
 	a.SetLedgerCoords(ledger.Coords{Agent: "code-implementer", User: "local", Source: "github"})
-	if err := a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "add the feature", "", "", "", "", func(eventSpec) bool { return true }); err != nil {
+	if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "add the feature", "", "", "", "", func(eventSpec) bool { return true }); err != nil {
 		t.Fatalf("round: %v", err)
 	}
 
