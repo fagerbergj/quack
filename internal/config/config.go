@@ -1249,8 +1249,8 @@ func (r RecordingConfig) validate(c *Config, otelEnabled bool) error {
 	if !ok {
 		return fmt.Errorf("config: observability.recording.store %q is not defined under stores", r.Store)
 	}
-	if s.Kind != "filesystem" {
-		return fmt.Errorf("config: observability.recording.store %q must be a filesystem store, got kind %q", r.Store, s.Kind)
+	if s.Kind != "filesystem" && s.Kind != "postgres" {
+		return fmt.Errorf("config: observability.recording.store %q must be a filesystem or postgres store, got kind %q", r.Store, s.Kind)
 	}
 	return nil
 }

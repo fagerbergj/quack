@@ -27,6 +27,12 @@ func (failingLedgerStore) List(context.Context) ([]ledger.SessionRef, error) {
 	return nil, errors.New("ledger: unreachable")
 }
 func (failingLedgerStore) Delete(context.Context, string) error { return nil }
+func (failingLedgerStore) AppendIntent(context.Context, ledger.Entry) (int64, error) {
+	return 0, errors.New("ledger: unreachable")
+}
+func (failingLedgerStore) ReadEntries(context.Context, string, int64) ([]ledger.Entry, error) {
+	return nil, errors.New("ledger: unreachable")
+}
 
 // TestErrorResponseShape is a table-driven check that every representative
 // 4xx/5xx path emits the same JSON schema.ErrorResponse shape (a non-empty

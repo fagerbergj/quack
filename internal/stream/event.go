@@ -443,6 +443,33 @@ type Translator struct {
 	prompt, completion, reasoning, total, cached int32
 	model                                        string
 	finish                                       string
+
+	// seenToolCalls dedups agent_tool_call by call_id: ACP emits a start update and a
+	// completion update that both carry the FunctionCall part, mapping to the same call twice.
+	seenToolCalls SeenCalls
+}
+
+// SeenCalls tracks call_ids already emitted as agent_tool_call, so a stream
+// translator can collapse ACP's start+completion FunctionCall parts into one
+// event per call. Empty IDs are never deduped: genai.FunctionCall.ID can be
+// empty, and the frontend treats callId=="" as its own non-upsertable case -
+// deduping on "" would drop distinct legitimate empty-id calls.
+type SeenCalls map[string]bool
+
+// Add records callID and reports whether it was already seen (so the caller
+// should skip re-emitting).
+func (s *SeenCalls) Add(callID string) bool {
+	if callID == "" {
+		return false
+	}
+	if (*s)[callID] {
+		return true
+	}
+	if *s == nil {
+		*s = make(SeenCalls)
+	}
+	(*s)[callID] = true
+	return false
 }
 
 // NewTranslator returns a Translator for one node stream.
@@ -513,6 +540,9 @@ func (t *Translator) Event(ev *session.Event) []SSEEvent {
 
 		case p.FunctionCall != nil:
 			if p.FunctionCall.Name == transferTool {
+				continue
+			}
+			if t.seenToolCalls.Add(p.FunctionCall.ID) {
 				continue
 			}
 			out = append(out, SSEEvent{Name: EventAgentToolCall, Data: AgentToolCallData{

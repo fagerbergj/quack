@@ -189,3 +189,97 @@ func TestFSStoreRejectsPathTraversal(t *testing.T) {
 		}
 	}
 }
+
+// TestFSStoreReadEntriesSkipsNonIntentLinesAndRespectsFromSeq mixes an
+// OTel-shaped line (no chat_id/kind) with AppendIntent entries, and checks
+// ReadEntries returns only the entries, honoring fromSeq.
+func TestFSStoreReadEntriesSkipsNonIntentLinesAndRespectsFromSeq(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewFSStore(dir)
+	if err != nil {
+		t.Fatalf("NewFSStore: %v", err)
+	}
+	ctx := context.Background()
+	const chatID = "chat-mixed"
+
+	if err := s.Append(ctx, chatID, []byte(`{"body":"otel line","attributes":{}}`)); err != nil {
+		t.Fatalf("Append otel line: %v", err)
+	}
+	for range 3 {
+		if _, err := s.AppendIntent(ctx, Entry{ChatID: chatID, Kind: KindNodeStarted}); err != nil {
+			t.Fatalf("AppendIntent: %v", err)
+		}
+	}
+
+	all, err := s.ReadEntries(ctx, chatID, 0)
+	if err != nil {
+		t.Fatalf("ReadEntries: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("got %d entries, want 3 (otel line skipped): %+v", len(all), all)
+	}
+	for i, e := range all {
+		if e.Seq != int64(i+1) {
+			t.Errorf("entries[%d].Seq = %d, want %d", i, e.Seq, i+1)
+		}
+	}
+
+	fromTwo, err := s.ReadEntries(ctx, chatID, 2)
+	if err != nil {
+		t.Fatalf("ReadEntries fromSeq=2: %v", err)
+	}
+	if len(fromTwo) != 2 || fromTwo[0].Seq != 2 {
+		t.Errorf("ReadEntries fromSeq=2 = %+v, want seq 2 and 3", fromTwo)
+	}
+}
+
+// TestFSStoreReadEntriesMissingFileReturnsNilNil: a chat with no file at
+// all (never appended to) is (nil, nil), not an error - ReadEntries is a
+// projection reader, and "no entries yet" isn't a failure.
+func TestFSStoreReadEntriesMissingFileReturnsNilNil(t *testing.T) {
+	s, err := NewFSStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFSStore: %v", err)
+	}
+	entries, err := s.ReadEntries(context.Background(), "never-touched", 0)
+	if err != nil {
+		t.Fatalf("ReadEntries: %v", err)
+	}
+	if entries != nil {
+		t.Errorf("entries = %+v, want nil", entries)
+	}
+}
+
+// TestFSStoreAppendIntentSeqSurvivesRestart: a fresh FSStore instance
+// pointed at an existing file (simulating a process restart) must seed its
+// in-memory counter from the file's own max seq, not restart at 1 and
+// collide with what's already on disk.
+func TestFSStoreAppendIntentSeqSurvivesRestart(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	const chatID = "chat-restart"
+
+	first, err := NewFSStore(dir)
+	if err != nil {
+		t.Fatalf("NewFSStore: %v", err)
+	}
+	for range 3 {
+		if _, err := first.AppendIntent(ctx, Entry{ChatID: chatID, Kind: KindNodeStarted}); err != nil {
+			t.Fatalf("AppendIntent: %v", err)
+		}
+	}
+
+	// A second FSStore over the same root has its own (empty) in-memory
+	// counter - the restart this simulates.
+	second, err := NewFSStore(dir)
+	if err != nil {
+		t.Fatalf("NewFSStore (restart): %v", err)
+	}
+	seq, err := second.AppendIntent(ctx, Entry{ChatID: chatID, Kind: KindNodeDone})
+	if err != nil {
+		t.Fatalf("AppendIntent after restart: %v", err)
+	}
+	if seq != 4 {
+		t.Errorf("seq after restart = %d, want 4 (continuing past the file's existing 1..3)", seq)
+	}
+}

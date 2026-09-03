@@ -104,6 +104,36 @@ func TestDagStream_WorkerActivityAndNodeDone(t *testing.T) {
 	}
 }
 
+// TestDagStream_DedupsToolCallByID: ACP's start+completion updates both carry
+// the FunctionCall part for one call_id (internal/acp/translate.go's ToolCall
+// then ToolCallUpdate); dagStream.part must not turn that into two
+// agent_tool_call events for the worker's own tool calls (PR #1102 review
+// finding - the orchestrator Translator was fixed but ACP worker calls,
+// routed through dagStream, were not).
+func TestDagStream_DedupsToolCallByID(t *testing.T) {
+	const wpath = "quack-dag-p@1/n1@rr/web-researcher@worker-r0"
+	agentByID := map[string]string{"n1": "web-researcher"}
+
+	call := &genai.Part{FunctionCall: &genai.FunctionCall{ID: "c1", Name: "web_search", Args: map[string]any{"query": "q"}}}
+	evs := []*session.Event{
+		ev(wpath, call), // start update: partial FunctionCall
+		ev(wpath, call, &genai.Part{FunctionResponse: &genai.FunctionResponse{ID: "c1", Name: "web_search", Response: map[string]any{"results": "r"}}}), // completion: re-pairs the call with its response
+	}
+
+	got := drive(evs, agentByID, gateScore{})
+
+	want := []string{
+		stream.EventNodeStart,
+		stream.EventAgentStart,
+		stream.EventAgentToolCall,
+		stream.EventAgentToolResult,
+		stream.EventAgentComplete,
+	}
+	if g := names(got); !equalStrings(g, want) {
+		t.Fatalf("event sequence:\n got=%v\nwant=%v (want exactly one agent_tool_call)", g, want)
+	}
+}
+
 // TestDagStream_ReviseRoundStage: a second worker run (worker-r1) is a revise
 // stage; switching runs closes the prior run first.
 func TestDagStream_ReviseRoundStage(t *testing.T) {

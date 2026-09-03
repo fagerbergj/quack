@@ -665,6 +665,34 @@ auth:
 	}
 }
 
+// TestLoadOldConfigWithoutPostgresLedgerStillParses guards #1100: a config
+// with no recording block at all (every field pre-dating the Postgres
+// ledger option) must keep parsing - prod's quack.yaml is bind-mounted and
+// STRICT, so an old config can never start failing after this change.
+func TestLoadOldConfigWithoutPostgresLedgerStillParses(t *testing.T) {
+	if _, err := Load(writeTemp(t, baseConfig)); err != nil {
+		t.Fatalf("old config without a recording block should still load: %v", err)
+	}
+}
+
+// TestLoadAcceptsPostgresRecordingStore is the new capability #1100 adds:
+// recording.store may now name a postgres store, not just filesystem.
+func TestLoadAcceptsPostgresRecordingStore(t *testing.T) {
+	c, err := Load(writeTemp(t, baseConfig+`
+observability:
+  recording:
+    enabled: true
+    store: main
+`))
+	if err != nil {
+		t.Fatalf("recording.store pointing at a postgres store should load: %v", err)
+	}
+	s, ok := c.Store(c.Observability.Recording.Store)
+	if !ok || s.Kind != "postgres" {
+		t.Errorf("recording store %q did not resolve to postgres: %+v ok=%v", c.Observability.Recording.Store, s, ok)
+	}
+}
+
 // baseConfig is a minimal valid config that adversarial tests append to.
 const baseConfig = `
 providers:
@@ -1689,18 +1717,27 @@ func TestRecordingUnconfiguredStoreDoesNotFailLoad(t *testing.T) {
 	}
 }
 
-func TestRecordingNamedStoreMustResolveAndBeFilesystem(t *testing.T) {
+func TestRecordingNamedStoreMustResolveAndBeFilesystemOrPostgres(t *testing.T) {
 	if _, err := Load(baseObservabilityYAML(t, `
 observability:
   recording: { enabled: true, store: does-not-exist }
 `)); err == nil {
 		t.Error("expected an error for a recording.store that isn't defined under stores")
 	}
+	// "main" is kind: postgres in baseObservabilityYAML - allowed since #1100.
 	if _, err := Load(baseObservabilityYAML(t, `
 observability:
   recording: { enabled: true, store: main }
+`)); err != nil {
+		t.Errorf("recording.store on a postgres store should be allowed: %v", err)
+	}
+	if _, err := Load(baseObservabilityYAML(t, `
+stores:
+  vec: { kind: qdrant, url: http://x }
+observability:
+  recording: { enabled: true, store: vec }
 `)); err == nil {
-		t.Error("expected an error for a recording.store that isn't kind: filesystem")
+		t.Error("expected an error for a recording.store that isn't filesystem or postgres")
 	}
 }
 
