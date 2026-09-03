@@ -588,35 +588,51 @@ export default function Chat() {
 
       <div className="flex flex-col flex-1 min-w-0">
         <div className="flex items-center justify-between px-4 py-3 sm:px-6 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-          <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
             <button
               onClick={() => setChatListOpen(o => !o)}
-              className="md:hidden flex-shrink-0 w-8 h-8 flex items-center justify-center rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+              className="md:hidden flex-shrink-0 w-11 h-11 flex items-center justify-center rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
               aria-label="Toggle chat list"
             >
               ☰
             </button>
-            <EditableChatTitle
-              title={activeChat?.title || (activeChatId ? 'New chat' : 'Chat')}
-              editable={!!activeChatId && !isArchived}
-              onRename={handleRenameChat}
-            />
-            {isArchived && (
-              <span
-                title="This chat is archived and read-only. Restore it from the Archived section to continue."
-                className="flex-shrink-0 text-[10px] font-semibold tracking-wide px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400"
-              >
-                Archived
-              </span>
-            )}
-            {githubLink && <GitHubLink url={githubLink.url} repo={githubLink.repo} className="flex-shrink-0" />}
+            {/* Title gets priority over everything else in this row (#1136) -
+                min-w-0 lets it actually shrink to its flex-1 share instead of
+                the row overflowing, so `truncate` inside EditableChatTitle
+                clips to "as much as fits", never to a few characters. */}
+            <div className="min-w-0 flex-1 flex items-center gap-1.5">
+              <EditableChatTitle
+                title={activeChat?.title || (activeChatId ? 'New chat' : 'Chat')}
+                editable={!!activeChatId && !isArchived}
+                onRename={handleRenameChat}
+              />
+              {isArchived && (
+                <span
+                  title="This chat is archived and read-only. Restore it from the Archived section to continue."
+                  className="flex-shrink-0 text-[10px] font-semibold tracking-wide px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400"
+                >
+                  Archived
+                </span>
+              )}
+              {githubLink && <GitHubLink url={githubLink.url} repo={githubLink.repo} className="flex-shrink-0" />}
+            </div>
           </div>
           <div className="flex items-center gap-3 flex-shrink-0">
-            {activeChatId && <UsageSummary models={sessionModels(state)} usage={state.usage} />}
+            {/* Hidden below the medium (600px) size class (#1136): the token/model
+                summary is secondary metadata that must yield its space to the
+                chat's own title rather than truncating it to near-nothing. Still
+                reachable there via the ⋯ menu below (usage prop). */}
+            {activeChatId && (
+              <div className="hidden medium:flex">
+                <UsageSummary models={sessionModels(state)} usage={state.usage} />
+              </div>
+            )}
             {/* Per-chat actions (#746 items 2/3): Download Logs is the escape
                 hatch to the untrimmed event-by-event recording - relabelled and
                 moved from a standing header link into the ⋯ overflow menu. */}
-            {activeChatId && <ChatMenu chatId={activeChatId} />}
+            {activeChatId && (
+              <ChatMenu chatId={activeChatId} usage={{ models: sessionModels(state), usage: state.usage }} />
+            )}
           </div>
         </div>
 

@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
+import { UsageSummary, type UsageSummaryProps } from './UsageSummary'
 
 // ChatMenu is the chat header's ⋯ overflow menu (#746 items 2/3): per-chat
-// actions that aren't worth permanent header real estate. Today that's just
+// actions that aren't worth permanent header real estate. Today that's
 // Download Logs (the `⬇ recording` link, relabelled and moved here - it stays
-// a plain link to the same endpoint, only label and placement change). It
-// does NOT hold Memory - Memory is a NavRail peer of Chats, not a per-chat
-// action. Same disclosure pattern as DagNode's NodeMenu: a button that toggles
-// a role="menu" popover, closed on outside click or Escape.
-export function ChatMenu({ chatId }: { chatId: string }) {
+// a plain link to the same endpoint, only label and placement change), plus -
+// on compact width (#1136) - the token/model usage summary that the header
+// itself hides there to give the title its width back. It does NOT hold
+// Memory - Memory is a NavRail peer of Chats, not a per-chat action. Same
+// disclosure pattern as DagNode's NodeMenu: a button that toggles a
+// role="menu" popover, closed on outside click or Escape.
+export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSummaryProps }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -31,12 +34,21 @@ export function ChatMenu({ chatId }: { chatId: string }) {
         aria-haspopup="menu"
         aria-expanded={open}
         title="Chat actions"
-        className="w-7 h-7 flex items-center justify-center rounded text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+        className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
       >
         ⋯
       </button>
       {open && (
         <div role="menu" className="absolute z-20 right-0 mt-1 w-44 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1 text-xs">
+          {/* Shown here always when the header itself hides the inline
+              UsageSummary (compact width, `hidden medium:flex` in Chat.tsx) -
+              the header stays the source of truth for whether it's shown
+              inline; this is just the escape hatch when it isn't. */}
+          {usage && (usage.models.length > 0 || (usage.usage?.total_tokens ?? 0) > 0) && (
+            <div className="px-3 py-1.5 border-b border-gray-100 dark:border-gray-700 medium:hidden">
+              <UsageSummary {...usage} />
+            </div>
+          )}
           <a
             role="menuitem"
             href={`/api/v1/chats/${chatId}/recording`}

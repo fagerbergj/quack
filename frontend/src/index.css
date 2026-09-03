@@ -31,6 +31,13 @@
   --color-blue-700: #3d4eb6;
   --color-blue-900: #262d63;
   --color-blue-950: #1a1f45;
+
+  /* Material 3 window size classes (#1131): compact (<600px, single column,
+     touch-first) is the unprefixed default everywhere below; this custom
+     breakpoint unlocks medium/expanded (600px+, multi-pane) layouts. Kept
+     separate from Tailwind's own sm/md so this PR's compact-width work can't
+     shift any untouched component's existing sm:/md: behaviour. */
+  --breakpoint-medium: 600px;
 }
 
 /* The app owns all scrolling (messages pane, sidebar list). The page itself
