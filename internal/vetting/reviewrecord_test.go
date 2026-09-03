@@ -941,3 +941,88 @@ func gitIn(t *testing.T, dir string, args ...string) {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 }
+
+// TestTextRoundWrite_PlainNodeWritesTextArtifact covers #1095 (#1090 P8): a
+// gated node with no registered structured kind (IsReviewer=false,
+// Artifact="") still gets one revision per round, id "text:<node>", with the
+// same lineage shape code_review uses and a correct parent_revision chain.
+func TestTextRoundWrite_PlainNodeWritesTextArtifact(t *testing.T) {
+	svc := newMetaAwareInMemory()
+	base := reviewerCfgWithArtifacts(t, svc, true)
+	base.IsReviewer = false
+	base.Artifact = ""
+	base.NodeID = "explore-1"
+
+	textID, err := recordstore.IdentityFor(kindText, nil, base.NodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if textID != "text:"+base.NodeID {
+		t.Fatalf("id = %q, want %q (owning node name is the instance, #1090 V4 §4.1)", textID, "text:"+base.NodeID)
+	}
+	rc := recordClient(base)
+
+	st := saveEpisodicRound(context.Background(), base, base.NodeID, "turn-1", 1, "round one's answer", StagedDelivery{}, nil)
+	raw, _, lineage, rev, ok, err := rc.LatestWithMeta(context.Background(), textID)
+	if err != nil || !ok {
+		t.Fatalf("round 1 LatestWithMeta: ok=%v err=%v", ok, err)
+	}
+	if rev != 1 || string(raw) != "round one's answer" {
+		t.Fatalf("round 1: rev=%d body=%q", rev, raw)
+	}
+	// TurnID is excluded from the lineage JSON on purpose (it lives in the
+	// store row's own turn_id column instead - Lineage.TurnID doc comment).
+	if lineage.NodeID != base.NodeID || lineage.Round != 1 || lineage.ParentRevision != 0 || lineage.Author != "worker" {
+		t.Fatalf("round 1 lineage = %+v, unexpected", lineage)
+	}
+
+	// Round 2 (a failed judge round still writes a revision - #1090 §4.5).
+	saveEpisodicRound(context.Background(), base, base.NodeID, "turn-1", 2, "round two's answer", StagedDelivery{}, st)
+	_, _, lineage2, rev2, ok, err := rc.LatestWithMeta(context.Background(), textID)
+	if err != nil || !ok {
+		t.Fatalf("round 2 LatestWithMeta: ok=%v err=%v", ok, err)
+	}
+	if rev2 != 2 {
+		t.Fatalf("round 2 revision = %d, want 2", rev2)
+	}
+	if lineage2.ParentRevision != 1 || lineage2.Round != 2 {
+		t.Fatalf("round 2 lineage = %+v, want ParentRevision=1 Round=2", lineage2)
+	}
+}
+
+// TestTextRoundWrite_SkippedWhenToolWrote covers #1095 item 3: an implementer/
+// explorer node that already tool-wrote an artifact this round (any
+// write_<kind> call, not just write_finding) must not also get a redundant
+// "text:<node>" fallback write for that round.
+func TestTextRoundWrite_SkippedWhenToolWrote(t *testing.T) {
+	svc := newMetaAwareInMemory()
+	base := reviewerCfgWithArtifacts(t, svc, true)
+	base.IsReviewer = false
+	base.Artifact = ""
+	base.NodeID = "implement-1"
+
+	toolStage := NewToolFindingStage()
+	RegisterMemSession("sec-1095-tool", MemSession{ToolFindings: toolStage})
+	MarkMemSessionConnected("sec-1095-tool")
+	defer UnregisterMemSession("sec-1095-tool")
+	token := "tok-1095-tool"
+	RegisterAdvisorThread(token, AdvisorTask{MemSecret: "sec-1095-tool"})
+	defer UnregisterAdvisorThread(token)
+	base.AdvisorToken = token
+
+	// Simulate the worker having called some write_<kind> tool this round
+	// (e.g. write_pr_body) - the MCP handler's real side effect is
+	// ToolFindings.Add(id), regardless of which kind was written.
+	toolStage.Add("pr_body:pr:1")
+
+	saveEpisodicRound(context.Background(), base, base.NodeID, "turn-1", 1, "answer text", StagedDelivery{}, nil)
+
+	textID, err := recordstore.IdentityFor(kindText, nil, base.NodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := recordClient(base)
+	if _, _, ok, err := rc.Latest(context.Background(), textID); err != nil || ok {
+		t.Fatalf("text artifact must not exist: ok=%v err=%v", ok, err)
+	}
+}
