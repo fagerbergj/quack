@@ -123,6 +123,22 @@ func TestGetChatRecordingNoSession(t *testing.T) {
 	}
 }
 
+// TestGetChatRecordingNoSession_PostgresStore mirrors
+// TestGetChatRecordingNoSession against the Postgres ledger store - a chat
+// with zero rows must 404 like the FS store's missing file, not 200 with an
+// empty ZIP (openapi.yaml promises 404 for never-recorded/GC'd/disabled).
+func TestGetChatRecordingNoSession_PostgresStore(t *testing.T) {
+	h := newTestHandler(t)
+	h.ledgerStore = newTestPGLedgerStore(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats/never-recorded/recording", nil)
+	h.GetChatRecording(rec, req, "never-recorded")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 // TestGetChatRecordingRoundTrip: a recorded chat's bundle downloads as a
 // valid ZIP with the expected manifest and entries content.
 func TestGetChatRecordingRoundTrip(t *testing.T) {
