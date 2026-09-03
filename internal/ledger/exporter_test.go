@@ -22,9 +22,11 @@ func (m *memStore) Append(_ context.Context, sessionID string, entry []byte) err
 	m.lines[sessionID] = append(m.lines[sessionID], append([]byte{}, entry...))
 	return nil
 }
-func (m *memStore) ReadStream(context.Context, string) (io.ReadCloser, error) { return nil, nil }
-func (m *memStore) List(context.Context) ([]SessionRef, error)                { return nil, nil }
-func (m *memStore) Delete(context.Context, string) error                      { return nil }
+func (m *memStore) ReadStream(context.Context, string) (io.ReadCloser, error)   { return nil, nil }
+func (m *memStore) List(context.Context) ([]SessionRef, error)                  { return nil, nil }
+func (m *memStore) Delete(context.Context, string) error                        { return nil }
+func (m *memStore) AppendIntent(context.Context, Entry) (int64, error)          { return 0, nil }
+func (m *memStore) ReadEntries(context.Context, string, int64) ([]Entry, error) { return nil, nil }
 
 var _ LedgerStore = (*memStore)(nil)
 
