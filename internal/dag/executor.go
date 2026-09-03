@@ -3,6 +3,7 @@ package dag
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
@@ -175,13 +176,19 @@ func (s *DagStream) Finish() {
 func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, nodeID string, seeded map[string]string) (map[string]string, error) {
 	source := ledger.CoordsFromContext(ctx).Source
 	var userID string
+	artifacts := e.artifacts
 	if sess := ctx.Session(); sess != nil {
 		userID = sess.UserID()
+	} else {
+		// No session, no real userID - artifact tools would scope to "" and
+		// silently see nothing, so skip building them rather than lie about scope.
+		artifacts = nil
+		slog.Warn("retry: no session, skipping artifact tools", "component", "dag", "chat_id", chatID, "node_id", nodeID)
 	}
 	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, userID, source,
 		func(nodeID string, score float64, passed bool, rounds int) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds)
-		}, e.admission, e.specFor, e.artifacts, e.walLedger, nil) // retry never re-runs setup, so nothing to refresh
+		}, e.admission, e.specFor, artifacts, e.walLedger, nil) // retry never re-runs setup, so nothing to refresh
 	if err != nil {
 		return nil, err
 	}
