@@ -115,18 +115,36 @@ func verbPast(dryRun bool) string {
 	return "written"
 }
 
+// DeliveryItemOutcome is a LOCAL copy of sdk.DeliveryItemOutcome's shape -
+// see DeliveryRecoverer below for why this stays a shim, not an import.
+type DeliveryItemOutcome struct {
+	Kind  string
+	URL   string
+	Error string
+}
+
+// DeliveryContext is a LOCAL copy of the sdk.DeliveryContext fields a
+// recoverer needs to look an idempotency key up (clone/PR coordinates) -
+// rebuilt by RunLedgerRecover from the delivery.intent payload, since
+// offline recovery has no live worker activity to derive them from.
+type DeliveryContext struct {
+	CloneURL    string
+	IssueNumber int
+}
+
 // DeliveryRecoverer looks an idempotency key up at the delivery target (a
 // hidden marker in a GitHub review body, a reMarkable document id) and
 // reports whether it was already posted. This is a LOCAL copy of the
 // interface an extension implements (github's App.RecoverDelivery, in
 // quack-extensions) - not an import, since core is pinned to sdk v0.8.0 on
-// origin/main, which predates this capability. Go interfaces are
-// structural: the concrete extension value satisfies this by method-set
-// shape alone, with no go.mod bump. Delete this and import
-// sdk.DeliveryRecoverer directly once quack's go.mod bumps to the sdk/github
-// release that adds it (#1093 deploy-order note).
+// origin/main, which predates this capability. Structurally identical to
+// sdk.DeliveryRecoverer's 3-arg/DeliveryItemOutcome signature so the concrete
+// extension value satisfies it by method-set shape alone with no go.mod
+// bump. Delete this and import sdk.DeliveryRecoverer directly once quack's
+// go.mod bumps to the sdk/github v0.9.0 release that adds it (#1093
+// deploy-order note; see PR body for the exact pin steps).
 type DeliveryRecoverer interface {
-	RecoverDelivery(ctx context.Context, key string) (found bool, remoteURL string, err error)
+	RecoverDelivery(ctx context.Context, key string, dc DeliveryContext) (found bool, outcome DeliveryItemOutcome, err error)
 }
 
 // OrphanedDelivery is one delivery.intent with no matching delivery.done.
@@ -136,12 +154,19 @@ type OrphanedDelivery struct {
 	Revision int    `json:"revision"`
 	NodeID   string `json:"node_id"`
 	Seq      int64  `json:"seq"`
+	// CloneURL/IssueNumber: minimal DeliveryContext fields persisted in the
+	// delivery.intent payload (#1093 finding 4) - enough to rebuild a
+	// DeliveryContext for a recoverer offline, without live worker activity.
+	CloneURL    string `json:"clone_url,omitempty"`
+	IssueNumber int    `json:"issue_number,omitempty"`
 }
 
 type deliveryIntentPayload struct {
-	TargetID string `json:"target_id"`
-	Revision int    `json:"revision"`
-	Key      string `json:"idempotency_key"`
+	TargetID    string `json:"target_id"`
+	Revision    int    `json:"revision"`
+	Key         string `json:"idempotency_key"`
+	CloneURL    string `json:"clone_url,omitempty"`
+	IssueNumber int    `json:"issue_number,omitempty"`
 }
 
 // findOrphanedDeliveryIntents scans chatID's ledger for delivery.intent
@@ -163,7 +188,8 @@ func findOrphanedDeliveryIntents(ctx context.Context, ls ledger.LedgerStore, cha
 			if json.Unmarshal(e.Payload, &p) != nil {
 				continue
 			}
-			intents = append(intents, OrphanedDelivery{Key: e.Key, TargetID: p.TargetID, Revision: p.Revision, NodeID: e.NodeID, Seq: e.Seq})
+			intents = append(intents, OrphanedDelivery{Key: e.Key, TargetID: p.TargetID, Revision: p.Revision, NodeID: e.NodeID, Seq: e.Seq,
+				CloneURL: p.CloneURL, IssueNumber: p.IssueNumber})
 		}
 	}
 	out := intents[:0]
@@ -200,7 +226,8 @@ func RunLedgerRecover(ctx context.Context, ls ledger.LedgerStore, chatID string,
 	report := &LedgerRecoverReport{ChatID: chatID}
 	for _, o := range orphans {
 		if recoverer != nil {
-			found, remoteURL, rerr := recoverer.RecoverDelivery(ctx, o.Key)
+			dc := DeliveryContext{CloneURL: o.CloneURL, IssueNumber: o.IssueNumber}
+			found, outcome, rerr := recoverer.RecoverDelivery(ctx, o.Key, dc)
 			if rerr != nil {
 				report.Unresolved = append(report.Unresolved, o)
 				continue
@@ -208,7 +235,7 @@ func RunLedgerRecover(ctx context.Context, ls ledger.LedgerStore, chatID string,
 			if found {
 				payload, _ := json.Marshal(struct {
 					RemoteURL string `json:"remote_url,omitempty"`
-				}{RemoteURL: remoteURL})
+				}{RemoteURL: outcome.URL})
 				if _, aerr := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, NodeID: o.NodeID, Kind: ledger.KindDeliveryDone, Key: o.Key, Payload: payload}); aerr != nil {
 					return nil, fmt.Errorf("ledger recover: append delivery.done for key %q: %w", o.Key, aerr)
 				}

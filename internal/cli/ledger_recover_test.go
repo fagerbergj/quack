@@ -12,20 +12,47 @@ type fakeRecoverer struct {
 	found     bool
 	remoteURL string
 	calls     int
+	lastDC    DeliveryContext
 }
 
-func (f *fakeRecoverer) RecoverDelivery(_ context.Context, _ string) (bool, string, error) {
+func (f *fakeRecoverer) RecoverDelivery(_ context.Context, _ string, dc DeliveryContext) (bool, DeliveryItemOutcome, error) {
 	f.calls++
-	return f.found, f.remoteURL, nil
+	f.lastDC = dc
+	return f.found, DeliveryItemOutcome{URL: f.remoteURL}, nil
 }
 
 func appendDeliveryIntentForTest(t *testing.T, ls ledger.LedgerStore, chatID, key, targetID string, revision int) {
 	t.Helper()
-	payload, _ := json.Marshal(deliveryIntentPayload{TargetID: targetID, Revision: revision, Key: key})
+	appendDeliveryIntentWithContextForTest(t, ls, chatID, key, targetID, revision, "", 0)
+}
+
+func appendDeliveryIntentWithContextForTest(t *testing.T, ls ledger.LedgerStore, chatID, key, targetID string, revision int, cloneURL string, issueNumber int) {
+	t.Helper()
+	payload, _ := json.Marshal(deliveryIntentPayload{TargetID: targetID, Revision: revision, Key: key, CloneURL: cloneURL, IssueNumber: issueNumber})
 	if _, err := ls.AppendIntent(context.Background(), ledger.Entry{
 		ChatID: chatID, NodeID: "n1", Kind: ledger.KindDeliveryIntent, Key: key, Payload: payload,
 	}); err != nil {
 		t.Fatalf("append delivery.intent: %v", err)
+	}
+}
+
+// #1093 finding 4: the recoverer must receive a DeliveryContext rebuilt from
+// the persisted intent payload, not a zero value - offline recovery has no
+// live worker activity to derive clone/PR coordinates from.
+func TestRunLedgerRecover_RebuildsDeliveryContextFromIntent(t *testing.T) {
+	ctx := context.Background()
+	ls, err := ledger.NewFSStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFSStore: %v", err)
+	}
+	appendDeliveryIntentWithContextForTest(t, ls, "chat5", "code_review:pr:5@1", "code_review:pr:5", 1, "https://github.com/x/y.git", 5)
+
+	rec := &fakeRecoverer{found: true}
+	if _, err := RunLedgerRecover(ctx, ls, "chat5", rec, nil); err != nil {
+		t.Fatalf("RunLedgerRecover: %v", err)
+	}
+	if rec.lastDC.CloneURL != "https://github.com/x/y.git" || rec.lastDC.IssueNumber != 5 {
+		t.Fatalf("recoverer saw DeliveryContext %+v, want CloneURL/IssueNumber from the intent payload", rec.lastDC)
 	}
 }
 
