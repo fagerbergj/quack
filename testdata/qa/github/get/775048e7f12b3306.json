@@ -1,0 +1,7 @@
+{
+  "title": "Fix the flaky retry loop",
+  "body": "Fixture issue for QA - not a real GitHub object.",
+  "state": "open",
+  "pull_request": null,
+  "labels": [{"name": "quack:review"}]
+}
