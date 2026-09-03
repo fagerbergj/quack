@@ -5,6 +5,17 @@
    defaults `dark:` to prefers-color-scheme, so override it to the class. */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Without an explicit color-scheme, the UA renders native controls (<select>
+   dropdowns/<option>, <dialog>'s ::backdrop, scrollbars, checkboxes) with
+   light chrome even inside a `dark:`-styled container - our own text/background
+   utilities on the OPEN <select> apply, but its native dropdown list and other
+   browser-drawn chrome ignore them, reading as black text on the (light) OS
+   default. This is the root cause of "dark mode looks awful" wherever a
+   native control (the artifact panel's revision <select>, in particular)
+   appears inside a dark-mode surface - #1114. */
+:root { color-scheme: light; }
+.dark { color-scheme: dark; }
+
 /* ponytail: global tone via the color scale - softer, slightly warm neutrals
    and a calmer accent. Overriding the built-in gray and blue scale here recolors
    every existing gray/blue utility (backgrounds, borders, text) across the app at

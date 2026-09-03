@@ -19,9 +19,14 @@ function stubFetch() {
   // 404-banner bug: switching A -> B used to fetch B?revision=2 (A's stale
   // selectedRev) before B's own revisions effect settled.
   const otherV1 = JSON.stringify({ path: 'b.go', title: 'unused import', rationale: 'b is never read' })
+  // A blob (markdown) artifact - #1114 renders these through react-markdown
+  // instead of the raw line list, with a heading + a line the judge quotes.
+  const reviewMd = '# Review summary\n\nMostly solid, but the apple pie recipe needs a citation.\n'
   const judgeRound = JSON.stringify({
     round: 1,
     passed: false,
+    score: 0.5,
+    criteria: [{ name: 'evidence', score: 0.4 }, { name: 'coverage', score: 0.6 }],
     notes: [
       { ref: { artifact_id: 'finding:abc123', revision: 1, snippet: 'x may be nil here' }, text: 'Needs a concrete repro.', criterion: 'evidence' },
       // Same line as the note above (both match "x may be nil here") -
@@ -29,6 +34,7 @@ function stubFetch() {
       // reachable/announced control, not just notes[0].
       { ref: { artifact_id: 'finding:abc123', revision: 1, snippet: 'nil here' }, text: 'Also flag the caller.', criterion: 'coverage' },
       { ref: { artifact_id: 'finding:abc123', revision: 1, line_hint: 999 }, text: 'Unanchored fixture note.' },
+      { ref: { artifact_id: 'text:review-1', revision: 1, snippet: 'apple pie recipe' }, text: 'Cite the source.', criterion: 'evidence' },
     ],
   })
 
@@ -49,12 +55,20 @@ function stubFetch() {
         ],
       })
     }
+    if (url.includes('/artifacts/text:review-1/revisions')) {
+      return jsonResponse({
+        data: [
+          { revision: 1, mime_type: 'text/markdown', size: reviewMd.length, kind: 'text', class: 'blob', lineage: { node_id: 'reviewer-1', round: 1, author: 'worker' } },
+        ],
+      })
+    }
     if (url.includes('/artifacts/judge_round:t1-1/revisions')) {
       return jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: judgeRound.length, kind: 'judge_round', class: 'structured' }] })
     }
     if (url.includes('/artifacts/finding:abc123?revision=2')) return textResponse(findingV2)
     if (url.includes('/artifacts/finding:abc123?revision=1')) return textResponse(findingV1)
     if (url.includes('/artifacts/finding:other?revision=1')) return textResponse(otherV1)
+    if (url.includes('/artifacts/text:review-1?revision=1')) return textResponse(reviewMd)
     // NOT ?revision=2 for finding:other - it has only revision 1, so a
     // request for revision 2 (the stale-selectedRev bug) 404s, matching the
     // real server's GetChatArtifact.
@@ -65,6 +79,7 @@ function stubFetch() {
         data: [
           { name: 'finding:abc123', kind: 'finding', class: 'structured', latest_revision: 2, lineage: { node_id: 'reviewer-1', round: 1, author: 'worker' }, revisions: [] },
           { name: 'finding:other', kind: 'finding', class: 'structured', latest_revision: 1, lineage: { node_id: 'reviewer-1', round: 1, author: 'worker' }, revisions: [] },
+          { name: 'text:review-1', kind: 'text', class: 'blob', latest_revision: 1, lineage: { node_id: 'reviewer-1', round: 1, author: 'worker' }, revisions: [] },
           { name: 'judge_round:t1-1', kind: 'judge_round', class: 'structured', latest_revision: 1, lineage: { node_id: 'reviewer-1', round: 1, author: 'judge' }, revisions: [] },
         ],
       })
@@ -80,10 +95,24 @@ function textResponse(body: string): Response {
   return new Response(body, { status: 200, headers: { 'Content-Type': 'text/plain' } })
 }
 
+// jsdom has no window.matchMedia at all - stub it so useIsNarrow's mount
+// effect doesn't throw. `matches` is fixed per stub (no live viewport in
+// jsdom), which is enough: the narrow-layout test stubs true before
+// rendering instead of simulating a resize event.
+function stubMatchMedia(matches: boolean) {
+  vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
+    matches,
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  })))
+}
+
 // jsdom has no HTMLDialogElement.showModal/close - stub them so the panel's
 // mount effect doesn't throw; behaviour (open/close) isn't under test here,
 // RTL just needs the dialog's children to render.
 beforeEach(() => {
+  stubMatchMedia(false) // desktop (sidebar list) by default
   // jsdom doesn't implement <dialog> at all (no showModal/close, no `open`
   // reflection) - stub both, and set `open` on showModal, because RTL's
   // getByRole treats a dialog with no `open` attribute as closed/hidden
@@ -106,7 +135,7 @@ describe('ArtifactPanel', () => {
     render(<ArtifactPanel chatId="chat-1" nodeId="reviewer-1" onClose={() => {}} />)
 
     // Select the finding artifact from the Outputs group.
-    const findingButton = (await screen.findAllByRole('button', { name: 'finding' }))[0]
+    const findingButton = await screen.findByTitle('finding:abc123')
     await user.click(findingButton)
 
     // Revision picker appears, defaulting to the latest (r2).
@@ -118,6 +147,10 @@ describe('ArtifactPanel', () => {
     // component correctly shows nothing yet for r2, which has none).
     await user.selectOptions(revisionSelect, '1')
     await waitFor(() => expect((revisionSelect as HTMLSelectElement).value).toBe('1'))
+
+    // finding is a structured kind, so it defaults to the JSON tree view
+    // (#1114) - line-based judge-note highlighting lives in the Raw view.
+    await user.click(screen.getByRole('checkbox', { name: 'Raw' }))
 
     // Both notes anchor to r1's rationale line ("x may be nil here" and "nil
     // here" both match it) - each must be its OWN reachable/announced
@@ -146,7 +179,7 @@ describe('ArtifactPanel', () => {
     const user = userEvent.setup()
     render(<ArtifactPanel chatId="chat-1" nodeId="reviewer-1" onClose={() => {}} />)
 
-    await user.click((await screen.findAllByRole('button', { name: 'finding' }))[0])
+    await user.click(await screen.findByTitle('finding:abc123'))
     const revisionSelect = await screen.findByLabelText('Revision')
     await waitFor(() => expect((revisionSelect as HTMLSelectElement).value).toBe('2'))
 
@@ -171,8 +204,7 @@ describe('ArtifactPanel', () => {
     const user = userEvent.setup()
     render(<ArtifactPanel chatId="chat-1" nodeId="reviewer-1" onClose={() => {}} />)
 
-    const findingButtons = await screen.findAllByRole('button', { name: 'finding' })
-    expect(findingButtons).toHaveLength(2)
+    const findingButtons = [await screen.findByTitle('finding:abc123'), await screen.findByTitle('finding:other')]
 
     // Select A (finding:abc123, latest revision 2) first.
     await user.click(findingButtons[0])
@@ -186,5 +218,92 @@ describe('ArtifactPanel', () => {
     // No stale error banner from the old selectedRev=2 -> B?revision=2 404.
     expect(screen.queryByText(/404/)).toBeNull()
     expect(screen.queryByText(/Fetch artifact failed/)).toBeNull()
+  })
+
+  // #1114: a blob artifact renders through react-markdown (headings, not raw
+  // text) by default, and a judge note on it anchors via a real data-line
+  // attribute on the rendered block element - not just a line-list index.
+  it('renders a markdown blob with real headings and anchors a note by data-line', async () => {
+    const user = userEvent.setup()
+    render(<ArtifactPanel chatId="chat-1" nodeId="reviewer-1" onClose={() => {}} />)
+
+    await user.click(await screen.findByTitle('text:review-1'))
+    await waitFor(() => expect((screen.getByLabelText('Revision') as HTMLSelectElement).value).toBe('1'))
+
+    // Rendered as markdown, not a raw "# Review summary" line of text.
+    const heading = await screen.findByRole('heading', { level: 1, name: 'Review summary' })
+    expect(heading).toBeTruthy()
+
+    // The paragraph quoting "apple pie recipe" (source line 3) carries a
+    // real data-line attribute, and its note is reachable there.
+    const noteButton = await screen.findByRole('button', { name: /Judge note on line 3/ })
+    expect(noteButton.closest('[data-line="3"]')).toBeTruthy()
+    await user.click(noteButton)
+    expect(await screen.findByText('Cite the source.')).toBeTruthy()
+  })
+
+  // Owner follow-up on #1114: structured JSON renders as a collapsible tree
+  // by default, judge_round gets a small criteria-chip header, and a nested
+  // object can be toggled closed via its own <details>.
+  it('renders a judge_round tree with criteria chips and a collapsible nested object', async () => {
+    const user = userEvent.setup()
+    render(<ArtifactPanel chatId="chat-1" nodeId="reviewer-1" onClose={() => {}} />)
+
+    await user.click(await screen.findByTitle('judge_round:t1-1'))
+    await waitFor(() => expect((screen.getByLabelText('Revision') as HTMLSelectElement).value).toBe('1'))
+
+    // Header summary: passed/failed + one chip per criterion name.
+    expect(await screen.findByText('✗ failed')).toBeTruthy()
+    expect(screen.getAllByText(/evidence/).length).toBeGreaterThan(0)
+
+    // "notes" (4 entries) is an array of objects - its own <details>, open by default.
+    const notesSummaryText = await screen.findByText('Array(4)')
+    const notesDisclosure = notesSummaryText.closest('details')
+    expect(notesDisclosure).not.toBeNull()
+    expect(notesDisclosure).toHaveProperty('open', true)
+    await user.click(notesSummaryText)
+    expect(notesDisclosure).toHaveProperty('open', false)
+  })
+
+  // #1114 owner feedback: "the dark mode also looks awful, text is black on
+  // gray" - every surface this panel renders must carry a dark: variant for
+  // its text/background/border, the same tokens the chat surface uses
+  // (index.css's shared @theme scale), not a light-only class left behind.
+  // The real root cause (native controls ignoring a dark container without
+  // `color-scheme: dark` - the <select> revision picker, in particular) is a
+  // global index.css fix verified structurally, not here; this test guards
+  // the panel's OWN Tailwind classes.
+  it('carries dark: variants on every content surface (tree, markdown, notes)', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<ArtifactPanel chatId="chat-1" nodeId="reviewer-1" onClose={() => {}} />)
+
+    await user.click(await screen.findByTitle('judge_round:t1-1'))
+    await waitFor(() => expect((screen.getByLabelText('Revision') as HTMLSelectElement).value).toBe('1'))
+    const treeSurface = container.querySelector('.overflow-x-auto')
+    expect(treeSurface?.className).toMatch(/dark:bg-gray-800/)
+    expect(treeSurface?.className).toMatch(/dark:border-gray-700/)
+
+    await user.click(await screen.findByTitle('text:review-1'))
+    await waitFor(() => expect((screen.getByLabelText('Revision') as HTMLSelectElement).value).toBe('1'))
+    const markdownSurface = container.querySelector('.prose')
+    expect(markdownSurface?.className).toMatch(/dark:prose-invert/)
+    expect(markdownSurface?.className).toMatch(/dark:bg-gray-800/)
+  })
+
+  // #1114 mobile pass: below the `sm` breakpoint the artifact list is a top
+  // <select>, not the sidebar - a real structural swap (driven by
+  // useIsNarrow's matchMedia check), not just responsive classes on the
+  // same markup, so it's the element that actually renders that's asserted.
+  it('renders the artifact list as a <select> instead of the sidebar when narrow', async () => {
+    stubMatchMedia(true)
+    const user = userEvent.setup()
+    render(<ArtifactPanel chatId="chat-1" nodeId="reviewer-1" onClose={() => {}} />)
+
+    const mobileSelect = await screen.findByLabelText('Select an artifact')
+    expect(mobileSelect.tagName).toBe('SELECT')
+    expect(screen.queryByTitle('finding:abc123')).toBeNull() // no sidebar row buttons
+
+    await user.selectOptions(mobileSelect, 'finding:abc123')
+    await waitFor(() => expect((screen.getByLabelText('Revision') as HTMLSelectElement).value).toBe('2'))
   })
 })

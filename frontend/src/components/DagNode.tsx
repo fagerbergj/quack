@@ -16,7 +16,7 @@ import { traceUrl } from '../state/clientConfig'
 // question…" opening the popup only when they need its input/editor. Hidden
 // entirely on a terminal node (done/failed/cancelled) - nothing left to do.
 function NodeMenu({
-  nodeId, status, onCancel, onPause, onResume, canQueue, canEdit, canAnswer, onOpenPopup,
+  nodeId, status, onCancel, onPause, onResume, canQueue, canEdit, canAnswer, onOpenPopup, onOpenArtifacts,
 }: {
   nodeId: string
   status: NodeStatus
@@ -27,6 +27,10 @@ function NodeMenu({
   canEdit: boolean
   canAnswer: boolean
   onOpenPopup: () => void
+  // Present only for a real chat (gates the Artifacts item) - see DagNode's
+  // own chatId doc. A terminal node still needs this menu for its outputs,
+  // so unlike the rest of this menu's items, it isn't gated by node status.
+  onOpenArtifacts?: () => void
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -44,15 +48,18 @@ function NodeMenu({
   }, [open])
 
   const terminal = status === 'done' || status === 'failed' || status === 'cancelled'
-  if (terminal) return null
+  // A terminal node has nothing left to control, but its output artifacts are
+  // still worth a menu - the whole point of viewing them is usually AFTER a
+  // node finishes. Only fully hide the menu when there's truly nothing in it.
+  if (terminal && !onOpenArtifacts) return null
 
   const running = status === 'running'
   // needs_input is the legacy DB/SSE spelling of paused/awaiting_input - both
   // are "paused" for transition purposes (dag.CanTransition treats them alike).
   const paused = status === 'paused' || status === 'needs_input'
-  const startable = paused || status === 'queued'
-  const cancellable = running || startable
-  const hasSecondary = canAnswer || canQueue || canEdit
+  const startable = !terminal && (paused || status === 'queued')
+  const cancellable = !terminal && (running || startable)
+  const hasSecondary = !terminal && (canAnswer || canQueue || canEdit)
 
   return (
     <div ref={ref} className="relative">
@@ -97,6 +104,14 @@ function NodeMenu({
             <button role="menuitem" onClick={() => { onOpenPopup(); setOpen(false) }} className="w-full text-left px-3 py-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
               ✎ Edit prompt
             </button>
+          )}
+          {onOpenArtifacts && (
+            <>
+              {!terminal && <div className="my-1 border-t border-gray-100 dark:border-gray-700" />}
+              <button role="menuitem" onClick={() => { onOpenArtifacts(); setOpen(false) }} className="w-full text-left px-3 py-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+                🗃 Artifacts
+              </button>
+            </>
           )}
         </div>
       )}
@@ -590,16 +605,6 @@ export const DagNode = memo(function DagNode({
             </a>
           )}
           <ContextMeter used={state.contextTokens ?? 0} limit={node.context_window ?? 0} />
-          {chatId && (
-            <button
-              onClick={() => setArtifactsOpen(true)}
-              aria-label="View artifacts"
-              title="View this node's input/output artifacts"
-              className="text-[10px] text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-            >
-              artifacts
-            </button>
-          )}
           {/* A finished node shows the server-measured duration (reconnect-proof);
               a running one ticks live from the server start time. */}
           {(state.finishedAt != null && state.serverDurationMs != null) ? (
@@ -619,6 +624,7 @@ export const DagNode = memo(function DagNode({
             canEdit={notStarted && !!onEditTask}
             canAnswer={(state.status === 'needs_input' || state.pauseReason === 'awaiting_input') && !!onAnswerQuestion}
             onOpenPopup={() => setPopupOpen(true)}
+            onOpenArtifacts={chatId ? () => setArtifactsOpen(true) : undefined}
           />
         </div>
       </div>
