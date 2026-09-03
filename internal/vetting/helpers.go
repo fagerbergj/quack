@@ -13,6 +13,7 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -61,6 +62,13 @@ type Config struct {
 	// delivers the merged, worst-of-verdict review exactly once.
 	ReviewFanout *ReviewFanout
 	Artifacts    artifact.Service // nil = read_artifact tool unavailable to this node
+	// Ledger: the WAL's fail-closed AppendIntent path (#1090 §4.9/#1100). Wired
+	// ONLY when observability.recording is enabled AND its store resolves to
+	// kind "postgres" - the filesystem ledger's AppendIntent is best-effort,
+	// non-transactional (see FSStore.AppendIntent), so it cannot back a
+	// fail-closed write and is never set here. nil = no WAL, recordstore and
+	// the gate behave exactly as before #1100.
+	Ledger ledger.LedgerStore
 	// Artifact: episodic record name this node writes on gate pass ("body" or
 	// "" for none). "review" is written for IsReviewer nodes regardless of
 	// this field - it names only the reMarkable-style extra record (#1006).

@@ -10,12 +10,20 @@ import (
 // other kind here is an intent (fail-closed at the call site).
 const (
 	KindArtifactRevision = "artifact.revision"
-	KindJudgeRound       = "judge.round"
-	KindDeliveryIntent   = "delivery.intent"
-	KindDeliveryDone     = "delivery.done"
-	KindNodeStarted      = "node.started"
-	KindNodeDone         = "node.done"
-	KindNodeFailed       = "node.failed"
+	// KindArtifactRevisionAborted is a compensating, best-effort entry
+	// (#1100 review finding): appended when an artifact.revision intent's
+	// row write fails AFTER the WAL entry already landed, so the revision
+	// it named never materialized. A fold (lastRevision, and any future
+	// replay) must skip an aborted revision when looking for the parent to
+	// build on, so the next save's nextRev still lines up with the store's
+	// real MAX(rows)+1 instead of wedging on the phantom forever.
+	KindArtifactRevisionAborted = "artifact.revision.aborted"
+	KindJudgeRound              = "judge.round"
+	KindDeliveryIntent          = "delivery.intent"
+	KindDeliveryDone            = "delivery.done"
+	KindNodeStarted             = "node.started"
+	KindNodeDone                = "node.done"
+	KindNodeFailed              = "node.failed"
 )
 
 // Entry is the WAL envelope (V4 §4.8): a state-changing intent appended

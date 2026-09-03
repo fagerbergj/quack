@@ -775,6 +775,13 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	executor.SetAdmission(admission, admissionSpecFor(cfg))
 	executor.SetSetup(setupFn)
 	executor.SetArtifacts(artifacts)
+	// WAL groundwork (#1090 §4.9/#1100): armed only when recording is on AND
+	// its store resolves to postgres - the filesystem ledger's AppendIntent
+	// is best-effort/non-transactional (FSStore.AppendIntent), so it stays
+	// recording-only and never backs the gate's fail-closed writes.
+	if pg, ok := ledgerStore.(*ledger.PGStore); ok {
+		executor.SetWALLedger(pg)
+	}
 	executor.SetNodeStateStore(st) // write-through node state machine (#962)
 	executorRef.Store(executor)
 	// The orchestrator's turns take a session from the same pool its worker

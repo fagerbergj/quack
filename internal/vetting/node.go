@@ -2,6 +2,7 @@ package vetting
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -202,6 +203,59 @@ func replyString(reply any) string {
 	return fmt.Sprintf("%v", reply)
 }
 
+// appendNodeEvent is the WAL's node.* observational path (#1090 §4.9): a
+// best-effort AppendIntent call, Warn-logged and otherwise ignored - it must
+// never affect the run, unlike artifact.revision/judge.round which are
+// fail-closed. No-op when cfg.Ledger is unset.
+func appendNodeEvent(ctx context.Context, cfg Config, nodeID, turnID, kind string, rounds int) {
+	if cfg.Ledger == nil {
+		return
+	}
+	payload, err := json.Marshal(struct {
+		NodeID string `json:"node_id"`
+		Turn   string `json:"turn"`
+		Round  int    `json:"round"`
+	}{NodeID: nodeID, Turn: turnID, Round: rounds})
+	if err != nil {
+		return
+	}
+	if _, err := cfg.Ledger.AppendIntent(ctx, ledger.Entry{
+		ChatID: cfg.ChatID, TurnID: turnID, NodeID: nodeID, Kind: kind, At: time.Now().UTC(), Payload: payload,
+	}); err != nil {
+		slog.Warn("ledger node event append failed (observational; run unaffected)", "component", "vetting", "node", nodeID, "kind", kind, "err", err)
+	}
+}
+
+// appendJudgeRound is the WAL's judge.round intent (#1090 §4.9, fail-closed):
+// appended right after a round's verdict is known, so it lands before the
+// NEXT round's artifact.revision writes. scored lists the code_review/finding
+// ids and revisions THIS round wrote (the judge_round artifact itself is
+// #1092 - not built here). No-op (nil error) when cfg.Ledger is unset. A
+// non-nil error means the caller must treat this round as failed-closed - it
+// must not start another revise round on this verdict, mirroring the
+// existing judge-unavailable path just above.
+func appendJudgeRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, passed bool, score float64, scored []ScoredRef) error {
+	if cfg.Ledger == nil {
+		return nil
+	}
+	id := fmt.Sprintf("%s-%d", turnID, round)
+	payload, err := json.Marshal(struct {
+		ID     string      `json:"id"`
+		Passed bool        `json:"passed"`
+		Score  float64     `json:"score"`
+		Scored []ScoredRef `json:"scored"`
+	}{ID: id, Passed: passed, Score: score, Scored: scored})
+	if err != nil {
+		return fmt.Errorf("vetting: marshal judge.round payload: %w", err)
+	}
+	if _, err := cfg.Ledger.AppendIntent(ctx, ledger.Entry{
+		ChatID: cfg.ChatID, TurnID: turnID, NodeID: nodeID, Kind: ledger.KindJudgeRound, Key: id, At: time.Now().UTC(), Payload: payload,
+	}); err != nil {
+		return fmt.Errorf("vetting: judge.round WAL append for node %s round %d: %w", nodeID, round, err)
+	}
+	return nil
+}
+
 func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Node, workerModel model.LLM, judge JudgeFactory, cfg Config, prompt string, attachments []*genai.Part, ctrl NodeControl, emit func(*session.Event) error) (answer string, res GateResult, err error) {
 	log := slog.With("component", "vetting", "node", nodeID)
 
@@ -211,6 +265,14 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		attribute.String(otelobs.GenAIAgentName, cfg.Agent),
 		attribute.String(otelobs.QuackModel, modelName(workerModel)),
 	)
+	// turnID: closest available stand-in for the store row's turn_id column
+	// (#1090 V4.2 point 2) - no chat-turn id is plumbed this deep today
+	// (dag/orchestrator carry none either), so the ADK invocation id is the
+	// best per-run identity RunGatedRefine actually has. Computed here
+	// (rather than at its original use site below) so node.started can be
+	// stamped with the same id node.done/node.failed close out on.
+	turnID := ctx.InvocationID()
+	appendNodeEvent(nodeCtx, cfg, nodeID, turnID, ledger.KindNodeStarted, 0)
 	defer func() {
 		span.SetAttributes(
 			attribute.Bool("verdict_passed", res.Passed),
@@ -218,6 +280,11 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			attribute.Int("gate_rounds", res.Rounds),
 		)
 		otelobs.EndNode(span, err)
+		doneKind := ledger.KindNodeDone
+		if err != nil {
+			doneKind = ledger.KindNodeFailed
+		}
+		appendNodeEvent(nodeCtx, cfg, nodeID, turnID, doneKind, res.Rounds)
 	}()
 
 	// Re-attach advisor-thread marker for tool-bearing rounds.
@@ -230,11 +297,6 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	// cfg is a per-call copy; stamping only reaches this node's judge rounds.
 	cfg.AdvisorToken = advisorToken
 	cfg.NodeBaseSHA = cloneHeadSHA(cfg)
-	// turnID: closest available stand-in for the store row's turn_id column
-	// (#1090 V4.2 point 2) - no chat-turn id is plumbed this deep today
-	// (dag/orchestrator carry none either), so the ADK invocation id is the
-	// best per-run identity RunGatedRefine actually has.
-	turnID := ctx.InvocationID()
 	// User attribution: the ADK session identity (mirrors MemoryScope below) -
 	// not caller-set, so a node can never claim to run as someone it isn't.
 	if s := ctx.Session(); s != nil {
@@ -537,6 +599,23 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			v = applyRubricSpecs(v, cfg.RubricSpecs)
 			env, feedback := composeFeedback(v, cfg.Threshold, round)
 			res = GateResult{Passed: env.Passed, Score: v.Score, Feedback: feedback, Rounds: round}
+			var scored []ScoredRef
+			if episodicState != nil {
+				scored = episodicState.roundWrites
+			}
+			if walErr := appendJudgeRound(nodeCtx, cfg, nodeID, turnID, round, res.Passed, res.Score, scored); walErr != nil {
+				// Fail-closed (#1090 §4.9): the WAL entry for this round's
+				// verdict didn't land, so don't start another revise round on
+				// it - surface it the same as an unavailable judge.
+				log.Error("judge.round WAL append failed; stopping the round loop", "round", round, "err", walErr)
+				verdictWord := "failed"
+				if env.Passed {
+					verdictWord = "passed"
+				}
+				res.Passed = false
+				res.Feedback = fmt.Sprintf("Round %d %s (score %.2f) but could not be recorded in the write-ahead log; treating as failed.", round, verdictWord, v.Score)
+				break
+			}
 			emitEvaluationResults(ledgerCtx, runID, v)
 			jspan.end(stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Score: res.Score, Passed: res.Passed, Feedback: res.Feedback, Envelope: env}, nil)
 			log.Info("judge round done", "round", round, "score", v.Score, "passed", res.Passed)
