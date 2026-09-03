@@ -637,6 +637,7 @@ export default function Chat() {
               key={turn.id}
               turn={turn}
               idx={idx}
+              chatId={activeChatId ?? undefined}
               choiceAnswer={choiceAnswer}
               isChoiceAnswer={isChoiceAnswer}
               submittingChoice={submittingChoice}
@@ -730,7 +731,7 @@ export default function Chat() {
                               {orchActivity.length > 0 && <ActivityList activity={orchActivity} />}
                               {/* Start/Stop stay wired post-run: a paused node ends the
                                   turn, so this is exactly where Start must work. */}
-                              <DagView dag={liveDag} onRetryNode={handleRetryNode} onResumeNode={handleResumeNode} onCancelNode={handleCancelNode} onAnswerNodeQuestion={handleAnswerNode} />
+                              <DagView dag={liveDag} chatId={activeChatId ?? undefined} onRetryNode={handleRetryNode} onResumeNode={handleResumeNode} onCancelNode={handleCancelNode} onAnswerNodeQuestion={handleAnswerNode} />
                             </div>
                           </details>
                         ) : (
@@ -738,6 +739,7 @@ export default function Chat() {
                             {orchActivity.length > 0 && <LiveStatusLine activity={orchActivity} />}
                             <DagView
                               dag={liveDag}
+                              chatId={activeChatId ?? undefined}
                               onCancelNode={handleCancelNode}
                               onPauseNode={handlePauseNode}
                               onQueueNodeMessage={handleQueueNodeMessage}

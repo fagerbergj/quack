@@ -34,6 +34,9 @@ function topoLayers(nodeIds: string[], dependsOnMap: Record<string, string[]>): 
 
 interface Props {
   dag: DagTurnState
+  // Present only for a real chat (not a Storybook fixture) - gates each
+  // node's Artifacts button, since the panel reads the REST artifacts API.
+  chatId?: string
   // Present only for a live, streaming run: per-node controls (cancel / pause /
   // resume / queue a message), surfaced in the node popup (#265).
   onCancelNode?: (nodeId: string) => void
@@ -65,7 +68,7 @@ export function DagBubbleHeader({ dag }: { dag: DagTurnState }) {
 }
 
 export function DagView({
-  dag, onCancelNode, onPauseNode, onResumeNode, onQueueNodeMessage,
+  dag, chatId, onCancelNode, onPauseNode, onResumeNode, onQueueNodeMessage,
   onEditQueuedMessage, onRemoveQueuedMessage, onEditNodeTask, onRetryNode, onAnswerNodeQuestion,
 }: Props) {
   const nodeMap = Object.fromEntries(dag.nodes.map(n => [n.id, n]))
@@ -111,6 +114,7 @@ export function DagView({
                   runs={getRuns(id)}
                   answer={getAnswer(id)}
                   isFinal={id === finalId}
+                  chatId={chatId}
                   onCancel={onCancelNode}
                   onPause={onPauseNode}
                   onResume={onResumeNode}

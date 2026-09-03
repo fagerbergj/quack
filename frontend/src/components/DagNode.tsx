@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { AssistantText, ActivityList, LiveStatusLine, AcpBadge, isAcpAgent } from './AgentParts'
+import { ArtifactPanel } from './ArtifactPanel'
 import { CopyButton } from './CopyButton'
 import { NodePopup } from './NodePopup'
 import { StatusDot } from './StatusDot'
@@ -488,6 +489,10 @@ interface Props {
   runs: AgentRun[]
   answer: string
   isFinal: boolean
+  // Present only when the DAG belongs to a real chat (not, say, a Storybook
+  // fixture) - gates the Artifacts button, since the panel needs it to hit
+  // the REST artifacts API.
+  chatId?: string
   onCancel?: (nodeId: string) => void
   onPause?: (nodeId: string) => void
   onResume?: (nodeId: string) => void
@@ -505,7 +510,7 @@ interface Props {
 // callback props are stable (Chat.tsx wraps them in useCallback), so a shallow
 // compare bails out for every node except the one that actually changed.
 export const DagNode = memo(function DagNode({
-  node, state, runs, answer, isFinal,
+  node, state, runs, answer, isFinal, chatId,
   onCancel, onPause, onResume, onQueueMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditTask,
   onRetry, onAnswerQuestion,
 }: Props) {
@@ -516,6 +521,7 @@ export const DagNode = memo(function DagNode({
   // The actively-streaming run is the last not-yet-done run while the node runs.
   const activeIdx = running ? runs.map(r => r.done).lastIndexOf(false) : -1
   const [popupOpen, setPopupOpen] = useState(false)
+  const [artifactsOpen, setArtifactsOpen] = useState(false)
   const pendingQueueCount = (state.queue ?? []).filter(m => !m.delivered).length
   const isPaused = state.status === 'paused' || state.status === 'needs_input'
   const pauseLabel = isPaused ? pausedStatusLabel(state.pauseReason) : null
@@ -584,6 +590,16 @@ export const DagNode = memo(function DagNode({
             </a>
           )}
           <ContextMeter used={state.contextTokens ?? 0} limit={node.context_window ?? 0} />
+          {chatId && (
+            <button
+              onClick={() => setArtifactsOpen(true)}
+              aria-label="View artifacts"
+              title="View this node's input/output artifacts"
+              className="text-[10px] text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+            >
+              artifacts
+            </button>
+          )}
           {/* A finished node shows the server-measured duration (reconnect-proof);
               a running one ticks live from the server start time. */}
           {(state.finishedAt != null && state.serverDurationMs != null) ? (
@@ -631,6 +647,9 @@ export const DagNode = memo(function DagNode({
           onEditTask={onEditTask}
           onAnswerQuestion={onAnswerQuestion}
         />
+      )}
+      {artifactsOpen && chatId && (
+        <ArtifactPanel chatId={chatId} nodeId={node.id} onClose={() => setArtifactsOpen(false)} />
       )}
 
       {/* Retry a finished node (failed or done) + its downstream, on a live turn */}
