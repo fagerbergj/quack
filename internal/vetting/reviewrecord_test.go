@@ -159,25 +159,41 @@ CLEAN:
 }
 
 // TestSaveCodeReviewRound_ToolWriteSkipsTailFallback covers the #1091 gate
-// fallback: a write_code_review call already wrote this round's record
-// directly, so saveCodeReviewRound must not also parse the (bogus) answer
-// tail and overwrite it - it just adopts the tool-written revision.
+// fallback, exercised as round 1 (the draft phase) - the flow #1108 B2 found
+// broken: a write_code_review call already wrote this round's record
+// directly (simulated the way the real MCP handler does it: SaveStructured
+// then ToolFindings.Add), so saveCodeReviewRound must not also parse the
+// (bogus) answer tail and overwrite it - it just adopts the tool-written
+// revision. st starts fresh (newEpisodicRoundState, reviewRev 0) exactly as
+// round 1 of a real run does - detection must not depend on a baseline
+// loaded after the tool write (#1108 B2), so it goes through toolWritten
+// instead of a revision comparison.
 func TestSaveCodeReviewRound_ToolWriteSkipsTailFallback(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	cfg := reviewerCfgWithArtifacts(t, svc, true)
 	rc := recordClient(cfg)
 
+	toolStage := NewToolFindingStage()
+	RegisterMemSession("sec-1108-b2", MemSession{ToolFindings: toolStage})
+	MarkMemSessionConnected("sec-1108-b2")
+	defer UnregisterMemSession("sec-1108-b2")
+	token := "tok-1108-b2"
+	RegisterAdvisorThread(token, AdvisorTask{MemSecret: "sec-1108-b2"})
+	defer UnregisterAdvisorThread(token)
+	cfg.AdvisorToken = token
+
 	toolWritten := CodeReviewRecord{Verdict: "approve", Summary: "written directly via write_code_review"}
-	_, toolRev, err := rc.SaveStructured(context.Background(), kindCodeReview, toolWritten, SubjectHint(cfg.ChatID), recordstore.Lineage{NodeID: cfg.NodeID, Author: "worker"})
+	crID, toolRev, err := rc.SaveStructured(context.Background(), kindCodeReview, toolWritten, SubjectHint(cfg.ChatID), recordstore.Lineage{NodeID: cfg.NodeID, Author: "worker"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	toolStage.Add(crID)
 
 	// A malformed/contradictory tail: if this were parsed, verdict would
 	// become request_changes - proving the fallback path never ran.
 	answer := "VERDICT: request_changes\nFINDINGS:\n- a.go:1: should never be recorded\n"
 	staged := StagedDelivery{Kind: "review", Recovered: true}
-	st := newEpisodicRoundState()
+	st := newEpisodicRoundState() // round 1's real baseline: fresh, not seeded
 	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "", 1, answer, staged, st)
 
 	raw, _, _, rev, ok, err := rc.LatestWithMeta(context.Background(), codeReviewID(cfg))
@@ -401,6 +417,83 @@ func TestSaveCodeReviewRoundLogsAndSkipsOnSeedReadFailure(t *testing.T) {
 
 	if _, live := st.findings[id]; live {
 		t.Fatalf("finding %s should not be recorded live this round when its seed-read failed", id)
+	}
+}
+
+// TestSaveCodeReviewRound_ToolWroteCodeReviewStillSeedsFindings covers #1108
+// B3, exercised in the revise phase (round 2+, where the toolWroteCodeReview
+// short-circuit fires): a round that tool-writes both write_finding and
+// write_code_review must still refresh st.findingRev for the finding from
+// the seed loop before returning - otherwise a later round's tail-parse
+// write for the same finding stamps a stale ParentRevision, silently
+// skipping the revision the tool wrote in between.
+func TestSaveCodeReviewRound_ToolWroteCodeReviewStillSeedsFindings(t *testing.T) {
+	svc := newMetaAwareInMemory()
+	cfg := reviewerCfgWithArtifacts(t, svc, true)
+	rc := recordClient(cfg)
+
+	toolStage := NewToolFindingStage()
+	RegisterMemSession("sec-1108-b3", MemSession{ToolFindings: toolStage})
+	MarkMemSessionConnected("sec-1108-b3")
+	defer UnregisterMemSession("sec-1108-b3")
+	token := "tok-1108-b3"
+	RegisterAdvisorThread(token, AdvisorTask{MemSecret: "sec-1108-b3"})
+	defer UnregisterAdvisorThread(token)
+	cfg.AdvisorToken = token
+
+	// Round 1: tail-parse creates finding F at revision 1 (no tool writes).
+	st := newEpisodicRoundState()
+	staged := StagedDelivery{Kind: "review", Recovered: true}
+	round1Answer := "VERDICT: request_changes\nFINDINGS:\n- a.go:1: bug one.\n"
+	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "t1", 1, round1Answer, staged, st)
+	var findingID string
+	for id := range st.findings {
+		findingID = id
+	}
+	if findingID == "" {
+		t.Fatal("round 1 did not record a live finding")
+	}
+	rev1 := st.findingRev[findingID]
+
+	// Round 2 (revise phase): the worker tool-writes a new revision of the
+	// SAME finding, then write_code_review - the short-circuit this test
+	// targets. The seed loop must still refresh st.findingRev[findingID]
+	// before the early return.
+	fRec := FindingRecord{Path: "a.go", Title: "bug one", State: "new"}
+	_, rev2, err := rc.SaveStructured(context.Background(), kindFinding, fRec, "", recordstore.Lineage{NodeID: cfg.NodeID, Round: 2, ParentRevision: rev1, Author: "worker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rev2 <= rev1 {
+		t.Fatalf("round 2 tool write revision = %d, want > round 1's %d", rev2, rev1)
+	}
+	toolStage.Add(findingID)
+	crRec := CodeReviewRecord{Verdict: "request_changes", FindingIDs: []string{findingID}}
+	crID, _, err := rc.SaveStructured(context.Background(), kindCodeReview, crRec, SubjectHint(cfg.ChatID), recordstore.Lineage{NodeID: cfg.NodeID, Round: 2, ParentRevision: st.reviewRev, Author: "worker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolStage.Add(crID)
+	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "t2", 2, "irrelevant - short-circuits on the tool write", staged, st)
+
+	if st.findingRev[findingID] != rev2 {
+		t.Fatalf("st.findingRev[%s] = %d after round 2, want %d (the seed loop must run before the toolWroteCodeReview return, #1108 B3)", findingID, st.findingRev[findingID], rev2)
+	}
+
+	// Round 3: the tail parse drops the finding (resolved) - the gate writes
+	// it with ParentRevision = st.findingRev[findingID]. It must chain off
+	// round 2's tool-written revision, not round 1's stale one.
+	round3Answer := "VERDICT: approve\nFINDINGS:\n"
+	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "t3", 3, round3Answer, staged, st)
+	_, _, lineage, rev3, ok, err := rc.LatestWithMeta(context.Background(), findingID)
+	if err != nil || !ok {
+		t.Fatalf("LatestWithMeta(%s): ok=%v err=%v", findingID, ok, err)
+	}
+	if rev3 <= rev2 {
+		t.Fatalf("round 3 did not write a new resolved revision: rev3=%d, rev2=%d", rev3, rev2)
+	}
+	if lineage.ParentRevision != rev2 {
+		t.Fatalf("round 3 finding parent_revision = %d, want %d (round 2's tool-written revision) - got a bogus/stale parent (#1108 B3)", lineage.ParentRevision, rev2)
 	}
 }
 

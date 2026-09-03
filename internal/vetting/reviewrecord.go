@@ -648,16 +648,15 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 
 	// #1091 gate fallback: write_code_review/write_finding (the loopback MCP
 	// tools) let the worker write this round's code_review record directly,
-	// bypassing stage_review_comment/stage_review entirely - detected as a
-	// revision newer than what this round started from. That write is
-	// authoritative; answer-tail parsing runs only when nothing was written
-	// via tools this round. Records are fail-open like every other read
-	// here, so a broken artifact service (even one that panics on Load, as
-	// artifact.Service's zero value does) must never block the round.
-	if toolRev, ok := latestCodeReviewRevSafe(ctx, c, cfg); ok && toolRev > st.reviewRev {
-		st.reviewRev = toolRev
-		return
-	}
+	// bypassing stage_review_comment/stage_review entirely. Detected via
+	// toolWritten membership, not a revision comparison against st.reviewRev -
+	// that baseline is only ever loaded lazily on this invocation's FIRST
+	// saveEpisodicRound call, which for a reviewer node happens after the
+	// draft round's write_code_review, so the baseline already includes it
+	// and a revision compare never fires in round 1 (#1108 B2). toolWritten
+	// is this round's own drain, so it's correct on round 1 too.
+	codeReviewID, crIDErr := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID))
+	toolWroteCodeReview := crIDErr == nil && toolWritten[codeReviewID]
 
 	var event string
 	var findings, dismissedComments []ReviewComment
@@ -701,8 +700,14 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 	// instead of minting a duplicate revision with a fabricated
 	// ParentRevision 0 (#1091 adversarial review finding #1). This seed loop
 	// always runs, unconditionally, before the tail-parse skip-decision loop
-	// below reads toolWritten (#1108 finding 3b).
+	// below reads toolWritten, and before the toolWroteCodeReview short-circuit
+	// further down - a return before this loop would discard the drained ids
+	// and leave st.findingRev stale for a later round's ParentRevision (#1108
+	// B3).
 	for id := range toolWritten {
+		if id == codeReviewID {
+			continue // not a FindingRecord; handled by toolWroteCodeReview below
+		}
 		raw, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id)
 		if lerr != nil || !ok {
 			// #1108 finding 3a: log instead of silently dropping the finding
@@ -724,6 +729,16 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 			findingIDs = append(findingIDs, id)
 			seen[id] = true
 		}
+	}
+
+	// That write is authoritative; answer-tail parsing runs only when nothing
+	// was written via write_code_review this round. Runs after the seed loop
+	// above so the drained finding ids are never discarded (#1108 B3).
+	if toolWroteCodeReview {
+		if rev, ok := latestCodeReviewRevSafe(ctx, c, cfg); ok {
+			st.reviewRev = rev
+		}
+		return
 	}
 
 	for _, f := range findings {

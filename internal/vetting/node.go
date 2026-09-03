@@ -577,6 +577,11 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				if episodicState != nil {
 					trigger = episodicState.triggerAnnotation
 				}
+				// Intentional: this round's revise (below, on judge fail) also
+				// stamps Round=round, even though its tool writes are first
+				// referenced by round+1's code_review - "round r judges, on
+				// fail revises" (line 557), so a revision belongs to the
+				// judgment that required it, not the round that later reads it.
 				SetAdvisorThreadRound(advisorToken, round, turnID, cfg.NodeBaseSHA, trigger)
 			}
 			act := actFor(answer)

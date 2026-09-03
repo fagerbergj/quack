@@ -99,9 +99,8 @@ type MemSession struct {
 }
 
 // ToolFindingStage: per-node record of ids written via write_<kind> this
-// round - reset by the gate at the top of every round (mirrors ReviewStage's
-// snapshot-not-drain shape; see SetAdvisorThreadRound's call site in
-// saveCodeReviewRound).
+// round - drained (opposite of ReviewStage's snapshot-not-drain shape) by
+// resetToolWrittenFindingIDs at the top of saveCodeReviewRound.
 type ToolFindingStage struct {
 	mu  sync.Mutex
 	ids map[string]bool

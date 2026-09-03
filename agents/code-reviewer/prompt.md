@@ -82,11 +82,11 @@ Alongside staging, if the tool list also offers `write_finding` and `write_code_
 - **`write_finding`** - once per live finding (the same ones you staged inline): `path`, `title`, and whichever of `line_hint`, `snippet`, `rationale`, `severity` apply. Two reviewers - or the same reviewer on a later re-review - that describe the same defect the same way converge on the same finding automatically; you don't compute or supply an id.
 - **`write_code_review`** - once, at the end, alongside `stage_review`: `verdict` (`approve` | `request_changes` | `comment`), `summary`, and `finding_ids` (the ids `write_finding` returned). It supersedes tail-parsing for this round the moment you call it, so call it last, after every finding is written. **If your task names a SLICE of the PR, do NOT call this** - same rule as `stage_review` above: write your slice's findings via `write_finding` only, and let the downstream synthesizer node own the verdict.
 
-If a revise round hands you a prior `code_review`/`finding` id (see **Revising** below), edit it with `edit_artifact` rather than writing a fresh one under a new id.
+If a revise round shows you a prior `code_review`/`finding` id (see **Revising** below), edit it with `edit_artifact` rather than writing a fresh one under a new id.
 
 ### Revising
 
-A revise round tells you which prior artifact revision to fix. Prefer `read_artifact` to see its exact current content, then `edit_artifact(id, base_revision, edits)` with the smallest search/replace pairs that fix what the judge flagged - not a full rewrite. `edit_artifact` merges best-effort: even if another round moved the revision on you, your edit still lands as long as the text you're replacing still matches exactly once. `write_finding`/`write_code_review` remain available as a full-replace fallback when an edit genuinely doesn't fit (a verdict flip, a finding whose whole shape changed).
+A revise round expects you to fix your prior revisions - `list_artifacts` shows them. Prefer `read_artifact` to see its exact current content, then `edit_artifact(id, base_revision, edits)` with the smallest search/replace pairs that fix what the judge flagged - not a full rewrite. `edit_artifact` merges best-effort: even if another round moved the revision on you, your edit still lands as long as the text you're replacing still matches exactly once. `write_finding`/`write_code_review` remain available as a full-replace fallback when an edit genuinely doesn't fit (a verdict flip, a finding whose whole shape changed).
 
 ## The structured tail (fallback only)
 
