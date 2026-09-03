@@ -906,26 +906,6 @@ func (s *Store) InsertChatEvent(ctx context.Context, ev ChatEvent) error {
 	return s.db.WithContext(ctx).Create(&ev).Error
 }
 
-// UpdateChatEventContent rewrites ONLY the Event payload of one EXISTING row
-// (chat_id, seq) - `quack ledger rebuild`'s (#1121) targeted correction of a
-// drifted node-lifecycle row. Never inserts: the caller must already know
-// the row exists (found by content-matching against the fold, not by
-// guessing a seq), so every other row in the table is untouched by
-// construction. Returns an error if no such row exists (a caller bug, not a
-// missing-row case - rebuild inserts a missing row via InsertChatEvent instead).
-func (s *Store) UpdateChatEventContent(ctx context.Context, chatID string, seq int64, eventJSON string) error {
-	res := s.db.WithContext(ctx).Model(&ChatEvent{}).
-		Where("chat_id = ? AND seq = ?", chatID, seq).
-		Update("event", eventJSON)
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return fmt.Errorf("store: no chat_events row for chat %q seq %d", chatID, seq)
-	}
-	return nil
-}
-
 // LoadChatEvents returns events with seq > afterSeq (afterSeq=0 for full run).
 func (s *Store) LoadChatEvents(ctx context.Context, chatID string, afterSeq int64) ([]ChatEvent, error) {
 	var evs []ChatEvent

@@ -290,6 +290,83 @@ func TestRunLedgerRebuild_HealthyChatIsANoop(t *testing.T) {
 	}
 }
 
+// TestRunLedgerRebuild_NodeAcrossTurnsIsStillANoop is the #1125 review's
+// blocking scenario end-to-end: turn 1's node N fails, turn 2's N (a later
+// re-run, fresh turn id) completes - the CURRENT table (per-run) only ever
+// holds turn 2's rows. Rebuild must not resurrect turn 1's stale
+// node_failed (nor insert a second node_start) - it must be a no-op,
+// exactly like a chat with only one turn per node.
+func TestRunLedgerRebuild_NodeAcrossTurnsIsStillANoop(t *testing.T) {
+	ctx := context.Background()
+	st, ls, artifacts := newTestStack(t)
+	const chatID = "chat-1"
+
+	payload := func(turn string) []byte {
+		b, err := json.Marshal(struct {
+			NodeID string `json:"node_id"`
+			Turn   string `json:"turn"`
+		}{NodeID: "n1", Turn: turn})
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		return b
+	}
+	// Turn 1: n1 fails. Its table rows were cleared by EventLog.Reset when
+	// turn 2 started (a live run's real behavior) - nothing to seed for it.
+	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindNodeStarted, Payload: payload("turn-1")}); err != nil {
+		t.Fatalf("AppendIntent turn-1 started: %v", err)
+	}
+	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindNodeFailed, Payload: payload("turn-1")}); err != nil {
+		t.Fatalf("AppendIntent turn-1 failed: %v", err)
+	}
+	// Turn 2: n1 (re-run) succeeds - the table holds exactly this.
+	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindNodeStarted, Payload: payload("turn-2")}); err != nil {
+		t.Fatalf("AppendIntent turn-2 started: %v", err)
+	}
+	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindNodeDone, Payload: payload("turn-2")}); err != nil {
+		t.Fatalf("AppendIntent turn-2 done: %v", err)
+	}
+	seedEvent(t, ctx, st, chatID, 1, stream.NodeStart("n1", "worker"))
+	seedEvent(t, ctx, st, chatID, 2, stream.NodeDone("n1", stream.NodeDoneData{Output: "turn 2 succeeded"}))
+
+	before, err := st.LoadChatEvents(ctx, chatID, 0)
+	if err != nil {
+		t.Fatalf("LoadChatEvents before: %v", err)
+	}
+	if len(before) != 2 {
+		t.Fatalf("seeded %d rows, want 2", len(before))
+	}
+
+	dry, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, true, false)
+	if err != nil {
+		t.Fatalf("RunLedgerRebuild dry-run: %v", err)
+	}
+	if dry.SSERowsInserted != 0 {
+		t.Fatalf("dry-run reported %d pending inserts, want 0 (turn 1's stale node_failed must not count)", dry.SSERowsInserted)
+	}
+
+	real, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false, false)
+	if err != nil {
+		t.Fatalf("RunLedgerRebuild: %v", err)
+	}
+	if real.SSERowsInserted != 0 {
+		t.Fatalf("rebuild inserted %d rows, want 0", real.SSERowsInserted)
+	}
+
+	after, err := st.LoadChatEvents(ctx, chatID, 0)
+	if err != nil {
+		t.Fatalf("LoadChatEvents after: %v", err)
+	}
+	if len(after) != 2 {
+		t.Fatalf("row count = %d after rebuild, want 2 (unchanged) - turn 1's stale failure must not have been inserted", len(after))
+	}
+	for i := range before {
+		if before[i] != after[i] {
+			t.Fatalf("row %d changed:\nbefore=%+v\nafter=%+v", i, before[i], after[i])
+		}
+	}
+}
+
 // TestRunLedgerRebuild_InsertsMissingWithoutTouchingOthers seeds a table
 // with real observational rows and ONE existing lifecycle row, then folds a
 // WAL with a genuinely missing second node's lifecycle - rebuild must add
