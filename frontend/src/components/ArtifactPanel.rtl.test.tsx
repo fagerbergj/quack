@@ -14,11 +14,20 @@ afterEach(cleanup)
 function stubFetch() {
   const findingV1 = JSON.stringify({ path: 'a.go', title: 'missing nil check', rationale: 'x may be nil here' })
   const findingV2 = JSON.stringify({ path: 'a.go', title: 'missing nil check (fixed)', rationale: 'x may be nil here' })
+  // finding:other has only ONE revision - the review's exact repro shape
+  // (artifact A has revisions {2, 1}, artifact B has only 1) for the stale
+  // 404-banner bug: switching A -> B used to fetch B?revision=2 (A's stale
+  // selectedRev) before B's own revisions effect settled.
+  const otherV1 = JSON.stringify({ path: 'b.go', title: 'unused import', rationale: 'b is never read' })
   const judgeRound = JSON.stringify({
     round: 1,
     passed: false,
     notes: [
       { ref: { artifact_id: 'finding:abc123', revision: 1, snippet: 'x may be nil here' }, text: 'Needs a concrete repro.', criterion: 'evidence' },
+      // Same line as the note above (both match "x may be nil here") -
+      // review finding 5: each note on a shared line must be its own
+      // reachable/announced control, not just notes[0].
+      { ref: { artifact_id: 'finding:abc123', revision: 1, snippet: 'nil here' }, text: 'Also flag the caller.', criterion: 'coverage' },
       { ref: { artifact_id: 'finding:abc123', revision: 1, line_hint: 999 }, text: 'Unanchored fixture note.' },
     ],
   })
@@ -33,22 +42,34 @@ function stubFetch() {
         ],
       })
     }
+    if (url.includes('/artifacts/finding:other/revisions')) {
+      return jsonResponse({
+        data: [
+          { revision: 1, mime_type: 'application/json', size: otherV1.length, kind: 'finding', class: 'structured', lineage: { node_id: 'reviewer-1', round: 1, author: 'worker' } },
+        ],
+      })
+    }
     if (url.includes('/artifacts/judge_round:t1-1/revisions')) {
       return jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: judgeRound.length, kind: 'judge_round', class: 'structured' }] })
     }
     if (url.includes('/artifacts/finding:abc123?revision=2')) return textResponse(findingV2)
     if (url.includes('/artifacts/finding:abc123?revision=1')) return textResponse(findingV1)
+    if (url.includes('/artifacts/finding:other?revision=1')) return textResponse(otherV1)
+    // NOT ?revision=2 for finding:other - it has only revision 1, so a
+    // request for revision 2 (the stale-selectedRev bug) 404s, matching the
+    // real server's GetChatArtifact.
     if (url.includes('/artifacts/finding:abc123/diff')) return textResponse(`--- finding:abc123@1\n+++ finding:abc123@2\n@@ -1 +1 @@\n-${findingV1}\n+${findingV2}\n`)
     if (url.includes('/artifacts/judge_round:t1-1')) return textResponse(judgeRound)
     if (url.endsWith('/artifacts')) {
       return jsonResponse({
         data: [
           { name: 'finding:abc123', kind: 'finding', class: 'structured', latest_revision: 2, lineage: { node_id: 'reviewer-1', round: 1, author: 'worker' }, revisions: [] },
+          { name: 'finding:other', kind: 'finding', class: 'structured', latest_revision: 1, lineage: { node_id: 'reviewer-1', round: 1, author: 'worker' }, revisions: [] },
           { name: 'judge_round:t1-1', kind: 'judge_round', class: 'structured', latest_revision: 1, lineage: { node_id: 'reviewer-1', round: 1, author: 'judge' }, revisions: [] },
         ],
       })
     }
-    return jsonResponse({ data: [] })
+    return new Response(JSON.stringify({ error: 'not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
   }))
 }
 
@@ -85,7 +106,7 @@ describe('ArtifactPanel', () => {
     render(<ArtifactPanel chatId="chat-1" nodeId="reviewer-1" onClose={() => {}} />)
 
     // Select the finding artifact from the Outputs group.
-    const findingButton = await screen.findByRole('button', { name: 'finding' })
+    const findingButton = (await screen.findAllByRole('button', { name: 'finding' }))[0]
     await user.click(findingButton)
 
     // Revision picker appears, defaulting to the latest (r2).
@@ -98,11 +119,15 @@ describe('ArtifactPanel', () => {
     await user.selectOptions(revisionSelect, '1')
     await waitFor(() => expect((revisionSelect as HTMLSelectElement).value).toBe('1'))
 
-    // The judge note's snippet ("x may be nil here") is on r1's rationale
-    // line - it should render as a clickable highlighted line.
-    const highlighted = await screen.findByRole('button', { name: /Judge note on line/ })
-    await user.click(highlighted)
+    // Both notes anchor to r1's rationale line ("x may be nil here" and "nil
+    // here" both match it) - each must be its OWN reachable/announced
+    // control (review finding 5), not just the first.
+    const lineNotes = await screen.findAllByRole('button', { name: /Judge note on line/ })
+    expect(lineNotes).toHaveLength(2)
+    await user.click(lineNotes[0])
     expect(await screen.findByText('Needs a concrete repro.')).toBeTruthy()
+    await user.click(lineNotes[1])
+    expect(await screen.findByText('Also flag the caller.')).toBeTruthy()
 
     // The unanchored note (bad line_hint, no snippet match) lists separately.
     expect(await screen.findByText('Unanchored fixture note.')).toBeTruthy()
@@ -121,7 +146,7 @@ describe('ArtifactPanel', () => {
     const user = userEvent.setup()
     render(<ArtifactPanel chatId="chat-1" nodeId="reviewer-1" onClose={() => {}} />)
 
-    await user.click(await screen.findByRole('button', { name: 'finding' }))
+    await user.click((await screen.findAllByRole('button', { name: 'finding' }))[0])
     const revisionSelect = await screen.findByLabelText('Revision')
     await waitFor(() => expect((revisionSelect as HTMLSelectElement).value).toBe('2'))
 
@@ -134,5 +159,32 @@ describe('ArtifactPanel', () => {
     await user.selectOptions(revisionSelect, '2')
 
     expect(await screen.findByText(/Pick a different revision to diff against/)).toBeTruthy()
+  })
+
+  // Review #1113's blocking finding: switching from an artifact with
+  // revisions {2, 1} to one with only revision 1 used to fetch
+  // `finding:other?revision=2` (the FIRST artifact's stale selectedRev) in
+  // the same commit as the selection change, 404ing and leaving a red error
+  // banner that nothing ever cleared - even once the second artifact's real
+  // content rendered correctly underneath it.
+  it('clears a previous artifact error banner when switching to a second artifact', async () => {
+    const user = userEvent.setup()
+    render(<ArtifactPanel chatId="chat-1" nodeId="reviewer-1" onClose={() => {}} />)
+
+    const findingButtons = await screen.findAllByRole('button', { name: 'finding' })
+    expect(findingButtons).toHaveLength(2)
+
+    // Select A (finding:abc123, latest revision 2) first.
+    await user.click(findingButtons[0])
+    await waitFor(() => expect((screen.getByLabelText('Revision') as HTMLSelectElement).value).toBe('2'))
+
+    // Switch to B (finding:other, only revision 1).
+    await user.click(findingButtons[1])
+    await waitFor(() => expect((screen.getByLabelText('Revision') as HTMLSelectElement).value).toBe('1'))
+    expect(await screen.findByText(/unused import/)).toBeTruthy()
+
+    // No stale error banner from the old selectedRev=2 -> B?revision=2 404.
+    expect(screen.queryByText(/404/)).toBeNull()
+    expect(screen.queryByText(/Fetch artifact failed/)).toBeNull()
   })
 })

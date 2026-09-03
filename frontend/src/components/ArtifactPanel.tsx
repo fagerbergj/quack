@@ -99,6 +99,17 @@ export function ArtifactPanel({ chatId, nodeId, onClose }: Props) {
   // button below); wire a real handler once #1092's payload shape exists to
   // test against.
 
+  // Membership is by the LATEST revision's lineage.node_id (ArtifactSummary
+  // only carries that revision's lineage - see toArtifactSummary in
+  // internal/server/rest/artifacts.go), not "any revision this node wrote".
+  // If a later node revises an artifact (e.g. a judge writes revision 2 of a
+  // worker's `finding`), it moves to the reviser's panel and disappears from
+  // the original author's - a real gap against a "everything this node
+  // wrote is an output" reading of design V4, open as a question on #1094's
+  // review pending a spec answer. Fixing it needs per-revision lineage
+  // (GET .../revisions) fetched for every artifact in the chat up front,
+  // which doesn't scale to "one click opens a panel" - documented here
+  // rather than silently wrong.
   const nodeArtifacts = useMemo(
     () => summaries.filter(s => s.lineage?.node_id === nodeId),
     [summaries, nodeId],
@@ -109,54 +120,94 @@ export function ArtifactPanel({ chatId, nodeId, onClose }: Props) {
   const outputs = useMemo(() => nodeArtifacts.filter(s => s.lineage?.author !== 'dispatch'), [nodeArtifacts])
   const judgeRoundIds = useMemo(() => nodeArtifacts.filter(s => s.kind === 'judge_round').map(s => s.name), [nodeArtifacts])
 
-  useEffect(() => {
+  // loadRevisions/loadContent/loadDiff/loadJudgeNotes are each an effect body
+  // pulled out to a stable callback, so refresh() (below) can re-run every
+  // fetch the panel currently has in flight instead of just the artifact
+  // list - the refresh button used to only re-run `load()`, leaving a
+  // revision written while the panel was open invisible until the user
+  // re-selected the artifact.
+  const loadRevisions = useCallback(() => {
     if (!selectedId) { setRevisions([]); setSelectedRev(null); return }
-    api.listArtifactRevisions(chatId, selectedId)
+    return api.listArtifactRevisions(chatId, selectedId)
       .then(r => {
+        setError(null)
         setRevisions(r.data ?? [])
-        setSelectedRev(r.data?.[0]?.revision ?? null)
+        // Keep the currently viewed revision selected across a refresh if it
+        // still exists; only a fresh selectArtifact() (which nulls
+        // selectedRev) or a revision that's since vanished falls back to latest.
+        setSelectedRev(prev => (prev != null && r.data?.some(rv => rv.revision === prev) ? prev : (r.data?.[0]?.revision ?? null)))
       })
       .catch(e => setError(String(e)))
   }, [chatId, selectedId])
+  useEffect(() => { loadRevisions() }, [loadRevisions])
 
-  useEffect(() => {
+  const loadContent = useCallback(() => {
     setActiveNote(null)
+    // selectedRev is reset to null by selectArtifact on every artifact
+    // switch, and only ever set back by loadRevisions settling on the NEW
+    // artifact's own latest (or still-valid) revision - so this never fires
+    // with a stale revision number left over from the previously selected
+    // artifact (the cause of a since-fixed stale 404 banner: switching
+    // artifacts used to fire this effect in the same commit with the old
+    // artifact's selectedRev, before the revisions effect had a chance to
+    // update it).
     if (!selectedId || selectedRev == null) { setContent(null); return }
-    api.getArtifactText(chatId, selectedId, selectedRev).then(setContent).catch(e => setError(String(e)))
+    return api.getArtifactText(chatId, selectedId, selectedRev)
+      .then(text => { setError(null); setContent(text) })
+      .catch(e => setError(String(e)))
   }, [chatId, selectedId, selectedRev])
+  useEffect(() => { loadContent() }, [loadContent])
 
-  useEffect(() => {
+  const loadDiff = useCallback(() => {
     if (!diffOn || !selectedId || selectedRev == null || diffAgainst == null || diffAgainst === selectedRev) {
       setDiffText(null)
       return
     }
     const from = Math.min(selectedRev, diffAgainst)
     const to = Math.max(selectedRev, diffAgainst)
-    api.diffArtifactRevisions(chatId, selectedId, from, to).then(setDiffText).catch(e => setError(String(e)))
+    return api.diffArtifactRevisions(chatId, selectedId, from, to)
+      .then(text => { setError(null); setDiffText(text) })
+      .catch(e => setError(String(e)))
   }, [diffOn, chatId, selectedId, selectedRev, diffAgainst])
+  useEffect(() => { loadDiff() }, [loadDiff])
 
   // Judge notes referencing exactly the artifact+revision on screen - pulled
   // from every judge_round artifact's latest content, not just one, since a
   // node can run several judge rounds each writing its own judge_round id.
-  useEffect(() => {
+  // judgeNotesToken guards against a race between two overlapping calls (the
+  // effect below firing again, or refresh() firing manually mid-flight) -
+  // only the most recently STARTED call's result is applied.
+  const judgeNotesToken = useRef(0)
+  const loadJudgeNotes = useCallback(() => {
     if (!selectedId || selectedRev == null || judgeRoundIds.length === 0) { setJudgeNotes([]); return }
-    let cancelled = false
-    Promise.all(
+    const token = ++judgeNotesToken.current
+    return Promise.all(
       judgeRoundIds.map(id =>
         api.getArtifactText(chatId, id)
           .then(t => JSON.parse(t) as JudgeRoundContent)
           .catch(() => null),
       ),
     ).then(rounds => {
-      if (cancelled) return
+      if (token !== judgeNotesToken.current) return
       const notes = rounds
         .filter((r): r is JudgeRoundContent => r != null)
         .flatMap(r => r.notes ?? [])
         .filter(n => n.ref.artifact_id === selectedId && n.ref.revision === selectedRev)
       setJudgeNotes(notes)
     })
-    return () => { cancelled = true }
   }, [chatId, selectedId, selectedRev, judgeRoundIds])
+  useEffect(() => { loadJudgeNotes() }, [loadJudgeNotes])
+
+  // refresh re-runs every fetch the panel currently has live: the artifact
+  // list plus, when something is selected, its revisions/content/diff/notes -
+  // not just the list load() alone did before.
+  const refresh = useCallback(() => {
+    load()
+    loadRevisions()
+    loadContent()
+    loadDiff()
+    loadJudgeNotes()
+  }, [load, loadRevisions, loadContent, loadDiff, loadJudgeNotes])
 
   const selectedSummary = nodeArtifacts.find(s => s.name === selectedId)
   const displayText = content != null ? prettyText(content, selectedSummary?.class) : null
@@ -165,6 +216,17 @@ export function ArtifactPanel({ chatId, nodeId, onClose }: Props) {
 
   function selectArtifact(id: string) {
     setSelectedId(id)
+    // Root fix for the stale-404-banner bug: without this, the content
+    // effect below fires in the same commit with the PREVIOUS artifact's
+    // selectedRev (React runs effects in declaration order after one commit,
+    // not one per state setter), fetching `newId?revision=oldRev` - a 404 on
+    // any artifact whose revision counts differ, whose error then had
+    // nothing to ever clear it. Nulling it here makes that effect's own
+    // `selectedRev == null` guard skip the bogus fetch until the revisions
+    // effect settles on the new artifact's real latest revision.
+    setSelectedRev(null)
+    setContent(null)
+    setError(null)
     setDiffOn(false)
     setDiffAgainst(null)
   }
@@ -210,7 +272,7 @@ export function ArtifactPanel({ chatId, nodeId, onClose }: Props) {
             </h2>
             <div className="flex items-center gap-1 shrink-0">
               <button
-                onClick={load}
+                onClick={refresh}
                 aria-label="Refresh artifacts"
                 title="Refresh artifacts"
                 className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-500 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
@@ -355,24 +417,33 @@ function ArtifactLines({ lines, byLine, activeNote, onSelectNote }: {
     <pre className="text-xs font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg overflow-x-auto">
       <code>
         {lines.map((line, i) => {
-          const notes = byLine.get(i)
-          const highlighted = !!notes && notes.length > 0
-          const isActive = highlighted && notes!.includes(activeNote as JudgeNote)
+          const notes = byLine.get(i) ?? []
+          const highlighted = notes.length > 0
           return (
             <div
               key={i}
-              role={highlighted ? 'button' : undefined}
-              tabIndex={highlighted ? 0 : undefined}
-              aria-label={highlighted ? `Judge note on line ${i + 1}: ${notes![0].text}` : undefined}
-              onClick={highlighted ? () => onSelectNote(notes![0]) : undefined}
-              onKeyDown={highlighted ? (e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelectNote(notes![0]) } }) : undefined}
-              className={`px-3 py-0.5 whitespace-pre-wrap break-words ${
-                highlighted
-                  ? `cursor-pointer ${isActive ? 'bg-amber-200 dark:bg-amber-800/60' : 'bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200 dark:hover:bg-amber-800/50'}`
-                  : ''
-              }`}
+              className={`px-3 py-0.5 whitespace-pre-wrap break-words ${highlighted ? 'bg-amber-100 dark:bg-amber-900/30' : ''}`}
             >
-              {line || ' '}
+              {line || ' '}
+              {/* One button PER note, not one for the whole line - a line with
+                  several notes (anchorNotes groups them) used to expose only
+                  notes[0] to click/keyboard/screen readers; each is now its
+                  own reachable, individually announced control. */}
+              {notes.map((n, ni) => (
+                <button
+                  key={ni}
+                  type="button"
+                  aria-label={`Judge note on line ${i + 1}${notes.length > 1 ? ` (${ni + 1} of ${notes.length})` : ''}: ${n.text}`}
+                  onClick={() => onSelectNote(n)}
+                  className={`ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px] leading-none cursor-pointer ${
+                    n === activeNote
+                      ? 'bg-amber-400 dark:bg-amber-600 text-amber-950 dark:text-amber-50'
+                      : 'bg-amber-200 dark:bg-amber-800 text-amber-800 dark:text-amber-200 hover:bg-amber-300 dark:hover:bg-amber-700'
+                  }`}
+                >
+                  {ni + 1}
+                </button>
+              ))}
             </div>
           )
         })}
