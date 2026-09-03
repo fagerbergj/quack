@@ -973,8 +973,11 @@ type GetChatArtifactParams struct {
 
 // DiffArtifactRevisionsParams defines parameters for DiffArtifactRevisions.
 type DiffArtifactRevisionsParams struct {
+	// From The earlier revision. 0 (or negative) silently means the latest revision, same as `revision` on the sibling download endpoint.
 	From int `form:"from" json:"from"`
-	To   int `form:"to" json:"to"`
+
+	// To The later revision. 0 (or negative) silently means the latest revision, same as `revision` on the sibling download endpoint.
+	To int `form:"to" json:"to"`
 }
 
 // ListMemoriesParams defines parameters for ListMemories.

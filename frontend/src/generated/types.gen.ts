@@ -850,7 +850,13 @@ export type DiffArtifactRevisionsData = {
         artifact_name: string;
     };
     query: {
+        /**
+         * The earlier revision. 0 (or negative) silently means the latest revision, same as `revision` on the sibling download endpoint.
+         */
         from: number;
+        /**
+         * The later revision. 0 (or negative) silently means the latest revision, same as `revision` on the sibling download endpoint.
+         */
         to: number;
     };
     url: '/api/v1/chats/{chat_id}/artifacts/{artifact_name}/diff';

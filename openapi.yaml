@@ -395,11 +395,13 @@ paths:
         - name: from
           in: query
           required: true
+          description: The earlier revision. 0 (or negative) silently means the latest revision, same as `revision` on the sibling download endpoint.
           schema:
             type: integer
         - name: to
           in: query
           required: true
+          description: The later revision. 0 (or negative) silently means the latest revision, same as `revision` on the sibling download endpoint.
           schema:
             type: integer
       responses:

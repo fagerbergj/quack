@@ -151,18 +151,13 @@ func (h *Handler) ListArtifactRevisions(w http.ResponseWriter, r *http.Request, 
 	writeJSON(w, http.StatusOK, schema.ArtifactRevisionList{Data: revs})
 }
 
-// diffableMimeTypes: byte-level diffs of binary blobs (images, PDFs) render
-// as noise, not a review aid - DiffArtifactRevisions 415s anything outside
-// this allowlist instead of pretending a diff exists.
+// diffable reports whether a MIME type is worth diffing at byte level:
+// binary blobs (images, PDFs) render as noise, not a review aid -
+// DiffArtifactRevisions 415s anything outside this allowlist instead of
+// pretending a diff exists.
 func diffable(mimeType string) bool {
 	return mimeType == "application/json" || strings.HasPrefix(mimeType, "text/")
 }
-
-// diffRevisionMaxBytes mirrors internal/acp/memorymcp.go's read_artifact
-// bound (256KB) - the same "don't let one huge revision flood the response"
-// ceiling, duplicated rather than imported since acp is another agent's
-// package for this change and the constant isn't exported.
-const diffRevisionMaxBytes = 256 * 1024
 
 // DiffArtifactRevisions returns a unified diff between two revisions of one
 // artifact, text/structured only (415 for a binary blob).
@@ -209,9 +204,9 @@ func (h *Handler) DiffArtifactRevisions(w http.ResponseWriter, r *http.Request, 
 		errMsg(w, http.StatusUnsupportedMediaType, "artifact is a binary blob; diffing is not supported")
 		return
 	}
-	if len(fromData) > diffRevisionMaxBytes || len(toData) > diffRevisionMaxBytes {
+	if len(fromData) > artifactref.InlineMaxBytes || len(toData) > artifactref.InlineMaxBytes {
 		errMsg(w, http.StatusRequestEntityTooLarge, fmt.Sprintf(
-			"revision exceeds the %d byte diff limit; fetch it directly via GET .../artifacts/%s instead", diffRevisionMaxBytes, artifactName))
+			"revision exceeds the %d byte diff limit; fetch it directly via GET .../artifacts/%s instead", artifactref.InlineMaxBytes, artifactName))
 		return
 	}
 	fromLabel := artifactName + "@" + strconv.Itoa(params.From)

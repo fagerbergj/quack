@@ -14,6 +14,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"google.golang.org/adk/v2/artifact"
 
+	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
@@ -58,10 +59,6 @@ const (
 	toolReadArtifact = "read_artifact"
 )
 
-// readArtifactMaxBytes bounds the raw artifact bytes returned inline, so a
-// large artifact (e.g. video) can't flood the agent's context.
-const readArtifactMaxBytes = 256 * 1024
-
 // readArtifactInput is the read_artifact tool's input.
 type readArtifactInput struct {
 	Name     string `json:"name" jsonschema:"artifact filename to read"`
@@ -87,10 +84,10 @@ func registerReadArtifactTool(srv *mcp.Server, svc artifact.Service, appName, us
 		data := resp.Part.InlineData.Data
 		// Cap before it lands in the agent's context - an artifact can be arbitrarily
 		// large (e.g. a video), and the repo already paid for one unbounded-output incident.
-		if len(data) > readArtifactMaxBytes {
+		if len(data) > artifactref.InlineMaxBytes {
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(
 				"mime: %s\nsize: %d bytes (exceeds %d byte read_artifact limit)\n\nread_artifact: content too large to return inline; work with it on disk instead.",
-				mime, len(data), readArtifactMaxBytes)}}}, nil, nil
+				mime, len(data), artifactref.InlineMaxBytes)}}}, nil, nil
 		}
 		text := string(data)
 		if !strings.HasPrefix(mime, "text/") && mime != "application/json" {
