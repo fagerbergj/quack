@@ -5,10 +5,13 @@ import (
 	"errors"
 	"io/fs"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
 // bothArtifactServices returns the row-backed GORM service and ADK's own
@@ -249,5 +252,121 @@ func TestArtifactService_RowBackend_SurvivesRestart(t *testing.T) {
 	}
 	if got := string(loaded.Part.InlineData.Data); got != "survives" {
 		t.Errorf("loaded after restart = %q, want %q", got, "survives")
+	}
+}
+
+// TestRecordstoreKeepsEveryRevision proves recordstore.Client (#1090 P2)
+// behaves the same over the row-backed store and ADK's in-memory service -
+// no retention call exists (design V4.1 #2), so every save keeps its own
+// revision on both backends.
+var registerRetentionTestKindOnce = sync.OnceFunc(func() {
+	recordstore.Register("store.retention.test", recordstore.KindSpec{
+		Class:    recordstore.Blob,
+		Identity: func(_ []byte, hint string) (string, error) { return hint, nil },
+	})
+})
+
+func TestRecordstoreKeepsEveryRevision(t *testing.T) {
+	registerRetentionTestKindOnce()
+	for name, svc := range bothArtifactServices(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			c := recordstore.New(svc, "app", "u", "s")
+			var id string
+			for i := 0; i < 5; i++ {
+				var err error
+				id, _, err = c.SaveBlob(ctx, "store.retention.test", []byte{byte(i)}, "text/plain", "doc:1", recordstore.Lineage{})
+				if err != nil {
+					t.Fatalf("SaveBlob %d: %v", i, err)
+				}
+			}
+			_, rev, ok, err := c.Latest(ctx, id)
+			if err != nil || !ok || rev != 5 {
+				t.Fatalf("Latest: rev=%d ok=%v err=%v", rev, ok, err)
+			}
+		})
+	}
+}
+
+// TestSaveWithMetaPersistsLineage proves the row-backed store round-trips
+// kind/class/lineage through SaveWithMeta/LoadWithMeta (#1090 P2) - the
+// in-memory service in bothArtifactServices has no row, so this only runs
+// against the GORM-backed service directly.
+func TestSaveWithMetaPersistsLineage(t *testing.T) {
+	st := newTestStore(t)
+	row, err := NewRowArtifactService(st.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tas := NewTurnAwareService(row)
+	ctx := context.Background()
+	lineage := []byte(`{"node_id":"n1","round":2,"parent_revision":1}`)
+	if _, err := tas.SaveWithMeta(ctx, &artifact.SaveRequest{
+		AppName: "app", UserID: "u", SessionID: "s", FileName: "n1:code_review:pr:1", Part: mustPart("v1"),
+	}, "code_review", "structured", lineage, "turn-1"); err != nil {
+		t.Fatalf("SaveWithMeta: %v", err)
+	}
+	_, kind, class, gotLineage, err := tas.LoadWithMeta(ctx, &artifact.LoadRequest{
+		AppName: "app", UserID: "u", SessionID: "s", FileName: "n1:code_review:pr:1",
+	})
+	if err != nil {
+		t.Fatalf("LoadWithMeta: %v", err)
+	}
+	if kind != "code_review" || class != "structured" || string(gotLineage) != string(lineage) {
+		t.Fatalf("kind=%q class=%q lineage=%s", kind, class, gotLineage)
+	}
+	revs, err := tas.RevisionsByTurn(ctx, "app", "u", "s", "turn-1")
+	if err != nil || len(revs) != 1 || revs[0].Name != "n1:code_review:pr:1" {
+		t.Fatalf("RevisionsByTurn(turn-1) = %+v, err=%v - SaveWithMeta must populate turn_id like SaveForTurn does", revs, err)
+	}
+}
+
+// TestConcurrentSaveSameID_NoLostRevisions covers #1090 adversarial review
+// finding #3: N goroutines saving the same (app,user,session,name) key must
+// come out with revisions exactly 1..N, no error and no two goroutines
+// landing on the same revision - the MAX(revision)+Create race the
+// per-key mutex (and, as a backstop, the unique-violation retry) close.
+// Run under -race; also exercises the row-backed and in-memory backends the
+// same way KeepEveryRevision does.
+func TestConcurrentSaveSameID_NoLostRevisions(t *testing.T) {
+	for name, svc := range bothArtifactServices(t) {
+		t.Run(name, func(t *testing.T) {
+			const n = 20
+			ctx := context.Background()
+			var wg sync.WaitGroup
+			errs := make([]error, n)
+			revs := make([]int64, n)
+			for i := 0; i < n; i++ {
+				wg.Add(1)
+				go func(i int) {
+					defer wg.Done()
+					resp, err := svc.Save(ctx, &artifact.SaveRequest{
+						AppName: "app", UserID: "u", SessionID: "s", FileName: "concurrent.txt",
+						Part: mustPart("v"),
+					})
+					errs[i] = err
+					if resp != nil {
+						revs[i] = resp.Version
+					}
+				}(i)
+			}
+			wg.Wait()
+
+			seen := make(map[int64]bool, n)
+			for i, err := range errs {
+				if err != nil {
+					t.Fatalf("goroutine %d: Save failed: %v", i, err)
+				}
+				if seen[revs[i]] {
+					t.Fatalf("revision %d assigned to two goroutines", revs[i])
+				}
+				seen[revs[i]] = true
+			}
+			for v := int64(1); v <= n; v++ {
+				if !seen[v] {
+					t.Fatalf("revision %d never assigned; got %v", v, revs)
+				}
+			}
+		})
 	}
 }

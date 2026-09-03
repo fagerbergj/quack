@@ -92,6 +92,7 @@ func Bind(shape Shape, ask string) (nodes []dag.RawNode, ok bool) {
 			Task:      strings.ReplaceAll(n.Task, askPlaceholder, ask),
 			Rubric:    n.Rubric,
 			DependsOn: n.DependsOn,
+			Artifact:  n.Artifact,
 		}
 	}
 	return out, true

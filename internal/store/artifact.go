@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -35,7 +36,17 @@ type Artifact struct {
 	RowBlobID *uint `gorm:"column:row_blob_id"`
 	// TurnID: the turn that created this revision, "" if unknown. Identity
 	// is chat-level (same name, new revision across turns); this is per-revision.
-	TurnID    string `gorm:"column:turn_id;index:idx_artifact_turn"`
+	TurnID string `gorm:"column:turn_id;index:idx_artifact_turn"`
+	// Kind/Class/Lineage (#1090 P2): additive columns, nullable/zero-value
+	// for every pre-existing row - AutoMigrate only adds columns, never
+	// backfills or drops, so old revisions keep working with "" everywhere.
+	// Kind = registered record kind ("code_review", "finding", ...); Class =
+	// "structured" or "blob"; Lineage = JSON envelope (node_id, round,
+	// parent_revision, trigger_annotation, head_sha, saved_at, author) -
+	// opaque to SQL, read back only through LoadWithMeta.
+	Kind      string `gorm:"column:kind"`
+	Class     string `gorm:"column:class"`
+	Lineage   string `gorm:"column:lineage"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -103,7 +114,7 @@ func NewLargeObjectArtifactService(db *gorm.DB) (artifact.Service, error) {
 // returns the large-object-backed artifact.Service - durable across
 // restarts. url must be a postgres DSN (config.validate enforces this).
 func NewArtifactService(url string) (artifact.Service, error) {
-	gormCfg := &gorm.Config{Logger: slogGormLogger()}
+	gormCfg := &gorm.Config{Logger: slogGormLogger(), TranslateError: true}
 	db, err := gorm.Open(postgres.Open(url), gormCfg)
 	if err != nil {
 		return nil, fmt.Errorf("store: open artifact store: %w", err)
@@ -140,6 +151,25 @@ func turnIDFromContext(ctx context.Context) string {
 	return id
 }
 
+// artifactMetaContextKey mirrors turnIDContextKey: carries kind/class/lineage
+// onto a Save through ctx, since ADK's SaveRequest has no room for them
+// either (#1090 P2). Set only by SaveWithMeta.
+type artifactMetaContextKey struct{}
+
+type artifactMeta struct {
+	Kind, Class string
+	LineageJSON []byte
+}
+
+func withArtifactMeta(ctx context.Context, m artifactMeta) context.Context {
+	return context.WithValue(ctx, artifactMetaContextKey{}, m)
+}
+
+func artifactMetaFromContext(ctx context.Context) artifactMeta {
+	m, _ := ctx.Value(artifactMetaContextKey{}).(artifactMeta)
+	return m
+}
+
 // TurnAwareService adds SaveForTurn to an artifact.Service - the entry-point
 // addition. Embeds the interface, so every other method (including the
 // plain turn-blind Save ADK's own runner/tools use) passes through unchanged.
@@ -156,6 +186,35 @@ func NewTurnAwareService(svc artifact.Service) *TurnAwareService {
 // caller with no turn context).
 func (w *TurnAwareService) SaveForTurn(ctx context.Context, req *artifact.SaveRequest, turnID string) (*artifact.SaveResponse, error) {
 	return w.Service.Save(withTurnID(ctx, turnID), req)
+}
+
+// SaveWithMeta is Save, stamping kind/class/lineage onto the row (#1090 P2:
+// lineage lives on the row, not inside the bytes, so blob kinds carry it
+// too) and turnID onto the existing turn_id column (same as SaveForTurn).
+func (w *TurnAwareService) SaveWithMeta(ctx context.Context, req *artifact.SaveRequest, kind, class string, lineageJSON []byte, turnID string) (*artifact.SaveResponse, error) {
+	ctx = withArtifactMeta(withTurnID(ctx, turnID), artifactMeta{Kind: kind, Class: class, LineageJSON: lineageJSON})
+	return w.Service.Save(ctx, req)
+}
+
+// metaLoader is implemented only by gormArtifactService - artifact.InMemoryService()
+// (used in most tests) has no row to read kind/class/lineage back from.
+type metaLoader interface {
+	loadMeta(ctx context.Context, req *artifact.LoadRequest) (kind, class string, lineageJSON []byte, err error)
+}
+
+// LoadWithMeta is Load, also returning kind/class/lineage when the wrapped
+// service is the row-backed store; zero values otherwise (#1090 known
+// ceiling: ADK's own interface carries no lineage, so a non-Postgres backend
+// degrades to "no metadata" rather than erroring).
+func (w *TurnAwareService) LoadWithMeta(ctx context.Context, req *artifact.LoadRequest) (resp *artifact.LoadResponse, kind, class string, lineageJSON []byte, err error) {
+	resp, err = w.Service.Load(ctx, req)
+	if err != nil {
+		return nil, "", "", nil, err
+	}
+	if ml, ok := w.Service.(metaLoader); ok {
+		kind, class, lineageJSON, _ = ml.loadMeta(ctx, req)
+	}
+	return resp, kind, class, lineageJSON, nil
 }
 
 // turnRevisionLister is implemented by gormArtifactService; not by
@@ -232,6 +291,27 @@ func (s *gormArtifactService) RevisionsByTurn(ctx context.Context, appName, user
 // Save implements [artifact.Service]. Version numbering always
 // auto-increments (matches ADK's own services - both ignore an explicit
 // SaveRequest.Version; see inmemory.go/gcsartifact's Save).
+// artifactRevisionLocks serializes MAX(revision)+Create per (app, user,
+// session, name) key within this process - two rounds of the same node, or
+// two nodes, writing the same id can no longer both read the same MAX and
+// have one insert silently fail the unique index (#1090 adversarial review
+// finding #3). ponytail: process-local only, not a real distributed lock
+// (Postgres advisory lock keyed on hashtext(...) would cover multiple
+// replicas too) - the retry loop below is the cross-process safety net for that
+// gap, and quack runs single-instance today.
+var artifactRevisionLocks sync.Map // key -> *sync.Mutex
+
+func revisionLockFor(appName, userID, sessionID, name string) *sync.Mutex {
+	key := appName + "\x00" + userID + "\x00" + sessionID + "\x00" + name
+	v, _ := artifactRevisionLocks.LoadOrStore(key, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
+
+// maxRevisionInsertAttempts bounds the retry-on-unique-violation loop below -
+// a losing insert (this process's mutex missed it, e.g. a second replica)
+// gets a couple of fresh-MAX retries before giving up loud.
+const maxRevisionInsertAttempts = 5
+
 func (s *gormArtifactService) Save(ctx context.Context, req *artifact.SaveRequest) (*artifact.SaveResponse, error) {
 	if err := req.Validate(); err != nil {
 		return nil, fmt.Errorf("request validation failed: %w", err)
@@ -250,19 +330,32 @@ func (s *gormArtifactService) Save(ctx context.Context, req *artifact.SaveReques
 		return nil, fmt.Errorf("store: save artifact blob: %w", err)
 	}
 
-	var maxRev int64
-	if err := s.db.WithContext(ctx).Model(&Artifact{}).
-		Where("app_name = ? AND user_id = ? AND session_id = ? AND name = ?", req.AppName, req.UserID, sessionID, req.FileName).
-		Select("COALESCE(MAX(revision), 0)").Scan(&maxRev).Error; err != nil {
-		return nil, err
-	}
+	mu := revisionLockFor(req.AppName, req.UserID, sessionID, req.FileName)
+	mu.Lock()
+	defer mu.Unlock()
 
-	rec := Artifact{
-		AppName: req.AppName, UserID: req.UserID, SessionID: sessionID, Name: req.FileName,
-		Revision: maxRev + 1, MimeType: mime, Size: int64(len(data)),
-		LOOid: loOid, RowBlobID: rowBlobID, TurnID: turnIDFromContext(ctx),
-	}
-	if err := s.db.WithContext(ctx).Create(&rec).Error; err != nil {
+	meta := artifactMetaFromContext(ctx)
+	var rec Artifact
+	for attempt := 1; ; attempt++ {
+		var maxRev int64
+		if err := s.db.WithContext(ctx).Model(&Artifact{}).
+			Where("app_name = ? AND user_id = ? AND session_id = ? AND name = ?", req.AppName, req.UserID, sessionID, req.FileName).
+			Select("COALESCE(MAX(revision), 0)").Scan(&maxRev).Error; err != nil {
+			return nil, err
+		}
+		rec = Artifact{
+			AppName: req.AppName, UserID: req.UserID, SessionID: sessionID, Name: req.FileName,
+			Revision: maxRev + 1, MimeType: mime, Size: int64(len(data)),
+			LOOid: loOid, RowBlobID: rowBlobID, TurnID: turnIDFromContext(ctx),
+			Kind: meta.Kind, Class: meta.Class, Lineage: string(meta.LineageJSON),
+		}
+		err := s.db.WithContext(ctx).Create(&rec).Error
+		if err == nil {
+			break
+		}
+		if errors.Is(err, gorm.ErrDuplicatedKey) && attempt < maxRevisionInsertAttempts {
+			continue
+		}
 		return nil, err
 	}
 	return &artifact.SaveResponse{Version: rec.Revision}, nil
@@ -297,6 +390,27 @@ func (s *gormArtifactService) Load(ctx context.Context, req *artifact.LoadReques
 		return nil, fmt.Errorf("store: load artifact blob: %w", err)
 	}
 	return &artifact.LoadResponse{Part: genai.NewPartFromBytes(data, a.MimeType)}, nil
+}
+
+// loadMeta backs TurnAwareService.LoadWithMeta: same lookup as Load, minus
+// the blob fetch, returning the row's kind/class/lineage instead.
+func (s *gormArtifactService) loadMeta(ctx context.Context, req *artifact.LoadRequest) (kind, class string, lineageJSON []byte, err error) {
+	sessionID := req.SessionID
+	if fileHasUserNamespace(req.FileName) {
+		sessionID = userScopedArtifactKey
+	}
+	q := s.db.WithContext(ctx).Where("app_name = ? AND user_id = ? AND session_id = ? AND name = ?",
+		req.AppName, req.UserID, sessionID, req.FileName)
+	if req.Version > 0 {
+		q = q.Where("revision = ?", req.Version)
+	} else {
+		q = q.Order("revision DESC")
+	}
+	var a Artifact
+	if err := q.First(&a).Error; err != nil {
+		return "", "", nil, err
+	}
+	return a.Kind, a.Class, []byte(a.Lineage), nil
 }
 
 // Delete implements [artifact.Service]. Deleting a non-existing entry is not

@@ -329,7 +329,7 @@ func New(kind, url string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	gormCfg := &gorm.Config{Logger: slogGormLogger()}
+	gormCfg := &gorm.Config{Logger: slogGormLogger(), TranslateError: true}
 	db, err := gorm.Open(dialector(), gormCfg)
 	if err != nil {
 		return nil, err

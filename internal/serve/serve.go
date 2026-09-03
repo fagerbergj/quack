@@ -272,6 +272,25 @@ func buildArtifactService(cfg *config.Config) (artifact.Service, error) {
 	return store.NewArtifactService(as.URL)
 }
 
+// warnIfEpisodicRecordsWontSurvive: artifacts.store defaults to "" (in-memory,
+// #1006 known ceiling), so any node opting into `artifact:` records dies on
+// every restart with no other signal - loud, not fatal, since GitHub
+// workflows that never set Artifact see zero behavior change either way.
+func warnIfEpisodicRecordsWontSurvive(cfg *config.Config) {
+	if cfg.Artifacts.Store != "" {
+		return
+	}
+	for _, w := range cfg.Workflows {
+		for _, n := range w.Nodes {
+			if n.Artifact != "" {
+				slog.Warn("workflow node declares an episodic artifact but artifacts.store is unset (in-memory); records will not survive a restart",
+					"component", "serve", "workflow", w.Name, "node", n.ID, "artifact", n.Artifact)
+				return
+			}
+		}
+	}
+}
+
 //go:embed all:web/dist
 var webDist embed.FS
 
@@ -474,6 +493,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	}
 	artifacts := store.NewTurnAwareService(artifactSvc)
 	st.SetArtifactService(artifacts)
+	warnIfEpisodicRecordsWontSurvive(cfg)
 
 	prov, _ := cfg.Provider(cfg.Orchestrator.Provider)
 	llm, err := inference.NewModel(prov, cfg.Orchestrator.Model, artifacts, cfg.ModelCost(cfg.Orchestrator.Model))
