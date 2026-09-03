@@ -396,3 +396,95 @@ func TestConcurrentSaveSameIDWALRevisionsAreSequential(t *testing.T) {
 		t.Fatalf("store's own latest revision = %d, want %d (matches the WAL's highest)", storeRev, n)
 	}
 }
+
+// failOnceSaveService fails its Nth Save call (1-indexed), then behaves like
+// the wrapped service - stands in for a saveRow failure that lands AFTER a
+// WAL artifact.revision entry has already been appended (#1100 review
+// finding: the wedge case).
+type failOnceSaveService struct {
+	artifact.Service
+	failCall int
+	calls    int
+}
+
+func (s *failOnceSaveService) Save(ctx context.Context, req *artifact.SaveRequest) (*artifact.SaveResponse, error) {
+	s.calls++
+	if s.calls == s.failCall {
+		return nil, errors.New("failOnceSaveService: forced failure")
+	}
+	return s.Service.Save(ctx, req)
+}
+
+// TestSaveRowFailureAfterAppendDoesNotWedgeID is the #1100 review fix: a
+// saveRow failure AFTER a successful AppendIntent must not permanently wedge
+// the id behind a phantom revision. The retried save must succeed with the
+// correct revision/parent, the ledger must carry the aborted marker, and a
+// fold that skips aborted revisions must see a clean 1-revision chain (the
+// second save's revision 1, not a broken revision 2).
+func TestSaveRowFailureAfterAppendDoesNotWedgeID(t *testing.T) {
+	svc := &failOnceSaveService{Service: artifact.InMemoryService(), failCall: 1}
+	fl := newFakeLedger()
+	c := New(svc, "quack", "user1", "chat1").WithLedger(fl)
+	ctx := context.Background()
+
+	if _, _, err := c.SaveBlob(ctx, "test.blob", []byte("v1"), "text/plain", "doc:wedge", Lineage{}); err == nil {
+		t.Fatal("expected the first save (forced saveRow failure) to error")
+	}
+	id, rev, err := c.SaveBlob(ctx, "test.blob", []byte("v1-retry"), "text/plain", "doc:wedge", Lineage{})
+	if err != nil {
+		t.Fatalf("retry after the wedge should succeed, got: %v", err)
+	}
+	if rev != 1 {
+		t.Fatalf("retry revision = %d, want 1 (the failed attempt's revision 1 never materialized)", rev)
+	}
+
+	entries, err := fl.ReadEntries(ctx, "chat1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawAborted, sawMaterialized bool
+	var materializedParent = -1
+	for _, e := range entries {
+		if e.Key != id {
+			continue
+		}
+		switch e.Kind {
+		case ledger.KindArtifactRevisionAborted:
+			var p abortedRevisionPayload
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				t.Fatal(err)
+			}
+			if p.Revision != 1 {
+				t.Fatalf("aborted marker revision = %d, want 1", p.Revision)
+			}
+			sawAborted = true
+		case ledger.KindArtifactRevision:
+			var p artifactRevisionPayload
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				t.Fatal(err)
+			}
+			if p.Revision == 1 {
+				sawMaterialized = true
+				materializedParent = p.ParentRevision
+			}
+		}
+	}
+	if !sawAborted {
+		t.Fatal("no artifact.revision.aborted entry found for the failed save")
+	}
+	if !sawMaterialized {
+		t.Fatal("no artifact.revision entry for the retry's revision 1")
+	}
+	if materializedParent != 0 {
+		t.Fatalf("retry's parent_revision = %d, want 0 (a clean chain start, the aborted attempt doesn't count as a parent)", materializedParent)
+	}
+
+	// A fold that skips aborted revisions sees exactly one clean revision.
+	parent, err := lastRevision(ctx, fl, "chat1", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parent != 1 {
+		t.Fatalf("lastRevision after the wedge+retry = %d, want 1", parent)
+	}
+}

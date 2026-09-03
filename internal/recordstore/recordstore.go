@@ -163,12 +163,14 @@ func (c *Client) WithLedger(store ledger.LedgerStore) *Client {
 
 // revisionLocks/revisionLockFor: a process-local per-(chat,id) mutex, held
 // around read-parent + AppendIntent + saveRow so the WAL's next revision and
-// the store's assigned revision are computed under the same lock - mirrors
-// internal/store's artifactRevisionLocks/revisionLockFor for the underlying
-// row itself. Without this, two concurrent save() calls for the same id can
-// both read parent=N and both append a WAL entry claiming revision N+1,
-// while the store's own per-id lock still hands out N+1 and N+2 - a phantom
-// WAL entry with no row, and a wrong parent_revision on the real one.
+// the store's assigned revision are computed under the same lock. The key is
+// deliberately COARSER than the store's own four-part lock key (appName +
+// userID + sessionID + name, internal/store/artifact.go's
+// artifactRevisionLocks) - sessionID (chat) + id is a superset of what the
+// store serializes. Do not "fix" this toward the finer key: two different
+// users' saves under the same (chat, id) must still serialize here, or their
+// WAL entries can race the same way a same-user race would, breaking the
+// parent chain.
 var revisionLocks sync.Map // key -> *sync.Mutex
 
 func revisionLockFor(chatID, id string) *sync.Mutex {
@@ -176,29 +178,72 @@ func revisionLockFor(chatID, id string) *sync.Mutex {
 	return v.(*sync.Mutex)
 }
 
-// lastRevision returns the highest revision recorded in an artifact.revision
-// WAL entry for id, 0 if none. A full per-chat scan (ponytail: O(entries);
-// ledger_entries has no (chat_id, key) index yet, so a server-side key filter
-// would still scan - the index belongs with #1101's projections work).
+// lastRevision returns the highest MATERIALIZED revision recorded in an
+// artifact.revision WAL entry for id, 0 if none. A retried save after a
+// wedge (see KindArtifactRevisionAborted) reuses the SAME revision number
+// its failed attempt claimed, so "aborted" is a per-revision-number STATUS
+// that later entries can flip back to materialized, not a permanent
+// exclusion - entries are walked in seq order and the last word for a given
+// revision number wins. A full per-chat scan (ponytail: O(entries);
+// ledger_entries has no (chat_id, key) index yet, so a server-side key
+// filter would still scan - the index belongs with #1101's projections work).
 func lastRevision(ctx context.Context, store ledger.LedgerStore, chatID, id string) (int, error) {
 	entries, err := store.ReadEntries(ctx, chatID, 0)
 	if err != nil {
 		return 0, err
 	}
+	materialized := map[int]bool{} // revision -> does the LATEST entry for it count?
 	var payload struct {
 		Revision int `json:"revision"`
 	}
+	for _, e := range entries { // seq order: later entries override earlier ones for the same revision
+		if e.Key != id {
+			continue
+		}
+		switch e.Kind {
+		case ledger.KindArtifactRevision:
+			if err := json.Unmarshal(e.Payload, &payload); err != nil {
+				continue
+			}
+			materialized[payload.Revision] = true
+		case ledger.KindArtifactRevisionAborted:
+			if err := json.Unmarshal(e.Payload, &payload); err != nil {
+				continue
+			}
+			materialized[payload.Revision] = false
+		}
+	}
 	rev := 0
-	for _, e := range entries {
-		if e.Kind != ledger.KindArtifactRevision || e.Key != id {
-			continue
+	for r, ok := range materialized {
+		if ok && r > rev {
+			rev = r
 		}
-		if err := json.Unmarshal(e.Payload, &payload); err != nil {
-			continue
-		}
-		rev = payload.Revision
 	}
 	return rev, nil
+}
+
+// abortedRevisionPayload is the artifact.revision.aborted entry's payload.
+type abortedRevisionPayload struct {
+	Revision int    `json:"revision"`
+	Reason   string `json:"reason"`
+}
+
+// appendAborted records that revision never materialized (saveRow failed
+// after the artifact.revision intent already landed) - best-effort: this is
+// cleanup for lastRevision's own bookkeeping, not itself part of the
+// fail-closed contract, so a failure here is Warn-logged, not returned.
+func appendAborted(ctx context.Context, store ledger.LedgerStore, chatID, turnID, nodeID, id string, revision int, reason string) {
+	payload, err := json.Marshal(abortedRevisionPayload{Revision: revision, Reason: reason})
+	if err != nil {
+		slog.Warn("recordstore: marshal artifact.revision.aborted payload failed", "component", "recordstore", "id", id, "revision", revision, "err", err)
+		return
+	}
+	if _, err := store.AppendIntent(ctx, ledger.Entry{
+		ChatID: chatID, TurnID: turnID, NodeID: nodeID,
+		Kind: ledger.KindArtifactRevisionAborted, Key: id, At: time.Now().UTC(), Payload: payload,
+	}); err != nil {
+		slog.Warn("recordstore: append artifact.revision.aborted failed; the id may stay wedged until this is retried", "component", "recordstore", "id", id, "revision", revision, "err", err)
+	}
 }
 
 // artifactRevisionPayload is the artifact.revision WAL entry's payload
@@ -245,12 +290,20 @@ func (c *Client) save(ctx context.Context, id, kind string, class Class, mime st
 		}
 		rev, err := c.saveRow(ctx, id, kind, class, mime, data, lineage)
 		if err != nil {
+			// The WAL entry for nextRev already landed but the row never
+			// will - append a compensating marker (best-effort) so
+			// lastRevision skips this revision as a parent on the next
+			// save, instead of every retry re-deriving the same phantom
+			// nextRev and wedging forever behind a row that can't exist.
+			appendAborted(ctx, c.ledgerStore, c.sessionID, lineage.TurnID, lineage.NodeID, id, nextRev, err.Error())
 			return 0, err
 		}
 		if rev != nextRev {
-			// Under the lock above this should be impossible; if it fires,
-			// the WAL and the store have diverged - fail closed rather than
-			// let a mismatched revision-content pairing propagate silently.
+			// Under the lock above, with aborted revisions skipped by
+			// lastRevision, this is no longer explainable by a race or by a
+			// prior failed save - the WAL and the store have genuinely
+			// diverged. Fail closed rather than let a mismatched
+			// revision-content pairing propagate silently.
 			return 0, fmt.Errorf("recordstore: store assigned revision %d for %s, WAL expected %d", rev, id, nextRev)
 		}
 		return rev, nil
