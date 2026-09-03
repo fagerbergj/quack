@@ -28,7 +28,12 @@ function stubFetch() {
   })
 
   window.fetch = async (input: RequestInfo | URL) => {
-    const url = String(input)
+    // The generated client's per-request fetch always calls this with a real
+    // Request instance (client.gen.ts) - String(aRequest) is "[object
+    // Request]", so its own .url must be read; getArtifactText's plain
+    // fetch() call still passes a bare string, which the ternary also covers.
+    // buildUrl percent-encodes the artifact_name path param (":" -> "%3A").
+    const url = decodeURIComponent(input instanceof Request ? input.url : String(input))
     if (url.includes('/artifacts/finding:abc123/revisions')) {
       return jsonResponse({
         data: [

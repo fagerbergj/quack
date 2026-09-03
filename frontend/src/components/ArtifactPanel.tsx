@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import type { ArtifactSummary, ArtifactRevisionInfo } from '../api'
 import { CopyButton } from './CopyButton'
@@ -169,17 +169,29 @@ export function ArtifactPanel({ chatId, nodeId, onClose }: Props) {
     setDiffAgainst(null)
   }
 
+  // Native <dialog> + showModal(): Esc closes (fires 'cancel' then 'close'),
+  // focus is trapped in the top layer, and per the HTML spec the browser
+  // itself restores focus to whatever had it before showModal() - the
+  // "artifacts" button that opened this - once the dialog closes. No manual
+  // focus-trap or focus-restore code needed; onClose (the native 'close'
+  // event, fired on Esc AND on our own .close() calls below) is the single
+  // place that tells the parent to unmount us, so that restore always
+  // finishes before React removes the dialog from the DOM.
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  useEffect(() => {
+    dialogRef.current?.showModal()
+  }, [])
+
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
+    <dialog
+      ref={dialogRef}
       aria-label={`Artifacts for node ${nodeId}`}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={onClose}
+      onClose={onClose}
+      onClick={e => { if (e.target === dialogRef.current) dialogRef.current?.close() }}
+      className="m-auto w-full max-w-4xl max-h-[85vh] p-0 border-0 rounded-2xl bg-transparent backdrop:bg-black/40"
     >
       <div
-        className="relative flex w-full max-w-4xl max-h-[85vh] overflow-hidden rounded-2xl bg-gray-50 dark:bg-gray-900 shadow-xl"
-        onClick={e => e.stopPropagation()}
+        className="relative flex w-full max-h-[85vh] overflow-hidden rounded-2xl bg-gray-50 dark:bg-gray-900 shadow-xl"
       >
         {/* Left: input/output artifact list */}
         <div className="w-56 shrink-0 overflow-y-auto border-r border-gray-200 dark:border-gray-700 py-3 px-2 space-y-3">
@@ -206,7 +218,7 @@ export function ArtifactPanel({ chatId, nodeId, onClose }: Props) {
                 ↻
               </button>
               <button
-                onClick={onClose}
+                onClick={() => dialogRef.current?.close()}
                 aria-label="Close"
                 className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-500 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
               >
@@ -255,7 +267,9 @@ export function ArtifactPanel({ chatId, nodeId, onClose }: Props) {
             </div>
           )}
 
-          {diffOn && diffText != null ? (
+          {diffOn && diffAgainst != null && diffAgainst === selectedRev ? (
+            <p className="text-xs text-gray-400 dark:text-gray-500">Pick a different revision to diff against - it's the same one shown above.</p>
+          ) : diffOn && diffText != null ? (
             <DiffView text={diffText} />
           ) : displayText != null ? (
             <ArtifactLines lines={lines} byLine={byLine} activeNote={activeNote} onSelectNote={setActiveNote} />
@@ -287,7 +301,7 @@ export function ArtifactPanel({ chatId, nodeId, onClose }: Props) {
           )}
         </div>
       </div>
-    </div>
+    </dialog>
   )
 }
 
