@@ -177,6 +177,15 @@ func NewReviewStage(fanout *ReviewFanout) *ReviewStage {
 	return &ReviewStage{fanout: fanout}
 }
 
+// IsNonDeliveringSlice reports whether this node feeds a downstream
+// synthesizer (#1148) - mirrors node.go's isNonDeliveringSlice(cfg), the
+// only other place this same fact is derived. Callers use it to withhold
+// the verdict tools (stage_review/write_code_review) instead of registering
+// them and refusing the call.
+func (s *ReviewStage) IsNonDeliveringSlice() bool {
+	return s.fanout != nil && s.fanout.SynthExpected()
+}
+
 func (s *ReviewStage) AddComment(path string, line int, body string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -214,11 +223,13 @@ func (s *ReviewStage) RemoveComment(id string) (ok bool) {
 // SetVerdict stages the overall event+body. Refuses to stage "approve"
 // while sibling reviewer nodes are still running (#867 defense-in-depth) -
 // a request_changes may still stage early, since it can only ever tighten
-// the run's worst-of verdict.
+// the run's worst-of verdict. The refusal text never says "wait": a model
+// reading it as an instruction is exactly how #1148's sleep-poll loop
+// started.
 func (s *ReviewStage) SetVerdict(event, body string) error {
 	if event == "approve" && s.fanout != nil && s.fanout.SiblingsPending() {
-		return fmt.Errorf("a sibling reviewer node is still running - only request_changes may stage early; " +
-			"approve waits until every reviewer node in this run has finished")
+		return fmt.Errorf("approve cannot be staged while sibling reviewer nodes are running; " +
+			"this node's verdict is not delivered - finish your reply without one")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
