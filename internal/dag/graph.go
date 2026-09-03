@@ -220,6 +220,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 					if artifactReader {
 						ms.Artifacts = cfg.Artifacts
 						ms.AppName, ms.UserID, ms.ChatID = task.AppName, task.UserID, chatID
+						ms.NodeID = node.ID
 					}
 					vetting.RegisterMemSession(secret, ms)
 					defer vetting.UnregisterMemSession(secret)

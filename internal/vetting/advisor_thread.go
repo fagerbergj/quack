@@ -67,6 +67,13 @@ type MemSession struct {
 	AppName   string
 	UserID    string
 	ChatID    string
+	// NodeID stamps Lineage.NodeID on writes made through list_artifacts/
+	// edit_artifact/write_artifact/write_<kind> - provenance only, never
+	// part of an artifact's id (#1090 §4.1). ponytail: Round/TurnID aren't
+	// threaded to tool-initiated writes (0/"" - the gate's own per-round
+	// write site is still the authoritative source for those); add if a
+	// caller needs round-accurate lineage on a tool write.
+	NodeID string
 }
 
 // MemStage: per-node staging buffer for stage_memory.

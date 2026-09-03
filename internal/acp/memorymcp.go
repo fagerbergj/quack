@@ -3,18 +3,23 @@ package acp
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	sdk "github.com/coder/acp-go-sdk"
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"google.golang.org/adk/v2/artifact"
 
 	"github.com/fagerbergj/quack/internal/memory"
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
@@ -53,9 +58,13 @@ const mcpServerName = "quackmcp"
 
 // Tool names shared between registrations and mcpToolNames.
 const (
-	toolLoadMemory   = "load_memory"
-	toolStageMemory  = "stage_memory"
-	toolReadArtifact = "read_artifact"
+	toolLoadMemory    = "load_memory"
+	toolStageMemory   = "stage_memory"
+	toolReadArtifact  = "read_artifact"
+	toolListArtifacts = "list_artifacts"
+	toolEditArtifact  = "edit_artifact"
+	toolWriteArtifact = "write_artifact"
+	writeKindPrefix   = "write_" // + registered structured kind name, e.g. write_finding
 )
 
 // readArtifactMaxBytes bounds the raw artifact bytes returned inline, so a
@@ -98,6 +107,151 @@ func registerReadArtifactTool(srv *mcp.Server, svc artifact.Service, appName, us
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("mime: %s\n\n%s", mime, text)}}}, nil, nil
 	})
+}
+
+// listArtifactsInput is the list_artifacts tool's input.
+type listArtifactsInput struct {
+	Kind string `json:"kind,omitempty" jsonschema:"only list artifacts of this registered kind; omit for all kinds"`
+}
+
+// registerListArtifactsTool exposes every id in this chat, letting a node
+// discover artifacts written by other nodes before editing one (#1090 §4.4:
+// any node may edit any output artifact).
+func registerListArtifactsTool(srv *mcp.Server, c *recordstore.Client) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        toolListArtifacts,
+		Description: "List this chat's artifacts (id, kind, latest revision, authoring node), optionally filtered by kind.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args listArtifactsInput) (*mcp.CallToolResult, any, error) {
+		items, err := c.List(ctx, args.Kind)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "list_artifacts: " + err.Error()}}}, nil, nil
+		}
+		if len(items) == 0 {
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "(no artifacts)"}}}, nil, nil
+		}
+		var b strings.Builder
+		for _, it := range items {
+			fmt.Fprintf(&b, "%s\trevision=%d\tkind=%s\tnode=%s\n", it.ID, it.Revision, it.Kind, it.NodeID)
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: b.String()}}}, nil, nil
+	})
+}
+
+// editArtifactInput is the edit_artifact tool's input.
+type editArtifactInput struct {
+	ID           string           `json:"id" jsonschema:"artifact id, from list_artifacts or read_artifact"`
+	BaseRevision int              `json:"base_revision" jsonschema:"the revision you last read; used to detect a concurrent edit"`
+	Edits        []editArtifactOp `json:"edits" jsonschema:"one or more search/replace pairs, applied in order"`
+}
+
+// editArtifactOp is one search/replace pair.
+type editArtifactOp struct {
+	Old string `json:"old" jsonschema:"exact text to replace; must match exactly once in the target content"`
+	New string `json:"new" jsonschema:"replacement text"`
+}
+
+// registerEditArtifactTool: optimistic-locking search/replace (#1090 §4.4/§9).
+// A stale base_revision still succeeds as long as every Old snippet still
+// matches uniquely against the CURRENT latest revision - only a real
+// conflict (ambiguous or vanished match) fails, returning the latest content
+// and revision so the caller can re-read and retry.
+func registerEditArtifactTool(srv *mcp.Server, c *recordstore.Client, nodeID string) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: toolEditArtifact,
+		Description: "Edit an existing artifact by search/replace. Optimistic locking: if base_revision is stale, " +
+			"your edits are still applied to the current latest content as long as each `old` string still matches " +
+			"exactly once; a real conflict fails and returns the current content and revision to retry against. " +
+			"Structured artifacts are re-validated before the write.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args editArtifactInput) (*mcp.CallToolResult, any, error) {
+		if len(args.Edits) == 0 {
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "edit_artifact: edits must be non-empty"}}}, nil, nil
+		}
+		ops := make([]recordstore.EditOp, len(args.Edits))
+		for i, e := range args.Edits {
+			ops[i] = recordstore.EditOp{Old: e.Old, New: e.New}
+		}
+		lineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: time.Now().UTC()}
+		rev, _, err := c.Edit(ctx, args.ID, args.BaseRevision, ops, lineage)
+		if err != nil {
+			var conflict *recordstore.EditConflict
+			if errors.As(err, &conflict) {
+				return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(
+					"edit_artifact: conflict - re-read and retry.\ncurrent revision: %d\ncurrent content:\n%s",
+					conflict.Revision, string(conflict.Content))}}}, nil, nil
+			}
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "edit_artifact: " + err.Error()}}}, nil, nil
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("ok: %s revision %d", args.ID, rev)}}}, nil, nil
+	})
+}
+
+// writeArtifactInput is the write_artifact tool's input - blob kinds only.
+type writeArtifactInput struct {
+	Kind  string `json:"kind" jsonschema:"a registered blob kind (e.g. document, pr_body, text, bytes)"`
+	Mime  string `json:"mime" jsonschema:"the content's mime type"`
+	Bytes string `json:"bytes" jsonschema:"content: raw text for a text mime, else base64"`
+}
+
+// registerWriteArtifactTool: blob writes only - structured kinds go through
+// their generated write_<kind> tool instead, so the registry validates
+// their shape. The registry derives the id; this tool never accepts one.
+func registerWriteArtifactTool(srv *mcp.Server, c *recordstore.Client, nodeID string) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        toolWriteArtifact,
+		Description: "Write a new revision of a blob artifact (markdown, text, PDF, image - not a structured kind; use write_<kind> for those). The registry derives the id.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args writeArtifactInput) (*mcp.CallToolResult, any, error) {
+		data := []byte(args.Bytes)
+		if !strings.HasPrefix(args.Mime, "text/") && args.Mime != "application/json" {
+			if b, err := base64.StdEncoding.DecodeString(args.Bytes); err == nil {
+				data = b
+			}
+		}
+		lineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: time.Now().UTC()}
+		id, rev, err := c.SaveBlob(ctx, args.Kind, data, args.Mime, "", lineage)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "write_artifact: " + err.Error()}}}, nil, nil
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("ok: id=%s revision=%d", id, rev)}}}, nil, nil
+	})
+}
+
+// registerWriteKindTool generates one write_<kind> tool whose input schema
+// IS the kind's registered JSONSchema (#1090 §4.4) - parsed once at
+// registration, not reflected from a Go struct, so the agent sees exactly
+// the schema the record type owns. Input is a raw JSON object (map), so
+// AddTool doesn't infer a struct schema over it and the parsed schema wins.
+func registerWriteKindTool(srv *mcp.Server, c *recordstore.Client, nodeID, kind string, spec recordstore.KindSpec) {
+	var schema jsonschema.Schema
+	if err := json.Unmarshal([]byte(spec.JSONSchema), &schema); err != nil {
+		slog.Warn("acp: write_<kind> tool skipped - bad JSONSchema", "component", "acp", "kind", kind, "err", err)
+		return
+	}
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        writeKindPrefix + kind,
+		Description: fmt.Sprintf("Write a new revision of a %q artifact. The registry validates the body and derives the id.", kind),
+		InputSchema: &schema,
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
+		lineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: time.Now().UTC()}
+		id, rev, err := c.SaveStructured(ctx, kind, args, "", lineage)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: writeKindPrefix + kind + ": " + err.Error()}}}, nil, nil
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("ok: id=%s revision=%d", id, rev)}}}, nil, nil
+	})
+}
+
+// registerArtifactWriteTools wires list_artifacts, edit_artifact,
+// write_artifact and one write_<kind> per registered structured kind onto
+// srv, scoped to sess's session (#1090 §4.4). Any node may edit any output
+// artifact - no per-node ownership check (V4 §4.4).
+func registerArtifactWriteTools(srv *mcp.Server, sess vetting.MemSession) {
+	c := recordstore.New(sess.Artifacts, sess.AppName, sess.UserID, sess.ChatID)
+	registerListArtifactsTool(srv, c)
+	registerEditArtifactTool(srv, c, sess.NodeID)
+	registerWriteArtifactTool(srv, c, sess.NodeID)
+	for _, spec := range recordstore.Kinds() {
+		registerWriteKindTool(srv, c, sess.NodeID, spec.Name(), spec)
+	}
 }
 
 // loadMemoryInput is the load_memory tool's input.
@@ -169,6 +323,7 @@ func memoryMCPHandler() http.Handler {
 		}
 		if sess.Artifacts != nil {
 			registerReadArtifactTool(srv, sess.Artifacts, sess.AppName, sess.UserID, sess.ChatID)
+			registerArtifactWriteTools(srv, sess)
 		}
 		if sess.Review != nil {
 			registerReviewTools(srv, sess.Review)
