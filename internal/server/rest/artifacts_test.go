@@ -191,9 +191,11 @@ func TestListArtifactRevisions_NewestFirstWithLineage(t *testing.T) {
 }
 
 // TestListArtifactRevisions_UsesNameScopedQuery is the adversarial-review
-// follow-up (#1094): the endpoint must not pull every artifact + revision in
-// the chat to find one name - RevisionsForName's WHERE name = ? seam issues a
-// single query regardless of how many OTHER artifacts the chat holds.
+// follow-up (#1094, then #1113): the endpoint must issue RevisionsForName's
+// WHERE name = ? query, not the ListForSession fallback's full-chat scan -
+// asserted on the raw SQL gorm renders, not QueryCount, since both paths
+// issue exactly one SELECT (a bare count can't tell them apart; it only
+// guards against N+1, not against an unscoped single scan).
 func TestListArtifactRevisions_UsesNameScopedQuery(t *testing.T) {
 	h := newTestHandler(t)
 	chatID := mustCreateChat(t, h)
@@ -205,19 +207,36 @@ func TestListArtifactRevisions_UsesNameScopedQuery(t *testing.T) {
 	saveTestArtifact(t, h, userID, chatID, "turn-1", "finding:target", "application/json", []byte(`{"v":1}`))
 	saveTestArtifact(t, h, userID, chatID, "turn-2", "finding:target", "application/json", []byte(`{"v":2}`))
 
-	before := h.store.QueryCount()
+	before := len(h.store.RecordedQuerySQL())
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats/"+chatID+"/artifacts/finding:target/revisions", nil)
 	rec := httptest.NewRecorder()
 	h.ListArtifactRevisions(rec, req, chatID, "finding:target")
-	queries := h.store.QueryCount() - before
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	// One SELECT for the revisions, plus the requireChat/sessionUser lookups -
-	// bounded, not "one row scanned per artifact in the chat" (21 artifacts here).
-	if queries > 5 {
-		t.Errorf("query count = %d, want a small bounded number independent of the chat's 21 other artifacts", queries)
+	seenScoped, seenUnscopedArtifactScan := false, false
+	for _, sql := range h.store.RecordedQuerySQL()[before:] {
+		if !strings.Contains(sql, "`artifacts`") { // sqlite renders identifiers backtick-quoted, not double-quoted
+			continue // requireChat/sessionUser's own lookups - not the query under test
+		}
+		// "AND name = ?", not "name = " - the latter also matches "app_name = ?",
+		// which both the scoped query AND the ListForSession fallback issue.
+		if strings.Contains(sql, "AND name = ?") {
+			seenScoped = true
+			continue
+		}
+		if strings.Contains(sql, "session_id IN") {
+			// ListForSession's full-chat scan (internal/store/artifact.go) - no
+			// name filter, exactly the regression this test guards against.
+			seenUnscopedArtifactScan = true
+		}
+	}
+	if !seenScoped {
+		t.Errorf("no name-scoped (WHERE name = ...) artifact query issued; recorded SQL: %v", h.store.RecordedQuerySQL()[before:])
+	}
+	if seenUnscopedArtifactScan {
+		t.Errorf("revisions endpoint issued an unscoped full-chat artifact scan; recorded SQL: %v", h.store.RecordedQuerySQL()[before:])
 	}
 }
 
@@ -275,7 +294,7 @@ func TestDiffArtifactRevisions_OversizeRevision_413(t *testing.T) {
 	chatID := mustCreateChat(t, h)
 	userID := h.sessionUser(context.Background(), chatID)
 
-	big := strings.Repeat("a", diffRevisionMaxBytes+1)
+	big := strings.Repeat("a", artifactref.InlineMaxBytes+1)
 	saveTestArtifact(t, h, userID, chatID, "turn-1", "text:huge", "text/plain", []byte("small"))
 	saveTestArtifact(t, h, userID, chatID, "turn-2", "text:huge", "text/plain", []byte(big))
 
