@@ -191,9 +191,8 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 		if a.opts.Preamble != "" {
 			outbound = a.opts.Preamble + "\n\n" + outbound
 		}
-		var extraRO []string
 		stopped := false
-		err = a.round(ctx, cwd, memSecret, extraRO, caps, outbound, steerChatID, steerNodeID, advisorToken, priorSessionID, func(spec eventSpec) bool {
+		err = a.round(ctx, cwd, memSecret, caps, outbound, steerChatID, steerNodeID, advisorToken, priorSessionID, func(spec eventSpec) bool {
 			if !yield(a.newEvent(ctx, spec), nil) {
 				stopped = true
 				return false
@@ -227,7 +226,7 @@ type promptDone struct {
 // SessionID/NodeID (round()'s callers resolve these), NOT ledger.Coords -
 // cfg.NodeID collapses to the shared workspace scope for a setup-chain's
 // writer node, which would silently no-op the hook (#998 review).
-func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []string, caps workspace.Caps, outbound string, steerChatID, steerNodeID, advisorToken, priorSessionID string, emit func(eventSpec) bool) (err error) {
+func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace.Caps, outbound string, steerChatID, steerNodeID, advisorToken, priorSessionID string, emit func(eventSpec) bool) (err error) {
 	ctx, roundSpan := otelobs.Start(ctx, "acp.round", attribute.String(otelobs.GenAIAgentName, a.name), attribute.String("cwd", cwd))
 	defer func() { otelobs.End(roundSpan, err) }()
 
@@ -250,7 +249,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, extraRO []stri
 
 	spawnCtx, spawnSpan := otelobs.Start(ctx, "acp.spawn", attribute.String(otelobs.GenAIAgentName, a.name))
 	_ = spawnCtx
-	h, err := a.start(ctx, cwd, extraRO, caps)
+	h, err := a.start(ctx, cwd, caps)
 	otelobs.End(spawnSpan, err)
 	if err != nil {
 		return err
