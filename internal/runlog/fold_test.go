@@ -86,29 +86,27 @@ func TestLoadEvents_PrefersTable(t *testing.T) {
 	}
 }
 
-// TestLoadEvents_FallbackHonorsFromSeq: the fold fallback must not resend
-// the whole reconstructed history - only entries newer than fromSeq (the
-// SOURCE ledger entry's own seq, never renumbered) come back.
-func TestLoadEvents_FallbackHonorsFromSeq(t *testing.T) {
+// TestLoadEvents_NeverFoldsWithPriorProgress: the table's Seq (per-RUN) and
+// the ledger's Seq (per-CHAT LIFETIME) are different numbering spaces - a
+// client with fromSeq > 0 already holds a per-run id, which the fold cannot
+// honestly satisfy. A lost table must return empty for such a client, never
+// a fold-derived guess in the wrong space.
+func TestLoadEvents_NeverFoldsWithPriorProgress(t *testing.T) {
 	st := newTestStore(t)
 	ls, err := ledger.NewFSStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewFSStore: %v", err)
 	}
 	const chatID = "chat-1"
-	seq1 := appendNode(t, ls, chatID, "n1", "t1", ledger.KindNodeStarted) // final state: started
-	seq2 := appendNode(t, ls, chatID, "n2", "t2", ledger.KindNodeStarted) // final state: started
+	appendNode(t, ls, chatID, "n1", "t1", ledger.KindNodeStarted) // WAL has data; must still be ignored
 
 	l := NewEventLog(st).WithLedger(ls)
-	evs, err := l.LoadEvents(context.Background(), chatID, seq1)
+	evs, err := l.LoadEvents(context.Background(), chatID, 3) // client already has SOME progress
 	if err != nil {
 		t.Fatalf("LoadEvents: %v", err)
 	}
-	if len(evs) != 1 {
-		t.Fatalf("LoadEvents returned %d events, want 1 (only n2, seq %d > fromSeq %d)", len(evs), seq2, seq1)
-	}
-	if evs[0].Seq != seq2 {
-		t.Fatalf("event seq = %d, want the source ledger entry's own seq %d", evs[0].Seq, seq2)
+	if len(evs) != 0 {
+		t.Fatalf("LoadEvents returned %d events for fromSeq>0 against a lost table, want 0 (unmappable, not a guess)", len(evs))
 	}
 }
 

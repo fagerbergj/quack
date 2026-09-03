@@ -89,18 +89,26 @@ func TestRunLedgerRebuild_RegeneratesArtifactMeta(t *testing.T) {
 }
 
 // TestRunLedgerRebuild_DryRunWritesNothing: --dry-run reports the same
-// counts but leaves the drifted row untouched.
+// counts but leaves the drifted row untouched. Seeds a REAL lineage
+// (Author/NodeID/Round all set) and drifts it to a DIFFERENT real lineage,
+// so this test cannot pass vacuously (an empty-vs-empty lineage comparison
+// would pass even if dry-run silently wrote - #1111 review finding).
 func TestRunLedgerRebuild_DryRunWritesNothing(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
 	const chatID, appName, userID = "chat-1", "quack", "local"
 
+	original := recordstore.Lineage{Author: "tester", NodeID: "n1", Round: 2}
 	c := recordstore.New(artifacts, appName, userID, chatID).WithLedger(ls)
-	id, rev, err := c.SaveStructured(ctx, testKind, map[string]string{"hello": "world"}, "doc-1", recordstore.Lineage{})
+	id, rev, err := c.SaveStructured(ctx, testKind, map[string]string{"hello": "world"}, "doc-1", original)
 	if err != nil {
 		t.Fatalf("SaveStructured: %v", err)
 	}
-	if err := artifacts.UpdateArtifactMeta(ctx, appName, userID, chatID, id, int64(rev), "WRONG_KIND", "WRONG_CLASS", []byte(`{}`)); err != nil {
+	drift, err := json.Marshal(recordstore.Lineage{Author: "DRIFTED", NodeID: "WRONG_NODE", Round: 99})
+	if err != nil {
+		t.Fatalf("marshal drift: %v", err)
+	}
+	if err := artifacts.UpdateArtifactMeta(ctx, appName, userID, chatID, id, int64(rev), "WRONG_KIND", "WRONG_CLASS", drift); err != nil {
 		t.Fatalf("seed drift: %v", err)
 	}
 
@@ -116,8 +124,8 @@ func TestRunLedgerRebuild_DryRunWritesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LatestWithMeta: %v", err)
 	}
-	if lineage.Author != "" {
-		t.Fatalf("dry-run wrote lineage: %+v", lineage)
+	if lineage.Author != "DRIFTED" || lineage.NodeID != "WRONG_NODE" || lineage.Round != 99 {
+		t.Fatalf("dry-run wrote lineage: got %+v, want the drifted value untouched", lineage)
 	}
 }
 
@@ -207,24 +215,76 @@ func TestRunLedgerRebuild_RegeneratesSSETable(t *testing.T) {
 	}
 }
 
+// TestRunLedgerShow_PrintsJSONLines exercises the JSONL contract `show`
+// advertises across MULTIPLE entries and kinds - each line independently
+// parseable, in seq order, with --from-seq's ">=" boundary honored - not
+// just the one-entry case (#1111 review finding).
 func TestRunLedgerShow_PrintsJSONLines(t *testing.T) {
 	ctx := context.Background()
 	_, ls, artifacts := newTestStack(t)
 	const chatID, appName, userID = "chat-1", "quack", "local"
 	c := recordstore.New(artifacts, appName, userID, chatID).WithLedger(ls)
-	if _, _, err := c.SaveStructured(ctx, testKind, map[string]string{"a": "b"}, "doc-1", recordstore.Lineage{}); err != nil {
-		t.Fatalf("SaveStructured: %v", err)
+
+	// Two artifact revisions plus a node pair - three entries of two
+	// different kinds, so ordering/kind assertions actually distinguish them.
+	if _, _, err := c.SaveStructured(ctx, testKind, map[string]string{"a": "1"}, "doc-1", recordstore.Lineage{}); err != nil {
+		t.Fatalf("SaveStructured 1: %v", err)
+	}
+	if _, _, err := c.SaveStructured(ctx, testKind, map[string]string{"a": "2"}, "doc-1", recordstore.Lineage{ParentRevision: 1}); err != nil {
+		t.Fatalf("SaveStructured 2: %v", err)
+	}
+	nodePayload, err := json.Marshal(struct {
+		NodeID string `json:"node_id"`
+	}{NodeID: "n1"})
+	if err != nil {
+		t.Fatalf("marshal node payload: %v", err)
+	}
+	lastSeq, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindNodeStarted, Payload: nodePayload})
+	if err != nil {
+		t.Fatalf("AppendIntent node.started: %v", err)
 	}
 
-	var buf bytes.Buffer
-	if err := RunLedgerShow(ctx, &buf, ls, chatID, 0); err != nil {
+	// Unfiltered: all three entries, in seq order.
+	var all bytes.Buffer
+	if err := RunLedgerShow(ctx, &all, ls, chatID, 0); err != nil {
 		t.Fatalf("RunLedgerShow: %v", err)
 	}
-	var e ledger.Entry
-	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &e); err != nil {
-		t.Fatalf("output not valid JSON: %v\n%s", err, buf.String())
+	lines := bytes.Split(bytes.TrimSpace(all.Bytes()), []byte("\n"))
+	if len(lines) != 3 {
+		t.Fatalf("got %d lines, want 3\n%s", len(lines), all.String())
 	}
-	if e.Kind != ledger.KindArtifactRevision {
-		t.Fatalf("first entry kind = %q, want %q", e.Kind, ledger.KindArtifactRevision)
+	var entries []ledger.Entry
+	for i, line := range lines {
+		var e ledger.Entry
+		if err := json.Unmarshal(line, &e); err != nil {
+			t.Fatalf("line %d not valid JSON: %v\n%s", i, err, line)
+		}
+		entries = append(entries, e)
+	}
+	wantKinds := []string{ledger.KindArtifactRevision, ledger.KindArtifactRevision, ledger.KindNodeStarted}
+	for i, e := range entries {
+		if e.Kind != wantKinds[i] {
+			t.Fatalf("line %d kind = %q, want %q", i, e.Kind, wantKinds[i])
+		}
+		if i > 0 && entries[i-1].Seq >= e.Seq {
+			t.Fatalf("entries not in seq order: line %d seq %d >= line %d seq %d", i-1, entries[i-1].Seq, i, e.Seq)
+		}
+	}
+
+	// --from-seq boundary: exactly the node entry (its own seq is >= itself).
+	var filtered bytes.Buffer
+	if err := RunLedgerShow(ctx, &filtered, ls, chatID, lastSeq); err != nil {
+		t.Fatalf("RunLedgerShow with fromSeq: %v", err)
+	}
+	filteredLines := bytes.Split(bytes.TrimSpace(filtered.Bytes()), []byte("\n"))
+	if len(filteredLines) != 1 {
+		t.Fatalf("--from-seq=%d returned %d lines, want 1\n%s", lastSeq, len(filteredLines), filtered.String())
+	}
+	var last ledger.Entry
+	if err := json.Unmarshal(filteredLines[0], &last); err != nil {
+		t.Fatalf("filtered line not valid JSON: %v", err)
+	}
+	if last.Seq != lastSeq || last.Kind != ledger.KindNodeStarted {
+		t.Fatalf("filtered entry = %+v, want the node.started entry at seq %d", last, lastSeq)
 	}
 }

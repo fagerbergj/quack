@@ -29,46 +29,42 @@ func newLedgerCmd() *cobra.Command {
 }
 
 func newLedgerShowCmd() *cobra.Command {
-	var chatID string
 	var fromSeq int64
 	c := &cobra.Command{
-		Use:   "show",
+		Use:   "show <chat-id>",
 		Short: "Print a chat's raw ledger entries (one JSON object per line)",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if chatID == "" {
-				return fmt.Errorf("ledger show: --chat is required")
-			}
 			ls, _, _, err := openLedgerAndStores()
 			if err != nil {
 				return err
 			}
-			return cli.RunLedgerShow(cmd.Context(), cmd.OutOrStdout(), ls, chatID, fromSeq)
+			return cli.RunLedgerShow(cmd.Context(), cmd.OutOrStdout(), ls, args[0], fromSeq)
 		},
 	}
-	c.Flags().StringVar(&chatID, "chat", "", "chat id (required)")
 	c.Flags().Int64Var(&fromSeq, "from-seq", 0, "only entries with seq >= this value")
 	return c
 }
 
 func newLedgerRebuildCmd() *cobra.Command {
-	var chatID string
 	var dryRun bool
 	c := &cobra.Command{
-		Use:   "rebuild",
+		Use:   "rebuild <chat-id>",
 		Short: "Regenerate a chat's artifact metadata and SSE table from the ledger",
 		Long: "Regenerates the artifact store rows' kind/class/lineage and the SSE\n" +
 			"table from the ledger fold (V4 §4.9's projections) - bytes and revision\n" +
 			"numbers are never touched, only metadata the fold recomputes. --dry-run\n" +
-			"reports what would change without writing.",
+			"reports what would change without writing.\n\n" +
+			"Run this with the server STOPPED, or with no active run on this chat:\n" +
+			"the SSE table rewrite is a delete-then-reinsert, not atomic, and a run\n" +
+			"landing rows in the window between them loses those rows to the rebuild.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if chatID == "" {
-				return fmt.Errorf("ledger rebuild: --chat is required")
-			}
 			ls, st, artifacts, err := openLedgerAndStores()
 			if err != nil {
 				return err
 			}
-			report, err := cli.RunLedgerRebuild(cmd.Context(), ls, st, artifacts, chatID, dryRun)
+			report, err := cli.RunLedgerRebuild(cmd.Context(), ls, st, artifacts, args[0], dryRun)
 			if err != nil {
 				return err
 			}
@@ -79,7 +75,6 @@ func newLedgerRebuildCmd() *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().StringVar(&chatID, "chat", "", "chat id (required)")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "report what would change without writing")
 	return c
 }

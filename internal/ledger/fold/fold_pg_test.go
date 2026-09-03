@@ -56,7 +56,11 @@ func newTestPGStore(t *testing.T) *ledger.PGStore {
 // LastRevision and Fold agree with each other against a real database, not
 // just FSStore's in-memory scan.
 func TestFold_Postgres_KeyIndexAndPaging(t *testing.T) {
-	t.Parallel()
+	// No t.Parallel(): this test mutates the package-level pageSize var, as
+	// does TestFold_PagingMatchesOneSlice - running both non-parallel is what
+	// keeps that shared mutation race-free (#1111 review finding). Add
+	// t.Parallel() back only after threading the page limit into readAll
+	// instead of sharing pageSize.
 	store := newTestPGStore(t)
 	ctx := context.Background()
 	const chatID = "chat-fold-pg"
