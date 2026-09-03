@@ -9,6 +9,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/recordstore"
+	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/store"
 )
 
@@ -120,42 +121,89 @@ func TestRunLedgerRebuild_DryRunWritesNothing(t *testing.T) {
 	}
 }
 
-// TestRunLedgerRebuild_RegeneratesSSETable is V4 §7 case 14's SSE side: node
-// lifecycle entries in the WAL become node_start/node_done rows in the
-// (cleared) SSE table.
+// TestRunLedgerRebuild_RegeneratesSSETable is V4 §7 case 14's SSE side - and
+// its honest ceiling: rebuild reconstructs node LIFECYCLE only (which node,
+// which terminal status), never the richer live payload (tokens, output,
+// model) the skinny node.* WAL entry never carried. It asserts the event's
+// actual content (id, node id, name), not just a row count, so a rebuild
+// that silently wrote the wrong node or the wrong terminal state would fail.
 func TestRunLedgerRebuild_RegeneratesSSETable(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
 	const chatID = "chat-1"
 
-	payload, err := json.Marshal(struct {
-		NodeID string `json:"node_id"`
-		Turn   string `json:"turn"`
-		Round  int    `json:"round"`
-	}{NodeID: "n1", Turn: "t1"})
+	payload := func(nodeID string) []byte {
+		b, err := json.Marshal(struct {
+			NodeID string `json:"node_id"`
+			Turn   string `json:"turn"`
+			Round  int    `json:"round"`
+		}{NodeID: nodeID, Turn: "t1"})
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		return b
+	}
+	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindNodeStarted, Payload: payload("n1")}); err != nil {
+		t.Fatalf("AppendIntent n1 started: %v", err)
+	}
+	doneSeq, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindNodeDone, Payload: payload("n1")})
 	if err != nil {
-		t.Fatalf("marshal: %v", err)
+		t.Fatalf("AppendIntent n1 done: %v", err)
 	}
-	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindNodeStarted, Payload: payload}); err != nil {
-		t.Fatalf("AppendIntent started: %v", err)
-	}
-	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindNodeDone, Payload: payload}); err != nil {
-		t.Fatalf("AppendIntent done: %v", err)
+	// A second node, still running (no done/failed) - its LAST entry is
+	// node.started, so it must come back as node_start, not node_done.
+	startedSeq, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindNodeStarted, Payload: payload("n2")})
+	if err != nil {
+		t.Fatalf("AppendIntent n2 started: %v", err)
 	}
 
 	report, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false)
 	if err != nil {
 		t.Fatalf("RunLedgerRebuild: %v", err)
 	}
-	if report.SSEEventsWritten != 1 {
-		t.Fatalf("SSEEventsWritten = %d, want 1 (n1's final state)", report.SSEEventsWritten)
+	if report.SSEEventsWritten != 2 {
+		t.Fatalf("SSEEventsWritten = %d, want 2 (n1's and n2's final states)", report.SSEEventsWritten)
 	}
+
 	evs, err := st.LoadChatEvents(ctx, chatID, 0)
 	if err != nil {
 		t.Fatalf("LoadChatEvents: %v", err)
 	}
-	if len(evs) != 1 {
-		t.Fatalf("LoadChatEvents returned %d rows, want 1", len(evs))
+	if len(evs) != 2 {
+		t.Fatalf("LoadChatEvents returned %d rows, want 2", len(evs))
+	}
+	byNode := map[string]struct {
+		seq  int64
+		name string
+	}{}
+	for _, row := range evs {
+		ev, err := runlog.UnmarshalEvent(row.Event)
+		if err != nil {
+			t.Fatalf("UnmarshalEvent: %v", err)
+		}
+		var d struct {
+			NodeID string `json:"node_id"`
+		}
+		raw, err := json.Marshal(ev.Data)
+		if err != nil {
+			t.Fatalf("marshal event data: %v", err)
+		}
+		if err := json.Unmarshal(raw, &d); err != nil {
+			t.Fatalf("unmarshal event data: %v", err)
+		}
+		byNode[d.NodeID] = struct {
+			seq  int64
+			name string
+		}{seq: row.Seq, name: ev.Name}
+	}
+
+	n1, ok := byNode["n1"]
+	if !ok || n1.name != "node_done" || n1.seq != doneSeq {
+		t.Fatalf("n1 event = %+v (ok=%v), want node_done at seq %d", n1, ok, doneSeq)
+	}
+	n2, ok := byNode["n2"]
+	if !ok || n2.name != "node_start" || n2.seq != startedSeq {
+		t.Fatalf("n2 event = %+v (ok=%v), want node_start at seq %d", n2, ok, startedSeq)
 	}
 }
 

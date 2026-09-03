@@ -27,26 +27,44 @@ func (l *EventLog) WithLedger(store ledger.LedgerStore) *EventLog {
 }
 
 // LoadEvents is Last-Event-ID resume's read path (V4 §4.9): the SSE table
-// when it has rows, else - only when a WAL is armed - synthesized from the
-// ledger fold. Unchanged behavior when no WAL is armed or the table already
-// has rows for chatID.
+// when it has ANY rows for chatID, else - only when a WAL is armed -
+// synthesized from the ledger fold. The fallback decision is deliberately
+// NOT based on the fromSeq-filtered read: a caught-up client (table has
+// rows, none newer than fromSeq) must get an empty result, not the whole
+// reconstructed history resent - only a chat with literally zero table rows
+// (e.g. GC'd, or never written) falls back. fromSeq is exclusive, matching
+// store.LoadChatEvents's own "seq > afterSeq" contract; a synthesized event
+// keeps its SOURCE ledger entry's seq as its id (never renumbered), so a
+// fallback resume's ids stay comparable across calls and to a GC'd table's
+// old ids.
 func (l *EventLog) LoadEvents(ctx context.Context, chatID string, fromSeq int64) ([]store.ChatEvent, error) {
-	evs, err := l.store.LoadChatEvents(ctx, chatID, fromSeq)
-	if err != nil || len(evs) > 0 || l.ledgerStore == nil {
-		return evs, err
+	exists, err := l.store.ChatEventsExist(ctx, chatID)
+	if err != nil {
+		return nil, err
+	}
+	if exists || l.ledgerStore == nil {
+		return l.store.LoadChatEvents(ctx, chatID, fromSeq)
 	}
 	res, ferr := fold.Fold(ctx, l.ledgerStore, chatID, 0)
 	if ferr != nil || (len(res.Nodes) == 0 && len(res.JudgeRounds) == 0) {
-		return evs, err // no ledger data either; nothing to synthesize
+		return nil, nil // no ledger data either; nothing to synthesize
 	}
-	return SynthesizeChatEvents(chatID, res), nil
+	all := SynthesizeChatEvents(chatID, res)
+	out := make([]store.ChatEvent, 0, len(all))
+	for _, e := range all {
+		if e.Seq > fromSeq {
+			out = append(out, e)
+		}
+	}
+	return out, nil
 }
 
 // SynthesizeChatEvents turns a fold.Result into the ChatEvent rows a live
 // run would have produced for its node lifecycle - the write side of `quack
-// ledger rebuild` and LoadEvents's fallback. Seq is reassigned 1..N in the
-// fold's own seq order (the ledger's seq space, not the original SSE
-// table's, which may no longer exist).
+// ledger rebuild` and LoadEvents's fallback. Seq is each event's SOURCE
+// ledger entry seq (the ledger's own seq space), never renumbered - so
+// LoadEvents's fromSeq filter and a resumed client's Last-Event-ID line up
+// with what the ledger actually recorded.
 func SynthesizeChatEvents(chatID string, res *fold.Result) []store.ChatEvent {
 	type item struct {
 		seq int64
@@ -74,12 +92,12 @@ func SynthesizeChatEvents(chatID string, res *fold.Result) []store.ChatEvent {
 	sort.Slice(items, func(i, j int) bool { return items[i].seq < items[j].seq })
 	now := time.Now().UTC()
 	out := make([]store.ChatEvent, 0, len(items))
-	for i, it := range items {
+	for _, it := range items {
 		js, err := MarshalEvent(it.ev)
 		if err != nil {
 			continue
 		}
-		out = append(out, store.ChatEvent{ChatID: chatID, Seq: int64(i + 1), Event: js, CreatedAt: now})
+		out = append(out, store.ChatEvent{ChatID: chatID, Seq: it.seq, Event: js, CreatedAt: now})
 	}
 	return out
 }
