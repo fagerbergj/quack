@@ -594,7 +594,12 @@ func saveEpisodicRound(ctx context.Context, cfg Config, nodeID, turnID string, r
 	case cfg.IsReviewer:
 		saveCodeReviewRound(ctx, cfg, nodeID, turnID, round, answer, staged, st)
 	case cfg.Artifact != "":
-		saveDocumentRound(ctx, cfg, nodeID, turnID, round, answer, st)
+		// An unregistered artifact kind (e.g. a workflow-config typo) must not
+		// silently drop the node's output - fall back to the same text:<node>
+		// write the no-selector branch below performs.
+		if !saveDocumentRound(ctx, cfg, nodeID, turnID, round, answer, st) {
+			saveTextRound(ctx, cfg, nodeID, turnID, round, answer, st)
+		}
 	default:
 		// No registered structured kind selected (#1095): every gated node's
 		// round output still becomes a revision, generic "text:<node>".
@@ -847,21 +852,24 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 
 // saveDocumentRound saves one "document" (or other blob-kind) revision per
 // round. No retention: every revision is kept (design V4.1 #2) - GC follows
-// the chat's own lifecycle, not a per-artifact policy.
-func saveDocumentRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, st *episodicRoundState) {
+// the chat's own lifecycle, not a per-artifact policy. Returns false (after
+// logging) on any SaveBlob error, including an unregistered cfg.Artifact
+// kind, so the caller can fall back to a generic text write.
+func saveDocumentRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, st *episodicRoundState) bool {
 	c := recordClient(cfg)
 	if c == nil {
-		return
+		return false
 	}
 	answer = truncateForBlob(answer, nodeID, cfg.Artifact)
 	lineage := recordstore.Lineage{NodeID: nodeID, Round: round, ParentRevision: st.documentRev, TriggerAnnotation: st.triggerAnnotation, HeadSHA: cfg.NodeBaseSHA, SavedAt: time.Now().UTC(), Author: "worker", TurnID: turnID}
 	id, rev, err := c.SaveBlob(ctx, cfg.Artifact, []byte(answer), "text/markdown", documentHint(cfg.ChatID), lineage)
 	if err != nil {
 		slog.Warn("document record save failed", "component", "vetting", "node", nodeID, "err", err)
-		return
+		return false
 	}
 	st.documentRev = rev
 	st.roundWrites = append(st.roundWrites, ScoredRef{ArtifactID: id, Revision: rev})
+	return true
 }
 
 // untrustedPriorBlock wraps a preloaded record in the same untrusted-prior-

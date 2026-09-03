@@ -1078,11 +1078,11 @@ func TestSaveTextRound_TruncatesOversizedAnswer(t *testing.T) {
 // TestSaveDocumentRound_TruncatesOversizedAnswer is the same check for the
 // saveDocumentRound path (reviewer/document-kind nodes), which shares
 // truncateForBlob with saveTextRound.
-// TestSaveEpisodicRound_InvalidArtifactSkipsTextFallback covers #1128: a
-// planner-authored node with a free-text (unregistered) artifact selector
-// must not fall back to the generic "text:<node>" write - that would
-// silently save the output under a kind other than what was requested.
-func TestSaveEpisodicRound_InvalidArtifactSkipsTextFallback(t *testing.T) {
+// TestSaveEpisodicRound_InvalidArtifactFallsBackToText covers #1128: a
+// workflow-config or otherwise unregistered artifact selector must not
+// silently drop the node's output - it falls back to the generic
+// "text:<node>" write, same as the no-selector default branch.
+func TestSaveEpisodicRound_InvalidArtifactFallsBackToText(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	base := reviewerCfgWithArtifacts(t, svc, true)
 	base.IsReviewer = false
@@ -1098,8 +1098,8 @@ func TestSaveEpisodicRound_InvalidArtifactSkipsTextFallback(t *testing.T) {
 	}
 	if _, _, ok, err := rc.Latest(context.Background(), textID); err != nil {
 		t.Fatal(err)
-	} else if ok {
-		t.Fatal("saveEpisodicRound: wrote a text:<node> fallback record for an invalid artifact selector")
+	} else if !ok {
+		t.Fatal("saveEpisodicRound: expected a text:<node> fallback record for an invalid artifact selector")
 	}
 }
 

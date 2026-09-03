@@ -100,25 +100,14 @@ type RawNode struct {
 // ArtifactKindNames returns the sorted names of every registered blob-class
 // recordstore kind - the closed set a node's `artifact` field may select,
 // since saveDocumentRound writes it via SaveBlob (#1128).
-func ArtifactKindNames() []string {
-	specs := recordstore.KindsForClass(recordstore.Blob)
-	names := make([]string, len(specs))
-	for i, s := range specs {
-		names[i] = s.Name()
-	}
-	return names
-}
+func ArtifactKindNames() []string { return recordstore.ArtifactKindNames() }
 
-// validateArtifactKind rejects an artifact selector that isn't one of
-// ArtifactKindNames() - the planner-facing guard for #1128.
-func validateArtifactKind(kind string) error {
-	for _, name := range ArtifactKindNames() {
-		if name == kind {
-			return nil
-		}
-	}
-	return fmt.Errorf("artifact %q is not a registered kind; valid kinds: %s", kind, strings.Join(ArtifactKindNames(), ", "))
-}
+// ValidateArtifactKind rejects an artifact selector that isn't one of
+// ArtifactKindNames() - the planner-facing guard for #1128. Thin wrapper
+// around recordstore.ValidateArtifactKind, kept here for plan-build callers;
+// config's own workflow-node validation calls recordstore directly to avoid
+// an import cycle (dag -> inference -> config).
+func ValidateArtifactKind(kind string) error { return recordstore.ValidateArtifactKind(kind) }
 
 // Build: validates submitted nodes into a Plan and stamps turn context.
 func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, delivery *Delivery, history []HistoryTurn, message string, attachments []*genai.Part, allowedKinds []string) (plan *Plan, err error) {
@@ -353,7 +342,7 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 			}
 		}
 		if n.Artifact != "" {
-			if err := validateArtifactKind(n.Artifact); err != nil {
+			if err := ValidateArtifactKind(n.Artifact); err != nil {
 				return nil, fmt.Errorf("node %q: %w", n.ID, err)
 			}
 		}

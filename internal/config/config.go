@@ -13,6 +13,8 @@ import (
 
 	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
+
+	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
 type Config struct {
@@ -164,6 +166,11 @@ func validateWorkflowNodes(shapeName string, nodes []WorkflowNode, agents map[st
 		}
 		if strings.ContainsAny(n.Artifact, `/\:`) {
 			return fmt.Errorf("config: workflow shape %q: bound node %q artifact %q must be a bare kind name, no path separators or colons", shapeName, n.ID, n.Artifact)
+		}
+		if n.Artifact != "" {
+			if err := recordstore.ValidateArtifactKind(n.Artifact); err != nil {
+				return fmt.Errorf("config: workflow shape %q: bound node %q: %w", shapeName, n.ID, err)
+			}
 		}
 	}
 	for _, n := range nodes {
