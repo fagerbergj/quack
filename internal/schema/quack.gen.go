@@ -35,6 +35,42 @@ func (e AgentActivityOutputItemType) Valid() bool {
 	}
 }
 
+// Defines values for ArtifactRevisionInfoClass.
+const (
+	ArtifactRevisionInfoClassBlob       ArtifactRevisionInfoClass = "blob"
+	ArtifactRevisionInfoClassStructured ArtifactRevisionInfoClass = "structured"
+)
+
+// Valid indicates whether the value is a known member of the ArtifactRevisionInfoClass enum.
+func (e ArtifactRevisionInfoClass) Valid() bool {
+	switch e {
+	case ArtifactRevisionInfoClassBlob:
+		return true
+	case ArtifactRevisionInfoClassStructured:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ArtifactSummaryClass.
+const (
+	ArtifactSummaryClassBlob       ArtifactSummaryClass = "blob"
+	ArtifactSummaryClassStructured ArtifactSummaryClass = "structured"
+)
+
+// Valid indicates whether the value is a known member of the ArtifactSummaryClass enum.
+func (e ArtifactSummaryClass) Valid() bool {
+	switch e {
+	case ArtifactSummaryClassBlob:
+		return true
+	case ArtifactSummaryClassStructured:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ChatDetailGithubState.
 const (
 	ChatDetailGithubStateClosed ChatDetailGithubState = "closed"
@@ -346,6 +382,22 @@ type AgentActivityOutputItem struct {
 // AgentActivityOutputItemType defines model for AgentActivityOutputItem.Type.
 type AgentActivityOutputItemType string
 
+// ArtifactLineage Per-revision provenance (design V4 §4.2), stamped on the row.
+type ArtifactLineage struct {
+	// Author worker, judge, gate, delivery, or human.
+	Author  *string `json:"author,omitempty"`
+	HeadSha *string `json:"head_sha,omitempty"`
+
+	// NodeId The node that authored this revision. Provenance only, never part of the artifact's id.
+	NodeId         *string    `json:"node_id,omitempty"`
+	ParentRevision *int64     `json:"parent_revision,omitempty"`
+	Round          *int       `json:"round,omitempty"`
+	SavedAt        *time.Time `json:"saved_at,omitempty"`
+
+	// TriggerAnnotation The judge_round artifact id that triggered this revision, if any.
+	TriggerAnnotation *string `json:"trigger_annotation,omitempty"`
+}
+
 // ArtifactList defines model for ArtifactList.
 type ArtifactList struct {
 	Data []ArtifactSummary `json:"data"`
@@ -353,20 +405,45 @@ type ArtifactList struct {
 
 // ArtifactRevisionInfo defines model for ArtifactRevisionInfo.
 type ArtifactRevisionInfo struct {
-	CreatedAt *time.Time `json:"created_at,omitempty"`
-	MimeType  string     `json:"mime_type"`
-	Revision  int64      `json:"revision"`
-	Size      int64      `json:"size"`
+	Class     *ArtifactRevisionInfoClass `json:"class,omitempty"`
+	CreatedAt *time.Time                 `json:"created_at,omitempty"`
+
+	// Kind Registered record kind, e.g. code_review, finding. Absent for a pre-#1090 row.
+	Kind *string `json:"kind,omitempty"`
+
+	// Lineage Per-revision provenance (design V4 §4.2), stamped on the row.
+	Lineage  *ArtifactLineage `json:"lineage,omitempty"`
+	MimeType string           `json:"mime_type"`
+	Revision int64            `json:"revision"`
+	Size     int64            `json:"size"`
 
 	// TurnId The turn that created this revision. Absent if unknown.
 	TurnId *string `json:"turn_id,omitempty"`
 }
 
+// ArtifactRevisionInfoClass defines model for ArtifactRevisionInfo.Class.
+type ArtifactRevisionInfoClass string
+
+// ArtifactRevisionList defines model for ArtifactRevisionList.
+type ArtifactRevisionList struct {
+	// Data Newest revision first.
+	Data []ArtifactRevisionInfo `json:"data"`
+}
+
 // ArtifactSummary defines model for ArtifactSummary.
 type ArtifactSummary struct {
+	Class          *ArtifactSummaryClass `json:"class,omitempty"`
+	Kind           *string               `json:"kind,omitempty"`
+	LatestRevision *int64                `json:"latest_revision,omitempty"`
+
+	// Lineage Per-revision provenance (design V4 §4.2), stamped on the row.
+	Lineage   *ArtifactLineage       `json:"lineage,omitempty"`
 	Name      string                 `json:"name"`
 	Revisions []ArtifactRevisionInfo `json:"revisions"`
 }
+
+// ArtifactSummaryClass defines model for ArtifactSummary.Class.
+type ArtifactSummaryClass string
 
 // ChatDetail defines model for ChatDetail.
 type ChatDetail struct {
@@ -894,6 +971,15 @@ type GetChatArtifactParams struct {
 	Revision *int `form:"revision,omitempty" json:"revision,omitempty"`
 }
 
+// DiffArtifactRevisionsParams defines parameters for DiffArtifactRevisions.
+type DiffArtifactRevisionsParams struct {
+	// From The earlier revision. 0 (or negative) silently means the latest revision, same as `revision` on the sibling download endpoint.
+	From int `form:"from" json:"from"`
+
+	// To The later revision. 0 (or negative) silently means the latest revision, same as `revision` on the sibling download endpoint.
+	To int `form:"to" json:"to"`
+}
+
 // ListMemoriesParams defines parameters for ListMemories.
 type ListMemoriesParams struct {
 	// Bucket Restrict to one bucket (e.g. `repo:NightsOut`, `role:coding`, `user:jason`). Omitted lists/searches every bucket.
@@ -1173,6 +1259,12 @@ type ServerInterface interface {
 	// Download one artifact revision's bytes
 	// (GET /api/v1/chats/{chat_id}/artifacts/{artifact_name})
 	GetChatArtifact(w http.ResponseWriter, r *http.Request, chatId ChatID, artifactName ArtifactName, params GetChatArtifactParams)
+	// Unified diff between two revisions of one artifact
+	// (GET /api/v1/chats/{chat_id}/artifacts/{artifact_name}/diff)
+	DiffArtifactRevisions(w http.ResponseWriter, r *http.Request, chatId ChatID, artifactName ArtifactName, params DiffArtifactRevisionsParams)
+	// List one artifact's revisions with lineage
+	// (GET /api/v1/chats/{chat_id}/artifacts/{artifact_name}/revisions)
+	ListArtifactRevisions(w http.ResponseWriter, r *http.Request, chatId ChatID, artifactName ArtifactName)
 	// Edit a not-yet-started node's prompt
 	// (PATCH /api/v1/chats/{chat_id}/nodes/{node_id})
 	EditNodeTask(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
@@ -1272,6 +1364,18 @@ func (_ Unimplemented) ListChatArtifacts(w http.ResponseWriter, r *http.Request,
 // Download one artifact revision's bytes
 // (GET /api/v1/chats/{chat_id}/artifacts/{artifact_name})
 func (_ Unimplemented) GetChatArtifact(w http.ResponseWriter, r *http.Request, chatId ChatID, artifactName ArtifactName, params GetChatArtifactParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Unified diff between two revisions of one artifact
+// (GET /api/v1/chats/{chat_id}/artifacts/{artifact_name}/diff)
+func (_ Unimplemented) DiffArtifactRevisions(w http.ResponseWriter, r *http.Request, chatId ChatID, artifactName ArtifactName, params DiffArtifactRevisionsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// List one artifact's revisions with lineage
+// (GET /api/v1/chats/{chat_id}/artifacts/{artifact_name}/revisions)
+func (_ Unimplemented) ListArtifactRevisions(w http.ResponseWriter, r *http.Request, chatId ChatID, artifactName ArtifactName) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1701,6 +1805,121 @@ func (siw *ServerInterfaceWrapper) GetChatArtifact(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetChatArtifact(w, r, chatId, artifactName, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DiffArtifactRevisions operation middleware
+func (siw *ServerInterfaceWrapper) DiffArtifactRevisions(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chat_id" -------------
+	var chatId ChatID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chat_id", chi.URLParam(r, "chat_id"), &chatId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "artifact_name" -------------
+	var artifactName ArtifactName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "artifact_name", chi.URLParam(r, "artifact_name"), &artifactName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "artifact_name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DiffArtifactRevisionsParams
+
+	// ------------- Required query parameter "from" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "from", r.URL.Query(), &params.From, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "to" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "to", r.URL.Query(), &params.To, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DiffArtifactRevisions(w, r, chatId, artifactName, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListArtifactRevisions operation middleware
+func (siw *ServerInterfaceWrapper) ListArtifactRevisions(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chat_id" -------------
+	var chatId ChatID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chat_id", chi.URLParam(r, "chat_id"), &chatId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "artifact_name" -------------
+	var artifactName ArtifactName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "artifact_name", chi.URLParam(r, "artifact_name"), &artifactName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "artifact_name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListArtifactRevisions(w, r, chatId, artifactName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2557,6 +2776,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/chats/{chat_id}/artifacts/{artifact_name}", wrapper.GetChatArtifact)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/chats/{chat_id}/artifacts/{artifact_name}/diff", wrapper.DiffArtifactRevisions)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/chats/{chat_id}/artifacts/{artifact_name}/revisions", wrapper.ListArtifactRevisions)
 	})
 	r.Group(func(r chi.Router) {
 		r.Patch(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}", wrapper.EditNodeTask)

@@ -17,6 +17,8 @@ export function visibleActivity(activity: Activity[]): Activity[] {
 export interface TurnViewProps {
   turn: Turn
   idx: number
+  // Present only for a real chat - gates each node's Artifacts button.
+  chatId?: string
   // The answer to this turn's clarification (next turn's input / the live input);
   // undefined means the clarification is still answerable.
   choiceAnswer?: string
@@ -37,7 +39,7 @@ export interface TurnViewProps {
 // this stops re-rendering (and re-parsing markdown/DAG) on every streaming token of
 // a later turn - the props only change for the one turn being copied/answered.
 export const TurnView = memo(function TurnView({
-  turn, idx, choiceAnswer, isChoiceAnswer, submittingChoice, isCopied, priorContents, onChoice, onCopy, onDownload,
+  turn, idx, chatId, choiceAnswer, isChoiceAnswer, submittingChoice, isCopied, priorContents, onChoice, onCopy, onDownload,
 }: TurnViewProps) {
   const dagItem = dagFromTurn(turn)
   const dagState = dagItem ? dagTurnStateFromItem(dagItem) : undefined
@@ -75,7 +77,7 @@ export const TurnView = memo(function TurnView({
                 </summary>
                 <div className="p-2 space-y-3">
                   {turnActivity.length > 0 && <ActivityList activity={turnActivity} />}
-                  <DagView dag={dagState} />
+                  <DagView dag={dagState} chatId={chatId} />
                 </div>
               </details>
             </div>

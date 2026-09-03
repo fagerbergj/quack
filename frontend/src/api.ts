@@ -13,11 +13,14 @@ import {
   deleteMemory as sdkDeleteMemory,
   listExtensions as sdkListExtensions,
   getConfig as sdkGetConfig,
+  listChatArtifacts as sdkListChatArtifacts,
+  listArtifactRevisions as sdkListArtifactRevisions,
+  diffArtifactRevisions as sdkDiffArtifactRevisions,
 } from './generated'
 
-export type { ChatSummary, ChatDetail, ChatList, Turn, Memory, MemoryList, ExtensionInfo, ClientConfig } from './generated'
+export type { ChatSummary, ChatDetail, ChatList, Turn, Memory, MemoryList, ExtensionInfo, ClientConfig, ArtifactSummary, ArtifactRevisionInfo } from './generated'
 
-import type { ChatSummary, ChatDetail, ChatList, Turn, MemoryList, ExtensionInfo, ClientConfig } from './generated'
+import type { ChatSummary, ChatDetail, ChatList, Turn, MemoryList, ExtensionInfo, ClientConfig, ArtifactList, ArtifactRevisionList } from './generated'
 
 type Result<T> = { data?: T; error?: unknown; response?: Response }
 
@@ -86,4 +89,25 @@ export const api = {
   listExtensions: async (): Promise<ExtensionInfo[]> => unwrap(await sdkListExtensions()),
 
   getConfig: async (): Promise<ClientConfig> => unwrap(await sdkGetConfig()),
+
+  listChatArtifacts: async (chatId: string): Promise<ArtifactList> =>
+    unwrap(await sdkListChatArtifacts({ path: { chat_id: chatId } })),
+
+  listArtifactRevisions: async (chatId: string, artifactName: string): Promise<ArtifactRevisionList> =>
+    unwrap(await sdkListArtifactRevisions({ path: { chat_id: chatId, artifact_name: artifactName } })),
+
+  // Returns the raw unified diff text (endpoint answers text/plain, not JSON).
+  diffArtifactRevisions: async (chatId: string, artifactName: string, from: number, to: number): Promise<string> =>
+    unwrap(await sdkDiffArtifactRevisions({ path: { chat_id: chatId, artifact_name: artifactName }, query: { from, to } })),
+
+  // Plain fetch, not the generated client: getChatArtifact's response is
+  // application/octet-stream (any mime), and the panel only ever wants it as
+  // text (markdown/JSON revisions) - a Blob round-trip would just get
+  // .text()'d right back.
+  getArtifactText: async (chatId: string, artifactName: string, revision?: number): Promise<string> => {
+    const q = revision != null ? `?revision=${revision}` : ''
+    const res = await fetch(`/api/v1/chats/${encodeURIComponent(chatId)}/artifacts/${encodeURIComponent(artifactName)}${q}`)
+    if (!res.ok) throw new Error(`Fetch artifact failed (${res.status})`)
+    return res.text()
+  },
 }

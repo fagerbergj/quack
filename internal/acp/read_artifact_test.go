@@ -11,6 +11,7 @@ import (
 	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
@@ -127,7 +128,7 @@ func TestReadArtifactMCP_ScopedToRegisteredSession(t *testing.T) {
 func TestReadArtifactMCP_OversizedContentIsCapped(t *testing.T) {
 	ctx := context.Background()
 	svc := artifact.InMemoryService()
-	big := bytes.Repeat([]byte("x"), readArtifactMaxBytes+1)
+	big := bytes.Repeat([]byte("x"), artifactref.InlineMaxBytes+1)
 	if _, err := svc.Save(ctx, &artifact.SaveRequest{
 		AppName: "quack", UserID: "u1", SessionID: "chat-a", FileName: "big.bin",
 		Part: genai.NewPartFromBytes(big, "application/octet-stream"),
@@ -161,7 +162,7 @@ func TestReadArtifactMCP_OversizedContentIsCapped(t *testing.T) {
 func TestReadArtifactMCP_AtSizeLimitIsReturned(t *testing.T) {
 	ctx := context.Background()
 	svc := artifact.InMemoryService()
-	atLimit := bytes.Repeat([]byte("y"), readArtifactMaxBytes)
+	atLimit := bytes.Repeat([]byte("y"), artifactref.InlineMaxBytes)
 	if _, err := svc.Save(ctx, &artifact.SaveRequest{
 		AppName: "quack", UserID: "u1", SessionID: "chat-a", FileName: "atlimit.txt",
 		Part: genai.NewPartFromBytes(atLimit, "text/plain"),

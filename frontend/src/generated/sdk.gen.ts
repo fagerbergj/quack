@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, DeleteMemoryData, DeleteMemoryErrors, DeleteMemoryResponses, EditNodeTaskData, EditNodeTaskErrors, EditNodeTaskResponses, EditQueuedMessageData, EditQueuedMessageErrors, EditQueuedMessageResponses, GetChatArtifactData, GetChatArtifactErrors, GetChatArtifactResponses, GetChatData, GetChatErrors, GetChatRecordingData, GetChatRecordingErrors, GetChatRecordingResponses, GetChatResponses, GetConfigData, GetConfigResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListChatArtifactsData, ListChatArtifactsErrors, ListChatArtifactsResponses, ListChatsData, ListChatsErrors, ListChatsResponses, ListExtensionsData, ListExtensionsResponses, ListMemoriesData, ListMemoriesErrors, ListMemoriesResponses, ListRecordingsData, ListRecordingsErrors, ListRecordingsResponses, QueueNodeMessageData, QueueNodeMessageErrors, QueueNodeMessageResponses, RemoveQueuedMessageData, RemoveQueuedMessageErrors, RemoveQueuedMessageResponses, SendChatMessageData, SendChatMessageErrors, SendChatMessageResponse, SendChatMessageResponses, StartNodeData, StartNodeErrors, StartNodeResponses, StopNodeData, StopNodeErrors, StopNodeResponses, SubscribeChatStreamData, SubscribeChatStreamErrors, SubscribeChatStreamResponse, SubscribeChatStreamResponses, UpdateChatData, UpdateChatErrors, UpdateChatResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses } from './types.gen';
+import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, DeleteMemoryData, DeleteMemoryErrors, DeleteMemoryResponses, DiffArtifactRevisionsData, DiffArtifactRevisionsErrors, DiffArtifactRevisionsResponses, EditNodeTaskData, EditNodeTaskErrors, EditNodeTaskResponses, EditQueuedMessageData, EditQueuedMessageErrors, EditQueuedMessageResponses, GetChatArtifactData, GetChatArtifactErrors, GetChatArtifactResponses, GetChatData, GetChatErrors, GetChatRecordingData, GetChatRecordingErrors, GetChatRecordingResponses, GetChatResponses, GetConfigData, GetConfigResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListArtifactRevisionsData, ListArtifactRevisionsErrors, ListArtifactRevisionsResponses, ListChatArtifactsData, ListChatArtifactsErrors, ListChatArtifactsResponses, ListChatsData, ListChatsErrors, ListChatsResponses, ListExtensionsData, ListExtensionsResponses, ListMemoriesData, ListMemoriesErrors, ListMemoriesResponses, ListRecordingsData, ListRecordingsErrors, ListRecordingsResponses, QueueNodeMessageData, QueueNodeMessageErrors, QueueNodeMessageResponses, RemoveQueuedMessageData, RemoveQueuedMessageErrors, RemoveQueuedMessageResponses, SendChatMessageData, SendChatMessageErrors, SendChatMessageResponse, SendChatMessageResponses, StartNodeData, StartNodeErrors, StartNodeResponses, StopNodeData, StopNodeErrors, StopNodeResponses, SubscribeChatStreamData, SubscribeChatStreamErrors, SubscribeChatStreamResponse, SubscribeChatStreamResponses, UpdateChatData, UpdateChatErrors, UpdateChatResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -171,6 +171,30 @@ export const getChatArtifact = <ThrowOnError extends boolean = false>(options: O
 });
 
 /**
+ * List one artifact's revisions with lineage
+ *
+ * Every revision of one artifact id, newest first, each with its lineage (node_id, round, parent_revision, author). Read-only; the per-node artifact panel's revision picker (#1094).
+ *
+ */
+export const listArtifactRevisions = <ThrowOnError extends boolean = false>(options: Options<ListArtifactRevisionsData, ThrowOnError>): RequestResult<ListArtifactRevisionsResponses, ListArtifactRevisionsErrors, ThrowOnError> => (options.client ?? client).get<ListArtifactRevisionsResponses, ListArtifactRevisionsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/chats/{chat_id}/artifacts/{artifact_name}/revisions',
+    ...options
+});
+
+/**
+ * Unified diff between two revisions of one artifact
+ *
+ * A unified text diff between `from` and `to` revisions, for text and structured (JSON) artifacts only - binary blobs answer 415, since a byte-level diff of an image or PDF isn't meaningful to render. Each revision is capped at the same 256KB bound `read_artifact` (the agent-facing tool) enforces - 413 above that, naming the plain artifact-bytes endpoint as the way to fetch it directly instead.
+ *
+ */
+export const diffArtifactRevisions = <ThrowOnError extends boolean = false>(options: Options<DiffArtifactRevisionsData, ThrowOnError>): RequestResult<DiffArtifactRevisionsResponses, DiffArtifactRevisionsErrors, ThrowOnError> => (options.client ?? client).get<DiffArtifactRevisionsResponses, DiffArtifactRevisionsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/chats/{chat_id}/artifacts/{artifact_name}/diff',
+    ...options
+});
+
+/**
  * Send a message and stream the response
  *
  * Streams the orchestrator's response as Server-Sent Events. Each event is
@@ -222,7 +246,10 @@ export const getChatArtifact = <ThrowOnError extends boolean = false>(options: O
  * `artifact_revision` fires first, then `artifact_judge_round` for the
  * judge_round record scoring it - `scored` lists the `{"artifact_id",
  * "revision"}` pairs that round wrote. Read-only; the same round's
- * WAL entries are the durable record, these are its live mirror.
+ * WAL entries are the durable record, these are its live mirror. The
+ * per-node artifact panel (#1094) reloads via REST and tolerates their
+ * absence, but now that the gate (#1092) emits them, wiring a live
+ * subscriber is a real follow-up, not a hedge against an unmerged branch.
  *
  * `delivery_result` ({"node_id","outcome","kind","url","error","trace_id"})
  * reports one staged item's ACTUAL outward-boundary outcome (push +

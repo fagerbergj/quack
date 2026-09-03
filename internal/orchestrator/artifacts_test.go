@@ -14,6 +14,7 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/stream"
 )
@@ -42,12 +43,12 @@ func TestFailSoftListArtifacts_DegradesToEmpty(t *testing.T) {
 
 // TestFailSoftListArtifacts_LoadBounded proves load_artifacts (the ADK-native
 // read path) rejects an oversized artifact instead of dumping it into model
-// context unbounded (#1006 item 7) - the same cap shape read_artifact (ACP,
-// internal/acp/memorymcp.go readArtifactMaxBytes) already enforces.
+// context unbounded (#1006 item 7) - the same artifactref.InlineMaxBytes cap
+// read_artifact (ACP, internal/acp/memorymcp.go) already enforces.
 func TestFailSoftListArtifacts_LoadBounded(t *testing.T) {
 	ctx := context.Background()
 	svc := artifact.InMemoryService()
-	big := make([]byte, loadArtifactMaxBytes+1)
+	big := make([]byte, artifactref.InlineMaxBytes+1)
 	if _, err := svc.Save(ctx, &artifact.SaveRequest{
 		AppName: AppName, UserID: "u1", SessionID: "c1", FileName: "big.bin",
 		Part: genai.NewPartFromBytes(big, "application/octet-stream"),
