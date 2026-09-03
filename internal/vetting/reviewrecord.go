@@ -345,6 +345,7 @@ type episodicRoundState struct {
 	findingRev   map[string]int           // every finding id ever seen -> its last WRITTEN revision
 	reviewRev    int
 	documentRev  int
+	textRev      int // "text:<node>" fallback kind's last-known revision (#1095)
 	// triggerAnnotation: the PRIOR round's judge_round id (#1092 design V4 §7
 	// case 3) - stamped as this round's writes' lineage.TriggerAnnotation,
 	// then advanced by the caller (node.go) once the round's own judge_round
@@ -536,7 +537,7 @@ func newEpisodicRoundState() *episodicRoundState {
 	return &episodicRoundState{findings: map[string]FindingRecord{}, findingState: map[string]string{}, findingRev: map[string]int{}}
 }
 
-func loadEpisodicRoundState(ctx context.Context, cfg Config) *episodicRoundState {
+func loadEpisodicRoundState(ctx context.Context, cfg Config, nodeID string) *episodicRoundState {
 	st := newEpisodicRoundState()
 	c := recordClient(cfg)
 	if c == nil {
@@ -574,21 +575,56 @@ func loadEpisodicRoundState(ctx context.Context, cfg Config) *episodicRoundState
 			}
 		}
 	}
+	if !cfg.IsReviewer && cfg.Artifact == "" {
+		if id, err := recordstore.IdentityFor(kindText, nil, nodeID); err == nil {
+			if _, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id); lerr == nil && ok {
+				st.textRev = rev
+			}
+		}
+	}
 	return st
 }
 
 func saveEpisodicRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, staged StagedDelivery, st *episodicRoundState) *episodicRoundState {
 	if st == nil {
-		st = loadEpisodicRoundState(ctx, cfg)
+		st = loadEpisodicRoundState(ctx, cfg, nodeID)
 	}
 	st.roundWrites = nil
-	if cfg.IsReviewer {
+	switch {
+	case cfg.IsReviewer:
 		saveCodeReviewRound(ctx, cfg, nodeID, turnID, round, answer, staged, st)
-	}
-	if cfg.Artifact != "" {
+	case cfg.Artifact != "":
 		saveDocumentRound(ctx, cfg, nodeID, turnID, round, answer, st)
+	default:
+		// No registered structured kind selected (#1095): every gated node's
+		// round output still becomes a revision, generic "text:<node>".
+		saveTextRound(ctx, cfg, nodeID, turnID, round, answer, st)
 	}
 	return st
+}
+
+// saveTextRound is the generic fallback for a gated node with no
+// cfg.IsReviewer/cfg.Artifact kind (#1095, #1090 P8): id "text:<node>", one
+// revision per round including failed rounds. Skipped when the worker
+// already tool-wrote an artifact this round (any kind) via write_<kind> -
+// reusing the same drain the code_review path uses, so a tool-writing
+// implementer/explorer node doesn't ALSO get a redundant text revision.
+func saveTextRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, st *episodicRoundState) {
+	if toolWritten := resetToolWrittenFindingIDs(cfg); len(toolWritten) > 0 {
+		return
+	}
+	c := recordClient(cfg)
+	if c == nil {
+		return
+	}
+	lineage := recordstore.Lineage{NodeID: nodeID, Round: round, ParentRevision: st.textRev, TriggerAnnotation: st.triggerAnnotation, HeadSHA: cfg.NodeBaseSHA, SavedAt: time.Now().UTC(), Author: "worker", TurnID: turnID}
+	id, rev, err := c.SaveBlob(ctx, kindText, []byte(answer), "text/markdown", nodeID, lineage)
+	if err != nil {
+		slog.Warn("text record save failed", "component", "vetting", "node", nodeID, "err", err)
+		return
+	}
+	st.textRev = rev
+	st.roundWrites = append(st.roundWrites, ScoredRef{ArtifactID: id, Revision: rev})
 }
 
 // latestCodeReviewRevSafe wraps the #1091 gate-fallback lookup in a recover:
