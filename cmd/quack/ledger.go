@@ -24,7 +24,36 @@ func newLedgerCmd() *cobra.Command {
 		Use:   "ledger",
 		Short: "Inspect or regenerate the write-ahead ledger's projections",
 	}
-	c.AddCommand(newLedgerShowCmd(), newLedgerRebuildCmd())
+	c.AddCommand(newLedgerShowCmd(), newLedgerRebuildCmd(), newLedgerRecoverCmd())
+	return c
+}
+
+// newLedgerRecoverCmd: `quack ledger recover <chat>` (#1093 case 13) - finds
+// delivery.intent entries with no matching delivery.done (a run that died
+// between the two) and reports them. recoverer/redoFunc are nil here: no
+// extension in this build implements cli.DeliveryRecoverer yet (that lands
+// with the sdk/github bump #1093's PR describes), and redoing a delivery
+// needs the live node context this offline command doesn't have - every
+// orphan is reported Unresolved until that wiring exists. Known ceiling,
+// not a bug: the reconciliation ALGORITHM is what this command proves out.
+func newLedgerRecoverCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "recover <chat-id>",
+		Short: "Reconcile delivery.intent entries with no delivery.done (a crashed delivery)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ls, _, _, err := openLedgerAndStores()
+			if err != nil {
+				return err
+			}
+			report, err := cli.RunLedgerRecover(cmd.Context(), ls, args[0], nil, nil)
+			if err != nil {
+				return err
+			}
+			fmt.Fprint(cmd.OutOrStdout(), cli.FormatLedgerRecoverReport(report))
+			return nil
+		},
+	}
 	return c
 }
 

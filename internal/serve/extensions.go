@@ -311,6 +311,10 @@ func (a sdkDeliverAdapter) Deliver(ctx context.Context, dc vetting.DeliveryConte
 		NodeID: dc.NodeID, ChatID: dc.ChatID, Items: sdkItems,
 		CloneURL: dc.CloneURL, PushedSHA: dc.PushedSHA, Branch: dc.Branch, IssueNumber: dc.IssueNumber,
 		GatePassed: dc.GatePassed, GateFeedback: dc.GateFeedback, ChecksSkipNote: dc.ChecksSkipNote,
+		// ponytail: dc.IdempotencyKey has nowhere to go yet - sdk v0.8.0 (pinned
+		// in go.mod) predates the field; wire it through once go.mod bumps to
+		// sdk/github v0.9.0 (#1093 deploy-order note, same ceiling as cli's
+		// DeliveryRecoverer shim).
 	})
 	out := make([]vetting.DeliveryItemOutcome, len(outcomes))
 	for i, o := range outcomes {

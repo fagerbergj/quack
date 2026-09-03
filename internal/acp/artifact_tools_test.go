@@ -367,6 +367,68 @@ func TestWriteArtifactMCP_Blob(t *testing.T) {
 	}
 }
 
+// TestWriteArtifactMCP_RecordsToolWritten: write_artifact must add its id to
+// the session's ToolWritten stage exactly like write_<kind> does, so
+// vetting's saveTextRound fallback can tell a tool-written round apart from
+// one with no tool writes (#1095 adversarial review finding #1 - the blob
+// path used to skip this, so a node that only called write_artifact still
+// got a duplicate text:<node> revision).
+func TestWriteArtifactMCP_RecordsToolWritten(t *testing.T) {
+	ctx := context.Background()
+	secret := mustMemSecret(t)
+	svc := artifact.InMemoryService()
+	stage := vetting.NewToolWrittenStage()
+	vetting.RegisterMemSession(secret, vetting.MemSession{Artifacts: svc, AppName: "quack", UserID: "u1", ChatID: "chat-a", NodeID: "n1", ToolWritten: stage})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "write_artifact", Arguments: map[string]any{
+		"kind": "text", "mime": "text/plain", "bytes": "hello",
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("CallTool write_artifact: err=%v isError=%v text=%s", err, res != nil && res.IsError, toolResultText(t, res))
+	}
+	h := sha256.Sum256([]byte("hello"))
+	wantID := "text:" + hex.EncodeToString(h[:])[:8]
+	if snap := stage.Snapshot(); !snap[wantID] {
+		t.Fatalf("ToolWritten after write_artifact = %v, want it to contain %s", snap, wantID)
+	}
+}
+
+// TestEditArtifactMCP_RecordsToolWritten: edit_artifact must also record its
+// id into ToolWritten (same reasoning as write_artifact above).
+func TestEditArtifactMCP_RecordsToolWritten(t *testing.T) {
+	ctx := context.Background()
+	secret := mustMemSecret(t)
+	svc := artifact.InMemoryService()
+	rc := recordstore.New(svc, "quack", "u1", "chat-a")
+	id, rev, err := rc.SaveBlob(ctx, "text", []byte("hello world"), "text/plain", "edit-target", recordstore.Lineage{NodeID: "n1"})
+	if err != nil {
+		t.Fatalf("seed SaveBlob: %v", err)
+	}
+	stage := vetting.NewToolWrittenStage()
+	vetting.RegisterMemSession(secret, vetting.MemSession{Artifacts: svc, AppName: "quack", UserID: "u1", ChatID: "chat-a", NodeID: "n1", ToolWritten: stage})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "edit_artifact", Arguments: map[string]any{
+		"id": id, "base_revision": float64(rev),
+		"edits": []map[string]any{{"old": "world", "new": "there"}},
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("CallTool edit_artifact: err=%v isError=%v text=%s", err, res != nil && res.IsError, toolResultText(t, res))
+	}
+	if snap := stage.Snapshot(); !snap[id] {
+		t.Fatalf("ToolWritten after edit_artifact = %v, want it to contain %s", snap, id)
+	}
+}
+
 // TestWriteArtifactDescription_ListsBlobKinds: the write_artifact tool
 // description must name every registered blob kind (#1108 B1 - Kinds() used
 // to return structured kinds only, so this list silently rendered empty).

@@ -496,6 +496,39 @@ func (c *Client) LatestWithMeta(ctx context.Context, id string) ([]byte, string,
 	return resp.Part.InlineData.Data, resp.Part.InlineData.MIMEType, lineage, rev, true, nil
 }
 
+// Versions returns id's saved revision numbers, newest first, nil if none -
+// the public counterpart of versionsDesc, for a caller (delivery_record's
+// history read, #1093) that needs every revision of one id, not just Latest.
+func (c *Client) Versions(ctx context.Context, id string) ([]int, error) {
+	vs, err := c.versionsDesc(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]int, len(vs))
+	for i, v := range vs {
+		out[i] = int(v)
+	}
+	return out, nil
+}
+
+// LoadVersion returns one specific revision of id's content, ok=false if
+// that revision doesn't exist.
+func (c *Client) LoadVersion(ctx context.Context, id string, version int) ([]byte, bool, error) {
+	resp, err := c.svc.Load(ctx, &artifact.LoadRequest{
+		AppName: c.appName, UserID: c.userID, SessionID: c.sessionID, FileName: id, Version: int64(version),
+	})
+	if err != nil {
+		if isNotFound(err) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("recordstore: load %s@%d: %w", id, version, err)
+	}
+	if resp == nil || resp.Part == nil || resp.Part.InlineData == nil {
+		return nil, false, nil
+	}
+	return resp.Part.InlineData.Data, true, nil
+}
+
 // ArtifactSummary is one id's listing row (§4.4 list_artifacts).
 type ArtifactSummary struct {
 	ID       string

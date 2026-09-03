@@ -90,27 +90,27 @@ type MemSession struct {
 	// tool-initiated writes with these instead of hardcoding zero values
 	// (#1091 adversarial review finding #4).
 	AdvisorToken string
-	// ToolFindings records every write_<kind> id written via the loopback MCP
-	// tools this round, so saveCodeReviewRound's answer-tail fallback can
-	// tell "already written by the worker's own tool call this round" apart
-	// from "only known from the tail parse" and skip re-staging a duplicate
-	// (#1091 adversarial review finding #1).
-	ToolFindings *ToolFindingStage
+	// ToolWritten records every id written via any loopback MCP artifact-write
+	// tool this round (write_<kind>, write_artifact, edit_artifact), so
+	// saveCodeReviewRound's answer-tail fallback and saveTextRound's
+	// tool-wrote check can both tell a tool-written id apart from one only
+	// known from a tail parse (#1091 finding #1, #1095 review finding #1).
+	ToolWritten *ToolWrittenStage
 }
 
-// ToolFindingStage: per-node record of ids written via write_<kind> this
-// round - drained (opposite of ReviewStage's snapshot-not-drain shape) by
-// resetToolWrittenFindingIDs at the top of saveCodeReviewRound.
-type ToolFindingStage struct {
+// ToolWrittenStage: per-node record of ids written via any artifact-write MCP
+// tool this round - drained (opposite of ReviewStage's snapshot-not-drain
+// shape) by resetToolWrittenIDs at the top of saveCodeReviewRound/saveTextRound.
+type ToolWrittenStage struct {
 	mu  sync.Mutex
 	ids map[string]bool
 }
 
-// NewToolFindingStage builds an empty stage for one node.
-func NewToolFindingStage() *ToolFindingStage { return &ToolFindingStage{ids: map[string]bool{}} }
+// NewToolWrittenStage builds an empty stage for one node.
+func NewToolWrittenStage() *ToolWrittenStage { return &ToolWrittenStage{ids: map[string]bool{}} }
 
 // Add records id as written via a tool call this round.
-func (s *ToolFindingStage) Add(id string) {
+func (s *ToolWrittenStage) Add(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.ids == nil {
@@ -120,7 +120,7 @@ func (s *ToolFindingStage) Add(id string) {
 }
 
 // Snapshot returns a copy of every id recorded so far.
-func (s *ToolFindingStage) Snapshot() map[string]bool {
+func (s *ToolWrittenStage) Snapshot() map[string]bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make(map[string]bool, len(s.ids))
@@ -135,7 +135,7 @@ func (s *ToolFindingStage) Snapshot() map[string]bool {
 // round N doesn't wrongly suppress round N+1's write for the same id
 // (#1108 finding 2: the stage previously had no reset and accumulated for
 // the whole node run despite the doc comments claiming per-round scope).
-func (s *ToolFindingStage) Reset() map[string]bool {
+func (s *ToolWrittenStage) Reset() map[string]bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make(map[string]bool, len(s.ids))
