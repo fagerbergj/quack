@@ -17,7 +17,8 @@ const testKind = "ledgertest_doc"
 
 func init() {
 	recordstore.Register(testKind, recordstore.KindSpec{
-		Class: recordstore.Structured,
+		Class:      recordstore.Structured,
+		JSONSchema: `{"type":"object"}`,
 		Identity: func(content []byte, hint string) (string, error) {
 			return hint, nil
 		},
