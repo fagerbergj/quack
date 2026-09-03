@@ -62,6 +62,12 @@ type Config struct {
 	// delivers the merged, worst-of-verdict review exactly once.
 	ReviewFanout *ReviewFanout
 	Artifacts    artifact.Service // nil = read_artifact tool unavailable to this node
+	// RoundCoordsSink: called with fresh round/turn/head-sha/trigger-annotation
+	// at the same two points SetAdvisorThreadRound is (draft seed + every judge
+	// round) - lets a native node's already-built artifact tools (which don't
+	// have an ACP session/AdvisorToken to poll) get restamped by the gate that
+	// actually knows the current round, without vetting importing tools (#1123).
+	RoundCoordsSink func(round int, turnID, headSHA, triggerAnnotation string)
 	// Ledger: the WAL's fail-closed AppendIntent path (#1090 §4.9/#1100). Wired
 	// ONLY when observability.recording is enabled AND its store resolves to
 	// kind "postgres" - the filesystem ledger's AppendIntent is best-effort,

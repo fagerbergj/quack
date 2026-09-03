@@ -588,10 +588,13 @@ func TestGateFailWritesNothing(t *testing.T) {
 // SaveStructuredAsync just logs. This proves calling the round-write helper
 // against a failing service does not panic or block.
 func TestSaveErrorFailsOpen(t *testing.T) {
-	cfg := reviewerCfgWithArtifacts(t, failingArtifactService{}, true)
+	cfg := reviewerCfgWithArtifacts(t, failingArtifactService{Service: artifact.InMemoryService()}, true)
 	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "", 1, "VERDICT: approve\n", StagedDelivery{Recovered: true}, newEpisodicRoundState())
 }
 
+// failingArtifactService wraps a real InMemoryService (not a nil one) - the
+// no-op-save guard (#1123) reads the current latest revision before every
+// save, so Load/Versions must work; only Save itself needs to fail.
 type failingArtifactService struct{ artifact.Service }
 
 func (failingArtifactService) Save(context.Context, *artifact.SaveRequest) (*artifact.SaveResponse, error) {

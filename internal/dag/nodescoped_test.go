@@ -19,6 +19,7 @@ import (
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
+	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
@@ -100,7 +101,7 @@ type nodeScopedStub struct {
 	cachedT []tool.Tool
 }
 
-func (s *nodeScopedStub) ForNode(nodeKey string, _ func() string) (adkagent.Agent, model.LLM, []tool.Tool, func(), error) {
+func (s *nodeScopedStub) ForNode(nodeKey string, _ func() string, _ artifact.Service, _, _, _, _ string) (adkagent.Agent, model.LLM, []tool.Tool, func(int, string, string, string), func(), error) {
 	s.mu.Lock()
 	s.calls++
 	m, builtins := s.cachedM, s.cachedT
@@ -111,7 +112,7 @@ func (s *nodeScopedStub) ForNode(nodeKey string, _ func() string) (adkagent.Agen
 		m = inference.TracedModelForTesting(stub, "nodeScopedStub")
 		var err error
 		if builtins, err = tools.Build([]string{"current_date"}, tools.Deps{}); err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, err
 		}
 		if s.share {
 			s.mu.Lock()
@@ -128,13 +129,13 @@ func (s *nodeScopedStub) ForNode(nodeKey string, _ func() string) (adkagent.Agen
 		Tools:       builtins,
 	})
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
 	s.mu.Lock()
 	s.built = append(s.built, fmt.Sprintf("%s:%p", nodeKey, m))
 	s.mu.Unlock()
-	return worker, m, builtins, func() {}, nil
+	return worker, m, builtins, nil, func() {}, nil
 }
 
 // runTwoConcurrentNodes drives a 2-node, no-dependency plan (both nodes named

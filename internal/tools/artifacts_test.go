@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 
 	"google.golang.org/adk/v2/artifact"
@@ -17,6 +18,46 @@ import (
 	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
+
+// metaAwareInMemory implements the optional SaveWithMeta/LoadWithMeta pair
+// over artifact.InMemoryService() so a test can read back real lineage
+// without a database - production always wraps a store that supports these
+// (internal/store.TurnAwareService); plain InMemoryService is a known
+// zero-lineage ceiling (see internal/recordstore's own test copy of this).
+type metaAwareInMemory struct {
+	artifact.Service
+	mu   sync.Mutex
+	meta map[string][]byte
+}
+
+func newMetaAwareInMemory() *metaAwareInMemory {
+	return &metaAwareInMemory{Service: artifact.InMemoryService(), meta: map[string][]byte{}}
+}
+
+func metaKey(appName, userID, sessionID, fileName string) string {
+	return appName + "\x00" + userID + "\x00" + sessionID + "\x00" + fileName
+}
+
+func (m *metaAwareInMemory) SaveWithMeta(ctx context.Context, req *artifact.SaveRequest, kind, class string, lineageJSON []byte, turnID string) (*artifact.SaveResponse, error) {
+	resp, err := m.Service.Save(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.meta[metaKey(req.AppName, req.UserID, req.SessionID, req.FileName)] = lineageJSON
+	return resp, nil
+}
+
+func (m *metaAwareInMemory) LoadWithMeta(ctx context.Context, req *artifact.LoadRequest) (*artifact.LoadResponse, string, string, []byte, error) {
+	resp, err := m.Service.Load(ctx, req)
+	if err != nil {
+		return nil, "", "", nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return resp, "", "", m.meta[metaKey(req.AppName, req.UserID, req.SessionID, req.FileName)], nil
+}
 
 // artifactsToolCtx: fakeCtx plus the ToolConfirmation stub functiontool.Run
 // requires (mirrors check_mermaid_test.go's checkMermaidToolCtx).
@@ -34,7 +75,7 @@ func TestNewWriteKindTool_WriteFindingRegistersAndWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tl, err := NewWriteKindTool(rc, "n1", "finding", spec, RoundCoords{}, vetting.SubjectHint("chat-a"))
+	tl, err := NewWriteKindTool(rc, "n1", "finding", spec, &RoundCoords{}, vetting.SubjectHint("chat-a"))
 	if err != nil {
 		t.Fatalf("NewWriteKindTool: %v", err)
 	}
@@ -69,7 +110,7 @@ func TestNewEditArtifactTool_DirectApply(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tl, err := NewEditArtifactTool(rc, "n1", RoundCoords{})
+	tl, err := NewEditArtifactTool(rc, "n1", &RoundCoords{})
 	if err != nil {
 		t.Fatalf("NewEditArtifactTool: %v", err)
 	}
@@ -102,7 +143,7 @@ func TestNewEditArtifactTool_DirectApply(t *testing.T) {
 // second, un-guarded schema check is reintroduced here (#1108 finding 3).
 func TestNewWriteKindTools_EveryKindRegistersWithoutError(t *testing.T) {
 	rc := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat-a")
-	toolsList, err := NewWriteKindTools(rc, "n1", RoundCoords{}, "")
+	toolsList, err := NewWriteKindTools(rc, "n1", &RoundCoords{}, "")
 	if err != nil {
 		t.Fatalf("NewWriteKindTools: %v", err)
 	}
@@ -147,7 +188,7 @@ func TestNewEditArtifactTool_ConflictIsStructuredSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tl, err := NewEditArtifactTool(rc, "n1", RoundCoords{})
+	tl, err := NewEditArtifactTool(rc, "n1", &RoundCoords{})
 	if err != nil {
 		t.Fatalf("NewEditArtifactTool: %v", err)
 	}
@@ -195,7 +236,7 @@ func TestNewWriteKindTool_WriteCodeReviewUsesSessionHint(t *testing.T) {
 		t.Fatal(err)
 	}
 	hint := vetting.SubjectHint(chatID)
-	tl, err := NewWriteKindTool(rc, "n1", "code_review", spec, RoundCoords{}, hint)
+	tl, err := NewWriteKindTool(rc, "n1", "code_review", spec, &RoundCoords{}, hint)
 	if err != nil {
 		t.Fatalf("NewWriteKindTool: %v", err)
 	}
@@ -234,7 +275,7 @@ func TestNewWriteArtifactTool_HintRequiringAndHintOptionalKinds(t *testing.T) {
 	rc := recordstore.New(svc, "quack", "u1", chatID)
 	hint := vetting.SubjectHint(chatID)
 
-	tl, err := NewWriteArtifactTool(rc, "n1", RoundCoords{}, hint)
+	tl, err := NewWriteArtifactTool(rc, "n1", &RoundCoords{}, hint)
 	if err != nil {
 		t.Fatalf("NewWriteArtifactTool: %v", err)
 	}
@@ -265,6 +306,65 @@ func TestNewWriteArtifactTool_HintRequiringAndHintOptionalKinds(t *testing.T) {
 	wantTextID := "text:" + hex.EncodeToString(h[:])[:8]
 	if !strings.Contains(result2, "id="+wantTextID) {
 		t.Fatalf("result = %q, want id=%s (content-hash identity, not session hint)", result2, wantTextID)
+	}
+}
+
+// TestNewEditArtifactTool_RoundCoordsRestampBetweenRounds: a native gated
+// node's artifact tools are built ONCE, before its judge/revise loop starts
+// (#1123) - the gate restamps round/turn/head-sha/trigger-annotation onto
+// the SAME *RoundCoords pointer every tool closure shares (mirrors
+// vetting.SetAdvisorThreadRound / ledger.Coords' SetLedgerCoords pattern), so
+// an edit made during round 2 must carry round 2's trigger_annotation (the
+// prior round's judge_round id), not round 1's.
+func TestNewEditArtifactTool_RoundCoordsRestampBetweenRounds(t *testing.T) {
+	svc := newMetaAwareInMemory()
+	rc := recordstore.New(svc, "quack", "u1", "chat-a")
+	id, rev, err := rc.SaveBlob(context.Background(), "text", []byte("draft one"), "text/plain", "doc1", recordstore.Lineage{NodeID: "n1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	coords := &RoundCoords{Round: 1, TurnID: "turn-1"}
+	tl, err := NewEditArtifactTool(rc, "n1", coords)
+	if err != nil {
+		t.Fatalf("NewEditArtifactTool: %v", err)
+	}
+	rt, ok := tl.(runnableTool)
+	if !ok {
+		t.Fatal("edit_artifact tool is not runnable")
+	}
+
+	// Gate restamps for round 2, same as newGatedNode's cfg.RoundCoordsSink
+	// would on the second judge/revise round.
+	*coords = RoundCoords{Round: 2, TurnID: "turn-1", HeadSHA: "deadbeef", TriggerAnnotation: "judge-r1"}
+
+	out, err := rt.Run(newArtifactsToolCtx(), map[string]any{
+		"id": id, "base_revision": rev,
+		"edits": []editArtifactEdit{{Old: "one", New: "two"}},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	result, _ := out["result"].(string)
+	if !strings.Contains(result, "ok: "+id+" revision 2") {
+		t.Fatalf("result = %q, want ok: %s revision 2", result, id)
+	}
+
+	raw, _, lineage, gotRev, ok, err := rc.LatestWithMeta(context.Background(), id)
+	if err != nil || !ok {
+		t.Fatalf("LatestWithMeta: ok=%v err=%v", ok, err)
+	}
+	if string(raw) != "draft two" {
+		t.Fatalf("content = %q, want %q", raw, "draft two")
+	}
+	if gotRev != 2 {
+		t.Fatalf("revision = %d, want 2", gotRev)
+	}
+	if lineage.TriggerAnnotation != "judge-r1" {
+		t.Fatalf("lineage.TriggerAnnotation = %q, want %q (round 2's restamped coords, not round 1's zero value)", lineage.TriggerAnnotation, "judge-r1")
+	}
+	if lineage.Round != 2 || lineage.HeadSHA != "deadbeef" {
+		t.Fatalf("lineage = %+v, want Round=2 HeadSHA=deadbeef", lineage)
 	}
 }
 

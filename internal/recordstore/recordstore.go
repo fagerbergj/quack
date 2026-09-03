@@ -9,6 +9,7 @@
 package recordstore
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -292,6 +293,16 @@ func (c *Client) save(ctx context.Context, id, kind string, class Class, mime st
 // the same id can both read the same parent and both claim the same next
 // revision in the WAL (adversarial review finding on #1100).
 func (c *Client) saveLocked(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage) (int, error) {
+	// Identical-content save: no new revision, no WAL intent - a no-op revise
+	// (e.g. a failed judge round that couldn't actually change anything) must
+	// look like nothing happened, not like an aborted or empty one (#1123).
+	// Applies to every save() and Edit() caller - the one choke point both
+	// converge on under this id's lock. A lookup error here (best-effort) just
+	// falls through to a normal save rather than risk skipping a real write.
+	if latest, latestRev, ok, err := c.Latest(ctx, id); err == nil && ok && bytes.Equal(latest, data) {
+		slog.Info("recordstore: save skipped, content identical to latest revision", "component", "recordstore", "id", id, "kind", kind, "revision", latestRev)
+		return latestRev, nil
+	}
 	if c.ledgerStore != nil {
 		parentRev, err := lastRevision(ctx, c.ledgerStore, c.sessionID, id)
 		if err != nil {

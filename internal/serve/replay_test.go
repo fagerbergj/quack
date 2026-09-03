@@ -97,7 +97,7 @@ func TestBuildAgents_ReplayProvider_NativeAgentToolsAreStubs(t *testing.T) {
 	if !ok {
 		t.Fatalf("clientMap[%q] = %T, want nativeAgent", "tester", clientMap["tester"])
 	}
-	_, _, tools, release, err := na.ForNode("test-plan:test-node", nil)
+	_, _, tools, _, release, err := na.ForNode("test-plan:test-node", nil, nil, "", "", "", "")
 	if err != nil {
 		t.Fatalf("ForNode: %v", err)
 	}

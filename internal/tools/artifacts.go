@@ -11,12 +11,14 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
 
+	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
@@ -69,6 +71,13 @@ type editArtifactEdit struct {
 // judge/revise round; the zero value ({}) is correct for a caller with no
 // round concept (e.g. the top-level orchestrator agent) rather than a
 // hardcoded literal (#1091 adversarial review finding #4).
+//
+// Passed to tool constructors as a *RoundCoords, not a value: a native gated
+// node's tools are built once, before its judge/revise loop starts, while the
+// round/turn/head-sha/trigger-annotation are only known once the gate reaches
+// that round (vetting.Config.RoundCoordsSink writes through the same pointer
+// every tool closure shares) - mirrors ledger.Coords' per-round
+// SetLedgerCoords restamping (#1123).
 type RoundCoords struct {
 	Round             int
 	TurnID            string
@@ -76,7 +85,7 @@ type RoundCoords struct {
 	TriggerAnnotation string
 }
 
-func NewEditArtifactTool(c *recordstore.Client, nodeID string, coords RoundCoords) (tool.Tool, error) {
+func NewEditArtifactTool(c *recordstore.Client, nodeID string, coords *RoundCoords) (tool.Tool, error) {
 	return functiontool.New[editArtifactArgs, string](
 		functiontool.Config{
 			Name: "edit_artifact",
@@ -142,7 +151,7 @@ func writeArtifactDescription() string {
 // session-derived identity hint (vetting.SubjectHint(chatID)) for kinds
 // whose Identity func requires one (e.g. document, pr_body) - never a tool
 // argument, same principle as ids (#1108 finding 2).
-func NewWriteArtifactTool(c *recordstore.Client, nodeID string, coords RoundCoords, hint string) (tool.Tool, error) {
+func NewWriteArtifactTool(c *recordstore.Client, nodeID string, coords *RoundCoords, hint string) (tool.Tool, error) {
 	return functiontool.New[writeArtifactArgs, string](
 		functiontool.Config{
 			Name:        "write_artifact",
@@ -177,7 +186,7 @@ func NewWriteArtifactTool(c *recordstore.Client, nodeID string, coords RoundCoor
 // spec's registered JSONSchema, parsed once here rather than reflected from
 // a Go struct (#1090 §4.4) - mirrors internal/acp/memorymcp.go's
 // registerWriteKindTool.
-func NewWriteKindTool(c *recordstore.Client, nodeID, kind string, spec recordstore.KindSpec, coords RoundCoords, hint string) (tool.Tool, error) {
+func NewWriteKindTool(c *recordstore.Client, nodeID, kind string, spec recordstore.KindSpec, coords *RoundCoords, hint string) (tool.Tool, error) {
 	var schema jsonschema.Schema
 	if err := json.Unmarshal([]byte(spec.JSONSchema), &schema); err != nil {
 		return nil, fmt.Errorf("write_%s: bad JSONSchema: %w", kind, err)
@@ -208,7 +217,7 @@ func NewWriteKindTool(c *recordstore.Client, nodeID, kind string, spec recordsto
 // startup (#1108 finding 3), so NewWriteKindTool can't fail here in
 // practice; a failure is still surfaced (never silently dropped) rather than
 // skipped, so the two surfaces can never drift again.
-func NewWriteKindTools(c *recordstore.Client, nodeID string, coords RoundCoords, hint string) ([]tool.Tool, error) {
+func NewWriteKindTools(c *recordstore.Client, nodeID string, coords *RoundCoords, hint string) ([]tool.Tool, error) {
 	out := make([]tool.Tool, 0, len(recordstore.Kinds()))
 	for _, spec := range recordstore.Kinds() {
 		t, err := NewWriteKindTool(c, nodeID, spec.Name(), spec, coords, hint)
@@ -218,4 +227,92 @@ func NewWriteKindTools(c *recordstore.Client, nodeID string, coords RoundCoords,
 		out = append(out, t)
 	}
 	return out, nil
+}
+
+// readArtifactArgs is read_artifact's input - id-addressed (from
+// list_artifacts), unlike the MCP surface's filename-addressed read_artifact
+// (internal/acp/memorymcp.go), since recordstore is the native surface's only
+// source of ids.
+type readArtifactArgs struct {
+	ID       string `json:"id"`
+	Revision int    `json:"revision,omitempty"`
+}
+
+// NewReadArtifactTool: the native equivalent of the MCP-only read_artifact
+// tool (#1012 wired it into ACP's loopback MCP only) - same
+// recordstore.Client reads, same InlineMaxBytes cap as
+// internal/acp/memorymcp.go's registerReadArtifactTool.
+func NewReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
+	return functiontool.New[readArtifactArgs, string](
+		functiontool.Config{
+			Name:        "read_artifact",
+			Description: "Read an artifact by id (from list_artifacts). Text content is returned inline; binary content is base64-encoded. Omit revision for the latest.",
+		},
+		func(ctx agent.Context, a readArtifactArgs) (string, error) {
+			var data []byte
+			var mime string
+			var ok bool
+			var err error
+			if a.Revision > 0 {
+				data, ok, err = c.LoadVersion(ctx, a.ID, a.Revision)
+			} else {
+				data, mime, _, _, ok, err = c.LatestWithMeta(ctx, a.ID)
+			}
+			if err != nil {
+				return "", fmt.Errorf("read_artifact: %w", err)
+			}
+			if !ok {
+				return "", fmt.Errorf("read_artifact: %s: not found", a.ID)
+			}
+			if len(data) > artifactref.InlineMaxBytes {
+				return fmt.Sprintf("size: %d bytes (exceeds %d byte read_artifact limit)\n\nread_artifact: content too large to return inline.",
+					len(data), artifactref.InlineMaxBytes), nil
+			}
+			// LoadVersion carries no stored mime; a historical revision falls back
+			// to a UTF-8 sniff instead (ponytail: good enough for text-heavy
+			// artifact kinds - a binary kind with a valid-UTF-8-looking old
+			// revision would misprint, not corrupt, so no data-loss risk).
+			text := string(data)
+			if (mime != "" && !strings.HasPrefix(mime, "text/") && mime != "application/json") ||
+				(mime == "" && !utf8.Valid(data)) {
+				text = base64.StdEncoding.EncodeToString(data)
+			}
+			if mime == "" {
+				return text, nil
+			}
+			return fmt.Sprintf("mime: %s\n\n%s", mime, text), nil
+		},
+	)
+}
+
+// BuildNativeArtifactTools assembles one node's full artifact tool set -
+// list/read/edit/write/write_<kind> - the single place both the orchestrator
+// and native gated nodes (internal/dag/graph.go) construct these, so the two
+// surfaces can't drift (#1123).
+func BuildNativeArtifactTools(c *recordstore.Client, nodeID string, coords *RoundCoords, hint string) ([]tool.Tool, error) {
+	if coords == nil {
+		coords = &RoundCoords{}
+	}
+	listTool, err := NewListArtifactsTool(c)
+	if err != nil {
+		return nil, fmt.Errorf("list_artifacts: %w", err)
+	}
+	readTool, err := NewReadArtifactTool(c)
+	if err != nil {
+		return nil, fmt.Errorf("read_artifact: %w", err)
+	}
+	editTool, err := NewEditArtifactTool(c, nodeID, coords)
+	if err != nil {
+		return nil, fmt.Errorf("edit_artifact: %w", err)
+	}
+	writeTool, err := NewWriteArtifactTool(c, nodeID, coords, hint)
+	if err != nil {
+		return nil, fmt.Errorf("write_artifact: %w", err)
+	}
+	kindTools, err := NewWriteKindTools(c, nodeID, coords, hint)
+	if err != nil {
+		return nil, fmt.Errorf("write_<kind>: %w", err)
+	}
+	out := []tool.Tool{listTool, readTool, editTool, writeTool}
+	return append(out, kindTools...), nil
 }

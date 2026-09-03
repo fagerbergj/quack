@@ -615,6 +615,83 @@ func TestGateReattachesAdvisorMarkerOnRevise(t *testing.T) {
 	}
 }
 
+// roundCoordsCall records one RoundCoordsSink invocation for assertion below.
+type roundCoordsCall struct {
+	round             int
+	turnID, headSHA   string
+	triggerAnnotation string
+}
+
+// TestRunGatedRefine_RoundCoordsSinkFiresAtSeedAndEachJudgeRound is the direct
+// test for the two RoundCoordsSink call sites RunGatedRefine added (draft
+// seed + per-judge-round restamp) - the prior test only exercised
+// SetAdvisorThreadRound via hand-assigned *coords, never the sink itself.
+func TestRunGatedRefine_RoundCoordsSinkFiresAtSeedAndEachJudgeRound(t *testing.T) {
+	const token = "planX/nodeZ"
+	stub := &stubModel{}
+	worker, err := llmagent.New(llmagent.Config{
+		Name: "web-researcher", Model: stub, Description: "researcher", Instruction: "Answer.",
+	})
+	if err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+	var calls []roundCoordsCall
+	cfg := Config{
+		JudgeRounds: 2, Threshold: 0.7, Rubric: "score 0-10",
+		// Artifacts+ChatID: the round-2 trigger annotation only populates once
+		// round 1's judge_round record actually saves (saveJudgeRoundRecord
+		// needs a record client), so this must not be recordClient's nil case.
+		Artifacts: artifact.InMemoryService(), ChatID: "chat-roundcoords", User: "u1",
+		RoundCoordsSink: func(round int, turnID, headSHA, triggerAnnotation string) {
+			calls = append(calls, roundCoordsCall{round, turnID, headSHA, triggerAnnotation})
+		},
+	}
+	node, err := newTestGatedNode("gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
+	if err != nil {
+		t.Fatalf("node: %v", err)
+	}
+	root, err := workflowagent.New(workflowagent.Config{
+		Name: "root", SubAgents: []adkagent.Agent{worker}, Edges: workflow.Chain(workflow.Start, node),
+	})
+	if err != nil {
+		t.Fatalf("root: %v", err)
+	}
+	r, err := runner.New(runner.Config{AppName: "test", Agent: root, SessionService: session.InMemoryService(), AutoCreateSession: true})
+	if err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Answer the question.\n\n" + AdvisorThreadMarker(token)}}}
+	for _, err := range r.Run(t.Context(), "u", "s", task, adkagent.RunConfig{}) {
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	}
+
+	// 3 calls: the draft seed, the round-1 judge-loop restamp (same round,
+	// still no trigger - the draft hasn't failed yet), and the round-2
+	// restamp after round 1's fail sets a trigger annotation.
+	if len(calls) != 3 {
+		t.Fatalf("RoundCoordsSink calls = %d, want exactly 3 (seed + round-1 loop restamp + round-2 restamp); got %+v", len(calls), calls)
+	}
+	seed, round1, round2 := calls[0], calls[1], calls[2]
+	if seed.round != 1 || seed.triggerAnnotation != "" {
+		t.Errorf("seed call = %+v, want round=1 trigger=\"\"", seed)
+	}
+	if round1.round != 1 || round1.triggerAnnotation != "" {
+		t.Errorf("round-1 restamp = %+v, want round=1 trigger=\"\"", round1)
+	}
+	if round2.round != 2 || round2.triggerAnnotation == "" {
+		t.Errorf("round-2 restamp = %+v, want round=2 non-empty trigger", round2)
+	}
+	if seed.turnID == "" || seed.turnID != round1.turnID || seed.turnID != round2.turnID {
+		t.Errorf("turnID mismatch across calls: seed=%q round1=%q round2=%q", seed.turnID, round1.turnID, round2.turnID)
+	}
+	if seed.headSHA != round1.headSHA || seed.headSHA != round2.headSHA {
+		t.Errorf("headSHA mismatch across calls: seed=%q round1=%q round2=%q", seed.headSHA, round1.headSHA, round2.headSHA)
+	}
+}
+
 // TestGatedWorkerNode_SingleRoundRevisesOnce asserts the loop semantics at
 // JudgeRounds=1: JudgeRounds counts REVISIONS, so one round judges the draft,
 // revises on the fail, and re-judges - 1 revision / 2 judgments. (Previously 1

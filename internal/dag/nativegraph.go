@@ -174,7 +174,7 @@ func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userI
 	// synchronously, before workflow.RunNode ever schedules a child) - past
 	// here it's carried on vetting.Config, same reason cfg.Agent is.
 	source := ledger.CoordsFromContext(ctx).Source
-	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, source,
+	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, userID, source,
 		func(nodeID string, score float64, passed bool, rounds int) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds)
 		}, e.admission, e.specFor, e.artifacts, e.walLedger, func(nctx context.Context, node Node, cfg vetting.Config) bool {

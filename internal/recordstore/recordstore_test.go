@@ -562,6 +562,51 @@ func TestNoLedgerConfiguredUnchanged(t *testing.T) {
 	}
 }
 
+// TestIdenticalContentSaveSkipsRevisionAndWAL is #1123's no-op-save guard: a
+// second save with byte-identical content to the current latest revision
+// must NOT mint revision 2 (still at 1) and must NOT append a WAL
+// artifact.revision intent for the skipped attempt - a failed revise that
+// couldn't actually change anything must look like nothing happened, not
+// like an aborted or empty revision.
+func TestIdenticalContentSaveSkipsRevisionAndWAL(t *testing.T) {
+	svc := artifact.InMemoryService()
+	fl := newFakeLedger()
+	c := New(svc, "quack", "user1", "chat1").WithLedger(fl)
+	ctx := context.Background()
+
+	id, rev1, err := c.SaveBlob(ctx, "test.blob", []byte("same content"), "text/plain", "doc:noop", Lineage{})
+	if err != nil || rev1 != 1 {
+		t.Fatalf("first SaveBlob: rev=%d err=%v, want rev=1 err=nil", rev1, err)
+	}
+
+	id2, rev2, err := c.SaveBlob(ctx, "test.blob", []byte("same content"), "text/plain", "doc:noop", Lineage{})
+	if err != nil {
+		t.Fatalf("second (identical) SaveBlob returned an error: %v", err)
+	}
+	if id2 != id || rev2 != 1 {
+		t.Fatalf("second (identical) SaveBlob: id=%q rev=%d, want id=%q rev=1 (no new revision)", id2, rev2, id)
+	}
+
+	raw, _, ok, err := c.Latest(ctx, id)
+	if err != nil || !ok || string(raw) != "same content" {
+		t.Fatalf("Latest after no-op save: raw=%q ok=%v err=%v", raw, ok, err)
+	}
+
+	entries, err := fl.ReadEntries(ctx, "chat1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var revisionEntries int
+	for _, e := range entries {
+		if e.Key == id && e.Kind == ledger.KindArtifactRevision {
+			revisionEntries++
+		}
+	}
+	if revisionEntries != 1 {
+		t.Fatalf("WAL has %d artifact.revision entries for %s, want exactly 1 (the skipped identical save must append none)", revisionEntries, id)
+	}
+}
+
 // TestConcurrentSaveSameIDWALRevisionsAreSequential is the adversarial-review
 // fix for #1100: N goroutines racing SaveBlob on the SAME id must produce WAL
 // artifact.revision entries numbered exactly 1..N with a strictly increasing
@@ -799,11 +844,18 @@ func (s *blockingLoadService) Load(ctx context.Context, req *artifact.LoadReques
 func TestEditVsGateSaveSerializes(t *testing.T) {
 	readStarted := make(chan struct{})
 	unblock := make(chan struct{})
-	svc := &blockingLoadService{Service: artifact.InMemoryService(), readStarted: readStarted, unblock: unblock}
+	base := artifact.InMemoryService()
+	svc := &blockingLoadService{Service: base, readStarted: readStarted, unblock: unblock}
 	c := New(svc, "quack", "user1", "chat1")
 	ctx := context.Background()
 
-	id, rev1, err := c.SaveStructured(ctx, "test.structured", doc{A: "hello", B: 0}, "race-id", Lineage{})
+	// Setup save goes through a plain client over the SAME underlying
+	// service: the no-op-save guard (#1123) now reads-before-write on every
+	// save, and this initial save has no prior revision to race over - only
+	// Edit's and the gate's own reads below are meant to hit the blocking
+	// wrapper.
+	setupC := New(base, "quack", "user1", "chat1")
+	id, rev1, err := setupC.SaveStructured(ctx, "test.structured", doc{A: "hello", B: 0}, "race-id", Lineage{})
 	if err != nil {
 		t.Fatal(err)
 	}
