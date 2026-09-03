@@ -33,7 +33,7 @@ func TestPlayback_ReplaysRecordedRoundWithNoSubprocess(t *testing.T) {
 
 	live := testAgent(t, "happy")
 	var recorded []eventSpec
-	if err := live.round(recordCtx, t.TempDir(), "", nil, workspace.Caps{}, "add the feature", "", "", "", "", func(s eventSpec) bool {
+	if err := live.round(recordCtx, t.TempDir(), "", workspace.Caps{}, "add the feature", "", "", "", "", func(s eventSpec) bool {
 		recorded = append(recorded, s)
 		return true
 	}); err != nil {
@@ -66,7 +66,7 @@ func TestPlayback_ReplaysRecordedRoundWithNoSubprocess(t *testing.T) {
 
 	var specs []eventSpec
 	replayCtx := ledger.WithCoords(context.Background(), coords)
-	if err := replayed.round(replayCtx, t.TempDir(), "", nil, workspace.Caps{}, "add the feature", "", "", "", "", func(s eventSpec) bool {
+	if err := replayed.round(replayCtx, t.TempDir(), "", workspace.Caps{}, "add the feature", "", "", "", "", func(s eventSpec) bool {
 		specs = append(specs, s)
 		return true
 	}); err != nil {
@@ -113,7 +113,7 @@ func TestPlayback_MissingExchangeIsMissError(t *testing.T) {
 	coords := ledger.Coords{ChatID: "c2", Node: "n1", Agent: "code-implementer", Round: "worker-r0"}
 	recordCtx := ledger.WithCoords(context.Background(), coords)
 	live := testAgent(t, "happy")
-	if err := live.round(recordCtx, t.TempDir(), "", nil, workspace.Caps{}, "add the feature", "", "", "", "", func(eventSpec) bool { return true }); err != nil {
+	if err := live.round(recordCtx, t.TempDir(), "", workspace.Caps{}, "add the feature", "", "", "", "", func(eventSpec) bool { return true }); err != nil {
 		t.Fatalf("recording round: %v", err)
 	}
 	if err := lp.ForceFlush(context.Background()); err != nil {
@@ -141,10 +141,10 @@ func TestPlayback_MissingExchangeIsMissError(t *testing.T) {
 	// entry; a SECOND replays against the same (now-exhausted) stream and
 	// must miss.
 	replayCtx := ledger.WithCoords(context.Background(), coords)
-	if err := replayed.round(replayCtx, t.TempDir(), "", nil, workspace.Caps{}, "add the feature", "", "", "", "", func(eventSpec) bool { return true }); err != nil {
+	if err := replayed.round(replayCtx, t.TempDir(), "", workspace.Caps{}, "add the feature", "", "", "", "", func(eventSpec) bool { return true }); err != nil {
 		t.Fatalf("first replayed round: %v", err)
 	}
-	err = replayed.round(replayCtx, t.TempDir(), "", nil, workspace.Caps{}, "add the feature", "", "", "", "", func(eventSpec) bool { return true })
+	err = replayed.round(replayCtx, t.TempDir(), "", workspace.Caps{}, "add the feature", "", "", "", "", func(eventSpec) bool { return true })
 	if err == nil {
 		t.Fatal("want an error from replaying past the recorded stream")
 	}

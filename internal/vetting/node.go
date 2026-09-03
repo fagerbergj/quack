@@ -25,6 +25,7 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/otelobs"
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -235,11 +236,14 @@ func appendNodeEvent(ctx context.Context, cfg Config, nodeID, turnID, kind strin
 // non-nil error means the caller must treat this round as failed-closed - it
 // must not start another revise round on this verdict, mirroring the
 // existing judge-unavailable path just above.
+// appendJudgeRound's Ledger==nil no-op is intentional fail-open, matching
+// every other episodic write: recording happens independently of whether a
+// Postgres-backed ledger is configured, not only when one is present.
 func appendJudgeRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, passed bool, score float64, scored []ScoredRef) error {
 	if cfg.Ledger == nil {
 		return nil
 	}
-	id := fmt.Sprintf("%s-%d", turnID, round)
+	id := judgeRoundHint(turnID, nodeID, round)
 	payload, err := json.Marshal(struct {
 		ID     string      `json:"id"`
 		Passed bool        `json:"passed"`
@@ -308,6 +312,12 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	// cfg is a per-call copy; stamping only reaches this node's judge rounds.
 	cfg.AdvisorToken = advisorToken
 	cfg.NodeBaseSHA = cloneHeadSHA(cfg)
+	if advisorToken != "" {
+		// Draft round: seed round=1 coords before the first worker call so a
+		// tool write during draft (before any judge round runs) still gets
+		// real lineage (#1091 finding #4).
+		SetAdvisorThreadRound(advisorToken, 1, turnID, cfg.NodeBaseSHA, "")
+	}
 	// User attribution: the ADK session identity (mirrors MemoryScope below) -
 	// not caller-set, so a node can never claim to run as someone it isn't.
 	if s := ctx.Session(); s != nil {
@@ -573,6 +583,18 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			if strings.TrimSpace(stripLeadingEnvScaffold(answer)) == "" {
 				break // still nothing to judge after recovery
 			}
+			if advisorToken != "" {
+				var trigger string
+				if episodicState != nil {
+					trigger = episodicState.triggerAnnotation
+				}
+				// Intentional: this round's revise (below, on judge fail) also
+				// stamps Round=round, even though its tool writes are first
+				// referenced by round+1's code_review - "round r judges, on
+				// fail revises" (line 557), so a revision belongs to the
+				// judgment that required it, not the round that later reads it.
+				SetAdvisorThreadRound(advisorToken, round, turnID, cfg.NodeBaseSHA, trigger)
+			}
 			act := actFor(answer)
 			// Every judge round writes a revision, gate-passed or not - only
 			// delivery stays gate-passed-only (#1090 P2: rounds are history).
@@ -613,6 +635,13 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				res = GateResult{Score: 0, Passed: false, Feedback: feedback, Rounds: round}
 				break
 			}
+			if isNonDeliveringSlice(cfg) {
+				// Fan-out (#1092, design V4 §4.6): a reviewer node feeding a
+				// synthesizer never owns the delivered verdict, so its own
+				// structured_verdict/VERDICT-consistency score would gate on
+				// something this node never controls.
+				v = dropCriteria(v, "structured_verdict")
+			}
 			v = sanitizeAnchors(v, answer, cfg)
 			v = mergeDeterministic(v, det, cfg)
 			v = applyRubricSpecs(v, cfg.RubricSpecs)
@@ -634,6 +663,25 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				res.Passed = false
 				res.Feedback = fmt.Sprintf("Round %d %s (score %.2f) but could not be recorded in the write-ahead log; treating as failed.", round, verdictWord, v.Score)
 				break
+			}
+			// judge_round record (#1092): written right after the WAL entry
+			// above (§4.9 ordering), but independently of it - a nil cfg.Ledger
+			// made the WAL append a no-op just above, yet this record and both
+			// SSE events below still fire. Intentional fail-open, same as every
+			// other episodic write, not a bug: every non-Postgres deploy still
+			// gets the record even with no WAL to materialize.
+			jr := buildJudgeRoundRecord(turnID, round, res.Passed, res.Score, scored, v, det, answer)
+			jrID, _ := saveJudgeRoundRecord(nodeCtx, cfg, nodeID, turnID, round, jr)
+			for _, sr := range scored {
+				emitArtifactRevision(sink, sr.ArtifactID, sr.Revision, recordstore.KindOf(sr.ArtifactID), nodeID, round)
+			}
+			if jrID != "" {
+				if episodicState != nil {
+					// Next round's writes point back at THIS round's verdict
+					// (design V4 §7 case 3's trigger_annotation chain).
+					episodicState.triggerAnnotation = jrID
+				}
+				emitJudgeRound(sink, jrID, res.Passed, res.Score, scored)
 			}
 			emitEvaluationResults(ledgerCtx, runID, v)
 			jspan.end(stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Score: res.Score, Passed: res.Passed, Feedback: res.Feedback, Envelope: env}, nil)
@@ -667,7 +715,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			// an ordinary incomplete/wrong round keeps its commits so revise
 			// builds on them instead of redoing the change from scratch.
 			resetCloneToNodeBase(cfg, v)
-			revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, env, act, citationOnlyFailure(v, cfg.Threshold))) + markerLine
+			revisePrompt := contentPlainText(buildRevisionContent(cfg.Constitution, question, answer, env, act, citationOnlyFailure(v, cfg.Threshold), jr.Notes)) + markerLine
 			reviseRunID := fmt.Sprintf("worker-r%d%s", round, sfx)
 			// gate.revise spans the round through the same choke point gate.judge
 			// uses. sink is nil: the matching agent_start/complete SSE for this run
@@ -1108,6 +1156,41 @@ func emitDeliveryResult(sink func(stream.SSEEvent), nodeID string, ev stream.SSE
 	if sink != nil {
 		sink(ev)
 	}
+}
+
+// emitArtifactRevision sends one artifact_revision SSE event (#1092) for a
+// revision this round wrote, before the round's artifact_judge_round event -
+// the record it was scored under references a revision that already exists.
+func emitArtifactRevision(sink func(stream.SSEEvent), id string, revision int, kind, nodeID string, round int) {
+	if sink == nil {
+		return
+	}
+	sink(stream.SSEEvent{Name: stream.EventArtifactRevision, Data: stream.ArtifactRevisionData{
+		ID: id, Revision: revision, Kind: kind, NodeID: nodeID, Round: round,
+	}})
+}
+
+// emitJudgeRound sends the artifact_judge_round SSE event (#1092), after
+// every artifact_revision event for the round's own scored writes.
+func emitJudgeRound(sink func(stream.SSEEvent), id string, passed bool, score float64, scored []ScoredRef) {
+	if sink == nil {
+		return
+	}
+	refs := make([]stream.ScoredRef, len(scored))
+	for i, s := range scored {
+		refs[i] = stream.ScoredRef{ArtifactID: s.ArtifactID, Revision: s.Revision}
+	}
+	sink(stream.SSEEvent{Name: stream.EventArtifactJudgeRound, Data: stream.ArtifactJudgeRoundData{
+		ID: id, Passed: passed, Score: score, Scored: refs,
+	}})
+}
+
+// isNonDeliveringSlice reports whether cfg is a reviewer node that is part
+// of a fan-out with a downstream synthesizer (#1092, design V4 §4.6) - such
+// a node's own verdict is never what delivery renders, so it isn't judged on
+// structured_verdict.
+func isNonDeliveringSlice(cfg Config) bool {
+	return cfg.IsReviewer && cfg.ReviewFanout != nil && cfg.ReviewFanout.SynthExpected()
 }
 
 // recordDeliveryOutcomeMetric: records quack.delivery.outcome. Scoped to delivery-capable agents.

@@ -21,12 +21,12 @@ import (
 // arbitrary JSON without a schema per kind.
 type pgEntry struct {
 	ID      uint      `gorm:"primaryKey;autoIncrement"`
-	ChatID  string    `gorm:"column:chat_id;index:idx_ledger_chat_seq,unique,priority:1"`
+	ChatID  string    `gorm:"column:chat_id;index:idx_ledger_chat_seq,unique,priority:1;index:idx_ledger_chat_key,priority:1"`
 	Seq     int64     `gorm:"column:seq;index:idx_ledger_chat_seq,unique,priority:2"`
 	TurnID  string    `gorm:"column:turn_id"`
 	NodeID  string    `gorm:"column:node_id"`
 	Kind    string    `gorm:"column:kind"`
-	Key     string    `gorm:"column:key"`
+	Key     string    `gorm:"column:key;index:idx_ledger_chat_key,priority:2"`
 	At      time.Time `gorm:"column:at"`
 	Payload string    `gorm:"column:payload;type:jsonb"`
 }
@@ -166,6 +166,39 @@ func (s *PGStore) ReadEntries(ctx context.Context, chatID string, fromSeq int64)
 		Order("seq asc").Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("ledger: read entries for chat %q: %w", chatID, err)
 	}
+	return pgRowsToEntries(rows), nil
+}
+
+// ReadEntriesByKey is #1101's fold optimization: recordstore.lastRevision
+// (via internal/ledger/fold.LastRevision) needs only one id's entries, and
+// the (chat_id, key) index (idx_ledger_chat_key) makes that a server-side
+// filter instead of a full per-chat scan. Optional on LedgerStore - a store
+// without it (FSStore) is scanned and filtered in memory by the fold.
+func (s *PGStore) ReadEntriesByKey(ctx context.Context, chatID, key string, fromSeq int64) ([]Entry, error) {
+	var rows []pgEntry
+	if err := s.db.WithContext(ctx).
+		Where("chat_id = ? AND key = ? AND seq >= ?", chatID, key, fromSeq).
+		Order("seq asc").Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("ledger: read entries for chat %q key %q: %w", chatID, key, err)
+	}
+	return pgRowsToEntries(rows), nil
+}
+
+// ReadEntriesPage is #1101's paging optimization: fold.Fold pages through a
+// big chat page-by-page instead of loading it in one slice (ReadEntries's
+// contract). Optional on LedgerStore - a store without it (FSStore) is read
+// in one ReadEntries call, since it already holds its whole JSONL in memory.
+func (s *PGStore) ReadEntriesPage(ctx context.Context, chatID string, fromSeq int64, limit int) ([]Entry, error) {
+	var rows []pgEntry
+	if err := s.db.WithContext(ctx).
+		Where("chat_id = ? AND seq >= ?", chatID, fromSeq).
+		Order("seq asc").Limit(limit).Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("ledger: read entries page for chat %q: %w", chatID, err)
+	}
+	return pgRowsToEntries(rows), nil
+}
+
+func pgRowsToEntries(rows []pgEntry) []Entry {
 	out := make([]Entry, len(rows))
 	for i, r := range rows {
 		out[i] = Entry{
@@ -173,7 +206,7 @@ func (s *PGStore) ReadEntries(ctx context.Context, chatID string, fromSeq int64)
 			Kind: r.Kind, Key: r.Key, At: r.At, Payload: json.RawMessage(r.Payload),
 		}
 	}
-	return out, nil
+	return out
 }
 
 // ReadStream reproduces the JSONL shape FSStore.ReadStream returns: every

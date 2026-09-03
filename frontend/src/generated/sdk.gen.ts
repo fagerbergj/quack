@@ -216,6 +216,14 @@ export const getChatArtifact = <ThrowOnError extends boolean = false>(options: O
  * separate SSE event - those calls are synchronous and already tell the
  * caller what changed.
  *
+ * `artifact_revision` ({"id","revision","kind","node_id","round"}) and
+ * `artifact_judge_round` ({"id","passed","score","scored"}) report a
+ * judge round's output (#1090): every round writes a revision, so
+ * `artifact_revision` fires first, then `artifact_judge_round` for the
+ * judge_round record scoring it - `scored` lists the `{"artifact_id",
+ * "revision"}` pairs that round wrote. Read-only; the same round's
+ * WAL entries are the durable record, these are its live mirror.
+ *
  * `delivery_result` ({"node_id","outcome","kind","url","error","trace_id"})
  * reports one staged item's ACTUAL outward-boundary outcome (push +
  * PR/review/comment), as the delivering extension observed it - never the

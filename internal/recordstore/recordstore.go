@@ -20,10 +20,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledger/fold"
 )
 
 // isNotFound reports whether err is the artifact.Service "no such
@@ -69,10 +71,22 @@ type IdentityFunc func(content []byte, hint string) (instance string, err error)
 type KindSpec struct {
 	Class         Class
 	SchemaVersion int
-	JSONSchema    string // #1091 tool generation input; unused by P2 itself
+	JSONSchema    string // #1091 tool generation input; the write_<kind> tool's input schema verbatim
 	Validate      func(json.RawMessage) error
 	Identity      IdentityFunc
+	// RequiresHint declares that Identity fails without a non-empty hint
+	// (the requireHint pattern) - callers that can't supply a real session
+	// hint (e.g. write_artifact/write_<kind> for an arbitrary caller-chosen
+	// kind) use this to decide whether to pass one at all, rather than
+	// passing a hint unconditionally and corrupting a hint-optional kind's
+	// content-hash identity (#1108 finding 2).
+	RequiresHint bool
+
+	name string // set only by Kinds(); not part of the registered spec
 }
+
+// Name is the registered kind name (populated on values returned by Kinds()).
+func (k KindSpec) Name() string { return k.name }
 
 var (
 	registryMu sync.RWMutex
@@ -82,8 +96,12 @@ var (
 // Register declares kind's shape (§4.3/§4.4). Call once (package init) per
 // kind from the record type's own package - #1090 P2's registered kinds are
 // code_review, finding, document, pr_body, text, bytes. Panics on a
-// duplicate registration or a spec missing Identity (a wiring bug, not a
-// runtime error - every kind must derive its own id).
+// duplicate registration, a spec missing Identity (a wiring bug, not a
+// runtime error - every kind must derive its own id), or a JSONSchema that
+// doesn't parse - the write_<kind> tool generators (MCP and ADK) both trust
+// this schema is valid and previously skipped the tool silently on either
+// surface when it wasn't; failing here instead means both surfaces fail the
+// same way, loudly, at startup (#1108 finding 3).
 func Register(kind string, spec KindSpec) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
@@ -93,7 +111,29 @@ func Register(kind string, spec KindSpec) {
 	if spec.Identity == nil {
 		panic("recordstore: kind " + kind + " registered with no Identity func")
 	}
+	if spec.Class == Structured && spec.JSONSchema == "" {
+		// An empty schema on a structured kind survives startup but then makes
+		// the two write_<kind> generators diverge - MCP Warns-and-skips, ADK
+		// hard-fails the whole run (#1108 L1) - so reject it here instead.
+		panic("recordstore: kind " + kind + " registered as structured without a JSONSchema")
+	}
+	if spec.JSONSchema != "" {
+		var schema jsonschema.Schema
+		if err := json.Unmarshal([]byte(spec.JSONSchema), &schema); err != nil {
+			panic("recordstore: kind " + kind + " registered with invalid JSONSchema: " + err.Error())
+		}
+	}
 	registry[kind] = spec
+}
+
+// SpecFor returns kind's registered spec, or ok=false if it isn't registered -
+// exported so a generic write path (write_artifact) can check RequiresHint
+// for a caller-chosen kind before deciding whether to pass one.
+func SpecFor(kind string) (spec KindSpec, ok bool) {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	spec, ok = registry[kind]
+	return spec, ok
 }
 
 func lookupKind(kind string) (KindSpec, error) {
@@ -111,9 +151,13 @@ func lookupKind(kind string) (KindSpec, error) {
 // NodeID is provenance only (the node that authored this revision), never
 // part of the artifact's id.
 type Lineage struct {
-	NodeID            string    `json:"node_id"`
-	Round             int       `json:"round"`
-	ParentRevision    int       `json:"parent_revision"`
+	NodeID         string `json:"node_id"`
+	Round          int    `json:"round"`
+	ParentRevision int    `json:"parent_revision"`
+	// BaseRevision is the revision the editor last read (Edit's caller-supplied
+	// base_revision) - advisory only, recorded for observability; the merge
+	// itself always targets whatever is actually latest (see Edit).
+	BaseRevision      int       `json:"base_revision"`
 	TriggerAnnotation string    `json:"trigger_annotation,omitempty"`
 	HeadSHA           string    `json:"head_sha,omitempty"`
 	SavedAt           time.Time `json:"saved_at"`
@@ -179,47 +223,11 @@ func revisionLockFor(chatID, id string) *sync.Mutex {
 }
 
 // lastRevision returns the highest MATERIALIZED revision recorded in an
-// artifact.revision WAL entry for id, 0 if none. A retried save after a
-// wedge (see KindArtifactRevisionAborted) reuses the SAME revision number
-// its failed attempt claimed, so "aborted" is a per-revision-number STATUS
-// that later entries can flip back to materialized, not a permanent
-// exclusion - entries are walked in seq order and the last word for a given
-// revision number wins. A full per-chat scan (ponytail: O(entries);
-// ledger_entries has no (chat_id, key) index yet, so a server-side key
-// filter would still scan - the index belongs with #1101's projections work).
+// artifact.revision WAL entry for id, 0 if none. Delegates to
+// internal/ledger/fold - the ONE definition of the aborted/later-entry-wins
+// rule (#1101); this used to duplicate that loop inline.
 func lastRevision(ctx context.Context, store ledger.LedgerStore, chatID, id string) (int, error) {
-	entries, err := store.ReadEntries(ctx, chatID, 0)
-	if err != nil {
-		return 0, err
-	}
-	materialized := map[int]bool{} // revision -> does the LATEST entry for it count?
-	var payload struct {
-		Revision int `json:"revision"`
-	}
-	for _, e := range entries { // seq order: later entries override earlier ones for the same revision
-		if e.Key != id {
-			continue
-		}
-		switch e.Kind {
-		case ledger.KindArtifactRevision:
-			if err := json.Unmarshal(e.Payload, &payload); err != nil {
-				continue
-			}
-			materialized[payload.Revision] = true
-		case ledger.KindArtifactRevisionAborted:
-			if err := json.Unmarshal(e.Payload, &payload); err != nil {
-				continue
-			}
-			materialized[payload.Revision] = false
-		}
-	}
-	rev := 0
-	for r, ok := range materialized {
-		if ok && r > rev {
-			rev = r
-		}
-	}
-	return rev, nil
+	return fold.LastRevision(ctx, store, chatID, id)
 }
 
 // abortedRevisionPayload is the artifact.revision.aborted entry's payload.
@@ -259,7 +267,19 @@ type artifactRevisionPayload struct {
 	BytesRef       string  `json:"bytes_ref"`
 }
 
+// save acquires id's per-(chat,id) lock (the same one Edit holds) before
+// writing, so a gate save (SaveStructured/SaveBlob) can never land between
+// Edit's read-latest and its write of N+1 (#1108 finding 1 - previously only
+// Edit locked, gate writers raced it silently). Edit already holds the lock
+// when it needs to save, so it calls saveLocked directly instead.
 func (c *Client) save(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage) (int, error) {
+	mu := c.lockFor(id)
+	mu.Lock()
+	defer mu.Unlock()
+	return c.saveLocked(ctx, id, kind, class, mime, data, lineage)
+}
+
+func (c *Client) saveLocked(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage) (int, error) {
 	if c.ledgerStore != nil {
 		// Held across read-parent + AppendIntent + saveRow: otherwise two
 		// concurrent saves for the same id can both read the same parent and
@@ -434,14 +454,15 @@ func (c *Client) versionsDesc(ctx context.Context, id string) ([]int64, error) {
 // Latest returns the newest revision of id as raw bytes plus its revision.
 // ok is false when no revision exists.
 func (c *Client) Latest(ctx context.Context, id string) ([]byte, int, bool, error) {
-	raw, _, rev, ok, err := c.LatestWithMeta(ctx, id)
+	raw, _, _, rev, ok, err := c.LatestWithMeta(ctx, id)
 	return raw, rev, ok, err
 }
 
-// LatestWithMeta is Latest, also returning the row's lineage when the
-// wrapped service supports it (zero Lineage otherwise - #1090 known ceiling
-// for a non-Postgres backend, e.g. artifact.InMemoryService() in tests).
-func (c *Client) LatestWithMeta(ctx context.Context, id string) ([]byte, Lineage, int, bool, error) {
+// LatestWithMeta is Latest, also returning mime and the row's lineage when
+// the wrapped service supports it (zero Lineage otherwise - #1090 known
+// ceiling for a non-Postgres backend, e.g. artifact.InMemoryService() in
+// tests).
+func (c *Client) LatestWithMeta(ctx context.Context, id string) ([]byte, string, Lineage, int, bool, error) {
 	req := &artifact.LoadRequest{AppName: c.appName, UserID: c.userID, SessionID: c.sessionID, FileName: id}
 	var resp *artifact.LoadResponse
 	var lineageJSON []byte
@@ -453,12 +474,12 @@ func (c *Client) LatestWithMeta(ctx context.Context, id string) ([]byte, Lineage
 	}
 	if err != nil {
 		if isNotFound(err) {
-			return nil, Lineage{}, 0, false, nil
+			return nil, "", Lineage{}, 0, false, nil
 		}
-		return nil, Lineage{}, 0, false, fmt.Errorf("recordstore: load %s: %w", id, err)
+		return nil, "", Lineage{}, 0, false, fmt.Errorf("recordstore: load %s: %w", id, err)
 	}
 	if resp == nil || resp.Part == nil || resp.Part.InlineData == nil {
-		return nil, Lineage{}, 0, false, nil
+		return nil, "", Lineage{}, 0, false, nil
 	}
 	var lineage Lineage
 	_ = json.Unmarshal(lineageJSON, &lineage) // best-effort; zero value if absent/malformed
@@ -467,7 +488,165 @@ func (c *Client) LatestWithMeta(ctx context.Context, id string) ([]byte, Lineage
 	if err == nil && len(versions) > 0 {
 		rev = int(versions[0])
 	}
-	return resp.Part.InlineData.Data, lineage, rev, true, nil
+	return resp.Part.InlineData.Data, resp.Part.InlineData.MIMEType, lineage, rev, true, nil
+}
+
+// ArtifactSummary is one id's listing row (§4.4 list_artifacts).
+type ArtifactSummary struct {
+	ID       string
+	Kind     string
+	Revision int
+	NodeID   string // lineage.node_id of the latest revision
+}
+
+// List returns every id in this chat whose kind matches kindFilter ("" =
+// all), each with its latest revision and authoring node. Best-effort per
+// id: an id that fails to load is skipped rather than failing the whole call.
+func (c *Client) List(ctx context.Context, kindFilter string) ([]ArtifactSummary, error) {
+	resp, err := c.svc.List(ctx, &artifact.ListRequest{AppName: c.appName, UserID: c.userID, SessionID: c.sessionID})
+	if err != nil {
+		return nil, fmt.Errorf("recordstore: list: %w", err)
+	}
+	if resp == nil {
+		return nil, nil
+	}
+	out := make([]ArtifactSummary, 0, len(resp.FileNames))
+	for _, id := range resp.FileNames {
+		kind := KindOf(id)
+		if kindFilter != "" && kind != kindFilter {
+			continue
+		}
+		_, _, lineage, rev, ok, err := c.LatestWithMeta(ctx, id)
+		if err != nil || !ok {
+			continue
+		}
+		out = append(out, ArtifactSummary{ID: id, Kind: kind, Revision: rev, NodeID: lineage.NodeID})
+	}
+	return out, nil
+}
+
+// EditOp is one search/replace pair for Edit; Old must match the target
+// content exactly once.
+type EditOp struct {
+	Old string
+	New string
+}
+
+// EditConflict is returned when ops cannot be resolved against the current
+// latest revision - the caller should show Content/Revision to the agent
+// and let it retry with fresh edits.
+type EditConflict struct {
+	ID       string
+	Revision int
+	Content  []byte
+}
+
+func (e *EditConflict) Error() string {
+	return fmt.Sprintf("recordstore: edit %s: no unique match against revision %d", e.ID, e.Revision)
+}
+
+// idLocks serializes revision allocation per (session, id) so two concurrent
+// editors of the same artifact never race to the same next revision number -
+// ponytail: process-local mutex, fine for quack's single-process server;
+// upgrade to a DB-level lock only if a second server process joins.
+var idLocks sync.Map // "app/user/session/id" -> *sync.Mutex
+
+func (c *Client) lockFor(id string) *sync.Mutex {
+	key := c.appName + "/" + c.userID + "/" + c.sessionID + "/" + id
+	v, _ := idLocks.LoadOrStore(key, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
+
+// applyEdits applies ops to content in order; each Old must appear exactly
+// once in the content as of that point, else the whole batch is rejected
+// (no partial writes) - ambiguous (0 or 2+ matches) is a failure.
+func applyEdits(content []byte, ops []EditOp) ([]byte, error) {
+	s := string(content)
+	for _, op := range ops {
+		n := strings.Count(s, op.Old)
+		if n != 1 {
+			return nil, fmt.Errorf("edit old-string matched %d times (want exactly 1): %q", n, op.Old)
+		}
+		s = strings.Replace(s, op.Old, op.New, 1)
+	}
+	return []byte(s), nil
+}
+
+// Edit applies ops to id's latest revision and writes N+1 (§4.4/§9). The
+// merge is unconditional on baseRevision: whether the caller's base is
+// current or stale, edits are always re-applied against whatever is latest
+// right now, and succeed exactly when every Old still matches uniquely -
+// that's what makes a stale-but-non-intersecting edit merge instead of
+// failing. Structured content is re-validated before the write. Returns
+// *EditConflict (with the current latest) on any match failure - never a
+// partial write.
+func (c *Client) Edit(ctx context.Context, id string, baseRevision int, ops []EditOp, lineage Lineage) (int, []byte, error) {
+	mu := c.lockFor(id)
+	mu.Lock()
+	defer mu.Unlock()
+
+	raw, mime, _, latestRev, ok, err := c.LatestWithMeta(ctx, id)
+	if err != nil {
+		return 0, nil, fmt.Errorf("recordstore: edit %s: %w", id, err)
+	}
+	if !ok {
+		return 0, nil, fmt.Errorf("recordstore: edit %s: no revision exists", id)
+	}
+	if baseRevision < 0 {
+		return 0, nil, fmt.Errorf("recordstore: edit %s: base_revision must be >= 0", id)
+	}
+	if baseRevision > latestRev {
+		return 0, nil, fmt.Errorf("recordstore: edit %s: base_revision %d exceeds latest revision %d", id, baseRevision, latestRev)
+	}
+	if baseRevision != latestRev {
+		// Worth observing in aggregate: how often edit_artifact merges against a
+		// stale base rather than applying directly.
+		slog.Debug("recordstore: edit merged against a newer revision than base_revision", "id", id, "base_revision", baseRevision, "latest_revision", latestRev)
+	}
+	merged, err := applyEdits(raw, ops)
+	if err != nil {
+		return 0, nil, &EditConflict{ID: id, Revision: latestRev, Content: raw}
+	}
+	kind := KindOf(id)
+	spec, err := lookupKind(kind)
+	if err != nil {
+		return 0, nil, err
+	}
+	if spec.Class == Structured && spec.Validate != nil {
+		if verr := spec.Validate(merged); verr != nil {
+			return 0, nil, fmt.Errorf("recordstore: edit %s: result fails validation: %w", id, verr)
+		}
+	}
+	lineage.ParentRevision = latestRev
+	lineage.BaseRevision = baseRevision
+	rev, err := c.saveLocked(ctx, id, kind, spec.Class, mime, merged, lineage)
+	if err != nil {
+		return 0, nil, err
+	}
+	return rev, merged, nil
+}
+
+// Kinds returns every registered structured kind's name and JSONSchema, for
+// #1091's generated write_<kind> tools - one per structured kind.
+func Kinds() []KindSpec { return KindsForClass(Structured) }
+
+// KindsForClass returns every registered spec of class, name populated,
+// sorted by name - the only enumerator that can see Blob kinds (Kinds() only
+// ever returned Structured, so write_artifact's kind list rendered empty;
+// #1108 finding 2 regression).
+func KindsForClass(class Class) []KindSpec {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	out := make([]KindSpec, 0, len(registry))
+	for name, spec := range registry {
+		if spec.Class != class {
+			continue
+		}
+		spec.name = name
+		out = append(out, spec)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
+	return out
 }
 
 // ponytail: no delete/retention/list surface. Design V4.1 dropped

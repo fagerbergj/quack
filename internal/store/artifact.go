@@ -217,6 +217,23 @@ func (w *TurnAwareService) LoadWithMeta(ctx context.Context, req *artifact.LoadR
 	return resp, kind, class, lineageJSON, nil
 }
 
+// metaUpdater is implemented only by gormArtifactService.
+type metaUpdater interface {
+	updateMeta(ctx context.Context, appName, userID, sessionID, name string, revision int64, kind, class string, lineageJSON []byte) error
+}
+
+// UpdateArtifactMeta overwrites one revision's kind/class/lineage - #1101's
+// `quack ledger rebuild` write path, for a backend that can (the row-backed
+// store); errors on artifact.InMemoryService() and similar, which have no
+// row to update.
+func (w *TurnAwareService) UpdateArtifactMeta(ctx context.Context, appName, userID, sessionID, name string, revision int64, kind, class string, lineageJSON []byte) error {
+	mu, ok := w.Service.(metaUpdater)
+	if !ok {
+		return fmt.Errorf("store: artifact backend does not support metadata rebuild")
+	}
+	return mu.updateMeta(ctx, appName, userID, sessionID, name, revision, kind, class, lineageJSON)
+}
+
 // turnRevisionLister is implemented by gormArtifactService; not by
 // artifact.InMemoryService(), which tracks no turn history.
 type turnRevisionLister interface {
@@ -411,6 +428,25 @@ func (s *gormArtifactService) loadMeta(ctx context.Context, req *artifact.LoadRe
 		return "", "", nil, err
 	}
 	return a.Kind, a.Class, []byte(a.Lineage), nil
+}
+
+// updateMeta overwrites one revision's kind/class/lineage in place - #1101's
+// `quack ledger rebuild` write path. Bytes and revision number are never
+// touched; only the metadata a fold recomputes from the WAL.
+func (s *gormArtifactService) updateMeta(ctx context.Context, appName, userID, sessionID, name string, revision int64, kind, class string, lineageJSON []byte) error {
+	if fileHasUserNamespace(name) {
+		sessionID = userScopedArtifactKey
+	}
+	res := s.db.WithContext(ctx).Model(&Artifact{}).
+		Where("app_name = ? AND user_id = ? AND session_id = ? AND name = ? AND revision = ?", appName, userID, sessionID, name, revision).
+		Updates(map[string]any{"kind": kind, "class": class, "lineage": string(lineageJSON)})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return fmt.Errorf("artifact not found: %w", fs.ErrNotExist)
+	}
+	return nil
 }
 
 // Delete implements [artifact.Service]. Deleting a non-existing entry is not

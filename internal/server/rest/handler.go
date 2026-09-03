@@ -89,7 +89,7 @@ func NewHandler(s *store.Store, o *orchestrator.Orchestrator, titler model.LLM, 
 	if hub == nil {
 		hub = stream.NewHub()
 	}
-	return &Handler{store: s, orch: o, titler: titler, jail: jail, hub: hub, eventLog: runlog.NewEventLog(s), ledgerStore: ledgerStore, quackVersion: quackVersion, taskMem: taskMem, userMem: userMem, artifacts: artifacts, extensions: extensions}
+	return &Handler{store: s, orch: o, titler: titler, jail: jail, hub: hub, eventLog: runlog.NewEventLog(s).WithLedger(ledgerStore), ledgerStore: ledgerStore, quackVersion: quackVersion, taskMem: taskMem, userMem: userMem, artifacts: artifacts, extensions: extensions}
 }
 
 func (h *Handler) generateTitle(ctx context.Context, chatID, firstMessage string) string {
@@ -1103,7 +1103,9 @@ func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, ch
 
 	// Cold path: hub has no buffered events - replay from the durable log.
 	if len(replay) == 0 && !active {
-		evs, err := h.store.LoadChatEvents(r.Context(), chatID, lastSeq)
+		// LoadEvents (#1101): the SSE table when it has rows, else - only when
+		// a WAL is armed - a fold-derived reconstruction.
+		evs, err := h.eventLog.LoadEvents(r.Context(), chatID, lastSeq)
 		if err != nil {
 			slog.Warn("subscribe: durable replay failed", "component", "stream", "chat", chatID, "err", err)
 			return

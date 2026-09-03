@@ -117,9 +117,6 @@ func SetupCloneDir(nodeID string) string {
 // Reserved node ID for nodes sharing one clone across a depends_on chain. Fixed, never a planner-chosen ID.
 const SharedRepoScope = "quack-shared-repo"
 
-// Reserved node ID for GitHub context dir. Sibling of SharedRepoScope (nothing accidentally committable).
-const ContextDirScope = "quack-context"
-
 // Unique branch name for a qualifying node's linked worktree. Derived from nodeID (no registry needed).
 func WorktreeBranch(nodeID string) string {
 	return "quack-worktree/" + nodeID

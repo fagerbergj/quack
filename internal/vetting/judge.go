@@ -1000,7 +1000,7 @@ func boundExcerpt(s string, maxChars int) string {
 // previously had no rubric access at all, so a worker told "no_fabrication: 4" had no idea
 // what a 7 looked like. Rubric text itself isn't a parameter here: applyRubricSpecs (node.go)
 // already folds each failing criterion's parsed definition/bands into env before this runs.
-func buildRevisionContent(constitution string, question *genai.Content, answer string, env verdictEnvelope, act workerActivity, citationOnly bool) *genai.Content {
+func buildRevisionContent(constitution string, question *genai.Content, answer string, env verdictEnvelope, act workerActivity, citationOnly bool, notes []JudgeNote) *genai.Content {
 	var sb strings.Builder
 	if citationOnly {
 		// The answer's substance passed; only cites_sources failed. This is a
@@ -1015,6 +1015,8 @@ func buildRevisionContent(constitution string, question *genai.Content, answer s
 		sb.WriteString("An independent reviewer evaluated your previous answer and it must be improved before it can be returned. " +
 			"Below is the structured verdict: each failing criterion's definition, scoring bands, and (where locatable) an anchor into your answer, plus a concrete fix. " +
 			"Address every failure - use your tools to fix the gaps: re-fetch and verify sources, correct or remove unsupported claims, add missing citations. " +
+			"If you wrote any artifact last round (list_artifacts shows your prior revision), read_artifact it and edit_artifact the specific parts this verdict flags - " +
+			"don't regenerate it from scratch; write_<kind> stays available as a full-replace fallback when an edit genuinely doesn't fit. " +
 			"If you're unsure how to address this feedback, consult your advisor (ask_advisor) before revising - it knows this task's goal and can help you tell what actually needs to change. " +
 			"Then output only the corrected answer with no preamble or commentary.\n\n")
 	}
@@ -1026,6 +1028,15 @@ func buildRevisionContent(constitution string, question *genai.Content, answer s
 	sb.WriteString("Verdict:\n```json\n")
 	sb.WriteString(boundExcerpt(marshalEnvelope(env), maxFeedbackChars))
 	sb.WriteString("\n```\n\n")
+	// Notes source from the persisted judge_round record (#1092), each
+	// anchored to the exact prior-round artifact revision it concerns - so
+	// the worker can read_artifact/edit_artifact that revision directly
+	// instead of re-deriving what changed from prose alone.
+	if len(notes) > 0 {
+		sb.WriteString("Notes (read/edit the exact artifact revision each one references):\n```json\n")
+		sb.WriteString(boundExcerpt(marshalNotes(notes), maxFeedbackChars))
+		sb.WriteString("\n```\n\n")
+	}
 	if section := buildActivitySection(act); section != "" {
 		sb.WriteString(boundExcerpt(section, maxActivitySectionChars))
 		sb.WriteString("\n")
@@ -1150,6 +1161,25 @@ func inferAnchorKind(a *anchorSpec) {
 	case a.Expected != "" && a.Text == "" && a.Path == "":
 		a.Kind = "omission"
 	}
+}
+
+// dropCriteria removes the named criteria and recomputes the weakest-link
+// score over what's left (#1092: a fan-out slice reviewer isn't judged on
+// structured_verdict, since it never owns the delivered verdict).
+func dropCriteria(v verdict, names ...string) verdict {
+	for _, name := range names {
+		delete(v.Criteria, name)
+	}
+	lowest := 1.0
+	for _, c := range v.Criteria {
+		if c.Score < lowest {
+			lowest = c.Score
+		}
+	}
+	if len(v.Criteria) > 0 {
+		v.Score = lowest
+	}
+	return v
 }
 
 // aggregateVerdict: weakest-link gating - lowest criterion is the overall score. Clamped [0,1].

@@ -50,6 +50,20 @@ type AdvisorTask struct {
 	InvocationID    string
 	MemSecret       string // unguessable per-node credential for ACP memory
 	ACPSessionID    string // last round's ACP protocol session id, for cross-round resume (judge -> revise -> revise)
+	// Round/TurnID/HeadSHA: the gate's own per-round coordinates, refreshed at
+	// the start of every round (SetAdvisorThreadRound) so a tool-initiated
+	// write (write_finding et al, via the registered MemSession's
+	// AdvisorToken) stamps real lineage instead of Round:0/TurnID:""/
+	// HeadSHA:"" - BuildReviewPreload drops any finding with an empty HeadSHA
+	// (#1091 adversarial review finding #4).
+	Round   int
+	TurnID  string
+	HeadSHA string
+	// TriggerAnnotation: the prior round's judge_round id, refreshed alongside
+	// Round/TurnID/HeadSHA (SetAdvisorThreadRound) so a tool-initiated write
+	// carries the same trigger_annotation chain as gate-written artifacts
+	// (design V4 §7 case 3, #1092).
+	TriggerAnnotation string
 }
 
 // MemSession: ACP memory MCP resolution for one node.
@@ -67,6 +81,69 @@ type MemSession struct {
 	AppName   string
 	UserID    string
 	ChatID    string
+	// NodeID stamps Lineage.NodeID on writes made through list_artifacts/
+	// edit_artifact/write_artifact/write_<kind> - provenance only, never
+	// part of an artifact's id (#1090 §4.1).
+	NodeID string
+	// AdvisorToken looks up this node's AdvisorTask for its current
+	// Round/TurnID/HeadSHA (SetAdvisorThreadRound) - the MCP handlers stamp
+	// tool-initiated writes with these instead of hardcoding zero values
+	// (#1091 adversarial review finding #4).
+	AdvisorToken string
+	// ToolFindings records every write_<kind> id written via the loopback MCP
+	// tools this round, so saveCodeReviewRound's answer-tail fallback can
+	// tell "already written by the worker's own tool call this round" apart
+	// from "only known from the tail parse" and skip re-staging a duplicate
+	// (#1091 adversarial review finding #1).
+	ToolFindings *ToolFindingStage
+}
+
+// ToolFindingStage: per-node record of ids written via write_<kind> this
+// round - drained (opposite of ReviewStage's snapshot-not-drain shape) by
+// resetToolWrittenFindingIDs at the top of saveCodeReviewRound.
+type ToolFindingStage struct {
+	mu  sync.Mutex
+	ids map[string]bool
+}
+
+// NewToolFindingStage builds an empty stage for one node.
+func NewToolFindingStage() *ToolFindingStage { return &ToolFindingStage{ids: map[string]bool{}} }
+
+// Add records id as written via a tool call this round.
+func (s *ToolFindingStage) Add(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ids == nil {
+		s.ids = map[string]bool{}
+	}
+	s.ids[id] = true
+}
+
+// Snapshot returns a copy of every id recorded so far.
+func (s *ToolFindingStage) Snapshot() map[string]bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]bool, len(s.ids))
+	for id := range s.ids {
+		out[id] = true
+	}
+	return out
+}
+
+// Reset returns every id recorded so far and clears the stage - the
+// snapshot-then-drain scoping saveCodeReviewRound needs so an id written in
+// round N doesn't wrongly suppress round N+1's write for the same id
+// (#1108 finding 2: the stage previously had no reset and accumulated for
+// the whole node run despite the doc comments claiming per-round scope).
+func (s *ToolFindingStage) Reset() map[string]bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]bool, len(s.ids))
+	for id := range s.ids {
+		out[id] = true
+	}
+	s.ids = map[string]bool{}
+	return out
 }
 
 // MemStage: per-node staging buffer for stage_memory.
@@ -309,5 +386,21 @@ func SetAdvisorThreadSessionID(token, sessionID string) {
 	}
 	t := v.(AdvisorTask)
 	t.ACPSessionID = sessionID
+	advisorThreads.Store(token, t)
+}
+
+// SetAdvisorThreadRound records the gate's current round/turn/head-sha
+// coordinates on token's AdvisorTask - called at the start of every judge
+// round (and once for the draft) so a tool-initiated write made during that
+// round (write_finding et al, looked up via the registered MemSession's
+// AdvisorToken) stamps real lineage instead of zero values (#1091
+// adversarial review finding #4).
+func SetAdvisorThreadRound(token string, round int, turnID, headSHA, triggerAnnotation string) {
+	v, ok := advisorThreads.Load(token)
+	if !ok {
+		return
+	}
+	t := v.(AdvisorTask)
+	t.Round, t.TurnID, t.HeadSHA, t.TriggerAnnotation = round, turnID, headSHA, triggerAnnotation
 	advisorThreads.Store(token, t)
 }

@@ -53,7 +53,7 @@ func TestRound_CancelNodeAbortsMidRound(t *testing.T) {
 	go func() {
 		// Parent ctx is background - never cancelled by the caller. If the
 		// round only fires on ctx.Done(), this test hangs until IdleTimeout.
-		done <- a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "loop forever", "chat1", "n1", "", "", func(eventSpec) bool { return true })
+		done <- a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "loop forever", "chat1", "n1", "", "", func(eventSpec) bool { return true })
 	}()
 
 	<-registered
@@ -111,7 +111,7 @@ func TestRound_CancelBeforePromptSpawn(t *testing.T) {
 	}
 
 	t0 := time.Now()
-	err = a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "loop forever", "chat1", "n1", "", "", func(eventSpec) bool { return true })
+	err = a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "loop forever", "chat1", "n1", "", "", func(eventSpec) bool { return true })
 	if err == nil {
 		t.Fatal("want an error from the pre-spawn cancel")
 	}
@@ -153,7 +153,7 @@ func TestRound_CancelNodeAbortIdempotent(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- a.round(context.Background(), t.TempDir(), "", nil, workspace.Caps{}, "loop forever", "chat1", "n1", "", "", func(eventSpec) bool { return true })
+		done <- a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "loop forever", "chat1", "n1", "", "", func(eventSpec) bool { return true })
 	}()
 
 	<-registered
