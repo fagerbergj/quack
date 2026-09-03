@@ -311,6 +311,138 @@ FINDINGS:
 	}
 }
 
+// TestToolFindingStageResetsPerRound covers #1108 finding 2: an id written
+// via write_finding in round 1 must not still suppress round N's tail-parse
+// write of the SAME id - the stage scopes to "this round," not the whole node
+// run, so it has to be drained between rounds.
+func TestToolFindingStageResetsPerRound(t *testing.T) {
+	svc := newMetaAwareInMemory()
+	cfg := reviewerCfgWithArtifacts(t, svc, true)
+	rc := recordClient(cfg)
+
+	toolStage := NewToolFindingStage()
+	RegisterMemSession("sec-1108-f2", MemSession{ToolFindings: toolStage})
+	MarkMemSessionConnected("sec-1108-f2")
+	defer UnregisterMemSession("sec-1108-f2")
+	token := "tok-1108-f2"
+	RegisterAdvisorThread(token, AdvisorTask{MemSecret: "sec-1108-f2"})
+	defer UnregisterAdvisorThread(token)
+	cfg.AdvisorToken = token
+
+	rec := FindingRecord{Path: "a.go", Title: "bug one", State: "new"}
+	id, rev1, err := rc.SaveStructured(context.Background(), kindFinding, rec, "", recordstore.Lineage{NodeID: cfg.NodeID, Round: 1, Author: "worker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolStage.Add(id)
+
+	// Round 1: seeded from the tool write, no tail-parse write for it.
+	st := newEpisodicRoundState()
+	staged := StagedDelivery{Kind: "review", Recovered: true}
+	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "t1", 1, "VERDICT: request_changes\nFINDINGS:\n", staged, st)
+	if _, ok := toolStage.Snapshot()[id]; ok {
+		t.Fatalf("ToolFindingStage still holds %s after round 1 - not drained", id)
+	}
+
+	// Round 2: the SAME id, now only known via the answer tail (the worker
+	// didn't call write_finding again) - must be treated as a normal
+	// round-2 write, not wrongly skipped as "already written this round."
+	answer2 := "VERDICT: request_changes\nFINDINGS:\n- a.go:1: bug one.\n"
+	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "t2", 2, answer2, staged, st)
+
+	_, _, lineage, rev2, ok, err := rc.LatestWithMeta(context.Background(), id)
+	if err != nil || !ok {
+		t.Fatalf("LatestWithMeta: ok=%v err=%v", ok, err)
+	}
+	if rev2 <= rev1 {
+		t.Fatalf("round 2 revision = %d, want > round 1's %d - the tail-parse write for round 2 never happened (stale suppression)", rev2, rev1)
+	}
+	if lineage.Round != 2 {
+		t.Fatalf("lineage.round = %d, want 2", lineage.Round)
+	}
+}
+
+// TestSaveCodeReviewRoundLogsAndSkipsOnSeedReadFailure covers #1108 finding
+// 3a: when a tool-written id can't be re-read while seeding the round (here,
+// the artifact.Service is swapped out from under the client so every Load
+// fails), the finding must not silently vanish and the tail-parse fallback
+// must not stamp a fabricated ParentRevision for it.
+func TestSaveCodeReviewRoundLogsAndSkipsOnSeedReadFailure(t *testing.T) {
+	svc := newMetaAwareInMemory()
+	cfg := reviewerCfgWithArtifacts(t, svc, true)
+	rc := recordClient(cfg)
+
+	toolStage := NewToolFindingStage()
+	RegisterMemSession("sec-1108-f3a", MemSession{ToolFindings: toolStage})
+	MarkMemSessionConnected("sec-1108-f3a")
+	defer UnregisterMemSession("sec-1108-f3a")
+	token := "tok-1108-f3a"
+	RegisterAdvisorThread(token, AdvisorTask{MemSecret: "sec-1108-f3a"})
+	defer UnregisterAdvisorThread(token)
+	cfg.AdvisorToken = token
+
+	rec := FindingRecord{Path: "a.go", Title: "bug one", State: "new"}
+	id, _, err := rc.SaveStructured(context.Background(), kindFinding, rec, "", recordstore.Lineage{NodeID: cfg.NodeID, Round: 1, Author: "worker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolStage.Add(id)
+
+	// Simulate the seed re-read failing: swap in an artifact.Service whose
+	// Load always errors, while the id still resolves via the SAME
+	// SubjectHint/kindCodeReview lookup for the early toolRev short-circuit
+	// (which is unaffected since no code_review record exists yet).
+	cfg.Artifacts = &alwaysFailLoadService{}
+
+	st := newEpisodicRoundState()
+	staged := StagedDelivery{Kind: "review", Recovered: true}
+	answer := "VERDICT: request_changes\nFINDINGS:\n- a.go:1: bug one.\n"
+	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "t1", 1, answer, staged, st)
+
+	if _, live := st.findings[id]; live {
+		t.Fatalf("finding %s should not be recorded live this round when its seed-read failed", id)
+	}
+}
+
+// alwaysFailLoadService makes every Load fail, simulating a seed re-read
+// failure (#1108 finding 3a) without needing a real broken backend.
+type alwaysFailLoadService struct{ artifact.Service }
+
+func (alwaysFailLoadService) Load(context.Context, *artifact.LoadRequest) (*artifact.LoadResponse, error) {
+	return nil, os.ErrNotExist
+}
+func (alwaysFailLoadService) Save(ctx context.Context, req *artifact.SaveRequest) (*artifact.SaveResponse, error) {
+	return &artifact.SaveResponse{Version: 1}, nil
+}
+func (alwaysFailLoadService) Versions(context.Context, *artifact.VersionsRequest) (*artifact.VersionsResponse, error) {
+	return nil, os.ErrNotExist
+}
+
+// TestFindingIdentityMatchesAcrossTailParseAndToolWrite covers #1108 finding
+// 3b: the exact-hash dedup between a tail-parsed finding and its tool-written
+// equivalent only holds if both code paths normalize into the same
+// FindingRecord shape. The tail-parse path (saveCodeReviewRound) splits an
+// answer-tail body via splitFirstSentence into Title/Rationale; a tool call
+// (write_finding) supplies Title/Rationale directly. Same logical finding,
+// same fields, must hash to the same id via recordstore.IdentityFor.
+func TestFindingIdentityMatchesAcrossTailParseAndToolWrite(t *testing.T) {
+	title, rationale := splitFirstSentence("bug one. it breaks things")
+	tailParsed := FindingRecord{Path: "a.go", LineHint: 1, Snippet: "func Foo() {", Title: title, Rationale: rationale, State: "new"}
+	toolWritten := FindingRecord{Path: "a.go", LineHint: 1, Snippet: "func Foo() {", Title: "bug one", Rationale: "it breaks things", State: "new"}
+
+	id1, err := recordstore.IdentityFor(kindFinding, tailParsed, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id2, err := recordstore.IdentityFor(kindFinding, toolWritten, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id1 != id2 {
+		t.Fatalf("tail-parsed id %q != tool-written id %q for the same logical finding - dedup would fail", id1, id2)
+	}
+}
+
 // TestFindingIdentityStableAcrossLineShiftHeadSHAAndNode covers #1006 test
 // case 2 / #1090 V4.2 verification #2: the same finding (same path, title,
 // flagged-line text) keeps its id regardless of line number, head SHA, or

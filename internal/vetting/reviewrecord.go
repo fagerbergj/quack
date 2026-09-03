@@ -413,12 +413,15 @@ func latestCodeReviewRevSafe(ctx context.Context, c *recordstore.Client, cfg Con
 	return rev, ok
 }
 
-// toolWrittenFindingIDs returns the ids written via write_<kind> tool calls
-// this round (ToolFindingStage, threaded through the registered MemSession),
-// nil if there's no advisor thread/session for this node - saveCodeReviewRound's
-// answer-tail fallback uses it to skip re-staging an id the worker already
-// wrote directly (#1091 adversarial review finding #1).
-func toolWrittenFindingIDs(cfg Config) map[string]bool {
+// resetToolWrittenFindingIDs drains the ids written via write_<kind> tool
+// calls this round (ToolFindingStage, threaded through the registered
+// MemSession), nil if there's no advisor thread/session for this node -
+// saveCodeReviewRound's answer-tail fallback uses it to skip re-staging an id
+// the worker already wrote directly (#1091 adversarial review finding #1).
+// Draining (not just snapshotting) is what makes this "this round" rather
+// than "this node run": an id tool-written in round N must not still be in
+// the stage suppressing round N+1's write for the same id (#1108 finding 2).
+func resetToolWrittenFindingIDs(cfg Config) map[string]bool {
 	if cfg.AdvisorToken == "" {
 		return nil
 	}
@@ -430,7 +433,7 @@ func toolWrittenFindingIDs(cfg Config) map[string]bool {
 	if !ok || ms.ToolFindings == nil {
 		return nil
 	}
-	return ms.ToolFindings.Snapshot()
+	return ms.ToolFindings.Reset()
 }
 
 func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, staged StagedDelivery, st *episodicRoundState) {
@@ -438,6 +441,11 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 	if c == nil {
 		return
 	}
+
+	// Drained unconditionally, before any other round bookkeeping, so the
+	// stage's "this round" scope (#1108 finding 2) holds regardless of which
+	// branch below returns early.
+	toolWritten := resetToolWrittenFindingIDs(cfg)
 
 	// #1091 gate fallback: write_code_review/write_finding (the loopback MCP
 	// tools) let the worker write this round's code_review record directly,
@@ -492,11 +500,18 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 	// round: seed them into current/findingIDs from the store (no write here -
 	// they're already persisted) so the tail-parse loop below can skip them
 	// instead of minting a duplicate revision with a fabricated
-	// ParentRevision 0 (#1091 adversarial review finding #1).
-	toolWritten := toolWrittenFindingIDs(cfg)
+	// ParentRevision 0 (#1091 adversarial review finding #1). This seed loop
+	// always runs, unconditionally, before the tail-parse skip-decision loop
+	// below reads toolWritten (#1108 finding 3b).
 	for id := range toolWritten {
 		raw, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id)
 		if lerr != nil || !ok {
+			// #1108 finding 3a: log instead of silently dropping the finding
+			// from the round. Leave id in toolWritten so the tail-parse loop
+			// below still skips it rather than writing over it with a
+			// ParentRevision from st.findingRev[id] - that value has nothing
+			// to do with this unread revision and would be fabricated.
+			slog.Warn("tool-written finding could not be re-read while seeding the round; it will be missing from this round's code_review", "component", "vetting", "node", nodeID, "id", id, "err", lerr)
 			continue
 		}
 		var f FindingRecord

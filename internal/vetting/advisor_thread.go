@@ -126,6 +126,22 @@ func (s *ToolFindingStage) Snapshot() map[string]bool {
 	return out
 }
 
+// Reset returns every id recorded so far and clears the stage - the
+// snapshot-then-drain scoping saveCodeReviewRound needs so an id written in
+// round N doesn't wrongly suppress round N+1's write for the same id
+// (#1108 finding 2: the stage previously had no reset and accumulated for
+// the whole node run despite the doc comments claiming per-round scope).
+func (s *ToolFindingStage) Reset() map[string]bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]bool, len(s.ids))
+	for id := range s.ids {
+		out[id] = true
+	}
+	s.ids = map[string]bool{}
+	return out
+}
+
 // MemStage: per-node staging buffer for stage_memory.
 type MemStage struct {
 	mu    sync.Mutex
