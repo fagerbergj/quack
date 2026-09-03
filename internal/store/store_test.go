@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"google.golang.org/adk/v2/session"
@@ -735,5 +736,36 @@ func TestRecordedQuerySQL_OffByDefaultAndBounded(t *testing.T) {
 	}
 	if got := len(st.RecordedQuerySQL()); got != querySQLCap {
 		t.Fatalf("RecordedQuerySQL length = %d, want exactly querySQLCap (%d) after %d queries", got, querySQLCap, n)
+	}
+}
+
+// TestUpdateTitle_CapsLength is #1124's backstop: a titler that ignores its
+// own "3-6 words" instruction (or a manual rename, or an extension's origin
+// label) must never persist an unbounded string as a chat's title - capped
+// once here, not duplicated per caller.
+func TestUpdateTitle_CapsLength(t *testing.T) {
+	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("New sqlite: %v", err)
+	}
+	ctx := context.Background()
+	c, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+
+	longAnswer := "# WAL Design Comparison: PostgreSQL vs. SQLite\n\n## Researcher Node A — " + strings.Repeat("detailed findings ", 50)
+	if err := st.UpdateTitle(ctx, c.ID, longAnswer); err != nil {
+		t.Fatalf("UpdateTitle: %v", err)
+	}
+	got, err := st.GetChat(ctx, c.ID)
+	if err != nil || got == nil {
+		t.Fatalf("GetChat: %v, %v", got, err)
+	}
+	if n := len([]rune(got.Title)); n > MaxTitleLen {
+		t.Fatalf("Title length = %d, want <= MaxTitleLen (%d)", n, MaxTitleLen)
+	}
+	if got.Title == longAnswer {
+		t.Fatalf("Title = the full uncapped answer, want it truncated")
 	}
 }
