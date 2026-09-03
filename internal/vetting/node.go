@@ -608,7 +608,12 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				// verdict didn't land, so don't start another revise round on
 				// it - surface it the same as an unavailable judge.
 				log.Error("judge.round WAL append failed; stopping the round loop", "round", round, "err", walErr)
+				verdictWord := "failed"
+				if env.Passed {
+					verdictWord = "passed"
+				}
 				res.Passed = false
+				res.Feedback = fmt.Sprintf("Round %d %s (score %.2f) but could not be recorded in the write-ahead log; treating as failed.", round, verdictWord, v.Score)
 				break
 			}
 			emitEvaluationResults(ledgerCtx, runID, v)

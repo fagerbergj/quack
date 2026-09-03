@@ -161,9 +161,25 @@ func (c *Client) WithLedger(store ledger.LedgerStore) *Client {
 	return c
 }
 
+// revisionLocks/revisionLockFor: a process-local per-(chat,id) mutex, held
+// around read-parent + AppendIntent + saveRow so the WAL's next revision and
+// the store's assigned revision are computed under the same lock - mirrors
+// internal/store's artifactRevisionLocks/revisionLockFor for the underlying
+// row itself. Without this, two concurrent save() calls for the same id can
+// both read parent=N and both append a WAL entry claiming revision N+1,
+// while the store's own per-id lock still hands out N+1 and N+2 - a phantom
+// WAL entry with no row, and a wrong parent_revision on the real one.
+var revisionLocks sync.Map // key -> *sync.Mutex
+
+func revisionLockFor(chatID, id string) *sync.Mutex {
+	v, _ := revisionLocks.LoadOrStore(chatID+"\x00"+id, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
+
 // lastRevision returns the highest revision recorded in an artifact.revision
-// WAL entry for id, 0 if none. A full per-chat scan (ponytail: O(entries),
-// fine at WAL-groundwork volumes; index by key if this shows up in profiles).
+// WAL entry for id, 0 if none. A full per-chat scan (ponytail: O(entries);
+// ledger_entries has no (chat_id, key) index yet, so a server-side key filter
+// would still scan - the index belongs with #1101's projections work).
 func lastRevision(ctx context.Context, store ledger.LedgerStore, chatID, id string) (int, error) {
 	entries, err := store.ReadEntries(ctx, chatID, 0)
 	if err != nil {
@@ -200,6 +216,13 @@ type artifactRevisionPayload struct {
 
 func (c *Client) save(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage) (int, error) {
 	if c.ledgerStore != nil {
+		// Held across read-parent + AppendIntent + saveRow: otherwise two
+		// concurrent saves for the same id can both read the same parent and
+		// both claim the same next revision in the WAL (adversarial review
+		// finding on #1100).
+		mu := revisionLockFor(c.sessionID, id)
+		mu.Lock()
+		defer mu.Unlock()
 		parentRev, err := lastRevision(ctx, c.ledgerStore, c.sessionID, id)
 		if err != nil {
 			return 0, fmt.Errorf("recordstore: read ledger parent revision for %s: %w", id, err)
@@ -225,7 +248,10 @@ func (c *Client) save(ctx context.Context, id, kind string, class Class, mime st
 			return 0, err
 		}
 		if rev != nextRev {
-			slog.Warn("recordstore: store-assigned revision disagrees with the WAL's", "component", "recordstore", "id", id, "wal_revision", nextRev, "store_revision", rev)
+			// Under the lock above this should be impossible; if it fires,
+			// the WAL and the store have diverged - fail closed rather than
+			// let a mismatched revision-content pairing propagate silently.
+			return 0, fmt.Errorf("recordstore: store assigned revision %d for %s, WAL expected %d", rev, id, nextRev)
 		}
 		return rev, nil
 	}

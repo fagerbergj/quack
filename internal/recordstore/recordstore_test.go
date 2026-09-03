@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -319,5 +320,79 @@ func TestNoLedgerConfiguredUnchanged(t *testing.T) {
 	_, rev, err := c.SaveBlob(ctx, "test.blob", []byte("v1"), "text/plain", "doc:no-ledger", Lineage{})
 	if err != nil || rev != 1 {
 		t.Fatalf("SaveBlob with no ledger configured: rev=%d err=%v, want rev=1 err=nil", rev, err)
+	}
+}
+
+// TestConcurrentSaveSameIDWALRevisionsAreSequential is the adversarial-review
+// fix for #1100: N goroutines racing SaveBlob on the SAME id must produce WAL
+// artifact.revision entries numbered exactly 1..N with a strictly increasing
+// parent chain (each entry's parent_revision == the previous one's revision),
+// and each WAL revision must equal what the store itself assigned - proving
+// read-parent + AppendIntent + saveRow run under one lock, not just that
+// AppendIntent's own seq is gapless. Run with -race.
+func TestConcurrentSaveSameIDWALRevisionsAreSequential(t *testing.T) {
+	const n = 20
+	svc := artifact.InMemoryService()
+	fl := newFakeLedger()
+	c := New(svc, "quack", "user1", "chat1").WithLedger(fl)
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, _, err := c.SaveBlob(ctx, "test.blob", []byte{byte(i)}, "text/plain", "doc:race", Lineage{})
+			errs[i] = err
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("save %d failed: %v", i, err)
+		}
+	}
+
+	id, err := IdentityFor("test.blob", nil, "doc:race")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := fl.ReadEntries(ctx, "chat1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var revs []int
+	byRev := map[int]artifactRevisionPayload{}
+	for _, e := range entries {
+		if e.Key != id {
+			continue
+		}
+		var p artifactRevisionPayload
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			t.Fatal(err)
+		}
+		revs = append(revs, p.Revision)
+		byRev[p.Revision] = p
+	}
+	if len(revs) != n {
+		t.Fatalf("got %d artifact.revision WAL entries for %s, want %d (one per save, no phantom/duplicate revisions)", len(revs), id, n)
+	}
+	sort.Ints(revs)
+	for i, r := range revs {
+		want := i + 1
+		if r != want {
+			t.Fatalf("WAL revisions = %v, want exactly 1..%d with no gaps or duplicates", revs, n)
+		}
+		if want > 1 && byRev[want].ParentRevision != want-1 {
+			t.Fatalf("revision %d's parent_revision = %d, want %d (strictly increasing chain)", want, byRev[want].ParentRevision, want-1)
+		}
+	}
+	_, storeRev, ok, err := c.Latest(ctx, id)
+	if err != nil || !ok {
+		t.Fatalf("Latest: ok=%v err=%v", ok, err)
+	}
+	if storeRev != n {
+		t.Fatalf("store's own latest revision = %d, want %d (matches the WAL's highest)", storeRev, n)
 	}
 }
