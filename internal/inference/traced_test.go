@@ -109,6 +109,26 @@ func TestTracedModel_GenerateContentStopsEarlyOnConsumerBreak(t *testing.T) {
 	}
 }
 
+// TestTracedModel_GenerateContentRecordsGatewayFailure proves the #1105 wire:
+// a generate() error still reaches the chat+node failure tracker even though
+// ADK's own runner later swallows the returned error into an empty node
+// completion - this is the only place the real cause survives that.
+func TestTracedModel_GenerateContentRecordsGatewayFailure(t *testing.T) {
+	const chatID, node, agent = "chat-traced-1105", "write-plan", "synthesizer"
+	t.Cleanup(func() { ClearFailure(chatID, node, agent) })
+
+	wantErr := errors.New(`openai qwen3.8-27b (generate): status 502: POST "http://llm-swap:11436/v1/chat/completions": 502 Bad Gateway`)
+	tm := &tracedModel{LLM: &stubModel{name: "m", err: wantErr}, name: "m"}
+	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: chatID, Node: node, Agent: agent})
+
+	for range tm.GenerateContent(ctx, &model.LLMRequest{}, true) {
+	}
+
+	if err, streak, _, ok := LastFailure(chatID, node, agent); !ok || streak != 1 || err.Error() != wantErr.Error() {
+		t.Fatalf("LastFailure = (%v, %d, ok=%v), want the gateway error recorded once", err, streak, ok)
+	}
+}
+
 func TestTracedModel_EmbedDelegatesWhenSupported(t *testing.T) {
 	want := [][]float32{{1, 2, 3}}
 	inner := &embeddableStub{stubModel: stubModel{name: "embed-model"}, vectors: want}
