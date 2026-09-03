@@ -130,35 +130,34 @@ func (a *Agent) RunNode(ctx adkagent.Context, nodeInput any) iter.Seq2[*session.
 // node.ID)), unlike cfg.NodeID (which collapses to the shared workspace scope
 // on a setup chain's writer node) or at.SessionID (the ADK session id, a
 // retry-only alias - see AdvisorTask.ChatID).
-func (a *Agent) resolveNode(ctx context.Context, prompt string) (cwd, memSecret, ctxDir, scratchDir string, readOnly bool, chatID, nodeID, token, priorSessionID string, err error) {
+func (a *Agent) resolveNode(ctx context.Context, prompt string) (cwd, memSecret, scratchDir string, readOnly bool, chatID, nodeID, token, priorSessionID string, err error) {
 	token, ok := vetting.ParseAdvisorThread(prompt)
 	if !ok {
-		return "", "", "", "", false, "", "", "", "", errors.New("acp: prompt carries no workspace-scope marker (is this agent running outside the gate?)")
+		return "", "", "", false, "", "", "", "", errors.New("acp: prompt carries no workspace-scope marker (is this agent running outside the gate?)")
 	}
 	at, ok := vetting.LookupAdvisorThread(token)
 	if !ok {
-		return "", "", "", "", false, "", "", "", "", fmt.Errorf("acp: advisor thread %q not registered", token)
+		return "", "", "", false, "", "", "", "", fmt.Errorf("acp: advisor thread %q not registered", token)
 	}
 	chatID, nodeID, priorSessionID = at.ChatID, at.NodeID, at.ACPSessionID
 	if a.opts.Jail != nil {
-		ctxDir, _ = a.opts.Jail.Resolve(a.opts.UserID, at.ChatID, workspace.ContextDirScope)
 		// A read-only reviewer needs this exactly as much as a writer does
 		// (TMPDIR/mktemp/heredocs don't care whether the round can touch its
 		// own tree) - scoped per node so concurrent rounds never collide.
 		scratchDir, err = a.opts.Jail.ScratchDir(a.opts.UserID, at.ChatID, at.WorkspaceNodeID)
 		if err != nil {
-			return "", "", "", "", false, chatID, nodeID, token, priorSessionID, fmt.Errorf("acp: scratch dir: %w", err)
+			return "", "", "", false, chatID, nodeID, token, priorSessionID, fmt.Errorf("acp: scratch dir: %w", err)
 		}
 	}
 	if at.WorktreeParent != "" {
 		if a.opts.Worktree == nil {
-			return "", "", "", "", false, chatID, nodeID, token, priorSessionID, fmt.Errorf("acp: node %q needs a git worktree but no worktree executor is configured", at.NodeID)
+			return "", "", "", false, chatID, nodeID, token, priorSessionID, fmt.Errorf("acp: node %q needs a git worktree but no worktree executor is configured", at.NodeID)
 		}
 		cwd, err = a.opts.Worktree(ctx, a.opts.UserID, at.ChatID, at.WorktreeParent, at.WorkspaceNodeID)
-		return cwd, at.MemSecret, ctxDir, scratchDir, at.ReadOnly, chatID, nodeID, token, priorSessionID, err
+		return cwd, at.MemSecret, scratchDir, at.ReadOnly, chatID, nodeID, token, priorSessionID, err
 	}
 	cwd, err = a.opts.Jail.EnsureDir(a.opts.UserID, at.ChatID, workspace.NodeDir(at.WorkspaceNodeID))
-	return cwd, at.MemSecret, ctxDir, scratchDir, at.ReadOnly, chatID, nodeID, token, priorSessionID, err
+	return cwd, at.MemSecret, scratchDir, at.ReadOnly, chatID, nodeID, token, priorSessionID, err
 }
 
 // runPrompt is one full round: spawn, handshake, prompt, stream translation, shutdown.
@@ -168,7 +167,7 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 			yield(nil, errors.New("acp: empty prompt"))
 			return
 		}
-		cwd, memSecret, ctxDir, scratchDir, readOnly, steerChatID, steerNodeID, advisorToken, priorSessionID, err := a.resolveNode(ctx, prompt)
+		cwd, memSecret, scratchDir, readOnly, steerChatID, steerNodeID, advisorToken, priorSessionID, err := a.resolveNode(ctx, prompt)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -193,9 +192,6 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 			outbound = a.opts.Preamble + "\n\n" + outbound
 		}
 		var extraRO []string
-		if ctxDir != "" {
-			extraRO = []string{ctxDir}
-		}
 		stopped := false
 		err = a.round(ctx, cwd, memSecret, extraRO, caps, outbound, steerChatID, steerNodeID, advisorToken, priorSessionID, func(spec eventSpec) bool {
 			if !yield(a.newEvent(ctx, spec), nil) {
