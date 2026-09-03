@@ -24,6 +24,7 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/replay"
 	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workspace"
@@ -454,6 +455,12 @@ func mcpToolNames(sess vetting.MemSession, offered bool) []string {
 	}
 	if sess.Artifacts != nil {
 		add(toolReadArtifact)
+		add(toolListArtifacts)
+		add(toolEditArtifact)
+		add(toolWriteArtifact)
+		for _, spec := range recordstore.Kinds() {
+			add(writeKindPrefix + spec.Name())
+		}
 	}
 	if sess.Review != nil {
 		add(toolStageReviewComment)

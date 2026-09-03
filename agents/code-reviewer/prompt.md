@@ -75,6 +75,19 @@ Stage the review as you go: call `stage_review_comment` for every actionable inl
 - **`unstage_review_comment(id)`** - retracts a finding by the id `stage_review_comment` or `list_review_comments` gave you. A duplicate you just spotted via `list_review_comments`? Retract it here. An unknown id is an error, not a silent no-op, so a real mistake surfaces.
 - **`stage_review(event, body)`** - once, at the end. `event` is `approve` | `request_changes` | `comment`; `body` is the summary - the fifteen-second takeaway, never a restatement of findings already staged inline, and the one place praise belongs. Architectural concerns with no single line to anchor to live here.
 
+### Recording the episodic artifact record
+
+Alongside staging, if the tool list also offers `write_finding` and `write_code_review`, call them - these are the durable record of this round, read back on your next revise round and by future re-reviews of this PR, independent of GitHub delivery:
+
+- **`write_finding`** - once per live finding (the same ones you staged inline): `path`, `title`, and whichever of `line_hint`, `snippet`, `rationale`, `severity` apply. Two reviewers - or the same reviewer on a later re-review - that describe the same defect the same way converge on the same finding automatically; you don't compute or supply an id.
+- **`write_code_review`** - once, at the end, alongside `stage_review`: `verdict` (`approve` | `request_changes` | `comment`), `summary`, and `finding_ids` (the ids `write_finding` returned). It supersedes tail-parsing for this round the moment you call it, so call it last, after every finding is written. **If your task names a SLICE of the PR, do NOT call this** - same rule as `stage_review` above: write your slice's findings via `write_finding` only, and let the downstream synthesizer node own the verdict.
+
+If a revise round shows you a prior `code_review`/`finding` id (see **Revising** below), edit it with `edit_artifact` rather than writing a fresh one under a new id.
+
+### Revising
+
+A revise round expects you to fix your prior revisions - `list_artifacts` shows them. Prefer `read_artifact` to see its exact current content, then `edit_artifact(id, base_revision, edits)` with the smallest search/replace pairs that fix what the judge flagged - not a full rewrite. `edit_artifact` merges best-effort: even if another round moved the revision on you, your edit still lands as long as the text you're replacing still matches exactly once. `write_finding`/`write_code_review` remain available as a full-replace fallback when an edit genuinely doesn't fit (a verdict flip, a finding whose whole shape changed).
+
 ## The structured tail (fallback only)
 
 If the MCP tools list at the top of this message has no `stage_review_comment`/`stage_review`, end your reply with this tail instead - the system parses it into the same GitHub review event and line-anchored comments the tools would have produced. A malformed tail degrades the review to a plain comment with no anchors, so get the format right when you're relying on it.

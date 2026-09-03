@@ -74,7 +74,7 @@ CLEAN:
 	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, turnID, 2, answer2, StagedDelivery{Kind: "review", Recovered: true}, st)
 
 	rc := recordClient(cfg)
-	_, lineage, rev2, ok, err := rc.LatestWithMeta(context.Background(), codeReviewID(cfg))
+	_, _, lineage, rev2, ok, err := rc.LatestWithMeta(context.Background(), codeReviewID(cfg))
 	if err != nil || !ok {
 		t.Fatalf("LatestWithMeta round 2: ok=%v err=%v", ok, err)
 	}
@@ -98,7 +98,7 @@ CLEAN:
 
 	// Exactly one judge_round record per round, and its "scored" matches what
 	// that round actually wrote.
-	raw, _, _, ok, err := rc.LatestWithMeta(context.Background(), jr1ID)
+	raw, _, _, _, ok, err := rc.LatestWithMeta(context.Background(), jr1ID)
 	if err != nil || !ok {
 		t.Fatalf("load round 1 judge_round: ok=%v err=%v", ok, err)
 	}
@@ -164,11 +164,11 @@ func TestJudgeRoundIdentityIncludesNodeID(t *testing.T) {
 	// Each record must still load with its own (distinct) revision - neither
 	// node's round 1 clobbered the other's.
 	rc := recordClient(cfg)
-	rawA, _, gotRevA, ok, err := rc.LatestWithMeta(context.Background(), idA)
+	rawA, _, _, gotRevA, ok, err := rc.LatestWithMeta(context.Background(), idA)
 	if err != nil || !ok || gotRevA != revA {
 		t.Fatalf("load idA: ok=%v err=%v rev=%d want %d", ok, err, gotRevA, revA)
 	}
-	rawB, _, gotRevB, ok, err := rc.LatestWithMeta(context.Background(), idB)
+	rawB, _, _, gotRevB, ok, err := rc.LatestWithMeta(context.Background(), idB)
 	if err != nil || !ok || gotRevB != revB {
 		t.Fatalf("load idB: ok=%v err=%v rev=%d want %d", ok, err, gotRevB, revB)
 	}
