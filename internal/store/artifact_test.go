@@ -320,3 +320,53 @@ func TestSaveWithMetaPersistsLineage(t *testing.T) {
 		t.Fatalf("RevisionsByTurn(turn-1) = %+v, err=%v - SaveWithMeta must populate turn_id like SaveForTurn does", revs, err)
 	}
 }
+
+// TestConcurrentSaveSameID_NoLostRevisions covers #1090 adversarial review
+// finding #3: N goroutines saving the same (app,user,session,name) key must
+// come out with revisions exactly 1..N, no error and no two goroutines
+// landing on the same revision - the MAX(revision)+Create race the
+// per-key mutex (and, as a backstop, the unique-violation retry) close.
+// Run under -race; also exercises the row-backed and in-memory backends the
+// same way KeepEveryRevision does.
+func TestConcurrentSaveSameID_NoLostRevisions(t *testing.T) {
+	for name, svc := range bothArtifactServices(t) {
+		t.Run(name, func(t *testing.T) {
+			const n = 20
+			ctx := context.Background()
+			var wg sync.WaitGroup
+			errs := make([]error, n)
+			revs := make([]int64, n)
+			for i := 0; i < n; i++ {
+				wg.Add(1)
+				go func(i int) {
+					defer wg.Done()
+					resp, err := svc.Save(ctx, &artifact.SaveRequest{
+						AppName: "app", UserID: "u", SessionID: "s", FileName: "concurrent.txt",
+						Part: mustPart("v"),
+					})
+					errs[i] = err
+					if resp != nil {
+						revs[i] = resp.Version
+					}
+				}(i)
+			}
+			wg.Wait()
+
+			seen := make(map[int64]bool, n)
+			for i, err := range errs {
+				if err != nil {
+					t.Fatalf("goroutine %d: Save failed: %v", i, err)
+				}
+				if seen[revs[i]] {
+					t.Fatalf("revision %d assigned to two goroutines", revs[i])
+				}
+				seen[revs[i]] = true
+			}
+			for v := int64(1); v <= n; v++ {
+				if !seen[v] {
+					t.Fatalf("revision %d never assigned; got %v", v, revs)
+				}
+			}
+		})
+	}
+}

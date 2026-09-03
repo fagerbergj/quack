@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -113,7 +114,7 @@ func NewLargeObjectArtifactService(db *gorm.DB) (artifact.Service, error) {
 // returns the large-object-backed artifact.Service - durable across
 // restarts. url must be a postgres DSN (config.validate enforces this).
 func NewArtifactService(url string) (artifact.Service, error) {
-	gormCfg := &gorm.Config{Logger: slogGormLogger()}
+	gormCfg := &gorm.Config{Logger: slogGormLogger(), TranslateError: true}
 	db, err := gorm.Open(postgres.Open(url), gormCfg)
 	if err != nil {
 		return nil, fmt.Errorf("store: open artifact store: %w", err)
@@ -290,6 +291,27 @@ func (s *gormArtifactService) RevisionsByTurn(ctx context.Context, appName, user
 // Save implements [artifact.Service]. Version numbering always
 // auto-increments (matches ADK's own services - both ignore an explicit
 // SaveRequest.Version; see inmemory.go/gcsartifact's Save).
+// artifactRevisionLocks serializes MAX(revision)+Create per (app, user,
+// session, name) key within this process - two rounds of the same node, or
+// two nodes, writing the same id can no longer both read the same MAX and
+// have one insert silently fail the unique index (#1090 adversarial review
+// finding #3). ponytail: process-local only, not a real distributed lock
+// (Postgres advisory lock keyed on hashtext(...) would cover multiple
+// replicas too) - the retry loop below is the cross-process safety net for that
+// gap, and quack runs single-instance today.
+var artifactRevisionLocks sync.Map // key -> *sync.Mutex
+
+func revisionLockFor(appName, userID, sessionID, name string) *sync.Mutex {
+	key := appName + "\x00" + userID + "\x00" + sessionID + "\x00" + name
+	v, _ := artifactRevisionLocks.LoadOrStore(key, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
+
+// maxRevisionInsertAttempts bounds the retry-on-unique-violation loop below -
+// a losing insert (this process's mutex missed it, e.g. a second replica)
+// gets a couple of fresh-MAX retries before giving up loud.
+const maxRevisionInsertAttempts = 5
+
 func (s *gormArtifactService) Save(ctx context.Context, req *artifact.SaveRequest) (*artifact.SaveResponse, error) {
 	if err := req.Validate(); err != nil {
 		return nil, fmt.Errorf("request validation failed: %w", err)
@@ -308,21 +330,32 @@ func (s *gormArtifactService) Save(ctx context.Context, req *artifact.SaveReques
 		return nil, fmt.Errorf("store: save artifact blob: %w", err)
 	}
 
-	var maxRev int64
-	if err := s.db.WithContext(ctx).Model(&Artifact{}).
-		Where("app_name = ? AND user_id = ? AND session_id = ? AND name = ?", req.AppName, req.UserID, sessionID, req.FileName).
-		Select("COALESCE(MAX(revision), 0)").Scan(&maxRev).Error; err != nil {
-		return nil, err
-	}
+	mu := revisionLockFor(req.AppName, req.UserID, sessionID, req.FileName)
+	mu.Lock()
+	defer mu.Unlock()
 
 	meta := artifactMetaFromContext(ctx)
-	rec := Artifact{
-		AppName: req.AppName, UserID: req.UserID, SessionID: sessionID, Name: req.FileName,
-		Revision: maxRev + 1, MimeType: mime, Size: int64(len(data)),
-		LOOid: loOid, RowBlobID: rowBlobID, TurnID: turnIDFromContext(ctx),
-		Kind: meta.Kind, Class: meta.Class, Lineage: string(meta.LineageJSON),
-	}
-	if err := s.db.WithContext(ctx).Create(&rec).Error; err != nil {
+	var rec Artifact
+	for attempt := 1; ; attempt++ {
+		var maxRev int64
+		if err := s.db.WithContext(ctx).Model(&Artifact{}).
+			Where("app_name = ? AND user_id = ? AND session_id = ? AND name = ?", req.AppName, req.UserID, sessionID, req.FileName).
+			Select("COALESCE(MAX(revision), 0)").Scan(&maxRev).Error; err != nil {
+			return nil, err
+		}
+		rec = Artifact{
+			AppName: req.AppName, UserID: req.UserID, SessionID: sessionID, Name: req.FileName,
+			Revision: maxRev + 1, MimeType: mime, Size: int64(len(data)),
+			LOOid: loOid, RowBlobID: rowBlobID, TurnID: turnIDFromContext(ctx),
+			Kind: meta.Kind, Class: meta.Class, Lineage: string(meta.LineageJSON),
+		}
+		err := s.db.WithContext(ctx).Create(&rec).Error
+		if err == nil {
+			break
+		}
+		if errors.Is(err, gorm.ErrDuplicatedKey) && attempt < maxRevisionInsertAttempts {
+			continue
+		}
 		return nil, err
 	}
 	return &artifact.SaveResponse{Version: rec.Revision}, nil
