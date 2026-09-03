@@ -353,6 +353,72 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/chats/{chat_id}/artifacts/{artifact_name}/revisions:
+    get:
+      operationId: listArtifactRevisions
+      summary: List one artifact's revisions with lineage
+      description: >
+        Every revision of one artifact id, newest first, each with its
+        lineage (node_id, round, parent_revision, author). Read-only; the
+        per-node artifact panel's revision picker (#1094).
+      parameters:
+        - $ref: "#/components/parameters/ChatID"
+        - $ref: "#/components/parameters/ArtifactName"
+      responses:
+        "200":
+          description: The artifact's revisions, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArtifactRevisionList"
+        "404":
+          description: No such chat or artifact
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/chats/{chat_id}/artifacts/{artifact_name}/diff:
+    get:
+      operationId: diffArtifactRevisions
+      summary: Unified diff between two revisions of one artifact
+      description: >
+        A unified text diff between `from` and `to` revisions, for text and
+        structured (JSON) artifacts only - binary blobs answer 415, since a
+        byte-level diff of an image or PDF isn't meaningful to render.
+      parameters:
+        - $ref: "#/components/parameters/ChatID"
+        - $ref: "#/components/parameters/ArtifactName"
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Unified diff text
+          content:
+            text/plain:
+              schema:
+                type: string
+        "404":
+          description: No such chat, artifact, or revision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: Artifact is a binary blob; diffing is not supported
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/chats/{chat_id}/responses:
     post:
       operationId: sendChatMessage
@@ -401,6 +467,12 @@ paths:
         separate SSE event - those calls are synchronous and already tell the
         caller what changed.
 
+        `artifact_revision` ({"id","revision","kind","node_id","round"}) and
+        `artifact_judge_round` ({"id","passed","score","scored"}) report a
+        recordstore write (design V4 §4.8) - emitted by the gate (#1092), not
+        this endpoint; the per-node artifact panel tolerates their absence
+        and reloads via REST.
+
         `delivery_result` ({"node_id","outcome","kind","url","error","trace_id"})
         reports one staged item's ACTUAL outward-boundary outcome (push +
         PR/review/comment), as the delivering extension observed it - never the
@@ -443,6 +515,8 @@ paths:
         - node_needs_input
         - node_paused
         - node_steered
+        - artifact_revision
+        - artifact_judge_round
         - delivery_result
         - compaction
         - chat_title
@@ -519,6 +593,8 @@ paths:
         - node_needs_input
         - node_paused
         - node_steered
+        - artifact_revision
+        - artifact_judge_round
         - delivery_result
         - compaction
         - chat_title
@@ -1235,6 +1311,30 @@ components:
     # Artifacts (chat-scoped, read-only)
     # -------------------------------------------------------------------------
 
+    ArtifactLineage:
+      type: object
+      description: Per-revision provenance (design V4 §4.2), stamped on the row.
+      properties:
+        node_id:
+          type: string
+          description: The node that authored this revision. Provenance only, never part of the artifact's id.
+        round:
+          type: integer
+        parent_revision:
+          type: integer
+          format: int64
+        trigger_annotation:
+          type: string
+          description: The judge_round artifact id that triggered this revision, if any.
+        head_sha:
+          type: string
+        author:
+          type: string
+          description: worker, judge, gate, delivery, or human.
+        saved_at:
+          type: string
+          format: date-time
+
     ArtifactRevisionInfo:
       type: object
       required: [revision, mime_type, size]
@@ -1253,6 +1353,14 @@ components:
         created_at:
           type: string
           format: date-time
+        kind:
+          type: string
+          description: Registered record kind, e.g. code_review, finding. Absent for a pre-#1090 row.
+        class:
+          type: string
+          enum: [structured, blob]
+        lineage:
+          $ref: "#/components/schemas/ArtifactLineage"
 
     ArtifactSummary:
       type: object
@@ -1260,6 +1368,16 @@ components:
       properties:
         name:
           type: string
+        kind:
+          type: string
+        class:
+          type: string
+          enum: [structured, blob]
+        latest_revision:
+          type: integer
+          format: int64
+        lineage:
+          $ref: "#/components/schemas/ArtifactLineage"
         revisions:
           type: array
           items:
@@ -1273,6 +1391,16 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ArtifactSummary"
+
+    ArtifactRevisionList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          description: Newest revision first.
+          items:
+            $ref: "#/components/schemas/ArtifactRevisionInfo"
 
     CreateChatBody:
       type: object

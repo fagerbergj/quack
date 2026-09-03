@@ -270,6 +270,10 @@ type ArtifactRevision struct {
 	Size      int64     `json:"size"`
 	TurnID    string    `json:"turn_id,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+	// Kind/Class/Lineage (#1090 P2 columns): zero-value for a pre-#1090 row.
+	Kind        string `json:"kind,omitempty"`
+	Class       string `json:"class,omitempty"`
+	LineageJSON string `json:"-"`
 }
 
 // RevisionsByTurn returns every artifact revision created by turnID, in the
@@ -283,7 +287,7 @@ func (s *gormArtifactService) RevisionsByTurn(ctx context.Context, appName, user
 	}
 	out := make([]ArtifactRevision, len(rows))
 	for i, a := range rows {
-		out[i] = ArtifactRevision{Name: a.Name, Revision: a.Revision, MimeType: a.MimeType, Size: a.Size, TurnID: a.TurnID, CreatedAt: a.CreatedAt}
+		out[i] = ArtifactRevision{Name: a.Name, Revision: a.Revision, MimeType: a.MimeType, Size: a.Size, TurnID: a.TurnID, CreatedAt: a.CreatedAt, Kind: a.Kind, Class: a.Class, LineageJSON: a.Lineage}
 	}
 	return out, nil
 }
@@ -471,7 +475,7 @@ func (s *gormArtifactService) ListForSession(ctx context.Context, appName, userI
 	}
 	summaries := make([]ArtifactSummary, 0)
 	for _, a := range rows {
-		rev := ArtifactRevision{Name: a.Name, Revision: a.Revision, MimeType: a.MimeType, Size: a.Size, TurnID: a.TurnID, CreatedAt: a.CreatedAt}
+		rev := ArtifactRevision{Name: a.Name, Revision: a.Revision, MimeType: a.MimeType, Size: a.Size, TurnID: a.TurnID, CreatedAt: a.CreatedAt, Kind: a.Kind, Class: a.Class, LineageJSON: a.Lineage}
 		if n := len(summaries); n > 0 && summaries[n-1].Name == a.Name {
 			summaries[n-1].Revisions = append(summaries[n-1].Revisions, rev)
 			continue

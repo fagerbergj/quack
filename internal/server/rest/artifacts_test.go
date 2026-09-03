@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"google.golang.org/adk/v2/artifact"
@@ -156,6 +157,96 @@ func TestGetChatArtifact_UnknownChat_404(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats/nope/artifacts/doc.pdf", nil)
 	rec := httptest.NewRecorder()
 	h.GetChatArtifact(rec, req, "nope", "doc.pdf", schema.GetChatArtifactParams{})
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestListArtifactRevisions_NewestFirstWithLineage(t *testing.T) {
+	h := newTestHandler(t)
+	chatID := mustCreateChat(t, h)
+	userID := h.sessionUser(context.Background(), chatID)
+
+	saveTestArtifact(t, h, userID, chatID, "turn-1", "finding:abc123", "application/json", []byte(`{"v":1}`))
+	saveTestArtifact(t, h, userID, chatID, "turn-2", "finding:abc123", "application/json", []byte(`{"v":2}`))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats/"+chatID+"/artifacts/finding:abc123/revisions", nil)
+	rec := httptest.NewRecorder()
+	h.ListArtifactRevisions(rec, req, chatID, "finding:abc123")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var out schema.ArtifactRevisionList
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out.Data) != 2 {
+		t.Fatalf("Data = %+v, want 2 revisions", out.Data)
+	}
+	if out.Data[0].Revision != 2 || out.Data[1].Revision != 1 {
+		t.Errorf("revisions = %d, %d, want newest first (2, 1)", out.Data[0].Revision, out.Data[1].Revision)
+	}
+}
+
+func TestListArtifactRevisions_UnknownArtifact_404(t *testing.T) {
+	h := newTestHandler(t)
+	chatID := mustCreateChat(t, h)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats/"+chatID+"/artifacts/nope/revisions", nil)
+	rec := httptest.NewRecorder()
+	h.ListArtifactRevisions(rec, req, chatID, "nope")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestDiffArtifactRevisions_TextUnifiedDiff(t *testing.T) {
+	h := newTestHandler(t)
+	chatID := mustCreateChat(t, h)
+	userID := h.sessionUser(context.Background(), chatID)
+
+	saveTestArtifact(t, h, userID, chatID, "turn-1", "code_review:pr:1", "application/json", []byte("{\"verdict\":\"comment\"}\n"))
+	saveTestArtifact(t, h, userID, chatID, "turn-2", "code_review:pr:1", "application/json", []byte("{\"verdict\":\"approve\"}\n"))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats/"+chatID+"/artifacts/code_review:pr:1/diff?from=1&to=2", nil)
+	rec := httptest.NewRecorder()
+	h.DiffArtifactRevisions(rec, req, chatID, "code_review:pr:1", schema.DiffArtifactRevisionsParams{From: 1, To: 2})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "-{\"verdict\":\"comment\"}") || !strings.Contains(body, "+{\"verdict\":\"approve\"}") {
+		t.Errorf("diff = %q, want a unified diff between the two revisions", body)
+	}
+}
+
+func TestDiffArtifactRevisions_BinaryBlob_415(t *testing.T) {
+	h := newTestHandler(t)
+	chatID := mustCreateChat(t, h)
+	userID := h.sessionUser(context.Background(), chatID)
+
+	saveTestArtifact(t, h, userID, chatID, "turn-1", "doc.pdf", "application/pdf", []byte("old"))
+	saveTestArtifact(t, h, userID, chatID, "turn-2", "doc.pdf", "application/pdf", []byte("new"))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats/"+chatID+"/artifacts/doc.pdf/diff?from=1&to=2", nil)
+	rec := httptest.NewRecorder()
+	h.DiffArtifactRevisions(rec, req, chatID, "doc.pdf", schema.DiffArtifactRevisionsParams{From: 1, To: 2})
+
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("status = %d, want 415; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDiffArtifactRevisions_UnknownRevision_404(t *testing.T) {
+	h := newTestHandler(t)
+	chatID := mustCreateChat(t, h)
+	userID := h.sessionUser(context.Background(), chatID)
+	saveTestArtifact(t, h, userID, chatID, "turn-1", "finding:abc", "application/json", []byte(`{}`))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats/"+chatID+"/artifacts/finding:abc/diff?from=1&to=2", nil)
+	rec := httptest.NewRecorder()
+	h.DiffArtifactRevisions(rec, req, chatID, "finding:abc", schema.DiffArtifactRevisionsParams{From: 1, To: 2})
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
 	}

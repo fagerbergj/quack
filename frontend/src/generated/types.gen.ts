@@ -191,6 +191,28 @@ export type ClientConfig = {
     otel_trace_url_template?: string;
 };
 
+/**
+ * Per-revision provenance (design V4 §4.2), stamped on the row.
+ */
+export type ArtifactLineage = {
+    /**
+     * The node that authored this revision. Provenance only, never part of the artifact's id.
+     */
+    node_id?: string;
+    round?: number;
+    parent_revision?: number;
+    /**
+     * The judge_round artifact id that triggered this revision, if any.
+     */
+    trigger_annotation?: string;
+    head_sha?: string;
+    /**
+     * worker, judge, gate, delivery, or human.
+     */
+    author?: string;
+    saved_at?: string;
+};
+
 export type ArtifactRevisionInfo = {
     revision: number;
     /**
@@ -200,15 +222,32 @@ export type ArtifactRevisionInfo = {
     mime_type: string;
     size: number;
     created_at?: string;
+    /**
+     * Registered record kind, e.g. code_review, finding. Absent for a pre-#1090 row.
+     */
+    kind?: string;
+    class?: 'structured' | 'blob';
+    lineage?: ArtifactLineage;
 };
 
 export type ArtifactSummary = {
     name: string;
+    kind?: string;
+    class?: 'structured' | 'blob';
+    latest_revision?: number;
+    lineage?: ArtifactLineage;
     revisions: Array<ArtifactRevisionInfo>;
 };
 
 export type ArtifactList = {
     data: Array<ArtifactSummary>;
+};
+
+export type ArtifactRevisionList = {
+    /**
+     * Newest revision first.
+     */
+    data: Array<ArtifactRevisionInfo>;
 };
 
 export type CreateChatBody = {
@@ -775,6 +814,69 @@ export type GetChatArtifactResponses = {
 };
 
 export type GetChatArtifactResponse = GetChatArtifactResponses[keyof GetChatArtifactResponses];
+
+export type ListArtifactRevisionsData = {
+    body?: never;
+    path: {
+        chat_id: string;
+        artifact_name: string;
+    };
+    query?: never;
+    url: '/api/v1/chats/{chat_id}/artifacts/{artifact_name}/revisions';
+};
+
+export type ListArtifactRevisionsErrors = {
+    /**
+     * No such chat or artifact
+     */
+    404: ErrorResponse;
+};
+
+export type ListArtifactRevisionsError = ListArtifactRevisionsErrors[keyof ListArtifactRevisionsErrors];
+
+export type ListArtifactRevisionsResponses = {
+    /**
+     * The artifact's revisions, newest first
+     */
+    200: ArtifactRevisionList;
+};
+
+export type ListArtifactRevisionsResponse = ListArtifactRevisionsResponses[keyof ListArtifactRevisionsResponses];
+
+export type DiffArtifactRevisionsData = {
+    body?: never;
+    path: {
+        chat_id: string;
+        artifact_name: string;
+    };
+    query: {
+        from: number;
+        to: number;
+    };
+    url: '/api/v1/chats/{chat_id}/artifacts/{artifact_name}/diff';
+};
+
+export type DiffArtifactRevisionsErrors = {
+    /**
+     * No such chat, artifact, or revision
+     */
+    404: ErrorResponse;
+    /**
+     * Artifact is a binary blob; diffing is not supported
+     */
+    415: ErrorResponse;
+};
+
+export type DiffArtifactRevisionsError = DiffArtifactRevisionsErrors[keyof DiffArtifactRevisionsErrors];
+
+export type DiffArtifactRevisionsResponses = {
+    /**
+     * Unified diff text
+     */
+    200: string;
+};
+
+export type DiffArtifactRevisionsResponse = DiffArtifactRevisionsResponses[keyof DiffArtifactRevisionsResponses];
 
 export type SendChatMessageData = {
     body: SendMessageBody;
