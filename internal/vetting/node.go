@@ -828,7 +828,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		// A judge-less node (JudgeRounds == 0, e.g. a deterministic-only
 		// reMarkable stage) never entered the round loop above - write its
 		// one round here so it still gets a code_review/document/text record.
-		if episodicRoundsWritten == 0 {
+		// Mirrors the round loop's own empty-answer guard (line 658) so an
+		// empty/whitespace-only answer doesn't produce an empty text revision.
+		if episodicRoundsWritten == 0 && strings.TrimSpace(stripLeadingEnvScaffold(answer)) != "" {
 			saveEpisodicRound(nodeCtx, cfg, nodeID, turnID, 1, answer, act.stagedDelivery["review"], nil)
 		}
 		// Deliver even on judge FAIL (graceful degradation). Memory stays pass-only.

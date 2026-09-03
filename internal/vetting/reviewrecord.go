@@ -606,17 +606,19 @@ func saveEpisodicRound(ctx context.Context, cfg Config, nodeID, turnID string, r
 // saveTextRound is the generic fallback for a gated node with no
 // cfg.IsReviewer/cfg.Artifact kind (#1095, #1090 P8): id "text:<node>", one
 // revision per round including failed rounds. Skipped when the worker
-// already tool-wrote an artifact this round (any kind) via write_<kind> -
-// reusing the same drain the code_review path uses, so a tool-writing
-// implementer/explorer node doesn't ALSO get a redundant text revision.
+// already tool-wrote an artifact this round (any kind, via write_<kind>,
+// write_artifact, or edit_artifact) - reusing the same drain the code_review
+// path uses, so a tool-writing implementer/explorer node doesn't ALSO get a
+// redundant text revision.
 func saveTextRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, st *episodicRoundState) {
-	if toolWritten := resetToolWrittenFindingIDs(cfg); len(toolWritten) > 0 {
+	if toolWritten := resetToolWrittenIDs(cfg); len(toolWritten) > 0 {
 		return
 	}
 	c := recordClient(cfg)
 	if c == nil {
 		return
 	}
+	answer = truncateForBlob(answer, nodeID, kindText)
 	lineage := recordstore.Lineage{NodeID: nodeID, Round: round, ParentRevision: st.textRev, TriggerAnnotation: st.triggerAnnotation, HeadSHA: cfg.NodeBaseSHA, SavedAt: time.Now().UTC(), Author: "worker", TurnID: turnID}
 	id, rev, err := c.SaveBlob(ctx, kindText, []byte(answer), "text/markdown", nodeID, lineage)
 	if err != nil {
@@ -625,6 +627,18 @@ func saveTextRound(ctx context.Context, cfg Config, nodeID, turnID string, round
 	}
 	st.textRev = rev
 	st.roundWrites = append(st.roundWrites, ScoredRef{ArtifactID: id, Revision: rev})
+}
+
+// truncateForBlob caps content at artifactref.InlineMaxBytes before a
+// saveTextRound/saveDocumentRound write - explorer/implementer answers can
+// dump a full diff or file listing, and nothing upstream bounds that size.
+func truncateForBlob(content, nodeID, kind string) string {
+	if len(content) <= artifactref.InlineMaxBytes {
+		return content
+	}
+	over := len(content) - artifactref.InlineMaxBytes
+	slog.Warn("episodic record truncated", "component", "vetting", "node", nodeID, "kind", kind, "bytes", len(content), "over", over)
+	return content[:artifactref.InlineMaxBytes] + fmt.Sprintf("\n\n[truncated: %d bytes over the %d byte cap]", over, artifactref.InlineMaxBytes)
 }
 
 // latestCodeReviewRevSafe wraps the #1091 gate-fallback lookup in a recover:
@@ -648,15 +662,16 @@ func latestCodeReviewRevSafe(ctx context.Context, c *recordstore.Client, cfg Con
 	return rev, ok
 }
 
-// resetToolWrittenFindingIDs drains the ids written via write_<kind> tool
-// calls this round (ToolFindingStage, threaded through the registered
+// resetToolWrittenIDs drains the ids written via any loopback MCP
+// artifact-write tool this round (write_<kind>, write_artifact,
+// edit_artifact - ToolWrittenStage, threaded through the registered
 // MemSession), nil if there's no advisor thread/session for this node -
 // saveCodeReviewRound's answer-tail fallback uses it to skip re-staging an id
 // the worker already wrote directly (#1091 adversarial review finding #1).
 // Draining (not just snapshotting) is what makes this "this round" rather
 // than "this node run": an id tool-written in round N must not still be in
 // the stage suppressing round N+1's write for the same id (#1108 finding 2).
-func resetToolWrittenFindingIDs(cfg Config) map[string]bool {
+func resetToolWrittenIDs(cfg Config) map[string]bool {
 	if cfg.AdvisorToken == "" {
 		return nil
 	}
@@ -665,10 +680,10 @@ func resetToolWrittenFindingIDs(cfg Config) map[string]bool {
 		return nil
 	}
 	ms, ok := LookupMemSession(t.MemSecret)
-	if !ok || ms.ToolFindings == nil {
+	if !ok || ms.ToolWritten == nil {
 		return nil
 	}
-	return ms.ToolFindings.Reset()
+	return ms.ToolWritten.Reset()
 }
 
 func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, staged StagedDelivery, st *episodicRoundState) {
@@ -680,7 +695,7 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 	// Drained unconditionally, before any other round bookkeeping, so the
 	// stage's "this round" scope (#1108 finding 2) holds regardless of which
 	// branch below returns early.
-	toolWritten := resetToolWrittenFindingIDs(cfg)
+	toolWritten := resetToolWrittenIDs(cfg)
 
 	// #1091 gate fallback: write_code_review/write_finding (the loopback MCP
 	// tools) let the worker write this round's code_review record directly,
@@ -838,6 +853,7 @@ func saveDocumentRound(ctx context.Context, cfg Config, nodeID, turnID string, r
 	if c == nil {
 		return
 	}
+	answer = truncateForBlob(answer, nodeID, cfg.Artifact)
 	lineage := recordstore.Lineage{NodeID: nodeID, Round: round, ParentRevision: st.documentRev, TriggerAnnotation: st.triggerAnnotation, HeadSHA: cfg.NodeBaseSHA, SavedAt: time.Now().UTC(), Author: "worker", TurnID: turnID}
 	id, rev, err := c.SaveBlob(ctx, cfg.Artifact, []byte(answer), "text/markdown", documentHint(cfg.ChatID), lineage)
 	if err != nil {

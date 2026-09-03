@@ -209,6 +209,9 @@ func registerEditArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vetti
 			}
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "edit_artifact: " + err.Error()}}}, nil, nil
 		}
+		if sess.ToolWritten != nil {
+			sess.ToolWritten.Add(args.ID)
+		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("ok: %s revision %d", args.ID, rev)}}}, nil, nil
 	})
 }
@@ -259,6 +262,9 @@ func registerWriteArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vett
 		if err != nil {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "write_artifact: " + err.Error()}}}, nil, nil
 		}
+		if sess.ToolWritten != nil {
+			sess.ToolWritten.Add(id)
+		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("ok: id=%s revision=%d", id, rev)}}}, nil, nil
 	})
 }
@@ -268,7 +274,7 @@ func registerWriteArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vett
 // registration, not reflected from a Go struct, so the agent sees exactly
 // the schema the record type owns. Input is a raw JSON object (map), so
 // AddTool doesn't infer a struct schema over it and the parsed schema wins.
-// registerWriteKindTool generates the write_<kind> tool. sess.ToolFindings
+// registerWriteKindTool generates the write_<kind> tool. sess.ToolWritten
 // (when non-nil) records every id written here so saveCodeReviewRound's
 // answer-tail fallback can tell a tool-written id apart from a tail-only one
 // (#1091 adversarial review finding #1) - tracked for every kind, not just
@@ -297,8 +303,8 @@ func registerWriteKindTool(srv *mcp.Server, c *recordstore.Client, sess vetting.
 		if err != nil {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: writeKindPrefix + kind + ": " + err.Error()}}}, nil, nil
 		}
-		if sess.ToolFindings != nil {
-			sess.ToolFindings.Add(id)
+		if sess.ToolWritten != nil {
+			sess.ToolWritten.Add(id)
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("ok: id=%s revision=%d", id, rev)}}}, nil, nil
 	})

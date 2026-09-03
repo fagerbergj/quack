@@ -13,6 +13,7 @@ import (
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/agent/workflowagent"
+	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/runner"
 	"google.golang.org/adk/v2/session"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
@@ -726,6 +728,69 @@ func TestGatedWorkerNode_ZeroRoundsSkipsJudge(t *testing.T) {
 	}
 	if stub.workerCalls != 1 {
 		t.Errorf("worker calls = %d, want 1 (draft only, no revise)", stub.workerCalls)
+	}
+}
+
+// TestGatedWorkerNode_JudgeLessEmptyAnswerWritesNoTextArtifact covers #1095
+// adversarial review finding #2: the judge-less fallback (node.go, after the
+// round loop that JudgeRounds=0 never enters) un-gated the old
+// IsReviewer||Artifact!="" check but lost its implicit non-empty guard, so an
+// empty/whitespace-only answer used to write an empty "text:<node>" revision.
+// It must now mirror the round loop's own strings.TrimSpace guard and skip.
+func TestGatedWorkerNode_JudgeLessEmptyAnswerWritesNoTextArtifact(t *testing.T) {
+	// Env-scaffold-only, not pure whitespace: strings.TrimSpace(answer) is
+	// non-empty so the earlier "worker still empty" recovery/ErrNodeEmpty
+	// path (node.go, before the judge-less fallback) never fires - only
+	// stripLeadingEnvScaffold sees this as empty, exactly like the round
+	// loop's own guard at line ~658.
+	stub := stubFixedAnswerModel{text: "<env>preamble only, no real content</env>"}
+	worker, err := llmagent.New(llmagent.Config{
+		Name: "blank-worker", Model: stub, Description: "worker",
+		Instruction: "Answer the question.",
+	})
+	if err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+	svc := artifact.InMemoryService()
+	cfg := reviewerCfgWithArtifacts(t, svc, true)
+	cfg.IsReviewer = false
+	cfg.Artifact = ""
+	cfg.JudgeRounds = 0
+	nodeName := "blank-gate"
+	node, err := newTestGatedNode(nodeName, worker, stub, nil, cfg)
+	if err != nil {
+		t.Fatalf("node: %v", err)
+	}
+	root, err := workflowagent.New(workflowagent.Config{
+		Name:      "root",
+		SubAgents: []adkagent.Agent{worker},
+		Edges:     workflow.Chain(workflow.Start, node),
+	})
+	if err != nil {
+		t.Fatalf("root: %v", err)
+	}
+	r, err := runner.New(runner.Config{
+		AppName: "test", Agent: root,
+		SessionService: session.InMemoryService(), AutoCreateSession: true,
+	})
+	if err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "anything"}}}
+	for _, err := range r.Run(t.Context(), "u", "s", task, adkagent.RunConfig{}) {
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	}
+
+	textID, err := recordstore.IdentityFor(kindText, nil, nodeName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := recordClient(cfg)
+	if _, _, ok, err := rc.Latest(t.Context(), textID); err != nil || ok {
+		t.Fatalf("text artifact must not exist for an empty answer: ok=%v err=%v", ok, err)
 	}
 }
 
