@@ -40,7 +40,11 @@ export function anchorNotes(lines: string[], notes: JudgeNote[]): AnchorResult {
   for (const note of notes) {
     let idx = -1
     if (note.ref.snippet) {
-      idx = lines.findIndex(l => l.includes(note.ref.snippet as string))
+      // A multi-line quoted snippet can never satisfy includes() against a
+      // single line - anchor on just its first line instead (same
+      // first-occurrence risk profile a single-line match already has).
+      const firstLine = note.ref.snippet.split('\n')[0]
+      idx = lines.findIndex(l => l.includes(firstLine))
     }
     if (idx === -1 && note.ref.line_hint != null) {
       const hinted = note.ref.line_hint - 1 // line_hint is 1-based
@@ -126,10 +130,18 @@ export function ArtifactPanel({ chatId, nodeId, onClose }: Props) {
   // list - the refresh button used to only re-run `load()`, leaving a
   // revision written while the panel was open invisible until the user
   // re-selected the artifact.
+  // Each loader below carries its own token ref (the judgeNotesToken
+  // pattern, extended here): a fast artifact switch can let a slow PRIOR
+  // response arrive after a newer request already started, applying stale
+  // data over what's now on screen. Checked in both the success and error
+  // path - a late error must not clobber a since-succeeded newer fetch either.
+  const revisionsToken = useRef(0)
   const loadRevisions = useCallback(() => {
     if (!selectedId) { setRevisions([]); setSelectedRev(null); return }
+    const token = ++revisionsToken.current
     return api.listArtifactRevisions(chatId, selectedId)
       .then(r => {
+        if (token !== revisionsToken.current) return
         setError(null)
         setRevisions(r.data ?? [])
         // Keep the currently viewed revision selected across a refresh if it
@@ -137,10 +149,11 @@ export function ArtifactPanel({ chatId, nodeId, onClose }: Props) {
         // selectedRev) or a revision that's since vanished falls back to latest.
         setSelectedRev(prev => (prev != null && r.data?.some(rv => rv.revision === prev) ? prev : (r.data?.[0]?.revision ?? null)))
       })
-      .catch(e => setError(String(e)))
+      .catch(e => { if (token === revisionsToken.current) setError(String(e)) })
   }, [chatId, selectedId])
   useEffect(() => { loadRevisions() }, [loadRevisions])
 
+  const contentToken = useRef(0)
   const loadContent = useCallback(() => {
     setActiveNote(null)
     // selectedRev is reset to null by selectArtifact on every artifact
@@ -152,22 +165,30 @@ export function ArtifactPanel({ chatId, nodeId, onClose }: Props) {
     // artifact's selectedRev, before the revisions effect had a chance to
     // update it).
     if (!selectedId || selectedRev == null) { setContent(null); return }
+    const token = ++contentToken.current
     return api.getArtifactText(chatId, selectedId, selectedRev)
-      .then(text => { setError(null); setContent(text) })
-      .catch(e => setError(String(e)))
+      .then(text => { if (token !== contentToken.current) return; setError(null); setContent(text) })
+      .catch(e => { if (token === contentToken.current) setError(String(e)) })
   }, [chatId, selectedId, selectedRev])
   useEffect(() => { loadContent() }, [loadContent])
 
+  const diffToken = useRef(0)
   const loadDiff = useCallback(() => {
     if (!diffOn || !selectedId || selectedRev == null || diffAgainst == null || diffAgainst === selectedRev) {
       setDiffText(null)
+      // Also clear error: otherwise a 413/415 from a PRIOR diff attempt
+      // stays rendered after unchecking Diff (or Refresh, which re-runs this
+      // same branch) - only re-selecting an artifact or the revision used to
+      // clear it.
+      setError(null)
       return
     }
     const from = Math.min(selectedRev, diffAgainst)
     const to = Math.max(selectedRev, diffAgainst)
+    const token = ++diffToken.current
     return api.diffArtifactRevisions(chatId, selectedId, from, to)
-      .then(text => { setError(null); setDiffText(text) })
-      .catch(e => setError(String(e)))
+      .then(text => { if (token !== diffToken.current) return; setError(null); setDiffText(text) })
+      .catch(e => { if (token === diffToken.current) setError(String(e)) })
   }, [diffOn, chatId, selectedId, selectedRev, diffAgainst])
   useEffect(() => { loadDiff() }, [loadDiff])
 

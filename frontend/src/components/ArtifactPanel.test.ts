@@ -41,6 +41,14 @@ describe('anchorNotes', () => {
     expect(unanchored).toHaveLength(1)
   })
 
+  it('anchors a multi-line snippet by its first line (#1113 review)', () => {
+    const { byLine, unanchored } = anchorNotes(lines, [
+      { ref: { artifact_id: 'a', revision: 1, snippet: 'x may be nil here\nreturn x.value' }, text: 'quotes two lines' },
+    ])
+    expect(unanchored).toHaveLength(0)
+    expect(byLine.get(1)?.[0].text).toBe('quotes two lines')
+  })
+
   it('groups multiple notes landing on the same line', () => {
     const { byLine } = anchorNotes(lines, [
       { ref: { artifact_id: 'a', revision: 1, snippet: 'x may be nil' }, text: 'note one' },

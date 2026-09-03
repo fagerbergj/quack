@@ -90,21 +90,18 @@ func (s failSoftListArtifacts) List(ctx context.Context, req *artifact.ListReque
 	return resp, nil
 }
 
-// loadArtifactMaxBytes mirrors read_artifact's ACP cap (internal/acp/memorymcp.go
-// readArtifactMaxBytes) - load_artifacts is the ADK-native equivalent read path
-// and had no bound of its own (#1006 item 7).
-const loadArtifactMaxBytes = 256 * 1024
-
-// Load errors out over the cap rather than truncating silently: loadartifactstool
-// puts the bytes straight into model context, so a large artifact (video, big
-// log) must fail loud, the same shape read_artifact's caller already handles.
+// Load errors out over artifactref.InlineMaxBytes rather than truncating
+// silently: loadartifactstool puts the bytes straight into model context, so
+// a large artifact (video, big log) must fail loud, the same shape
+// read_artifact's caller already handles. load_artifacts is the ADK-native
+// equivalent read path and had no bound of its own before this (#1006 item 7).
 func (s failSoftListArtifacts) Load(ctx context.Context, req *artifact.LoadRequest) (*artifact.LoadResponse, error) {
 	resp, err := s.Service.Load(ctx, req)
 	if err != nil || resp == nil || resp.Part == nil || resp.Part.InlineData == nil {
 		return resp, err
 	}
-	if n := len(resp.Part.InlineData.Data); n > loadArtifactMaxBytes {
-		return nil, fmt.Errorf("artifact %q is %d bytes, exceeds the %d byte load_artifacts limit", req.FileName, n, loadArtifactMaxBytes)
+	if n := len(resp.Part.InlineData.Data); n > artifactref.InlineMaxBytes {
+		return nil, fmt.Errorf("artifact %q is %d bytes, exceeds the %d byte load_artifacts limit", req.FileName, n, artifactref.InlineMaxBytes)
 	}
 	return resp, nil
 }
