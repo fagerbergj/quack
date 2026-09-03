@@ -17,11 +17,12 @@ import (
 	"gorm.io/gorm"
 )
 
-// newTestPGStore starts a real Postgres container - AppendIntent's seq
-// allocation relies on a real UPSERT's row locking, which sqlite/mocks
-// can't exercise. Skips (not fails) when Docker isn't reachable, matching
-// internal/store's own container tests.
-func newTestPGStore(t *testing.T) *PGStore {
+// newTestPGDB starts a real Postgres container and returns the raw
+// connection, UNMIGRATED - callers that need to migrate onto a pre-existing
+// table (see TestPGStoreNewMigrate_AddsChatKeyIndexToExistingTable) need the
+// db before NewPGStore's AutoMigrate ever runs. Skips (not fails) when
+// Docker isn't reachable, matching internal/store's own container tests.
+func newTestPGDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -49,11 +50,47 @@ func newTestPGStore(t *testing.T) *PGStore {
 	if err != nil {
 		t.Fatalf("gorm.Open: %v", err)
 	}
-	store, err := NewPGStore(db)
+	return db
+}
+
+// newTestPGStore starts a real Postgres container - AppendIntent's seq
+// allocation relies on a real UPSERT's row locking, which sqlite/mocks
+// can't exercise. Skips (not fails) when Docker isn't reachable.
+func newTestPGStore(t *testing.T) *PGStore {
+	t.Helper()
+	store, err := NewPGStore(newTestPGDB(t))
 	if err != nil {
 		t.Fatalf("NewPGStore: %v", err)
 	}
 	return store
+}
+
+// TestPGStoreNewMigrate_AddsChatKeyIndexToExistingTable pins the migration
+// side of idx_ledger_chat_key (#1111 review finding): every other PG test
+// starts from a fresh container, so AutoMigrate always creates the table and
+// index together - the production path (adding the index to an EXISTING
+// ledger_entries table on a deployed database) was otherwise unexercised. A
+// tag-parsing miss on chat_id's two index tags would silently degrade
+// ReadEntriesByKey to a scan with no test to catch it.
+func TestPGStoreNewMigrate_AddsChatKeyIndexToExistingTable(t *testing.T) {
+	t.Parallel()
+	db := newTestPGDB(t)
+	if err := db.Exec(`CREATE TABLE ledger_entries (
+		id BIGSERIAL PRIMARY KEY, chat_id TEXT, seq BIGINT, turn_id TEXT,
+		node_id TEXT, kind TEXT, key TEXT, at TIMESTAMPTZ, payload JSONB)`).Error; err != nil {
+		t.Fatalf("create bare table: %v", err)
+	}
+	if _, err := NewPGStore(db); err != nil { // AutoMigrate onto the pre-existing table
+		t.Fatalf("NewPGStore: %v", err)
+	}
+	var n int
+	if err := db.Raw(`SELECT count(*) FROM pg_indexes
+		WHERE tablename = 'ledger_entries' AND indexname = 'idx_ledger_chat_key'`).Scan(&n).Error; err != nil {
+		t.Fatalf("pg_indexes: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("idx_ledger_chat_key = %d, want 1 on a pre-existing table", n)
+	}
 }
 
 // TestPGStoreAppendIntentConcurrentSeqIsGaplessAndUnique is verification

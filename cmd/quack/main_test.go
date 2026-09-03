@@ -16,6 +16,7 @@ func TestCommandTree(t *testing.T) {
 		"chat":   {"new", "send", "show", "list", "delete", "export", "stop", "node"},
 		"server": {"run", "init", "use", "add", "list", "remove"},
 		"api":    nil,
+		"ledger": {"show", "rebuild"},
 	}
 	// Top-level `init` is the onboarding entry (local/remote branch).
 	if c, _, err := root.Find([]string{"init"}); err != nil || c.Name() != "init" {

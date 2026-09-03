@@ -220,8 +220,8 @@ func newSkillSource(skillDirs []string) skill.Source {
 	return skill.NewMergedSource(resolved, skillsource.Scoped(fallback, backfill))
 }
 
-// ledgerStoreFromConfig resolves the replay ledger backend from stores, best-effort.
-func ledgerStoreFromConfig(cfg *config.Config) ledger.LedgerStore {
+// LedgerStoreFromConfig resolves the replay ledger backend from stores, best-effort.
+func LedgerStoreFromConfig(cfg *config.Config) ledger.LedgerStore {
 	name := cfg.Observability.Recording.Store
 	if name == "" {
 		return nil
@@ -259,9 +259,9 @@ func setDefaultAgent(m any, name string) {
 	}
 }
 
-// buildArtifactService resolves cfg.Artifacts: in-memory by default, or the
+// BuildArtifactService resolves cfg.Artifacts: in-memory by default, or the
 // durable Postgres large-object backend for a named store.
-func buildArtifactService(cfg *config.Config) (artifact.Service, error) {
+func BuildArtifactService(cfg *config.Config) (artifact.Service, error) {
 	if cfg.Artifacts.Store == "" {
 		return artifact.InMemoryService(), nil
 	}
@@ -424,7 +424,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		return nil, nil, "", fmt.Errorf("auth init failed: %w", err)
 	}
 
-	ledgerStore := ledgerStoreFromConfig(cfg)
+	ledgerStore := LedgerStoreFromConfig(cfg)
 	otelProviders, otelShutdown, err := otelobs.Init(ctx, cfg.Observability, ledgerStore, Version)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("otel init failed: %w", err)
@@ -487,7 +487,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		})
 	}
 
-	artifactSvc, err := buildArtifactService(cfg)
+	artifactSvc, err := BuildArtifactService(cfg)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("artifact service init failed: %w", err)
 	}

@@ -24,6 +24,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledger/fold"
 )
 
 // isNotFound reports whether err is the artifact.Service "no such
@@ -179,47 +180,11 @@ func revisionLockFor(chatID, id string) *sync.Mutex {
 }
 
 // lastRevision returns the highest MATERIALIZED revision recorded in an
-// artifact.revision WAL entry for id, 0 if none. A retried save after a
-// wedge (see KindArtifactRevisionAborted) reuses the SAME revision number
-// its failed attempt claimed, so "aborted" is a per-revision-number STATUS
-// that later entries can flip back to materialized, not a permanent
-// exclusion - entries are walked in seq order and the last word for a given
-// revision number wins. A full per-chat scan (ponytail: O(entries);
-// ledger_entries has no (chat_id, key) index yet, so a server-side key
-// filter would still scan - the index belongs with #1101's projections work).
+// artifact.revision WAL entry for id, 0 if none. Delegates to
+// internal/ledger/fold - the ONE definition of the aborted/later-entry-wins
+// rule (#1101); this used to duplicate that loop inline.
 func lastRevision(ctx context.Context, store ledger.LedgerStore, chatID, id string) (int, error) {
-	entries, err := store.ReadEntries(ctx, chatID, 0)
-	if err != nil {
-		return 0, err
-	}
-	materialized := map[int]bool{} // revision -> does the LATEST entry for it count?
-	var payload struct {
-		Revision int `json:"revision"`
-	}
-	for _, e := range entries { // seq order: later entries override earlier ones for the same revision
-		if e.Key != id {
-			continue
-		}
-		switch e.Kind {
-		case ledger.KindArtifactRevision:
-			if err := json.Unmarshal(e.Payload, &payload); err != nil {
-				continue
-			}
-			materialized[payload.Revision] = true
-		case ledger.KindArtifactRevisionAborted:
-			if err := json.Unmarshal(e.Payload, &payload); err != nil {
-				continue
-			}
-			materialized[payload.Revision] = false
-		}
-	}
-	rev := 0
-	for r, ok := range materialized {
-		if ok && r > rev {
-			rev = r
-		}
-	}
-	return rev, nil
+	return fold.LastRevision(ctx, store, chatID, id)
 }
 
 // abortedRevisionPayload is the artifact.revision.aborted entry's payload.
