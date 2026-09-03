@@ -391,3 +391,69 @@ func TestArtifactSSEEventOrder(t *testing.T) {
 		t.Fatalf("artifact_judge_round events = %d, want 2 (fail then pass)", judgeRounds)
 	}
 }
+
+// TestTextArtifactEmitsSSE covers #1095: a plain gated node (no IsReviewer,
+// no Artifact kind) still emits artifact_revision over SSE for its
+// "text:<node>" fallback writes, same as the code_review/document path does.
+func TestTextArtifactEmitsSSE(t *testing.T) {
+	stub := &stubModel{}
+	worker, err := llmagent.New(llmagent.Config{
+		Name: "web-researcher", Model: stub, Description: "researcher",
+		Instruction: "Answer the question.",
+	})
+	if err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+	cfg := Config{
+		JudgeRounds: 1, Threshold: 0.7, Rubric: "score the answer 0-10",
+		ChatID: "chat2", User: "u1",
+		Artifacts: newMetaAwareInMemory(),
+	}
+	node, err := newTestGatedNode("researcher-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
+	if err != nil {
+		t.Fatalf("node: %v", err)
+	}
+	root, err := workflowagent.New(workflowagent.Config{
+		Name: "root", SubAgents: []adkagent.Agent{worker}, Edges: workflow.Chain(workflow.Start, node),
+	})
+	if err != nil {
+		t.Fatalf("root: %v", err)
+	}
+	r, err := runner.New(runner.Config{
+		AppName: "test", Agent: root,
+		SessionService: session.InMemoryService(), AutoCreateSession: true,
+	})
+	if err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+
+	var mu sync.Mutex
+	var revisions []stream.ArtifactRevisionData
+	ctx := stream.WithYield(t.Context(), func(ev stream.SSEEvent) {
+		if ev.Name != stream.EventArtifactRevision {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if d, ok := ev.Data.(stream.ArtifactRevisionData); ok {
+			revisions = append(revisions, d)
+		}
+	})
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "What is the capital of France?"}}}
+	for _, err := range r.Run(ctx, "u", "s", task, adkagent.RunConfig{}) {
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(revisions) == 0 {
+		t.Fatal("expected at least one artifact_revision event for the text fallback write")
+	}
+	for _, rev := range revisions {
+		if rev.Kind != kindText {
+			t.Fatalf("artifact_revision.Kind = %q, want %q", rev.Kind, kindText)
+		}
+	}
+}

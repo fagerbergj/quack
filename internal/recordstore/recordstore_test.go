@@ -855,6 +855,86 @@ func TestEditVsGateSaveSerializes(t *testing.T) {
 	}
 }
 
+// TestGateSaveEditWALConcurrentSingleLock is #1107: gate saves (SaveStructured)
+// and Edit used to serialize through two different locks (recordstore's own
+// idLocks plus a second map guarding only the WAL section of saveLocked).
+// Racing both against the same id under one consolidated lock must still
+// produce a WAL chain with no lost/duplicate/out-of-order revisions and a
+// store latest revision matching the WAL's highest - the invariant both old
+// locks existed to protect. Run with -race.
+func TestGateSaveEditWALConcurrentSingleLock(t *testing.T) {
+	const n = 15
+	svc := artifact.InMemoryService()
+	fl := newFakeLedger()
+	c := New(svc, "quack", "user1", "chat1").WithLedger(fl)
+	ctx := context.Background()
+
+	id, _, err := c.SaveStructured(ctx, "test.structured", doc{A: "seed", B: 0}, "race-both", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			_, _, _ = c.SaveStructured(ctx, "test.structured", doc{A: "gate", B: i + 1}, "race-both", Lineage{})
+		}(i)
+	}
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			// A conflict (EditConflict, the old text already overwritten by a
+			// concurrent gate save) is an acceptable outcome under this race -
+			// the invariant under test is chain integrity, not that every
+			// edit lands.
+			_, _, _ = c.Edit(ctx, id, 1, []EditOp{{Old: `"a":"seed"`, New: `"a":"edited"`}}, Lineage{})
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	entries, err := fl.ReadEntries(ctx, "chat1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var revs []int
+	byRev := map[int]artifactRevisionPayload{}
+	for _, e := range entries {
+		if e.Key != id || e.Kind != ledger.KindArtifactRevision {
+			continue
+		}
+		var p artifactRevisionPayload
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			t.Fatal(err)
+		}
+		revs = append(revs, p.Revision)
+		byRev[p.Revision] = p
+	}
+	sort.Ints(revs)
+	for i, r := range revs {
+		want := i + 1
+		if r != want {
+			t.Fatalf("WAL revisions = %v, want exactly 1..%d with no gaps or duplicates", revs, len(revs))
+		}
+		if want > 1 && byRev[want].ParentRevision != want-1 {
+			t.Fatalf("revision %d's parent_revision = %d, want %d (strictly increasing chain)", want, byRev[want].ParentRevision, want-1)
+		}
+	}
+	_, storeRev, ok, err := c.Latest(ctx, id)
+	if err != nil || !ok {
+		t.Fatalf("Latest: ok=%v err=%v", ok, err)
+	}
+	if storeRev != len(revs) {
+		t.Fatalf("store's own latest revision = %d, want %d (matches the WAL's highest)", storeRev, len(revs))
+	}
+}
+
 func containsAll(s string, subs ...string) bool {
 	for _, sub := range subs {
 		if !strings.Contains(s, sub) {

@@ -13,6 +13,7 @@ import (
 
 	"google.golang.org/adk/v2/artifact"
 
+	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -162,7 +163,7 @@ CLEAN:
 // fallback, exercised as round 1 (the draft phase) - the flow #1108 B2 found
 // broken: a write_code_review call already wrote this round's record
 // directly (simulated the way the real MCP handler does it: SaveStructured
-// then ToolFindings.Add), so saveCodeReviewRound must not also parse the
+// then ToolWritten.Add), so saveCodeReviewRound must not also parse the
 // (bogus) answer tail and overwrite it - it just adopts the tool-written
 // revision. st starts fresh (newEpisodicRoundState, reviewRev 0) exactly as
 // round 1 of a real run does - detection must not depend on a baseline
@@ -173,8 +174,8 @@ func TestSaveCodeReviewRound_ToolWriteSkipsTailFallback(t *testing.T) {
 	cfg := reviewerCfgWithArtifacts(t, svc, true)
 	rc := recordClient(cfg)
 
-	toolStage := NewToolFindingStage()
-	RegisterMemSession("sec-1108-b2", MemSession{ToolFindings: toolStage})
+	toolStage := NewToolWrittenStage()
+	RegisterMemSession("sec-1108-b2", MemSession{ToolWritten: toolStage})
 	MarkMemSessionConnected("sec-1108-b2")
 	defer UnregisterMemSession("sec-1108-b2")
 	token := "tok-1108-b2"
@@ -226,8 +227,8 @@ func TestSaveCodeReviewRound_ToolWrittenFindingsSkipTailDuplicate(t *testing.T) 
 	cfg := reviewerCfgWithArtifacts(t, svc, true)
 	rc := recordClient(cfg)
 
-	toolStage := NewToolFindingStage()
-	RegisterMemSession("sec-1091-f1", MemSession{ToolFindings: toolStage})
+	toolStage := NewToolWrittenStage()
+	RegisterMemSession("sec-1091-f1", MemSession{ToolWritten: toolStage})
 	MarkMemSessionConnected("sec-1091-f1")
 	defer UnregisterMemSession("sec-1091-f1")
 	token := "tok-1091-f1"
@@ -236,7 +237,7 @@ func TestSaveCodeReviewRound_ToolWrittenFindingsSkipTailDuplicate(t *testing.T) 
 	cfg.AdvisorToken = token
 
 	// Simulate 3 tool-written findings (as write_finding's MCP handler would
-	// do: SaveStructured directly, then record the id on ToolFindings).
+	// do: SaveStructured directly, then record the id on ToolWritten).
 	// Snippet "" matches what fileLineAtForCfg resolves for a path that
 	// doesn't exist in the probe repo - the tail parse below reads the same
 	// (missing) file, so the hash-derived id lines up with the tool write.
@@ -327,17 +328,17 @@ FINDINGS:
 	}
 }
 
-// TestToolFindingStageResetsPerRound covers #1108 finding 2: an id written
+// TestToolWrittenStageResetsPerRound covers #1108 finding 2: an id written
 // via write_finding in round 1 must not still suppress round N's tail-parse
 // write of the SAME id - the stage scopes to "this round," not the whole node
 // run, so it has to be drained between rounds.
-func TestToolFindingStageResetsPerRound(t *testing.T) {
+func TestToolWrittenStageResetsPerRound(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	cfg := reviewerCfgWithArtifacts(t, svc, true)
 	rc := recordClient(cfg)
 
-	toolStage := NewToolFindingStage()
-	RegisterMemSession("sec-1108-f2", MemSession{ToolFindings: toolStage})
+	toolStage := NewToolWrittenStage()
+	RegisterMemSession("sec-1108-f2", MemSession{ToolWritten: toolStage})
 	MarkMemSessionConnected("sec-1108-f2")
 	defer UnregisterMemSession("sec-1108-f2")
 	token := "tok-1108-f2"
@@ -357,7 +358,7 @@ func TestToolFindingStageResetsPerRound(t *testing.T) {
 	staged := StagedDelivery{Kind: "review", Recovered: true}
 	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "t1", 1, "VERDICT: request_changes\nFINDINGS:\n", staged, st)
 	if _, ok := toolStage.Snapshot()[id]; ok {
-		t.Fatalf("ToolFindingStage still holds %s after round 1 - not drained", id)
+		t.Fatalf("ToolWrittenStage still holds %s after round 1 - not drained", id)
 	}
 
 	// Round 2: the SAME id, now only known via the answer tail (the worker
@@ -388,8 +389,8 @@ func TestSaveCodeReviewRoundLogsAndSkipsOnSeedReadFailure(t *testing.T) {
 	cfg := reviewerCfgWithArtifacts(t, svc, true)
 	rc := recordClient(cfg)
 
-	toolStage := NewToolFindingStage()
-	RegisterMemSession("sec-1108-f3a", MemSession{ToolFindings: toolStage})
+	toolStage := NewToolWrittenStage()
+	RegisterMemSession("sec-1108-f3a", MemSession{ToolWritten: toolStage})
 	MarkMemSessionConnected("sec-1108-f3a")
 	defer UnregisterMemSession("sec-1108-f3a")
 	token := "tok-1108-f3a"
@@ -432,8 +433,8 @@ func TestSaveCodeReviewRound_ToolWroteCodeReviewStillSeedsFindings(t *testing.T)
 	cfg := reviewerCfgWithArtifacts(t, svc, true)
 	rc := recordClient(cfg)
 
-	toolStage := NewToolFindingStage()
-	RegisterMemSession("sec-1108-b3", MemSession{ToolFindings: toolStage})
+	toolStage := NewToolWrittenStage()
+	RegisterMemSession("sec-1108-b3", MemSession{ToolWritten: toolStage})
 	MarkMemSessionConnected("sec-1108-b3")
 	defer UnregisterMemSession("sec-1108-b3")
 	token := "tok-1108-b3"
@@ -939,5 +940,164 @@ func gitIn(t *testing.T, dir string, args ...string) {
 	cmd.Env = append(cmd.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// TestTextRoundWrite_PlainNodeWritesTextArtifact covers #1095 (#1090 P8): a
+// gated node with no registered structured kind (IsReviewer=false,
+// Artifact="") still gets one revision per round, id "text:<node>", with the
+// same lineage shape code_review uses and a correct parent_revision chain.
+func TestTextRoundWrite_PlainNodeWritesTextArtifact(t *testing.T) {
+	svc := newMetaAwareInMemory()
+	base := reviewerCfgWithArtifacts(t, svc, true)
+	base.IsReviewer = false
+	base.Artifact = ""
+	base.NodeID = "explore-1"
+
+	textID, err := recordstore.IdentityFor(kindText, nil, base.NodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if textID != "text:"+base.NodeID {
+		t.Fatalf("id = %q, want %q (owning node name is the instance, #1090 V4 §4.1)", textID, "text:"+base.NodeID)
+	}
+	rc := recordClient(base)
+
+	st := saveEpisodicRound(context.Background(), base, base.NodeID, "turn-1", 1, "round one's answer", StagedDelivery{}, nil)
+	raw, _, lineage, rev, ok, err := rc.LatestWithMeta(context.Background(), textID)
+	if err != nil || !ok {
+		t.Fatalf("round 1 LatestWithMeta: ok=%v err=%v", ok, err)
+	}
+	if rev != 1 || string(raw) != "round one's answer" {
+		t.Fatalf("round 1: rev=%d body=%q", rev, raw)
+	}
+	// TurnID is excluded from the lineage JSON on purpose (it lives in the
+	// store row's own turn_id column instead - Lineage.TurnID doc comment).
+	if lineage.NodeID != base.NodeID || lineage.Round != 1 || lineage.ParentRevision != 0 || lineage.Author != "worker" {
+		t.Fatalf("round 1 lineage = %+v, unexpected", lineage)
+	}
+
+	// Round 2 (a failed judge round still writes a revision - #1090 §4.5).
+	saveEpisodicRound(context.Background(), base, base.NodeID, "turn-1", 2, "round two's answer", StagedDelivery{}, st)
+	_, _, lineage2, rev2, ok, err := rc.LatestWithMeta(context.Background(), textID)
+	if err != nil || !ok {
+		t.Fatalf("round 2 LatestWithMeta: ok=%v err=%v", ok, err)
+	}
+	if rev2 != 2 {
+		t.Fatalf("round 2 revision = %d, want 2", rev2)
+	}
+	if lineage2.ParentRevision != 1 || lineage2.Round != 2 {
+		t.Fatalf("round 2 lineage = %+v, want ParentRevision=1 Round=2", lineage2)
+	}
+}
+
+// TestTextRoundWrite_SkippedWhenToolWrote covers #1095 item 3: an implementer/
+// explorer node that already tool-wrote an artifact this round via ANY of the
+// loopback MCP artifact-write tools (write_<kind>, write_artifact,
+// edit_artifact - all three now record into ToolWritten, see
+// internal/acp/artifact_tools_test.go for real-handler coverage of that
+// wiring) must not also get a redundant "text:<node>" fallback write for that
+// round. This test exercises saveTextRound/saveEpisodicRound's consumption of
+// ToolWritten directly (populating the stage the way each of those tools
+// does), not the MCP wiring itself.
+func TestTextRoundWrite_SkippedWhenToolWrote(t *testing.T) {
+	cases := []struct {
+		name string
+		id   string // id as it would be recorded by the tool being simulated
+	}{
+		{"write_kind_tool", "pr_body:pr:1"},              // write_<kind>
+		{"write_artifact_blob_tool", "bytes:deadbeef12"}, // write_artifact (generic blob path)
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newMetaAwareInMemory()
+			base := reviewerCfgWithArtifacts(t, svc, true)
+			base.IsReviewer = false
+			base.Artifact = ""
+			base.NodeID = "implement-1"
+
+			toolStage := NewToolWrittenStage()
+			secret := "sec-1095-tool-" + tc.name
+			RegisterMemSession(secret, MemSession{ToolWritten: toolStage})
+			MarkMemSessionConnected(secret)
+			defer UnregisterMemSession(secret)
+			token := "tok-1095-tool-" + tc.name
+			RegisterAdvisorThread(token, AdvisorTask{MemSecret: secret})
+			defer UnregisterAdvisorThread(token)
+			base.AdvisorToken = token
+
+			// Simulate the worker having called the tool this round - the real
+			// handler's side effect (memorymcp.go) is ToolWritten.Add(id).
+			toolStage.Add(tc.id)
+
+			saveEpisodicRound(context.Background(), base, base.NodeID, "turn-1", 1, "answer text", StagedDelivery{}, nil)
+
+			textID, err := recordstore.IdentityFor(kindText, nil, base.NodeID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rc := recordClient(base)
+			if _, _, ok, err := rc.Latest(context.Background(), textID); err != nil || ok {
+				t.Fatalf("text artifact must not exist: ok=%v err=%v", ok, err)
+			}
+		})
+	}
+}
+
+// TestSaveTextRound_TruncatesOversizedAnswer covers #1095 adversarial review
+// finding #3: saveTextRound had no size bound, so an explorer/implementer
+// dump (a full diff, a long file listing) would be written whole. Content
+// over artifactref.InlineMaxBytes must be truncated with a trailing marker.
+func TestSaveTextRound_TruncatesOversizedAnswer(t *testing.T) {
+	svc := newMetaAwareInMemory()
+	base := reviewerCfgWithArtifacts(t, svc, true)
+	base.IsReviewer = false
+	base.Artifact = ""
+	base.NodeID = "explore-big"
+
+	big := strings.Repeat("x", artifactref.InlineMaxBytes+100)
+	saveEpisodicRound(context.Background(), base, base.NodeID, "turn-1", 1, big, StagedDelivery{}, nil)
+
+	textID, err := recordstore.IdentityFor(kindText, nil, base.NodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := recordClient(base)
+	raw, _, ok, err := rc.Latest(context.Background(), textID)
+	if err != nil || !ok {
+		t.Fatalf("Latest: ok=%v err=%v", ok, err)
+	}
+	if len(raw) > artifactref.InlineMaxBytes+200 {
+		t.Fatalf("stored content = %d bytes, want it capped near the %d byte limit", len(raw), artifactref.InlineMaxBytes)
+	}
+	if !strings.Contains(string(raw), "[truncated:") {
+		t.Fatalf("stored content missing truncation marker: %q...", string(raw[:80]))
+	}
+}
+
+// TestSaveDocumentRound_TruncatesOversizedAnswer is the same check for the
+// saveDocumentRound path (reviewer/document-kind nodes), which shares
+// truncateForBlob with saveTextRound.
+func TestSaveDocumentRound_TruncatesOversizedAnswer(t *testing.T) {
+	svc := newMetaAwareInMemory()
+	base := reviewerCfgWithArtifacts(t, svc, true)
+	base.IsReviewer = false
+	base.Artifact = kindDocument
+	base.NodeID = "doc-big"
+
+	big := strings.Repeat("y", artifactref.InlineMaxBytes+100)
+	saveEpisodicRound(context.Background(), base, base.NodeID, "turn-1", 1, big, StagedDelivery{}, nil)
+
+	docID, err := recordstore.IdentityFor(kindDocument, nil, documentHint(base.ChatID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := recordClient(base)
+	raw, _, ok, err := rc.Latest(context.Background(), docID)
+	if err != nil || !ok {
+		t.Fatalf("Latest: ok=%v err=%v", ok, err)
+	}
+	if !strings.Contains(string(raw), "[truncated:") {
+		t.Fatalf("stored content missing truncation marker: %q...", string(raw[:80]))
 	}
 }

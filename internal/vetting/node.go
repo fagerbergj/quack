@@ -673,10 +673,10 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			act := actFor(answer)
 			// Every judge round writes a revision, gate-passed or not - only
 			// delivery stays gate-passed-only (#1090 P2: rounds are history).
-			if cfg.IsReviewer || cfg.Artifact != "" {
-				episodicState = saveEpisodicRound(nodeCtx, cfg, nodeID, turnID, round, answer, act.stagedDelivery["review"], episodicState)
-				episodicRoundsWritten++
-			}
+			// Every gated node writes one, not just reviewer/document nodes
+			// (#1095/#1090 P8: saveEpisodicRound falls back to "text:<node>").
+			episodicState = saveEpisodicRound(nodeCtx, cfg, nodeID, turnID, round, answer, act.stagedDelivery["review"], episodicState)
+			episodicRoundsWritten++
 			runID := fmt.Sprintf("judge-r%d", round)
 			judgeCtx, jspan := startStageSpan(nodeCtx, sink, cfg, nodeID, "judge", stream.StageJudge, runID, round)
 			// Replay-ledger coords for judge round (via context.WithValue, not adkagent.Context).
@@ -827,8 +827,10 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		}
 		// A judge-less node (JudgeRounds == 0, e.g. a deterministic-only
 		// reMarkable stage) never entered the round loop above - write its
-		// one round here so it still gets a code_review/document record.
-		if episodicRoundsWritten == 0 && (cfg.IsReviewer || cfg.Artifact != "") {
+		// one round here so it still gets a code_review/document/text record.
+		// Mirrors the round loop's own empty-answer guard (line 658) so an
+		// empty/whitespace-only answer doesn't produce an empty text revision.
+		if episodicRoundsWritten == 0 && strings.TrimSpace(stripLeadingEnvScaffold(answer)) != "" {
 			saveEpisodicRound(nodeCtx, cfg, nodeID, turnID, 1, answer, act.stagedDelivery["review"], nil)
 		}
 		// Deliver even on judge FAIL (graceful degradation). Memory stays pass-only.

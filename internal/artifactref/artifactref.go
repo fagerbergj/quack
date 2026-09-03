@@ -20,6 +20,10 @@ const AppName = "quack"
 // FileData part carries (gs://, https://, ...), so it can't collide.
 const Scheme = "quack-artifact"
 
+// InlineMaxBytes bounds a single inline artifact write/read across the
+// codebase (matches acp.readArtifactMaxBytes/orchestrator.loadArtifactMaxBytes).
+const InlineMaxBytes = 256 * 1024
+
 // Encode builds a reference part for one artifact revision. FileData (not
 // InlineData, which exists to embed bytes, or Text, which could collide
 // with real model-visible text) carries it.

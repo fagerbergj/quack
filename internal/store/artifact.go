@@ -312,10 +312,15 @@ func (s *gormArtifactService) RevisionsByTurn(ctx context.Context, appName, user
 // session, name) key within this process - two rounds of the same node, or
 // two nodes, writing the same id can no longer both read the same MAX and
 // have one insert silently fail the unique index (#1090 adversarial review
-// finding #3). ponytail: process-local only, not a real distributed lock
-// (Postgres advisory lock keyed on hashtext(...) would cover multiple
-// replicas too) - the retry loop below is the cross-process safety net for that
-// gap, and quack runs single-instance today.
+// finding #3). recordstore.Client's own per-(chat,id) lock (#1107) is the
+// primary serializer for every write that goes through recordstore; this one
+// is a defensive backstop for a caller that reaches artifact.Service
+// directly, bypassing recordstore entirely (e.g. attachments, REST reads
+// that Save via the raw ADK service) - kept rather than deleted because that
+// path has no other lock at all. ponytail: process-local only, not a real
+// distributed lock (Postgres advisory lock keyed on hashtext(...) would cover
+// multiple replicas too) - the retry loop below is the cross-process safety
+// net for that gap, and quack runs single-instance today.
 var artifactRevisionLocks sync.Map // key -> *sync.Mutex
 
 func revisionLockFor(appName, userID, sessionID, name string) *sync.Mutex {

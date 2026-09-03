@@ -7,12 +7,16 @@ import (
 	"fmt"
 	"strings"
 
+	"log/slog"
+
 	otellog "go.opentelemetry.io/otel/log"
 	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
@@ -31,7 +35,7 @@ type planResult struct {
 }
 
 // NewPlanTool: validates and caches a DAG plan, emits dag_plan SSE event.
-func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn, message string, githubSetup *dag.Setup, allowedKinds []string, workerAsk string, contextItems []dag.ContextItem, planOnly bool) (tool.Tool, error) {
+func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn, message string, githubSetup *dag.Setup, allowedKinds []string, workerAsk string, contextItems []dag.ContextItem, planOnly bool, artifacts artifact.Service) (tool.Tool, error) {
 	checksDesc := "Checks are currently unavailable (workspace.check_commands is empty) - omit `checks`."
 	if cc := planner.CheckCommands(); len(cc) > 0 {
 		checksDesc = fmt.Sprintf("`checks` are OPTIONAL - you have NOT seen the repo yet, so do NOT guess its "+
@@ -96,6 +100,12 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 			}
 
 			cache.Put(*p)
+
+			// Plan acceptance is the one place a plan is persisted (#1095/#1090
+			// P8) - fail-open, same as every other episodic artifact write.
+			if _, _, saveErr := dag.SaveDagPlanRecord(tc, artifacts, artifactref.AppName, tc.UserID(), tc.SessionID(), tc.InvocationID(), *p); saveErr != nil {
+				slog.Warn("dag_plan record save failed", "component", "dag", "plan_id", p.ID, "err", saveErr)
+			}
 
 			// Emit dag_plan so the frontend sees the plan before execution starts.
 			if yieldFn, ok := stream.YieldFromContext(tc); ok {
