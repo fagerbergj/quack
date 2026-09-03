@@ -22,10 +22,11 @@ type callFailure struct {
 
 var (
 	failuresMu sync.Mutex
-	// ponytail: unbounded map keyed by chat+node+agent, swept only by
-	// RecordCallResult's success case and dag's LastFailure/consume reads;
-	// add a reaper if a leak ever shows up (bounded today by
-	// concurrently-running rounds, not requests).
+	// ponytail: unbounded map keyed by chat+node+agent, swept by
+	// RecordCallResult's success case, dag's LastFailure/consume reads, and
+	// each RunGatedRefine/judge-round entry's own-role ClearFailure; add a
+	// reaper if a leak ever shows up (bounded today by concurrently-running
+	// invocations per chat+node+agent, not requests).
 	failures = map[string]*callFailure{}
 )
 

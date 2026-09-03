@@ -97,12 +97,20 @@ func (s *DagStream) ScopeToResume(nodeIDs []string) {
 // NewDagStream: builds a router for one plan's gate-node events.
 func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID, sessionID, cancelKey string, yield func(stream.SSEEvent, error) bool, nodeOutputs map[string]string) *DagStream {
 	agentByID := make(map[string]string, len(plan.Nodes))
+	// scopeByID: workspaceNodeID(plan, n) per node - the SAME key
+	// vetting.RunGatedRefine's recorder uses (cfg.NodeID), which diverges
+	// from the plan node id for implementer nodes in setup/repo-chain plans
+	// (workspace.SharedRepoScope, shared across sibling implementers). The
+	// failure lookup below must use this, not the raw plan node id, or the
+	// record the recorder wrote is never found (#1109 re-review finding).
+	scopeByID := make(map[string]string, len(plan.Nodes))
 	for _, n := range plan.Nodes {
 		agentByID[n.ID] = n.AgentName
+		scopeByID[n.ID] = workspaceNodeID(plan, n)
 	}
 	return &DagStream{
 		ctx: ctx, plan: plan, agentByID: agentByID, yield: yield,
-		ds: newDagStream(otelobs.TraceIDOf(ctx), cancelKey, agentByID, yield, nodeOutputs, func(nodeID string) gateScore {
+		ds: newDagStream(otelobs.TraceIDOf(ctx), cancelKey, agentByID, scopeByID, yield, nodeOutputs, func(nodeID string) gateScore {
 			return e.gateScore(ctx, appName, userID, sessionID, nodeID)
 		}, func(nodeID string) bool {
 			return e.controls.wasCancelled(cancelKey, nodeID)
@@ -156,7 +164,7 @@ func (s *DagStream) Finish() {
 			continue
 		}
 		if strings.TrimSpace(s.ds.outputs[n.ID]) == "" {
-			s.yield(stream.NodeFailed(n.ID, emptyNodeError(s.ds.chatID, n.ID, s.ds.agentByID[n.ID])), nil)
+			s.yield(stream.NodeFailed(n.ID, emptyNodeError(s.ds.chatID, s.ds.scope(n.ID), s.ds.agentByID[n.ID])), nil)
 			continue
 		}
 		s.yield(stream.NodeDone(n.ID, s.ds.nodeDoneData(n.ID)), nil)
@@ -258,8 +266,12 @@ type dagStream struct {
 	// chatID: real chat scope (both NewDagStream call sites pass their
 	// cancelKey, which is always the chat id) - used to look up a
 	// gateway-failure record when a node's output comes back empty (#1105).
-	chatID     string
-	agentByID  map[string]string
+	chatID    string
+	agentByID map[string]string
+	// scopeByID: per-node workspace scope (workspaceNodeID) - the failure
+	// tracker's real key component, distinct from the plan node id for
+	// setup/repo-chain implementer nodes (#1109 re-review finding).
+	scopeByID  map[string]string
 	yield      func(stream.SSEEvent, error) bool
 	outputs    map[string]string
 	scoreOf    func(string) gateScore
@@ -292,12 +304,23 @@ type runUsage struct {
 	model, finish string
 }
 
-func newDagStream(traceID, chatID string, agentByID map[string]string, yield func(stream.SSEEvent, error) bool, outputs map[string]string, scoreOf func(string) gateScore, cancelled func(string) bool, userPaused func(string) bool, steerOf func(string, int) string) *dagStream {
+func newDagStream(traceID, chatID string, agentByID, scopeByID map[string]string, yield func(stream.SSEEvent, error) bool, outputs map[string]string, scoreOf func(string) gateScore, cancelled func(string) bool, userPaused func(string) bool, steerOf func(string, int) string) *dagStream {
 	return &dagStream{
-		traceID: traceID, chatID: chatID, agentByID: agentByID, yield: yield, outputs: outputs, scoreOf: scoreOf, cancelled: cancelled, userPaused: userPaused, steerOf: steerOf,
+		traceID: traceID, chatID: chatID, agentByID: agentByID, scopeByID: scopeByID, yield: yield, outputs: outputs, scoreOf: scoreOf, cancelled: cancelled, userPaused: userPaused, steerOf: steerOf,
 		started: map[string]bool{}, doneEmitted: map[string]bool{}, needsInput: map[string]bool{}, startedAt: map[string]time.Time{},
 		curRun: map[string]string{}, steerSeen: map[string]int{}, usage: map[string]*runUsage{}, nodeUsage: map[string]*runUsage{},
 	}
+}
+
+// scope returns node's workspace scope (the failure recorder's real key
+// component), falling back to the raw node id when scopeByID has no entry
+// (e.g. a test harness that never populated it, or a node id that is
+// already its own scope).
+func (s *dagStream) scope(node string) string {
+	if sc, ok := s.scopeByID[node]; ok && sc != "" {
+		return sc
+	}
+	return node
 }
 
 func (s *dagStream) emit(ev stream.SSEEvent) bool {
@@ -361,7 +384,7 @@ func (s *dagStream) handle(ev *session.Event) bool {
 					return false
 				}
 			default:
-				if !s.emit(stream.NodeFailed(node, emptyNodeError(s.chatID, node, s.agentByID[node]))) {
+				if !s.emit(stream.NodeFailed(node, emptyNodeError(s.chatID, s.scope(node), s.agentByID[node]))) {
 					return false
 				}
 			}

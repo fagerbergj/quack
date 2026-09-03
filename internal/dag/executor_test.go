@@ -1,6 +1,7 @@
 package dag
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -17,7 +18,7 @@ import (
 // events it produced. scoreOf is fixed so node_done carries a known judge result.
 func drive(evs []*session.Event, agentByID map[string]string, score gateScore) []stream.SSEEvent {
 	var got []stream.SSEEvent
-	ds := newDagStream("", "", agentByID,
+	ds := newDagStream("", "", agentByID, nil,
 		func(ev stream.SSEEvent, _ error) bool { got = append(got, ev); return true },
 		map[string]string{},
 		func(string) gateScore { return score },
@@ -123,7 +124,7 @@ func TestDagStream_EmptyNodeReportsRecordedGatewayFailure(t *testing.T) {
 
 	const npath = "quack-dag-p@1/n1@rr"
 	var got []stream.SSEEvent
-	ds := newDagStream("", chatID, map[string]string{node: agent},
+	ds := newDagStream("", chatID, map[string]string{node: agent}, nil,
 		func(ev stream.SSEEvent, _ error) bool { got = append(got, ev); return true },
 		map[string]string{},
 		func(string) gateScore { return gateScore{} },
@@ -168,7 +169,7 @@ func TestDagStream_EmptyNodeIgnoresOtherRolesFailure(t *testing.T) {
 
 	const npath = "quack-dag-p@1/n1@rr"
 	var got []stream.SSEEvent
-	ds := newDagStream("", chatID, map[string]string{node: agent},
+	ds := newDagStream("", chatID, map[string]string{node: agent}, nil,
 		func(ev stream.SSEEvent, _ error) bool { got = append(got, ev); return true },
 		map[string]string{},
 		func(string) gateScore { return gateScore{} },
@@ -187,6 +188,50 @@ func TestDagStream_EmptyNodeIgnoresOtherRolesFailure(t *testing.T) {
 	}
 	if nf == nil || nf.Error != "produced no answer" {
 		t.Fatalf("node_failed = %+v, want the silent-gap message - the judge's failure belongs to a different role", nf)
+	}
+}
+
+// TestDagStream_EmptyNodeUsesWorkspaceScopeForSetupPlanImplementer is the
+// #1109 re-review finding: for an implementer node in a setup/repo-chain
+// plan, the recorder keys generate() calls under cfg.NodeID =
+// workspaceNodeID(plan, node) = workspace.SharedRepoScope ("quack-shared-repo"),
+// NOT the plan node id. Executor.NewDagStream must resolve the SAME scope so
+// emptyNodeError actually finds the record the recorder wrote.
+func TestDagStream_EmptyNodeUsesWorkspaceScopeForSetupPlanImplementer(t *testing.T) {
+	const chatID, agent = "chat-1105-setup", implementerAgent
+	scope := "quack-shared-repo" // workspace.SharedRepoScope, avoiding an import cycle-prone dependency in the test
+	t.Cleanup(func() { inference.ClearFailure(chatID, scope, agent) })
+
+	gwErr := errors.New(`openai qwen3.8-27b (generate): status 502: POST "http://llm-swap:11436/v1/chat/completions": 502 Bad Gateway`)
+	for i := 0; i < 3; i++ {
+		inference.RecordCallResult(chatID, scope, agent, gwErr)
+	}
+
+	plan := Plan{ID: "p1", Setup: &Setup{Repo: "https://example.com/r.git"}, Nodes: []Node{{ID: "impl-1", AgentName: agent}}}
+	ex := NewExecutor(nil, nil, nil, nil, nil, nil)
+	var got []stream.SSEEvent
+	ds := ex.NewDagStream(context.Background(), plan, "quack", "u1", chatID, chatID,
+		func(ev stream.SSEEvent, _ error) bool { got = append(got, ev); return true },
+		map[string]string{})
+
+	const npath = "quack-dag-p@1/impl-1@rr"
+	ds.Handle(&session.Event{NodeInfo: &session.NodeInfo{Path: npath}, Output: ""})
+	ds.Finish()
+
+	var nf *stream.NodeFailedData
+	for _, ev := range got {
+		if d, ok := ev.Data.(stream.NodeFailedData); ok {
+			nf = &d
+		}
+	}
+	if nf == nil {
+		t.Fatalf("no node_failed event emitted; got %v", names(got))
+	}
+	if nf.Error == "produced no answer" {
+		t.Fatalf("node_failed.Error = %q, want the recorded gateway error - the workspace-scope key must resolve, not the raw plan node id", nf.Error)
+	}
+	if !strings.Contains(nf.Error, "502 Bad Gateway") || !strings.Contains(nf.Error, "3 consecutive attempts") {
+		t.Fatalf("node_failed.Error = %q, want it to name the error class and attempt count", nf.Error)
 	}
 }
 
@@ -314,7 +359,7 @@ func equalStrings(a, b []string) bool {
 func TestDagStream_SteeredRunEmitsNodeSteered(t *testing.T) {
 	agentByID := map[string]string{"n1": "web-researcher"}
 	var got []stream.SSEEvent
-	ds := newDagStream("", "", agentByID,
+	ds := newDagStream("", "", agentByID, nil,
 		func(e stream.SSEEvent, _ error) bool { got = append(got, e); return true },
 		map[string]string{},
 		func(string) gateScore { return gateScore{} },

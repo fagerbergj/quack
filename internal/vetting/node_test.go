@@ -20,6 +20,7 @@ import (
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/stream"
@@ -681,6 +682,66 @@ func TestGatedWorkerNode_SingleRoundRevisesOnce(t *testing.T) {
 }
 
 // TestGatedWorkerNode_ZeroRoundsSkipsJudge pins the 0 = "no judge at all"
+// TestRunGatedRefine_EntryClearDropsStaleFailureBeforeASilentGap is #1109
+// re-review's suggestion 2 (a direct test for the entry-clear introduced for
+// finding 3): a failure record left over from an earlier, unrelated
+// invocation of this same chat+node+agent must not survive into a NEW
+// invocation whose model succeeds on every call but returns an empty
+// answer - that run must still resolve as the true #568 silent gap
+// (ErrNodeEmpty), not report the stale gateway error.
+func TestRunGatedRefine_EntryClearDropsStaleFailureBeforeASilentGap(t *testing.T) {
+	// planNodeID (the RunGatedRefine nodeID param, e.g. dag/graph.go's
+	// node.ID) deliberately differs from cfg.NodeID (workspaceNodeID) - the
+	// #1109 re-review finding: they diverge for setup-plan implementer
+	// nodes, and the entry-clear must key off cfg.NodeID, the recorder's own key.
+	const chatID, planNodeID, workspaceScope, agentName = "chat-1109-entryclear", "impl-1", "quack-shared-repo", "code-implementer"
+	inference.RecordCallResult(chatID, workspaceScope, agentName, errors.New("stale: previous invocation's gateway error"))
+	t.Cleanup(func() { inference.ClearFailure(chatID, workspaceScope, agentName) })
+
+	stub := stubFixedAnswerModel{text: ""} // succeeds every call, always empty - the true silent-gap shape
+	worker, err := llmagent.New(llmagent.Config{
+		Name: agentName, Model: stub, Description: "reader",
+		Instruction: "Answer the question.",
+	})
+	if err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+	cfg := Config{JudgeRounds: 0, Threshold: 0.7, ChatID: chatID, NodeID: workspaceScope, Agent: agentName}
+	node, err := newTestGatedNode(planNodeID, worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
+	if err != nil {
+		t.Fatalf("node: %v", err)
+	}
+	root, err := workflowagent.New(workflowagent.Config{
+		Name:      "root",
+		SubAgents: []adkagent.Agent{worker},
+		Edges:     workflow.Chain(workflow.Start, node),
+	})
+	if err != nil {
+		t.Fatalf("root: %v", err)
+	}
+	r, err := runner.New(runner.Config{
+		AppName: "test", Agent: root,
+		SessionService: session.InMemoryService(), AutoCreateSession: true,
+	})
+	if err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+
+	// A true silent gap (ErrNodeEmpty, wrapped as "vetting: node produced no
+	// answer") is the EXPECTED outcome here - the model succeeds on every
+	// call but never has anything to say. Any other error is a real test failure.
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "What is the capital of France?"}}}
+	for _, err := range r.Run(t.Context(), "u", "s", task, adkagent.RunConfig{}) {
+		if err != nil && !strings.Contains(err.Error(), "produced no answer") {
+			t.Fatalf("run: %v", err)
+		}
+	}
+
+	if _, _, _, ok := inference.LastFailure(chatID, workspaceScope, agentName); ok {
+		t.Fatalf("stale failure record still present - the entry-clear did not fire, or a real (nonexistent) failure got recorded")
+	}
+}
+
 // contract the media readers rely on (judge:false ⇒ JudgeRounds=0): even though
 // the judge factory is non-nil, JudgeRounds=0 must never invoke it, so the draft
 // is surfaced unjudged.

@@ -22,6 +22,7 @@ func TestNodeDoneReportsDurationAndGateResult(t *testing.T) {
 		"",
 		"",
 		map[string]string{node: "code-explorer"},
+		nil,
 		func(stream.SSEEvent, error) bool { return true },
 		map[string]string{node: "goose registers tools via ExtensionManager…"},
 		func(id string) gateScore { return gateScore{score: 1.0, passed: true, rounds: 1} },

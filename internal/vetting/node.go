@@ -260,11 +260,15 @@ func appendJudgeRound(ctx context.Context, cfg Config, nodeID, turnID string, ro
 func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Node, workerModel model.LLM, judge JudgeFactory, cfg Config, prompt string, attachments []*genai.Part, ctrl NodeControl, emit func(*session.Event) error) (answer string, res GateResult, err error) {
 	log := slog.With("component", "vetting", "node", nodeID)
 
-	// A node id is reused across turns/plans on the same chat - drop any
-	// unconsumed failure record from a previous invocation before this one
-	// records its own, so a stale streak can't leak into an unrelated future
-	// empty completion (PR #1109 review finding 3).
-	inference.ClearFailure(cfg.ChatID, nodeID, cfg.Agent)
+	// cfg.NodeID (workspaceNodeID), NOT nodeID - the recorder keys every
+	// generate() call on cfg.NodeID (line ~1212 below), which for an
+	// implementer node in a setup/repo-chain plan is workspace.SharedRepoScope,
+	// not the plan node id nodeID carries (#1109 re-review finding). A node
+	// id is reused across turns/plans on the same chat - drop any unconsumed
+	// failure record from a previous invocation before this one records its
+	// own, so a stale streak can't leak into an unrelated future empty
+	// completion (PR #1109 review finding 3).
+	inference.ClearFailure(cfg.ChatID, cfg.NodeID, cfg.Agent)
 
 	nodeCtx, span := otelobs.StartNode(ctx,
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID),
@@ -579,12 +583,20 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			runID := fmt.Sprintf("judge-r%d", round)
 			judgeCtx, jspan := startStageSpan(nodeCtx, sink, cfg, nodeID, "judge", stream.StageJudge, runID, round)
 			// Replay-ledger coords for judge round (via context.WithValue, not adkagent.Context).
-			judgeCoords := ledger.Coords{ChatID: cfg.ChatID, Node: nodeID, Agent: "judge", Round: runID, User: cfg.User, Source: cfg.Source}
+			// Node: cfg.NodeID (not nodeID) matches the worker recorder's own
+			// key (see RunGatedRefine's entry-clear above) - both must agree
+			// on the same workspace scope for setup/repo-chain plans.
+			judgeCoords := ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: "judge", Round: runID, User: cfg.User, Source: cfg.Source}
 			ledgerCtx := ledger.WithCoords(ctx, judgeCoords)
 			// Same belt-and-suspenders as runWorkerNodeTraced's workerModel stamp.
 			if cs, ok := cfg.JudgeModel.(interface{ SetLedgerCoords(ledger.Coords) }); ok {
 				cs.SetLedgerCoords(judgeCoords)
 			}
+			// Nothing reads a "judge"-role failure record today - clear it on
+			// entry so a failed judge round doesn't leave a permanent orphan
+			// waiting for a judge success that may never come (#1109
+			// re-review suggestion).
+			inference.ClearFailure(cfg.ChatID, cfg.NodeID, "judge")
 			// Compute deterministic criteria before judge runs.
 			det, skip := computeDeterministicCriteria(judgeCtx, answer, act, cfg)
 			if skip != "" {
