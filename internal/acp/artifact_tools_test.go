@@ -301,12 +301,28 @@ func TestEditArtifactMCP_ConflictReturnsCurrent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CallTool edit_artifact: %v", err)
 	}
-	if !res.IsError {
-		t.Fatalf("a non-matching Old must conflict, got: %s", toolResultText(t, res))
+	// A conflict is an expected, actionable outcome for the calling agent, not
+	// a tool failure - success carrying structured conflict data (#1108 finding 3).
+	if res.IsError {
+		t.Fatalf("a non-matching Old is a conflict, not a tool error: %s", toolResultText(t, res))
 	}
 	text := toolResultText(t, res)
 	if !strings.Contains(text, "conflict") || !strings.Contains(text, "hello world") {
 		t.Fatalf("conflict result = %q, want the current content/revision", text)
+	}
+	// Round-tripped over the wire, so structured content decodes as a plain map.
+	out, ok := res.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("StructuredContent = %#v (%T), want a JSON object", res.StructuredContent, res.StructuredContent)
+	}
+	if conflict, _ := out["conflict"].(bool); !conflict {
+		t.Fatalf("StructuredContent[conflict] = %v, want true", out["conflict"])
+	}
+	if gotRev, _ := out["revision"].(float64); int(gotRev) != rev {
+		t.Fatalf("StructuredContent[revision] = %v, want %d", out["revision"], rev)
+	}
+	if content, _ := out["content"].(string); content != "hello world" {
+		t.Fatalf("StructuredContent[content] = %q, want %q", content, "hello world")
 	}
 	raw, _, ok, err := rc.Latest(ctx, id)
 	if err != nil || !ok || string(raw) != "hello world" {

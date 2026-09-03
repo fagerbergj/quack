@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -724,4 +725,37 @@ func TestSaveRowFailureAfterAppendDoesNotWedgeID(t *testing.T) {
 	if parent != 1 {
 		t.Fatalf("lastRevision after the wedge+retry = %d, want 1", parent)
 	}
+}
+
+// TestRegisterPanicsOnInvalidJSONSchema: the single root-cause fix for #1108
+// finding 3 - a kind with unparseable JSONSchema must fail loudly at
+// registration time (like the existing missing-Identity/duplicate-kind
+// panics), not be silently skipped by whichever tool-generation surface
+// (MCP write_<kind>, ADK write_<kind>) happens to notice later. One guard
+// here means both surfaces get it for free.
+func TestRegisterPanicsOnInvalidJSONSchema(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("Register did not panic on an invalid JSONSchema")
+		}
+		msg, _ := r.(string)
+		if !containsAll(msg, "test_bad_schema_kind", "invalid JSONSchema") {
+			t.Fatalf("panic message = %q, want it to name the kind and the problem", msg)
+		}
+	}()
+	Register("test_bad_schema_kind", KindSpec{
+		Class:      Structured,
+		JSONSchema: `{not valid json`,
+		Identity:   func(_ []byte, hint string) (string, error) { return hint, nil },
+	})
+}
+
+func containsAll(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if !strings.Contains(s, sub) {
+			return false
+		}
+	}
+	return true
 }

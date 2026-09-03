@@ -159,6 +159,15 @@ type editArtifactInput struct {
 	Edits        []editArtifactOp `json:"edits" jsonschema:"one or more search/replace pairs, applied in order"`
 }
 
+// editConflictResult is edit_artifact's structured success payload on a real
+// conflict (ambiguous/vanished match) - field names mirror
+// recordstore.EditConflict so the two never drift (#1108 finding 3).
+type editConflictResult struct {
+	Conflict bool   `json:"conflict"`
+	Revision int    `json:"revision"`
+	Content  string `json:"content"`
+}
+
 // editArtifactOp is one search/replace pair.
 type editArtifactOp struct {
 	Old string `json:"old" jsonschema:"exact text to replace; must match exactly once in the target content"`
@@ -191,9 +200,12 @@ func registerEditArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vetti
 		if err != nil {
 			var conflict *recordstore.EditConflict
 			if errors.As(err, &conflict) {
-				return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(
-					"edit_artifact: conflict - re-read and retry.\ncurrent revision: %d\ncurrent content:\n%s",
-					conflict.Revision, string(conflict.Content))}}}, nil, nil
+				// A conflict is an expected, actionable outcome (re-read and retry with
+				// fresh edits), not a tool failure - success, not IsError (#1108 finding 3).
+				out := editConflictResult{Conflict: true, Revision: conflict.Revision, Content: string(conflict.Content)}
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("conflict - re-read and retry.\ncurrent revision: %d\ncurrent content:\n%s", conflict.Revision, string(conflict.Content))}},
+				}, out, nil
 			}
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "edit_artifact: " + err.Error()}}}, nil, nil
 		}

@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/genai"
 
@@ -94,8 +95,12 @@ var (
 // Register declares kind's shape (§4.3/§4.4). Call once (package init) per
 // kind from the record type's own package - #1090 P2's registered kinds are
 // code_review, finding, document, pr_body, text, bytes. Panics on a
-// duplicate registration or a spec missing Identity (a wiring bug, not a
-// runtime error - every kind must derive its own id).
+// duplicate registration, a spec missing Identity (a wiring bug, not a
+// runtime error - every kind must derive its own id), or a JSONSchema that
+// doesn't parse - the write_<kind> tool generators (MCP and ADK) both trust
+// this schema is valid and previously skipped the tool silently on either
+// surface when it wasn't; failing here instead means both surfaces fail the
+// same way, loudly, at startup (#1108 finding 3).
 func Register(kind string, spec KindSpec) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
@@ -104,6 +109,12 @@ func Register(kind string, spec KindSpec) {
 	}
 	if spec.Identity == nil {
 		panic("recordstore: kind " + kind + " registered with no Identity func")
+	}
+	if spec.JSONSchema != "" {
+		var schema jsonschema.Schema
+		if err := json.Unmarshal([]byte(spec.JSONSchema), &schema); err != nil {
+			panic("recordstore: kind " + kind + " registered with invalid JSONSchema: " + err.Error())
+		}
 	}
 	registry[kind] = spec
 }

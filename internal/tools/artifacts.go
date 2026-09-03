@@ -96,8 +96,19 @@ func NewEditArtifactTool(c *recordstore.Client, nodeID string, coords RoundCoord
 			if err != nil {
 				var conflict *recordstore.EditConflict
 				if errors.As(err, &conflict) {
-					return fmt.Sprintf("edit_artifact: conflict - re-read and retry.\ncurrent revision: %d\ncurrent content:\n%s",
-						conflict.Revision, string(conflict.Content)), nil
+					// A conflict is an expected, actionable outcome (re-read and retry with
+					// fresh edits), not a tool failure - success, not an error (#1108 finding 3,
+					// matches the MCP surface's editConflictResult field names).
+					out := struct {
+						Conflict bool   `json:"conflict"`
+						Revision int    `json:"revision"`
+						Content  string `json:"content"`
+					}{Conflict: true, Revision: conflict.Revision, Content: string(conflict.Content)}
+					b, mErr := json.Marshal(out)
+					if mErr != nil {
+						return "", fmt.Errorf("edit_artifact: marshaling conflict: %w", mErr)
+					}
+					return string(b), nil
 				}
 				return "", fmt.Errorf("edit_artifact: %w", err)
 			}
@@ -193,15 +204,18 @@ func NewWriteKindTool(c *recordstore.Client, nodeID, kind string, spec recordsto
 }
 
 // NewWriteKindTools builds one write_<kind> tool per registered structured
-// kind; a bad schema drops just that one tool rather than failing the batch.
-func NewWriteKindTools(c *recordstore.Client, nodeID string, coords RoundCoords, hint string) []tool.Tool {
-	var out []tool.Tool
+// kind. recordstore.Register already rejects a bad JSONSchema at process
+// startup (#1108 finding 3), so NewWriteKindTool can't fail here in
+// practice; a failure is still surfaced (never silently dropped) rather than
+// skipped, so the two surfaces can never drift again.
+func NewWriteKindTools(c *recordstore.Client, nodeID string, coords RoundCoords, hint string) ([]tool.Tool, error) {
+	out := make([]tool.Tool, 0, len(recordstore.Kinds()))
 	for _, spec := range recordstore.Kinds() {
 		t, err := NewWriteKindTool(c, nodeID, spec.Name(), spec, coords, hint)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("write_%s: %w", spec.Name(), err)
 		}
 		out = append(out, t)
 	}
-	return out
+	return out, nil
 }

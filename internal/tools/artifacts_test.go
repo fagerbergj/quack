@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -90,6 +91,76 @@ func TestNewEditArtifactTool_DirectApply(t *testing.T) {
 	raw, _, ok, err := rc.Latest(context.Background(), id)
 	if err != nil || !ok || string(raw) != "hello there" {
 		t.Fatalf("Latest: raw=%q ok=%v err=%v", raw, ok, err)
+	}
+}
+
+// TestNewWriteKindTools_EveryKindRegistersWithoutError: the ADK-native mirror
+// of internal/acp's TestArtifactWriteToolsMCP_EveryKindRegistersWithoutWarning -
+// every kind recordstore.Kinds() currently returns must produce a write_<kind>
+// tool. recordstore.Register now rejects a bad JSONSchema at process startup
+// (TestRegisterPanicsOnInvalidJSONSchema), so this can only regress if a
+// second, un-guarded schema check is reintroduced here (#1108 finding 3).
+func TestNewWriteKindTools_EveryKindRegistersWithoutError(t *testing.T) {
+	rc := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat-a")
+	toolsList, err := NewWriteKindTools(rc, "n1", RoundCoords{}, "")
+	if err != nil {
+		t.Fatalf("NewWriteKindTools: %v", err)
+	}
+	got := map[string]bool{}
+	for _, tl := range toolsList {
+		got[tl.Name()] = true
+	}
+	for _, spec := range recordstore.Kinds() {
+		if !got["write_"+spec.Name()] {
+			t.Errorf("write_%s was not registered (a bad JSONSchema silently dropped the tool)", spec.Name())
+		}
+	}
+}
+
+// TestNewEditArtifactTool_ConflictIsStructuredSuccess: edit_artifact was
+// already a success (not a tool error) on the ADK surface for a real
+// conflict; this pins the JSON payload shape ({"conflict":true,"revision":N,
+// "content":"..."} - same field names as the MCP surface's
+// editConflictResult) so the two surfaces can't drift apart again
+// (#1108 finding 3).
+func TestNewEditArtifactTool_ConflictIsStructuredSuccess(t *testing.T) {
+	svc := artifact.InMemoryService()
+	rc := recordstore.New(svc, "quack", "u1", "chat-a")
+	id, rev, err := rc.SaveBlob(context.Background(), "text", []byte("hello world"), "text/plain", "doc1", recordstore.Lineage{NodeID: "n1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tl, err := NewEditArtifactTool(rc, "n1", RoundCoords{})
+	if err != nil {
+		t.Fatalf("NewEditArtifactTool: %v", err)
+	}
+	rt, ok := tl.(runnableTool)
+	if !ok {
+		t.Fatal("edit_artifact tool is not runnable")
+	}
+	out, err := rt.Run(newArtifactsToolCtx(), map[string]any{
+		"id": id, "base_revision": rev,
+		"edits": []editArtifactEdit{{Old: "not present anywhere", New: "x"}},
+	})
+	if err != nil {
+		t.Fatalf("Run must succeed on a conflict, not error: %v", err)
+	}
+	result, _ := out["result"].(string)
+	var payload struct {
+		Conflict bool   `json:"conflict"`
+		Revision int    `json:"revision"`
+		Content  string `json:"content"`
+	}
+	if jErr := json.Unmarshal([]byte(result), &payload); jErr != nil {
+		t.Fatalf("result %q is not the expected JSON conflict payload: %v", result, jErr)
+	}
+	if !payload.Conflict || payload.Revision != rev || payload.Content != "hello world" {
+		t.Fatalf("payload = %+v, want {Conflict:true Revision:%d Content:hello world}", payload, rev)
+	}
+	raw, _, ok, err := rc.Latest(context.Background(), id)
+	if err != nil || !ok || string(raw) != "hello world" {
+		t.Fatalf("content must be untouched after a conflict: raw=%q ok=%v err=%v", raw, ok, err)
 	}
 }
 
