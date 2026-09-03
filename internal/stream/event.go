@@ -443,6 +443,10 @@ type Translator struct {
 	prompt, completion, reasoning, total, cached int32
 	model                                        string
 	finish                                       string
+
+	// seenToolCalls dedups agent_tool_call by call_id: ACP emits a start update and a
+	// completion update that both carry the FunctionCall part, mapping to the same call twice.
+	seenToolCalls map[string]bool
 }
 
 // NewTranslator returns a Translator for one node stream.
@@ -515,6 +519,13 @@ func (t *Translator) Event(ev *session.Event) []SSEEvent {
 			if p.FunctionCall.Name == transferTool {
 				continue
 			}
+			if t.seenToolCalls[p.FunctionCall.ID] {
+				continue
+			}
+			if t.seenToolCalls == nil {
+				t.seenToolCalls = make(map[string]bool)
+			}
+			t.seenToolCalls[p.FunctionCall.ID] = true
 			out = append(out, SSEEvent{Name: EventAgentToolCall, Data: AgentToolCallData{
 				RunID: t.curRun, CallID: p.FunctionCall.ID, Name: p.FunctionCall.Name, Args: p.FunctionCall.Args,
 			}})

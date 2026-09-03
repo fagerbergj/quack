@@ -64,6 +64,26 @@ func TestTranslatorRunLifecycle(t *testing.T) {
 	}
 }
 
+// ACP emits a tool-call-start update and a completion update that both carry the
+// FunctionCall part for the same call ID (e.g. pairSpec re-includes it alongside the
+// FunctionResponse); the Translator must not turn that into two agent_tool_call events.
+func TestTranslatorDedupsToolCallByID(t *testing.T) {
+	tr := NewTranslator()
+	tr.Event(eventWith(AgentStartPart("r1", "web-researcher", StageWorker, 0)))
+
+	call := &genai.Part{FunctionCall: &genai.FunctionCall{ID: "c1", Name: "web_search", Args: map[string]any{}}}
+	got := tr.Event(eventWith(call))
+	if len(got) != 1 || got[0].Name != EventAgentToolCall {
+		t.Fatalf("first call = %+v, want one agent_tool_call", got)
+	}
+
+	// Second event repeats the same FunctionCall part alongside the FunctionResponse.
+	got = tr.Event(eventWith(call, &genai.Part{FunctionResponse: &genai.FunctionResponse{ID: "c1", Name: "web_search", Response: map[string]any{"result": "x"}}}))
+	if len(got) != 1 || got[0].Name != EventAgentToolResult {
+		t.Fatalf("second event = %+v, want only one agent_tool_result (call must not repeat)", got)
+	}
+}
+
 func TestTranslatorAccumulatesUsageOntoComplete(t *testing.T) {
 	tr := NewTranslator()
 	tr.Event(eventWith(AgentStartPart("r1", "web-researcher", StageWorker, 0)))
