@@ -47,7 +47,12 @@ func (h *Handler) sessionUser(ctx context.Context, chatID string) string {
 	return h.store.SessionUserForChat(ctx, chatID)
 }
 
-const titleInstruction = "Generate a concise chat title (3–6 words, no punctuation, no quotes). Return only the title."
+// titleInstruction is deliberately blunt about the failure mode it guards
+// against (#1124): a model given a genuine question as its only input will,
+// left to its own judgment, sometimes just ANSWER it instead of titling it -
+// this is the prompt-side half of the fix; sanitizeTitle is the other half.
+const titleInstruction = "Generate a short chat title for the message below - do NOT answer it. " +
+	"At most 8 words, plain text, one line, no markdown (no #, *, `, quotes, or punctuation at the end)."
 
 // Backstop that stops a wedged run leaking a goroutine (24h covers the longest overnight DAG).
 const runTimeout = 24 * time.Hour
@@ -92,6 +97,23 @@ func NewHandler(s *store.Store, o *orchestrator.Orchestrator, titler model.LLM, 
 	return &Handler{store: s, orch: o, titler: titler, jail: jail, hub: hub, eventLog: runlog.NewEventLog(s).WithLedger(ledgerStore), ledgerStore: ledgerStore, quackVersion: quackVersion, taskMem: taskMem, userMem: userMem, artifacts: artifacts, extensions: extensions}
 }
 
+// fallbackTitleWords caps the fallback title (see fallbackTitle) at this
+// many words of the user's own request - short enough to read as a title,
+// long enough to be recognizable. store.UpdateTitle's MaxTitleLen is the
+// last-resort character backstop for whatever this or the titler produces.
+const fallbackTitleWords = 8
+
+// fallbackTitle derives a short title straight from what the user asked,
+// for use when the titler is unavailable/errored/empty - never from the
+// run's own answer (#1124). "" only when message itself has no words.
+func fallbackTitle(message string) string {
+	words := strings.Fields(message)
+	if len(words) > fallbackTitleWords {
+		words = words[:fallbackTitleWords]
+	}
+	return strings.Join(words, " ")
+}
+
 func (h *Handler) generateTitle(ctx context.Context, chatID, firstMessage string) string {
 	if h.titler == nil {
 		return ""
@@ -125,9 +147,32 @@ func (h *Handler) generateTitle(ctx context.Context, chatID, firstMessage string
 		}
 	}
 	// Strip leaked thinking blocks that /no_think doesn't always suppress.
-	title := stream.StripThinking(out.String())
+	title := sanitizeTitle(stream.StripThinking(out.String()))
 	slog.Info("title generated", "component", "title", "title", title, "candidates", candidates, "total", total)
 	return title
+}
+
+// markdownTitleChars are stripped from a titler's raw output - a model that
+// ignores titleInstruction's "no markdown" clause tends to hand back a
+// heading/emphasis-decorated fragment of its own answer (#1124's QA
+// evidence: "**Researcher Node:**\nIn a write-ahead-log...").
+var markdownTitleChars = strings.NewReplacer("#", "", "*", "", "`", "", "_", "")
+
+// sanitizeTitle turns a titler's raw response into something safe to show as
+// a title, or "" if nothing usable survives (the caller then falls back to
+// fallbackTitle - #1124). A model that answers instead of titling produces
+// multiple lines and/or markdown; a compliant one-line, plain-text, ≤8-word
+// response passes through untouched but for whitespace.
+func sanitizeTitle(raw string) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(raw), "\n") // first line only
+	line = strings.TrimSpace(markdownTitleChars.Replace(line))
+	line = strings.Trim(line, `"'`+"“”‘’")
+	line = strings.TrimRight(line, ":.,;- ")
+	words := strings.Fields(line)
+	if len(words) > fallbackTitleWords {
+		words = words[:fallbackTitleWords]
+	}
+	return strings.Join(words, " ")
 }
 
 func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
@@ -647,7 +692,15 @@ func (h *Handler) runChat(runCtx context.Context, chatID, turnID, message string
 		}
 		title := h.generateTitle(runCtx, chatID, message)
 		if title == "" {
-			return
+			// Titler unavailable/errored/empty (nil model, timeout, a
+			// non-compliant response StripThinking left blank) - never leave
+			// the chat titleless forever, and never let a later fallback
+			// reach for the run's ANSWER (#1124): derive a short title from
+			// what the user actually asked.
+			title = fallbackTitle(message)
+			if title == "" {
+				return
+			}
 		}
 		_ = h.store.UpdateTitle(runCtx, chatID, title)
 		titleCh <- title

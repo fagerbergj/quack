@@ -675,6 +675,31 @@ func KindsForClass(class Class) []KindSpec {
 	return out
 }
 
+// ArtifactKindNames returns the sorted names of every registered blob-class
+// kind - the closed set a node's `artifact` field may select, since
+// SaveBlob only accepts a registered kind (#1128).
+func ArtifactKindNames() []string {
+	specs := KindsForClass(Blob)
+	names := make([]string, len(specs))
+	for i, s := range specs {
+		names[i] = s.Name()
+	}
+	return names
+}
+
+// ValidateArtifactKind rejects an artifact selector that isn't one of
+// ArtifactKindNames() - the shared guard for #1128, used at plan-build time
+// (dag, planner-authored nodes) and at config-bind time (config,
+// operator-authored workflow nodes) so both routes to SaveBlob agree.
+func ValidateArtifactKind(kind string) error {
+	for _, name := range ArtifactKindNames() {
+		if name == kind {
+			return nil
+		}
+	}
+	return fmt.Errorf("artifact %q is not a registered kind; valid kinds: %s", kind, strings.Join(ArtifactKindNames(), ", "))
+}
+
 // ponytail: no delete/retention/list surface. Design V4.1 dropped
 // delete-on-merged/closed and document retention outright - artifacts live
 // until the chat itself is hard-deleted, so there is nothing here for those

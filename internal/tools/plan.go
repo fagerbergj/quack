@@ -36,6 +36,10 @@ type planResult struct {
 
 // NewPlanTool: validates and caches a DAG plan, emits dag_plan SSE event.
 func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Part, history []dag.HistoryTurn, message string, githubSetup *dag.Setup, allowedKinds []string, workerAsk string, contextItems []dag.ContextItem, planOnly bool, artifacts artifact.Service) (tool.Tool, error) {
+	artifactDesc := fmt.Sprintf("`artifact` is OPTIONAL - only set it to have a node's output saved as a "+
+		"named recordstore artifact on gate pass, and only to one of these exact registered kind names: %s. "+
+		"Never put free text there (it is not a title or description); omit it entirely if you don't need a "+
+		"dedicated artifact for this node's output.", strings.Join(dag.ArtifactKindNames(), ", "))
 	checksDesc := "Checks are currently unavailable (workspace.check_commands is empty) - omit `checks`."
 	if cc := planner.CheckCommands(); len(cc) > 0 {
 		checksDesc = fmt.Sprintf("`checks` are OPTIONAL - you have NOT seen the repo yet, so do NOT guess its "+
@@ -50,7 +54,7 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 			Description: "Tool to run a DAG of specialist agents. Load the plan-work skill first, then YOU author " +
 				"the DAG: pass `nodes`, each {id, agent (a name from the Agents list), task (self-contained - the " +
 				"agent sees only this text), depends_on: [ids it needs output from]}. Optionally a `rubric`. " +
-				checksDesc + " " +
+				checksDesc + " " + artifactDesc + " " +
 				"Every plan MUST declare setup (the working clone + branch) and delivery (how the gated result " +
 				"reaches GitHub). setup and delivery run deterministically AFTER the trust gate - you declare " +
 				"intent, you never run git, push, or open a PR yourself. Pass `setup: {repo, base_ref, work_branch}` " +

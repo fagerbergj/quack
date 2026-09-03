@@ -820,8 +820,19 @@ func (s *Store) DeleteGithubMergeIntent(ctx context.Context, chatID string) erro
 	return s.db.WithContext(ctx).Where("chat_id = ?", chatID).Delete(&GithubMergeIntent{}).Error
 }
 
-// UpdateTitle sets the human-readable title for a chat.
+// MaxTitleLen caps every persisted chat title, regardless of caller (the
+// generated titler, its failure-path fallback, a user's manual rename, or an
+// extension's origin label) - a single backstop against a titler that
+// ignores its own "3-6 words" instruction and echoes back a long answer
+// verbatim (#1124), enforced once here rather than duplicated per caller.
+const MaxTitleLen = 80
+
+// UpdateTitle sets the human-readable title for a chat, truncated to
+// MaxTitleLen runes (see its doc comment).
 func (s *Store) UpdateTitle(ctx context.Context, id, title string) error {
+	if r := []rune(title); len(r) > MaxTitleLen {
+		title = string(r[:MaxTitleLen])
+	}
 	return s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", id).Update("title", title).Error
 }
 

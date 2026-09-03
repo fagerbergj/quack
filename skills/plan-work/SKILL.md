@@ -176,3 +176,5 @@ The chosen node receives the actual file bytes; write its task as a specific ins
 ## Submitting
 
 Call `plan` with `nodes`, each `{id, agent, task, depends_on: [...]}` (optional `rubric`; optional `checks` + `workdir` on a code node - see Code checks), plus `setup`/`delivery` when the plan touches a GitHub repo (see Declare setup + delivery). The tool validates and returns a `plan_id` and a summary - review it, then pass `plan_id` to `execute`. If validation fails, fix the nodes and call again.
+
+A node may also set `artifact` - optional, and only ever one of the exact registered recordstore kind names the tool's own description lists (never free text) - to have that node's output saved as a dedicated artifact on gate pass.
