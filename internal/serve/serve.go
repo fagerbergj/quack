@@ -227,15 +227,27 @@ func ledgerStoreFromConfig(cfg *config.Config) ledger.LedgerStore {
 		return nil
 	}
 	s, ok := cfg.Store(name)
-	if !ok || s.Kind != "filesystem" {
+	if !ok {
 		return nil
 	}
-	store, err := ledger.NewFSStore(s.Root)
-	if err != nil {
-		slog.Warn("replay ledger store init failed; recording disabled", "component", "startup", "err", err)
+	switch s.Kind {
+	case "filesystem":
+		store, err := ledger.NewFSStore(s.Root)
+		if err != nil {
+			slog.Warn("replay ledger store init failed; recording disabled", "component", "startup", "err", err)
+			return nil
+		}
+		return store
+	case "postgres":
+		store, err := ledger.NewPGStoreFromURL(s.URL)
+		if err != nil {
+			slog.Warn("replay ledger store init failed; recording disabled", "component", "startup", "err", err)
+			return nil
+		}
+		return store
+	default:
 		return nil
 	}
-	return store
 }
 
 // setDefaultAgent stamps m's metrics-only agent fallback (tracedModel.SetDefaultAgent) -

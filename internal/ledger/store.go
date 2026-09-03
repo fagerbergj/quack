@@ -34,4 +34,15 @@ type LedgerStore interface {
 	List(ctx context.Context) ([]SessionRef, error)
 	// Delete removes a whole session's recording (GC only - never a partial entry).
 	Delete(ctx context.Context, sessionID string) error
+
+	// AppendIntent is the WAL's fail-closed path (V4 §4.8): it allocates
+	// entry.Seq and writes entry as one atomic operation, returning the
+	// allocated seq. A non-nil error means nothing was written, and the
+	// caller must not perform the state change the entry describes either.
+	// The FS store cannot make this transactional against its JSONL file;
+	// it appends best-effort and documents the gap on its own method.
+	AppendIntent(ctx context.Context, entry Entry) (seq int64, err error)
+	// ReadEntries returns every Entry for chatID with Seq >= fromSeq, in
+	// seq order - the reader side of the WAL, used by folds/projections.
+	ReadEntries(ctx context.Context, chatID string, fromSeq int64) ([]Entry, error)
 }

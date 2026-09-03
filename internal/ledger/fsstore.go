@@ -1,13 +1,18 @@
 package ledger
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // FSStore is the v1 LedgerStore adapter: one JSONL file per session under
@@ -22,6 +27,13 @@ import (
 type FSStore struct {
 	root string
 	mu   sync.Mutex
+
+	// seqMu/seqs back AppendIntent's seq counter: in-memory only, so it is
+	// NOT gapless across a restart or a second process sharing root.
+	// ponytail: good enough for a filesystem store nobody runs concurrent
+	// multi-process today; move to PGStore (real gapless seq) if that changes.
+	seqMu sync.Mutex
+	seqs  map[string]int64
 }
 
 // NewFSStore returns an FSStore rooted at root, creating it if needed.
@@ -32,7 +44,7 @@ func NewFSStore(root string) (*FSStore, error) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("ledger: mkdir root %q: %w", root, err)
 	}
-	return &FSStore{root: root}, nil
+	return &FSStore{root: root, seqs: make(map[string]int64)}, nil
 }
 
 // path resolves sessionID to its JSONL file, rejecting anything that could
@@ -114,4 +126,61 @@ func (s *FSStore) Delete(_ context.Context, sessionID string) error {
 		return fmt.Errorf("ledger: delete %q: %w", p, err)
 	}
 	return nil
+}
+
+// AppendIntent is a plain best-effort append, NOT the transactional,
+// gapless allocation the interface promises for Postgres: seq comes from an
+// in-memory counter (see FSStore.seqs), so it is not durable and not
+// coordinated across processes. Documented per the LedgerStore contract.
+func (s *FSStore) AppendIntent(ctx context.Context, entry Entry) (int64, error) {
+	if entry.ChatID == "" || entry.Kind == "" {
+		return 0, fmt.Errorf("ledger: intent needs chat_id and kind")
+	}
+	s.seqMu.Lock()
+	s.seqs[entry.ChatID]++
+	entry.Seq = s.seqs[entry.ChatID]
+	s.seqMu.Unlock()
+
+	if entry.At.IsZero() {
+		entry.At = time.Now().UTC()
+	}
+	body, err := json.Marshal(entry)
+	if err != nil {
+		return 0, fmt.Errorf("ledger: encode intent: %w", err)
+	}
+	if err := s.Append(ctx, entry.ChatID, body); err != nil {
+		return 0, err
+	}
+	return entry.Seq, nil
+}
+
+// ReadEntries decodes each JSONL line as an Entry, skipping lines that
+// aren't one (the OTel exporter's own lines have no chat_id/kind and
+// unmarshal to zero values, which this filters out).
+func (s *FSStore) ReadEntries(ctx context.Context, chatID string, fromSeq int64) ([]Entry, error) {
+	rc, err := s.ReadStream(ctx, chatID)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer rc.Close()
+
+	var out []Entry
+	scanner := bufio.NewScanner(rc)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+	for scanner.Scan() {
+		var e Entry
+		if err := json.Unmarshal(scanner.Bytes(), &e); err != nil || e.ChatID == "" || e.Kind == "" {
+			continue
+		}
+		if e.Seq >= fromSeq {
+			out = append(out, e)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("ledger: scan %q: %w", chatID, err)
+	}
+	return out, nil
 }
