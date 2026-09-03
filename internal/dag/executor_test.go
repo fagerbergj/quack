@@ -114,16 +114,16 @@ func TestDagStream_WorkerActivityAndNodeDone(t *testing.T) {
 // worker's error into an empty completion - instead of the generic
 // "produced no answer" a true silent gap gets.
 func TestDagStream_EmptyNodeReportsRecordedGatewayFailure(t *testing.T) {
-	const chatID, node = "chat-1105", "n1"
-	t.Cleanup(func() { inference.ClearFailure(chatID, node) })
-	gwErr := errors.New(`openai qwen3.8-27b (generate): status 502: POST "http://llm-swap:11436/v1/chat/completions": 502 Bad Gateway`)
+	const chatID, node, agent = "chat-1105", "n1", "web-researcher"
+	t.Cleanup(func() { inference.ClearFailure(chatID, node, agent) })
+	gwErr := errors.New(`openai qwen3.8-27b (generate): status 502: POST "http://llm-swap:11436/v1/chat/completions": {"error":"upstream said sk-fake-key-xyz"}`)
 	for i := 0; i < 5; i++ {
-		inference.RecordCallResult(chatID, node, gwErr)
+		inference.RecordCallResult(chatID, node, agent, gwErr)
 	}
 
 	const npath = "quack-dag-p@1/n1@rr"
 	var got []stream.SSEEvent
-	ds := newDagStream("", chatID, map[string]string{node: "web-researcher"},
+	ds := newDagStream("", chatID, map[string]string{node: agent},
 		func(ev stream.SSEEvent, _ error) bool { got = append(got, ev); return true },
 		map[string]string{},
 		func(string) gateScore { return gateScore{} },
@@ -148,6 +148,45 @@ func TestDagStream_EmptyNodeReportsRecordedGatewayFailure(t *testing.T) {
 	}
 	if !strings.Contains(nf.Error, "502 Bad Gateway") || !strings.Contains(nf.Error, "5 consecutive attempts") {
 		t.Fatalf("node_failed.Error = %q, want it to name the error class and attempt count", nf.Error)
+	}
+	// #1109 review finding 1: no URL, port, or upstream body content - the raw
+	// error carries all three - reaches this PUBLIC-eventually text.
+	for _, leaked := range []string{"llm-swap", "11436", "sk-fake-key-xyz", "POST"} {
+		if strings.Contains(nf.Error, leaked) {
+			t.Fatalf("node_failed.Error = %q leaked %q", nf.Error, leaked)
+		}
+	}
+}
+
+// TestDagStream_EmptyNodeIgnoresOtherRolesFailure is #1109 review finding 3:
+// a judge failure recorded under the "judge" role must not be picked up for
+// an empty completion under the node's own worker agent role.
+func TestDagStream_EmptyNodeIgnoresOtherRolesFailure(t *testing.T) {
+	const chatID, node, agent = "chat-1105-roles", "n1", "web-researcher"
+	t.Cleanup(func() { inference.ClearFailure(chatID, node, "judge") })
+	inference.RecordCallResult(chatID, node, "judge", errors.New("judge boom"))
+
+	const npath = "quack-dag-p@1/n1@rr"
+	var got []stream.SSEEvent
+	ds := newDagStream("", chatID, map[string]string{node: agent},
+		func(ev stream.SSEEvent, _ error) bool { got = append(got, ev); return true },
+		map[string]string{},
+		func(string) gateScore { return gateScore{} },
+		func(string) bool { return false },
+		func(string) bool { return false },
+		func(string, int) string { return "" },
+	)
+	ds.handle(&session.Event{NodeInfo: &session.NodeInfo{Path: npath}, Output: ""})
+	ds.flush()
+
+	var nf *stream.NodeFailedData
+	for _, ev := range got {
+		if d, ok := ev.Data.(stream.NodeFailedData); ok {
+			nf = &d
+		}
+	}
+	if nf == nil || nf.Error != "produced no answer" {
+		t.Fatalf("node_failed = %+v, want the silent-gap message - the judge's failure belongs to a different role", nf)
 	}
 }
 

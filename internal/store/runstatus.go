@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/fagerbergj/quack/internal/dag"
 )
 
 // Chat.RunStatus values - a run's terminal outcome. Never "queued"/"running": those stay
@@ -156,10 +158,16 @@ func (s *Store) chatsWithPausedNodes(ctx context.Context) (map[string]bool, erro
 
 // failedDagNodeError reports the first failed node's own error text, so a
 // gateway failure the node recorded (#1105) survives past DeriveTerminalStatus
-// instead of collapsing into a bare "failed" with nothing to say why.
+// instead of collapsing into a bare "failed" with nothing to say why. A node
+// whose Error is exactly dag.SilentGapError (#568's true silent gap) reports
+// "" - that sentinel is for the DagNode row, not for downstream public text
+// (PR #1109 review finding 2).
 func failedDagNodeError(nodes []DagNode) (errText string, failed bool) {
 	for _, n := range nodes {
 		if n.Status == "failed" {
+			if n.Error == dag.SilentGapError {
+				return "", true
+			}
 			return n.Error, true
 		}
 	}

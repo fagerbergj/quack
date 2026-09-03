@@ -84,7 +84,7 @@ func (t *tracedModel) GenerateContent(ctx context.Context, req *model.LLMRequest
 			emitChatEvent(ctx, t.name, req, last, callErr)
 			recordUsageMetrics(ctx, t.name, t.defaultAgent, t.pricing, last)
 			// Outlives ADK's own error handling - see failure.go's doc comment.
-			RecordCallResult(callCoords.ChatID, callCoords.Node, callErr)
+			RecordCallResult(callCoords.ChatID, callCoords.Node, callCoords.Agent, callErr)
 		}()
 		inner(func(resp *model.LLMResponse, err error) bool {
 			if err != nil {

@@ -24,6 +24,7 @@ import (
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/otelobs"
@@ -713,9 +714,15 @@ func mapExtRunOutcome(status, question, nodeError, answer string, planRan bool, 
 		// extsdk.RunOutcome has no Error field yet (a needed sdk follow-up,
 		// see #1105) - fold the failed node's real cause into Answer so an
 		// empty answer never falls through to the extension's silent-gap
-		// text for a run that in fact failed with a known cause.
+		// text for a run that in fact failed with a known cause. nodeError
+		// is already sanitized (dag.emptyNodeError via
+		// inference.SanitizeGatewayError) - no raw URL/body/key reaches here.
 		if out.Answer == "" && nodeError != "" {
-			out.Answer = fmt.Sprintf("quack's run failed: %s\n\nRetry once the gateway is healthy.", nodeError)
+			guidance := "Check the model gateway / provider configuration."
+			if inference.TransientFromSummary(nodeError) {
+				guidance = "Retry once the gateway is healthy."
+			}
+			out.Answer = fmt.Sprintf("quack's run failed: %s\n\n%s", nodeError, guidance)
 		}
 	case status == store.RunStatusNeedsInput:
 		out.Status = extsdk.RunNeedsInput

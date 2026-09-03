@@ -156,7 +156,7 @@ func (s *DagStream) Finish() {
 			continue
 		}
 		if strings.TrimSpace(s.ds.outputs[n.ID]) == "" {
-			s.yield(stream.NodeFailed(n.ID, emptyNodeError(s.ds.chatID, n.ID)), nil)
+			s.yield(stream.NodeFailed(n.ID, emptyNodeError(s.ds.chatID, n.ID, s.ds.agentByID[n.ID])), nil)
 			continue
 		}
 		s.yield(stream.NodeDone(n.ID, s.ds.nodeDoneData(n.ID)), nil)
@@ -188,15 +188,25 @@ type gateScore struct {
 	rounds int
 }
 
-// emptyNodeError names a node's empty completion: the real cause when ADK's
-// runner swallowed a worker's repeated gateway errors into a silent empty
-// output (#1105), or the true silent-gap text when no failure was recorded.
-func emptyNodeError(chatID, nodeID string) string {
-	if err, streak, since, ok := inference.LastFailure(chatID, nodeID); ok && streak > 0 {
-		inference.ClearFailure(chatID, nodeID)
-		return fmt.Sprintf("model gateway failed %d consecutive attempts over %s: %s", streak, since.Round(time.Second), err)
+// SilentGapError is the true silent-gap message (#568): a node whose output
+// came back empty with no failure on record. store.failedDagNodeError treats
+// this exact string as "nothing to report" rather than a real cause, so it
+// must stay a sentinel other callers can compare against, not a format string.
+const SilentGapError = "produced no answer"
+
+// emptyNodeError names a node's empty completion: a sanitized (no URL/body -
+// see inference.SanitizeGatewayError) classification when ADK's runner
+// swallowed a worker's repeated gateway errors into a silent empty output
+// (#1105), or SilentGapError when no failure was recorded for this node's
+// own agent role (a judge failure on the same node id/chat is tracked
+// separately - #1109 review finding 3).
+func emptyNodeError(chatID, nodeID, agent string) string {
+	if err, streak, dur, ok := inference.LastFailure(chatID, nodeID, agent); ok && streak > 0 {
+		inference.ClearFailure(chatID, nodeID, agent)
+		class, _ := inference.SanitizeGatewayError(err)
+		return fmt.Sprintf("%s on %d consecutive attempts over %s", class, streak, dur.Round(time.Second))
 	}
-	return "produced no answer"
+	return SilentGapError
 }
 
 // gateResultKey: keys gateResults scoped by chat id.
@@ -351,7 +361,7 @@ func (s *dagStream) handle(ev *session.Event) bool {
 					return false
 				}
 			default:
-				if !s.emit(stream.NodeFailed(node, emptyNodeError(s.chatID, node))) {
+				if !s.emit(stream.NodeFailed(node, emptyNodeError(s.chatID, node, s.agentByID[node]))) {
 					return false
 				}
 			}

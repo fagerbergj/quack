@@ -4,6 +4,8 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+
+	"github.com/fagerbergj/quack/internal/dag"
 )
 
 func newRunStatusTestStore(t *testing.T) *Store {
@@ -137,6 +139,22 @@ func TestDeriveTerminalStatus_TrueSilentGapStaysUntouched(t *testing.T) {
 	status, _, nodeError := DeriveTerminalStatus(turns, "", false)
 	if status != RunStatusIdle || nodeError != "" {
 		t.Fatalf("status/nodeError = %q/%q, want idle/\"\" for a true silent gap", status, nodeError)
+	}
+}
+
+// TestDeriveTerminalStatus_FailedNodeWithSilentGapSentinelReportsNoError is
+// #1109 review finding 2: a failed node whose Error is exactly
+// dag.SilentGapError (the true #568 silent gap, persisted on the DagNode row
+// regardless) must still hand back nodeError == "" - that sentinel is not a
+// real cause to surface downstream as if it were.
+func TestDeriveTerminalStatus_FailedNodeWithSilentGapSentinelReportsNoError(t *testing.T) {
+	turns := []TurnContent{{AsstText: "", Nodes: []DagNode{{NodeID: "n1", Status: "failed", Error: dag.SilentGapError}}}}
+	status, _, nodeError := DeriveTerminalStatus(turns, "", false)
+	if status != RunStatusFailed {
+		t.Fatalf("status = %q, want %q", status, RunStatusFailed)
+	}
+	if nodeError != "" {
+		t.Fatalf("nodeError = %q, want empty - the silent-gap sentinel is not a real cause", nodeError)
 	}
 }
 

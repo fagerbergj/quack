@@ -60,7 +60,7 @@ func TestMapExtRunOutcome(t *testing.T) {
 // in Answer instead of leaving it empty for the extension's silent-gap text.
 func TestMapExtRunOutcome_FailedWithNodeErrorFillsEmptyAnswer(t *testing.T) {
 	needsInput := stream.NodeNeedsInputData{}
-	out := mapExtRunOutcome(store.RunStatusFailed, "", "model gateway failed 5 consecutive attempts over 48m0s: 502 Bad Gateway",
+	out := mapExtRunOutcome(store.RunStatusFailed, "", "model gateway returned 502 Bad Gateway on 5 consecutive attempts over 48m0s",
 		"", true, needsInput, false, false)
 	if out.Status != extsdk.RunFailed {
 		t.Fatalf("Status = %q, want RunFailed", out.Status)
@@ -70,6 +70,24 @@ func TestMapExtRunOutcome_FailedWithNodeErrorFillsEmptyAnswer(t *testing.T) {
 	}
 	if !strings.Contains(out.Answer, "502 Bad Gateway") || !strings.Contains(out.Answer, "5 consecutive attempts") {
 		t.Errorf("Answer = %q, want it to name the error class and attempt count", out.Answer)
+	}
+	if !strings.Contains(out.Answer, "Retry once the gateway is healthy") {
+		t.Errorf("Answer = %q, want retry guidance for a transient 502", out.Answer)
+	}
+}
+
+// TestMapExtRunOutcome_NonTransientErrorGetsNeutralGuidance is #1109 review
+// finding 4: "retry once healthy" is wrong advice for a 401/400/quota error
+// that will not self-heal.
+func TestMapExtRunOutcome_NonTransientErrorGetsNeutralGuidance(t *testing.T) {
+	needsInput := stream.NodeNeedsInputData{}
+	out := mapExtRunOutcome(store.RunStatusFailed, "", "model gateway returned 401 Unauthorized on 1 consecutive attempts over 0s",
+		"", true, needsInput, false, false)
+	if strings.Contains(out.Answer, "Retry once the gateway is healthy") {
+		t.Errorf("Answer = %q, want neutral guidance for a non-transient 401, not retry advice", out.Answer)
+	}
+	if !strings.Contains(out.Answer, "provider configuration") {
+		t.Errorf("Answer = %q, want guidance pointing at configuration", out.Answer)
 	}
 }
 

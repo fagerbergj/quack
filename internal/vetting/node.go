@@ -21,6 +21,7 @@ import (
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/otelobs"
@@ -258,6 +259,12 @@ func appendJudgeRound(ctx context.Context, cfg Config, nodeID, turnID string, ro
 
 func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Node, workerModel model.LLM, judge JudgeFactory, cfg Config, prompt string, attachments []*genai.Part, ctrl NodeControl, emit func(*session.Event) error) (answer string, res GateResult, err error) {
 	log := slog.With("component", "vetting", "node", nodeID)
+
+	// A node id is reused across turns/plans on the same chat - drop any
+	// unconsumed failure record from a previous invocation before this one
+	// records its own, so a stale streak can't leak into an unrelated future
+	// empty completion (PR #1109 review finding 3).
+	inference.ClearFailure(cfg.ChatID, nodeID, cfg.Agent)
 
 	nodeCtx, span := otelobs.StartNode(ctx,
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID),
