@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -74,7 +75,8 @@ func hintIdentity(_ []byte, hint string) (string, error) { return hint, nil }
 
 func init() {
 	Register("test.structured", KindSpec{
-		Class: Structured,
+		Class:      Structured,
+		JSONSchema: `{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"integer"}}}`,
 		Validate: func(raw json.RawMessage) error {
 			var d doc
 			if err := json.Unmarshal(raw, &d); err != nil {
@@ -95,6 +97,46 @@ func newTestClient(t *testing.T) *Client {
 	return New(artifact.InMemoryService(), "quack", "user1", "chat1")
 }
 
+// metaAwareInMemory implements the optional SaveWithMeta/LoadWithMeta pair
+// over artifact.InMemoryService() - production always wraps a store that
+// supports these (internal/store.TurnAwareService); this stands in for that
+// so a test can read back real lineage without a database.
+type metaAwareInMemory struct {
+	artifact.Service
+	mu   sync.Mutex
+	meta map[string][]byte
+}
+
+func newMetaAwareInMemory() *metaAwareInMemory {
+	return &metaAwareInMemory{Service: artifact.InMemoryService(), meta: map[string][]byte{}}
+}
+
+func metaKey(appName, userID, sessionID, fileName string) string {
+	return appName + "\x00" + userID + "\x00" + sessionID + "\x00" + fileName
+}
+
+func (m *metaAwareInMemory) SaveWithMeta(ctx context.Context, req *artifact.SaveRequest, kind, class string, lineageJSON []byte, turnID string) (*artifact.SaveResponse, error) {
+	resp, err := m.Service.Save(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.meta[metaKey(req.AppName, req.UserID, req.SessionID, req.FileName)] = lineageJSON
+	return resp, nil
+}
+
+func (m *metaAwareInMemory) LoadWithMeta(ctx context.Context, req *artifact.LoadRequest) (*artifact.LoadResponse, string, string, []byte, error) {
+	resp, err := m.Service.Load(ctx, req)
+	if err != nil {
+		return nil, "", "", nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	lineageJSON := m.meta[metaKey(req.AppName, req.UserID, req.SessionID, req.FileName)]
+	return resp, "", "", lineageJSON, nil
+}
+
 func TestKindOf(t *testing.T) {
 	if got := KindOf("code_review:pr:123"); got != "code_review" {
 		t.Fatalf("KindOf = %q, want code_review", got)
@@ -112,7 +154,7 @@ func TestSaveStructuredRoundTrip(t *testing.T) {
 	if err != nil || rev != 1 || id != "test.structured:main" {
 		t.Fatalf("SaveStructured: id=%q rev=%d err=%v", id, rev, err)
 	}
-	raw, lineage, gotRev, ok, err := c.LatestWithMeta(ctx, id)
+	raw, _, lineage, gotRev, ok, err := c.LatestWithMeta(ctx, id)
 	if err != nil || !ok || gotRev != 1 {
 		t.Fatalf("LatestWithMeta: raw=%s rev=%d ok=%v err=%v", raw, gotRev, ok, err)
 	}
@@ -234,6 +276,203 @@ func TestContentHashIgnoresHint(t *testing.T) {
 	}
 	if id1 != id2 {
 		t.Fatalf("same content under different hints produced different ids: %q vs %q", id1, id2)
+	}
+}
+
+// TestEditDirectApply covers the base_revision-current case: edits apply straight to the latest content.
+func TestEditDirectApply(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	id, rev1, err := c.SaveStructured(ctx, "test.structured", doc{A: "hello", B: 1}, "main", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev2, merged, err := c.Edit(ctx, id, rev1, []EditOp{{Old: `"a":"hello"`, New: `"a":"world"`}}, Lineage{})
+	if err != nil {
+		t.Fatalf("Edit: %v", err)
+	}
+	if rev2 != rev1+1 {
+		t.Fatalf("revision = %d, want %d", rev2, rev1+1)
+	}
+	var d doc
+	if err := json.Unmarshal(merged, &d); err != nil || d.A != "world" {
+		t.Fatalf("merged = %s, err=%v", merged, err)
+	}
+}
+
+// TestEditStaleBaseMergesWhenUnique covers V4 §7 case 5: a stale
+// base_revision still succeeds when its `old` snippets still match uniquely
+// against the newer latest content (a non-intersecting concurrent edit).
+func TestEditStaleBaseMergesWhenUnique(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	id, rev1, err := c.SaveStructured(ctx, "test.structured", doc{A: "hello", B: 1}, "main", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A concurrent editor bumps B while this caller still thinks rev1 is latest.
+	rev2, _, err := c.Edit(ctx, id, rev1, []EditOp{{Old: `"b":1`, New: `"b":2`}}, Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// This caller's base_revision (rev1) is now stale, but its edit targets
+	// a region the concurrent edit never touched - must still succeed.
+	rev3, merged, err := c.Edit(ctx, id, rev1, []EditOp{{Old: `"a":"hello"`, New: `"a":"world"`}}, Lineage{})
+	if err != nil {
+		t.Fatalf("Edit with stale base should merge, got: %v", err)
+	}
+	if rev3 != rev2+1 {
+		t.Fatalf("revision = %d, want %d", rev3, rev2+1)
+	}
+	var d doc
+	if err := json.Unmarshal(merged, &d); err != nil || d.A != "world" || d.B != 2 {
+		t.Fatalf("merged = %s (want both edits applied), err=%v", merged, err)
+	}
+}
+
+// TestEditStaleBaseConflictsWhenIntersecting covers V4 §7 case 5's failure
+// half: a stale edit whose `old` region was itself changed by the newer
+// revision no longer matches, and the call fails with the current latest -
+// no partial write.
+func TestEditStaleBaseConflictsWhenIntersecting(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	id, rev1, err := c.SaveStructured(ctx, "test.structured", doc{A: "hello", B: 1}, "main", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c.Edit(ctx, id, rev1, []EditOp{{Old: `"a":"hello"`, New: `"a":"changed"`}}, Lineage{}); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = c.Edit(ctx, id, rev1, []EditOp{{Old: `"a":"hello"`, New: `"a":"conflicting"`}}, Lineage{})
+	var conflict *EditConflict
+	if !errors.As(err, &conflict) {
+		t.Fatalf("Edit = %v, want *EditConflict", err)
+	}
+	if conflict.Revision != rev1+1 {
+		t.Fatalf("conflict.Revision = %d, want %d", conflict.Revision, rev1+1)
+	}
+	if _, _, _, latestRev, _, _ := c.LatestWithMeta(ctx, id); latestRev != rev1+1 {
+		t.Fatalf("failed edit must not write - latest revision = %d, want %d", latestRev, rev1+1)
+	}
+}
+
+// TestEditRejectsNegativeBaseRevision covers #1091 adversarial review
+// suggestion #3: base_revision was accepted but never validated.
+func TestEditRejectsNegativeBaseRevision(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	id, _, err := c.SaveStructured(ctx, "test.structured", doc{A: "hello", B: 1}, "main", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c.Edit(ctx, id, -1, []EditOp{{Old: `"a":"hello"`, New: `"a":"world"`}}, Lineage{}); err == nil {
+		t.Fatal("Edit with base_revision -1 should fail")
+	}
+}
+
+// TestEditRejectsBaseRevisionAboveLatest covers #1091 adversarial review
+// suggestion #3: a base_revision greater than the actual latest revision is
+// nonsensical (it names a revision that doesn't exist yet) and must error
+// rather than silently proceeding.
+func TestEditRejectsBaseRevisionAboveLatest(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	id, rev, err := c.SaveStructured(ctx, "test.structured", doc{A: "hello", B: 1}, "main", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c.Edit(ctx, id, rev+5, []EditOp{{Old: `"a":"hello"`, New: `"a":"world"`}}, Lineage{}); err == nil {
+		t.Fatal("Edit with base_revision above latest should fail")
+	}
+	if _, _, _, latestRev, _, _ := c.LatestWithMeta(ctx, id); latestRev != rev {
+		t.Fatalf("rejected edit must not write - latest revision = %d, want %d", latestRev, rev)
+	}
+}
+
+// TestEditRecordsBaseRevisionInLineage covers #1091 adversarial review
+// suggestion #3: base_revision is no longer silently dropped - it lands in
+// the written revision's lineage, distinct from parent_revision (the real
+// latest the merge targeted) whenever the two differ (a merge, not a direct apply).
+func TestEditRecordsBaseRevisionInLineage(t *testing.T) {
+	ctx := context.Background()
+	// LatestWithMeta only returns real lineage when the wrapped service
+	// implements metaSaver/metaLoader (InMemoryService, used by newTestClient,
+	// doesn't) - mirror internal/vetting's metaAwareInMemory test double.
+	c := New(newMetaAwareInMemory(), "quack", "user1", "chat1")
+	id, rev1, err := c.SaveStructured(ctx, "test.structured", doc{A: "hello", B: 1}, "main", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev2, _, err := c.Edit(ctx, id, rev1, []EditOp{{Old: `"b":1`, New: `"b":2`}}, Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Stale base (rev1) merges against the real latest (rev2).
+	if _, _, err := c.Edit(ctx, id, rev1, []EditOp{{Old: `"a":"hello"`, New: `"a":"world"`}}, Lineage{}); err != nil {
+		t.Fatalf("Edit with stale base should merge, got: %v", err)
+	}
+	_, _, lineage, _, ok, err := c.LatestWithMeta(ctx, id)
+	if err != nil || !ok {
+		t.Fatalf("LatestWithMeta: ok=%v err=%v", ok, err)
+	}
+	if lineage.BaseRevision != rev1 {
+		t.Fatalf("lineage.BaseRevision = %d, want the caller's base_revision %d", lineage.BaseRevision, rev1)
+	}
+	if lineage.ParentRevision != rev2 {
+		t.Fatalf("lineage.ParentRevision = %d, want the real latest merged against (%d)", lineage.ParentRevision, rev2)
+	}
+}
+
+// TestEditNonUniqueMatchFails: an `old` matching 0 or 2+ times fails without
+// writing, even against the current latest revision (no stale base involved).
+func TestEditNonUniqueMatchFails(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	blobID, brev, err := c.SaveBlob(ctx, "test.blob", []byte("aa"), "text/plain", "b1", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c.Edit(ctx, blobID, brev, []EditOp{{Old: "a", New: "z"}}, Lineage{}); err == nil {
+		t.Fatal("Edit with a 2x-matching old should fail")
+	}
+	if _, _, _, latestRev, _, _ := c.LatestWithMeta(ctx, blobID); latestRev != brev {
+		t.Fatalf("failed edit must not write - latest revision = %d, want %d", latestRev, brev)
+	}
+}
+
+// TestWriteFindingOffSchemaFailsWithoutWriting: an off-schema structured
+// write is rejected by the registry's Validate and nothing is persisted.
+func TestWriteFindingOffSchemaFailsWithoutWriting(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	// test.structured requires non-empty "a" - the write_<kind> equivalent
+	// for this suite's stand-in kind.
+	if _, _, err := c.SaveStructured(ctx, "test.structured", map[string]any{"b": 1}, "bad", Lineage{}); err == nil {
+		t.Fatal("expected validation failure for a body missing the required field")
+	}
+	if _, _, ok, _ := c.Latest(ctx, "test.structured:bad"); ok {
+		t.Fatal("an off-schema write must not persist a revision")
+	}
+}
+
+// TestIdentityForMatchesWriteID: the id a write returns equals what
+// IdentityFor (the registry's own Identity function) derives for the same
+// content/hint - required by V4 §7 case 5.
+func TestIdentityForMatchesWriteID(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	d := doc{A: "x", B: 1}
+	wantID, err := IdentityFor("test.structured", d, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotID, _, err := c.SaveStructured(ctx, "test.structured", d, "main", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotID != wantID {
+		t.Fatalf("SaveStructured id = %q, want IdentityFor's %q", gotID, wantID)
 	}
 }
 
@@ -487,4 +726,140 @@ func TestSaveRowFailureAfterAppendDoesNotWedgeID(t *testing.T) {
 	if parent != 1 {
 		t.Fatalf("lastRevision after the wedge+retry = %d, want 1", parent)
 	}
+}
+
+// TestRegisterPanicsOnInvalidJSONSchema: the single root-cause fix for #1108
+// finding 3 - a kind with unparseable JSONSchema must fail loudly at
+// registration time (like the existing missing-Identity/duplicate-kind
+// panics), not be silently skipped by whichever tool-generation surface
+// (MCP write_<kind>, ADK write_<kind>) happens to notice later. One guard
+// here means both surfaces get it for free.
+func TestRegisterPanicsOnInvalidJSONSchema(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("Register did not panic on an invalid JSONSchema")
+		}
+		msg, _ := r.(string)
+		if !containsAll(msg, "test_bad_schema_kind", "invalid JSONSchema") {
+			t.Fatalf("panic message = %q, want it to name the kind and the problem", msg)
+		}
+	}()
+	Register("test_bad_schema_kind", KindSpec{
+		Class:      Structured,
+		JSONSchema: `{not valid json`,
+		Identity:   func(_ []byte, hint string) (string, error) { return hint, nil },
+	})
+}
+
+// TestRegisterPanicsOnEmptySchemaForStructuredKind: #1108 L1 - an empty
+// JSONSchema on a structured kind used to pass Register (the "" guard was
+// meant for blob kinds, which have no schema), then made MCP silently skip
+// the write_<kind> tool while ADK hard-failed the whole run for the same
+// registry state. Reject it at registration instead, same as an invalid one.
+func TestRegisterPanicsOnEmptySchemaForStructuredKind(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("Register did not panic on a structured kind with an empty JSONSchema")
+		}
+		msg, _ := r.(string)
+		if !containsAll(msg, "test_empty_schema_kind", "without a JSONSchema") {
+			t.Fatalf("panic message = %q, want it to name the kind and the problem", msg)
+		}
+	}()
+	Register("test_empty_schema_kind", KindSpec{
+		Class:    Structured,
+		Identity: func(_ []byte, hint string) (string, error) { return hint, nil },
+	})
+}
+
+// blockingLoadService delays Load until unblock is closed, signaling
+// readStarted first - lets a test force a concurrent writer into the exact
+// window between Edit's read of latest and its write of the merged result.
+type blockingLoadService struct {
+	artifact.Service
+	readStarted chan struct{}
+	unblock     chan struct{}
+	once        sync.Once
+}
+
+func (s *blockingLoadService) Load(ctx context.Context, req *artifact.LoadRequest) (*artifact.LoadResponse, error) {
+	s.once.Do(func() { close(s.readStarted) })
+	<-s.unblock
+	return s.Service.Load(ctx, req)
+}
+
+// TestEditVsGateSaveSerializes is #1108 finding 1: Edit's idLocks and the
+// gate's Save/SaveStructured/SaveBlob path used to serialize independently
+// (Edit locked, gate writers didn't), so a gate save could land between
+// Edit's read-latest and its write and vanish with no conflict surfaced.
+// This forces that exact window and proves the gate write now blocks on
+// Edit's lock instead of racing through and getting silently overwritten.
+func TestEditVsGateSaveSerializes(t *testing.T) {
+	readStarted := make(chan struct{})
+	unblock := make(chan struct{})
+	svc := &blockingLoadService{Service: artifact.InMemoryService(), readStarted: readStarted, unblock: unblock}
+	c := New(svc, "quack", "user1", "chat1")
+	ctx := context.Background()
+
+	id, rev1, err := c.SaveStructured(ctx, "test.structured", doc{A: "hello", B: 0}, "race-id", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	editDone := make(chan struct{})
+	var editRev int
+	var editErr error
+	go func() {
+		editRev, _, editErr = c.Edit(ctx, id, rev1, []EditOp{{Old: `"a":"hello"`, New: `"a":"edited"`}}, Lineage{})
+		close(editDone)
+	}()
+
+	<-readStarted // Edit has read rev1 and is blocked before its write.
+
+	gateDone := make(chan struct{})
+	var gateErr error
+	go func() {
+		_, _, gateErr = c.SaveStructured(ctx, "test.structured", doc{A: "gate", B: 99}, "race-id", Lineage{})
+		close(gateDone)
+	}()
+
+	select {
+	case <-gateDone:
+		t.Fatal("gate SaveStructured completed while Edit was mid-write - not serialized against Edit (finding 1 regression)")
+	case <-time.After(50 * time.Millisecond):
+		// Expected: the gate save blocks on the same per-(chat,id) lock Edit holds.
+	}
+
+	close(unblock)
+	<-editDone
+	<-gateDone
+	if editErr != nil {
+		t.Fatalf("Edit: %v", editErr)
+	}
+	if gateErr != nil {
+		t.Fatalf("gate SaveStructured: %v", gateErr)
+	}
+
+	raw, rev, ok, err := c.Latest(ctx, id)
+	if err != nil || !ok {
+		t.Fatalf("Latest: ok=%v err=%v", ok, err)
+	}
+	if rev != editRev+1 {
+		t.Fatalf("final revision = %d, want %d (gate save landed strictly after Edit's, no gap/overwrite)", rev, editRev+1)
+	}
+	var d doc
+	if err := json.Unmarshal(raw, &d); err != nil || d.A != "gate" || d.B != 99 {
+		t.Fatalf("gate save was clobbered or lost: content = %s, err=%v", raw, err)
+	}
+}
+
+func containsAll(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if !strings.Contains(s, sub) {
+			return false
+		}
+	}
+	return true
 }

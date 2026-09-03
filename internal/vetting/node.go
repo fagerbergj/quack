@@ -301,6 +301,12 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	// cfg is a per-call copy; stamping only reaches this node's judge rounds.
 	cfg.AdvisorToken = advisorToken
 	cfg.NodeBaseSHA = cloneHeadSHA(cfg)
+	if advisorToken != "" {
+		// Draft round: seed round=1 coords before the first worker call so a
+		// tool write during draft (before any judge round runs) still gets
+		// real lineage (#1091 finding #4).
+		SetAdvisorThreadRound(advisorToken, 1, turnID, cfg.NodeBaseSHA, "")
+	}
 	// User attribution: the ADK session identity (mirrors MemoryScope below) -
 	// not caller-set, so a node can never claim to run as someone it isn't.
 	if s := ctx.Session(); s != nil {
@@ -565,6 +571,18 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			}
 			if strings.TrimSpace(stripLeadingEnvScaffold(answer)) == "" {
 				break // still nothing to judge after recovery
+			}
+			if advisorToken != "" {
+				var trigger string
+				if episodicState != nil {
+					trigger = episodicState.triggerAnnotation
+				}
+				// Intentional: this round's revise (below, on judge fail) also
+				// stamps Round=round, even though its tool writes are first
+				// referenced by round+1's code_review - "round r judges, on
+				// fail revises" (line 557), so a revision belongs to the
+				// judgment that required it, not the round that later reads it.
+				SetAdvisorThreadRound(advisorToken, round, turnID, cfg.NodeBaseSHA, trigger)
 			}
 			act := actFor(answer)
 			// Every judge round writes a revision, gate-passed or not - only

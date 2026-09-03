@@ -29,7 +29,7 @@ func TestResolveNodeWorktreeParentInvokesWorktreeHook(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	cwd, _, _, _, _, _, _, _, _, err := a.resolveNode(context.Background(), "review the PR\n\n"+vetting.AdvisorThreadMarker(token))
+	cwd, _, _, _, _, _, _, _, err := a.resolveNode(context.Background(), "review the PR\n\n"+vetting.AdvisorThreadMarker(token))
 	if err != nil {
 		t.Fatalf("resolveNode: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestResolveNodeUsesChatIDNotSessionIDOnRetry(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	if _, _, _, _, _, _, _, _, _, err := a.resolveNode(context.Background(), "review the PR\n\n"+vetting.AdvisorThreadMarker(token)); err != nil {
+	if _, _, _, _, _, _, _, _, err := a.resolveNode(context.Background(), "review the PR\n\n"+vetting.AdvisorThreadMarker(token)); err != nil {
 		t.Fatalf("resolveNode: %v", err)
 	}
 	if gotChat != "chat1" {
@@ -86,7 +86,7 @@ func TestResolveNodeWorktreeParentWithoutHookErrors(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	_, _, _, _, _, _, _, _, _, err := a.resolveNode(context.Background(), "review\n\n"+vetting.AdvisorThreadMarker(token))
+	_, _, _, _, _, _, _, _, err := a.resolveNode(context.Background(), "review\n\n"+vetting.AdvisorThreadMarker(token))
 	if err == nil {
 		t.Fatal("resolveNode: want an error - the node needs a worktree but none is configured")
 	}
@@ -108,7 +108,7 @@ func TestResolveNodeNonWorktreeNodeUsesJail(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	cwd, _, _, _, _, _, _, _, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
+	cwd, _, _, _, _, _, _, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
 	if err != nil {
 		t.Fatalf("resolveNode: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestResolveNodeReturnsAdvisorTaskReadOnly(t *testing.T) {
 		vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
 			NodeID: "impl1", WorkspaceNodeID: "impl1", ChatID: "chat1", SessionID: "chat1", ReadOnly: want,
 		})
-		_, _, _, _, got, _, _, _, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
+		_, _, _, got, _, _, _, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
 		vetting.UnregisterAdvisorThread(token)
 		if err != nil {
 			t.Fatalf("resolveNode: %v", err)
@@ -145,61 +145,6 @@ func TestResolveNodeReturnsAdvisorTaskReadOnly(t *testing.T) {
 		if got != want {
 			t.Errorf("resolveNode readOnly = %v, want %v", got, want)
 		}
-	}
-}
-
-// TestResolveNodeGrantsContextDir pins the #659/#660 wiring: resolveNode
-// derives the GitHub trigger's sibling context directory from the SAME
-// (UserID, SessionID) coordinate the dispatch side writes it under - no
-// separate registry field needed - so the sandbox actually grants it.
-func TestResolveNodeGrantsContextDir(t *testing.T) {
-	dir := t.TempDir()
-	jail, err := workspace.NewJail(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	a := &Agent{opts: Options{UserID: "u1", Jail: jail}}
-	token := vetting.AdvisorThreadToken("plan-1", "impl1")
-	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
-		NodeID: "impl1", WorkspaceNodeID: "impl1", ChatID: "chat1", SessionID: "chat1",
-	})
-	defer vetting.UnregisterAdvisorThread(token)
-
-	_, _, ctxDir, _, _, _, _, _, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
-	if err != nil {
-		t.Fatalf("resolveNode: %v", err)
-	}
-	want, err := jail.Resolve("u1", "chat1", workspace.ContextDirScope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ctxDir != want {
-		t.Errorf("ctxDir = %q, want the jail-resolved context dir %q", ctxDir, want)
-	}
-}
-
-// TestResolveNodeNoJailNoContextDir: a test harness Agent with no Jail
-// configured (see the WorktreeParent tests above) must not panic resolving
-// ctxDir - it degrades to "" (no extra grant), never a nil-pointer crash.
-func TestResolveNodeNoJailNoContextDir(t *testing.T) {
-	a := &Agent{opts: Options{
-		UserID: "u1",
-		Worktree: func(ctx context.Context, userID, chatID, parentNodeID, nodeID string) (string, error) {
-			return "/resolved/worktree/dir", nil
-		},
-	}}
-	token := vetting.AdvisorThreadToken("plan-1", "review1")
-	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
-		NodeID: "review1", WorkspaceNodeID: "review1", WorktreeParent: workspace.SharedRepoScope, ChatID: "chat1", SessionID: "chat1",
-	})
-	defer vetting.UnregisterAdvisorThread(token)
-
-	_, _, ctxDir, _, _, _, _, _, _, err := a.resolveNode(context.Background(), "review\n\n"+vetting.AdvisorThreadMarker(token))
-	if err != nil {
-		t.Fatalf("resolveNode: %v", err)
-	}
-	if ctxDir != "" {
-		t.Errorf("ctxDir = %q, want \"\" with no Jail configured", ctxDir)
 	}
 }
 
@@ -221,7 +166,7 @@ func TestResolveNodeGrantsScratchDir(t *testing.T) {
 		vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{
 			NodeID: "impl1", WorkspaceNodeID: "impl1", ChatID: "chat1", SessionID: "chat1", ReadOnly: readOnly,
 		})
-		cwd, _, _, scratchDir, _, _, _, _, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
+		cwd, _, scratchDir, _, _, _, _, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
 		vetting.UnregisterAdvisorThread(token)
 		if err != nil {
 			t.Fatalf("resolveNode (readOnly=%v): %v", readOnly, err)
@@ -242,8 +187,8 @@ func TestResolveNodeGrantsScratchDir(t *testing.T) {
 	}
 }
 
-// TestResolveNodeNoJailNoScratchDir mirrors TestResolveNodeNoJailNoContextDir
-// for the scratch grant: no Jail configured degrades to "", never a panic.
+// TestResolveNodeNoJailNoScratchDir: no Jail configured degrades scratchDir
+// to "", never a panic.
 func TestResolveNodeNoJailNoScratchDir(t *testing.T) {
 	a := &Agent{opts: Options{
 		UserID: "u1",
@@ -257,7 +202,7 @@ func TestResolveNodeNoJailNoScratchDir(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	_, _, _, scratchDir, _, _, _, _, _, err := a.resolveNode(context.Background(), "review\n\n"+vetting.AdvisorThreadMarker(token))
+	_, _, scratchDir, _, _, _, _, _, err := a.resolveNode(context.Background(), "review\n\n"+vetting.AdvisorThreadMarker(token))
 	if err != nil {
 		t.Fatalf("resolveNode: %v", err)
 	}
@@ -286,7 +231,7 @@ func TestResolveNodeChatAndNodeIDKeyOffAdvisorThread(t *testing.T) {
 	})
 	defer vetting.UnregisterAdvisorThread(token)
 
-	_, _, _, _, _, chatID, nodeID, _, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
+	_, _, _, _, chatID, nodeID, _, _, err := a.resolveNode(context.Background(), "implement\n\n"+vetting.AdvisorThreadMarker(token))
 	if err != nil {
 		t.Fatalf("resolveNode: %v", err)
 	}

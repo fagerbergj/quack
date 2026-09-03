@@ -362,27 +362,6 @@ func TestJailHomeDirIsSiblingNotNestedInARepo(t *testing.T) {
 	}
 }
 
-// TestContextDirScopeIsSiblingOfSharedRepoScope pins #660's "sibling to the
-// clone, not inside it": both resolve under the same chat scope, and neither
-// path is a prefix of the other.
-func TestContextDirScopeIsSiblingOfSharedRepoScope(t *testing.T) {
-	j := newTestJail(t)
-	clone, err := j.Resolve("alice", "chat1", SetupCloneDir(SharedRepoScope))
-	if err != nil {
-		t.Fatalf("Resolve(clone): %v", err)
-	}
-	ctxDir, err := j.Resolve("alice", "chat1", ContextDirScope)
-	if err != nil {
-		t.Fatalf("Resolve(context dir): %v", err)
-	}
-	if strings.HasPrefix(ctxDir, clone+string(filepath.Separator)) || ctxDir == clone {
-		t.Fatalf("context dir %q is nested inside the clone %q - must be a sibling", ctxDir, clone)
-	}
-	if filepath.Dir(ctxDir) != filepath.Dir(clone) {
-		t.Errorf("context dir %q and clone %q are not siblings (different parents)", ctxDir, clone)
-	}
-}
-
 func TestJailHomeDirCreatesDirectory(t *testing.T) {
 	j := newTestJail(t)
 	home, err := j.HomeDir("alice")

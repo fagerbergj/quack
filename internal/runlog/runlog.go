@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
 )
@@ -18,6 +19,9 @@ import (
 type EventLog struct {
 	store *store.Store
 	ch    chan store.ChatEvent
+	// ledgerStore: LoadEvents' fold fallback (#1101, see fold.go). nil = no
+	// WAL; LoadEvents then behaves exactly like a direct table read.
+	ledgerStore ledger.LedgerStore
 }
 
 func NewEventLog(s *store.Store) *EventLog {

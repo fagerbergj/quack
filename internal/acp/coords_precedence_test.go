@@ -22,7 +22,7 @@ func TestRound_CtxCoordsWinOverTheSharedStampForUsage(t *testing.T) {
 	a.SetLedgerCoords(ledger.Coords{Agent: "sibling-agent", User: "sibling-user"})
 
 	ctx := ledger.WithCoords(context.Background(), ledger.Coords{Agent: "my-agent"})
-	if err := a.round(ctx, t.TempDir(), "", nil, workspace.Caps{}, "add the feature", "", "", "", "", func(eventSpec) bool { return true }); err != nil {
+	if err := a.round(ctx, t.TempDir(), "", workspace.Caps{}, "add the feature", "", "", "", "", func(eventSpec) bool { return true }); err != nil {
 		t.Fatalf("round: %v", err)
 	}
 

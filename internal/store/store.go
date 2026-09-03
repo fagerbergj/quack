@@ -889,6 +889,17 @@ func (s *Store) LoadChatEvents(ctx context.Context, chatID string, afterSeq int6
 	return evs, err
 }
 
+// ChatEventsExist reports whether chatID has ANY row in the SSE table,
+// regardless of seq - runlog.EventLog.LoadEvents' fold-fallback decision
+// (#1101): a chat with rows but none newer than some fromSeq is "caught
+// up", not "table is gone", and must not trigger a resend of the whole
+// reconstructed history.
+func (s *Store) ChatEventsExist(ctx context.Context, chatID string) (bool, error) {
+	var count int64
+	err := s.db.WithContext(ctx).Model(&ChatEvent{}).Where("chat_id = ?", chatID).Count(&count).Error
+	return count > 0, err
+}
+
 // DeleteChatEvents drops a chat's run events (fresh start for new run).
 func (s *Store) DeleteChatEvents(ctx context.Context, chatID string) error {
 	return s.db.WithContext(ctx).Where("chat_id = ?", chatID).Delete(&ChatEvent{}).Error

@@ -59,8 +59,8 @@ func traceparentEnv(ctx context.Context) []string {
 // (ExtraRO) on top of the caps' own system + exec_path grants. landlock
 // applies them as a ruleset, bwrap as identity bind mounts (#921); `none`
 // passes Command through unchanged.
-func (a *Agent) wrappedArgv(cwd string, extraRO []string, caps workspace.Caps) []string {
-	return workspace.WrapArgv(cwd, a.opts.Command, caps, append(append([]string{}, a.opts.ExtraRO...), extraRO...), nil)
+func (a *Agent) wrappedArgv(cwd string, caps workspace.Caps) []string {
+	return workspace.WrapArgv(cwd, a.opts.Command, caps, a.opts.ExtraRO, nil)
 }
 
 // spawnEnv is the subprocess environment: PATH is HERMETIC in every sandbox
@@ -93,22 +93,22 @@ func (a *Agent) spawnEnv(caps workspace.Caps) []string {
 // SAME real-subprocess path a never-replayed round takes, so "live" for ACP
 // needs no separate delegate object, only the opts every round already
 // carries (Command, Env, Caps, ...).
-func (a *Agent) start(ctx context.Context, cwd string, extraRO []string, caps workspace.Caps) (*procHandle, error) {
+func (a *Agent) start(ctx context.Context, cwd string, caps workspace.Caps) (*procHandle, error) {
 	if a.opts.Replay != nil {
 		h, err := a.startReplay(ctx)
 		var fs *replay.ForkSignal
 		if errors.As(err, &fs) {
 			a.log.Info("acp round forked to live", "reason", fs.Reason, "stream", fs.Stream.String())
-			return a.startLive(ctx, cwd, extraRO, caps)
+			return a.startLive(ctx, cwd, caps)
 		}
 		return h, err
 	}
-	return a.startLive(ctx, cwd, extraRO, caps)
+	return a.startLive(ctx, cwd, caps)
 }
 
 // startLive spawns a real opencode subprocess and wires the ACP connection -
 // the only path before #605 added fork-replay's live fallback.
-func (a *Agent) startLive(ctx context.Context, cwd string, extraRO []string, caps workspace.Caps) (*procHandle, error) {
+func (a *Agent) startLive(ctx context.Context, cwd string, caps workspace.Caps) (*procHandle, error) {
 	h := &procHandle{
 		updates:  make(chan sdk.SessionUpdate, 64),
 		stop:     make(chan struct{}),
@@ -116,7 +116,7 @@ func (a *Agent) startLive(ctx context.Context, cwd string, extraRO []string, cap
 		sent:     &teeBuffer{},
 		received: &teeBuffer{},
 	}
-	argv := a.wrappedArgv(cwd, extraRO, caps)
+	argv := a.wrappedArgv(cwd, caps)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = cwd
 	cmd.Env = append(a.spawnEnv(caps), traceparentEnv(ctx)...)
