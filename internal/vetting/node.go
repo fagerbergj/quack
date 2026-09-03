@@ -473,10 +473,14 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		var res GateResult
 		var checksSkipReason string // last computeDeterministicCriteria skip reason; attached to res below (#780)
 		queuedText := ""
-		// prevFindings: the last round's live findings by hash id, threaded
-		// into saveEpisodicRound so a dropped id gets one final "resolved"
-		// revision instead of every round rewriting every finding (#1090 P2).
-		prevFindings := map[string]FindingRecord{}
+		// episodicState: cross-round (and, seeded once, cross-turn) tracking
+		// for the episodic record write site below - live findings by hash id
+		// plus the last-known revision of every code_review/finding/document
+		// id, so a re-review turn stamps true parent_revision instead of
+		// fabricating one and correctly marks repeats "unchanged" (#1090 P2).
+		// nil until first touched; saveEpisodicRound seeds it from the store
+		// on that first call.
+		var episodicState *episodicRoundState
 		episodicRoundsWritten := 0
 		// JudgeRounds counts revisions: round r judges, on fail revises (N rounds = N revisions / N+1 judgments).
 		for round := 1; judge != nil && cfg.JudgeRounds > 0 && round <= cfg.JudgeRounds+1; round++ {
@@ -500,7 +504,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			// Every judge round writes a revision, gate-passed or not - only
 			// delivery stays gate-passed-only (#1090 P2: rounds are history).
 			if cfg.IsReviewer || cfg.Artifact != "" {
-				prevFindings = saveEpisodicRound(nodeCtx, cfg, nodeID, turnID, round, answer, act.stagedDelivery["review"], prevFindings)
+				episodicState = saveEpisodicRound(nodeCtx, cfg, nodeID, turnID, round, answer, act.stagedDelivery["review"], episodicState)
 				episodicRoundsWritten++
 			}
 			runID := fmt.Sprintf("judge-r%d", round)

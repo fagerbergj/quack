@@ -258,21 +258,90 @@ func fileLineAtForCfg(cfg Config, path string, line int) string {
 // id) forward so a dropped id gets one final "resolved" revision instead of
 // every round rewriting every finding. Returns this round's live findings,
 // to pass back into the next call.
-func saveEpisodicRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, staged StagedDelivery, prevFindings map[string]FindingRecord) map[string]FindingRecord {
-	var current map[string]FindingRecord
-	if cfg.IsReviewer {
-		current = saveCodeReviewRound(ctx, cfg, nodeID, turnID, round, answer, staged, prevFindings)
-	}
-	if cfg.Artifact != "" {
-		saveDocumentRound(ctx, cfg, nodeID, turnID, round, answer)
-	}
-	return current
+// episodicRoundState carries cross-round, and (seeded once per invocation)
+// cross-turn, bookkeeping for the write site below: each finding's live
+// content, state and last-known revision, plus the code_review and document
+// kinds' last-known revisions - so a re-review turn stamps the real
+// parent_revision instead of fabricating round-1 (#1090 adversarial review
+// finding #2), and correctly marks a repeated finding "unchanged" rather
+// than "new" (finding #1). Saves are synchronous (SaveStructured/SaveBlob,
+// not the Async forms) so a node's own rounds for one id can never
+// interleave (finding #3) and so the real assigned revision is available
+// immediately to seed the next round's ParentRevision - still fail-open: a
+// save error is Warned and this round's bookkeeping just doesn't advance.
+type episodicRoundState struct {
+	findings     map[string]FindingRecord // LIVE findings only, by hash id
+	findingState map[string]string        // every finding id ever seen this chat -> its last WRITTEN state
+	findingRev   map[string]int           // every finding id ever seen -> its last WRITTEN revision
+	reviewRev    int
+	documentRev  int
 }
 
-func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, staged StagedDelivery, prevFindings map[string]FindingRecord) map[string]FindingRecord {
+// loadEpisodicRoundState seeds state from the store for a fresh invocation
+// (nil passed in) - test case 7: a second RunGatedRefine on the same chat
+// must see round 1's findings as already-known, not as new.
+func newEpisodicRoundState() *episodicRoundState {
+	return &episodicRoundState{findings: map[string]FindingRecord{}, findingState: map[string]string{}, findingRev: map[string]int{}}
+}
+
+func loadEpisodicRoundState(ctx context.Context, cfg Config) *episodicRoundState {
+	st := newEpisodicRoundState()
 	c := recordClient(cfg)
 	if c == nil {
-		return nil
+		return st
+	}
+	if cfg.IsReviewer {
+		if id, err := recordstore.IdentityFor(kindCodeReview, nil, subjectHint(cfg.ChatID)); err == nil {
+			if raw, _, rev, ok, lerr := c.LatestWithMeta(ctx, id); lerr == nil && ok {
+				st.reviewRev = rev
+				var rec CodeReviewRecord
+				if json.Unmarshal(raw, &rec) == nil {
+					for _, fid := range rec.FindingIDs {
+						fraw, _, frev, fok, ferr := c.LatestWithMeta(ctx, fid)
+						if ferr != nil || !fok {
+							continue
+						}
+						var f FindingRecord
+						if json.Unmarshal(fraw, &f) != nil {
+							continue
+						}
+						st.findingRev[fid] = frev
+						st.findingState[fid] = f.State
+						if f.State != "resolved" {
+							st.findings[fid] = f
+						}
+					}
+				}
+			}
+		}
+	}
+	if cfg.Artifact != "" {
+		if id, err := recordstore.IdentityFor(cfg.Artifact, nil, documentHint(cfg.ChatID)); err == nil {
+			if _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id); lerr == nil && ok {
+				st.documentRev = rev
+			}
+		}
+	}
+	return st
+}
+
+func saveEpisodicRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, staged StagedDelivery, st *episodicRoundState) *episodicRoundState {
+	if st == nil {
+		st = loadEpisodicRoundState(ctx, cfg)
+	}
+	if cfg.IsReviewer {
+		saveCodeReviewRound(ctx, cfg, nodeID, turnID, round, answer, staged, st)
+	}
+	if cfg.Artifact != "" {
+		saveDocumentRound(ctx, cfg, nodeID, turnID, round, answer, st)
+	}
+	return st
+}
+
+func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, staged StagedDelivery, st *episodicRoundState) {
+	c := recordClient(cfg)
+	if c == nil {
+		return
 	}
 
 	var event string
@@ -291,6 +360,23 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 	savedAt := time.Now().UTC()
 	current := make(map[string]FindingRecord, len(findings))
 	findingIDs := make([]string, 0, len(findings))
+	writeFinding := func(id string, rec FindingRecord) {
+		// Skip a rewrite when the last WRITTEN state already matches -
+		// avoids every intermediate revise round re-persisting "unchanged"
+		// for a finding nothing happened to, while still writing the one
+		// transition (new->unchanged, *->resolved) each state change earns.
+		if st.findingState[id] == rec.State {
+			return
+		}
+		lineage := recordstore.Lineage{NodeID: nodeID, Round: round, ParentRevision: st.findingRev[id], HeadSHA: cfg.NodeBaseSHA, SavedAt: savedAt, Author: "worker", TurnID: turnID}
+		_, rev, err := c.SaveStructured(ctx, kindFinding, rec, "", lineage)
+		if err != nil {
+			slog.Warn("finding record save failed", "component", "vetting", "node", nodeID, "id", id, "err", err)
+			return
+		}
+		st.findingRev[id] = rev
+		st.findingState[id] = rec.State
+	}
 	for _, f := range findings {
 		line := fileLineAtForCfg(cfg, f.Path, f.Line)
 		title, rationale := splitFirstSentence(f.Body)
@@ -300,47 +386,54 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 			slog.Warn("finding identity failed; dropping this finding from the round", "component", "vetting", "node", nodeID, "err", err)
 			continue
 		}
-		if _, existed := prevFindings[id]; existed {
+		if _, existed := st.findings[id]; existed {
 			rec.State = "unchanged"
 		}
 		current[id] = rec
 		findingIDs = append(findingIDs, id)
-		if rec.State == "new" {
-			lineage := recordstore.Lineage{NodeID: nodeID, Round: round, HeadSHA: cfg.NodeBaseSHA, SavedAt: savedAt, Author: "worker", TurnID: turnID}
-			c.SaveStructuredAsync(ctx, kindFinding, rec, "", lineage)
-		}
+		writeFinding(id, rec)
 	}
-	// Resolved: an id the previous round had that this round dropped - one
-	// final revision recording the resolution (replaces V3's critique list).
-	for id, rec := range prevFindings {
+	// Resolved: an id previously live (this run or a prior turn) that this
+	// round dropped - one revision recording the resolution (replaces V3's
+	// critique list).
+	for id, rec := range st.findings {
 		if _, stillLive := current[id]; stillLive {
 			continue
 		}
 		rec.State = "resolved"
-		lineage := recordstore.Lineage{NodeID: nodeID, Round: round, HeadSHA: cfg.NodeBaseSHA, SavedAt: savedAt, Author: "worker", TurnID: turnID}
-		c.SaveStructuredAsync(ctx, kindFinding, rec, "", lineage)
+		writeFinding(id, rec)
 	}
+	st.findings = current
 
 	dismissed := make([]DismissedEntry, 0, len(dismissedComments))
 	for _, d := range dismissedComments {
 		dismissed = append(dismissed, DismissedEntry{Path: d.Path, Line: d.Line, Note: d.Body})
 	}
 	reviewRec := CodeReviewRecord{Verdict: event, FindingIDs: findingIDs, Dismissed: dismissed, Clean: clean}
-	lineage := recordstore.Lineage{NodeID: nodeID, Round: round, ParentRevision: round - 1, HeadSHA: cfg.NodeBaseSHA, SavedAt: savedAt, Author: "gate", TurnID: turnID}
-	c.SaveStructuredAsync(ctx, kindCodeReview, reviewRec, subjectHint(cfg.ChatID), lineage)
-	return current
+	lineage := recordstore.Lineage{NodeID: nodeID, Round: round, ParentRevision: st.reviewRev, HeadSHA: cfg.NodeBaseSHA, SavedAt: savedAt, Author: "gate", TurnID: turnID}
+	_, rev, err := c.SaveStructured(ctx, kindCodeReview, reviewRec, subjectHint(cfg.ChatID), lineage)
+	if err != nil {
+		slog.Warn("code_review record save failed", "component", "vetting", "node", nodeID, "err", err)
+		return
+	}
+	st.reviewRev = rev
 }
 
 // saveDocumentRound saves one "document" (or other blob-kind) revision per
 // round. No retention: every revision is kept (design V4.1 #2) - GC follows
 // the chat's own lifecycle, not a per-artifact policy.
-func saveDocumentRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string) {
+func saveDocumentRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, st *episodicRoundState) {
 	c := recordClient(cfg)
 	if c == nil {
 		return
 	}
-	lineage := recordstore.Lineage{NodeID: nodeID, Round: round, HeadSHA: cfg.NodeBaseSHA, SavedAt: time.Now().UTC(), Author: "worker", TurnID: turnID}
-	c.SaveBlobAsync(ctx, cfg.Artifact, []byte(answer), "text/markdown", documentHint(cfg.ChatID), lineage)
+	lineage := recordstore.Lineage{NodeID: nodeID, Round: round, ParentRevision: st.documentRev, HeadSHA: cfg.NodeBaseSHA, SavedAt: time.Now().UTC(), Author: "worker", TurnID: turnID}
+	_, rev, err := c.SaveBlob(ctx, cfg.Artifact, []byte(answer), "text/markdown", documentHint(cfg.ChatID), lineage)
+	if err != nil {
+		slog.Warn("document record save failed", "component", "vetting", "node", nodeID, "err", err)
+		return
+	}
+	st.documentRev = rev
 }
 
 // untrustedPriorBlock wraps a preloaded record in the same untrusted-prior-

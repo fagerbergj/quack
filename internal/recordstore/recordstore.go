@@ -14,7 +14,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -219,30 +218,12 @@ func (c *Client) SaveBlob(ctx context.Context, kind string, data []byte, mime, h
 	return id, rev, err
 }
 
-// SaveStructuredAsync/SaveBlobAsync are the fire-and-forget forms: they save
-// in a goroutine with their own timeout and log a Warn on error. Fail-open,
-// same as commitMemoryOnPass - the caller never blocks or sees the error (or
-// the derived id; call IdentityFor first if the id is needed synchronously).
-func (c *Client) SaveStructuredAsync(ctx context.Context, kind string, doc any, hint string, lineage Lineage) {
-	go func() {
-		saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cancel()
-		if _, _, err := c.SaveStructured(saveCtx, kind, doc, hint, lineage); err != nil {
-			slog.Warn("recordstore: async structured save failed", "component", "recordstore", "kind", kind, "err", err)
-		}
-	}()
-}
-
-func (c *Client) SaveBlobAsync(ctx context.Context, kind string, data []byte, mime, hint string, lineage Lineage) {
-	go func() {
-		saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cancel()
-		if _, _, err := c.SaveBlob(saveCtx, kind, data, mime, hint, lineage); err != nil {
-			slog.Warn("recordstore: async blob save failed", "component", "recordstore", "kind", kind, "err", err)
-		}
-	}()
-}
-
+// ponytail: no async Save*. The one caller (vetting's per-round write site)
+// now calls SaveStructured/SaveBlob synchronously so it can capture the real
+// assigned revision for the next round's ParentRevision, and so a node's own
+// rounds for one id can never interleave (#1090 adversarial review finding
+// #3). Add back a fire-and-forget wrapper if a caller with no revision-chain
+// need shows up.
 // IdentityFor computes what SaveStructured would derive as the id for doc,
 // without saving - pure and synchronous, so a caller can know an id (e.g.
 // for its own in-memory bookkeeping across rounds) before firing an async

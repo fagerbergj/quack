@@ -112,11 +112,9 @@ CLEAN:
 - e.go
 `
 	staged := StagedDelivery{Kind: "review", Recovered: true}
-	current := saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "", 1, answer, staged, nil)
-	waitFor(t, func() bool {
-		_, _, ok, _ := recordClient(cfg).Latest(context.Background(), codeReviewID(cfg))
-		return ok
-	})
+	st := newEpisodicRoundState()
+	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "", 1, answer, staged, st)
+	current := st.findings
 
 	if len(current) != 2 {
 		t.Fatalf("returned live findings = %d, want 2: %+v", len(current), current)
@@ -212,8 +210,7 @@ func TestGateFailWritesNothing(t *testing.T) {
 // against a failing service does not panic or block.
 func TestSaveErrorFailsOpen(t *testing.T) {
 	cfg := reviewerCfgWithArtifacts(t, failingArtifactService{}, true)
-	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "", 1, "VERDICT: approve\n", StagedDelivery{Recovered: true}, nil)
-	time.Sleep(50 * time.Millisecond) // let the fire-and-forget goroutine run
+	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "", 1, "VERDICT: approve\n", StagedDelivery{Recovered: true}, newEpisodicRoundState())
 }
 
 type failingArtifactService struct{ artifact.Service }
@@ -238,12 +235,13 @@ FINDINGS:
 - a.go:1: issue A. detail
 `
 	staged := StagedDelivery{Recovered: true}
-	prev := saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "", 1, round1, staged, nil)
-	if len(prev) != 2 {
-		t.Fatalf("round 1 live findings = %d, want 2", len(prev))
+	st := newEpisodicRoundState()
+	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "", 1, round1, staged, st)
+	if len(st.findings) != 2 {
+		t.Fatalf("round 1 live findings = %d, want 2", len(st.findings))
 	}
 	var droppedID string
-	for id, f := range prev {
+	for id, f := range st.findings {
 		if f.Path == "b.go" {
 			droppedID = id
 		}
@@ -252,21 +250,102 @@ FINDINGS:
 		t.Fatal("could not find b.go's finding id in round 1")
 	}
 
-	current := saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "", 2, round2, staged, prev)
-	if len(current) != 1 {
-		t.Fatalf("round 2 live findings = %d, want 1", len(current))
+	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "", 2, round2, staged, st)
+	if len(st.findings) != 1 {
+		t.Fatalf("round 2 live findings = %d, want 1", len(st.findings))
 	}
 
 	rc := recordClient(cfg)
-	waitFor(t, func() bool {
-		raw, _, _, ok, _ := rc.LatestWithMeta(context.Background(), droppedID)
-		if !ok {
-			return false
+	raw, _, ok, err := rc.Latest(context.Background(), droppedID)
+	if err != nil || !ok {
+		t.Fatalf("dropped finding record missing: ok=%v err=%v", ok, err)
+	}
+	var f FindingRecord
+	if err := json.Unmarshal(raw, &f); err != nil {
+		t.Fatal(err)
+	}
+	if f.State != "resolved" {
+		t.Fatalf("dropped finding state = %q, want resolved", f.State)
+	}
+}
+
+// TestSecondInvocationSeedsFromStoreAndStampsParent covers #1090 adversarial
+// review findings #1 and #2: a fresh RunGatedRefine invocation (prev state
+// nil, as node.go passes on its very first round) on a chat that already
+// has a code_review record must load it - a repeated finding gets
+// "unchanged" (not "new" again) and a dropped one gets "resolved"; the new
+// code_review revision's parent_revision is the real previous revision, not
+// a fabricated 0.
+func TestSecondInvocationSeedsFromStoreAndStampsParent(t *testing.T) {
+	svc := newMetaAwareInMemory()
+	cfg := reviewerCfgWithArtifacts(t, svc, true)
+	staged := StagedDelivery{Recovered: true}
+
+	// Turn 1: a whole separate RunGatedRefine invocation - fresh nil state.
+	turn1 := `VERDICT: request_changes
+FINDINGS:
+- a.go:1: issue A. detail
+- b.go:2: issue B. detail
+`
+	saveEpisodicRound(context.Background(), cfg, cfg.NodeID, "t1", 1, turn1, staged, nil)
+
+	rc := recordClient(cfg)
+	_, _, firstRev, ok, err := rc.LatestWithMeta(context.Background(), codeReviewID(cfg))
+	if err != nil || !ok {
+		t.Fatalf("turn 1 code_review missing: ok=%v err=%v", ok, err)
+	}
+	var aID string
+	{
+		raw, _, _, _, _ := rc.LatestWithMeta(context.Background(), codeReviewID(cfg))
+		var rec CodeReviewRecord
+		if err := json.Unmarshal(raw, &rec); err != nil {
+			t.Fatal(err)
 		}
-		var f FindingRecord
-		_ = json.Unmarshal(raw, &f)
-		return f.State == "resolved"
-	})
+		for _, fid := range rec.FindingIDs {
+			fraw, _, _, _, _ := rc.LatestWithMeta(context.Background(), fid)
+			var f FindingRecord
+			if json.Unmarshal(fraw, &f) == nil && f.Path == "a.go" {
+				aID = fid
+			}
+		}
+	}
+	if aID == "" {
+		t.Fatal("could not find a.go's finding id in turn 1")
+	}
+
+	// Turn 2: another fresh invocation (nil state, like node.go's first
+	// round of any call) - a.go repeats, b.go is dropped.
+	turn2 := `VERDICT: comment
+FINDINGS:
+- a.go:1: issue A. detail
+`
+	saveEpisodicRound(context.Background(), cfg, cfg.NodeID, "t2", 1, turn2, staged, nil)
+
+	_, secondLineage, secondRev, ok, err := rc.LatestWithMeta(context.Background(), codeReviewID(cfg))
+	if err != nil || !ok {
+		t.Fatalf("turn 2 code_review missing: ok=%v err=%v", ok, err)
+	}
+	if secondRev != firstRev+1 {
+		t.Fatalf("turn 2 revision = %d, want %d", secondRev, firstRev+1)
+	}
+	if secondLineage.ParentRevision != firstRev {
+		t.Fatalf("turn 2 parent_revision = %d, want the real previous revision %d (not fabricated)", secondLineage.ParentRevision, firstRev)
+	}
+
+	aRaw, aLineage, aRev, ok, err := rc.LatestWithMeta(context.Background(), aID)
+	if err != nil || !ok {
+		t.Fatalf("a.go finding missing after turn 2: ok=%v err=%v", ok, err)
+	}
+	var aRec FindingRecord
+	if err := json.Unmarshal(aRaw, &aRec); err != nil {
+		t.Fatal(err)
+	}
+	if aRec.State != "unchanged" {
+		t.Fatalf("a.go state on turn 2 = %q, want unchanged (was seeded from the store, not re-created as new)", aRec.State)
+	}
+	if aRev != 2 || aLineage.ParentRevision != 1 {
+		t.Fatalf("a.go rev=%d parent=%d, want rev=2 parent=1", aRev, aLineage.ParentRevision)
+	}
 }
 
 // TestResumePreloadFiltersByFile covers #1006 test case 2: after a commit
@@ -283,11 +362,7 @@ CLEAN:
 - a.txt
 - b.txt
 `
-	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "", 1, answer, StagedDelivery{Recovered: true}, nil)
-	waitFor(t, func() bool {
-		_, _, ok, _ := recordClient(cfg).Latest(context.Background(), codeReviewID(cfg))
-		return ok
-	})
+	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "", 1, answer, StagedDelivery{Recovered: true}, newEpisodicRoundState())
 
 	// Commit touching only a.txt on the same clone, advancing HEAD.
 	dir := probeDirOf(t, cfg)
@@ -336,10 +411,11 @@ func TestDocumentStagesShareOneID(t *testing.T) {
 	base.IsReviewer = false
 	base.Artifact = kindDocument
 
+	st := newEpisodicRoundState()
 	saveStage := func(nodeID, text string) {
 		cfg := base
 		cfg.NodeID = nodeID
-		saveDocumentRound(context.Background(), cfg, nodeID, "", 1, text)
+		saveDocumentRound(context.Background(), cfg, nodeID, "", 1, text, st)
 	}
 	docID, err := recordstore.IdentityFor(kindDocument, nil, documentHint(base.ChatID))
 	if err != nil {
@@ -348,13 +424,7 @@ func TestDocumentStagesShareOneID(t *testing.T) {
 	rc := recordClient(base)
 
 	saveStage("ocr", "ocr text v1")
-	waitFor(t, func() bool { _, _, ok, _ := rc.Latest(context.Background(), docID); return ok })
-
 	saveStage("summarize", "summary v1 (re-dispatch)")
-	waitFor(t, func() bool {
-		_, rev, ok, _ := rc.Latest(context.Background(), docID)
-		return ok && rev == 2
-	})
 	raw, rev, ok, err := rc.Latest(context.Background(), docID)
 	if err != nil || !ok || rev != 2 {
 		t.Fatalf("Latest: rev=%d ok=%v err=%v", rev, ok, err)
