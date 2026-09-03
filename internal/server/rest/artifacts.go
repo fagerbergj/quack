@@ -3,6 +3,7 @@ package rest
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"mime"
 	"net/http"
@@ -97,21 +98,30 @@ func toArtifactRevisionInfo(rv store.ArtifactRevision) schema.ArtifactRevisionIn
 	return info
 }
 
-// findArtifact locates one artifact's summary by exact name within the
-// chat's full listing - reuses ListForSession (already unpaginated/bounded
-// per chat, per its own doc comment) rather than adding a new store query.
-func (h *Handler) findArtifact(r *http.Request, chatID, name string) (store.ArtifactSummary, bool, error) {
+// revisionsForArtifact fetches one artifact name's revisions - the store's
+// WHERE name = ? seam (store.TurnAwareService.RevisionsForName) when the
+// backend supports it, falling back to filtering ListForSession's full-chat
+// listing only for a backend that doesn't (adversarial review follow-up on
+// #1094: the original version always paid for the full-chat scan).
+func (h *Handler) revisionsForArtifact(r *http.Request, chatID, name string) ([]store.ArtifactRevision, bool, error) {
 	userID := h.sessionUser(r.Context(), chatID)
+	revs, supported, err := h.artifacts.RevisionsForName(r.Context(), artifactref.AppName, userID, chatID, name)
+	if err != nil {
+		return nil, false, err
+	}
+	if supported {
+		return revs, len(revs) > 0, nil
+	}
 	summaries, err := h.artifacts.ListForSession(r.Context(), artifactref.AppName, userID, chatID)
 	if err != nil {
-		return store.ArtifactSummary{}, false, err
+		return nil, false, err
 	}
 	for _, s := range summaries {
 		if s.Name == name {
-			return s, true, nil
+			return s.Revisions, true, nil
 		}
 	}
-	return store.ArtifactSummary{}, false, nil
+	return nil, false, nil
 }
 
 // ListArtifactRevisions lists one artifact id's revisions, newest first,
@@ -124,7 +134,7 @@ func (h *Handler) ListArtifactRevisions(w http.ResponseWriter, r *http.Request, 
 		errMsg(w, http.StatusNotFound, "not found")
 		return
 	}
-	summary, ok, err := h.findArtifact(r, chatID, artifactName)
+	storeRevs, ok, err := h.revisionsForArtifact(r, chatID, artifactName)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
 		return
@@ -133,8 +143,8 @@ func (h *Handler) ListArtifactRevisions(w http.ResponseWriter, r *http.Request, 
 		errMsg(w, http.StatusNotFound, "not found")
 		return
 	}
-	revs := make([]schema.ArtifactRevisionInfo, len(summary.Revisions))
-	for i, rv := range summary.Revisions {
+	revs := make([]schema.ArtifactRevisionInfo, len(storeRevs))
+	for i, rv := range storeRevs {
 		revs[i] = toArtifactRevisionInfo(rv)
 	}
 	sort.Slice(revs, func(i, j int) bool { return revs[i].Revision > revs[j].Revision })
@@ -147,6 +157,12 @@ func (h *Handler) ListArtifactRevisions(w http.ResponseWriter, r *http.Request, 
 func diffable(mimeType string) bool {
 	return mimeType == "application/json" || strings.HasPrefix(mimeType, "text/")
 }
+
+// diffRevisionMaxBytes mirrors internal/acp/memorymcp.go's read_artifact
+// bound (256KB) - the same "don't let one huge revision flood the response"
+// ceiling, duplicated rather than imported since acp is another agent's
+// package for this change and the constant isn't exported.
+const diffRevisionMaxBytes = 256 * 1024
 
 // DiffArtifactRevisions returns a unified diff between two revisions of one
 // artifact, text/structured only (415 for a binary blob).
@@ -191,6 +207,11 @@ func (h *Handler) DiffArtifactRevisions(w http.ResponseWriter, r *http.Request, 
 	}
 	if !diffable(fromMime) || !diffable(toMime) {
 		errMsg(w, http.StatusUnsupportedMediaType, "artifact is a binary blob; diffing is not supported")
+		return
+	}
+	if len(fromData) > diffRevisionMaxBytes || len(toData) > diffRevisionMaxBytes {
+		errMsg(w, http.StatusRequestEntityTooLarge, fmt.Sprintf(
+			"revision exceeds the %d byte diff limit; fetch it directly via GET .../artifacts/%s instead", diffRevisionMaxBytes, artifactName))
 		return
 	}
 	fromLabel := artifactName + "@" + strconv.Itoa(params.From)

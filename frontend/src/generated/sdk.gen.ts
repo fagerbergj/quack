@@ -185,7 +185,7 @@ export const listArtifactRevisions = <ThrowOnError extends boolean = false>(opti
 /**
  * Unified diff between two revisions of one artifact
  *
- * A unified text diff between `from` and `to` revisions, for text and structured (JSON) artifacts only - binary blobs answer 415, since a byte-level diff of an image or PDF isn't meaningful to render.
+ * A unified text diff between `from` and `to` revisions, for text and structured (JSON) artifacts only - binary blobs answer 415, since a byte-level diff of an image or PDF isn't meaningful to render. Each revision is capped at the same 256KB bound `read_artifact` (the agent-facing tool) enforces - 413 above that, naming the plain artifact-bytes endpoint as the way to fetch it directly instead.
  *
  */
 export const diffArtifactRevisions = <ThrowOnError extends boolean = false>(options: Options<DiffArtifactRevisionsData, ThrowOnError>): RequestResult<DiffArtifactRevisionsResponses, DiffArtifactRevisionsErrors, ThrowOnError> => (options.client ?? client).get<DiffArtifactRevisionsResponses, DiffArtifactRevisionsErrors, ThrowOnError>({

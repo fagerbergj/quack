@@ -862,6 +862,10 @@ export type DiffArtifactRevisionsErrors = {
      */
     404: ErrorResponse;
     /**
+     * One of the two revisions exceeds the diff size bound
+     */
+    413: ErrorResponse;
+    /**
      * Artifact is a binary blob; diffing is not supported
      */
     415: ErrorResponse;

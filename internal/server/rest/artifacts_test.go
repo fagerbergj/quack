@@ -3,6 +3,7 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -189,6 +190,37 @@ func TestListArtifactRevisions_NewestFirstWithLineage(t *testing.T) {
 	}
 }
 
+// TestListArtifactRevisions_UsesNameScopedQuery is the adversarial-review
+// follow-up (#1094): the endpoint must not pull every artifact + revision in
+// the chat to find one name - RevisionsForName's WHERE name = ? seam issues a
+// single query regardless of how many OTHER artifacts the chat holds.
+func TestListArtifactRevisions_UsesNameScopedQuery(t *testing.T) {
+	h := newTestHandler(t)
+	chatID := mustCreateChat(t, h)
+	userID := h.sessionUser(context.Background(), chatID)
+
+	for i := 0; i < 20; i++ {
+		saveTestArtifact(t, h, userID, chatID, "turn-1", fmt.Sprintf("finding:noise-%d", i), "application/json", []byte("{}"))
+	}
+	saveTestArtifact(t, h, userID, chatID, "turn-1", "finding:target", "application/json", []byte(`{"v":1}`))
+	saveTestArtifact(t, h, userID, chatID, "turn-2", "finding:target", "application/json", []byte(`{"v":2}`))
+
+	before := h.store.QueryCount()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats/"+chatID+"/artifacts/finding:target/revisions", nil)
+	rec := httptest.NewRecorder()
+	h.ListArtifactRevisions(rec, req, chatID, "finding:target")
+	queries := h.store.QueryCount() - before
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	// One SELECT for the revisions, plus the requireChat/sessionUser lookups -
+	// bounded, not "one row scanned per artifact in the chat" (21 artifacts here).
+	if queries > 5 {
+		t.Errorf("query count = %d, want a small bounded number independent of the chat's 21 other artifacts", queries)
+	}
+}
+
 func TestListArtifactRevisions_UnknownArtifact_404(t *testing.T) {
 	h := newTestHandler(t)
 	chatID := mustCreateChat(t, h)
@@ -235,6 +267,24 @@ func TestDiffArtifactRevisions_BinaryBlob_415(t *testing.T) {
 
 	if rec.Code != http.StatusUnsupportedMediaType {
 		t.Fatalf("status = %d, want 415; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDiffArtifactRevisions_OversizeRevision_413(t *testing.T) {
+	h := newTestHandler(t)
+	chatID := mustCreateChat(t, h)
+	userID := h.sessionUser(context.Background(), chatID)
+
+	big := strings.Repeat("a", diffRevisionMaxBytes+1)
+	saveTestArtifact(t, h, userID, chatID, "turn-1", "text:huge", "text/plain", []byte("small"))
+	saveTestArtifact(t, h, userID, chatID, "turn-2", "text:huge", "text/plain", []byte(big))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats/"+chatID+"/artifacts/text:huge/diff?from=1&to=2", nil)
+	rec := httptest.NewRecorder()
+	h.DiffArtifactRevisions(rec, req, chatID, "text:huge", schema.DiffArtifactRevisionsParams{From: 1, To: 2})
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413; body=%s", rec.Code, rec.Body.String())
 	}
 }
 

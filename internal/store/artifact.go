@@ -254,6 +254,30 @@ func (w *TurnAwareService) ListForSession(ctx context.Context, appName, userID, 
 
 var _ sessionArtifactLister = (*gormArtifactService)(nil)
 
+// nameArtifactLister is implemented by gormArtifactService; not by
+// artifact.InMemoryService(). Adversarial-review follow-up (#1094): the
+// artifacts REST API's revisions endpoint used to reuse ListForSession and
+// filter client-side, pulling every artifact + revision in the chat to find
+// one name - this is the narrower query the same WHERE clause supports.
+type nameArtifactLister interface {
+	RevisionsForName(ctx context.Context, appName, userID, sessionID, name string) ([]ArtifactRevision, error)
+}
+
+// RevisionsForName lists one artifact name's revisions (ascending, like
+// ListForSession's per-name slice), or nil for a backend with no such
+// history. ok is false only when the backend doesn't support the query at
+// all (not when the name simply has no revisions - that's an empty slice).
+func (w *TurnAwareService) RevisionsForName(ctx context.Context, appName, userID, sessionID, name string) ([]ArtifactRevision, bool, error) {
+	l, ok := w.Service.(nameArtifactLister)
+	if !ok {
+		return nil, false, nil
+	}
+	revs, err := l.RevisionsForName(ctx, appName, userID, sessionID, name)
+	return revs, true, err
+}
+
+var _ nameArtifactLister = (*gormArtifactService)(nil)
+
 // ArtifactSummary groups one name's revisions, oldest first - the shape the
 // artifacts API lists per chat.
 type ArtifactSummary struct {
@@ -483,6 +507,24 @@ func (s *gormArtifactService) ListForSession(ctx context.Context, appName, userI
 		summaries = append(summaries, ArtifactSummary{Name: a.Name, Revisions: []ArtifactRevision{rev}})
 	}
 	return summaries, nil
+}
+
+// RevisionsForName lists one artifact name's revisions in the session (same
+// session-or-user-scoped rule as ListForSession), ascending - the WHERE name
+// = ? sibling of ListForSession, for a caller that only wants one artifact's
+// history instead of the whole chat's.
+func (s *gormArtifactService) RevisionsForName(ctx context.Context, appName, userID, sessionID, name string) ([]ArtifactRevision, error) {
+	var rows []Artifact
+	if err := s.db.WithContext(ctx).
+		Where("app_name = ? AND user_id = ? AND session_id IN ? AND name = ?", appName, userID, []string{sessionID, userScopedArtifactKey}, name).
+		Order("revision ASC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]ArtifactRevision, len(rows))
+	for i, a := range rows {
+		out[i] = ArtifactRevision{Name: a.Name, Revision: a.Revision, MimeType: a.MimeType, Size: a.Size, TurnID: a.TurnID, CreatedAt: a.CreatedAt, Kind: a.Kind, Class: a.Class, LineageJSON: a.Lineage}
+	}
+	return out, nil
 }
 
 // Versions implements [artifact.Service] and errors if no versions are found.
