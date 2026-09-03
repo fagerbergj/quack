@@ -8,6 +8,12 @@ import { useEffect, useRef } from 'react'
 // identically, not just look identical.
 export function useDrawer(open: boolean, onClose: () => void) {
   const panelRef = useRef<HTMLDivElement>(null)
+  // Both call sites pass an inline closure, so it gets a new identity on
+  // every render of the owning component - a ref keeps the effect below
+  // from tearing down/re-running (and re-stealing focus) on every one of
+  // those re-renders (e.g. Chat's 5s chat-list poll) while the drawer is open.
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
 
   useEffect(() => {
     if (!open) return
@@ -21,7 +27,7 @@ export function useDrawer(open: boolean, onClose: () => void) {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         e.stopPropagation()
-        onClose()
+        onCloseRef.current()
         return
       }
       if (e.key !== 'Tab') return
@@ -45,7 +51,7 @@ export function useDrawer(open: boolean, onClose: () => void) {
       document.body.style.overflow = prevOverflow
       if (opener instanceof HTMLElement) opener.focus()
     }
-  }, [open, onClose])
+  }, [open])
 
   return panelRef
 }

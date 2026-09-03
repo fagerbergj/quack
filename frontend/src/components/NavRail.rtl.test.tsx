@@ -41,6 +41,8 @@ describe('NavRail compact drawer', () => {
     expect(dialog).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Chats' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Memory' })).toBeTruthy()
+    // Opening moves focus into the panel - the first focusable in it is "Close navigation".
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close navigation' }))
 
     await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())

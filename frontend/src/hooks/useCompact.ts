@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useMediaQuery } from './useMediaQuery'
 
 // Material 3's compact window size class (#1131 epic): 0-599px is
 // single-column/touch-first; 600px+ (medium/expanded) adds panes. This is
@@ -9,14 +9,5 @@ import { useEffect, useState } from 'react'
 const COMPACT_QUERY = '(max-width: 599px)'
 
 export function useCompact(): boolean {
-  const supported = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-  const [compact, setCompact] = useState(() => supported && window.matchMedia(COMPACT_QUERY).matches)
-  useEffect(() => {
-    if (!supported) return
-    const mql = window.matchMedia(COMPACT_QUERY)
-    const onChange = () => setCompact(mql.matches)
-    mql.addEventListener('change', onChange)
-    return () => mql.removeEventListener('change', onChange)
-  }, [supported])
-  return compact
+  return useMediaQuery(COMPACT_QUERY)
 }
