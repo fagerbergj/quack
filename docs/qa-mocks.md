@@ -14,6 +14,13 @@ cd quack-extensions/github
 go run ./cmd/qa-mock serve --fixtures ../../agent-researcher/testdata/qa/github --addr :8090
 ```
 
+The GitHub fixtures live in core, at `testdata/qa/github` (this repo) - every
+`--fixtures`/`--fixture` path below is relative to `quack-extensions/github`,
+hence the `../../agent-researcher/...` prefix. There are no reMarkable fixture files in this PR; the
+`--fixtures ../../agent-researcher/testdata/qa/remarkable` path below is
+just where `serve`/`drop` will persist `docs.json` and dropped PDFs the
+first time you run them - create the directory or let `drop` create it.
+
 Point the QA server's `quack.yaml` at it:
 
 ```yaml
@@ -25,6 +32,7 @@ extensions:
     api_base: http://localhost:8090                    # the QA-only lever - see App.SetAPIBase
     allowed_users: [fagerbergj]
     triggers: [label, issue_plan, issue_implement, merge, ci_fix]
+    labels: { review: "quack:review" }                  # the fixture below fires this label
 ```
 
 Fire a webhook at the running quack server:
@@ -78,11 +86,15 @@ The extension's next poll picks it up like a real sync.
 ## End-to-end review script
 
 ```bash
-scripts/qa/e2e-review.sh <quack-chat-server-url> <qa-webhook-secret>
+scripts/qa/e2e-review.sh --secret "$QUACK_QA_WEBHOOK_SECRET" [--url URL] [--fixture FILE] [--chat ID]
 ```
 
-Sends the fixture `quack:review` webhook, polls `quack api
-/api/v1/chats/<id>` (found via the mock's recorded delivery, or pass
-`--chat`) until the run leaves `running`, then dumps `/artifacts` and the
-mock's `deliveries.jsonl`. Requires both mocks and a QA quack server already
-up per the config above - it does not start them.
+Sends the fixture `quack:review` webhook (default fixture
+`testdata/qa/github/events/issues.labeled.quack-review.json`, default url
+`http://localhost:8080/api/v1/github/webhook`). There's no chat id in the
+webhook response or the mock's recorded delivery - quack replies 202 before
+the run is created - so without `--chat` the script lists `/api/v1/chats`
+and asks you to re-run with the new id. With `--chat`, it polls `quack api
+/api/v1/chats/<id>` until the run leaves `running`, then dumps `/artifacts`
+and the mock's `deliveries.jsonl`. Requires both mocks and a QA quack server
+already up per the config above - it does not start them.

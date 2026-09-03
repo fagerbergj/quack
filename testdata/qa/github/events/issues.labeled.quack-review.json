@@ -5,8 +5,7 @@
     "title": "Fix the flaky retry loop",
     "body": "Fixture issue for QA - not a real GitHub object.",
     "state": "open",
-    "labels": [{"name": "quack:review"}],
-    "pull_request": {}
+    "labels": [{"name": "quack:review"}]
   },
   "label": {"name": "quack:review"},
   "repository": {
