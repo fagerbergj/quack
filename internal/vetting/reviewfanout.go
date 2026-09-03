@@ -118,6 +118,14 @@ func (f *ReviewFanout) Finish(nodeID string, item StagedDelivery, ok, failed boo
 	return f.deliverIfReady()
 }
 
+// SynthExpected reports whether this plan has a downstream synthesizer node
+// (#1092): a reviewer node feeding one never owns the delivered verdict.
+func (f *ReviewFanout) SynthExpected() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.synthWanted
+}
+
 // ExpectSynthesis marks the plan as having a synthesizer node downstream of
 // the reviewers: delivery waits for FinishSynthesis. Called during graph
 // assembly, before any node runs.
@@ -197,6 +205,13 @@ func mergeReviews(terminal map[string]reviewFanoutEntry, synthBody string) Stage
 	}
 	if synthBody != "" {
 		sections = []string{synthBody}
+		// The synthesizer owns the delivered verdict (#1092, design V4 §4.6):
+		// its own VERDICT tail wins over the worst-of computed from slices
+		// above. A slice's VERDICT is staged only as that fallback, for when
+		// the synthesizer's own output couldn't be parsed.
+		if ev := ParseAnswerReviewSections(synthBody).Event; ev != "" {
+			verdict = ev
+		}
 	}
 	if len(notes) > 0 {
 		sections = append(sections, "### Incomplete\n"+strings.Join(notes, "\n"))

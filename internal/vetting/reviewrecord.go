@@ -15,8 +15,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -34,6 +36,7 @@ const (
 	kindPRBody     = "pr_body"
 	kindText       = "text"
 	kindBytes      = "bytes"
+	kindJudgeRound = "judge_round"
 )
 
 // codeReviewJSONSchema/findingJSONSchema back #1091's generated write_<kind>
@@ -95,6 +98,24 @@ func init() {
 	})
 	recordstore.Register(kindText, recordstore.KindSpec{Class: recordstore.Blob, Identity: contentOrHintIdentity})
 	recordstore.Register(kindBytes, recordstore.KindSpec{Class: recordstore.Blob, Identity: contentOrHintIdentity})
+	recordstore.Register(kindJudgeRound, recordstore.KindSpec{
+		Class: recordstore.Structured,
+		// Instance = hint verbatim ("<turn_id>-<node_id>-<round>", #1092 design
+		// V4 §4.1/§4.3) - the gate computes it, never derived from content.
+		// turnID (ctx.InvocationID()) is shared by every node in a run, so
+		// node_id must be in the instance or two fan-out nodes' round 1 both
+		// resolve to the same id and clobber each other's revisions/WAL key.
+		Identity: func(_ []byte, hint string) (string, error) { return requireHint(hint) },
+	})
+}
+
+// judgeRoundHint builds the judge_round identity's instance (#1092 design V4
+// §4.1/§4.3): node_id must be included since turnID alone is shared by every
+// node in one run (dag/graph.go's InvocationID), so two fan-out nodes' round
+// 1 would otherwise collide. Shared by the WAL key (node.go) and the record's
+// own identity hint so both point at the same round.
+func judgeRoundHint(turnID, nodeID string, round int) string {
+	return fmt.Sprintf("%s-%s-%d", turnID, nodeID, round)
 }
 
 func requireHint(hint string) (string, error) {
@@ -316,6 +337,11 @@ type episodicRoundState struct {
 	findingRev   map[string]int           // every finding id ever seen -> its last WRITTEN revision
 	reviewRev    int
 	documentRev  int
+	// triggerAnnotation: the PRIOR round's judge_round id (#1092 design V4 §7
+	// case 3) - stamped as this round's writes' lineage.TriggerAnnotation,
+	// then advanced by the caller (node.go) once the round's own judge_round
+	// record is saved, so round r+1's revisions point back at round r's verdict.
+	triggerAnnotation string
 	// roundWrites: ids+revisions this call to saveEpisodicRound actually
 	// wrote (reset each call) - feeds the gate's judge.round WAL entry
 	// (#1100 scope item 2: "scored" = the code_review/finding ids this
@@ -328,6 +354,171 @@ type episodicRoundState struct {
 type ScoredRef struct {
 	ArtifactID string `json:"artifact_id"`
 	Revision   int    `json:"revision"`
+}
+
+// JudgeRoundRecord: the "judge_round" kind's structured body (#1092, design
+// V4 §4.3/§4.6) - one per judge round, pass or fail, written right after the
+// judge.round WAL entry. Notes anchor a quoted judge criticism to the exact
+// revision and line it concerns; Evidence carries only what the judge
+// already tracks internally (see NoteRef/JudgeEvidence doc below) - never
+// invented to fill the shape.
+type JudgeRoundRecord struct {
+	Turn     string             `json:"turn"`
+	Round    int                `json:"round"`
+	Passed   bool               `json:"passed"`
+	Score    float64            `json:"score"`
+	Scored   []ScoredRef        `json:"scored"`
+	Criteria []JudgeCriterion   `json:"criteria,omitempty"`
+	Notes    []JudgeNote        `json:"notes,omitempty"`
+	Evidence JudgeRoundEvidence `json:"evidence"`
+}
+
+// JudgeCriterion is one named criterion's score+feedback this round.
+type JudgeCriterion struct {
+	Name     string  `json:"name"`
+	Score    float64 `json:"score"`
+	Feedback string  `json:"feedback,omitempty"`
+}
+
+// NoteRef anchors a note to the exact artifact revision and line it
+// concerns. LineHint is a best-effort string-search result, 0 when Snippet
+// wasn't found - never a stale/wrong guess (see buildJudgeRoundRecord).
+type NoteRef struct {
+	ArtifactID string `json:"artifact_id"`
+	Revision   int    `json:"revision"`
+	LineHint   int    `json:"line_hint,omitempty"`
+	Snippet    string `json:"snippet"`
+}
+
+// JudgeNote: one anchored piece of judge feedback - built only from a
+// criterion whose Anchor was an exact quote (sanitizeAnchors has already
+// dropped an anchor that failed its gate check, so every quote here is
+// verified to appear in the round's answer).
+type JudgeNote struct {
+	Ref       NoteRef `json:"ref"`
+	Text      string  `json:"text"`
+	Criterion string  `json:"criterion"`
+}
+
+// JudgeRoundEvidence: what the judge actually verified this round.
+// ponytail: Reads stays empty - judgereads.go only TALLIES read-tool calls
+// (readCounter.count()), it never records which paths were opened; wiring
+// per-call path capture into countingTool.Run is the upgrade path. Probes
+// and ClaimsChecked ARE populated below, from data the judge already
+// produces (computeDeterministicCriteria's check results, submit_verdict's
+// per-finding verification).
+type JudgeRoundEvidence struct {
+	Reads         []JudgeReadRef `json:"reads,omitempty"`
+	Probes        []JudgeProbe   `json:"probes,omitempty"`
+	ClaimsChecked []JudgeClaim   `json:"claims_checked,omitempty"`
+}
+
+// JudgeReadRef: a file the judge read while verifying this round (#1090
+// §4.3 evidence.reads). ponytail: never populated yet - see JudgeRoundEvidence.
+type JudgeReadRef struct {
+	Path string `json:"path"`
+	SHA  string `json:"sha"`
+}
+
+// JudgeProbe is one deterministic check this round ran, sourced from
+// computeDeterministicCriteria's per-criterion result (node.go).
+type JudgeProbe struct {
+	Name   string `json:"name"`
+	Result string `json:"result"`
+}
+
+// JudgeClaim is one staged finding's independent verification, sourced from
+// the judge's own submit_verdict.findings (findings.go's findingVerdict).
+type JudgeClaim struct {
+	Path   string `json:"path,omitempty"`
+	Line   int    `json:"line,omitempty"`
+	Status string `json:"status"`
+	Why    string `json:"why,omitempty"`
+}
+
+// buildJudgeRoundRecord assembles this round's judge_round body from the
+// verdict/envelope the gate already computed - no extra reads or judge
+// calls. answer is the round's raw worker output: an anchor's quote is
+// searched there for LineHint since that's what the judge actually quoted
+// from, then attributed to primaryScored (the round's main written
+// artifact - code_review or document) as the closest available revision
+// reference (#1090 §9 note anchoring; a criterion's own finer-grained
+// artifact isn't resolvable from the anchor alone).
+// ponytail: for a review node, primaryScored points at the code_review JSON
+// artifact, but the quote is searched in the raw answer text, not that
+// artifact's own serialized bytes - so review-node snippets are never found
+// there (LineHint stays 0) even when the quote is real. Works for document
+// nodes only, where answer IS the artifact's content. Upgrade path: search
+// the referenced revision's serialized content (fetch it via recordstore)
+// instead of answer.
+func buildJudgeRoundRecord(turnID string, round int, passed bool, score float64, scored []ScoredRef, v verdict, det map[string]criterionScore, answer string) JudgeRoundRecord {
+	rec := JudgeRoundRecord{Turn: turnID, Round: round, Passed: passed, Score: score, Scored: scored}
+
+	names := make([]string, 0, len(v.Criteria))
+	for name := range v.Criteria {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var primaryScored ScoredRef
+	if len(scored) > 0 {
+		primaryScored = scored[len(scored)-1] // code_review/document write is appended last (saveCodeReviewRound/saveDocumentRound)
+	}
+
+	for _, name := range names {
+		c := v.Criteria[name]
+		rec.Criteria = append(rec.Criteria, JudgeCriterion{Name: name, Score: c.Score, Feedback: criterionText(c)})
+		if c.Anchor == nil || c.Anchor.Kind != "quote" || c.Anchor.Text == "" {
+			continue
+		}
+		ref := NoteRef{ArtifactID: primaryScored.ArtifactID, Revision: primaryScored.Revision, Snippet: c.Anchor.Text}
+		if idx := strings.Index(answer, c.Anchor.Text); idx >= 0 {
+			ref.LineHint = strings.Count(answer[:idx], "\n") + 1
+		}
+		rec.Notes = append(rec.Notes, JudgeNote{Ref: ref, Text: criterionText(c), Criterion: name})
+	}
+
+	probeNames := make([]string, 0, len(det))
+	for name := range det {
+		probeNames = append(probeNames, name)
+	}
+	sort.Strings(probeNames)
+	for _, name := range probeNames {
+		c := det[name]
+		result := "pass"
+		if c.Score < 1 {
+			result = "fail: " + criterionText(c)
+		}
+		rec.Evidence.Probes = append(rec.Evidence.Probes, JudgeProbe{Name: name, Result: result})
+	}
+	for _, f := range v.Findings {
+		rec.Evidence.ClaimsChecked = append(rec.Evidence.ClaimsChecked, JudgeClaim{Path: f.Path, Line: f.Line, Status: f.Status, Why: f.Why})
+	}
+	return rec
+}
+
+// saveJudgeRoundRecord writes rec as this round's judge_round revision, AFTER
+// the caller has already appended the judge.round WAL entry (#1092 scope:
+// same ordering rule artifact.revision entries already follow) - but this
+// write happens independently of whether that WAL append actually did
+// anything. A nil cfg.Ledger makes the WAL append a no-op, yet this record
+// still gets written: recording is intentional fail-open, not gated on
+// ledger presence. Returns the saved id/revision, "" if there's no artifact
+// client or the save failed - fail-open, matching every other episodic write
+// in this file.
+func saveJudgeRoundRecord(ctx context.Context, cfg Config, nodeID, turnID string, round int, rec JudgeRoundRecord) (id string, revision int) {
+	c := recordClient(cfg)
+	if c == nil {
+		return "", 0
+	}
+	hint := judgeRoundHint(turnID, nodeID, round)
+	lineage := recordstore.Lineage{NodeID: nodeID, Round: round, HeadSHA: cfg.NodeBaseSHA, SavedAt: time.Now().UTC(), Author: "judge", TurnID: turnID}
+	id, rev, err := c.SaveStructured(ctx, kindJudgeRound, rec, hint, lineage)
+	if err != nil {
+		slog.Warn("judge_round record save failed", "component", "vetting", "node", nodeID, "round", round, "err", err)
+		return "", 0
+	}
+	return id, rev
 }
 
 // loadEpisodicRoundState seeds state from the store for a fresh invocation
@@ -485,7 +676,7 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 		if st.findingState[id] == rec.State {
 			return
 		}
-		lineage := recordstore.Lineage{NodeID: nodeID, Round: round, ParentRevision: st.findingRev[id], HeadSHA: cfg.NodeBaseSHA, SavedAt: savedAt, Author: "worker", TurnID: turnID}
+		lineage := recordstore.Lineage{NodeID: nodeID, Round: round, ParentRevision: st.findingRev[id], TriggerAnnotation: st.triggerAnnotation, HeadSHA: cfg.NodeBaseSHA, SavedAt: savedAt, Author: "worker", TurnID: turnID}
 		_, rev, err := c.SaveStructured(ctx, kindFinding, rec, "", lineage)
 		if err != nil {
 			slog.Warn("finding record save failed", "component", "vetting", "node", nodeID, "id", id, "err", err)
@@ -568,7 +759,7 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 		dismissed = append(dismissed, DismissedEntry{Path: d.Path, Line: d.Line, Note: d.Body})
 	}
 	reviewRec := CodeReviewRecord{Verdict: event, FindingIDs: findingIDs, Dismissed: dismissed, Clean: clean}
-	lineage := recordstore.Lineage{NodeID: nodeID, Round: round, ParentRevision: st.reviewRev, HeadSHA: cfg.NodeBaseSHA, SavedAt: savedAt, Author: "gate", TurnID: turnID}
+	lineage := recordstore.Lineage{NodeID: nodeID, Round: round, ParentRevision: st.reviewRev, TriggerAnnotation: st.triggerAnnotation, HeadSHA: cfg.NodeBaseSHA, SavedAt: savedAt, Author: "gate", TurnID: turnID}
 	_, rev, err := c.SaveStructured(ctx, kindCodeReview, reviewRec, SubjectHint(cfg.ChatID), lineage)
 	if err != nil {
 		slog.Warn("code_review record save failed", "component", "vetting", "node", nodeID, "err", err)
@@ -588,13 +779,14 @@ func saveDocumentRound(ctx context.Context, cfg Config, nodeID, turnID string, r
 	if c == nil {
 		return
 	}
-	lineage := recordstore.Lineage{NodeID: nodeID, Round: round, ParentRevision: st.documentRev, HeadSHA: cfg.NodeBaseSHA, SavedAt: time.Now().UTC(), Author: "worker", TurnID: turnID}
-	_, rev, err := c.SaveBlob(ctx, cfg.Artifact, []byte(answer), "text/markdown", documentHint(cfg.ChatID), lineage)
+	lineage := recordstore.Lineage{NodeID: nodeID, Round: round, ParentRevision: st.documentRev, TriggerAnnotation: st.triggerAnnotation, HeadSHA: cfg.NodeBaseSHA, SavedAt: time.Now().UTC(), Author: "worker", TurnID: turnID}
+	id, rev, err := c.SaveBlob(ctx, cfg.Artifact, []byte(answer), "text/markdown", documentHint(cfg.ChatID), lineage)
 	if err != nil {
 		slog.Warn("document record save failed", "component", "vetting", "node", nodeID, "err", err)
 		return
 	}
 	st.documentRev = rev
+	st.roundWrites = append(st.roundWrites, ScoredRef{ArtifactID: id, Revision: rev})
 }
 
 // untrustedPriorBlock wraps a preloaded record in the same untrusted-prior-
