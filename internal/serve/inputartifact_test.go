@@ -1,6 +1,13 @@
 package serve
 
-import "testing"
+import (
+	"context"
+	"testing"
+
+	"google.golang.org/adk/v2/artifact"
+
+	"github.com/fagerbergj/quack/internal/artifactref"
+)
 
 // TestWriteExtInputArtifactUnchangedNoNewRevision pins #1010's delta rule:
 // re-writing identical bytes for the same name must not mint a new revision.
@@ -58,6 +65,34 @@ func TestWriteExtInputArtifactChangedNewRevision(t *testing.T) {
 	}
 	if rev2 != rev1+1 {
 		t.Errorf("revision = %d, want %d (rev1+1)", rev2, rev1+1)
+	}
+}
+
+// TestReadArtifactNeedsBytesPrefix pins the cross-repo contract the docs
+// describe (PR #1110 review): the pinned github v0.8.1 manifest renders a
+// bare local name ("comments"), but read_artifact (internal/acp/memorymcp.go)
+// does an exact FileName match against what WriteArtifact actually stored -
+// "bytes:<name>". A worker must prefix the manifest's id before calling
+// read_artifact; the bare name alone does not resolve.
+func TestReadArtifactNeedsBytesPrefix(t *testing.T) {
+	st, _, _, artifacts, _ := newExtTestStack(t)
+	write := writeExtInputArtifact(st, artifacts)
+
+	chatID := "github-acme-widgets-7"
+	if _, _, err := write(chatID, "comments", "application/json", []byte(`[{"id":1}]`)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	userID := st.SessionUserForChat(context.Background(), chatID)
+
+	if _, err := artifacts.Load(context.Background(), &artifact.LoadRequest{
+		AppName: artifactref.AppName, UserID: userID, SessionID: chatID, FileName: "comments",
+	}); err == nil {
+		t.Error(`read_artifact("comments") (the manifest's bare id) resolved - expected not-found`)
+	}
+	if _, err := artifacts.Load(context.Background(), &artifact.LoadRequest{
+		AppName: artifactref.AppName, UserID: userID, SessionID: chatID, FileName: "bytes:comments",
+	}); err != nil {
+		t.Errorf(`read_artifact("bytes:comments") (the documented workaround) failed: %v`, err)
 	}
 }
 

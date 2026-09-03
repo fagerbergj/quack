@@ -368,9 +368,9 @@ func TestLandlockArgvStillCarriesLimits(t *testing.T) {
 }
 
 // TestLandlockGrantsIncludesCapsExtraRO is a pure computation check (no
-// Landlock kernel support needed): Caps.ExtraRO (#660's hook for a GitHub
-// context dir sibling to the node's own WorkRoot) lands in the read-only
-// grant set, never the read-write one.
+// Landlock kernel support needed): Caps.ExtraRO (skill paths the node needs
+// to read, per serve.go - no longer a GitHub context dir, #1010 deleted
+// that use) lands in the read-only grant set, never the read-write one.
 func TestLandlockGrantsIncludesCapsExtraRO(t *testing.T) {
 	dir := t.TempDir()
 	ctxDir := t.TempDir()

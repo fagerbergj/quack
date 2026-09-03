@@ -187,8 +187,8 @@ func TestResolveNodeGrantsScratchDir(t *testing.T) {
 	}
 }
 
-// TestResolveNodeNoJailNoScratchDir mirrors TestResolveNodeNoJailNoContextDir
-// for the scratch grant: no Jail configured degrades to "", never a panic.
+// TestResolveNodeNoJailNoScratchDir: no Jail configured degrades scratchDir
+// to "", never a panic.
 func TestResolveNodeNoJailNoScratchDir(t *testing.T) {
 	a := &Agent{opts: Options{
 		UserID: "u1",

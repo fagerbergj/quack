@@ -122,8 +122,9 @@ func (a *Agent) RunNode(ctx adkagent.Context, nodeInput any) iter.Seq2[*session.
 }
 
 // resolveNode derives the node's working directory, memory-MCP credential,
-// GitHub context-dir grant, and per-node scratch dir from the advisor-thread
-// marker in the prompt. memSecret is resolved separately in the memSessions
+// and per-node scratch dir from the advisor-thread marker in the prompt
+// (the GitHub context-dir grant this used to also derive is gone - #1010
+// deleted the mechanism). memSecret is resolved separately in the memSessions
 // registry - the advisor-thread token never doubles as the MCP bearer
 // credential. chatID/nodeID are the advisor thread's own (at.ChatID,
 // at.NodeID) - the executor's controls key (dag's controls.register(chatID,
