@@ -72,7 +72,7 @@ func TestRunLedgerRebuild_RegeneratesArtifactMeta(t *testing.T) {
 		t.Fatalf("ArtifactUpdateErrors = %v, want none", report.ArtifactUpdateErrors)
 	}
 
-	raw, lineage, gotRev, ok, err := c.LatestWithMeta(ctx, id)
+	raw, _, lineage, gotRev, ok, err := c.LatestWithMeta(ctx, id)
 	if err != nil || !ok {
 		t.Fatalf("LatestWithMeta: ok=%v err=%v", ok, err)
 	}
@@ -120,7 +120,7 @@ func TestRunLedgerRebuild_DryRunWritesNothing(t *testing.T) {
 		t.Fatalf("report = %+v, want dry-run with 1 pending update", report)
 	}
 
-	_, lineage, _, _, err := c.LatestWithMeta(ctx, id)
+	_, _, lineage, _, _, err := c.LatestWithMeta(ctx, id)
 	if err != nil {
 		t.Fatalf("LatestWithMeta: %v", err)
 	}
