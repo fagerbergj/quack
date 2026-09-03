@@ -155,6 +155,9 @@ type DeliveryContext struct {
 	// display; "" means say nothing (checks ran, or the reason is operator
 	// config, not a property of the change).
 	ChecksSkipNote string
+	// IdempotencyKey: target artifact id + revision (#1093 V4 §4.9) - "" when
+	// this delivery has no backing artifact revision to key on.
+	IdempotencyKey string
 }
 
 // DeliverFunc: posts final staged delivery. Errors logged, never fail the node.

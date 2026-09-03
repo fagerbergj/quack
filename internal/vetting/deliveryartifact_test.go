@@ -2,6 +2,7 @@ package vetting
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -127,6 +128,78 @@ func TestCommitDelivery_SecondRevisionCarriesOverUnchangedFindings(t *testing.T)
 	entries := listDeliveryRecords(context.Background(), cfg, id)
 	if len(entries) != 2 {
 		t.Fatalf("delivery_record entries = %d, want 2 (one per delivered revision)", len(entries))
+	}
+}
+
+// #1093 finding 1: the DeliveryContext passed to Deliver must carry the
+// target artifact id + revision as IdempotencyKey, so the extension can
+// embed it for later recovery.
+func TestCommitDelivery_SetsIdempotencyKey(t *testing.T) {
+	cfg := Config{IsReviewer: true, ChatID: "ext:github:owner-repo-46", User: "u1", Artifacts: artifact.InMemoryService()}
+	finding := FindingRecord{Path: "a.go", Title: "x", State: "new"}
+	fid, _ := recordstore.IdentityFor(kindFinding, finding, "")
+	seedCodeReview(t, cfg, "approve", "s", map[string]FindingRecord{fid: finding})
+
+	var got DeliveryContext
+	cfg.Deliver = func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
+		got = dc
+		return []DeliveryItemOutcome{{Kind: "review", URL: "https://example/review/1"}}, nil
+	}
+	act := workerActivity{stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "approve", Body: "x"}}}
+	commitDelivery(context.Background(), func(stream.SSEEvent) {}, cfg, "n1", act, GateResult{Passed: true})
+
+	targetID, _ := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID))
+	wantKey := targetID + "@1"
+	if got.IdempotencyKey != wantKey {
+		t.Fatalf("IdempotencyKey = %q, want %q", got.IdempotencyKey, wantKey)
+	}
+}
+
+// #1093 finding 2: a judge-FAIL final round still renders and posts from the
+// artifact (design V4 §4.5 "draft PR on gate fail"), and the delivery_record
+// carries gate_passed=false against the SAME revision that got posted.
+func TestCommitDelivery_GateFailStillRendersAndRecordsGatePassedFalse(t *testing.T) {
+	cfg := Config{IsReviewer: true, ChatID: "ext:github:owner-repo-47", User: "u1", Artifacts: artifact.InMemoryService()}
+	finding := FindingRecord{Path: "a.go", Title: "unchecked error", Rationale: "err is dropped", State: "new"}
+	fid, _ := recordstore.IdentityFor(kindFinding, finding, "")
+	seedCodeReview(t, cfg, "request_changes", "failing round summary", map[string]FindingRecord{fid: finding})
+
+	var got DeliveryContext
+	cfg.Deliver = func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
+		got = dc
+		return []DeliveryItemOutcome{{Kind: "review", URL: "https://example/review/1"}}, nil
+	}
+	act := workerActivity{stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "comment", Body: "STALE staged text"}}}
+	commitDelivery(context.Background(), func(stream.SSEEvent) {}, cfg, "n1", act, GateResult{Passed: false, Feedback: "still has findings"})
+
+	if len(got.Items) != 1 || strings.Contains(got.Items[0].Body, "STALE staged text") {
+		t.Fatalf("Items = %+v, want the artifact render posted, not the stale staged draft", got.Items)
+	}
+	if !strings.Contains(got.Items[0].Body, "failing round summary") {
+		t.Fatalf("Body = %q, want the code_review record's summary", got.Items[0].Body)
+	}
+	if got.GatePassed {
+		t.Fatal("GatePassed = true, want false (caller must know this is a draft)")
+	}
+
+	targetID, _ := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID))
+	entries := listDeliveryRecords(context.Background(), cfg, targetID)
+	if len(entries) != 1 {
+		t.Fatalf("delivery_record entries = %d, want 1", len(entries))
+	}
+	raw, ok, err := recordClient(cfg).LoadVersion(context.Background(), deliveryRecordID(targetID), entries[0].Revision)
+	if err != nil || !ok {
+		t.Fatalf("LoadVersion delivery_record: ok=%v err=%v", ok, err)
+	}
+	var rec DeliveryRecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		t.Fatalf("unmarshal delivery_record: %v", err)
+	}
+	if rec.GatePassed {
+		t.Fatal("delivery_record.GatePassed = true, want false")
+	}
+	if rec.DeliveredRevision != 1 {
+		t.Fatalf("delivery_record.DeliveredRevision = %d, want 1 (the revision that was actually rendered and posted)", rec.DeliveredRevision)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -294,21 +295,26 @@ func deliveryTarget(ctx context.Context, cfg Config) (id string, revision int, o
 // deliveryIdempotencyKey: target artifact id + revision (#1090 V4 §4.9) -
 // unambiguous since "@" never appears in an artifact id (ids use ":").
 func deliveryIdempotencyKey(targetID string, revision int) string {
-	return deliveryRecordHint(targetID, revision)
+	return targetID + "@" + strconv.Itoa(revision)
 }
 
 // appendDeliveryIntent is the WAL's delivery.intent entry (#1090 §4.9,
 // fail-closed): appended right before the gate pushes/hands staged items to
 // the extension. A non-nil error means the caller must not deliver at all.
-func appendDeliveryIntent(ctx context.Context, cfg Config, nodeID, key, targetID string, revision int) error {
+func appendDeliveryIntent(ctx context.Context, cfg Config, nodeID, key, targetID string, revision int, cloneURL string, issueNumber int) error {
 	if cfg.Ledger == nil {
 		return nil
 	}
+	// CloneURL/IssueNumber (#1093 finding 4): the minimal DeliveryContext
+	// fields `quack ledger recover` needs to rebuild one offline, since it
+	// has no live worker activity to derive them from after a crash.
 	payload, err := json.Marshal(struct {
-		TargetID string `json:"target_id"`
-		Revision int    `json:"revision"`
-		Key      string `json:"idempotency_key"`
-	}{TargetID: targetID, Revision: revision, Key: key})
+		TargetID    string `json:"target_id"`
+		Revision    int    `json:"revision"`
+		Key         string `json:"idempotency_key"`
+		CloneURL    string `json:"clone_url,omitempty"`
+		IssueNumber int    `json:"issue_number,omitempty"`
+	}{TargetID: targetID, Revision: revision, Key: key, CloneURL: cloneURL, IssueNumber: issueNumber})
 	if err != nil {
 		return fmt.Errorf("vetting: marshal delivery.intent payload: %w", err)
 	}
@@ -1030,11 +1036,13 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 		return
 	}
 	// Render from the durable record instead of the worker's own restatement
-	// (#1093 P6/P10) - only on the round that actually passed; a failed round
-	// still delivers the staged draft exactly as before.
-	if res.Passed {
-		act.stagedDelivery = artifactRenderedDelivery(ctx, cfg, nodeID, act.stagedDelivery)
-	}
+	// (#1093 P6/P10) - every final round writes its code_review/document
+	// revision (saveEpisodicRound runs pass or fail), so a draft-on-fail
+	// delivery renders and records the SAME revision it posts, never the
+	// staged text (finding 2: a staged-text post must never be recorded as
+	// an artifact-backed delivery).
+	var renderedFromStaged bool
+	act.stagedDelivery, renderedFromStaged = artifactRenderedDelivery(ctx, cfg, nodeID, act.stagedDelivery)
 	spanCtx, span := otelobs.Start(ctx, "delivery",
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID))
 	defer span.End()
@@ -1094,12 +1102,16 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	// tied to a recordstore artifact revision (reviewer or cfg.Artifact
 	// nodes) - a plain PR-only delivery with no backing artifact has nothing
 	// to key a WAL entry on, and stays exactly as before (no WAL, no
-	// recovery to reconcile).
+	// recovery to reconcile). A staged-text fallback render (finding 2) is
+	// never treated as artifact-backed either, even when a target exists -
+	// what got posted is not what the target revision holds.
 	targetID, targetRev, hasTarget := deliveryTarget(ctx, cfg)
+	hasTarget = hasTarget && !renderedFromStaged
 	var idemKey string
 	if hasTarget {
 		idemKey = deliveryIdempotencyKey(targetID, targetRev)
-		if walErr := appendDeliveryIntent(cctx, cfg, nodeID, idemKey, targetID, targetRev); walErr != nil {
+		dc.IdempotencyKey = idemKey
+		if walErr := appendDeliveryIntent(cctx, cfg, nodeID, idemKey, targetID, targetRev, dc.CloneURL, dc.IssueNumber); walErr != nil {
 			slog.Error("delivery.intent WAL append failed; not delivering", "component", "vetting", "node", nodeID, "err", walErr)
 			itemOutcomes := make([]DeliveryItemOutcome, len(dc.Items))
 			for i, item := range dc.Items {
@@ -1139,6 +1151,7 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 		appendDeliveryDone(cctx, cfg, nodeID, idemKey, remoteURL)
 		saveDeliveryRecord(cctx, cfg, nodeID, DeliveryRecord{
 			TargetID: targetID, DeliveredRevision: targetRev, RemoteURL: remoteURL, PRNumber: dc.IssueNumber, At: time.Now().UTC(),
+			GatePassed: res.Passed, RenderedFromStaged: renderedFromStaged,
 		})
 	}
 

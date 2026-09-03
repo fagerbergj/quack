@@ -1,9 +1,10 @@
-// deliveryartifact.go: renders a passed round's delivery from the durable
+// deliveryartifact.go: renders a round's delivery from the durable
 // code_review/finding/pr_body records instead of the worker's own staged
-// text (#1093, P6/P10 of the artifact-model epic #1090). commitDelivery only
-// calls this on a passed round (res.Passed) - a failed round still delivers
-// today's staged draft unchanged, matching existing graceful-degradation
-// behavior.
+// text (#1093, P6/P10 of the artifact-model epic #1090). commitDelivery
+// calls this on every final round, passed or failed - a code_review/document
+// revision is written every round (saveEpisodicRound), so the posted content
+// and the recorded delivered_revision are always the same thing, even on a
+// gate-fail draft delivery (design V4 §4.5).
 package vetting
 
 import (
@@ -20,13 +21,16 @@ import (
 // artifactRenderedDelivery replaces the "review" and "pr" staged items with
 // artifact-backed renders where a record exists, leaving every other staged
 // item (and either one, on any render failure) exactly as the worker staged
-// it. staged is mutated in place and returned for call-site convenience.
-func artifactRenderedDelivery(ctx context.Context, cfg Config, nodeID string, staged map[string]StagedDelivery) map[string]StagedDelivery {
+// it. staged is mutated in place and returned for call-site convenience;
+// fromStaged is true when any item fell back to the worker's own staged text
+// (finding 2: the caller must never record such a delivery as artifact-backed).
+func artifactRenderedDelivery(ctx context.Context, cfg Config, nodeID string, staged map[string]StagedDelivery) (result map[string]StagedDelivery, fromStaged bool) {
 	if cfg.IsReviewer {
 		if item, ok := renderReviewFromArtifact(ctx, cfg, nodeID); ok {
 			staged["review"] = item
 		} else {
 			slog.Warn("no passed code_review artifact revision; delivering staged review text", "component", "vetting", "node", nodeID)
+			fromStaged = true
 		}
 	}
 	if item, hasPR := staged["pr"]; hasPR {
@@ -34,9 +38,10 @@ func artifactRenderedDelivery(ctx context.Context, cfg Config, nodeID string, st
 			staged["pr"] = rendered
 		} else {
 			slog.Warn("no pr_body artifact; delivering staged PR text", "component", "vetting", "node", nodeID)
+			fromStaged = true
 		}
 	}
-	return staged
+	return staged, fromStaged
 }
 
 // renderReviewFromArtifact loads the latest code_review record (only valid
