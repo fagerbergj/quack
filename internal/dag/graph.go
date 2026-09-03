@@ -13,6 +13,7 @@ import (
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/workflow"
 
+	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -29,12 +30,24 @@ const (
 type nodeScopedWorker interface {
 	// drain delivers a message queued against this node mid-round (#1029);
 	// it is resolved lazily because the control registers when the node runs.
-	ForNode(nodeKey string, drain func() string) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, release func(), err error)
+	// artifacts/appName/userID/chatID/nodeID (all "" / nil when artifacts is
+	// unavailable) let the implementation (internal/serve's nativeAgent) build
+	// this node's own list/read/edit/write_<kind> artifact tools before the
+	// worker is constructed - dag itself never imports internal/tools, to
+	// avoid an import cycle (tools already imports dag for plan/execute).
+	// setRoundCoords, when non-nil, must be called by the gate at every
+	// judge/revise round (mirrors vetting.SetAdvisorThreadRound) so those
+	// already-built tools' writes carry the round's real lineage (#1123).
+	ForNode(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string), release func(), err error)
 }
 
 // buildGateNodes: one gated node per plan node. source: the run's origin
 // (extension name or a fixed app value) - observability only, see vetting.Config.Source.
-func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int), admission *Admission, specFor func(agentName string) AdmissionSpec, artifacts artifact.Service, walLedger ledger.LedgerStore,
+// userID scopes the recordstore.Client behind a native node's artifact tools
+// (#1123) - must match the userID the rest of the chat's artifacts (e.g. the
+// orchestrator's own writes) were saved under, or a node's list/read/edit
+// would silently see nothing.
+func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, userID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int), admission *Admission, specFor func(agentName string) AdmissionSpec, artifacts artifact.Service, walLedger ledger.LedgerStore,
 	refreshSetup func(context.Context, Node, vetting.Config) bool) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
@@ -52,12 +65,13 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		workerModel := models[n.AgentName]
 		var workerTools []tool.Tool
 		var release func()
+		var setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string)
 		if scoped, ok := ag.(nodeScopedWorker); ok {
-			w, m, wt, rel, err := scoped.ForNode(plan.ID+":"+n.ID, liveSteerDrain(controls, chatID, n.ID))
+			w, m, wt, src, rel, err := scoped.ForNode(plan.ID+":"+n.ID, liveSteerDrain(controls, chatID, n.ID), artifacts, artifactref.AppName, userID, chatID, n.ID)
 			if err != nil {
 				return nil, nil, fmt.Errorf("dag: node %q: per-node agent construction: %w", n.ID, err)
 			}
-			worker, workerModel, workerTools, release = w, m, wt, rel
+			worker, workerModel, workerTools, setRoundCoords, release = w, m, wt, src, rel
 		}
 		workerNode, err := vetting.NewWorkerNode(worker)
 		if err != nil {
@@ -71,6 +85,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		}
 		cfg.Artifacts = artifacts
 		cfg.Ledger = walLedger
+		cfg.RoundCoordsSink = setRoundCoords
 		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec, refreshSetup)
 	}
 	return nodesByID, subAgents, nil

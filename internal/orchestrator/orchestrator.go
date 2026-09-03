@@ -544,19 +544,19 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 				yield(stream.Errorf("orchestrator: list_artifacts tool: "+err.Error()), nil)
 				return
 			}
-			editTool, err := tools.NewEditArtifactTool(rc, orchestratorName, tools.RoundCoords{})
+			editTool, err := tools.NewEditArtifactTool(rc, orchestratorName, &tools.RoundCoords{})
 			if err != nil {
 				yield(stream.Errorf("orchestrator: edit_artifact tool: "+err.Error()), nil)
 				return
 			}
 			hint := vetting.SubjectHint(sessionID)
-			writeTool, err := tools.NewWriteArtifactTool(rc, orchestratorName, tools.RoundCoords{}, hint)
+			writeTool, err := tools.NewWriteArtifactTool(rc, orchestratorName, &tools.RoundCoords{}, hint)
 			if err != nil {
 				yield(stream.Errorf("orchestrator: write_artifact tool: "+err.Error()), nil)
 				return
 			}
 			toolList = append(toolList, listTool, editTool, writeTool)
-			writeKindTools, err := tools.NewWriteKindTools(rc, orchestratorName, tools.RoundCoords{}, hint)
+			writeKindTools, err := tools.NewWriteKindTools(rc, orchestratorName, &tools.RoundCoords{}, hint)
 			if err != nil {
 				yield(stream.Errorf("orchestrator: write_<kind> tools: "+err.Error()), nil)
 				return

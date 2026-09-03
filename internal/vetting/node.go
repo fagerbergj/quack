@@ -403,6 +403,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		// tool write during draft (before any judge round runs) still gets
 		// real lineage (#1091 finding #4).
 		SetAdvisorThreadRound(advisorToken, 1, turnID, cfg.NodeBaseSHA, "")
+		if cfg.RoundCoordsSink != nil {
+			cfg.RoundCoordsSink(1, turnID, cfg.NodeBaseSHA, "")
+		}
 	}
 	// User attribution: the ADK session identity (mirrors MemoryScope below) -
 	// not caller-set, so a node can never claim to run as someone it isn't.
@@ -680,6 +683,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				// fail revises" (line 557), so a revision belongs to the
 				// judgment that required it, not the round that later reads it.
 				SetAdvisorThreadRound(advisorToken, round, turnID, cfg.NodeBaseSHA, trigger)
+				if cfg.RoundCoordsSink != nil {
+					cfg.RoundCoordsSink(round, turnID, cfg.NodeBaseSHA, trigger)
+				}
 			}
 			act := actFor(answer)
 			// Every judge round writes a revision, gate-passed or not - only

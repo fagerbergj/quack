@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/tool"
 
@@ -20,11 +21,15 @@ import (
 // mutable coordinate field.
 type nativeAgent struct {
 	adkagent.Agent
-	build func(nodeKey string, drain func() string) (adkagent.Agent, model.LLM, []tool.Tool, func(), error)
+	build func(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(), error)
 }
 
-func (n nativeAgent) ForNode(nodeKey string, drain func() string) (adkagent.Agent, model.LLM, []tool.Tool, func(), error) {
-	return n.build(nodeKey, drain)
+// ForNode builds this node's list/read/edit/write_<kind> artifact tools
+// (internal/tools.BuildNativeArtifactTools) into the worker's builtins
+// before construction - the same mechanism check_mermaid/format-markdown
+// tools go through (buildWorker's builtins), not a parallel one (#1123).
+func (n nativeAgent) ForNode(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(), error) {
+	return n.build(nodeKey, drain, artifacts, appName, userID, chatID, nodeID)
 }
 
 // perNodeServers tracks currently-open per-node A2A servers (nativeAgent.

@@ -47,6 +47,7 @@ import (
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/plugin"
 	"github.com/fagerbergj/quack/internal/promptbuilder"
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/replay"
 	"github.com/fagerbergj/quack/internal/server"
 	"github.com/fagerbergj/quack/internal/server/adkdebug"
@@ -1282,7 +1283,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			}
 		}
 
-		buildWorker := func(drain func() string) (adkagent.Agent, model.LLM, []tool.Tool, error) {
+		buildWorker := func(drain func() string, extraTools ...tool.Tool) (adkagent.Agent, model.LLM, []tool.Tool, error) {
 			wm, err := inference.NewModel(prov, ac.Model, artifacts, cfg.ModelCost(ac.Model))
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("model: %w", err)
@@ -1316,6 +1317,10 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 					builtins = append(builtins, loadmemorytool.New())
 				}
 			}
+			// extraTools: this node's artifact tools (list/read/edit/write_<kind>),
+			// built per-dispatch by dag.buildGateNodes once chatID/artifacts are
+			// known - buildWorker(nil) at startup gets none (#1123).
+			builtins = append(builtins, extraTools...)
 			comp := compactionFor(ac, wm)
 			wag, err := agent.Build(bundle, wm, builtins, []tool.Toolset{agentSkillTS}, comp, memGuidance, skillFms, grading, drain)
 			if err != nil {
@@ -1330,24 +1335,44 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		}
 		clientMap[name] = nativeAgent{
 			Agent: protoAgent,
-			build: func(nodeKey string, drain func() string) (adkagent.Agent, model.LLM, []tool.Tool, func(), error) {
-				wag, wm, builtins, err := buildWorker(drain)
+			build: func(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(), error) {
+				var extraTools []tool.Tool
+				var setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string)
+				if artifacts != nil {
+					rc := recordstore.New(artifacts, appName, userID, chatID)
+					coords := &tools.RoundCoords{}
+					var terr error
+					if extraTools, terr = tools.BuildNativeArtifactTools(rc, nodeID, coords, vetting.SubjectHint(chatID)); terr != nil {
+						return nil, nil, nil, nil, nil, fmt.Errorf("artifact tools: %w", terr)
+					}
+					setRoundCoords = func(round int, turnID, headSHA, triggerAnnotation string) {
+						*coords = tools.RoundCoords{Round: round, TurnID: turnID, HeadSHA: headSHA, TriggerAnnotation: triggerAnnotation}
+					}
+				}
+				wag, wm, builtins, err := buildWorker(drain, extraTools...)
 				if err != nil {
-					return nil, nil, nil, nil, err
+					return nil, nil, nil, nil, nil, err
 				}
 				srv, err := agent.Serve(wag, sessions, memSvc)
 				if err != nil {
-					return nil, nil, nil, nil, fmt.Errorf("a2a serve: %w", err)
+					return nil, nil, nil, nil, nil, fmt.Errorf("a2a serve: %w", err)
 				}
 				client, err := srv.ClientForNode(nodeKey)
 				if err != nil {
 					_ = srv.Close()
-					return nil, nil, nil, nil, fmt.Errorf("a2a client: %w", err)
+					return nil, nil, nil, nil, nil, fmt.Errorf("a2a client: %w", err)
 				}
-				return client, wm, builtins, nodeServers.track(srv), nil
+				return client, wm, builtins, setRoundCoords, nodeServers.track(srv), nil
 			},
 		}
-		slog.Info("agent serving over A2A per DAG node", "component", "startup", "agent", name, "tools", ac.Tools)
+		agentTools := ac.Tools
+		if artifacts != nil {
+			// Per-node artifact tools are built later, per dispatch (dag.buildGateNodes,
+			// #1123) - named here too so "why didn't it revise" debugging sees them
+			// were offered at all, same as ac.Tools' static config list.
+			agentTools = append(append([]string{}, ac.Tools...), "list_artifacts", "read_artifact", "edit_artifact", "write_artifact", "write_<kind>")
+		}
+		slog.Info("agent serving over A2A per DAG node", "component", "startup", "agent", name, "tools", agentTools)
 	}
 	return clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, nil
 }

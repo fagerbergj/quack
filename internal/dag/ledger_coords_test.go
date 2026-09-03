@@ -19,6 +19,7 @@ import (
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
+	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
@@ -68,8 +69,8 @@ type lcScopedAgent struct {
 	tools []tool.Tool
 }
 
-func (a lcScopedAgent) ForNode(string, func() string) (adkagent.Agent, model.LLM, []tool.Tool, func(), error) {
-	return a.Agent, a.model, a.tools, func() {}, nil
+func (a lcScopedAgent) ForNode(string, func() string, artifact.Service, string, string, string, string) (adkagent.Agent, model.LLM, []tool.Tool, func(int, string, string, string), func(), error) {
+	return a.Agent, a.model, a.tools, nil, func() {}, nil
 }
 
 // ledgerCoordsStub calls current_date once, answers, and passes the judge

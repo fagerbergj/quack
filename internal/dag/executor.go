@@ -174,7 +174,11 @@ func (s *DagStream) Finish() {
 // RetryPlanInNode: re-runs target node + descendants with seeded outputs.
 func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, nodeID string, seeded map[string]string) (map[string]string, error) {
 	source := ledger.CoordsFromContext(ctx).Source
-	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, source,
+	var userID string
+	if sess := ctx.Session(); sess != nil {
+		userID = sess.UserID()
+	}
+	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, userID, source,
 		func(nodeID string, score float64, passed bool, rounds int) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds)
 		}, e.admission, e.specFor, e.artifacts, e.walLedger, nil) // retry never re-runs setup, so nothing to refresh
