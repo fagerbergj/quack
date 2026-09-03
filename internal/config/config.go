@@ -107,6 +107,9 @@ type WorkflowNode struct {
 	Task      string   `yaml:"task"`
 	DependsOn []string `yaml:"depends_on,omitempty"`
 	Rubric    string   `yaml:"rubric,omitempty"`
+	// Artifact: the registered recordstore kind this node writes on gate pass,
+	// e.g. "document" (#1006/#1090). Empty = write nothing; operator opt-in only.
+	Artifact string `yaml:"artifact,omitempty"`
 }
 
 // validateWorkflows drops structurally incomplete shapes with a warning
@@ -158,6 +161,9 @@ func validateWorkflowNodes(shapeName string, nodes []WorkflowNode, agents map[st
 		ids[n.ID] = true
 		if _, ok := agents[n.Agent]; !ok {
 			return fmt.Errorf("config: workflow shape %q: bound node %q names agent %q which is not configured under agents", shapeName, n.ID, n.Agent)
+		}
+		if strings.ContainsAny(n.Artifact, `/\:`) {
+			return fmt.Errorf("config: workflow shape %q: bound node %q artifact %q must be a bare kind name, no path separators or colons", shapeName, n.ID, n.Artifact)
 		}
 	}
 	for _, n := range nodes {

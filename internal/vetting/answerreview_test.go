@@ -156,3 +156,53 @@ func TestAugmentFromAnswer_Guards(t *testing.T) {
 		t.Fatal("probe staged a review with no Setup (no PR to review against) (#482)")
 	}
 }
+
+const sectionedReviewAnswer = `VERDICT: request_changes
+FINDINGS:
+- internal/server/router.go:42: the new route is registered after the SPA fallback, so it can never match
+- frontend/src/state/chatStore.ts:118: optimistic write is not rolled back on a 409
+DISMISSED:
+- internal/vetting/node.go:12: looked risky but the retry already covers it
+CLEAN:
+- internal/store/artifact.go
+- internal/recordstore/recordstore.go
+`
+
+func TestParseAnswerReviewSections(t *testing.T) {
+	r := ParseAnswerReviewSections(sectionedReviewAnswer)
+	if !r.OK || r.Event != "request_changes" {
+		t.Fatalf("verdict: ok=%v event=%q", r.OK, r.Event)
+	}
+	if len(r.Findings) != 2 {
+		t.Fatalf("findings: got %d, want 2: %+v", len(r.Findings), r.Findings)
+	}
+	if len(r.Dismissed) != 1 || r.Dismissed[0].Path != "internal/vetting/node.go" || r.Dismissed[0].Line != 12 {
+		t.Fatalf("dismissed: got %+v", r.Dismissed)
+	}
+	if len(r.Clean) != 2 || r.Clean[0] != "internal/store/artifact.go" || r.Clean[1] != "internal/recordstore/recordstore.go" {
+		t.Fatalf("clean: got %+v", r.Clean)
+	}
+}
+
+// A DISMISSED: line must not bleed into FINDINGS when sections are present -
+// today's unscoped regex would absorb it as a live finding (#1006 ceiling).
+func TestParseAnswerReviewSections_DismissedNotAbsorbedIntoFindings(t *testing.T) {
+	r := ParseAnswerReviewSections(sectionedReviewAnswer)
+	for _, f := range r.Findings {
+		if f.Path == "internal/vetting/node.go" {
+			t.Fatalf("DISMISSED entry leaked into Findings: %+v", f)
+		}
+	}
+}
+
+// Unstructured answers (no section headers at all) keep the pre-#1006
+// unscoped fallback behavior - a regression guard for existing reviewers.
+func TestParseAnswerReviewSections_FallbackWhenNoHeaders(t *testing.T) {
+	r := ParseAnswerReviewSections(reviewAnswer)
+	if !r.OK || len(r.Findings) != 2 {
+		t.Fatalf("fallback scan: ok=%v findings=%d", r.OK, len(r.Findings))
+	}
+	if len(r.Dismissed) != 0 || len(r.Clean) != 0 {
+		t.Fatalf("no DISMISSED/CLEAN headers should yield none: dismissed=%+v clean=%+v", r.Dismissed, r.Clean)
+	}
+}
