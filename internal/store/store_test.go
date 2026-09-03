@@ -701,3 +701,39 @@ func TestGroupSessionEvents_OrchestratorOwnReplyKept(t *testing.T) {
 		t.Errorf("asstText = %q, want the orchestrator's own reply preserved", got)
 	}
 }
+
+// TestRecordedQuerySQL_OffByDefaultAndBounded is the #1113 second-review
+// regression: record_sql's callback is registered unconditionally in New(),
+// so without a gate + cap it would grow forever on a live server. Proves
+// both halves: recording off (the production default) leaves the slice
+// empty no matter how many queries run, and recording on caps at
+// querySQLCap regardless of how many more queries run past it.
+func TestRecordedQuerySQL_OffByDefaultAndBounded(t *testing.T) {
+	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+	const n = 10_000
+	for i := 0; i < n; i++ {
+		if _, err := st.GetChat(ctx, "nonexistent"); err != nil {
+			t.Fatalf("GetChat: %v", err)
+		}
+	}
+	if got := st.QueryCount(); got < n {
+		t.Fatalf("QueryCount = %d, want at least %d (the plain counter always runs)", got, n)
+	}
+	if got := st.RecordedQuerySQL(); len(got) != 0 {
+		t.Fatalf("RecordedQuerySQL = %d entries, want 0 - recording is off by default", len(got))
+	}
+
+	st.EnableQueryRecording()
+	for i := 0; i < n; i++ {
+		if _, err := st.GetChat(ctx, "nonexistent"); err != nil {
+			t.Fatalf("GetChat: %v", err)
+		}
+	}
+	if got := len(st.RecordedQuerySQL()); got != querySQLCap {
+		t.Fatalf("RecordedQuerySQL length = %d, want exactly querySQLCap (%d) after %d queries", got, querySQLCap, n)
+	}
+}

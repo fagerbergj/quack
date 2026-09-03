@@ -311,22 +311,42 @@ type Store struct {
 	// Identifies this store for node-ownership tracking (random per New, or overridden).
 	instanceID string
 	// Counts SELECT queries issued on db - test instrumentation for N+1 regressions (#738).
+	// A plain atomic counter, unbounded but O(1) memory - safe to always run.
 	queryCount atomic.Int64
 	// Records each SELECT's raw SQL - test instrumentation for asserting WHICH
 	// query ran, not just how many (#1113 review: QueryCount alone can't tell
 	// a name-scoped query apart from an unscoped full-table scan that happens
-	// to also issue exactly one SELECT).
-	querySQLMu sync.Mutex
-	querySQL   []string
+	// to also issue exactly one SELECT). Off by default (queryRecordingEnabled):
+	// the callback that appends to querySQL is registered unconditionally in
+	// New() below, so without a gate it would record every SELECT a live
+	// server ever issues, forever (#1113 second review - a real production
+	// memory leak, not just a test concern). EnableQueryRecording turns it on
+	// for the lifetime of one *Store, test-only; querySQLCap bounds it even
+	// then, so a long test run can't grow it unbounded either.
+	queryRecordingEnabled atomic.Bool
+	querySQLMu            sync.Mutex
+	querySQL              []string
 	// artifacts: nil unless SetArtifactService was called - DeleteChat cascades into it when set.
 	artifacts artifact.Service
 }
 
+// querySQLCap bounds RecordedQuerySQL's ring buffer - the oldest entry is
+// dropped once a recording *Store hits this many, so even an enabled
+// recorder can't grow past a fixed small size.
+const querySQLCap = 1000
+
 // QueryCount returns the number of SELECT queries issued so far. Test-only instrumentation.
 func (s *Store) QueryCount() int64 { return s.queryCount.Load() }
 
-// RecordedQuerySQL returns the raw SQL of every SELECT issued on db so far,
-// in issue order. Test-only instrumentation, like QueryCount.
+// EnableQueryRecording turns on RecordedQuerySQL's capture for this Store.
+// Test-only: call it right after store.New() in a test that needs to assert
+// which query ran, not just how many - production code never calls this, so
+// the record_sql callback is a no-op append for every real server process.
+func (s *Store) EnableQueryRecording() { s.queryRecordingEnabled.Store(true) }
+
+// RecordedQuerySQL returns the raw SQL of the last querySQLCap SELECTs
+// issued on db, oldest first, or nil if EnableQueryRecording was never
+// called. Test-only instrumentation, like QueryCount.
 func (s *Store) RecordedQuerySQL() []string {
 	s.querySQLMu.Lock()
 	defer s.querySQLMu.Unlock()
@@ -375,8 +395,14 @@ func New(kind, url string) (*Store, error) {
 		return nil, err
 	}
 	if err := db.Callback().Query().After("gorm:query").Register("quack:record_sql", func(tx *gorm.DB) {
+		if !s.queryRecordingEnabled.Load() {
+			return
+		}
 		s.querySQLMu.Lock()
 		s.querySQL = append(s.querySQL, tx.Statement.SQL.String())
+		if len(s.querySQL) > querySQLCap {
+			s.querySQL = s.querySQL[len(s.querySQL)-querySQLCap:]
+		}
 		s.querySQLMu.Unlock()
 	}); err != nil {
 		return nil, err

@@ -198,6 +198,7 @@ func TestListArtifactRevisions_NewestFirstWithLineage(t *testing.T) {
 // guards against N+1, not against an unscoped single scan).
 func TestListArtifactRevisions_UsesNameScopedQuery(t *testing.T) {
 	h := newTestHandler(t)
+	h.store.EnableQueryRecording() // off by default in production; this test is the one real consumer
 	chatID := mustCreateChat(t, h)
 	userID := h.sessionUser(context.Background(), chatID)
 
