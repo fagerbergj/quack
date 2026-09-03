@@ -601,6 +601,33 @@ func TestBuildRejectsChecksWhenAllowlistEmpty(t *testing.T) {
 	}
 }
 
+// TestBuildRejectsUnregisteredArtifactKind covers #1128: a planner-authored
+// free-text `artifact` selector (not a registered recordstore kind) must be
+// rejected, naming the bad value, rather than reaching the gate and failing
+// there with the output never saved at all.
+func TestBuildRejectsUnregisteredArtifactKind(t *testing.T) {
+	p := testPlanner()
+	_, err := p.Build(context.Background(), []RawNode{
+		{ID: "n1", Agent: "web-researcher", Task: "a", Artifact: "the one-word answer"},
+	}, nil, nil, nil, "m", nil, nil)
+	if err == nil {
+		t.Fatal("Build: expected error for an unregistered artifact kind")
+	}
+	if !strings.Contains(err.Error(), `"the one-word answer"`) {
+		t.Fatalf("Build error should name the bad value, got: %v", err)
+	}
+}
+
+func TestBuildAcceptsRegisteredArtifactKind(t *testing.T) {
+	p := testPlanner()
+	_, err := p.Build(context.Background(), []RawNode{
+		{ID: "n1", Agent: "web-researcher", Task: "a", Artifact: "document"},
+	}, nil, nil, nil, "m", nil, nil)
+	if err != nil {
+		t.Fatalf("Build: unexpected error for a registered artifact kind: %v", err)
+	}
+}
+
 func TestBuildAllowsNodeWithNoChecks(t *testing.T) {
 	// A node that simply omits `checks` is unaffected by the allowlist being
 	// empty - checks are opt-in per node.

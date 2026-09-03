@@ -1889,6 +1889,30 @@ workflows:
 	}
 }
 
+// TestWorkflowShapeBoundNodeUnregisteredArtifactFailsStartup: a bound node's
+// artifact must be a registered recordstore kind (#1128) - a typo here
+// previously reached SaveBlob at run time and was silently warn-logged away.
+func TestWorkflowShapeBoundNodeUnregisteredArtifactFailsStartup(t *testing.T) {
+	_, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
+workflows:
+  - name: document-ingest
+    trigger: "Ingest a new document into the knowledge base"
+    agents: [document-classifier]
+    shape: "ONE `+"`document-classifier`"+` node (terminal)"
+    nodes:
+      - id: classify
+        agent: document-classifier
+        task: "classify it"
+        artifact: not-a-real-kind
+`))
+	if err == nil {
+		t.Fatal("expected an error for a bound node with an unregistered artifact kind")
+	}
+	if !strings.Contains(err.Error(), "not-a-real-kind") || !strings.Contains(err.Error(), "valid kinds:") {
+		t.Errorf("error = %q, want it to name the bad kind and list valid kinds", err)
+	}
+}
+
 // TestWorkflowShapeBoundNodeUnknownAgentFailsStartup: a bound node naming an
 // agent absent from `agents:` must fail loud at config load, not surface
 // only when a dispatch tries to bind it later.

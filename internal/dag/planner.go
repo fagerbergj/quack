@@ -15,6 +15,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/otelobs"
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -88,11 +89,25 @@ type RawNode struct {
 	DependsOn []string `json:"depends_on"`
 	Checks    []string `json:"checks,omitempty"`
 	Workdir   string   `json:"workdir,omitempty"`
-	// Artifact: episodic record name this node writes on gate pass (#1006).
-	// Only ever set by workflowcatalog.Bind from config.WorkflowNode.Artifact -
-	// the LLM planner never emits this field.
+	// Artifact: registered recordstore kind this node's output is saved as on
+	// gate pass (#1006). Set either by workflowcatalog.Bind from
+	// config.WorkflowNode.Artifact or directly by the LLM planner - assemble
+	// validates it against ArtifactKindNames() either way (#1128: a planner
+	// once put free text here, which reached SaveBlob and errored unregistered).
 	Artifact string `json:"artifact,omitempty"`
 }
+
+// ArtifactKindNames returns the sorted names of every registered blob-class
+// recordstore kind - the closed set a node's `artifact` field may select,
+// since saveDocumentRound writes it via SaveBlob (#1128).
+func ArtifactKindNames() []string { return recordstore.ArtifactKindNames() }
+
+// ValidateArtifactKind rejects an artifact selector that isn't one of
+// ArtifactKindNames() - the planner-facing guard for #1128. Thin wrapper
+// around recordstore.ValidateArtifactKind, kept here for plan-build callers;
+// config's own workflow-node validation calls recordstore directly to avoid
+// an import cycle (dag -> inference -> config).
+func ValidateArtifactKind(kind string) error { return recordstore.ValidateArtifactKind(kind) }
 
 // Build: validates submitted nodes into a Plan and stamps turn context.
 func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, delivery *Delivery, history []HistoryTurn, message string, attachments []*genai.Part, allowedKinds []string) (plan *Plan, err error) {
@@ -323,6 +338,11 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 		}
 		if len(n.Checks) > 0 {
 			if err := validateChecks(n.Checks, checkCommands); err != nil {
+				return nil, fmt.Errorf("node %q: %w", n.ID, err)
+			}
+		}
+		if n.Artifact != "" {
+			if err := ValidateArtifactKind(n.Artifact); err != nil {
 				return nil, fmt.Errorf("node %q: %w", n.ID, err)
 			}
 		}
