@@ -260,6 +260,86 @@ func appendJudgeRound(ctx context.Context, cfg Config, nodeID, turnID string, ro
 	return nil
 }
 
+// deliveryTarget resolves the recordstore artifact backing this node's
+// delivery, if any: the code_review subject for a reviewer, or cfg.Artifact
+// for a document node. false when this delivery has no backing artifact
+// (a plain PR-only delivery) - the WAL/delivery_record path is skipped
+// entirely in that case (#1093: idempotency key = artifact id + revision,
+// nothing to key on without one).
+func deliveryTarget(ctx context.Context, cfg Config) (id string, revision int, ok bool) {
+	c := recordClient(cfg)
+	if c == nil {
+		return "", 0, false
+	}
+	var targetID string
+	var err error
+	switch {
+	case cfg.IsReviewer:
+		targetID, err = recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID))
+	case cfg.Artifact != "":
+		targetID, err = recordstore.IdentityFor(cfg.Artifact, nil, documentHint(cfg.ChatID))
+	default:
+		return "", 0, false
+	}
+	if err != nil {
+		return "", 0, false
+	}
+	_, rev, exists, lerr := c.Latest(ctx, targetID)
+	if lerr != nil || !exists {
+		return "", 0, false
+	}
+	return targetID, rev, true
+}
+
+// deliveryIdempotencyKey: target artifact id + revision (#1090 V4 §4.9) -
+// unambiguous since "@" never appears in an artifact id (ids use ":").
+func deliveryIdempotencyKey(targetID string, revision int) string {
+	return deliveryRecordHint(targetID, revision)
+}
+
+// appendDeliveryIntent is the WAL's delivery.intent entry (#1090 §4.9,
+// fail-closed): appended right before the gate pushes/hands staged items to
+// the extension. A non-nil error means the caller must not deliver at all.
+func appendDeliveryIntent(ctx context.Context, cfg Config, nodeID, key, targetID string, revision int) error {
+	if cfg.Ledger == nil {
+		return nil
+	}
+	payload, err := json.Marshal(struct {
+		TargetID string `json:"target_id"`
+		Revision int    `json:"revision"`
+		Key      string `json:"idempotency_key"`
+	}{TargetID: targetID, Revision: revision, Key: key})
+	if err != nil {
+		return fmt.Errorf("vetting: marshal delivery.intent payload: %w", err)
+	}
+	if _, err := cfg.Ledger.AppendIntent(ctx, ledger.Entry{
+		ChatID: cfg.ChatID, NodeID: nodeID, Kind: ledger.KindDeliveryIntent, Key: key, At: time.Now().UTC(), Payload: payload,
+	}); err != nil {
+		return fmt.Errorf("vetting: delivery.intent WAL append for node %s: %w", nodeID, err)
+	}
+	return nil
+}
+
+// appendDeliveryDone is the WAL's delivery.done entry (#1090 §4.9,
+// best-effort/retried per the issue's WAL table - the delivery already
+// happened by the time this is called, so a failure here must not undo it).
+func appendDeliveryDone(ctx context.Context, cfg Config, nodeID, key, remoteURL string) {
+	if cfg.Ledger == nil {
+		return
+	}
+	payload, err := json.Marshal(struct {
+		RemoteURL string `json:"remote_url,omitempty"`
+	}{RemoteURL: remoteURL})
+	if err != nil {
+		return
+	}
+	if _, err := cfg.Ledger.AppendIntent(ctx, ledger.Entry{
+		ChatID: cfg.ChatID, NodeID: nodeID, Kind: ledger.KindDeliveryDone, Key: key, At: time.Now().UTC(), Payload: payload,
+	}); err != nil {
+		slog.Warn("ledger delivery.done append failed (best-effort; delivery already happened)", "component", "vetting", "node", nodeID, "key", key, "err", err)
+	}
+}
+
 func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Node, workerModel model.LLM, judge JudgeFactory, cfg Config, prompt string, attachments []*genai.Part, ctrl NodeControl, emit func(*session.Event) error) (answer string, res GateResult, err error) {
 	log := slog.With("component", "vetting", "node", nodeID)
 
@@ -949,6 +1029,12 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 		}
 		return
 	}
+	// Render from the durable record instead of the worker's own restatement
+	// (#1093 P6/P10) - only on the round that actually passed; a failed round
+	// still delivers the staged draft exactly as before.
+	if res.Passed {
+		act.stagedDelivery = artifactRenderedDelivery(ctx, cfg, nodeID, act.stagedDelivery)
+	}
 	spanCtx, span := otelobs.Start(ctx, "delivery",
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID))
 	defer span.End()
@@ -1004,6 +1090,28 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
+	// delivery.intent (#1093 §4.9, fail-closed): only when this delivery is
+	// tied to a recordstore artifact revision (reviewer or cfg.Artifact
+	// nodes) - a plain PR-only delivery with no backing artifact has nothing
+	// to key a WAL entry on, and stays exactly as before (no WAL, no
+	// recovery to reconcile).
+	targetID, targetRev, hasTarget := deliveryTarget(ctx, cfg)
+	var idemKey string
+	if hasTarget {
+		idemKey = deliveryIdempotencyKey(targetID, targetRev)
+		if walErr := appendDeliveryIntent(cctx, cfg, nodeID, idemKey, targetID, targetRev); walErr != nil {
+			slog.Error("delivery.intent WAL append failed; not delivering", "component", "vetting", "node", nodeID, "err", walErr)
+			itemOutcomes := make([]DeliveryItemOutcome, len(dc.Items))
+			for i, item := range dc.Items {
+				itemOutcomes[i] = DeliveryItemOutcome{Kind: item.Kind, Error: "delivery.intent WAL append failed: " + walErr.Error()}
+				emitDeliveryResult(sink, nodeID, stream.DeliveryResult(nodeID, stream.DeliveryOutcomeFailed, item.Kind, "", itemOutcomes[i].Error, traceID))
+			}
+			recordDeliveryOutcomeMetric(cfg, res, true, false)
+			otelobs.End(span, walErr)
+			return
+		}
+	}
+
 	// Gate-owned push: lands on the remote before any item reaches the
 	// extension. A push failure never reaches Deliver - nothing was attempted.
 	var itemOutcomes []DeliveryItemOutcome
@@ -1019,6 +1127,20 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	}
 	span.SetAttributes(attribute.Bool("delivered", err == nil))
 	otelobs.End(span, err)
+
+	if hasTarget && err == nil {
+		var remoteURL string
+		for _, io := range itemOutcomes {
+			if io.URL != "" {
+				remoteURL = io.URL
+				break
+			}
+		}
+		appendDeliveryDone(cctx, cfg, nodeID, idemKey, remoteURL)
+		saveDeliveryRecord(cctx, cfg, nodeID, DeliveryRecord{
+			TargetID: targetID, DeliveredRevision: targetRev, RemoteURL: remoteURL, PRNumber: dc.IssueNumber, At: time.Now().UTC(),
+		})
+	}
 
 	// Extension's record is authoritative; fall back to synthetic outcomes only when extension reported nothing.
 	if len(itemOutcomes) == 0 {
