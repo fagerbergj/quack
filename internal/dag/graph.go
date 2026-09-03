@@ -204,7 +204,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 						"component", "dag", "node", node.ID, "err", serr)
 				} else {
 					task.MemSecret = secret
-					ms := vetting.MemSession{}
+					ms := vetting.MemSession{AdvisorToken: token}
 					if memParticipant {
 						ms.Memory = cfg.Memory
 						ms.Scope = vetting.MemoryScope(ctx, cfg, node.ID)
@@ -221,6 +221,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 						ms.Artifacts = cfg.Artifacts
 						ms.AppName, ms.UserID, ms.ChatID = task.AppName, task.UserID, chatID
 						ms.NodeID = node.ID
+						ms.ToolFindings = vetting.NewToolFindingStage()
 					}
 					vetting.RegisterMemSession(secret, ms)
 					defer vetting.UnregisterMemSession(secret)

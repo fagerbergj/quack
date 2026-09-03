@@ -392,6 +392,26 @@ func latestCodeReviewRevSafe(ctx context.Context, c *recordstore.Client, cfg Con
 	return rev, ok
 }
 
+// toolWrittenFindingIDs returns the ids written via write_<kind> tool calls
+// this round (ToolFindingStage, threaded through the registered MemSession),
+// nil if there's no advisor thread/session for this node - saveCodeReviewRound's
+// answer-tail fallback uses it to skip re-staging an id the worker already
+// wrote directly (#1091 adversarial review finding #1).
+func toolWrittenFindingIDs(cfg Config) map[string]bool {
+	if cfg.AdvisorToken == "" {
+		return nil
+	}
+	t, ok := LookupAdvisorThread(cfg.AdvisorToken)
+	if !ok || t.MemSecret == "" {
+		return nil
+	}
+	ms, ok := LookupMemSession(t.MemSecret)
+	if !ok || ms.ToolFindings == nil {
+		return nil
+	}
+	return ms.ToolFindings.Snapshot()
+}
+
 func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, staged StagedDelivery, st *episodicRoundState) {
 	c := recordClient(cfg)
 	if c == nil {
@@ -427,6 +447,7 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 	savedAt := time.Now().UTC()
 	current := make(map[string]FindingRecord, len(findings))
 	findingIDs := make([]string, 0, len(findings))
+	seen := make(map[string]bool, len(findings))
 	writeFinding := func(id string, rec FindingRecord) {
 		// Skip a rewrite when the last WRITTEN state already matches -
 		// avoids every intermediate revise round re-persisting "unchanged"
@@ -444,6 +465,31 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 		st.findingRev[id] = rev
 		st.findingState[id] = rec.State
 	}
+
+	// Findings the worker already wrote directly via write_finding this
+	// round: seed them into current/findingIDs from the store (no write here -
+	// they're already persisted) so the tail-parse loop below can skip them
+	// instead of minting a duplicate revision with a fabricated
+	// ParentRevision 0 (#1091 adversarial review finding #1).
+	toolWritten := toolWrittenFindingIDs(cfg)
+	for id := range toolWritten {
+		raw, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id)
+		if lerr != nil || !ok {
+			continue
+		}
+		var f FindingRecord
+		if json.Unmarshal(raw, &f) != nil {
+			continue
+		}
+		st.findingRev[id] = rev
+		st.findingState[id] = f.State
+		if f.State != "resolved" && !seen[id] {
+			current[id] = f
+			findingIDs = append(findingIDs, id)
+			seen[id] = true
+		}
+	}
+
 	for _, f := range findings {
 		line := fileLineAtForCfg(cfg, f.Path, f.Line)
 		title, rationale := splitFirstSentence(f.Body)
@@ -453,11 +499,19 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 			slog.Warn("finding identity failed; dropping this finding from the round", "component", "vetting", "node", nodeID, "err", err)
 			continue
 		}
+		if toolWritten[id] {
+			// Already written via tool this round and already staged above -
+			// the tail parse rediscovering the same finding is not a second write.
+			continue
+		}
 		if _, existed := st.findings[id]; existed {
 			rec.State = "unchanged"
 		}
-		current[id] = rec
-		findingIDs = append(findingIDs, id)
+		if !seen[id] {
+			current[id] = rec
+			findingIDs = append(findingIDs, id)
+			seen[id] = true
+		}
 		writeFinding(id, rec)
 	}
 	// Resolved: an id previously live (this run or a prior turn) that this

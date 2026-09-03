@@ -546,18 +546,18 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 				yield(stream.Errorf("orchestrator: list_artifacts tool: "+err.Error()), nil)
 				return
 			}
-			editTool, err := tools.NewEditArtifactTool(rc, orchestratorName)
+			editTool, err := tools.NewEditArtifactTool(rc, orchestratorName, tools.RoundCoords{})
 			if err != nil {
 				yield(stream.Errorf("orchestrator: edit_artifact tool: "+err.Error()), nil)
 				return
 			}
-			writeTool, err := tools.NewWriteArtifactTool(rc, orchestratorName)
+			writeTool, err := tools.NewWriteArtifactTool(rc, orchestratorName, tools.RoundCoords{})
 			if err != nil {
 				yield(stream.Errorf("orchestrator: write_artifact tool: "+err.Error()), nil)
 				return
 			}
 			toolList = append(toolList, listTool, editTool, writeTool)
-			toolList = append(toolList, tools.NewWriteKindTools(rc, orchestratorName)...)
+			toolList = append(toolList, tools.NewWriteKindTools(rc, orchestratorName, tools.RoundCoords{})...)
 		}
 
 		ag, err := llmagent.New(llmagent.Config{

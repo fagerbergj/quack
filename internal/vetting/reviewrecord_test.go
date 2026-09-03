@@ -199,6 +199,118 @@ func TestSaveCodeReviewRound_ToolWriteSkipsTailFallback(t *testing.T) {
 	}
 }
 
+// TestSaveCodeReviewRound_ToolWrittenFindingsSkipTailDuplicate covers #1091
+// adversarial review finding #1: a worker that calls write_finding 3 times
+// but never write_code_review must not have the tail-parse fallback re-stage
+// (and duplicate, with a fabricated ParentRevision 0) those same 3 findings -
+// only the answer tail's genuinely new 4th finding gets a new revision, and
+// code_review.finding_ids lists all 4.
+func TestSaveCodeReviewRound_ToolWrittenFindingsSkipTailDuplicate(t *testing.T) {
+	svc := newMetaAwareInMemory()
+	cfg := reviewerCfgWithArtifacts(t, svc, true)
+	rc := recordClient(cfg)
+
+	toolStage := NewToolFindingStage()
+	RegisterMemSession("sec-1091-f1", MemSession{ToolFindings: toolStage})
+	MarkMemSessionConnected("sec-1091-f1")
+	defer UnregisterMemSession("sec-1091-f1")
+	token := "tok-1091-f1"
+	RegisterAdvisorThread(token, AdvisorTask{MemSecret: "sec-1091-f1"})
+	defer UnregisterAdvisorThread(token)
+	cfg.AdvisorToken = token
+
+	// Simulate 3 tool-written findings (as write_finding's MCP handler would
+	// do: SaveStructured directly, then record the id on ToolFindings).
+	// Snippet "" matches what fileLineAtForCfg resolves for a path that
+	// doesn't exist in the probe repo - the tail parse below reads the same
+	// (missing) file, so the hash-derived id lines up with the tool write.
+	toolFindings := []FindingRecord{
+		{Path: "a.go", Title: "bug one", State: "new"},
+		{Path: "b.go", Title: "bug two", State: "new"},
+		{Path: "c.go", Title: "bug three", State: "new"},
+	}
+	toolIDs := make(map[string]int) // id -> revision written
+	for _, rec := range toolFindings {
+		id, rev, err := rc.SaveStructured(context.Background(), kindFinding, rec, "", recordstore.Lineage{NodeID: cfg.NodeID, Round: 1, Author: "worker"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		toolIDs[id] = rev
+		toolStage.Add(id)
+	}
+
+	// The worker never called write_code_review; the answer tail happens to
+	// describe the same 3 findings (matching hash: same path/title/snippet)
+	// plus one genuinely new one.
+	answer := `VERDICT: request_changes
+FINDINGS:
+- a.go:1: bug one.
+- b.go:2: bug two.
+- c.go:3: bug three.
+- d.go:4: bug four.
+`
+	staged := StagedDelivery{Kind: "review", Recovered: true}
+	st := newEpisodicRoundState()
+	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "t1", 1, answer, staged, st)
+
+	// Exactly one NEW finding revision (d.go); the 3 tool-written ones stay
+	// at their original revision - no duplicate, no ParentRevision-0 rewrite.
+	for id, wantRev := range toolIDs {
+		_, _, lineage, rev, ok, err := rc.LatestWithMeta(context.Background(), id)
+		if err != nil || !ok {
+			t.Fatalf("tool-written finding %s missing: ok=%v err=%v", id, ok, err)
+		}
+		if rev != wantRev {
+			t.Fatalf("tool-written finding %s revision = %d, want unchanged %d (fallback duplicated it)", id, rev, wantRev)
+		}
+		if rev > 1 && lineage.ParentRevision == 0 {
+			t.Fatalf("tool-written finding %s got a bogus ParentRevision 0 rewrite", id)
+		}
+	}
+
+	raw, _, _, rev, ok, err := rc.LatestWithMeta(context.Background(), codeReviewID(cfg))
+	if err != nil || !ok || rev != 1 {
+		t.Fatalf("code_review LatestWithMeta: rev=%d ok=%v err=%v", rev, ok, err)
+	}
+	var rec CodeReviewRecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.FindingIDs) != 4 {
+		t.Fatalf("code_review.finding_ids = %v, want all 4 (3 tool-written + 1 new)", rec.FindingIDs)
+	}
+	for id := range toolIDs {
+		found := false
+		for _, fid := range rec.FindingIDs {
+			if fid == id {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("code_review.finding_ids missing tool-written id %s: %v", id, rec.FindingIDs)
+		}
+	}
+
+	// The one new finding (d.go) got exactly revision 1 - a real new write,
+	// not zero and not a duplicate of anything.
+	var newID string
+	for _, fid := range rec.FindingIDs {
+		if _, isTool := toolIDs[fid]; !isTool {
+			newID = fid
+		}
+	}
+	if newID == "" {
+		t.Fatal("expected exactly one non-tool-written new finding id")
+	}
+	_, _, newLineage, newRev, ok, err := rc.LatestWithMeta(context.Background(), newID)
+	if err != nil || !ok || newRev != 1 {
+		t.Fatalf("new finding %s: rev=%d ok=%v err=%v, want rev=1", newID, newRev, ok, err)
+	}
+	if newLineage.ParentRevision != 0 {
+		t.Fatalf("new finding %s parent_revision = %d, want 0 (genuinely new)", newID, newLineage.ParentRevision)
+	}
+}
+
 // TestFindingIdentityStableAcrossLineShiftHeadSHAAndNode covers #1006 test
 // case 2 / #1090 V4.2 verification #2: the same finding (same path, title,
 // flagged-line text) keeps its id regardless of line number, head SHA, or
@@ -386,6 +498,63 @@ FINDINGS:
 	}
 	if aRev != 2 || aLineage.ParentRevision != 1 {
 		t.Fatalf("a.go rev=%d parent=%d, want rev=2 parent=1", aRev, aLineage.ParentRevision)
+	}
+}
+
+// TestSetAdvisorThreadRound_ToolWriteGetsRealLineageAndPreloads covers #1091
+// adversarial review finding #4: a tool-initiated write, stamped with the
+// AdvisorTask's current Round/HeadSHA (as internal/acp/memorymcp.go's
+// currentRound reads them, refreshed by SetAdvisorThreadRound at the start of
+// the round) gets real lineage instead of Round:0/HeadSHA:"" - and
+// BuildReviewPreload, which drops any finding with an empty HeadSHA, picks it up.
+func TestSetAdvisorThreadRound_ToolWriteGetsRealLineageAndPreloads(t *testing.T) {
+	svc := newMetaAwareInMemory()
+	cfg := reviewerCfgWithArtifacts(t, svc, true)
+
+	token := "tok-1091-f4"
+	RegisterAdvisorThread(token, AdvisorTask{})
+	defer UnregisterAdvisorThread(token)
+	SetAdvisorThreadRound(token, 2, "turn-abc", cfg.NodeBaseSHA)
+
+	task, ok := LookupAdvisorThread(token)
+	if !ok {
+		t.Fatal("advisor task not registered")
+	}
+	if task.Round != 2 || task.TurnID != "turn-abc" || task.HeadSHA == "" {
+		t.Fatalf("AdvisorTask coords = %+v, want round=2 turn=turn-abc non-empty head", task)
+	}
+
+	// Mirrors internal/acp/memorymcp.go's currentRound + registerWriteKindTool:
+	// a tool-initiated write stamps the round's live coords, not zero values.
+	rc := recordClient(cfg)
+	rec := FindingRecord{Path: "a.go", Title: "mid-round finding", State: "new"}
+	lineage := recordstore.Lineage{NodeID: cfg.NodeID, Round: task.Round, TurnID: task.TurnID, HeadSHA: task.HeadSHA, Author: "worker"}
+	id, _, err := rc.SaveStructured(context.Background(), kindFinding, rec, "", lineage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, gotLineage, _, ok, err := rc.LatestWithMeta(context.Background(), id)
+	if err != nil || !ok {
+		t.Fatalf("LatestWithMeta: ok=%v err=%v", ok, err)
+	}
+	if gotLineage.Round != 2 {
+		t.Fatalf("stored lineage.Round = %d, want 2 (not the old hardcoded 0)", gotLineage.Round)
+	}
+	if gotLineage.HeadSHA != cfg.NodeBaseSHA || gotLineage.HeadSHA == "" {
+		t.Fatalf("stored lineage.HeadSHA = %q, want %q (non-empty)", gotLineage.HeadSHA, cfg.NodeBaseSHA)
+	}
+
+	// A code_review record referencing the finding, as saveCodeReviewRound
+	// would write once the round completes.
+	if _, _, err := rc.SaveStructured(context.Background(), kindCodeReview,
+		CodeReviewRecord{Verdict: "request_changes", FindingIDs: []string{id}},
+		subjectHint(cfg.ChatID), recordstore.Lineage{NodeID: cfg.NodeID, Round: 2, HeadSHA: cfg.NodeBaseSHA}); err != nil {
+		t.Fatal(err)
+	}
+
+	block := BuildReviewPreload(context.Background(), cfg, cfg.NodeID)
+	if !strings.Contains(block, "mid-round finding") {
+		t.Fatalf("BuildReviewPreload dropped the tool-written finding (empty HeadSHA would do this): %q", block)
 	}
 }
 

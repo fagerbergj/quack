@@ -67,6 +67,21 @@ const (
 	writeKindPrefix   = "write_" // + registered structured kind name, e.g. write_finding
 )
 
+// currentRound reads sess's live round/turn/head-sha off its AdvisorTask
+// (SetAdvisorThreadRound, refreshed by the gate at the start of every round) -
+// zero values if there's no advisor thread (sess.AdvisorToken == "") or it
+// has already been unregistered (#1091 adversarial review finding #4).
+func currentRound(sess vetting.MemSession) (round int, turnID, headSHA string) {
+	if sess.AdvisorToken == "" {
+		return 0, "", ""
+	}
+	t, ok := vetting.LookupAdvisorThread(sess.AdvisorToken)
+	if !ok {
+		return 0, "", ""
+	}
+	return t.Round, t.TurnID, t.HeadSHA
+}
+
 // readArtifactMaxBytes bounds the raw artifact bytes returned inline, so a
 // large artifact (e.g. video) can't flood the agent's context.
 const readArtifactMaxBytes = 256 * 1024
@@ -155,7 +170,7 @@ type editArtifactOp struct {
 // matches uniquely against the CURRENT latest revision - only a real
 // conflict (ambiguous or vanished match) fails, returning the latest content
 // and revision so the caller can re-read and retry.
-func registerEditArtifactTool(srv *mcp.Server, c *recordstore.Client, nodeID string) {
+func registerEditArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vetting.MemSession) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: toolEditArtifact,
 		Description: "Edit an existing artifact by search/replace. Optimistic locking: if base_revision is stale, " +
@@ -170,7 +185,8 @@ func registerEditArtifactTool(srv *mcp.Server, c *recordstore.Client, nodeID str
 		for i, e := range args.Edits {
 			ops[i] = recordstore.EditOp{Old: e.Old, New: e.New}
 		}
-		lineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: time.Now().UTC()}
+		round, turnID, headSHA := currentRound(sess)
+		lineage := recordstore.Lineage{NodeID: sess.NodeID, Round: round, TurnID: turnID, HeadSHA: headSHA, Author: "worker", SavedAt: time.Now().UTC()}
 		rev, _, err := c.Edit(ctx, args.ID, args.BaseRevision, ops, lineage)
 		if err != nil {
 			var conflict *recordstore.EditConflict
@@ -195,7 +211,7 @@ type writeArtifactInput struct {
 // registerWriteArtifactTool: blob writes only - structured kinds go through
 // their generated write_<kind> tool instead, so the registry validates
 // their shape. The registry derives the id; this tool never accepts one.
-func registerWriteArtifactTool(srv *mcp.Server, c *recordstore.Client, nodeID string) {
+func registerWriteArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vetting.MemSession) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolWriteArtifact,
 		Description: "Write a new revision of a blob artifact (markdown, text, PDF, image - not a structured kind; use write_<kind> for those). The registry derives the id.",
@@ -206,7 +222,8 @@ func registerWriteArtifactTool(srv *mcp.Server, c *recordstore.Client, nodeID st
 				data = b
 			}
 		}
-		lineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: time.Now().UTC()}
+		round, turnID, headSHA := currentRound(sess)
+		lineage := recordstore.Lineage{NodeID: sess.NodeID, Round: round, TurnID: turnID, HeadSHA: headSHA, Author: "worker", SavedAt: time.Now().UTC()}
 		id, rev, err := c.SaveBlob(ctx, args.Kind, data, args.Mime, "", lineage)
 		if err != nil {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "write_artifact: " + err.Error()}}}, nil, nil
@@ -220,7 +237,13 @@ func registerWriteArtifactTool(srv *mcp.Server, c *recordstore.Client, nodeID st
 // registration, not reflected from a Go struct, so the agent sees exactly
 // the schema the record type owns. Input is a raw JSON object (map), so
 // AddTool doesn't infer a struct schema over it and the parsed schema wins.
-func registerWriteKindTool(srv *mcp.Server, c *recordstore.Client, nodeID, kind string, spec recordstore.KindSpec) {
+// registerWriteKindTool generates the write_<kind> tool. sess.ToolFindings
+// (when non-nil) records every id written here so saveCodeReviewRound's
+// answer-tail fallback can tell a tool-written id apart from a tail-only one
+// (#1091 adversarial review finding #1) - tracked for every kind, not just
+// "finding", since the fallback decision only needs to ask "is this id
+// already accounted for."
+func registerWriteKindTool(srv *mcp.Server, c *recordstore.Client, sess vetting.MemSession, kind string, spec recordstore.KindSpec) {
 	var schema jsonschema.Schema
 	if err := json.Unmarshal([]byte(spec.JSONSchema), &schema); err != nil {
 		slog.Warn("acp: write_<kind> tool skipped - bad JSONSchema", "component", "acp", "kind", kind, "err", err)
@@ -231,10 +254,14 @@ func registerWriteKindTool(srv *mcp.Server, c *recordstore.Client, nodeID, kind 
 		Description: fmt.Sprintf("Write a new revision of a %q artifact. The registry validates the body and derives the id.", kind),
 		InputSchema: &schema,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
-		lineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: time.Now().UTC()}
+		round, turnID, headSHA := currentRound(sess)
+		lineage := recordstore.Lineage{NodeID: sess.NodeID, Round: round, TurnID: turnID, HeadSHA: headSHA, Author: "worker", SavedAt: time.Now().UTC()}
 		id, rev, err := c.SaveStructured(ctx, kind, args, "", lineage)
 		if err != nil {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: writeKindPrefix + kind + ": " + err.Error()}}}, nil, nil
+		}
+		if sess.ToolFindings != nil {
+			sess.ToolFindings.Add(id)
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("ok: id=%s revision=%d", id, rev)}}}, nil, nil
 	})
@@ -247,10 +274,10 @@ func registerWriteKindTool(srv *mcp.Server, c *recordstore.Client, nodeID, kind 
 func registerArtifactWriteTools(srv *mcp.Server, sess vetting.MemSession) {
 	c := recordstore.New(sess.Artifacts, sess.AppName, sess.UserID, sess.ChatID)
 	registerListArtifactsTool(srv, c)
-	registerEditArtifactTool(srv, c, sess.NodeID)
-	registerWriteArtifactTool(srv, c, sess.NodeID)
+	registerEditArtifactTool(srv, c, sess)
+	registerWriteArtifactTool(srv, c, sess)
 	for _, spec := range recordstore.Kinds() {
-		registerWriteKindTool(srv, c, sess.NodeID, spec.Name(), spec)
+		registerWriteKindTool(srv, c, sess, spec.Name(), spec)
 	}
 }
 

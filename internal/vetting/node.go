@@ -235,6 +235,12 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	// (dag/orchestrator carry none either), so the ADK invocation id is the
 	// best per-run identity RunGatedRefine actually has.
 	turnID := ctx.InvocationID()
+	if advisorToken != "" {
+		// Draft round: seed round=1 coords before the first worker call so a
+		// tool write during draft (before any judge round runs) still gets
+		// real lineage (#1091 finding #4).
+		SetAdvisorThreadRound(advisorToken, 1, turnID, cfg.NodeBaseSHA)
+	}
 	// User attribution: the ADK session identity (mirrors MemoryScope below) -
 	// not caller-set, so a node can never claim to run as someone it isn't.
 	if s := ctx.Session(); s != nil {
@@ -499,6 +505,9 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			}
 			if strings.TrimSpace(stripLeadingEnvScaffold(answer)) == "" {
 				break // still nothing to judge after recovery
+			}
+			if advisorToken != "" {
+				SetAdvisorThreadRound(advisorToken, round, turnID, cfg.NodeBaseSHA)
 			}
 			act := actFor(answer)
 			// Every judge round writes a revision, gate-passed or not - only
