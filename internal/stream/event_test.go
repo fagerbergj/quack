@@ -84,6 +84,22 @@ func TestTranslatorDedupsToolCallByID(t *testing.T) {
 	}
 }
 
+// Empty call IDs are legitimate and distinct (genai.FunctionCall.ID can be
+// empty); dedup must not treat two different empty-id calls as the same call.
+func TestTranslatorDoesNotDedupeEmptyCallID(t *testing.T) {
+	tr := NewTranslator()
+	tr.Event(eventWith(AgentStartPart("r1", "web-researcher", StageWorker, 0)))
+
+	got := tr.Event(eventWith(&genai.Part{FunctionCall: &genai.FunctionCall{ID: "", Name: "a", Args: map[string]any{}}}))
+	if len(got) != 1 || got[0].Name != EventAgentToolCall {
+		t.Fatalf("first empty-id call = %+v, want one agent_tool_call", got)
+	}
+	got = tr.Event(eventWith(&genai.Part{FunctionCall: &genai.FunctionCall{ID: "", Name: "b", Args: map[string]any{}}}))
+	if len(got) != 1 || got[0].Name != EventAgentToolCall {
+		t.Fatalf("second empty-id call = %+v, want one agent_tool_call (distinct call, must not be dropped)", got)
+	}
+}
+
 func TestTranslatorAccumulatesUsageOntoComplete(t *testing.T) {
 	tr := NewTranslator()
 	tr.Event(eventWith(AgentStartPart("r1", "web-researcher", StageWorker, 0)))

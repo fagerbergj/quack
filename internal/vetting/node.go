@@ -1155,6 +1155,7 @@ func emitJudge(sink func(stream.SSEEvent), nodeID string, ev stream.SSEEvent) {
 
 // judgePartEmitter: forwards judge's streamed parts to SSE sink. nil-sink-safe, never writes to session.
 func judgePartEmitter(sink func(stream.SSEEvent), nodeID, runID string) func(*genai.Part) bool {
+	var seen stream.SeenCalls
 	return func(p *genai.Part) bool {
 		if sink == nil || p == nil {
 			return true
@@ -1165,6 +1166,10 @@ func judgePartEmitter(sink func(stream.SSEEvent), nodeID, runID string) func(*ge
 		case p.Text != "":
 			sink(stream.ScopeToNode(stream.SSEEvent{Name: stream.EventAgentToken, Data: stream.AgentTokenData{RunID: runID, Text: p.Text}}, nodeID))
 		case p.FunctionCall != nil:
+			// ACP's start+completion updates both carry the FunctionCall part for one call_id.
+			if seen.Add(p.FunctionCall.ID) {
+				return true
+			}
 			sink(stream.ScopeToNode(stream.SSEEvent{Name: stream.EventAgentToolCall, Data: stream.AgentToolCallData{RunID: runID, CallID: p.FunctionCall.ID, Name: p.FunctionCall.Name, Args: p.FunctionCall.Args}}, nodeID))
 		case p.FunctionResponse != nil:
 			sink(stream.ScopeToNode(stream.SSEEvent{Name: stream.EventAgentToolResult, Data: stream.AgentToolResultData{RunID: runID, CallID: p.FunctionResponse.ID, Name: p.FunctionResponse.Name, Result: p.FunctionResponse.Response}}, nodeID))
