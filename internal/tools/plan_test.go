@@ -30,7 +30,7 @@ func (planToolCtx) ToolConfirmation() *toolconfirmation.ToolConfirmation { retur
 // #661 deterministic-setup tests below.
 func buildPlan(t *testing.T, planner *dag.Planner, cache *PlanCache, githubSetup *dag.Setup, args map[string]any) dag.Plan {
 	t.Helper()
-	tl, err := NewPlanTool(planner, cache, nil, nil, "", githubSetup, nil, "", nil, false)
+	tl, err := NewPlanTool(planner, cache, nil, nil, "", githubSetup, nil, "", nil, false, nil)
 	if err != nil {
 		t.Fatalf("NewPlanTool: %v", err)
 	}
@@ -64,7 +64,7 @@ func implementNode() []map[string]any {
 func TestPlanToolStampsPlanOnly(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	cache := NewPlanCache()
-	tl, err := NewPlanTool(planner, cache, nil, nil, "", nil, nil, "", nil, true)
+	tl, err := NewPlanTool(planner, cache, nil, nil, "", nil, nil, "", nil, true, nil)
 	if err != nil {
 		t.Fatalf("NewPlanTool: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestNonGitHubRunKeepsPlannerSetup(t *testing.T) {
 
 func TestNewPlanToolMetadata(t *testing.T) {
 	planner := dag.NewPlanner(nil, nil, nil)
-	tl, err := NewPlanTool(planner, NewPlanCache(), nil, nil, "", nil, nil, "", nil, false)
+	tl, err := NewPlanTool(planner, NewPlanCache(), nil, nil, "", nil, nil, "", nil, false, nil)
 	if err != nil {
 		t.Fatalf("NewPlanTool error: %v", err)
 	}
@@ -361,7 +361,7 @@ func TestReviewWithoutExistingHeadStillRejected(t *testing.T) {
 		Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main",
 		WorkBranch: "quack/issue-836", // no CheckoutExistingHead
 	}
-	tl, err := NewPlanTool(planner, NewPlanCache(), nil, nil, "", githubSetup, nil, "", nil, false)
+	tl, err := NewPlanTool(planner, NewPlanCache(), nil, nil, "", githubSetup, nil, "", nil, false, nil)
 	if err != nil {
 		t.Fatalf("NewPlanTool: %v", err)
 	}
