@@ -64,6 +64,14 @@ const (
 	// EventCompaction reports a node's worker history being rewritten to fit
 	// its agent's context window - see internal/agent's Compaction.
 	EventCompaction = "compaction"
+
+	// EventArtifactRevision reports one artifact revision written by a judge
+	// round (#1090 §4.8/#1092) - emitted before the round's
+	// EventArtifactJudgeRound, so a client sees the revision exist first.
+	EventArtifactRevision = "artifact_revision"
+	// EventArtifactJudgeRound reports the judge_round record a round wrote,
+	// referencing the revisions EventArtifactRevision already announced.
+	EventArtifactJudgeRound = "artifact_judge_round"
 )
 
 // Delivery outcome values.
@@ -311,6 +319,30 @@ func DeliveryResult(nodeID, outcome, kind, url, errMsg, traceID string) SSEEvent
 	return SSEEvent{Name: EventDeliveryResult, Data: DeliveryResultData{
 		NodeID: nodeID, Outcome: outcome, Kind: kind, URL: url, Error: errMsg, TraceID: traceID,
 	}}
+}
+
+// ArtifactRevisionData: `artifact_revision` event payload (#1090 §4.8).
+type ArtifactRevisionData struct {
+	ID       string `json:"id"`
+	Revision int    `json:"revision"`
+	Kind     string `json:"kind"`
+	NodeID   string `json:"node_id"`
+	Round    int    `json:"round"`
+}
+
+// ScoredRef mirrors vetting.ScoredRef for the SSE wire shape, avoiding a
+// stream -> vetting import.
+type ScoredRef struct {
+	ArtifactID string `json:"artifact_id"`
+	Revision   int    `json:"revision"`
+}
+
+// ArtifactJudgeRoundData: `artifact_judge_round` event payload (#1090 §4.8).
+type ArtifactJudgeRoundData struct {
+	ID     string      `json:"id"`
+	Passed bool        `json:"passed"`
+	Score  float64     `json:"score"`
+	Scored []ScoredRef `json:"scored"`
 }
 
 // `compaction` event payload: a node's worker history was rewritten to fit
