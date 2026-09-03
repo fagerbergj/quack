@@ -97,32 +97,87 @@ func TestLastRevision_NoEntries(t *testing.T) {
 	}
 }
 
-// TestFold_NodeStatesLaterWins: a node's final status is its LAST node.*
-// entry, not its first.
+// TestFold_NodeStatesLaterWins: a node's terminal status is its LAST
+// node.done/failed entry; its StartedSeq is INDEPENDENTLY kept even after
+// the node reaches a terminal state (#1121 - rebuild needs both).
 func TestFold_NodeStatesLaterWins(t *testing.T) {
 	s := newFSStore(t)
-	mustAppend := func(kind string) {
+	mustAppend := func(kind string) int64 {
 		payload, _ := json.Marshal(struct {
 			NodeID string `json:"node_id"`
 			Turn   string `json:"turn"`
 			Round  int    `json:"round"`
 		}{NodeID: "n1", Turn: "t1", Round: 2})
-		if _, err := s.AppendIntent(context.Background(), ledger.Entry{
+		seq, err := s.AppendIntent(context.Background(), ledger.Entry{
 			ChatID: "chat1", Kind: kind, Payload: payload,
-		}); err != nil {
+		})
+		if err != nil {
 			t.Fatalf("AppendIntent %s: %v", kind, err)
 		}
+		return seq
 	}
-	mustAppend(ledger.KindNodeStarted)
-	mustAppend(ledger.KindNodeDone)
+	startedSeq := mustAppend(ledger.KindNodeStarted)
+	doneSeq := mustAppend(ledger.KindNodeDone)
 
 	res, err := Fold(context.Background(), s, "chat1", 0)
 	if err != nil {
 		t.Fatalf("Fold: %v", err)
 	}
-	n := res.Nodes["n1\x00t1"]
-	if n == nil || n.Status != "done" {
-		t.Fatalf("node state = %+v, want status done", n)
+	n := res.Nodes["n1"]
+	if n == nil || n.TerminalStatus != "done" || n.TerminalSeq != doneSeq {
+		t.Fatalf("node state = %+v, want terminal status done at seq %d", n, doneSeq)
+	}
+	if n.StartedSeq != startedSeq {
+		t.Fatalf("node state = %+v, want StartedSeq %d preserved alongside the terminal state", n, startedSeq)
+	}
+}
+
+// TestFold_NodeAcrossTurns_KeyedByNodeIDNotTurn is the #1125 review's
+// blocking scenario: a turn is fresh per invocation, node IDs are only
+// unique within one plan, so the SAME node ID legitimately recurs across
+// turns. Turn 1's node N fails; turn 2's N (a later re-run) starts and
+// completes. The fold must report exactly ONE current state for N - the
+// live one - not two states (one per turn) that a consumer could resurrect
+// turn 1's stale failure alongside turn 2's real success.
+func TestFold_NodeAcrossTurns_KeyedByNodeIDNotTurn(t *testing.T) {
+	s := newFSStore(t)
+	append_ := func(turn, kind string) int64 {
+		payload, _ := json.Marshal(struct {
+			NodeID string `json:"node_id"`
+			Turn   string `json:"turn"`
+		}{NodeID: "n1", Turn: turn})
+		seq, err := s.AppendIntent(context.Background(), ledger.Entry{
+			ChatID: "chat1", Kind: kind, Payload: payload,
+		})
+		if err != nil {
+			t.Fatalf("AppendIntent %s: %v", kind, err)
+		}
+		return seq
+	}
+	append_("turn-1", ledger.KindNodeStarted)
+	append_("turn-1", ledger.KindNodeFailed) // turn 1: n1 fails
+	turn2Start := append_("turn-2", ledger.KindNodeStarted)
+	turn2Done := append_("turn-2", ledger.KindNodeDone) // turn 2: n1 (re-run) succeeds
+
+	res, err := Fold(context.Background(), s, "chat1", 0)
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+	if len(res.Nodes) != 1 {
+		t.Fatalf("Nodes has %d entries, want exactly 1 (one node, not one per turn): %+v", len(res.Nodes), res.Nodes)
+	}
+	n := res.Nodes["n1"]
+	if n == nil {
+		t.Fatalf("Nodes[\"n1\"] missing - node must be keyed by NodeID alone")
+	}
+	if n.TerminalStatus != "done" || n.TerminalSeq != turn2Done {
+		t.Fatalf("node state = %+v, want turn 2's node_done (seq %d) - turn 1's stale node_failed must not survive", n, turn2Done)
+	}
+	if n.StartedSeq != turn2Start {
+		t.Fatalf("node state = %+v, want StartedSeq %d (turn 2's start, not turn 1's)", n, turn2Start)
+	}
+	if n.TurnID != "turn-2" {
+		t.Fatalf("node state = %+v, want TurnID turn-2 (the most recent)", n)
 	}
 }
 

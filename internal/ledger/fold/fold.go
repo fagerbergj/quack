@@ -81,16 +81,31 @@ func (a *Artifact) Latest() (ArtifactRevision, bool) {
 	return a.Revisions[len(a.Revisions)-1], true
 }
 
-// NodeState is one node+turn's lifecycle, derived from the last node.* entry
-// seen for it - richer per-round fields (tokens, output, model) never made
-// it into the skinny node.* payload, so this is a lossy reconstruction, not
-// a byte-for-byte replay of the SSE table's node_done event.
+// NodeState is one NODE's (not node+turn's) lifecycle, keyed by NodeID
+// alone - a turn is fresh per invocation (uuid.NewString() at
+// server/rest/handler.go, serve/extensions.go) while the WAL is per-chat
+// lifetime and node IDs are only unique within one plan, so the same node
+// ID legitimately recurs across turns; keying by turn would keep a stale
+// turn's state around forever, which rebuild (matching the live, per-run
+// table by node id + event name alone) could resurrect as a spurious row.
+// TurnID reflects the MOST RECENT entry only. Richer per-round fields
+// (tokens, output, model) never made it into the skinny node.* payload, so
+// this is a lossy reconstruction, not a byte-for-byte replay of the SSE
+// table's real events. StartedSeq and Terminal* are tracked INDEPENDENTLY
+// (each is its own "later entry wins" slot, same rule as an artifact
+// revision key) so a node that has already reached done/failed still
+// reports its node.started seq too - #1121: a rebuild must be able to
+// regenerate BOTH the node_start and node_done/failed rows, not just the
+// terminal one. A later node.started clears any earlier terminal (entries
+// arrive in seq order, so the terminal necessarily precedes a re-run's
+// start) - otherwise a completed run's node would still carry a PRIOR
+// turn's stale terminal status.
 type NodeState struct {
 	NodeID, TurnID string
-	Status         string // "started", "done", "failed"
+	StartedSeq     int64  // 0 = no node.started entry seen
+	TerminalStatus string // "" | "done" | "failed" - "" whenever a start supersedes it
+	TerminalSeq    int64
 	Round          int
-	At             time.Time
-	Seq            int64
 }
 
 // JudgeRound is one judge.round entry.
@@ -105,7 +120,7 @@ type JudgeRound struct {
 // Result is one chat's ledger folded into its projections (V4 §4.9).
 type Result struct {
 	Artifacts   map[string]*Artifact  // by id (Entry.Key)
-	Nodes       map[string]*NodeState // by node_id+"\x00"+turn_id
+	Nodes       map[string]*NodeState // by NodeID alone - see NodeState's doc for why not (node_id, turn_id)
 	JudgeRounds []JudgeRound          // seq order
 	LastSeq     int64
 }
@@ -169,13 +184,35 @@ func applyEntries(entries []ledger.Entry) *Result {
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
 				continue
 			}
-			status := "started"
-			if e.Kind == ledger.KindNodeDone {
-				status = "done"
-			} else if e.Kind == ledger.KindNodeFailed {
-				status = "failed"
+			// Keyed by NodeID ALONE, not (NodeID, Turn): a turn is fresh
+			// per invocation (uuid.NewString() at server/rest/handler.go,
+			// serve/extensions.go), the WAL is per-chat lifetime, and node
+			// IDs are only unique within one plan - so the SAME node ID
+			// legitimately recurs across turns. Keying by turn kept a
+			// stale state around forever (turn 1's node_failed surviving
+			// next to turn 2's node_done for the same node), which
+			// rebuild - matching the live, per-run table by (node id,
+			// event name) alone - could resurrect as a spurious row.
+			key := p.NodeID
+			n, ok := res.Nodes[key]
+			if !ok {
+				n = &NodeState{NodeID: p.NodeID, TurnID: p.Turn}
+				res.Nodes[key] = n
 			}
-			res.Nodes[p.NodeID+"\x00"+p.Turn] = &NodeState{NodeID: p.NodeID, TurnID: p.Turn, Status: status, Round: p.Round, At: e.At, Seq: e.Seq}
+			n.Round = p.Round
+			n.TurnID = p.Turn
+			switch e.Kind {
+			case ledger.KindNodeStarted:
+				// A later start re-runs the node; entries arrive in seq
+				// order, so any earlier terminal (same-turn retry or a
+				// previous turn) necessarily precedes it and is superseded.
+				n.TerminalStatus, n.TerminalSeq = "", 0
+				n.StartedSeq = e.Seq
+			case ledger.KindNodeDone:
+				n.TerminalStatus, n.TerminalSeq = "done", e.Seq
+			case ledger.KindNodeFailed:
+				n.TerminalStatus, n.TerminalSeq = "failed", e.Seq
+			}
 		case ledger.KindJudgeRound:
 			res.JudgeRounds = append(res.JudgeRounds, JudgeRound{ID: e.Key, NodeID: e.NodeID, TurnID: e.TurnID, Payload: e.Payload, At: e.At, Seq: e.Seq})
 		}

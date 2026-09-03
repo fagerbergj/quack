@@ -12,7 +12,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
 	"sort"
+	"time"
+
+	"google.golang.org/adk/v2/artifact"
 
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/ledger"
@@ -38,28 +42,54 @@ func RunLedgerShow(ctx context.Context, out io.Writer, ls ledger.LedgerStore, ch
 	return nil
 }
 
-// LedgerRebuildReport is `quack ledger rebuild`'s result: what changed (or,
-// under --dry-run, what WOULD change).
+// LedgerRebuildReport is `quack ledger rebuild`'s result: what actually
+// DIFFERED from the fold (or, under --dry-run, what WOULD differ) - #1121:
+// this is a diff against the current rows, never a raw candidate count, so
+// it reports 0 on a chat that hasn't drifted.
 type LedgerRebuildReport struct {
 	ChatID                   string   `json:"chat_id"`
 	DryRun                   bool     `json:"dry_run"`
-	ArtifactRevisionsUpdated int      `json:"artifact_revisions_updated"`
+	Force                    bool     `json:"force,omitempty"`
+	ArtifactRevisionsChanged int      `json:"artifact_revisions_changed"`
 	ArtifactUpdateErrors     []string `json:"artifact_update_errors,omitempty"`
-	SSEEventsWritten         int      `json:"sse_events_written"`
+	// SSERowsInserted: node-lifecycle rows genuinely missing from the table,
+	// inserted without touching any other row. Zero in --force mode (see
+	// SSERowsReplaced instead).
+	SSERowsInserted int `json:"sse_rows_inserted"`
+	// SSERowsReplaced: --force mode ONLY - the whole table was wiped and
+	// replaced with this many synthesized rows, losing every observational
+	// event (agent_token, agent_thinking, tool calls, dag_plan, ...).
+	SSERowsReplaced int `json:"sse_rows_replaced,omitempty"`
 }
 
-// RunLedgerRebuild regenerates chatID's artifact store rows (kind/class/
-// lineage only - bytes and revision numbers are never touched, they aren't
-// in the fold) and its SSE table (node_start/node_done/node_failed,
-// reconstructed from node.* entries - see runlog.SynthesizeChatEvents's doc
-// for what that reconstruction loses) from the ledger fold. dryRun computes
-// the report without writing anything.
-func RunLedgerRebuild(ctx context.Context, ls ledger.LedgerStore, st *store.Store, artifacts *store.TurnAwareService, chatID string, dryRun bool) (*LedgerRebuildReport, error) {
+// RunLedgerRebuild reconciles chatID's artifact store rows and SSE table
+// against the ledger fold. Default (force=false, the safe path, #1121):
+//   - artifact metadata: a revision's kind/class/lineage is updated ONLY if
+//     it actually differs from the fold - compared via LoadWithMeta, not
+//     assumed. Bytes and revision numbers are never touched, they aren't in
+//     the fold.
+//   - SSE table: ONLY node-lifecycle rows (node_start/node_done/node_failed)
+//     that are COMPLETELY MISSING are inserted, keyed by (node id, event
+//     name) - never by seq (the ledger's seq space and the table's per-run
+//     seq space are different counters, see runlog.LoadEvents's doc; reusing
+//     a ledger seq as a table row's Seq risks colliding with and silently
+//     overwriting an unrelated real row). Every existing row - lifecycle or
+//     observational - is left untouched, since the fold can't reconstruct
+//     ANY row's full real content (tokens/output/model/exact timestamps) and
+//     overwriting on that basis would replace real data with a placeholder.
+//
+// force=true is the OLD, destructive "replace the whole table" mode: it
+// deletes every row (including all observational history) and rewrites the
+// table from the fold alone. Only for a chat the operator has already
+// decided to treat as unrecoverable any other way.
+//
+// dryRun computes the report without writing anything.
+func RunLedgerRebuild(ctx context.Context, ls ledger.LedgerStore, st *store.Store, artifacts *store.TurnAwareService, chatID string, dryRun, force bool) (*LedgerRebuildReport, error) {
 	res, err := fold.Fold(ctx, ls, chatID, 0)
 	if err != nil {
 		return nil, fmt.Errorf("ledger rebuild: fold chat %q: %w", chatID, err)
 	}
-	report := &LedgerRebuildReport{ChatID: chatID, DryRun: dryRun}
+	report := &LedgerRebuildReport{ChatID: chatID, DryRun: dryRun, Force: force}
 	userID := st.SessionUserForChat(ctx, chatID)
 
 	ids := make([]string, 0, len(res.Artifacts))
@@ -69,7 +99,15 @@ func RunLedgerRebuild(ctx context.Context, ls ledger.LedgerStore, st *store.Stor
 	sort.Strings(ids) // deterministic report order
 	for _, id := range ids {
 		for _, rev := range res.Artifacts[id].Revisions {
-			report.ArtifactRevisionsUpdated++
+			drifted, cerr := artifactMetaDrifted(ctx, artifacts, artifactref.AppName, userID, chatID, id, rev)
+			if cerr != nil {
+				report.ArtifactUpdateErrors = append(report.ArtifactUpdateErrors, fmt.Sprintf("%s@%d: %v", id, rev.Revision, cerr))
+				continue
+			}
+			if !drifted {
+				continue
+			}
+			report.ArtifactRevisionsChanged++
 			if dryRun {
 				continue
 			}
@@ -79,19 +117,89 @@ func RunLedgerRebuild(ctx context.Context, ls ledger.LedgerStore, st *store.Stor
 		}
 	}
 
-	events := runlog.SynthesizeChatEvents(chatID, res)
-	report.SSEEventsWritten = len(events)
-	if !dryRun {
-		if err := st.DeleteChatEvents(ctx, chatID); err != nil {
-			return report, fmt.Errorf("ledger rebuild: clear SSE table for chat %q: %w", chatID, err)
+	if force {
+		events := runlog.SynthesizeChatEvents(chatID, res)
+		report.SSERowsReplaced = len(events)
+		if !dryRun {
+			if err := st.DeleteChatEvents(ctx, chatID); err != nil {
+				return report, fmt.Errorf("ledger rebuild: clear SSE table for chat %q: %w", chatID, err)
+			}
+			for _, ev := range events {
+				if err := st.InsertChatEvent(ctx, ev); err != nil {
+					return report, fmt.Errorf("ledger rebuild: insert SSE row for chat %q: %w", chatID, err)
+				}
+			}
 		}
-		for _, ev := range events {
-			if err := st.InsertChatEvent(ctx, ev); err != nil {
+		return report, nil
+	}
+
+	existing, err := st.LoadChatEvents(ctx, chatID, 0)
+	if err != nil {
+		return report, fmt.Errorf("ledger rebuild: load chat_events for chat %q: %w", chatID, err)
+	}
+	have := map[string]bool{}
+	var maxSeq int64
+	for _, row := range existing {
+		if row.Seq > maxSeq {
+			maxSeq = row.Seq
+		}
+		ev, uerr := runlog.UnmarshalEvent(row.Event)
+		if uerr != nil {
+			continue
+		}
+		if nodeID, ok := runlog.EventNodeID(ev); ok {
+			have[nodeID+"\x00"+ev.Name] = true
+		}
+	}
+	missing := runlog.MissingLifecycleEvents(chatID, res, func(nodeID, name string) bool {
+		return have[nodeID+"\x00"+name]
+	})
+	report.SSERowsInserted = len(missing)
+	if !dryRun {
+		now := time.Now().UTC()
+		for _, ce := range missing {
+			maxSeq++
+			ce.Seq, ce.CreatedAt = maxSeq, now
+			if err := st.InsertChatEvent(ctx, ce); err != nil {
 				return report, fmt.Errorf("ledger rebuild: insert SSE row for chat %q: %w", chatID, err)
 			}
 		}
 	}
 	return report, nil
+}
+
+// artifactMetaDrifted reports whether id@revision's STORED kind/class/
+// lineage differs from what the fold says it should be - the diff #1121
+// requires before counting or writing anything.
+func artifactMetaDrifted(ctx context.Context, artifacts *store.TurnAwareService, appName, userID, chatID, id string, rev fold.ArtifactRevision) (bool, error) {
+	_, kind, class, lineageJSON, err := artifacts.LoadWithMeta(ctx, &artifact.LoadRequest{
+		AppName: appName, UserID: userID, SessionID: chatID, FileName: id, Version: int64(rev.Revision),
+	})
+	if err != nil {
+		return false, err
+	}
+	if kind != rev.Kind || class != rev.Class {
+		return true, nil
+	}
+	equal, err := jsonEqual(lineageJSON, rev.Lineage)
+	if err != nil {
+		return true, nil // stored lineage doesn't even parse - treat as drifted
+	}
+	return !equal, nil
+}
+
+// jsonEqual compares two JSON documents structurally (map/slice/scalar),
+// immune to key-order or whitespace differences between two independent
+// marshals of the same value.
+func jsonEqual(a, b json.RawMessage) (bool, error) {
+	var va, vb any
+	if err := json.Unmarshal(a, &va); err != nil {
+		return false, err
+	}
+	if err := json.Unmarshal(b, &vb); err != nil {
+		return false, err
+	}
+	return reflect.DeepEqual(va, vb), nil
 }
 
 // FormatLedgerRebuildReport renders report as the human-readable summary `rebuild` prints.
@@ -100,8 +208,14 @@ func FormatLedgerRebuildReport(r *LedgerRebuildReport) string {
 	if r.DryRun {
 		verb = "would rebuild"
 	}
-	s := fmt.Sprintf("%s chat %s: %d artifact revision(s) %s, %d SSE event(s) %s\n",
-		verb, r.ChatID, r.ArtifactRevisionsUpdated, verbPast(r.DryRun), r.SSEEventsWritten, verbPast(r.DryRun))
+	var s string
+	if r.Force {
+		s = fmt.Sprintf("%s chat %s (--force): %d artifact revision(s) %s, chat_events REPLACED with %d synthesized row(s) - observational history lost\n",
+			verb, r.ChatID, r.ArtifactRevisionsChanged, verbPast(r.DryRun), r.SSERowsReplaced)
+	} else {
+		s = fmt.Sprintf("%s chat %s: %d artifact revision(s) %s, %d SSE row(s) %s (inserted only - no row was touched or deleted)\n",
+			verb, r.ChatID, r.ArtifactRevisionsChanged, verbPast(r.DryRun), r.SSERowsInserted, verbPast(r.DryRun))
+	}
 	for _, e := range r.ArtifactUpdateErrors {
 		s += "  error: " + e + "\n"
 	}

@@ -11,6 +11,7 @@ package runlog
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
@@ -66,11 +67,17 @@ func (l *EventLog) LoadEvents(ctx context.Context, chatID string, fromSeq int64)
 
 // SynthesizeChatEvents turns a fold.Result into the ChatEvent rows a live
 // run would have produced for its node lifecycle - the write side of `quack
-// ledger rebuild` and LoadEvents's from-scratch fallback. Seq is each
-// event's SOURCE ledger entry seq (the ledger's own lifetime seq space) -
-// NOT comparable to the SSE table's per-run Seq (see LoadEvents's doc); a
-// caller resuming a live SSE stream must treat this as a fresh reconstructed
-// history, never as a continuation to filter by a table-space id.
+// ledger rebuild` and LoadEvents's from-scratch fallback. A node with BOTH a
+// node.started and a terminal (done/failed) entry produces BOTH a
+// node_start and a node_done/node_failed row (#1121 - StartedSeq and
+// TerminalStatus are tracked independently in the fold for exactly this).
+// Seq is each event's SOURCE ledger entry seq (the ledger's own lifetime seq
+// space) - NOT comparable to the SSE table's per-run Seq (see LoadEvents's
+// doc); a caller resuming a live SSE stream must treat this as a fresh
+// reconstructed history, never as a continuation to filter by a table-space
+// id. `quack ledger rebuild` (internal/cli/ledger.go) re-keys these by
+// (node id, event name) to upsert against the real table instead of using
+// this seq directly - see its doc for why.
 func SynthesizeChatEvents(chatID string, res *fold.Result) []store.ChatEvent {
 	type item struct {
 		seq int64
@@ -78,18 +85,15 @@ func SynthesizeChatEvents(chatID string, res *fold.Result) []store.ChatEvent {
 	}
 	var items []item
 	for _, n := range res.Nodes {
-		var ev stream.SSEEvent
-		switch n.Status {
-		case "started":
-			ev = stream.NodeStart(n.NodeID, "")
-		case "done":
-			ev = stream.NodeDone(n.NodeID, stream.NodeDoneData{})
-		case "failed":
-			ev = stream.NodeFailed(n.NodeID, "")
-		default:
-			continue
+		if n.StartedSeq > 0 {
+			items = append(items, item{seq: n.StartedSeq, ev: stream.NodeStart(n.NodeID, "")})
 		}
-		items = append(items, item{seq: n.Seq, ev: ev})
+		switch n.TerminalStatus {
+		case "done":
+			items = append(items, item{seq: n.TerminalSeq, ev: stream.NodeDone(n.NodeID, stream.NodeDoneData{})})
+		case "failed":
+			items = append(items, item{seq: n.TerminalSeq, ev: stream.NodeFailed(n.NodeID, "")})
+		}
 	}
 	// judge.round entries carry no dedicated SSE event yet (design V4 §5's
 	// stream/event.go step is a later P) - out of #1101's scope; the fold
@@ -104,6 +108,65 @@ func SynthesizeChatEvents(chatID string, res *fold.Result) []store.ChatEvent {
 			continue
 		}
 		out = append(out, store.ChatEvent{ChatID: chatID, Seq: it.seq, Event: js, CreatedAt: now})
+	}
+	return out
+}
+
+// IsLifecycleEvent reports whether name is one this package can synthesize
+// from the fold - node_start/node_done/node_failed only. Everything else
+// (agent_token, agent_thinking, dag_plan, ...) is observational and has no
+// WAL source (#1121 - rebuild must never treat those as candidates at all).
+func IsLifecycleEvent(name string) bool {
+	switch name {
+	case stream.EventNodeStart, stream.EventNodeDone, stream.EventNodeFailed:
+		return true
+	}
+	return false
+}
+
+// EventNodeID extracts the node_id a lifecycle SSEEvent carries, regardless
+// of its concrete Data type (NodeStartData/NodeDoneData/NodeFailedData all
+// share the same "node_id" JSON field) - used to key an EXISTING stored row
+// the same way MissingLifecycleEvents keys a synthesized one, so the two
+// sides of the match agree on identity without a shared concrete type.
+func EventNodeID(ev stream.SSEEvent) (string, bool) {
+	if !IsLifecycleEvent(ev.Name) {
+		return "", false
+	}
+	var d struct {
+		NodeID string `json:"node_id"`
+	}
+	raw, err := json.Marshal(ev.Data)
+	if err != nil {
+		return "", false
+	}
+	if err := json.Unmarshal(raw, &d); err != nil || d.NodeID == "" {
+		return "", false
+	}
+	return d.NodeID, true
+}
+
+// MissingLifecycleEvents returns the subset of SynthesizeChatEvents(res)
+// for which have(nodeID, eventName) is false (#1121's non-destructive
+// rebuild). An EXISTING lifecycle row is NEVER a candidate here, even if its
+// content differs from the synthesized placeholder: the fold only ever
+// carries node_id/turn/round, so a real row's richer fields (tokens, output,
+// model, the real started_at) are always "different" from a reconstruction
+// that never had them - overwriting on that basis would replace real data
+// with a placeholder. Only a row that doesn't exist AT ALL is missing.
+func MissingLifecycleEvents(chatID string, res *fold.Result, have func(nodeID, eventName string) bool) []store.ChatEvent {
+	all := SynthesizeChatEvents(chatID, res)
+	out := make([]store.ChatEvent, 0, len(all))
+	for _, ce := range all {
+		ev, err := UnmarshalEvent(ce.Event)
+		if err != nil {
+			continue
+		}
+		nodeID, ok := EventNodeID(ev)
+		if !ok || have(nodeID, ev.Name) {
+			continue
+		}
+		out = append(out, ce)
 	}
 	return out
 }

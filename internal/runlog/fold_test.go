@@ -29,7 +29,8 @@ func appendNode(t *testing.T, s ledger.LedgerStore, chatID, nodeID, turn, kind s
 }
 
 // TestLoadEvents_FallsBackToFold: an empty SSE table with a WAL armed
-// resumes from the fold instead of returning nothing.
+// resumes from the fold instead of returning nothing - BOTH the node_start
+// and node_done rows (#1121: start and terminal are synthesized independently).
 func TestLoadEvents_FallsBackToFold(t *testing.T) {
 	st := newTestStore(t)
 	ls, err := ledger.NewFSStore(t.TempDir())
@@ -45,15 +46,19 @@ func TestLoadEvents_FallsBackToFold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadEvents: %v", err)
 	}
-	if len(evs) != 1 {
-		t.Fatalf("LoadEvents returned %d events, want 1 (the node's final state)", len(evs))
+	if len(evs) != 2 {
+		t.Fatalf("LoadEvents returned %d events, want 2 (node_start + node_done)", len(evs))
 	}
-	ev, err := UnmarshalEvent(evs[0].Event)
-	if err != nil {
-		t.Fatalf("UnmarshalEvent: %v", err)
+	names := make([]string, len(evs))
+	for i, e := range evs {
+		ev, err := UnmarshalEvent(e.Event)
+		if err != nil {
+			t.Fatalf("UnmarshalEvent: %v", err)
+		}
+		names[i] = ev.Name
 	}
-	if ev.Name != "node_done" {
-		t.Fatalf("event name = %q, want node_done", ev.Name)
+	if names[0] != "node_start" || names[1] != "node_done" {
+		t.Fatalf("event names = %v, want [node_start node_done] in seq order", names)
 	}
 }
 

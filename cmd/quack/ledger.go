@@ -76,24 +76,34 @@ func newLedgerShowCmd() *cobra.Command {
 }
 
 func newLedgerRebuildCmd() *cobra.Command {
-	var dryRun bool
+	var dryRun, force bool
 	c := &cobra.Command{
 		Use:   "rebuild <chat-id>",
-		Short: "Regenerate a chat's artifact metadata and SSE table from the ledger",
-		Long: "Regenerates the artifact store rows' kind/class/lineage and the SSE\n" +
-			"table from the ledger fold (V4 §4.9's projections) - bytes and revision\n" +
-			"numbers are never touched, only metadata the fold recomputes. --dry-run\n" +
-			"reports what would change without writing.\n\n" +
+		Short: "Reconcile a chat's artifact metadata and SSE table against the ledger",
+		Long: "Diffs the ledger fold (V4 §4.9's projections) against what's actually\n" +
+			"stored and fixes only real drift: an artifact revision's kind/class/\n" +
+			"lineage is corrected if (and only if) it differs, and a MISSING node\n" +
+			"lifecycle row (node_start/node_done/node_failed) is inserted. Bytes and\n" +
+			"revision numbers are never touched, and no OTHER row - lifecycle or\n" +
+			"observational (agent_token, tool calls, dag_plan, ...) - is ever deleted\n" +
+			"or overwritten. --dry-run reports what would change without writing;\n" +
+			"zero changes is the expected result on a healthy chat.\n\n" +
+			"--force switches to the OLD, DESTRUCTIVE mode: it WIPES the chat's\n" +
+			"entire chat_events table and replaces it with synthesized lifecycle\n" +
+			"rows only - every observational event is LOST. Use only when you have\n" +
+			"already decided the chat's table is unrecoverable any other way.\n\n" +
 			"Run this with the server STOPPED, or with no active run on this chat:\n" +
-			"the SSE table rewrite is a delete-then-reinsert, not atomic, and a run\n" +
-			"landing rows in the window between them loses those rows to the rebuild.",
+			"writes are not transactional against a concurrently running run.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ls, st, artifacts, err := openLedgerAndStores()
 			if err != nil {
 				return err
 			}
-			report, err := cli.RunLedgerRebuild(cmd.Context(), ls, st, artifacts, args[0], dryRun)
+			if force {
+				fmt.Fprintln(cmd.ErrOrStderr(), "--force: replacing the whole chat_events table - all observational history (tokens, tool calls, dag_plan, ...) for this chat will be lost")
+			}
+			report, err := cli.RunLedgerRebuild(cmd.Context(), ls, st, artifacts, args[0], dryRun, force)
 			if err != nil {
 				return err
 			}
@@ -105,6 +115,7 @@ func newLedgerRebuildCmd() *cobra.Command {
 		},
 	}
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "report what would change without writing")
+	c.Flags().BoolVar(&force, "force", false, "DESTRUCTIVE: wipe and replace the whole chat_events table (loses observational history)")
 	return c
 }
 
