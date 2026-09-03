@@ -114,3 +114,127 @@ func verbPast(dryRun bool) string {
 	}
 	return "written"
 }
+
+// DeliveryRecoverer looks an idempotency key up at the delivery target (a
+// hidden marker in a GitHub review body, a reMarkable document id) and
+// reports whether it was already posted. This is a LOCAL copy of the
+// interface an extension implements (github's App.RecoverDelivery, in
+// quack-extensions) - not an import, since core is pinned to sdk v0.8.0 on
+// origin/main, which predates this capability. Go interfaces are
+// structural: the concrete extension value satisfies this by method-set
+// shape alone, with no go.mod bump. Delete this and import
+// sdk.DeliveryRecoverer directly once quack's go.mod bumps to the sdk/github
+// release that adds it (#1093 deploy-order note).
+type DeliveryRecoverer interface {
+	RecoverDelivery(ctx context.Context, key string) (found bool, remoteURL string, err error)
+}
+
+// OrphanedDelivery is one delivery.intent with no matching delivery.done.
+type OrphanedDelivery struct {
+	Key      string `json:"key"`
+	TargetID string `json:"target_id"`
+	Revision int    `json:"revision"`
+	NodeID   string `json:"node_id"`
+	Seq      int64  `json:"seq"`
+}
+
+type deliveryIntentPayload struct {
+	TargetID string `json:"target_id"`
+	Revision int    `json:"revision"`
+	Key      string `json:"idempotency_key"`
+}
+
+// findOrphanedDeliveryIntents scans chatID's ledger for delivery.intent
+// entries with no later delivery.done sharing the same Key - the crash
+// window #1093 case 13 covers (died between intent and done).
+func findOrphanedDeliveryIntents(ctx context.Context, ls ledger.LedgerStore, chatID string) ([]OrphanedDelivery, error) {
+	entries, err := ls.ReadEntries(ctx, chatID, 0)
+	if err != nil {
+		return nil, fmt.Errorf("ledger recover: read chat %q: %w", chatID, err)
+	}
+	done := map[string]bool{}
+	var intents []OrphanedDelivery
+	for _, e := range entries {
+		switch e.Kind {
+		case ledger.KindDeliveryDone:
+			done[e.Key] = true
+		case ledger.KindDeliveryIntent:
+			var p deliveryIntentPayload
+			if json.Unmarshal(e.Payload, &p) != nil {
+				continue
+			}
+			intents = append(intents, OrphanedDelivery{Key: e.Key, TargetID: p.TargetID, Revision: p.Revision, NodeID: e.NodeID, Seq: e.Seq})
+		}
+	}
+	out := intents[:0]
+	for _, in := range intents {
+		if !done[in.Key] {
+			out = append(out, in)
+		}
+	}
+	return out, nil
+}
+
+// LedgerRecoverReport is `quack ledger recover`'s result.
+type LedgerRecoverReport struct {
+	ChatID     string             `json:"chat_id"`
+	Confirmed  []OrphanedDelivery `json:"confirmed"`            // delivery.done appended; extension already had it
+	Redone     []OrphanedDelivery `json:"redone"`               // redoFunc called; nothing was there
+	Unresolved []OrphanedDelivery `json:"unresolved,omitempty"` // no recoverer/redoFunc available to check
+}
+
+// RunLedgerRecover reconciles chatID's orphaned delivery.intent entries
+// (#1093 case 13): for each, ask recoverer whether the target already saw
+// this key posted (a crash after Deliver but before delivery.done landed).
+// If found, delivery.done is appended and redoFunc is never called - the
+// extension is never asked to post twice. If not found (a crash BEFORE
+// Deliver reached the extension), redoFunc runs the same delivery path
+// again. recoverer/redoFunc nil means that check/action isn't wired for this
+// caller (e.g. no extension implements it yet) - such intents are reported
+// Unresolved rather than guessed at.
+func RunLedgerRecover(ctx context.Context, ls ledger.LedgerStore, chatID string, recoverer DeliveryRecoverer, redoFunc func(ctx context.Context, o OrphanedDelivery) error) (*LedgerRecoverReport, error) {
+	orphans, err := findOrphanedDeliveryIntents(ctx, ls, chatID)
+	if err != nil {
+		return nil, err
+	}
+	report := &LedgerRecoverReport{ChatID: chatID}
+	for _, o := range orphans {
+		if recoverer != nil {
+			found, remoteURL, rerr := recoverer.RecoverDelivery(ctx, o.Key)
+			if rerr != nil {
+				report.Unresolved = append(report.Unresolved, o)
+				continue
+			}
+			if found {
+				payload, _ := json.Marshal(struct {
+					RemoteURL string `json:"remote_url,omitempty"`
+				}{RemoteURL: remoteURL})
+				if _, aerr := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, NodeID: o.NodeID, Kind: ledger.KindDeliveryDone, Key: o.Key, Payload: payload}); aerr != nil {
+					return nil, fmt.Errorf("ledger recover: append delivery.done for key %q: %w", o.Key, aerr)
+				}
+				report.Confirmed = append(report.Confirmed, o)
+				continue
+			}
+		}
+		if redoFunc != nil {
+			if rerr := redoFunc(ctx, o); rerr != nil {
+				report.Unresolved = append(report.Unresolved, o)
+				continue
+			}
+			report.Redone = append(report.Redone, o)
+			continue
+		}
+		report.Unresolved = append(report.Unresolved, o)
+	}
+	return report, nil
+}
+
+// FormatLedgerRecoverReport renders report as the human-readable summary `recover` prints.
+func FormatLedgerRecoverReport(r *LedgerRecoverReport) string {
+	s := fmt.Sprintf("chat %s: %d confirmed already-delivered, %d redelivered, %d unresolved\n",
+		r.ChatID, len(r.Confirmed), len(r.Redone), len(r.Unresolved))
+	for _, o := range r.Unresolved {
+		s += fmt.Sprintf("  unresolved: key=%s target=%s rev=%d node=%s seq=%d\n", o.Key, o.TargetID, o.Revision, o.NodeID, o.Seq)
+	}
+	return s
+}
