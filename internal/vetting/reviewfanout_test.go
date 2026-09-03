@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/workflow"
 )
 
@@ -253,6 +254,42 @@ func TestResolveAbortedReviewer_SoloReviewerDeliversStagedReviewInsteadOfDiscard
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("a staged review must be delivered when the round that produced it dies")
+	}
+}
+
+// #1118 regression: a solo reviewer's round that dies must still post the
+// staged review + abort note, not the stale code_review record left by a
+// prior round on the same chat (the artifact render would clobber both the
+// note and the current staged verdict with old content).
+func TestResolveAbortedReviewer_SoloReviewerNotClobberedByStaleArtifact(t *testing.T) {
+	cfg := Config{IsReviewer: true, ChatID: "ext:github:owner-repo-1118", User: "u1", Artifacts: artifact.InMemoryService()}
+	seedCodeReview(t, cfg, "approve", "STALE prior-round summary", nil)
+
+	done := make(chan DeliveryContext, 1)
+	cfg.Deliver = func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
+		done <- dc
+		return nil, nil
+	}
+	act := workerActivity{stagedDelivery: map[string]StagedDelivery{
+		"review": {Kind: "review", Event: "request_changes", Body: "current round's real verdict"},
+	}}
+
+	resolveAbortedReviewer(context.Background(), nil, cfg, "review-1118", act)
+
+	select {
+	case dc := <-done:
+		body := dc.Items[0].Body
+		if strings.Contains(body, "STALE prior-round summary") {
+			t.Fatalf("Body = %q, must not be replaced by the stale artifact record", body)
+		}
+		if !strings.Contains(body, "current round's real verdict") {
+			t.Fatalf("Body = %q, want the staged text preserved", body)
+		}
+		if !strings.Contains(body, "abnormally") {
+			t.Fatalf("Body = %q, want the #942 abort note", body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a killed solo reviewer's staged review must be delivered")
 	}
 }
 

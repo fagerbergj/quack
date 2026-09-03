@@ -210,6 +210,11 @@ type workerActivity struct {
 
 	stagedDelivery map[string]StagedDelivery
 	currentBranch  string
+
+	// skipArtifactRender: post stagedDelivery text as-is, never the
+	// code_review/pr_body artifact - it may be stale relative to this
+	// item (aborted round's salvaged text, or an already-merged review).
+	skipArtifactRender bool
 	// ponytail: prefer plan.Setup's PR/issue number over ledger inference.
 	prNumber int
 }

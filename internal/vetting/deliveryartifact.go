@@ -24,6 +24,9 @@ import (
 // it. staged is mutated in place and returned for call-site convenience;
 // fromStaged is true when any item fell back to the worker's own staged text
 // (finding 2: the caller must never record such a delivery as artifact-backed).
+// ponytail: all-or-nothing across items; fine while reviewers stage only
+// "review" and implementers only "pr" - needs per-item scoping once #1095's
+// pr_body writer lands alongside a rendered review in the same delivery.
 func artifactRenderedDelivery(ctx context.Context, cfg Config, nodeID string, staged map[string]StagedDelivery) (result map[string]StagedDelivery, fromStaged bool) {
 	if cfg.IsReviewer {
 		if item, ok := renderReviewFromArtifact(ctx, cfg, nodeID); ok {
@@ -44,8 +47,8 @@ func artifactRenderedDelivery(ctx context.Context, cfg Config, nodeID string, st
 	return staged, fromStaged
 }
 
-// renderReviewFromArtifact loads the latest code_review record (only valid
-// to call once the round it belongs to has passed - see commitDelivery) and
+// renderReviewFromArtifact loads the latest code_review record (called on
+// every final round, whether it passed or failed - see commitDelivery) and
 // its findings, and renders the same StagedDelivery{Kind: "review", ...}
 // shape stage_review/the answer-tail parser would have produced. false when
 // no code_review record exists yet for this subject (fresh chat, or a

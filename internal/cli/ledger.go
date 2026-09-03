@@ -138,9 +138,9 @@ type DeliveryContext struct {
 // interface an extension implements (github's App.RecoverDelivery, in
 // quack-extensions) - not an import, since core is pinned to sdk v0.8.0 on
 // origin/main, which predates this capability. Structurally identical to
-// sdk.DeliveryRecoverer's 3-arg/DeliveryItemOutcome signature so the concrete
-// extension value satisfies it by method-set shape alone with no go.mod
-// bump. Delete this and import sdk.DeliveryRecoverer directly once quack's
+// sdk.DeliveryRecoverer's 3-arg/DeliveryItemOutcome signature - mirrors the
+// planned v0.9.0 signature; replaced wholesale when the bump lands. Delete
+// this and import sdk.DeliveryRecoverer directly once quack's
 // go.mod bumps to the sdk/github v0.9.0 release that adds it (#1093
 // deploy-order note; see PR body for the exact pin steps).
 type DeliveryRecoverer interface {

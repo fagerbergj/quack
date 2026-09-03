@@ -1041,8 +1041,10 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	// delivery renders and records the SAME revision it posts, never the
 	// staged text (finding 2: a staged-text post must never be recorded as
 	// an artifact-backed delivery).
-	var renderedFromStaged bool
-	act.stagedDelivery, renderedFromStaged = artifactRenderedDelivery(ctx, cfg, nodeID, act.stagedDelivery)
+	renderedFromStaged := act.skipArtifactRender
+	if !renderedFromStaged {
+		act.stagedDelivery, renderedFromStaged = artifactRenderedDelivery(ctx, cfg, nodeID, act.stagedDelivery)
+	}
 	spanCtx, span := otelobs.Start(ctx, "delivery",
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID))
 	defer span.End()
@@ -1203,7 +1205,10 @@ func deliverMergedReview(ctx context.Context, sink func(stream.SSEEvent), cfg Co
 	cfg.ReviewFanout = nil
 	// The delivering node (often a synthesizer) may have cloned nothing
 	// itself - fall back to a reviewer sibling's clone coordinates (#1059).
-	act := workerActivity{stagedDelivery: map[string]StagedDelivery{"review": merged}, currentBranch: branch}
+	// The merge is already the final worst-of text; a reviewer-node terminal
+	// (latent plan shape, see #1118 review) must never let the render
+	// clobber it with that node's own individual code_review record.
+	act := workerActivity{stagedDelivery: map[string]StagedDelivery{"review": merged}, currentBranch: branch, skipArtifactRender: true}
 	if cloneURL != "" {
 		act.clonedRepos = []string{cloneURL}
 	}
@@ -1237,7 +1242,7 @@ func resolveAbortedReviewer(ctx context.Context, sink func(stream.SSEEvent), cfg
 		if !hasItem {
 			return
 		}
-		commitDelivery(ctx, sink, cfg, nodeID, workerActivity{stagedDelivery: map[string]StagedDelivery{"review": item}}, GateResult{})
+		commitDelivery(ctx, sink, cfg, nodeID, workerActivity{stagedDelivery: map[string]StagedDelivery{"review": item}, skipArtifactRender: true}, GateResult{})
 		return
 	}
 	var merged StagedDelivery
