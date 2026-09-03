@@ -121,7 +121,7 @@ CLEAN:
 	}
 
 	rc := recordClient(cfg)
-	raw, _, rev, ok, err := rc.LatestWithMeta(context.Background(), codeReviewID(cfg))
+	raw, _, _, rev, ok, err := rc.LatestWithMeta(context.Background(), codeReviewID(cfg))
 	if err != nil || !ok || rev != 1 {
 		t.Fatalf("LatestWithMeta: rev=%d ok=%v err=%v", rev, ok, err)
 	}
@@ -138,10 +138,10 @@ CLEAN:
 
 	for id, want := range current {
 		waitFor(t, func() bool {
-			_, _, _, ok, _ := rc.LatestWithMeta(context.Background(), id)
+			_, _, _, _, ok, _ := rc.LatestWithMeta(context.Background(), id)
 			return ok
 		})
-		fRaw, _, _, _, err := rc.LatestWithMeta(context.Background(), id)
+		fRaw, _, _, _, _, err := rc.LatestWithMeta(context.Background(), id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -155,6 +155,47 @@ CLEAN:
 		if f.Path != want.Path {
 			t.Fatalf("finding %s path = %q, want %q", id, f.Path, want.Path)
 		}
+	}
+}
+
+// TestSaveCodeReviewRound_ToolWriteSkipsTailFallback covers the #1091 gate
+// fallback: a write_code_review call already wrote this round's record
+// directly, so saveCodeReviewRound must not also parse the (bogus) answer
+// tail and overwrite it - it just adopts the tool-written revision.
+func TestSaveCodeReviewRound_ToolWriteSkipsTailFallback(t *testing.T) {
+	svc := newMetaAwareInMemory()
+	cfg := reviewerCfgWithArtifacts(t, svc, true)
+	rc := recordClient(cfg)
+
+	toolWritten := CodeReviewRecord{Verdict: "approve", Summary: "written directly via write_code_review"}
+	_, toolRev, err := rc.SaveStructured(context.Background(), kindCodeReview, toolWritten, subjectHint(cfg.ChatID), recordstore.Lineage{NodeID: cfg.NodeID, Author: "worker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A malformed/contradictory tail: if this were parsed, verdict would
+	// become request_changes - proving the fallback path never ran.
+	answer := "VERDICT: request_changes\nFINDINGS:\n- a.go:1: should never be recorded\n"
+	staged := StagedDelivery{Kind: "review", Recovered: true}
+	st := newEpisodicRoundState()
+	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "", 1, answer, staged, st)
+
+	raw, _, _, rev, ok, err := rc.LatestWithMeta(context.Background(), codeReviewID(cfg))
+	if err != nil || !ok {
+		t.Fatalf("LatestWithMeta: ok=%v err=%v", ok, err)
+	}
+	if rev != toolRev {
+		t.Fatalf("revision = %d, want the tool's write (%d) - tail fallback ran when it shouldn't have", rev, toolRev)
+	}
+	var rec CodeReviewRecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Verdict != "approve" {
+		t.Fatalf("verdict = %q, want the tool-written %q (tail fallback must not overwrite it)", rec.Verdict, "approve")
+	}
+	if st.reviewRev != toolRev {
+		t.Fatalf("st.reviewRev = %d, want %d so the next round's ParentRevision is correct", st.reviewRev, toolRev)
 	}
 }
 
@@ -290,19 +331,19 @@ FINDINGS:
 	saveEpisodicRound(context.Background(), cfg, cfg.NodeID, "t1", 1, turn1, staged, nil)
 
 	rc := recordClient(cfg)
-	_, _, firstRev, ok, err := rc.LatestWithMeta(context.Background(), codeReviewID(cfg))
+	_, _, _, firstRev, ok, err := rc.LatestWithMeta(context.Background(), codeReviewID(cfg))
 	if err != nil || !ok {
 		t.Fatalf("turn 1 code_review missing: ok=%v err=%v", ok, err)
 	}
 	var aID string
 	{
-		raw, _, _, _, _ := rc.LatestWithMeta(context.Background(), codeReviewID(cfg))
+		raw, _, _, _, _, _ := rc.LatestWithMeta(context.Background(), codeReviewID(cfg))
 		var rec CodeReviewRecord
 		if err := json.Unmarshal(raw, &rec); err != nil {
 			t.Fatal(err)
 		}
 		for _, fid := range rec.FindingIDs {
-			fraw, _, _, _, _ := rc.LatestWithMeta(context.Background(), fid)
+			fraw, _, _, _, _, _ := rc.LatestWithMeta(context.Background(), fid)
 			var f FindingRecord
 			if json.Unmarshal(fraw, &f) == nil && f.Path == "a.go" {
 				aID = fid
@@ -321,7 +362,7 @@ FINDINGS:
 `
 	saveEpisodicRound(context.Background(), cfg, cfg.NodeID, "t2", 1, turn2, staged, nil)
 
-	_, secondLineage, secondRev, ok, err := rc.LatestWithMeta(context.Background(), codeReviewID(cfg))
+	_, _, secondLineage, secondRev, ok, err := rc.LatestWithMeta(context.Background(), codeReviewID(cfg))
 	if err != nil || !ok {
 		t.Fatalf("turn 2 code_review missing: ok=%v err=%v", ok, err)
 	}
@@ -332,7 +373,7 @@ FINDINGS:
 		t.Fatalf("turn 2 parent_revision = %d, want the real previous revision %d (not fabricated)", secondLineage.ParentRevision, firstRev)
 	}
 
-	aRaw, aLineage, aRev, ok, err := rc.LatestWithMeta(context.Background(), aID)
+	aRaw, _, aLineage, aRev, ok, err := rc.LatestWithMeta(context.Background(), aID)
 	if err != nil || !ok {
 		t.Fatalf("a.go finding missing after turn 2: ok=%v err=%v", ok, err)
 	}

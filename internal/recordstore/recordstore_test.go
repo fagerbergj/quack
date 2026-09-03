@@ -58,7 +58,7 @@ func TestSaveStructuredRoundTrip(t *testing.T) {
 	if err != nil || rev != 1 || id != "test.structured:main" {
 		t.Fatalf("SaveStructured: id=%q rev=%d err=%v", id, rev, err)
 	}
-	raw, lineage, gotRev, ok, err := c.LatestWithMeta(ctx, id)
+	raw, _, lineage, gotRev, ok, err := c.LatestWithMeta(ctx, id)
 	if err != nil || !ok || gotRev != 1 {
 		t.Fatalf("LatestWithMeta: raw=%s rev=%d ok=%v err=%v", raw, gotRev, ok, err)
 	}
@@ -180,5 +180,135 @@ func TestContentHashIgnoresHint(t *testing.T) {
 	}
 	if id1 != id2 {
 		t.Fatalf("same content under different hints produced different ids: %q vs %q", id1, id2)
+	}
+}
+
+// TestEditDirectApply covers the base_revision-current case: edits apply straight to the latest content.
+func TestEditDirectApply(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	id, rev1, err := c.SaveStructured(ctx, "test.structured", doc{A: "hello", B: 1}, "main", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev2, merged, err := c.Edit(ctx, id, rev1, []EditOp{{Old: `"a":"hello"`, New: `"a":"world"`}}, Lineage{})
+	if err != nil {
+		t.Fatalf("Edit: %v", err)
+	}
+	if rev2 != rev1+1 {
+		t.Fatalf("revision = %d, want %d", rev2, rev1+1)
+	}
+	var d doc
+	if err := json.Unmarshal(merged, &d); err != nil || d.A != "world" {
+		t.Fatalf("merged = %s, err=%v", merged, err)
+	}
+}
+
+// TestEditStaleBaseMergesWhenUnique covers V4 §7 case 5: a stale
+// base_revision still succeeds when its `old` snippets still match uniquely
+// against the newer latest content (a non-intersecting concurrent edit).
+func TestEditStaleBaseMergesWhenUnique(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	id, rev1, err := c.SaveStructured(ctx, "test.structured", doc{A: "hello", B: 1}, "main", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A concurrent editor bumps B while this caller still thinks rev1 is latest.
+	rev2, _, err := c.Edit(ctx, id, rev1, []EditOp{{Old: `"b":1`, New: `"b":2`}}, Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// This caller's base_revision (rev1) is now stale, but its edit targets
+	// a region the concurrent edit never touched - must still succeed.
+	rev3, merged, err := c.Edit(ctx, id, rev1, []EditOp{{Old: `"a":"hello"`, New: `"a":"world"`}}, Lineage{})
+	if err != nil {
+		t.Fatalf("Edit with stale base should merge, got: %v", err)
+	}
+	if rev3 != rev2+1 {
+		t.Fatalf("revision = %d, want %d", rev3, rev2+1)
+	}
+	var d doc
+	if err := json.Unmarshal(merged, &d); err != nil || d.A != "world" || d.B != 2 {
+		t.Fatalf("merged = %s (want both edits applied), err=%v", merged, err)
+	}
+}
+
+// TestEditStaleBaseConflictsWhenIntersecting covers V4 §7 case 5's failure
+// half: a stale edit whose `old` region was itself changed by the newer
+// revision no longer matches, and the call fails with the current latest -
+// no partial write.
+func TestEditStaleBaseConflictsWhenIntersecting(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	id, rev1, err := c.SaveStructured(ctx, "test.structured", doc{A: "hello", B: 1}, "main", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c.Edit(ctx, id, rev1, []EditOp{{Old: `"a":"hello"`, New: `"a":"changed"`}}, Lineage{}); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = c.Edit(ctx, id, rev1, []EditOp{{Old: `"a":"hello"`, New: `"a":"conflicting"`}}, Lineage{})
+	var conflict *EditConflict
+	if !errors.As(err, &conflict) {
+		t.Fatalf("Edit = %v, want *EditConflict", err)
+	}
+	if conflict.Revision != rev1+1 {
+		t.Fatalf("conflict.Revision = %d, want %d", conflict.Revision, rev1+1)
+	}
+	if _, _, _, latestRev, _, _ := c.LatestWithMeta(ctx, id); latestRev != rev1+1 {
+		t.Fatalf("failed edit must not write - latest revision = %d, want %d", latestRev, rev1+1)
+	}
+}
+
+// TestEditNonUniqueMatchFails: an `old` matching 0 or 2+ times fails without
+// writing, even against the current latest revision (no stale base involved).
+func TestEditNonUniqueMatchFails(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	blobID, brev, err := c.SaveBlob(ctx, "test.blob", []byte("aa"), "text/plain", "b1", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c.Edit(ctx, blobID, brev, []EditOp{{Old: "a", New: "z"}}, Lineage{}); err == nil {
+		t.Fatal("Edit with a 2x-matching old should fail")
+	}
+	if _, _, _, latestRev, _, _ := c.LatestWithMeta(ctx, blobID); latestRev != brev {
+		t.Fatalf("failed edit must not write - latest revision = %d, want %d", latestRev, brev)
+	}
+}
+
+// TestWriteFindingOffSchemaFailsWithoutWriting: an off-schema structured
+// write is rejected by the registry's Validate and nothing is persisted.
+func TestWriteFindingOffSchemaFailsWithoutWriting(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	// test.structured requires non-empty "a" - the write_<kind> equivalent
+	// for this suite's stand-in kind.
+	if _, _, err := c.SaveStructured(ctx, "test.structured", map[string]any{"b": 1}, "bad", Lineage{}); err == nil {
+		t.Fatal("expected validation failure for a body missing the required field")
+	}
+	if _, _, ok, _ := c.Latest(ctx, "test.structured:bad"); ok {
+		t.Fatal("an off-schema write must not persist a revision")
+	}
+}
+
+// TestIdentityForMatchesWriteID: the id a write returns equals what
+// IdentityFor (the registry's own Identity function) derives for the same
+// content/hint - required by V4 §7 case 5.
+func TestIdentityForMatchesWriteID(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	d := doc{A: "x", B: 1}
+	wantID, err := IdentityFor("test.structured", d, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotID, _, err := c.SaveStructured(ctx, "test.structured", d, "main", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotID != wantID {
+		t.Fatalf("SaveStructured id = %q, want IdentityFor's %q", gotID, wantID)
 	}
 }

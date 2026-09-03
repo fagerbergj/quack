@@ -36,18 +36,51 @@ const (
 	kindBytes      = "bytes"
 )
 
+// codeReviewJSONSchema/findingJSONSchema back #1091's generated write_<kind>
+// tools (recordstore.KindSpec.JSONSchema) - literal text, not reflected from
+// the Go struct, so the agent-facing schema is reviewed on its own.
+const codeReviewJSONSchema = `{
+  "type": "object",
+  "required": ["verdict"],
+  "properties": {
+    "verdict": {"type": "string", "enum": ["approve", "request_changes", "comment"]},
+    "summary": {"type": "string"},
+    "finding_ids": {"type": "array", "items": {"type": "string"}},
+    "dismissed": {"type": "array", "items": {"type": "object", "properties": {
+      "path": {"type": "string"}, "line": {"type": "integer"}, "note": {"type": "string"}
+    }}},
+    "clean": {"type": "array", "items": {"type": "string"}}
+  }
+}`
+
+const findingJSONSchema = `{
+  "type": "object",
+  "required": ["path", "title"],
+  "properties": {
+    "path": {"type": "string"},
+    "line_hint": {"type": "integer"},
+    "snippet": {"type": "string"},
+    "title": {"type": "string"},
+    "rationale": {"type": "string"},
+    "severity": {"type": "string"},
+    "state": {"type": "string", "enum": ["new", "unchanged", "resolved"]}
+  }
+}`
+
 func init() {
 	recordstore.Register(kindCodeReview, recordstore.KindSpec{
-		Class:    recordstore.Structured,
-		Validate: validateJSONObject[CodeReviewRecord],
+		Class:      recordstore.Structured,
+		JSONSchema: codeReviewJSONSchema,
+		Validate:   validateJSONObject[CodeReviewRecord],
 		// Instance = the hint verbatim: the subject's external identity
 		// (e.g. "pr:123"), the same value regardless of round or node.
 		Identity: func(_ []byte, hint string) (string, error) { return requireHint(hint) },
 	})
 	recordstore.Register(kindFinding, recordstore.KindSpec{
-		Class:    recordstore.Structured,
-		Validate: validateFinding,
-		Identity: findingIdentity,
+		Class:      recordstore.Structured,
+		JSONSchema: findingJSONSchema,
+		Validate:   validateFinding,
+		Identity:   findingIdentity,
 	})
 	recordstore.Register(kindDocument, recordstore.KindSpec{
 		Class:    recordstore.Blob,
@@ -292,12 +325,12 @@ func loadEpisodicRoundState(ctx context.Context, cfg Config) *episodicRoundState
 	}
 	if cfg.IsReviewer {
 		if id, err := recordstore.IdentityFor(kindCodeReview, nil, subjectHint(cfg.ChatID)); err == nil {
-			if raw, _, rev, ok, lerr := c.LatestWithMeta(ctx, id); lerr == nil && ok {
+			if raw, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id); lerr == nil && ok {
 				st.reviewRev = rev
 				var rec CodeReviewRecord
 				if json.Unmarshal(raw, &rec) == nil {
 					for _, fid := range rec.FindingIDs {
-						fraw, _, frev, fok, ferr := c.LatestWithMeta(ctx, fid)
+						fraw, _, _, frev, fok, ferr := c.LatestWithMeta(ctx, fid)
 						if ferr != nil || !fok {
 							continue
 						}
@@ -317,7 +350,7 @@ func loadEpisodicRoundState(ctx context.Context, cfg Config) *episodicRoundState
 	}
 	if cfg.Artifact != "" {
 		if id, err := recordstore.IdentityFor(cfg.Artifact, nil, documentHint(cfg.ChatID)); err == nil {
-			if _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id); lerr == nil && ok {
+			if _, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id); lerr == nil && ok {
 				st.documentRev = rev
 			}
 		}
@@ -338,9 +371,43 @@ func saveEpisodicRound(ctx context.Context, cfg Config, nodeID, turnID string, r
 	return st
 }
 
+// latestCodeReviewRevSafe wraps the #1091 gate-fallback lookup in a recover:
+// LatestWithMeta's own error return doesn't cover a service that panics
+// outright (e.g. a nil-embedded artifact.Service in tests), and this check
+// must never be the reason a round fails to save.
+func latestCodeReviewRevSafe(ctx context.Context, c *recordstore.Client, cfg Config) (rev int, ok bool) {
+	defer func() {
+		if recover() != nil {
+			rev, ok = 0, false
+		}
+	}()
+	id, err := recordstore.IdentityFor(kindCodeReview, nil, subjectHint(cfg.ChatID))
+	if err != nil {
+		return 0, false
+	}
+	_, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id)
+	if lerr != nil {
+		return 0, false
+	}
+	return rev, ok
+}
+
 func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, staged StagedDelivery, st *episodicRoundState) {
 	c := recordClient(cfg)
 	if c == nil {
+		return
+	}
+
+	// #1091 gate fallback: write_code_review/write_finding (the loopback MCP
+	// tools) let the worker write this round's code_review record directly,
+	// bypassing stage_review_comment/stage_review entirely - detected as a
+	// revision newer than what this round started from. That write is
+	// authoritative; answer-tail parsing runs only when nothing was written
+	// via tools this round. Records are fail-open like every other read
+	// here, so a broken artifact service (even one that panics on Load, as
+	// artifact.Service's zero value does) must never block the round.
+	if toolRev, ok := latestCodeReviewRevSafe(ctx, c, cfg); ok && toolRev > st.reviewRev {
+		st.reviewRev = toolRev
 		return
 	}
 
@@ -473,7 +540,7 @@ func BuildReviewPreload(ctx context.Context, cfg Config, nodeID string) string {
 	if err != nil {
 		return ""
 	}
-	raw, lineage, _, ok, err := c.LatestWithMeta(ctx, id)
+	raw, _, lineage, _, ok, err := c.LatestWithMeta(ctx, id)
 	if err != nil {
 		slog.Warn("review preload failed", "component", "vetting", "node", nodeID, "err", err)
 		return ""
@@ -503,7 +570,7 @@ func BuildReviewPreload(ctx context.Context, cfg Config, nodeID string) string {
 
 	var findings []FindingRecord
 	for _, fid := range rec.FindingIDs {
-		fRaw, _, _, fok, ferr := c.LatestWithMeta(ctx, fid)
+		fRaw, _, _, _, fok, ferr := c.LatestWithMeta(ctx, fid)
 		if ferr != nil || !fok {
 			continue
 		}
@@ -550,7 +617,7 @@ func BuildBodyPreload(ctx context.Context, cfg Config, nodeID string) string {
 	if err != nil {
 		return ""
 	}
-	raw, _, _, ok, err := c.LatestWithMeta(ctx, id)
+	raw, _, _, _, ok, err := c.LatestWithMeta(ctx, id)
 	if err != nil {
 		slog.Warn("document preload failed", "component", "vetting", "node", nodeID, "err", err)
 		return ""
