@@ -35,6 +35,7 @@ import (
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/recordstore"
+	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
 )
@@ -551,13 +552,14 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 				yield(stream.Errorf("orchestrator: edit_artifact tool: "+err.Error()), nil)
 				return
 			}
-			writeTool, err := tools.NewWriteArtifactTool(rc, orchestratorName, tools.RoundCoords{})
+			hint := vetting.SubjectHint(sessionID)
+			writeTool, err := tools.NewWriteArtifactTool(rc, orchestratorName, tools.RoundCoords{}, hint)
 			if err != nil {
 				yield(stream.Errorf("orchestrator: write_artifact tool: "+err.Error()), nil)
 				return
 			}
 			toolList = append(toolList, listTool, editTool, writeTool)
-			toolList = append(toolList, tools.NewWriteKindTools(rc, orchestratorName, tools.RoundCoords{})...)
+			toolList = append(toolList, tools.NewWriteKindTools(rc, orchestratorName, tools.RoundCoords{}, hint)...)
 		}
 
 		ag, err := llmagent.New(llmagent.Config{

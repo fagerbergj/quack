@@ -72,6 +72,13 @@ type KindSpec struct {
 	JSONSchema    string // #1091 tool generation input; the write_<kind> tool's input schema verbatim
 	Validate      func(json.RawMessage) error
 	Identity      IdentityFunc
+	// RequiresHint declares that Identity fails without a non-empty hint
+	// (the requireHint pattern) - callers that can't supply a real session
+	// hint (e.g. write_artifact/write_<kind> for an arbitrary caller-chosen
+	// kind) use this to decide whether to pass one at all, rather than
+	// passing a hint unconditionally and corrupting a hint-optional kind's
+	// content-hash identity (#1108 finding 2).
+	RequiresHint bool
 
 	name string // set only by Kinds(); not part of the registered spec
 }
@@ -99,6 +106,16 @@ func Register(kind string, spec KindSpec) {
 		panic("recordstore: kind " + kind + " registered with no Identity func")
 	}
 	registry[kind] = spec
+}
+
+// SpecFor returns kind's registered spec, or ok=false if it isn't registered -
+// exported so a generic write path (write_artifact) can check RequiresHint
+// for a caller-chosen kind before deciding whether to pass one.
+func SpecFor(kind string) (spec KindSpec, ok bool) {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	spec, ok = registry[kind]
+	return spec, ok
 }
 
 func lookupKind(kind string) (KindSpec, error) {

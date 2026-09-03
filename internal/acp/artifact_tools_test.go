@@ -350,3 +350,98 @@ func TestWriteArtifactMCP_Blob(t *testing.T) {
 		t.Fatalf("Latest(%s): raw=%q ok=%v err=%v", wantID, raw, ok, err)
 	}
 }
+
+// TestWriteCodeReviewMCP_UsesSessionSubjectHint: write_code_review (#1108
+// finding 1) must succeed for a github-derived chat id and mint exactly the
+// id vetting.SubjectHint + code_review's Identity func (requireHint) produce -
+// never "" (which requireHint always rejects).
+func TestWriteCodeReviewMCP_UsesSessionSubjectHint(t *testing.T) {
+	ctx := context.Background()
+	secret := mustMemSecret(t)
+	svc := artifact.InMemoryService()
+	chatID := "ext:github:github-owner-repo-42"
+	vetting.RegisterMemSession(secret, vetting.MemSession{Artifacts: svc, AppName: "quack", UserID: "u1", ChatID: chatID, NodeID: "n1"})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	args := map[string]any{"verdict": "approve"}
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "write_code_review", Arguments: args})
+	if err != nil {
+		t.Fatalf("CallTool write_code_review: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("write_code_review returned an error: %s", toolResultText(t, res))
+	}
+	wantID, err := recordstore.IdentityFor("code_review", nil, vetting.SubjectHint(chatID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wantID != "code_review:pr:42" {
+		t.Fatalf("unexpected computed id %q; SubjectHint's format may have changed", wantID)
+	}
+	text := toolResultText(t, res)
+	if !strings.Contains(text, "id="+wantID) {
+		t.Fatalf("write_code_review result = %q, want id=%s", text, wantID)
+	}
+	rc := recordstore.New(svc, "quack", "u1", chatID)
+	if _, _, ok, err := rc.Latest(ctx, wantID); err != nil || !ok {
+		t.Fatalf("code_review %s not found: ok=%v err=%v", wantID, ok, err)
+	}
+}
+
+// TestWriteArtifactMCP_HintRequiringKind: write_artifact with a hint-requiring
+// blob kind ("document") must succeed by deriving its hint from the session,
+// exactly like write_code_review - the same root cause as finding 1
+// (#1108 finding 2).
+func TestWriteArtifactMCP_HintRequiringKind(t *testing.T) {
+	ctx := context.Background()
+	secret := mustMemSecret(t)
+	svc := artifact.InMemoryService()
+	chatID := "ext:github:github-owner-repo-7"
+	vetting.RegisterMemSession(secret, vetting.MemSession{Artifacts: svc, AppName: "quack", UserID: "u1", ChatID: chatID, NodeID: "n1"})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "write_artifact", Arguments: map[string]any{
+		"kind": "document", "mime": "text/markdown", "bytes": "# hi",
+	}})
+	if err != nil {
+		t.Fatalf("CallTool write_artifact: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("write_artifact(document) returned an error: %s", toolResultText(t, res))
+	}
+	wantID, err := recordstore.IdentityFor("document", nil, vetting.SubjectHint(chatID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := toolResultText(t, res)
+	if !strings.Contains(text, "id="+wantID) {
+		t.Fatalf("write_artifact(document) result = %q, want id=%s", text, wantID)
+	}
+
+	// A hint-optional kind (text) must still derive its id from content, not
+	// collapse onto the session hint - the regression finding 2's naive fix
+	// would introduce.
+	res2, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "write_artifact", Arguments: map[string]any{
+		"kind": "text", "mime": "text/plain", "bytes": "distinct content",
+	}})
+	if err != nil {
+		t.Fatalf("CallTool write_artifact: %v", err)
+	}
+	if res2.IsError {
+		t.Fatalf("write_artifact(text) returned an error: %s", toolResultText(t, res2))
+	}
+	h := sha256.Sum256([]byte("distinct content"))
+	wantTextID := "text:" + hex.EncodeToString(h[:])[:8]
+	text2 := toolResultText(t, res2)
+	if !strings.Contains(text2, "id="+wantTextID) {
+		t.Fatalf("write_artifact(text) result = %q, want id=%s (content-hash identity, not session hint)", text2, wantTextID)
+	}
+}

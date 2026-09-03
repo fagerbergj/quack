@@ -5,6 +5,8 @@ package tools
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"testing"
 
@@ -12,6 +14,7 @@ import (
 	"google.golang.org/adk/v2/tool/toolconfirmation"
 
 	"github.com/fagerbergj/quack/internal/recordstore"
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // artifactsToolCtx: fakeCtx plus the ToolConfirmation stub functiontool.Run
@@ -30,7 +33,7 @@ func TestNewWriteKindTool_WriteFindingRegistersAndWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tl, err := NewWriteKindTool(rc, "n1", "finding", spec, RoundCoords{})
+	tl, err := NewWriteKindTool(rc, "n1", "finding", spec, RoundCoords{}, vetting.SubjectHint("chat-a"))
 	if err != nil {
 		t.Fatalf("NewWriteKindTool: %v", err)
 	}
@@ -87,6 +90,94 @@ func TestNewEditArtifactTool_DirectApply(t *testing.T) {
 	raw, _, ok, err := rc.Latest(context.Background(), id)
 	if err != nil || !ok || string(raw) != "hello there" {
 		t.Fatalf("Latest: raw=%q ok=%v err=%v", raw, ok, err)
+	}
+}
+
+// TestNewWriteKindTool_WriteCodeReviewUsesSessionHint: the ADK-native mirror
+// of internal/acp's TestWriteCodeReviewMCP_UsesSessionSubjectHint (#1108
+// finding 1) - write_code_review must succeed when given the caller's
+// session-derived hint, and mint exactly the id code_review's Identity
+// (requireHint) plus vetting.SubjectHint produce.
+func TestNewWriteKindTool_WriteCodeReviewUsesSessionHint(t *testing.T) {
+	svc := artifact.InMemoryService()
+	chatID := "ext:github:github-owner-repo-42"
+	rc := recordstore.New(svc, "quack", "u1", chatID)
+
+	spec, err := findKindSpec(t, "code_review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hint := vetting.SubjectHint(chatID)
+	tl, err := NewWriteKindTool(rc, "n1", "code_review", spec, RoundCoords{}, hint)
+	if err != nil {
+		t.Fatalf("NewWriteKindTool: %v", err)
+	}
+	rt, ok := tl.(runnableTool)
+	if !ok {
+		t.Fatal("write_code_review tool is not runnable")
+	}
+
+	out, err := rt.Run(newArtifactsToolCtx(), map[string]any{"verdict": "approve"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	result, _ := out["result"].(string)
+	wantID, err := recordstore.IdentityFor("code_review", nil, hint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wantID != "code_review:pr:42" {
+		t.Fatalf("unexpected computed id %q; SubjectHint's format may have changed", wantID)
+	}
+	if !strings.Contains(result, "id="+wantID) {
+		t.Fatalf("result = %q, want id=%s", result, wantID)
+	}
+	if _, _, ok, err := rc.Latest(context.Background(), wantID); err != nil || !ok {
+		t.Fatalf("code_review %s not found: ok=%v err=%v", wantID, ok, err)
+	}
+}
+
+// TestNewWriteArtifactTool_HintRequiringAndHintOptionalKinds: the ADK-native
+// mirror of TestWriteArtifactMCP_HintRequiringKind (#1108 finding 2) -
+// a hint-requiring blob kind (document) succeeds using the session hint,
+// while a hint-optional kind (text) keeps its content-hash identity.
+func TestNewWriteArtifactTool_HintRequiringAndHintOptionalKinds(t *testing.T) {
+	svc := artifact.InMemoryService()
+	chatID := "ext:github:github-owner-repo-7"
+	rc := recordstore.New(svc, "quack", "u1", chatID)
+	hint := vetting.SubjectHint(chatID)
+
+	tl, err := NewWriteArtifactTool(rc, "n1", RoundCoords{}, hint)
+	if err != nil {
+		t.Fatalf("NewWriteArtifactTool: %v", err)
+	}
+	rt, ok := tl.(runnableTool)
+	if !ok {
+		t.Fatal("write_artifact tool is not runnable")
+	}
+
+	out, err := rt.Run(newArtifactsToolCtx(), map[string]any{"kind": "document", "mime": "text/markdown", "bytes": "# hi"})
+	if err != nil {
+		t.Fatalf("Run(document): %v", err)
+	}
+	result, _ := out["result"].(string)
+	wantDocID, err := recordstore.IdentityFor("document", nil, hint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "id="+wantDocID) {
+		t.Fatalf("result = %q, want id=%s", result, wantDocID)
+	}
+
+	out2, err := rt.Run(newArtifactsToolCtx(), map[string]any{"kind": "text", "mime": "text/plain", "bytes": "distinct content"})
+	if err != nil {
+		t.Fatalf("Run(text): %v", err)
+	}
+	result2, _ := out2["result"].(string)
+	h := sha256.Sum256([]byte("distinct content"))
+	wantTextID := "text:" + hex.EncodeToString(h[:])[:8]
+	if !strings.Contains(result2, "id="+wantTextID) {
+		t.Fatalf("result = %q, want id=%s (content-hash identity, not session hint)", result2, wantTextID)
 	}
 }
 

@@ -203,9 +203,22 @@ func registerEditArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vetti
 
 // writeArtifactInput is the write_artifact tool's input - blob kinds only.
 type writeArtifactInput struct {
-	Kind  string `json:"kind" jsonschema:"a registered blob kind (e.g. document, pr_body, text, bytes)"`
+	Kind  string `json:"kind" jsonschema:"a registered blob kind - see the tool description for the current list"`
 	Mime  string `json:"mime" jsonschema:"the content's mime type"`
 	Bytes string `json:"bytes" jsonschema:"content: raw text for a text mime, else base64"`
+}
+
+// writeArtifactDescription lists the registered Blob kinds by name instead of
+// a hand-written example list, so it can't drift from what the registry
+// actually holds (#1108 finding 2).
+func writeArtifactDescription() string {
+	var kinds []string
+	for _, spec := range recordstore.Kinds() {
+		if spec.Class == recordstore.Blob {
+			kinds = append(kinds, spec.Name())
+		}
+	}
+	return fmt.Sprintf("Write a new revision of a blob artifact (%s - not a structured kind; use write_<kind> for those). The registry derives the id.", strings.Join(kinds, ", "))
 }
 
 // registerWriteArtifactTool: blob writes only - structured kinds go through
@@ -214,7 +227,7 @@ type writeArtifactInput struct {
 func registerWriteArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vetting.MemSession) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolWriteArtifact,
-		Description: "Write a new revision of a blob artifact (markdown, text, PDF, image - not a structured kind; use write_<kind> for those). The registry derives the id.",
+		Description: writeArtifactDescription(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, args writeArtifactInput) (*mcp.CallToolResult, any, error) {
 		data := []byte(args.Bytes)
 		if !strings.HasPrefix(args.Mime, "text/") && args.Mime != "application/json" {
@@ -224,7 +237,15 @@ func registerWriteArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vett
 		}
 		round, turnID, headSHA := currentRound(sess)
 		lineage := recordstore.Lineage{NodeID: sess.NodeID, Round: round, TurnID: turnID, HeadSHA: headSHA, Author: "worker", SavedAt: time.Now().UTC()}
-		id, rev, err := c.SaveBlob(ctx, args.Kind, data, args.Mime, "", lineage)
+		// Only a hint-requiring blob kind (document, pr_body) gets the session's
+		// subject hint - a hint-optional kind (text, bytes) must keep deriving its
+		// id from content, or every write from this chat would collapse onto one
+		// id (#1108 finding 2).
+		var hint string
+		if spec, ok := recordstore.SpecFor(args.Kind); ok && spec.RequiresHint {
+			hint = vetting.SubjectHint(sess.ChatID)
+		}
+		id, rev, err := c.SaveBlob(ctx, args.Kind, data, args.Mime, hint, lineage)
 		if err != nil {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "write_artifact: " + err.Error()}}}, nil, nil
 		}
@@ -256,7 +277,13 @@ func registerWriteKindTool(srv *mcp.Server, c *recordstore.Client, sess vetting.
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
 		round, turnID, headSHA := currentRound(sess)
 		lineage := recordstore.Lineage{NodeID: sess.NodeID, Round: round, TurnID: turnID, HeadSHA: headSHA, Author: "worker", SavedAt: time.Now().UTC()}
-		id, rev, err := c.SaveStructured(ctx, kind, args, "", lineage)
+		// code_review's Identity requires a non-empty hint (vetting.requireHint);
+		// derive it from the registered session, same as the gate - never a tool arg.
+		var hint string
+		if spec.RequiresHint {
+			hint = vetting.SubjectHint(sess.ChatID)
+		}
+		id, rev, err := c.SaveStructured(ctx, kind, args, hint, lineage)
 		if err != nil {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: writeKindPrefix + kind + ": " + err.Error()}}}, nil, nil
 		}

@@ -113,13 +113,29 @@ type writeArtifactArgs struct {
 	Bytes string `json:"bytes"`
 }
 
+// writeArtifactDescription lists the registered Blob kinds by name instead of
+// a hand-written example list, so it can't drift from what the registry
+// actually holds (#1108 finding 2, mirrors internal/acp/memorymcp.go).
+func writeArtifactDescription() string {
+	var kinds []string
+	for _, spec := range recordstore.Kinds() {
+		if spec.Class == recordstore.Blob {
+			kinds = append(kinds, spec.Name())
+		}
+	}
+	return fmt.Sprintf("Write a new revision of a blob artifact (%s - not a structured kind; use write_<kind> for those). The registry derives the id.", strings.Join(kinds, ", "))
+}
+
 // NewWriteArtifactTool: blob writes only; structured kinds go through their
-// generated write_<kind> tool (NewWriteKindTool) instead.
-func NewWriteArtifactTool(c *recordstore.Client, nodeID string, coords RoundCoords) (tool.Tool, error) {
+// generated write_<kind> tool (NewWriteKindTool) instead. hint is the
+// session-derived identity hint (vetting.SubjectHint(chatID)) for kinds
+// whose Identity func requires one (e.g. document, pr_body) - never a tool
+// argument, same principle as ids (#1108 finding 2).
+func NewWriteArtifactTool(c *recordstore.Client, nodeID string, coords RoundCoords, hint string) (tool.Tool, error) {
 	return functiontool.New[writeArtifactArgs, string](
 		functiontool.Config{
 			Name:        "write_artifact",
-			Description: "Write a new revision of a blob artifact (markdown, text, PDF, image - not a structured kind; use write_<kind> for those). The registry derives the id.",
+			Description: writeArtifactDescription(),
 		},
 		func(ctx agent.Context, a writeArtifactArgs) (string, error) {
 			data := []byte(a.Bytes)
@@ -129,7 +145,15 @@ func NewWriteArtifactTool(c *recordstore.Client, nodeID string, coords RoundCoor
 				}
 			}
 			lineage := recordstore.Lineage{NodeID: nodeID, Round: coords.Round, TurnID: coords.TurnID, HeadSHA: coords.HeadSHA, Author: "worker", SavedAt: time.Now().UTC()}
-			id, rev, err := c.SaveBlob(ctx, a.Kind, data, a.Mime, "", lineage)
+			// Only a hint-requiring blob kind (document, pr_body) gets hint - a
+			// hint-optional kind (text, bytes) must keep deriving its id from
+			// content, or every write from this session collapses onto one id
+			// (#1108 finding 2, mirrors internal/acp/memorymcp.go).
+			blobHint := ""
+			if spec, ok := recordstore.SpecFor(a.Kind); ok && spec.RequiresHint {
+				blobHint = hint
+			}
+			id, rev, err := c.SaveBlob(ctx, a.Kind, data, a.Mime, blobHint, lineage)
 			if err != nil {
 				return "", fmt.Errorf("write_artifact: %w", err)
 			}
@@ -142,7 +166,7 @@ func NewWriteArtifactTool(c *recordstore.Client, nodeID string, coords RoundCoor
 // spec's registered JSONSchema, parsed once here rather than reflected from
 // a Go struct (#1090 §4.4) - mirrors internal/acp/memorymcp.go's
 // registerWriteKindTool.
-func NewWriteKindTool(c *recordstore.Client, nodeID, kind string, spec recordstore.KindSpec, coords RoundCoords) (tool.Tool, error) {
+func NewWriteKindTool(c *recordstore.Client, nodeID, kind string, spec recordstore.KindSpec, coords RoundCoords, hint string) (tool.Tool, error) {
 	var schema jsonschema.Schema
 	if err := json.Unmarshal([]byte(spec.JSONSchema), &schema); err != nil {
 		return nil, fmt.Errorf("write_%s: bad JSONSchema: %w", kind, err)
@@ -155,7 +179,11 @@ func NewWriteKindTool(c *recordstore.Client, nodeID, kind string, spec recordsto
 		},
 		func(ctx agent.Context, args map[string]any) (string, error) {
 			lineage := recordstore.Lineage{NodeID: nodeID, Round: coords.Round, TurnID: coords.TurnID, HeadSHA: coords.HeadSHA, Author: "worker", SavedAt: time.Now().UTC()}
-			id, rev, err := c.SaveStructured(ctx, kind, args, "", lineage)
+			structuredHint := ""
+			if spec.RequiresHint {
+				structuredHint = hint
+			}
+			id, rev, err := c.SaveStructured(ctx, kind, args, structuredHint, lineage)
 			if err != nil {
 				return "", fmt.Errorf("write_%s: %w", kind, err)
 			}
@@ -166,10 +194,10 @@ func NewWriteKindTool(c *recordstore.Client, nodeID, kind string, spec recordsto
 
 // NewWriteKindTools builds one write_<kind> tool per registered structured
 // kind; a bad schema drops just that one tool rather than failing the batch.
-func NewWriteKindTools(c *recordstore.Client, nodeID string, coords RoundCoords) []tool.Tool {
+func NewWriteKindTools(c *recordstore.Client, nodeID string, coords RoundCoords, hint string) []tool.Tool {
 	var out []tool.Tool
 	for _, spec := range recordstore.Kinds() {
-		t, err := NewWriteKindTool(c, nodeID, spec.Name(), spec, coords)
+		t, err := NewWriteKindTool(c, nodeID, spec.Name(), spec, coords, hint)
 		if err != nil {
 			continue
 		}

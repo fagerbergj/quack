@@ -79,7 +79,7 @@ func reviewerCfgWithArtifacts(t *testing.T, svc artifact.Service, commitOnBranch
 }
 
 func codeReviewID(cfg Config) string {
-	id, err := recordstore.IdentityFor(kindCodeReview, nil, subjectHint(cfg.ChatID))
+	id, err := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID))
 	if err != nil {
 		panic(err)
 	}
@@ -168,7 +168,7 @@ func TestSaveCodeReviewRound_ToolWriteSkipsTailFallback(t *testing.T) {
 	rc := recordClient(cfg)
 
 	toolWritten := CodeReviewRecord{Verdict: "approve", Summary: "written directly via write_code_review"}
-	_, toolRev, err := rc.SaveStructured(context.Background(), kindCodeReview, toolWritten, subjectHint(cfg.ChatID), recordstore.Lineage{NodeID: cfg.NodeID, Author: "worker"})
+	_, toolRev, err := rc.SaveStructured(context.Background(), kindCodeReview, toolWritten, SubjectHint(cfg.ChatID), recordstore.Lineage{NodeID: cfg.NodeID, Author: "worker"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -548,7 +548,7 @@ func TestSetAdvisorThreadRound_ToolWriteGetsRealLineageAndPreloads(t *testing.T)
 	// would write once the round completes.
 	if _, _, err := rc.SaveStructured(context.Background(), kindCodeReview,
 		CodeReviewRecord{Verdict: "request_changes", FindingIDs: []string{id}},
-		subjectHint(cfg.ChatID), recordstore.Lineage{NodeID: cfg.NodeID, Round: 2, HeadSHA: cfg.NodeBaseSHA}); err != nil {
+		SubjectHint(cfg.ChatID), recordstore.Lineage{NodeID: cfg.NodeID, Round: 2, HeadSHA: cfg.NodeBaseSHA}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -599,7 +599,7 @@ func TestResumePreloadDropsUnreachableHead(t *testing.T) {
 	rc := recordClient(cfg)
 	lineage := recordstore.Lineage{NodeID: cfg.NodeID, Round: 1, HeadSHA: "0000000000000000000000000000000000dead"}
 	if _, _, err := rc.SaveStructured(context.Background(), kindCodeReview,
-		CodeReviewRecord{Verdict: "comment", Clean: []string{"a.txt"}}, subjectHint(cfg.ChatID), lineage); err != nil {
+		CodeReviewRecord{Verdict: "comment", Clean: []string{"a.txt"}}, SubjectHint(cfg.ChatID), lineage); err != nil {
 		t.Fatal(err)
 	}
 	if block := BuildReviewPreload(context.Background(), cfg, cfg.NodeID); block != "" {
