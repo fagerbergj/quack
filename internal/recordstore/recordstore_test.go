@@ -751,6 +751,87 @@ func TestRegisterPanicsOnInvalidJSONSchema(t *testing.T) {
 	})
 }
 
+// blockingLoadService delays Load until unblock is closed, signaling
+// readStarted first - lets a test force a concurrent writer into the exact
+// window between Edit's read of latest and its write of the merged result.
+type blockingLoadService struct {
+	artifact.Service
+	readStarted chan struct{}
+	unblock     chan struct{}
+	once        sync.Once
+}
+
+func (s *blockingLoadService) Load(ctx context.Context, req *artifact.LoadRequest) (*artifact.LoadResponse, error) {
+	s.once.Do(func() { close(s.readStarted) })
+	<-s.unblock
+	return s.Service.Load(ctx, req)
+}
+
+// TestEditVsGateSaveSerializes is #1108 finding 1: Edit's idLocks and the
+// gate's Save/SaveStructured/SaveBlob path used to serialize independently
+// (Edit locked, gate writers didn't), so a gate save could land between
+// Edit's read-latest and its write and vanish with no conflict surfaced.
+// This forces that exact window and proves the gate write now blocks on
+// Edit's lock instead of racing through and getting silently overwritten.
+func TestEditVsGateSaveSerializes(t *testing.T) {
+	readStarted := make(chan struct{})
+	unblock := make(chan struct{})
+	svc := &blockingLoadService{Service: artifact.InMemoryService(), readStarted: readStarted, unblock: unblock}
+	c := New(svc, "quack", "user1", "chat1")
+	ctx := context.Background()
+
+	id, rev1, err := c.SaveStructured(ctx, "test.structured", doc{A: "hello", B: 0}, "race-id", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	editDone := make(chan struct{})
+	var editRev int
+	var editErr error
+	go func() {
+		editRev, _, editErr = c.Edit(ctx, id, rev1, []EditOp{{Old: `"a":"hello"`, New: `"a":"edited"`}}, Lineage{})
+		close(editDone)
+	}()
+
+	<-readStarted // Edit has read rev1 and is blocked before its write.
+
+	gateDone := make(chan struct{})
+	var gateErr error
+	go func() {
+		_, _, gateErr = c.SaveStructured(ctx, "test.structured", doc{A: "gate", B: 99}, "race-id", Lineage{})
+		close(gateDone)
+	}()
+
+	select {
+	case <-gateDone:
+		t.Fatal("gate SaveStructured completed while Edit was mid-write - not serialized against Edit (finding 1 regression)")
+	case <-time.After(50 * time.Millisecond):
+		// Expected: the gate save blocks on the same per-(chat,id) lock Edit holds.
+	}
+
+	close(unblock)
+	<-editDone
+	<-gateDone
+	if editErr != nil {
+		t.Fatalf("Edit: %v", editErr)
+	}
+	if gateErr != nil {
+		t.Fatalf("gate SaveStructured: %v", gateErr)
+	}
+
+	raw, rev, ok, err := c.Latest(ctx, id)
+	if err != nil || !ok {
+		t.Fatalf("Latest: ok=%v err=%v", ok, err)
+	}
+	if rev != editRev+1 {
+		t.Fatalf("final revision = %d, want %d (gate save landed strictly after Edit's, no gap/overwrite)", rev, editRev+1)
+	}
+	var d doc
+	if err := json.Unmarshal(raw, &d); err != nil || d.A != "gate" || d.B != 99 {
+		t.Fatalf("gate save was clobbered or lost: content = %s, err=%v", raw, err)
+	}
+}
+
 func containsAll(s string, subs ...string) bool {
 	for _, sub := range subs {
 		if !strings.Contains(s, sub) {

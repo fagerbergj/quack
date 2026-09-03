@@ -296,7 +296,19 @@ type artifactRevisionPayload struct {
 	BytesRef       string  `json:"bytes_ref"`
 }
 
+// save acquires id's per-(chat,id) lock (the same one Edit holds) before
+// writing, so a gate save (SaveStructured/SaveBlob) can never land between
+// Edit's read-latest and its write of N+1 (#1108 finding 1 - previously only
+// Edit locked, gate writers raced it silently). Edit already holds the lock
+// when it needs to save, so it calls saveLocked directly instead.
 func (c *Client) save(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage) (int, error) {
+	mu := c.lockFor(id)
+	mu.Lock()
+	defer mu.Unlock()
+	return c.saveLocked(ctx, id, kind, class, mime, data, lineage)
+}
+
+func (c *Client) saveLocked(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage) (int, error) {
 	if c.ledgerStore != nil {
 		// Held across read-parent + AppendIntent + saveRow: otherwise two
 		// concurrent saves for the same id can both read the same parent and
@@ -636,7 +648,7 @@ func (c *Client) Edit(ctx context.Context, id string, baseRevision int, ops []Ed
 	}
 	lineage.ParentRevision = latestRev
 	lineage.BaseRevision = baseRevision
-	rev, err := c.save(ctx, id, kind, spec.Class, mime, merged, lineage)
+	rev, err := c.saveLocked(ctx, id, kind, spec.Class, mime, merged, lineage)
 	if err != nil {
 		return 0, nil, err
 	}
