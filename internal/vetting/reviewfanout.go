@@ -25,9 +25,10 @@ type ReviewFanout struct {
 	// (#965): delivery waits for it, and its answer becomes the summary
 	// body. On synthesizer failure the merge falls back to the per-node
 	// concatenation so nothing is stranded.
-	synthWanted bool
-	synthDone   bool
-	synthBody   string
+	synthWanted  bool
+	synthDone    bool
+	synthBody    string
+	synthVerdict string // structured code_review verdict (#1184), authoritative over synthBody's tail
 
 	// cloneURL/branch: the repo a reviewer node actually cloned (#1059). The
 	// synthesizer node that ends up delivering the merged review never
@@ -137,13 +138,17 @@ func (f *ReviewFanout) ExpectSynthesis() {
 
 // FinishSynthesis records the synthesizer node's terminal outcome. answer is
 // its consolidated review ("" if it failed or produced nothing - the merge
-// then falls back to the per-node concatenation). Same exactly-once deliver
-// contract as Finish.
-func (f *ReviewFanout) FinishSynthesis(answer string) (merged StagedDelivery, deliver bool) {
+// then falls back to the per-node concatenation). verdict is the
+// synthesizer's structured code_review record verdict, "" if it never wrote
+// one - the authoritative event for delivery (#1184); mergeReviews falls
+// back to the answer's VERDICT tail, then the slices' worst-of, only when
+// this is empty. Same exactly-once deliver contract as Finish.
+func (f *ReviewFanout) FinishSynthesis(answer, verdict string) (merged StagedDelivery, deliver bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.synthDone = true
 	f.synthBody = strings.TrimSpace(answer)
+	f.synthVerdict = verdict
 	return f.deliverIfReady()
 }
 
@@ -154,20 +159,25 @@ func (f *ReviewFanout) deliverIfReady() (StagedDelivery, bool) {
 		return StagedDelivery{}, false
 	}
 	f.delivered = true
-	return mergeReviews(f.terminal, f.synthBody), true
+	return mergeReviews(f.terminal, f.synthBody, f.synthVerdict), true
 }
 
 // verdictRank: worst-of ordering - request_changes beats approve beats a
 // plain comment.
 var verdictRank = map[string]int{"comment": 0, "approve": 1, "request_changes": 2}
 
-// mergeReviews: worst-of verdict, findings merged and attributed per node.
-// A non-empty synthBody (the synthesizer's consolidated review) replaces the
-// per-node section concatenation as the summary body (#965).
-// A failed/cancelled sibling contributes no verdict but is named in the
-// body rather than silently dropped - the point of this fix is that
-// nothing gets swept under the rug.
-func mergeReviews(terminal map[string]reviewFanoutEntry, synthBody string) StagedDelivery {
+// mergeReviews: the synthesizer's structured verdict is authoritative when
+// present (#1184); only absent that does this fall back to the synthesizer's
+// answer-tail VERDICT, then to worst-of over slices that staged one (#867's
+// defense: an early slice request_changes still beats a later synthesizer
+// approve, since worst-of only ever raises the verdict, never lowers it).
+// A slice with no event (V4: slices stage findings only, #1150) doesn't
+// participate in worst-of at all - it used to default to "comment", the
+// exact bug #1184 reports.
+// Findings are merged and attributed per node regardless of which verdict
+// wins. A failed/cancelled sibling contributes no verdict but is named in
+// the body rather than silently dropped.
+func mergeReviews(terminal map[string]reviewFanoutEntry, synthBody, synthVerdict string) StagedDelivery {
 	ids := make([]string, 0, len(terminal))
 	for id := range terminal {
 		ids = append(ids, id)
@@ -175,6 +185,7 @@ func mergeReviews(terminal map[string]reviewFanoutEntry, synthBody string) Stage
 	sort.Strings(ids)
 
 	verdict := "comment"
+	haveVerdict := false
 	var sections []string
 	var comments []ReviewComment
 	var notes []string
@@ -188,12 +199,9 @@ func mergeReviews(terminal map[string]reviewFanoutEntry, synthBody string) Stage
 			notes = append(notes, fmt.Sprintf("- %s: completed without staging a review", id))
 			continue
 		}
-		event := e.item.Event
-		if event == "" {
-			event = "comment"
-		}
-		if verdictRank[event] > verdictRank[verdict] {
+		if event := e.item.Event; event != "" && (!haveVerdict || verdictRank[event] > verdictRank[verdict]) {
 			verdict = event
+			haveVerdict = true
 		}
 		if strings.TrimSpace(e.item.Body) != "" {
 			sections = append(sections, fmt.Sprintf("### %s\n%s", id, strings.TrimSpace(e.item.Body)))
@@ -205,13 +213,22 @@ func mergeReviews(terminal map[string]reviewFanoutEntry, synthBody string) Stage
 	}
 	if synthBody != "" {
 		sections = []string{synthBody}
-		// The synthesizer owns the delivered verdict (#1092, design V4 §4.6):
-		// its own VERDICT tail wins over the worst-of computed from slices
-		// above. A slice's VERDICT is staged only as that fallback, for when
-		// the synthesizer's own output couldn't be parsed.
-		if ev := ParseAnswerReviewSections(synthBody).Event; ev != "" {
+		if ev := ParseAnswerReviewSections(synthBody).Event; ev != "" && (!haveVerdict || verdictRank[ev] > verdictRank[verdict]) {
 			verdict = ev
+			haveVerdict = true
 		}
+	}
+	// The synthesizer's own structured code_review record is authoritative
+	// over its answer-tail parse above, but still worst-of against a slice's
+	// verdict rather than overwriting it outright - #867's defense (an early
+	// slice request_changes must survive a later synthesizer approve) holds
+	// regardless of which form the synthesizer's verdict took.
+	if synthVerdict != "" && (!haveVerdict || verdictRank[synthVerdict] > verdictRank[verdict]) {
+		verdict = synthVerdict
+		haveVerdict = true
+	}
+	if !haveVerdict {
+		verdict = "comment"
 	}
 	if len(notes) > 0 {
 		sections = append(sections, "### Incomplete\n"+strings.Join(notes, "\n"))

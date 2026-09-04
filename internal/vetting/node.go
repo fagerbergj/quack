@@ -1021,8 +1021,12 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	// node in the plan has finished.
 	if cfg.ReviewFanout != nil && !cfg.IsReviewer {
 		// Synthesizer node (#965): its answer is the plan's consolidated
-		// review - hand it to the fan-in, which delivers exactly once.
-		merged, deliverNow := cfg.ReviewFanout.FinishSynthesis(act.answer)
+		// review - hand it to the fan-in, which delivers exactly once. The
+		// structured code_review verdict (#1184) is read here rather than
+		// parsed from act.answer, since a native write_code_review leaves no
+		// VERDICT tail in the answer text.
+		verdict, _ := LatestCodeReviewVerdict(ctx, cfg)
+		merged, deliverNow := cfg.ReviewFanout.FinishSynthesis(act.answer, verdict)
 		if deliverNow {
 			deliverMergedReview(ctx, sink, cfg, nodeID, merged)
 		}
@@ -1290,7 +1294,7 @@ func resolveAbortedReviewer(ctx context.Context, sink func(stream.SSEEvent), cfg
 		merged, deliverNow = cfg.ReviewFanout.Finish(nodeID, item, hasItem, !hasItem)
 	} else {
 		// Empty answer falls the merge back to per-node concatenation (#965).
-		merged, deliverNow = cfg.ReviewFanout.FinishSynthesis("")
+		merged, deliverNow = cfg.ReviewFanout.FinishSynthesis("", "")
 	}
 	if deliverNow {
 		deliverMergedReview(ctx, sink, cfg, nodeID, merged)
