@@ -1110,6 +1110,13 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 		planByTurn[plans[i].TurnID] = &plans[i]
 	}
 
+	// groups can be shorter than turns - a ResetHistory dispatch (#1195) wipes
+	// older session events while every ChatTurn row survives forever, and
+	// only ever removes OLDER events, never reorders what's left. So the
+	// surviving groups always line up with the MOST RECENT len(groups) turns,
+	// never the first: align from the end, not the front, or a reset silently
+	// shifts every later turn's content onto the wrong (earlier) turn.
+	offset := len(turns) - len(groups)
 	result := make([]TurnContent, len(turns))
 	for i, t := range turns {
 		tc := TurnContent{
@@ -1120,17 +1127,17 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 			PromptTokens: t.PromptTokens, CompletionTokens: t.CompletionTokens,
 			ReasoningTokens: t.ReasoningTokens, TotalTokens: t.TotalTokens, CachedTokens: t.CachedTokens,
 		}
-		if i < len(groups) {
-			tc.UserText = groups[i].userText
-			tc.AsstText = groups[i].asstText
-			tc.AsstThink = groups[i].asstThink
-			tc.ToolCalls = groups[i].toolCalls
+		if gi := i - offset; gi >= 0 && gi < len(groups) {
+			tc.UserText = groups[gi].userText
+			tc.AsstText = groups[gi].asstText
+			tc.AsstThink = groups[gi].asstThink
+			tc.ToolCalls = groups[gi].toolCalls
 			if tc.PromptTokens == 0 && tc.CompletionTokens == 0 {
-				tc.PromptTokens = groups[i].promptTokens
-				tc.CompletionTokens = groups[i].completionTokens
-				tc.ReasoningTokens = groups[i].reasoningTokens
-				tc.CachedTokens = groups[i].cachedTokens
-				tc.TotalTokens = groups[i].totalTokens
+				tc.PromptTokens = groups[gi].promptTokens
+				tc.CompletionTokens = groups[gi].completionTokens
+				tc.ReasoningTokens = groups[gi].reasoningTokens
+				tc.CachedTokens = groups[gi].cachedTokens
+				tc.TotalTokens = groups[gi].totalTokens
 			}
 		}
 		if plan := planByTurn[t.ID]; plan != nil {

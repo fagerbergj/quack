@@ -515,7 +515,14 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 			runCtx = tools.WithContextItems(runCtx, toDagContextItems(req.Ask.ContextItems))
 		}
 		runCtx = tools.WithPlanOnly(runCtx, req.Run.ReadOnly)
-		go driveExtensionRun(runCtx, name, orch, st, hub, extHolder, userID, chatID, turnID, composeDispatchMessage(req), attachments, req.Run.Timeout)
+		// Never hand the orchestrator's LLM turn an empty prompt (#1195): a
+		// caller bug upstream of here must surface as a real dispatch error
+		// the extension can post, not a run that silently produces nothing.
+		composed := composeDispatchMessage(req)
+		if strings.TrimSpace(composed) == "" {
+			return fmt.Errorf("extensions.%s: dispatch composed an empty message (Ask.Message was %q)", name, req.Ask.Message)
+		}
+		go driveExtensionRun(runCtx, name, orch, st, hub, extHolder, userID, chatID, turnID, composed, attachments, req.Run.Timeout)
 		return nil
 	}
 }
