@@ -699,7 +699,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	}
 
 	var setupFn dag.SetupFunc
-	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(cfg, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, pluginSkillDirs, deliver, nodeCancelled, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, &setupFn, artifacts)
+	clientMap, modelMap, nodeServers, judgeFactory, planJudge, gateCfgs, judgeModel, err := buildAgents(cfg, st.Sessions, skillTS, builtinSkillSrc, newScopedSkillTS, taskStore, advisorAgent, jail, gitTokenSource, extTools, pluginSkillDirs, deliver, nodeCancelled, registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, &setupFn, artifacts, ledgerStore)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("agent build failed: %w", err)
 	}
@@ -780,7 +780,8 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	// its store resolves to postgres - the filesystem ledger's AppendIntent
 	// is best-effort/non-transactional (FSStore.AppendIntent), so it stays
 	// recording-only and never backs the gate's fail-closed writes.
-	if pg, ok := ledgerStore.(*ledger.PGStore); ok {
+	pg, hasPGLedger := ledgerStore.(*ledger.PGStore)
+	if hasPGLedger {
 		executor.SetWALLedger(pg)
 	}
 	executor.SetNodeStateStore(st) // write-through node state machine (#962)
@@ -796,6 +797,9 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	// (#1095/#1118) must not depend on load_artifacts being in orchestrator.tools -
 	// a prod config without it silently dropped every plan record (#1122).
 	orch.SetArtifacts(artifacts)
+	if hasPGLedger {
+		orch.SetLedger(pg)
+	}
 	// Bounds run SETUP (workspace clone/jail), which costs host disk/CPU before
 	// any node reaches the GPU ledger. Also the only cap on how many runs are
 	// live at once, which is what the UI shows as running (#1067).
@@ -947,7 +951,7 @@ func (a gitCredentialAdapter) GitCredential(ctx context.Context, rawURL string) 
 }
 
 // buildAgents loads each agent bundle, builds its model and tools, exposes over A2A, returns client map.
-func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, pluginSkillDirs []string, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, model.LLM, error) {
+func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, advisorAgent adkagent.Agent, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, pluginSkillDirs []string, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, map[string]vetting.Config, model.LLM, error) {
 	nodeServers := newPerNodeServers()
 
 	nodeScope := func(ctx context.Context) memory.Scope {
@@ -1341,6 +1345,12 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				var setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string)
 				if artifacts != nil {
 					rc := recordstore.New(artifacts, appName, userID, chatID)
+					// Same PGStore-only restriction as executor.SetWALLedger (#1153):
+					// a worker's write_<kind> must record parent_revision like a
+					// gate's own writes, but only over a transactional ledger.
+					if pg, ok := ledgerStore.(*ledger.PGStore); ok {
+						rc = rc.WithLedger(pg)
+					}
 					coords := &tools.RoundCoords{}
 					var terr error
 					if extraTools, terr = tools.BuildNativeArtifactTools(rc, nodeID, coords, vetting.SubjectHint(chatID)); terr != nil {

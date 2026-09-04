@@ -64,6 +64,7 @@ type Orchestrator struct {
 	taskMem     *memory.Store
 	memAgent    adkagent.Agent
 	artifacts   artifact.Service
+	ledgerStore ledger.LedgerStore
 	runDeadline time.Duration
 	runAdmit    *dag.Admission
 	queuedChats sync.Map
@@ -73,6 +74,12 @@ type Orchestrator struct {
 // and, when load_artifacts is in orchestrator.tools, exposes the load_artifacts
 // tool. Mirrors dag.Executor.SetArtifacts.
 func (o *Orchestrator) SetArtifacts(svc artifact.Service) { o.artifacts = svc }
+
+// SetLedger wires the WAL's fail-closed AppendIntent path into the
+// orchestrator's own write_<kind>/write_artifact tools, so a direct-chat
+// write records parent_revision like every gated node does (#1153). Mirrors
+// dag.Executor.SetWALLedger.
+func (o *Orchestrator) SetLedger(store ledger.LedgerStore) { o.ledgerStore = store }
 
 // failSoftListArtifacts: load_artifacts calls List on every LLM request
 // (ADK's loadartifactstool.ProcessRequest), and a List error fails the whole
@@ -539,6 +546,9 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			toolList = append(toolList, loadartifactstool.New())
 			artifacts = failSoftListArtifacts{o.artifacts}
 			rc := recordstore.New(o.artifacts, artifactref.AppName, userID, sessionID)
+			if o.ledgerStore != nil {
+				rc = rc.WithLedger(o.ledgerStore)
+			}
 			listTool, err := tools.NewListArtifactsTool(rc)
 			if err != nil {
 				yield(stream.Errorf("orchestrator: list_artifacts tool: "+err.Error()), nil)
