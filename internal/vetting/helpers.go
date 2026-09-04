@@ -5,6 +5,7 @@ import (
 	"iter"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -98,8 +99,11 @@ type Config struct {
 	Workspace          *workspace.Jail // nil + non-empty Checks fails closed
 	WorkspaceUserID    string
 	WorkspaceCaps      workspace.Caps
-	Deliver            DeliverFunc         // posts staged delivery set; nil = disabled
-	GitCredentials     GitCredentialSource // resolves the gate-owned push credential; nil = push disabled
+	// CheckTimeout overrides WorkspaceCaps.Timeout for gate check commands only
+	// (they run a full test suite, not a single tool call); 0 = use WorkspaceCaps.Timeout.
+	CheckTimeout   time.Duration
+	Deliver        DeliverFunc         // posts staged delivery set; nil = disabled
+	GitCredentials GitCredentialSource // resolves the gate-owned push credential; nil = push disabled
 	// AllowedDeliveryKinds: nil = unrestricted (no trigger governs this run);
 	// non-nil (including empty) restricts staged delivery to exactly these kinds.
 	AllowedDeliveryKinds []string

@@ -9,7 +9,8 @@ workspace:
   max_write_kb: 2048
   max_results: 200
   max_list_entries: 500
-  timeout_seconds: 60
+  timeout_seconds: 60          # per run_command tool call
+  check_timeout_seconds: 600   # per gate check command (e.g. a full test suite); default 600
   sandbox: bwrap
   check_commands: ["go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make"]
 ```

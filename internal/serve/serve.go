@@ -1032,6 +1032,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		gateCfg.Workspace = jail
 		gateCfg.WorkspaceUserID = localUserID
 		gateCfg.WorkspaceCaps = workspaceCaps
+		gateCfg.CheckTimeout = time.Duration(cfg.Workspace.CheckTimeoutSeconds) * time.Second
 		gateCfg.Deliver = deliver
 		if gitTokenSource != nil {
 			gateCfg.GitCredentials = gitCredentialAdapter{gitTokenSource}
