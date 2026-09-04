@@ -19,21 +19,21 @@ import (
 func TestMergeExtOrigin_NudgeFallsBackToStoredSetup(t *testing.T) {
 	first := &extsdk.Setup{Repo: "https://github.com/o/r", BaseRef: "main", ExistingHeadRef: "quack/pr-1170"}
 	origin := &extsdk.ChatOrigin{Extension: "github", Label: "o/r#1170", Kind: "pr"}
-	storedJSON, fallback := mergeExtOrigin("", origin, first)
-	if fallback != nil {
-		t.Fatalf("first dispatch carried its own Setup; want no fallback, got %+v", fallback)
+	storedJSON, effective := mergeExtOrigin("", origin, first)
+	if effective == nil || effective.WorkBranch != "quack/pr-1170" || !effective.CheckoutExistingHead {
+		t.Fatalf("first dispatch's own Setup should be the effective one, got %+v", effective)
 	}
 	if storedJSON == "" {
 		t.Fatal("first dispatch stored nothing")
 	}
 
 	// Turn 2: the nudge - no Chat.Origin, no Run.Setup.
-	nudgedJSON, fallback := mergeExtOrigin(storedJSON, nil, nil)
-	if fallback == nil {
-		t.Fatal("nudge got no fallback setup - the exact #1180/quack-extensions#47 gap")
+	nudgedJSON, effective := mergeExtOrigin(storedJSON, nil, nil)
+	if effective == nil {
+		t.Fatal("nudge got no effective setup - the exact #1180/quack-extensions#47 gap")
 	}
-	if fallback.WorkBranch != "quack/pr-1170" || !fallback.CheckoutExistingHead {
-		t.Errorf("fallback = %+v, want the stored PR head checked out as-is", fallback)
+	if effective.WorkBranch != "quack/pr-1170" || !effective.CheckoutExistingHead {
+		t.Errorf("effective = %+v, want the stored PR head checked out as-is", effective)
 	}
 	// The merged record must still carry the origin - a nudge with no Origin
 	// of its own must not blank the chat's sidebar/title metadata either.
@@ -50,25 +50,47 @@ func TestMergeExtOrigin_NudgeFallsBackToStoredSetup(t *testing.T) {
 }
 
 // TestMergeExtOrigin_NoPriorSetup_NoFallback: a chat that never had a Setup
-// stored (a plain, non-PR dispatch) gets no fallback - plan.go's existing
-// "no setup anywhere" rejection is still what a bare nudge on such a chat sees.
+// stored (a plain, non-PR dispatch) gets no effective setup - plan.go's
+// existing "no setup anywhere" rejection is still what a bare nudge on such a
+// chat sees.
 func TestMergeExtOrigin_NoPriorSetup_NoFallback(t *testing.T) {
-	_, fallback := mergeExtOrigin("", nil, nil)
-	if fallback != nil {
-		t.Errorf("fallback = %+v, want nil with nothing ever stored", fallback)
+	_, effective := mergeExtOrigin("", nil, nil)
+	if effective != nil {
+		t.Errorf("effective = %+v, want nil with nothing ever stored", effective)
 	}
 }
 
-// TestMergeExtOrigin_FreshSetupOverridesStale: a dispatch that DOES carry its
-// own Setup must use that, not a stale one from an earlier, unrelated turn.
+// TestMergeExtOrigin_FreshSetupOverridesStale: a dispatch that carries its
+// own Setup WITH a real head ref must use that, not a stale one from an
+// earlier, unrelated turn.
 func TestMergeExtOrigin_FreshSetupOverridesStale(t *testing.T) {
 	stale := &extsdk.Setup{Repo: "https://github.com/o/r", BaseRef: "main", ExistingHeadRef: "quack/pr-old"}
 	storedJSON, _ := mergeExtOrigin("", nil, stale)
 
 	fresh := &extsdk.Setup{Repo: "https://github.com/o/r", BaseRef: "main", ExistingHeadRef: "quack/pr-new"}
-	_, fallback := mergeExtOrigin(storedJSON, nil, fresh)
-	if fallback != nil {
-		t.Fatalf("this dispatch carried its own Setup; want no fallback, got %+v", fallback)
+	_, effective := mergeExtOrigin(storedJSON, nil, fresh)
+	if effective == nil || effective.WorkBranch != "quack/pr-new" {
+		t.Fatalf("effective = %+v, want this dispatch's own fresh head ref", effective)
+	}
+}
+
+// TestMergeExtOrigin_BlankHeadRefBorrowsStored is #1180's actual recurrence
+// (issue comment: "neither the v0.9.0 nudge re-send ... nor #1181's
+// stored-origin fallback delivered a head ref"): github's own dispatch()
+// ALWAYS builds a non-nil sdk.Setup, even when its snapshot fetch came back
+// without a head ref - so "newSetup == nil" (the only case #1181 handled)
+// never actually happens on a real github dispatch. A Setup that is present
+// but blank must get the same fallback as a wholly-missing one.
+func TestMergeExtOrigin_BlankHeadRefBorrowsStored(t *testing.T) {
+	good := &extsdk.Setup{Repo: "https://github.com/o/r", BaseRef: "main", ExistingHeadRef: "quack/pr-1188"}
+	storedJSON, _ := mergeExtOrigin("", nil, good)
+
+	// This dispatch (or its nudge) built a real, non-nil Setup, but this
+	// time the head ref came back empty.
+	blank := &extsdk.Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/issue-1188"}
+	_, effective := mergeExtOrigin(storedJSON, nil, blank)
+	if effective == nil || effective.WorkBranch != "quack/pr-1188" || !effective.CheckoutExistingHead {
+		t.Fatalf("effective = %+v, want the stored real head ref borrowed onto this dispatch's Setup", effective)
 	}
 }
 

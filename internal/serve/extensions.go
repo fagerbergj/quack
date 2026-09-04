@@ -450,13 +450,7 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		} else if existing != nil {
 			existingOriginJSON = existing.Origin
 		}
-		originJSON, fallbackSetup := mergeExtOrigin(existingOriginJSON, req.Chat.Origin, req.Run.Setup)
-		if fallbackSetup != nil {
-			// This dispatch forgot Setup (the nudge bug) but a prior turn on
-			// this same chat recorded one - hand it to the planner exactly as
-			// if this dispatch had carried it (#1180).
-			runCtx = tools.WithGitHubSetup(runCtx, *fallbackSetup)
-		}
+		originJSON, effectiveSetup := mergeExtOrigin(existingOriginJSON, req.Chat.Origin, req.Run.Setup)
 		if err := st.SetChatOrigin(runCtx, chatID, userID, originJSON); err != nil {
 			return fmt.Errorf("extensions.%s: chat setup: %w", name, err)
 		}
@@ -505,8 +499,14 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		// The real consumer of Setup/NodeContext/ContextItems/ReadOnly - the
 		// GitHub migration's pre-provisioned clone and node-scoped context.
 		runCtx = tools.WithAllowedDeliveryKinds(runCtx, allowedKinds)
-		if req.Run.Setup != nil {
-			runCtx = tools.WithGitHubSetup(runCtx, toDagSetup(*req.Run.Setup))
+		if effectiveSetup != nil {
+			// mergeExtOrigin's own merged Setup, NOT req.Run.Setup directly
+			// (#1180 recurrence): github always sends a non-nil Setup, even
+			// with an empty ExistingHeadRef when its snapshot fetch came back
+			// short - applying req.Run.Setup here unconditionally clobbered
+			// mergeExtOrigin's fallback/merge with that weaker value on
+			// every single dispatch, nudge included.
+			runCtx = tools.WithGitHubSetup(runCtx, *effectiveSetup)
 		}
 		if req.Ask.NodeContext != "" {
 			runCtx = tools.WithWorkerAsk(runCtx, req.Ask.NodeContext)
@@ -559,10 +559,16 @@ type extOriginRecord struct {
 // mergeExtOrigin folds a dispatch's own Origin/Setup onto whatever this chat
 // already has stored, so a dispatch missing one (a nudge or retry re-dispatch
 // - quack-extensions#47) never blanks it. Returns the JSON to persist (""
-// when there's nothing to store) and, when this dispatch itself carried no
-// Setup but a prior one did, that prior Setup (converted to dag.Setup) as a
-// fallback for the caller to hand the planner via tools.WithGitHubSetup (#1180).
-func mergeExtOrigin(existingOriginJSON string, newOrigin *extsdk.ChatOrigin, newSetup *extsdk.Setup) (originJSON string, fallbackSetup *dag.Setup) {
+// when there's nothing to store) and the Setup this turn should actually
+// plan with, converted to dag.Setup - the caller's ONLY source for
+// tools.WithGitHubSetup; it must never additionally apply req.Run.Setup raw.
+//
+// newSetup being non-nil is NOT proof it has a real head ref: github's own
+// dispatch() always builds a non-nil sdk.Setup, even when its snapshot fetch
+// came back without one, so "no Setup" and "Setup with a blank
+// ExistingHeadRef" both need the same fallback to the last known-good ref
+// (#1180 recurrence - the earlier fix only handled the former).
+func mergeExtOrigin(existingOriginJSON string, newOrigin *extsdk.ChatOrigin, newSetup *extsdk.Setup) (originJSON string, effectiveSetup *dag.Setup) {
 	var rec extOriginRecord
 	if existingOriginJSON != "" {
 		if err := json.Unmarshal([]byte(existingOriginJSON), &rec); err != nil {
@@ -572,20 +578,32 @@ func mergeExtOrigin(existingOriginJSON string, newOrigin *extsdk.ChatOrigin, new
 	if newOrigin != nil {
 		rec.ChatOrigin = newOrigin
 	}
-	if newSetup != nil {
+	switch {
+	case newSetup == nil:
+		// Nothing new this dispatch - keep whatever rec.Setup already holds.
+	case newSetup.ExistingHeadRef != "" || rec.Setup == nil || rec.Setup.ExistingHeadRef == "":
 		rec.Setup = newSetup
-	} else if rec.Setup != nil {
+	default:
+		// newSetup is non-nil but its head ref is blank, and we have a better
+		// one on record - keep everything else from this dispatch (repo/base/
+		// work branch can legitimately change turn to turn), just borrow the
+		// real head ref rather than losing it.
+		merged := *newSetup
+		merged.ExistingHeadRef = rec.Setup.ExistingHeadRef
+		rec.Setup = &merged
+	}
+	if rec.Setup != nil {
 		s := toDagSetup(*rec.Setup)
-		fallbackSetup = &s
+		effectiveSetup = &s
 	}
 	if rec.ChatOrigin == nil && rec.Setup == nil {
-		return "", fallbackSetup
+		return "", effectiveSetup
 	}
 	b, err := json.Marshal(rec)
 	if err != nil {
-		return "", fallbackSetup
+		return "", effectiveSetup
 	}
-	return string(b), fallbackSetup
+	return string(b), effectiveSetup
 }
 
 // toDagSetup adapts the SDK's Setup to dag.Setup. ExistingHeadRef overrides
