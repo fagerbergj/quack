@@ -2,7 +2,10 @@ package inference
 
 import (
 	"errors"
+	"fmt"
+	"net"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -81,5 +84,68 @@ func TestSanitizeGatewayError_5xxIsTransient(t *testing.T) {
 	}
 	if !TransientFromSummary(summary) {
 		t.Errorf("TransientFromSummary(%q) = false, want true", summary)
+	}
+}
+
+type fakeAddr string
+
+func (a fakeAddr) Network() string { return "tcp" }
+func (a fakeAddr) String() string  { return string(a) }
+
+// TestSanitizeStoreError_NeverLeaksDSNFragments covers the two exotic DSN
+// shapes the #1200 review flagged: a single-quoted password containing an
+// @, and a raw user@host embedded inside a DSN. Both are baked into the
+// wrapped error's text (as a real pgconn/gorm error might carry), proving
+// SanitizeStoreError's structured-field-only approach never echoes them -
+// unlike the prior regex approach, which matched only up to the first @ or
+// unquoted whitespace and leaked the remainder.
+func TestSanitizeStoreError_NeverLeaksDSNFragments(t *testing.T) {
+	tests := []struct {
+		name   string
+		err    error
+		leaked []string
+	}{
+		{
+			name: "single-quoted password containing @",
+			err: &net.OpError{Op: "dial", Net: "tcp", Addr: fakeAddr("quack-postgres:5432"),
+				Err: fmt.Errorf("dsn host=quack-postgres password='p@ss' sslmode=disable: %w", syscall.ECONNREFUSED)},
+			leaked: []string{"p@ss", "password="},
+		},
+		{
+			name: "user@host embedded in DSN",
+			err: &net.OpError{Op: "dial", Net: "tcp", Addr: fakeAddr("quack-postgres:5432"),
+				Err: fmt.Errorf("postgres://user:pa@ss@quack-postgres:5432/db: %w", syscall.ECONNREFUSED)},
+			leaked: []string{"pa@ss", "user:pa", "user@host"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SanitizeStoreError(tc.err)
+			for _, frag := range tc.leaked {
+				if strings.Contains(got, frag) {
+					t.Fatalf("sanitized message %q leaked fragment %q", got, frag)
+				}
+			}
+			if !strings.Contains(got, "quack-postgres:5432") {
+				t.Fatalf("sanitized message %q missing expected host:port", got)
+			}
+			if !strings.Contains(got, "connection refused") {
+				t.Fatalf("sanitized message %q missing expected error class", got)
+			}
+		})
+	}
+}
+
+func TestSanitizeStoreError_NoSuchHost(t *testing.T) {
+	err := &net.DNSError{Err: "no such host", Name: "quack-postgres", IsNotFound: true}
+	got := SanitizeStoreError(err)
+	if !strings.Contains(got, "quack-postgres") || !strings.Contains(got, "no such host") {
+		t.Fatalf("sanitized message = %q, want host + no such host class", got)
+	}
+}
+
+func TestSanitizeStoreError_NilIsEmpty(t *testing.T) {
+	if got := SanitizeStoreError(nil); got != "" {
+		t.Fatalf("SanitizeStoreError(nil) = %q, want empty", got)
 	}
 }

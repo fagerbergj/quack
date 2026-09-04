@@ -26,6 +26,7 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/pgdial"
 )
 
 // Chat is the app-level chat record. Its ID doubles as the ADK session ID.
@@ -435,14 +436,14 @@ func slogGormLogger() logger.Interface {
 func dialectorFor(kind, url string) (func() gorm.Dialector, error) {
 	switch kind {
 	case "", "postgres":
-		if _, err := openPostgres(url); err != nil {
+		if _, err := pgdial.Open(url); err != nil {
 			return nil, fmt.Errorf("store: parse postgres url: %w", err)
 		}
 		return func() gorm.Dialector {
 			// Reparses url each call (dialectorFor already proved it parses) - New()
 			// calls this factory twice (main db, then the session service) and each
 			// needs its own *sql.DB/pool.
-			d, _ := openPostgres(url)
+			d, _ := pgdial.Open(url)
 			return d
 		}, nil
 	case "sqlite":

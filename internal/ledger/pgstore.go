@@ -10,9 +10,10 @@ import (
 	"log/slog"
 	"time"
 
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+
+	"github.com/fagerbergj/quack/internal/pgdial"
 )
 
 // pgEntry is the GORM row for one ledger entry - the Postgres LedgerStore's
@@ -72,13 +73,19 @@ func NewPGStore(db *gorm.DB) (*PGStore, error) {
 
 // NewPGStoreFromURL opens its own Postgres connection at url, mirroring
 // internal/store.NewArtifactService - the ledger store is meant to point at
-// the same database, but is wired independently of internal/store.
+// the same database, but is wired independently of internal/store. Uses
+// pgdial.Open so this dialector gets the same dial retry as every other one
+// (#1200 review: this was a fourth postgres dialector missed by the first pass).
 func NewPGStoreFromURL(url string) (*PGStore, error) {
 	gormCfg := &gorm.Config{Logger: logger.New(
 		slog.NewLogLogger(slog.Default().Handler(), slog.LevelWarn),
 		logger.Config{SlowThreshold: 200 * time.Millisecond, LogLevel: logger.Warn, IgnoreRecordNotFoundError: true},
 	)}
-	db, err := gorm.Open(postgres.Open(url), gormCfg)
+	dialector, err := pgdial.Open(url)
+	if err != nil {
+		return nil, fmt.Errorf("ledger: parse postgres url: %w", err)
+	}
+	db, err := gorm.Open(dialector, gormCfg)
 	if err != nil {
 		return nil, fmt.Errorf("ledger: open postgres store: %w", err)
 	}

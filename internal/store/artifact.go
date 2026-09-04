@@ -15,6 +15,8 @@ import (
 	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/genai"
 	"gorm.io/gorm"
+
+	"github.com/fagerbergj/quack/internal/pgdial"
 )
 
 // Artifact is the durable metadata record for one artifact revision.
@@ -113,7 +115,7 @@ func NewLargeObjectArtifactService(db *gorm.DB) (artifact.Service, error) {
 // returns the large-object-backed artifact.Service - durable across
 // restarts. url must be a postgres DSN (config.validate enforces this).
 func NewArtifactService(url string) (artifact.Service, error) {
-	dialector, err := openPostgres(url)
+	dialector, err := pgdial.Open(url)
 	if err != nil {
 		return nil, fmt.Errorf("store: parse artifact store url: %w", err)
 	}

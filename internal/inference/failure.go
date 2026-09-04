@@ -1,11 +1,14 @@
 package inference
 
 import (
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"regexp"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -139,22 +142,52 @@ var (
 	storeFailures   = map[string]string{}
 )
 
-// dsnCredRe/dsnURLCredRe strip credentials a raw pgconn/gorm dial error can
-// carry (keyword DSN's password=..., or a postgres://user:pass@ URL) before
-// the message is ever stored or surfaced (#1193 - never leak a DSN password).
-var (
-	dsnCredRe    = regexp.MustCompile(`(?i)(password|pwd)=\S+`)
-	dsnURLCredRe = regexp.MustCompile(`://[^@/\s]+@`)
-)
-
 // SanitizeStoreError reduces a store/DB error to text safe to surface in a
-// run outcome - see dsnCredRe/dsnURLCredRe.
+// run outcome. A pgconn/gorm dial error's Error() text can itself contain
+// the raw DSN in arbitrary quoting (#1200 review: regex-stripping credentials
+// out of that text leaked fragments of quoted or @-containing passwords), so
+// this never looks at err.Error() at all - only the structured dial address
+// (net.OpError.Addr / net.DNSError.Name) and a coarse error class. The raw
+// error is still available server-side via the slog.Warn call at the one
+// caller (orchestrator.failSoftListArtifacts.List).
 func SanitizeStoreError(err error) string {
 	if err == nil {
 		return ""
 	}
-	msg := dsnCredRe.ReplaceAllString(err.Error(), "$1=***")
-	return dsnURLCredRe.ReplaceAllString(msg, "://***@")
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		class := dialErrorClass(opErr.Err)
+		if opErr.Addr != nil {
+			return fmt.Sprintf("database unavailable: dial %s: %s", opErr.Addr, class)
+		}
+		return fmt.Sprintf("database unavailable: %s", class)
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return fmt.Sprintf("database unavailable: dial %s: no such host", dnsErr.Name)
+	}
+	return "database unavailable: connection error"
+}
+
+// dialErrorClass buckets a dial error into one of a few known classes
+// without ever formatting err itself into the result - only errors.Is/As
+// checks against structured error values, so nothing from err.Error() (which
+// could echo a DSN) reaches the returned string.
+func dialErrorClass(err error) string {
+	switch {
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection refused"
+	case errors.Is(err, syscall.ETIMEDOUT):
+		return "timeout"
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return "no such host"
+	}
+	if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		return "timeout"
+	}
+	return "connection error"
 }
 
 // RecordStoreFailure notes a sanitized store error for chatID, overwriting
