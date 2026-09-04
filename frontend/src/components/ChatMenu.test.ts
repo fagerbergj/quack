@@ -1,8 +1,16 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ChatMenu } from './ChatMenu'
+
+// jsdom has no matchMedia; ChatMenu's theme picker (useTheme) calls it on mount.
+vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
+  matches: false,
+  media: query,
+  addEventListener: vi.fn(),
+  removeEventListener: vi.fn(),
+})))
 
 // #746 items 2/3: Download Logs moved from a standing header link into the
 // chat header's ⋯ overflow menu, relabelled but still a plain link to the
