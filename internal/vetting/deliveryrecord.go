@@ -51,6 +51,10 @@ type DeliveryRecord struct {
 	// delivery must never be confused with an artifact-backed one when
 	// diffing carried-over/resolved findings later.
 	RenderedFromStaged bool `json:"rendered_from_staged,omitempty"`
+	// Error: non-empty on a failed delivery attempt (e.g. gate push failure,
+	// #1155) - kept in the history so a later revision isn't mistaken for
+	// the subject's first attempt.
+	Error string `json:"error,omitempty"`
 }
 
 // deliverySubject strips the leading "<kind>:" off a target id ("code_review:

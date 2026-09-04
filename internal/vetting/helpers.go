@@ -156,6 +156,11 @@ type DeliveryContext struct {
 	GateFeedback string // feedback for caveat when GatePassed is false
 	// PushedSHA: the branch head the gate itself pushed; "" = no push happened.
 	PushedSHA string
+	// PushError: non-empty when ensurePush failed before Deliver was called -
+	// Items are still the originally staged set (never attempted). Deliver
+	// implementations should skip attempting them and report this as each
+	// item's failure instead, mirroring the PushedSHA-verify-mismatch path (#1155).
+	PushError string
 	// ChecksSkipNote: non-empty when GatePassed but no build/test check ran
 	// for a reason worth telling the reader (#780). Already worded for
 	// display; "" means say nothing (checks ran, or the reason is operator

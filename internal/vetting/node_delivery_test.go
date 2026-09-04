@@ -391,6 +391,53 @@ func TestCommitDeliveryFiresOnFailWithCaveat(t *testing.T) {
 	}
 }
 
+// #1155: a gate push failure must still reach Deliver, carrying the push
+// error on dc.PushError - the extension is the only thing that can tell the
+// human on GitHub a delivery failed, and it was never invoked at all before
+// this fix (the run just went quiet with the worker's own, possibly stale,
+// answer text).
+func TestCommitDeliveryStillReachesDeliverOnPushFailure(t *testing.T) {
+	j, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := j.EnsureDir("u1", "chat1", workspace.SetupCloneDir("impl")); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan DeliveryContext, 1)
+	cfg := Config{
+		Deliver: func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
+			done <- dc
+			// A real extension skips attempting push-dependent items once it
+			// sees PushError, and reports the failure back to GitHub instead.
+			return []DeliveryItemOutcome{{Kind: dc.Items[0].Kind, Error: dc.PushError}}, errors.New(dc.PushError)
+		},
+		Setup:           &SetupBranch{Repo: "https://github.com/fagerbergj/games", WorkBranch: "quack/work"},
+		NodeID:          "impl",
+		Workspace:       j,
+		WorkspaceUserID: "u1",
+		ChatID:          "chat1",
+		// GitCredentials left nil on purpose: ensurePush fails with
+		// "no git credential source configured" before Deliver is ever called.
+	}
+	commitDelivery(context.Background(), nil, cfg, "impl", workerActivity{
+		stagedDelivery: map[string]StagedDelivery{"pr": {Kind: "pull_request", Title: "x"}},
+	}, GateResult{Passed: true})
+
+	select {
+	case dc := <-done:
+		if dc.PushError == "" {
+			t.Fatal("PushError = \"\", want ensurePush's failure carried through so Deliver can report it")
+		}
+		if len(dc.Items) != 1 {
+			t.Fatalf("Items = %+v, want the staged item still present (Deliver decides whether to attempt it)", dc.Items)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Deliver never fired on a push failure - the extension must still get a chance to report it (#1155)")
+	}
+}
+
 // #1059: a multi-reviewer plan's merged review is delivered by the
 // synthesizer node, which never clones anything itself - its own cfg/act
 // carry no clone URL. The merged delivery must still carry the URL one of
