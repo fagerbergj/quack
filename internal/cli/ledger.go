@@ -248,15 +248,12 @@ type DeliveryContext struct {
 
 // DeliveryRecoverer looks an idempotency key up at the delivery target (a
 // hidden marker in a GitHub review body, a reMarkable document id) and
-// reports whether it was already posted. This is a LOCAL copy of the
-// interface an extension implements (github's App.RecoverDelivery, in
-// quack-extensions) - not an import, since core is pinned to sdk v0.8.0 on
-// origin/main, which predates this capability. Structurally identical to
-// sdk.DeliveryRecoverer's 3-arg/DeliveryItemOutcome signature - mirrors the
-// planned v0.9.0 signature; replaced wholesale when the bump lands. Delete
-// this and import sdk.DeliveryRecoverer directly once quack's
-// go.mod bumps to the sdk/github v0.9.0 release that adds it (#1093
-// deploy-order note; see PR body for the exact pin steps).
+// reports whether it was already posted. This is a LOCAL copy of
+// sdk.DeliveryRecoverer's shape - cli doesn't import quack-extensions/sdk
+// directly (that dependency stays in internal/serve, which already adapts
+// the SDK boundary elsewhere); internal/serve.sdkRecoverAdapter bridges the
+// real extension's sdk.DeliveryRecoverer to this interface for
+// `quack ledger recover`.
 type DeliveryRecoverer interface {
 	RecoverDelivery(ctx context.Context, key string, dc DeliveryContext) (found bool, outcome DeliveryItemOutcome, err error)
 }
