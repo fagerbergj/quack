@@ -31,6 +31,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/otelobs"
@@ -331,6 +332,11 @@ func (o *Orchestrator) BuildBoundPlan(ctx context.Context, nodes []dag.RawNode, 
 func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, source string, plan dag.Plan) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		var span oteltrace.Span
+		// A prior turn's unconsumed planning failure (empty node/agent key,
+		// store.orchestratorGiveUpError's read) must not leak into THIS run's
+		// silent gap - RunBoundPlan makes no orchestrator model call to ever
+		// naturally clear it (#1109 review finding 3 precedent, #1156).
+		inference.ClearFailure(sessionID, "", "")
 		// Coords first: the root span reads them for gen_ai.conversation.id/user.id.
 		ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: sessionID, User: userID, Source: source})
 		ctx, span = otelobs.Start(ctx, "run.bound", attribute.String(otelobs.ChatIDKey, sessionID))
@@ -451,6 +457,13 @@ func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.P
 func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, message string, attachments []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		var span oteltrace.Span
+		// A prior turn's unconsumed planning failure (empty node/agent key,
+		// store.orchestratorGiveUpError's read) must not leak into THIS run:
+		// if this turn itself never calls the model again before ending in
+		// its own empty gap (e.g. a pending-choice reply, or a plan that runs
+		// but ends silent), the stale record would still be sitting there
+		// (#1109 review finding 3 precedent, #1156).
+		inference.ClearFailure(sessionID, "", "")
 		// Coords first: the root span reads them for gen_ai.conversation.id/user.id.
 		ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: sessionID, User: userID, Source: source})
 		ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, sessionID))
