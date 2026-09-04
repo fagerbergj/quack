@@ -80,7 +80,7 @@ GitHub → **Settings → Developer settings → GitHub Apps → New GitHub App*
 
 - **Name**: e.g. `quack-<yourorg>`.
 - **Homepage URL**: anything (your repo).
-- **Webhook URL**: `https://<your-host>/api/v1/github/webhook`.
+- **Webhook URL**: `https://<your-host>/github/webhook`.
 - **Webhook secret**: generate a strong random string; you'll put it in `QUACK_GITHUB_WEBHOOK_SECRET`.
 
 ### 2. Permissions (least privilege)
@@ -150,23 +150,23 @@ The App's client secret is **not** used - quack authenticates as the App by sign
 
 The installation token doubles as quack's git credential: when a tool clones or pushes a `github.com` URL and no static credential matches, the extension mints a short-lived token for that repo's installation automatically (never written to disk, never in a URL). A static PAT (`workspace.git_credentials`) still works and wins if both are configured.
 
-When `extensions.github` is absent, the extension isn't built at all - no tools, and `/api/v1/github/webhook` returns `404`.
+When `extensions.github` is absent, the extension isn't built at all - no tools, and `/github/webhook` returns `404`.
 
 ### 7. Expose the endpoint
 
-`/api/v1/github/webhook` must be reachable from GitHub over HTTPS. In production, terminate TLS at a reverse proxy in front of quack.
+`/github/webhook` must be reachable from GitHub over HTTPS. In production, terminate TLS at a reverse proxy in front of quack.
 
 **Local development** - forward GitHub's webhooks to your machine:
 
 ```bash
 # Option A: GitHub CLI
 gh webhook forward --repo=<owner>/<repo> --events=issue_comment,issues,pull_request \
-  --url=http://localhost:8080/api/v1/github/webhook
+  --url=http://localhost:8080/github/webhook
 
 # Option B: smee.io - create a channel at https://smee.io, set it as the App's
 # Webhook URL, then:
 npx smee-client --url https://smee.io/<channel> \
-  --target http://localhost:8080/api/v1/github/webhook
+  --target http://localhost:8080/github/webhook
 ```
 
 ### 8. Verify it works
