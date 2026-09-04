@@ -50,6 +50,10 @@ func runCheckMermaid(t *testing.T, diagram string) string {
 }
 
 func TestCheckMermaidTool_ValidDiagram(t *testing.T) {
+	// Parallel: each run spawns node loading mermaid's full parser (~1.5s);
+	// nothing in this test binary reassigns the validator's globals, so
+	// the two runs can overlap.
+	t.Parallel()
 	requireNode(t)
 	got := runCheckMermaid(t, "flowchart TD\n    A[Start] --> B[Finish]")
 	if got != "ok" {
@@ -58,6 +62,7 @@ func TestCheckMermaidTool_ValidDiagram(t *testing.T) {
 }
 
 func TestCheckMermaidTool_InvalidDiagram(t *testing.T) {
+	t.Parallel()
 	requireNode(t)
 	got := runCheckMermaid(t, "A[Start] --> B[Finish]") // no diagram-type declaration
 	if !strings.HasPrefix(got, "invalid") {
