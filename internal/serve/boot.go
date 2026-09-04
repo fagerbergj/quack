@@ -16,14 +16,17 @@ import (
 const staleResumePlanCeiling = 24 * time.Hour
 
 // resumeGuardArchivedOrStale is boot resume's cheap admissibility check
-// (#1176): an archived chat's paused nodes must never be resumed, and a plan
-// older than staleResumePlanCeiling is more likely abandoned than mid-run.
+// (#1176): an archived chat's paused nodes must never be resumed. A plan
+// older than staleResumePlanCeiling is more likely abandoned than mid-run -
+// unless the node is parked on awaiting_input, which holds no run slot and
+// whose only recovery (a full retry) would re-run the node and lose the
+// pending question, so the ceiling only applies to actual work nodes.
 // Split out from the DB reads that feed it so it is unit-testable directly.
-func resumeGuardArchivedOrStale(archived, hasPlan bool, planCreatedAt time.Time) (bool, string) {
+func resumeGuardArchivedOrStale(archived, hasPlan, awaitingInput bool, planCreatedAt time.Time) (bool, string) {
 	if archived {
 		return false, "chat archived; not resumed"
 	}
-	if hasPlan && time.Since(planCreatedAt) > staleResumePlanCeiling {
+	if !awaitingInput && hasPlan && time.Since(planCreatedAt) > staleResumePlanCeiling {
 		return false, "plan older than staleResumePlanCeiling; not resumed"
 	}
 	return true, ""
@@ -36,7 +39,7 @@ func resumeGuardArchivedOrStale(archived, hasPlan bool, planCreatedAt time.Time)
 // Runs before the Hub can accept a run (ScanOrphanedRuns is table-wide with no
 // liveness check) and returns the nodes worth dispatching; the caller starts
 // them once the orchestrator exists.
-func reconcileNodes(ctx context.Context, st *store.Store, resumable func(chatID string) (bool, string)) []store.ResumableNode {
+func reconcileNodes(ctx context.Context, st *store.Store, resumable func(chatID, pauseReason string) (bool, string)) []store.ResumableNode {
 	rep, err := st.ResumePausedDagNodes(ctx, resumable)
 	if err != nil {
 		slog.Error("resume paused dag nodes", "component", "store", "err", err)
@@ -71,7 +74,12 @@ func reconcileNodes(ctx context.Context, st *store.Store, resumable func(chatID 
 // Hub registers one run per chat), driving every resumable node of that chat
 // in turn - each re-entry is the scoped "node + descendants" subset, so a
 // second paused sibling is not covered by the first node's walk.
-func startResumedNodes(ctx context.Context, nodes []store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub) {
+//
+// maxConcurrent bounds how many chats resume at once - these runs skip the
+// orchestrator's own run admission (their slot died with the old process, see
+// RetryNodeResumed), so nothing else caps a restart with many resumable
+// chats from hammering the host at once; the rest just wait their turn here.
+func startResumedNodes(ctx context.Context, nodes []store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, maxConcurrent int) {
 	byChat := map[string][]store.ResumableNode{}
 	var order []string
 	for _, n := range nodes {
@@ -80,8 +88,26 @@ func startResumedNodes(ctx context.Context, nodes []store.ResumableNode, orch *o
 		}
 		byChat[n.ChatID] = append(byChat[n.ChatID], n)
 	}
-	for _, chatID := range order {
-		go driveResume(ctx, chatID, byChat[chatID], orch, st, hub)
+	boundedGoRun(order, maxConcurrent, func(chatID string) {
+		driveResume(ctx, chatID, byChat[chatID], orch, st, hub)
+	})
+}
+
+// boundedGoRun starts run(id) in its own goroutine for every id, at most
+// maxConcurrent at a time - split out from startResumedNodes so the
+// concurrency cap is testable without a real orchestrator/LLM. Blocks until
+// every run has been dispatched (not until they finish).
+func boundedGoRun(ids []string, maxConcurrent int, run func(id string)) {
+	if maxConcurrent < 1 {
+		maxConcurrent = 1
+	}
+	sem := make(chan struct{}, maxConcurrent)
+	for _, id := range ids {
+		sem <- struct{}{}
+		go func(id string) {
+			defer func() { <-sem }()
+			run(id)
+		}(id)
 	}
 }
 

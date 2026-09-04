@@ -127,7 +127,10 @@ var runAdmissionSpec = dag.AdmissionSpec{Model: "orchestrator-run"}
 
 // SetMaxActiveRuns caps concurrent runs server-wide via the same admission
 // queue (dag.Admission) node scheduling uses, instead of a second
-// parallel implementation.
+// parallel implementation. RetryNodeResumed (boot resume) bypasses this
+// admission entirely (#1176) - the caller caps its own concurrency instead
+// (serve.startResumedNodes), so this limit is not a true ceiling on
+// concurrent runs while resumes are in flight.
 func (o *Orchestrator) SetMaxActiveRuns(n int) {
 	if n >= 1 {
 		o.runAdmit = dag.NewAdmission(map[string]int{runAdmissionSpec.Model: n}, nil, nil, 0)

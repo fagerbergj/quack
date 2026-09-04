@@ -94,7 +94,7 @@ func TestResumePausedDagNodes_ArchivedChatIsNotResumed(t *testing.T) {
 		t.Fatalf("UpsertDagNode: %v", err)
 	}
 
-	resumable := func(chatID string) (bool, string) {
+	resumable := func(chatID, pauseReason string) (bool, string) {
 		c, err := st.GetChat(ctx, chatID)
 		if err == nil && c != nil && c.Archived {
 			return false, "chat archived; not resumed"
