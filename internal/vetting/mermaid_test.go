@@ -31,6 +31,7 @@ func requireMermaidValidator(t *testing.T) {
 }
 
 func TestFindInvalidMermaid_ValidDiagramPasses(t *testing.T) {
+	t.Parallel()
 	requireMermaidValidator(t)
 	md := "Here's the plan:\n\n```mermaid\nflowchart TD\n    A[Start] --> B[Finish]\n```\n\nDone."
 	if issues := FindInvalidMermaid(md); len(issues) != 0 {
@@ -48,6 +49,7 @@ func TestFindInvalidMermaid_NoMermaidBlockPasses(t *testing.T) {
 // A missing diagram-type header is a real parse error from mermaid.js itself
 // ("No diagram type detected") - one of the five known-bad shapes from #574.
 func TestFindInvalidMermaid_MissingHeaderDetected(t *testing.T) {
+	t.Parallel()
 	requireMermaidValidator(t)
 	md := "Before.\n\n```mermaid\nA[Start] --> B[Finish]\n```\n\nAfter."
 	issues := FindInvalidMermaid(md)
@@ -68,6 +70,7 @@ func TestFindInvalidMermaid_MissingHeaderDetected(t *testing.T) {
 // existed only because mermaid-check, the Go reimplementation, parsed and
 // strictly validated this clean).
 func TestFindInvalidMermaid_QuoteInUnquotedLabelDetected(t *testing.T) {
+	t.Parallel()
 	requireMermaidValidator(t)
 	md := "```mermaid\nflowchart TD\n  A[bundle name<br/>e.g. \"code-reviewer\"] --> B[x]\n```"
 	issues := FindInvalidMermaid(md)
@@ -81,6 +84,7 @@ func TestFindInvalidMermaid_QuoteInUnquotedLabelDetected(t *testing.T) {
 
 // A fully-quoted label using mermaid's own escape form is valid.
 func TestFindInvalidMermaid_FullyQuotedLabelWithEscapedQuotesPasses(t *testing.T) {
+	t.Parallel()
 	requireMermaidValidator(t)
 	md := "```mermaid\nflowchart TD\n  A[\"bundle name, e.g. \\\"code-reviewer\\\"\"] --> B[Done]\n```"
 	if issues := FindInvalidMermaid(md); len(issues) != 0 {
@@ -92,6 +96,7 @@ func TestFindInvalidMermaid_FullyQuotedLabelWithEscapedQuotesPasses(t *testing.T
 // real parse error under mermaid.js (it opens a "round" node shape), not
 // merely a strict-validation warning.
 func TestFindInvalidMermaid_UnquotedParenLabelDetected(t *testing.T) {
+	t.Parallel()
 	requireMermaidValidator(t)
 	md := "```mermaid\nflowchart TD\n    A[Login (OAuth)] --> B[Done]\n```"
 	issues := FindInvalidMermaid(md)
@@ -104,6 +109,7 @@ func TestFindInvalidMermaid_UnquotedParenLabelDetected(t *testing.T) {
 // (`CV[ComposeView<br/>setContent { NavHost }]`) - this is what broke two of
 // the five real plan diagrams behind #574.
 func TestFindInvalidMermaid_UnquotedBraceLabelDetected(t *testing.T) {
+	t.Parallel()
 	requireMermaidValidator(t)
 	md := "```mermaid\nflowchart TD\n    CV[ComposeView<br/>setContent { NavHost }] --> B[Done]\n```"
 	issues := FindInvalidMermaid(md)
@@ -115,6 +121,7 @@ func TestFindInvalidMermaid_UnquotedBraceLabelDetected(t *testing.T) {
 // The same label, fully quoted, is valid - braces inside a QUOTED label are
 // just text.
 func TestFindInvalidMermaid_QuotedBraceLabelPasses(t *testing.T) {
+	t.Parallel()
 	requireMermaidValidator(t)
 	md := "```mermaid\nflowchart TD\n    CV[\"ComposeView setContent { NavHost }\"] --> B[Done]\n```"
 	if issues := FindInvalidMermaid(md); len(issues) != 0 {
@@ -127,6 +134,7 @@ func TestFindInvalidMermaid_QuotedBraceLabelPasses(t *testing.T) {
 // rather than breaking the line. A natural rule to hand-code wrongly; pinned
 // here so nobody "fixes" this into a false positive.
 func TestFindInvalidMermaid_LiteralBackslashNPasses(t *testing.T) {
+	t.Parallel()
 	requireMermaidValidator(t)
 	md := "```mermaid\nflowchart TD\n    A[line one\\nline two] --> B[x]\n```"
 	if issues := FindInvalidMermaid(md); len(issues) != 0 {
@@ -135,6 +143,7 @@ func TestFindInvalidMermaid_LiteralBackslashNPasses(t *testing.T) {
 }
 
 func TestFindInvalidMermaid_UnknownSequenceArrowDetected(t *testing.T) {
+	t.Parallel()
 	requireMermaidValidator(t)
 	md := "```mermaid\nsequenceDiagram\n    Alice ->>> Bob: bad arrow\n```"
 	if issues := FindInvalidMermaid(md); len(issues) != 1 {
@@ -162,6 +171,7 @@ func TestFindInvalidMermaid_NestedFenceIgnored(t *testing.T) {
 // The same regression, but proving a REAL top-level bad mermaid block right
 // next to the nested false-positive is still caught.
 func TestFindInvalidMermaid_NestedFenceIgnoredRealBlockStillDetected(t *testing.T) {
+	t.Parallel()
 	requireMermaidValidator(t)
 	md := "```go\n// ```mermaid\n// not a real diagram\n// ```\nfmt.Println(1)\n```\n\n" +
 		"```mermaid\nA[Start] --> B[Finish]\n```"
@@ -173,6 +183,7 @@ func TestFindInvalidMermaid_NestedFenceIgnoredRealBlockStillDetected(t *testing.
 // GitHub renders ```Mermaid / ```MERMAID the same as ```mermaid - the fence
 // match must be case-insensitive.
 func TestFindInvalidMermaid_CaseInsensitiveFence(t *testing.T) {
+	t.Parallel()
 	requireMermaidValidator(t)
 	md := "```MERMAID\nA[Start] --> B[Finish]\n```"
 	if issues := FindInvalidMermaid(md); len(issues) != 1 {
@@ -184,6 +195,7 @@ func TestFindInvalidMermaid_CaseInsensitiveFence(t *testing.T) {
 // process invokes a subprocess, and a bug in that invocation path must not
 // take the gate round down with it.
 func TestMermaidError_RecoversFromPanic(t *testing.T) {
+	t.Parallel()
 	requireMermaidValidator(t)
 	defer func() {
 		if r := recover(); r != nil {
@@ -214,6 +226,7 @@ func TestMermaidError(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			got := mermaidError(c.body) != ""
 			if got != c.invalid {
 				t.Errorf("mermaidError(%q) invalid = %v, want %v", c.body, got, c.invalid)
@@ -224,6 +237,7 @@ func TestMermaidError(t *testing.T) {
 
 // TestCheckMermaid_ValidDiagramPasses covers the check_mermaid tool's happy path.
 func TestCheckMermaid_ValidDiagramPasses(t *testing.T) {
+	t.Parallel()
 	requireMermaidValidator(t)
 	ok, line, col, msg := CheckMermaid("flowchart TD\n    A[Start] --> B[Finish]")
 	if !ok || line != 0 || col != 0 || msg != "" {
@@ -234,6 +248,7 @@ func TestCheckMermaid_ValidDiagramPasses(t *testing.T) {
 // TestCheckMermaid_InvalidDiagramReportsLocation covers the tool's failure path:
 // ok=false plus a located line/column pulled out of the same message the gate shows.
 func TestCheckMermaid_InvalidDiagramReportsLocation(t *testing.T) {
+	t.Parallel()
 	requireMermaidValidator(t)
 	ok, line, col, msg := CheckMermaid(`flowchart TD
     G[Node (parens)] --> H[End]`)
@@ -252,6 +267,7 @@ func TestCheckMermaid_InvalidDiagramReportsLocation(t *testing.T) {
 // (the gate's wiring) agree on the same diagram - one source of truth, not two
 // implementations that could drift apart.
 func TestCheckMermaid_SharesValidatorWithGate(t *testing.T) {
+	t.Parallel()
 	requireMermaidValidator(t)
 	body := "A[Start] --> B[Finish]" // no diagram-type declaration: invalid
 	toolOK, _, _, _ := CheckMermaid(body)
@@ -270,6 +286,7 @@ func TestCheckMermaid_SharesValidatorWithGate(t *testing.T) {
 // either the answer text or a staged delivery body, and stay inapplicable
 // (ok=false) when nothing invalid is present anywhere.
 func TestMermaidCriterion_DetectsInvalidStagedBody(t *testing.T) {
+	t.Parallel()
 	requireMermaidValidator(t)
 	act := workerActivity{stagedDelivery: map[string]StagedDelivery{
 		"pr": {Kind: "pull_request", Body: "See the flow:\n\n```mermaid\nA[Start] --> B[End]\n```"},
@@ -287,6 +304,7 @@ func TestMermaidCriterion_DetectsInvalidStagedBody(t *testing.T) {
 }
 
 func TestMermaidCriterion_ValidEverywherePasses(t *testing.T) {
+	t.Parallel()
 	requireMermaidValidator(t)
 	act := workerActivity{stagedDelivery: map[string]StagedDelivery{
 		"pr": {Kind: "pull_request", Body: "See the flow:\n\n```mermaid\nflowchart TD\n    A[Start] --> B[End]\n```"},
@@ -300,6 +318,7 @@ func TestMermaidCriterion_ValidEverywherePasses(t *testing.T) {
 // real parser: quoted subgraph titles and class-diagram notes must still
 // parse clean.
 func TestFindInvalidMermaid_QuotedSubgraphTitlePasses(t *testing.T) {
+	t.Parallel()
 	requireMermaidValidator(t)
 	md := "```mermaid\nflowchart TD\nsubgraph \"My Title\"\nA-->B\nend\n```"
 	if issues := FindInvalidMermaid(md); len(issues) != 0 {
@@ -308,6 +327,7 @@ func TestFindInvalidMermaid_QuotedSubgraphTitlePasses(t *testing.T) {
 }
 
 func TestFindInvalidMermaid_ClassDiagramNotePasses(t *testing.T) {
+	t.Parallel()
 	requireMermaidValidator(t)
 	md := "```mermaid\nclassDiagram\nclass Foo\nnote for Foo \"a note\"\n```"
 	if issues := FindInvalidMermaid(md); len(issues) != 0 {
@@ -319,6 +339,7 @@ func TestFindInvalidMermaid_ClassDiagramNotePasses(t *testing.T) {
 // message naming the "(" and the quoted fix, keep the diagram's own line 2
 // and caret column, and drop the grammar-internal Expecting-list noise.
 func TestMermaidError_UnquotedParenTranslated(t *testing.T) {
+	t.Parallel()
 	requireMermaidValidator(t)
 	got := mermaidError("flowchart TD\n  F[x] --> G[filterChats(chats, filterState)]")
 	if got == "" {
@@ -410,7 +431,9 @@ func TestTranslateMermaidError_UnstructuredErrorKeepsRawText(t *testing.T) {
 
 // A node with no mermaid at all is untouched whether or not the validator is
 // available - and a node WITH a diagram derives nothing (no false failure)
-// rather than crash when the validator can't be found.
+// rather than crash when the validator can't be found. Deliberately not
+// t.Parallel(): it rebinds the package-level mermaidValidatorPath that the
+// parallel tests read.
 func TestMermaidCriterion_NoOpWhenValidatorUnavailable(t *testing.T) {
 	old := mermaidValidatorPath
 	mermaidValidatorPath = "/nonexistent/mermaid-validate.mjs"
@@ -430,6 +453,7 @@ func TestMermaidCriterion_NoOpWhenValidatorUnavailable(t *testing.T) {
 // parse clean - since the gate defers to the real mermaid.js parser, this
 // just proves the upgraded dependency didn't regress either.
 func TestFindInvalidMermaid_NewShapeSyntaxPasses(t *testing.T) {
+	t.Parallel()
 	requireMermaidValidator(t)
 	md := "```mermaid\nflowchart TD\n  A@{ shape: person, label: \"User\" }\n  B@{ shape: folder, label: \"Docs\" }\n  A --> B\n```"
 	if issues := FindInvalidMermaid(md); len(issues) != 0 {
@@ -438,6 +462,7 @@ func TestFindInvalidMermaid_NewShapeSyntaxPasses(t *testing.T) {
 }
 
 func TestFindInvalidMermaid_CollapsedSubgraphPasses(t *testing.T) {
+	t.Parallel()
 	requireMermaidValidator(t)
 	md := "```mermaid\nflowchart TD\n  subgraph sub1[\"Details\"]\n    X --> Y\n  end\n  sub1@{ view: collapsed }\n  A --> sub1\n```"
 	if issues := FindInvalidMermaid(md); len(issues) != 0 {
@@ -449,7 +474,9 @@ func TestFindInvalidMermaid_CollapsedSubgraphPasses(t *testing.T) {
 // invalid: CommandContext's kill surfaces as an ExitError, which used to fall
 // through to "unreadable output" and fail the gate on a slow box. Drives the
 // real mermaidError path (not a standalone stdlib probe) so reverting the
-// ctx.Err() guard in mermaidError fails this test.
+// ctx.Err() guard in mermaidError fails this test. Deliberately not
+// t.Parallel(): it rebinds the package-level mermaidValidatorPath and
+// mermaidValidateTimeout that the parallel tests read.
 func TestMermaidValidate_TimeoutIsNotAnInvalidDiagram(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node unavailable in this environment")
