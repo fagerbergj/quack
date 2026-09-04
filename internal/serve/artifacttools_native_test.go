@@ -60,7 +60,7 @@ func TestBuildAgents_NativeNodeGetsArtifactTools(t *testing.T) {
 	var setupFn dag.SetupFunc
 	artifacts := artifact.InMemoryService()
 	clientMap, _, nodeServers, _, _, _, _, err := buildAgents(cfg, session.InMemoryService(), skillTS, builtinSkillSrc, newScopedSkillTS,
-		nil, nil, jail, nil, nil, nil, nil, nil, nil, nil, nil, nil, &setupFn, artifacts)
+		nil, nil, jail, nil, nil, nil, nil, nil, nil, nil, nil, nil, &setupFn, artifacts, nil)
 	if err != nil {
 		t.Fatalf("buildAgents: %v", err)
 	}

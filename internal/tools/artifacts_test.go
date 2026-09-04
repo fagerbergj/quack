@@ -8,16 +8,61 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/tool/toolconfirmation"
 
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
+
+// fakeLedger: minimal in-memory ledger.LedgerStore double (mirrors
+// internal/recordstore's own test copy) so a write_<kind> test can prove
+// parent_revision without a database (#1153).
+type fakeLedger struct {
+	mu      sync.Mutex
+	seqs    map[string]int64
+	entries map[string][]ledger.Entry
+}
+
+func newFakeLedger() *fakeLedger {
+	return &fakeLedger{seqs: map[string]int64{}, entries: map[string][]ledger.Entry{}}
+}
+
+func (f *fakeLedger) Append(context.Context, string, []byte) error { return nil }
+func (f *fakeLedger) ReadStream(context.Context, string) (io.ReadCloser, error) {
+	return nil, nil
+}
+func (f *fakeLedger) List(context.Context) ([]ledger.SessionRef, error) { return nil, nil }
+func (f *fakeLedger) Delete(context.Context, string) error              { return nil }
+
+func (f *fakeLedger) AppendIntent(_ context.Context, e ledger.Entry) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seqs[e.ChatID]++
+	e.Seq = f.seqs[e.ChatID]
+	e.At = time.Now().UTC()
+	f.entries[e.ChatID] = append(f.entries[e.ChatID], e)
+	return e.Seq, nil
+}
+
+func (f *fakeLedger) ReadEntries(_ context.Context, chatID string, fromSeq int64) ([]ledger.Entry, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []ledger.Entry
+	for _, e := range f.entries[chatID] {
+		if e.Seq >= fromSeq {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
 
 // metaAwareInMemory implements the optional SaveWithMeta/LoadWithMeta pair
 // over artifact.InMemoryService() so a test can read back real lineage
@@ -379,4 +424,84 @@ func findKindSpec(t *testing.T, name string) (recordstore.KindSpec, error) {
 	}
 	t.Fatalf("kind %q not registered - is internal/vetting imported (for its init) somewhere in this test binary?", name)
 	return recordstore.KindSpec{}, nil
+}
+
+// TestNewWriteKindTool_ParentRevisionChain: write_<kind> (and write_artifact)
+// build their own recordstore.Lineage with no ParentRevision (#1153) -
+// saveLocked fills it in from the WAL's own last-revision read, but only
+// when the client is WithLedger-armed, which every worker tool call site
+// used to skip. Two saves through the tool must chain revision 2 to
+// revision 1, both in the returned lineage and in the WAL's own
+// artifact.revision intent (fold's parent-chain oracle, epic #1090 item 1.5).
+func TestNewWriteKindTool_ParentRevisionChain(t *testing.T) {
+	svc := newMetaAwareInMemory()
+	fl := newFakeLedger()
+	rc := recordstore.New(svc, "quack", "u1", "chat-a").WithLedger(fl)
+
+	spec, err := findKindSpec(t, "finding")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tl, err := NewWriteKindTool(rc, "n1", "finding", spec, &RoundCoords{}, vetting.SubjectHint("chat-a"))
+	if err != nil {
+		t.Fatalf("NewWriteKindTool: %v", err)
+	}
+	rt, ok := tl.(runnableTool)
+	if !ok {
+		t.Fatal("write_finding tool is not runnable")
+	}
+
+	args1 := map[string]any{"path": "a.go", "title": "leaked resource", "state": "new"}
+	if _, err := rt.Run(newArtifactsToolCtx(), args1); err != nil {
+		t.Fatalf("Run 1: %v", err)
+	}
+	id, err := recordstore.IdentityFor("finding", args1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Same id, different body: a real second revision, not a no-op
+	// identical-content skip (saveLocked's own guard, #1123).
+	args2 := map[string]any{"path": "a.go", "title": "leaked resource", "state": "resolved"}
+	out2, err := rt.Run(newArtifactsToolCtx(), args2)
+	if err != nil {
+		t.Fatalf("Run 2: %v", err)
+	}
+	if result, _ := out2["result"].(string); !strings.Contains(result, "revision=2") {
+		t.Fatalf("result = %q, want revision=2", result)
+	}
+
+	_, _, lineage, rev, ok, err := rc.LatestWithMeta(context.Background(), id)
+	if err != nil || !ok {
+		t.Fatalf("LatestWithMeta: ok=%v err=%v", ok, err)
+	}
+	if rev != 2 || lineage.ParentRevision != 1 {
+		t.Fatalf("revision=%d parent_revision=%d, want revision=2 parent_revision=1", rev, lineage.ParentRevision)
+	}
+
+	entries, err := fl.ReadEntries(context.Background(), "chat-a", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawRev2Intent bool
+	for _, e := range entries {
+		if e.Key != id || e.Kind != ledger.KindArtifactRevision {
+			continue
+		}
+		var payload struct {
+			Revision       int `json:"revision"`
+			ParentRevision int `json:"parent_revision"`
+		}
+		if jErr := json.Unmarshal(e.Payload, &payload); jErr != nil {
+			t.Fatal(jErr)
+		}
+		if payload.Revision == 2 {
+			sawRev2Intent = true
+			if payload.ParentRevision != 1 {
+				t.Fatalf("artifact.revision intent parent_revision = %d, want 1", payload.ParentRevision)
+			}
+		}
+	}
+	if !sawRev2Intent {
+		t.Fatal("no artifact.revision WAL intent for revision 2")
+	}
 }

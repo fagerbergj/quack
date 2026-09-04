@@ -313,6 +313,9 @@ func registerWriteKindTool(srv *mcp.Server, c *recordstore.Client, sess vetting.
 // artifact - no per-node ownership check (V4 §4.4).
 func registerArtifactWriteTools(srv *mcp.Server, sess vetting.MemSession) {
 	c := recordstore.New(sess.Artifacts, sess.AppName, sess.UserID, sess.ChatID)
+	if sess.Ledger != nil {
+		c = c.WithLedger(sess.Ledger)
+	}
 	registerListArtifactsTool(srv, c)
 	registerEditArtifactTool(srv, c, sess)
 	registerWriteArtifactTool(srv, c, sess)

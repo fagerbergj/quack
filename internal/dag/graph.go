@@ -238,6 +238,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 						ms.AppName, ms.UserID, ms.ChatID = task.AppName, task.UserID, chatID
 						ms.NodeID = node.ID
 						ms.ToolWritten = vetting.NewToolWrittenStage()
+						ms.Ledger = cfg.Ledger
 					}
 					vetting.RegisterMemSession(secret, ms)
 					defer vetting.UnregisterMemSession(secret)
