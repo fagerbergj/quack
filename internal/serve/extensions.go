@@ -23,6 +23,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/fagerbergj/quack/internal/artifactref"
+	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
@@ -309,18 +310,77 @@ func (a sdkDeliverAdapter) Deliver(ctx context.Context, dc vetting.DeliveryConte
 	}
 	outcomes, err := a.deliverer.Deliver(ctx, extsdk.DeliveryContext{
 		NodeID: dc.NodeID, ChatID: dc.ChatID, Items: sdkItems,
-		CloneURL: dc.CloneURL, PushedSHA: dc.PushedSHA, Branch: dc.Branch, IssueNumber: dc.IssueNumber,
+		CloneURL: dc.CloneURL, PushedSHA: dc.PushedSHA, PushError: dc.PushError, Branch: dc.Branch, IssueNumber: dc.IssueNumber,
 		GatePassed: dc.GatePassed, GateFeedback: dc.GateFeedback, ChecksSkipNote: dc.ChecksSkipNote,
-		// ponytail: dc.IdempotencyKey has nowhere to go yet - sdk v0.8.0 (pinned
-		// in go.mod) predates the field; wire it through once go.mod bumps to
-		// sdk/github v0.9.0 (#1093 deploy-order note, same ceiling as cli's
-		// DeliveryRecoverer shim).
+		IdempotencyKey: dc.IdempotencyKey,
 	})
 	out := make([]vetting.DeliveryItemOutcome, len(outcomes))
 	for i, o := range outcomes {
 		out[i] = vetting.DeliveryItemOutcome{Kind: o.Kind, URL: o.URL, Error: o.Error}
 	}
 	return out, err
+}
+
+// sdkRecoverAdapter bridges sdk.DeliveryRecoverer to cli.DeliveryRecoverer -
+// cli's copy predates the sdk v0.9.0 pin (see cli.DeliveryRecoverer's doc);
+// this is the wiring that replaces it wholesale once cli imports sdk directly.
+type sdkRecoverAdapter struct{ recoverer extsdk.DeliveryRecoverer }
+
+func (a sdkRecoverAdapter) RecoverDelivery(ctx context.Context, key string, dc cli.DeliveryContext) (bool, cli.DeliveryItemOutcome, error) {
+	found, outcome, err := a.recoverer.RecoverDelivery(ctx, key, extsdk.DeliveryContext{CloneURL: dc.CloneURL, IssueNumber: dc.IssueNumber})
+	return found, cli.DeliveryItemOutcome{Kind: outcome.Kind, URL: outcome.URL, Error: outcome.Error}, err
+}
+
+// BuildDeliveryRecoverer constructs just the configured extension that
+// implements sdk.DeliveryRecoverer, for `quack ledger recover` (an offline
+// CLI command with no running server, hub, or orchestrator to wire a full
+// buildSDKExtensions call against). The factory only needs Host.DataDir/Log
+// to build (github's factory() reads nothing else eagerly) - Dispatch,
+// UpdateChatOrigin and the rest are never invoked by RecoverDelivery, so this
+// intentionally skips building them rather than threading live server state
+// through a CLI command. Returns (nil, "", nil) when no configured module
+// implements the interface.
+func BuildDeliveryRecoverer(cfg *config.Config) (cli.DeliveryRecoverer, string, error) {
+	factories := extsdk.Registered()
+	names := make([]string, 0, len(cfg.Extensions.Modules))
+	for name := range cfg.Extensions.Modules {
+		names = append(names, name)
+	}
+	sort.Strings(names) // deterministic scan order, same convention as findDeliverer
+	for _, name := range names {
+		factory, ok := factories[name]
+		if !ok {
+			continue
+		}
+		node := cfg.Extensions.Modules[name]
+		raw, err := yaml.Marshal(&node)
+		if err != nil {
+			return nil, "", fmt.Errorf("extensions.%s: re-marshal config: %w", name, err)
+		}
+		var base extsdk.BaseConfig
+		if err := yaml.Unmarshal(raw, &base); err != nil {
+			return nil, "", fmt.Errorf("extensions.%s: parse base config: %w", name, err)
+		}
+		if base.Enabled != nil && !*base.Enabled {
+			continue
+		}
+		dataDir := base.DataDir
+		if dataDir == "" {
+			dataDir = filepath.Join(cfg.Workspace.Root, "extensions", name)
+		}
+		if err := os.MkdirAll(dataDir, 0o755); err != nil {
+			return nil, "", fmt.Errorf("extensions.%s: data dir: %w", name, err)
+		}
+		host := extsdk.Host{Log: slog.Default().With("component", "ext."+name), DataDir: dataDir}
+		ext, err := factory(host, raw)
+		if err != nil {
+			return nil, "", fmt.Errorf("extensions.%s: factory: %w", name, err)
+		}
+		if rec, ok := ext.(extsdk.DeliveryRecoverer); ok {
+			return sdkRecoverAdapter{recoverer: rec}, name, nil
+		}
+	}
+	return nil, "", nil
 }
 
 // newExtDispatch builds the sdk.DispatchFunc an extension's Host carries.

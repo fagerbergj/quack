@@ -30,13 +30,15 @@ func newLedgerCmd() *cobra.Command {
 
 // newLedgerRecoverCmd: `quack ledger recover <chat>` (#1093 case 13) - finds
 // delivery.intent entries with no matching delivery.done (a run that died
-// between the two) and reports them. recoverer/redoFunc are nil here: no
-// extension in this build implements cli.DeliveryRecoverer yet (that lands
-// with the sdk/github bump #1093's PR describes), and redoing a delivery
-// needs the live node context this offline command doesn't have - every
-// orphan is reported Unresolved until that wiring exists. Known ceiling,
-// not a bug: the reconciliation ALGORITHM is what this command proves out.
+// between the two) and asks the configured extension's DeliveryRecoverer
+// (sdk v0.9.0) whether the target already has the post. redoFunc stays nil:
+// redoing a delivery needs the live node context this offline command
+// doesn't have, so a crash BEFORE Deliver ever reached the extension is
+// still reported Unresolved. --dry-run keeps the old report-only behavior
+// (no recoverer call, nothing appended) for inspecting orphans without
+// touching the ledger or the extension's target.
 func newLedgerRecoverCmd() *cobra.Command {
+	var dryRun bool
 	c := &cobra.Command{
 		Use:   "recover <chat-id>",
 		Short: "Reconcile delivery.intent entries with no delivery.done (a crashed delivery)",
@@ -46,7 +48,24 @@ func newLedgerRecoverCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			report, err := cli.RunLedgerRecover(cmd.Context(), ls, args[0], nil, nil)
+			var recoverer cli.DeliveryRecoverer
+			if !dryRun {
+				cfg, cerr := config.Load(defaultConfigPath())
+				if cerr != nil {
+					return cerr
+				}
+				built, name, berr := serve.BuildDeliveryRecoverer(cfg)
+				if berr != nil {
+					return berr
+				}
+				if built != nil {
+					recoverer = built
+					fmt.Fprintf(cmd.ErrOrStderr(), "using extensions.%s as the delivery recoverer\n", name)
+				} else {
+					fmt.Fprintln(cmd.ErrOrStderr(), "no configured extension implements DeliveryRecoverer; every orphan will be Unresolved")
+				}
+			}
+			report, err := cli.RunLedgerRecover(cmd.Context(), ls, args[0], recoverer, nil)
 			if err != nil {
 				return err
 			}
@@ -54,6 +73,7 @@ func newLedgerRecoverCmd() *cobra.Command {
 			return nil
 		},
 	}
+	c.Flags().BoolVar(&dryRun, "dry-run", false, "report orphaned delivery.intent entries only; never call the extension or write to the ledger")
 	return c
 }
 
