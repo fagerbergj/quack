@@ -15,6 +15,7 @@ import { AttachmentPreviews } from '../components/AttachmentUI'
 import { GitHubLink } from '../components/GitHubLink'
 import { TriggerMessage } from '../components/TriggerEnvelope'
 import { ChatMenu } from '../components/ChatMenu'
+import { NavToggle } from '../components/NavToggle'
 import { imageAttachmentsByTurn } from '../lib/turnAttachments'
 
 // liveDagFinalText extracts the answer from the terminal node's accumulated answer.
@@ -163,7 +164,15 @@ export function EditableChatTitle({ title, editable, onRename }: EditableChatTit
   )
 }
 
-export default function Chat() {
+// #1171: App.tsx owns the nav drawer's open state and hands it down, so the
+// toggle in the header's leading slot and the NavRail overlay share one
+// source of truth.
+export interface ChatProps {
+  navOpen: boolean
+  onToggleNav: () => void
+}
+
+export default function Chat({ navOpen, onToggleNav }: ChatProps) {
   const urlChatId = useChatId()
 
   const store = useChatStore()
@@ -620,6 +629,10 @@ export default function Chat() {
             >
               ☰
             </button>
+            {/* #1171: the nav drawer's toggle - visible at ALL widths (the ☰
+                above is md:hidden) and with its own glyph, so the chat-list
+                hamburger stays the app's only ☰ (#1175). */}
+            <NavToggle open={navOpen} onToggle={onToggleNav} />
             {/* Title gets priority over everything else in this row (#1136) -
                 min-w-0 lets it actually shrink to its flex-1 share instead of
                 the row overflowing, so `truncate` inside EditableChatTitle

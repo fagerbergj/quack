@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
 
-// Shared matchMedia subscription - useCompact() and ChatList's own
-// md:-matching query both build on this instead of each rolling their own
-// listener/cleanup.
+// Shared matchMedia subscription - ChatList's own md:-matching query builds
+// on this instead of rolling its own listener/cleanup.
 export function useMediaQuery(query: string): boolean {
   const supported = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
   const [matches, setMatches] = useState(() => supported && window.matchMedia(query).matches)

@@ -14,8 +14,10 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
-// #746 item 1: the rail's collapsed/expanded state persists across reload
-// (localStorage), and Memory is reachable from it as a peer of Chats.
+// #1171: NavRail is a pure drawer - the open state is owned by the caller
+// (App.tsx) and never persisted, so these tests drive it via the open prop
+// and assert the key the rail used to persist (navRailCollapsed) is neither
+// read nor written.
 
 describe('NavRail', () => {
   let root: ReturnType<typeof createRoot> | undefined
@@ -35,12 +37,14 @@ describe('NavRail', () => {
     window.history.replaceState(null, '', '/') // undo any /ext/:name navigate() from the click test above
   })
 
+  // open defaults to true so the content tests exercise the drawer body;
+  // onClose is a no-op in these unit tests (closing is the App's job).
   function render(props: Partial<Parameters<typeof NavRail>[0]> = {}) {
     host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
     act(() => {
-      root!.render(createElement(NavRail, { route: 'chat', ...props }))
+      root!.render(createElement(NavRail, { route: 'chat', open: true, onClose: () => {}, ...props }))
     })
   }
 
@@ -50,42 +54,16 @@ describe('NavRail', () => {
     expect(host!.textContent).toContain('Memory')
   })
 
-  // #870: collapsed used to render no rail at all (just a fixed 5px sliver),
-  // which lost the whole nav. It now stays a real, clickable icon strip -
-  // labels drop but Chats/Memory (and the expand control) stay reachable.
-  it('collapses to an icon strip (no text labels, but Chats/Memory/expand stay clickable) when localStorage says so', () => {
+  // #1171: the drawer remembers nothing. A stale navRailCollapsed value from
+  // before the rail was deleted is neither read (the drawer stays closed
+  // regardless) nor rewritten by rendering.
+  it('ignores a stale navRailCollapsed localStorage value - neither read nor written', () => {
     localStorage.setItem('navRailCollapsed', '1')
-    render()
-    expect(host!.textContent).not.toContain('Chats')
-    expect(host!.textContent).not.toContain('Memory')
-    expect(host!.querySelector('nav')).not.toBeNull()
-    const chatsBtn = Array.from(host!.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Chats')
-    const memoryBtn = Array.from(host!.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Memory')
-    const restore = Array.from(host!.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Expand navigation')
-    expect(chatsBtn).toBeTruthy()
-    expect(memoryBtn).toBeTruthy()
-    expect(restore).toBeTruthy()
-    expect(restore!.tagName).toBe('BUTTON')
-  })
-
-  it('persists the collapsed choice to localStorage on toggle, dropping labels but keeping the icon strip clickable', () => {
-    render({ initialCollapsed: false })
-    const toggle = Array.from(host!.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Collapse navigation')!
-    act(() => { toggle.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
-    expect(localStorage.getItem('navRailCollapsed')).toBe('1')
-    expect(host!.textContent).not.toContain('Chats')
-    expect(host!.querySelector('nav')).not.toBeNull()
-    expect(Array.from(host!.querySelectorAll('button')).some(b => b.getAttribute('aria-label') === 'Chats')).toBe(true)
-  })
-
-  it('restore button re-expands the rail (with text labels back) on click', () => {
-    localStorage.setItem('navRailCollapsed', '1')
-    render()
-    const restore = Array.from(host!.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Expand navigation')!
-    act(() => { restore.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
-    expect(localStorage.getItem('navRailCollapsed')).toBe('0')
-    expect(host!.textContent).toContain('Chats')
-    expect(host!.querySelector('nav')).not.toBeNull()
+    render({ open: false })
+    expect(host!.textContent).toBe('') // closed renders zero DOM
+    expect(host!.querySelector('nav')).toBeNull()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(localStorage.getItem('navRailCollapsed')).toBe('1') // untouched, never rewritten
   })
 
   it('marks the active route via aria-current', () => {
@@ -120,8 +98,8 @@ describe('NavRail', () => {
 
   it('renders no extensions section when the only extension has no href', () => {
     render({ initialExtensions: [{ name: 'github' }] })
-    // The extensions divider is the only border-gray-100 element (the footer's
-    // own border-t uses border-gray-200) - absent means no section rendered.
+    // The extensions divider is the only border-gray-100 element in the drawer
+    // panel - absent means no section rendered.
     expect(host!.querySelector('.border-gray-100')).toBeNull()
   })
 
