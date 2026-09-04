@@ -194,6 +194,30 @@ func TestDeriveTerminalStatus_OrchestratorPlanningFailureNoDagNode(t *testing.T)
 	}
 }
 
+// TestDeriveTerminalStatus_StoreFailureNamesDatabaseNoCredentials is #1193: a
+// dial error surviving the pgdial retry (recorded via
+// inference.RecordStoreFailure, as failSoftListArtifacts.List does) must fail
+// the run with a message naming "database", and any DSN credentials in the
+// raw error must never reach the stored/derived text.
+func TestDeriveTerminalStatus_StoreFailureNamesDatabaseNoCredentials(t *testing.T) {
+	const chatID = "c-store-1193"
+	t.Cleanup(func() { inference.ClearStoreFailure(chatID) })
+	dialErr := errors.New(`failed to connect to "postgres://quack:hunter2@quack-postgres:5432/quack": hostname resolving error: lookup quack-postgres on 127.0.0.11:53: no such host`)
+	inference.RecordStoreFailure(chatID, dialErr)
+
+	turns := []TurnContent{{AsstText: "", Nodes: nil}}
+	status, _, nodeError := DeriveTerminalStatus(chatID, turns, "", false)
+	if status != RunStatusFailed {
+		t.Fatalf("status = %q, want %q", status, RunStatusFailed)
+	}
+	if !strings.Contains(nodeError, "database") {
+		t.Fatalf("nodeError = %q, want it to name the database", nodeError)
+	}
+	if strings.Contains(nodeError, "hunter2") {
+		t.Fatalf("nodeError = %q, leaked the DSN password", nodeError)
+	}
+}
+
 // TestScanOrphanedRuns_LeavesHealthyChatsAlone is the negative case: idle,
 // failed, and needs_input chats with no ActiveTurnID must never be touched.
 func TestScanOrphanedRuns_LeavesHealthyChatsAlone(t *testing.T) {
