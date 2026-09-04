@@ -509,10 +509,52 @@ func TestRemoveAllReclaimsReadOnlyModuleCache(t *testing.T) {
 	if err := os.RemoveAll(root); err == nil {
 		t.Fatal("os.RemoveAll unexpectedly succeeded; the test no longer reproduces the modcache failure")
 	}
-	if err := removeAll(root); err != nil {
-		t.Fatalf("removeAll: %v", err)
+	if err := RemoveAllForce(root); err != nil {
+		t.Fatalf("RemoveAllForce: %v", err)
 	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Errorf("tree should be gone, stat err = %v", err)
+	}
+}
+
+// TestRemoveAllForceLeavesSymlinkTargetPermsAlone: WalkDir must not follow a
+// symlink into a sibling tree and chmod what it points at - only real
+// directories inside the removed tree get the u+w retry.
+func TestRemoveAllForceLeavesSymlinkTargetPermsAlone(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the write bit; the failure this test reproduces cannot happen")
+	}
+	base := t.TempDir()
+	outside := filepath.Join(base, "outside")
+	if err := os.MkdirAll(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(outside, 0o700) })
+
+	root := filepath.Join(base, "root")
+	roDir := filepath.Join(root, "ro")
+	if err := os.MkdirAll(roDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(roDir, "f"), []byte("x"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(roDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(roDir, 0o755) })
+
+	if err := RemoveAllForce(root); err != nil {
+		t.Fatalf("RemoveAllForce: %v", err)
+	}
+	fi, err := os.Stat(outside)
+	if err != nil {
+		t.Fatalf("symlink target should still exist: %v", err)
+	}
+	if fi.Mode().Perm() != 0o700 {
+		t.Errorf("symlink target perms changed: got %v, want 0700", fi.Mode().Perm())
 	}
 }

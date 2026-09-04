@@ -2,6 +2,7 @@ package dag
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -125,7 +126,17 @@ type setupError struct {
 	cause error
 }
 
+// localCleanupErr structurally matches internal/tools' cleanupError (dag
+// never imports internal/tools, see graph.go) - a stale-clone removal
+// failure is local, not a fetch failure, so it must never be worded as the
+// repository being unreachable (#1213).
+type localCleanupErr interface{ LocalCleanupFailure() }
+
 func (e *setupError) Error() string {
+	var lc localCleanupErr
+	if errors.As(e.cause, &lc) {
+		return fmt.Sprintf("plan setup failed: %s", e.cause)
+	}
 	return fmt.Sprintf("plan setup failed: repository %s is unreachable (%s) - revise the plan: "+
 		"drop setup if no repository is needed, or name a reachable repository", e.repo, oneLine(e.cause))
 }

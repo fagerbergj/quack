@@ -9,6 +9,7 @@ import (
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // staleResumePlanCeiling: a paused plan this old is more likely abandoned
@@ -39,7 +40,7 @@ func resumeGuardArchivedOrStale(archived, hasPlan, awaitingInput bool, planCreat
 // Runs before the Hub can accept a run (ScanOrphanedRuns is table-wide with no
 // liveness check) and returns the nodes worth dispatching; the caller starts
 // them once the orchestrator exists.
-func reconcileNodes(ctx context.Context, st *store.Store, resumable func(chatID, pauseReason string) (bool, string)) []store.ResumableNode {
+func reconcileNodes(ctx context.Context, st *store.Store, jail *workspace.Jail, resumable func(chatID, pauseReason string) (bool, string)) []store.ResumableNode {
 	rep, err := st.ResumePausedDagNodes(ctx, resumable)
 	if err != nil {
 		slog.Error("resume paused dag nodes", "component", "store", "err", err)
@@ -65,8 +66,26 @@ func reconcileNodes(ctx context.Context, st *store.Store, resumable func(chatID,
 	for _, id := range interrupted {
 		slog.Warn("chat left mid-run with no resumable node; marked interrupted - resend the message to retry",
 			"component", "startup", "chat", id)
+		removeStaleCloneDir(jail, id)
 	}
 	return rep.Start
+}
+
+// removeStaleCloneDir clears an interrupted chat's shared-repo clone (#1213)
+// so the retry's setup step never inherits a read-only Go module cache left
+// by a killed `go mod download`. Best-effort: a missing/never-provisioned
+// dir is not an error.
+func removeStaleCloneDir(jail *workspace.Jail, chatID string) {
+	if jail == nil {
+		return
+	}
+	dir, err := jail.Resolve(localUserID, chatID, workspace.SetupCloneDir(workspace.SharedRepoScope))
+	if err != nil {
+		return
+	}
+	if err := workspace.RemoveAllForce(dir); err != nil {
+		slog.Warn("remove stale clone dir for interrupted chat failed", "component", "startup", "chat", chatID, "dir", dir, "err", err)
+	}
 }
 
 // startResumedNodes re-enters each resumable node's graph on a server-lifetime
