@@ -384,6 +384,7 @@ const (
 	defaultWorkspaceMaxResults     = 200
 	defaultWorkspaceMaxListEntries = 500
 	defaultWorkspaceTimeoutSeconds = 60
+	defaultCheckTimeoutSeconds     = 600
 	defaultWorkspaceSandbox        = "bwrap"
 	defaultWorkspaceAddressSpaceMB = 8192
 	defaultWorkspaceMaxProcs       = 512
@@ -397,21 +398,24 @@ const (
 var defaultCheckCommands = []string{"go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make", "gofmt", "npx prettier", "./gradlew"}
 
 type WorkspaceConfig struct {
-	Root           string                `yaml:"root"`
-	MaxReadKB      int                   `yaml:"max_read_kb"`
-	MaxWriteKB     int                   `yaml:"max_write_kb"`
-	MaxResults     int                   `yaml:"max_results"`
-	MaxListEntries int                   `yaml:"max_list_entries"`
-	TimeoutSeconds int                   `yaml:"timeout_seconds"`
-	CheckCommands  []string              `yaml:"check_commands"`
-	CheckSetup     []string              `yaml:"check_setup"`
-	ExecPath       []string              `yaml:"exec_path"`
-	Env            map[string]string     `yaml:"env"`
-	GitCredentials []GitCredentialConfig `yaml:"git_credentials"`
-	Guards         map[string]string     `yaml:"guards"`
-	Sandbox        string                `yaml:"sandbox"`
-	Limits         WorkspaceLimits       `yaml:"limits"`
-	GC             WorkspaceGCConfig     `yaml:"gc"`
+	Root           string `yaml:"root"`
+	MaxReadKB      int    `yaml:"max_read_kb"`
+	MaxWriteKB     int    `yaml:"max_write_kb"`
+	MaxResults     int    `yaml:"max_results"`
+	MaxListEntries int    `yaml:"max_list_entries"`
+	TimeoutSeconds int    `yaml:"timeout_seconds"`
+	// CheckTimeoutSeconds bounds gate check commands (e.g. full `go test ./...`),
+	// which run far longer than a single run_command call. 0 = default 600.
+	CheckTimeoutSeconds int                   `yaml:"check_timeout_seconds"`
+	CheckCommands       []string              `yaml:"check_commands"`
+	CheckSetup          []string              `yaml:"check_setup"`
+	ExecPath            []string              `yaml:"exec_path"`
+	Env                 map[string]string     `yaml:"env"`
+	GitCredentials      []GitCredentialConfig `yaml:"git_credentials"`
+	Guards              map[string]string     `yaml:"guards"`
+	Sandbox             string                `yaml:"sandbox"`
+	Limits              WorkspaceLimits       `yaml:"limits"`
+	GC                  WorkspaceGCConfig     `yaml:"gc"`
 }
 
 type WorkspaceGCConfig struct {
@@ -1302,7 +1306,10 @@ func (w *WorkspaceConfig) applyDefaults() error {
 	if w.TimeoutSeconds == 0 {
 		w.TimeoutSeconds = defaultWorkspaceTimeoutSeconds
 	}
-	if w.MaxReadKB < 0 || w.MaxWriteKB < 0 || w.MaxResults < 0 || w.MaxListEntries < 0 || w.TimeoutSeconds < 0 {
+	if w.CheckTimeoutSeconds == 0 {
+		w.CheckTimeoutSeconds = defaultCheckTimeoutSeconds
+	}
+	if w.MaxReadKB < 0 || w.MaxWriteKB < 0 || w.MaxResults < 0 || w.MaxListEntries < 0 || w.TimeoutSeconds < 0 || w.CheckTimeoutSeconds < 0 {
 		return fmt.Errorf("config: workspace caps must be >= 0")
 	}
 	if w.Sandbox == "" {

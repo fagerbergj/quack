@@ -839,6 +839,9 @@ func TestWorkspaceDefaults(t *testing.T) {
 	if w.TimeoutSeconds != 60 {
 		t.Errorf("TimeoutSeconds = %d, want 60", w.TimeoutSeconds)
 	}
+	if w.CheckTimeoutSeconds != 600 {
+		t.Errorf("CheckTimeoutSeconds = %d, want 600", w.CheckTimeoutSeconds)
+	}
 	if len(w.CheckCommands) == 0 {
 		t.Errorf("CheckCommands = %v, want the default allowlist (checks ON by default; derived checks are toolchain-gated)", w.CheckCommands)
 	}
@@ -981,6 +984,7 @@ workspace:
   max_results: 50
   max_list_entries: 100
   timeout_seconds: 30
+  check_timeout_seconds: 300
   check_commands: ["go build", "go test"]
   check_setup: ["make plugins"]
 `))
@@ -1005,6 +1009,9 @@ workspace:
 	}
 	if w.TimeoutSeconds != 30 {
 		t.Errorf("TimeoutSeconds = %d, want 30", w.TimeoutSeconds)
+	}
+	if w.CheckTimeoutSeconds != 300 {
+		t.Errorf("CheckTimeoutSeconds = %d, want 300", w.CheckTimeoutSeconds)
 	}
 	if len(w.CheckCommands) != 2 || w.CheckCommands[0] != "go build" || w.CheckCommands[1] != "go test" {
 		t.Errorf("CheckCommands = %v, want [go build, go test]", w.CheckCommands)

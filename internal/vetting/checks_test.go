@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fagerbergj/quack/internal/workspace"
 
@@ -30,6 +31,22 @@ func testChecksConfig(t *testing.T, checks []string, workdir string) Config {
 	return Config{
 		Checks: checks, Workdir: workdir,
 		Workspace: j, WorkspaceUserID: "u1", WorkspaceCaps: workspace.DefaultCaps(),
+	}
+}
+
+// TestChecksCapsUsesCheckTimeout proves the gate's check runner gets
+// CheckTimeout, not WorkspaceCaps.Timeout (the run_command budget) - the
+// root cause of #1171's `go test ./...` gate timeout at 60s.
+func TestChecksCapsUsesCheckTimeout(t *testing.T) {
+	cfg := testChecksConfig(t, nil, "")
+	cfg.WorkspaceCaps.Timeout = 60 * time.Second
+	cfg.CheckTimeout = 600 * time.Second
+	if got := checksCaps(cfg).Timeout; got != 600*time.Second {
+		t.Errorf("checksCaps Timeout = %v, want CheckTimeout (600s), not WorkspaceCaps.Timeout (60s)", got)
+	}
+	cfg.CheckTimeout = 0
+	if got := checksCaps(cfg).Timeout; got != 60*time.Second {
+		t.Errorf("checksCaps Timeout = %v, want WorkspaceCaps.Timeout (60s) when CheckTimeout unset", got)
 	}
 }
 

@@ -409,6 +409,9 @@ workspace:
   max_results: 200                # grep/glob hits per call
   max_list_entries: 500           # list_dir entries per call
   timeout_seconds: 60
+  # timeout_seconds governs a single run_command tool call; gate check commands
+  # (e.g. a full `go test ./...`) run far longer, so they use check_timeout_seconds instead.
+  check_timeout_seconds: 600
 
   # sandbox: the OS boundary every run_command / gate-check CHILD PROCESS runs
   # inside. The jail above is a PATH CHECK on the tools - it never constrained a
