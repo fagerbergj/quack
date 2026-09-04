@@ -260,12 +260,30 @@ func TestSDKExtensionDispatchKeepsStableUserAcrossRedispatch(t *testing.T) {
 	}
 	waitRunSettled(t, st, chatID)
 
+	// waitRunSettled alone would race here (review comment thread
+	// 3937400227): turn 1 already left RunStatus non-empty, so it returns
+	// immediately without turn 2 ever having run - the same trap
+	// extensions_plan_rejection_test.go:166 works around. Wait for turn 2's
+	// own ActiveTurnID go-then-clear transition instead.
+	t1, err := st.GetChat(ctx, chatID)
+	if err != nil || t1 == nil {
+		t.Fatalf("GetChat after turn 1: %v, %v", t1, err)
+	}
+	turn1UpdatedAt := t1.UpdatedAt
+
 	// Turn 2: a /review re-dispatch from a different GitHub commenter.
 	req2 := extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID, User: "bob"}, Ask: extsdk.Ask{Message: "please review"}}
 	if err := dispatch(ctx, req2); err != nil {
 		t.Fatalf("dispatch 2: %v", err)
 	}
-	waitRunSettled(t, st, chatID)
+	waitUntil(t, 5*time.Second, func() bool {
+		c, _ := st.GetChat(context.Background(), chatID)
+		return c != nil && c.ActiveTurnID != ""
+	})
+	waitUntil(t, 5*time.Second, func() bool {
+		c, _ := st.GetChat(context.Background(), chatID)
+		return c != nil && c.ActiveTurnID == "" && c.UpdatedAt.After(turn1UpdatedAt)
+	})
 
 	c, err := st.GetChat(ctx, chatID)
 	if err != nil || c == nil {

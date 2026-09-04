@@ -77,6 +77,46 @@ func TestCommitDeliveryRefusesReviewWithNoVerdict(t *testing.T) {
 	}
 }
 
+// TestCommitDeliveryRefusesVerdictlessReviewButDeliversSiblingItem is #1198
+// part C's per-item shape (review comment thread 3937400235): a verdict-less
+// review is refused, but a sibling "pr" item staged in the SAME delivery
+// still reaches cfg.Deliver - the same per-item contract
+// TestCommitDeliveryDeliversGrantedItemsAlongsideRefusedOnes pins for the
+// allowed-kinds check.
+func TestCommitDeliveryRefusesVerdictlessReviewButDeliversSiblingItem(t *testing.T) {
+	var got DeliveryContext
+	cfg := Config{
+		Deliver: func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
+			got = dc
+			return []DeliveryItemOutcome{{Kind: "pull_request", URL: "https://example/pr/1"}}, nil
+		},
+	}
+	var events []stream.SSEEvent
+	sink := func(ev stream.SSEEvent) { events = append(events, ev) }
+
+	commitDelivery(context.Background(), sink, cfg, "n1", workerActivity{
+		stagedDelivery: map[string]StagedDelivery{
+			"review": {Kind: "review", Body: "some findings"}, // no Event
+			"pr":     {Kind: "pull_request", Title: "t", Body: "b"},
+		},
+		skipArtifactRender: true,
+	}, GateResult{Passed: true})
+
+	if len(got.Items) != 1 || got.Items[0].Kind != "pull_request" {
+		t.Fatalf("Items reaching Deliver = %+v, want only the pull_request item", got.Items)
+	}
+	var sawReviewRefusal bool
+	for _, ev := range events {
+		data, ok := ev.Data.(stream.DeliveryResultData)
+		if ok && data.Kind == "review" && data.Outcome == stream.DeliveryOutcomeFailed {
+			sawReviewRefusal = true
+		}
+	}
+	if !sawReviewRefusal {
+		t.Fatalf("events = %+v, want a failed review delivery_result alongside the delivered pr", events)
+	}
+}
+
 // A permitted item in the SAME staged set as a refused one still ships - the
 // allowlist is enforced per-item, not all-or-nothing for the node.
 func TestCommitDeliveryDeliversGrantedItemsAlongsideRefusedOnes(t *testing.T) {
