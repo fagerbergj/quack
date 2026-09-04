@@ -125,3 +125,60 @@ describe('Composer archived placeholder', () => {
     expect(ta.disabled).toBe(true)
   })
 })
+
+// #1174: the auto-grow cap follows the width - 128px (max-h-32) compact,
+// 192px (max-h-48) desktop - so both must be pinned. jsdom reports
+// scrollHeight 0 (no layout), so each test shadows it on the instance. The
+// value is set through the native prototype setter, because React 19
+// defines its own `value` accessor on controlled nodes that keeps the value
+// tracker in step - a plain assignment would register no change to the
+// dispatched `input` event (the same trick user-event uses internally).
+describe('Composer auto-grow cap', () => {
+  let root: ReturnType<typeof createRoot> | undefined
+  let host: HTMLDivElement | undefined
+
+  afterEach(() => {
+    act(() => root?.unmount())
+    host?.remove()
+    root = undefined
+    host = undefined
+    vi.unstubAllGlobals()
+  })
+
+  function render() {
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    act(() => {
+      root!.render(createElement(Composer, { disabled: false, streaming: false, onSubmit: () => {}, onStop: () => {} }))
+    })
+  }
+
+  function setLongValue() {
+    const ta = host!.querySelector('textarea') as HTMLTextAreaElement
+    Object.defineProperty(ta, 'scrollHeight', { value: 300, configurable: true, writable: true })
+    const nativeSet = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+    act(() => {
+      nativeSet.call(ta, 'a '.repeat(60).trim())
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+  }
+
+  it('caps the textarea at 128px when compact', () => {
+    mockMatchMedia(true)
+    render()
+    const ta = host!.querySelector('textarea') as HTMLTextAreaElement
+    setLongValue()
+    expect(ta.style.height).toBe('128px')
+    expect(ta.style.overflowY).toBe('auto')
+  })
+
+  it('caps the textarea at 192px at normal widths', () => {
+    mockMatchMedia(false)
+    render()
+    const ta = host!.querySelector('textarea') as HTMLTextAreaElement
+    setLongValue()
+    expect(ta.style.height).toBe('192px')
+    expect(ta.style.overflowY).toBe('auto')
+  })
+})

@@ -46,14 +46,19 @@ export const Disabled: Story = {
 }
 
 // Regression check for the mobile "composer not visible" bug: a phone-sized
-// (390px) frame, clipped with overflow-hidden like the real app shell, with
-// the composer pinned to the bottom via flex - same layout App.tsx/Chat.tsx
-// use with h-dvh. If the composer's bottom edge falls outside this frame,
-// the fix has regressed.
+// (390x844, #1174's acceptance viewport) frame, clipped with overflow-hidden
+// like the real app shell, with the composer pinned to the bottom via flex -
+// same layout App.tsx/Chat.tsx use with h-dvh. If the composer's bottom edge
+// falls outside this frame, the fix has regressed.
+//
+// The frame is just a frame: medium:/useCompact() track the real browser
+// window, so #1174's compact single-pill composer only appears in a <600px
+// window or under DevTools device emulation - this story viewed in a
+// >=600px-wide window shows the desktop layout.
 export const MobileViewport: Story = {
   args: { disabled: false, streaming: false },
   decorators: [Story => (
-    <div className="w-[390px] h-[700px] mx-auto flex flex-col justify-end overflow-hidden border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900">
+    <div className="w-[390px] h-[844px] mx-auto flex flex-col justify-end overflow-hidden border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900">
       <Story />
     </div>
   )],
@@ -61,11 +66,30 @@ export const MobileViewport: Story = {
 
 // Same regression check, streaming: Stop+Queue crowd the row and shrink the
 // textarea further than the idle case does - the tightest width the
-// placeholder has to fit in (#759 item 2).
+// placeholder has to fit in (#759 item 2). The two-item queue shows the
+// compact "N queued" chip (desktop: the pending bubble rows).
 export const MobileViewportStreaming: Story = {
-  args: { disabled: false, streaming: true },
+  args: {
+    disabled: false,
+    streaming: true,
+    queue: [
+      { id: '1', text: 'also check the staging build' },
+      { id: '2', text: 'and add a changelog entry' },
+    ],
+  },
   decorators: [Story => (
-    <div className="w-[390px] h-[700px] mx-auto flex flex-col justify-end overflow-hidden border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900">
+    <div className="w-[390px] h-[844px] mx-auto flex flex-col justify-end overflow-hidden border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900">
+      <Story />
+    </div>
+  )],
+}
+
+// #1174's narrowest acceptance viewport (360x740): the tightest idle check -
+// the pill's fixed 44+8+44 row cost leaves the least room for the textarea.
+export const MobileViewport360: Story = {
+  args: { disabled: false, streaming: false },
+  decorators: [Story => (
+    <div className="w-[360px] h-[740px] mx-auto flex flex-col justify-end overflow-hidden border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900">
       <Story />
     </div>
   )],
