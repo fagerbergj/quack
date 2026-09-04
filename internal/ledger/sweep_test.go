@@ -2,31 +2,23 @@ package ledger
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 )
 
-// TestSweepOnceDeletesOnlyExpired: an old session is deleted, a fresh one
-// kept.
+func appendAt(t *testing.T, s LedgerStore, chatID string, at time.Time) {
+	t.Helper()
+	if _, err := s.AppendIntent(context.Background(), Entry{ChatID: chatID, Kind: KindNodeStarted, At: at}); err != nil {
+		t.Fatalf("AppendIntent(%s): %v", chatID, err)
+	}
+}
+
+// TestSweepOnceDeletesOnlyExpired: an old session is deleted, a fresh one kept.
 func TestSweepOnceDeletesOnlyExpired(t *testing.T) {
-	dir := t.TempDir()
-	s, err := NewFSStore(dir)
-	if err != nil {
-		t.Fatalf("NewFSStore: %v", err)
-	}
+	s := NewMemStore()
 	ctx := context.Background()
-	if err := s.Append(ctx, "old", []byte(`{}`)); err != nil {
-		t.Fatalf("Append(old): %v", err)
-	}
-	if err := s.Append(ctx, "fresh", []byte(`{}`)); err != nil {
-		t.Fatalf("Append(fresh): %v", err)
-	}
-	old := time.Now().Add(-40 * 24 * time.Hour)
-	if err := os.Chtimes(filepath.Join(dir, "old.jsonl"), old, old); err != nil {
-		t.Fatalf("chtimes: %v", err)
-	}
+	appendAt(t, s, "old", time.Now().Add(-40*24*time.Hour))
+	appendAt(t, s, "fresh", time.Now())
 
 	sweepOnce(ctx, s, 30)
 
@@ -41,29 +33,15 @@ func TestSweepOnceDeletesOnlyExpired(t *testing.T) {
 
 // TestRunRetentionSweepZeroMeansForever: retentionDays 0 must never delete.
 func TestRunRetentionSweepZeroMeansForever(t *testing.T) {
-	dir := t.TempDir()
-	s, err := NewFSStore(dir)
-	if err != nil {
-		t.Fatalf("NewFSStore: %v", err)
-	}
+	s := NewMemStore()
 	ctx := context.Background()
-	if err := s.Append(ctx, "ancient", []byte(`{}`)); err != nil {
-		t.Fatalf("Append: %v", err)
-	}
-	ancient := time.Now().Add(-3650 * 24 * time.Hour)
-	if err := os.Chtimes(filepath.Join(dir, "ancient.jsonl"), ancient, ancient); err != nil {
-		t.Fatalf("chtimes: %v", err)
-	}
+	appendAt(t, s, "ancient", time.Now().Add(-3650*24*time.Hour))
 
 	runCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 	defer cancel()
 	RunRetentionSweep(runCtx, s, 0, 50*time.Millisecond)
 
-	refs, err := s.List(ctx)
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(refs) != 1 {
+	if refs, _ := s.List(ctx); len(refs) != 1 {
 		t.Fatalf("retention_days=0 deleted a session; got %+v, want it kept forever", refs)
 	}
 }
@@ -71,32 +49,16 @@ func TestRunRetentionSweepZeroMeansForever(t *testing.T) {
 // TestRunRetentionSweepRunsImmediatelyThenTicks: the initial sweep fires
 // without waiting for the first tick.
 func TestRunRetentionSweepRunsImmediatelyThenTicks(t *testing.T) {
-	dir := t.TempDir()
-	s, err := NewFSStore(dir)
-	if err != nil {
-		t.Fatalf("NewFSStore: %v", err)
-	}
+	s := NewMemStore()
 	ctx := context.Background()
-	if err := s.Append(ctx, "old", []byte(`{}`)); err != nil {
-		t.Fatalf("Append: %v", err)
-	}
-	old := time.Now().Add(-40 * 24 * time.Hour)
-	if err := os.Chtimes(filepath.Join(dir, "old.jsonl"), old, old); err != nil {
-		t.Fatalf("chtimes: %v", err)
-	}
+	appendAt(t, s, "old", time.Now().Add(-40*24*time.Hour))
 
-	// A tick interval far longer than the test's own deadline: if deletion
-	// only happened on the ticker.C branch, this would time out with the
-	// session still present.
+	// A tick far longer than the deadline: deletion must come from the immediate sweep.
 	runCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 	defer cancel()
 	RunRetentionSweep(runCtx, s, 30, time.Hour)
 
-	refs, err := s.List(ctx)
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(refs) != 0 {
+	if refs, _ := s.List(ctx); len(refs) != 0 {
 		t.Fatalf("expected immediate sweep to delete the old session; got %+v", refs)
 	}
 }

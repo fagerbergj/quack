@@ -246,11 +246,7 @@ func runFixtureNode(t *testing.T, nodeID, prompt string) {
 // path to its assembled bundle.zip.
 func buildFixtureBundle(t *testing.T) string {
 	t.Helper()
-	recDir := t.TempDir()
-	store, err := ledger.NewFSStore(recDir)
-	if err != nil {
-		t.Fatalf("fixture: new FSStore: %v", err)
-	}
+	store := ledger.NewMemStore()
 
 	lp := sdklog.NewLoggerProvider(
 		sdklog.WithProcessor(ledger.NewRedactingProcessor()),
@@ -268,16 +264,10 @@ func buildFixtureBundle(t *testing.T) string {
 // assembleFixtureBundle reads back fixtureChatID's recorded entries and
 // zips them - the same path ledger.AssembleBundle's own round-trip test
 // exercises (internal/ledger/bundle_test.go).
-func assembleFixtureBundle(t *testing.T, store *ledger.FSStore) string {
+func assembleFixtureBundle(t *testing.T, store ledger.LedgerStore) string {
 	t.Helper()
-	entries, err := store.ReadStream(context.Background(), fixtureChatID)
-	if err != nil {
-		t.Fatalf("fixture: read stream: %v", err)
-	}
-	defer entries.Close()
-
 	var buf bytes.Buffer
-	if err := ledger.AssembleBundle(context.Background(), store, fixtureChatID, "test", otelobs.GenAISemConvVersion, entries, &buf); err != nil {
+	if err := ledger.AssembleBundle(context.Background(), store, fixtureChatID, "test", &buf); err != nil {
 		t.Fatalf("fixture: assemble bundle: %v", err)
 	}
 	path := filepath.Join(t.TempDir(), "bundle.zip")

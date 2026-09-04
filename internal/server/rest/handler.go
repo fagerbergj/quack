@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"hash/fnv"
 	"io"
-	"io/fs"
 	"iter"
 	"log/slog"
 	"mime"
@@ -28,7 +27,6 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
-	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/store"
@@ -420,7 +418,7 @@ func (h *Handler) ListExtensions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// Lists sessions the replay ledger has entries for (backs `quack recording list`).
+// Lists chats the ledger has entries for (backs `quack ledger list`).
 func (h *Handler) ListRecordings(w http.ResponseWriter, r *http.Request) {
 	if h.ledgerStore == nil {
 		errMsg(w, http.StatusNotFound, "recording is not enabled")
@@ -442,28 +440,27 @@ func (h *Handler) ListRecordings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// Streams the chat's replay-ledger recording as a ZIP. ReadStream check first ensures a clean 404.
+// Streams the chat's replay-ledger recording as a ZIP. The observation read
+// happens first so a missing recording is a clean 404, not a truncated ZIP.
 func (h *Handler) GetChatRecording(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
 	if h.ledgerStore == nil {
 		errMsg(w, http.StatusNotFound, "recording is not enabled")
 		return
 	}
-	entries, err := h.ledgerStore.ReadStream(r.Context(), chatID)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
+	if _, err := ledger.ReadObservations(r.Context(), h.ledgerStore, chatID); err != nil {
+		if errors.Is(err, ledger.ErrNoRecording) {
 			errMsg(w, http.StatusNotFound, "no recording for this chat")
 			return
 		}
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
-	defer entries.Close()
 
 	w.Header().Set("Content-Type", "application/zip")
 	// mime.FormatMediaType quotes the filename; chatID is caller-supplied so never reaches the header verbatim.
 	w.Header().Set("Content-Disposition",
 		mime.FormatMediaType("attachment", map[string]string{"filename": chatID + ".zip"}))
-	if err := ledger.AssembleBundle(r.Context(), h.ledgerStore, chatID, h.quackVersion, otelobs.GenAISemConvVersion, entries, w); err != nil {
+	if err := ledger.AssembleBundle(r.Context(), h.ledgerStore, chatID, h.quackVersion, w); err != nil {
 		// Headers (and possibly partial body) already sent; log only.
 		slog.Warn("recording bundle write failed mid-stream", "component", "rest", "chat", chatID, "err", err)
 	}

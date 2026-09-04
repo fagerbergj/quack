@@ -112,14 +112,13 @@ export const getConfig = <ThrowOnError extends boolean = false>(options?: Option
 /**
  * List recorded chat sessions
  *
- * Every session the replay ledger has an entry for (internal/ledger's
- * `LedgerStore.List`), backing `quack recording list`/export. 200 with
- * an empty array when recording is enabled but nothing has been
- * recorded yet; 404 when recording is disabled entirely - same
- * disabled signal as `getChatRecording`. Deliberately unpaginated: one
- * entry per recorded session, bounded by the ledger's own retention_days
- * GC, not an open-ended table - unlike /chats it has no realistic path
- * to needing a page_token.
+ * Every chat the ledger has an entry for (internal/ledger's
+ * `LedgerStore.List`; size_bytes counts entries), backing `quack ledger
+ * list`/export. 200 with an empty array when a ledger store is
+ * configured but nothing has been written yet; 404 when no ledger store
+ * is configured - same signal as `getChatRecording`. Deliberately
+ * unpaginated: one entry per chat, bounded by the ledger's own
+ * retention_days GC, not an open-ended table.
  *
  */
 export const listRecordings = <ThrowOnError extends boolean = false>(options?: Options<ListRecordingsData, ThrowOnError>): RequestResult<ListRecordingsResponses, ListRecordingsErrors, ThrowOnError> => (options?.client ?? client).get<ListRecordingsResponses, ListRecordingsErrors, ThrowOnError>({
@@ -131,13 +130,12 @@ export const listRecordings = <ThrowOnError extends boolean = false>(options?: O
 /**
  * Download a chat's replay-ledger recording bundle
  *
- * Streams a self-contained ZIP export of the chat's replay ledger:
- * `manifest.json` (quack version, gen_ai semconv version, session id,
- * recording flags) + `entries.jsonl` (the session's OTel event stream,
- * including gate-probe outputs) + an optional `clone.bundle` when a
- * clone snapshot was recorded for this session. See
- * `.quack/replay-log.md`. 404 when the session has no recording (never
- * recorded, already GC'd by retention, or recording disabled).
+ * Streams a self-contained ZIP export of the chat's recorded
+ * observations: `manifest.json` (quack version, ledger_version, session
+ * id) + `entries.jsonl` (one typed ledger entry per line: llm.call,
+ * tool.call, agent.invoke, eval.score, including gate-probe outputs).
+ * 404 when the chat has no observation entries (never recorded, already
+ * GC'd by retention, or recording.observations off).
  *
  */
 export const getChatRecording = <ThrowOnError extends boolean = false>(options: Options<GetChatRecordingData, ThrowOnError>): RequestResult<GetChatRecordingResponses, GetChatRecordingErrors, ThrowOnError> => (options.client ?? client).get<GetChatRecordingResponses, GetChatRecordingErrors, ThrowOnError>({

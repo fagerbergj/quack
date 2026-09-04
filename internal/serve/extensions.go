@@ -279,6 +279,25 @@ func findDeliverer(exts []builtSDKExtension) (extsdk.Deliverer, string) {
 	return found, foundName
 }
 
+// findRecoverer mirrors findDeliverer for sdk.DeliveryRecoverer.
+func findRecoverer(exts []builtSDKExtension) (extsdk.DeliveryRecoverer, string) {
+	var found extsdk.DeliveryRecoverer
+	var foundName string
+	for _, e := range exts {
+		r, ok := e.ext.(extsdk.DeliveryRecoverer)
+		if !ok {
+			continue
+		}
+		if found != nil {
+			slog.Warn("multiple extensions implement DeliveryRecoverer; keeping the first",
+				"component", "startup", "using", foundName, "ignoring", e.name)
+			continue
+		}
+		found, foundName = r, e.name
+	}
+	return found, foundName
+}
+
 // sdkGitCredentialAdapter bridges sdk.GitCredentialSource to
 // tools.GitTokenSource - same shape, different concrete credential type
 // (the SDK boundary can't share quack's own internal type).

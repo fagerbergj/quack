@@ -4,6 +4,7 @@ package replay
 import (
 	"archive/zip"
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,22 +12,13 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/fagerbergj/quack/internal/ledger"
 )
 
-// line mirrors ledger's unexported on-disk shape.
-type line struct {
-	Timestamp time.Time      `json:"timestamp"`
-	Attrs     map[string]any `json:"attributes"`
-}
-
-// Manifest mirrors bundle header ledger.AssembleBundle writes (manifest.json).
-type Manifest struct {
-	QuackVersion   string `json:"quack_version"`
-	SemConvVersion string `json:"semconv_version"`
-	SessionID      string `json:"session_id"`
-}
-
-// Load reads a bundle from path (ZIP from ledger.AssembleBundle or bare entries.jsonl).
+// Load reads a bundle from path (ZIP from ledger.AssembleBundle or bare
+// entries.jsonl of ledger.Entry lines). Only ledger.LedgerVersion bundles
+// are supported; older OTel-attribute bundles are rejected by their manifest.
 func Load(path string) (*Session, error) {
 	if strings.HasSuffix(path, ".zip") {
 		return loadZip(path)
@@ -41,7 +33,7 @@ func loadZip(path string) (*Session, error) {
 	}
 	defer zr.Close()
 
-	var manifest Manifest
+	var manifest ledger.Manifest
 	var entries io.ReadCloser
 	for _, f := range zr.File {
 		switch f.Name {
@@ -67,6 +59,9 @@ func loadZip(path string) (*Session, error) {
 		return nil, fmt.Errorf("replay: bundle %q has no entries.jsonl", path)
 	}
 	defer entries.Close()
+	if manifest.LedgerVersion != ledger.LedgerVersion {
+		return nil, fmt.Errorf("replay: bundle %q is ledger_version %d, this build reads %d only", path, manifest.LedgerVersion, ledger.LedgerVersion)
+	}
 	return buildSession(entries, manifest)
 }
 
@@ -76,11 +71,26 @@ func loadJSONL(path string) (*Session, error) {
 		return nil, fmt.Errorf("replay: open %q: %w", path, err)
 	}
 	defer f.Close()
-	return buildSession(f, Manifest{})
+	return buildSession(f, ledger.Manifest{})
+}
+
+// FromStore builds a Session straight from chatID's observation entries in
+// store - the same rows AssembleBundle would export, minus the ZIP.
+func FromStore(ctx context.Context, store ledger.LedgerStore, chatID string) (*Session, error) {
+	entries, err := ledger.ReadObservations(ctx, store, chatID)
+	if err != nil {
+		return nil, fmt.Errorf("replay: %w", err)
+	}
+	s := &Session{manifest: ledger.Manifest{LedgerVersion: ledger.LedgerVersion, SessionID: chatID}, streams: map[StreamKey]*streamState{}}
+	for _, e := range entries {
+		s.ingest(e)
+	}
+	s.finalize()
+	return s, nil
 }
 
 // buildSession parses r as newline-delimited ledger entries into streams.
-func buildSession(r io.Reader, manifest Manifest) (*Session, error) {
+func buildSession(r io.Reader, manifest ledger.Manifest) (*Session, error) {
 	s := &Session{manifest: manifest, streams: map[StreamKey]*streamState{}}
 
 	sc := bufio.NewScanner(r)
@@ -90,45 +100,17 @@ func buildSession(r io.Reader, manifest Manifest) (*Session, error) {
 		if raw == "" {
 			continue
 		}
-		var l line
-		if err := json.Unmarshal([]byte(raw), &l); err != nil {
+		var e ledger.Entry
+		if err := json.Unmarshal([]byte(raw), &e); err != nil {
 			return nil, fmt.Errorf("replay: parse entry: %w", err)
 		}
-		s.ingest(l)
+		s.ingest(e)
 	}
 	if err := sc.Err(); err != nil {
 		return nil, fmt.Errorf("replay: read entries: %w", err)
 	}
 	s.finalize()
 	return s, nil
-}
-
-// attrStr reads a string attribute; "" if absent or wrong type.
-func attrStr(attrs map[string]any, key string) string {
-	s, _ := attrs[key].(string)
-	return s
-}
-
-// attrFirstOf reads first element of a JSON array attribute as string (semconv slice round-trip).
-func attrFirstOf(attrs map[string]any, key string) string {
-	arr, _ := attrs[key].([]any)
-	if len(arr) == 0 {
-		return ""
-	}
-	s, _ := arr[0].(string)
-	return s
-}
-
-// attrInt64 reads a numeric attribute (JSON decodes numbers as float64).
-func attrInt64(attrs map[string]any, key string) int64 {
-	f, _ := attrs[key].(float64)
-	return int64(f)
-}
-
-// attrFloat64 reads a numeric attribute as float64 (judge scores are fractional).
-func attrFloat64(attrs map[string]any, key string) float64 {
-	f, _ := attrs[key].(float64)
-	return f
 }
 
 // sortByTime sorts entries by timestamp; stable so same-timestamp entries keep append order.

@@ -69,12 +69,9 @@ type Config struct {
 	// have an ACP session/AdvisorToken to poll) get restamped by the gate that
 	// actually knows the current round, without vetting importing tools (#1123).
 	RoundCoordsSink func(round int, turnID, headSHA, triggerAnnotation string)
-	// Ledger: the WAL's fail-closed AppendIntent path (#1090 §4.9/#1100). Wired
-	// ONLY when observability.recording is enabled AND its store resolves to
-	// kind "postgres" - the filesystem ledger's AppendIntent is best-effort,
-	// non-transactional (see FSStore.AppendIntent), so it cannot back a
-	// fail-closed write and is never set here. nil = no WAL, recordstore and
-	// the gate behave exactly as before #1100.
+	// Ledger: the WAL's fail-closed AppendIntent path. nil = no WAL (no
+	// recording.store configured); recordstore and the gate then write
+	// projections directly.
 	Ledger ledger.LedgerStore
 	// Artifact: episodic record name this node writes on gate pass ("body" or
 	// "" for none). "review" is written for IsReviewer nodes regardless of

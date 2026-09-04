@@ -78,21 +78,25 @@ The active/queued/in-flight gauges (`quack.runs.active`, `quack.runs.queued`, `q
 
 `internal/otelobs/sloghandler.go` bridges `log/slog` to trace correlation — see [`AGENTS.md`](../../AGENTS.md)'s `QUACK_LOG_LEVEL`/`QUACK_LOG_FORMAT` for the logging side of this. Separately, `internal/otelobs` also runs an OTel *logger* provider (`internal/otelobs/logs.go`) — this is the replay ledger's transport, not `slog`.
 
-## Replay ledger
+## Ledger and recording
 
-Three seams emit one `gen_ai.*` OTel log event per call — `inference.NewModel` (`chat`), `tools.Build` (`execute_tool`), and the ACP subprocess connection (`invoke_agent`, the full teed protocol conversation) — plus the judge emits one `gen_ai.evaluation.result` per rubric criterion. Every event carries `gen_ai.conversation.id` (the chat id) and the two custom `quack.node`/`quack.round` attributes, stamped once by the vetting gate and read back via `internal/ledger`'s context carrier.
+The ledger is quack's write-ahead log: one append-only stream of typed entries per chat in Postgres (`ledger_entries`). Intents (artifact revisions, delivery, node lifecycle, judge rounds) are appended before the state change they describe; observations (`llm.call`, `tool.call`, `agent.invoke`, `eval.score`) are appended after the fact from the `gen_ai.*` OTel log records that `inference.NewModel`, `tools.Build`, the ACP subprocess connection and the judge emit. Every entry carries the chat id plus `node_id`/`agent`/`round`, the replay stream identity, stamped by the vetting gate on the emitting object.
 
 ```yaml
 stores:
-  default_ledger:
-    kind: filesystem              # append-only session recordings; s3 is a future adapter
-    root: ${QUACK_RECORDING_DIR}  # unset ⇒ ./recordings
+  default_postgres:
+    kind: postgres
+    url: ${QUACK_DATABASE_URL}
 
 observability:
   recording:
-    enabled: ${QUACK_RECORDING_ENABLED}  # unset ⇒ follows otel.enabled
-    store: default_ledger
+    observations: ${QUACK_RECORDING_ENABLED}  # unset ⇒ follows otel.enabled
+    store: default_postgres                   # must be a postgres store
     retention_days: 30
 ```
 
-The built-in ledger exporter appends every event as one redacted (auth headers/API keys/credentials stripped) JSON line to `recordings/<chat-id>.jsonl` — quack's default "collector". Recording rides the SAME logger provider as `otlp_endpoint`, so it can only be on when `otel.enabled` is; a store that fails to resolve degrades to "not recording" (a Warn log), never a startup failure or a change to the run itself. Export and replay (reconstructing/replaying a run from these recordings) are later milestones — this stage is emission + storage only.
+`recording.store` must be a Postgres store; config refuses anything else at load, because the WAL's fail-closed append needs a transactional, gapless sequence. With a store named the ledger is always on. `recording.observations` only toggles the observation half (it rides the same logger provider as `otlp_endpoint`, so it can only be on when `otel.enabled` is); turning it off never turns the WAL off. Observation payloads are redacted (auth headers/API keys/credentials stripped) before they are written.
+
+At boot the server runs ledger recovery over every chat: an `artifact.revision` intent with no store row is marked `artifact.revision.aborted`, a `delivery.intent` with no `delivery.done` is checked against the extension's `DeliveryRecoverer`. The count it could not settle is the `quack_ledger_unresolved_intents` gauge; `quack ledger recover --dry-run` runs the same pass and reports instead of writing.
+
+`quack ledger export <chat-id>` downloads a chat's observations as a ZIP (`manifest.json` with `ledger_version`, `entries.jsonl` of typed entries) for `quack replay` and `quack eval`. Only bundles at the current `ledger_version` replay; bundles exported before the typed-entry format (OTel attribute lines, `semconv_version` manifests) are unsupported.

@@ -38,6 +38,7 @@ import (
 	"github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/auth"
 	"github.com/fagerbergj/quack/internal/bundledir"
+	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
@@ -221,7 +222,8 @@ func newSkillSource(skillDirs []string) skill.Source {
 	return skill.NewMergedSource(resolved, skillsource.Scoped(fallback, backfill))
 }
 
-// LedgerStoreFromConfig resolves the replay ledger backend from stores, best-effort.
+// LedgerStoreFromConfig resolves the ledger (WAL) backend from stores; config
+// validation already guarantees a named store is Postgres.
 func LedgerStoreFromConfig(cfg *config.Config) ledger.LedgerStore {
 	name := cfg.Observability.Recording.Store
 	if name == "" {
@@ -231,24 +233,12 @@ func LedgerStoreFromConfig(cfg *config.Config) ledger.LedgerStore {
 	if !ok {
 		return nil
 	}
-	switch s.Kind {
-	case "filesystem":
-		store, err := ledger.NewFSStore(s.Root)
-		if err != nil {
-			slog.Warn("replay ledger store init failed; recording disabled", "component", "startup", "err", err)
-			return nil
-		}
-		return store
-	case "postgres":
-		store, err := ledger.NewPGStoreFromURL(s.URL)
-		if err != nil {
-			slog.Warn("replay ledger store init failed; recording disabled", "component", "startup", "err", err)
-			return nil
-		}
-		return store
-	default:
+	store, err := ledger.NewPGStoreFromURL(s.URL)
+	if err != nil {
+		slog.Warn("ledger store init failed; no WAL and no recording for this run", "component", "startup", "err", err)
 		return nil
 	}
+	return store
 }
 
 // setDefaultAgent stamps m's metrics-only agent fallback (tracedModel.SetDefaultAgent) -
@@ -659,6 +649,17 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		deliver = sdkDeliverAdapter{deliverer: deliverer}.Deliver
 		slog.Info("extension supplies delivery", "component", "startup", "extension", delivererName)
 	}
+	if ledgerStore != nil {
+		// Boot-time recovery: settle intents whose projection write never
+		// happened (a crash between WAL append and row write) before any run starts.
+		proj := cli.Projections{ArtifactRowExists: cli.ArtifactRowChecker(st, artifacts)}
+		if rec, _ := findRecoverer(sdkExts); rec != nil {
+			proj.Delivery = sdkRecoverAdapter{recoverer: rec}
+		}
+		if _, err := cli.Recover(ctx, ledgerStore, nil, proj, false); err != nil {
+			slog.Warn("ledger recovery failed; unresolved intents stay unresolved", "component", "startup", "err", err)
+		}
+	}
 
 	cleanups = append(cleanups, func() {
 		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -788,13 +789,8 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	executor.SetAdmission(admission, admissionSpecFor(cfg))
 	executor.SetSetup(setupFn)
 	executor.SetArtifacts(artifacts)
-	// WAL groundwork (#1090 §4.9/#1100): armed only when recording is on AND
-	// its store resolves to postgres - the filesystem ledger's AppendIntent
-	// is best-effort/non-transactional (FSStore.AppendIntent), so it stays
-	// recording-only and never backs the gate's fail-closed writes.
-	pg, hasPGLedger := ledgerStore.(*ledger.PGStore)
-	if hasPGLedger {
-		executor.SetWALLedger(pg)
+	if ledgerStore != nil {
+		executor.SetWALLedger(ledgerStore)
 	}
 	executor.SetNodeStateStore(st) // write-through node state machine (#962)
 	executorRef.Store(executor)
@@ -809,8 +805,8 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	// (#1095/#1118) must not depend on load_artifacts being in orchestrator.tools -
 	// a prod config without it silently dropped every plan record (#1122).
 	orch.SetArtifacts(artifacts)
-	if hasPGLedger {
-		orch.SetLedger(pg)
+	if ledgerStore != nil {
+		orch.SetLedger(ledgerStore)
 	}
 	// Bounds run SETUP (workspace clone/jail), which costs host disk/CPU before
 	// any node reaches the GPU ledger. Also the only cap on how many runs are

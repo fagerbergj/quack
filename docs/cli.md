@@ -65,7 +65,10 @@ Runs can be recorded to a replay ledger and re-driven later - the basis for regr
 
 | Command | Does |
 | --- | --- |
-| `quack recording list` / `export` | Inspect and export replay-ledger recordings. |
+| `quack ledger list` / `export <chat-id>` | List chats with a recording on the server; download one as a bundle for replay or a fixture. |
+| `quack ledger show <chat-id> [--from-seq N]` | Print a chat's raw ledger entries (server-side, from the local quack.yaml's stores). |
+| `quack ledger recover [chat-id] [--dry-run]` | Settle intents whose projection write is missing (the same pass the server runs at boot); `--dry-run` reports only. |
+| `quack ledger rebuild <chat-id> [--dry-run] [--force]` | Reconcile a chat's artifact metadata and SSE table against the ledger fold. |
 | `quack replay` | Replay a recorded run offline (strict) or live from a changed node (fork). |
 | `quack eval` | Re-run a recorded conversation live with a swapped model and compare judge scores. |
 

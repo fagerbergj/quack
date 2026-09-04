@@ -4,88 +4,72 @@ import (
 	"archive/zip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"time"
 )
 
+// LedgerVersion is the bundle entry shape; bump it whenever Entry or a
+// payload struct changes incompatibly. Version 2 is the typed-Entry shape;
+// version 1 (raw OTel attribute lines) bundles are unsupported.
+const LedgerVersion = 2
+
 // Manifest is the bundle's self-describing header - everything a reader with
-// zero access to quack's DB or workspace needs to know what produced the
-// bundle and whether anything is missing.
+// zero access to quack's DB needs to know what produced the bundle.
 type Manifest struct {
-	QuackVersion   string    `json:"quack_version"`
-	SemConvVersion string    `json:"semconv_version"`
-	SessionID      string    `json:"session_id"`
-	ExportedAt     time.Time `json:"exported_at"`
-	CloneSnapshot  bool      `json:"clone_snapshot"`
+	QuackVersion  string    `json:"quack_version"`
+	LedgerVersion int       `json:"ledger_version"`
+	SessionID     string    `json:"session_id"`
+	ExportedAt    time.Time `json:"exported_at"`
 }
 
-// CloneSnapshotReader is implemented by a LedgerStore that can additionally
-// serve an optional git-bundle snapshot recorded alongside a session's
-// entries (FSStore today). Kept separate from LedgerStore itself - clone
-// snapshots are opt-in per run (config.RecordingConfig.CloneSnapshot), so
-// most sessions, and stores that never produce one, never implement this.
-type CloneSnapshotReader interface {
-	// ReadCloneSnapshot returns sessionID's clone bundle, or ok=false if none
-	// was recorded.
-	ReadCloneSnapshot(ctx context.Context, sessionID string) (rc io.ReadCloser, ok bool, err error)
-}
+// ErrNoRecording is returned by ReadObservations for a chat with no
+// observation entries (never ran, recording off, or hard-deleted).
+var ErrNoRecording = errors.New("ledger: no recording for this chat")
 
-// AssembleBundle streams sessionID's recording as a ZIP to w: manifest.json,
-// entries.jsonl (copied from entries - the caller's already-open
-// LedgerStore.ReadStream result, never buffered whole in memory here), and
-// clone.bundle when store implements CloneSnapshotReader and has one for
-// this session. quackVersion/semconvVersion are the caller's build/schema
-// stamps - the bundle is meant to be openable with no access back to quack's
-// DB or workspace, so both travel with it instead of being inferred later.
-func AssembleBundle(ctx context.Context, store LedgerStore, sessionID, quackVersion, semconvVersion string, entries io.Reader, w io.Writer) error {
-	var cloneRC io.ReadCloser
-	hasClone := false
-	if csr, ok := store.(CloneSnapshotReader); ok {
-		rc, ok2, err := csr.ReadCloneSnapshot(ctx, sessionID)
-		if err != nil {
-			return fmt.Errorf("ledger: clone snapshot: %w", err)
-		}
-		if ok2 {
-			cloneRC, hasClone = rc, true
-			defer cloneRC.Close()
+// ReadObservations returns chatID's observation entries in seq order.
+func ReadObservations(ctx context.Context, store LedgerStore, chatID string) ([]Entry, error) {
+	all, err := store.ReadEntries(ctx, chatID, 0)
+	if err != nil {
+		return nil, err
+	}
+	out := all[:0]
+	for _, e := range all {
+		if IsObservation(e.Kind) {
+			out = append(out, e)
 		}
 	}
+	if len(out) == 0 {
+		return nil, ErrNoRecording
+	}
+	return out, nil
+}
 
+// AssembleBundle streams sessionID's recording as a ZIP to w: manifest.json
+// plus entries.jsonl (one Entry per line, seq order).
+func AssembleBundle(ctx context.Context, store LedgerStore, sessionID, quackVersion string, w io.Writer) error {
+	entries, err := ReadObservations(ctx, store, sessionID)
+	if err != nil {
+		return err
+	}
 	zw := zip.NewWriter(w)
-
 	mf, err := zw.Create("manifest.json")
 	if err != nil {
 		return fmt.Errorf("ledger: create manifest.json: %w", err)
 	}
-	manifest := Manifest{
-		QuackVersion:   quackVersion,
-		SemConvVersion: semconvVersion,
-		SessionID:      sessionID,
-		ExportedAt:     time.Now().UTC(),
-		CloneSnapshot:  hasClone,
-	}
-	if err := json.NewEncoder(mf).Encode(manifest); err != nil {
+	if err := json.NewEncoder(mf).Encode(Manifest{QuackVersion: quackVersion, LedgerVersion: LedgerVersion, SessionID: sessionID, ExportedAt: time.Now().UTC()}); err != nil {
 		return fmt.Errorf("ledger: encode manifest.json: %w", err)
 	}
-
 	ef, err := zw.Create("entries.jsonl")
 	if err != nil {
 		return fmt.Errorf("ledger: create entries.jsonl: %w", err)
 	}
-	if _, err := io.Copy(ef, entries); err != nil {
-		return fmt.Errorf("ledger: copy entries.jsonl: %w", err)
-	}
-
-	if hasClone {
-		cf, err := zw.Create("clone.bundle")
-		if err != nil {
-			return fmt.Errorf("ledger: create clone.bundle: %w", err)
-		}
-		if _, err := io.Copy(cf, cloneRC); err != nil {
-			return fmt.Errorf("ledger: copy clone.bundle: %w", err)
+	enc := json.NewEncoder(ef)
+	for _, e := range entries {
+		if err := enc.Encode(e); err != nil {
+			return fmt.Errorf("ledger: encode entry seq %d: %w", e.Seq, err)
 		}
 	}
-
 	return zw.Close()
 }

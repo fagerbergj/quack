@@ -1,5 +1,5 @@
 // This file drives internal/orchestrator's REAL entry point (Orchestrator.Run)
-// through the REAL ledger.Exporter/FSStore, then feeds the resulting bundle
+// through the REAL ledger.Exporter/MemStore, then feeds the resulting bundle
 // back into replay.Load - proving UserTurns() works against a bundle shaped
 // the way PRODUCTION actually writes one, not a hand-built fixture that
 // happens to only ever go through one exporter (see #617: before the fix,
@@ -10,10 +10,7 @@ package replay_test
 
 import (
 	"context"
-	"io"
 	"iter"
-	"os"
-	"path/filepath"
 	"testing"
 
 	sdklog "go.opentelemetry.io/otel/sdk/log"
@@ -74,13 +71,9 @@ func newOrchForTest(t *testing.T, m model.LLM) *orchestrator.Orchestrator {
 // TestUserTurns_FromProductionShapedBundle is the #617 regression that
 // matters most: UserTurns() must recover the user's turn from a bundle built
 // the way a live run actually records one - root events stamped with ChatID
-// only, filed by the real exporter into this chat's own FSStore file.
+// only, filed by the real exporter under this chat's own id.
 func TestUserTurns_FromProductionShapedBundle(t *testing.T) {
-	dir := t.TempDir()
-	store, err := ledger.NewFSStore(filepath.Join(dir, "ledger"))
-	if err != nil {
-		t.Fatalf("NewFSStore: %v", err)
-	}
+	store := ledger.NewMemStore()
 
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(ledger.NewExporter(store))))
 	restore := otelobs.SetLoggerProviderForTesting(lp)
@@ -95,27 +88,9 @@ func TestUserTurns_FromProductionShapedBundle(t *testing.T) {
 		}
 	}
 
-	rc, err := store.ReadStream(context.Background(), chatID)
+	sess, err := replay.FromStore(context.Background(), store, chatID)
 	if err != nil {
-		t.Fatalf("ReadStream: %v", err)
-	}
-	defer rc.Close()
-	data, err := io.ReadAll(rc)
-	if err != nil {
-		t.Fatalf("read entries: %v", err)
-	}
-	if len(data) == 0 {
-		t.Fatal("no ledger entries recorded under this chat's own stream - root events fell into \"unscoped\" instead")
-	}
-
-	bundlePath := filepath.Join(dir, "entries.jsonl")
-	if err := os.WriteFile(bundlePath, data, 0o600); err != nil {
-		t.Fatalf("write bundle: %v", err)
-	}
-
-	sess, err := replay.Load(bundlePath)
-	if err != nil {
-		t.Fatalf("replay.Load: %v", err)
+		t.Fatalf("replay.FromStore: %v (root events fell into no chat stream?)", err)
 	}
 
 	turns := sess.UserTurns()
