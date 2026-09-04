@@ -11,6 +11,24 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
+// staleResumePlanCeiling: a paused plan this old is more likely abandoned
+// than genuinely mid-run - resuming it would burn a run slot on stale work.
+const staleResumePlanCeiling = 24 * time.Hour
+
+// resumeGuardArchivedOrStale is boot resume's cheap admissibility check
+// (#1176): an archived chat's paused nodes must never be resumed, and a plan
+// older than staleResumePlanCeiling is more likely abandoned than mid-run.
+// Split out from the DB reads that feed it so it is unit-testable directly.
+func resumeGuardArchivedOrStale(archived, hasPlan bool, planCreatedAt time.Time) (bool, string) {
+	if archived {
+		return false, "chat archived; not resumed"
+	}
+	if hasPlan && time.Since(planCreatedAt) > staleResumePlanCeiling {
+		return false, "plan older than staleResumePlanCeiling; not resumed"
+	}
+	return true, ""
+}
+
 // reconcileNodes is boot's half of #962: every node the last process left
 // suspended is handed back to the scheduler, and the reconcile is logged as
 // what actually happened rather than as advice to resend a message.
@@ -101,7 +119,7 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 				"chat", chatID, "node", n.NodeID, "plan", n.PlanID, "latest", plan.ID)
 			continue
 		}
-		res = runlog.Drive(plan.TurnID, st, pub, orch.RetryNode(runCtx, userID, chatID, seededOutputs(runCtx, st, plan.ID), n.NodeID, ""), func(err error) {
+		res = runlog.Drive(plan.TurnID, st, pub, orch.RetryNodeResumed(runCtx, userID, chatID, seededOutputs(runCtx, st, plan.ID), n.NodeID, ""), func(err error) {
 			slog.Warn("resume run error", "component", "startup", "chat", chatID, "node", n.NodeID, "err", err)
 		})
 	}

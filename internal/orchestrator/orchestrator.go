@@ -134,6 +134,16 @@ func (o *Orchestrator) SetMaxActiveRuns(n int) {
 	}
 }
 
+// RunAdmissionUsage reports the run-level admission's current (used, limit),
+// for callers explaining a queued chat's wait (#1176). ok is false when no
+// cap is configured (SetMaxActiveRuns never called, or n < 1).
+func (o *Orchestrator) RunAdmissionUsage() (used, limit int, ok bool) {
+	if o.runAdmit == nil {
+		return 0, 0, false
+	}
+	return o.runAdmit.Usage(runAdmissionSpec)
+}
+
 // acquireRun blocks until a run slot is free, or ctx is cancelled while
 // queued. A cancelled wait never reserves a slot: the caller must check
 // acquired and return without executing.
@@ -231,7 +241,20 @@ func (o *Orchestrator) SetNodeTaskOverride(chatID, nodeID, task string) bool {
 }
 
 // RetryNode re-runs a finished node and its descendants with optional guidance.
+// It counts against MaxActiveRuns like any other run.
 func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, seeded map[string]string, nodeID, guidance string) iter.Seq2[stream.SSEEvent, error] {
+	return o.retryNode(ctx, userID, chatID, seeded, nodeID, guidance, true)
+}
+
+// RetryNodeResumed re-enters a node a previous process left admitted (boot
+// resume, #1176): the node's run slot was already reserved by the process
+// that died, and that reservation is gone with it, so re-acquiring one here
+// would let boot resume starve fresh work out of the admission queue.
+func (o *Orchestrator) RetryNodeResumed(ctx context.Context, userID, chatID string, seeded map[string]string, nodeID, guidance string) iter.Seq2[stream.SSEEvent, error] {
+	return o.retryNode(ctx, userID, chatID, seeded, nodeID, guidance, false)
+}
+
+func (o *Orchestrator) retryNode(ctx context.Context, userID, chatID string, seeded map[string]string, nodeID, guidance string, admit bool) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		// A retry/resume is its own run, not a continuation of whatever
 		// finished run left this node retryable - it needs its own trace so
@@ -239,14 +262,18 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, see
 		var span oteltrace.Span
 		ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, chatID))
 		defer otelobs.End(span, nil)
-		// A retry (or a boot resume, which rides this path) counts against
-		// MaxActiveRuns like any other run.
-		release, acquired := o.acquireRun(ctx)
-		defer release()
-		if !acquired {
-			yield(stream.Errorf("orchestrator: run cancelled while queued"), nil)
-			return
+		if admit {
+			release, acquired := o.acquireRun(ctx)
+			defer release()
+			if !acquired {
+				yield(stream.Errorf("orchestrator: run cancelled while queued"), nil)
+				return
+			}
 		}
+		// quack_runs_active must count this run whether or not it went
+		// through admission - Run/RunBoundPlan already do (#1176).
+		otelobs.RunStarted()
+		defer otelobs.RunFinished()
 		plan, ok := o.stashedPlan(ctx, userID, chatID)
 		if !ok {
 			yield(stream.Errorf("retry: no plan in session to retry"), nil)

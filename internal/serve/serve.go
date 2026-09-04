@@ -479,6 +479,17 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		// is started further down - resume gets the DB to a settled state
 		// first, the sweep goroutines start after.
 		resumeNodes = reconcileNodes(context.Background(), st, func(chatID string) (bool, string) {
+			// #1176: an archived chat's paused nodes must not be resumed -
+			// they were still holding run slots the archive should free.
+			c, _ := st.GetChat(context.Background(), chatID)
+			p, _ := st.GetLatestDagPlan(context.Background(), chatID)
+			var planCreatedAt time.Time
+			if p != nil {
+				planCreatedAt = p.CreatedAt
+			}
+			if ok, why := resumeGuardArchivedOrStale(c != nil && c.Archived, p != nil, planCreatedAt); !ok {
+				return false, why
+			}
 			// A resumable node was provisioned a chat scope dir; if the
 			// workspace is gone the run cannot pick up where it left off.
 			if _, rerr := jail.Resolve(st.SessionUserForChat(context.Background(), chatID), chatID, "."); rerr != nil {

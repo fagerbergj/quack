@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
@@ -133,6 +134,37 @@ func (s *resumeStubLLM) workerPrompts() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.prompts...)
+}
+
+// TestResumeGuardArchivedOrStale pins #1176's two admissibility rules: an
+// archived chat is never resumed, and a plan older than
+// staleResumePlanCeiling is marked failed rather than re-entered.
+func TestResumeGuardArchivedOrStale(t *testing.T) {
+	now := time.Now()
+	cases := []struct {
+		name          string
+		archived      bool
+		hasPlan       bool
+		planAge       time.Duration
+		wantOK        bool
+		wantReasonHas string
+	}{
+		{"fresh non-archived resumes", false, true, time.Hour, true, ""},
+		{"archived chat is never resumed even with a fresh plan", true, true, time.Minute, false, "archived"},
+		{"stale plan is failed even when not archived", false, true, staleResumePlanCeiling + time.Minute, false, "stale"},
+		{"no plan row skips the age check", false, false, 0, true, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ok, why := resumeGuardArchivedOrStale(tc.archived, tc.hasPlan, now.Add(-tc.planAge))
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v (why=%q)", ok, tc.wantOK, why)
+			}
+			if !tc.wantOK && !strings.Contains(why, tc.wantReasonHas) {
+				t.Errorf("reason = %q, want it to mention %q", why, tc.wantReasonHas)
+			}
+		})
+	}
 }
 
 // TestDriveResume_ReentryRunsPausedNodeOnly is the boot half of #962 end to
