@@ -317,6 +317,12 @@ func registerArtifactWriteTools(srv *mcp.Server, sess vetting.MemSession) {
 	registerEditArtifactTool(srv, c, sess)
 	registerWriteArtifactTool(srv, c, sess)
 	for _, spec := range recordstore.Kinds() {
+		// A slice reviewer feeding a synthesizer never owns the delivered
+		// verdict (#1148); withholding write_code_review keeps the tool list
+		// itself the fact the reviewer prompt tells it to trust.
+		if spec.Name() == "code_review" && sess.Review != nil && sess.Review.IsNonDeliveringSlice() {
+			continue
+		}
 		registerWriteKindTool(srv, c, sess, spec.Name(), spec)
 	}
 }

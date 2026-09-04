@@ -459,6 +459,10 @@ func mcpToolNames(sess vetting.MemSession, offered bool) []string {
 		add(toolEditArtifact)
 		add(toolWriteArtifact)
 		for _, spec := range recordstore.Kinds() {
+			// Mirrors registerArtifactWriteTools' own skip (#1148).
+			if spec.Name() == "code_review" && sess.Review != nil && sess.Review.IsNonDeliveringSlice() {
+				continue
+			}
 			add(writeKindPrefix + spec.Name())
 		}
 	}
@@ -466,7 +470,9 @@ func mcpToolNames(sess vetting.MemSession, offered bool) []string {
 		add(toolStageReviewComment)
 		add(toolListReviewComments)
 		add(toolUnstageReviewComment)
-		add(toolStageReview)
+		if !sess.Review.IsNonDeliveringSlice() {
+			add(toolStageReview)
+		}
 	}
 	if sess.PRStage != nil {
 		if sess.ExistingPR {

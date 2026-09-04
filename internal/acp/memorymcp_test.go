@@ -424,6 +424,51 @@ func TestReviewMCP_ToolNamesUnprefixed(t *testing.T) {
 	}
 }
 
+// TestReviewMCP_SliceGetsNoVerdictTool pins #1148: a reviewer node feeding a
+// synthesizer must never be offered stage_review/write_code_review - the
+// prompt tells it the tool list is a fact, so a registered-but-refused tool
+// is what drove both slice siblings into a sleep-poll loop.
+func TestReviewMCP_SliceGetsNoVerdictTool(t *testing.T) {
+	secret := mustMemSecret(t)
+	fanout := vetting.GetReviewFanout(t.Name(), 2)
+	fanout.ExpectSynthesis()
+	t.Cleanup(func() { vetting.ResetReviewFanout(t.Name()) })
+	sess := vetting.MemSession{
+		Review:    vetting.NewReviewStage(fanout),
+		Artifacts: artifactStub{},
+		AppName:   "quack", UserID: "u1", ChatID: "chat-a",
+	}
+	vetting.RegisterMemSession(secret, sess)
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	got := map[string]bool{}
+	for _, tl := range res.Tools {
+		got[tl.Name] = true
+	}
+	if got["stage_review"] || got["write_code_review"] {
+		t.Fatalf("slice session must not register stage_review/write_code_review, got %v", got)
+	}
+	if !got["stage_review_comment"] {
+		t.Fatal("slice session must still register stage_review_comment")
+	}
+
+	names := mcpToolNames(sess, true)
+	if hasToolName(names, "stage_review") || hasToolName(names, "write_code_review") {
+		t.Fatalf("mcpToolNames must not announce stage_review/write_code_review for a slice, got %v", names)
+	}
+	if !hasToolName(names, "stage_review_comment") {
+		t.Fatalf("mcpToolNames must still announce stage_review_comment for a slice, got %v", names)
+	}
+}
+
 // TestMcpToolNames_AnnouncesEveryRegisteredTool guards the announcement-gap
 // class of bug (read_artifact was registered on the loopback server but
 // missing from mcpToolNames, so the agent never learned it existed): for a

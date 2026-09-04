@@ -481,6 +481,40 @@ func TestReviewFanout_SynthesizerAbortFallsBackToConcat(t *testing.T) {
 	}
 }
 
+// The #1148 refusal text must never read as an instruction to wait - that's
+// what drove both slice siblings into a sleep-poll loop against each other.
+func TestReviewStage_RefusalDoesNotInviteWaiting(t *testing.T) {
+	fanout := freshFanout(t, 2)
+	stage := NewReviewStage(fanout)
+	err := stage.SetVerdict("approve", "looks good")
+	if err == nil {
+		t.Fatal("approve must still be refused while a sibling is pending")
+	}
+	if strings.Contains(err.Error(), "wait") {
+		t.Fatalf("refusal text must not say wait: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "not delivered") {
+		t.Fatalf("refusal text should tell the caller its verdict is not delivered, got: %q", err.Error())
+	}
+}
+
+// A slice feeding a synthesizer (#1148) must be reported as non-delivering
+// so callers can withhold its verdict tools; a plan with no synthesizer,
+// or with every sibling terminal, must not be.
+func TestReviewStage_IsNonDeliveringSlice(t *testing.T) {
+	fanout := freshFanout(t, 2)
+	fanout.ExpectSynthesis()
+	slice := NewReviewStage(fanout)
+	if !slice.IsNonDeliveringSlice() {
+		t.Fatal("a reviewer feeding a synthesizer must report as a non-delivering slice")
+	}
+
+	solo := NewReviewStage(nil)
+	if solo.IsNonDeliveringSlice() {
+		t.Fatal("a single-reviewer node (nil fanout) is never a slice")
+	}
+}
+
 // freshFanout: the fan-in registry is process-global, and these tests key it
 // on t.Name(), so -count>1 inherits the previous iteration without this.
 func freshFanout(t *testing.T, total int) *ReviewFanout {
