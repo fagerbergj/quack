@@ -275,7 +275,7 @@ func TestMergeReviewsSynthesizerOwnsVerdict(t *testing.T) {
 		"slice-b": {ok: true, item: StagedDelivery{Kind: "review", Event: "approve"}},
 	}
 	synthBody := "Consolidated review.\n\nVERDICT: request_changes\n"
-	merged := mergeReviews(terminal, synthBody)
+	merged := mergeReviews(terminal, synthBody, "")
 	if merged.Event != "request_changes" {
 		t.Fatalf("merged verdict = %q, want request_changes (synthesizer-owned, not slices' worst-of)", merged.Event)
 	}
@@ -289,7 +289,66 @@ func TestMergeReviewsSlicesOnlyNitsPassesAsComment(t *testing.T) {
 	terminal := map[string]reviewFanoutEntry{
 		"slice-a": {ok: true, item: StagedDelivery{Kind: "review", Event: "comment"}},
 	}
-	merged := mergeReviews(terminal, "")
+	merged := mergeReviews(terminal, "", "")
+	if merged.Event != "comment" {
+		t.Fatalf("merged verdict = %q, want comment", merged.Event)
+	}
+}
+
+// TestMergeReviewsStructuredVerdictApprove: three slices stage findings with
+// no event (V4: slices never own a verdict, #1150) and the synthesizer's
+// structured code_review record says approve (#1184's exact prod shape: a
+// native write_code_review leaves no VERDICT tail for the old fallback to
+// find). Delivered event must be approve, not "comment".
+func TestMergeReviewsStructuredVerdictApprove(t *testing.T) {
+	terminal := map[string]reviewFanoutEntry{
+		"slice-a": {ok: true, item: StagedDelivery{Kind: "review", Body: "a"}},
+		"slice-b": {ok: true, item: StagedDelivery{Kind: "review", Body: "b"}},
+		"slice-c": {ok: true, item: StagedDelivery{Kind: "review", Body: "c"}},
+	}
+	merged := mergeReviews(terminal, "Consolidated review.", "approve")
+	if merged.Event != "approve" {
+		t.Fatalf("merged verdict = %q, want approve", merged.Event)
+	}
+}
+
+// TestMergeReviewsStructuredVerdictRequestChanges: same shape as above but
+// the synthesizer's structured verdict is request_changes.
+func TestMergeReviewsStructuredVerdictRequestChanges(t *testing.T) {
+	terminal := map[string]reviewFanoutEntry{
+		"slice-a": {ok: true, item: StagedDelivery{Kind: "review", Body: "a"}},
+		"slice-b": {ok: true, item: StagedDelivery{Kind: "review", Body: "b"}},
+		"slice-c": {ok: true, item: StagedDelivery{Kind: "review", Body: "c"}},
+	}
+	merged := mergeReviews(terminal, "Consolidated review.", "request_changes")
+	if merged.Event != "request_changes" {
+		t.Fatalf("merged verdict = %q, want request_changes", merged.Event)
+	}
+}
+
+// TestMergeReviewsSliceRequestChangesBeatsStructuredApprove: #867's defense
+// still holds against the structured verdict, not just the answer-tail one -
+// a slice's explicit request_changes must survive a synthesizer approve.
+func TestMergeReviewsSliceRequestChangesBeatsStructuredApprove(t *testing.T) {
+	terminal := map[string]reviewFanoutEntry{
+		"slice-a": {ok: true, item: StagedDelivery{Kind: "review", Event: "request_changes", Body: "blocking bug"}},
+		"slice-b": {ok: true, item: StagedDelivery{Kind: "review", Body: "b"}},
+	}
+	merged := mergeReviews(terminal, "Consolidated review.", "approve")
+	if merged.Event != "request_changes" {
+		t.Fatalf("merged verdict = %q, want request_changes (slice wins over synthesizer approve)", merged.Event)
+	}
+}
+
+// TestMergeReviewsNoVerdictAnywhereIsComment: no synthesizer verdict (neither
+// structured nor tail) and no slice staged an event - merge degrades to
+// comment rather than fabricating one.
+func TestMergeReviewsNoVerdictAnywhereIsComment(t *testing.T) {
+	terminal := map[string]reviewFanoutEntry{
+		"slice-a": {ok: true, item: StagedDelivery{Kind: "review", Body: "a"}},
+		"slice-b": {ok: true, item: StagedDelivery{Kind: "review", Body: "b"}},
+	}
+	merged := mergeReviews(terminal, "Consolidated review with no verdict line.", "")
 	if merged.Event != "comment" {
 		t.Fatalf("merged verdict = %q, want comment", merged.Event)
 	}
