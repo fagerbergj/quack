@@ -105,9 +105,9 @@ export function DagView({
     <div className="space-y-4 not-prose">
       {layers.map((layer, li) => (
         <div key={li}>
-          <div className={`flex gap-3 items-stretch ${layer.length > 1 ? 'flex-row' : 'flex-col'}`}>
+          <div className={`flex flex-col gap-3 items-stretch ${layer.length > 1 ? 'min-[600px]:flex-row' : ''}`}>
             {layer.map(id => (
-              <div key={id} className={layer.length > 1 ? 'flex-1 min-w-0' : ''}>
+              <div key={id} className={layer.length > 1 ? 'min-[600px]:flex-1 min-w-0' : ''}>
                 <DagNode
                   node={nodeMap[id]}
                   state={getState(id)}
