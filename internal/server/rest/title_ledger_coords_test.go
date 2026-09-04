@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
 	"github.com/fagerbergj/quack/internal/inference"
@@ -32,8 +32,8 @@ func TestGenerateTitle_ChatEventCarriesChatID(t *testing.T) {
 	var found bool
 	for _, r := range capExp.records {
 		var operation string
-		r.WalkAttributes(func(kv otellog.KeyValue) bool {
-			switch kv.Key {
+		r.WalkAttributes(func(kv attribute.KeyValue) bool {
+			switch string(kv.Key) {
 			case otelobs.GenAIOperationName:
 				operation = kv.Value.AsString()
 			case otelobs.GenAIConversationID:

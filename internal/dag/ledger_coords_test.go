@@ -15,7 +15,7 @@ import (
 	"iter"
 	"testing"
 
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
@@ -51,8 +51,8 @@ func (c *ledgerCaptureExporter) ForceFlush(context.Context) error { return nil }
 // Slice-valued gen_ai.tool.definitions) logs a spurious internal warning.
 func ledgerAttrsOf(r sdklog.Record) map[string]string {
 	out := map[string]string{}
-	r.WalkAttributes(func(kv otellog.KeyValue) bool {
-		if kv.Value.Kind() == otellog.KindString {
+	r.WalkAttributes(func(kv attribute.KeyValue) bool {
+		if kv.Value.Type() == attribute.STRING {
 			out[string(kv.Key)] = kv.Value.AsString()
 		}
 		return true

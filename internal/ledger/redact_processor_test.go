@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"go.opentelemetry.io/otel/attribute"
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
@@ -26,8 +27,8 @@ func attrString(t *testing.T, r sdklog.Record, key string) string {
 	t.Helper()
 	var got string
 	found := false
-	r.WalkAttributes(func(kv otellog.KeyValue) bool {
-		if kv.Key == key {
+	r.WalkAttributes(func(kv attribute.KeyValue) bool {
+		if string(kv.Key) == key {
 			got = kv.Value.AsString()
 			found = true
 			return false
@@ -60,9 +61,9 @@ func TestRedactingProcessorProtectsEveryDownstreamProcessor(t *testing.T) {
 
 	var rec otellog.Record
 	rec.AddAttributes(
-		otellog.String("authorization", "Bearer sekret"),
-		otellog.String("gen_ai.tool.call.arguments", `{"headers":{"api_key":"abc123"},"url":"https://x"}`),
-		otellog.String("gen_ai.operation.name", "execute_tool"), // not a secret - must survive untouched
+		attribute.String("authorization", "Bearer sekret"),
+		attribute.String("gen_ai.tool.call.arguments", `{"headers":{"api_key":"abc123"},"url":"https://x"}`),
+		attribute.String("gen_ai.operation.name", "execute_tool"), // not a secret - must survive untouched
 	)
 	logger.Emit(context.Background(), rec)
 
@@ -100,7 +101,7 @@ func TestRedactingProcessorIsIdempotent(t *testing.T) {
 	logger := lp.Logger("test")
 
 	var rec otellog.Record
-	rec.AddAttributes(otellog.String("authorization", "Bearer sekret"))
+	rec.AddAttributes(attribute.String("authorization", "Bearer sekret"))
 	logger.Emit(context.Background(), rec)
 
 	if len(exp.records) != 1 {

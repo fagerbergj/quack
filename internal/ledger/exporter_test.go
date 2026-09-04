@@ -6,6 +6,7 @@ import (
 	"io"
 	"testing"
 
+	"go.opentelemetry.io/otel/attribute"
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
@@ -38,11 +39,11 @@ func TestExporterAppendsRedactedJSONKeyedByConversation(t *testing.T) {
 	logger := provider.Logger("test")
 
 	var rec otellog.Record
-	rec.SetBody(otellog.StringValue("chat"))
+	rec.SetBody(attribute.StringValue("chat"))
 	rec.AddAttributes(
-		otellog.String("gen_ai.conversation.id", "chat-42"),
-		otellog.String("gen_ai.operation.name", "chat"),
-		otellog.String("authorization", "Bearer secret"),
+		attribute.String("gen_ai.conversation.id", "chat-42"),
+		attribute.String("gen_ai.operation.name", "chat"),
+		attribute.String("authorization", "Bearer secret"),
 	)
 	logger.Emit(context.Background(), rec)
 
@@ -80,7 +81,7 @@ func TestExporterUnscopedFallsBackToKnownSession(t *testing.T) {
 	logger := provider.Logger("test")
 
 	var rec otellog.Record
-	rec.SetBody(otellog.StringValue("no conversation id"))
+	rec.SetBody(attribute.StringValue("no conversation id"))
 	logger.Emit(context.Background(), rec)
 
 	if _, ok := store.lines[unscopedSession]; !ok {

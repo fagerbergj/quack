@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
 	"github.com/fagerbergj/quack/internal/ledger"
@@ -43,8 +43,8 @@ func TestEmitEvaluationResults_DeterministicOrder(t *testing.T) {
 		}
 		var names []string
 		for _, r := range capExp.records {
-			r.WalkAttributes(func(kv otellog.KeyValue) bool {
-				if kv.Key == otelobs.GenAIEvaluationName {
+			r.WalkAttributes(func(kv attribute.KeyValue) bool {
+				if string(kv.Key) == otelobs.GenAIEvaluationName {
 					names = append(names, kv.Value.AsString())
 				}
 				return true
@@ -80,8 +80,8 @@ func TestEmitEvaluationResults_AgentAttribute(t *testing.T) {
 		t.Fatalf("got %d records, want 1", len(capExp.records))
 	}
 	var got string
-	capExp.records[0].WalkAttributes(func(kv otellog.KeyValue) bool {
-		if kv.Key == otelobs.GenAIAgentName {
+	capExp.records[0].WalkAttributes(func(kv attribute.KeyValue) bool {
+		if string(kv.Key) == otelobs.GenAIAgentName {
 			got = kv.Value.AsString()
 		}
 		return true

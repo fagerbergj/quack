@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"sync"
 
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/tool"
@@ -90,23 +90,23 @@ func emitToolEvent(ctx context.Context, name string, args any, result map[string
 	if !otelobs.LoggingEnabled(toolsScope) {
 		return
 	}
-	attrs := []otellog.KeyValue{
-		otellog.String(otelobs.GenAIOperationName, otelobs.GenAIOperationExecuteTool),
-		otellog.String(otelobs.GenAIToolName, name),
-		otellog.String(otelobs.GenAIToolType, "function"),
+	attrs := []attribute.KeyValue{
+		attribute.String(otelobs.GenAIOperationName, otelobs.GenAIOperationExecuteTool),
+		attribute.String(otelobs.GenAIToolName, name),
+		attribute.String(otelobs.GenAIToolType, "function"),
 	}
 	if b, jerr := json.Marshal(args); jerr == nil {
-		attrs = append(attrs, otellog.String(otelobs.GenAIToolCallArguments, string(b)))
+		attrs = append(attrs, attribute.String(otelobs.GenAIToolCallArguments, string(b)))
 	}
 	if b, jerr := json.Marshal(result); jerr == nil {
-		attrs = append(attrs, otellog.String(otelobs.GenAIToolCallResult, string(b)))
+		attrs = append(attrs, attribute.String(otelobs.GenAIToolCallResult, string(b)))
 	}
 	if err != nil {
-		attrs = append(attrs, otellog.String(otelobs.ErrorType, err.Error()))
+		attrs = append(attrs, attribute.String(otelobs.ErrorType, err.Error()))
 	}
 	// gen_ai.agent.name: same identity emitChatEvent stamps - replay's stream key needs it.
 	if c := ledger.CoordsFromContext(ctx); c.Agent != "" {
-		attrs = append(attrs, otellog.String(otelobs.GenAIAgentName, c.Agent))
+		attrs = append(attrs, attribute.String(otelobs.GenAIAgentName, c.Agent))
 	}
 	otelobs.EmitLog(ctx, toolsScope, "", attrs...)
 }

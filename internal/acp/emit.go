@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"sync"
 
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
@@ -76,18 +76,18 @@ func emitInvokeAgent(ctx context.Context, agentName string, sent, received *teeB
 	if !otelobs.LoggingEnabled(acpScope) {
 		return // nothing listening - skip parsing/marshaling the teed conversation
 	}
-	attrs := []otellog.KeyValue{
-		otellog.String(otelobs.GenAIOperationName, otelobs.GenAIOperationInvokeAgent),
-		otellog.String(otelobs.GenAIAgentName, agentName),
+	attrs := []attribute.KeyValue{
+		attribute.String(otelobs.GenAIOperationName, otelobs.GenAIOperationInvokeAgent),
+		attribute.String(otelobs.GenAIAgentName, agentName),
 	}
 	if b, err := json.Marshal(sent.lines()); err == nil {
-		attrs = append(attrs, otellog.String(otelobs.GenAIInputMessages, string(b)))
+		attrs = append(attrs, attribute.String(otelobs.GenAIInputMessages, string(b)))
 	}
 	if b, err := json.Marshal(received.lines()); err == nil {
-		attrs = append(attrs, otellog.String(otelobs.GenAIOutputMessages, string(b)))
+		attrs = append(attrs, attribute.String(otelobs.GenAIOutputMessages, string(b)))
 	}
 	if roundErr != nil {
-		attrs = append(attrs, otellog.String(otelobs.ErrorType, roundErr.Error()))
+		attrs = append(attrs, attribute.String(otelobs.ErrorType, roundErr.Error()))
 	}
 	otelobs.EmitLog(ctx, acpScope, "", attrs...)
 }
