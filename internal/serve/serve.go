@@ -656,6 +656,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		if rec, _ := findRecoverer(sdkExts); rec != nil {
 			proj.Delivery = sdkRecoverAdapter{recoverer: rec}
 		}
+		// Fail-open on purpose: a recovery bug must not crash-loop the deploy; the gauge and this Warn are the signal.
 		if _, err := cli.Recover(ctx, ledgerStore, nil, proj, false); err != nil {
 			slog.Warn("ledger recovery failed; unresolved intents stay unresolved", "component", "startup", "err", err)
 		}
