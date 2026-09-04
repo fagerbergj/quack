@@ -152,9 +152,12 @@ export function EditableChatTitle({ title, editable, onRename }: EditableChatTit
     <h1
       onClick={startEdit}
       title={editable ? 'Click to rename' : undefined}
-      className={`group flex items-center gap-1.5 text-base font-semibold text-gray-900 dark:text-white truncate ${editable ? 'cursor-text' : ''}`}
+      className={`group flex items-start medium:items-center gap-1.5 text-base font-semibold text-gray-900 dark:text-white ${editable ? 'cursor-text' : ''}`}
     >
-      <span className="truncate">{title}</span>
+      {/* Below 600px (#1136) the title gets two lines before ellipsis instead
+          of clipping to a handful of characters; medium: restores the
+          single-line truncate once the header has room. */}
+      <span className="line-clamp-2 medium:line-clamp-1 medium:truncate">{title}</span>
       {editable && (
         <span className="opacity-0 group-hover:opacity-100 text-gray-400 text-xs transition-opacity flex-shrink-0" aria-hidden="true">
           ✎
@@ -637,7 +640,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
                 min-w-0 lets it actually shrink to its flex-1 share instead of
                 the row overflowing, so `truncate` inside EditableChatTitle
                 clips to "as much as fits", never to a few characters. */}
-            <div className="min-w-0 flex-1 flex items-center gap-1.5">
+            <div className="min-w-0 flex-1 flex items-start medium:items-center gap-1.5">
               <EditableChatTitle
                 title={activeChat?.title || (activeChatId ? 'New chat' : 'Chat')}
                 editable={!!activeChatId && !isArchived}
