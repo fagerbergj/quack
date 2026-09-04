@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { AttachmentStrip, type AttachmentItem } from './AttachmentUI'
-import { useCompact } from '../hooks/useCompact'
+import { useMediaQuery } from '../hooks/useMediaQuery'
 import type { QueuedTurn } from '../state/chatStore'
 
 interface AttachmentPreview {
@@ -68,7 +68,8 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
   // #1174: the compact (<600px) branch swaps decoration/subtree (icon buttons,
   // pill row, queued chip) rather than just resizing, so it's a JS branch -
   // the wrapper's pure resize stays CSS via the `medium:` breakpoint.
-  const compact = useCompact()
+  // Below the 600px `medium` size class (#1145); useCompact was deleted in #1189.
+  const compact = useMediaQuery('(max-width: 599px)')
 
   // Auto-grow the textarea with its content (CSS field-sizing isn't in Firefox/
   // Safari yet). Reset to auto first so it shrinks back when the draft is cleared;
