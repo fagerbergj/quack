@@ -13,8 +13,11 @@ export function imageAttachmentsByTurn(chatId: string, artifacts: ArtifactList):
     for (const rev of artifact.revisions) {
       if (!rev.turn_id || !rev.mime_type.startsWith('image/')) continue
       const url = `/api/v1/chats/${encodeURIComponent(chatId)}/artifacts/${encodeURIComponent(artifact.name)}?revision=${rev.revision}`
+      // Attachments save under the "bytes" recordstore kind (#1126), so the id is
+      // "bytes:<filename>" - strip the kind prefix back off for display/download.
+      const name = artifact.name.startsWith('bytes:') ? artifact.name.slice('bytes:'.length) : artifact.name
       const list = byTurn[rev.turn_id] ?? (byTurn[rev.turn_id] = [])
-      list.push({ url, mime: rev.mime_type, name: artifact.name })
+      list.push({ url, mime: rev.mime_type, name })
     }
   }
   return byTurn
