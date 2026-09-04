@@ -671,11 +671,12 @@ func newExtUpdateChatOrigin(name string, st *store.Store, taskMem, userMem *memo
 			return fmt.Errorf("extensions.%s: update chat origin: %w", name, extsdk.ErrUnknownChat)
 		}
 		prevState := priorOriginState(c.Origin)
-		b, err := json.Marshal(&origin)
-		if err != nil {
-			return fmt.Errorf("extensions.%s: update chat origin: marshal: %w", name, err)
-		}
-		if err := st.SetChatOrigin(ctx, chatID, c.SessionUser, string(b)); err != nil {
+		// Merge, don't replace (#1181 review): a bare json.Marshal(&origin)
+		// here wiped the stored quackSetup field on every state-transition
+		// webhook (synchronize/close/merge) between a dispatch and a nudge -
+		// undoing mergeExtOrigin's whole point and reopening #1180.
+		originJSON, _ := mergeExtOrigin(c.Origin, &origin, nil)
+		if err := st.SetChatOrigin(ctx, chatID, c.SessionUser, originJSON); err != nil {
 			return fmt.Errorf("extensions.%s: update chat origin: %w", name, err)
 		}
 		applyMemoryOutcome(ctx, name, chatID, prevState, origin.State, taskMem, userMem)

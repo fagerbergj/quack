@@ -1,10 +1,15 @@
 package serve
 
 import (
+	"context"
 	"encoding/json"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+
+	"github.com/fagerbergj/quack/internal/orchestrator"
 )
 
 // TestMergeExtOrigin_NudgeFallsBackToStoredSetup is #1180's issue-47
@@ -64,5 +69,57 @@ func TestMergeExtOrigin_FreshSetupOverridesStale(t *testing.T) {
 	_, fallback := mergeExtOrigin(storedJSON, nil, fresh)
 	if fallback != nil {
 		t.Fatalf("this dispatch carried its own Setup; want no fallback, got %+v", fallback)
+	}
+}
+
+// TestUpdateChatOrigin_PreservesStoredSetup is the #1181 review's blocking
+// finding: newExtUpdateChatOrigin (the state-transition webhook path - PR
+// synchronize/close/merge) used to marshal the bare extsdk.ChatOrigin and
+// overwrite the whole row, wiping the quackSetup field a dispatch had just
+// stored - so any such webhook between a dispatch and a nudge reopened
+// #1180. A dispatch with Origin+Setup, then an origin update, must still
+// have the stored Setup afterward.
+func TestUpdateChatOrigin_PreservesStoredSetup(t *testing.T) {
+	st, orch, hub, artifacts, _ := newExtTestStack(t)
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+	var extHolder atomic.Pointer[extsdk.Extension]
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+	updateOrigin := newExtUpdateChatOrigin("noop", st, nil, nil)
+
+	const localID = "update-origin-1181"
+	chatID := "ext:noop:" + localID
+	req := extsdk.DispatchRequest{
+		Chat: extsdk.ChatRef{LocalID: localID, Origin: &extsdk.ChatOrigin{Extension: "noop", Label: "o/r#7", Kind: "pull_request"}},
+		Ask:  extsdk.Ask{Message: "review this"},
+		Run:  extsdk.RunConfig{Setup: &extsdk.Setup{Repo: "https://github.com/o/r", BaseRef: "main", ExistingHeadRef: "quack/pr-7"}},
+	}
+	if err := dispatch(context.Background(), req); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	waitRunSettled(t, st, chatID)
+
+	// A state-transition webhook (e.g. PR synchronize) fires next, with no
+	// Setup of its own - only the SDK's own ChatOrigin shape.
+	if err := updateOrigin(localID, extsdk.ChatOrigin{Extension: "noop", Label: "o/r#7", Kind: "pull_request", Badge: "synchronize"}); err != nil {
+		t.Fatalf("updateOrigin: %v", err)
+	}
+
+	c, err := st.GetChat(context.Background(), chatID)
+	if err != nil || c == nil {
+		t.Fatalf("GetChat: %v, %v", c, err)
+	}
+	if !strings.Contains(c.Origin, "quackSetup") {
+		t.Fatalf("Origin = %q, lost quackSetup across the origin update", c.Origin)
+	}
+	var rec extOriginRecord
+	if err := json.Unmarshal([]byte(c.Origin), &rec); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if rec.Setup == nil || rec.Setup.ExistingHeadRef != "quack/pr-7" {
+		t.Errorf("Setup = %+v, want the dispatch's original head ref preserved", rec.Setup)
+	}
+	if rec.ChatOrigin == nil || rec.ChatOrigin.Badge != "synchronize" {
+		t.Errorf("ChatOrigin = %+v, want the update's own Badge applied", rec.ChatOrigin)
 	}
 }

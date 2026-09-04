@@ -31,6 +31,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/otelobs"
@@ -329,6 +330,10 @@ func (o *Orchestrator) BuildBoundPlan(ctx context.Context, nodes []dag.RawNode, 
 // RunPlanAsGraph is the exact same executor a model-authored plan runs
 // through, so every node still passes through vetting.RunGatedRefine.
 func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, source string, plan dag.Plan) iter.Seq2[stream.SSEEvent, error] {
+	// Same turn-boundary clear as Run - a bound plan never calls the plan
+	// tool itself, but a stale rejection from an earlier unbound turn on this
+	// chat must not leak into this one's terminal status.
+	inference.ClearPlanRejection(sessionID)
 	return func(yield func(stream.SSEEvent, error) bool) {
 		var span oteltrace.Span
 		// Coords first: the root span reads them for gen_ai.conversation.id/user.id.
@@ -449,6 +454,11 @@ func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.P
 // source: the run's origin for gen_ai.client.token.usage/cost attribution -
 // an extension's registration name, or SourceApp for a direct UI/REST/MCP chat.
 func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, message string, attachments []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
+	// Bound to this turn (#1181 review): an earlier turn's rejection must
+	// never outlive it - a later silent gap or gateway failure on the same
+	// chat needs its OWN evidence, not a stale reason from a turn that
+	// already ended.
+	inference.ClearPlanRejection(sessionID)
 	return func(yield func(stream.SSEEvent, error) bool) {
 		var span oteltrace.Span
 		// Coords first: the root span reads them for gen_ai.conversation.id/user.id.

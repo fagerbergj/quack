@@ -74,11 +74,14 @@ func DeriveTerminalStatus(chatID string, turns []TurnContent, pendingQuestion st
 			if errText, failed := failedDagNodeError(last.Nodes); failed {
 				return RunStatusFailed, "", errText
 			}
-			if reason, failed := inference.LastPlanRejection(chatID); failed {
-				return RunStatusFailed, "", reason
-			}
+			// Gateway failure checked first (#1181 review): a real gateway
+			// outage during THIS turn is stronger evidence than an earlier
+			// rejection on the same turn, if both happened to occur.
 			if errText, failed := orchestratorGiveUpError(chatID); failed {
 				return RunStatusFailed, "", errText
+			}
+			if reason, failed := inference.LastPlanRejection(chatID); failed {
+				return RunStatusFailed, "", reason
 			}
 		}
 	}
