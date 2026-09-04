@@ -42,6 +42,41 @@ func TestCommitDeliveryRefusesUngrantedReview(t *testing.T) {
 	}
 }
 
+// TestCommitDeliveryRefusesReviewWithNoVerdict is #1198 part C: a staged
+// review with an empty Event (findings/comments but no approve/
+// request_changes/comment) must never reach cfg.Deliver - GitHub has no
+// "no verdict" review, and posting one anyway is the markers-only bug.
+func TestCommitDeliveryRefusesReviewWithNoVerdict(t *testing.T) {
+	var called int32
+	cfg := Config{
+		Deliver: func(context.Context, DeliveryContext) ([]DeliveryItemOutcome, error) {
+			called++
+			return nil, nil
+		},
+	}
+	var events []stream.SSEEvent
+	sink := func(ev stream.SSEEvent) { events = append(events, ev) }
+
+	commitDelivery(context.Background(), sink, cfg, "n1", workerActivity{
+		stagedDelivery:     map[string]StagedDelivery{"review": {Kind: "review", Body: "some findings"}},
+		skipArtifactRender: true,
+	}, GateResult{Passed: true})
+
+	if called != 0 {
+		t.Fatalf("Deliver was called %d times, want 0 - a verdict-less review must be refused", called)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %+v, want exactly one delivery_result", events)
+	}
+	data, ok := events[0].Data.(stream.DeliveryResultData)
+	if !ok {
+		t.Fatalf("event data = %T, want DeliveryResultData", events[0].Data)
+	}
+	if data.Outcome != stream.DeliveryOutcomeFailed || data.Kind != "review" || data.Error == "" {
+		t.Fatalf("delivery_result = %+v, want a failed review outcome naming the missing verdict", data)
+	}
+}
+
 // A permitted item in the SAME staged set as a refused one still ships - the
 // allowlist is enforced per-item, not all-or-nothing for the node.
 func TestCommitDeliveryDeliversGrantedItemsAlongsideRefusedOnes(t *testing.T) {

@@ -69,6 +69,31 @@ func TestCommitDelivery_RendersReviewFromArtifact(t *testing.T) {
 	}
 }
 
+// TestCommitDelivery_SingleReviewerCarriesSummaryEndToEnd is #1198: the
+// actual regression, reproduced through the real write site
+// (saveCodeReviewRound) rather than a pre-seeded record - a single-reviewer
+// node's passed round must deliver its own prose, not markers-only.
+func TestCommitDelivery_SingleReviewerCarriesSummaryEndToEnd(t *testing.T) {
+	cfg := Config{IsReviewer: true, ChatID: "ext:github:owner-repo-45", User: "u1", Artifacts: artifact.InMemoryService(), NodeID: "n1"}
+	answer := "Looks good, one nit below.\n\nVERDICT: approve\nFINDINGS:\nCLEAN:\n"
+	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "t1", 1, answer, StagedDelivery{Kind: "review", Recovered: true}, newEpisodicRoundState())
+
+	var got DeliveryContext
+	cfg.Deliver = func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
+		got = dc
+		return []DeliveryItemOutcome{{Kind: "review", URL: "https://example/review/1"}}, nil
+	}
+	act := workerActivity{stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "approve", Body: answer, Recovered: true}}}
+	commitDelivery(context.Background(), func(stream.SSEEvent) {}, cfg, "n1", act, GateResult{Passed: true})
+
+	if len(got.Items) != 1 {
+		t.Fatalf("Items = %+v, want exactly the rendered review", got.Items)
+	}
+	if body := got.Items[0].Body; !strings.Contains(body, "Looks good, one nit below.") {
+		t.Fatalf("Body = %q, want the round's own summary, not markers-only", body)
+	}
+}
+
 // Fallback: no code_review artifact exists yet for this subject -> today's
 // staged-text delivery, unchanged.
 func TestCommitDelivery_FallsBackToStagedTextWithoutArtifact(t *testing.T) {

@@ -716,6 +716,25 @@ func resetToolWrittenIDs(cfg Config) map[string]bool {
 	return ms.ToolWritten.Reset()
 }
 
+// reviewSummary is the human-facing prose for a code_review record - #1198:
+// deliveryartifact.go's renderReviewFromArtifact renders THIS field as the
+// posted review body, so leaving it unset (as before this fix) delivers
+// markers-only. Tool-staged text is already clean prose; answer-tail
+// recovery must cut before the VERDICT/FINDINGS/DISMISSED/CLEAN tail.
+func reviewSummary(answer string, staged StagedDelivery) string {
+	if !staged.Recovered {
+		return strings.TrimSpace(staged.Body)
+	}
+	cut := len(answer)
+	if loc := verdictRe.FindStringIndex(answer); loc != nil && loc[0] < cut {
+		cut = loc[0]
+	}
+	if loc := sectionHeaderRe.FindStringIndex(answer); loc != nil && loc[0] < cut {
+		cut = loc[0]
+	}
+	return strings.TrimSpace(answer[:cut])
+}
+
 func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, staged StagedDelivery, st *episodicRoundState) {
 	c := recordClient(cfg)
 	if c == nil {
@@ -862,7 +881,7 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 	for _, d := range dismissedComments {
 		dismissed = append(dismissed, DismissedEntry{Path: d.Path, Line: d.Line, Note: d.Body})
 	}
-	reviewRec := CodeReviewRecord{Verdict: event, FindingIDs: findingIDs, Dismissed: dismissed, Clean: clean}
+	reviewRec := CodeReviewRecord{Verdict: event, Summary: reviewSummary(answer, staged), FindingIDs: findingIDs, Dismissed: dismissed, Clean: clean}
 	lineage := recordstore.Lineage{NodeID: nodeID, Round: round, ParentRevision: st.reviewRev, TriggerAnnotation: st.triggerAnnotation, HeadSHA: cfg.NodeBaseSHA, SavedAt: savedAt, Author: "gate", TurnID: turnID}
 	_, rev, err := c.SaveStructured(ctx, kindCodeReview, reviewRec, SubjectHint(cfg.ChatID), lineage)
 	if err != nil {

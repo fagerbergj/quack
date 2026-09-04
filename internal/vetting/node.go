@@ -1076,6 +1076,15 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	if !renderedFromStaged {
 		act.stagedDelivery, renderedFromStaged = artifactRenderedDelivery(ctx, cfg, nodeID, act.stagedDelivery)
 	}
+	// #1198 part C: a review with comments/findings but no verdict is not a
+	// reviewed PR - refuse rather than post an unlabeled GitHub review.
+	if item, ok := act.stagedDelivery["review"]; ok && strings.TrimSpace(item.Event) == "" {
+		slog.Error("delivery refused: staged review has no verdict", "component", "vetting", "node", nodeID)
+		emitDeliveryResult(sink, nodeID, stream.DeliveryResult(nodeID, stream.DeliveryOutcomeFailed,
+			item.Kind, "", "you staged comments but no verdict - call stage_review with an event (approve/request_changes/comment) before this round ends", otelobs.TraceIDOf(ctx)))
+		recordDeliveryOutcomeMetric(cfg, res, true, false)
+		return
+	}
 	spanCtx, span := otelobs.Start(ctx, "delivery",
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID))
 	defer span.End()
