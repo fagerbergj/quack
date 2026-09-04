@@ -108,3 +108,47 @@ func TestReadExtInputArtifactMissingReturnsNotFound(t *testing.T) {
 		t.Errorf("read of a never-written artifact = (%v, %v), want (nil, false)", data, ok)
 	}
 }
+
+// TestSaveExtAttachmentDoesNotCollideWithSameNamedInputArtifact pins #1208's
+// review finding: an attachment and a dispatch input artifact both save
+// under the "bytes" kind in the same chat session, so a naive save-by-bare-
+// name would let an attachment named e.g. "pull" silently overwrite the
+// extension's own "bytes:pull" input artifact (or vice versa).
+// attachmentHintPrefix ("upload-") is what keeps them apart.
+func TestSaveExtAttachmentDoesNotCollideWithSameNamedInputArtifact(t *testing.T) {
+	st, _, _, artifacts, _ := newExtTestStack(t)
+	write := writeExtInputArtifact(st, artifacts)
+	read := readExtInputArtifact(st, artifacts)
+	ctx := context.Background()
+	chatID := "github-acme-widgets-7"
+	userID := st.SessionUserForChat(ctx, chatID)
+
+	// The dispatch writes its own "pull" input artifact first.
+	inputBytes := []byte(`{"number":7}`)
+	if _, _, err := write(chatID, "pull", "application/json", inputBytes); err != nil {
+		t.Fatalf("write input artifact: %v", err)
+	}
+
+	// A user attachment named "pull" must land at a different id, not clobber it.
+	attachBytes := []byte("not a pull request payload")
+	ref, err := saveExtAttachment(ctx, artifacts, userID, chatID, "turn1", "pull", attachBytes, "text/plain")
+	if err != nil {
+		t.Fatalf("saveExtAttachment: %v", err)
+	}
+	_, _, attachID, _, ok := artifactref.Decode(ref)
+	if !ok {
+		t.Fatalf("saveExtAttachment returned an undecodable ref part")
+	}
+	if attachID == "bytes:pull" {
+		t.Fatalf("attachment id collided with the dispatch input artifact's id %q", attachID)
+	}
+
+	// The input artifact must still read back untouched.
+	data, ok := read(chatID, "pull")
+	if !ok {
+		t.Fatal("input artifact \"pull\" vanished after the attachment save")
+	}
+	if string(data) != string(inputBytes) {
+		t.Errorf("input artifact \"pull\" content = %q, want unchanged %q", data, inputBytes)
+	}
+}

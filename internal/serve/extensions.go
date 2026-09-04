@@ -728,6 +728,15 @@ func writeExtInputArtifact(st *store.Store, artifacts *store.TurnAwareService) f
 	}
 }
 
+// attachmentHintPrefix keeps a dispatch attachment's id ("bytes:upload-
+// <filename>") out of the dispatch input-artifact namespace ("bytes:<name>",
+// readExtInputArtifact/writeExtInputArtifact above) - both share the "bytes"
+// kind and chat session, so an attachment named e.g. "pull" or "files" would
+// otherwise silently collide with (and overwrite) an input artifact of the
+// same name (#1208 review). Mirrors internal/server/rest/handler.go's own
+// attachmentHintPrefix.
+const attachmentHintPrefix = "upload-"
+
 // saveExtAttachment mirrors rest.Handler.saveAttachment: durably store the
 // bytes as a recordstore blob artifact (kind/class/lineage set, #1126) and
 // hand back a reference part (internal/artifactref), never the bytes, so
@@ -738,7 +747,7 @@ func saveExtAttachment(ctx context.Context, artifacts *store.TurnAwareService, u
 	}
 	client := recordstore.New(artifacts, artifactref.AppName, userID, chatID)
 	lineage := recordstore.Lineage{Author: "dispatch", TurnID: turnID, SavedAt: time.Now().UTC()}
-	id, rev, err := client.SaveBlob(ctx, inputArtifactKind, data, mimeType, name, lineage)
+	id, rev, err := client.SaveBlob(ctx, inputArtifactKind, data, mimeType, attachmentHintPrefix+name, lineage)
 	if err != nil {
 		return nil, err
 	}

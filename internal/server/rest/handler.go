@@ -626,6 +626,15 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 // of null (#1126).
 const attachmentArtifactKind = "bytes"
 
+// attachmentHintPrefix keeps a user-uploaded attachment's id ("bytes:upload-
+// <filename>") out of the dispatch input-artifact namespace ("bytes:<name>",
+// internal/serve/extensions.go's readExtInputArtifact/writeExtInputArtifact)
+// - both share the same "bytes" kind and chat session, so an upload named
+// e.g. "pull" or "files" would otherwise silently collide with (and
+// overwrite) an extension's own dispatch input of the same name (#1208
+// review).
+const attachmentHintPrefix = "upload-"
+
 // saveAttachment durably stores one uploaded file's bytes as a recordstore
 // blob artifact and returns a lightweight reference part
 // (internal/artifactref) - never the bytes - to carry through plans and
@@ -636,7 +645,7 @@ func (h *Handler) saveAttachment(ctx context.Context, userID, chatID, turnID, na
 	}
 	client := recordstore.New(h.artifacts, artifactref.AppName, userID, chatID)
 	lineage := recordstore.Lineage{Author: "user", TurnID: turnID, SavedAt: time.Now().UTC()}
-	id, rev, err := client.SaveBlob(ctx, attachmentArtifactKind, data, mimeType, name, lineage)
+	id, rev, err := client.SaveBlob(ctx, attachmentArtifactKind, data, mimeType, attachmentHintPrefix+name, lineage)
 	if err != nil {
 		return nil, err
 	}

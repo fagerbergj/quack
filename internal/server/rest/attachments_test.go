@@ -260,12 +260,12 @@ func TestAttachmentRoundTrip(t *testing.T) {
 	}
 	var found *schema.ArtifactSummary
 	for i := range list.Data {
-		if list.Data[i].Name == "bytes:photo.png" {
+		if list.Data[i].Name == "bytes:upload-photo.png" {
 			found = &list.Data[i]
 		}
 	}
 	if found == nil {
-		t.Fatalf("no bytes:photo.png artifact in %+v", list.Data)
+		t.Fatalf("no bytes:upload-photo.png artifact in %+v", list.Data)
 	}
 	if found.Kind == nil || *found.Kind != "bytes" {
 		t.Errorf("kind = %v, want \"bytes\"", found.Kind)
@@ -296,7 +296,7 @@ func TestAttachmentRoundTrip_SecondAccessStillHydrates(t *testing.T) {
 	// Simulate a later turn's model call that references the same
 	// artifact revision again, through the same hydrating wrapper prod uses.
 	userID := h.sessionUser(context.Background(), chatID)
-	ref := artifactref.Encode(userID, chatID, "bytes:photo.png", 1, "image/png")
+	ref := artifactref.Encode(userID, chatID, "bytes:upload-photo.png", 1, "image/png")
 	rec := &recordingModel{}
 	hydrated := inference.HydratingModelForTesting(rec, h.artifacts)
 	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{ref}}}}
