@@ -432,12 +432,6 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		runCtx := context.WithoutCancel(ctx)
 		allowedKinds := deliveryKindStrings(req.Delivery.AllowedKinds)
 
-		if req.Chat.ResetHistory {
-			if err := orch.ResetSession(runCtx, userID, chatID); err != nil {
-				return fmt.Errorf("extensions.%s: reset history: %w", name, err)
-			}
-		}
-
 		// Merge onto whatever this chat already has stored, rather than
 		// replacing it wholesale: a nudge/retry re-dispatch (quack-extensions#47)
 		// carries neither Chat.Origin nor Run.Setup, and previously blanked
@@ -449,6 +443,13 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 				"component", "ext."+name, "chat", chatID, "err", getErr)
 		} else if existing != nil {
 			existingOriginJSON = existing.Origin
+			userID = stableDispatchUser(existing.SessionUser, userID)
+		}
+
+		if req.Chat.ResetHistory {
+			if err := orch.ResetSession(runCtx, userID, chatID); err != nil {
+				return fmt.Errorf("extensions.%s: reset history: %w", name, err)
+			}
 		}
 		originJSON, fallbackSetup := mergeExtOrigin(existingOriginJSON, req.Chat.Origin, req.Run.Setup)
 		if fallbackSetup != nil {
@@ -554,6 +555,22 @@ func deliveryKindStrings(kinds []extsdk.DeliveryKind) []string {
 type extOriginRecord struct {
 	*extsdk.ChatOrigin
 	Setup *extsdk.Setup `json:"quackSetup,omitempty"`
+}
+
+// stableDispatchUser is #1198's fix: SessionUser is fixed at chat creation
+// (store.SetChatOrigin's own OnConflict never touches it on later dispatches),
+// so the run/session/record-client user for a re-dispatch must agree with
+// that stored value - not whichever commenter's req.Chat.User triggered THIS
+// dispatch (e.g. a /review from a different GitHub user than the one who
+// opened the PR). Without this, the node's ADK session and recordstore
+// writes land under a user the chat's own artifact listing never looks
+// under, since the listing reads the stored (first-dispatch) user.
+// existingSessionUser == "" (brand new chat) keeps reqUser as-is.
+func stableDispatchUser(existingSessionUser, reqUser string) string {
+	if existingSessionUser != "" {
+		return existingSessionUser
+	}
+	return reqUser
 }
 
 // mergeExtOrigin folds a dispatch's own Origin/Setup onto whatever this chat
