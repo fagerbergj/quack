@@ -66,6 +66,9 @@ func printChatSnapshot(out io.Writer, d schema.ChatDetail) {
 	if d.PendingQuestion != nil && *d.PendingQuestion != "" {
 		fmt.Fprintf(out, "question: %s\n", *d.PendingQuestion)
 	}
+	if d.QueueInfo != nil && *d.QueueInfo != "" {
+		fmt.Fprintln(out, *d.QueueInfo)
+	}
 	if dagItem, ok := lastTurnDag(d.Turns); ok {
 		fmt.Fprintln(out)
 		printNodeTable(out, dagItem)

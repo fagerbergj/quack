@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
@@ -133,6 +135,78 @@ func (s *resumeStubLLM) workerPrompts() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.prompts...)
+}
+
+// TestResumeGuardArchivedOrStale pins #1176's admissibility rules: an
+// archived chat is never resumed, a plan older than staleResumePlanCeiling is
+// marked failed rather than re-entered - unless the node is parked on
+// awaiting_input, which holds no run slot and must be left alone even past
+// the ceiling (review: failing it would strand the pending question).
+func TestResumeGuardArchivedOrStale(t *testing.T) {
+	now := time.Now()
+	cases := []struct {
+		name          string
+		archived      bool
+		hasPlan       bool
+		awaitingInput bool
+		planAge       time.Duration
+		wantOK        bool
+		wantReasonHas string
+	}{
+		{"fresh non-archived resumes", false, true, false, time.Hour, true, ""},
+		{"archived chat is never resumed even with a fresh plan", true, true, false, time.Minute, false, "archived"},
+		{"stale plan is failed even when not archived", false, true, false, staleResumePlanCeiling + time.Minute, false, "stale"},
+		{"no plan row skips the age check", false, false, false, 0, true, ""},
+		{"awaiting_input node past the ceiling is left as-is", false, true, true, staleResumePlanCeiling + time.Minute, true, ""},
+		{"archived still wins over awaiting_input", true, true, true, staleResumePlanCeiling + time.Minute, false, "archived"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ok, why := resumeGuardArchivedOrStale(tc.archived, tc.hasPlan, tc.awaitingInput, now.Add(-tc.planAge))
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v (why=%q)", ok, tc.wantOK, why)
+			}
+			if !tc.wantOK && !strings.Contains(why, tc.wantReasonHas) {
+				t.Errorf("reason = %q, want it to mention %q", why, tc.wantReasonHas)
+			}
+		})
+	}
+}
+
+// TestBoundedGoRun_CapsConcurrency pins #1176 review: resumed runs skip the
+// orchestrator's own admission (their old slot died with the process), so
+// startResumedNodes must cap concurrency itself, at max_active_runs, or a
+// restart with many resumable chats hammers the host at once. With limit 1
+// and two ids, the second must not start until the first finishes.
+func TestBoundedGoRun_CapsConcurrency(t *testing.T) {
+	release1 := make(chan struct{})
+	var started2 atomic.Bool
+	done := make(chan struct{})
+
+	go boundedGoRun([]string{"chat-1", "chat-2"}, 1, func(id string) {
+		if id == "chat-1" {
+			<-release1
+			return
+		}
+		started2.Store(true)
+	})
+
+	time.Sleep(50 * time.Millisecond)
+	if started2.Load() {
+		t.Fatal("chat-2 started while chat-1 held the only slot")
+	}
+	close(release1)
+	go func() {
+		for !started2.Load() {
+			time.Sleep(time.Millisecond)
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("chat-2 never started after chat-1 released its slot")
+	}
 }
 
 // TestDriveResume_ReentryRunsPausedNodeOnly is the boot half of #962 end to

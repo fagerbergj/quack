@@ -50,8 +50,8 @@ go run ./cmd/qa-mock send \
 `issue_plan`/`issue_implement` triggers, never review, no matter what label
 name it carries. The webhook is mounted at `/<extension-name>/webhook`
 (`/github/webhook` here), not under `/api/v1/` - verified against a live
-server; `docs/extensions/github.md`'s `/api/v1/github/webhook` is wrong and
-tracked separately.
+server; `docs/extensions/github.md` documented the wrong `/api/v1`-prefixed
+path for a while and was corrected in #1147.
 
 Check what quack tried to post back to GitHub:
 

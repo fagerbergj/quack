@@ -31,6 +31,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/otelobs"
@@ -127,11 +128,24 @@ var runAdmissionSpec = dag.AdmissionSpec{Model: "orchestrator-run"}
 
 // SetMaxActiveRuns caps concurrent runs server-wide via the same admission
 // queue (dag.Admission) node scheduling uses, instead of a second
-// parallel implementation.
+// parallel implementation. RetryNodeResumed (boot resume) bypasses this
+// admission entirely (#1176) - the caller caps its own concurrency instead
+// (serve.startResumedNodes), so this limit is not a true ceiling on
+// concurrent runs while resumes are in flight.
 func (o *Orchestrator) SetMaxActiveRuns(n int) {
 	if n >= 1 {
 		o.runAdmit = dag.NewAdmission(map[string]int{runAdmissionSpec.Model: n}, nil, nil, 0)
 	}
+}
+
+// RunAdmissionUsage reports the run-level admission's current (used, limit),
+// for callers explaining a queued chat's wait (#1176). ok is false when no
+// cap is configured (SetMaxActiveRuns never called, or n < 1).
+func (o *Orchestrator) RunAdmissionUsage() (used, limit int, ok bool) {
+	if o.runAdmit == nil {
+		return 0, 0, false
+	}
+	return o.runAdmit.Usage(runAdmissionSpec)
 }
 
 // acquireRun blocks until a run slot is free, or ctx is cancelled while
@@ -231,7 +245,20 @@ func (o *Orchestrator) SetNodeTaskOverride(chatID, nodeID, task string) bool {
 }
 
 // RetryNode re-runs a finished node and its descendants with optional guidance.
+// It counts against MaxActiveRuns like any other run.
 func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, seeded map[string]string, nodeID, guidance string) iter.Seq2[stream.SSEEvent, error] {
+	return o.retryNode(ctx, userID, chatID, seeded, nodeID, guidance, true)
+}
+
+// RetryNodeResumed re-enters a node a previous process left admitted (boot
+// resume, #1176): the node's run slot was already reserved by the process
+// that died, and that reservation is gone with it, so re-acquiring one here
+// would let boot resume starve fresh work out of the admission queue.
+func (o *Orchestrator) RetryNodeResumed(ctx context.Context, userID, chatID string, seeded map[string]string, nodeID, guidance string) iter.Seq2[stream.SSEEvent, error] {
+	return o.retryNode(ctx, userID, chatID, seeded, nodeID, guidance, false)
+}
+
+func (o *Orchestrator) retryNode(ctx context.Context, userID, chatID string, seeded map[string]string, nodeID, guidance string, admit bool) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		// A retry/resume is its own run, not a continuation of whatever
 		// finished run left this node retryable - it needs its own trace so
@@ -239,14 +266,18 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID string, see
 		var span oteltrace.Span
 		ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, chatID))
 		defer otelobs.End(span, nil)
-		// A retry (or a boot resume, which rides this path) counts against
-		// MaxActiveRuns like any other run.
-		release, acquired := o.acquireRun(ctx)
-		defer release()
-		if !acquired {
-			yield(stream.Errorf("orchestrator: run cancelled while queued"), nil)
-			return
+		if admit {
+			release, acquired := o.acquireRun(ctx)
+			defer release()
+			if !acquired {
+				yield(stream.Errorf("orchestrator: run cancelled while queued"), nil)
+				return
+			}
 		}
+		// quack_runs_active must count this run whether or not it went
+		// through admission - Run/RunBoundPlan already do (#1176).
+		otelobs.RunStarted()
+		defer otelobs.RunFinished()
 		plan, ok := o.stashedPlan(ctx, userID, chatID)
 		if !ok {
 			yield(stream.Errorf("retry: no plan in session to retry"), nil)
@@ -329,6 +360,10 @@ func (o *Orchestrator) BuildBoundPlan(ctx context.Context, nodes []dag.RawNode, 
 // RunPlanAsGraph is the exact same executor a model-authored plan runs
 // through, so every node still passes through vetting.RunGatedRefine.
 func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, source string, plan dag.Plan) iter.Seq2[stream.SSEEvent, error] {
+	// Same turn-boundary clear as Run - a bound plan never calls the plan
+	// tool itself, but a stale rejection from an earlier unbound turn on this
+	// chat must not leak into this one's terminal status.
+	inference.ClearPlanRejection(sessionID)
 	return func(yield func(stream.SSEEvent, error) bool) {
 		var span oteltrace.Span
 		// Coords first: the root span reads them for gen_ai.conversation.id/user.id.
@@ -449,6 +484,11 @@ func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.P
 // source: the run's origin for gen_ai.client.token.usage/cost attribution -
 // an extension's registration name, or SourceApp for a direct UI/REST/MCP chat.
 func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, message string, attachments []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
+	// Bound to this turn (#1181 review): an earlier turn's rejection must
+	// never outlive it - a later silent gap or gateway failure on the same
+	// chat needs its OWN evidence, not a stale reason from a turn that
+	// already ended.
+	inference.ClearPlanRejection(sessionID)
 	return func(yield func(stream.SSEEvent, error) bool) {
 		var span oteltrace.Span
 		// Coords first: the root span reads them for gen_ai.conversation.id/user.id.

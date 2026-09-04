@@ -1153,6 +1153,9 @@ components:
         pending_question:
           type: string
           description: The unanswered question blocking the chat, present only when status is `needs_input`.
+        queue_info:
+          type: string
+          description: What a `queued` chat is waiting on, e.g. "waiting for a run slot (2/2 active)". Present only when status is `queued`.
         github_url:
           type: string
           description: Web URL of the originating GitHub issue/PR, present only for GitHub-originated chats.

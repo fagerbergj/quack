@@ -327,7 +327,7 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
       aria-label={offCanvas && open ? 'Chat list' : undefined}
       className={`
       fixed md:static inset-y-0 left-0 z-40
-      h-screen w-[250px] flex-shrink-0 flex flex-col
+      h-dvh w-[250px] flex-shrink-0 flex flex-col
       border-r border-gray-200 dark:border-gray-700
       bg-white dark:bg-gray-800
       transition-transform duration-200

@@ -981,10 +981,12 @@ type ResumeReport struct {
 //   - queued nodes are left alone: the resumed graph re-enters at the paused
 //     node and walks its descendants, which is what schedules them.
 //
-// resumable, when non-nil, is the caller's liveness check for a node's
-// workspace (serve passes a clone-dir check); a false verdict, or a missing
-// plan row, is the only path left to `failed`, with the reason in `error`.
-func (s *Store) ResumePausedDagNodes(ctx context.Context, resumable func(chatID string) (bool, string)) (ResumeReport, error) {
+// resumable, when non-nil, is the caller's liveness/admissibility check for a
+// node (serve passes a clone-dir + archived-chat + stale-plan check);
+// pauseReason lets it exempt parked HITL questions from a ceiling that only
+// makes sense for work nodes. A false verdict, or a missing plan row, is the
+// only path left to `failed`, with the reason in `error`.
+func (s *Store) ResumePausedDagNodes(ctx context.Context, resumable func(chatID, pauseReason string) (bool, string)) (ResumeReport, error) {
 	var rep ResumeReport
 	cutoff := time.Now().UTC().Add(-staleNodeCeiling)
 	var nodes []DagNode
@@ -1016,7 +1018,7 @@ func (s *Store) ResumePausedDagNodes(ctx context.Context, resumable func(chatID 
 			continue
 		}
 		if resumable != nil {
-			if ok, why := resumable(chatID); !ok {
+			if ok, why := resumable(chatID, n.PauseReason); !ok {
 				rep.Failed = append(rep.Failed, s.failUnresumable(ctx, n, why))
 				continue
 			}

@@ -369,11 +369,24 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 			}
 		}
 
-		originJSON := ""
-		if req.Chat.Origin != nil {
-			if b, err := json.Marshal(req.Chat.Origin); err == nil {
-				originJSON = string(b)
-			}
+		// Merge onto whatever this chat already has stored, rather than
+		// replacing it wholesale: a nudge/retry re-dispatch (quack-extensions#47)
+		// carries neither Chat.Origin nor Run.Setup, and previously blanked
+		// both on this call - the exact reason turn 2 of #1180 had no PR head
+		// ref to plan a review with.
+		existingOriginJSON := ""
+		if existing, getErr := st.GetChat(runCtx, chatID); getErr != nil {
+			slog.Warn("extension dispatch: chat origin lookup failed; not merging onto prior state",
+				"component", "ext."+name, "chat", chatID, "err", getErr)
+		} else if existing != nil {
+			existingOriginJSON = existing.Origin
+		}
+		originJSON, fallbackSetup := mergeExtOrigin(existingOriginJSON, req.Chat.Origin, req.Run.Setup)
+		if fallbackSetup != nil {
+			// This dispatch forgot Setup (the nudge bug) but a prior turn on
+			// this same chat recorded one - hand it to the planner exactly as
+			// if this dispatch had carried it (#1180).
+			runCtx = tools.WithGitHubSetup(runCtx, *fallbackSetup)
 		}
 		if err := st.SetChatOrigin(runCtx, chatID, userID, originJSON); err != nil {
 			return fmt.Errorf("extensions.%s: chat setup: %w", name, err)
@@ -450,6 +463,53 @@ func deliveryKindStrings(kinds []extsdk.DeliveryKind) []string {
 		out[i] = string(k)
 	}
 	return out
+}
+
+// extOriginRecord is what Chat.Origin actually stores for an extension-dispatched
+// chat: the extension's own ChatOrigin (still at the JSON top level - a nil
+// embedded pointer marshals as absent, and priorOriginState/UpdateChatOrigin's
+// own writes decode straight into extsdk.ChatOrigin, ignoring the extra field)
+// plus, alongside it (#1180), the dispatch's own sdk Setup - the only durable
+// record of a PR's real head ref, so a later dispatch on the same chat with no
+// Run.Setup (a nudge, a retry) can still plan a review. Kept as the SDK's own
+// Setup, not dag.Setup: dag.Setup.CheckoutExistingHead is `json:"-"` (it's
+// derived, never persisted with a plan) and toDagSetup is what recomputes it
+// from ExistingHeadRef on the way back out.
+type extOriginRecord struct {
+	*extsdk.ChatOrigin
+	Setup *extsdk.Setup `json:"quackSetup,omitempty"`
+}
+
+// mergeExtOrigin folds a dispatch's own Origin/Setup onto whatever this chat
+// already has stored, so a dispatch missing one (a nudge or retry re-dispatch
+// - quack-extensions#47) never blanks it. Returns the JSON to persist (""
+// when there's nothing to store) and, when this dispatch itself carried no
+// Setup but a prior one did, that prior Setup (converted to dag.Setup) as a
+// fallback for the caller to hand the planner via tools.WithGitHubSetup (#1180).
+func mergeExtOrigin(existingOriginJSON string, newOrigin *extsdk.ChatOrigin, newSetup *extsdk.Setup) (originJSON string, fallbackSetup *dag.Setup) {
+	var rec extOriginRecord
+	if existingOriginJSON != "" {
+		if err := json.Unmarshal([]byte(existingOriginJSON), &rec); err != nil {
+			rec = extOriginRecord{}
+		}
+	}
+	if newOrigin != nil {
+		rec.ChatOrigin = newOrigin
+	}
+	if newSetup != nil {
+		rec.Setup = newSetup
+	} else if rec.Setup != nil {
+		s := toDagSetup(*rec.Setup)
+		fallbackSetup = &s
+	}
+	if rec.ChatOrigin == nil && rec.Setup == nil {
+		return "", fallbackSetup
+	}
+	b, err := json.Marshal(rec)
+	if err != nil {
+		return "", fallbackSetup
+	}
+	return string(b), fallbackSetup
 }
 
 // toDagSetup adapts the SDK's Setup to dag.Setup. ExistingHeadRef overrides
@@ -611,11 +671,12 @@ func newExtUpdateChatOrigin(name string, st *store.Store, taskMem, userMem *memo
 			return fmt.Errorf("extensions.%s: update chat origin: %w", name, extsdk.ErrUnknownChat)
 		}
 		prevState := priorOriginState(c.Origin)
-		b, err := json.Marshal(&origin)
-		if err != nil {
-			return fmt.Errorf("extensions.%s: update chat origin: marshal: %w", name, err)
-		}
-		if err := st.SetChatOrigin(ctx, chatID, c.SessionUser, string(b)); err != nil {
+		// Merge, don't replace (#1181 review): a bare json.Marshal(&origin)
+		// here wiped the stored quackSetup field on every state-transition
+		// webhook (synchronize/close/merge) between a dispatch and a nudge -
+		// undoing mergeExtOrigin's whole point and reopening #1180.
+		originJSON, _ := mergeExtOrigin(c.Origin, &origin, nil)
+		if err := st.SetChatOrigin(ctx, chatID, c.SessionUser, originJSON); err != nil {
 			return fmt.Errorf("extensions.%s: update chat origin: %w", name, err)
 		}
 		applyMemoryOutcome(ctx, name, chatID, prevState, origin.State, taskMem, userMem)
@@ -784,14 +845,18 @@ func mapExtRunOutcome(status, question, nodeError, answer string, planRan bool, 
 		// see #1105) - fold the failed node's real cause into Answer so an
 		// empty answer never falls through to the extension's silent-gap
 		// text for a run that in fact failed with a known cause. nodeError
-		// is already sanitized (dag.emptyNodeError via
-		// inference.SanitizeGatewayError) - no raw URL/body/key reaches here.
+		// is either sanitized (dag.emptyNodeError via
+		// inference.SanitizeGatewayError) or, for a rejected `plan` call
+		// (#1180), quack's own unsanitized rejection text - never a raw
+		// gateway URL/body/key either way.
 		if out.Answer == "" && nodeError != "" {
-			guidance := "Check the model gateway / provider configuration."
+			guidance := ""
 			if inference.TransientFromSummary(nodeError) {
-				guidance = "Retry once the gateway is healthy."
+				guidance = "\n\nRetry once the gateway is healthy."
+			} else if strings.Contains(nodeError, "model gateway returned") {
+				guidance = "\n\nCheck the model gateway / provider configuration."
 			}
-			out.Answer = fmt.Sprintf("quack's run failed: %s\n\n%s", nodeError, guidance)
+			out.Answer = fmt.Sprintf("quack's run failed: %s%s", nodeError, guidance)
 		}
 	case status == store.RunStatusNeedsInput:
 		out.Status = extsdk.RunNeedsInput
