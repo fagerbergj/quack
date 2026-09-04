@@ -112,6 +112,25 @@ describe('App nav drawer', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close navigation' }))
   })
 
+  // Regression for the desktop-width stacking bug caught in PR review: jsdom
+  // does no layout, so document.elementFromPoint can't reproduce the real
+  // hit-test - instead assert the z-index ordering the bug depends on. The
+  // drawer overlay must outrank ChatList's z-40 (needed only for ChatList's
+  // own off-canvas stacking below md) or the drawer is unclickable behind it
+  // at md+ widths where ChatList renders in-flow.
+  it('drawer overlay outranks the chat list z-index at desktop widths', async () => {
+    const user = userEvent.setup()
+    renderAt('/chat')
+    await user.click(screen.getByRole('button', { name: 'Toggle navigation' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Main navigation' })
+
+    const overlay = dialog.closest('.fixed.inset-0') as HTMLElement
+    expect(overlay).not.toBeNull()
+    const overlayZ = Number(overlay.className.match(/z-(\d+)/)?.[1])
+    const chatListZ = Number(screen.getByText('New Chat').closest('[class*="z-"]')!.className.match(/z-(\d+)/)?.[1])
+    expect(overlayZ).toBeGreaterThan(chatListZ)
+  })
+
   it('closes on item selection and navigates to the picked route', async () => {
     const user = userEvent.setup()
     renderAt('/chat')

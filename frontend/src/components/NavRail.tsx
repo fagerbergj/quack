@@ -57,8 +57,10 @@ export function NavRail({ route, activeExtension, initialExtensions, open, onClo
 
   if (!open) return null
 
+  // z-50: above ChatList's z-40 (which needs it only for its own off-canvas
+  // stacking below md) so the drawer isn't buried behind it at desktop widths.
   return (
-    <div className="fixed inset-0 z-40">
+    <div className="fixed inset-0 z-50">
       <div
         className="absolute inset-0 bg-black/50"
         onClick={onClose}
