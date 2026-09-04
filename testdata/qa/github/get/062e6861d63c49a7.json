@@ -4,7 +4,7 @@
   "state": "open",
   "draft": false,
   "merged_at": null,
-  "head": {"ref": "qa/github-remarkable-mocks", "sha": "9b1fbe794923ec1086c98f3617e2063c013dbfa3", "repo": {"full_name": "fagerbergj/quack"}},
+  "head": {"ref": "main", "sha": "ee65f46d889f797e6ab5408fe728ebb16d32c14d", "repo": {"full_name": "fagerbergj/quack-qa"}},
   "base": {"ref": "main", "repo": {"full_name": "fagerbergj/quack"}},
   "labels": [{"name": "quack:review"}]
 }
