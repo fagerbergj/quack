@@ -352,6 +352,28 @@ func TestReviewDispatchSetupSatisfiesExistingHead(t *testing.T) {
 	}
 }
 
+// TestPlanTool_OriginFallbackSetupSatisfiesExistingHead is #1180's second
+// defect: a nudge/retry dispatch carries no Run.Setup of its own, so
+// internal/serve's mergeExtOrigin resolves the chat's stored origin into a
+// dag.Setup and hands it to tools.WithGitHubSetup exactly as if this dispatch
+// had carried it. From here at the plan tool the two are indistinguishable -
+// this pins that a setup arriving via the fallback path is accepted the same
+// way TestReviewDispatchSetupSatisfiesExistingHead pins for a fresh dispatch.
+func TestPlanTool_OriginFallbackSetupSatisfiesExistingHead(t *testing.T) {
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
+	// Stands in for what mergeExtOrigin(storedOriginJSON, nil, nil) returns
+	// when a prior turn on this chat stored this Setup.
+	fallbackSetup := &dag.Setup{
+		Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main",
+		WorkBranch: "quack/pr-1170", CheckoutExistingHead: true,
+	}
+	reviewNode := []map[string]any{{"id": "rev", "agent": "code-reviewer", "task": "review the PR", "depends_on": []string{}}}
+	p := buildPlan(t, planner, NewPlanCache(), fallbackSetup, map[string]any{"nodes": reviewNode})
+	if p.Setup == nil || p.Setup.WorkBranch != "quack/pr-1170" || !p.Setup.CheckoutExistingHead {
+		t.Errorf("Setup = %+v, want the origin-fallback PR head checked out as-is", p.Setup)
+	}
+}
+
 // TestReviewWithoutExistingHeadStillRejected keeps #520's guard: a
 // review-only plan whose dispatch Setup does NOT name an existing head must
 // still be rejected rather than reviewing a freshly-cut empty branch.

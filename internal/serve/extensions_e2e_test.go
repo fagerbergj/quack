@@ -78,6 +78,15 @@ func newExtTestStack(t *testing.T) (*store.Store, *orchestrator.Orchestrator, *s
 // than the always-succeeds directAnswerModel.
 func newExtTestStackWithModel(t *testing.T, m model.LLM) (*store.Store, *orchestrator.Orchestrator, *stream.Hub, *store.TurnAwareService, *workspace.Jail) {
 	t.Helper()
+	return newExtTestStackWithModelAndAgents(t, m, nil)
+}
+
+// newExtTestStackWithModelAndAgents is newExtTestStackWithModel with the
+// planner's known-agent roster also swappable - needed by any test whose
+// scripted plan names a real agent (e.g. dag's own reviewerAgent), since
+// dag.Planner.Build rejects an unknown agent name before anything else runs.
+func newExtTestStackWithModelAndAgents(t *testing.T, m model.LLM, agents []dag.AgentInfo) (*store.Store, *orchestrator.Orchestrator, *stream.Hub, *store.TurnAwareService, *workspace.Jail) {
+	t.Helper()
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
 		t.Fatalf("store.New: %v", err)
@@ -89,7 +98,7 @@ func newExtTestStackWithModel(t *testing.T, m model.LLM) (*store.Store, *orchest
 	st.SetArtifactService(artifactSvc)
 	ex := dag.NewExecutor(st.Sessions, map[string]adkagent.Agent{}, map[string]model.LLM{}, nil,
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
-	planner := dag.NewPlanner(nil, nil, nil)
+	planner := dag.NewPlanner(agents, nil, nil)
 	orch := orchestrator.New(st.Sessions, m, "You are a test duck.", planner, ex, nil, nil, nil)
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {

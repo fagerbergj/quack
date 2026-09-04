@@ -18,6 +18,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/stream"
@@ -77,10 +78,16 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 			planCtx := ledger.WithCoords(tc, ledger.Coords{ChatID: tc.SessionID()})
 			p, err := planner.Build(planCtx, a.Nodes, a.Setup, a.Delivery, history, message, attachments, allowedKinds)
 			if err != nil {
+				reason := err.Error()
 				var rejected *dag.PlanRejectedError
 				if errors.As(err, &rejected) {
-					cache.RecordRejection(rejected.Reason)
+					reason = rejected.Reason
+					cache.RecordRejection(reason)
 				}
+				// Survives past this turn's PlanCache so the give-up path
+				// (orchestrator.go) and a later DeriveTerminalStatus read can
+				// both see it, whatever kind of rejection this was (#1180).
+				inference.RecordPlanRejection(tc.SessionID(), reason)
 				return planResult{}, fmt.Errorf("plan: %w", err)
 			}
 			// GitHub already told us repo/base_ref/branch - never trust the planner's guess.
@@ -100,8 +107,13 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 				existingHead = githubSetup.WorkBranch
 			}
 			if err := dag.OverrideExistingPRHead(p, existingHead); err != nil {
+				inference.RecordPlanRejection(tc.SessionID(), err.Error())
 				return planResult{}, fmt.Errorf("plan: %w", err)
 			}
+			// A plan was accepted - any earlier rejection this chat recorded no
+			// longer describes why the run ended (#1180), same as
+			// RecordCallResult's own success clear.
+			inference.ClearPlanRejection(tc.SessionID())
 
 			cache.Put(*p)
 

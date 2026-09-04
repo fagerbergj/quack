@@ -89,6 +89,46 @@ func ClearFailure(chatID, node, agent string) {
 	failuresMu.Unlock()
 }
 
+// toolRejectionsMu/toolRejections track the last `plan` tool rejection per
+// chat (#1180): a planner turn whose plan calls were all rejected and that
+// ends with no plan and no answer needs the same terminal-failure path as a
+// gateway outage during planning, but the rejection text is quack's own
+// dag.PlanRejectedError.Reason - never sanitized like a gateway error.
+var (
+	toolRejectionsMu sync.Mutex
+	toolRejections   = map[string]string{}
+)
+
+// RecordPlanRejection notes the reason the plan judge declined a proposed
+// plan on chatID. Overwrites any prior reason for the chat - only the most
+// recent rejection matters to the give-up path.
+func RecordPlanRejection(chatID, reason string) {
+	if chatID == "" {
+		return
+	}
+	toolRejectionsMu.Lock()
+	defer toolRejectionsMu.Unlock()
+	toolRejections[chatID] = reason
+}
+
+// LastPlanRejection returns the last recorded plan rejection reason for
+// chatID, if any.
+func LastPlanRejection(chatID string) (reason string, ok bool) {
+	toolRejectionsMu.Lock()
+	defer toolRejectionsMu.Unlock()
+	reason, ok = toolRejections[chatID]
+	return reason, ok
+}
+
+// ClearPlanRejection drops chatID's recorded rejection - called once a plan
+// is accepted, so a later turn's genuine silent gap doesn't inherit a stale
+// reason from an earlier, unrelated rejection on the same chat.
+func ClearPlanRejection(chatID string) {
+	toolRejectionsMu.Lock()
+	delete(toolRejections, chatID)
+	toolRejectionsMu.Unlock()
+}
+
 // statusRe pulls the HTTP status code out of openaimodel's "status <N>: ..."
 // error shape without touching the rest of the string.
 var statusRe = regexp.MustCompile(`status (\d{3})`)
