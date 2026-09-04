@@ -41,7 +41,7 @@ How to make changes to quack's chat frontend that fit its grain: lean stack, str
 
 ## Core principles
 
-0. **Inventory before building.** Streaming, an always-visible Stop button, markdown+GFM, sticky input, Enter/Shift+Enter, mobile sidebar, dark mode, per-response model names, and the DAG view already exist - including the collapse/toggle mechanisms a mobile-nav fix would otherwise reinvent: `NavRail`'s "Collapse navigation" button (narrows, doesn't hide) and the chat-list drawer's existing slide-in panel (a working off-canvas pattern to reuse for other drawers). Grep first; ship the gap, not a rebuild.
+0. **Inventory before building.** Streaming, an always-visible Stop button, markdown+GFM, sticky input, Enter/Shift+Enter, mobile sidebar, dark mode, per-response model names, and the DAG view already exist - including the off-canvas drawer mechanics a nav fix would otherwise reinvent: the navigation drawer `NavRail` (the app's only navigation shape since #1171: closed it renders nothing, open it floats over the content with a backdrop, and it's opened from the ⊞ NavToggle in each page's header) and the chat-list drawer (the same off-canvas pattern). Grep first; ship the gap, not a rebuild.
 
 1. **Typing lag is a re-render problem, not a DOM-count problem - isolate, don't virtualize.** Move draft state into its own component so keystrokes don't re-render the turn list; memoize completed turns so they don't re-parse markdown while a later turn streams; key any sibling-derived `useMemo` to a ref that's stable during streaming. Reach for `react-virtuoso` only if node count alone still lags afterward. → recipe in references.
 
