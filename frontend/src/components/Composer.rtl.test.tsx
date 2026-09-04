@@ -85,6 +85,14 @@ describe('Composer compact pill', () => {
     expect(send.getAttribute('aria-label')).toBe('Queue')
   })
 
+  it('renders no stray text from a bare JS comment above the compact row', () => {
+    // Regression: a `//` line inside JSX children isn't a comment, it's a
+    // text node - catches it without pinning the wrapper's pixel height.
+    mockMatchMedia(true)
+    const { container } = render(<Composer disabled={false} streaming={false} onSubmit={() => {}} onStop={() => {}} />)
+    expect(container.textContent ?? '').not.toContain('//')
+  })
+
   it('tapping the "N queued" chip expands the queued messages with an always-visible remove', async () => {
     mockMatchMedia(true)
     const onRemoveQueued = vi.fn()

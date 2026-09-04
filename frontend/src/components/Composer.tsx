@@ -186,9 +186,9 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
             return prev.filter((_, j) => j !== i)
           })}
         />
-        // #1174: compact collapses the row to one pill - ring (box-shadow)
-        // rather than a border so the 44px row box doesn't grow 2px; desktop
-        // keeps its current classes exactly.
+        {/* #1174: compact collapses the row to one pill - ring (box-shadow)
+        rather than a border so the 44px row box doesn't grow 2px; desktop
+        keeps its current classes exactly. */}
         <div className={compact
           ? 'flex items-center gap-2 rounded-full ring-1 ring-gray-300 dark:ring-gray-600 bg-white dark:bg-gray-700'
           : 'flex gap-2 items-end'}>
