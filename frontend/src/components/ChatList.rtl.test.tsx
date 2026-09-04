@@ -68,3 +68,40 @@ describe('ChatList mobile drawer a11y', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 })
+
+// #1201: "Load more" measured 249x36px on mobile - under the 44px comfortable
+// touch target. min-h-[44px] fixes the height without visual bloat (the text
+// stays the same size, only the button's padding grows).
+describe('ChatList "Load more" touch target (#1201)', () => {
+  it('active-list Load more has a >=44px min-height', () => {
+    render(<ChatList {...baseProps(() => {})} open={false} hasMoreChats onLoadMoreChats={() => {}} />)
+    const btn = screen.getByText('Load more').closest('button')!
+    expect(btn.className).toContain('min-h-[44px]')
+  })
+})
+
+// #1137: the per-row "Archive chat" (×) button was packed tightly against the
+// row's own "Row actions" (⋮) menu trigger on archived rows - both are now
+// full 44x44 tap areas placed side by side instead of overlapping/adjacent
+// small boxes.
+describe('ChatList archive/row-actions touch targets (#1137)', () => {
+  const chat = {
+    id: 'c1', title: 'A chat', system_prompt: '', created_at: '', updated_at: '', status: 'idle',
+  } as const
+
+  it('the archive/delete button is a 44x44 tap area', () => {
+    render(<ChatList {...baseProps(() => {})} open={false} chats={[chat]} />)
+    const btn = screen.getByRole('button', { name: 'Archive chat' })
+    expect(btn.className).toContain('min-w-[44px]')
+    expect(btn.className).toContain('min-h-[44px]')
+  })
+
+  it('an archived row\'s row-actions menu trigger is also a 44x44 tap area', async () => {
+    const user = userEvent.setup()
+    render(<ChatList {...baseProps(() => {})} open={false} archivedChats={[chat]} onUnarchive={() => {}} />)
+    await user.click(screen.getByRole('button', { name: /Archived/ }))
+    const btn = screen.getByRole('button', { name: 'Row actions' })
+    expect(btn.className).toContain('min-w-[44px]')
+    expect(btn.className).toContain('min-h-[44px]')
+  })
+})
