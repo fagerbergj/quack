@@ -74,6 +74,9 @@ func DeriveTerminalStatus(chatID string, turns []TurnContent, pendingQuestion st
 			if errText, failed := failedDagNodeError(last.Nodes); failed {
 				return RunStatusFailed, "", errText
 			}
+			if reason, failed := inference.LastPlanRejection(chatID); failed {
+				return RunStatusFailed, "", reason
+			}
 			if errText, failed := orchestratorGiveUpError(chatID); failed {
 				return RunStatusFailed, "", errText
 			}
