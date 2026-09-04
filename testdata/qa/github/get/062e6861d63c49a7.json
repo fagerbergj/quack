@@ -5,6 +5,6 @@
   "draft": false,
   "merged_at": null,
   "head": {"ref": "main", "sha": "ee65f46d889f797e6ab5408fe728ebb16d32c14d", "repo": {"full_name": "fagerbergj/quack-qa"}},
-  "base": {"ref": "main", "repo": {"full_name": "fagerbergj/quack"}},
+  "base": {"ref": "v0.50.3", "repo": {"full_name": "fagerbergj/quack"}},
   "labels": [{"name": "quack:review"}]
 }
