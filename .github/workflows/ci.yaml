@@ -97,6 +97,8 @@ jobs:
         working-directory: frontend
       - run: npx eslint src/
         working-directory: frontend
+      - run: npm run check-stories
+        working-directory: frontend
       - run: npm run knip
         working-directory: frontend
       - run: npm run build
