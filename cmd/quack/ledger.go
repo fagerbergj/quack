@@ -36,7 +36,10 @@ func newLedgerCmd() *cobra.Command {
 // doesn't have, so a crash BEFORE Deliver ever reached the extension is
 // still reported Unresolved. --dry-run keeps the old report-only behavior
 // (no recoverer call, nothing appended) for inspecting orphans without
-// touching the ledger or the extension's target.
+// touching the ledger or the extension's target. A recoverer-build failure
+// (bad config, a factory error) degrades to a stderr warning + recoverer=nil
+// rather than aborting - this is a diagnostics command, and a misconfigured
+// extension must not hide the orphans it might otherwise explain.
 func newLedgerRecoverCmd() *cobra.Command {
 	var dryRun bool
 	c := &cobra.Command{
@@ -48,23 +51,7 @@ func newLedgerRecoverCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			var recoverer cli.DeliveryRecoverer
-			if !dryRun {
-				cfg, cerr := config.Load(defaultConfigPath())
-				if cerr != nil {
-					return cerr
-				}
-				built, name, berr := serve.BuildDeliveryRecoverer(cfg)
-				if berr != nil {
-					return berr
-				}
-				if built != nil {
-					recoverer = built
-					fmt.Fprintf(cmd.ErrOrStderr(), "using extensions.%s as the delivery recoverer\n", name)
-				} else {
-					fmt.Fprintln(cmd.ErrOrStderr(), "no configured extension implements DeliveryRecoverer; every orphan will be Unresolved")
-				}
-			}
+			recoverer := buildRecovererOrWarn(cmd, dryRun)
 			report, err := cli.RunLedgerRecover(cmd.Context(), ls, args[0], recoverer, nil)
 			if err != nil {
 				return err
@@ -75,6 +62,32 @@ func newLedgerRecoverCmd() *cobra.Command {
 	}
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "report orphaned delivery.intent entries only; never call the extension or write to the ledger")
 	return c
+}
+
+// buildRecovererOrWarn builds the configured extension's DeliveryRecoverer,
+// or returns nil (every orphan reported Unresolved) rather than an error -
+// see newLedgerRecoverCmd's doc for why a build failure must not abort a
+// diagnostics command.
+func buildRecovererOrWarn(cmd *cobra.Command, dryRun bool) cli.DeliveryRecoverer {
+	if dryRun {
+		return nil
+	}
+	cfg, err := config.Load(defaultConfigPath())
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "ledger recover: load config: %v; continuing without a recoverer, orphans will be reported Unresolved\n", err)
+		return nil
+	}
+	built, name, err := serve.BuildDeliveryRecoverer(cfg)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "ledger recover: build delivery recoverer: %v; continuing without one, orphans will be reported Unresolved\n", err)
+		return nil
+	}
+	if built == nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "no configured extension implements DeliveryRecoverer; every orphan will be Unresolved")
+		return nil
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "using extensions.%s as the delivery recoverer\n", name)
+	return built
 }
 
 func newLedgerShowCmd() *cobra.Command {

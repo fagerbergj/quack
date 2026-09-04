@@ -347,6 +347,8 @@ func BuildDeliveryRecoverer(cfg *config.Config) (cli.DeliveryRecoverer, string, 
 		names = append(names, name)
 	}
 	sort.Strings(names) // deterministic scan order, same convention as findDeliverer
+	var found cli.DeliveryRecoverer
+	var foundName string
 	for _, name := range names {
 		factory, ok := factories[name]
 		if !ok {
@@ -376,11 +378,18 @@ func BuildDeliveryRecoverer(cfg *config.Config) (cli.DeliveryRecoverer, string, 
 		if err != nil {
 			return nil, "", fmt.Errorf("extensions.%s: factory: %w", name, err)
 		}
-		if rec, ok := ext.(extsdk.DeliveryRecoverer); ok {
-			return sdkRecoverAdapter{recoverer: rec}, name, nil
+		rec, ok := ext.(extsdk.DeliveryRecoverer)
+		if !ok {
+			continue
 		}
+		if found != nil {
+			slog.Warn("multiple extensions implement DeliveryRecoverer; keeping the first",
+				"component", "startup", "using", foundName, "ignoring", name)
+			continue
+		}
+		found, foundName = sdkRecoverAdapter{recoverer: rec}, name
 	}
-	return nil, "", nil
+	return found, foundName, nil
 }
 
 // newExtDispatch builds the sdk.DispatchFunc an extension's Host carries.

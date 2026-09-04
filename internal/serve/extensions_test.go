@@ -5,8 +5,12 @@ import (
 	"testing"
 
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+	"github.com/go-chi/chi/v5"
+	"google.golang.org/adk/v2/tool"
+	"gopkg.in/yaml.v3"
 
 	"github.com/fagerbergj/quack/internal/cli"
+	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
@@ -65,5 +69,93 @@ func TestSdkDeliverAdapterForwardsPushErrorAndIdempotencyKey(t *testing.T) {
 	}
 	if fake.got.IdempotencyKey != "artifact-42@3" {
 		t.Errorf("IdempotencyKey = %q, want it forwarded from quack's DeliveryContext", fake.got.IdempotencyKey)
+	}
+}
+
+func init() {
+	// Registered once at package init (extsdk.Register panics on a repeat
+	// name) under names no real extension uses, so BuildDeliveryRecoverer's
+	// tests can drive them via ordinary config.
+	extsdk.Register("fake-recoverer-a", func(host extsdk.Host, _ []byte) (extsdk.Extension, error) {
+		return &recovererExt{}, nil
+	})
+	extsdk.Register("fake-recoverer-b", func(host extsdk.Host, _ []byte) (extsdk.Extension, error) {
+		return &recovererExt{}, nil
+	})
+	extsdk.Register("fake-non-recoverer", func(host extsdk.Host, _ []byte) (extsdk.Extension, error) {
+		return &nonRecovererExt{}, nil
+	})
+}
+
+// recovererExt implements sdk.DeliveryRecoverer; nonRecovererExt doesn't -
+// BuildDeliveryRecoverer must detect the difference via type assertion.
+type recovererExt struct{}
+
+func (recovererExt) Tools() []tool.Tool                    { return nil }
+func (recovererExt) RegisterRoutes(chi.Router, chi.Router) {}
+func (recovererExt) RecoverDelivery(context.Context, string, extsdk.DeliveryContext) (bool, extsdk.DeliveryItemOutcome, error) {
+	return false, extsdk.DeliveryItemOutcome{}, nil
+}
+
+type nonRecovererExt struct{}
+
+func (nonRecovererExt) Tools() []tool.Tool                    { return nil }
+func (nonRecovererExt) RegisterRoutes(chi.Router, chi.Router) {}
+
+func moduleNode(t *testing.T, yamlSrc string) yaml.Node {
+	t.Helper()
+	var n yaml.Node
+	if err := yaml.Unmarshal([]byte(yamlSrc), &n); err != nil {
+		t.Fatalf("unmarshal module node: %v", err)
+	}
+	// yaml.Unmarshal into a Node produces a DocumentNode wrapping the
+	// mapping - ExtensionsConfig.Modules stores the mapping node itself.
+	return *n.Content[0]
+}
+
+func testConfig(t *testing.T, modules map[string]string) *config.Config {
+	t.Helper()
+	cfg := &config.Config{}
+	cfg.Workspace.Root = t.TempDir()
+	cfg.Extensions.Modules = map[string]yaml.Node{}
+	for name, src := range modules {
+		cfg.Extensions.Modules[name] = moduleNode(t, src)
+	}
+	return cfg
+}
+
+func TestBuildDeliveryRecoverer_NoImplementer(t *testing.T) {
+	cfg := testConfig(t, map[string]string{"fake-non-recoverer": "enabled: true"})
+	rec, name, err := BuildDeliveryRecoverer(cfg)
+	if err != nil {
+		t.Fatalf("BuildDeliveryRecoverer: %v", err)
+	}
+	if rec != nil || name != "" {
+		t.Fatalf("got (%v, %q), want (nil, \"\") when no configured extension implements DeliveryRecoverer", rec, name)
+	}
+}
+
+func TestBuildDeliveryRecoverer_DisabledModuleSkipped(t *testing.T) {
+	cfg := testConfig(t, map[string]string{"fake-recoverer-a": "enabled: false"})
+	rec, name, err := BuildDeliveryRecoverer(cfg)
+	if err != nil {
+		t.Fatalf("BuildDeliveryRecoverer: %v", err)
+	}
+	if rec != nil || name != "" {
+		t.Fatalf("got (%v, %q), want (nil, \"\") for a disabled module", rec, name)
+	}
+}
+
+func TestBuildDeliveryRecoverer_FirstInSortedOrderWins(t *testing.T) {
+	cfg := testConfig(t, map[string]string{
+		"fake-recoverer-a": "enabled: true",
+		"fake-recoverer-b": "enabled: true",
+	})
+	_, name, err := BuildDeliveryRecoverer(cfg)
+	if err != nil {
+		t.Fatalf("BuildDeliveryRecoverer: %v", err)
+	}
+	if name != "fake-recoverer-a" {
+		t.Fatalf("name = %q, want the first name in sorted order (fake-recoverer-a)", name)
 	}
 }
