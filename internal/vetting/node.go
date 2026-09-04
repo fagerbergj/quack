@@ -1107,6 +1107,23 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	}
 	// Mermaid validity is checked by mermaidCriterion before this point.
 
+	// #1198 part C: a review with comments/findings but no verdict is not a
+	// reviewed PR - drop just that item (loud refusal), same per-item shape
+	// as the allowed-kinds check below, so a sibling pr/comment item in the
+	// same delivery still ships.
+	if verdictless, rest := partitionEmptyVerdictReview(dc.Items); len(verdictless) > 0 {
+		for _, item := range verdictless {
+			slog.Error("delivery refused: staged review has no verdict", "component", "vetting", "node", nodeID)
+			emitDeliveryResult(sink, nodeID, stream.DeliveryResult(nodeID, stream.DeliveryOutcomeFailed,
+				item.Kind, "", "you staged comments but no verdict - call stage_review with an event (approve/request_changes/comment) before this round ends", traceID))
+		}
+		dc.Items = rest
+		if len(dc.Items) == 0 {
+			recordDeliveryOutcomeMetric(cfg, res, true, false)
+			return
+		}
+	}
+
 	// Permission boundary: drop ungranted items before they reach cfg.Deliver. Refusals are loud, never silent.
 	if allowed, refused, reasons := partitionByAllowedKinds(dc.Items, cfg.AllowedDeliveryKinds); len(refused) > 0 {
 		for i, item := range refused {
@@ -1323,6 +1340,22 @@ func partitionByAllowedKinds(items []StagedDelivery, allowedKinds []string) (all
 		}
 	}
 	return allowed, refused, reasons
+}
+
+// partitionEmptyVerdictReview splits staged items, dropping a "review" item
+// whose Event is empty (#1198 part C) - GitHub has no "no verdict" review,
+// and posting one anyway is the markers-only bug. Per-item, like
+// partitionByAllowedKinds: a sibling pr/comment item in the same delivery
+// still ships.
+func partitionEmptyVerdictReview(items []StagedDelivery) (verdictless, rest []StagedDelivery) {
+	for _, item := range items {
+		if item.Kind == "review" && strings.TrimSpace(item.Event) == "" {
+			verdictless = append(verdictless, item)
+		} else {
+			rest = append(rest, item)
+		}
+	}
+	return verdictless, rest
 }
 
 // emitDeliveryResult: sends delivery_result SSE event (SSE-only, never written to session).

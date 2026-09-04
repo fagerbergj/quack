@@ -234,6 +234,76 @@ func TestSDKExtensionDispatchLoop(t *testing.T) {
 	}
 }
 
+// TestSDKExtensionDispatchKeepsStableUserAcrossRedispatch is #1198: a first
+// dispatch as one GitHub user (the PR author) followed by a re-dispatch on
+// the SAME chat as a different user (a /review commenter) must run the
+// second turn under the first turn's user - both the chat's own stored
+// SessionUser and the ADK session the node actually runs in, or the node's
+// record/artifact writes land under a user the chat's own listing never
+// looks under.
+func TestSDKExtensionDispatchKeepsStableUserAcrossRedispatch(t *testing.T) {
+	st, orch, hub, artifacts, jail := newExtTestStack(t)
+	_ = jail
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+	var extHolder atomic.Pointer[extsdk.Extension]
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+
+	const localID = "redispatch-user"
+	chatID := "ext:noop:" + localID
+	ctx := context.Background()
+
+	// Turn 1: dispatched as the PR author.
+	req1 := extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID, User: "alice"}, Ask: extsdk.Ask{Message: "open the PR"}}
+	if err := dispatch(ctx, req1); err != nil {
+		t.Fatalf("dispatch 1: %v", err)
+	}
+	waitRunSettled(t, st, chatID)
+
+	// waitRunSettled alone would race here (review comment thread
+	// 3937400227): turn 1 already left RunStatus non-empty, so it returns
+	// immediately without turn 2 ever having run - the same trap
+	// extensions_plan_rejection_test.go:166 works around. Wait for turn 2's
+	// own ActiveTurnID go-then-clear transition instead.
+	t1, err := st.GetChat(ctx, chatID)
+	if err != nil || t1 == nil {
+		t.Fatalf("GetChat after turn 1: %v, %v", t1, err)
+	}
+	turn1UpdatedAt := t1.UpdatedAt
+
+	// Turn 2: a /review re-dispatch from a different GitHub commenter.
+	req2 := extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID, User: "bob"}, Ask: extsdk.Ask{Message: "please review"}}
+	if err := dispatch(ctx, req2); err != nil {
+		t.Fatalf("dispatch 2: %v", err)
+	}
+	waitUntil(t, 5*time.Second, func() bool {
+		c, _ := st.GetChat(context.Background(), chatID)
+		return c != nil && c.ActiveTurnID != ""
+	})
+	waitUntil(t, 5*time.Second, func() bool {
+		c, _ := st.GetChat(context.Background(), chatID)
+		return c != nil && c.ActiveTurnID == "" && c.UpdatedAt.After(turn1UpdatedAt)
+	})
+
+	c, err := st.GetChat(ctx, chatID)
+	if err != nil || c == nil {
+		t.Fatalf("GetChat(%s) = %v, %v", chatID, c, err)
+	}
+	if c.SessionUser != "alice" {
+		t.Fatalf("chat SessionUser = %q, want the first dispatch's user %q", c.SessionUser, "alice")
+	}
+
+	// The node's own ADK session must have run as "alice" too, not "bob" -
+	// PriorEvents under bob's identity must be empty (no session ever
+	// existed there), and alice's must carry both turns.
+	if events := orch.PriorEvents(ctx, "bob", chatID); len(events) != 0 {
+		t.Fatalf("PriorEvents(bob) = %d events, want 0 - the second dispatch must not have run under bob's session", len(events))
+	}
+	if events := orch.PriorEvents(ctx, "alice", chatID); len(events) == 0 {
+		t.Fatalf("PriorEvents(alice) = 0 events, want both turns to have run under alice's session")
+	}
+}
+
 // (c) An unconfigured noop registers no routes at all - 404, not a
 // dormant-but-mounted handler.
 func TestSDKExtensionUnconfiguredExtensionRegistersNoRoutes(t *testing.T) {

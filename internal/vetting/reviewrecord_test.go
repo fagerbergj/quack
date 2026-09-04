@@ -1078,6 +1078,105 @@ func TestSaveTextRound_TruncatesOversizedAnswer(t *testing.T) {
 	}
 }
 
+// TestSaveCodeReviewRound_SummaryFromAnswerTail is #1198: before this fix,
+// saveCodeReviewRound never set CodeReviewRecord.Summary, so
+// deliveryartifact.go's renderReviewFromArtifact always delivered an empty
+// body (markers only) once a passed round existed to render from.
+func TestSaveCodeReviewRound_SummaryFromAnswerTail(t *testing.T) {
+	svc := newMetaAwareInMemory()
+	cfg := reviewerCfgWithArtifacts(t, svc, true)
+	answer := "This change looks solid overall.\n\nVERDICT: approve\nFINDINGS:\nCLEAN:\n- a.go\n"
+	st := newEpisodicRoundState()
+	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "t1", 1, answer, StagedDelivery{Kind: "review", Recovered: true}, st)
+
+	rc := recordClient(cfg)
+	raw, _, ok, err := rc.Latest(context.Background(), codeReviewID(cfg))
+	if err != nil || !ok {
+		t.Fatalf("Latest: ok=%v err=%v", ok, err)
+	}
+	var rec CodeReviewRecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Summary != "This change looks solid overall." {
+		t.Fatalf("Summary = %q, want the prose before the VERDICT tail", rec.Summary)
+	}
+}
+
+// TestSaveCodeReviewRound_SummaryFromToolStagedBody covers the non-Recovered
+// (stage_review MCP tool) path: the body is already clean prose, so Summary
+// is the staged body verbatim.
+func TestSaveCodeReviewRound_SummaryFromToolStagedBody(t *testing.T) {
+	svc := newMetaAwareInMemory()
+	cfg := reviewerCfgWithArtifacts(t, svc, true)
+	st := newEpisodicRoundState()
+	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "t1", 1, "ignored answer text",
+		StagedDelivery{Kind: "review", Event: "comment", Body: "worker's own summary"}, st)
+
+	rc := recordClient(cfg)
+	raw, _, ok, err := rc.Latest(context.Background(), codeReviewID(cfg))
+	if err != nil || !ok {
+		t.Fatalf("Latest: ok=%v err=%v", ok, err)
+	}
+	var rec CodeReviewRecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Summary != "worker's own summary" {
+		t.Fatalf("Summary = %q, want the tool-staged body", rec.Summary)
+	}
+}
+
+// TestSaveCodeReviewRound_BackfillsEmptyToolWrittenSummary is #1198's
+// residual markers-only path (review comment thread 3937400238):
+// write_code_review's "summary" field is optional, so a compliant tool call
+// can still leave it empty. saveCodeReviewRound must backfill from the
+// findings' titles rather than leave the record - and the delivered body
+// deliveryartifact.go later renders from it - empty.
+func TestSaveCodeReviewRound_BackfillsEmptyToolWrittenSummary(t *testing.T) {
+	svc := newMetaAwareInMemory()
+	cfg := reviewerCfgWithArtifacts(t, svc, true)
+	rc := recordClient(cfg)
+
+	toolStage := NewToolWrittenStage()
+	RegisterMemSession("sec-1198-backfill", MemSession{ToolWritten: toolStage})
+	MarkMemSessionConnected("sec-1198-backfill")
+	defer UnregisterMemSession("sec-1198-backfill")
+	token := "tok-1198-backfill"
+	RegisterAdvisorThread(token, AdvisorTask{MemSecret: "sec-1198-backfill"})
+	defer UnregisterAdvisorThread(token)
+	cfg.AdvisorToken = token
+
+	finding := FindingRecord{Path: "a.go", LineHint: 3, Title: "off-by-one", Rationale: "loop bound is wrong", State: "new"}
+	fID, _, err := rc.SaveStructured(context.Background(), kindFinding, finding, "", recordstore.Lineage{NodeID: cfg.NodeID, Author: "worker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolStage.Add(fID)
+	// No Summary - the exact gap a compliant-but-terse tool call leaves.
+	crRec := CodeReviewRecord{Verdict: "request_changes", FindingIDs: []string{fID}}
+	crID, _, err := rc.SaveStructured(context.Background(), kindCodeReview, crRec, SubjectHint(cfg.ChatID), recordstore.Lineage{NodeID: cfg.NodeID, Author: "worker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolStage.Add(crID)
+
+	st := newEpisodicRoundState()
+	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "t1", 1, "irrelevant - tool-written round", StagedDelivery{Kind: "review", Recovered: true}, st)
+
+	raw, _, ok, err := rc.Latest(context.Background(), codeReviewID(cfg))
+	if err != nil || !ok {
+		t.Fatalf("Latest: ok=%v err=%v", ok, err)
+	}
+	var rec CodeReviewRecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rec.Summary, "off-by-one") {
+		t.Fatalf("Summary = %q, want it backfilled from the finding's title", rec.Summary)
+	}
+}
+
 // TestSaveDocumentRound_TruncatesOversizedAnswer is the same check for the
 // saveDocumentRound path (reviewer/document-kind nodes), which shares
 // truncateForBlob with saveTextRound.
