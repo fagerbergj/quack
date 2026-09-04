@@ -335,6 +335,7 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 		UpdatedAt:       c.UpdatedAt,
 		Status:          status,
 		PendingQuestion: pendingQuestion,
+		QueueInfo:       h.queueInfo(status),
 		GithubUrl:       strPtr(c.GithubURL),
 		GithubRepo:      strPtr(c.GithubRepo),
 		GithubState:     detailStateVal(c.GithubState),
@@ -798,6 +799,27 @@ func (h *Handler) loadPlanNode(w http.ResponseWriter, r *http.Request, chatID, n
 	return dp, dn, current, true
 }
 
+// queueInfo explains what a queued chat is waiting on (#1176) - keep it to
+// what the admission ledger already knows, no separate holder registry.
+func (h *Handler) queueInfo(status schema.ChatStatus) *string {
+	if status != schema.ChatStatusQueued {
+		return nil
+	}
+	used, limit, ok := h.orch.RunAdmissionUsage()
+	if !ok {
+		return nil
+	}
+	s := fmt.Sprintf("queued: waiting for a run slot (%d/%d active)", used, limit)
+	return &s
+}
+
+// chatArchived reports whether chatID is archived - #1176: RetryNode's
+// dispatch layer must refuse an archived chat the same way the UI does.
+func (h *Handler) chatArchived(ctx context.Context, chatID string) bool {
+	c, err := h.store.GetChat(ctx, chatID)
+	return err == nil && c != nil && c.Archived
+}
+
 // wireStatus maps the legacy needs_input spelling to paused, the same
 // normalization dagNodeState applies - 409 bodies must speak it too.
 func wireStatus(s dag.NodeStatus) schema.NodeStatus {
@@ -873,11 +895,19 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 			errMsg(w, http.StatusServiceUnavailable, "server is shutting down; try again shortly")
 			return
 		}
+		if h.chatArchived(r.Context(), chatID) {
+			errMsg(w, http.StatusConflict, "chat is archived; unarchive it before retrying a node")
+			return
+		}
 		h.retryNodeAsync(dp, chatID, nodeID, guidance)
 		writeJSON(w, http.StatusOK, schema.DagNodeState{Status: schema.NodeStatusQueued})
 	case dag.StatusQueued:
 		if h.hub.Draining() {
 			errMsg(w, http.StatusServiceUnavailable, "server is shutting down; try again shortly")
+			return
+		}
+		if h.chatArchived(r.Context(), chatID) {
+			errMsg(w, http.StatusConflict, "chat is archived; unarchive it before retrying a node")
 			return
 		}
 		h.retryNodeAsync(dp, chatID, nodeID, guidance)
@@ -908,6 +938,10 @@ func (h *Handler) StartNode(w http.ResponseWriter, r *http.Request, chatID schem
 	}
 	if h.hub.Draining() {
 		errMsg(w, http.StatusServiceUnavailable, "server is shutting down; try again shortly")
+		return
+	}
+	if h.chatArchived(r.Context(), chatID) {
+		errMsg(w, http.StatusConflict, "chat is archived; unarchive it before starting a node")
 		return
 	}
 	content := ""
@@ -1470,6 +1504,7 @@ func (h *Handler) toSummary(c store.Chat, totalTokens int64) schema.ChatSummary 
 		UpdatedAt:       c.UpdatedAt,
 		Status:          status,
 		PendingQuestion: pendingQuestion,
+		QueueInfo:       h.queueInfo(status),
 		GithubUrl:       strPtr(c.GithubURL),
 		GithubRepo:      strPtr(c.GithubRepo),
 		GithubState:     stateVal(c.GithubState),

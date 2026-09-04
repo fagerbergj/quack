@@ -80,6 +80,43 @@ func TestResumePausedDagNodes_MissingPlanFails(t *testing.T) {
 	}
 }
 
+// TestResumePausedDagNodes_ArchivedChatIsNotResumed pins #1176: a resumable
+// callback that rejects archived chats (as serve.go's boot wiring does) must
+// mark the node failed with that reason, not hand it back to Start - an
+// archived chat's stale paused nodes were being resumed forever in prod.
+func TestResumePausedDagNodes_ArchivedChatIsNotResumed(t *testing.T) {
+	st := resumeTestStore(t)
+	ctx := context.Background()
+	if err := st.ArchiveChat(ctx, "c1", true); err != nil {
+		t.Fatalf("ArchiveChat: %v", err)
+	}
+	if err := st.UpsertDagNode(ctx, DagNode{NodeID: "n1", PlanID: "p1", Status: string(dag.StatusPaused)}); err != nil {
+		t.Fatalf("UpsertDagNode: %v", err)
+	}
+
+	resumable := func(chatID, pauseReason string) (bool, string) {
+		c, err := st.GetChat(ctx, chatID)
+		if err == nil && c != nil && c.Archived {
+			return false, "chat archived; not resumed"
+		}
+		return true, ""
+	}
+	rep, err := st.ResumePausedDagNodes(ctx, resumable)
+	if err != nil {
+		t.Fatalf("ResumePausedDagNodes: %v", err)
+	}
+	if len(rep.Start) != 0 {
+		t.Fatalf("Start = %+v, want empty - an archived chat's node must not be resumed", rep.Start)
+	}
+	if len(rep.Failed) != 1 || rep.Failed[0].Reason != "chat archived; not resumed" {
+		t.Fatalf("Failed = %+v, want one node with the archived reason", rep.Failed)
+	}
+	got, _ := st.GetDagNode(ctx, "p1", "n1")
+	if got.Status != string(dag.StatusFailed) {
+		t.Errorf("node status = %q, want failed", got.Status)
+	}
+}
+
 // TestScanOrphanedRuns_KeepsPendingQuestion pins #957: the boot scan used to
 // blank chats.pending_question, destroying the state a resume needs.
 func TestScanOrphanedRuns_KeepsPendingQuestion(t *testing.T) {

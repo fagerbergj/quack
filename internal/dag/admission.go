@@ -158,6 +158,16 @@ func (a *Admission) fireUnlocked(fn func()) {
 	fn()
 }
 
+// Usage reports spec's current session-dimension load (used, limit), for
+// callers that want to explain a queued wait rather than just block on it.
+// ok is false when spec.Model carries no configured limit (unbounded).
+func (a *Admission) Usage(spec AdmissionSpec) (used, limit int, ok bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	limit, ok = a.sessionsLimit[spec.Model]
+	return a.sessionsUsed[spec.Model], limit, ok
+}
+
 // Release returns spec's reserved capacity and wakes any blocked waiters.
 func (a *Admission) Release(spec AdmissionSpec) {
 	a.mu.Lock()

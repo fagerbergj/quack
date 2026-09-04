@@ -69,6 +69,10 @@ export type ChatSummary = {
      */
     pending_question?: string;
     /**
+     * What a `queued` chat is waiting on, e.g. "waiting for a run slot (2/2 active)". Present only when status is `queued`.
+     */
+    queue_info?: string;
+    /**
      * Web URL of the originating GitHub issue/PR, present only for GitHub-originated chats.
      */
     github_url?: string;

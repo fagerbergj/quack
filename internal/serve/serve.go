@@ -478,7 +478,19 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		// with the Hub, and before the memory consolidator's own boot sweep
 		// is started further down - resume gets the DB to a settled state
 		// first, the sweep goroutines start after.
-		resumeNodes = reconcileNodes(context.Background(), st, func(chatID string) (bool, string) {
+		resumeNodes = reconcileNodes(context.Background(), st, func(chatID, pauseReason string) (bool, string) {
+			// #1176: an archived chat's paused nodes must not be resumed -
+			// they were still holding run slots the archive should free.
+			c, _ := st.GetChat(context.Background(), chatID)
+			p, _ := st.GetLatestDagPlan(context.Background(), chatID)
+			var planCreatedAt time.Time
+			if p != nil {
+				planCreatedAt = p.CreatedAt
+			}
+			awaitingInput := pauseReason == string(dag.PauseAwaitingInput)
+			if ok, why := resumeGuardArchivedOrStale(c != nil && c.Archived, p != nil, awaitingInput, planCreatedAt); !ok {
+				return false, why
+			}
 			// A resumable node was provisioned a chat scope dir; if the
 			// workspace is gone the run cannot pick up where it left off.
 			if _, rerr := jail.Resolve(st.SessionUserForChat(context.Background(), chatID), chatID, "."); rerr != nil {
@@ -812,7 +824,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	// After the orchestrator exists: re-enter each resumed node's graph. The
 	// store-side reconcile already ran at boot, so a crash here leaves the
 	// nodes paused and the next boot picks them up again.
-	startResumedNodes(ctx, resumeNodes, orch, st, runHub)
+	startResumedNodes(ctx, resumeNodes, orch, st, runHub, cfg.Dag.MaxActiveRuns)
 	for _, start := range startSweeps {
 		start()
 	}

@@ -163,7 +163,7 @@ func TestBootFailsUnresumableNode(t *testing.T) {
 		t.Fatalf("pause n2: %v", err)
 	}
 
-	start := reconcileNodes(ctx, st, func(string) (bool, string) { return false, "workspace dir is gone" })
+	start := reconcileNodes(ctx, st, func(string, string) (bool, string) { return false, "workspace dir is gone" })
 
 	if len(start) != 0 {
 		t.Errorf("started %+v; an unresumable node must not be started", start)
