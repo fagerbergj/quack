@@ -1177,6 +1177,16 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	otelobs.End(span, err)
 
 	if hasTarget {
+		// #1187: the GitHub side effect already happened by this point, so the
+		// bookkeeping below must survive a run-level cancel (shutdown drain,
+		// hub.CancelRun) landing between Deliver returning and here - it runs
+		// on a context detached from ctx's cancellation, with its own budget.
+		if ctx.Err() != nil {
+			slog.Warn("run context cancelled before post-delivery bookkeeping; continuing on a detached context",
+				"component", "vetting", "node", nodeID, "err", ctx.Err(), "cause", context.Cause(ctx))
+		}
+		bctx, bcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer bcancel()
 		if err == nil {
 			var remoteURL string
 			for _, io := range itemOutcomes {
@@ -1185,15 +1195,15 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 					break
 				}
 			}
-			appendDeliveryDone(cctx, cfg, nodeID, idemKey, remoteURL)
-			saveDeliveryRecord(cctx, cfg, nodeID, DeliveryRecord{
+			appendDeliveryDone(bctx, cfg, nodeID, idemKey, remoteURL)
+			saveDeliveryRecord(bctx, cfg, nodeID, DeliveryRecord{
 				TargetID: targetID, DeliveredRevision: targetRev, RemoteURL: remoteURL, PRNumber: dc.IssueNumber, At: time.Now().UTC(),
 				GatePassed: res.Passed, RenderedFromStaged: renderedFromStaged,
 			})
 		} else {
 			// No appendDeliveryDone: the WAL entry stays open so `quack ledger
 			// recover` can reconcile this attempt instead of treating it as done.
-			saveDeliveryRecord(cctx, cfg, nodeID, DeliveryRecord{
+			saveDeliveryRecord(bctx, cfg, nodeID, DeliveryRecord{
 				TargetID: targetID, DeliveredRevision: targetRev, PRNumber: dc.IssueNumber, At: time.Now().UTC(),
 				GatePassed: res.Passed, RenderedFromStaged: renderedFromStaged, Error: err.Error(),
 			})

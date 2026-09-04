@@ -12,6 +12,7 @@ import (
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/agent/workflowagent"
+	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/runner"
 	"google.golang.org/adk/v2/session"
@@ -20,6 +21,8 @@ import (
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -480,4 +483,60 @@ func TestReviewFanoutMergedDeliveryCarriesReviewerCloneURL(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Deliver never fired")
 	}
+}
+
+// #1187: a run-level cancel landing the instant Deliver returns (shutdown
+// drain, hub.CancelRun) must not lose the post-delivery bookkeeping - the
+// GitHub side effect already happened, so delivery_record and delivery.done
+// must still be written even though the caller's context is now Done.
+func TestCommitDelivery_BookkeepingSurvivesCancelAfterDeliver(t *testing.T) {
+	cfg := Config{IsReviewer: true, ChatID: "ext:github:owner-repo-1187", User: "u1", Artifacts: artifact.InMemoryService()}
+	finding := FindingRecord{Path: "a.go", Title: "x", State: "new"}
+	fid, _ := recordstore.IdentityFor(kindFinding, finding, "")
+	seedCodeReview(t, cfg, "approve", "s", map[string]FindingRecord{fid: finding})
+
+	// wraps fakeGateLedger to record whether the ctx AppendIntent actually
+	// received was already cancelled - the fake itself ignores ctx, so this
+	// is what makes the test fail without the WithoutCancel fix.
+	shim := &ctxCapturingLedger{fakeGateLedger: newFakeGateLedger()}
+	cfg.Ledger = shim
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cfg.Deliver = func(context.Context, DeliveryContext) ([]DeliveryItemOutcome, error) {
+		cancel() // simulate a shutdown drain firing right as GitHub confirms the post
+		return []DeliveryItemOutcome{{Kind: "review", URL: "https://example/review/1"}}, nil
+	}
+	act := workerActivity{stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "approve", Body: "x"}}}
+	commitDelivery(ctx, nil, cfg, "n1", act, GateResult{Passed: true})
+
+	var sawDone bool
+	for _, k := range shim.kinds() {
+		if k == ledger.KindDeliveryDone {
+			sawDone = true
+		}
+	}
+	if !sawDone {
+		t.Fatal("delivery.done was not appended after the run context was cancelled")
+	}
+	if shim.doneCtxErr != nil {
+		t.Fatalf("delivery.done was appended on a context that was already Done (err=%v) - bookkeeping must run detached from the run cancel", shim.doneCtxErr)
+	}
+	targetID, _ := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID))
+	if entries := listDeliveryRecords(context.Background(), cfg, targetID); len(entries) == 0 {
+		t.Fatal("delivery_record was not saved after the run context was cancelled")
+	}
+}
+
+// ctxCapturingLedger records the Err() of the ctx passed to the
+// delivery.done AppendIntent call, since fakeGateLedger itself ignores ctx.
+type ctxCapturingLedger struct {
+	*fakeGateLedger
+	doneCtxErr error
+}
+
+func (c *ctxCapturingLedger) AppendIntent(ctx context.Context, e ledger.Entry) (int64, error) {
+	if e.Kind == ledger.KindDeliveryDone {
+		c.doneCtxErr = ctx.Err()
+	}
+	return c.fakeGateLedger.AppendIntent(ctx, e)
 }
