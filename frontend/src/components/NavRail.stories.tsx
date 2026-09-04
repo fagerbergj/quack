@@ -84,6 +84,35 @@ export const WithExtensions: Story = {
   ),
 }
 
+// Compact (<600px, #1131/#1133): the persistent rail is replaced by a 44px
+// hamburger - a visible entry point, not a hidden-only menu - at a 360px
+// frame (our narrowest target device).
+export const CompactClosed: Story = {
+  args: { route: 'chat', initialExtensions: [], forceCompact: true },
+  render: args => (
+    <div className="h-96 w-[360px] relative border border-dashed border-gray-300 dark:border-gray-600">
+      <NavRail {...args} />
+    </div>
+  ),
+}
+
+// Tapping the hamburger opens the off-canvas drawer with the same
+// Chats/Memory list the expanded rail shows.
+export const CompactOpen: Story = {
+  args: { route: 'chat', initialExtensions: [], forceCompact: true },
+  render: args => (
+    <div className="h-96 w-[360px] relative border border-dashed border-gray-300 dark:border-gray-600">
+      <NavRail {...args} />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: 'Open navigation' }))
+    expect(canvas.getByRole('dialog', { name: 'Main navigation' })).toBeInTheDocument()
+    expect(canvas.getByRole('button', { name: 'Chats' })).toBeInTheDocument()
+  },
+}
+
 // Clicking the collapse toggle removes the rail entirely and persists the
 // choice to localStorage (test case 1: survives a reload).
 export const ToggleCollapse: Story = {
