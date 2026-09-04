@@ -43,7 +43,7 @@
     "globals": "^17.9.0",
     "jsdom": "^30.0.1",
     "knip": "6.32.2",
-    "playwright": "^1.61.1",
+    "playwright": "^1.62.1",
     "postcss": "^8.5.23",
     "storybook": "^10.5.9",
     "tailwindcss": "^4.3.3",
