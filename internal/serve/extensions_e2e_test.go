@@ -69,6 +69,15 @@ func (directAnswerModel) GenerateContent(_ context.Context, _ *model.LLMRequest,
 // the same store, exactly like buildFromConfig wires attachments in production.
 func newExtTestStack(t *testing.T) (*store.Store, *orchestrator.Orchestrator, *stream.Hub, *store.TurnAwareService, *workspace.Jail) {
 	t.Helper()
+	return newExtTestStackWithModel(t, directAnswerModel{})
+}
+
+// newExtTestStackWithModel is newExtTestStack with the orchestrator's model
+// swapped out - used by tests that need a specific failure mode from the
+// model itself (e.g. #1156's gateway-error-during-planning repro), rather
+// than the always-succeeds directAnswerModel.
+func newExtTestStackWithModel(t *testing.T, m model.LLM) (*store.Store, *orchestrator.Orchestrator, *stream.Hub, *store.TurnAwareService, *workspace.Jail) {
+	t.Helper()
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
 		t.Fatalf("store.New: %v", err)
@@ -81,7 +90,7 @@ func newExtTestStack(t *testing.T) (*store.Store, *orchestrator.Orchestrator, *s
 	ex := dag.NewExecutor(st.Sessions, map[string]adkagent.Agent{}, map[string]model.LLM{}, nil,
 		func(string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
 	planner := dag.NewPlanner(nil, nil, nil)
-	orch := orchestrator.New(st.Sessions, directAnswerModel{}, "You are a test duck.", planner, ex, nil, nil, nil)
+	orch := orchestrator.New(st.Sessions, m, "You are a test duck.", planner, ex, nil, nil, nil)
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
 		t.Fatalf("workspace.NewJail: %v", err)
