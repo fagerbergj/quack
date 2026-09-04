@@ -40,8 +40,8 @@ type noopExtWithRunObserver struct {
 	outcomes chan extsdk.RunOutcome
 }
 
-func (noopExtWithRunObserver) Tools() []tool.Tool                              { return nil }
-func (noopExtWithRunObserver) RegisterRoutes(_, _ chi.Router)                  {}
+func (noopExtWithRunObserver) Tools() []tool.Tool                             { return nil }
+func (noopExtWithRunObserver) RegisterRoutes(_, _ chi.Router)                 {}
 func (e noopExtWithRunObserver) RunEnded(_ string, outcome extsdk.RunOutcome) { e.outcomes <- outcome }
 
 // TestPlanningFailure_EndsRunFailedWithClassifiedError is #1156's regression
