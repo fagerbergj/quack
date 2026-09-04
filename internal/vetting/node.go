@@ -1154,34 +1154,46 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	}
 
 	// Gate-owned push: lands on the remote before any item reaches the
-	// extension. A push failure never reaches Deliver - nothing was attempted.
-	var itemOutcomes []DeliveryItemOutcome
-	err := ensurePush(cctx, cfg, &dc)
-	if err != nil {
-		slog.Error("gate push failed", "component", "vetting", "node", nodeID, "err", err, "branch", dc.Branch)
-		itemOutcomes = make([]DeliveryItemOutcome, len(dc.Items))
-		for i, item := range dc.Items {
-			itemOutcomes[i] = DeliveryItemOutcome{Kind: item.Kind, Error: err.Error()}
-		}
-	} else {
-		itemOutcomes, err = cfg.Deliver(cctx, dc)
+	// extension. A push failure still reaches Deliver (carried on
+	// dc.PushError) instead of short-circuiting it - the extension is the
+	// only thing that can tell the human on GitHub a delivery failed (#1155);
+	// it's expected to skip the push-dependent items using PushError rather
+	// than attempt them against a branch that was never pushed.
+	if pushErr := ensurePush(cctx, cfg, &dc); pushErr != nil {
+		slog.Error("gate push failed", "component", "vetting", "node", nodeID, "err", pushErr, "branch", dc.Branch)
+		dc.PushError = pushErr.Error()
+	}
+	itemOutcomes, err := cfg.Deliver(cctx, dc)
+	if dc.PushError != "" && err == nil {
+		// A Deliver that doesn't check PushError yet may report success;
+		// the push itself never landed, so that outweighs its own report.
+		err = errors.New(dc.PushError)
 	}
 	span.SetAttributes(attribute.Bool("delivered", err == nil))
 	otelobs.End(span, err)
 
-	if hasTarget && err == nil {
-		var remoteURL string
-		for _, io := range itemOutcomes {
-			if io.URL != "" {
-				remoteURL = io.URL
-				break
+	if hasTarget {
+		if err == nil {
+			var remoteURL string
+			for _, io := range itemOutcomes {
+				if io.URL != "" {
+					remoteURL = io.URL
+					break
+				}
 			}
+			appendDeliveryDone(cctx, cfg, nodeID, idemKey, remoteURL)
+			saveDeliveryRecord(cctx, cfg, nodeID, DeliveryRecord{
+				TargetID: targetID, DeliveredRevision: targetRev, RemoteURL: remoteURL, PRNumber: dc.IssueNumber, At: time.Now().UTC(),
+				GatePassed: res.Passed, RenderedFromStaged: renderedFromStaged,
+			})
+		} else {
+			// No appendDeliveryDone: the WAL entry stays open so `quack ledger
+			// recover` can reconcile this attempt instead of treating it as done.
+			saveDeliveryRecord(cctx, cfg, nodeID, DeliveryRecord{
+				TargetID: targetID, DeliveredRevision: targetRev, PRNumber: dc.IssueNumber, At: time.Now().UTC(),
+				GatePassed: res.Passed, RenderedFromStaged: renderedFromStaged, Error: err.Error(),
+			})
 		}
-		appendDeliveryDone(cctx, cfg, nodeID, idemKey, remoteURL)
-		saveDeliveryRecord(cctx, cfg, nodeID, DeliveryRecord{
-			TargetID: targetID, DeliveredRevision: targetRev, RemoteURL: remoteURL, PRNumber: dc.IssueNumber, At: time.Now().UTC(),
-			GatePassed: res.Passed, RenderedFromStaged: renderedFromStaged,
-		})
 	}
 
 	// Extension's record is authoritative; fall back to synthetic outcomes only when extension reported nothing.
