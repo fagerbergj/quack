@@ -74,6 +74,13 @@ func DeriveTerminalStatus(chatID string, turns []TurnContent, pendingQuestion st
 			if errText, failed := failedDagNodeError(last.Nodes); failed {
 				return RunStatusFailed, "", errText
 			}
+			// Store failure checked before the gateway/plan-rejection fallbacks
+			// (#1193): a DB dial error surviving the pgdial retry (internal/store's
+			// openPostgres) is stronger, more specific evidence than a generic
+			// gateway or rejection reason for the same silent-answer turn.
+			if reason, failed := inference.LastStoreFailure(chatID); failed {
+				return RunStatusFailed, "", fmt.Sprintf("database unavailable: %s", reason)
+			}
 			// Gateway failure checked first (#1181 review): a real gateway
 			// outage during THIS turn is stronger evidence than an earlier
 			// rejection on the same turn, if both happened to occur.

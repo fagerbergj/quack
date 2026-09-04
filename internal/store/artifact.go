@@ -14,7 +14,6 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/genai"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -114,8 +113,12 @@ func NewLargeObjectArtifactService(db *gorm.DB) (artifact.Service, error) {
 // returns the large-object-backed artifact.Service - durable across
 // restarts. url must be a postgres DSN (config.validate enforces this).
 func NewArtifactService(url string) (artifact.Service, error) {
+	dialector, err := openPostgres(url)
+	if err != nil {
+		return nil, fmt.Errorf("store: parse artifact store url: %w", err)
+	}
 	gormCfg := &gorm.Config{Logger: slogGormLogger(), TranslateError: true}
-	db, err := gorm.Open(postgres.Open(url), gormCfg)
+	db, err := gorm.Open(dialector, gormCfg)
 	if err != nil {
 		return nil, fmt.Errorf("store: open artifact store: %w", err)
 	}

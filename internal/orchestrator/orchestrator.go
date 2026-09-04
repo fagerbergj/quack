@@ -93,8 +93,12 @@ func (s failSoftListArtifacts) List(ctx context.Context, req *artifact.ListReque
 	resp, err := s.Service.List(ctx, req)
 	if err != nil {
 		slog.Warn("orchestrator: artifact List failed; offering no artifacts this turn", "err", err)
+		// A dial error that survived the pgdial retry (#1193) must not vanish as a
+		// silent gap once this degrades to "no artifacts" - stamp it for DeriveTerminalStatus.
+		inference.RecordStoreFailure(req.SessionID, err)
 		return &artifact.ListResponse{}, nil
 	}
+	inference.ClearStoreFailure(req.SessionID)
 	return resp, nil
 }
 

@@ -129,6 +129,63 @@ func ClearPlanRejection(chatID string) {
 	toolRejectionsMu.Unlock()
 }
 
+// storeFailuresMu/storeFailures track the last store (DB) error per chat
+// (#1193): a dial/connection error surviving the pgdial retry gets swallowed
+// into "no artifacts" by the planner's failSoftListArtifacts, so the run's
+// terminal status needs the same give-up path a gateway outage uses, keyed
+// separately from callFailure since a store error has no node/agent.
+var (
+	storeFailuresMu sync.Mutex
+	storeFailures   = map[string]string{}
+)
+
+// dsnCredRe/dsnURLCredRe strip credentials a raw pgconn/gorm dial error can
+// carry (keyword DSN's password=..., or a postgres://user:pass@ URL) before
+// the message is ever stored or surfaced (#1193 - never leak a DSN password).
+var (
+	dsnCredRe    = regexp.MustCompile(`(?i)(password|pwd)=\S+`)
+	dsnURLCredRe = regexp.MustCompile(`://[^@/\s]+@`)
+)
+
+// SanitizeStoreError reduces a store/DB error to text safe to surface in a
+// run outcome - see dsnCredRe/dsnURLCredRe.
+func SanitizeStoreError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := dsnCredRe.ReplaceAllString(err.Error(), "$1=***")
+	return dsnURLCredRe.ReplaceAllString(msg, "://***@")
+}
+
+// RecordStoreFailure notes a sanitized store error for chatID, overwriting
+// any prior one - only the most recent failure matters to the give-up path.
+func RecordStoreFailure(chatID string, err error) {
+	if chatID == "" || err == nil {
+		return
+	}
+	storeFailuresMu.Lock()
+	defer storeFailuresMu.Unlock()
+	storeFailures[chatID] = SanitizeStoreError(err)
+}
+
+// ClearStoreFailure drops chatID's recorded store failure - called once a
+// store call for that chat succeeds again, so a later genuine silent gap
+// doesn't inherit a stale DB-outage reason.
+func ClearStoreFailure(chatID string) {
+	storeFailuresMu.Lock()
+	delete(storeFailures, chatID)
+	storeFailuresMu.Unlock()
+}
+
+// LastStoreFailure returns chatID's last recorded (already-sanitized) store
+// failure reason, if any.
+func LastStoreFailure(chatID string) (reason string, ok bool) {
+	storeFailuresMu.Lock()
+	defer storeFailuresMu.Unlock()
+	reason, ok = storeFailures[chatID]
+	return reason, ok
+}
+
 // statusRe pulls the HTTP status code out of openaimodel's "status <N>: ..."
 // error shape without touching the rest of the string.
 var statusRe = regexp.MustCompile(`status (\d{3})`)

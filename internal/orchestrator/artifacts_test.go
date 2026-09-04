@@ -16,6 +16,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
@@ -39,6 +40,47 @@ func TestFailSoftListArtifacts_DegradesToEmpty(t *testing.T) {
 	if len(resp.FileNames) != 0 {
 		t.Fatalf("FileNames = %v, want empty on a failed List", resp.FileNames)
 	}
+}
+
+// TestFailSoftListArtifacts_RecordsStoreFailure is #1193: a List failure must
+// not just degrade silently - it has to leave a trace inference.LastStoreFailure
+// can surface into a failed run outcome (store/runstatus.go's DeriveTerminalStatus).
+func TestFailSoftListArtifacts_RecordsStoreFailure(t *testing.T) {
+	const chatID = "c-1193"
+	t.Cleanup(func() { inference.ClearStoreFailure(chatID) })
+	svc := &onceFailingListService{Service: artifact.InMemoryService()}
+	wrapped := failSoftListArtifacts{svc}
+	if _, err := wrapped.List(context.Background(), &artifact.ListRequest{AppName: AppName, UserID: "u1", SessionID: chatID}); err != nil {
+		t.Fatalf("List: %v, want nil (fail-soft)", err)
+	}
+	if _, ok := inference.LastStoreFailure(chatID); !ok {
+		t.Fatal("want a recorded store failure after a failed List, got none")
+	}
+
+	// A later successful List (store recovered) must clear the stale record -
+	// otherwise a genuine unrelated silent gap later in the same chat would
+	// wrongly report a DB outage that's long over.
+	if _, err := wrapped.List(context.Background(), &artifact.ListRequest{AppName: AppName, UserID: "u1", SessionID: chatID}); err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if _, ok := inference.LastStoreFailure(chatID); ok {
+		t.Fatal("want no recorded store failure after a subsequent successful List")
+	}
+}
+
+// onceFailingListService fails List exactly once, then delegates - proves the
+// clear-on-success half of RecordStoreFailure/ClearStoreFailure.
+type onceFailingListService struct {
+	artifact.Service
+	failed bool
+}
+
+func (s *onceFailingListService) List(ctx context.Context, req *artifact.ListRequest) (*artifact.ListResponse, error) {
+	if !s.failed {
+		s.failed = true
+		return nil, errors.New("artifact store unreachable")
+	}
+	return s.Service.List(ctx, req)
 }
 
 // TestFailSoftListArtifacts_LoadBounded proves load_artifacts (the ADK-native
