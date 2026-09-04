@@ -13,7 +13,8 @@
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
     "knip": "knip",
-    "check-stories": "node scripts/check-stories.mjs"
+    "check-stories": "node scripts/check-stories.mjs",
+    "render-check": "vitest run --config vitest.render-check.config.ts"
   },
   "dependencies": {
     "highlight.js": "11.12.0",

@@ -80,6 +80,8 @@ cd frontend && npx tsc --noEmit && npx eslint src/ && npm test && npm run build
 
 Then confirm behaviour in `npm run dev` (and `npm run storybook` for new stories): typing stays smooth in a long chat, the spinner shows instantly on a follow-up message, code blocks highlight and copy. Watch the `npm run build` output for CSS warnings (see the `*/`-in-comment gotcha).
 
+Finish with `npm run render-check` (#1192) - it mounts every story in a real Chromium at mobile/desktop x light/dark and catches what the commands above cannot: a stray JSX text node (a `//` comment left where `{/* */}` was meant), a dialog stacked under a sibling, and horizontal overflow. See `docs/frontend-testing.md`.
+
 ## Resources
 
 - `references/recipes.md` - concrete file-level recipes and code (the Composer/TurnView/ChatList extraction, the `useMemo`/`memo` wiring, the optimistic-write reorder in `chatStore.submit`, the `@theme` override, the rehype-highlight + `CopyablePre` setup). **Read it when implementing** any of the principles above, not when only deciding the approach.
