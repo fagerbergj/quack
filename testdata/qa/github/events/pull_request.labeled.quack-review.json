@@ -3,7 +3,7 @@
   "number": 1,
   "pull_request": {
     "title": "Fix the flaky retry loop",
-    "head": {"sha": "9b1fbe794923ec1086c98f3617e2063c013dbfa3"},
+    "head": {"sha": "ee65f46d889f797e6ab5408fe728ebb16d32c14d"},
     "state": "open",
     "merged": false
   },
