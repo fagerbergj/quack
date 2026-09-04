@@ -2,11 +2,13 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/inference"
 )
 
 // Chat.RunStatus values - a run's terminal outcome. Never "queued"/"running": those stay
@@ -58,8 +60,11 @@ func (s *Store) StampRunOutcome(ctx context.Context, chatID, status, pendingQues
 // question is still pending. Shared by the REST and GitHub run drivers so both stamp the
 // same rule the read path relies on (#738). nodeError is the failed node's own DagNode.Error
 // (#1105) - "" for every other status, including a genuine silent gap (empty answer, no
-// failed node) so that path stays exactly as it was.
-func DeriveTerminalStatus(turns []TurnContent, pendingQuestion string, hasPendingQuestion bool) (status, question, nodeError string) {
+// failed node) so that path stays exactly as it was. chatID also covers the orchestrator's
+// own pre-DAG planning give-up (#1156): a gateway outage during planning never produces a
+// DagNode to read an error off of, so it falls back to the same failure tracker DagNode
+// failures use, keyed with an empty node/agent (see orchestratorGiveUpError).
+func DeriveTerminalStatus(chatID string, turns []TurnContent, pendingQuestion string, hasPendingQuestion bool) (status, question, nodeError string) {
 	if hasPendingQuestion {
 		return RunStatusNeedsInput, pendingQuestion, ""
 	}
@@ -69,9 +74,37 @@ func DeriveTerminalStatus(turns []TurnContent, pendingQuestion string, hasPendin
 			if errText, failed := failedDagNodeError(last.Nodes); failed {
 				return RunStatusFailed, "", errText
 			}
+			if errText, failed := orchestratorGiveUpError(chatID); failed {
+				return RunStatusFailed, "", errText
+			}
 		}
 	}
 	return RunStatusIdle, "", ""
+}
+
+// orchestratorGiveUpError reports the classified model-gateway error when the
+// orchestrator's own planning loop (orchestrator.go's Run, before any DAG plan
+// exists) exhausted its retries because every call to the model failed
+// (#1156). The orchestrator's own model calls stamp an empty node/agent in
+// ledger.Coords, so that's the key inference's failure tracker holds it
+// under - same tracker #1109's dag.emptyNodeError reads for a DAG node, reused
+// here via its exported classification helper (inference.SanitizeGatewayError)
+// rather than a second copy of the format.
+//
+// Deliberately does NOT clear the tracker (unlike dag.emptyNodeError, which
+// consumes it once into a persisted DagNode.Error column): this is called on
+// every read of a chat's terminal status - including well after the run
+// ended, e.g. GetChat - and clearing here would make the SECOND read fall
+// back to idle while the first-stamped Chat.RunStatus still says failed. The
+// next real model call for this chat (success or otherwise) naturally
+// supersedes the record via RecordCallResult's own nil-err clear.
+func orchestratorGiveUpError(chatID string) (string, bool) {
+	err, streak, dur, ok := inference.LastFailure(chatID, "", "")
+	if !ok || streak == 0 {
+		return "", false
+	}
+	class, _ := inference.SanitizeGatewayError(err)
+	return fmt.Sprintf("%s on %d consecutive attempts over %s", class, streak, dur.Round(time.Second)), true
 }
 
 // StampTerminalOutcome loads turns, derives the terminal status via
@@ -85,7 +118,7 @@ func (s *Store) StampTerminalOutcome(ctx context.Context, appName, userID, chatI
 		slog.Warn("stamp terminal outcome: turns load failed", "component", "store", "chat", chatID, "err", err)
 	}
 	q, hasQ := pendingQuestion()
-	status, question, nodeError = DeriveTerminalStatus(turns, q, hasQ)
+	status, question, nodeError = DeriveTerminalStatus(chatID, turns, q, hasQ)
 	if err := s.StampRunOutcome(ctx, chatID, status, question); err != nil {
 		slog.Warn("stamp terminal outcome: persist failed", "component", "store", "chat", chatID, "err", err)
 	}
