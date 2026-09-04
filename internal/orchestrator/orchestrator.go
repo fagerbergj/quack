@@ -415,6 +415,12 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
 		safeYield(tools.DagPlanEvent(ctx, plan), nil)
 
+		// A bound plan skips the llmagent turn entirely, so nothing else ever
+		// appends this turn's "user" event - without it, groupSessionEvents
+		// (store.GetTurnsWithContent) sees zero events for this ChatTurn row
+		// and misaligns every later turn's persisted content against it (#1195).
+		o.persistUserMessage(ctx, userID, sessionID, plan.UserMessage)
+
 		// A bound plan never passes through the execute tool (no orchestrator
 		// LLM turn exists to revise from), so provisioning failure here has no
 		// tool call to fail into - surface the human form directly on the stream.
@@ -867,6 +873,22 @@ func latestPendingNodeInterrupt(events []*session.Event) (pendingInterrupt, bool
 		}
 	}
 	return out, found
+}
+
+// persistUserMessage appends the user-authored event a bound-plan run would
+// otherwise never write (see RunBoundPlan's call site). Mirrors persistAnswer's
+// own Get-then-AppendEvent shape.
+func (o *Orchestrator) persistUserMessage(ctx context.Context, userID, sessionID, message string) {
+	if message == "" {
+		return
+	}
+	persistCtx := context.WithoutCancel(ctx)
+	if resp, gerr := o.sessions.Get(persistCtx, &session.GetRequest{AppName: AppName, UserID: userID, SessionID: sessionID}); gerr == nil && resp != nil {
+		uev := session.NewEvent(persistCtx, "")
+		uev.Author = "user"
+		uev.Content = &genai.Content{Role: "user", Parts: []*genai.Part{{Text: message}}}
+		_ = o.sessions.AppendEvent(persistCtx, resp.Session, uev)
+	}
 }
 
 // persistAnswer appends the delivered answer to the chat session as the orchestrator's model message.
