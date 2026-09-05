@@ -2,86 +2,68 @@ package acp
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// TestRound_ForwardsLiveSteerIntoTheRunningSession (#998): a message handed
-// to the captured forward func reaches the still-running Prompt RPC. Keys
-// come straight from round()'s own steerChatID/steerNodeID params - not
-// a.coords (the shared, racy field a real caller must never key the hook on;
-// see acp.go's resolveNode/runPrompt, which resolve them per-round from the
-// advisor thread).
-func TestRound_ForwardsLiveSteerIntoTheRunningSession(t *testing.T) {
-	jail, err := workspace.NewJail(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
+// fakeExtensionCaller is an in-process extensionCaller: no subprocess, no
+// round() goroutine, so steerForward's own logic is deterministic to test.
+type fakeExtensionCaller struct {
+	err           error
+	gotMethod     string
+	gotParamsText string
+	calls         int
+}
+
+func (f *fakeExtensionCaller) CallExtension(_ context.Context, method string, params any) (json.RawMessage, error) {
+	f.calls++
+	f.gotMethod = method
+	if p, ok := params.(steerParams); ok {
+		f.gotParamsText = p.Text
 	}
+	return nil, f.err
+}
 
-	var mu sync.Mutex
-	var gotChat, gotNode string
-	var forward func(string) bool
-	registered := make(chan struct{})
-	unregistered := make(chan struct{})
+// TestSteerForward_DeliversOverAckedExtensionCall (#998, replaces the flaky
+// #1202 round()-based e2e version: that test could not be made to fail
+// deterministically after 2000+ -race runs, so per the no-flaky-gates rule
+// it was deleted and replaced with this direct unit test of the same
+// production closure - no subprocess, no goroutine handoff, nothing to race).
+func TestSteerForward_DeliversOverAckedExtensionCall(t *testing.T) {
+	fake := &fakeExtensionCaller{}
+	fwd := steerForward(fake)
 
-	a, err := New("code-implementer", "external coder", Options{
-		Command: []string{os.Args[0]},
-		Env:     []string{"QUACK_ACP_FAKE=steer"},
-		Home:    t.TempDir(),
-		Jail:    jail,
-		UserID:  "u1",
-		RegisterLiveSteer: func(chatID, nodeID string, f func(string) bool) {
-			mu.Lock()
-			gotChat, gotNode, forward = chatID, nodeID, f
-			mu.Unlock()
-			close(registered)
-		},
-		UnregisterLiveSteer: func(chatID, nodeID string) { close(unregistered) },
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var specs []eventSpec
-	done := make(chan error, 1)
-	go func() {
-		done <- a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "add the feature", "chat1", "n1", "", "", func(s eventSpec) bool {
-			specs = append(specs, s)
-			return true
-		})
-	}()
-
-	<-registered
-	mu.Lock()
-	chatID, nodeID, fwd := gotChat, gotNode, forward
-	mu.Unlock()
-	if chatID != "chat1" || nodeID != "n1" {
-		t.Fatalf("RegisterLiveSteer got (%q,%q), want (chat1,n1)", chatID, nodeID)
-	}
 	if !fwd("focus on cost") {
-		t.Fatal("forward reported failure delivering into the live round")
+		t.Fatal("forward reported failure for a call the fake acked")
 	}
+	if fake.calls != 1 {
+		t.Fatalf("calls = %d, want 1", fake.calls)
+	}
+	if fake.gotMethod != steerExtMethod {
+		t.Fatalf("method = %q, want %q", fake.gotMethod, steerExtMethod)
+	}
+	if fake.gotParamsText != "focus on cost" {
+		t.Fatalf("params text = %q, want %q", fake.gotParamsText, "focus on cost")
+	}
+}
 
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("round: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("round never returned after the steer was forwarded")
-	}
-	select {
-	case <-unregistered:
-	case <-time.After(2 * time.Second):
-		t.Fatal("UnregisterLiveSteer never called")
-	}
+// TestSteerForward_ReportsFailureOnRejectedCall (#998 review): the forward
+// func must use an ACKED call (CallExtension), not a fire-and-forget
+// notification - otherwise a steer landing after the shim has settled the
+// round would report delivered while silently dropped. An error from the
+// extension call must surface as false so enqueue's caller parks the
+// message instead of marking it delivered.
+func TestSteerForward_ReportsFailureOnRejectedCall(t *testing.T) {
+	fake := &fakeExtensionCaller{err: errors.New("no live round to steer")}
+	fwd := steerForward(fake)
 
-	if len(specs) == 0 || specs[len(specs)-1].parts[0].Text != "steered: focus on cost" {
-		t.Fatalf("round never saw the forwarded steer; final spec = %+v", specs)
+	if fwd("too late") {
+		t.Fatal("forward reported success for a steer the extension call rejected")
 	}
 }
 

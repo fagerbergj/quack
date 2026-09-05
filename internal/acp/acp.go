@@ -6,6 +6,7 @@ package acp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
@@ -214,6 +215,22 @@ type steerParams struct {
 	Text string `json:"text"`
 }
 
+// extensionCaller is the one method steerForward needs from *sdk.ClientSideConnection -
+// narrowed so the forwarding logic is unit-testable without a real ACP
+// subprocess or round() goroutine handoff (#1202).
+type extensionCaller interface {
+	CallExtension(ctx context.Context, method string, params any) (json.RawMessage, error)
+}
+
+// steerForward builds the RegisterLiveSteer callback: an acked CallExtension
+// RPC, not a fire-and-forget notify (see the call site's #998 review comment).
+func steerForward(conn extensionCaller) func(text string) bool {
+	return func(text string) bool {
+		_, err := conn.CallExtension(context.Background(), steerExtMethod, steerParams{Text: text})
+		return err == nil
+	}
+}
+
 // promptDone carries the Prompt RPC's outcome off the goroutine in round.
 type promptDone struct {
 	resp sdk.PromptResponse
@@ -321,11 +338,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 	// the shim silently drops it (promptReq already nil). A failed/errored
 	// call reports false, and enqueue's caller parks it instead (#998 review).
 	if a.opts.RegisterLiveSteer != nil && steerChatID != "" && steerNodeID != "" {
-		conn := h.conn
-		a.opts.RegisterLiveSteer(steerChatID, steerNodeID, func(text string) bool {
-			_, err := conn.CallExtension(context.Background(), steerExtMethod, steerParams{Text: text})
-			return err == nil
-		})
+		a.opts.RegisterLiveSteer(steerChatID, steerNodeID, steerForward(h.conn))
 		if a.opts.UnregisterLiveSteer != nil {
 			defer a.opts.UnregisterLiveSteer(steerChatID, steerNodeID)
 		}

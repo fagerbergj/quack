@@ -22,6 +22,11 @@ type GCConfig struct {
 	ScratchTTL   time.Duration
 	HomeMaxBytes int64
 	Interval     time.Duration
+	// BaselineTempDir overrides where sweepBaselineTemp globs for quack-base-*
+	// dirs; empty means the real os.TempDir(). Tests set this so a concurrent
+	// package sharing the machine-wide temp dir can't add or remove entries
+	// this sweep counts.
+	BaselineTempDir string
 }
 
 // ActiveChatFunc reports whether the chat behind an on-disk directory name
@@ -86,7 +91,7 @@ func Sweep(ctx context.Context, jail *Jail, cfg GCConfig, isActive ActiveChatFun
 		res.BytesReclaimed += b
 	}
 	if cfg.ScratchTTL > 0 {
-		n, b := sweepBaselineTemp(ctx, cfg.ScratchTTL, prune)
+		n, b := sweepBaselineTemp(ctx, cfg.ScratchTTL, cfg.BaselineTempDir, prune)
 		res.ScratchRemoved += n
 		res.BytesReclaimed += b
 		n, b = sweepHomeTmp(cfg.ScratchTTL, jail)
@@ -153,8 +158,11 @@ func sweepChatScopes(ctx context.Context, jail *Jail, ttl time.Duration, isActiv
 }
 
 // sweepBaselineTemp removes orphaned baseline-check worktrees (quack-base-*) whose mtime predates ttl.
-func sweepBaselineTemp(ctx context.Context, ttl time.Duration, prune WorktreePruner) (removed int, bytes int64) {
-	matches, err := filepath.Glob(filepath.Join(os.TempDir(), baselineTempPrefix+"*"))
+func sweepBaselineTemp(ctx context.Context, ttl time.Duration, tempDir string, prune WorktreePruner) (removed int, bytes int64) {
+	if tempDir == "" {
+		tempDir = os.TempDir()
+	}
+	matches, err := filepath.Glob(filepath.Join(tempDir, baselineTempPrefix+"*"))
 	if err != nil {
 		slog.Warn("workspace gc: glob baseline scratch failed", "component", "workspace", "err", err)
 		return 0, 0
