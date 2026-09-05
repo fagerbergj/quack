@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/fagerbergj/quack/internal/workspace"
@@ -28,6 +27,23 @@ func SetupClone(ctx context.Context, jail *workspace.Jail, userID, chatID, dir, 
 	return target, nil
 }
 
+// cleanupError: a stale-clone removal failure, never a fetch failure - the
+// dag package structurally matches LocalCleanupFailure (dag never imports
+// this package, see dag/graph.go) so its wrapping setupError doesn't reword
+// this into a bogus "repository is unreachable" (#1213).
+type cleanupError struct {
+	path  string
+	cause error
+}
+
+func (e *cleanupError) Error() string {
+	return fmt.Sprintf("setup: could not clear stale clone dir %s: %v", e.path, e.cause)
+}
+
+func (e *cleanupError) Unwrap() error { return e.cause }
+
+func (e *cleanupError) LocalCleanupFailure() {}
+
 // setupCloneAndBranch: false=create new branch off baseRef, true=checkout existing remote branch.
 func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRef, workBranch string, checkoutExistingHead bool) (string, error) {
 	if strings.TrimSpace(baseRef) == "" {
@@ -40,9 +56,10 @@ func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRe
 	if err != nil {
 		return "", fmt.Errorf("setup: resolve clone dir: %w", err)
 	}
-	// Clear stale clone from a previous run.
-	if err := os.RemoveAll(target); err != nil {
-		return "", fmt.Errorf("setup: clear stale clone dir: %w", err)
+	// Clear stale clone from a previous run. Local cleanup, not a fetch - its
+	// error must never read as the repository being unreachable (#1213).
+	if err := workspace.RemoveAllForce(target); err != nil {
+		return "", &cleanupError{path: target, cause: err}
 	}
 	if _, err := b.cloneRepo(repoURL, dir, nil, baseRef); err != nil {
 		return "", fmt.Errorf("setup: clone: %w", err)

@@ -468,7 +468,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		// with the Hub, and before the memory consolidator's own boot sweep
 		// is started further down - resume gets the DB to a settled state
 		// first, the sweep goroutines start after.
-		resumeNodes = reconcileNodes(context.Background(), st, func(chatID, pauseReason string) (bool, string) {
+		resumeNodes = reconcileNodes(context.Background(), st, jail, func(chatID, pauseReason string) (bool, string) {
 			// #1176: an archived chat's paused nodes must not be resumed -
 			// they were still holding run slots the archive should free.
 			c, _ := st.GetChat(context.Background(), chatID)

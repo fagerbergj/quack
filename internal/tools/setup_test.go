@@ -45,6 +45,52 @@ func TestSetupCloneAndBranchClonesAndChecksOutNewBranch(t *testing.T) {
 	}
 }
 
+// TestSetupCloneAndBranchStaleCleanupFailureMessage is #1213: a stale clone
+// dir left read-only by go's module cache must surface as a local-cleanup
+// message, never worded as the repository being unreachable.
+func TestSetupCloneAndBranchStaleCleanupFailureMessage(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the write bit; the failure this test reproduces cannot happen")
+	}
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	b := newTestGitBinding(t)
+
+	target, err := b.jail.Resolve(b.userID, "", "repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	roDir := filepath.Join(target, "ro")
+	if err := os.MkdirAll(roDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(roDir, "f"), []byte("x"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(roDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(roDir, 0o755) })
+
+	if _, err := setupCloneAndBranch(context.Background(), b, "repo", "file://"+bare, "main", "quack/work", false); err != nil {
+		t.Fatalf("setupCloneAndBranch should recover via RemoveAllForce: %v", err)
+	}
+}
+
+// TestCleanupErrorMessageNeverClaimsUnreachable pins the exact wording #1213
+// asks for and proves it never contains the fetch-failure "unreachable" text.
+func TestCleanupErrorMessageNeverClaimsUnreachable(t *testing.T) {
+	err := &cleanupError{path: "/workspace/local/x/quack-shared-repo", cause: os.ErrPermission}
+	msg := err.Error()
+	want := "setup: could not clear stale clone dir /workspace/local/x/quack-shared-repo: permission denied"
+	if msg != want {
+		t.Errorf("Error() = %q, want %q", msg, want)
+	}
+	if strings.Contains(msg, "unreachable") {
+		t.Errorf("cleanup failure message must not claim the repository is unreachable: %q", msg)
+	}
+}
+
 func TestSetupCloneAndBranchFailsOnBadBaseRef(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)

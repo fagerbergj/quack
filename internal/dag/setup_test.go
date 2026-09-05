@@ -285,6 +285,37 @@ func TestProvision_ClonefailureIsHumanReadable(t *testing.T) {
 	}
 }
 
+// fakeCleanupError structurally matches internal/tools' cleanupError so this
+// test never has to import that package (dag never does, see graph.go).
+type fakeCleanupError struct{ msg string }
+
+func (e *fakeCleanupError) Error() string        { return e.msg }
+func (e *fakeCleanupError) LocalCleanupFailure() {}
+
+// TestProvision_LocalCleanupFailureIsNeverWordedUnreachable is #1213: a
+// stale-clone removal failure is local disk cleanup, not a fetch failure -
+// it must surface verbatim, never wrapped into the "repository is
+// unreachable" text real fetch failures use.
+func TestProvision_LocalCleanupFailureIsNeverWordedUnreachable(t *testing.T) {
+	cause := &fakeCleanupError{msg: "setup: could not clear stale clone dir /workspace/local/x/quack-shared-repo: permission denied"}
+	ex := &Executor{setupFn: func(context.Context, string, string, string, Setup) error { return cause }}
+	plan := Plan{
+		Setup: &Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main", WorkBranch: "quack/work"},
+		Nodes: []Node{{ID: "impl", AgentName: implementerAgent}},
+	}
+	err := ex.Provision(context.Background(), "u", "c", &plan)
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "unreachable") {
+		t.Errorf("err = %q, must not claim the repository is unreachable for a local cleanup failure", msg)
+	}
+	if !strings.Contains(msg, "could not clear stale clone dir") {
+		t.Errorf("err = %q, want the underlying cleanup message preserved", msg)
+	}
+}
+
 func TestRunPlanSetup_NilSetupIsNoOp(t *testing.T) {
 	ex := &Executor{setupFn: func(context.Context, string, string, string, Setup) error {
 		t.Fatal("setupFn must never be called when plan.Setup is nil")

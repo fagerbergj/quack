@@ -240,7 +240,7 @@ func (j *Jail) RemoveChatScope(userID, chatID string) error {
 	if root == userRoot || root == j.root {
 		return ErrInvalidChatID
 	}
-	if err := removeAll(root); err != nil {
+	if err := RemoveAllForce(root); err != nil {
 		return fmt.Errorf("workspace: remove chat scope %q: %w", root, err)
 	}
 	return nil
