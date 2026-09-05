@@ -22,9 +22,8 @@ func writePlanJudgeFixture(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "entries.jsonl")
 	out := `{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"name\":\"submit_plan_verdict\",\"args\":{\"accept\":true,\"reason\":\"ok\"}}}]}`
-	line := `{"timestamp":"2026-01-01T00:00:00Z","attributes":{` +
-		`"gen_ai.operation.name":"chat","gen_ai.request.model":"judge-model",` +
-		`"gen_ai.response.model":"judge-model","gen_ai.output.messages":"` + out + `"` +
+	line := `{"seq":1,"chat_id":"c","kind":"llm.call","at":"2026-01-01T00:00:00Z","payload":{` +
+		`"request_model":"judge-model","response_model":"judge-model","output":"` + out + `"` +
 		`}}` + "\n"
 	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
 		t.Fatal(err)

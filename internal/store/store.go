@@ -21,12 +21,12 @@ import (
 	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/session/database"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/pgdial"
 )
 
 // Chat is the app-level chat record. Its ID doubles as the ADK session ID.
@@ -436,7 +436,16 @@ func slogGormLogger() logger.Interface {
 func dialectorFor(kind, url string) (func() gorm.Dialector, error) {
 	switch kind {
 	case "", "postgres":
-		return func() gorm.Dialector { return postgres.Open(url) }, nil
+		if _, err := pgdial.Open(url); err != nil {
+			return nil, fmt.Errorf("store: parse postgres url: %w", err)
+		}
+		return func() gorm.Dialector {
+			// Reparses url each call (dialectorFor already proved it parses) - New()
+			// calls this factory twice (main db, then the session service) and each
+			// needs its own *sql.DB/pool.
+			d, _ := pgdial.Open(url)
+			return d
+		}, nil
 	case "sqlite":
 		sqlDB, err := sql.Open(sqlite.DriverName, sqliteDSN(url))
 		if err != nil {
@@ -1110,6 +1119,13 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 		planByTurn[plans[i].TurnID] = &plans[i]
 	}
 
+	// groups can be shorter than turns - a ResetHistory dispatch (#1195) wipes
+	// older session events while every ChatTurn row survives forever, and
+	// only ever removes OLDER events, never reorders what's left. So the
+	// surviving groups always line up with the MOST RECENT len(groups) turns,
+	// never the first: align from the end, not the front, or a reset silently
+	// shifts every later turn's content onto the wrong (earlier) turn.
+	offset := len(turns) - len(groups)
 	result := make([]TurnContent, len(turns))
 	for i, t := range turns {
 		tc := TurnContent{
@@ -1120,17 +1136,17 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 			PromptTokens: t.PromptTokens, CompletionTokens: t.CompletionTokens,
 			ReasoningTokens: t.ReasoningTokens, TotalTokens: t.TotalTokens, CachedTokens: t.CachedTokens,
 		}
-		if i < len(groups) {
-			tc.UserText = groups[i].userText
-			tc.AsstText = groups[i].asstText
-			tc.AsstThink = groups[i].asstThink
-			tc.ToolCalls = groups[i].toolCalls
+		if gi := i - offset; gi >= 0 && gi < len(groups) {
+			tc.UserText = groups[gi].userText
+			tc.AsstText = groups[gi].asstText
+			tc.AsstThink = groups[gi].asstThink
+			tc.ToolCalls = groups[gi].toolCalls
 			if tc.PromptTokens == 0 && tc.CompletionTokens == 0 {
-				tc.PromptTokens = groups[i].promptTokens
-				tc.CompletionTokens = groups[i].completionTokens
-				tc.ReasoningTokens = groups[i].reasoningTokens
-				tc.CachedTokens = groups[i].cachedTokens
-				tc.TotalTokens = groups[i].totalTokens
+				tc.PromptTokens = groups[gi].promptTokens
+				tc.CompletionTokens = groups[gi].completionTokens
+				tc.ReasoningTokens = groups[gi].reasoningTokens
+				tc.CachedTokens = groups[gi].cachedTokens
+				tc.TotalTokens = groups[gi].totalTokens
 			}
 		}
 		if plan := planByTurn[t.ID]; plan != nil {

@@ -162,6 +162,9 @@ func boundCheckOutput(out string) string {
 // check command's own tmp use never lands in the checked-out tree.
 func checksCaps(cfg Config) workspace.Caps {
 	caps := cfg.WorkspaceCaps
+	if cfg.CheckTimeout > 0 {
+		caps.Timeout = cfg.CheckTimeout
+	}
 	root, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.NodeDir(cfg.NodeID))
 	if err != nil {
 		return caps

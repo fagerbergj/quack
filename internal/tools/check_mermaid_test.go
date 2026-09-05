@@ -50,6 +50,7 @@ func runCheckMermaid(t *testing.T, diagram string) string {
 }
 
 func TestCheckMermaidTool_ValidDiagram(t *testing.T) {
+	t.Parallel()
 	requireNode(t)
 	got := runCheckMermaid(t, "flowchart TD\n    A[Start] --> B[Finish]")
 	if got != "ok" {
@@ -58,6 +59,7 @@ func TestCheckMermaidTool_ValidDiagram(t *testing.T) {
 }
 
 func TestCheckMermaidTool_InvalidDiagram(t *testing.T) {
+	t.Parallel()
 	requireNode(t)
 	got := runCheckMermaid(t, "A[Start] --> B[Finish]") // no diagram-type declaration
 	if !strings.HasPrefix(got, "invalid") {

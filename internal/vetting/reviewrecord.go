@@ -646,25 +646,29 @@ func truncateForBlob(content, nodeID, kind string) string {
 	return content[:artifactref.InlineMaxBytes] + fmt.Sprintf("\n\n[truncated: %d bytes over the %d byte cap]", over, artifactref.InlineMaxBytes)
 }
 
-// latestCodeReviewRevSafe wraps the #1091 gate-fallback lookup in a recover:
-// LatestWithMeta's own error return doesn't cover a service that panics
-// outright (e.g. a nil-embedded artifact.Service in tests), and this check
-// must never be the reason a round fails to save.
-func latestCodeReviewRevSafe(ctx context.Context, c *recordstore.Client, cfg Config) (rev int, ok bool) {
-	defer func() {
-		if recover() != nil {
-			rev, ok = 0, false
-		}
-	}()
+// LatestCodeReviewVerdict reads the synthesizer's own structured verdict
+// (the code_review record the gate already wrote from write_code_review or
+// the answer tail, #1090 P2) - the authoritative source for the fan-out's
+// delivered event (#1184), since a native synthesizer's write_code_review
+// leaves no VERDICT tail for mergeReviews' old fallback to find.
+func LatestCodeReviewVerdict(ctx context.Context, cfg Config) (verdict string, ok bool) {
+	c := recordClient(cfg)
+	if c == nil {
+		return "", false
+	}
 	id, err := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID))
 	if err != nil {
-		return 0, false
+		return "", false
 	}
-	_, _, _, rev, ok, lerr := c.LatestWithMeta(ctx, id)
-	if lerr != nil {
-		return 0, false
+	raw, _, _, _, found, lerr := c.LatestWithMeta(ctx, id)
+	if lerr != nil || !found {
+		return "", false
 	}
-	return rev, ok
+	var rec CodeReviewRecord
+	if json.Unmarshal(raw, &rec) != nil || rec.Verdict == "" {
+		return "", false
+	}
+	return rec.Verdict, true
 }
 
 // resetToolWrittenIDs drains the ids written via any loopback MCP
@@ -689,6 +693,98 @@ func resetToolWrittenIDs(cfg Config) map[string]bool {
 		return nil
 	}
 	return ms.ToolWritten.Reset()
+}
+
+// reviewSummary is the human-facing prose for a code_review record - #1198:
+// deliveryartifact.go's renderReviewFromArtifact renders THIS field as the
+// posted review body, so leaving it unset (as before this fix) delivers
+// markers-only. Tool-staged text is already clean prose; answer-tail
+// recovery must cut before the VERDICT/FINDINGS/DISMISSED/CLEAN tail.
+func reviewSummary(answer string, staged StagedDelivery) string {
+	if !staged.Recovered {
+		return strings.TrimSpace(staged.Body)
+	}
+	cut := len(answer)
+	if loc := verdictRe.FindStringIndex(answer); loc != nil && loc[0] < cut {
+		cut = loc[0]
+	}
+	if loc := sectionHeaderRe.FindStringIndex(answer); loc != nil && loc[0] < cut {
+		cut = loc[0]
+	}
+	return strings.TrimSpace(answer[:cut])
+}
+
+// codeReviewSummaryFallback covers the residual markers-only path: a native
+// write_code_review tool call's "summary" field is optional, so a
+// spec-compliant call can still leave Summary empty even after reviewSummary
+// closed the staged/answer-tail gap. Findings come first - a tool-calling
+// turn's leftover text answer is usually narration ("I've filed the
+// findings"), not review prose, unlike the answer-tail recovery path
+// reviewSummary handles. Falls back to the answer text (cut before any
+// VERDICT/FINDINGS tail, same rule as reviewSummary), and as a last resort
+// states plainly that nothing was provided - deliveryartifact.go's render
+// must never see "".
+func codeReviewSummaryFallback(answer string, findings []FindingRecord, verdict string) string {
+	if len(findings) > 0 {
+		titles := make([]string, 0, len(findings))
+		for _, f := range findings {
+			if t := strings.TrimSpace(f.Title); t != "" {
+				titles = append(titles, t)
+			}
+		}
+		if len(titles) > 0 {
+			return strings.Join(titles, "; ")
+		}
+	}
+	if s := reviewSummary(answer, StagedDelivery{Recovered: true}); s != "" {
+		return s
+	}
+	return "No summary was provided by the reviewer. Verdict: " + verdict
+}
+
+// backfillCodeReviewSummary patches an empty Summary on a code_review record
+// the worker wrote directly via write_code_review this round (#1198). Writes
+// a second revision only when a backfill was actually needed - the common
+// case (a compliant tool call that filled Summary in) is a plain read.
+// recover() mirrors latestCodeReviewRevSafe's own guard: LatestWithMeta's
+// error return doesn't cover a service that panics outright (e.g. a
+// nil-embedded artifact.Service in tests), and this must never be the
+// reason a round fails to save.
+func backfillCodeReviewSummary(ctx context.Context, c *recordstore.Client, cfg Config, nodeID, turnID string, round int, answer string, st *episodicRoundState) {
+	defer func() { recover() }()
+	id, idErr := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID))
+	if idErr != nil {
+		return
+	}
+	raw, _, _, rev, ok, err := c.LatestWithMeta(ctx, id)
+	if err != nil || !ok {
+		return
+	}
+	st.reviewRev = rev
+	var rec CodeReviewRecord
+	if json.Unmarshal(raw, &rec) != nil || strings.TrimSpace(rec.Summary) != "" {
+		return
+	}
+	var findings []FindingRecord
+	for _, fid := range rec.FindingIDs {
+		fraw, _, fok, ferr := c.Latest(ctx, fid)
+		if ferr != nil || !fok {
+			continue
+		}
+		var f FindingRecord
+		if json.Unmarshal(fraw, &f) == nil {
+			findings = append(findings, f)
+		}
+	}
+	rec.Summary = codeReviewSummaryFallback(answer, findings, rec.Verdict)
+	lineage := recordstore.Lineage{NodeID: nodeID, Round: round, ParentRevision: rev, TriggerAnnotation: st.triggerAnnotation, HeadSHA: cfg.NodeBaseSHA, SavedAt: time.Now().UTC(), Author: "gate", TurnID: turnID}
+	_, rev2, err := c.SaveStructured(ctx, kindCodeReview, rec, SubjectHint(cfg.ChatID), lineage)
+	if err != nil {
+		slog.Warn("code_review summary backfill save failed", "component", "vetting", "node", nodeID, "err", err)
+		return
+	}
+	st.reviewRev = rev2
+	st.roundWrites = append(st.roundWrites, ScoredRef{ArtifactID: id, Revision: rev2})
 }
 
 func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, answer string, staged StagedDelivery, st *episodicRoundState) {
@@ -791,9 +887,7 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 	// was written via write_code_review this round. Runs after the seed loop
 	// above so the drained finding ids are never discarded (#1108 B3).
 	if toolWroteCodeReview {
-		if rev, ok := latestCodeReviewRevSafe(ctx, c, cfg); ok {
-			st.reviewRev = rev
-		}
+		backfillCodeReviewSummary(ctx, c, cfg, nodeID, turnID, round, answer, st)
 		return
 	}
 
@@ -837,7 +931,7 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 	for _, d := range dismissedComments {
 		dismissed = append(dismissed, DismissedEntry{Path: d.Path, Line: d.Line, Note: d.Body})
 	}
-	reviewRec := CodeReviewRecord{Verdict: event, FindingIDs: findingIDs, Dismissed: dismissed, Clean: clean}
+	reviewRec := CodeReviewRecord{Verdict: event, Summary: reviewSummary(answer, staged), FindingIDs: findingIDs, Dismissed: dismissed, Clean: clean}
 	lineage := recordstore.Lineage{NodeID: nodeID, Round: round, ParentRevision: st.reviewRev, TriggerAnnotation: st.triggerAnnotation, HeadSHA: cfg.NodeBaseSHA, SavedAt: savedAt, Author: "gate", TurnID: turnID}
 	_, rev, err := c.SaveStructured(ctx, kindCodeReview, reviewRec, SubjectHint(cfg.ChatID), lineage)
 	if err != nil {

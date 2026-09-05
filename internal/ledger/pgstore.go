@@ -1,30 +1,28 @@
 package ledger
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"io/fs"
 	"log/slog"
 	"time"
 
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+
+	"github.com/fagerbergj/quack/internal/pgdial"
 )
 
-// pgEntry is the GORM row for one ledger entry - the Postgres LedgerStore's
-// on-disk shape for the V4 §4.8 WAL envelope. Payload is jsonb so
-// ReadEntries and the OTel exporter's raw lines (kind "otel") round-trip
-// arbitrary JSON without a schema per kind.
+// pgEntry is the GORM row for one ledger Entry. Payload is jsonb so every
+// kind round-trips arbitrary JSON without a schema per kind.
 type pgEntry struct {
 	ID      uint      `gorm:"primaryKey;autoIncrement"`
 	ChatID  string    `gorm:"column:chat_id;index:idx_ledger_chat_seq,unique,priority:1;index:idx_ledger_chat_key,priority:1"`
 	Seq     int64     `gorm:"column:seq;index:idx_ledger_chat_seq,unique,priority:2"`
 	TurnID  string    `gorm:"column:turn_id"`
 	NodeID  string    `gorm:"column:node_id"`
+	Agent   string    `gorm:"column:agent"`
+	Round   string    `gorm:"column:round"`
 	Kind    string    `gorm:"column:kind"`
 	Key     string    `gorm:"column:key;index:idx_ledger_chat_key,priority:2"`
 	At      time.Time `gorm:"column:at"`
@@ -32,10 +30,6 @@ type pgEntry struct {
 }
 
 func (pgEntry) TableName() string { return "ledger_entries" }
-
-// otelEntryKind marks a row written through the plain Append path (the OTel
-// exporter's raw lines), as opposed to a typed AppendIntent entry.
-const otelEntryKind = "otel"
 
 // pgSeqCounter holds the next seq to allocate for one chat. See nextSeq for
 // why a single UPSERT on this row is enough to make allocation race-free.
@@ -49,15 +43,10 @@ func (pgSeqCounter) TableName() string { return "ledger_seq_counters" }
 // PGStore is the Postgres LedgerStore adapter (V4 §4.8): the WAL backend,
 // meant to run against the same database as internal/store. It is the only
 // adapter with a real transactional, gapless per-chat seq (see nextSeq);
-// List/Delete operate at the chat (session) grain like FSStore.
+// List/Delete operate at the chat grain.
 type PGStore struct {
 	db *gorm.DB
 }
-
-var (
-	_ LedgerStore = (*PGStore)(nil)
-	_ LedgerStore = (*FSStore)(nil)
-)
 
 // NewPGStore migrates the ledger's own tables on db and returns a store
 // backed by it. db is expected to already point at the app's Postgres
@@ -72,13 +61,19 @@ func NewPGStore(db *gorm.DB) (*PGStore, error) {
 
 // NewPGStoreFromURL opens its own Postgres connection at url, mirroring
 // internal/store.NewArtifactService - the ledger store is meant to point at
-// the same database, but is wired independently of internal/store.
+// the same database, but is wired independently of internal/store. Uses
+// pgdial.Open so this dialector gets the same dial retry as every other one
+// (#1200 review: this was a fourth postgres dialector missed by the first pass).
 func NewPGStoreFromURL(url string) (*PGStore, error) {
 	gormCfg := &gorm.Config{Logger: logger.New(
 		slog.NewLogLogger(slog.Default().Handler(), slog.LevelWarn),
 		logger.Config{SlowThreshold: 200 * time.Millisecond, LogLevel: logger.Warn, IgnoreRecordNotFoundError: true},
 	)}
-	db, err := gorm.Open(postgres.Open(url), gormCfg)
+	dialector, err := pgdial.Open(url)
+	if err != nil {
+		return nil, fmt.Errorf("ledger: parse postgres url: %w", err)
+	}
+	db, err := gorm.Open(dialector, gormCfg)
 	if err != nil {
 		return nil, fmt.Errorf("ledger: open postgres store: %w", err)
 	}
@@ -125,19 +120,6 @@ func (s *PGStore) appendRow(ctx context.Context, row pgEntry) (int64, error) {
 	return seq, nil
 }
 
-// Append stores entry (the OTel exporter's raw JSON line) as kind "otel" -
-// the same gapless seq path as AppendIntent, so both kinds of writer share
-// one ordering per chat.
-func (s *PGStore) Append(ctx context.Context, sessionID string, entry []byte) error {
-	_, err := s.appendRow(ctx, pgEntry{
-		ChatID:  sessionID,
-		Kind:    otelEntryKind,
-		At:      time.Now().UTC(),
-		Payload: string(entry),
-	})
-	return err
-}
-
 // AppendIntent is the fail-closed WAL path: a non-nil error means no row
 // was written, so the caller must not perform the state change either.
 func (s *PGStore) AppendIntent(ctx context.Context, e Entry) (int64, error) {
@@ -152,13 +134,12 @@ func (s *PGStore) AppendIntent(ctx context.Context, e Entry) (int64, error) {
 		payload = json.RawMessage("null")
 	}
 	return s.appendRow(ctx, pgEntry{
-		ChatID: e.ChatID, TurnID: e.TurnID, NodeID: e.NodeID,
+		ChatID: e.ChatID, TurnID: e.TurnID, NodeID: e.NodeID, Agent: e.Agent, Round: e.Round,
 		Kind: e.Kind, Key: e.Key, At: e.At, Payload: string(payload),
 	})
 }
 
-// ReadEntries returns every row for chatID (both Append and AppendIntent
-// writers share the same table) with Seq >= fromSeq, in seq order.
+// ReadEntries returns every row for chatID with Seq >= fromSeq, in seq order.
 func (s *PGStore) ReadEntries(ctx context.Context, chatID string, fromSeq int64) ([]Entry, error) {
 	var rows []pgEntry
 	if err := s.db.WithContext(ctx).
@@ -173,7 +154,7 @@ func (s *PGStore) ReadEntries(ctx context.Context, chatID string, fromSeq int64)
 // (via internal/ledger/fold.LastRevision) needs only one id's entries, and
 // the (chat_id, key) index (idx_ledger_chat_key) makes that a server-side
 // filter instead of a full per-chat scan. Optional on LedgerStore - a store
-// without it (FSStore) is scanned and filtered in memory by the fold.
+// without it is scanned and filtered in memory by the fold.
 func (s *PGStore) ReadEntriesByKey(ctx context.Context, chatID, key string, fromSeq int64) ([]Entry, error) {
 	var rows []pgEntry
 	if err := s.db.WithContext(ctx).
@@ -186,8 +167,8 @@ func (s *PGStore) ReadEntriesByKey(ctx context.Context, chatID, key string, from
 
 // ReadEntriesPage is #1101's paging optimization: fold.Fold pages through a
 // big chat page-by-page instead of loading it in one slice (ReadEntries's
-// contract). Optional on LedgerStore - a store without it (FSStore) is read
-// in one ReadEntries call, since it already holds its whole JSONL in memory.
+// contract). Optional on LedgerStore - a store without it is read in one
+// ReadEntries call.
 func (s *PGStore) ReadEntriesPage(ctx context.Context, chatID string, fromSeq int64, limit int) ([]Entry, error) {
 	var rows []pgEntry
 	if err := s.db.WithContext(ctx).
@@ -202,41 +183,14 @@ func pgRowsToEntries(rows []pgEntry) []Entry {
 	out := make([]Entry, len(rows))
 	for i, r := range rows {
 		out[i] = Entry{
-			Seq: r.Seq, ChatID: r.ChatID, TurnID: r.TurnID, NodeID: r.NodeID,
+			Seq: r.Seq, ChatID: r.ChatID, TurnID: r.TurnID, NodeID: r.NodeID, Agent: r.Agent, Round: r.Round,
 			Kind: r.Kind, Key: r.Key, At: r.At, Payload: json.RawMessage(r.Payload),
 		}
 	}
 	return out
 }
 
-// ReadStream reproduces the JSONL shape FSStore.ReadStream returns: every
-// row's payload, one per line, in seq (append) order - so the OTel
-// exporter's bundle/export path (internal/ledger.AssembleBundle) is
-// unchanged by which LedgerStore backs it.
-func (s *PGStore) ReadStream(ctx context.Context, sessionID string) (io.ReadCloser, error) {
-	var rows []pgEntry
-	if err := s.db.WithContext(ctx).
-		Where("chat_id = ?", sessionID).
-		Order("seq asc").Find(&rows).Error; err != nil {
-		return nil, fmt.Errorf("ledger: read stream for chat %q: %w", sessionID, err)
-	}
-	if len(rows) == 0 {
-		// Match FSStore: a chat with no recording (never ran, GC'd, or
-		// recording was off) is fs.ErrNotExist, not an empty stream - the
-		// GetChatRecording handler's 404 depends on errors.Is matching.
-		return nil, fmt.Errorf("ledger: no recording for chat %q: %w", sessionID, fs.ErrNotExist)
-	}
-	var buf bytes.Buffer
-	for _, r := range rows {
-		buf.WriteString(r.Payload)
-		buf.WriteByte('\n')
-	}
-	return io.NopCloser(&buf), nil
-}
-
-// List returns one SessionRef per distinct chat_id. Size counts rows, not
-// bytes - the FSStore notion of "file size" has no Postgres equivalent, and
-// row count serves the same "how big is this session" purpose in practice.
+// List returns one SessionRef per distinct chat_id; Size counts rows.
 func (s *PGStore) List(ctx context.Context) ([]SessionRef, error) {
 	var aggs []struct {
 		ChatID string

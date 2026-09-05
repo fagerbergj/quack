@@ -1,19 +1,19 @@
-// TUI-free logic behind `quack ledger show`/`rebuild` (V4 §4.9/#1101). There
-// is no REST surface for raw ledger entries or a rebuild trigger (that's a
-// later API step, and internal/server/rest's artifact endpoints are another
-// change in flight) - both commands run server-side, against the SAME
-// stores a local `quack.yaml` would boot `quack serve` against (see
-// cmd/quack/ledger.go, mirroring how `quack replay` builds an in-process
-// server from local config instead of talking to a running one).
+// TUI-free logic behind `quack ledger`. show/rebuild/recover run against the
+// SAME stores a local `quack.yaml` would boot `quack serve` against (see
+// cmd/quack/ledger.go); list/export talk to a running server's REST API.
 package cli
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"os"
 	"reflect"
 	"sort"
+	"text/tabwriter"
 	"time"
 
 	"google.golang.org/adk/v2/artifact"
@@ -21,6 +21,7 @@ import (
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledger/fold"
+	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/store"
 )
@@ -248,15 +249,12 @@ type DeliveryContext struct {
 
 // DeliveryRecoverer looks an idempotency key up at the delivery target (a
 // hidden marker in a GitHub review body, a reMarkable document id) and
-// reports whether it was already posted. This is a LOCAL copy of the
-// interface an extension implements (github's App.RecoverDelivery, in
-// quack-extensions) - not an import, since core is pinned to sdk v0.8.0 on
-// origin/main, which predates this capability. Structurally identical to
-// sdk.DeliveryRecoverer's 3-arg/DeliveryItemOutcome signature - mirrors the
-// planned v0.9.0 signature; replaced wholesale when the bump lands. Delete
-// this and import sdk.DeliveryRecoverer directly once quack's
-// go.mod bumps to the sdk/github v0.9.0 release that adds it (#1093
-// deploy-order note; see PR body for the exact pin steps).
+// reports whether it was already posted. This is a LOCAL copy of
+// sdk.DeliveryRecoverer's shape - cli doesn't import quack-extensions/sdk
+// directly (that dependency stays in internal/serve, which already adapts
+// the SDK boundary elsewhere); internal/serve.sdkRecoverAdapter bridges the
+// real extension's sdk.DeliveryRecoverer to this interface for
+// `quack ledger recover`.
 type DeliveryRecoverer interface {
 	RecoverDelivery(ctx context.Context, key string, dc DeliveryContext) (found bool, outcome DeliveryItemOutcome, err error)
 }
@@ -315,33 +313,73 @@ func findOrphanedDeliveryIntents(ctx context.Context, ls ledger.LedgerStore, cha
 	return out, nil
 }
 
-// LedgerRecoverReport is `quack ledger recover`'s result.
-type LedgerRecoverReport struct {
-	ChatID     string             `json:"chat_id"`
-	Confirmed  []OrphanedDelivery `json:"confirmed"`            // delivery.done appended; extension already had it
-	Redone     []OrphanedDelivery `json:"redone"`               // redoFunc called; nothing was there
-	Unresolved []OrphanedDelivery `json:"unresolved,omitempty"` // no recoverer/redoFunc available to check
+// OrphanedRevision is one artifact.revision intent whose store row never
+// materialized (a crash between the WAL append and the row write).
+type OrphanedRevision struct {
+	ID       string `json:"id"`
+	Revision int    `json:"revision"`
+	NodeID   string `json:"node_id"`
+	TurnID   string `json:"turn_id"`
+	Seq      int64  `json:"seq"`
 }
 
-// RunLedgerRecover reconciles chatID's orphaned delivery.intent entries
-// (#1093 case 13): for each, ask recoverer whether the target already saw
-// this key posted (a crash after Deliver but before delivery.done landed).
-// If found, delivery.done is appended and redoFunc is never called - the
-// extension is never asked to post twice. If not found (a crash BEFORE
-// Deliver reached the extension), redoFunc runs the same delivery path
-// again. recoverer/redoFunc nil means that check/action isn't wired for this
-// caller (e.g. no extension implements it yet) - such intents are reported
-// Unresolved rather than guessed at.
-func RunLedgerRecover(ctx context.Context, ls ledger.LedgerStore, chatID string, recoverer DeliveryRecoverer, redoFunc func(ctx context.Context, o OrphanedDelivery) error) (*LedgerRecoverReport, error) {
+// Projections is what Recover checks each intent against. A nil member
+// skips that intent family (its orphans are reported, never touched).
+type Projections struct {
+	// ArtifactRowExists reports whether id@revision has a store row.
+	ArtifactRowExists func(ctx context.Context, chatID, id string, revision int) (bool, error)
+	Delivery          DeliveryRecoverer
+	Redo              func(ctx context.Context, o OrphanedDelivery) error
+}
+
+// ArtifactRowChecker adapts the artifact store to Projections.ArtifactRowExists.
+func ArtifactRowChecker(st *store.Store, artifacts *store.TurnAwareService) func(context.Context, string, string, int) (bool, error) {
+	return func(ctx context.Context, chatID, id string, revision int) (bool, error) {
+		return artifacts.RevisionExists(ctx, artifactref.AppName, st.SessionUserForChat(ctx, chatID), chatID, id, int64(revision))
+	}
+}
+
+// LedgerRecoverReport is one chat's recovery result.
+type LedgerRecoverReport struct {
+	ChatID     string             `json:"chat_id"`
+	DryRun     bool               `json:"dry_run,omitempty"`
+	Confirmed  []OrphanedDelivery `json:"confirmed"`            // delivery.done appended; extension already had it
+	Redone     []OrphanedDelivery `json:"redone"`               // Redo called; nothing was there
+	Unresolved []OrphanedDelivery `json:"unresolved,omitempty"` // no recoverer/Redo available to check, or dry-run
+	// Aborted: artifact.revision intents with no row, now (or under
+	// --dry-run, would be) marked artifact.revision.aborted so the next save
+	// builds on the real parent revision.
+	Aborted []OrphanedRevision `json:"aborted,omitempty"`
+	Errors  []string           `json:"errors,omitempty"`
+}
+
+// unresolved counts the intents this pass could not settle - the
+// quack_ledger_unresolved_intents gauge's per-chat contribution.
+func (r *LedgerRecoverReport) unresolved() int {
+	n := len(r.Unresolved) + len(r.Errors)
+	if r.DryRun {
+		n += len(r.Aborted)
+	}
+	return n
+}
+
+// RunLedgerRecover reconciles one chat's intents whose projection write is
+// missing. Delivery (#1093 case 13): for each delivery.intent with no
+// delivery.done, ask p.Delivery whether the target already saw the key; if
+// so append delivery.done, else run p.Redo. Artifacts: each live
+// artifact.revision with no store row gets an artifact.revision.aborted
+// marker. Idempotent: a settled intent no longer shows up as an orphan.
+// dryRun reports without calling anything or writing.
+func RunLedgerRecover(ctx context.Context, ls ledger.LedgerStore, chatID string, p Projections, dryRun bool) (*LedgerRecoverReport, error) {
 	orphans, err := findOrphanedDeliveryIntents(ctx, ls, chatID)
 	if err != nil {
 		return nil, err
 	}
-	report := &LedgerRecoverReport{ChatID: chatID}
+	report := &LedgerRecoverReport{ChatID: chatID, DryRun: dryRun}
 	for _, o := range orphans {
-		if recoverer != nil {
+		if !dryRun && p.Delivery != nil {
 			dc := DeliveryContext{CloneURL: o.CloneURL, IssueNumber: o.IssueNumber}
-			found, outcome, rerr := recoverer.RecoverDelivery(ctx, o.Key, dc)
+			found, outcome, rerr := p.Delivery.RecoverDelivery(ctx, o.Key, dc)
 			if rerr != nil {
 				report.Unresolved = append(report.Unresolved, o)
 				continue
@@ -357,8 +395,8 @@ func RunLedgerRecover(ctx context.Context, ls ledger.LedgerStore, chatID string,
 				continue
 			}
 		}
-		if redoFunc != nil {
-			if rerr := redoFunc(ctx, o); rerr != nil {
+		if !dryRun && p.Redo != nil {
+			if rerr := p.Redo(ctx, o); rerr != nil {
 				report.Unresolved = append(report.Unresolved, o)
 				continue
 			}
@@ -367,15 +405,177 @@ func RunLedgerRecover(ctx context.Context, ls ledger.LedgerStore, chatID string,
 		}
 		report.Unresolved = append(report.Unresolved, o)
 	}
+	if p.ArtifactRowExists == nil {
+		return report, nil
+	}
+	res, err := fold.Fold(ctx, ls, chatID, 0)
+	if err != nil {
+		return nil, fmt.Errorf("ledger recover: fold chat %q: %w", chatID, err)
+	}
+	ids := make([]string, 0, len(res.Artifacts))
+	for id := range res.Artifacts {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		for _, rev := range res.Artifacts[id].Revisions {
+			exists, cerr := p.ArtifactRowExists(ctx, chatID, id, rev.Revision)
+			if cerr != nil {
+				report.Errors = append(report.Errors, fmt.Sprintf("%s@%d: %v", id, rev.Revision, cerr))
+				continue
+			}
+			if exists {
+				continue
+			}
+			o := OrphanedRevision{ID: id, Revision: rev.Revision, NodeID: rev.NodeID, TurnID: rev.TurnID, Seq: rev.Seq}
+			report.Aborted = append(report.Aborted, o)
+			if dryRun {
+				continue
+			}
+			payload, _ := json.Marshal(struct {
+				Revision int    `json:"revision"`
+				Reason   string `json:"reason"`
+			}{Revision: rev.Revision, Reason: "recovery: no store row for this revision"})
+			if _, aerr := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, TurnID: rev.TurnID, NodeID: rev.NodeID,
+				Kind: ledger.KindArtifactRevisionAborted, Key: id, Payload: payload}); aerr != nil {
+				return nil, fmt.Errorf("ledger recover: append artifact.revision.aborted for %s@%d: %w", id, rev.Revision, aerr)
+			}
+		}
+	}
 	return report, nil
+}
+
+// RecoverSummary is Recover's whole-ledger result.
+type RecoverSummary struct {
+	Chats      int                    `json:"chats"`
+	Unresolved int                    `json:"unresolved"`
+	Reports    []*LedgerRecoverReport `json:"reports"`
+}
+
+// Recover runs RunLedgerRecover over every chat in ls (or only chatIDs when
+// given), publishes quack_ledger_unresolved_intents and logs a summary. It
+// runs at server boot; `quack ledger recover` is the same call with dryRun.
+// ponytail: folds every chat from seq 0 on each boot; P3's projection
+// watermarks turn this into an incremental scan.
+func Recover(ctx context.Context, ls ledger.LedgerStore, chatIDs []string, p Projections, dryRun bool) (*RecoverSummary, error) {
+	if len(chatIDs) == 0 {
+		refs, err := ls.List(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("ledger recover: list chats: %w", err)
+		}
+		for _, r := range refs {
+			chatIDs = append(chatIDs, r.ID)
+		}
+	}
+	sum := &RecoverSummary{Chats: len(chatIDs)}
+	for _, id := range chatIDs {
+		report, err := RunLedgerRecover(ctx, ls, id, p, dryRun)
+		if err != nil {
+			return nil, err
+		}
+		if len(report.Confirmed)+len(report.Redone)+len(report.Unresolved)+len(report.Aborted)+len(report.Errors) == 0 {
+			continue
+		}
+		sum.Reports = append(sum.Reports, report)
+		sum.Unresolved += report.unresolved()
+	}
+	otelobs.SetLedgerUnresolvedIntents(int64(sum.Unresolved))
+	slog.Info("ledger recovery", "component", "ledger", "dry_run", dryRun, "chats", sum.Chats, "chats_with_orphans", len(sum.Reports), "unresolved", sum.Unresolved)
+	return sum, nil
 }
 
 // FormatLedgerRecoverReport renders report as the human-readable summary `recover` prints.
 func FormatLedgerRecoverReport(r *LedgerRecoverReport) string {
-	s := fmt.Sprintf("chat %s: %d confirmed already-delivered, %d redelivered, %d unresolved\n",
-		r.ChatID, len(r.Confirmed), len(r.Redone), len(r.Unresolved))
+	verb := "aborted"
+	if r.DryRun {
+		verb = "would abort"
+	}
+	s := fmt.Sprintf("chat %s: %d confirmed already-delivered, %d redelivered, %d unresolved, %d row-less revision(s) %s\n",
+		r.ChatID, len(r.Confirmed), len(r.Redone), len(r.Unresolved), len(r.Aborted), verb)
 	for _, o := range r.Unresolved {
 		s += fmt.Sprintf("  unresolved: key=%s target=%s rev=%d node=%s seq=%d\n", o.Key, o.TargetID, o.Revision, o.NodeID, o.Seq)
 	}
+	for _, o := range r.Aborted {
+		s += fmt.Sprintf("  %s: %s@%d node=%s seq=%d\n", verb, o.ID, o.Revision, o.NodeID, o.Seq)
+	}
+	for _, e := range r.Errors {
+		s += "  error: " + e + "\n"
+	}
 	return s
+}
+
+// FormatRecoverSummary renders every chat that had something to recover.
+func FormatRecoverSummary(sum *RecoverSummary) string {
+	s := fmt.Sprintf("%d chat(s) scanned, %d with orphaned intents, %d unresolved\n", sum.Chats, len(sum.Reports), sum.Unresolved)
+	for _, r := range sum.Reports {
+		s += FormatLedgerRecoverReport(r)
+	}
+	return s
+}
+
+// RunLedgerList is `quack ledger list`: chats the server's ledger has
+// observation entries for (id, entry count, last activity), or raw JSON.
+func RunLedgerList(ctx context.Context, out io.Writer, server string, asJSON bool) error {
+	c, err := NewClient(ctx, server)
+	if err != nil {
+		return err
+	}
+	recs, err := c.ListRecordings(ctx)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return fmt.Errorf("no ledger store is configured on this server")
+		}
+		return err
+	}
+	if asJSON {
+		return writeJSON(out, recs)
+	}
+	if len(recs) == 0 {
+		fmt.Fprintln(out, "No recordings yet.")
+		return nil
+	}
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "CHAT ID\tENTRIES\tMODIFIED")
+	for _, r := range recs {
+		fmt.Fprintf(tw, "%s\t%d\t%s\n", r.ChatId, r.SizeBytes, r.ModifiedAt.Local().Format("2006-01-02 15:04"))
+	}
+	return tw.Flush()
+}
+
+// RunLedgerExport is `quack ledger export <chat-id> [-o file]`: downloads
+// the chat's recording bundle to outFile (default "<chat-id>.zip").
+func RunLedgerExport(ctx context.Context, out io.Writer, server, chatID, outFile string) error {
+	c, err := NewClient(ctx, server)
+	if err != nil {
+		return err
+	}
+	if outFile == "" {
+		outFile = chatID + ".zip"
+	}
+	body, err := c.FetchRecording(ctx, chatID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return fmt.Errorf("no recording for chat %s (never recorded, hard-deleted, or recording.observations off)", chatID)
+		}
+		return err
+	}
+	if err := os.WriteFile(outFile, body, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", outFile, err)
+	}
+	fmt.Fprintln(out, outFile)
+	return nil
+}
+
+// humanSize renders n bytes as a short human-readable size (B/KB/MB/GB).
+func humanSize(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%dB", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f%cB", float64(n)/float64(div), "KMGTPE"[exp])
 }

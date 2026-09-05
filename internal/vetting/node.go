@@ -1021,8 +1021,12 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	// node in the plan has finished.
 	if cfg.ReviewFanout != nil && !cfg.IsReviewer {
 		// Synthesizer node (#965): its answer is the plan's consolidated
-		// review - hand it to the fan-in, which delivers exactly once.
-		merged, deliverNow := cfg.ReviewFanout.FinishSynthesis(act.answer)
+		// review - hand it to the fan-in, which delivers exactly once. The
+		// structured code_review verdict (#1184) is read here rather than
+		// parsed from act.answer, since a native write_code_review leaves no
+		// VERDICT tail in the answer text.
+		verdict, _ := LatestCodeReviewVerdict(ctx, cfg)
+		merged, deliverNow := cfg.ReviewFanout.FinishSynthesis(act.answer, verdict)
 		if deliverNow {
 			deliverMergedReview(ctx, sink, cfg, nodeID, merged)
 		}
@@ -1103,6 +1107,23 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	}
 	// Mermaid validity is checked by mermaidCriterion before this point.
 
+	// #1198 part C: a review with comments/findings but no verdict is not a
+	// reviewed PR - drop just that item (loud refusal), same per-item shape
+	// as the allowed-kinds check below, so a sibling pr/comment item in the
+	// same delivery still ships.
+	if verdictless, rest := partitionEmptyVerdictReview(dc.Items); len(verdictless) > 0 {
+		for _, item := range verdictless {
+			slog.Error("delivery refused: staged review has no verdict", "component", "vetting", "node", nodeID)
+			emitDeliveryResult(sink, nodeID, stream.DeliveryResult(nodeID, stream.DeliveryOutcomeFailed,
+				item.Kind, "", "you staged comments but no verdict - call stage_review with an event (approve/request_changes/comment) before this round ends", traceID))
+		}
+		dc.Items = rest
+		if len(dc.Items) == 0 {
+			recordDeliveryOutcomeMetric(cfg, res, true, false)
+			return
+		}
+	}
+
 	// Permission boundary: drop ungranted items before they reach cfg.Deliver. Refusals are loud, never silent.
 	if allowed, refused, reasons := partitionByAllowedKinds(dc.Items, cfg.AllowedDeliveryKinds); len(refused) > 0 {
 		for i, item := range refused {
@@ -1173,6 +1194,16 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	otelobs.End(span, err)
 
 	if hasTarget {
+		// #1187: the GitHub side effect already happened by this point, so the
+		// bookkeeping below must survive a run-level cancel (shutdown drain,
+		// hub.CancelRun) landing between Deliver returning and here - it runs
+		// on a context detached from ctx's cancellation, with its own budget.
+		if ctx.Err() != nil {
+			slog.Warn("run context cancelled before post-delivery bookkeeping; continuing on a detached context",
+				"component", "vetting", "node", nodeID, "err", ctx.Err(), "cause", context.Cause(ctx))
+		}
+		bctx, bcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer bcancel()
 		if err == nil {
 			var remoteURL string
 			for _, io := range itemOutcomes {
@@ -1181,15 +1212,15 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 					break
 				}
 			}
-			appendDeliveryDone(cctx, cfg, nodeID, idemKey, remoteURL)
-			saveDeliveryRecord(cctx, cfg, nodeID, DeliveryRecord{
+			appendDeliveryDone(bctx, cfg, nodeID, idemKey, remoteURL)
+			saveDeliveryRecord(bctx, cfg, nodeID, DeliveryRecord{
 				TargetID: targetID, DeliveredRevision: targetRev, RemoteURL: remoteURL, PRNumber: dc.IssueNumber, At: time.Now().UTC(),
 				GatePassed: res.Passed, RenderedFromStaged: renderedFromStaged,
 			})
 		} else {
 			// No appendDeliveryDone: the WAL entry stays open so `quack ledger
 			// recover` can reconcile this attempt instead of treating it as done.
-			saveDeliveryRecord(cctx, cfg, nodeID, DeliveryRecord{
+			saveDeliveryRecord(bctx, cfg, nodeID, DeliveryRecord{
 				TargetID: targetID, DeliveredRevision: targetRev, PRNumber: dc.IssueNumber, At: time.Now().UTC(),
 				GatePassed: res.Passed, RenderedFromStaged: renderedFromStaged, Error: err.Error(),
 			})
@@ -1290,7 +1321,7 @@ func resolveAbortedReviewer(ctx context.Context, sink func(stream.SSEEvent), cfg
 		merged, deliverNow = cfg.ReviewFanout.Finish(nodeID, item, hasItem, !hasItem)
 	} else {
 		// Empty answer falls the merge back to per-node concatenation (#965).
-		merged, deliverNow = cfg.ReviewFanout.FinishSynthesis("")
+		merged, deliverNow = cfg.ReviewFanout.FinishSynthesis("", "")
 	}
 	if deliverNow {
 		deliverMergedReview(ctx, sink, cfg, nodeID, merged)
@@ -1309,6 +1340,22 @@ func partitionByAllowedKinds(items []StagedDelivery, allowedKinds []string) (all
 		}
 	}
 	return allowed, refused, reasons
+}
+
+// partitionEmptyVerdictReview splits staged items, dropping a "review" item
+// whose Event is empty (#1198 part C) - GitHub has no "no verdict" review,
+// and posting one anyway is the markers-only bug. Per-item, like
+// partitionByAllowedKinds: a sibling pr/comment item in the same delivery
+// still ships.
+func partitionEmptyVerdictReview(items []StagedDelivery) (verdictless, rest []StagedDelivery) {
+	for _, item := range items {
+		if item.Kind == "review" && strings.TrimSpace(item.Event) == "" {
+			verdictless = append(verdictless, item)
+		} else {
+			rest = append(rest, item)
+		}
+	}
+	return verdictless, rest
 }
 
 // emitDeliveryResult: sends delivery_result SSE event (SSE-only, never written to session).

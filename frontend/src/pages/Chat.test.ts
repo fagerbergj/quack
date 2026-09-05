@@ -231,6 +231,15 @@ describe('EditableChatTitle', () => {
     act(() => { host!.querySelector('h1')!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
     expect(host!.querySelector('input')).toBeNull()
   })
+
+  // #1136: below the 600px medium size class the title gets two lines before
+  // ellipsis, instead of single-line truncate clipping it to a few chars.
+  it('allows two lines below 600px, single-line truncate at/above it', () => {
+    renderTitle({ title: 'A very long chat title that would otherwise truncate', editable: false, onRename: vi.fn() })
+    const span = host!.querySelector('h1 span')!
+    expect(span.className).toContain('line-clamp-2')
+    expect(span.className).toContain('medium:truncate')
+  })
 })
 
 // #736 follow-up: the 5s sidebar poll must never shorten the chat list. A

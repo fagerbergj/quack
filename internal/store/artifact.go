@@ -14,8 +14,9 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/genai"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+
+	"github.com/fagerbergj/quack/internal/pgdial"
 )
 
 // Artifact is the durable metadata record for one artifact revision.
@@ -114,8 +115,12 @@ func NewLargeObjectArtifactService(db *gorm.DB) (artifact.Service, error) {
 // returns the large-object-backed artifact.Service - durable across
 // restarts. url must be a postgres DSN (config.validate enforces this).
 func NewArtifactService(url string) (artifact.Service, error) {
+	dialector, err := pgdial.Open(url)
+	if err != nil {
+		return nil, fmt.Errorf("store: parse artifact store url: %w", err)
+	}
 	gormCfg := &gorm.Config{Logger: slogGormLogger(), TranslateError: true}
-	db, err := gorm.Open(postgres.Open(url), gormCfg)
+	db, err := gorm.Open(dialector, gormCfg)
 	if err != nil {
 		return nil, fmt.Errorf("store: open artifact store: %w", err)
 	}
@@ -440,6 +445,22 @@ func (s *gormArtifactService) Load(ctx context.Context, req *artifact.LoadReques
 		return nil, fmt.Errorf("store: load artifact blob: %w", err)
 	}
 	return &artifact.LoadResponse{Part: genai.NewPartFromBytes(data, a.MimeType)}, nil
+}
+
+// RevisionExists reports whether name@revision has a row - the artifact
+// projection check ledger recovery runs for each artifact.revision intent.
+func (w *TurnAwareService) RevisionExists(ctx context.Context, appName, userID, sessionID, name string, revision int64) (bool, error) {
+	req := &artifact.LoadRequest{AppName: appName, UserID: userID, SessionID: sessionID, FileName: name, Version: revision}
+	var err error
+	if ml, ok := w.Service.(metaLoader); ok {
+		_, _, _, err = ml.loadMeta(ctx, req) // row lookup only; recovery must not pull every blob at boot
+	} else {
+		_, err = w.Service.Load(ctx, req)
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // loadMeta backs TurnAwareService.LoadWithMeta: same lookup as Load, minus

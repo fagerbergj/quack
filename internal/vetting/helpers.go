@@ -5,6 +5,7 @@ import (
 	"iter"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -68,12 +69,9 @@ type Config struct {
 	// have an ACP session/AdvisorToken to poll) get restamped by the gate that
 	// actually knows the current round, without vetting importing tools (#1123).
 	RoundCoordsSink func(round int, turnID, headSHA, triggerAnnotation string)
-	// Ledger: the WAL's fail-closed AppendIntent path (#1090 §4.9/#1100). Wired
-	// ONLY when observability.recording is enabled AND its store resolves to
-	// kind "postgres" - the filesystem ledger's AppendIntent is best-effort,
-	// non-transactional (see FSStore.AppendIntent), so it cannot back a
-	// fail-closed write and is never set here. nil = no WAL, recordstore and
-	// the gate behave exactly as before #1100.
+	// Ledger: the WAL's fail-closed AppendIntent path. nil = no WAL (no
+	// recording.store configured); recordstore and the gate then write
+	// projections directly.
 	Ledger ledger.LedgerStore
 	// Artifact: episodic record name this node writes on gate pass ("body" or
 	// "" for none). "review" is written for IsReviewer nodes regardless of
@@ -98,8 +96,11 @@ type Config struct {
 	Workspace          *workspace.Jail // nil + non-empty Checks fails closed
 	WorkspaceUserID    string
 	WorkspaceCaps      workspace.Caps
-	Deliver            DeliverFunc         // posts staged delivery set; nil = disabled
-	GitCredentials     GitCredentialSource // resolves the gate-owned push credential; nil = push disabled
+	// CheckTimeout overrides WorkspaceCaps.Timeout for gate check commands only
+	// (they run a full test suite, not a single tool call); 0 = use WorkspaceCaps.Timeout.
+	CheckTimeout   time.Duration
+	Deliver        DeliverFunc         // posts staged delivery set; nil = disabled
+	GitCredentials GitCredentialSource // resolves the gate-owned push credential; nil = push disabled
 	// AllowedDeliveryKinds: nil = unrestricted (no trigger governs this run);
 	// non-nil (including empty) restricts staged delivery to exactly these kinds.
 	AllowedDeliveryKinds []string

@@ -2,6 +2,7 @@ package replay
 
 import (
 	"archive/zip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,8 +12,50 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	otellog "go.opentelemetry.io/otel/log"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
+
 	"github.com/fagerbergj/quack/internal/ledger"
 )
+
+// toEntries pushes hand-built attribute maps through the real Exporter, so
+// these fixtures are shaped exactly as production records them.
+func toEntries(t *testing.T, entries []entry) []ledger.Entry {
+	t.Helper()
+	store := ledger.NewMemStore()
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(ledger.NewExporter(store))))
+	lg := lp.Logger("test")
+	for _, e := range entries {
+		var rec otellog.Record
+		rec.SetTimestamp(e.ts)
+		rec.AddAttributes(attribute.String("gen_ai.conversation.id", "chat-1"))
+		for k, v := range e.attrs {
+			switch x := v.(type) {
+			case string:
+				rec.AddAttributes(attribute.String(k, x))
+			case float64:
+				rec.AddAttributes(attribute.Float64(k, x))
+			case int:
+				rec.AddAttributes(attribute.Int64(k, int64(x)))
+			case []any:
+				vals := make([]attribute.Value, len(x))
+				for i, sv := range x {
+					vals[i] = attribute.StringValue(sv.(string))
+				}
+				rec.AddAttributes(attribute.Slice(k, vals...))
+			default:
+				t.Fatalf("unsupported attr type %T for %s", v, k)
+			}
+		}
+		lg.Emit(context.Background(), rec)
+	}
+	out, err := store.ReadEntries(context.Background(), "chat-1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
 
 // entry is a small builder for one hand-crafted ledger line, so these tests
 // exercise Session directly without going through the full emission path
@@ -73,9 +116,8 @@ func writeJSONL(t *testing.T, entries []entry) string {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "entries.jsonl")
 	var sb strings.Builder
-	for _, e := range entries {
-		l := line{Timestamp: e.ts, Attrs: e.attrs}
-		b, err := json.Marshal(l)
+	for _, e := range toEntries(t, entries) {
+		b, err := json.Marshal(e)
 		if err != nil {
 			t.Fatalf("marshal entry: %v", err)
 		}
@@ -88,7 +130,7 @@ func writeJSONL(t *testing.T, entries []entry) string {
 	return path
 }
 
-func writeZip(t *testing.T, entries []entry, manifest Manifest) string {
+func writeZip(t *testing.T, entries []entry, manifest ledger.Manifest) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bundle.zip")
@@ -112,9 +154,8 @@ func writeZip(t *testing.T, entries []entry, manifest Manifest) string {
 	if err != nil {
 		t.Fatalf("create entries.jsonl: %v", err)
 	}
-	for _, e := range entries {
-		l := line{Timestamp: e.ts, Attrs: e.attrs}
-		b, err := json.Marshal(l)
+	for _, e := range toEntries(t, entries) {
+		b, err := json.Marshal(e)
 		if err != nil {
 			t.Fatalf("marshal entry: %v", err)
 		}
@@ -416,7 +457,7 @@ func TestLoad_Zip(t *testing.T) {
 			"gen_ai.output.messages": `{"role":"model","parts":[{"text":"hi"}]}`,
 		}),
 	}
-	path := writeZip(t, entries, Manifest{QuackVersion: "v-test", SessionID: "chat-1"})
+	path := writeZip(t, entries, ledger.Manifest{QuackVersion: "v-test", LedgerVersion: ledger.LedgerVersion, SessionID: "chat-1"})
 	sess, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)

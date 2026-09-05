@@ -13,8 +13,8 @@ import (
 	"github.com/fagerbergj/quack/internal/store"
 )
 
-// newLedgerCmd: `quack ledger show|rebuild` - #1101's read/write access to
-// the write-ahead ledger. No REST surface exists for either yet, so both run
+// newLedgerCmd: `quack ledger list|export|show|rebuild|recover`. list and
+// export talk to a running server; show/rebuild/recover have no REST surface and run
 // server-side against the SAME stores a LOCAL quack.yaml would boot `quack
 // serve` against (config.Load(defaultConfigPath()), like `quack replay`) -
 // there is no notion of "the active registered server" here, since the
@@ -24,36 +24,103 @@ func newLedgerCmd() *cobra.Command {
 		Use:   "ledger",
 		Short: "Inspect or regenerate the write-ahead ledger's projections",
 	}
-	c.AddCommand(newLedgerShowCmd(), newLedgerRebuildCmd(), newLedgerRecoverCmd())
+	c.AddCommand(newLedgerListCmd(), newLedgerExportCmd(), newLedgerShowCmd(), newLedgerRebuildCmd(), newLedgerRecoverCmd())
 	return c
 }
 
-// newLedgerRecoverCmd: `quack ledger recover <chat>` (#1093 case 13) - finds
-// delivery.intent entries with no matching delivery.done (a run that died
-// between the two) and reports them. recoverer/redoFunc are nil here: no
-// extension in this build implements cli.DeliveryRecoverer yet (that lands
-// with the sdk/github bump #1093's PR describes), and redoing a delivery
-// needs the live node context this offline command doesn't have - every
-// orphan is reported Unresolved until that wiring exists. Known ceiling,
-// not a bug: the reconciliation ALGORITHM is what this command proves out.
+// newLedgerRecoverCmd: `quack ledger recover [chat-id] [--dry-run]` - the
+// same cli.Recover the server runs at boot: delivery.intent entries with no
+// delivery.done are checked against the configured extension's
+// DeliveryRecoverer, artifact.revision intents with no store row are marked
+// aborted. Redo stays nil: redoing a delivery needs the live node context
+// this offline command doesn't have. --dry-run reports without calling the
+// extension or writing. A recoverer-build failure degrades to a stderr
+// warning rather than aborting, so a misconfigured extension cannot hide
+// the orphans it might otherwise explain.
 func newLedgerRecoverCmd() *cobra.Command {
+	var dryRun bool
 	c := &cobra.Command{
-		Use:   "recover <chat-id>",
-		Short: "Reconcile delivery.intent entries with no delivery.done (a crashed delivery)",
-		Args:  cobra.ExactArgs(1),
+		Use:   "recover [chat-id]",
+		Short: "Settle intents whose projection write is missing (a crashed delivery or artifact save)",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ls, _, _, err := openLedgerAndStores()
+			ls, st, artifacts, err := openLedgerAndStores()
 			if err != nil {
 				return err
 			}
-			report, err := cli.RunLedgerRecover(cmd.Context(), ls, args[0], nil, nil)
+			proj := cli.Projections{ArtifactRowExists: cli.ArtifactRowChecker(st, artifacts), Delivery: buildRecovererOrWarn(cmd, dryRun)}
+			sum, err := cli.Recover(cmd.Context(), ls, args, proj, dryRun)
 			if err != nil {
 				return err
 			}
-			fmt.Fprint(cmd.OutOrStdout(), cli.FormatLedgerRecoverReport(report))
+			fmt.Fprint(cmd.OutOrStdout(), cli.FormatRecoverSummary(sum))
 			return nil
 		},
 	}
+	c.Flags().BoolVar(&dryRun, "dry-run", false, "report orphaned intents only; never call the extension or write to the ledger")
+	return c
+}
+
+// buildRecovererOrWarn builds the configured extension's DeliveryRecoverer,
+// or returns nil (every delivery orphan reported Unresolved) rather than an
+// error - see newLedgerRecoverCmd's doc.
+func buildRecovererOrWarn(cmd *cobra.Command, dryRun bool) cli.DeliveryRecoverer {
+	if dryRun {
+		return nil
+	}
+	cfg, err := config.Load(defaultConfigPath())
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "ledger recover: load config: %v; continuing without a recoverer, delivery orphans will be reported Unresolved\n", err)
+		return nil
+	}
+	built, name, err := serve.BuildDeliveryRecoverer(cfg)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "ledger recover: build delivery recoverer: %v; continuing without one, delivery orphans will be reported Unresolved\n", err)
+		return nil
+	}
+	if built == nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "no configured extension implements DeliveryRecoverer; every delivery orphan will be Unresolved")
+		return nil
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "using extensions.%s as the delivery recoverer\n", name)
+	return built
+}
+
+func newLedgerListCmd() *cobra.Command {
+	var asJSON bool
+	c := &cobra.Command{
+		Use:   "list",
+		Short: "List chats with a recording on the server",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunLedgerList(cmd.Context(), cmd.OutOrStdout(), t, asJSON)
+			})
+		},
+	}
+	asJSONFlag(c, &asJSON)
+	return c
+}
+
+// newLedgerExportCmd: `ledger export <chat-id> [-o file]` - the dogfooding
+// ritual for the replay engine: hit a bug -> export the chat -> attach the
+// zip to the issue or pin it in testdata/ as a replay fixture.
+func newLedgerExportCmd() *cobra.Command {
+	var output string
+	c := &cobra.Command{
+		Use:   "export <chat-id>",
+		Short: "Download a chat's recording bundle",
+		Long: "Download a chat's recording bundle (a ZIP: manifest.json + entries.jsonl of\n" +
+			"typed ledger entries) - default filename <chat-id>.zip. Only bundles at the\n" +
+			"current ledger_version replay; older OTel-attribute bundles are unsupported.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunLedgerExport(cmd.Context(), cmd.OutOrStdout(), t, args[0], output)
+			})
+		},
+	}
+	c.Flags().StringVarP(&output, "output", "o", "", "output file path (default: <chat-id>.zip)")
 	return c
 }
 

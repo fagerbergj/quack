@@ -93,8 +93,12 @@ func (s failSoftListArtifacts) List(ctx context.Context, req *artifact.ListReque
 	resp, err := s.Service.List(ctx, req)
 	if err != nil {
 		slog.Warn("orchestrator: artifact List failed; offering no artifacts this turn", "err", err)
+		// A dial error that survived the pgdial retry (#1193) must not vanish as a
+		// silent gap once this degrades to "no artifacts" - stamp it for DeriveTerminalStatus.
+		inference.RecordStoreFailure(req.SessionID, err)
 		return &artifact.ListResponse{}, nil
 	}
+	inference.ClearStoreFailure(req.SessionID)
 	return resp, nil
 }
 
@@ -366,6 +370,11 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 	inference.ClearPlanRejection(sessionID)
 	return func(yield func(stream.SSEEvent, error) bool) {
 		var span oteltrace.Span
+		// A prior turn's unconsumed planning failure (empty node/agent key,
+		// store.orchestratorGiveUpError's read) must not leak into THIS run's
+		// silent gap - RunBoundPlan makes no orchestrator model call to ever
+		// naturally clear it (#1109 review finding 3 precedent, #1156).
+		inference.ClearFailure(sessionID, "", "")
 		// Coords first: the root span reads them for gen_ai.conversation.id/user.id.
 		ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: sessionID, User: userID, Source: source})
 		ctx, span = otelobs.Start(ctx, "run.bound", attribute.String(otelobs.ChatIDKey, sessionID))
@@ -414,6 +423,12 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 
 		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
 		safeYield(tools.DagPlanEvent(ctx, plan), nil)
+
+		// A bound plan skips the llmagent turn entirely, so nothing else ever
+		// appends this turn's "user" event - without it, groupSessionEvents
+		// (store.GetTurnsWithContent) sees zero events for this ChatTurn row
+		// and misaligns every later turn's persisted content against it (#1195).
+		o.persistUserMessage(ctx, userID, sessionID, plan.UserMessage)
 
 		// A bound plan never passes through the execute tool (no orchestrator
 		// LLM turn exists to revise from), so provisioning failure here has no
@@ -491,6 +506,13 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 	inference.ClearPlanRejection(sessionID)
 	return func(yield func(stream.SSEEvent, error) bool) {
 		var span oteltrace.Span
+		// A prior turn's unconsumed planning failure (empty node/agent key,
+		// store.orchestratorGiveUpError's read) must not leak into THIS run:
+		// if this turn itself never calls the model again before ending in
+		// its own empty gap (e.g. a pending-choice reply, or a plan that runs
+		// but ends silent), the stale record would still be sitting there
+		// (#1109 review finding 3 precedent, #1156).
+		inference.ClearFailure(sessionID, "", "")
 		// Coords first: the root span reads them for gen_ai.conversation.id/user.id.
 		ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: sessionID, User: userID, Source: source})
 		ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, sessionID))
@@ -867,6 +889,22 @@ func latestPendingNodeInterrupt(events []*session.Event) (pendingInterrupt, bool
 		}
 	}
 	return out, found
+}
+
+// persistUserMessage appends the user-authored event a bound-plan run would
+// otherwise never write (see RunBoundPlan's call site). Mirrors persistAnswer's
+// own Get-then-AppendEvent shape.
+func (o *Orchestrator) persistUserMessage(ctx context.Context, userID, sessionID, message string) {
+	if message == "" {
+		return
+	}
+	persistCtx := context.WithoutCancel(ctx)
+	if resp, gerr := o.sessions.Get(persistCtx, &session.GetRequest{AppName: AppName, UserID: userID, SessionID: sessionID}); gerr == nil && resp != nil {
+		uev := session.NewEvent(persistCtx, "")
+		uev.Author = "user"
+		uev.Content = &genai.Content{Role: "user", Parts: []*genai.Part{{Text: message}}}
+		_ = o.sessions.AppendEvent(persistCtx, resp.Session, uev)
+	}
 }
 
 // persistAnswer appends the delivered answer to the chat session as the orchestrator's model message.

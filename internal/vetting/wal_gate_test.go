@@ -3,7 +3,6 @@ package vetting
 import (
 	"context"
 	"errors"
-	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -42,10 +41,6 @@ func newFakeGateLedger() *fakeGateLedger {
 	return &fakeGateLedger{seqs: map[string]int64{}}
 }
 
-func (f *fakeGateLedger) Append(context.Context, string, []byte) error { return nil }
-func (f *fakeGateLedger) ReadStream(context.Context, string) (io.ReadCloser, error) {
-	return nil, nil
-}
 func (f *fakeGateLedger) List(context.Context) ([]ledger.SessionRef, error) { return nil, nil }
 func (f *fakeGateLedger) Delete(context.Context, string) error              { return nil }
 

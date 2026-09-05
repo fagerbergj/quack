@@ -27,36 +27,29 @@ func streamKeyFor(c ledger.Coords) StreamKey {
 	return StreamKey{Node: c.Node, Agent: c.Agent, Round: c.Round}
 }
 
-// chatEntry is one recorded "chat" operation.
+// chatEntry is one recorded llm.call entry.
 type chatEntry struct {
-	ts            time.Time
-	requestModel  string
-	responseModel string
-	finishReason  string
-	inputTokens   int64
-	outputTokens  int64
-	promptVersion string
-	inputJSON     string // gen_ai.input.messages: JSON array of *genai.Content
-	outputJSON    string // gen_ai.output.messages: JSON of one *genai.Content
+	ts time.Time
+	ledger.LLMCallPayload
 }
 
 // toResponse reconstructs the *model.LLMResponse the live call would have produced.
 func (e chatEntry) toResponse() *model.LLMResponse {
 	resp := &model.LLMResponse{
-		ModelVersion: e.responseModel,
-		FinishReason: genai.FinishReason(e.finishReason),
+		ModelVersion: e.ResponseModel,
+		FinishReason: genai.FinishReason(e.FinishReason),
 		TurnComplete: true,
 	}
-	if e.outputJSON != "" {
+	if e.Output != "" {
 		var c genai.Content
-		if err := json.Unmarshal([]byte(e.outputJSON), &c); err == nil {
+		if err := json.Unmarshal([]byte(e.Output), &c); err == nil {
 			resp.Content = &c
 		}
 	}
-	if e.inputTokens != 0 || e.outputTokens != 0 {
+	if e.InputTokens != 0 || e.OutputTokens != 0 {
 		resp.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{
-			PromptTokenCount:     int32(e.inputTokens),
-			CandidatesTokenCount: int32(e.outputTokens),
+			PromptTokenCount:     int32(e.InputTokens),
+			CandidatesTokenCount: int32(e.OutputTokens),
 		}
 	}
 	return resp
@@ -111,7 +104,7 @@ const (
 // Session is a loaded, replayable bundle with concurrency-safe consumption cursors.
 type Session struct {
 	mu       sync.Mutex
-	manifest Manifest
+	manifest ledger.Manifest
 	streams  map[StreamKey]*streamState
 
 	// Earliest recorded chat input (UserTurn derives the user message from it).
@@ -187,55 +180,52 @@ func (s *Session) state(key StreamKey) *streamState {
 	return st
 }
 
-// ingest files one parsed ledger line into its stream by operation name.
-// Evaluation events go to evalScores; unidentifiable lines are dropped.
-func (s *Session) ingest(l line) {
-	if name := attrStr(l.Attrs, "gen_ai.evaluation.name"); name != "" {
-		s.evalScores = append(s.evalScores, EvalScore{
-			Node:        attrStr(l.Attrs, "quack.node"),
-			Round:       attrStr(l.Attrs, "quack.round"),
-			ResponseID:  attrStr(l.Attrs, "gen_ai.response.id"),
-			Criterion:   name,
-			Score:       attrFloat64(l.Attrs, "gen_ai.evaluation.score.value"),
-			Explanation: attrStr(l.Attrs, "gen_ai.evaluation.explanation"),
-			Timestamp:   l.Timestamp,
-		})
-		return
-	}
-	key := StreamKey{Node: attrStr(l.Attrs, "quack.node"), Agent: attrStr(l.Attrs, "gen_ai.agent.name"), Round: attrStr(l.Attrs, "quack.round")}
-	st := s.state(key)
-	switch attrStr(l.Attrs, "gen_ai.operation.name") {
-	case "chat":
-		ce := chatEntry{
-			ts:            l.Timestamp,
-			requestModel:  attrStr(l.Attrs, "gen_ai.request.model"),
-			responseModel: attrStr(l.Attrs, "gen_ai.response.model"),
-			finishReason:  attrFirstOf(l.Attrs, "gen_ai.response.finish_reasons"),
-			inputTokens:   attrInt64(l.Attrs, "gen_ai.usage.input_tokens"),
-			outputTokens:  attrInt64(l.Attrs, "gen_ai.usage.output_tokens"),
-			promptVersion: attrStr(l.Attrs, "gen_ai.prompt.version"),
-			inputJSON:     attrStr(l.Attrs, "gen_ai.input.messages"),
-			outputJSON:    attrStr(l.Attrs, "gen_ai.output.messages"),
+// ingest files one observation entry into its stream by kind. Evaluation
+// scores go to evalScores; intent kinds are not replayed and are dropped.
+func (s *Session) ingest(e ledger.Entry) {
+	key := StreamKey{Node: e.NodeID, Agent: e.Agent, Round: e.Round}
+	switch e.Kind {
+	case ledger.KindEvalScore:
+		var p ledger.EvalScorePayload
+		if json.Unmarshal(e.Payload, &p) != nil {
+			return
 		}
+		s.evalScores = append(s.evalScores, EvalScore{Node: e.NodeID, Round: e.Round, ResponseID: p.ResponseID,
+			Criterion: p.Criterion, Score: p.Score, Explanation: p.Explanation, Timestamp: e.At})
+	case ledger.KindLLMCall:
+		ce := chatEntry{ts: e.At}
+		if json.Unmarshal(e.Payload, &ce.LLMCallPayload) != nil {
+			return
+		}
+		st := s.state(key)
 		st.chat = append(st.chat, ce)
 		if !s.haveEarliest || ce.ts.Before(s.earliestTS) {
-			s.haveEarliest, s.earliestTS, s.earliestChatInput = true, ce.ts, ce.inputJSON
+			s.haveEarliest, s.earliestTS, s.earliestChatInput = true, ce.ts, ce.Input
 		}
-	case "execute_tool":
-		name := attrStr(l.Attrs, "gen_ai.tool.name")
-		te := toolEntry{ts: l.Timestamp, errStr: attrStr(l.Attrs, "error.type")}
-		if raw := attrStr(l.Attrs, "gen_ai.tool.call.result"); raw != "" {
-			_ = json.Unmarshal([]byte(raw), &te.result)
+	case ledger.KindToolCall:
+		var p ledger.ToolCallPayload
+		if json.Unmarshal(e.Payload, &p) != nil {
+			return
 		}
-		st.tools[name] = append(st.tools[name], te)
-	case "invoke_agent":
-		ae := invokeAgentEntry{ts: l.Timestamp, agentName: attrStr(l.Attrs, "gen_ai.agent.name")}
-		if raw := attrStr(l.Attrs, "gen_ai.input.messages"); raw != "" {
-			_ = json.Unmarshal([]byte(raw), &ae.sent)
+		te := toolEntry{ts: e.At, errStr: p.Error}
+		if p.Result != "" {
+			_ = json.Unmarshal([]byte(p.Result), &te.result)
 		}
-		if raw := attrStr(l.Attrs, "gen_ai.output.messages"); raw != "" {
-			_ = json.Unmarshal([]byte(raw), &ae.received)
+		st := s.state(key)
+		st.tools[p.Name] = append(st.tools[p.Name], te)
+	case ledger.KindAgentInvoke:
+		var p ledger.AgentInvokePayload
+		if json.Unmarshal(e.Payload, &p) != nil {
+			return
 		}
+		ae := invokeAgentEntry{ts: e.At, agentName: e.Agent}
+		if p.Sent != "" {
+			_ = json.Unmarshal([]byte(p.Sent), &ae.sent)
+		}
+		if p.Received != "" {
+			_ = json.Unmarshal([]byte(p.Received), &ae.received)
+		}
+		st := s.state(key)
 		st.agents = append(st.agents, ae)
 	}
 }
@@ -295,7 +285,7 @@ func (s *Session) UserTurns() []string {
 	seen := map[string]bool{}
 	var turns []string
 	for _, ce := range st.chat {
-		for _, text := range userTexts(ce.inputJSON) {
+		for _, text := range userTexts(ce.Input) {
 			if seen[text] {
 				continue
 			}
@@ -347,11 +337,11 @@ func (s *Session) FinalAnswer() (string, bool) {
 	}
 	for i := len(st.chat) - 1; i >= 0; i-- {
 		ce := st.chat[i]
-		if ce.outputJSON == "" {
+		if ce.Output == "" {
 			continue
 		}
 		var c genai.Content
-		if err := json.Unmarshal([]byte(ce.outputJSON), &c); err != nil {
+		if err := json.Unmarshal([]byte(ce.Output), &c); err != nil {
 			continue
 		}
 		if text := partsText(c.Parts); text != "" {
@@ -388,7 +378,7 @@ func nearMissChat(chat []chatEntry, pos int) []NearMiss {
 		if i < 0 || i >= len(chat) {
 			continue
 		}
-		out = append(out, NearMiss{Position: i, Name: chat[i].requestModel, Field: "model"})
+		out = append(out, NearMiss{Position: i, Name: chat[i].RequestModel, Field: "model"})
 	}
 	return out
 }
@@ -409,14 +399,14 @@ func (s *Session) NextChat(coords ledger.Coords, modelName string, sysInstrJSON 
 		return nil, s.forkOrFail(key, st, &MissError{Class: ClassExtra, Stream: key, Op: "chat", Position: pos, Want: modelName, Diff: nearMissChat(st.chat, pos)})
 	}
 	ce := st.chat[pos]
-	if ce.requestModel != modelName {
+	if ce.RequestModel != modelName {
 		return nil, s.forkOrFail(key, st, &MissError{Class: ClassMismatched, Stream: key, Op: "chat", Position: pos, Want: modelName, Diff: nearMissChat(st.chat, pos)})
 	}
 	st.chatPos++
 
-	if len(sysInstrJSON) > 0 && ce.promptVersion != "" {
-		if live := contentHash(sysInstrJSON); live != ce.promptVersion {
-			s.drift = append(s.drift, PromptDrift{Stream: key, Position: pos, Recorded: ce.promptVersion, Live: live})
+	if len(sysInstrJSON) > 0 && ce.PromptVersion != "" {
+		if live := contentHash(sysInstrJSON); live != ce.PromptVersion {
+			s.drift = append(s.drift, PromptDrift{Stream: key, Position: pos, Recorded: ce.PromptVersion, Live: live})
 		}
 	}
 	return ce.toResponse(), nil

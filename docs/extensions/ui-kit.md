@@ -1,6 +1,6 @@
 # Extension UI kit
 
-An SDK extension that implements `sdk.UI` gets a nav entry in the SPA's left rail (`NavRail`), pointing at one of its own routes (`sdk.UIDescriptor.Href`). That route is a full page navigation, outside the SPA's own router - if it serves HTML, that HTML is a separate document with none of the SPA's Tailwind build or component styles available to it.
+An SDK extension that implements `sdk.UI` gets a nav entry in the SPA's navigation drawer (`NavRail` - the overlay panel opened from the ⊞ toggle in each page's header; there is no persistent left rail), pointing at one of its own routes (`sdk.UIDescriptor.Href`). That route is a full page navigation, outside the SPA's own router - if it serves HTML, that HTML is a separate document with none of the SPA's Tailwind build or component styles available to it.
 
 Quack serves a small, hand-authored CSS file for exactly this: same-origin, no build step, no shared toolchain with the extension's own module.
 

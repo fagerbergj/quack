@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { within, userEvent, expect } from 'storybook/test'
+import { within, expect } from 'storybook/test'
 import { NavRail } from './NavRail'
 
 const meta: Meta<typeof NavRail> = {
@@ -11,56 +11,70 @@ export default meta
 
 type Story = StoryObj<typeof NavRail>
 
-// Default: text labels beside each icon, Chats highlighted as the active route.
-export const ExpandedOnChats: Story = {
-  args: { route: 'chat', initialCollapsed: false, initialExtensions: [] },
+// #1171: NavRail is a pure overlay drawer at every width - open mounts the
+// fixed panel, closed renders nothing. The trigger lives in each page's
+// header leading slot (NavToggle), not in this component, so these stories
+// drive the drawer through its open prop. The fixed inset-0 overlay floats
+// over the Storybook frame, which stands in for the app.
+
+// Chats highlighted as the active route (#746 item 1: Memory is a peer of
+// Chats, no overflow menu).
+export const OpenOnChats: Story = {
+  args: { route: 'chat', open: true, initialExtensions: [] },
   render: args => (
     <div className="h-96">
       <NavRail {...args} />
     </div>
   ),
-}
-
-// Memory reachable and highlighted as active - without the overflow menu
-// (#746 item 1's core acceptance: Memory is a rail peer of Chats).
-export const ExpandedOnMemory: Story = {
-  args: { route: 'memory', initialCollapsed: false, initialExtensions: [] },
-  render: args => (
-    <div className="h-96">
-      <NavRail {...args} />
-    </div>
-  ),
-}
-
-// Fully collapsed (#759 item 1, revised #870): a slim ~40px icon strip, not
-// an empty sliver - Chats/Memory/extensions and the expand chevron are all
-// still real, focusable, accessible-named buttons. The 320px frame stands in
-// for a narrow phone viewport.
-export const Collapsed: Story = {
-  args: { route: 'chat', initialCollapsed: true, initialExtensions: [] },
-  render: args => (
-    <div className="h-96 w-[320px] relative border border-dashed border-gray-300 dark:border-gray-600">
-      <NavRail {...args} />
-    </div>
-  ),
-}
-
-// Collapsed with extensions: the icon strip carries an extension's icon too
-// (🧩 fallback, or the API-provided icon - see WithExtensions below).
-export const CollapsedWithExtensions: Story = {
-  args: {
-    route: 'chat',
-    initialCollapsed: true,
-    initialExtensions: [
-      { name: 'remarkable', title: 'reMarkable', href: '/remarkable/review' },
-      { name: 'usage', title: 'Usage', href: '/usage' },
-    ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    expect(canvas.getByRole('dialog', { name: 'Main navigation' })).toBeInTheDocument()
+    expect(canvas.getByRole('button', { name: 'Chats' })).toBeInTheDocument()
+    expect(canvas.getByRole('button', { name: 'Memory' })).toBeInTheDocument()
   },
+}
+
+// Memory highlighted as active.
+export const OpenOnMemory: Story = {
+  args: { route: 'memory', open: true, initialExtensions: [] },
   render: args => (
-    <div className="h-96 w-[320px] relative border border-dashed border-gray-300 dark:border-gray-600">
+    <div className="h-96">
       <NavRail {...args} />
     </div>
   ),
+}
+
+// Closed renders nothing at all - no rail, no strip, no hamburger column
+// (this is what #1171 removes; the 360px frame is the narrowest target
+// device).
+export const Closed: Story = {
+  args: { route: 'chat', open: false, initialExtensions: [] },
+  render: args => (
+    <div className="h-96 w-[360px] relative border border-dashed border-gray-300 dark:border-gray-600">
+      <NavRail {...args} />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    expect(canvas.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(canvas.queryByText('Chats')).not.toBeInTheDocument()
+  },
+}
+
+// The canonical drawer story at phone width (#1145's sub-600px shape, now
+// the only shape, at every width).
+export const Open: Story = {
+  args: { route: 'chat', open: true, initialExtensions: [] },
+  render: args => (
+    <div className="h-96 w-[360px] relative border border-dashed border-gray-300 dark:border-gray-600">
+      <NavRail {...args} />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    expect(canvas.getByRole('dialog', { name: 'Main navigation' })).toBeInTheDocument()
+    expect(canvas.getByRole('button', { name: 'Chats' })).toBeInTheDocument()
+  },
 }
 
 // Extension nav entries (#/api/v1/extensions): a module with a UI descriptor
@@ -70,7 +84,7 @@ export const CollapsedWithExtensions: Story = {
 export const WithExtensions: Story = {
   args: {
     route: 'chat',
-    initialCollapsed: false,
+    open: true,
     initialExtensions: [
       { name: 'remarkable', title: 'reMarkable', href: '/remarkable/review' },
       { name: 'usage', title: 'Usage', href: '/usage', icon: '📊' },
@@ -82,52 +96,4 @@ export const WithExtensions: Story = {
       <NavRail {...args} />
     </div>
   ),
-}
-
-// Compact (<600px, #1131/#1133): the persistent rail is replaced by a 44px
-// hamburger - a visible entry point, not a hidden-only menu - at a 360px
-// frame (our narrowest target device).
-export const CompactClosed: Story = {
-  args: { route: 'chat', initialExtensions: [], forceCompact: true },
-  render: args => (
-    <div className="h-96 w-[360px] relative border border-dashed border-gray-300 dark:border-gray-600">
-      <NavRail {...args} />
-    </div>
-  ),
-}
-
-// Tapping the hamburger opens the off-canvas drawer with the same
-// Chats/Memory list the expanded rail shows.
-export const CompactOpen: Story = {
-  args: { route: 'chat', initialExtensions: [], forceCompact: true },
-  render: args => (
-    <div className="h-96 w-[360px] relative border border-dashed border-gray-300 dark:border-gray-600">
-      <NavRail {...args} />
-    </div>
-  ),
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement)
-    await userEvent.click(canvas.getByRole('button', { name: 'Open navigation' }))
-    expect(canvas.getByRole('dialog', { name: 'Main navigation' })).toBeInTheDocument()
-    expect(canvas.getByRole('button', { name: 'Chats' })).toBeInTheDocument()
-  },
-}
-
-// Clicking the collapse toggle removes the rail entirely and persists the
-// choice to localStorage (test case 1: survives a reload).
-export const ToggleCollapse: Story = {
-  args: { route: 'chat', initialCollapsed: false, initialExtensions: [] },
-  render: args => (
-    <div className="h-96 relative">
-      <NavRail {...args} />
-    </div>
-  ),
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement)
-    expect(canvas.getByText('Chats')).toBeInTheDocument()
-    await userEvent.click(canvas.getByRole('button', { name: 'Collapse navigation' }))
-    expect(canvas.queryByText('Chats')).not.toBeInTheDocument()
-    expect(canvas.getByRole('button', { name: 'Expand navigation' })).toBeInTheDocument()
-    expect(localStorage.getItem('navRailCollapsed')).toBe('1')
-  },
 }

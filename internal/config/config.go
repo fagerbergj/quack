@@ -233,21 +233,25 @@ type ObservabilityConfig struct {
 	ADKDebug bool `yaml:"adk_debug"`
 }
 
+// RecordingConfig names the ledger (WAL) store and whether OTel observation
+// kinds (llm.call, tool.call, ...) are written to it. The ledger itself is
+// always on when Store is set; Observations only gates the observation half.
 type RecordingConfig struct {
-	Enabled       *bool  `yaml:"enabled"`
+	Observations  *bool  `yaml:"observations"`
 	Store         string `yaml:"store"`
 	RetentionDays int    `yaml:"retention_days"`
-	CloneSnapshot bool   `yaml:"clone_snapshot"`
 }
 
-func (r RecordingConfig) IsEnabled(otelEnabled bool) bool {
+// ObservationsEnabled reports whether observation entries are recorded:
+// requires otel (the records ride its logger provider) and defaults to on.
+func (r RecordingConfig) ObservationsEnabled(otelEnabled bool) bool {
 	if !otelEnabled {
 		return false
 	}
-	if r.Enabled == nil {
+	if r.Observations == nil {
 		return true
 	}
-	return *r.Enabled
+	return *r.Observations
 }
 
 // ArtifactsConfig selects the artifact.Service backend, always wired. Empty
@@ -384,6 +388,7 @@ const (
 	defaultWorkspaceMaxResults     = 200
 	defaultWorkspaceMaxListEntries = 500
 	defaultWorkspaceTimeoutSeconds = 60
+	defaultCheckTimeoutSeconds     = 600
 	defaultWorkspaceSandbox        = "bwrap"
 	defaultWorkspaceAddressSpaceMB = 8192
 	defaultWorkspaceMaxProcs       = 512
@@ -397,21 +402,24 @@ const (
 var defaultCheckCommands = []string{"go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make", "gofmt", "npx prettier", "./gradlew"}
 
 type WorkspaceConfig struct {
-	Root           string                `yaml:"root"`
-	MaxReadKB      int                   `yaml:"max_read_kb"`
-	MaxWriteKB     int                   `yaml:"max_write_kb"`
-	MaxResults     int                   `yaml:"max_results"`
-	MaxListEntries int                   `yaml:"max_list_entries"`
-	TimeoutSeconds int                   `yaml:"timeout_seconds"`
-	CheckCommands  []string              `yaml:"check_commands"`
-	CheckSetup     []string              `yaml:"check_setup"`
-	ExecPath       []string              `yaml:"exec_path"`
-	Env            map[string]string     `yaml:"env"`
-	GitCredentials []GitCredentialConfig `yaml:"git_credentials"`
-	Guards         map[string]string     `yaml:"guards"`
-	Sandbox        string                `yaml:"sandbox"`
-	Limits         WorkspaceLimits       `yaml:"limits"`
-	GC             WorkspaceGCConfig     `yaml:"gc"`
+	Root           string `yaml:"root"`
+	MaxReadKB      int    `yaml:"max_read_kb"`
+	MaxWriteKB     int    `yaml:"max_write_kb"`
+	MaxResults     int    `yaml:"max_results"`
+	MaxListEntries int    `yaml:"max_list_entries"`
+	TimeoutSeconds int    `yaml:"timeout_seconds"`
+	// CheckTimeoutSeconds bounds gate check commands (e.g. full `go test ./...`),
+	// which run far longer than a single run_command call. 0 = default 600.
+	CheckTimeoutSeconds int                   `yaml:"check_timeout_seconds"`
+	CheckCommands       []string              `yaml:"check_commands"`
+	CheckSetup          []string              `yaml:"check_setup"`
+	ExecPath            []string              `yaml:"exec_path"`
+	Env                 map[string]string     `yaml:"env"`
+	GitCredentials      []GitCredentialConfig `yaml:"git_credentials"`
+	Guards              map[string]string     `yaml:"guards"`
+	Sandbox             string                `yaml:"sandbox"`
+	Limits              WorkspaceLimits       `yaml:"limits"`
+	GC                  WorkspaceGCConfig     `yaml:"gc"`
 }
 
 type WorkspaceGCConfig struct {
@@ -662,7 +670,6 @@ type StoreConfig struct {
 	TopK          int                  `yaml:"top_k"`
 	MinScore      *float32             `yaml:"min_score"`
 	Collection    string               `yaml:"collection"`
-	Root          string               `yaml:"root"`
 }
 
 // ConsolidationConfig binds the model for the gated-commit reconcile and
@@ -677,8 +684,6 @@ type ConsolidationConfig struct {
 
 // defaultConsolidationSchedule: daily at 02:00, standard 5-field cron.
 const defaultConsolidationSchedule = "0 2 * * *"
-
-const defaultLedgerRoot = "./recordings"
 
 func (c *Config) Store(name string) (StoreConfig, bool) {
 	return c.resolveStore(name, nil)
@@ -1026,18 +1031,9 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: store %q has an unknown or cyclic extends", name)
 		}
 		switch s.Kind {
-		case "postgres", "qdrant", "sqlite", "filesystem":
+		case "postgres", "qdrant", "sqlite":
 		default:
-			return fmt.Errorf("config: store %q has unsupported kind %q (known: postgres, qdrant, sqlite, filesystem)", name, s.Kind)
-		}
-	}
-	for name, s := range c.Stores {
-		if s.Kind != "filesystem" {
-			continue
-		}
-		if s.Root == "" {
-			s.Root = defaultLedgerRoot
-			c.Stores[name] = s
+			return fmt.Errorf("config: store %q has unsupported kind %q (known: postgres, qdrant, sqlite)", name, s.Kind)
 		}
 	}
 	for name, s := range c.Stores {
@@ -1236,7 +1232,7 @@ func (c *Config) validate() error {
 	if err := c.Observability.Otel.applyDefaults(); err != nil {
 		return err
 	}
-	if err := c.Observability.Recording.validate(c, c.Observability.Otel.IsEnabled()); err != nil {
+	if err := c.Observability.Recording.validate(c); err != nil {
 		return err
 	}
 	if err := c.Auth.validate(); err != nil {
@@ -1245,19 +1241,21 @@ func (c *Config) validate() error {
 	return nil
 }
 
-func (r RecordingConfig) validate(c *Config, otelEnabled bool) error {
+// validate refuses any non-Postgres ledger store: the WAL's fail-closed
+// AppendIntent needs a transactional, gapless seq no other backend gives.
+func (r RecordingConfig) validate(c *Config) error {
 	if r.RetentionDays < 0 {
 		return fmt.Errorf("config: observability.recording.retention_days must be >= 0")
 	}
-	if !r.IsEnabled(otelEnabled) || r.Store == "" {
+	if r.Store == "" {
 		return nil
 	}
 	s, ok := c.Store(r.Store)
 	if !ok {
 		return fmt.Errorf("config: observability.recording.store %q is not defined under stores", r.Store)
 	}
-	if s.Kind != "filesystem" && s.Kind != "postgres" {
-		return fmt.Errorf("config: observability.recording.store %q must be a filesystem or postgres store, got kind %q", r.Store, s.Kind)
+	if s.Kind != "postgres" {
+		return fmt.Errorf("config: observability.recording.store %q must be a postgres store (the ledger is the write-ahead log), got kind %q", r.Store, s.Kind)
 	}
 	return nil
 }
@@ -1302,7 +1300,10 @@ func (w *WorkspaceConfig) applyDefaults() error {
 	if w.TimeoutSeconds == 0 {
 		w.TimeoutSeconds = defaultWorkspaceTimeoutSeconds
 	}
-	if w.MaxReadKB < 0 || w.MaxWriteKB < 0 || w.MaxResults < 0 || w.MaxListEntries < 0 || w.TimeoutSeconds < 0 {
+	if w.CheckTimeoutSeconds == 0 {
+		w.CheckTimeoutSeconds = defaultCheckTimeoutSeconds
+	}
+	if w.MaxReadKB < 0 || w.MaxWriteKB < 0 || w.MaxResults < 0 || w.MaxListEntries < 0 || w.TimeoutSeconds < 0 || w.CheckTimeoutSeconds < 0 {
 		return fmt.Errorf("config: workspace caps must be >= 0")
 	}
 	if w.Sandbox == "" {

@@ -31,10 +31,7 @@ func TestListRecordingsNoStore(t *testing.T) {
 // recorded yet - 200 with an empty array, not a 404.
 func TestListRecordingsEmpty(t *testing.T) {
 	h := newTestHandler(t)
-	store, err := ledger.NewFSStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewFSStore: %v", err)
-	}
+	store := ledger.NewMemStore()
 	h.ledgerStore = store
 
 	rec := httptest.NewRecorder()
@@ -55,17 +52,13 @@ func TestListRecordingsEmpty(t *testing.T) {
 // TestListRecordingsWithSessions: lists every recorded session's id and size.
 func TestListRecordingsWithSessions(t *testing.T) {
 	h := newTestHandler(t)
-	store, err := ledger.NewFSStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewFSStore: %v", err)
-	}
+	store := ledger.NewMemStore()
 	h.ledgerStore = store
 	ctx := context.Background()
-	if err := store.Append(ctx, "c1", []byte(`{"seq":1}`)); err != nil {
-		t.Fatalf("Append: %v", err)
-	}
-	if err := store.Append(ctx, "c2", []byte(`{"seq":1}`)); err != nil {
-		t.Fatalf("Append: %v", err)
+	for _, c := range []string{"c1", "c2"} {
+		if _, err := store.AppendIntent(ctx, ledger.Entry{ChatID: c, Kind: ledger.KindLLMCall}); err != nil {
+			t.Fatalf("AppendIntent: %v", err)
+		}
 	}
 
 	rec := httptest.NewRecorder()
@@ -109,10 +102,7 @@ func TestGetChatRecordingNoStore(t *testing.T) {
 // never recorded - still 404, not a 500 or a truncated 200.
 func TestGetChatRecordingNoSession(t *testing.T) {
 	h := newTestHandler(t)
-	store, err := ledger.NewFSStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewFSStore: %v", err)
-	}
+	store := ledger.NewMemStore()
 	h.ledgerStore = store
 
 	rec := httptest.NewRecorder()
@@ -125,7 +115,7 @@ func TestGetChatRecordingNoSession(t *testing.T) {
 
 // TestGetChatRecordingNoSession_PostgresStore mirrors
 // TestGetChatRecordingNoSession against the Postgres ledger store - a chat
-// with zero rows must 404 like the FS store's missing file, not 200 with an
+// with zero rows must 404, not 200 with an
 // empty ZIP (openapi.yaml promises 404 for never-recorded/GC'd/disabled).
 func TestGetChatRecordingNoSession_PostgresStore(t *testing.T) {
 	h := newTestHandler(t)
@@ -143,19 +133,15 @@ func TestGetChatRecordingNoSession_PostgresStore(t *testing.T) {
 // valid ZIP with the expected manifest and entries content.
 func TestGetChatRecordingRoundTrip(t *testing.T) {
 	h := newTestHandler(t)
-	store, err := ledger.NewFSStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewFSStore: %v", err)
-	}
+	store := ledger.NewMemStore()
 	h.ledgerStore = store
 	h.quackVersion = "v9.9.9"
 
 	ctx := context.Background()
-	if err := store.Append(ctx, "c1", []byte(`{"seq":1}`)); err != nil {
-		t.Fatalf("Append: %v", err)
-	}
-	if err := store.Append(ctx, "c1", []byte(`{"seq":2}`)); err != nil {
-		t.Fatalf("Append: %v", err)
+	for i := 0; i < 2; i++ {
+		if _, err := store.AppendIntent(ctx, ledger.Entry{ChatID: "c1", Kind: ledger.KindLLMCall}); err != nil {
+			t.Fatalf("AppendIntent: %v", err)
+		}
 	}
 
 	rec := httptest.NewRecorder()
@@ -210,9 +196,13 @@ func TestGetChatRecordingRoundTrip(t *testing.T) {
 	if _, err := buf.ReadFrom(erc); err != nil {
 		t.Fatalf("read entries.jsonl: %v", err)
 	}
-	want := "{\"seq\":1}\n{\"seq\":2}\n"
-	if buf.String() != want {
-		t.Errorf("entries.jsonl = %q, want %q", buf.String(), want)
+	lines := bytes.Split(bytes.TrimSpace(buf.Bytes()), []byte("\n"))
+	if len(lines) != 2 {
+		t.Fatalf("entries.jsonl has %d lines, want 2: %q", len(lines), buf.String())
+	}
+	var e ledger.Entry
+	if err := json.Unmarshal(lines[1], &e); err != nil || e.Seq != 2 || e.Kind != ledger.KindLLMCall {
+		t.Errorf("second entry = %+v (%v), want seq 2 llm.call", e, err)
 	}
 }
 
@@ -220,14 +210,11 @@ func TestGetChatRecordingRoundTrip(t *testing.T) {
 // review on #611: header-parameter injection via `;` / quotes).
 func TestGetChatRecording_SanitizesContentDisposition(t *testing.T) {
 	h := newTestHandler(t)
-	store, err := ledger.NewFSStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewFSStore: %v", err)
-	}
+	store := ledger.NewMemStore()
 	h.ledgerStore = store
 	hostile := `evil"; dummy="x`
-	if err := store.Append(context.Background(), hostile, []byte(`{"seq":1}`)); err != nil {
-		t.Fatalf("Append: %v", err)
+	if _, err := store.AppendIntent(context.Background(), ledger.Entry{ChatID: hostile, Kind: ledger.KindLLMCall}); err != nil {
+		t.Fatalf("AppendIntent: %v", err)
 	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats/x/recording", nil)

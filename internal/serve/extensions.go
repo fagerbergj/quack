@@ -23,6 +23,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/fagerbergj/quack/internal/artifactref"
+	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
@@ -278,6 +279,25 @@ func findDeliverer(exts []builtSDKExtension) (extsdk.Deliverer, string) {
 	return found, foundName
 }
 
+// findRecoverer mirrors findDeliverer for sdk.DeliveryRecoverer.
+func findRecoverer(exts []builtSDKExtension) (extsdk.DeliveryRecoverer, string) {
+	var found extsdk.DeliveryRecoverer
+	var foundName string
+	for _, e := range exts {
+		r, ok := e.ext.(extsdk.DeliveryRecoverer)
+		if !ok {
+			continue
+		}
+		if found != nil {
+			slog.Warn("multiple extensions implement DeliveryRecoverer; keeping the first",
+				"component", "startup", "using", foundName, "ignoring", e.name)
+			continue
+		}
+		found, foundName = r, e.name
+	}
+	return found, foundName
+}
+
 // sdkGitCredentialAdapter bridges sdk.GitCredentialSource to
 // tools.GitTokenSource - same shape, different concrete credential type
 // (the SDK boundary can't share quack's own internal type).
@@ -309,18 +329,86 @@ func (a sdkDeliverAdapter) Deliver(ctx context.Context, dc vetting.DeliveryConte
 	}
 	outcomes, err := a.deliverer.Deliver(ctx, extsdk.DeliveryContext{
 		NodeID: dc.NodeID, ChatID: dc.ChatID, Items: sdkItems,
-		CloneURL: dc.CloneURL, PushedSHA: dc.PushedSHA, Branch: dc.Branch, IssueNumber: dc.IssueNumber,
+		CloneURL: dc.CloneURL, PushedSHA: dc.PushedSHA, PushError: dc.PushError, Branch: dc.Branch, IssueNumber: dc.IssueNumber,
 		GatePassed: dc.GatePassed, GateFeedback: dc.GateFeedback, ChecksSkipNote: dc.ChecksSkipNote,
-		// ponytail: dc.IdempotencyKey has nowhere to go yet - sdk v0.8.0 (pinned
-		// in go.mod) predates the field; wire it through once go.mod bumps to
-		// sdk/github v0.9.0 (#1093 deploy-order note, same ceiling as cli's
-		// DeliveryRecoverer shim).
+		IdempotencyKey: dc.IdempotencyKey,
 	})
 	out := make([]vetting.DeliveryItemOutcome, len(outcomes))
 	for i, o := range outcomes {
 		out[i] = vetting.DeliveryItemOutcome{Kind: o.Kind, URL: o.URL, Error: o.Error}
 	}
 	return out, err
+}
+
+// sdkRecoverAdapter bridges sdk.DeliveryRecoverer to cli.DeliveryRecoverer -
+// cli's copy predates the sdk v0.9.0 pin (see cli.DeliveryRecoverer's doc);
+// this is the wiring that replaces it wholesale once cli imports sdk directly.
+type sdkRecoverAdapter struct{ recoverer extsdk.DeliveryRecoverer }
+
+func (a sdkRecoverAdapter) RecoverDelivery(ctx context.Context, key string, dc cli.DeliveryContext) (bool, cli.DeliveryItemOutcome, error) {
+	found, outcome, err := a.recoverer.RecoverDelivery(ctx, key, extsdk.DeliveryContext{CloneURL: dc.CloneURL, IssueNumber: dc.IssueNumber})
+	return found, cli.DeliveryItemOutcome{Kind: outcome.Kind, URL: outcome.URL, Error: outcome.Error}, err
+}
+
+// BuildDeliveryRecoverer constructs just the configured extension that
+// implements sdk.DeliveryRecoverer, for `quack ledger recover` (an offline
+// CLI command with no running server, hub, or orchestrator to wire a full
+// buildSDKExtensions call against). The factory only needs Host.DataDir/Log
+// to build (github's factory() reads nothing else eagerly) - Dispatch,
+// UpdateChatOrigin and the rest are never invoked by RecoverDelivery, so this
+// intentionally skips building them rather than threading live server state
+// through a CLI command. Returns (nil, "", nil) when no configured module
+// implements the interface.
+func BuildDeliveryRecoverer(cfg *config.Config) (cli.DeliveryRecoverer, string, error) {
+	factories := extsdk.Registered()
+	names := make([]string, 0, len(cfg.Extensions.Modules))
+	for name := range cfg.Extensions.Modules {
+		names = append(names, name)
+	}
+	sort.Strings(names) // deterministic scan order, same convention as findDeliverer
+	var found cli.DeliveryRecoverer
+	var foundName string
+	for _, name := range names {
+		factory, ok := factories[name]
+		if !ok {
+			continue
+		}
+		node := cfg.Extensions.Modules[name]
+		raw, err := yaml.Marshal(&node)
+		if err != nil {
+			return nil, "", fmt.Errorf("extensions.%s: re-marshal config: %w", name, err)
+		}
+		var base extsdk.BaseConfig
+		if err := yaml.Unmarshal(raw, &base); err != nil {
+			return nil, "", fmt.Errorf("extensions.%s: parse base config: %w", name, err)
+		}
+		if base.Enabled != nil && !*base.Enabled {
+			continue
+		}
+		dataDir := base.DataDir
+		if dataDir == "" {
+			dataDir = filepath.Join(cfg.Workspace.Root, "extensions", name)
+		}
+		if err := os.MkdirAll(dataDir, 0o755); err != nil {
+			return nil, "", fmt.Errorf("extensions.%s: data dir: %w", name, err)
+		}
+		host := extsdk.Host{Log: slog.Default().With("component", "ext."+name), DataDir: dataDir}
+		ext, err := factory(host, raw)
+		if err != nil {
+			return nil, "", fmt.Errorf("extensions.%s: factory: %w", name, err)
+		}
+		rec, ok := ext.(extsdk.DeliveryRecoverer)
+		if !ok {
+			continue
+		}
+		if found != nil {
+			slog.Warn("multiple extensions implement DeliveryRecoverer; keeping the first",
+				"component", "startup", "using", foundName, "ignoring", name)
+			continue
+		}
+		found, foundName = sdkRecoverAdapter{recoverer: rec}, name
+	}
+	return found, foundName, nil
 }
 
 // newExtDispatch builds the sdk.DispatchFunc an extension's Host carries.
@@ -363,12 +451,6 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		runCtx := context.WithoutCancel(ctx)
 		allowedKinds := deliveryKindStrings(req.Delivery.AllowedKinds)
 
-		if req.Chat.ResetHistory {
-			if err := orch.ResetSession(runCtx, userID, chatID); err != nil {
-				return fmt.Errorf("extensions.%s: reset history: %w", name, err)
-			}
-		}
-
 		// Merge onto whatever this chat already has stored, rather than
 		// replacing it wholesale: a nudge/retry re-dispatch (quack-extensions#47)
 		// carries neither Chat.Origin nor Run.Setup, and previously blanked
@@ -380,14 +462,15 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 				"component", "ext."+name, "chat", chatID, "err", getErr)
 		} else if existing != nil {
 			existingOriginJSON = existing.Origin
+			userID = stableDispatchUser(existing.SessionUser, userID)
 		}
-		originJSON, fallbackSetup := mergeExtOrigin(existingOriginJSON, req.Chat.Origin, req.Run.Setup)
-		if fallbackSetup != nil {
-			// This dispatch forgot Setup (the nudge bug) but a prior turn on
-			// this same chat recorded one - hand it to the planner exactly as
-			// if this dispatch had carried it (#1180).
-			runCtx = tools.WithGitHubSetup(runCtx, *fallbackSetup)
+
+		if req.Chat.ResetHistory {
+			if err := orch.ResetSession(runCtx, userID, chatID); err != nil {
+				return fmt.Errorf("extensions.%s: reset history: %w", name, err)
+			}
 		}
+		originJSON, effectiveSetup := mergeExtOrigin(existingOriginJSON, req.Chat.Origin, req.Run.Setup)
 		if err := st.SetChatOrigin(runCtx, chatID, userID, originJSON); err != nil {
 			return fmt.Errorf("extensions.%s: chat setup: %w", name, err)
 		}
@@ -436,8 +519,14 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		// The real consumer of Setup/NodeContext/ContextItems/ReadOnly - the
 		// GitHub migration's pre-provisioned clone and node-scoped context.
 		runCtx = tools.WithAllowedDeliveryKinds(runCtx, allowedKinds)
-		if req.Run.Setup != nil {
-			runCtx = tools.WithGitHubSetup(runCtx, toDagSetup(*req.Run.Setup))
+		if effectiveSetup != nil {
+			// mergeExtOrigin's own merged Setup, NOT req.Run.Setup directly
+			// (#1180 recurrence): github always sends a non-nil Setup, even
+			// with an empty ExistingHeadRef when its snapshot fetch came back
+			// short - applying req.Run.Setup here unconditionally clobbered
+			// mergeExtOrigin's fallback/merge with that weaker value on
+			// every single dispatch, nudge included.
+			runCtx = tools.WithGitHubSetup(runCtx, *effectiveSetup)
 		}
 		if req.Ask.NodeContext != "" {
 			runCtx = tools.WithWorkerAsk(runCtx, req.Ask.NodeContext)
@@ -446,7 +535,14 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 			runCtx = tools.WithContextItems(runCtx, toDagContextItems(req.Ask.ContextItems))
 		}
 		runCtx = tools.WithPlanOnly(runCtx, req.Run.ReadOnly)
-		go driveExtensionRun(runCtx, name, orch, st, hub, extHolder, userID, chatID, turnID, composeDispatchMessage(req), attachments, req.Run.Timeout)
+		// Never hand the orchestrator's LLM turn an empty prompt (#1195): a
+		// caller bug upstream of here must surface as a real dispatch error
+		// the extension can post, not a run that silently produces nothing.
+		composed := composeDispatchMessage(req)
+		if strings.TrimSpace(composed) == "" {
+			return fmt.Errorf("extensions.%s: dispatch composed an empty message (Ask.Message was %q)", name, req.Ask.Message)
+		}
+		go driveExtensionRun(runCtx, name, orch, st, hub, extHolder, userID, chatID, turnID, composed, attachments, req.Run.Timeout)
 		return nil
 	}
 }
@@ -480,13 +576,35 @@ type extOriginRecord struct {
 	Setup *extsdk.Setup `json:"quackSetup,omitempty"`
 }
 
+// stableDispatchUser is #1198's fix: SessionUser is fixed at chat creation
+// (store.SetChatOrigin's own OnConflict never touches it on later dispatches),
+// so the run/session/record-client user for a re-dispatch must agree with
+// that stored value - not whichever commenter's req.Chat.User triggered THIS
+// dispatch (e.g. a /review from a different GitHub user than the one who
+// opened the PR). Without this, the node's ADK session and recordstore
+// writes land under a user the chat's own artifact listing never looks
+// under, since the listing reads the stored (first-dispatch) user.
+// existingSessionUser == "" (brand new chat) keeps reqUser as-is.
+func stableDispatchUser(existingSessionUser, reqUser string) string {
+	if existingSessionUser != "" {
+		return existingSessionUser
+	}
+	return reqUser
+}
+
 // mergeExtOrigin folds a dispatch's own Origin/Setup onto whatever this chat
 // already has stored, so a dispatch missing one (a nudge or retry re-dispatch
 // - quack-extensions#47) never blanks it. Returns the JSON to persist (""
-// when there's nothing to store) and, when this dispatch itself carried no
-// Setup but a prior one did, that prior Setup (converted to dag.Setup) as a
-// fallback for the caller to hand the planner via tools.WithGitHubSetup (#1180).
-func mergeExtOrigin(existingOriginJSON string, newOrigin *extsdk.ChatOrigin, newSetup *extsdk.Setup) (originJSON string, fallbackSetup *dag.Setup) {
+// when there's nothing to store) and the Setup this turn should actually
+// plan with, converted to dag.Setup - the caller's ONLY source for
+// tools.WithGitHubSetup; it must never additionally apply req.Run.Setup raw.
+//
+// newSetup being non-nil is NOT proof it has a real head ref: github's own
+// dispatch() always builds a non-nil sdk.Setup, even when its snapshot fetch
+// came back without one, so "no Setup" and "Setup with a blank
+// ExistingHeadRef" both need the same fallback to the last known-good ref
+// (#1180 recurrence - the earlier fix only handled the former).
+func mergeExtOrigin(existingOriginJSON string, newOrigin *extsdk.ChatOrigin, newSetup *extsdk.Setup) (originJSON string, effectiveSetup *dag.Setup) {
 	var rec extOriginRecord
 	if existingOriginJSON != "" {
 		if err := json.Unmarshal([]byte(existingOriginJSON), &rec); err != nil {
@@ -496,20 +614,32 @@ func mergeExtOrigin(existingOriginJSON string, newOrigin *extsdk.ChatOrigin, new
 	if newOrigin != nil {
 		rec.ChatOrigin = newOrigin
 	}
-	if newSetup != nil {
+	switch {
+	case newSetup == nil:
+		// Nothing new this dispatch - keep whatever rec.Setup already holds.
+	case newSetup.ExistingHeadRef != "" || rec.Setup == nil || rec.Setup.ExistingHeadRef == "":
 		rec.Setup = newSetup
-	} else if rec.Setup != nil {
+	default:
+		// newSetup is non-nil but its head ref is blank, and we have a better
+		// one on record - keep everything else from this dispatch (repo/base/
+		// work branch can legitimately change turn to turn), just borrow the
+		// real head ref rather than losing it.
+		merged := *newSetup
+		merged.ExistingHeadRef = rec.Setup.ExistingHeadRef
+		rec.Setup = &merged
+	}
+	if rec.Setup != nil {
 		s := toDagSetup(*rec.Setup)
-		fallbackSetup = &s
+		effectiveSetup = &s
 	}
 	if rec.ChatOrigin == nil && rec.Setup == nil {
-		return "", fallbackSetup
+		return "", effectiveSetup
 	}
 	b, err := json.Marshal(rec)
 	if err != nil {
-		return "", fallbackSetup
+		return "", effectiveSetup
 	}
-	return string(b), fallbackSetup
+	return string(b), effectiveSetup
 }
 
 // toDagSetup adapts the SDK's Setup to dag.Setup. ExistingHeadRef overrides

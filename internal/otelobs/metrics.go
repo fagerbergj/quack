@@ -40,6 +40,7 @@ type metrics struct {
 	runNoAnswer      metric.Int64Counter
 	tokenUsage       metric.Int64Counter   // attrs: gen_ai.request.model, agent, user, source, gen_ai.token.type
 	cost             metric.Float64Counter // attrs: gen_ai.request.model, agent, user, source; unit USD
+	ledgerUnresolved metric.Int64Gauge
 }
 
 // initMetrics builds every instrument from meter and installs it as the
@@ -111,6 +112,10 @@ func initMetrics(meter metric.Meter) error {
 	if m2.tokenUsage, err = meter.Int64Counter("gen_ai.client.token.usage",
 		metric.WithDescription("tokens consumed per completed model call, by gen_ai.token.type (input/output/reasoning/cached)"),
 		metric.WithUnit("{token}")); err != nil {
+		return err
+	}
+	if m2.ledgerUnresolved, err = meter.Int64Gauge("quack.ledger.unresolved_intents",
+		metric.WithDescription("Ledger intents whose projection is missing and boot recovery could not settle")); err != nil {
 		return err
 	}
 	if m2.cost, err = meter.Float64Counter("gen_ai.client.cost",
@@ -370,4 +375,12 @@ func attrSource(v string) attribute.KeyValue         { return attribute.String("
 // logf for non-fatal startup diagnostics.
 func logf(msg string, args ...any) {
 	slog.Warn(msg, append([]any{"component", "otelobs"}, args...)...)
+}
+
+// SetLedgerUnresolvedIntents publishes the last recovery pass's unresolved count.
+func SetLedgerUnresolvedIntents(n int64) {
+	if m == nil {
+		return
+	}
+	m.ledgerUnresolved.Record(context.Background(), n)
 }

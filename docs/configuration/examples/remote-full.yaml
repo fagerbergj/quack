@@ -50,9 +50,6 @@ stores:
       model: ${QUACK_JUDGE_MODEL}
     top_k: 5
     min_score: 0.5
-  default_ledger:
-    kind: filesystem
-    root: ${QUACK_RECORDING_DIR}   # unset ⇒ ./recordings
 
 session:
   store: default_postgres
@@ -187,8 +184,8 @@ observability:
         signals: [traces, metrics]
     sample: 1.0
   recording:
-    enabled: ${QUACK_RECORDING_ENABLED}   # unset ⇒ follows otel.enabled
-    store: default_ledger
+    observations: ${QUACK_RECORDING_ENABLED}   # unset ⇒ follows otel.enabled
+    store: default_postgres
 
 workspace:
   root: ${QUACK_WORKSPACE_ROOT}

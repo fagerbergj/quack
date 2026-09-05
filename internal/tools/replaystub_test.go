@@ -15,10 +15,9 @@ import (
 func writeToolReplayFixture(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "entries.jsonl")
-	line := `{"timestamp":"2026-01-01T00:00:00Z","attributes":{` +
-		`"gen_ai.operation.name":"execute_tool","gen_ai.tool.name":"current_date",` +
-		`"quack.node":"node-a","gen_ai.agent.name":"worker","quack.round":"worker-r0",` +
-		`"gen_ai.tool.call.result":"{\"result\":\"Today's date is recorded-day.\"}"` +
+	line := `{"seq":1,"chat_id":"c","kind":"tool.call","at":"2026-01-01T00:00:00Z",` +
+		`"node_id":"node-a","agent":"worker","round":"worker-r0","payload":{` +
+		`"name":"current_date","result":"{\"result\":\"Today's date is recorded-day.\"}"` +
 		`}}` + "\n"
 	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
 		t.Fatal(err)

@@ -19,10 +19,10 @@ import (
 func writeReplayFixture(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "entries.jsonl")
-	line := `{"timestamp":"2026-01-01T00:00:00Z","attributes":{` +
-		`"gen_ai.operation.name":"chat","gen_ai.request.model":"worker-model",` +
-		`"quack.node":"node-a","gen_ai.agent.name":"worker","quack.round":"worker-r0",` +
-		`"gen_ai.output.messages":"{\"role\":\"model\",\"parts\":[{\"text\":\"recorded answer\"}]}"` +
+	line := `{"seq":1,"chat_id":"c","kind":"llm.call","at":"2026-01-01T00:00:00Z",` +
+		`"node_id":"node-a","agent":"worker","round":"worker-r0","payload":{` +
+		`"request_model":"worker-model",` +
+		`"output":"{\"role\":\"model\",\"parts\":[{\"text\":\"recorded answer\"}]}"` +
 		`}}` + "\n"
 	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
 		t.Fatal(err)

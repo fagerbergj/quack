@@ -8,13 +8,9 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 )
 
-func newFSStore(t *testing.T) *ledger.FSStore {
+func newMemStore(t *testing.T) *ledger.MemStore {
 	t.Helper()
-	s, err := ledger.NewFSStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewFSStore: %v", err)
-	}
-	return s
+	return ledger.NewMemStore()
 }
 
 func appendRevision(t *testing.T, s ledger.LedgerStore, chatID, id string, revision, parent int) {
@@ -52,7 +48,7 @@ func appendAborted(t *testing.T, s ledger.LedgerStore, chatID, id string, revisi
 // revision must not count as the id's latest, even though its
 // artifact.revision entry landed first.
 func TestFold_SkipsAbortedRevision(t *testing.T) {
-	s := newFSStore(t)
+	s := newMemStore(t)
 	appendRevision(t, s, "chat1", "code_review:pr-1", 1, 0)
 	appendRevision(t, s, "chat1", "code_review:pr-1", 2, 1)
 	appendAborted(t, s, "chat1", "code_review:pr-1", 2)
@@ -72,7 +68,7 @@ func TestFold_SkipsAbortedRevision(t *testing.T) {
 // its aborted attempt claimed - the later artifact.revision entry must
 // re-materialize it, per KindArtifactRevisionAborted's doc.
 func TestFold_LaterEntryWins(t *testing.T) {
-	s := newFSStore(t)
+	s := newMemStore(t)
 	appendRevision(t, s, "chat1", "id1", 1, 0)
 	appendAborted(t, s, "chat1", "id1", 1)
 	appendRevision(t, s, "chat1", "id1", 1, 0) // retry, same number, now succeeds
@@ -87,7 +83,7 @@ func TestFold_LaterEntryWins(t *testing.T) {
 }
 
 func TestLastRevision_NoEntries(t *testing.T) {
-	s := newFSStore(t)
+	s := newMemStore(t)
 	rev, err := LastRevision(context.Background(), s, "chat1", "id1")
 	if err != nil {
 		t.Fatalf("LastRevision: %v", err)
@@ -101,7 +97,7 @@ func TestLastRevision_NoEntries(t *testing.T) {
 // node.done/failed entry; its StartedSeq is INDEPENDENTLY kept even after
 // the node reaches a terminal state (#1121 - rebuild needs both).
 func TestFold_NodeStatesLaterWins(t *testing.T) {
-	s := newFSStore(t)
+	s := newMemStore(t)
 	mustAppend := func(kind string) int64 {
 		payload, _ := json.Marshal(struct {
 			NodeID string `json:"node_id"`
@@ -140,7 +136,7 @@ func TestFold_NodeStatesLaterWins(t *testing.T) {
 // live one - not two states (one per turn) that a consumer could resurrect
 // turn 1's stale failure alongside turn 2's real success.
 func TestFold_NodeAcrossTurns_KeyedByNodeIDNotTurn(t *testing.T) {
-	s := newFSStore(t)
+	s := newMemStore(t)
 	append_ := func(turn, kind string) int64 {
 		payload, _ := json.Marshal(struct {
 			NodeID string `json:"node_id"`
@@ -181,16 +177,16 @@ func TestFold_NodeAcrossTurns_KeyedByNodeIDNotTurn(t *testing.T) {
 	}
 }
 
-// pagingFakeStore wraps FSStore and honors the requested limit exactly (like
+// pagingFakeStore wraps MemStore and honors the requested limit exactly (like
 // PGStore's real .Limit(n)), so shrinking fold's pageSize below the fixture
 // count forces Fold through multiple pages, proving paged reads match one
 // unpaged slice.
 type pagingFakeStore struct {
-	*ledger.FSStore
+	*ledger.MemStore
 }
 
 func (p *pagingFakeStore) ReadEntriesPage(ctx context.Context, chatID string, fromSeq int64, limit int) ([]ledger.Entry, error) {
-	all, err := p.FSStore.ReadEntries(ctx, chatID, fromSeq)
+	all, err := p.MemStore.ReadEntries(ctx, chatID, fromSeq)
 	if err != nil {
 		return nil, err
 	}
@@ -205,11 +201,11 @@ func TestFold_PagingMatchesOneSlice(t *testing.T) {
 	pageSize = 4
 	defer func() { pageSize = old }()
 
-	base := newFSStore(t)
+	base := newMemStore(t)
 	for i := 1; i <= 25; i++ {
 		appendRevision(t, base, "chat1", "id1", i, i-1)
 	}
-	paged := &pagingFakeStore{FSStore: base}
+	paged := &pagingFakeStore{MemStore: base}
 
 	want, err := Fold(context.Background(), base, "chat1", 0)
 	if err != nil {

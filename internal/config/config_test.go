@@ -676,12 +676,12 @@ func TestLoadOldConfigWithoutPostgresLedgerStillParses(t *testing.T) {
 }
 
 // TestLoadAcceptsPostgresRecordingStore is the new capability #1100 adds:
-// recording.store may now name a postgres store, not just filesystem.
+// recording.store names a postgres store.
 func TestLoadAcceptsPostgresRecordingStore(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 observability:
   recording:
-    enabled: true
+    observations: true
     store: main
 `))
 	if err != nil {
@@ -839,6 +839,9 @@ func TestWorkspaceDefaults(t *testing.T) {
 	if w.TimeoutSeconds != 60 {
 		t.Errorf("TimeoutSeconds = %d, want 60", w.TimeoutSeconds)
 	}
+	if w.CheckTimeoutSeconds != 600 {
+		t.Errorf("CheckTimeoutSeconds = %d, want 600", w.CheckTimeoutSeconds)
+	}
 	if len(w.CheckCommands) == 0 {
 		t.Errorf("CheckCommands = %v, want the default allowlist (checks ON by default; derived checks are toolchain-gated)", w.CheckCommands)
 	}
@@ -981,6 +984,7 @@ workspace:
   max_results: 50
   max_list_entries: 100
   timeout_seconds: 30
+  check_timeout_seconds: 300
   check_commands: ["go build", "go test"]
   check_setup: ["make plugins"]
 `))
@@ -1005,6 +1009,9 @@ workspace:
 	}
 	if w.TimeoutSeconds != 30 {
 		t.Errorf("TimeoutSeconds = %d, want 30", w.TimeoutSeconds)
+	}
+	if w.CheckTimeoutSeconds != 300 {
+		t.Errorf("CheckTimeoutSeconds = %d, want 300", w.CheckTimeoutSeconds)
 	}
 	if len(w.CheckCommands) != 2 || w.CheckCommands[0] != "go build" || w.CheckCommands[1] != "go test" {
 		t.Errorf("CheckCommands = %v, want [go build, go test]", w.CheckCommands)
@@ -1661,7 +1668,6 @@ models:
   m: { provider: default, role: worker }
 stores:
   main: { kind: postgres, url: ${QUACK_DATABASE_URL} }
-  ledger: { kind: filesystem, root: /tmp/quack-recordings }
 session: { store: main }
 orchestrator: { provider: default, model: ${QUACK_ORCH_MODEL} }
 `+observability)
@@ -1675,8 +1681,8 @@ func TestRecordingUnsetFollowsOtelEnabled(t *testing.T) {
 	if !c.Observability.Otel.IsEnabled() {
 		t.Fatal("otel should default enabled")
 	}
-	if !c.Observability.Recording.IsEnabled(c.Observability.Otel.IsEnabled()) {
-		t.Error("recording.enabled unset should inherit otel.enabled (true)")
+	if !c.Observability.Recording.ObservationsEnabled(c.Observability.Otel.IsEnabled()) {
+		t.Error("recording.observations unset should inherit otel.enabled (true)")
 	}
 }
 
@@ -1684,12 +1690,12 @@ func TestRecordingCannotBeOnWhenOtelDisabled(t *testing.T) {
 	c, err := Load(baseObservabilityYAML(t, `
 observability:
   otel: { enabled: false }
-  recording: { enabled: true, store: ledger }
+  recording: { observations: true, store: main }
 `))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if c.Observability.Recording.IsEnabled(c.Observability.Otel.IsEnabled()) {
+	if c.Observability.Recording.ObservationsEnabled(c.Observability.Otel.IsEnabled()) {
 		t.Error("recording must never be enabled when otel itself is disabled")
 	}
 }
@@ -1697,13 +1703,13 @@ observability:
 func TestRecordingExplicitFalseOverridesOtelEnabled(t *testing.T) {
 	c, err := Load(baseObservabilityYAML(t, `
 observability:
-  recording: { enabled: false }
+  recording: { observations: false }
 `))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if c.Observability.Recording.IsEnabled(c.Observability.Otel.IsEnabled()) {
-		t.Error("explicit recording.enabled: false should stay off even though otel defaults on")
+	if c.Observability.Recording.ObservationsEnabled(c.Observability.Otel.IsEnabled()) {
+		t.Error("explicit recording.observations: false should stay off even though otel defaults on")
 	}
 }
 
@@ -1717,52 +1723,37 @@ func TestRecordingUnconfiguredStoreDoesNotFailLoad(t *testing.T) {
 	}
 }
 
-func TestRecordingNamedStoreMustResolveAndBeFilesystemOrPostgres(t *testing.T) {
+// TestRecordingStoreMustBePostgres: the ledger is the WAL, so any other
+// backend is refused at load - even with observations off, since the
+// intent path does not depend on the observation toggle.
+func TestRecordingStoreMustBePostgres(t *testing.T) {
 	if _, err := Load(baseObservabilityYAML(t, `
 observability:
-  recording: { enabled: true, store: does-not-exist }
+  recording: { store: does-not-exist }
 `)); err == nil {
 		t.Error("expected an error for a recording.store that isn't defined under stores")
 	}
-	// "main" is kind: postgres in baseObservabilityYAML - allowed since #1100.
 	if _, err := Load(baseObservabilityYAML(t, `
 observability:
-  recording: { enabled: true, store: main }
+  recording: { observations: true, store: main }
 `)); err != nil {
 		t.Errorf("recording.store on a postgres store should be allowed: %v", err)
 	}
+	for _, kind := range []string{"sqlite", "qdrant"} {
+		if _, err := Load(baseObservabilityYAML(t, `
+stores:
+  other: { kind: `+kind+`, url: http://x }
+observability:
+  recording: { observations: false, store: other }
+`)); err == nil {
+			t.Errorf("expected an error for a %s recording.store", kind)
+		}
+	}
 	if _, err := Load(baseObservabilityYAML(t, `
 stores:
-  vec: { kind: qdrant, url: http://x }
-observability:
-  recording: { enabled: true, store: vec }
+  files: { kind: filesystem, root: /tmp/x }
 `)); err == nil {
-		t.Error("expected an error for a recording.store that isn't filesystem or postgres")
-	}
-}
-
-func TestFilesystemStoreDefaultsRoot(t *testing.T) {
-	t.Setenv("QUACK_LLM_ENDPOINT", "http://x/v1")
-	t.Setenv("QUACK_LLM_API_KEY", "secret")
-	t.Setenv("QUACK_DATABASE_URL", "postgres://localhost/db")
-	t.Setenv("QUACK_ORCH_MODEL", "m")
-	c, err := Load(writeTemp(t, `
-providers:
-  default: { kind: openai, endpoint: ${QUACK_LLM_ENDPOINT}, api_key: ${QUACK_LLM_API_KEY} }
-models:
-  m: { provider: default, role: worker }
-stores:
-  main: { kind: postgres, url: ${QUACK_DATABASE_URL} }
-  ledger2: { kind: filesystem }
-session: { store: main }
-orchestrator: { provider: default, model: ${QUACK_ORCH_MODEL} }
-`))
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	s, ok := c.Store("ledger2")
-	if !ok || s.Root != defaultLedgerRoot {
-		t.Errorf("Store(ledger2).Root = %q, want %q", s.Root, defaultLedgerRoot)
+		t.Error("expected an error: filesystem is no longer a store kind")
 	}
 }
 

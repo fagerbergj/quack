@@ -234,6 +234,76 @@ func TestSDKExtensionDispatchLoop(t *testing.T) {
 	}
 }
 
+// TestSDKExtensionDispatchKeepsStableUserAcrossRedispatch is #1198: a first
+// dispatch as one GitHub user (the PR author) followed by a re-dispatch on
+// the SAME chat as a different user (a /review commenter) must run the
+// second turn under the first turn's user - both the chat's own stored
+// SessionUser and the ADK session the node actually runs in, or the node's
+// record/artifact writes land under a user the chat's own listing never
+// looks under.
+func TestSDKExtensionDispatchKeepsStableUserAcrossRedispatch(t *testing.T) {
+	st, orch, hub, artifacts, jail := newExtTestStack(t)
+	_ = jail
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+	var extHolder atomic.Pointer[extsdk.Extension]
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+
+	const localID = "redispatch-user"
+	chatID := "ext:noop:" + localID
+	ctx := context.Background()
+
+	// Turn 1: dispatched as the PR author.
+	req1 := extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID, User: "alice"}, Ask: extsdk.Ask{Message: "open the PR"}}
+	if err := dispatch(ctx, req1); err != nil {
+		t.Fatalf("dispatch 1: %v", err)
+	}
+	waitRunSettled(t, st, chatID)
+
+	// waitRunSettled alone would race here (review comment thread
+	// 3937400227): turn 1 already left RunStatus non-empty, so it returns
+	// immediately without turn 2 ever having run - the same trap
+	// extensions_plan_rejection_test.go:166 works around. Wait for turn 2's
+	// own ActiveTurnID go-then-clear transition instead.
+	t1, err := st.GetChat(ctx, chatID)
+	if err != nil || t1 == nil {
+		t.Fatalf("GetChat after turn 1: %v, %v", t1, err)
+	}
+	turn1UpdatedAt := t1.UpdatedAt
+
+	// Turn 2: a /review re-dispatch from a different GitHub commenter.
+	req2 := extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID, User: "bob"}, Ask: extsdk.Ask{Message: "please review"}}
+	if err := dispatch(ctx, req2); err != nil {
+		t.Fatalf("dispatch 2: %v", err)
+	}
+	waitUntil(t, 5*time.Second, func() bool {
+		c, _ := st.GetChat(context.Background(), chatID)
+		return c != nil && c.ActiveTurnID != ""
+	})
+	waitUntil(t, 5*time.Second, func() bool {
+		c, _ := st.GetChat(context.Background(), chatID)
+		return c != nil && c.ActiveTurnID == "" && c.UpdatedAt.After(turn1UpdatedAt)
+	})
+
+	c, err := st.GetChat(ctx, chatID)
+	if err != nil || c == nil {
+		t.Fatalf("GetChat(%s) = %v, %v", chatID, c, err)
+	}
+	if c.SessionUser != "alice" {
+		t.Fatalf("chat SessionUser = %q, want the first dispatch's user %q", c.SessionUser, "alice")
+	}
+
+	// The node's own ADK session must have run as "alice" too, not "bob" -
+	// PriorEvents under bob's identity must be empty (no session ever
+	// existed there), and alice's must carry both turns.
+	if events := orch.PriorEvents(ctx, "bob", chatID); len(events) != 0 {
+		t.Fatalf("PriorEvents(bob) = %d events, want 0 - the second dispatch must not have run under bob's session", len(events))
+	}
+	if events := orch.PriorEvents(ctx, "alice", chatID); len(events) == 0 {
+		t.Fatalf("PriorEvents(alice) = 0 events, want both turns to have run under alice's session")
+	}
+}
+
 // (c) An unconfigured noop registers no routes at all - 404, not a
 // dormant-but-mounted handler.
 func TestSDKExtensionUnconfiguredExtensionRegistersNoRoutes(t *testing.T) {
@@ -442,6 +512,179 @@ func TestSDKExtensionRedispatchSameChatIDAppendsTurn(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("chat rows for %s = %d, want exactly 1 (re-dispatch must append, not duplicate)", chatID, count)
+	}
+}
+
+// echoProbeModel records every prompt text it's given (one entry per
+// GenerateContent call) so a test can assert what actually reached the
+// orchestrator's LLM turn, not just what was requested. Mutex-guarded: the
+// dispatch under test runs the model call from a background goroutine while
+// the test polls seen() from the main goroutine.
+type echoProbeModel struct {
+	mu   *sync.Mutex
+	seen *[]string
+}
+
+func newEchoProbeModel() echoProbeModel {
+	return echoProbeModel{mu: &sync.Mutex{}, seen: &[]string{}}
+}
+
+func (echoProbeModel) Name() string { return "echo-probe-stub" }
+
+func (m echoProbeModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		var text string
+		for _, c := range req.Contents {
+			if c == nil || c.Role != genai.RoleUser {
+				continue
+			}
+			for _, p := range c.Parts {
+				if p != nil && p.Text != "" {
+					text += p.Text
+				}
+			}
+		}
+		m.mu.Lock()
+		*m.seen = append(*m.seen, text)
+		m.mu.Unlock()
+		yield(&model.LLMResponse{
+			Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: "quack quack"}}},
+			FinishReason: genai.FinishReasonStop, TurnComplete: true,
+		}, nil)
+	}
+}
+
+func (m echoProbeModel) calls() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), (*m.seen)...)
+}
+
+// TestSDKExtensionRedispatchAfterBoundPlanKeepsAskOnBothTurns is #1195's
+// repro: a chat's first turn runs a bound workflow (a configured DAG shape,
+// e.g. the "quack-review" trigger) - RunBoundPlan never touches the
+// orchestrator's own llmagent, so it appends NO "user"/orchestrator session
+// event, even though store.SaveTurn still creates a ChatTurn row for it. A
+// second, unshaped dispatch (a plain re-review) then runs the real
+// orchestrator turn and appends exactly one user event. GetTurnsWithContent
+// matched store.ChatTurn rows (2, one per dispatch) to live session event
+// groups (1, only the second dispatch's) by raw slice index: turn[0] (the
+// bound-plan turn) stole turn 2's group, and turn[1] - the actual re-review -
+// read back empty. Both dispatches carry ResetHistory:true, matching every
+// production repro (#1182/#1188/#1190) and the QA fixture path.
+func TestSDKExtensionRedispatchAfterBoundPlanKeepsAskOnBothTurns(t *testing.T) {
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	artifactSvc, err := st.RowArtifactService()
+	if err != nil {
+		t.Fatalf("RowArtifactService: %v", err)
+	}
+	st.SetArtifactService(artifactSvc)
+	artifacts := store.NewTurnAwareService(artifactSvc)
+
+	workerStub := &extAttachStub{}
+	worker, err := llmagent.New(llmagent.Config{
+		Name: "worker", Model: workerStub, Description: "does work", Instruction: "ROLE:worker Do the task.",
+	})
+	if err != nil {
+		t.Fatalf("worker agent: %v", err)
+	}
+	ex := dag.NewExecutor(st.Sessions, map[string]adkagent.Agent{"worker": worker}, map[string]model.LLM{"worker": workerStub},
+		vetting.NewJudgeFactory(workerStub, nil, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.5, JudgeRounds: 1} }, nil)
+	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "worker", Description: "does work"}}, nil, nil)
+
+	m := newEchoProbeModel()
+	orch := orchestrator.New(st.Sessions, m, "You are the orchestrator.", planner, ex, nil, nil, nil)
+
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+	hub := stream.NewHub()
+	var extHolder atomic.Pointer[extsdk.Extension]
+
+	shapes := []workflowcatalog.Shape{{
+		Name:  "quack-review",
+		Nodes: []config.WorkflowNode{{ID: "n1", Agent: "worker", Task: "review: {{ask}}"}},
+	}}
+	dispatch := newExtDispatch("github", &orchRef, st, hub, &extHolder, shapes, artifacts)
+
+	const localID = "bound-then-unshaped-fixture"
+	const chatID = "ext:github:" + localID
+
+	// Turn 1: bound workflow dispatch - the labeled-PR review trigger.
+	req1 := extsdk.DispatchRequest{
+		Chat: extsdk.ChatRef{LocalID: localID, ResetHistory: true},
+		Ask:  extsdk.Ask{Message: "review PR #42"},
+		Run:  extsdk.RunConfig{Workflow: "quack-review"},
+	}
+	if err := dispatch(context.Background(), req1); err != nil {
+		t.Fatalf("first (bound) dispatch: %v", err)
+	}
+	waitRunSettled(t, st, chatID)
+
+	// Turn 2: unshaped re-dispatch onto the same chat (a bare /review re-trigger).
+	req2 := extsdk.DispatchRequest{
+		Chat: extsdk.ChatRef{LocalID: localID, ResetHistory: true},
+		Ask:  extsdk.Ask{Message: "re-review PR #42, new commits pushed"},
+	}
+	if err := dispatch(context.Background(), req2); err != nil {
+		t.Fatalf("second (unshaped) dispatch: %v", err)
+	}
+	// Turn 1's own bound-plan run already produced one orchestrator-model
+	// call (its synthesis/format step) before turn 2 is even dispatched, so
+	// waiting on any call arriving races: wait for one whose text actually
+	// names turn 2's message instead.
+	waitUntil(t, 5*time.Second, func() bool {
+		for _, c := range m.calls() {
+			if strings.Contains(c, "re-review PR #42") {
+				return true
+			}
+		}
+		return false
+	})
+	waitRunSettled(t, st, chatID)
+
+	seen := m.calls()
+	found := false
+	for _, c := range seen {
+		if strings.Contains(c, "re-review PR #42") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("orchestrator LLM calls = %v, want one containing the second dispatch's Ask.Message", seen)
+	}
+
+	ctx := context.Background()
+	turns, err := st.GetTurnsWithContent(ctx, orchestrator.AppName, extRunUserID, chatID)
+	if err != nil {
+		t.Fatalf("GetTurnsWithContent: %v", err)
+	}
+	if len(turns) != 2 {
+		t.Fatalf("turns = %d, want 2", len(turns))
+	}
+	if strings.TrimSpace(turns[1].UserText) == "" {
+		t.Errorf("turn 1 (the re-review) persisted UserText is empty, want %q - this is #1195's repro", req2.Ask.Message)
+	}
+}
+
+// TestSDKExtensionDispatchEmptyMessageErrors is #1195's guard: an unshaped
+// dispatch whose composed message is empty must fail the dispatch call
+// itself - never run the orchestrator's LLM turn on an empty prompt and end
+// as a silent no-answer gap.
+func TestSDKExtensionDispatchEmptyMessageErrors(t *testing.T) {
+	st, orch, hub, artifacts, _ := newExtTestStack(t)
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+
+	var extHolder atomic.Pointer[extsdk.Extension]
+	dispatch := newExtDispatch("github", &orchRef, st, hub, &extHolder, nil, artifacts)
+
+	const localID = "empty-message-fixture"
+	req := extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID}, Ask: extsdk.Ask{Message: "  "}}
+	if err := dispatch(context.Background(), req); err == nil {
+		t.Fatal("expected an error for a blank Ask.Message, got nil")
 	}
 }
 

@@ -15,6 +15,7 @@ import { AttachmentPreviews } from '../components/AttachmentUI'
 import { GitHubLink } from '../components/GitHubLink'
 import { TriggerMessage } from '../components/TriggerEnvelope'
 import { ChatMenu } from '../components/ChatMenu'
+import { NavToggle } from '../components/NavToggle'
 import { imageAttachmentsByTurn } from '../lib/turnAttachments'
 
 // liveDagFinalText extracts the answer from the terminal node's accumulated answer.
@@ -151,9 +152,12 @@ export function EditableChatTitle({ title, editable, onRename }: EditableChatTit
     <h1
       onClick={startEdit}
       title={editable ? 'Click to rename' : undefined}
-      className={`group flex items-center gap-1.5 text-base font-semibold text-gray-900 dark:text-white truncate ${editable ? 'cursor-text' : ''}`}
+      className={`group flex items-start medium:items-center gap-1.5 text-base font-semibold text-gray-900 dark:text-white ${editable ? 'cursor-text' : ''}`}
     >
-      <span className="truncate">{title}</span>
+      {/* Below 600px (#1136) the title gets two lines before ellipsis instead
+          of clipping to a handful of characters; medium: restores the
+          single-line truncate once the header has room. */}
+      <span className="line-clamp-2 medium:line-clamp-1 medium:truncate">{title}</span>
       {editable && (
         <span className="opacity-0 group-hover:opacity-100 text-gray-400 text-xs transition-opacity flex-shrink-0" aria-hidden="true">
           ✎
@@ -163,7 +167,15 @@ export function EditableChatTitle({ title, editable, onRename }: EditableChatTit
   )
 }
 
-export default function Chat() {
+// #1171: App.tsx owns the nav drawer's open state and hands it down, so the
+// toggle in the header's leading slot and the NavRail overlay share one
+// source of truth.
+export interface ChatProps {
+  navOpen: boolean
+  onToggleNav: () => void
+}
+
+export default function Chat({ navOpen, onToggleNav }: ChatProps) {
   const urlChatId = useChatId()
 
   const store = useChatStore()
@@ -620,11 +632,15 @@ export default function Chat() {
             >
               ☰
             </button>
+            {/* #1171: the nav drawer's toggle - visible at ALL widths (the ☰
+                above is md:hidden) and with its own glyph, so the chat-list
+                hamburger stays the app's only ☰ (#1175). */}
+            <NavToggle open={navOpen} onToggle={onToggleNav} />
             {/* Title gets priority over everything else in this row (#1136) -
                 min-w-0 lets it actually shrink to its flex-1 share instead of
                 the row overflowing, so `truncate` inside EditableChatTitle
                 clips to "as much as fits", never to a few characters. */}
-            <div className="min-w-0 flex-1 flex items-center gap-1.5">
+            <div className="min-w-0 flex-1 flex items-start medium:items-center gap-1.5">
               <EditableChatTitle
                 title={activeChat?.title || (activeChatId ? 'New chat' : 'Chat')}
                 editable={!!activeChatId && !isArchived}

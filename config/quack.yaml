@@ -80,9 +80,6 @@ stores:
       # retention_days: 30  # hard-delete invalidated points + memory_ops rows past this age; 0 = forever
     top_k: 5
     min_score: 0.5                # drop recall hits below this cosine similarity (0 disables)
-  default_ledger:
-    kind: filesystem                     # append-only per-session recordings; s3 is a future adapter
-    root: ${QUACK_RECORDING_DIR}         # unset ⇒ ./recordings
 
 # ADK session + chat persistence (references a store) plus context compaction,
 # which operates over that session history.
@@ -326,14 +323,15 @@ observability:
     environment: ${QUACK_OTEL_ENVIRONMENT}     # unset ⇒ production; deployment.environment.name on every span
     # capture_content: true # ALSO put user prompts and model responses (plus ACP tool-call args/output) on span attributes (default: off) - ships raw content to the OTLP endpoint
     # trace_url_template: "https://tracing.example.com/trace/{trace_id}"  # unset ⇒ no deep link rendered in the UI
-  # The replay ledger (.quack/replay-log.md): every gen_ai.* log event, appended
-  # to default_ledger as one JSONL line per session. Rides the otel logger
-  # provider above, so it can only be on when otel is.
+  # The ledger: quack's write-ahead log (artifact revisions, deliveries, node
+  # lifecycle) in the same Postgres as the artifacts. `observations` adds the
+  # gen_ai.* model/tool/agent calls and judge scores that `quack ledger export`
+  # and `quack replay` read; it rides the otel logger provider above, so it can
+  # only be on when otel is. The store must be postgres.
   recording:
-    enabled: ${QUACK_RECORDING_ENABLED}  # unset ⇒ follows otel.enabled
-    store: default_ledger
-    retention_days: 30                   # whole-session GC by last-modified; not yet enforced
-    clone_snapshot: false                 # opt-in git snapshot in the export bundle; not yet implemented
+    observations: ${QUACK_RECORDING_ENABLED}  # unset ⇒ follows otel.enabled
+    store: default_postgres
+    retention_days: 30                        # whole-chat GC by last activity
   # Mounts ADK's REST debug console at /debug/adk. DANGER: /run, /run_sse
   # and /run_live execute any loaded agent WITHOUT the trust gate - protected
   # only by quack's auth + this flag. MUST stay off in production.
@@ -409,6 +407,9 @@ workspace:
   max_results: 200                # grep/glob hits per call
   max_list_entries: 500           # list_dir entries per call
   timeout_seconds: 60
+  # timeout_seconds governs a single run_command tool call; gate check commands
+  # (e.g. a full `go test ./...`) run far longer, so they use check_timeout_seconds instead.
+  check_timeout_seconds: 600
 
   # sandbox: the OS boundary every run_command / gate-check CHILD PROCESS runs
   # inside. The jail above is a PATH CHECK on the tools - it never constrained a

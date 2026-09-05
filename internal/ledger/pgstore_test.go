@@ -3,11 +3,7 @@ package ledger
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"io/fs"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -138,56 +134,6 @@ func TestPGStoreAppendIntentConcurrentSeqIsGaplessAndUnique(t *testing.T) {
 	}
 }
 
-// TestPGStoreExporterRoundTripUnchanged is verification case (b): the OTel
-// exporter's best-effort Append/ReadStream path behaves the same against
-// the postgres backend as it does against FSStore's JSONL file.
-func TestPGStoreExporterRoundTripUnchanged(t *testing.T) {
-	t.Parallel()
-	store := newTestPGStore(t)
-	ctx := context.Background()
-	const chatID = "chat-otel"
-
-	lines := [][]byte{
-		[]byte(`{"body":"first"}`),
-		[]byte(`{"body":"second"}`),
-	}
-	exp := NewExporter(store)
-	if err := exp.store.Append(ctx, chatID, lines[0]); err != nil {
-		t.Fatalf("Append 1: %v", err)
-	}
-	if err := exp.store.Append(ctx, chatID, lines[1]); err != nil {
-		t.Fatalf("Append 2: %v", err)
-	}
-
-	rc, err := store.ReadStream(ctx, chatID)
-	if err != nil {
-		t.Fatalf("ReadStream: %v", err)
-	}
-	defer rc.Close()
-	body, err := io.ReadAll(rc)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	// jsonb round-trips the VALUE, not the byte-for-byte text (whitespace
-	// gets reformatted), so compare decoded lines rather than raw bytes.
-	got := strings.Split(strings.TrimRight(string(body), "\n"), "\n")
-	if len(got) != len(lines) {
-		t.Fatalf("got %d lines, want %d: %q", len(got), len(lines), got)
-	}
-	for i, line := range lines {
-		var want, have map[string]any
-		if err := json.Unmarshal(line, &want); err != nil {
-			t.Fatalf("bad fixture line %d: %v", i, err)
-		}
-		if err := json.Unmarshal([]byte(got[i]), &have); err != nil {
-			t.Fatalf("line %d not valid JSON: %v (%q)", i, err, got[i])
-		}
-		if want["body"] != have["body"] {
-			t.Errorf("line %d = %v, want %v", i, have, want)
-		}
-	}
-}
-
 // TestPGStoreReadEntriesReturnsInOrder is verification case (c).
 func TestPGStoreReadEntriesReturnsInOrder(t *testing.T) {
 	t.Parallel()
@@ -223,19 +169,6 @@ func TestPGStoreReadEntriesReturnsInOrder(t *testing.T) {
 	}
 	if len(fromMiddle) != 1 || fromMiddle[0].Seq != lastSeq {
 		t.Errorf("ReadEntries fromSeq=%d = %+v, want exactly seq %d", lastSeq, fromMiddle, lastSeq)
-	}
-}
-
-// TestPGStoreReadStreamUnknownChatIsErrNotExist: a chat with zero rows must
-// look like FSStore's missing file to callers checking errors.Is(err,
-// fs.ErrNotExist) - GetChatRecording's 404 depends on this, not on the
-// stream merely being empty.
-func TestPGStoreReadStreamUnknownChatIsErrNotExist(t *testing.T) {
-	t.Parallel()
-	store := newTestPGStore(t)
-	_, err := store.ReadStream(context.Background(), "never-recorded")
-	if !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("ReadStream unknown chat err = %v, want fs.ErrNotExist", err)
 	}
 }
 
