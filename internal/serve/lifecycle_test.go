@@ -214,7 +214,33 @@ func TestBootFailsUnresumableNode(t *testing.T) {
 		t.Fatalf("pause n2: %v", err)
 	}
 
-	start := reconcileNodes(ctx, st, nil, func(string, string) (bool, string) { return false, "workspace dir is gone" })
+	// An unresumable node is marked failed before ScanOrphanedRuns runs, so
+	// the chat has no paused node left and lands in `interrupted` - a real
+	// jail here proves removeStaleCloneDir actually fires on that path
+	// (#1213), not just that a nil jail is tolerated.
+	jail, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewJail: %v", err)
+	}
+	cloneDir, err := jail.Resolve(localUserID, chatID, workspace.SetupCloneDir(workspace.SharedRepoScope))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	roDir := filepath.Join(cloneDir, ".gomodcache", "dario.cat", "mergo@v1.0.2")
+	if err := os.MkdirAll(roDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(roDir, "issue131_test.go"), []byte("package mergo\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if os.Geteuid() != 0 {
+		if err := os.Chmod(roDir, 0o555); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(roDir, 0o755) })
+	}
+
+	start := reconcileNodes(ctx, st, jail, func(string, string) (bool, string) { return false, "workspace dir is gone" })
 
 	if len(start) != 0 {
 		t.Errorf("started %+v; an unresumable node must not be started", start)
@@ -225,5 +251,8 @@ func TestBootFailsUnresumableNode(t *testing.T) {
 	}
 	if n2.Error != "cannot resume: workspace dir is gone" {
 		t.Errorf("error = %q, want the reason it could not be resumed", n2.Error)
+	}
+	if _, err := os.Stat(cloneDir); !os.IsNotExist(err) {
+		t.Errorf("stale clone dir %q should be removed, stat err = %v", cloneDir, err)
 	}
 }

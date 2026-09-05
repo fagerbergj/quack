@@ -529,6 +529,11 @@ func TestRemoveAllForceLeavesSymlinkTargetPermsAlone(t *testing.T) {
 	if err := os.MkdirAll(outside, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// 0500, not 0700 - RemoveAllForce's retry chmods to 0700, so leaving this
+	// at 0700 would let a symlink-following bug pass unnoticed.
+	if err := os.Chmod(outside, 0o500); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = os.Chmod(outside, 0o700) })
 
 	root := filepath.Join(base, "root")
@@ -554,7 +559,7 @@ func TestRemoveAllForceLeavesSymlinkTargetPermsAlone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("symlink target should still exist: %v", err)
 	}
-	if fi.Mode().Perm() != 0o700 {
-		t.Errorf("symlink target perms changed: got %v, want 0700", fi.Mode().Perm())
+	if fi.Mode().Perm() != 0o500 {
+		t.Errorf("symlink target perms changed: got %v, want 0500", fi.Mode().Perm())
 	}
 }
