@@ -276,10 +276,11 @@ func TestSDKExtensionDispatchKeepsStableUserAcrossRedispatch(t *testing.T) {
 	if err := dispatch(ctx, req2); err != nil {
 		t.Fatalf("dispatch 2: %v", err)
 	}
-	waitUntil(t, 5*time.Second, func() bool {
-		c, _ := st.GetChat(context.Background(), chatID)
-		return c != nil && c.ActiveTurnID != ""
-	})
+	// Oracle: UpdatedAt advancing past turn 1's snapshot is a terminal,
+	// monotonic write - unlike ActiveTurnID going non-empty, which a fast
+	// noop dispatch can set and clear entirely between two 10ms polls
+	// (the actual cause of #1218's 5s timeout). No separate "wait for the
+	// turn to start" step is needed: a later UpdatedAt already proves turn 2 ran.
 	waitUntil(t, 5*time.Second, func() bool {
 		c, _ := st.GetChat(context.Background(), chatID)
 		return c != nil && c.ActiveTurnID == "" && c.UpdatedAt.After(turn1UpdatedAt)

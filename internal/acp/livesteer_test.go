@@ -55,6 +55,11 @@ func TestRound_ForwardsLiveSteerIntoTheRunningSession(t *testing.T) {
 		})
 	}()
 
+	// Oracle: close(registered) (not a poll) proves the session handshake is
+	// done, and fwd's CallExtension is an acked RPC - both already deterministic,
+	// no sleep or timing window. The steer text lands in the fake agent's
+	// buffered (cap 1) steerCh regardless of whether Prompt has started reading
+	// it yet, so send-before-receive ordering can't race either.
 	<-registered
 	mu.Lock()
 	chatID, nodeID, fwd := gotChat, gotNode, forward

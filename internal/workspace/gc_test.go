@@ -423,11 +423,14 @@ func TestSweepBaselineWorktreeReapingKeepsParentConsistent(t *testing.T) {
 	parent := filepath.Join(jail.Root(), "alice", "chat1", "quack-shared-repo")
 	initGitRepo(t, parent)
 
-	scratch, err := os.MkdirTemp("", baselineTempPrefix)
+	// A private tempDir root, not the real os.TempDir(), so a concurrent
+	// package's own quack-base-* scratch dirs can't be seen or reaped by
+	// this test's Sweep call (or vice versa) - the actual cause of the flake.
+	tempRoot := t.TempDir()
+	scratch, err := os.MkdirTemp(tempRoot, baselineTempPrefix)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(scratch) })
 	wt := filepath.Join(scratch, "wt")
 	add := exec.Command("git", "worktree", "add", "--detach", wt, "HEAD")
 	add.Dir = parent
@@ -456,7 +459,7 @@ func TestSweepBaselineWorktreeReapingKeepsParentConsistent(t *testing.T) {
 		return cmd.Run()
 	}
 
-	res := Sweep(context.Background(), jail, GCConfig{ScratchTTL: time.Hour}, never, prune)
+	res := Sweep(context.Background(), jail, GCConfig{ScratchTTL: time.Hour, BaselineTempDir: tempRoot}, never, prune)
 	if res.ScratchRemoved != 1 {
 		t.Fatalf("ScratchRemoved = %d, want 1", res.ScratchRemoved)
 	}
