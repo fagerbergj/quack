@@ -1,6 +1,9 @@
 # Build artifacts
 node_modules
 frontend/dist
+frontend/render-check/
+frontend/.vitest-attachments/
+frontend/src/__screenshots__/
 /quack
 .test/
 # Embedded SPA is built into internal/serve/web/dist by `make build`. Ignore

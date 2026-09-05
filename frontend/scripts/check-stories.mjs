@@ -9,14 +9,18 @@ import { fileURLToPath } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', 'src')
 const dirs = ['components', 'pages']
 
-// pages/Chat.tsx is owned by a concurrent agent stream (header work in
-// flight) - tracked separately, not this lint's job to block on.
+// pages/Chat.tsx: allowlisted for #1217 - remove this entry once
+// pages/Chat.stories.tsx exists.
 const ALLOWLIST = new Set(['pages/Chat.tsx'])
 
 // A .tsx file counts as a component file if it exports a capitalized
-// function component - excludes plain utility modules (envelope.ts-style
-// logic that happens to live in a .tsx file, if any).
-const COMPONENT_EXPORT = /export\s+(?:default\s+)?function\s+[A-Z]\w*\s*\(/
+// function, const/arrow, or memo() component - excludes plain utility
+// modules (envelope.ts-style logic that happens to live in a .tsx file, if
+// any). Must also match `export const X = memo(...)`/arrow forms (DagNode,
+// TurnView, MermaidDiagram) - a function-declaration-only regex would let a
+// future arrow component with no story pass silently, the exact false
+// negative #1192 created this gate to catch.
+const COMPONENT_EXPORT = /export\s+(?:default\s+function\s+[A-Z]\w*\s*\(|function\s+[A-Z]\w*\s*\(|const\s+[A-Z]\w*\s*(?::[^=]+)?=\s*(?:memo\(|\())/
 
 function walk(dir) {
   const out = []

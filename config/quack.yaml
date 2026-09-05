@@ -496,6 +496,10 @@ workspace:
   # only) simply derives nothing instead of failing nodes. An EXPLICIT [] still
   # disables checks entirely.
   check_commands: ["go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make"]
+  # "npm run" above already covers `npm run render-check` (#1192) as a valid
+  # area:frontend gate check. Follow-up (not yet wired, tracked as #1211):
+  # hand its PNGs to the judge as `bytes:` artifacts so a visual review sees
+  # the screenshots, not just the gate's pass/fail.
 
   # check_setup: repo bootstrap commands, run once per dir (a shared clone, a
   # node's linked worktree, or the baseline worktree the gate diffs against)

@@ -57,6 +57,10 @@ export const Disabled: Story = {
 // >=600px-wide window shows the desktop layout.
 export const MobileViewport: Story = {
   args: { disabled: false, streaming: false },
+  // fullscreen: this frame IS the simulated device width - the preview's own
+  // docs-canvas padding (.storybook/preview.tsx) would otherwise push it
+  // past 390px (caught by render-check).
+  parameters: { layout: 'fullscreen' },
   decorators: [Story => (
     <div className="w-[390px] h-[844px] mx-auto flex flex-col justify-end overflow-hidden border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900">
       <Story />
@@ -77,6 +81,7 @@ export const MobileViewportStreaming: Story = {
       { id: '2', text: 'and add a changelog entry' },
     ],
   },
+  parameters: { layout: 'fullscreen' },
   decorators: [Story => (
     <div className="w-[390px] h-[844px] mx-auto flex flex-col justify-end overflow-hidden border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900">
       <Story />

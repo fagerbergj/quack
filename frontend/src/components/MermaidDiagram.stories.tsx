@@ -33,6 +33,9 @@ export const InvalidSource: Story = {
 
 export const MobileViewport390: Story = {
   args: { code: diagram },
+  // fullscreen: this frame IS the simulated device width - the preview's own
+  // docs-canvas padding would otherwise push it past 390px (render-check).
+  parameters: { layout: 'fullscreen' },
   decorators: [Story => (
     <div className="w-[390px] h-[844px] overflow-hidden border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 p-3">
       <Story />
