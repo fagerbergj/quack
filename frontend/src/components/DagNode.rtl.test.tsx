@@ -10,6 +10,13 @@ afterEach(cleanup)
 
 const node: DagNodeDef = { id: 'r1', agent: 'web-researcher', task: 'Research Dublin.', depends_on: [] }
 
+// Opens the panel from the ⋮ menu (the only way it opens - #1114).
+async function openArtifacts(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: 'Node actions' }))
+  await user.click(await screen.findByRole('menuitem', { name: /Artifacts/ }))
+  await screen.findByRole('dialog', { name: /Artifacts for node/ })
+}
+
 beforeEach(() => {
   // See ArtifactPanel.rtl.test.tsx for why these stubs are needed: jsdom has
   // no <dialog> support and no matchMedia at all, and the generated client's
@@ -54,5 +61,68 @@ describe('DagNode artifacts menu item (#1114)', () => {
   it('renders no ⋮ menu at all on a terminal node with no chatId (nothing to show)', () => {
     render(<DagNode node={node} state={{ status: 'done' }} runs={[]} answer="the answer" isFinal={false} />)
     expect(screen.queryByRole('button', { name: 'Node actions' })).toBeNull()
+  })
+})
+
+// #1178: the panel reads three narrow fields from the node - its name
+// (nodeTask), its error (nodeError, only on a failed status) and its
+// declared output kind (nodeArtifactKind). These tests drive the panel
+// through its only entry point to prove each field actually crosses the
+// component boundary into the result view.
+describe('DagNode artifact panel props (#1178)', () => {
+  it('shows the node\u2019s task as the panel heading, not an artifact id', async () => {
+    const user = userEvent.setup()
+    render(<DagNode node={node} state={{ status: 'done' }} runs={[]} answer="the answer" isFinal={false} chatId="chat-1" />)
+    await openArtifacts(user)
+    expect(await screen.findByRole('heading', { level: 2, name: 'Research Dublin.' })).toBeTruthy()
+    expect(screen.getByText("This node hasn't produced anything yet.")).toBeTruthy()
+  })
+
+  it('passes the declared output kind: the panel opens on the matching artifact, not the newest', async () => {
+    const user = userEvent.setup()
+    // document:spec is NEWER (latest revision 5), but the node declares
+    // `text` - the plan is the result view must open on.
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = decodeURIComponent(input instanceof Request ? input.url : String(input))
+      if (url.includes('/artifacts/text:plan/revisions')) {
+        return new Response(JSON.stringify({ data: [{ revision: 2, mime_type: 'text/markdown', size: 8, kind: 'text', class: 'blob', lineage: { node_id: 'p1' } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      if (url.includes('/artifacts/text:plan?revision=2')) {
+        return new Response('# The plan\n\nPlan body line.\n', { status: 200, headers: { 'Content-Type': 'text/plain' } })
+      }
+      if (url.endsWith('/artifacts')) {
+        return new Response(JSON.stringify({
+          data: [
+            { name: 'text:plan', kind: 'text', class: 'blob', latest_revision: 2, lineage: { node_id: 'p1', author: 'worker' }, revisions: [] },
+            { name: 'document:spec', kind: 'document', class: 'structured', latest_revision: 5, lineage: { node_id: 'p1', author: 'worker' }, revisions: [] },
+          ],
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      return new Response(JSON.stringify({ error: 'not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
+    }))
+    render(<DagNode node={{ ...node, id: 'p1', artifact: 'text' }} state={{ status: 'done' }} runs={[]} answer="" isFinal={false} chatId="chat-1" />)
+    await openArtifacts(user)
+    // The declared-kind artifact rendered, not the newer document.
+    expect(await screen.findByRole('heading', { level: 1, name: 'The plan' })).toBeTruthy()
+  })
+
+  it('passes the node error on a failed node: the failure empty state shows it', async () => {
+    const user = userEvent.setup()
+    render(<DagNode node={node} state={{ status: 'failed', error: 'judge gave up after 3 rounds' }} runs={[]} answer="" isFinal={false} chatId="chat-1" />)
+    await openArtifacts(user)
+    expect(await screen.findByText('This node failed before writing its result.')).toBeTruthy()
+    // The error text appears twice: the node card's own red banner and
+    // the panel's failure empty state.
+    expect(screen.getAllByText('judge gave up after 3 rounds').length).toBe(2)
+  })
+
+  it('does not read a transient error on a non-failed node as a failure', async () => {
+    const user = userEvent.setup()
+    // markNodeError annotates rejected control actions on any status -
+    // the panel must not claim the node "failed" for one.
+    render(<DagNode node={node} state={{ status: 'running', error: 'stop rejected (HTTP 409)' }} runs={[]} answer="" isFinal={false} chatId="chat-1" />)
+    await openArtifacts(user)
+    expect(await screen.findByText("This node hasn't produced anything yet.")).toBeTruthy()
+    expect(screen.queryByText('This node failed before writing its result.')).toBeNull()
   })
 })
