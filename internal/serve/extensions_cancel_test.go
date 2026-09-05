@@ -55,50 +55,35 @@ func TestMapExtRunOutcome(t *testing.T) {
 	}
 }
 
-// TestMapExtRunOutcome_FailedWithNodeErrorFillsEmptyAnswer is #1105's fix:
-// extsdk.RunOutcome has no Error field, so a failed run's real cause rides
-// in Answer instead of leaving it empty for the extension's silent-gap text.
-func TestMapExtRunOutcome_FailedWithNodeErrorFillsEmptyAnswer(t *testing.T) {
+// TestMapExtRunOutcome_FailedWithNodeErrorFillsError is sdk v0.10.0's fix:
+// RunOutcome.Error carries a failed run's real cause; Answer stays empty
+// rather than folding the cause into it (formerly #1105's stopgap).
+func TestMapExtRunOutcome_FailedWithNodeErrorFillsError(t *testing.T) {
 	needsInput := stream.NodeNeedsInputData{}
 	out := mapExtRunOutcome(store.RunStatusFailed, "", "model gateway returned 502 Bad Gateway on 5 consecutive attempts over 48m0s",
 		"", true, needsInput, false, false)
 	if out.Status != extsdk.RunFailed {
 		t.Fatalf("Status = %q, want RunFailed", out.Status)
 	}
-	if out.Answer == "" {
-		t.Fatalf("Answer left empty; the extension would report this as a silent gap instead of a known cause")
+	if out.Answer != "" {
+		t.Errorf("Answer = %q, want empty - the cause belongs in Error", out.Answer)
 	}
-	if !strings.Contains(out.Answer, "502 Bad Gateway") || !strings.Contains(out.Answer, "5 consecutive attempts") {
-		t.Errorf("Answer = %q, want it to name the error class and attempt count", out.Answer)
-	}
-	if !strings.Contains(out.Answer, "Retry once the gateway is healthy") {
-		t.Errorf("Answer = %q, want retry guidance for a transient 502", out.Answer)
+	if !strings.Contains(out.Error, "502 Bad Gateway") || !strings.Contains(out.Error, "5 consecutive attempts") {
+		t.Errorf("Error = %q, want it to name the error class and attempt count", out.Error)
 	}
 }
 
-// TestMapExtRunOutcome_NonTransientErrorGetsNeutralGuidance is #1109 review
-// finding 4: "retry once healthy" is wrong advice for a 401/400/quota error
-// that will not self-heal.
-func TestMapExtRunOutcome_NonTransientErrorGetsNeutralGuidance(t *testing.T) {
-	needsInput := stream.NodeNeedsInputData{}
-	out := mapExtRunOutcome(store.RunStatusFailed, "", "model gateway returned 401 Unauthorized on 1 consecutive attempts over 0s",
-		"", true, needsInput, false, false)
-	if strings.Contains(out.Answer, "Retry once the gateway is healthy") {
-		t.Errorf("Answer = %q, want neutral guidance for a non-transient 401, not retry advice", out.Answer)
-	}
-	if !strings.Contains(out.Answer, "provider configuration") {
-		t.Errorf("Answer = %q, want guidance pointing at configuration", out.Answer)
-	}
-}
-
-// TestMapExtRunOutcome_TrueSilentGapAnswerStaysEmpty proves the #568 path is
-// untouched: no failed-node error means Answer stays empty for the
+// TestMapExtRunOutcome_TrueSilentGapErrorStaysEmpty proves the #568 path is
+// untouched: no failed-node error means Error stays empty for the
 // extension's own silent-gap text.
-func TestMapExtRunOutcome_TrueSilentGapAnswerStaysEmpty(t *testing.T) {
+func TestMapExtRunOutcome_TrueSilentGapErrorStaysEmpty(t *testing.T) {
 	needsInput := stream.NodeNeedsInputData{}
 	out := mapExtRunOutcome(store.RunStatusIdle, "", "", "", true, needsInput, false, false)
 	if out.Answer != "" {
 		t.Fatalf("Answer = %q, want empty for a genuine silent gap", out.Answer)
+	}
+	if out.Error != "" {
+		t.Fatalf("Error = %q, want empty for a genuine silent gap", out.Error)
 	}
 }
 

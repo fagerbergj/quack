@@ -81,12 +81,15 @@ func TestPlanningFailure_EndsRunFailedWithClassifiedError(t *testing.T) {
 	if outcome.Status != extsdk.RunFailed {
 		t.Fatalf("Status = %q, want %q (a gateway failure during planning must not surface as a silent gap)", outcome.Status, extsdk.RunFailed)
 	}
-	if !strings.Contains(outcome.Answer, "model gateway returned 502 Bad Gateway") {
-		t.Errorf("Answer = %q, want it to name the classified gateway error", outcome.Answer)
+	if outcome.Answer != "" {
+		t.Errorf("Answer = %q, want empty - the cause belongs in Error", outcome.Answer)
+	}
+	if !strings.Contains(outcome.Error, "model gateway returned 502 Bad Gateway") {
+		t.Errorf("Error = %q, want it to name the classified gateway error", outcome.Error)
 	}
 	for _, leaked := range []string{"llm-swap", "11436", "POST"} {
-		if strings.Contains(outcome.Answer, leaked) {
-			t.Errorf("Answer = %q leaked %q - raw URL/body must never reach the extension", outcome.Answer, leaked)
+		if strings.Contains(outcome.Error, leaked) {
+			t.Errorf("Error = %q leaked %q - raw URL/body must never reach the extension", outcome.Error, leaked)
 		}
 	}
 }
