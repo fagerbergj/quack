@@ -1,14 +1,21 @@
 import { describe, it, expect } from 'vitest'
 import { page } from 'vitest/browser'
 import { render, cleanup } from '@testing-library/react'
-import { composeStories } from '@storybook/react-vite'
+import { composeStories, setProjectAnnotations } from '@storybook/react-vite'
+import * as previewAnnotations from '../.storybook/preview'
+import './index.css'
 
 // #1192: two quack-authored PRs passed every gate (tsc/eslint/424 RTL
 // tests/build/knip) yet were unusable in a real browser - a stray `//` in
 // JSX rendered as a visible text node, and a dialog was stacked under a
 // sibling. Neither defect is visible to a query-by-role/label RTL test, so
 // this gate actually mounts every story in a real Chromium (Playwright, via
-// Vitest browser mode) and inspects the rendered DOM instead.
+// Vitest browser mode) and inspects the rendered DOM instead. Importing
+// index.css here (not just relying on the preview module doing it) makes the
+// intent explicit even though `../.storybook/preview` already pulls it in -
+// without SOME import of it, none of the Tailwind rules the checks below
+// depend on (z-index stacking, overflow-x-auto, dark: variants) would exist
+// in this document at all.
 const storyModules = import.meta.glob('./**/*.stories.tsx', { eager: true }) as Record<string, Record<string, unknown>>
 
 const VIEWPORTS = [
@@ -57,46 +64,94 @@ function findCoveredDialog(root: Element): string | undefined {
   return undefined
 }
 
-describe.each(Object.entries(storyModules))('%s', (path, mod) => {
-  const composed = composeStories(mod as never)
+// Waits for the subtree to actually stop changing instead of a fixed sleep:
+// web fonts loaded (layout-affecting), every <img> resolved, then a short
+// idle window after the last DOM mutation. This is what a Mermaid story
+// needs (its diagram arrives via a dynamic import + async render() call,
+// swapping in an <svg> well after mount) without a Mermaid-specific branch -
+// the mutation that adds the <svg> is exactly what resets the idle timer.
+// Bounded overall so a story with a genuinely perpetual mutation (a live
+// "running" spinner, say) can't hang the gate.
+function waitForSettled(root: Element, { idleMs = 100, maxMs = 3000 } = {}): Promise<void> {
+  return new Promise(resolve => {
+    let done = false
+    const finish = () => { if (!done) { done = true; observer.disconnect(); resolve() } }
+    let idleTimer = setTimeout(finish, idleMs)
+    const observer = new MutationObserver(() => {
+      clearTimeout(idleTimer)
+      idleTimer = setTimeout(finish, idleMs)
+    })
+    observer.observe(root, { childList: true, subtree: true, attributes: true, characterData: true })
+    setTimeout(finish, maxMs)
+  })
+}
 
-  describe.each(Object.entries(composed))('%s', (storyName, StoryComp) => {
-    // Most existing stories render at a fixed desktop-ish width (e.g. a
-    // `max-w-2xl` wrapper) with no mobile intent - the codebase's own
-    // convention for a story that DOES care about a phone width is to say so
-    // in its name (Composer's `MobileViewport360`, ArtifactPanel's
-    // `WithJudgeNotesMobile`). Reuse that convention here rather than
-    // fighting every desktop-only story's natural width at 390px.
-    const viewports = /mobile/i.test(storyName) ? VIEWPORTS : VIEWPORTS.filter(v => v.name === 'desktop')
-    describe.each(viewports)('$name viewport', ({ name: viewportName, width, height }) => {
-      it.each(THEMES)('%s theme has no visible defects', async theme => {
-        document.documentElement.classList.toggle('dark', theme === 'dark')
+async function waitForRenderSettled(root: Element): Promise<void> {
+  await document.fonts.ready
+  const images = Array.from(root.querySelectorAll('img'))
+  await Promise.all(images.map(img => (img.complete ? Promise.resolve() : new Promise<void>(res => {
+    img.addEventListener('load', () => res(), { once: true })
+    img.addEventListener('error', () => res(), { once: true })
+  }))))
+  await waitForSettled(root)
+}
+
+describe.each(Object.entries(storyModules))('%s', (path, mod) => {
+  // Composed once here just to enumerate story names - the per-theme render
+  // below recomposes with that theme's project annotations so the preview's
+  // real `withTheme` decorator (not a hand-rolled duplicate of it) drives the
+  // `dark` class, the same mechanism MermaidDiagram's own useIsDarkMode and
+  // the shipped app both rely on.
+  const storyNames = Object.keys(composeStories(mod as never))
+
+  describe.each(storyNames)('%s', storyName => {
+    it.each(THEMES)('%s theme has no visible defects at every opted-in viewport', async theme => {
+      setProjectAnnotations({ ...(previewAnnotations as unknown as Record<string, unknown>), globals: { theme } } as never)
+      const composed = composeStories(mod as never)
+      const StoryComp = composed[storyName] as React.ComponentType & { parameters?: Record<string, unknown> }
+
+      // Viewport opt-in: a story's own `parameters.renderCheck.viewports` (or
+      // Storybook's own `parameters.viewport.defaultViewport`, honored as an
+      // equivalent signal) wins when present. Name-matching ("...Mobile...",
+      // matching the codebase's own MobileViewport360/WithJudgeNotesMobile
+      // convention) is only the FALLBACK for stories that haven't opted in
+      // explicitly yet - most existing stories render at a fixed desktop
+      // width with no mobile intent, so checking them at 390px would flag
+      // the story's own width choice, not a component defect.
+      const renderCheckParams = StoryComp.parameters?.renderCheck as { viewports?: readonly string[] } | undefined
+      const storybookViewport = StoryComp.parameters?.viewport as { defaultViewport?: string } | undefined
+      const wantsMobile = renderCheckParams?.viewports
+        ? renderCheckParams.viewports.includes('mobile')
+        : storybookViewport?.defaultViewport
+          ? storybookViewport.defaultViewport.toLowerCase().includes('mobile')
+          : /mobile/i.test(storyName)
+      const viewports = wantsMobile ? VIEWPORTS : VIEWPORTS.filter(v => v.name === 'desktop')
+
+      for (const { name: viewportName, width, height } of viewports) {
         await page.viewport(width, height)
 
         const errors: unknown[] = []
         const originalError = console.error
         console.error = (...args: unknown[]) => { errors.push(args); originalError(...args) }
 
-        const Story = StoryComp as React.ComponentType
-        // Most existing stories render a bare component with no app-shell
-        // frame around it (that frame is normally what bounds width and
-        // provides the "scroll inside your own container" boundary) - a raw
-        // mount would make every such story "overflow" a 390px viewport
-        // regardless of whether the component itself is at fault. Wrapping
-        // every story in a fixed width x height clipped frame reproduces the
-        // real app shell uniformly: a component with its own internal
-        // overflow-x-auto (per the frontend-design skill's convention) stays
-        // within this frame; one that pushes its own box wider does not.
-        const { container } = render(
-          <div style={{ width, height, overflow: 'hidden' }}>
-            <Story />
-          </div>,
-        )
-        // Effects that render async (MermaidDiagram's dynamic import + parse)
-        // need a tick past the initial synchronous mount.
-        await new Promise(r => setTimeout(r, 50))
-
         try {
+          // Most existing stories render a bare component with no app-shell
+          // frame around it (that frame is normally what bounds width and
+          // provides the "scroll inside your own container" boundary) - a
+          // raw mount would make every such story "overflow" a 390px
+          // viewport regardless of whether the component itself is at
+          // fault. Wrapping every story in a fixed width x height clipped
+          // frame reproduces the real app shell uniformly: a component with
+          // its own internal overflow-x-auto (per the frontend-design
+          // skill's convention) stays within this frame; one that pushes
+          // its own box wider does not.
+          const { container } = render(
+            <div style={{ width, height, overflow: 'hidden' }}>
+              <StoryComp />
+            </div>,
+          )
+          await waitForRenderSettled(container)
+
           const strayComment = findStrayCommentText(container)
           expect(strayComment, `stray comment-like text node: ${strayComment}`).toBeUndefined()
 
@@ -115,9 +170,8 @@ describe.each(Object.entries(storyModules))('%s', (path, mod) => {
         } finally {
           console.error = originalError
           cleanup()
-          document.documentElement.classList.remove('dark')
         }
-      })
+      }
     })
   })
 })

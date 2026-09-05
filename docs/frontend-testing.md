@@ -1,10 +1,10 @@
 # Frontend testing
 
-The frontend gate is `tsc --noEmit`, `eslint`, `vitest run`, `build`, `knip`, `check-stories` (#1192, part 1) and `render-check` (#1192, part 2), run in that order in CI's `frontend-build` and `render-check` jobs.
+CI runs three separate jobs for `frontend/`: `frontend-build` (`tsc --noEmit` → `eslint` → `knip` → `build`), `frontend-test` (`vitest run`), and `render-check` (#1192, part 2 - this doc). `check-stories` (#1192, part 1, [#1207](https://github.com/fagerbergj/quack/pull/1207)) is not merged yet - once it lands it adds a `check-stories` step to `frontend-build`, right after `eslint`.
 
 ## render-check
 
-`npm run render-check` (in `frontend/`) mounts every `*.stories.tsx` export via Storybook's portable-stories API (`composeStories` from `@storybook/react-vite`) inside a real Chromium session (Vitest browser mode, Playwright provider - `vitest.render-check.config.ts`), at two viewports (390x844 mobile, 1280x800 desktop) and two themes (light/dark, toggled the same way `.storybook/preview.tsx` does).
+`npm run render-check` (in `frontend/`) mounts every `*.stories.tsx` export via Storybook's portable-stories API (`composeStories`/`setProjectAnnotations` from `@storybook/react-vite`) inside a real Chromium session (Vitest browser mode, Playwright provider - `vitest.render-check.config.ts`), at two viewports (390x844 mobile, 1280x800 desktop) and two themes. The real `.storybook/preview.tsx` module (its `withTheme` decorator and `index.css` import) is applied via `setProjectAnnotations`, so the checks below run against the app's actual Tailwind rules and dark-mode toggling, not a hand-rolled stand-in.
 
 It exists because #1192 shipped two PRs that passed every other gate check yet were unusable in a real browser:
 
@@ -20,7 +20,7 @@ For each story x viewport x theme combination, `render-check` asserts:
 
 A screenshot is captured per combination into `frontend/render-check/` (gitignored - not checked in). To inspect a failure locally, run `npm run render-check` and open the PNG matching the failing test name printed in the output.
 
-Stories that render at a fixed desktop width (most existing ones - no mobile intent) skip the mobile-viewport pass; a story that does care about phone width opts in by including "mobile" in its export name (matching the existing convention: `Composer.stories.tsx`'s `MobileViewport360`, `ArtifactPanel.stories.tsx`'s `WithJudgeNotesMobile`).
+Stories that render at a fixed desktop width (most existing ones - no mobile intent) skip the mobile-viewport pass. A story opts in to the mobile pass explicitly via `parameters.renderCheck.viewports: ['mobile']` (or `parameters.viewport.defaultViewport` naming a mobile size); a story with neither falls back to matching "mobile" in its export name (the existing convention: `Composer.stories.tsx`'s `MobileViewport360`, `ArtifactPanel.stories.tsx`'s `WithJudgeNotesMobile`).
 
 ## check-stories
 
