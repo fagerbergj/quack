@@ -592,6 +592,9 @@ type DagEdge struct {
 type DagNodeDef struct {
 	Agent string `json:"agent"`
 
+	// Artifact The node's declared output artifact kind - the record name its output is saved as on gate pass; absent when the node declares none.
+	Artifact *string `json:"artifact,omitempty"`
+
 	// ContextWindow The assigned agent's configured context_window (0/absent if unset) - the context meter's static limit.
 	ContextWindow *int     `json:"context_window,omitempty"`
 	DependsOn     []string `json:"depends_on"`

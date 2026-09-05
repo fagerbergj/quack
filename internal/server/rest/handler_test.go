@@ -367,6 +367,52 @@ func TestBuildTurnDAGAnswerBubble(t *testing.T) {
 	}
 }
 
+// TestBuildTurnDAGCarriesArtifact: a node's declared output artifact kind
+// persists in the DAG's PlanJSON and must surface on the reloaded turn's
+// quack:dag output item (#1178) - absent when the node declares none.
+func TestBuildTurnDAGCarriesArtifact(t *testing.T) {
+	planJSON := `{"nodes":[{"id":"explore","agent":"code-explorer","task":"read","depends_on":[],"artifact":"text"},{"id":"post","agent":"code-reviewer","task":"review","depends_on":["explore"]}],"edges":[{"from":"explore","to":"post"}]}`
+	tc := store.TurnContent{
+		ID:        "t1",
+		CreatedAt: time.Now(),
+		UserText:  "please review this PR",
+		AsstText:  "I'll handle this review - planning chatter",
+		Plan:      &store.DagPlan{ID: "p1", TurnID: "t1", PlanJSON: planJSON},
+		Nodes: []store.DagNode{
+			{NodeID: "explore", Status: "done", Output: "explorer notes"},
+			{NodeID: "post", Status: "done", Output: "VERDICT: approve"},
+		},
+	}
+
+	turn := buildTurn(tc)
+
+	var dagItem schema.DagOutputItem
+	found := false
+	for _, item := range turn.Output {
+		if disc, _ := item.Discriminator(); disc == "quack:dag" {
+			var err error
+			if dagItem, err = item.AsDagOutputItem(); err != nil {
+				t.Fatalf("AsDagOutputItem: %v", err)
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("no quack:dag output item")
+	}
+	byID := map[string]schema.DagNodeDef{}
+	for _, n := range dagItem.Nodes {
+		byID[n.Id] = n
+	}
+	if got := byID["explore"].Artifact; got == nil || *got != "text" {
+		t.Errorf("explore Artifact = %v, want %q", got, "text")
+	}
+	if got := byID["post"].Artifact; got != nil {
+		t.Errorf("post Artifact = %v, want nil (undeclared)", got)
+	}
+}
+
 // TestBuildTurnPlainReplyKeepsNarration: a non-DAG turn's bubble stays the
 // orchestrator's own AsstText - terminalNodeOutput only applies to DAG turns.
 func TestBuildTurnPlainReplyKeepsNarration(t *testing.T) {

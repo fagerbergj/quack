@@ -55,6 +55,9 @@ export interface DagNodeDef {
   // context_window is the assigned agent's configured limit (0/absent if
   // unset) - the context meter's static ceiling.
   context_window?: number
+  // artifact is the node's declared output artifact kind - the record name
+  // its output is saved as on gate pass; absent when the node declares none.
+  artifact?: string
 }
 
 // DagEdgeDef is one edge in a DAG plan.

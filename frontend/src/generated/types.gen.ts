@@ -463,6 +463,10 @@ export type DagNodeDef = {
      * The assigned agent's configured context_window (0/absent if unset) - the context meter's static limit.
      */
     context_window?: number;
+    /**
+     * The node's declared output artifact kind - the record name its output is saved as on gate pass; absent when the node declares none.
+     */
+    artifact?: string;
 };
 
 export type DagEdge = {

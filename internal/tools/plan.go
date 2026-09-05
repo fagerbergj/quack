@@ -138,7 +138,7 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 func DagPlanEvent(ctx context.Context, p dag.Plan) stream.SSEEvent {
 	nodes := make([]stream.DagNodeDef, len(p.Nodes))
 	for i, n := range p.Nodes {
-		nodes[i] = stream.DagNodeDef{ID: n.ID, Agent: n.AgentName, Task: n.Task, DependsOn: n.DependsOn, ContextWindow: n.ContextWindow}
+		nodes[i] = stream.DagNodeDef{ID: n.ID, Agent: n.AgentName, Task: n.Task, DependsOn: n.DependsOn, ContextWindow: n.ContextWindow, Artifact: n.Artifact}
 	}
 	return stream.WithTrace(stream.DagPlan(p.ID, nodes, planEdges(p.Nodes)), otelobs.TraceIDOf(ctx))
 }
