@@ -548,9 +548,9 @@ export const DagNode = memo(function DagNode({
         : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'
     }`}>
       {/* Node header */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100 dark:border-gray-700">
+      <div className="flex items-start min-[600px]:items-center gap-2 px-4 py-3 border-b border-gray-100 dark:border-gray-700 flex-wrap min-[600px]:flex-nowrap">
         <StatusDot status={state.status} />
-        <span className="text-xs font-semibold text-gray-700 dark:text-gray-200">
+        <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 min-w-0 flex-1 basis-full min-[600px]:basis-auto min-[600px]:truncate max-[599px]:line-clamp-2">
           {agentLabel(node.agent)}
         </span>
         {pauseLabel && (
