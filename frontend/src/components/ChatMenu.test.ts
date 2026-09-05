@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ChatMenu } from './ChatMenu'
@@ -11,11 +11,22 @@ describe('ChatMenu', () => {
   let root: ReturnType<typeof createRoot> | undefined
   let host: HTMLDivElement | undefined
 
+  beforeEach(() => {
+    // jsdom has no matchMedia; ChatMenu's theme picker (useTheme) calls it on mount.
+    vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })))
+  })
+
   afterEach(() => {
     act(() => root?.unmount())
     host?.remove()
     root = undefined
     host = undefined
+    vi.unstubAllGlobals()
   })
 
   function render() {

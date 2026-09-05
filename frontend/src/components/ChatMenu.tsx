@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { UsageSummary, type UsageSummaryProps } from './UsageSummary'
+import { useTheme, type Theme } from '../hooks/useTheme'
+
+const THEME_OPTIONS: { value: Theme; label: string }[] = [
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+  { value: 'system', label: 'System' },
+]
 
 // ChatMenu is the chat header's ⋯ overflow menu (#746 items 2/3): per-chat
 // actions that aren't worth permanent header real estate. Today that's
@@ -13,6 +20,7 @@ import { UsageSummary, type UsageSummaryProps } from './UsageSummary'
 export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSummaryProps }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const [theme, setTheme] = useTheme()
 
   useEffect(() => {
     if (!open) return
@@ -58,6 +66,23 @@ export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSumma
           >
             <span aria-hidden="true">⬇</span> Download Logs
           </a>
+          {/* #1173: Light/Dark/System - only in-app way to change theme.
+              APG menuitemradio: activating changes the selection but leaves
+              the menu open (unlike Download Logs above), so a user can
+              change their mind without reopening. */}
+          <div role="group" aria-label="Theme" className="border-t border-gray-100 dark:border-gray-700 mt-1 pt-1">
+            {THEME_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                role="menuitemradio"
+                aria-checked={theme === opt.value}
+                onClick={() => setTheme(opt.value)}
+                className="flex items-center gap-1.5 w-full px-3 py-1.5 text-left text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+              >
+                <span aria-hidden="true" className="w-3">{theme === opt.value ? '✓' : ''}</span> {opt.label}
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </div>

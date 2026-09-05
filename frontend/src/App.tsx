@@ -4,6 +4,7 @@ import Memory from './pages/Memory'
 import ExtensionHost from './pages/ExtensionHost'
 import { NavRail } from './components/NavRail'
 import { useRoute, useExtName } from './router'
+import { applyTheme } from './hooks/useTheme'
 
 export default function App() {
   const route = useRoute()
@@ -15,12 +16,10 @@ export default function App() {
   const [navOpen, setNavOpen] = useState(false)
 
   // Theme init must run here (not in Chat) so it applies before first paint
-  // regardless of which chat route is active.
+  // regardless of which chat route is active. The kebab's useTheme() picks
+  // up from here and also handles OS-change/in-app switching (#1173).
   useEffect(() => {
-    const stored = localStorage.getItem('theme')
-    if (stored === 'dark' || (!stored && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-      document.documentElement.classList.add('dark')
-    }
+    applyTheme()
   }, [])
 
   return (
