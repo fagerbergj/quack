@@ -97,8 +97,11 @@ func TestPlanRejection_EndsRunFailedWithRejectionReason(t *testing.T) {
 	if outcome.Status != extsdk.RunFailed {
 		t.Fatalf("Status = %q, want %q (a rejected-plan turn with no plan and no answer must not surface as a silent gap)", outcome.Status, extsdk.RunFailed)
 	}
-	if !strings.Contains(outcome.Answer, "review setup needs the PR's real head branch") {
-		t.Errorf("Answer = %q, want it to name the plan's own rejection reason", outcome.Answer)
+	if outcome.Answer != "" {
+		t.Errorf("Answer = %q, want empty - the cause belongs in Error", outcome.Answer)
+	}
+	if !strings.Contains(outcome.Error, "review setup needs the PR's real head branch") {
+		t.Errorf("Error = %q, want it to name the plan's own rejection reason", outcome.Error)
 	}
 
 	c, err := st.GetChat(context.Background(), chatID)
