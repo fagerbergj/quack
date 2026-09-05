@@ -66,14 +66,17 @@ export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSumma
           >
             <span aria-hidden="true">⬇</span> Download Logs
           </a>
-          {/* #1173: Light/Dark/System - only in-app way to change theme. */}
+          {/* #1173: Light/Dark/System - only in-app way to change theme.
+              APG menuitemradio: activating changes the selection but leaves
+              the menu open (unlike Download Logs above), so a user can
+              change their mind without reopening. */}
           <div role="group" aria-label="Theme" className="border-t border-gray-100 dark:border-gray-700 mt-1 pt-1">
             {THEME_OPTIONS.map(opt => (
               <button
                 key={opt.value}
                 role="menuitemradio"
                 aria-checked={theme === opt.value}
-                onClick={() => { setTheme(opt.value); setOpen(false) }}
+                onClick={() => setTheme(opt.value)}
                 className="flex items-center gap-1.5 w-full px-3 py-1.5 text-left text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
               >
                 <span aria-hidden="true" className="w-3">{theme === opt.value ? '✓' : ''}</span> {opt.label}

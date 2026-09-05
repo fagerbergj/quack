@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, beforeEach } from 'vitest'
-import { act, cleanup, render } from '@testing-library/react'
+import { act, cleanup, render, screen } from '@testing-library/react'
 import { useTheme } from './useTheme'
 
 afterEach(cleanup)
@@ -30,6 +30,8 @@ function Probe() {
     <div>
       <span data-testid="theme">{theme}</span>
       <button onClick={() => setTheme('dark')}>set-dark</button>
+      <button onClick={() => setTheme('light')}>set-light</button>
+      <button onClick={() => setTheme('system')}>set-system</button>
     </div>
   )
 }
@@ -51,5 +53,31 @@ describe('useTheme', () => {
     expect(document.documentElement.classList.contains('dark')).toBe(true)
     act(() => fireOsChange(false))
     expect(document.documentElement.classList.contains('dark')).toBe(true)
+  })
+
+  it('an explicit light choice stays light while the OS is dark', () => {
+    localStorage.setItem('theme', 'light')
+    render(<Probe />)
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+    expect(document.documentElement.style.colorScheme).toBe('light')
+    act(() => fireOsChange(true))
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+    expect(document.documentElement.style.colorScheme).toBe('light')
+  })
+
+  it('switching from dark to light removes the dark class', () => {
+    localStorage.setItem('theme', 'dark')
+    render(<Probe />)
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+    act(() => screen.getByText('set-light').click())
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+    expect(document.documentElement.style.colorScheme).toBe('light')
+  })
+
+  it('choosing System removes the stored theme key', () => {
+    localStorage.setItem('theme', 'dark')
+    render(<Probe />)
+    act(() => screen.getByText('set-system').click())
+    expect(localStorage.getItem('theme')).toBeNull()
   })
 })
