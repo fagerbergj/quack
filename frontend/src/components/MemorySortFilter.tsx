@@ -41,7 +41,7 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
         aria-haspopup="dialog"
         aria-expanded={open}
         title="Sort and filter"
-        className={`flex items-center justify-center rounded-lg border px-2 py-1.5 transition-colors ${
+        className={`flex items-center justify-center min-w-[44px] min-h-[44px] rounded-lg border transition-colors ${
           active
             ? 'border-blue-500 text-blue-600 dark:text-blue-400'
             : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'

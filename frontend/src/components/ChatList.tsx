@@ -135,7 +135,7 @@ function ChatRow({
       className={`group relative flex flex-col px-3 py-2.5 cursor-pointer border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${activeChatId === s.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''}`}
       onClick={() => onSelect(s.id)}
     >
-      <span title={s.title || 'New chat'} className={`flex items-center ${archived ? 'pr-14' : 'pr-6'}`}>
+      <span title={s.title || 'New chat'} className={`flex items-center ${archived ? 'pr-[88px]' : 'pr-11'}`}>
         <StatusDot status={s.status} className="mr-1.5" variant="chat" />
         <span className={`text-sm truncate block ${activeChatId === s.id ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-100'}`}>
           {s.title || 'New chat'}
@@ -220,7 +220,7 @@ function ChatRow({
       {archived && onUnarchive && (
         <div
           ref={menuRef}
-          className="absolute right-8 top-2"
+          className="absolute right-11 top-0"
           onBlur={e => {
             if (!menuRef.current?.contains(e.relatedTarget as Node)) setMenuOpen(false)
           }}
@@ -231,7 +231,7 @@ function ChatRow({
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             title="Row actions"
-            className={`inline-flex items-center justify-center w-6 h-6 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-opacity ${menuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+            className={`inline-flex items-center justify-center min-w-[44px] min-h-[44px] rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-opacity ${menuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
           >
             ⋮
           </button>
@@ -257,7 +257,7 @@ function ChatRow({
         onClick={handleTrashClick}
         aria-label={archived ? 'Delete chat permanently' : 'Archive chat'}
         title={archived ? 'Delete chat permanently' : 'Archive chat'}
-        className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity p-1 rounded"
+        className="absolute right-0 top-0 min-w-[44px] min-h-[44px] flex items-center justify-center opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity rounded"
       >
         ×
       </button>
@@ -406,7 +406,7 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
                   onClick={onLoadMoreArchivedChats}
                   disabled={loadingMoreArchivedChats}
                   aria-label="Load more archived chats"
-                  className="w-full text-xs text-center py-2.5 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"
+                  className="w-full min-h-[44px] text-xs text-center text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"
                 >
                   {loadingMoreArchivedChats ? 'Loading…' : 'Load more'}
                 </button>
@@ -419,7 +419,7 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
           <button
             onClick={onLoadMoreChats}
             disabled={loadingMoreChats}
-            className="w-full text-xs text-center py-2.5 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"
+            className="w-full min-h-[44px] text-xs text-center text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"
           >
             {loadingMoreChats ? 'Loading…' : 'Load more'}
           </button>
