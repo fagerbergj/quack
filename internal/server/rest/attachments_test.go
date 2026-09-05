@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"iter"
 	"mime/multipart"
@@ -24,6 +25,7 @@ import (
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/orchestrator"
+	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
@@ -245,6 +247,35 @@ func TestAttachmentRoundTrip(t *testing.T) {
 			}
 		}
 	}
+
+	// #1126: the attachment lists as a "bytes" recordstore artifact with
+	// kind/class/lineage set, not the null triple the raw artifact-service
+	// path used to leave behind.
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/chats/"+chatID+"/artifacts", nil)
+	listRec := httptest.NewRecorder()
+	h.ListChatArtifacts(listRec, listReq, chatID)
+	var list schema.ArtifactList
+	if err := json.Unmarshal(listRec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode artifact list: %v", err)
+	}
+	var found *schema.ArtifactSummary
+	for i := range list.Data {
+		if list.Data[i].Name == "bytes:upload-photo.png" {
+			found = &list.Data[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("no bytes:upload-photo.png artifact in %+v", list.Data)
+	}
+	if found.Kind == nil || *found.Kind != "bytes" {
+		t.Errorf("kind = %v, want \"bytes\"", found.Kind)
+	}
+	if found.Class == nil || *found.Class != "blob" {
+		t.Errorf("class = %v, want \"blob\"", found.Class)
+	}
+	if found.Lineage == nil || found.Lineage.Author == nil || *found.Lineage.Author != "user" {
+		t.Errorf("lineage = %+v, want author \"user\"", found.Lineage)
+	}
 }
 
 // TestAttachmentRoundTrip_SecondAccessStillHydrates proves hydration isn't a
@@ -265,7 +296,7 @@ func TestAttachmentRoundTrip_SecondAccessStillHydrates(t *testing.T) {
 	// Simulate a later turn's model call that references the same
 	// artifact revision again, through the same hydrating wrapper prod uses.
 	userID := h.sessionUser(context.Background(), chatID)
-	ref := artifactref.Encode(userID, chatID, "photo.png", 1, "image/png")
+	ref := artifactref.Encode(userID, chatID, "bytes:upload-photo.png", 1, "image/png")
 	rec := &recordingModel{}
 	hydrated := inference.HydratingModelForTesting(rec, h.artifacts)
 	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{ref}}}}

@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
@@ -27,6 +26,7 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/store"
@@ -620,21 +620,36 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 	streamHub(r.Context(), sse, replay, live, 0)
 }
 
-// saveAttachment durably stores one uploaded file's bytes and returns a
-// lightweight reference part (internal/artifactref) - never the bytes - to
-// carry through plans and session events instead.
+// attachmentArtifactKind is the generic blob kind (#1090 §4.3, already
+// registered by internal/vetting/reviewrecord.go) chat attachments are saved
+// under, so the artifacts API lists them with kind/class/lineage set instead
+// of null (#1126).
+const attachmentArtifactKind = "bytes"
+
+// attachmentHintPrefix keeps a user-uploaded attachment's id ("bytes:upload-
+// <filename>") out of the dispatch input-artifact namespace ("bytes:<name>",
+// internal/serve/extensions.go's readExtInputArtifact/writeExtInputArtifact)
+// - both share the same "bytes" kind and chat session, so an upload named
+// e.g. "pull" or "files" would otherwise silently collide with (and
+// overwrite) an extension's own dispatch input of the same name (#1208
+// review).
+const attachmentHintPrefix = "upload-"
+
+// saveAttachment durably stores one uploaded file's bytes as a recordstore
+// blob artifact and returns a lightweight reference part
+// (internal/artifactref) - never the bytes - to carry through plans and
+// session events instead.
 func (h *Handler) saveAttachment(ctx context.Context, userID, chatID, turnID, name string, data []byte, mimeType string) (*genai.Part, error) {
 	if h.artifacts == nil {
 		return nil, fmt.Errorf("no artifact service configured")
 	}
-	resp, err := h.artifacts.SaveForTurn(ctx, &artifact.SaveRequest{
-		AppName: artifactref.AppName, UserID: userID, SessionID: chatID, FileName: name,
-		Part: &genai.Part{InlineData: &genai.Blob{Data: data, MIMEType: mimeType}},
-	}, turnID)
+	client := recordstore.New(h.artifacts, artifactref.AppName, userID, chatID)
+	lineage := recordstore.Lineage{Author: "user", TurnID: turnID, SavedAt: time.Now().UTC()}
+	id, rev, err := client.SaveBlob(ctx, attachmentArtifactKind, data, mimeType, attachmentHintPrefix+name, lineage)
 	if err != nil {
 		return nil, err
 	}
-	return artifactref.Encode(userID, chatID, name, resp.Version, mimeType), nil
+	return artifactref.Encode(userID, chatID, id, int64(rev), mimeType), nil
 }
 
 // recoverRun keeps a panicking run from taking the process with it. All three

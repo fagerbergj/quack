@@ -17,7 +17,6 @@ import (
 
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 	"github.com/google/uuid"
-	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 	"gopkg.in/yaml.v3"
@@ -729,21 +728,30 @@ func writeExtInputArtifact(st *store.Store, artifacts *store.TurnAwareService) f
 	}
 }
 
+// attachmentHintPrefix keeps a dispatch attachment's id ("bytes:upload-
+// <filename>") out of the dispatch input-artifact namespace ("bytes:<name>",
+// readExtInputArtifact/writeExtInputArtifact above) - both share the "bytes"
+// kind and chat session, so an attachment named e.g. "pull" or "files" would
+// otherwise silently collide with (and overwrite) an input artifact of the
+// same name (#1208 review). Mirrors internal/server/rest/handler.go's own
+// attachmentHintPrefix.
+const attachmentHintPrefix = "upload-"
+
 // saveExtAttachment mirrors rest.Handler.saveAttachment: durably store the
-// bytes and hand back a reference part (internal/artifactref), never the
-// bytes, so plans/session events/the gen_ai ledger carry no attachment bytes.
+// bytes as a recordstore blob artifact (kind/class/lineage set, #1126) and
+// hand back a reference part (internal/artifactref), never the bytes, so
+// plans/session events/the gen_ai ledger carry no attachment bytes.
 func saveExtAttachment(ctx context.Context, artifacts *store.TurnAwareService, userID, chatID, turnID, name string, data []byte, mimeType string) (*genai.Part, error) {
 	if artifacts == nil {
 		return nil, fmt.Errorf("no artifact service configured")
 	}
-	resp, err := artifacts.SaveForTurn(ctx, &artifact.SaveRequest{
-		AppName: artifactref.AppName, UserID: userID, SessionID: chatID, FileName: name,
-		Part: &genai.Part{InlineData: &genai.Blob{Data: data, MIMEType: mimeType}},
-	}, turnID)
+	client := recordstore.New(artifacts, artifactref.AppName, userID, chatID)
+	lineage := recordstore.Lineage{Author: "dispatch", TurnID: turnID, SavedAt: time.Now().UTC()}
+	id, rev, err := client.SaveBlob(ctx, inputArtifactKind, data, mimeType, attachmentHintPrefix+name, lineage)
 	if err != nil {
 		return nil, err
 	}
-	return artifactref.Encode(userID, chatID, name, resp.Version, mimeType), nil
+	return artifactref.Encode(userID, chatID, id, int64(rev), mimeType), nil
 }
 
 // composeDispatchMessage folds the Workflow hint into Ask.Message. Only
