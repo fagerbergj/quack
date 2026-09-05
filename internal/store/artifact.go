@@ -447,6 +447,22 @@ func (s *gormArtifactService) Load(ctx context.Context, req *artifact.LoadReques
 	return &artifact.LoadResponse{Part: genai.NewPartFromBytes(data, a.MimeType)}, nil
 }
 
+// RevisionExists reports whether name@revision has a row - the artifact
+// projection check ledger recovery runs for each artifact.revision intent.
+func (w *TurnAwareService) RevisionExists(ctx context.Context, appName, userID, sessionID, name string, revision int64) (bool, error) {
+	req := &artifact.LoadRequest{AppName: appName, UserID: userID, SessionID: sessionID, FileName: name, Version: revision}
+	var err error
+	if ml, ok := w.Service.(metaLoader); ok {
+		_, _, _, err = ml.loadMeta(ctx, req) // row lookup only; recovery must not pull every blob at boot
+	} else {
+		_, err = w.Service.Load(ctx, req)
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // loadMeta backs TurnAwareService.LoadWithMeta: same lookup as Load, minus
 // the blob fetch, returning the row's kind/class/lineage instead.
 func (s *gormArtifactService) loadMeta(ctx context.Context, req *artifact.LoadRequest) (kind, class string, lineageJSON []byte, err error) {

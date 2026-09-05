@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -19,10 +18,6 @@ import (
 // touching the store's DB connection directly.
 type failingLedgerStore struct{}
 
-func (failingLedgerStore) Append(context.Context, string, []byte) error { return nil }
-func (failingLedgerStore) ReadStream(context.Context, string) (io.ReadCloser, error) {
-	return nil, errors.New("ledger: unreachable")
-}
 func (failingLedgerStore) List(context.Context) ([]ledger.SessionRef, error) {
 	return nil, errors.New("ledger: unreachable")
 }

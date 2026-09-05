@@ -13,7 +13,7 @@ import (
 )
 
 // newTestPGStore mirrors internal/ledger's own container test helper (kept
-// package-local here since fold needs the REAL PGStore, not FSStore, to
+// package-local here since fold needs the REAL PGStore, not MemStore, to
 // exercise ReadEntriesByKey/ReadEntriesPage and the (chat_id, key) index).
 // Skips (not fails) when Docker isn't reachable.
 func newTestPGStore(t *testing.T) *ledger.PGStore {
@@ -54,7 +54,7 @@ func newTestPGStore(t *testing.T) *ledger.PGStore {
 // TestFold_Postgres_KeyIndexAndPaging exercises the real PGStore path:
 // ReadEntriesByKey (the (chat_id, key) index) and ReadEntriesPage, proving
 // LastRevision and Fold agree with each other against a real database, not
-// just FSStore's in-memory scan.
+// just MemStore's in-memory scan.
 func TestFold_Postgres_KeyIndexAndPaging(t *testing.T) {
 	// No t.Parallel(): this test mutates the package-level pageSize var, as
 	// does TestFold_PagingMatchesOneSlice - running both non-parallel is what

@@ -33,10 +33,7 @@ func newTestStack(t *testing.T) (*store.Store, ledger.LedgerStore, *store.TurnAw
 	if err != nil {
 		t.Fatalf("store.New: %v", err)
 	}
-	ls, err := ledger.NewFSStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewFSStore: %v", err)
-	}
+	ls := ledger.NewMemStore()
 	rowSvc, err := st.RowArtifactService()
 	if err != nil {
 		t.Fatalf("RowArtifactService: %v", err)

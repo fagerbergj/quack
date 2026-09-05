@@ -33,10 +33,7 @@ func appendNode(t *testing.T, s ledger.LedgerStore, chatID, nodeID, turn, kind s
 // and node_done rows (#1121: start and terminal are synthesized independently).
 func TestLoadEvents_FallsBackToFold(t *testing.T) {
 	st := newTestStore(t)
-	ls, err := ledger.NewFSStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewFSStore: %v", err)
-	}
+	ls := ledger.NewMemStore()
 	const chatID = "chat-1"
 	appendNode(t, ls, chatID, "n1", "t1", ledger.KindNodeStarted)
 	appendNode(t, ls, chatID, "n1", "t1", ledger.KindNodeDone)
@@ -66,10 +63,7 @@ func TestLoadEvents_FallsBackToFold(t *testing.T) {
 // even with a WAL armed - unchanged behavior when the table already has rows.
 func TestLoadEvents_PrefersTable(t *testing.T) {
 	st := newTestStore(t)
-	ls, err := ledger.NewFSStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewFSStore: %v", err)
-	}
+	ls := ledger.NewMemStore()
 	const chatID = "chat-1"
 	appendNode(t, ls, chatID, "n1", "t1", ledger.KindNodeStarted) // ledger disagrees with the table on purpose
 	l := NewEventLog(st).WithLedger(ls)
@@ -98,10 +92,7 @@ func TestLoadEvents_PrefersTable(t *testing.T) {
 // a fold-derived guess in the wrong space.
 func TestLoadEvents_NeverFoldsWithPriorProgress(t *testing.T) {
 	st := newTestStore(t)
-	ls, err := ledger.NewFSStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewFSStore: %v", err)
-	}
+	ls := ledger.NewMemStore()
 	const chatID = "chat-1"
 	appendNode(t, ls, chatID, "n1", "t1", ledger.KindNodeStarted) // WAL has data; must still be ignored
 
@@ -120,10 +111,7 @@ func TestLoadEvents_NeverFoldsWithPriorProgress(t *testing.T) {
 // back to the fold and resend reconstructed history.
 func TestLoadEvents_CaughtUpClientNeverFolds(t *testing.T) {
 	st := newTestStore(t)
-	ls, err := ledger.NewFSStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewFSStore: %v", err)
-	}
+	ls := ledger.NewMemStore()
 	const chatID = "chat-1"
 	appendNode(t, ls, chatID, "n1", "t1", ledger.KindNodeStarted) // ledger has data; must be ignored
 

@@ -15,7 +15,7 @@ import (
 )
 
 // newRecordingBundle builds a minimal valid recording ZIP (manifest.json +
-// entries.jsonl with one evaluation.result line) - the shape FetchRecording
+// entries.jsonl with one eval.score entry) - the shape FetchRecording
 // downloads and replay.Load reads.
 func newRecordingBundle(t *testing.T, criterion string, score float64) []byte {
 	t.Helper()
@@ -25,14 +25,14 @@ func newRecordingBundle(t *testing.T, criterion string, score float64) []byte {
 	if err != nil {
 		t.Fatalf("create manifest.json: %v", err)
 	}
-	io.WriteString(mf, `{"session_id":"eval-c1"}`)
+	io.WriteString(mf, `{"session_id":"eval-c1","ledger_version":2}`)
 
 	ef, err := zw.Create("entries.jsonl")
 	if err != nil {
 		t.Fatalf("create entries.jsonl: %v", err)
 	}
-	line := `{"timestamp":"2026-01-01T00:00:00Z","attributes":{"gen_ai.evaluation.name":"` + criterion + `","gen_ai.evaluation.score.value":` +
-		strconv.FormatFloat(score, 'f', -1, 64) + `,"gen_ai.response.id":"judge-r1"}}` + "\n"
+	line := `{"seq":1,"chat_id":"eval-c1","kind":"eval.score","at":"2026-01-01T00:00:00Z","payload":{"criterion":"` + criterion + `","score":` +
+		strconv.FormatFloat(score, 'f', -1, 64) + `,"response_id":"judge-r1"}}` + "\n"
 	io.WriteString(ef, line)
 	if err := zw.Close(); err != nil {
 		t.Fatalf("close zip: %v", err)

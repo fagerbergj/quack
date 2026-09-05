@@ -3,87 +3,97 @@ package ledger
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"testing"
 
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
 
-// memStore is a tiny in-memory LedgerStore for testing the Exporter without
-// touching disk.
-type memStore struct {
-	lines map[string][][]byte
-}
-
-func newMemStore() *memStore { return &memStore{lines: map[string][][]byte{}} }
-
-func (m *memStore) Append(_ context.Context, sessionID string, entry []byte) error {
-	m.lines[sessionID] = append(m.lines[sessionID], append([]byte{}, entry...))
-	return nil
-}
-func (m *memStore) ReadStream(context.Context, string) (io.ReadCloser, error)   { return nil, nil }
-func (m *memStore) List(context.Context) ([]SessionRef, error)                  { return nil, nil }
-func (m *memStore) Delete(context.Context, string) error                        { return nil }
-func (m *memStore) AppendIntent(context.Context, Entry) (int64, error)          { return 0, nil }
-func (m *memStore) ReadEntries(context.Context, string, int64) ([]Entry, error) { return nil, nil }
-
-var _ LedgerStore = (*memStore)(nil)
-
-func TestExporterAppendsRedactedJSONKeyedByConversation(t *testing.T) {
-	store := newMemStore()
-	exp := NewExporter(store)
-
-	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(exp)))
-	logger := provider.Logger("test")
-
+func emitVia(t *testing.T, store LedgerStore, attrs ...otellog.KeyValue) {
+	t.Helper()
+	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(NewExporter(store))))
 	var rec otellog.Record
-	rec.SetBody(otellog.StringValue("chat"))
-	rec.AddAttributes(
+	rec.AddAttributes(attrs...)
+	provider.Logger("test").Emit(context.Background(), rec)
+}
+
+// TestExporterEmitsTypedEntries: a gen_ai chat record becomes one llm.call
+// Entry carrying the stream coordinates and a redacted, typed payload.
+func TestExporterEmitsTypedEntries(t *testing.T) {
+	store := NewMemStore()
+	emitVia(t, store,
 		otellog.String("gen_ai.conversation.id", "chat-42"),
 		otellog.String("gen_ai.operation.name", "chat"),
-		otellog.String("authorization", "Bearer secret"),
+		otellog.String("gen_ai.request.model", "m1"),
+		otellog.String("quack.node", "n1"),
+		otellog.String("gen_ai.agent.name", "coder"),
+		otellog.String("quack.round", "2"),
+		otellog.Slice("gen_ai.response.finish_reasons", otellog.StringValue("stop")),
+		otellog.Int64("gen_ai.usage.input_tokens", 7),
+		otellog.String("gen_ai.input.messages", `[{"authorization":"Bearer secret"}]`),
 	)
-	logger.Emit(context.Background(), rec)
+	emitVia(t, store,
+		otellog.String("gen_ai.conversation.id", "chat-42"),
+		otellog.String("gen_ai.operation.name", "execute_tool"),
+		otellog.String("gen_ai.tool.name", "read_file"),
+		otellog.String("gen_ai.tool.call.result", `{"ok":true}`),
+	)
+	emitVia(t, store,
+		otellog.String("gen_ai.conversation.id", "chat-42"),
+		otellog.String("gen_ai.operation.name", "invoke_agent"),
+		otellog.String("gen_ai.agent.name", "acp"),
+	)
+	emitVia(t, store,
+		otellog.String("gen_ai.conversation.id", "chat-42"),
+		otellog.String("gen_ai.evaluation.name", "accuracy"),
+		otellog.Float64("gen_ai.evaluation.score.value", 0.8),
+	)
 
-	lines, ok := store.lines["chat-42"]
-	if !ok || len(lines) != 1 {
-		t.Fatalf("got sessions %v, want exactly one line under chat-42", store.lines)
+	entries, err := store.ReadEntries(context.Background(), "chat-42", 0)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if len(entries) != 4 {
+		t.Fatalf("got %d entries, want 4", len(entries))
+	}
+	for i, want := range []string{KindLLMCall, KindToolCall, KindAgentInvoke, KindEvalScore} {
+		if entries[i].Kind != want {
+			t.Errorf("entry %d kind = %q, want %q", i, entries[i].Kind, want)
+		}
+	}
+	e := entries[0]
+	if e.NodeID != "n1" || e.Agent != "coder" || e.Round != "2" || e.Seq != 1 {
+		t.Errorf("coords = node %q agent %q round %q seq %d", e.NodeID, e.Agent, e.Round, e.Seq)
+	}
+	var p LLMCallPayload
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.RequestModel != "m1" || p.FinishReason != "stop" || p.InputTokens != 7 {
+		t.Errorf("payload = %+v", p)
+	}
+	if p.Input != `[{"authorization":"[REDACTED]"}]` {
+		t.Errorf("input not redacted: %s", p.Input)
+	}
+	var ev EvalScorePayload
+	if err := json.Unmarshal(entries[3].Payload, &ev); err != nil || ev.Criterion != "accuracy" || ev.Score != 0.8 {
+		t.Errorf("eval payload = %+v (%v)", ev, err)
+	}
+}
 
-	var got line
-	if err := json.Unmarshal(lines[0], &got); err != nil {
-		t.Fatalf("emitted line is not valid JSON: %v (%s)", err, lines[0])
-	}
-	if got.Attrs["gen_ai.operation.name"] != "chat" {
-		t.Errorf("operation.name = %v, want chat", got.Attrs["gen_ai.operation.name"])
-	}
-	if got.Attrs["authorization"] != redactedValue {
-		t.Errorf("authorization = %v, want redacted", got.Attrs["authorization"])
-	}
-	if got.Body != "chat" {
-		t.Errorf("body = %v, want chat", got.Body)
+// TestExporterDropsUnmappedRecords: no conversation id, or an operation no
+// observation kind describes, never reaches the store.
+func TestExporterDropsUnmappedRecords(t *testing.T) {
+	store := NewMemStore()
+	emitVia(t, store, otellog.String("gen_ai.operation.name", "chat"))
+	emitVia(t, store, otellog.String("gen_ai.conversation.id", "c"), otellog.String("gen_ai.operation.name", "plan"))
+	if refs, _ := store.List(context.Background()); len(refs) != 0 {
+		t.Fatalf("got %+v, want nothing recorded", refs)
 	}
 }
 
 func TestExporterDisabledStoreIsNoop(t *testing.T) {
-	exp := NewExporter(nil)
-	if err := exp.Export(context.Background(), nil); err != nil {
+	if err := NewExporter(nil).Export(context.Background(), nil); err != nil {
 		t.Fatalf("Export with nil store returned an error: %v", err)
-	}
-}
-
-func TestExporterUnscopedFallsBackToKnownSession(t *testing.T) {
-	store := newMemStore()
-	exp := NewExporter(store)
-	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(exp)))
-	logger := provider.Logger("test")
-
-	var rec otellog.Record
-	rec.SetBody(otellog.StringValue("no conversation id"))
-	logger.Emit(context.Background(), rec)
-
-	if _, ok := store.lines[unscopedSession]; !ok {
-		t.Fatalf("got sessions %v, want a fallback entry under %q", store.lines, unscopedSession)
 	}
 }

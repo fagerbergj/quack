@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -35,10 +34,6 @@ func newFakeLedger() *fakeLedger {
 	return &fakeLedger{seqs: map[string]int64{}, entries: map[string][]ledger.Entry{}}
 }
 
-func (f *fakeLedger) Append(context.Context, string, []byte) error { return nil }
-func (f *fakeLedger) ReadStream(context.Context, string) (io.ReadCloser, error) {
-	return nil, nil
-}
 func (f *fakeLedger) List(context.Context) ([]ledger.SessionRef, error) { return nil, nil }
 func (f *fakeLedger) Delete(context.Context, string) error              { return nil }
 

@@ -36,9 +36,8 @@ type runnableTool interface {
 func writeCurrentDateReplayFixture(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "entries.jsonl")
-	line := `{"timestamp":"2026-01-01T00:00:00Z","attributes":{` +
-		`"gen_ai.operation.name":"execute_tool","gen_ai.tool.name":"current_date",` +
-		`"gen_ai.tool.call.result":"{\"result\":\"RECORDED-NOT-LIVE\"}"` +
+	line := `{"seq":1,"chat_id":"c","kind":"tool.call","at":"2026-01-01T00:00:00Z","payload":{` +
+		`"name":"current_date","result":"{\"result\":\"RECORDED-NOT-LIVE\"}"` +
 		`}}` + "\n"
 	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
 		t.Fatal(err)

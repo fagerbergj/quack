@@ -131,10 +131,10 @@ func initLogs(ctx context.Context, res *resource.Resource, cfg config.Observabil
 	}
 	var shutdowns []func(context.Context) error
 
-	if cfg.Recording.IsEnabled(cfg.Otel.IsEnabled()) {
+	if cfg.Recording.ObservationsEnabled(cfg.Otel.IsEnabled()) {
 		if ledgerStore == nil {
 			// recording must never change run behavior - degrades to not recording.
-			logf("observability.recording is enabled but no ledger store resolved; recording is disabled for this run")
+			logf("observability.recording.observations is on but no ledger store resolved; observations are not recorded for this run")
 		} else {
 			proc := sdklog.NewSimpleProcessor(ledger.NewExporter(ledgerStore))
 			opts = append(opts, sdklog.WithProcessor(proc))

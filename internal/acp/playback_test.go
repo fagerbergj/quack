@@ -3,7 +3,6 @@ package acp
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"testing"
 
 	sdklog "go.opentelemetry.io/otel/sdk/log"
@@ -20,11 +19,7 @@ import (
 // spawned - and asserts the gate-visible activity (thought, durable
 // run_command tool pair, final answer text) matches the recording (#604).
 func TestPlayback_ReplaysRecordedRoundWithNoSubprocess(t *testing.T) {
-	root := t.TempDir()
-	store, err := ledger.NewFSStore(root)
-	if err != nil {
-		t.Fatalf("NewFSStore: %v", err)
-	}
+	store := ledger.NewMemStore()
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(ledger.NewExporter(store))))
 	restore := otelobs.SetLoggerProviderForTesting(lp)
 
@@ -44,9 +39,9 @@ func TestPlayback_ReplaysRecordedRoundWithNoSubprocess(t *testing.T) {
 	}
 	restore() // stop recording before replay - the two must not interfere
 
-	sess, err := replay.Load(filepath.Join(root, coords.ChatID+".jsonl"))
+	sess, err := replay.FromStore(context.Background(), store, coords.ChatID)
 	if err != nil {
-		t.Fatalf("replay.Load: %v", err)
+		t.Fatalf("replay.FromStore: %v", err)
 	}
 
 	// Command names a binary that does not exist - if playback ever fell
@@ -102,11 +97,7 @@ func TestPlayback_ReplaysRecordedRoundWithNoSubprocess(t *testing.T) {
 // (stream + position), never a bare "not found" or a silent empty round -
 // the ACP twin of replay's model/tool "extra call" acceptance case.
 func TestPlayback_MissingExchangeIsMissError(t *testing.T) {
-	root := t.TempDir()
-	store, err := ledger.NewFSStore(root)
-	if err != nil {
-		t.Fatalf("NewFSStore: %v", err)
-	}
+	store := ledger.NewMemStore()
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(ledger.NewExporter(store))))
 	restore := otelobs.SetLoggerProviderForTesting(lp)
 
@@ -121,9 +112,9 @@ func TestPlayback_MissingExchangeIsMissError(t *testing.T) {
 	}
 	restore()
 
-	sess, err := replay.Load(filepath.Join(root, coords.ChatID+".jsonl"))
+	sess, err := replay.FromStore(context.Background(), store, coords.ChatID)
 	if err != nil {
-		t.Fatalf("replay.Load: %v", err)
+		t.Fatalf("replay.FromStore: %v", err)
 	}
 
 	replayed, err := New("code-implementer", "external coder", Options{

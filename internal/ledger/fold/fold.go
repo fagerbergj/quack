@@ -19,8 +19,8 @@ import (
 var pageSize = 1000
 
 // pagedReader is implemented by a LedgerStore that can page results
-// server-side (PGStore.ReadEntriesPage); a store without it (FSStore) is
-// read in one ReadEntries call - it already holds its whole JSONL in memory.
+// server-side (PGStore.ReadEntriesPage); a store without it is
+// read in one ReadEntries call.
 type pagedReader interface {
 	ReadEntriesPage(ctx context.Context, chatID string, fromSeq int64, limit int) ([]ledger.Entry, error)
 }
