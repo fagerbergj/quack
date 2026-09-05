@@ -64,17 +64,18 @@ describe('DagNode artifacts menu item (#1114)', () => {
   })
 })
 
-// #1178: the panel reads three narrow fields from the node - its name
-// (nodeTask), its error (nodeError, only on a failed status) and its
-// declared output kind (nodeArtifactKind). These tests drive the panel
-// through its only entry point to prove each field actually crosses the
-// component boundary into the result view.
+// #1178/#1216: the panel reads four narrow fields from the node - its agent
+// label (nodeAgent, the panel heading), its raw task (nodeTask, Details
+// only), its error (nodeError, only on a failed status) and its declared
+// output kind (nodeArtifactKind). These tests drive the panel through its
+// only entry point to prove each field actually crosses the component
+// boundary into the result view.
 describe('DagNode artifact panel props (#1178)', () => {
-  it('shows the node\u2019s task as the panel heading, not an artifact id', async () => {
+  it('shows the node\u2019s agent label as the panel heading, not the raw task or an artifact id', async () => {
     const user = userEvent.setup()
     render(<DagNode node={node} state={{ status: 'done' }} runs={[]} answer="the answer" isFinal={false} chatId="chat-1" />)
     await openArtifacts(user)
-    expect(await screen.findByRole('heading', { level: 2, name: 'Research Dublin.' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { level: 2, name: 'Web researcher' })).toBeTruthy()
     expect(screen.getByText("This node hasn't produced anything yet.")).toBeTruthy()
   })
 

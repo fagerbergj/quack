@@ -663,6 +663,7 @@ export const DagNode = memo(function DagNode({
         <ArtifactPanel
           chatId={chatId}
           nodeId={node.id}
+          nodeAgent={agentLabel(node.agent)}
           nodeTask={node.task}
           nodeError={state.status === 'failed' && state.error ? state.error : undefined}
           nodeArtifactKind={node.artifact ?? undefined}

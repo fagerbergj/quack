@@ -153,10 +153,11 @@ describe('ArtifactPanel as a result view (#1178)', () => {
   // there is no second tap anywhere (no picker step).
   it("opens directly onto the node's rendered result with the judge-round timeline", async () => {
     stubPlanFixture()
-    const { container } = render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
+    const { container } = render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
 
-    // The <h2> is the node's name, never an artifact id.
-    const heading = await screen.findByRole('heading', { level: 2, name: 'Plan the fix' })
+    // The <h2> is the node's agent label, never an artifact id or the raw
+    // task prompt (#1216).
+    const heading = await screen.findByRole('heading', { level: 2, name: 'Planner' })
     expect(heading).toBeTruthy()
 
     // The primary output (the node's declared kind) is rendered as
@@ -177,6 +178,23 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     expect(container.querySelectorAll('select')).toHaveLength(0)
   })
 
+  // (#1216 review): a real agent prompt can run to a kilobyte-plus - it must
+  // never render as the header, only inside Details.
+  it('titles the panel with the agent label, not the raw task, however long the task is', async () => {
+    const user = userEvent.setup()
+    stubPlanFixture()
+    const longTask = 'Investigate and fix the bug. '.repeat(70) // ~2kB
+    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask={longTask} nodeArtifactKind="text" onClose={() => {}} />)
+
+    const heading = await screen.findByRole('heading', { level: 2, name: 'Planner' })
+    expect(heading.textContent).toBe('Planner')
+    expect(document.body.textContent ?? '').not.toContain(longTask)
+
+    await screen.findByRole('heading', { level: 1, name: 'Plan v2' })
+    await user.click(screen.getByText('Details'))
+    expect(await screen.findByText(longTask.trim())).toBeTruthy()
+  })
+
   // (a/2) Tapping a chip: switches to the revision that round judged
   // (from the round's scored ref), stamps that round's notes as
   // highlights, and marks itself active - through the #1139 anchor
@@ -184,7 +202,7 @@ describe('ArtifactPanel as a result view (#1178)', () => {
   it("tapping a judge chip shows that round's notes on the revision it judged", async () => {
     const user = userEvent.setup()
     stubPlanFixture()
-    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
+    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
     await screen.findByRole('heading', { level: 1, name: 'Plan v2' })
 
     await user.click(screen.getByRole('button', { name: 'Round 1, failed, score 0.42' }))
@@ -207,7 +225,7 @@ describe('ArtifactPanel as a result view (#1178)', () => {
   it('moving between revisions clears the active round and its highlights', async () => {
     const user = userEvent.setup()
     stubPlanFixture()
-    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
+    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
     await screen.findByRole('heading', { level: 1, name: 'Plan v2' })
     await user.click(screen.getByRole('button', { name: 'Round 1, failed, score 0.42' }))
     expect(await screen.findByText('Revision 1 of 2')).toBeTruthy()
@@ -224,7 +242,7 @@ describe('ArtifactPanel as a result view (#1178)', () => {
   it('disables prev/next at the ends of the revision list', async () => {
     const user = userEvent.setup()
     stubPlanFixture()
-    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
+    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
     await screen.findByText('Revision 2 of 2')
 
     // At the latest revision, Next is disabled...
@@ -241,7 +259,7 @@ describe('ArtifactPanel as a result view (#1178)', () => {
   it('toggles the diff against the previous revision and explains when it is disabled', async () => {
     const user = userEvent.setup()
     stubPlanFixture()
-    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
+    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
     await screen.findByText('Revision 2 of 2')
 
     await user.click(screen.getByRole('button', { name: 'Diff' }))
@@ -265,7 +283,7 @@ describe('ArtifactPanel as a result view (#1178)', () => {
   it('degrades the diff toggle to a disabled state with its own reason on a 413', async () => {
     const user = userEvent.setup()
     stubLargeFixture()
-    const { container } = render(<ArtifactPanel chatId="chat-1" nodeId="writer-1" nodeTask="Write the doc" onClose={() => {}} />)
+    const { container } = render(<ArtifactPanel chatId="chat-1" nodeId="writer-1" nodeAgent="Writer" nodeTask="Write the doc" onClose={() => {}} />)
     await screen.findByText('Revision 2 of 2')
 
     await user.click(screen.getByRole('button', { name: 'Diff' }))
@@ -283,7 +301,7 @@ describe('ArtifactPanel as a result view (#1178)', () => {
   it('groups secondary artifacts under human labels and expands them inline', async () => {
     const user = userEvent.setup()
     stubPlanFixture()
-    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
+    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
     await screen.findByRole('heading', { level: 1, name: 'Plan v2' })
 
     // Grouped, counted, human-labelled (the dispatch-authored code_review
@@ -304,7 +322,7 @@ describe('ArtifactPanel as a result view (#1178)', () => {
   // timeline, no picker, no "pick something" phrasing.
   it('shows the failure text for a failed node with no artifacts', async () => {
     stubEmptyList()
-    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeTask="Plan the fix" nodeError="judge gave up after 3 rounds" onClose={() => {}} />)
+    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeError="judge gave up after 3 rounds" onClose={() => {}} />)
 
     expect(await screen.findByText('This node failed before writing its result.')).toBeTruthy()
     expect(screen.getByText('judge gave up after 3 rounds')).toBeTruthy()
@@ -316,7 +334,7 @@ describe('ArtifactPanel as a result view (#1178)', () => {
   // (b/2) No artifacts, no failure: the neutral empty state.
   it("says a quiet node hasn't produced anything yet", async () => {
     stubEmptyList()
-    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeTask="Plan the fix" onClose={() => {}} />)
+    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" onClose={() => {}} />)
 
     expect(await screen.findByText("This node hasn't produced anything yet.")).toBeTruthy()
     expect(screen.queryByRole('group', { name: 'Judge rounds' })).toBeNull()
@@ -339,7 +357,7 @@ describe('ArtifactPanel as a result view (#1178)', () => {
         vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: narrow, media: 'x', addEventListener: () => {}, removeEventListener: () => {} })))
         stubPlanFixture()
         if (theme === 'dark') document.documentElement.classList.add('dark')
-        const { container } = render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
+        const { container } = render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
         await screen.findByRole('heading', { level: 1, name: 'Plan v2' })
         await screen.findByRole('button', { name: 'Round 2, passed, score 0.81' })
 

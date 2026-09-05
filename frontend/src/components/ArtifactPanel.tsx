@@ -172,8 +172,12 @@ function moreItemLabel(a: ArtifactSummary, ordinal: number): string {
 interface Props {
   chatId: string
   nodeId: string
-  // The node's display name - the panel's <h2>. DagNode passes node.task,
-  // the same string its card shows.
+  // The node's display name - the panel's <h2>. Same agentLabel() DagNode's
+  // own card header shows (#1216 review): the raw prompt (nodeTask) can run
+  // to a kilobyte, which blew the header past the sheet height when it was
+  // shown here instead - it now lives only in the Details "Task" row.
+  nodeAgent: string
+  // The node's raw prompt - shown in Details, never the header (see above).
   nodeTask: string
   // The node's error text (NodeState.error). Drives the failure empty state
   // when the node has no non-judge artifact.
@@ -192,7 +196,7 @@ interface Props {
 // in a collapsed "Details" disclosure at the very bottom. Both native
 // <select>s and the desktop sidebar from the picker era are gone - there is
 // nothing left to pick.
-export function ArtifactPanel({ chatId, nodeId, nodeTask, nodeError, nodeArtifactKind, onClose }: Props) {
+export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, nodeArtifactKind, onClose }: Props) {
   const [summaries, setSummaries] = useState<ArtifactSummary[]>([])
   const [error, setError] = useState<string | null>(null)
   // rawView: the monospace line-list is the FALLBACK view (also what a
@@ -519,11 +523,13 @@ export function ArtifactPanel({ chatId, nodeId, nodeTask, nodeError, nodeArtifac
       <div
         className="relative flex flex-col w-full h-full overflow-hidden rounded-none sm:rounded-2xl bg-gray-50 dark:bg-gray-900 shadow-xl"
       >
-        {/* Header: the node's own name (never an artifact id), refresh,
-            close - non-scrolling; >=44px targets (#1135). */}
+        {/* Header: the node's own name (never an artifact id or its raw
+            prompt - #1216), refresh, close - non-scrolling; >=44px targets
+            (#1135). line-clamp-2 is a hard ceiling: even a future caller
+            that passes a long label can't blow the header past 2 lines. */}
         <header className="shrink-0 flex items-start gap-1 px-4 py-1.5 border-b border-gray-200 dark:border-gray-700">
-          <h2 className="flex-1 min-w-0 py-2 text-sm font-semibold text-gray-800 dark:text-gray-100 break-words">
-            {nodeTask}
+          <h2 className="flex-1 min-w-0 py-2 text-sm font-semibold text-gray-800 dark:text-gray-100 break-words line-clamp-2">
+            {nodeAgent}
           </h2>
           <div className="flex items-center gap-1 shrink-0 py-1.5">
             <button
@@ -715,6 +721,9 @@ export function ArtifactPanel({ chatId, nodeId, nodeTask, nodeError, nodeArtifac
                   </summary>
                   {detailsOpen && (
                     <div className="px-3 pb-3">
+                      <MetaRow label="task">
+                        <p className="line-clamp-6 whitespace-pre-wrap">{nodeTask}</p>
+                      </MetaRow>
                       <ArtifactMetadata
                         summary={primary}
                         revision={curInfo}

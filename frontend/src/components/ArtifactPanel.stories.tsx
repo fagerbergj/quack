@@ -159,9 +159,21 @@ export const WithResult: Story = {
   args: {
     chatId: 'chat-1',
     nodeId: 'reviewer-1',
+    nodeAgent: 'Code Reviewer',
     nodeTask: 'Review PR #1170',
     nodeArtifactKind: 'text',
     onClose: () => {},
+  },
+}
+
+// The bug this story exists to catch (#1216 review): a real agent prompt can
+// run to a kilobyte-plus. The header must stay 2 lines regardless - the full
+// text is only reachable in Details.
+export const WithLongTask: Story = {
+  ...WithResult,
+  args: {
+    ...WithResult.args,
+    nodeTask: 'Review PR #1170 for correctness, style, and security issues. '.repeat(40),
   },
 }
 
@@ -196,6 +208,7 @@ export const FailedNode: Story = {
   args: {
     chatId: 'chat-failed',
     nodeId: 'reviewer-1',
+    nodeAgent: 'Code Reviewer',
     nodeTask: 'Review PR #1170',
     nodeError: 'judge gave up after 3 rounds without a passing score',
     onClose: () => {},
@@ -209,6 +222,7 @@ export const MoreHeavyNode: Story = {
   args: {
     chatId: 'chat-more',
     nodeId: 'writer-1',
+    nodeAgent: 'Writer',
     nodeTask: 'Write the spec',
     nodeArtifactKind: 'document',
     onClose: () => {},
