@@ -206,6 +206,9 @@ type DagNodeDef struct {
 	// ContextWindow is the assigned agent's configured context_window (0 if
 	// unset) - the context meter's static limit.
 	ContextWindow int `json:"context_window,omitempty"`
+	// Artifact is the node's declared output artifact kind - the record name
+	// its output is saved as on gate pass; absent when the node declares none.
+	Artifact string `json:"artifact,omitempty"`
 }
 
 // Wire representation of one edge in a DAG plan.

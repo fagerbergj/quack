@@ -97,17 +97,38 @@ export const api = {
     unwrap(await sdkListArtifactRevisions({ path: { chat_id: chatId, artifact_name: artifactName } })),
 
   // Returns the raw unified diff text (endpoint answers text/plain, not JSON).
-  diffArtifactRevisions: async (chatId: string, artifactName: string, from: number, to: number): Promise<string> =>
-    unwrap(await sdkDiffArtifactRevisions({ path: { chat_id: chatId, artifact_name: artifactName }, query: { from, to } })),
+  // Unlike the other unwrap() callers this keeps the HTTP status on the
+  // thrown error: the artifact panel disables the Diff toggle with its own
+  // display reason for the two server rejections (413 over the 256KB bound,
+  // 415 binary) - the 413 body embeds the artifact's id, which the panel
+  // must not render outside its Details disclosure (#1178).
+  diffArtifactRevisions: async (chatId: string, artifactName: string, from: number, to: number): Promise<string> => {
+    const r = await sdkDiffArtifactRevisions({ path: { chat_id: chatId, artifact_name: artifactName }, query: { from, to } })
+    if (!r.response || !r.response.ok || r.error !== undefined) {
+      const msg =
+        r.error && typeof r.error === 'object' && 'error' in r.error
+          ? String((r.error as { error: unknown }).error)
+          : `Request failed (${r.response ? r.response.status : 'no response'})`
+      const err = new Error(msg) as Error & { status?: number }
+      err.status = r.response?.status
+      throw err
+    }
+    return r.data as string
+  },
 
   // Plain fetch, not the generated client: getChatArtifact's response is
   // application/octet-stream (any mime), and the panel only ever wants it as
   // text (markdown/JSON revisions) - a Blob round-trip would just get
   // .text()'d right back.
   getArtifactText: async (chatId: string, artifactName: string, revision?: number): Promise<string> => {
-    const q = revision != null ? `?revision=${revision}` : ''
-    const res = await fetch(`/api/v1/chats/${encodeURIComponent(chatId)}/artifacts/${encodeURIComponent(artifactName)}${q}`)
+    const res = await fetch(artifactUrl(chatId, artifactName, revision))
     if (!res.ok) throw new Error(`Fetch artifact failed (${res.status})`)
     return res.text()
   },
+}
+
+// The REST path of one artifact revision (base '/'), for the panel's
+// Details disclosure link.
+export function artifactUrl(chatId: string, artifactName: string, revision?: number): string {
+  return `/api/v1/chats/${encodeURIComponent(chatId)}/artifacts/${encodeURIComponent(artifactName)}${revision != null ? `?revision=${revision}` : ''}`
 }

@@ -224,6 +224,36 @@ func TestAgentCompleteNonJudgeOmitsScore(t *testing.T) {
 	}
 }
 
+// TestDagNodeDefArtifactWireShape pins the #1178 wire addition: the node's
+// declared output kind crosses the wire as "artifact" and stays out of the
+// JSON when the node declares none, so a PlanJSON persisted before the field
+// existed still parses on reload.
+func TestDagNodeDefArtifactWireShape(t *testing.T) {
+	b, err := json.Marshal(DagNodeDef{ID: "a", Agent: "web-researcher", Task: "research", DependsOn: []string{}, Artifact: "text"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := m["artifact"]; !ok || v != "text" {
+		t.Errorf("declared kind must serialize as artifact: got %v (present=%v)", v, ok)
+	}
+
+	b, err = json.Marshal(DagNodeDef{ID: "b", Agent: "synthesizer", Task: "synthesize", DependsOn: []string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m2 map[string]any
+	if err := json.Unmarshal(b, &m2); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m2["artifact"]; ok {
+		t.Errorf("undeclared kind must stay out of the wire JSON, got %v", m2["artifact"])
+	}
+}
+
 // Marker-part builders: v1-gate wire fixtures kept ONLY to exercise the
 // Translator's decoder (production code no longer emits markers).
 // AgentStartPart encodes (test fixture) the start of an agent run.

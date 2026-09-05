@@ -334,6 +334,32 @@ func TestDagPlanEventCarriesContextWindow(t *testing.T) {
 	}
 }
 
+// TestDagPlanEventCarriesArtifact pins the #1178 wire path: DagPlanEvent must
+// forward each node's declared output artifact kind (dag.Node.Artifact) onto
+// the wire DagNodeDef so the frontend can pick the node's primary output
+// artifact exactly; a node that declares none carries an empty field.
+func TestDagPlanEventCarriesArtifact(t *testing.T) {
+	p := dag.Plan{ID: "p1", Nodes: []dag.Node{
+		{ID: "a", AgentName: "code-explorer", Artifact: "text"},
+		{ID: "b", AgentName: "synthesizer"}, // no declared output kind
+	}}
+	ev := DagPlanEvent(context.Background(), p)
+	data, ok := ev.Data.(stream.DagPlanData)
+	if !ok {
+		t.Fatalf("event data is %T, want stream.DagPlanData", ev.Data)
+	}
+	byID := map[string]stream.DagNodeDef{}
+	for _, n := range data.Nodes {
+		byID[n.ID] = n
+	}
+	if got := byID["a"].Artifact; got != "text" {
+		t.Errorf("node a Artifact = %q, want %q", got, "text")
+	}
+	if got := byID["b"].Artifact; got != "" {
+		t.Errorf("node b Artifact = %q, want empty (undeclared)", got)
+	}
+}
+
 // TestReviewDispatchSetupSatisfiesExistingHead pins the v0.29.0 cutover
 // regression: a review-only dispatch declares its existing PR head via Setup
 // (sdk ExistingHeadRef -> CheckoutExistingHead), the old WithGitHubPR ctx

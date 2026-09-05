@@ -654,8 +654,21 @@ export const DagNode = memo(function DagNode({
           onAnswerQuestion={onAnswerQuestion}
         />
       )}
+      {/* Three narrow fields, not the whole NodeState: DagNode is memoized
+          and the panel shouldn't re-render on every SSE event for the node
+          (#1178). nodeError is the same value the red banner below renders
+          (failed status), so a transient non-failure error never reads as
+          "the node failed" in an empty panel. */}
       {artifactsOpen && chatId && (
-        <ArtifactPanel chatId={chatId} nodeId={node.id} onClose={() => setArtifactsOpen(false)} />
+        <ArtifactPanel
+          chatId={chatId}
+          nodeId={node.id}
+          nodeAgent={agentLabel(node.agent)}
+          nodeTask={node.task}
+          nodeError={state.status === 'failed' && state.error ? state.error : undefined}
+          nodeArtifactKind={node.artifact ?? undefined}
+          onClose={() => setArtifactsOpen(false)}
+        />
       )}
 
       {/* Retry a finished node (failed or done) + its downstream, on a live turn */}
