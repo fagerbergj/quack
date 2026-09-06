@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
 	"google.golang.org/adk/v2/tool/toolconfirmation"
@@ -224,8 +224,8 @@ func TestEmitPlanEvent_ProducesWellFormedEvent(t *testing.T) {
 	if len(capExp.records) != 1 {
 		t.Fatalf("got %d records, want 1", len(capExp.records))
 	}
-	attrs := map[string]otellog.Value{}
-	capExp.records[0].WalkAttributes(func(kv otellog.KeyValue) bool {
+	attrs := map[string]attribute.Value{}
+	capExp.records[0].WalkAttributes(func(kv attribute.KeyValue) bool {
 		attrs[string(kv.Key)] = kv.Value
 		return true
 	})
@@ -271,7 +271,7 @@ func TestEmitPlanEvent_RecordsInputMessages(t *testing.T) {
 		t.Fatalf("got %d records, want 1", len(capExp.records))
 	}
 	var input string
-	capExp.records[0].WalkAttributes(func(kv otellog.KeyValue) bool {
+	capExp.records[0].WalkAttributes(func(kv attribute.KeyValue) bool {
 		if string(kv.Key) == "gen_ai.input.messages" {
 			input = kv.Value.AsString()
 		}

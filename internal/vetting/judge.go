@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/model"
@@ -1224,14 +1224,14 @@ func emitEvaluationResults(ctx context.Context, responseID string, v verdict) {
 	agent := ledger.CoordsFromContext(ctx).Agent
 	for _, name := range names {
 		cs := v.Criteria[name]
-		attrs := []otellog.KeyValue{
-			otellog.String(otelobs.GenAIResponseID, responseID),
-			otellog.String(otelobs.GenAIEvaluationName, name),
-			otellog.Float64(otelobs.GenAIEvaluationScore, cs.Score),
-			otellog.String(otelobs.GenAIEvaluationExplain, cs.Reason),
+		attrs := []attribute.KeyValue{
+			attribute.String(otelobs.GenAIResponseID, responseID),
+			attribute.String(otelobs.GenAIEvaluationName, name),
+			attribute.Float64(otelobs.GenAIEvaluationScore, cs.Score),
+			attribute.String(otelobs.GenAIEvaluationExplain, cs.Reason),
 		}
 		if agent != "" {
-			attrs = append(attrs, otellog.String(otelobs.GenAIAgentName, agent))
+			attrs = append(attrs, attribute.String(otelobs.GenAIAgentName, agent))
 		}
 		otelobs.EmitLog(ctx, judgeScope, "", attrs...)
 	}

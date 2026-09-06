@@ -72,6 +72,9 @@ func New(sessions session.Service, agents map[string]adkagent.Agent, artifacts a
 		SessionService:  sessions,
 		AgentLoader:     loader,
 		ArtifactService: artifacts,
+		// adk v2.3.0 made the debug router (incl. /debug/trace, what this
+		// package exists to mount) opt-in; this whole Mount is pointless without it.
+		DebugAPIConfig: adkrest.DebugAPIConfig{IncludeDebugAPI: true},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("adkdebug: adkrest server: %w", err)

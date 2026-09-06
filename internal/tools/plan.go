@@ -9,7 +9,7 @@ import (
 
 	"log/slog"
 
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/tool"
@@ -189,9 +189,9 @@ func emitPlanEvent(tc agent.Context, p *dag.Plan) {
 		return
 	}
 	ctx := ledger.WithCoords(tc, ledger.Coords{ChatID: tc.SessionID(), Agent: "orchestrator", Round: "plan"})
-	attrs := []otellog.KeyValue{
-		otellog.String(otelobs.GenAIOperationName, otelobs.GenAIOperationPlan),
-		otellog.String(otelobs.GenAIWorkflowName, p.ID),
+	attrs := []attribute.KeyValue{
+		attribute.String(otelobs.GenAIOperationName, otelobs.GenAIOperationPlan),
+		attribute.String(otelobs.GenAIWorkflowName, p.ID),
 	}
 	// The planner's actual ask - history/message/attachments Build stamped onto p - not a
 	// reconstruction from the plan it produced.
@@ -200,10 +200,10 @@ func emitPlanEvent(tc agent.Context, p *dag.Plan) {
 		Message     string            `json:"message,omitempty"`
 		Attachments []attachmentMeta  `json:"attachments,omitempty"`
 	}{p.History, p.UserMessage, summarizeAttachments(p.Attachments)}); err == nil {
-		attrs = append(attrs, otellog.String(otelobs.GenAIInputMessages, string(b)))
+		attrs = append(attrs, attribute.String(otelobs.GenAIInputMessages, string(b)))
 	}
 	if b, err := json.Marshal(p); err == nil {
-		attrs = append(attrs, otellog.String(otelobs.GenAIOutputMessages, string(b)))
+		attrs = append(attrs, attribute.String(otelobs.GenAIOutputMessages, string(b)))
 	}
 	otelobs.EmitLog(ctx, "quack.planner", "", attrs...)
 }

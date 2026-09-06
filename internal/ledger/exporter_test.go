@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"testing"
 
+	"go.opentelemetry.io/otel/attribute"
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
 
-func emitVia(t *testing.T, store LedgerStore, attrs ...otellog.KeyValue) {
+func emitVia(t *testing.T, store LedgerStore, attrs ...attribute.KeyValue) {
 	t.Helper()
 	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(NewExporter(store))))
 	var rec otellog.Record
@@ -22,31 +23,31 @@ func emitVia(t *testing.T, store LedgerStore, attrs ...otellog.KeyValue) {
 func TestExporterEmitsTypedEntries(t *testing.T) {
 	store := NewMemStore()
 	emitVia(t, store,
-		otellog.String("gen_ai.conversation.id", "chat-42"),
-		otellog.String("gen_ai.operation.name", "chat"),
-		otellog.String("gen_ai.request.model", "m1"),
-		otellog.String("quack.node", "n1"),
-		otellog.String("gen_ai.agent.name", "coder"),
-		otellog.String("quack.round", "2"),
-		otellog.Slice("gen_ai.response.finish_reasons", otellog.StringValue("stop")),
-		otellog.Int64("gen_ai.usage.input_tokens", 7),
-		otellog.String("gen_ai.input.messages", `[{"authorization":"Bearer secret"}]`),
+		attribute.String("gen_ai.conversation.id", "chat-42"),
+		attribute.String("gen_ai.operation.name", "chat"),
+		attribute.String("gen_ai.request.model", "m1"),
+		attribute.String("quack.node", "n1"),
+		attribute.String("gen_ai.agent.name", "coder"),
+		attribute.String("quack.round", "2"),
+		attribute.Slice("gen_ai.response.finish_reasons", attribute.StringValue("stop")),
+		attribute.Int64("gen_ai.usage.input_tokens", 7),
+		attribute.String("gen_ai.input.messages", `[{"authorization":"Bearer secret"}]`),
 	)
 	emitVia(t, store,
-		otellog.String("gen_ai.conversation.id", "chat-42"),
-		otellog.String("gen_ai.operation.name", "execute_tool"),
-		otellog.String("gen_ai.tool.name", "read_file"),
-		otellog.String("gen_ai.tool.call.result", `{"ok":true}`),
+		attribute.String("gen_ai.conversation.id", "chat-42"),
+		attribute.String("gen_ai.operation.name", "execute_tool"),
+		attribute.String("gen_ai.tool.name", "read_file"),
+		attribute.String("gen_ai.tool.call.result", `{"ok":true}`),
 	)
 	emitVia(t, store,
-		otellog.String("gen_ai.conversation.id", "chat-42"),
-		otellog.String("gen_ai.operation.name", "invoke_agent"),
-		otellog.String("gen_ai.agent.name", "acp"),
+		attribute.String("gen_ai.conversation.id", "chat-42"),
+		attribute.String("gen_ai.operation.name", "invoke_agent"),
+		attribute.String("gen_ai.agent.name", "acp"),
 	)
 	emitVia(t, store,
-		otellog.String("gen_ai.conversation.id", "chat-42"),
-		otellog.String("gen_ai.evaluation.name", "accuracy"),
-		otellog.Float64("gen_ai.evaluation.score.value", 0.8),
+		attribute.String("gen_ai.conversation.id", "chat-42"),
+		attribute.String("gen_ai.evaluation.name", "accuracy"),
+		attribute.Float64("gen_ai.evaluation.score.value", 0.8),
 	)
 
 	entries, err := store.ReadEntries(context.Background(), "chat-42", 0)
@@ -85,8 +86,8 @@ func TestExporterEmitsTypedEntries(t *testing.T) {
 // observation kind describes, never reaches the store.
 func TestExporterDropsUnmappedRecords(t *testing.T) {
 	store := NewMemStore()
-	emitVia(t, store, otellog.String("gen_ai.operation.name", "chat"))
-	emitVia(t, store, otellog.String("gen_ai.conversation.id", "c"), otellog.String("gen_ai.operation.name", "plan"))
+	emitVia(t, store, attribute.String("gen_ai.operation.name", "chat"))
+	emitVia(t, store, attribute.String("gen_ai.conversation.id", "c"), attribute.String("gen_ai.operation.name", "plan"))
 	if refs, _ := store.List(context.Background()); len(refs) != 0 {
 		t.Fatalf("got %+v, want nothing recorded", refs)
 	}

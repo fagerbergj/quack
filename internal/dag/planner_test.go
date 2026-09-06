@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
 	"github.com/fagerbergj/quack/internal/ledger"
@@ -483,8 +483,8 @@ func TestJudgeRoutingRejection_EmitsLedgerEventPerRejection(t *testing.T) {
 	var gotReasons []string
 	for _, r := range capExp.records {
 		var operation, explain string
-		r.WalkAttributes(func(kv otellog.KeyValue) bool {
-			switch kv.Key {
+		r.WalkAttributes(func(kv attribute.KeyValue) bool {
+			switch string(kv.Key) {
 			case otelobs.GenAIOperationName:
 				operation = kv.Value.AsString()
 			case otelobs.GenAIEvaluationExplain:

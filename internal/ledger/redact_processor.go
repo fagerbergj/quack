@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
 
@@ -22,8 +22,8 @@ func (*RedactingProcessor) OnEmit(_ context.Context, record *sdklog.Record) erro
 	if n == 0 {
 		return nil
 	}
-	kvs := make([]otellog.KeyValue, 0, n)
-	record.WalkAttributes(func(kv otellog.KeyValue) bool {
+	kvs := make([]attribute.KeyValue, 0, n)
+	record.WalkAttributes(func(kv attribute.KeyValue) bool {
 		kvs = append(kvs, redactKeyValue(kv))
 		return true
 	})
@@ -36,12 +36,12 @@ func (*RedactingProcessor) Shutdown(context.Context) error                      
 func (*RedactingProcessor) ForceFlush(context.Context) error                       { return nil }
 
 // redactKeyValue redacts credential-named keys and string values probed as JSON.
-func redactKeyValue(kv otellog.KeyValue) otellog.KeyValue {
-	if redactedKeys[strings.ToLower(kv.Key)] {
-		return otellog.String(kv.Key, redactedValue)
+func redactKeyValue(kv attribute.KeyValue) attribute.KeyValue {
+	if redactedKeys[strings.ToLower(string(kv.Key))] {
+		return attribute.String(string(kv.Key), redactedValue)
 	}
-	if kv.Value.Kind() == otellog.KindString {
-		return otellog.String(kv.Key, redactJSONString(kv.Value.AsString()))
+	if kv.Value.Type() == attribute.STRING {
+		return attribute.String(string(kv.Key), redactJSONString(kv.Value.AsString()))
 	}
 	return kv
 }

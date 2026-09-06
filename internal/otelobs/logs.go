@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	otellog "go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/log/noop"
@@ -170,23 +171,23 @@ func initLogs(ctx context.Context, res *resource.Resource, cfg config.Observabil
 }
 
 // EmitLog records one gen_ai.* log event, stamping execution coordinates from ctx.
-func EmitLog(ctx context.Context, scope, body string, attrs ...otellog.KeyValue) {
+func EmitLog(ctx context.Context, scope, body string, attrs ...attribute.KeyValue) {
 	lg := Logger(scope)
 	var rec otellog.Record
 	rec.SetTimestamp(time.Now())
 	if body != "" {
-		rec.SetBody(otellog.StringValue(body))
+		rec.SetBody(attribute.StringValue(body))
 	}
 	c := ledger.CoordsFromContext(ctx)
-	rec.AddAttributes(otellog.String("gen_ai.semconv.version", GenAISemConvVersion))
+	rec.AddAttributes(attribute.String("gen_ai.semconv.version", GenAISemConvVersion))
 	if c.ChatID != "" {
-		rec.AddAttributes(otellog.String(GenAIConversationID, c.ChatID))
+		rec.AddAttributes(attribute.String(GenAIConversationID, c.ChatID))
 	}
 	if c.Node != "" {
-		rec.AddAttributes(otellog.String(quackNodeKey, c.Node))
+		rec.AddAttributes(attribute.String(quackNodeKey, c.Node))
 	}
 	if c.Round != "" {
-		rec.AddAttributes(otellog.String(quackRoundKey, c.Round))
+		rec.AddAttributes(attribute.String(quackRoundKey, c.Round))
 	}
 	rec.AddAttributes(attrs...)
 	lg.Emit(ctx, rec)

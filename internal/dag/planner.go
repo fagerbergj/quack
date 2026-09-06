@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
-	otellog "go.opentelemetry.io/otel/log"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/otelobs"
@@ -187,9 +186,9 @@ func emitPlanRejectedEvent(ctx context.Context, plan *Plan, reason string) {
 		return
 	}
 	otelobs.EmitLog(ctx, "quack.planner", "",
-		otellog.String(otelobs.GenAIOperationName, otelobs.GenAIOperationPlanRejected),
-		otellog.String(otelobs.GenAIWorkflowName, plan.ID),
-		otellog.String(otelobs.GenAIEvaluationExplain, reason),
+		attribute.String(otelobs.GenAIOperationName, otelobs.GenAIOperationPlanRejected),
+		attribute.String(otelobs.GenAIWorkflowName, plan.ID),
+		attribute.String(otelobs.GenAIEvaluationExplain, reason),
 	)
 }
 

@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"sort"
 
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/adk/v2/model"
 
 	"github.com/fagerbergj/quack/internal/ledger"
@@ -27,17 +27,17 @@ func emitChatEvent(ctx context.Context, name string, req *model.LLMRequest, resp
 	if !otelobs.LoggingEnabled(inferenceScope) {
 		return // nothing listening - skip building a (potentially large) event nobody reads
 	}
-	attrs := []otellog.KeyValue{
-		otellog.String(otelobs.GenAIOperationName, otelobs.GenAIOperationChat),
-		otellog.String(otelobs.GenAIProviderName, otelobs.GenAIProviderOpenAI),
-		otellog.String(otelobs.GenAIRequestModel, name),
+	attrs := []attribute.KeyValue{
+		attribute.String(otelobs.GenAIOperationName, otelobs.GenAIOperationChat),
+		attribute.String(otelobs.GenAIProviderName, otelobs.GenAIProviderOpenAI),
+		attribute.String(otelobs.GenAIRequestModel, name),
 	}
 	if v, ok := marshalAttr(req.Contents); ok {
-		attrs = append(attrs, otellog.String(otelobs.GenAIInputMessages, v))
+		attrs = append(attrs, attribute.String(otelobs.GenAIInputMessages, v))
 	}
 	if names := toolNames(req.Tools); len(names) > 0 {
 		if v, ok := marshalAttr(names); ok {
-			attrs = append(attrs, otellog.String(otelobs.GenAIToolDefinitions, v))
+			attrs = append(attrs, attribute.String(otelobs.GenAIToolDefinitions, v))
 		}
 	}
 
@@ -45,18 +45,18 @@ func emitChatEvent(ctx context.Context, name string, req *model.LLMRequest, resp
 	if req.Config != nil {
 		if req.Config.SystemInstruction != nil {
 			if v, ok := marshalAttr(req.Config.SystemInstruction); ok {
-				attrs = append(attrs, otellog.String(otelobs.GenAISystemInstructions, v))
+				attrs = append(attrs, attribute.String(otelobs.GenAISystemInstructions, v))
 				sysHash = contentHash([]byte(v))
 			}
 		}
 		if req.Config.Temperature != nil {
-			attrs = append(attrs, otellog.Float64(otelobs.GenAIRequestTemperature, float64(*req.Config.Temperature)))
+			attrs = append(attrs, attribute.Float64(otelobs.GenAIRequestTemperature, float64(*req.Config.Temperature)))
 		}
 		if req.Config.MaxOutputTokens != 0 {
-			attrs = append(attrs, otellog.Int64(otelobs.GenAIRequestMaxTokens, int64(req.Config.MaxOutputTokens)))
+			attrs = append(attrs, attribute.Int64(otelobs.GenAIRequestMaxTokens, int64(req.Config.MaxOutputTokens)))
 		}
 		if req.Config.Seed != nil {
-			attrs = append(attrs, otellog.Int64(otelobs.GenAIRequestSeed, int64(*req.Config.Seed)))
+			attrs = append(attrs, attribute.Int64(otelobs.GenAIRequestSeed, int64(*req.Config.Seed)))
 		}
 	}
 
@@ -67,39 +67,39 @@ func emitChatEvent(ctx context.Context, name string, req *model.LLMRequest, resp
 	// vetting gate) is the closest available proxy.
 	c := ledger.CoordsFromContext(ctx)
 	if c.Agent != "" {
-		attrs = append(attrs, otellog.String(otelobs.GenAIAgentName, c.Agent))
-		attrs = append(attrs, otellog.String(otelobs.GenAIPromptName, c.Agent))
+		attrs = append(attrs, attribute.String(otelobs.GenAIAgentName, c.Agent))
+		attrs = append(attrs, attribute.String(otelobs.GenAIPromptName, c.Agent))
 	}
 	if sysHash != "" {
-		attrs = append(attrs, otellog.String(otelobs.GenAIPromptVersion, sysHash))
+		attrs = append(attrs, attribute.String(otelobs.GenAIPromptVersion, sysHash))
 	}
 
 	if resp != nil {
 		if v, ok := marshalAttr(resp.Content); ok {
-			attrs = append(attrs, otellog.String(otelobs.GenAIOutputMessages, v))
+			attrs = append(attrs, attribute.String(otelobs.GenAIOutputMessages, v))
 		}
 		if resp.ModelVersion != "" {
-			attrs = append(attrs, otellog.String(otelobs.GenAIResponseModel, resp.ModelVersion))
+			attrs = append(attrs, attribute.String(otelobs.GenAIResponseModel, resp.ModelVersion))
 		}
 		if resp.FinishReason != "" {
 			// semconv models finish_reasons as an array (one entry per
 			// candidate); quack's LLMResponse carries a single candidate.
-			attrs = append(attrs, otellog.Slice(otelobs.GenAIResponseFinishReasons, otellog.StringValue(string(resp.FinishReason))))
+			attrs = append(attrs, attribute.Slice(otelobs.GenAIResponseFinishReasons, attribute.StringValue(string(resp.FinishReason))))
 		}
 		if u := resp.UsageMetadata; u != nil {
 			// Cost accounting per node/round, and the token/finish parity a
 			// swapped-model eval re-run (#606) needs to compare against a
 			// recording - both free once UsageMetadata is populated.
 			if u.PromptTokenCount != 0 {
-				attrs = append(attrs, otellog.Int64(otelobs.GenAIUsageInputTokens, int64(u.PromptTokenCount)))
+				attrs = append(attrs, attribute.Int64(otelobs.GenAIUsageInputTokens, int64(u.PromptTokenCount)))
 			}
 			if u.CandidatesTokenCount != 0 {
-				attrs = append(attrs, otellog.Int64(otelobs.GenAIUsageOutputTokens, int64(u.CandidatesTokenCount)))
+				attrs = append(attrs, attribute.Int64(otelobs.GenAIUsageOutputTokens, int64(u.CandidatesTokenCount)))
 			}
 		}
 	}
 	if callErr != nil {
-		attrs = append(attrs, otellog.String(otelobs.ErrorType, callErr.Error()))
+		attrs = append(attrs, attribute.String(otelobs.ErrorType, callErr.Error()))
 	}
 
 	otelobs.EmitLog(ctx, inferenceScope, "", attrs...)

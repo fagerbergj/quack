@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
@@ -28,10 +28,10 @@ func (c *captureExporter) Export(_ context.Context, records []sdklog.Record) err
 func (c *captureExporter) Shutdown(context.Context) error   { return nil }
 func (c *captureExporter) ForceFlush(context.Context) error { return nil }
 
-func attrsOf(t *testing.T, r sdklog.Record) map[string]otellog.Value {
+func attrsOf(t *testing.T, r sdklog.Record) map[string]attribute.Value {
 	t.Helper()
-	out := map[string]otellog.Value{}
-	r.WalkAttributes(func(kv otellog.KeyValue) bool {
+	out := map[string]attribute.Value{}
+	r.WalkAttributes(func(kv attribute.KeyValue) bool {
 		out[string(kv.Key)] = kv.Value
 		return true
 	})

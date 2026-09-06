@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
@@ -28,21 +29,21 @@ func toEntries(t *testing.T, entries []entry) []ledger.Entry {
 	for _, e := range entries {
 		var rec otellog.Record
 		rec.SetTimestamp(e.ts)
-		rec.AddAttributes(otellog.String("gen_ai.conversation.id", "chat-1"))
+		rec.AddAttributes(attribute.String("gen_ai.conversation.id", "chat-1"))
 		for k, v := range e.attrs {
 			switch x := v.(type) {
 			case string:
-				rec.AddAttributes(otellog.String(k, x))
+				rec.AddAttributes(attribute.String(k, x))
 			case float64:
-				rec.AddAttributes(otellog.Float64(k, x))
+				rec.AddAttributes(attribute.Float64(k, x))
 			case int:
-				rec.AddAttributes(otellog.Int64(k, int64(x)))
+				rec.AddAttributes(attribute.Int64(k, int64(x)))
 			case []any:
-				vals := make([]otellog.Value, len(x))
+				vals := make([]attribute.Value, len(x))
 				for i, sv := range x {
-					vals[i] = otellog.StringValue(sv.(string))
+					vals[i] = attribute.StringValue(sv.(string))
 				}
-				rec.AddAttributes(otellog.Slice(k, vals...))
+				rec.AddAttributes(attribute.Slice(k, vals...))
 			default:
 				t.Fatalf("unsupported attr type %T for %s", v, k)
 			}

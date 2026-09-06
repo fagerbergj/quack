@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
 
@@ -50,7 +50,7 @@ func (e *Exporter) ForceFlush(context.Context) error { return nil }
 // records without a conversation id) - those still reach any OTLP exporter.
 func EntryFromRecord(r sdklog.Record) (Entry, bool) {
 	attrs := make(map[string]any, r.AttributesLen())
-	r.WalkAttributes(func(kv otellog.KeyValue) bool {
+	r.WalkAttributes(func(kv attribute.KeyValue) bool {
 		attrs[string(kv.Key)] = valueToAny(kv.Value)
 		return true
 	})
@@ -115,28 +115,30 @@ func EntryFromRecord(r sdklog.Record) (Entry, bool) {
 	return entry, true
 }
 
-// valueToAny converts an otellog.Value to the generic shape encoding/json
-// already knows how to marshal.
-func valueToAny(v otellog.Value) any {
-	switch v.Kind() {
-	case otellog.KindBool:
+// valueToAny converts an attribute.Value to the generic shape encoding/json
+// already knows how to marshal. otel/log v0.21.0 dropped its own Value/Kind
+// types in favor of attribute.Value/Type (upstream record.go now embeds
+// attribute.Value directly) - see the otel/log v0.21.0 release notes.
+func valueToAny(v attribute.Value) any {
+	switch v.Type() {
+	case attribute.BOOL:
 		return v.AsBool()
-	case otellog.KindFloat64:
+	case attribute.FLOAT64:
 		return v.AsFloat64()
-	case otellog.KindInt64:
+	case attribute.INT64:
 		return v.AsInt64()
-	case otellog.KindString:
+	case attribute.STRING:
 		return v.AsString()
-	case otellog.KindBytes:
-		return v.AsBytes()
-	case otellog.KindSlice:
+	case attribute.BYTESLICE:
+		return v.AsByteSlice()
+	case attribute.SLICE:
 		s := v.AsSlice()
 		out := make([]any, len(s))
 		for i, e := range s {
 			out[i] = valueToAny(e)
 		}
 		return out
-	case otellog.KindMap:
+	case attribute.MAP:
 		m := v.AsMap()
 		out := make(map[string]any, len(m))
 		for _, kv := range m {

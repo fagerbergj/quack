@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"go.opentelemetry.io/otel/attribute"
-	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -35,8 +34,8 @@ func (c *ledgerCaptureExporter) ForceFlush(context.Context) error { return nil }
 
 func ledgerAttrsOf(r sdklog.Record) map[string]string {
 	out := map[string]string{}
-	r.WalkAttributes(func(kv otellog.KeyValue) bool {
-		if kv.Value.Kind() == otellog.KindString {
+	r.WalkAttributes(func(kv attribute.KeyValue) bool {
+		if kv.Value.Type() == attribute.STRING {
 			out[string(kv.Key)] = kv.Value.AsString()
 		}
 		return true
