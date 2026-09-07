@@ -772,6 +772,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
                     content={live.userText}
                     attachments={<AttachmentPreviews previews={liveAttachmentPreviews} />}
                     priorContents={livePriorContents}
+                    chatId={activeChatId ?? undefined}
                   />
                 )}
                 {/* Assistant response: DAG bubble → node question → answer bubble, as siblings */}
