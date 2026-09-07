@@ -1,10 +1,16 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import { within, waitFor } from 'storybook/test'
 import { ArtifactPanel } from './ArtifactPanel'
+import { ChatStoreProvider } from '../state/ChatStoreProvider'
+import { ChatStore } from '../state/chatStore'
 
 const meta: Meta<typeof ArtifactPanel> = {
   title: 'Chat/ArtifactPanel',
   component: ArtifactPanel,
   parameters: { layout: 'fullscreen' },
+  // The panel reads chatStore for live SSE follow (#1114) - every story
+  // needs the provider, same as the real app's tree under Chat.tsx.
+  decorators: [Story => <ChatStoreProvider><Story /></ChatStoreProvider>],
 }
 export default meta
 
@@ -42,6 +48,12 @@ const reviewJudge2 = JSON.stringify({
   scored: [{ artifact_id: 'text:review-1', revision: 2 }],
   notes: [],
 })
+
+// Flipped mid-story (LiveUpdate's play function) to simulate the server
+// having written a 3rd revision - the fixture, not just the SSE event,
+// has to reflect it since the panel's refresh is a real REST refetch.
+let reviewRev3Written = false
+const reviewMdV3 = '# Review summary (live update)\n\nA third revision just landed over SSE.\n'
 
 window.fetch = async (input: RequestInfo | URL) => {
   // The generated client's per-request fetch always calls this with a real
@@ -103,6 +115,7 @@ window.fetch = async (input: RequestInfo | URL) => {
     return jsonResponse({
       data: [
         // Newest first, like the endpoint (openapi.yaml's ArtifactRevisionList).
+        ...(reviewRev3Written ? [{ revision: 3, mime_type: 'text/markdown', size: reviewMdV3.length, kind: 'text', class: 'blob', lineage: { node_id: 'reviewer-1', round: 3, author: 'worker' } }] : []),
         { revision: 2, mime_type: 'text/markdown', size: reviewMd.length, kind: 'text', class: 'blob', lineage: { node_id: 'reviewer-1', round: 2, author: 'worker', trigger_annotation: 'judge_round:t1-1-1' } },
         { revision: 1, mime_type: 'text/markdown', size: reviewMdV1.length, kind: 'text', class: 'blob', lineage: { node_id: 'reviewer-1', round: 1, author: 'worker' } },
       ],
@@ -116,6 +129,7 @@ window.fetch = async (input: RequestInfo | URL) => {
       ],
     })
   }
+  if (url.includes('/artifacts/text:review-1?revision=3')) return textResponse(reviewMdV3)
   if (url.includes('/artifacts/text:review-1?revision=2')) return textResponse(reviewMd)
   if (url.includes('/artifacts/text:review-1?revision=1')) return textResponse(reviewMdV1)
   if (url.includes('/artifacts/finding:abc123?revision=2')) return textResponse(findingV2)
@@ -163,6 +177,43 @@ export const WithResult: Story = {
     nodeTask: 'Review PR #1170',
     nodeArtifactKind: 'text',
     onClose: () => {},
+  },
+}
+
+// Minimal EventSource fake (mirrors chatStore.test.ts's own) so the play
+// function can dispatch a real SSE frame through chatStore's own
+// EventSource handling, rather than reaching into the store's internals.
+class FakeEventSource {
+  static last: FakeEventSource | null = null
+  onerror: (() => void) | null = null
+  private listeners: Record<string, ((e: MessageEvent) => void)[]> = {}
+  constructor() { FakeEventSource.last = this }
+  addEventListener(name: string, cb: (e: MessageEvent) => void) { (this.listeners[name] ??= []).push(cb) }
+  close() {}
+  emit(name: string, data: unknown) {
+    for (const cb of this.listeners[name] ?? []) cb({ data: JSON.stringify(data), lastEventId: '' } as MessageEvent)
+  }
+}
+window.EventSource = FakeEventSource as unknown as typeof EventSource
+
+// #1114: the panel follows a live artifact_revision event over the chat's
+// own SSE stream, no page reload/manual Refresh - the story injects its own
+// ChatStore, attaches it (opening the fake EventSource above), and the play
+// function fires the event exactly as the real stream would deliver it.
+const liveStore = new ChatStore()
+liveStore.seed('chat-1', [])
+liveStore.attach('chat-1')
+export const LiveUpdate: Story = {
+  ...WithResult,
+  decorators: [Story => <ChatStoreProvider store={liveStore}><Story /></ChatStoreProvider>],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await waitFor(() => canvas.getByText('Revision 2 of 2'))
+
+    reviewRev3Written = true
+    FakeEventSource.last?.emit('artifact_revision', { id: 'text:review-1', revision: 3, kind: 'text', node_id: 'reviewer-1', round: 3 })
+
+    await waitFor(() => canvas.getByText('Revision 3 of 3'))
   },
 }
 
