@@ -1,6 +1,15 @@
 package agent
 
-import "google.golang.org/adk/v2/model"
+import (
+	"context"
+
+	"go.opentelemetry.io/otel/attribute"
+	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/session"
+
+	"github.com/fagerbergj/quack/internal/otelobs"
+	"github.com/fagerbergj/quack/internal/stream"
+)
 
 // Compaction summarizes older turns of a session, folding them into a
 // durable event via adk/v2's native runner-level compaction (see a2a.go's
@@ -40,4 +49,34 @@ func usable(contextWindow int) int {
 		return u
 	}
 	return 0
+}
+
+// emitCompaction publishes ev's compaction record to the chat's hub and opens
+// a paired otel span, or does nothing for a non-compaction event or a nil
+// sink (compaction disabled, or a call site - e.g. tests - with no hub).
+//
+// ctx must be the worker's own per-request context (from agent.Serve's
+// RunnerProvider): otelhttp's server handler already parented it from the
+// caller's traceparent header, so the span lands under the dispatching
+// round's trace without the ledger.Coords.SpanContext workaround the old
+// in-process callback needed (see dda27aaa's internal/agent/compaction.go).
+func emitCompaction(ctx context.Context, sink func(stream.SSEEvent), nodeID string, ev *session.Event) {
+	if sink == nil || ev == nil || ev.Actions.Compaction == nil {
+		return
+	}
+	c := ev.Actions.Compaction
+	var in, out int32
+	if u := ev.LLMResponse.UsageMetadata; u != nil {
+		in, out = u.PromptTokenCount, u.CandidatesTokenCount+u.ThoughtsTokenCount
+	}
+	sink(stream.Compaction(nodeID, ev.InvocationID, c.StartTimestamp, c.EndTimestamp, in, out))
+
+	_, span := otelobs.Start(ctx, "compaction", attribute.String("node_id", nodeID))
+	if in > 0 {
+		span.SetAttributes(attribute.Int("gen_ai.usage.input_tokens", int(in)))
+	}
+	if out > 0 {
+		span.SetAttributes(attribute.Int("gen_ai.usage.output_tokens", int(out)))
+	}
+	span.End()
 }

@@ -763,7 +763,7 @@ describe('ChatStore - mid-node steering', () => {
   })
 })
 
-describe('ChatStore - context meter', () => {
+describe('ChatStore - context meter + compaction', () => {
   let fetchMock: ReturnType<typeof vi.fn>
   let store: ChatStore
 
@@ -816,6 +816,24 @@ describe('ChatStore - context meter', () => {
     fetchMock.mockResolvedValueOnce(makeStream(sse))
     await store.submit('c', 'go')
     expect(store.get('c').live?.dag?.nodeStates['a'].contextTokens).toBe(100000)
+  })
+
+  it("records a compaction event on the node's currently open run", async () => {
+    const sse = [
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}',
+      '',
+      'event: agent_start',
+      'data: {"node_id":"a","run_id":"worker-r0","agent":"researcher","stage":"worker"}',
+      '',
+      'event: compaction',
+      'data: {"node_id":"a","run_id":"inv-1","summary_input_tokens":210000,"summary_output_tokens":1800}',
+      '',
+    ].join('\n')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'go')
+    const run = store.get('c').live?.dag?.nodeRuns['a']?.find(r => r.runId === 'worker-r0')
+    expect(run?.activity).toContainEqual({ kind: 'compaction', summaryInputTokens: 210000, summaryOutputTokens: 1800 })
   })
 })
 

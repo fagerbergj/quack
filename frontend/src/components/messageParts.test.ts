@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { showLiveSpinner, startRun, appendRunToolCall, fillRunToolResult, type AgentRun } from './messageParts'
+import { showLiveSpinner, startRun, appendRunToolCall, fillRunToolResult, appendRunCompaction, type AgentRun } from './messageParts'
 
 describe('showLiveSpinner', () => {
   it('shows dots while streaming before anything visible arrives', () => {
@@ -66,5 +66,18 @@ describe('appendRunToolCall / fillRunToolResult (tool-call orphaning, #746)', ()
     expect(tools).toHaveLength(1)
     const tool = tools[0] as { kind: 'tool'; tool: { done: boolean } }
     expect(tool.tool.done).toBe(true)
+  })
+})
+
+describe('appendRunCompaction', () => {
+  it('appends a compaction row to the most recently started run', () => {
+    let runs: AgentRun[] = startRun([], { runId: 'worker-r0', agent: 'web-researcher', stage: 'worker' })
+    runs = appendRunCompaction(runs, { kind: 'compaction', summaryInputTokens: 210_000, summaryOutputTokens: 1_800 })
+    expect(runs[0].activity).toEqual([{ kind: 'compaction', summaryInputTokens: 210_000, summaryOutputTokens: 1_800 }])
+  })
+
+  it('is a no-op when the node has no runs yet', () => {
+    const runs: AgentRun[] = []
+    expect(appendRunCompaction(runs, { kind: 'compaction' })).toBe(runs)
   })
 })

@@ -9,7 +9,7 @@ import type { ComponentPropsWithoutRef } from 'react'
 import type { Element } from 'hast'
 import type { Activity, ToolCall } from './messageParts'
 import { agentLabel, liveStatusLine } from './messageParts'
-import { summarizeArgs, previewLine, toolFailed, toolActionLine } from './toolFormat'
+import { summarizeArgs, previewLine, toolFailed, toolActionLine, fmtTokenCount } from './toolFormat'
 import { escapeUnmatchedBackticks } from '../lib/backticks'
 import { Expandable } from './Expandable'
 import { ToolCallView } from './ToolCallView'
@@ -154,6 +154,7 @@ export function ActivityList({ activity }: { activity: Activity[] }) {
       {activity.slice(start).map((a, i) => {
         switch (a.kind) {
           case 'thinking': return <ThinkBlock key={start + i} text={a.text} />
+          case 'compaction': return <CompactionBlock key={start + i} {...a} />
           default: return <ToolBlock key={start + i} tool={a.tool} />
         }
       })}
@@ -219,6 +220,27 @@ function ThinkBlock({ text }: { text: string }) {
         </Expandable>
       </div>
     </details>
+  )
+}
+
+// CompactionBlock is a one-line inline row marking a mid-round history
+// rewrite - same collapsed-summary ethos as ThinkBlock/ToolBlock, but never
+// expands. adk reports no before/after conversation-size total (unlike the
+// pre-#1239 quack engine), so this shows the summarizer's own spend when
+// known and falls back to a bare label when it isn't.
+function CompactionBlock({ summaryInputTokens, summaryOutputTokens }: { summaryInputTokens?: number; summaryOutputTokens?: number }) {
+  const hasTokens = !!summaryInputTokens || !!summaryOutputTokens
+  return (
+    <div
+      className="flex items-center gap-1.5 my-0.5 py-0.5 text-[11px] text-gray-400 dark:text-gray-500 not-prose"
+      aria-label={hasTokens ? `Context compacted, summarizer spent ${summaryInputTokens ?? 0} in / ${summaryOutputTokens ?? 0} out tokens` : 'Context compacted'}
+    >
+      <span aria-hidden>↯</span>
+      <span className="italic">compacted</span>
+      {hasTokens && (
+        <span className="tabular-nums">{fmtTokenCount(summaryInputTokens ?? 0)} → {fmtTokenCount(summaryOutputTokens ?? 0)}</span>
+      )}
+    </div>
   )
 }
 

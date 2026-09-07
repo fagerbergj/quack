@@ -1362,7 +1362,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		}
 		clientMap[name] = nativeAgent{
 			Agent: protoAgent,
-			build: func(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(), error) {
+			build: func(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(), error) {
 				var extraTools []tool.Tool
 				var setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string)
 				if artifacts != nil {
@@ -1386,7 +1386,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				if err != nil {
 					return nil, nil, nil, nil, nil, err
 				}
-				srv, err := agent.Serve(wag, sessions, memSvc, compactionFor(ac, wm))
+				srv, err := agent.Serve(wag, sessions, memSvc, compactionFor(ac, wm), nodeID, sink)
 				if err != nil {
 					return nil, nil, nil, nil, nil, fmt.Errorf("a2a serve: %w", err)
 				}

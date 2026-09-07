@@ -4,6 +4,7 @@ import {
   appendRunThinking,
   appendRunToolCall,
   fillRunToolResult,
+  appendRunCompaction,
   completeRun,
   freezeOpenRuns,
   type AgentRun,
@@ -859,6 +860,13 @@ export class ChatStore {
             updateTopLevelRuns(r => completeRun(r, d.runId, completeArgs, Date.now()))
           }
         },
+        onCompaction: d => updateNodeRuns(d.nodeId, r => appendRunCompaction(r, {
+          kind: 'compaction',
+          startTimestamp: d.startTimestamp,
+          endTimestamp: d.endTimestamp,
+          summaryInputTokens: d.summaryInputTokens,
+          summaryOutputTokens: d.summaryOutputTokens,
+        })),
         onChatTitle: title => onTitle?.(title),
         onError,
         // The very first event of a run: captures the response id so stop()

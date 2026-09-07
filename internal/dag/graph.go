@@ -38,7 +38,9 @@ type nodeScopedWorker interface {
 	// setRoundCoords, when non-nil, must be called by the gate at every
 	// judge/revise round (mirrors vetting.SetAdvisorThreadRound) so those
 	// already-built tools' writes carry the round's real lineage (#1123).
-	ForNode(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string), release func(), err error)
+	// sink lets this node's own A2A server re-emit a `compaction` SSE event
+	// (#1185 follow-up) - nil is a valid "no active hub" no-op.
+	ForNode(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string), release func(), err error)
 }
 
 // buildGateNodes: one gated node per plan node. source: the run's origin
@@ -48,7 +50,7 @@ type nodeScopedWorker interface {
 // orchestrator's own writes) were saved under, or a node's list/read/edit
 // would silently see nothing.
 func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, userID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int), admission *Admission, specFor func(agentName string) AdmissionSpec, artifacts artifact.Service, walLedger ledger.LedgerStore,
-	refreshSetup func(context.Context, Node, vetting.Config) bool) (map[string]workflow.Node, []adkagent.Agent, error) {
+	refreshSetup func(context.Context, Node, vetting.Config) bool, sink func(stream.SSEEvent)) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
@@ -67,7 +69,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		var release func()
 		var setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string)
 		if scoped, ok := ag.(nodeScopedWorker); ok {
-			w, m, wt, src, rel, err := scoped.ForNode(plan.ID+":"+n.ID, liveSteerDrain(controls, chatID, n.ID), artifacts, artifactref.AppName, userID, chatID, n.ID)
+			w, m, wt, src, rel, err := scoped.ForNode(plan.ID+":"+n.ID, liveSteerDrain(controls, chatID, n.ID), artifacts, artifactref.AppName, userID, chatID, n.ID, sink)
 			if err != nil {
 				return nil, nil, fmt.Errorf("dag: node %q: per-node agent construction: %w", n.ID, err)
 			}

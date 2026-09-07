@@ -61,6 +61,12 @@ const (
 	// delivery failure. See DeliveryResultData.
 	EventDeliveryResult = "delivery_result"
 
+	// EventCompaction reports a worker node's session being compacted by
+	// adk/v2's native runner-level compaction (internal/agent's Compaction) -
+	// observed server-side, before A2A conversion, since a zero-Content
+	// compaction event never crosses the A2A wire (see internal/agent/a2a.go).
+	EventCompaction = "compaction"
+
 	// EventArtifactRevision reports one artifact revision written by a judge
 	// round (#1090 §4.8/#1092) - emitted before the round's
 	// EventArtifactJudgeRound, so a client sees the revision exist first.
@@ -347,6 +353,36 @@ type ArtifactJudgeRoundData struct {
 // ChatTitleData is the `chat_title` event payload.
 type ChatTitleData struct {
 	Title string `json:"title"`
+}
+
+// CompactionData: `compaction` event payload. Fields are exactly what
+// adk/v2's session.EventCompaction and the summarizer's UsageMetadata expose
+// on the compaction Event itself - no invented before/after conversation size
+// (adk does not report that; see internal/agent/compaction.go).
+type CompactionData struct {
+	NodeID string `json:"node_id,omitempty"`
+	// RunID is the adk invocation that triggered the compaction, not a quack
+	// worker-run id (adk native compaction isn't scoped to one of those).
+	RunID               string `json:"run_id,omitempty"`
+	StartTimestamp      string `json:"start_timestamp,omitempty"`
+	EndTimestamp        string `json:"end_timestamp,omitempty"`
+	SummaryInputTokens  int32  `json:"summary_input_tokens,omitempty"`
+	SummaryOutputTokens int32  `json:"summary_output_tokens,omitempty"`
+}
+
+// Compaction builds a compaction event. start/end zero values are omitted
+// rather than sent as the epoch, and likewise for zero token counts - adk
+// leaves both unset when it has nothing to report (see
+// internal/telemetry/compaction.go in the vendored module).
+func Compaction(nodeID, runID string, start, end time.Time, inputTokens, outputTokens int32) SSEEvent {
+	d := CompactionData{NodeID: nodeID, RunID: runID, SummaryInputTokens: inputTokens, SummaryOutputTokens: outputTokens}
+	if !start.IsZero() {
+		d.StartTimestamp = start.UTC().Format(time.RFC3339)
+	}
+	if !end.IsZero() {
+		d.EndTimestamp = end.UTC().Format(time.RFC3339)
+	}
+	return SSEEvent{Name: EventCompaction, Data: d}
 }
 
 // ── event constructors ───

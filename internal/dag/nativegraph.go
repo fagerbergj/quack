@@ -174,12 +174,16 @@ func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userI
 	// synchronously, before workflow.RunNode ever schedules a child) - past
 	// here it's carried on vetting.Config, same reason cfg.Agent is.
 	source := ledger.CoordsFromContext(ctx).Source
+	// sink travels the same way as source above, for the same reason: grabbed
+	// here while ctx is still live, then carried as a plain value past the
+	// point workflow.RunNode stops propagating it (#1185 follow-up).
+	sink, _ := stream.YieldFromContext(ctx)
 	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, userID, source,
 		func(nodeID string, score float64, passed bool, rounds int) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds)
 		}, e.admission, e.specFor, e.artifacts, e.walLedger, func(nctx context.Context, node Node, cfg vetting.Config) bool {
 			return e.refreshStaleSetup(nctx, userID, chatID, &plan, node, cfg)
-		})
+		}, sink)
 	if err != nil {
 		return false, err
 	}

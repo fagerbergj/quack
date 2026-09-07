@@ -185,10 +185,11 @@ func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, node
 		artifacts = nil
 		slog.Warn("retry: no session, skipping artifact tools", "component", "dag", "chat_id", chatID, "node_id", nodeID)
 	}
+	sink, _ := stream.YieldFromContext(ctx)
 	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, userID, source,
 		func(nodeID string, score float64, passed bool, rounds int) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds)
-		}, e.admission, e.specFor, artifacts, e.walLedger, nil) // retry never re-runs setup, so nothing to refresh
+		}, e.admission, e.specFor, artifacts, e.walLedger, nil, sink) // retry never re-runs setup, so nothing to refresh
 	if err != nil {
 		return nil, err
 	}

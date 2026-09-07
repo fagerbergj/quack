@@ -32,10 +32,21 @@ export interface ToolCall {
   title?: string
 }
 
-// Activity is one ordered item inside a run: reasoning or a tool call.
+// Activity is one ordered item inside a run: reasoning, a tool call, or a
+// context-compaction event (the node's worker session was rewritten mid-round
+// by adk's own runner-level compaction). Fields mirror stream.CompactionData -
+// adk reports no before/after conversation-size total, so unlike the old
+// tokensBefore/tokensAfter row this is a range + summarizer spend, both optional.
 export type Activity =
   | { kind: 'thinking'; text: string }
   | { kind: 'tool'; tool: ToolCall }
+  | {
+      kind: 'compaction'
+      startTimestamp?: string
+      endTimestamp?: string
+      summaryInputTokens?: number
+      summaryOutputTokens?: number
+    }
 
 // AgentRun is one agent invocation within a node. Result fields are populated on
 // agent_complete and vary by stage.
@@ -173,6 +184,18 @@ export function freezeOpenRuns(runs: AgentRun[], nowMs?: number): AgentRun[] {
     const durationMs = nowMs != null && run.startedAt != null ? nowMs - run.startedAt : run.durationMs
     return { ...run, done: true, durationMs }
   })
+}
+
+// appendRunCompaction records a compaction event on a node's most recently
+// started run. Unlike appendRunThinking/appendRunToolCall it can't match by
+// run_id: adk's compaction event carries its own invocation id, not one of
+// quack's run_id values, so there's nothing to look up. A node's compaction
+// always belongs to whichever run is currently open (adk compacts the live
+// session, never a finished one) - a no-op if the node has no runs yet.
+export function appendRunCompaction(runs: AgentRun[], data: Extract<Activity, { kind: 'compaction' }>): AgentRun[] {
+  if (runs.length === 0) return runs
+  const last = runs[runs.length - 1]
+  return [...runs.slice(0, -1), { ...last, activity: [...last.activity, data] }]
 }
 
 function mapRun(runs: AgentRun[], runId: string, fn: (run: AgentRun) => AgentRun): AgentRun[] {
