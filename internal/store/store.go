@@ -844,10 +844,25 @@ const MaxTitleLen = 80
 // UpdateTitle sets the human-readable title for a chat, truncated to
 // MaxTitleLen runes (see its doc comment).
 func (s *Store) UpdateTitle(ctx context.Context, id, title string) error {
-	if r := []rune(title); len(r) > MaxTitleLen {
-		title = string(r[:MaxTitleLen])
+	return s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", id).Update("title", truncateTitle(title, MaxTitleLen)).Error
+}
+
+// truncateTitle cuts title to at most maxLen runes, backing off to the last
+// preceding space so a long PR/issue title doesn't sever mid-word (#1232),
+// then appends an ellipsis. No-op if title already fits.
+func truncateTitle(title string, maxLen int) string {
+	r := []rune(title)
+	if len(r) <= maxLen {
+		return title
 	}
-	return s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", id).Update("title", title).Error
+	cut := maxLen - 1 // room for the ellipsis
+	if cut < 0 {
+		cut = 0
+	}
+	if sp := strings.LastIndex(string(r[:cut]), " "); sp > 0 {
+		cut = len([]rune(string(r[:cut])[:sp]))
+	}
+	return string(r[:cut]) + "…"
 }
 
 // ArchiveChat toggles the archived flag on a chat.
