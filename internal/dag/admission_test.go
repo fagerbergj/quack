@@ -138,13 +138,13 @@ func TestAgingStopsBackfillAndAdmitsOldest(t *testing.T) {
 	fatCtx, fatCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer fatCancel()
 	go func() { fatDone <- a.Admit(fatCtx, fat, nil) }()
-	time.Sleep(10 * time.Millisecond) // fat registers as the oldest waiter
+	time.Sleep(60 * time.Millisecond) // fat registers as the oldest waiter, well before it ages out
 
 	// Release the filler: a small node would normally backfill ahead of fat...
 	a.Release(filler)
 
-	// ...but wait past the aging threshold, then try a small backfill candidate.
-	time.Sleep(50 * time.Millisecond) // > 30ms aging threshold
+	// ...but wait well past the aging threshold, then try a small backfill candidate.
+	time.Sleep(300 * time.Millisecond) // >> 30ms aging threshold, wide margin against scheduler jitter
 	small := AdmissionSpec{Model: "m", KVTokens: 5}
 	smallCtx, smallCancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer smallCancel()
@@ -176,13 +176,13 @@ func TestAgingActuallyBlocksLaterBackfill(t *testing.T) {
 	fatCtx, fatCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer fatCancel()
 	go func() { fatDone <- a.Admit(fatCtx, fat, nil) }()
-	time.Sleep(10 * time.Millisecond) // fat = sole/oldest waiter
+	time.Sleep(20 * time.Millisecond) // fat = sole/oldest waiter, well before it ages out
 
 	smallA := AdmissionSpec{Model: "m", KVTokens: 15}
 	mustAdmit(t, a, smallA) // pre-aging backfill: 80+15=95<=100, fits
 	a.Release(smallA)       // back to 80/100 used, 20 free again
 
-	time.Sleep(60 * time.Millisecond) // fat now aged (>40ms)
+	time.Sleep(300 * time.Millisecond) // fat now aged (>>40ms), wide margin against scheduler jitter
 
 	smallB := AdmissionSpec{Model: "m", KVTokens: 15} // would fit (95<=100) if backfill still allowed
 	cancel := mustBlock(t, a, smallB)                 // capacity exists - only aging can explain a block

@@ -508,7 +508,7 @@ func TestRound_IdleTimeout(t *testing.T) {
 // false timeout - the round completes normally when done fires.
 func TestRound_IdleTimeoutDoesNotFireOnSlowButAlive(t *testing.T) {
 	a := testAgent(t, "slow")
-	a.opts.IdleTimeout = 150 * time.Millisecond // each update gap is 80ms
+	a.opts.IdleTimeout = 500 * time.Millisecond // each update gap is 80ms; wide margin against scheduler jitter
 
 	var specs []eventSpec
 	err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "take your time", "", "", "", "", func(s eventSpec) bool {

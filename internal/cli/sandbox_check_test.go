@@ -52,8 +52,16 @@ func TestRunSandboxChecks_CwdWriteReadOnly(t *testing.T) {
 func TestRunSandboxChecks_CwdWriteReadOnlyBlocked(t *testing.T) {
 	// The script itself failing (EACCES) is the PASS condition for a
 	// read-only agent.
-	results := RunSandboxChecks(context.Background(), fakeRunner{fail: []string{"write cwd probe would never match on script text; use name"}}, true, true, nil)
-	_ = results
+	results := RunSandboxChecks(context.Background(), fakeRunner{fail: []string{"./.quack-sandbox-probe"}}, true, true, nil)
+	for _, r := range results {
+		if r.Name == "write cwd" {
+			if r.Status != ProbePass {
+				t.Errorf("read-only cwd write should PASS when the script reports EACCES, got %s: %s", r.Status, r.Evidence)
+			}
+			return
+		}
+	}
+	t.Fatal("write cwd probe not found")
 }
 
 func TestRunSandboxChecks_InfoProbesNeverFailTheGate(t *testing.T) {
