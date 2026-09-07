@@ -1,10 +1,12 @@
-package ledger
+package ledgertest
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"testing"
+
+	"github.com/fagerbergj/quack/internal/ledger"
 )
 
 // TestMemStoreAppendIntent_ParentRevisionConflict is the fast, no-docker
@@ -17,10 +19,10 @@ func TestMemStoreAppendIntent_ParentRevisionConflict(t *testing.T) {
 		ParentRevision int `json:"parent_revision"`
 	}{ParentRevision: 0})
 
-	if _, err := s.AppendIntent(ctx, Entry{ChatID: "chat1", Kind: KindArtifactRevision, Key: "id1", Payload: payload}); err != nil {
+	if _, err := s.AppendIntent(ctx, ledger.Entry{ChatID: "chat1", Kind: ledger.KindArtifactRevision, Key: "id1", Payload: payload}); err != nil {
 		t.Fatalf("first AppendIntent: %v", err)
 	}
-	if _, err := s.AppendIntent(ctx, Entry{ChatID: "chat1", Kind: KindArtifactRevision, Key: "id1", Payload: payload}); !errors.Is(err, ErrStaleParent) {
+	if _, err := s.AppendIntent(ctx, ledger.Entry{ChatID: "chat1", Kind: ledger.KindArtifactRevision, Key: "id1", Payload: payload}); !errors.Is(err, ledger.ErrStaleParent) {
 		t.Fatalf("second AppendIntent for the same parent = %v, want ErrStaleParent", err)
 	}
 }
@@ -31,12 +33,12 @@ func TestMemStoreAppendIntent_IdempotencyKeyIsANoOp(t *testing.T) {
 	s := NewMemStore()
 	ctx := context.Background()
 
-	seq1, err := s.AppendIntent(ctx, Entry{ChatID: "chat1", Kind: KindArtifactRevision, Key: "id1", IdempotencyKey: "dup"})
+	seq1, err := s.AppendIntent(ctx, ledger.Entry{ChatID: "chat1", Kind: ledger.KindArtifactRevision, Key: "id1", IdempotencyKey: "dup"})
 	if err != nil {
 		t.Fatalf("first AppendIntent: %v", err)
 	}
-	_, err = s.AppendIntent(ctx, Entry{ChatID: "chat1", Kind: KindArtifactRevision, Key: "id1", IdempotencyKey: "dup"})
-	var dup *DuplicateIntentError
+	_, err = s.AppendIntent(ctx, ledger.Entry{ChatID: "chat1", Kind: ledger.KindArtifactRevision, Key: "id1", IdempotencyKey: "dup"})
+	var dup *ledger.DuplicateIntentError
 	if !errors.As(err, &dup) {
 		t.Fatalf("second AppendIntent = %v, want *DuplicateIntentError", err)
 	}

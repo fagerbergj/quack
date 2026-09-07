@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
 )
 
 // TestSeedProjectionWatermarks_SeparateStores proves seeding works across the
@@ -24,7 +25,7 @@ func TestSeedProjectionWatermarks_SeparateStores(t *testing.T) {
 	if _, err := NewRowArtifactService(st.db); err != nil {
 		t.Fatalf("NewRowArtifactService: %v", err)
 	}
-	ls := ledger.NewMemStore()
+	ls := ledgertest.NewMemStore()
 
 	chatID := "c1"
 	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: "turn.started", At: time.Now()}); err != nil {

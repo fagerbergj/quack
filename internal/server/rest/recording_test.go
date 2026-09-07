@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
@@ -31,7 +32,7 @@ func TestListRecordingsNoStore(t *testing.T) {
 // recorded yet - 200 with an empty array, not a 404.
 func TestListRecordingsEmpty(t *testing.T) {
 	h := newTestHandler(t)
-	store := ledger.NewMemStore()
+	store := ledgertest.NewMemStore()
 	h.ledgerStore = store
 
 	rec := httptest.NewRecorder()
@@ -52,7 +53,7 @@ func TestListRecordingsEmpty(t *testing.T) {
 // TestListRecordingsWithSessions: lists every recorded session's id and size.
 func TestListRecordingsWithSessions(t *testing.T) {
 	h := newTestHandler(t)
-	store := ledger.NewMemStore()
+	store := ledgertest.NewMemStore()
 	h.ledgerStore = store
 	ctx := context.Background()
 	for _, c := range []string{"c1", "c2"} {
@@ -102,7 +103,7 @@ func TestGetChatRecordingNoStore(t *testing.T) {
 // never recorded - still 404, not a 500 or a truncated 200.
 func TestGetChatRecordingNoSession(t *testing.T) {
 	h := newTestHandler(t)
-	store := ledger.NewMemStore()
+	store := ledgertest.NewMemStore()
 	h.ledgerStore = store
 
 	rec := httptest.NewRecorder()
@@ -133,7 +134,7 @@ func TestGetChatRecordingNoSession_PostgresStore(t *testing.T) {
 // valid ZIP with the expected manifest and entries content.
 func TestGetChatRecordingRoundTrip(t *testing.T) {
 	h := newTestHandler(t)
-	store := ledger.NewMemStore()
+	store := ledgertest.NewMemStore()
 	h.ledgerStore = store
 	h.quackVersion = "v9.9.9"
 
@@ -210,7 +211,7 @@ func TestGetChatRecordingRoundTrip(t *testing.T) {
 // review on #611: header-parameter injection via `;` / quotes).
 func TestGetChatRecording_SanitizesContentDisposition(t *testing.T) {
 	h := newTestHandler(t)
-	store := ledger.NewMemStore()
+	store := ledgertest.NewMemStore()
 	h.ledgerStore = store
 	hostile := `evil"; dummy="x`
 	if _, err := store.AppendIntent(context.Background(), ledger.Entry{ChatID: hostile, Kind: ledger.KindLLMCall}); err != nil {

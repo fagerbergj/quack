@@ -26,10 +26,10 @@ func (e *DuplicateIntentError) Error() string {
 	return fmt.Sprintf("ledger: duplicate idempotency key, existing seq %d", e.Existing.Seq)
 }
 
-// parentRevisionOf reads an artifact.revision entry's parent_revision out of
-// its payload, so PGStore/MemStore enforce uniqueness without either owning
-// recordstore's artifactRevisionPayload type.
-func parentRevisionOf(kind string, payload json.RawMessage) int64 {
+// ParentRevisionOf reads an artifact.revision entry's parent_revision out of
+// its payload, so PGStore/ledgertest.MemStore enforce uniqueness without either
+// owning recordstore's artifactRevisionPayload type. Exported for ledgertest.
+func ParentRevisionOf(kind string, payload json.RawMessage) int64 {
 	if kind != KindArtifactRevision {
 		return 0
 	}

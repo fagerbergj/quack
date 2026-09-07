@@ -17,13 +17,14 @@ import (
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
 )
 
 // toEntries pushes hand-built attribute maps through the real Exporter, so
 // these fixtures are shaped exactly as production records them.
 func toEntries(t *testing.T, entries []entry) []ledger.Entry {
 	t.Helper()
-	store := ledger.NewMemStore()
+	store := ledgertest.NewMemStore()
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(ledger.NewExporter(store))))
 	lg := lp.Logger("test")
 	for _, e := range entries {
