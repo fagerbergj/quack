@@ -139,6 +139,28 @@ func (r recordingJudge) GenerateContent(_ context.Context, req *model.LLMRequest
 	}
 }
 
+// TestJudgeCharBudgetReservesConfiguredMaxOutputTokens is #1215: prod set
+// context_window=65536 and max_output_tokens=8192, but judgeCharBudget only
+// reserved a hardcoded 2000 tokens for the reply - packing the prompt up to
+// window-2000 while the model was asked for up to 8192 reply tokens, ~6K over
+// the slot. That truncated the judge mid-thought with no tool call and no
+// parseable text (ErrJudgeNoVerdict) on the first attempt of nearly every round.
+func TestJudgeCharBudgetReservesConfiguredMaxOutputTokens(t *testing.T) {
+	cfg := Config{JudgeContextWindow: 65_536, JudgeMaxOutputTokens: 8_192}
+	got := judgeCharBudget(cfg)
+	want := (65_536 - 8_192) * judgeCharsPerToken
+	if got != want {
+		t.Errorf("judgeCharBudget = %d, want %d (reserve must track cfg.JudgeMaxOutputTokens, not the %d-token fallback)",
+			got, want, judgeOutputReserveTokens)
+	}
+
+	// Unset JudgeMaxOutputTokens still falls back to the fixed reserve.
+	cfg2 := Config{JudgeContextWindow: 65_536}
+	if got2 := judgeCharBudget(cfg2); got2 != (65_536-judgeOutputReserveTokens)*judgeCharsPerToken {
+		t.Errorf("judgeCharBudget with unset max output tokens = %d, want fallback reserve applied", got2)
+	}
+}
+
 // TestRunJudgeAgent_OverBudgetAnswerFitsBudget proves issue #291's budgeting
 // fix: an answer big enough that the assembled judge prompt would blow past
 // the judge model's configured context window gets clamped BEFORE the call
