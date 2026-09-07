@@ -61,10 +61,6 @@ const (
 	// delivery failure. See DeliveryResultData.
 	EventDeliveryResult = "delivery_result"
 
-	// EventCompaction reports a node's worker history being rewritten to fit
-	// its agent's context window - see internal/agent's Compaction.
-	EventCompaction = "compaction"
-
 	// EventArtifactRevision reports one artifact revision written by a judge
 	// round (#1090 §4.8/#1092) - emitted before the round's
 	// EventArtifactJudgeRound, so a client sees the revision exist first.
@@ -346,22 +342,6 @@ type ArtifactJudgeRoundData struct {
 	Passed bool        `json:"passed"`
 	Score  float64     `json:"score"`
 	Scored []ScoredRef `json:"scored"`
-}
-
-// `compaction` event payload: a node's worker history was rewritten to fit
-// its agent's context window mid-round.
-type CompactionData struct {
-	NodeID       string `json:"node_id,omitempty"`
-	RunID        string `json:"run_id,omitempty"`
-	TokensBefore int32  `json:"tokens_before"`
-	TokensAfter  int32  `json:"tokens_after"`
-}
-
-// Compaction builds a compaction event.
-func Compaction(nodeID, runID string, tokensBefore, tokensAfter int32) SSEEvent {
-	return SSEEvent{Name: EventCompaction, Data: CompactionData{
-		NodeID: nodeID, RunID: runID, TokensBefore: tokensBefore, TokensAfter: tokensAfter,
-	}}
 }
 
 // ChatTitleData is the `chat_title` event payload.

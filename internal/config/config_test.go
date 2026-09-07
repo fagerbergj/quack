@@ -131,6 +131,47 @@ orchestrator: { provider: default, model: m }
 	}
 }
 
+// TestLoadAcceptsDeprecatedCompactionEngine pins that session.compaction.engine
+// - a real key in every deployed quack.yaml until this release - still loads
+// as a no-op rather than tripping KnownFields(true) once the field is gone
+// from CompactionConfig for good; that's what makes the "remove it" step of
+// #1185 safe rather than a crash-loop.
+func TestLoadAcceptsDeprecatedCompactionEngine(t *testing.T) {
+	_, err := Load(writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
+stores:
+  main: { kind: postgres, url: u }
+session: { store: main, compaction: { engine: adk } }
+orchestrator: { provider: default, model: m }
+`))
+	if err != nil {
+		t.Fatalf("deprecated engine key must still load: %v", err)
+	}
+}
+
+// TestLoadRejectsOverlapWithoutInterval pins that overlap_size without
+// compaction_interval fails at config load - adk's compaction.Config.Validate()
+// rejects that combination at every dispatch of this agent, so this must be
+// caught before the config ever reaches a running node.
+func TestLoadRejectsOverlapWithoutInterval(t *testing.T) {
+	_, err := Load(writeTemp(t, `
+providers:
+  default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
+stores:
+  main: { kind: postgres, url: u }
+session: { store: main, compaction: { enabled: true, overlap_size: 2 } }
+orchestrator: { provider: default, model: m }
+`))
+	if err == nil || !strings.Contains(err.Error(), "overlap_size requires compaction_interval") {
+		t.Fatalf("got err %v, want overlap_size/compaction_interval error", err)
+	}
+}
+
 // TestLoadAcceptsReplayProviderForkMode pins #605's fork-replay config shape:
 // kind: replay + fork_mode: fork + a live provider config all round-trip
 // through Load cleanly.

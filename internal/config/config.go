@@ -477,7 +477,8 @@ type CompactionConfig struct {
 	CompactionInterval int `yaml:"compaction_interval"`
 	// OverlapSize is how many already-compacted raw events carry into the
 	// next summarization window, so a fact split across a chunk boundary
-	// isn't lost. 0 ⇒ package default.
+	// isn't lost. adk has no default here - 0 disables overlap - and requires
+	// CompactionInterval > 0 whenever this is set (see validate()).
 	OverlapSize int `yaml:"overlap_size"`
 }
 
@@ -1195,6 +1196,12 @@ func (c *Config) validate() error {
 			if err := c.checkModelRegistered("session.compaction.model", cc.Model); err != nil {
 				return err
 			}
+		}
+		// adk's compaction.Config.Validate() rejects this combination outright
+		// (sliding-window compaction would never run); fail at load rather than
+		// on the first long session that dispatches this agent.
+		if cc.OverlapSize > 0 && cc.CompactionInterval == 0 {
+			return fmt.Errorf("config: session.compaction.overlap_size requires compaction_interval > 0")
 		}
 	}
 	for name, t := range c.Tools {

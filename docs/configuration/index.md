@@ -46,7 +46,7 @@ Compaction runs on `google.golang.org/adk/v2`'s native runner-level engine (`int
 - `token_threshold` — absolute safety limit, in tokens (adk uses the provider's reported prompt-token count, not an estimate). Unset ⇒ derived from the agent's `context_window`.
 - `event_retention_size` — trailing request contents kept verbatim (default 20).
 - `compaction_interval` — regular cadence, in invocations. `0` ⇒ threshold-only.
-- `overlap_size` — how many of the newest folded-window events carry over raw into the next round instead of being folded in immediately. `0` ⇒ fold the whole window each time.
+- `overlap_size` — how many of the newest folded-window events carry over raw into the next `compaction_interval` round instead of being folded in immediately (it does not affect a `token_threshold` round). `0` ⇒ fold the whole window each time. Requires `compaction_interval > 0` - adk rejects the combination otherwise.
 
 adk's summariser hard-errors past its transcript cap (sized from `context_window`) rather than chunking, unlike a hand-rolled summariser would.
 
