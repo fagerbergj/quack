@@ -676,7 +676,12 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
           </div>
         </div>
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain px-6 py-6 space-y-6">
+        {/* #1248: relative wrapper so the composer can float over the message
+            list (absolute) instead of docking as a full-width bar - the
+            scroll pane's own bottom padding (below) is what keeps the last
+            message clear of it. */}
+        <div className="relative flex-1 min-h-0">
+        <div ref={scrollRef} className="absolute inset-0 overflow-y-auto overscroll-contain px-6 pt-6 pb-28 medium:pb-32 space-y-6">
           {!activeChatId && (
             <div className="text-center text-gray-400 dark:text-gray-500 text-sm mt-20">
               Select or start a chat
@@ -908,15 +913,18 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
           )}
         </div>
 
-        <Composer
-          disabled={!activeChatId || isArchived}
-          streaming={liveActive}
-          onSubmit={submitMessage}
-          onStop={handleStop}
-          queue={state.queue}
-          onRemoveQueued={handleRemoveQueued}
-          archived={isArchived}
-        />
+        <div className="absolute inset-x-0 bottom-0">
+          <Composer
+            disabled={!activeChatId || isArchived}
+            streaming={liveActive}
+            onSubmit={submitMessage}
+            onStop={handleStop}
+            queue={state.queue}
+            onRemoveQueued={handleRemoveQueued}
+            archived={isArchived}
+          />
+        </div>
+        </div>
       </div>
     </div>
   )

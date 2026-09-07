@@ -9,6 +9,32 @@ interface AttachmentPreview {
   name: string
 }
 
+// Inline SVG paths, matching the icon style already used elsewhere (e.g.
+// CopyButton) - no icon-library dependency for three glyphs.
+function PaperclipIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+  )
+}
+
+function StopIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+      <rect x="5" y="5" width="14" height="14" rx="2" />
+    </svg>
+  )
+}
+
+function SendIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
+      <path d="M3 20l18-8L3 4v6l12 2-12 2z" />
+    </svg>
+  )
+}
+
 // Below Tailwind's sm breakpoint (640px) - matches where the app's other
 // sm: utilities switch, and comfortably covers the 390px phones this was
 // found on.
@@ -106,12 +132,12 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
   }
 
   return (
-    // #1174: the unprefixed padding is the compact (<600px) default - 8px
-    // top/bottom keeps an empty composer within 60px + safe-area on phones;
-    // medium: restores the desktop values. pb adds env(safe-area-inset-bottom)
-    // so the composer clears the home indicator on notched phones instead of
-    // sitting flush under it.
-    <div className="border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] medium:px-6 medium:pt-4 medium:pb-[calc(1rem+env(safe-area-inset-bottom))]">
+    // #1248: floating pill, not a full-width bar - no bg/border here, the
+    // pill surface below carries its own bg/shadow. Bottom padding is exactly
+    // env(safe-area-inset-bottom): any fixed amount on top of that was the
+    // "too much dead space at rest" complaint, so there's no medium:-only
+    // addition either - the pill's own py provides the visual margin instead.
+    <div className="px-3 pt-2 pb-[env(safe-area-inset-bottom)] medium:px-6 medium:pt-3">
       {queue != null && queue.length > 0 && (
         compact ? (
           // #1174: a row per queued bubble stacks on top of the 60px budget -
@@ -187,12 +213,14 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
             return prev.filter((_, j) => j !== i)
           })}
         />
-        {/* #1174: compact collapses the row to one pill - ring (box-shadow)
-        rather than a border so the 44px row box doesn't grow 2px; desktop
-        keeps its current classes exactly. */}
+        {/* #1248: one floating pill surface at every width - shadow +
+        ring instead of a full-width bar/border, so it reads as a control
+        floating over the chat rather than a docked toolbar. #1174: ring
+        (box-shadow) rather than a border on the compact pill so the 44px
+        row box doesn't grow 2px. */}
         <div className={compact
-          ? 'flex items-center gap-2 rounded-full ring-1 ring-gray-300 dark:ring-gray-600 bg-white dark:bg-gray-700'
-          : 'flex gap-2 items-end'}>
+          ? 'flex items-center gap-2 rounded-full ring-1 ring-gray-300 dark:ring-gray-600 bg-white dark:bg-gray-800 shadow-lg'
+          : 'flex gap-2 items-end rounded-3xl ring-1 ring-gray-200 dark:ring-gray-700 bg-white dark:bg-gray-800 shadow-lg p-2'}>
           <input
             ref={fileInputRef}
             type="file"
@@ -216,13 +244,11 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
             disabled={streaming || disabled}
             className={compact
               ? 'h-11 w-11 flex-shrink-0 flex items-center justify-center rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors'
-              : 'p-3 rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors'}
+              : 'h-11 w-11 flex-shrink-0 flex items-center justify-center rounded-xl text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors'}
             aria-label="Attach file"
             title="Attach image or audio"
           >
-            {compact
-              ? <span aria-hidden="true" className="text-lg leading-none">📎</span>
-              : '📎'}
+            <PaperclipIcon />
           </button>
           <textarea
             ref={textareaRef}
@@ -235,7 +261,7 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
             // compete for the row's space.
             className={compact
               ? 'flex-1 min-w-0 bg-transparent px-4 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none max-h-32 disabled:opacity-50 dark:text-gray-100 dark:placeholder-gray-400 placeholder:truncate'
-              : 'flex-1 min-w-0 rounded-xl border border-gray-300 dark:border-gray-600 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none max-h-48 disabled:opacity-50 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400 placeholder:truncate'}
+              : 'flex-1 min-w-0 bg-transparent px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-xl resize-none max-h-48 disabled:opacity-50 dark:text-gray-100 dark:placeholder-gray-400 placeholder:truncate'}
             rows={1}
             placeholder={placeholderFor(disabled, streaming, narrow, archived)}
             value={input}
@@ -247,27 +273,23 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
             <button
               type="button"
               onClick={onStop}
-              aria-label={compact ? 'Stop' : undefined}
+              aria-label="Stop"
               className={compact
                 ? 'h-11 w-11 flex-shrink-0 flex items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors'
-                : 'px-4 py-3 rounded-xl bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm font-medium hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors whitespace-nowrap'}
+                : 'h-11 w-11 flex-shrink-0 flex items-center justify-center rounded-xl bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors'}
             >
-              {compact
-                ? <span aria-hidden="true" className="text-lg leading-none">⏹</span>
-                : 'Stop'}
+              <StopIcon />
             </button>
           )}
           <button
             type="submit"
             disabled={(!input.trim() && attachments.length === 0) || disabled}
-            aria-label={compact ? (streaming ? 'Queue' : 'Send') : undefined}
+            aria-label={streaming ? 'Queue' : 'Send'}
             className={compact
               ? 'h-11 w-11 flex-shrink-0 flex items-center justify-center rounded-full bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors'
-              : 'px-4 py-3 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap'}
+              : 'h-11 w-11 flex-shrink-0 flex items-center justify-center rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors'}
           >
-            {compact
-              ? <span aria-hidden="true" className="text-lg leading-none">➤</span>
-              : (streaming ? 'Queue' : 'Send')}
+            <SendIcon />
           </button>
         </div>
       </form>

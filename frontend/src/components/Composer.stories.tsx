@@ -89,6 +89,21 @@ export const MobileViewportStreaming: Story = {
   )],
 }
 
+// #1248: the on-screen keyboard shrinks visualViewport without shrinking
+// dvh on iOS Safari - App.tsx's useVisualViewportHeight override is what
+// keeps this frame itself short in the real app; this story fakes that same
+// short frame directly so render-check can catch the composer sliding off
+// the bottom of it without a real keyboard.
+export const MobileViewportKeyboardOpen: Story = {
+  args: { disabled: false, streaming: false },
+  parameters: { layout: 'fullscreen' },
+  decorators: [Story => (
+    <div className="w-[390px] h-[420px] mx-auto flex flex-col justify-end overflow-hidden border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900">
+      <Story />
+    </div>
+  )],
+}
+
 // #1174's narrowest acceptance viewport (360x740): the tightest idle check -
 // the pill's fixed 44+8+44 row cost leaves the least room for the textarea.
 export const MobileViewport360: Story = {
