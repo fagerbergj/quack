@@ -82,7 +82,7 @@ func (l *EventLog) foldSSEFromWatermark(ctx context.Context, chatID string) ([]s
 	if err != nil {
 		return nil, 0, err
 	}
-	res, err := fold.Apply(ctx, l.ledgerStore, chatID, nil, watermark)
+	res, err := fold.Apply(ctx, l.ledgerStore, chatID, watermark)
 	if err != nil {
 		return nil, 0, err
 	}

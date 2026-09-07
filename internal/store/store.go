@@ -26,6 +26,7 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/pgdial"
 )
 
@@ -1069,28 +1070,39 @@ func (s *Store) ResetProjectionWatermark(ctx context.Context, chatID, projection
 // "node_state" (already-materialized DagNode rows) as for "sse" - each marks
 // pre-existing data "caught up through the whole ledger so far" so the first
 // watermark-gated write for that projection never re-derives or duplicates
-// it. All three assume ledger_entries lives in this Store's own database
-// (true of every deployment today - a separate ledger Postgres would just
-// make this INSERT a no-op error, Warn-logged by the caller, never fatal).
-func (s *Store) SeedProjectionWatermarks(ctx context.Context) error {
+// it. ledgerStore may be a wholly separate database (Postgres ledger next to
+// a sqlite session store, the only sanctioned topology); it is read through
+// its own Go API, never joined to from this Store's SQL.
+func (s *Store) SeedProjectionWatermarks(ctx context.Context, ledgerStore ledger.LedgerStore) error {
 	seeds := []struct {
-		projection, fromTable string
+		projection, listChats string
 	}{
-		{"sse", "(SELECT DISTINCT chat_id FROM chat_events)"},
-		{"artifact", "(SELECT DISTINCT session_id AS chat_id FROM artifacts)"},
-		{"node_state", "(SELECT DISTINCT dp.chat_id FROM dag_nodes dn JOIN dag_plans dp ON dn.plan_id = dp.id)"},
+		{"sse", "SELECT DISTINCT chat_id AS chat_id FROM chat_events"},
+		{"artifact", "SELECT DISTINCT session_id AS chat_id FROM artifacts"},
+		{"node_state", "SELECT DISTINCT dp.chat_id AS chat_id FROM dag_nodes dn JOIN dag_plans dp ON dn.plan_id = dp.id"},
 	}
+	now := time.Now().UTC()
 	for _, sd := range seeds {
-		err := s.db.WithContext(ctx).Exec(`
-			INSERT INTO projection_watermarks (chat_id, projection, folded_seq, updated_at)
-			SELECT le.chat_id, ?, MAX(le.seq), now()
-			FROM ledger_entries le
-			WHERE le.chat_id IN `+sd.fromTable+`
-			GROUP BY le.chat_id
-			ON CONFLICT (chat_id, projection) DO NOTHING
-		`, sd.projection).Error
-		if err != nil {
-			return fmt.Errorf("store: seed %s projection watermark: %w", sd.projection, err)
+		var chatIDs []string
+		if err := s.db.WithContext(ctx).Raw(sd.listChats).Scan(&chatIDs).Error; err != nil {
+			return fmt.Errorf("store: list chats for %s projection seed: %w", sd.projection, err)
+		}
+		for _, chatID := range chatIDs {
+			entries, err := ledgerStore.ReadEntries(ctx, chatID, 0)
+			if err != nil {
+				return fmt.Errorf("store: read ledger entries for %s seed (chat %s): %w", sd.projection, chatID, err)
+			}
+			if len(entries) == 0 {
+				continue // no ledger history for this chat yet; nothing to catch up on
+			}
+			maxSeq := entries[len(entries)-1].Seq // ReadEntries returns seq-ordered
+			err = s.db.WithContext(ctx).Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "chat_id"}, {Name: "projection"}},
+				DoNothing: true,
+			}).Create(&ProjectionWatermark{ChatID: chatID, Projection: sd.projection, FoldedSeq: maxSeq, UpdatedAt: now}).Error
+			if err != nil {
+				return fmt.Errorf("store: seed %s projection watermark (chat %s): %w", sd.projection, chatID, err)
+			}
 		}
 	}
 	return nil

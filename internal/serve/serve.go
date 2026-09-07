@@ -656,7 +656,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		// SeedProjectionWatermarks's doc for why this can't be a literal
 		// MAX(seq) copy of the projection's own table. Cheap and idempotent;
 		// runs every boot.
-		if err := st.SeedProjectionWatermarks(ctx); err != nil {
+		if err := st.SeedProjectionWatermarks(ctx, ledgerStore); err != nil {
 			slog.Warn("projection watermark seeding failed; a first-time fold may re-derive history for old chats", "component", "startup", "err", err)
 		}
 		// Boot-time recovery: settle intents whose projection write never

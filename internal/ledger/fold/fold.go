@@ -263,35 +263,19 @@ func applyEntries(entries []ledger.Entry) *Result {
 // entry point (#1144 P3) - every catch-up (SSE, artifact, node_state) reads
 // from a watermark through Apply instead of its own loop.
 func Fold(ctx context.Context, store ledger.LedgerStore, chatID string, fromSeq int64) (*Result, error) {
-	return Apply(ctx, store, chatID, nil, fromSeq-1)
+	return Apply(ctx, store, chatID, fromSeq-1)
 }
 
-// Apply folds only the entries newer than from (a projection's watermark)
-// onto prev, instead of re-folding chatID's whole history (#1144 P3). live
-// is reconstructed from prev.Artifacts - already the materialized,
-// non-aborted revision set - so an aborted entry arriving in this batch can
-// still remove a revision prev already held; prev.Nodes carries over as-is
-// (NodeState's fields are each independently "later wins", same rule).
-// prev == nil is a fresh fold from 0, equivalent to Fold(ctx, store, chatID, 0).
-func Apply(ctx context.Context, store ledger.LedgerStore, chatID string, prev *Result, from int64) (*Result, error) {
-	if prev == nil {
-		prev = &Result{Artifacts: map[string]*Artifact{}, Nodes: map[string]*NodeState{}}
-	}
+// Apply folds only the entries newer than from (a projection's watermark),
+// instead of re-folding chatID's whole history (#1144 P3). from=-1 (via
+// Fold's fromSeq=0) is a fresh fold of the whole chat.
+func Apply(ctx context.Context, store ledger.LedgerStore, chatID string, from int64) (*Result, error) {
 	entries, err := readAll(ctx, store, chatID, from+1)
 	if err != nil {
 		return nil, err
 	}
+	res := &Result{Nodes: map[string]*NodeState{}}
 	live := map[revKey]ArtifactRevision{}
-	for id, a := range prev.Artifacts {
-		for _, r := range a.Revisions {
-			live[revKey{id: id, rev: r.Revision}] = r
-		}
-	}
-	nodes := prev.Nodes
-	if nodes == nil {
-		nodes = map[string]*NodeState{}
-	}
-	res := &Result{Nodes: nodes, LastSeq: prev.LastSeq}
 	applyLoop(res, live, entries)
 	return finalize(res, live), nil
 }

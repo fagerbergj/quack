@@ -69,7 +69,7 @@ func RunLedgerRebuild(ctx context.Context, ls ledger.LedgerStore, st *store.Stor
 			}
 		}
 	}
-	res, err := fold.Apply(ctx, ls, chatID, nil, 0)
+	res, err := fold.Apply(ctx, ls, chatID, 0)
 	if err != nil {
 		return nil, fmt.Errorf("ledger rebuild: fold chat %q: %w", chatID, err)
 	}
@@ -402,7 +402,7 @@ func RunLedgerRecover(ctx context.Context, ls ledger.LedgerStore, chatID string,
 	if p.ArtifactRowExists == nil {
 		return report, nil
 	}
-	res, err := fold.Apply(ctx, ls, chatID, nil, 0)
+	res, err := fold.Apply(ctx, ls, chatID, 0)
 	if err != nil {
 		return nil, fmt.Errorf("ledger recover: fold chat %q: %w", chatID, err)
 	}
@@ -449,8 +449,9 @@ type RecoverSummary struct {
 // Recover runs RunLedgerRecover over every chat in ls (or only chatIDs when
 // given), publishes quack_ledger_unresolved_intents and logs a summary. It
 // runs at server boot; `quack ledger recover` is the same call with dryRun.
-// ponytail: folds every chat from seq 0 on each boot; P3's projection
-// watermarks turn this into an incremental scan.
+// ponytail: folds every chat from seq 0 on each boot - P3's watermarks
+// gate SSE/artifact/node_state writes, not this recover path; make it
+// incremental if boot-time recover cost ever matters.
 func Recover(ctx context.Context, ls ledger.LedgerStore, chatIDs []string, p Projections, dryRun bool) (*RecoverSummary, error) {
 	if len(chatIDs) == 0 {
 		refs, err := ls.List(ctx)
