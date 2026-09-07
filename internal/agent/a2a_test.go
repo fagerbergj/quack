@@ -347,3 +347,14 @@ func TestNativeCompactionConfig(t *testing.T) {
 		t.Fatal("engine=adk with no summarizer: want an error, got nil")
 	}
 }
+
+// TestMaxTranscriptChars pins that adk's summarizer cap is derived from the
+// configured context window rather than left at adk's 200k-char default.
+func TestMaxTranscriptChars(t *testing.T) {
+	if got, want := maxTranscriptChars(Compaction{ContextWindow: 65_000}), 65_000*charsPerToken; got != want {
+		t.Fatalf("got %d, want %d", got, want)
+	}
+	if got := maxTranscriptChars(Compaction{}); got != 0 {
+		t.Fatalf("unknown window: got %d, want 0 (keeps adk's default)", got)
+	}
+}

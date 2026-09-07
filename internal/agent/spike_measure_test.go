@@ -7,12 +7,12 @@ package agent
 //
 // Run: QUACK_SPIKE_LIVE=1 go test ./internal/agent/ -run TestSpikeCompactionEngines -v
 //
-// It builds a ~40-turn tool-heavy conversation (each turn: a large tool
-// result, forcing the token threshold repeatedly), then replays it through
-// two llmagent+runner stacks that differ only in Compaction.Engine, and
-// reports: prompt tokens per model call, compaction count, and whether the
-// durable summary survives a simulated restart (fresh runner, same session
-// service, mid-conversation).
+// It builds a spikeTurns (20) turn tool-heavy conversation (each turn: a
+// large tool result, forcing the token threshold repeatedly), then replays it
+// through two llmagent+runner stacks that differ only in Compaction.Engine,
+// and logs per engine: final session event count, how many compaction rounds
+// fired, and whether a durable summary event is present. No per-call token
+// counts and no restart/resume check - the harness does not measure those.
 
 import (
 	"context"

@@ -97,6 +97,13 @@ func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service, c
 // Close stops the A2A server's listener.
 func (s *A2AServer) Close() error { return s.listener.Close() }
 
+// maxTranscriptChars sizes adk's summarizer transcript cap from the model's
+// context window (0 = unknown, keeps adk's own 200k-char default) so
+// compaction keeps engaging past adk's default on large-window models.
+func maxTranscriptChars(comp Compaction) int {
+	return comp.ContextWindow * charsPerToken
+}
+
 // nativeCompactionConfig builds adk/v2's runner-level compaction.Config from
 // comp, or nil when comp isn't asking for the "adk" engine. It reuses quack's
 // own tuned summarizer prompt (compactionSystemPrompt + summaryTemplate, see
@@ -111,8 +118,9 @@ func nativeCompactionConfig(comp Compaction) (*compaction.Config, error) {
 	}
 	prompt := compactionSystemPrompt + "\n\n" + summaryTemplate + "\n\n" + compaction.ConversationHistoryPlaceholder
 	summarizer, err := compaction.NewLLMSummarizer(compaction.LLMSummarizerConfig{
-		Model:          comp.Summarizer,
-		PromptTemplate: prompt,
+		Model:              comp.Summarizer,
+		PromptTemplate:     prompt,
+		MaxTranscriptChars: maxTranscriptChars(comp),
 	})
 	if err != nil {
 		return nil, err

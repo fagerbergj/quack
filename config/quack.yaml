@@ -96,6 +96,7 @@ session:
     # event_retention_size: 0        # unset ⇒ 20 trailing request contents kept verbatim
     # compaction_interval: 0         # unset ⇒ threshold-only; N ⇒ also compact every N invocations
     # overlap_size: 0                # unset ⇒ fold whole window each time; N ⇒ carry last N events into the next round
+    # engine: quack                  # quack (default) or adk (adk/v2 native); same knobs, different semantics under adk - see docs/configuration/index.md
 
 orchestrator:
   # plan-work: DAG-authoring playbook; format-markdown: direct-answer replies;
