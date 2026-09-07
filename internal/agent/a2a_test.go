@@ -115,7 +115,7 @@ func collect(t *testing.T, seq iter.Seq2[*session.Event, error]) (thinking, answ
 // client, and asserts thinking / tool_call / tool_result / token all survive the
 // round-trip (adka2a DataPart metadata ↔ genai parts).
 func TestA2ARoundTripPreservesEventVocabulary(t *testing.T) {
-	srv, err := Serve(newWorker(t), session.InMemoryService(), nil)
+	srv, err := Serve(newWorker(t), session.InMemoryService(), nil, Compaction{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func (m transferModel) GenerateContent(_ context.Context, req *model.LLMRequest,
 // orchestrator with the A2A client as a sub-agent transfers to it, and the
 // sub-agent's events surface through the orchestrator's runner.
 func TestOrchestratorTransfersToA2ASubAgent(t *testing.T) {
-	srv, err := Serve(newWorker(t), session.InMemoryService(), nil)
+	srv, err := Serve(newWorker(t), session.InMemoryService(), nil, Compaction{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,5 +313,37 @@ func TestDescribeEvent_KeepsMediaParts(t *testing.T) {
 	}
 	if !gotImage {
 		t.Fatal("describeEvent dropped the image part - the vision model never sees it")
+	}
+}
+
+// TestNativeCompactionConfig covers the #1185 spike's engine switch: "adk"
+// builds a runner-level Config from quack's own prompt, anything else (incl.
+// the zero Compaction) leaves native compaction off.
+func TestNativeCompactionConfig(t *testing.T) {
+	base := Compaction{Enabled: true, Summarizer: workerModel{}, ContextWindow: 65_000, TokenThreshold: 40_000, EventRetentionSize: 20}
+
+	if cfg, err := nativeCompactionConfig(Compaction{}); err != nil || cfg != nil {
+		t.Fatalf("disabled: got (%v, %v), want (nil, nil)", cfg, err)
+	}
+	quackEngine := base
+	quackEngine.Engine = "quack"
+	if cfg, err := nativeCompactionConfig(quackEngine); err != nil || cfg != nil {
+		t.Fatalf("engine=quack: got (%v, %v), want (nil, nil)", cfg, err)
+	}
+
+	adkEngine := base
+	adkEngine.Engine = "adk"
+	cfg, err := nativeCompactionConfig(adkEngine)
+	if err != nil {
+		t.Fatalf("engine=adk: %v", err)
+	}
+	if cfg == nil || cfg.TokenThreshold != 40_000 || cfg.EventRetentionSize != 20 || cfg.Summarizer == nil {
+		t.Fatalf("engine=adk: got %+v, want quack's thresholds carried over with a summarizer set", cfg)
+	}
+
+	noSummarizer := adkEngine
+	noSummarizer.Summarizer = nil
+	if _, err := nativeCompactionConfig(noSummarizer); err == nil {
+		t.Fatal("engine=adk with no summarizer: want an error, got nil")
 	}
 }

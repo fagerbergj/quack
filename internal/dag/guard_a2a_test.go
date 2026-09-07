@@ -165,7 +165,7 @@ func newGuardA2ARun(t *testing.T) *guardA2ARun {
 	if err != nil {
 		t.Fatalf("worker agent: %v", err)
 	}
-	srv, err := quackagent.Serve(worker, sessions, nil)
+	srv, err := quackagent.Serve(worker, sessions, nil, quackagent.Compaction{})
 	if err != nil {
 		t.Fatalf("a2a serve: %v", err)
 	}
@@ -395,7 +395,7 @@ func TestGuardConfirm_OverA2A_RaisedDuringRevision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("worker agent: %v", err)
 	}
-	srv, err := quackagent.Serve(worker, sessions, nil)
+	srv, err := quackagent.Serve(worker, sessions, nil, quackagent.Compaction{})
 	if err != nil {
 		t.Fatalf("a2a serve: %v", err)
 	}

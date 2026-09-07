@@ -60,7 +60,9 @@ func build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, c
 	}
 	// Steer first, so compaction's budget accounts for the injected message.
 	cfg.BeforeModelCallbacks = []llmagent.BeforeModelCallback{steerCallback(drain)}
-	if comp.Enabled && comp.ContextWindow > 0 && comp.Summarizer != nil {
+	// Engine "adk" is wired at the runner (internal/agent/a2a.go's Serve), not
+	// here - the quack callback below would double-compact against it.
+	if comp.Enabled && comp.ContextWindow > 0 && comp.Summarizer != nil && comp.Engine != "adk" {
 		cfg.BeforeModelCallbacks = append(cfg.BeforeModelCallbacks, compactionCallback(comp))
 		cfg.AfterModelCallbacks = []llmagent.AfterModelCallback{recordUsage()}
 	}
