@@ -36,7 +36,7 @@ describe('CopyButton', () => {
     })
 
     expect(writeText).toHaveBeenCalledWith('{"input":1}')
-    expect(button.textContent).toBe('✓')
+    expect(button.querySelector('svg')).not.toBeNull() // check glyph on confirmation
   })
 
   it('does not toggle an enclosing <details> when clicked', () => {

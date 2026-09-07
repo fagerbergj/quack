@@ -86,13 +86,12 @@ describe('App nav drawer', () => {
   })
 
   // #1175: the rail's hamburger duplicated the chat-list toggle's glyph. With
-  // the rail's column gone, the chat-list ☰ is the only one in the DOM.
-  it('has exactly one ☰ in the DOM - the chat-list toggle', () => {
+  // the rail's column gone, the chat-list toggle is the only hamburger button.
+  it('has exactly one hamburger toggle in the DOM - the chat-list one', () => {
     renderAt('/chat')
-    const glyphHolders = Array.from(document.querySelectorAll('*')).filter(el => el.textContent?.trim() === '☰')
-    expect(glyphHolders).toHaveLength(1)
-    expect(glyphHolders[0].tagName).toBe('BUTTON')
-    expect(glyphHolders[0].getAttribute('aria-label')).toBe('Toggle chat list')
+    const toggles = Array.from(document.querySelectorAll('button[aria-label="Toggle chat list"]'))
+    expect(toggles).toHaveLength(1)
+    expect(toggles[0].querySelector('svg')).toBeTruthy()
   })
 
   it('opens the drawer on toggle click, with focus moving into the panel', async () => {

@@ -1,4 +1,5 @@
 import { useRef } from 'react'
+import { Icon } from './Icon'
 
 export type AttachmentItem = { file: File; url: string }
 
@@ -71,8 +72,8 @@ export function AttachmentPreviews({ previews }: { previews: AttachmentPreview[]
       {others.length > 0 && (
         <ul className="space-y-0.5 text-xs text-blue-100 opacity-90">
           {others.map((p, i) => (
-            <li key={i} className="truncate max-w-xs">
-              🎵{' '}
+            <li key={i} className="flex items-center gap-1 truncate max-w-xs">
+              <Icon name="music" className="w-3.5 h-3.5 shrink-0" />
               <a href={p.url} download={p.name} className="underline underline-offset-2 hover:opacity-100">
                 {p.name}
               </a>

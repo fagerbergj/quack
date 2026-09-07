@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { UsageSummary, type UsageSummaryProps } from './UsageSummary'
 import { useTheme, type Theme } from '../hooks/useTheme'
+import { Icon } from './Icon'
 
 const THEME_OPTIONS: { value: Theme; label: string }[] = [
   { value: 'light', label: 'Light' },
@@ -79,7 +80,7 @@ export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSumma
                 onClick={() => setTheme(opt.value)}
                 className="flex items-center gap-1.5 w-full px-3 py-1.5 text-left text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
               >
-                <span aria-hidden="true" className="w-3">{theme === opt.value ? '✓' : ''}</span> {opt.label}
+                <span aria-hidden="true" className="w-3 inline-flex">{theme === opt.value ? <Icon name="check" className="w-3 h-3" /> : ''}</span> {opt.label}
               </button>
             ))}
           </div>

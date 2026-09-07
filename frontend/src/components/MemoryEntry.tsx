@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Memory } from '../api'
 import { paletteClasses } from '../lib/colorHash'
+import { Icon } from './Icon'
 
 export interface MemoryEntryProps {
   memory: Memory
@@ -151,7 +152,7 @@ export function MemoryEntry({ memory, onForget }: MemoryEntryProps) {
             title="Forget this memory"
             className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
           >
-            <span aria-hidden="true">✕</span>
+            <Icon name="close" className="w-3.5 h-3.5" />
           </button>
         )}
       </div>

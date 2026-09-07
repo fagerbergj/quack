@@ -145,7 +145,7 @@ describe('ToolCallView - new per-tool views (#404)', () => {
     })
     expect(out).toContain('Which Springfield?')
     expect(out).toContain('Springfield, IL')
-    expect(out).toContain('✓')
+    expect(out).toContain('bg-green-50') // chosen option gets the check icon + highlight
   })
 
   it('get_user_choice still pending shows the awaiting marker', () => {

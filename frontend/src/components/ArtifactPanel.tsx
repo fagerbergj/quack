@@ -13,6 +13,7 @@ import { CopyButton } from './CopyButton'
 import { CopyablePre } from './CopyablePre'
 import { escapeUnmatchedBackticks } from '../lib/backticks'
 import { useChatStore } from '../state/ChatStoreProvider'
+import { Icon } from './Icon'
 
 // JudgeRoundContent is the JSON body of a `judge_round` artifact (design V4
 // §4.3) - the only place a note's line anchor lives. Fetched and parsed
@@ -597,7 +598,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
               aria-label="Close"
               className="flex h-11 w-11 items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-500 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
             >
-              ✕
+              <Icon name="close" className="w-4 h-4" />
             </button>
           </div>
         </header>
@@ -1173,8 +1174,8 @@ function judgeRoundSummary(data: unknown) {
   return (
     <div className="flex flex-wrap items-center gap-1.5 mb-2 text-xs">
       {d.passed != null && (
-        <span className={`font-medium ${d.passed ? 'text-green-700 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-          {d.passed ? '✓ passed' : '✗ failed'}
+        <span className={`inline-flex items-center gap-1 font-medium ${d.passed ? 'text-green-700 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+          <Icon name={d.passed ? 'check' : 'close'} className="w-3.5 h-3.5" /> {d.passed ? 'passed' : 'failed'}
         </span>
       )}
       {/* d.score (JudgeRoundRecord.Score) is a real 0-1 fraction - shown

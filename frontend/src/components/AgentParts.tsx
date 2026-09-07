@@ -8,6 +8,7 @@ import 'highlight.js/styles/github-dark.css'
 import type { ComponentPropsWithoutRef } from 'react'
 import type { Element } from 'hast'
 import type { Activity, ToolCall } from './messageParts'
+import { Icon } from './Icon'
 import { agentLabel, liveStatusLine } from './messageParts'
 import { summarizeArgs, previewLine, toolFailed, toolActionLine } from './toolFormat'
 import { escapeUnmatchedBackticks } from '../lib/backticks'
@@ -279,8 +280,8 @@ export function ToolBlock({ tool }: { tool: ToolCall }) {
 function ToolStatusIcon({ tool }: { tool: ToolCall }) {
   if (!tool.done) return <Dots variant="compact" size="w-1 h-1" />
   return toolFailed(tool.result)
-    ? <span className="text-red-500 dark:text-red-400 shrink-0" aria-hidden>✗</span>
-    : <span className="text-green-600 dark:text-green-400 shrink-0" aria-hidden>✓</span>
+    ? <Icon name="close" className="w-3 h-3 text-red-500 dark:text-red-400 shrink-0" />
+    : <Icon name="check" className="w-3 h-3 text-green-600 dark:text-green-400 shrink-0" />
 }
 
 // Dots is the "working" indicator. Two variants (#421): the chat-level answer

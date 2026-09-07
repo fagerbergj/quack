@@ -111,18 +111,25 @@ describe('NavRail', () => {
   })
 
   // Defensive read of a field not yet in the generated ExtensionInfo type
-  // (wire schema addition landing separately) - falls back to 🧩 when absent.
-  it('shows the extension-provided icon when present, and 🧩 as the fallback', () => {
+  // (wire schema addition landing separately). A Material icon name renders
+  // as that icon; an inline `<svg>` renders as-is; anything else (including
+  // a raw emoji - the legacy shape) falls back to the generic "extension"
+  // glyph rather than rendering arbitrary plugin-supplied emoji.
+  it('accepts a Material icon name or inline SVG, and falls back to the generic glyph', () => {
     render({
       initialExtensions: [
-        { name: 'usage', title: 'Usage', href: '/usage', icon: '📊' } as ExtensionInfo,
-        { name: 'remarkable', title: 'reMarkable', href: '/remarkable/review' },
+        { name: 'usage', title: 'Usage', href: '/usage', icon: 'memory' } as ExtensionInfo,
+        { name: 'custom', title: 'Custom', href: '/custom', icon: '<svg viewBox="0 0 24 24"><path d="M1 1h1v1h-1z"/></svg>' } as ExtensionInfo,
+        { name: 'remarkable', title: 'reMarkable', href: '/remarkable/review', icon: '📊' } as ExtensionInfo,
       ],
     })
     const usageBtn = Array.from(host!.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Usage')!
+    const customBtn = Array.from(host!.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Custom')!
     const remarkableBtn = Array.from(host!.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'reMarkable')!
-    expect(usageBtn.textContent).toContain('📊')
-    expect(remarkableBtn.textContent).toContain('🧩')
+    expect(usageBtn.querySelector('svg')).toBeTruthy() // Material "memory" icon
+    expect(customBtn.innerHTML).toContain('<svg viewBox="0 0 24 24">') // inline SVG passthrough
+    expect(remarkableBtn.textContent).not.toContain('📊') // emoji no longer rendered as-is
+    expect(remarkableBtn.querySelector('svg')).toBeTruthy() // falls back to the generic glyph
   })
 
   it('renders no extensions section when the list is empty', () => {
