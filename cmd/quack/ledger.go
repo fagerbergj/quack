@@ -11,6 +11,7 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/serve"
 	"github.com/fagerbergj/quack/internal/store"
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // newLedgerCmd: `quack ledger list|export|show|rebuild|recover`. list and
@@ -49,6 +50,7 @@ func newLedgerRecoverCmd() *cobra.Command {
 				return err
 			}
 			proj := cli.Projections{ArtifactRowExists: cli.ArtifactRowChecker(st, artifacts), Delivery: buildRecovererOrWarn(cmd, dryRun)}
+			proj.DeliveryRecorded, proj.RecordDelivery = vetting.DeliveryProjections(artifacts, ls, st.SessionUserForChat)
 			sum, err := cli.Recover(cmd.Context(), ls, args, proj, dryRun)
 			if err != nil {
 				return err

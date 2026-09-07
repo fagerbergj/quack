@@ -451,6 +451,62 @@ func seedEvent(t *testing.T, ctx context.Context, st *store.Store, chatID string
 	}
 }
 
+// TestRunLedgerShow_DeliveryAndJudgeRoundListedOnce is #1144 P2's ledger-show
+// requirement: a chat with one delivery and one judge round lists each ONE
+// time - no delivery.done/judge.round duplicate entry kind exists to double
+// count them, since both are now just the delivery_record/judge_round
+// artifact.revision they always also wrote.
+func TestRunLedgerShow_DeliveryAndJudgeRoundListedOnce(t *testing.T) {
+	ctx := context.Background()
+	_, ls, artifacts := newTestStack(t)
+	const chatID, appName, userID = "chat-p2", "quack", "local"
+	c := recordstore.New(artifacts, appName, userID, chatID).WithLedger(ls)
+
+	if _, _, err := c.SaveStructured(ctx, "judge_round", map[string]int{"round": 1}, "t1-n1-1", recordstore.Lineage{}); err != nil {
+		t.Fatalf("SaveStructured judge_round: %v", err)
+	}
+	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindDeliveryIntent, Key: "code_review:pr:1@1"}); err != nil {
+		t.Fatalf("AppendIntent delivery.intent: %v", err)
+	}
+	if _, _, err := c.SaveStructured(ctx, "delivery_record", map[string]any{"target_id": "code_review:pr:1", "delivered_revision": 1, "at": time.Now().UTC()}, "pr:1", recordstore.Lineage{}); err != nil {
+		t.Fatalf("SaveStructured delivery_record: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := RunLedgerShow(ctx, &out, ls, chatID, 0); err != nil {
+		t.Fatalf("RunLedgerShow: %v", err)
+	}
+	var deliveryIntents, judgeRounds, deliveryRecords int
+	for _, line := range bytes.Split(bytes.TrimSpace(out.Bytes()), []byte("\n")) {
+		var e ledger.Entry
+		if err := json.Unmarshal(line, &e); err != nil {
+			t.Fatalf("invalid JSON line: %v\n%s", err, line)
+		}
+		if e.Kind == ledger.KindDeliveryIntent {
+			deliveryIntents++
+			continue
+		}
+		if e.Kind != ledger.KindArtifactRevision {
+			continue
+		}
+		var p struct {
+			Kind string `json:"kind"`
+		}
+		if json.Unmarshal(e.Payload, &p) != nil {
+			continue
+		}
+		switch p.Kind {
+		case "judge_round":
+			judgeRounds++
+		case "delivery_record":
+			deliveryRecords++
+		}
+	}
+	if deliveryIntents != 1 || judgeRounds != 1 || deliveryRecords != 1 {
+		t.Fatalf("delivery.intent=%d judge_round=%d delivery_record=%d, want 1 each", deliveryIntents, judgeRounds, deliveryRecords)
+	}
+}
+
 // TestRunLedgerShow_PrintsJSONLines exercises the JSONL contract `show`
 // advertises across MULTIPLE entries and kinds - each line independently
 // parseable, in seq order, with --from-seq's ">=" boundary honored - not

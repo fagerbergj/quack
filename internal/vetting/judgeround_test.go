@@ -54,9 +54,9 @@ CLEAN:
 		"catches_real_issues": {Score: 0.3, Shortfall: "missed something"},
 	}}
 	rec1 := buildJudgeRoundRecord(turnID, 1, false, 0.3, scored1, v1, nil, answer1)
-	jr1ID, jr1Rev := saveJudgeRoundRecord(context.Background(), cfg, cfg.NodeID, turnID, 1, rec1)
-	if jr1ID == "" || jr1Rev != 1 {
-		t.Fatalf("round 1 judge_round save: id=%q rev=%d", jr1ID, jr1Rev)
+	jr1ID, jr1Rev, jr1Err := saveJudgeRoundRecord(context.Background(), cfg, cfg.NodeID, turnID, 1, rec1)
+	if jr1Err != nil || jr1ID == "" || jr1Rev != 1 {
+		t.Fatalf("round 1 judge_round save: id=%q rev=%d err=%v", jr1ID, jr1Rev, jr1Err)
 	}
 	if jr1ID != judgeRoundID(turnID, cfg.NodeID, 1) {
 		t.Fatalf("judge_round id = %q, want %q", jr1ID, judgeRoundID(turnID, cfg.NodeID, 1))
@@ -91,7 +91,10 @@ CLEAN:
 	scored2 := append([]ScoredRef(nil), st.roundWrites...)
 	v2 := verdict{Score: 1, Passed: true, Criteria: map[string]criterionScore{"catches_real_issues": {Score: 1}}}
 	rec2 := buildJudgeRoundRecord(turnID, 2, true, 1, scored2, v2, nil, answer2)
-	jr2ID, _ := saveJudgeRoundRecord(context.Background(), cfg, cfg.NodeID, turnID, 2, rec2)
+	jr2ID, _, jr2Err := saveJudgeRoundRecord(context.Background(), cfg, cfg.NodeID, turnID, 2, rec2)
+	if jr2Err != nil {
+		t.Fatalf("round 2 judge_round save: %v", jr2Err)
+	}
 	if jr2ID == jr1ID {
 		t.Fatal("round 2's judge_round id must differ from round 1's")
 	}
@@ -130,16 +133,10 @@ func TestJudgeRoundIdentityIncludesNodeID(t *testing.T) {
 	recA := JudgeRoundRecord{Turn: turnID, Round: 1, Passed: true, Score: 0.9}
 	recB := JudgeRoundRecord{Turn: turnID, Round: 1, Passed: false, Score: 0.1}
 
-	if err := appendJudgeRound(context.Background(), cfg, "review-1", turnID, 1, true, 0.9, nil); err != nil {
-		t.Fatalf("appendJudgeRound(review-1): %v", err)
-	}
-	if err := appendJudgeRound(context.Background(), cfg, "review-2", turnID, 1, false, 0.1, nil); err != nil {
-		t.Fatalf("appendJudgeRound(review-2): %v", err)
-	}
-	idA, revA := saveJudgeRoundRecord(context.Background(), cfg, "review-1", turnID, 1, recA)
-	idB, revB := saveJudgeRoundRecord(context.Background(), cfg, "review-2", turnID, 1, recB)
-	if idA == "" || idB == "" {
-		t.Fatalf("saveJudgeRoundRecord failed: idA=%q idB=%q", idA, idB)
+	idA, revA, errA := saveJudgeRoundRecord(context.Background(), cfg, "review-1", turnID, 1, recA)
+	idB, revB, errB := saveJudgeRoundRecord(context.Background(), cfg, "review-2", turnID, 1, recB)
+	if errA != nil || errB != nil || idA == "" || idB == "" {
+		t.Fatalf("saveJudgeRoundRecord failed: idA=%q idB=%q errA=%v errB=%v", idA, idB, errA, errB)
 	}
 	if idA == idB {
 		t.Fatalf("round 1 ids for two different nodes must differ: both are %q", idA)
@@ -148,17 +145,18 @@ func TestJudgeRoundIdentityIncludesNodeID(t *testing.T) {
 		t.Fatalf("unexpected ids: idA=%q idB=%q", idA, idB)
 	}
 
-	// WAL keys (ledger.Entry.Key) for the judge.round kind must differ too, or
-	// the second append would clobber the first's WAL row for the same
-	// (chat, turn, round).
+	// WAL keys (ledger.Entry.Key) for the judge_round artifact.revision must
+	// differ too, or the second save would clobber the first's WAL row for
+	// the same (chat, turn, round) - #1144 P2: the artifact.revision entry
+	// recordstore already appends IS this round's only WAL entry.
 	var judgeRoundKeys []string
 	for _, e := range fl.entries {
-		if e.Kind == ledger.KindJudgeRound {
+		if e.Kind == ledger.KindArtifactRevision && (e.Key == idA || e.Key == idB) {
 			judgeRoundKeys = append(judgeRoundKeys, e.Key)
 		}
 	}
 	if len(judgeRoundKeys) != 2 || judgeRoundKeys[0] == judgeRoundKeys[1] {
-		t.Fatalf("judge.round WAL keys must differ per node: %v", judgeRoundKeys)
+		t.Fatalf("judge_round WAL keys must differ per node: %v", judgeRoundKeys)
 	}
 
 	// Each record must still load with its own (distinct) revision - neither

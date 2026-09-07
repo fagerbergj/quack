@@ -3,11 +3,13 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledger/fold"
 	"github.com/fagerbergj/quack/internal/recordstore"
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 type fakeRecoverer struct {
@@ -21,6 +23,32 @@ func (f *fakeRecoverer) RecoverDelivery(_ context.Context, _ string, dc Delivery
 	f.calls++
 	f.lastDC = dc
 	return f.found, DeliveryItemOutcome{URL: f.remoteURL}, nil
+}
+
+// fakeDeliveryRecords is a Projections.DeliveryRecorded/RecordDelivery
+// double: a set of "targetID@revision" keys already recorded, standing in
+// for the real delivery_record artifact (#1144 P2).
+type fakeDeliveryRecords struct {
+	done        map[string]bool
+	recordCalls int
+}
+
+func newFakeDeliveryRecords() *fakeDeliveryRecords {
+	return &fakeDeliveryRecords{done: map[string]bool{}}
+}
+
+func (f *fakeDeliveryRecords) checker(_ context.Context, _, targetID string, revision int) (bool, error) {
+	return f.done[deliveryIdempotencyKeyForTest(targetID, revision)], nil
+}
+
+func (f *fakeDeliveryRecords) recorder(_ context.Context, _, _, targetID string, revision int, _ string) error {
+	f.recordCalls++
+	f.done[deliveryIdempotencyKeyForTest(targetID, revision)] = true
+	return nil
+}
+
+func deliveryIdempotencyKeyForTest(targetID string, revision int) string {
+	return fmt.Sprintf("%s@%d", targetID, revision)
 }
 
 func appendDeliveryIntentForTest(t *testing.T, ls ledger.LedgerStore, chatID, key, targetID string, revision int) {
@@ -55,21 +83,25 @@ func TestRunLedgerRecover_RebuildsDeliveryContextFromIntent(t *testing.T) {
 	}
 }
 
-// #1093 case 13, "found" branch: a crash between Deliver succeeding and
-// delivery.done landing. RecoverDelivery reports found=true, so recover
-// appends delivery.done and never calls redoFunc (the extension is never
-// asked to post twice).
-func TestRunLedgerRecover_FoundAppendsDoneWithoutRedo(t *testing.T) {
+// #1093 case 13, "found" branch (#1144 P2: completion is a delivery_record
+// write, not a delivery.done entry). RecoverDelivery reports found=true, so
+// recover calls RecordDelivery and never Redo (the extension is never asked
+// to post twice).
+func TestRunLedgerRecover_FoundRecordsDeliveryWithoutRedo(t *testing.T) {
 	ctx := context.Background()
 	ls := ledger.NewMemStore()
 	appendDeliveryIntentForTest(t, ls, "chat1", "code_review:pr:1@2", "code_review:pr:1", 2)
 
 	rec := &fakeRecoverer{found: true, remoteURL: "https://github.com/x/y/pull/1#pullrequestreview-1"}
+	fdr := newFakeDeliveryRecords()
 	redoCalls := 0
-	report, err := RunLedgerRecover(ctx, ls, "chat1", Projections{Delivery: rec, Redo: func(context.Context, OrphanedDelivery) error {
-		redoCalls++
-		return nil
-	}}, false)
+	report, err := RunLedgerRecover(ctx, ls, "chat1", Projections{
+		Delivery: rec, DeliveryRecorded: fdr.checker, RecordDelivery: fdr.recorder,
+		Redo: func(context.Context, OrphanedDelivery) error {
+			redoCalls++
+			return nil
+		},
+	}, false)
 	if err != nil {
 		t.Fatalf("RunLedgerRecover: %v", err)
 	}
@@ -79,23 +111,12 @@ func TestRunLedgerRecover_FoundAppendsDoneWithoutRedo(t *testing.T) {
 	if redoCalls != 0 {
 		t.Fatalf("redoFunc called %d times, want 0 (extension already had it)", redoCalls)
 	}
-
-	entries, err := ls.ReadEntries(ctx, "chat1", 0)
-	if err != nil {
-		t.Fatalf("ReadEntries: %v", err)
-	}
-	doneCount := 0
-	for _, e := range entries {
-		if e.Kind == ledger.KindDeliveryDone && e.Key == "code_review:pr:1@2" {
-			doneCount++
-		}
-	}
-	if doneCount != 1 {
-		t.Fatalf("delivery.done entries for key = %d, want 1", doneCount)
+	if fdr.recordCalls != 1 {
+		t.Fatalf("RecordDelivery called %d times, want 1", fdr.recordCalls)
 	}
 
 	// Re-running recover must not re-find the now-resolved intent.
-	report2, err := RunLedgerRecover(ctx, ls, "chat1", Projections{Delivery: rec}, false)
+	report2, err := RunLedgerRecover(ctx, ls, "chat1", Projections{Delivery: rec, DeliveryRecorded: fdr.checker, RecordDelivery: fdr.recorder}, false)
 	if err != nil {
 		t.Fatalf("RunLedgerRecover (2nd): %v", err)
 	}
@@ -145,21 +166,68 @@ func TestRunLedgerRecover_NoRecovererReportsUnresolved(t *testing.T) {
 	}
 }
 
-// A delivery.intent WITH a matching delivery.done is not orphaned at all.
-func TestRunLedgerRecover_NoOrphanWhenDoneExists(t *testing.T) {
+// A delivery.intent WITH a matching delivery_record is not orphaned at all
+// (#1144 P2: DeliveryRecorded is the single "is this done" read).
+func TestRunLedgerRecover_NoOrphanWhenRecordExists(t *testing.T) {
 	ctx := context.Background()
 	ls := ledger.NewMemStore()
 	appendDeliveryIntentForTest(t, ls, "chat4", "code_review:pr:4@1", "code_review:pr:4", 1)
-	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: "chat4", Kind: ledger.KindDeliveryDone, Key: "code_review:pr:4@1"}); err != nil {
-		t.Fatalf("append delivery.done: %v", err)
-	}
+	fdr := newFakeDeliveryRecords()
+	fdr.done[deliveryIdempotencyKeyForTest("code_review:pr:4", 1)] = true
 
-	report, err := RunLedgerRecover(ctx, ls, "chat4", Projections{Delivery: &fakeRecoverer{}}, false)
+	report, err := RunLedgerRecover(ctx, ls, "chat4", Projections{Delivery: &fakeRecoverer{}, DeliveryRecorded: fdr.checker}, false)
 	if err != nil {
 		t.Fatalf("RunLedgerRecover: %v", err)
 	}
 	if len(report.Confirmed)+len(report.Redone)+len(report.Unresolved) != 0 {
 		t.Fatalf("report = %+v, want nothing (not orphaned)", report)
+	}
+}
+
+// TestRecover_CrashBetweenDeliveryIntentAndRecord is the kill -9 case for
+// delivery (#1144 P2): a delivery.intent lands, the process dies before the
+// delivery_record artifact write. Recover (real vetting.DeliveryProjections
+// against a real store) asks the extension, finds the delivery already
+// landed, and writes the completing delivery_record - no CLI involved. A
+// second pass finds nothing left to do.
+func TestRecover_CrashBetweenDeliveryIntentAndRecord(t *testing.T) {
+	ctx := context.Background()
+	st, ls, artifacts := newTestStack(t)
+	const chatID, targetID = "chat-delivery-crash", "ledgertest_doc:target-1"
+
+	// The delivery target itself already exists at revision 1.
+	c := recordstore.New(artifacts, "quack", "local", chatID).WithLedger(ls)
+	if _, rev, err := c.SaveStructured(ctx, testKind, map[string]string{"v": "1"}, targetID[len("ledgertest_doc:"):], recordstore.Lineage{Author: "tester"}); err != nil || rev != 1 {
+		t.Fatalf("SaveStructured target: rev %d, %v", rev, err)
+	}
+
+	// Crash: delivery.intent lands, the delivery_record write never happens.
+	payload, _ := json.Marshal(deliveryIntentPayload{TargetID: targetID, Revision: 1, Key: "code_review:target-1@1"})
+	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, NodeID: "n1", Kind: ledger.KindDeliveryIntent, Key: "code_review:target-1@1", Payload: payload}); err != nil {
+		t.Fatal(err)
+	}
+
+	checker, recorder := vetting.DeliveryProjections(artifacts, ls, st.SessionUserForChat)
+	proj := Projections{DeliveryRecorded: checker, RecordDelivery: recorder, Delivery: &fakeRecoverer{found: true, remoteURL: "https://example/pr/1"}}
+
+	sum, err := Recover(ctx, ls, []string{chatID}, proj, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Unresolved != 0 || len(sum.Reports) != 1 || len(sum.Reports[0].Confirmed) != 1 {
+		t.Fatalf("summary = %+v, want one confirmed delivery", sum)
+	}
+	if done, err := checker(ctx, chatID, targetID, 1); err != nil || !done {
+		t.Fatalf("delivery_record after recovery: done=%v err=%v", done, err)
+	}
+
+	// Idempotent: a second pass finds nothing left orphaned.
+	again, err := Recover(ctx, ls, []string{chatID}, proj, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again.Reports) != 0 {
+		t.Fatalf("second pass = %+v, want nothing", again)
 	}
 }
 

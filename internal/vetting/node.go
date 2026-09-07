@@ -229,39 +229,6 @@ func appendNodeEvent(ctx context.Context, cfg Config, nodeID, turnID, kind strin
 	}
 }
 
-// appendJudgeRound is the WAL's judge.round intent (#1090 §4.9, fail-closed):
-// appended right after a round's verdict is known, so it lands before the
-// NEXT round's artifact.revision writes. scored lists the code_review/finding
-// ids and revisions THIS round wrote (the judge_round artifact itself is
-// #1092 - not built here). No-op (nil error) when cfg.Ledger is unset. A
-// non-nil error means the caller must treat this round as failed-closed - it
-// must not start another revise round on this verdict, mirroring the
-// existing judge-unavailable path just above.
-// appendJudgeRound's Ledger==nil no-op is intentional fail-open, matching
-// every other episodic write: recording happens independently of whether a
-// Postgres-backed ledger is configured, not only when one is present.
-func appendJudgeRound(ctx context.Context, cfg Config, nodeID, turnID string, round int, passed bool, score float64, scored []ScoredRef) error {
-	if cfg.Ledger == nil {
-		return nil
-	}
-	id := judgeRoundHint(turnID, nodeID, round)
-	payload, err := json.Marshal(struct {
-		ID     string      `json:"id"`
-		Passed bool        `json:"passed"`
-		Score  float64     `json:"score"`
-		Scored []ScoredRef `json:"scored"`
-	}{ID: id, Passed: passed, Score: score, Scored: scored})
-	if err != nil {
-		return fmt.Errorf("vetting: marshal judge.round payload: %w", err)
-	}
-	if _, err := cfg.Ledger.AppendIntent(ctx, ledger.Entry{
-		ChatID: cfg.ChatID, TurnID: turnID, NodeID: nodeID, Kind: ledger.KindJudgeRound, Key: id, At: time.Now().UTC(), Payload: payload,
-	}); err != nil {
-		return fmt.Errorf("vetting: judge.round WAL append for node %s round %d: %w", nodeID, round, err)
-	}
-	return nil
-}
-
 // deliveryTarget resolves the recordstore artifact backing this node's
 // delivery, if any: the code_review subject for a reviewer, or cfg.Artifact
 // for a document node. false when this delivery has no backing artifact
@@ -325,26 +292,6 @@ func appendDeliveryIntent(ctx context.Context, cfg Config, nodeID, key, targetID
 		return fmt.Errorf("vetting: delivery.intent WAL append for node %s: %w", nodeID, err)
 	}
 	return nil
-}
-
-// appendDeliveryDone is the WAL's delivery.done entry (#1090 §4.9,
-// best-effort/retried per the issue's WAL table - the delivery already
-// happened by the time this is called, so a failure here must not undo it).
-func appendDeliveryDone(ctx context.Context, cfg Config, nodeID, key, remoteURL string) {
-	if cfg.Ledger == nil {
-		return
-	}
-	payload, err := json.Marshal(struct {
-		RemoteURL string `json:"remote_url,omitempty"`
-	}{RemoteURL: remoteURL})
-	if err != nil {
-		return
-	}
-	if _, err := cfg.Ledger.AppendIntent(ctx, ledger.Entry{
-		ChatID: cfg.ChatID, NodeID: nodeID, Kind: ledger.KindDeliveryDone, Key: key, At: time.Now().UTC(), Payload: payload,
-	}); err != nil {
-		slog.Warn("ledger delivery.done append failed (best-effort; delivery already happened)", "component", "vetting", "node", nodeID, "key", key, "err", err)
-	}
 }
 
 func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Node, workerModel model.LLM, judge JudgeFactory, cfg Config, prompt string, attachments []*genai.Part, ctrl NodeControl, emit func(*session.Event) error) (answer string, res GateResult, err error) {
@@ -743,11 +690,17 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			if episodicState != nil {
 				scored = episodicState.roundWrites
 			}
-			if walErr := appendJudgeRound(nodeCtx, cfg, nodeID, turnID, round, res.Passed, res.Score, scored); walErr != nil {
-				// Fail-closed (#1090 §4.9): the WAL entry for this round's
-				// verdict didn't land, so don't start another revise round on
-				// it - surface it the same as an unavailable judge.
-				log.Error("judge.round WAL append failed; stopping the round loop", "round", round, "err", walErr)
+			// judge_round record (#1144 P2): this SaveStructured call IS the
+			// WAL entry for this round's verdict (recordstore appends
+			// artifact.revision before the row, fail-closed) - no separate
+			// judge.round intent to append first.
+			jr := buildJudgeRoundRecord(turnID, round, res.Passed, res.Score, scored, v, det, answer)
+			jrID, _, walErr := saveJudgeRoundRecord(nodeCtx, cfg, nodeID, turnID, round, jr)
+			if walErr != nil {
+				// Fail-closed (#1090 §4.9, #1144 P2): this round's verdict
+				// didn't land in the WAL, so don't start another revise round
+				// on it - surface it the same as an unavailable judge.
+				log.Error("judge_round WAL save failed; stopping the round loop", "round", round, "err", walErr)
 				verdictWord := "failed"
 				if env.Passed {
 					verdictWord = "passed"
@@ -756,14 +709,6 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				res.Feedback = fmt.Sprintf("Round %d %s (score %.2f) but could not be recorded in the write-ahead log; treating as failed.", round, verdictWord, v.Score)
 				break
 			}
-			// judge_round record (#1092): written right after the WAL entry
-			// above (§4.9 ordering), but independently of it - a nil cfg.Ledger
-			// made the WAL append a no-op just above, yet this record and both
-			// SSE events below still fire. Intentional fail-open, same as every
-			// other episodic write, not a bug: every non-Postgres deploy still
-			// gets the record even with no WAL to materialize.
-			jr := buildJudgeRoundRecord(turnID, round, res.Passed, res.Score, scored, v, det, answer)
-			jrID, _ := saveJudgeRoundRecord(nodeCtx, cfg, nodeID, turnID, round, jr)
 			for _, sr := range scored {
 				emitArtifactRevision(sink, sr.ArtifactID, sr.Revision, recordstore.KindOf(sr.ArtifactID), nodeID, round)
 			}
@@ -1212,14 +1157,15 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 					break
 				}
 			}
-			appendDeliveryDone(bctx, cfg, nodeID, idemKey, remoteURL)
+			// This save IS the delivery.intent's completion (#1144 P2 - the
+			// delivery_record artifact is the record, not a delivery.done entry).
 			saveDeliveryRecord(bctx, cfg, nodeID, DeliveryRecord{
 				TargetID: targetID, DeliveredRevision: targetRev, RemoteURL: remoteURL, PRNumber: dc.IssueNumber, At: time.Now().UTC(),
 				GatePassed: res.Passed, RenderedFromStaged: renderedFromStaged,
 			})
 		} else {
-			// No appendDeliveryDone: the WAL entry stays open so `quack ledger
-			// recover` can reconcile this attempt instead of treating it as done.
+			// No successful delivery_record revision: `quack ledger recover`
+			// finds this intent still open and can reconcile the attempt.
 			saveDeliveryRecord(bctx, cfg, nodeID, DeliveryRecord{
 				TargetID: targetID, DeliveredRevision: targetRev, PRNumber: dc.IssueNumber, At: time.Now().UTC(),
 				GatePassed: res.Passed, RenderedFromStaged: renderedFromStaged, Error: err.Error(),

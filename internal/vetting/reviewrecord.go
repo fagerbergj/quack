@@ -506,28 +506,24 @@ func buildJudgeRoundRecord(turnID string, round int, passed bool, score float64,
 	return rec
 }
 
-// saveJudgeRoundRecord writes rec as this round's judge_round revision, AFTER
-// the caller has already appended the judge.round WAL entry (#1092 scope:
-// same ordering rule artifact.revision entries already follow) - but this
-// write happens independently of whether that WAL append actually did
-// anything. A nil cfg.Ledger makes the WAL append a no-op, yet this record
-// still gets written: recording is intentional fail-open, not gated on
-// ledger presence. Returns the saved id/revision, "" if there's no artifact
-// client or the save failed - fail-open, matching every other episodic write
-// in this file.
-func saveJudgeRoundRecord(ctx context.Context, cfg Config, nodeID, turnID string, round int, rec JudgeRoundRecord) (id string, revision int) {
+// saveJudgeRoundRecord writes rec as this round's judge_round revision - the
+// round's ONLY WAL entry (#1144 P2: SaveStructured itself appends
+// artifact.revision fail-closed before the row). err is non-nil on either a
+// missing artifact client or a save failure; the caller (node.go) treats a
+// non-nil err as fail-closed, exactly as the old separate judge.round append
+// did - dropping the extra entry does not relax that guarantee.
+func saveJudgeRoundRecord(ctx context.Context, cfg Config, nodeID, turnID string, round int, rec JudgeRoundRecord) (id string, revision int, err error) {
 	c := recordClient(cfg)
 	if c == nil {
-		return "", 0
+		return "", 0, nil
 	}
 	hint := judgeRoundHint(turnID, nodeID, round)
 	lineage := recordstore.Lineage{NodeID: nodeID, Round: round, HeadSHA: cfg.NodeBaseSHA, SavedAt: time.Now().UTC(), Author: "judge", TurnID: turnID}
 	id, rev, err := c.SaveStructured(ctx, kindJudgeRound, rec, hint, lineage)
 	if err != nil {
-		slog.Warn("judge_round record save failed", "component", "vetting", "node", nodeID, "round", round, "err", err)
-		return "", 0
+		return "", 0, fmt.Errorf("vetting: judge_round save for node %s round %d: %w", nodeID, round, err)
 	}
-	return id, rev
+	return id, rev, nil
 }
 
 // loadEpisodicRoundState seeds state from the store for a fresh invocation
