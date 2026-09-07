@@ -1088,7 +1088,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("gates.judge: plan judge model: %w", err)
 			}
 			safetyJudge = tools.NewSafetyJudge(safetyModel)
-			planJudge = vetting.NewPlanJudge(planModel, cfg.Gates.Judge.MaxOutputTokens)
+			planJudge = vetting.NewPlanJudge(planModel, cfg.Gates.Judge.MaxOutputTokens, cfg.Gates.Judge.ThinkingLevel)
 		}
 		slog.Info("trust gate enabled", "component", "startup",
 			"deterministic_rounds", gateCfg.DeterministicRounds,

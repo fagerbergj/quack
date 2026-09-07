@@ -277,6 +277,9 @@ gates:
     max_output_tokens: 8192  # cap on the judge/plan-judge round's own reply - a runaway
                               # generation loop can otherwise decode tens of thousands of tokens on
                               # a verdict that should be a few hundred (#889). 0 = uncapped.
+    # thinking_level: low    # optional: low/medium/high reasoning_effort on the judge/plan-judge request,
+                              # unset by default - some OpenAI-compatible endpoints 400 on this for a
+                              # non-reasoning model, so it's opt-in, not forced on (#1235).
 
 # DAG execution policy.
 dag:

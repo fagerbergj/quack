@@ -66,7 +66,7 @@ func (m maxTokensRecordingPlanJudge) GenerateContent(_ context.Context, req *mod
 // argument reaches the plan judge's own model request.
 func TestPlanJudge_RequestCarriesConfiguredMaxOutputTokens(t *testing.T) {
 	got := int32(-1)
-	judge := NewPlanJudge(maxTokensRecordingPlanJudge{got: &got}, 1024)
+	judge := NewPlanJudge(maxTokensRecordingPlanJudge{got: &got}, 1024, "")
 	if _, _, err := judge(context.Background(), "write a plan", "1 node(s):\n- explore (web-researcher)"); err != nil {
 		t.Fatalf("PlanJudge: %v", err)
 	}
@@ -109,7 +109,7 @@ func (m *loopingPlanJudgeModel) GenerateContent(_ context.Context, _ *model.LLMR
 // call reply does.
 func TestPlanJudge_RunawayRepeatRoutesToNoVerdict(t *testing.T) {
 	m := &loopingPlanJudgeModel{}
-	judge := NewPlanJudge(m, 0)
+	judge := NewPlanJudge(m, 0, "")
 	_, _, err := judge(context.Background(), "write a plan", "1 node(s):\n- explore (web-researcher)")
 	if err == nil {
 		t.Fatal("PlanJudge: expected an error - the model never calls submit_plan_verdict")
@@ -120,7 +120,7 @@ func TestPlanJudge_RunawayRepeatRoutesToNoVerdict(t *testing.T) {
 }
 
 func TestPlanJudgeAccepts(t *testing.T) {
-	judge := NewPlanJudge(stubPlanJudgeModel{accept: true, reason: ""}, 0)
+	judge := NewPlanJudge(stubPlanJudgeModel{accept: true, reason: ""}, 0, "")
 	accept, reason, err := judge(context.Background(), "write a plan", "1 node(s):\n- explore (web-researcher)")
 	if err != nil {
 		t.Fatalf("PlanJudge: %v", err)
@@ -131,7 +131,7 @@ func TestPlanJudgeAccepts(t *testing.T) {
 }
 
 func TestPlanJudgeRejectsWithReason(t *testing.T) {
-	judge := NewPlanJudge(stubPlanJudgeModel{accept: false, reason: "add a code-implementer node"}, 0)
+	judge := NewPlanJudge(stubPlanJudgeModel{accept: false, reason: "add a code-implementer node"}, 0, "")
 	accept, reason, err := judge(context.Background(), "implement and ship it", "1 node(s):\n- explore (web-researcher)")
 	if err != nil {
 		t.Fatalf("PlanJudge: %v", err)
@@ -145,7 +145,7 @@ func TestPlanJudgeRejectsWithReason(t *testing.T) {
 }
 
 func TestPlanJudgeErrorsWithoutVerdict(t *testing.T) {
-	judge := NewPlanJudge(noVerdictModel{}, 0)
+	judge := NewPlanJudge(noVerdictModel{}, 0, "")
 	if _, _, err := judge(context.Background(), "x", "y"); err == nil {
 		t.Fatal("PlanJudge: expected an error when the model never calls submit_plan_verdict")
 	}
@@ -163,7 +163,7 @@ func TestPlanJudge_ChatEventCarriesCallerCoords(t *testing.T) {
 	defer restore()
 
 	traced := inference.TracedModelForTesting(stubPlanJudgeModel{accept: true}, "plan-judge-test-model")
-	judge := NewPlanJudge(traced, 0)
+	judge := NewPlanJudge(traced, 0, "")
 
 	const chatID = "planner-chat"
 	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: chatID})
@@ -202,7 +202,7 @@ func TestPlanJudge_ChatEventCarriesCallerCoords(t *testing.T) {
 // reaction to an API) with setup + delivery declared is a ONE-node plan, and
 // must be accepted rather than forced into an API/logic/tests chain.
 func TestPlanJudgeAcceptsCohesiveSingleNodePlan(t *testing.T) {
-	judge := NewPlanJudge(stubPlanJudgeModel{accept: true, reason: ""}, 0)
+	judge := NewPlanJudge(stubPlanJudgeModel{accept: true, reason: ""}, 0, "")
 	planSummary := "1 node(s):\n" +
 		"- implement (code-implementer): add a 👀 reaction to the API, implement the logic, write tests, and run checks\n" +
 		"setup: repo=github.com/example/app work_branch=feat/eyes-reaction\n" +
@@ -296,7 +296,7 @@ func TestPlanRubricRequiresRequestArtifactMatch(t *testing.T) {
 // rather than the model's judgment, which is untestable without one.
 func TestPlanJudgeRejectsExplorationTerminalForPlanRequest(t *testing.T) {
 	reason := "add a terminal node that actually writes the plan - the current terminal node only explores and produces a report"
-	judge := NewPlanJudge(stubPlanJudgeModel{accept: false, reason: reason}, 0)
+	judge := NewPlanJudge(stubPlanJudgeModel{accept: false, reason: reason}, 0, "")
 	planSummary := "1 node(s):\n" +
 		"- explore (code-explorer): Explore the repository and produce a detailed report covering: files, Compose patterns, Gradle config, navigation\n" +
 		"delivery: kind=comment"
@@ -319,7 +319,7 @@ func TestPlanJudgeRejectsExplorationTerminalForPlanRequest(t *testing.T) {
 // request whose deliverable is shipped code either.
 func TestPlanJudgeRejectsExplorationTerminalForImplementRequest(t *testing.T) {
 	reason := "this plan stops at exploration; add a terminal code-implementer node that ships the change"
-	judge := NewPlanJudge(stubPlanJudgeModel{accept: false, reason: reason}, 0)
+	judge := NewPlanJudge(stubPlanJudgeModel{accept: false, reason: reason}, 0, "")
 	planSummary := "1 node(s):\n" +
 		"- explore (code-explorer): Explore the repository and report where the dark-mode toggle should be added\n"
 	accept, gotReason, err := judge(context.Background(),

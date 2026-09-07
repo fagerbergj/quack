@@ -1353,3 +1353,189 @@ func TestCommitHygieneEvidenceSection(t *testing.T) {
 		t.Errorf("all-named files should yield no section, got %q", got)
 	}
 }
+
+// garbledThenSubmitsJudge answers with unparseable plain text on its first
+// turn (the #1235 attempt-2 shape: analysis complete, submission wrong), then
+// calls submit_verdict once nudged.
+type garbledThenSubmitsJudge struct{ calls int32 }
+
+func (j *garbledThenSubmitsJudge) Name() string { return "garbled-then-submits-judge" }
+
+func (j *garbledThenSubmitsJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		n := atomic.AddInt32(&j.calls, 1)
+		if n == 1 {
+			yield(stubText(`{"score": 3, "criteria": {"constructive_actionable": "reason": "garbled"}}`), nil)
+			return
+		}
+		yield(stubCall(submitVerdictTool, map[string]any{"score": 0.9, "feedback": "submitted on the nudge"}), nil)
+	}
+}
+
+// TestRunJudgeAgent_SubmitNudgeRecoversGarbledText is #1235's fix: a turn
+// that ends with unparseable text and no submit_verdict call gets one
+// in-session nudge before the fresh-session retry, and a judge that submits
+// on the nudge must not pay for a fresh round at all.
+func TestRunJudgeAgent_SubmitNudgeRecoversGarbledText(t *testing.T) {
+	judge := &garbledThenSubmitsJudge{}
+	factory := NewJudgeFactory(judge, nil, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6}
+
+	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	if err != nil {
+		t.Fatalf("runJudgeAgent: %v", err)
+	}
+	if v.Score != 0.9 {
+		t.Errorf("verdict score = %v, want 0.9 (recovered via the in-session nudge)", v.Score)
+	}
+	if got := atomic.LoadInt32(&judge.calls); got != 2 {
+		t.Errorf("judge model called %d times, want 2 (garbled text + the nudge) - no fresh-session retry should have run", got)
+	}
+}
+
+// neverSubmitsTextOnlyJudge always answers with the same unparseable plain
+// text and never calls submit_verdict, in any round - the nudge must not
+// manufacture a verdict out of a model that genuinely never submits.
+type neverSubmitsTextOnlyJudge struct{ roundsStarted int32 }
+
+func (j *neverSubmitsTextOnlyJudge) Name() string { return "never-submits-text-only-judge" }
+
+func (j *neverSubmitsTextOnlyJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		// A text-only judge never adds a FunctionCall to the session, so
+		// isFreshRound (which looks for one) can't tell "new session" from
+		// "the in-session nudge continuing this same session" - only a brand
+		// new session starts from just the one prompt message.
+		if len(req.Contents) == 1 {
+			atomic.AddInt32(&j.roundsStarted, 1)
+		}
+		yield(stubText(`{"score": "not-parseable-`), nil)
+	}
+}
+
+// TestRunJudgeAgent_SubmitNudgeExhaustedStillNoVerdict proves the nudge is
+// bounded: a judge that never submits still ends in ErrJudgeNoVerdict after
+// the nudge AND the existing fresh-session retry, no more.
+func TestRunJudgeAgent_SubmitNudgeExhaustedStillNoVerdict(t *testing.T) {
+	judge := &neverSubmitsTextOnlyJudge{}
+	factory := NewJudgeFactory(judge, nil, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6}
+
+	_, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	if !errors.Is(err, ErrJudgeNoVerdict) {
+		t.Fatalf("err = %v, want errors.Is(err, ErrJudgeNoVerdict)", err)
+	}
+	if got := atomic.LoadInt32(&judge.roundsStarted); got != 2 {
+		t.Errorf("rounds started = %d, want 2 (the original round, nudged in-session, + exactly one fresh-session retry)", got)
+	}
+}
+
+// forceClosedGarbledJudge burns two distinct read_file calls (maxIters=3), so
+// its third invocation is the round's own last allowed turn: forcedVerdictCallback
+// has already stripped tools and appended judgeForceCloseInstruction by the time
+// this call sees the request. That forced turn answers with unparseable text
+// (the #853 shape #1235's review flagged - a naturally-ending forced close,
+// turns == maxIters, never trips the turns > maxIters loop-break).
+type forceClosedGarbledJudge struct{ calls int32 }
+
+func (j *forceClosedGarbledJudge) Name() string { return "force-closed-garbled-judge" }
+
+func (j *forceClosedGarbledJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		n := atomic.AddInt32(&j.calls, 1)
+		if n < 3 {
+			yield(stubCall("read_file", map[string]any{"path": fmt.Sprintf("file%d.go", n)}), nil)
+			return
+		}
+		if len(req.Tools) != 0 || (req.Config != nil && len(req.Config.Tools) != 0) {
+			yield(nil, fmt.Errorf("expected no tools on the forced-close turn, got %d req.Tools", len(req.Tools)))
+			return
+		}
+		yield(stubText(`{"score": "not-parseable-`), nil)
+	}
+}
+
+// TestRunJudgeAgent_ForcedCloseSkipsSubmitNudge is the fix for the #1236
+// review finding: a round that ends by force-closing (maxIters tool
+// invocations, then the callback strips tools and the model's forced turn is
+// unparseable) must NOT get an in-session submit_verdict nudge - there are no
+// tools on that turn to call, so the nudge would ask for what was just
+// declared unavailable. Calling runJudgeRound directly (not runJudgeAgent)
+// isolates this from the separate fresh-session retry.
+func TestRunJudgeAgent_ForcedCloseSkipsSubmitNudge(t *testing.T) {
+	judge := &forceClosedGarbledJudge{}
+	factory := NewJudgeFactory(judge, nil, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 3}
+
+	_, _, err := runJudgeRound(t.Context(), factory, cfg, q, "done.", "", "", workerActivity{}, func(*genai.Part) bool { return true })
+	if !errors.Is(err, ErrJudgeNoVerdict) {
+		t.Fatalf("err = %v, want errors.Is(err, ErrJudgeNoVerdict)", err)
+	}
+	if got := atomic.LoadInt32(&judge.calls); got != 3 {
+		t.Errorf("judge model called %d times, want exactly 3 (2 reads + the forced-close turn) - no nudge call should follow a forced close", got)
+	}
+}
+
+// repeatTrippedJudgeModel emits the same plain (non-Thought) text every turn
+// alongside a varying tool call - the #889 runaway-repeat shape, but as plain
+// text so it lands in runJudgeRound's accum instead of being suppressed as
+// thinking. nudgeCalls counts any request carrying judgeSubmitNudge, proving
+// the nudge never runs after this abort (#1236 review: repeats.tripped
+// cancels runCtx exactly like a forced close, so the nudge must skip too).
+type repeatTrippedJudgeModel struct{ calls, nudgeCalls int32 }
+
+func (j *repeatTrippedJudgeModel) Name() string { return "repeat-tripped-judge" }
+
+func (j *repeatTrippedJudgeModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		n := atomic.AddInt32(&j.calls, 1)
+		for _, c := range req.Contents {
+			if c == nil {
+				continue
+			}
+			for _, p := range c.Parts {
+				if p != nil && strings.Contains(p.Text, judgeSubmitNudge) {
+					atomic.AddInt32(&j.nudgeCalls, 1)
+				}
+			}
+		}
+		yield(&model.LLMResponse{
+			Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{
+				{Text: "This exact sentence repeats without variation. "},
+				{FunctionCall: &genai.FunctionCall{Name: "read_file", Args: map[string]any{"path": fmt.Sprintf("file%d.go", n)}}},
+			}},
+			FinishReason: genai.FinishReasonStop,
+			TurnComplete: true,
+		}, nil)
+	}
+}
+
+// TestRunJudgeAgent_RepeatTripSkipsSubmitNudge is the fix for the #1236
+// review's second finding: the event loop's repeats.tripped break cancels
+// runCtx exactly like the turn-cap break, but forcedVerdictCallback never
+// fires for it (there's no forced turn - the abort happens mid-generation),
+// so forcedClose alone doesn't catch this shape. Calling runJudgeRound
+// directly isolates this from the separate fresh-session retry.
+func TestRunJudgeAgent_RepeatTripSkipsSubmitNudge(t *testing.T) {
+	readTool := newSpyReadTool(t, "package x\n", new(int32))
+	judge := &repeatTrippedJudgeModel{}
+	factory := NewJudgeFactory(judge, []tool.Tool{readTool}, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	// Generous turn budget so a run to the turn cap (rather than the repeat
+	// guard) would make the test fail loud, not pass by accident.
+	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 1000}
+
+	_, _, err := runJudgeRound(t.Context(), factory, cfg, q, "done.", "", "", workerActivity{}, func(*genai.Part) bool { return true })
+	if !errors.Is(err, ErrJudgeNoVerdict) {
+		t.Fatalf("err = %v, want errors.Is(err, ErrJudgeNoVerdict)", err)
+	}
+	if got := atomic.LoadInt32(&judge.calls); got >= 1000 {
+		t.Errorf("judge model called %d times, want well under the 1000-turn cap - the repeat guard should trip first", got)
+	}
+	if got := atomic.LoadInt32(&judge.nudgeCalls); got != 0 {
+		t.Errorf("judge model saw the submit_verdict nudge in %d request(s), want 0 - a repeat-trip abort must not nudge on the cancelled context", got)
+	}
+}
