@@ -15,6 +15,8 @@ import (
 	"github.com/fagerbergj/quack/internal/pgdial"
 )
 
+var _ LedgerStore = (*PGStore)(nil)
+
 // idxParentRevision/idxIdempotency: named explicitly (not GORM's tag-derived
 // naming) so AppendIntent can tell which one a 23505 violation came from.
 const (
@@ -218,7 +220,7 @@ func (s *PGStore) AppendIntent(ctx context.Context, e Entry) (int64, error) {
 	seq, err := s.appendRow(ctx, pgEntry{
 		ChatID: e.ChatID, TurnID: e.TurnID, NodeID: e.NodeID, Agent: e.Agent, Round: e.Round,
 		Kind: e.Kind, Key: e.Key, At: e.At, Payload: string(payload),
-		ParentRevision: parentRevisionOf(e.Kind, payload), IdempotencyKey: e.IdempotencyKey,
+		ParentRevision: ParentRevisionOf(e.Kind, payload), IdempotencyKey: e.IdempotencyKey,
 		SchemaVersion: EntrySchemaVersion,
 	})
 	if err != nil {

@@ -30,6 +30,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -246,7 +247,7 @@ func runFixtureNode(t *testing.T, nodeID, prompt string) {
 // path to its assembled bundle.zip.
 func buildFixtureBundle(t *testing.T) string {
 	t.Helper()
-	store := ledger.NewMemStore()
+	store := ledgertest.NewMemStore()
 
 	lp := sdklog.NewLoggerProvider(
 		sdklog.WithProcessor(ledger.NewRedactingProcessor()),

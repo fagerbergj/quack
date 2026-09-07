@@ -8,6 +8,7 @@ import (
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/replay"
 	"github.com/fagerbergj/quack/internal/workspace"
@@ -19,7 +20,7 @@ import (
 // spawned - and asserts the gate-visible activity (thought, durable
 // run_command tool pair, final answer text) matches the recording (#604).
 func TestPlayback_ReplaysRecordedRoundWithNoSubprocess(t *testing.T) {
-	store := ledger.NewMemStore()
+	store := ledgertest.NewMemStore()
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(ledger.NewExporter(store))))
 	restore := otelobs.SetLoggerProviderForTesting(lp)
 
@@ -97,7 +98,7 @@ func TestPlayback_ReplaysRecordedRoundWithNoSubprocess(t *testing.T) {
 // (stream + position), never a bare "not found" or a silent empty round -
 // the ACP twin of replay's model/tool "extra call" acceptance case.
 func TestPlayback_MissingExchangeIsMissError(t *testing.T) {
-	store := ledger.NewMemStore()
+	store := ledgertest.NewMemStore()
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(ledger.NewExporter(store))))
 	restore := otelobs.SetLoggerProviderForTesting(lp)
 

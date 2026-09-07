@@ -6,11 +6,12 @@ import (
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
 )
 
-func newMemStore(t *testing.T) *ledger.MemStore {
+func newMemStore(t *testing.T) *ledgertest.MemStore {
 	t.Helper()
-	return ledger.NewMemStore()
+	return ledgertest.NewMemStore()
 }
 
 func appendRevision(t *testing.T, s ledger.LedgerStore, chatID, id string, revision, parent int) {
@@ -171,7 +172,7 @@ func TestFold_NodeAcrossTurns_KeyedByNodeIDNotTurn(t *testing.T) {
 // count forces Fold through multiple pages, proving paged reads match one
 // unpaged slice.
 type pagingFakeStore struct {
-	*ledger.MemStore
+	*ledgertest.MemStore
 }
 
 func (p *pagingFakeStore) ReadEntriesPage(ctx context.Context, chatID string, fromSeq int64, limit int) ([]ledger.Entry, error) {

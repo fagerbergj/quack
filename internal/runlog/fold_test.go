@@ -8,6 +8,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledger/fold"
+	"github.com/fagerbergj/quack/internal/ledgertest"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
 )
@@ -34,7 +35,7 @@ func appendNode(t *testing.T, s ledger.LedgerStore, chatID, nodeID, turn, kind s
 // and node_done rows (#1121: start and terminal are synthesized independently).
 func TestLoadEvents_FallsBackToFold(t *testing.T) {
 	st := newTestStore(t)
-	ls := ledger.NewMemStore()
+	ls := ledgertest.NewMemStore()
 	const chatID = "chat-1"
 	appendNode(t, ls, chatID, "n1", "t1", ledger.KindNodeStarted)
 	appendNode(t, ls, chatID, "n1", "t1", ledger.KindNodeDone)
@@ -64,7 +65,7 @@ func TestLoadEvents_FallsBackToFold(t *testing.T) {
 // even with a WAL armed - unchanged behavior when the table already has rows.
 func TestLoadEvents_PrefersTable(t *testing.T) {
 	st := newTestStore(t)
-	ls := ledger.NewMemStore()
+	ls := ledgertest.NewMemStore()
 	const chatID = "chat-1"
 	appendNode(t, ls, chatID, "n1", "t1", ledger.KindNodeStarted) // ledger disagrees with the table on purpose
 	l := NewEventLog(st).WithLedger(ls)
@@ -93,7 +94,7 @@ func TestLoadEvents_PrefersTable(t *testing.T) {
 // a fold-derived guess in the wrong space.
 func TestLoadEvents_NeverFoldsWithPriorProgress(t *testing.T) {
 	st := newTestStore(t)
-	ls := ledger.NewMemStore()
+	ls := ledgertest.NewMemStore()
 	const chatID = "chat-1"
 	appendNode(t, ls, chatID, "n1", "t1", ledger.KindNodeStarted) // WAL has data; must still be ignored
 
@@ -112,7 +113,7 @@ func TestLoadEvents_NeverFoldsWithPriorProgress(t *testing.T) {
 // back to the fold and resend reconstructed history.
 func TestLoadEvents_CaughtUpClientNeverFolds(t *testing.T) {
 	st := newTestStore(t)
-	ls := ledger.NewMemStore()
+	ls := ledgertest.NewMemStore()
 	const chatID = "chat-1"
 	appendNode(t, ls, chatID, "n1", "t1", ledger.KindNodeStarted) // ledger has data; must be ignored
 
@@ -146,7 +147,7 @@ func TestLoadEvents_CaughtUpClientNeverFolds(t *testing.T) {
 func TestLoadEvents_CrashBetweenIntentAndWatermark(t *testing.T) {
 	ctx := context.Background()
 	st := newTestStore(t)
-	ls := ledger.NewMemStore()
+	ls := ledgertest.NewMemStore()
 	const chatID = "chat-crash"
 
 	// The "crash": these intents are durably in the ledger, but nothing ever

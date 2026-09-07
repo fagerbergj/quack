@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
 )
 
 // TestSaveTurn_CrashBetweenIntentAndRow is #1144 P5's required kill-9 test:
@@ -20,7 +21,7 @@ import (
 func TestSaveTurn_CrashBetweenIntentAndRow(t *testing.T) {
 	ctx := context.Background()
 	st := newTestStore(t)
-	ls := ledger.NewMemStore()
+	ls := ledgertest.NewMemStore()
 	st.SetWALLedger(ls)
 
 	chat, err := st.CreateChat(ctx, "sys")
@@ -122,7 +123,7 @@ func (failingLedger) AppendIntent(context.Context, ledger.Entry) (int64, error) 
 func TestSaveDagPlan_ResumeIsWALIdempotent(t *testing.T) {
 	ctx := context.Background()
 	st := newTestStore(t)
-	ls := ledger.NewMemStore()
+	ls := ledgertest.NewMemStore()
 	st.SetWALLedger(ls)
 
 	chat, err := st.CreateChat(ctx, "sys")
@@ -162,7 +163,7 @@ func TestSaveDagPlan_ResumeIsWALIdempotent(t *testing.T) {
 func TestWriteCheckpoint_UpsertsOneRowAndSeedsNextFold(t *testing.T) {
 	ctx := context.Background()
 	st := newTestStore(t)
-	ls := ledger.NewMemStore()
+	ls := ledgertest.NewMemStore()
 	st.SetWALLedger(ls)
 
 	chat, err := st.CreateChat(ctx, "sys")

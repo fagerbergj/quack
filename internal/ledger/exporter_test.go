@@ -1,4 +1,4 @@
-package ledger
+package ledger_test
 
 import (
 	"context"
@@ -8,11 +8,14 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+
+	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
 )
 
-func emitVia(t *testing.T, store LedgerStore, attrs ...attribute.KeyValue) {
+func emitVia(t *testing.T, store ledger.LedgerStore, attrs ...attribute.KeyValue) {
 	t.Helper()
-	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(NewExporter(store))))
+	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(ledger.NewExporter(store))))
 	var rec otellog.Record
 	rec.AddAttributes(attrs...)
 	provider.Logger("test").Emit(context.Background(), rec)
@@ -21,7 +24,7 @@ func emitVia(t *testing.T, store LedgerStore, attrs ...attribute.KeyValue) {
 // TestExporterEmitsTypedEntries: a gen_ai chat record becomes one llm.call
 // Entry carrying the stream coordinates and a redacted, typed payload.
 func TestExporterEmitsTypedEntries(t *testing.T) {
-	store := NewMemStore()
+	store := ledgertest.NewMemStore()
 	emitVia(t, store,
 		attribute.String("gen_ai.conversation.id", "chat-42"),
 		attribute.String("gen_ai.operation.name", "chat"),
@@ -57,7 +60,7 @@ func TestExporterEmitsTypedEntries(t *testing.T) {
 	if len(entries) != 4 {
 		t.Fatalf("got %d entries, want 4", len(entries))
 	}
-	for i, want := range []string{KindLLMCall, KindToolCall, KindAgentInvoke, KindEvalScore} {
+	for i, want := range []string{ledger.KindLLMCall, ledger.KindToolCall, ledger.KindAgentInvoke, ledger.KindEvalScore} {
 		if entries[i].Kind != want {
 			t.Errorf("entry %d kind = %q, want %q", i, entries[i].Kind, want)
 		}
@@ -66,7 +69,7 @@ func TestExporterEmitsTypedEntries(t *testing.T) {
 	if e.NodeID != "n1" || e.Agent != "coder" || e.Round != "2" || e.Seq != 1 {
 		t.Errorf("coords = node %q agent %q round %q seq %d", e.NodeID, e.Agent, e.Round, e.Seq)
 	}
-	var p LLMCallPayload
+	var p ledger.LLMCallPayload
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +79,7 @@ func TestExporterEmitsTypedEntries(t *testing.T) {
 	if p.Input != `[{"authorization":"[REDACTED]"}]` {
 		t.Errorf("input not redacted: %s", p.Input)
 	}
-	var ev EvalScorePayload
+	var ev ledger.EvalScorePayload
 	if err := json.Unmarshal(entries[3].Payload, &ev); err != nil || ev.Criterion != "accuracy" || ev.Score != 0.8 {
 		t.Errorf("eval payload = %+v (%v)", ev, err)
 	}
@@ -85,7 +88,7 @@ func TestExporterEmitsTypedEntries(t *testing.T) {
 // TestExporterDropsUnmappedRecords: no conversation id, or an operation no
 // observation kind describes, never reaches the store.
 func TestExporterDropsUnmappedRecords(t *testing.T) {
-	store := NewMemStore()
+	store := ledgertest.NewMemStore()
 	emitVia(t, store, attribute.String("gen_ai.operation.name", "chat"))
 	emitVia(t, store, attribute.String("gen_ai.conversation.id", "c"), attribute.String("gen_ai.operation.name", "plan"))
 	if refs, _ := store.List(context.Background()); len(refs) != 0 {
@@ -94,7 +97,7 @@ func TestExporterDropsUnmappedRecords(t *testing.T) {
 }
 
 func TestExporterDisabledStoreIsNoop(t *testing.T) {
-	if err := NewExporter(nil).Export(context.Background(), nil); err != nil {
+	if err := ledger.NewExporter(nil).Export(context.Background(), nil); err != nil {
 		t.Fatalf("Export with nil store returned an error: %v", err)
 	}
 }

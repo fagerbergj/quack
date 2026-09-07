@@ -13,6 +13,7 @@ import (
 	"google.golang.org/adk/v2/artifact"
 
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
 )
 
 // fakeLedger is a minimal, in-memory ledger.LedgerStore double for the WAL
@@ -771,11 +772,11 @@ func TestSaveRowFailureAfterAppendSelfHeals(t *testing.T) {
 // lying about having saved.
 func TestSaveRetryAfterPartialSave_CompletesOrphanedDuplicate(t *testing.T) {
 	svc := &failOnceSaveService{Service: artifact.InMemoryService(), failCall: 1}
-	// ledger.NewMemStore(), not the local fakeLedger double: MemStore checks
+	// ledgertest.NewMemStore(), not the local fakeLedger double: MemStore checks
 	// idempotency before parent-conflict, same order as PGStore, so this
 	// actually exercises the DuplicateIntentError branch under test (#1237
 	// review: the fake's old, reversed check order meant it never did).
-	ls := ledger.NewMemStore()
+	ls := ledgertest.NewMemStore()
 	c := New(svc, "quack", "user1", "chat1").WithLedger(ls)
 	ctx := context.Background()
 
@@ -806,7 +807,7 @@ func TestSaveRetryAfterPartialSave_CompletesOrphanedDuplicate(t *testing.T) {
 // never be handed writer B's content under a false "already recorded".
 func TestSaveRetryAfterPartialSave_ForeignAdoptionFailsClosed(t *testing.T) {
 	svc := &failOnceSaveService{Service: artifact.InMemoryService(), failCall: 1}
-	ls := ledger.NewMemStore()
+	ls := ledgertest.NewMemStore()
 	c := New(svc, "quack", "user1", "chat1").WithLedger(ls)
 	ctx := context.Background()
 
@@ -887,7 +888,7 @@ func TestRegisterPanicsOnEmptySchemaForStructuredKind(t *testing.T) {
 // silently overwrite Edit's result: exactly one of the two claims wins that
 // parent, the other gets ledger.ErrStaleParent instead of vanishing.
 func TestGateVsEditNoSilentOverwrite(t *testing.T) {
-	fl := ledger.NewMemStore()
+	fl := ledgertest.NewMemStore()
 	c := New(artifact.InMemoryService(), "quack", "user1", "chat1").WithLedger(fl)
 	ctx := context.Background()
 

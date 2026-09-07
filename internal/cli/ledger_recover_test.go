@@ -9,6 +9,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledger/fold"
+	"github.com/fagerbergj/quack/internal/ledgertest"
 	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
@@ -72,7 +73,7 @@ func appendDeliveryIntentWithContextForTest(t *testing.T, ls ledger.LedgerStore,
 // live worker activity to derive clone/PR coordinates from.
 func TestRunLedgerRecover_RebuildsDeliveryContextFromIntent(t *testing.T) {
 	ctx := context.Background()
-	ls := ledger.NewMemStore()
+	ls := ledgertest.NewMemStore()
 	appendDeliveryIntentWithContextForTest(t, ls, "chat5", "code_review:pr:5@1", "code_review:pr:5", 1, "https://github.com/x/y.git", 5)
 
 	rec := &fakeRecoverer{found: true}
@@ -90,7 +91,7 @@ func TestRunLedgerRecover_RebuildsDeliveryContextFromIntent(t *testing.T) {
 // to post twice).
 func TestRunLedgerRecover_FoundRecordsDeliveryWithoutRedo(t *testing.T) {
 	ctx := context.Background()
-	ls := ledger.NewMemStore()
+	ls := ledgertest.NewMemStore()
 	appendDeliveryIntentForTest(t, ls, "chat1", "code_review:pr:1@2", "code_review:pr:1", 2)
 
 	rec := &fakeRecoverer{found: true, remoteURL: "https://github.com/x/y/pull/1#pullrequestreview-1"}
@@ -131,7 +132,7 @@ func TestRunLedgerRecover_FoundRecordsDeliveryWithoutRedo(t *testing.T) {
 // to redo the delivery the same way it would have run the first time.
 func TestRunLedgerRecover_NotFoundRedoes(t *testing.T) {
 	ctx := context.Background()
-	ls := ledger.NewMemStore()
+	ls := ledgertest.NewMemStore()
 	appendDeliveryIntentForTest(t, ls, "chat2", "code_review:pr:2@1", "code_review:pr:2", 1)
 
 	rec := &fakeRecoverer{found: false}
@@ -155,7 +156,7 @@ func TestRunLedgerRecover_NotFoundRedoes(t *testing.T) {
 // Unresolved rather than guessed at.
 func TestRunLedgerRecover_NoRecovererReportsUnresolved(t *testing.T) {
 	ctx := context.Background()
-	ls := ledger.NewMemStore()
+	ls := ledgertest.NewMemStore()
 	appendDeliveryIntentForTest(t, ls, "chat3", "document:doc:1@1", "document:doc:1", 1)
 
 	report, err := RunLedgerRecover(ctx, ls, "chat3", Projections{}, false)
@@ -171,7 +172,7 @@ func TestRunLedgerRecover_NoRecovererReportsUnresolved(t *testing.T) {
 // (#1144 P2: DeliveryRecorded is the single "is this done" read).
 func TestRunLedgerRecover_NoOrphanWhenRecordExists(t *testing.T) {
 	ctx := context.Background()
-	ls := ledger.NewMemStore()
+	ls := ledgertest.NewMemStore()
 	appendDeliveryIntentForTest(t, ls, "chat4", "code_review:pr:4@1", "code_review:pr:4", 1)
 	fdr := newFakeDeliveryRecords()
 	fdr.done[deliveryIdempotencyKeyForTest("code_review:pr:4", 1)] = true

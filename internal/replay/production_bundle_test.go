@@ -23,6 +23,7 @@ import (
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/replay"
@@ -73,7 +74,7 @@ func newOrchForTest(t *testing.T, m model.LLM) *orchestrator.Orchestrator {
 // the way a live run actually records one - root events stamped with ChatID
 // only, filed by the real exporter under this chat's own id.
 func TestUserTurns_FromProductionShapedBundle(t *testing.T) {
-	store := ledger.NewMemStore()
+	store := ledgertest.NewMemStore()
 
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(ledger.NewExporter(store))))
 	restore := otelobs.SetLoggerProviderForTesting(lp)

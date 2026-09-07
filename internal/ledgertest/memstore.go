@@ -1,4 +1,7 @@
-package ledger
+// Package ledgertest provides an in-memory ledger.LedgerStore for tests.
+// It is not a runtime backend: nothing survives the process, and config
+// refuses anything but Postgres as the WAL.
+package ledgertest
 
 import (
 	"context"
@@ -6,26 +9,23 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/fagerbergj/quack/internal/ledger"
 )
 
-// MemStore is the in-memory LedgerStore for tests. It is not a runtime
-// backend: nothing survives the process, and config refuses anything but
-// Postgres as the WAL.
+// MemStore is the in-memory ledger.LedgerStore for tests.
 type MemStore struct {
 	mu      sync.Mutex
-	entries map[string][]Entry
+	entries map[string][]ledger.Entry
 }
 
-var (
-	_ LedgerStore = (*MemStore)(nil)
-	_ LedgerStore = (*PGStore)(nil)
-)
+var _ ledger.LedgerStore = (*MemStore)(nil)
 
-func NewMemStore() *MemStore { return &MemStore{entries: map[string][]Entry{}} }
+func NewMemStore() *MemStore { return &MemStore{entries: map[string][]ledger.Entry{}} }
 
 // AppendIntent enforces the same two constraints PGStore does (#1144 P4) by
 // scanning this chat's entries - fine for a test-only store.
-func (s *MemStore) AppendIntent(_ context.Context, e Entry) (int64, error) {
+func (s *MemStore) AppendIntent(_ context.Context, e ledger.Entry) (int64, error) {
 	if e.ChatID == "" || e.Kind == "" {
 		return 0, fmt.Errorf("ledger: intent needs chat_id and kind")
 	}
@@ -39,31 +39,31 @@ func (s *MemStore) AppendIntent(_ context.Context, e Entry) (int64, error) {
 	if e.IdempotencyKey != "" {
 		for _, ex := range s.entries[e.ChatID] {
 			if ex.IdempotencyKey == e.IdempotencyKey {
-				return 0, &DuplicateIntentError{Existing: ex}
+				return 0, &ledger.DuplicateIntentError{Existing: ex}
 			}
 		}
 	}
-	if e.Kind == KindArtifactRevision {
-		parent := parentRevisionOf(e.Kind, e.Payload)
+	if e.Kind == ledger.KindArtifactRevision {
+		parent := ledger.ParentRevisionOf(e.Kind, e.Payload)
 		for _, ex := range s.entries[e.ChatID] {
-			if ex.Kind == KindArtifactRevision && ex.Key == e.Key && parentRevisionOf(ex.Kind, ex.Payload) == parent {
-				return 0, ErrStaleParent
+			if ex.Kind == ledger.KindArtifactRevision && ex.Key == e.Key && ledger.ParentRevisionOf(ex.Kind, ex.Payload) == parent {
+				return 0, ledger.ErrStaleParent
 			}
 		}
 	}
 	e.Seq = int64(len(s.entries[e.ChatID])) + 1
-	e.SchemaVersion = EntrySchemaVersion
+	e.SchemaVersion = ledger.EntrySchemaVersion
 	s.entries[e.ChatID] = append(s.entries[e.ChatID], e)
 	return e.Seq, nil
 }
 
-func (s *MemStore) ReadEntries(_ context.Context, chatID string, fromSeq int64) ([]Entry, error) {
+func (s *MemStore) ReadEntries(_ context.Context, chatID string, fromSeq int64) ([]ledger.Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var out []Entry
+	var out []ledger.Entry
 	for _, e := range s.entries[chatID] {
 		if e.Seq >= fromSeq {
-			out = append(out, MigrateEntry(e))
+			out = append(out, ledger.MigrateEntry(e))
 		}
 	}
 	return out, nil
@@ -77,15 +77,15 @@ func (s *MemStore) MaxSeq(_ context.Context, chatID string) (int64, error) {
 	return int64(len(s.entries[chatID])), nil
 }
 
-func (s *MemStore) List(context.Context) ([]SessionRef, error) {
+func (s *MemStore) List(context.Context) ([]ledger.SessionRef, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]SessionRef, 0, len(s.entries))
+	out := make([]ledger.SessionRef, 0, len(s.entries))
 	for id, es := range s.entries {
 		if len(es) == 0 {
 			continue
 		}
-		out = append(out, SessionRef{ID: id, Size: int64(len(es)), ModTime: es[len(es)-1].At})
+		out = append(out, ledger.SessionRef{ID: id, Size: int64(len(es)), ModTime: es[len(es)-1].At})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil

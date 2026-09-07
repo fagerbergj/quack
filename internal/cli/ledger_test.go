@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
 	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/store"
@@ -33,7 +34,7 @@ func newTestStack(t *testing.T) (*store.Store, ledger.LedgerStore, *store.TurnAw
 	if err != nil {
 		t.Fatalf("store.New: %v", err)
 	}
-	ls := ledger.NewMemStore()
+	ls := ledgertest.NewMemStore()
 	rowSvc, err := st.RowArtifactService()
 	if err != nil {
 		t.Fatalf("RowArtifactService: %v", err)
