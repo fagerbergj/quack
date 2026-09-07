@@ -44,6 +44,7 @@ type Config struct {
 	JudgeMaxIterations   int     // cap on judge model turns per round
 	JudgeContextWindow   int     // context window in tokens; 0 ⇒ default
 	JudgeMaxOutputTokens int     // cap on judge/plan-judge reply tokens; <= 0 = uncapped
+	JudgeThinkingLevel   string  // gates.judge.thinking_level: "", "low", "medium", "high"; "" = no ThinkingConfig sent
 	Constitution         string  // global principles for judge prompt
 	Rubric               string  // scoring guide; global default or per-agent override; rendered markdown for the judge prompt
 	// RubricSpecs: per-criterion definition/scale/bands, only when Rubric was

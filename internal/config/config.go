@@ -530,6 +530,11 @@ type JudgeConfig struct {
 	// tokens - 0 (the Go zero value, e.g. an older config that predates this
 	// field) leaves it uncapped like before #889. quack.yaml's own default is 8192.
 	MaxOutputTokens int `yaml:"max_output_tokens"`
+	// ThinkingLevel opts the judge/plan-judge request into a capped reasoning
+	// effort ("low", "medium", "high"); "" (default) sends no ThinkingConfig at
+	// all - some OpenAI-compatible endpoints 400 on reasoning_effort for a
+	// non-reasoning model, so this must stay opt-in, not forced on (#1235).
+	ThinkingLevel string `yaml:"thinking_level"`
 }
 
 func (g GatesConfig) JudgeEnabled() bool { return g.Judge.Model != "" && g.Judge.MaxRounds > 0 }
@@ -1170,6 +1175,11 @@ func (c *Config) validate() error {
 			}
 			if g.Judge.MaxOutputTokens < 0 {
 				return fmt.Errorf("config: gates.judge.max_output_tokens must be >= 0")
+			}
+			switch g.Judge.ThinkingLevel {
+			case "", "low", "medium", "high":
+			default:
+				return fmt.Errorf("config: gates.judge.thinking_level must be one of low, medium, high (or unset)")
 			}
 		}
 	}

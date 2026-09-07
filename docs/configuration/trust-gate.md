@@ -33,6 +33,7 @@ A separate, independently-configured model scores the answer G-Eval style agains
 - `max_rounds` bounds judge/revise cycles - the worker gets self-contained feedback and another attempt, up to this many times.
 - `max_iterations` caps the judge's own agentic model turns within a single round (it may call tools to verify claims, e.g. reading the clone).
 - `context_window` budgets the assembled judge prompt so it fits before the call, instead of discovering a 400 mid-request.
+- `thinking_level` (`low`/`medium`/`high`, unset by default) opts the judge/plan-judge request into a capped reasoning effort so thinking can't consume the whole `max_output_tokens` budget before a verdict is reached - leave it unset for a non-reasoning model or an endpoint that 400s on `reasoning_effort`.
 
 ## Rubrics
 

@@ -50,7 +50,8 @@ Call submit_plan_verdict exactly once with accept (bool) and reason (if rejectin
 
 // NewPlanJudge: builds PlanJudge backed by judgeModel (reuses the trust gate's judge). Isolated in-memory
 // session per call. maxOutputTokens caps the round's own reply tokens; <= 0 leaves it uncapped (#889).
-func NewPlanJudge(judgeModel model.LLM, maxOutputTokens int) PlanJudge {
+// thinkingLevel is gates.judge.thinking_level ("", "low", "medium", "high"); "" sends no ThinkingConfig.
+func NewPlanJudge(judgeModel model.LLM, maxOutputTokens int, thinkingLevel string) PlanJudge {
 	return func(ctx context.Context, request, planSummary string) (bool, string, error) {
 		var sink planVerdictArgs
 		var submitted bool
@@ -76,7 +77,7 @@ func NewPlanJudge(judgeModel model.LLM, maxOutputTokens int) PlanJudge {
 			Model:                 judgeModel,
 			Instruction:           planRubricInstruction,
 			Tools:                 []tool.Tool{submit},
-			GenerateContentConfig: judgeGenConfig(maxOutputTokens),
+			GenerateContentConfig: judgeGenConfig(maxOutputTokens, thinkingLevel),
 		})
 		if err != nil {
 			return false, "", fmt.Errorf("vetting: build plan judge agent: %w", err)

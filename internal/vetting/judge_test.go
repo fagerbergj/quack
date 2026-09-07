@@ -1431,3 +1431,50 @@ func TestRunJudgeAgent_SubmitNudgeExhaustedStillNoVerdict(t *testing.T) {
 		t.Errorf("rounds started = %d, want 2 (the original round, nudged in-session, + exactly one fresh-session retry)", got)
 	}
 }
+
+// forceClosedGarbledJudge burns two distinct read_file calls (maxIters=3), so
+// its third invocation is the round's own last allowed turn: forcedVerdictCallback
+// has already stripped tools and appended judgeForceCloseInstruction by the time
+// this call sees the request. That forced turn answers with unparseable text
+// (the #853 shape #1235's review flagged - a naturally-ending forced close,
+// turns == maxIters, never trips the turns > maxIters loop-break).
+type forceClosedGarbledJudge struct{ calls int32 }
+
+func (j *forceClosedGarbledJudge) Name() string { return "force-closed-garbled-judge" }
+
+func (j *forceClosedGarbledJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		n := atomic.AddInt32(&j.calls, 1)
+		if n < 3 {
+			yield(stubCall("read_file", map[string]any{"path": fmt.Sprintf("file%d.go", n)}), nil)
+			return
+		}
+		if len(req.Tools) != 0 || (req.Config != nil && len(req.Config.Tools) != 0) {
+			yield(nil, fmt.Errorf("expected no tools on the forced-close turn, got %d req.Tools", len(req.Tools)))
+			return
+		}
+		yield(stubText(`{"score": "not-parseable-`), nil)
+	}
+}
+
+// TestRunJudgeAgent_ForcedCloseSkipsSubmitNudge is the fix for the #1236
+// review finding: a round that ends by force-closing (maxIters tool
+// invocations, then the callback strips tools and the model's forced turn is
+// unparseable) must NOT get an in-session submit_verdict nudge - there are no
+// tools on that turn to call, so the nudge would ask for what was just
+// declared unavailable. Calling runJudgeRound directly (not runJudgeAgent)
+// isolates this from the separate fresh-session retry.
+func TestRunJudgeAgent_ForcedCloseSkipsSubmitNudge(t *testing.T) {
+	judge := &forceClosedGarbledJudge{}
+	factory := NewJudgeFactory(judge, nil, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 3}
+
+	_, _, err := runJudgeRound(t.Context(), factory, cfg, q, "done.", "", "", workerActivity{}, func(*genai.Part) bool { return true })
+	if !errors.Is(err, ErrJudgeNoVerdict) {
+		t.Fatalf("err = %v, want errors.Is(err, ErrJudgeNoVerdict)", err)
+	}
+	if got := atomic.LoadInt32(&judge.calls); got != 3 {
+		t.Errorf("judge model called %d times, want exactly 3 (2 reads + the forced-close turn) - no nudge call should follow a forced close", got)
+	}
+}

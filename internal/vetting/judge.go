@@ -118,12 +118,14 @@ type verdict struct {
 // maxIters wires forcedVerdictCallback so the round's last allowed turn (or a repeated identical tool
 // call) forces a text-only verdict instead of silently exhausting the budget (#853). maxOutputTokens
 // caps the round's own reply tokens against a runaway generation loop; <= 0 leaves it uncapped (#889).
-type JudgeFactory func(sink *verdict, maxIters, maxOutputTokens int) (adkagent.Agent, *readCounter, error)
+// forced is set true by forcedVerdictCallback the moment it strips tools for a forced close - the
+// caller's own signal that this round already spent its last allowed turn (#1235).
+type JudgeFactory func(sink *verdict, forced *bool, maxIters, maxOutputTokens int, thinkingLevel string) (adkagent.Agent, *readCounter, error)
 
 // NewJudgeFactory: builds agentic judge with judgeModel, read-only tools, skillsets, and submit_verdict.
 func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []tool.Toolset) JudgeFactory {
 	behaviour := judgeBehaviour(len(readTools) > 0, len(skillsets) > 0)
-	return func(sink *verdict, maxIters, maxOutputTokens int) (adkagent.Agent, *readCounter, error) {
+	return func(sink *verdict, forced *bool, maxIters, maxOutputTokens int, thinkingLevel string) (adkagent.Agent, *readCounter, error) {
 		submit, err := newSubmitVerdictTool(sink)
 		if err != nil {
 			return nil, nil, err
@@ -141,8 +143,8 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 			},
 			Tools:                 judgeTools,
 			Toolsets:              skillsets,
-			GenerateContentConfig: judgeGenConfig(maxOutputTokens),
-			BeforeModelCallbacks:  []llmagent.BeforeModelCallback{forcedVerdictCallback(maxIters)},
+			GenerateContentConfig: judgeGenConfig(maxOutputTokens, thinkingLevel),
+			BeforeModelCallbacks:  []llmagent.BeforeModelCallback{forcedVerdictCallback(maxIters, forced)},
 		})
 		return a, reads, err
 	}
@@ -151,17 +153,38 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 // judgeGenConfig caps a judge/plan-judge round's own reply tokens - a
 // verdict is a few hundred tokens of JSON, but an ungoverned round can decode
 // tens of thousands looping (#889). <= 0 leaves the request uncapped.
-func judgeGenConfig(maxOutputTokens int) *genai.GenerateContentConfig {
-	// Low thinking: a verdict call is a few hundred tokens of JSON, not a
-	// research task - keeps reasoning from eating the whole output budget
-	// before the model ever reaches submit_verdict (#1235). Providers that
-	// ignore ThinkingConfig (the openai adapter maps it to reasoning_effort;
-	// others no-op) are unaffected.
-	cfg := &genai.GenerateContentConfig{ThinkingConfig: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow}}
+// thinkingLevel is opt-in via gates.judge.thinking_level ("low"/"medium"/"high");
+// "" (unset, the default) sends no ThinkingConfig at all, unchanged from before
+// #1235 - some OpenAI-compatible endpoints 400 on reasoning_effort for a
+// non-reasoning model, so this must never be forced on unconditionally.
+func judgeGenConfig(maxOutputTokens int, thinkingLevel string) *genai.GenerateContentConfig {
+	var cfg *genai.GenerateContentConfig
+	if tc := judgeThinkingConfig(thinkingLevel); tc != nil {
+		cfg = &genai.GenerateContentConfig{ThinkingConfig: tc}
+	}
 	if maxOutputTokens > 0 {
+		if cfg == nil {
+			cfg = &genai.GenerateContentConfig{}
+		}
 		cfg.MaxOutputTokens = int32(maxOutputTokens)
 	}
 	return cfg
+}
+
+// judgeThinkingConfig maps gates.judge.thinking_level to genai's enum; an
+// unrecognised or empty value (the default) means "send nothing" - config
+// validation is what actually rejects an unknown level.
+func judgeThinkingConfig(level string) *genai.ThinkingConfig {
+	switch level {
+	case "low":
+		return &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow}
+	case "medium":
+		return &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelMedium}
+	case "high":
+		return &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh}
+	default:
+		return nil
+	}
 }
 
 // judgeForceCloseInstruction: appended on the round's last allowed turn, or right after the judge
@@ -175,13 +198,19 @@ const judgeForceCloseInstruction = "\n\nSTOP - you are out of tool budget for th
 
 // forcedVerdictCallback strips all tools and appends judgeForceCloseInstruction on the round's last
 // allowed turn, or the turn right after the judge repeats an identical tool call (model stutter that
-// would otherwise burn the rest of the budget repeating itself, #853).
-func forcedVerdictCallback(maxIters int) llmagent.BeforeModelCallback {
+// would otherwise burn the rest of the budget repeating itself, #853). forced (may be nil) is set true
+// the moment tools are stripped - the round's own signal that this turn is tool-less, so callers must
+// not offer or demand a tool call afterward (#1235: nudging submit_verdict here contradicted this
+// same instruction in the same request).
+func forcedVerdictCallback(maxIters int, forced *bool) llmagent.BeforeModelCallback {
 	turn := 0
 	return func(_ adkagent.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
 		turn++
 		if turn < maxIters && !repeatsLastToolCall(req.Contents) {
 			return nil, nil
+		}
+		if forced != nil {
+			*forced = true
 		}
 		req.Tools = nil
 		if req.Config != nil {
@@ -704,7 +733,13 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	}
 
 	var sink verdict
-	judgeAgent, reads, err := factory(&sink, maxIters, cfg.JudgeMaxOutputTokens)
+	// forcedClose is flipped by forcedVerdictCallback the instant it strips
+	// tools for a forced close (turn budget spent, or a repeated tool call) -
+	// the round's own signal, not a re-derivation from our turn counter, which
+	// only reflects TurnComplete events already observed and can't see a
+	// forced close whose own (final, tool-less) turn is what's in flight (#1235).
+	var forcedClose bool
+	judgeAgent, reads, err := factory(&sink, &forcedClose, maxIters, cfg.JudgeMaxOutputTokens, cfg.JudgeThinkingLevel)
 	if err != nil {
 		return verdict{}, nil, fmt.Errorf("vetting: build judge agent: %w", err)
 	}
@@ -736,13 +771,12 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	sessionID := judgeSessionID(cfg.ChatID, "verdict")
 
 	var (
-		submitted      bool
-		turns          int
-		accum          strings.Builder
-		repeats        repeatLoopDetector
-		budgetExceeded bool
-		lastFinish     genai.FinishReason
-		lastOutTokens  int32
+		submitted     bool
+		turns         int
+		accum         strings.Builder
+		repeats       repeatLoopDetector
+		lastFinish    genai.FinishReason
+		lastOutTokens int32
 	)
 	// runTurn drives one jr.Run call to completion, shared across the initial
 	// turn and the submit_verdict nudge below - turns/submitted/accum/repeats
@@ -809,7 +843,6 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 					slog.Warn("judge round aborted: runaway repeat detected mid-generation",
 						"component", "vetting", "agent", cfg.Agent)
 				}
-				budgetExceeded = true
 				cancel()
 				break
 			}
@@ -832,9 +865,11 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	// no submit_verdict call, and that text didn't parse as a verdict, is
 	// often the analysis-complete/submission-wrong shape (#1235) rather than
 	// a stuck model - worth one direct ask before paying for a fresh session.
-	// Skipped once the round already exhausted its own turn budget above, since
-	// forcedVerdictCallback already forced (and tool-stripped) that last turn.
-	if !budgetExceeded && ctx.Err() == nil && strings.TrimSpace(accum.String()) != "" {
+	// Skipped once forcedVerdictCallback has already forced (and tool-stripped)
+	// a turn in this round - nudging "call submit_verdict" into a request that
+	// carries no tools, right after telling the model none are available,
+	// would just contradict that instruction (#1235 review).
+	if !forcedClose && ctx.Err() == nil && strings.TrimSpace(accum.String()) != "" {
 		nudge := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: judgeSubmitNudge}}}
 		if err := runTurn(nudge); err != nil {
 			return verdict{}, reads, err
