@@ -61,7 +61,7 @@ func TestRunLedgerRebuild_RegeneratesArtifactMeta(t *testing.T) {
 		t.Fatalf("seed drift: %v", err)
 	}
 
-	report, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false, false)
+	report, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false)
 	if err != nil {
 		t.Fatalf("RunLedgerRebuild: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestRunLedgerRebuild_DryRunWritesNothing(t *testing.T) {
 		t.Fatalf("seed drift: %v", err)
 	}
 
-	report, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, true, false)
+	report, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, true)
 	if err != nil {
 		t.Fatalf("RunLedgerRebuild: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestRunLedgerRebuild_RegeneratesSSETable(t *testing.T) {
 		t.Fatalf("AppendIntent n2 started: %v", err)
 	}
 
-	report, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false, false)
+	report, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false)
 	if err != nil {
 		t.Fatalf("RunLedgerRebuild: %v", err)
 	}
@@ -209,12 +209,15 @@ func TestRunLedgerRebuild_RegeneratesSSETable(t *testing.T) {
 	}
 }
 
-// TestRunLedgerRebuild_HealthyChatIsANoop is #1121's core regression: on a
-// chat whose artifact metadata and lifecycle rows ALREADY match the ledger,
-// --dry-run reports zero changes and a REAL rebuild changes nothing at all -
-// same row count, same row content, same artifact metadata, before and
-// after. This is the exact scenario that used to replace ~4000 chat_events
-// rows with 3 synthesized ones.
+// TestRunLedgerRebuild_HealthyChatIsANoop is #1121's core regression, updated
+// for #1144 P3: rebuild no longer diffs artifact metadata (that heuristic is
+// deleted - a watermark reset always re-writes every revision it finds), so
+// ArtifactRevisionsChanged now counts revisions PROCESSED, not revisions that
+// differed. What still must hold on a healthy chat is idempotence: the
+// content written is byte-identical to what was already there, and the SSE
+// table's row count and content are completely unchanged (only truly missing
+// lifecycle rows are ever inserted). This is the scenario that used to
+// replace ~4000 chat_events rows with 3 synthesized ones.
 func TestRunLedgerRebuild_HealthyChatIsANoop(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
@@ -223,7 +226,8 @@ func TestRunLedgerRebuild_HealthyChatIsANoop(t *testing.T) {
 	// A real artifact revision, saved normally - its stored kind/class/
 	// lineage is EXACTLY what recordstore wrote, so the fold agrees with it.
 	c := recordstore.New(artifacts, appName, userID, chatID).WithLedger(ls)
-	if _, _, err := c.SaveStructured(ctx, testKind, map[string]string{"hello": "world"}, "doc-1", recordstore.Lineage{Author: "tester"}); err != nil {
+	docID, _, err := c.SaveStructured(ctx, testKind, map[string]string{"hello": "world"}, "doc-1", recordstore.Lineage{Author: "tester"})
+	if err != nil {
 		t.Fatalf("SaveStructured: %v", err)
 	}
 
@@ -257,20 +261,20 @@ func TestRunLedgerRebuild_HealthyChatIsANoop(t *testing.T) {
 		t.Fatalf("seeded %d rows, want 4", len(before))
 	}
 
-	dry, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, true, false)
+	dry, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, true)
 	if err != nil {
 		t.Fatalf("RunLedgerRebuild dry-run: %v", err)
 	}
-	if dry.ArtifactRevisionsChanged != 0 || dry.SSERowsInserted != 0 {
-		t.Fatalf("dry-run on a healthy chat reported changes: %+v, want zero", dry)
+	if dry.ArtifactRevisionsChanged != 1 || dry.SSERowsInserted != 0 {
+		t.Fatalf("dry-run on a healthy chat = %+v, want 1 revision processed, 0 SSE rows inserted", dry)
 	}
 
-	real, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false, false)
+	real, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false)
 	if err != nil {
 		t.Fatalf("RunLedgerRebuild: %v", err)
 	}
-	if real.ArtifactRevisionsChanged != 0 || real.SSERowsInserted != 0 {
-		t.Fatalf("rebuild of a healthy chat reported changes: %+v, want zero", real)
+	if real.ArtifactRevisionsChanged != 1 || real.SSERowsInserted != 0 {
+		t.Fatalf("rebuild of a healthy chat = %+v, want 1 revision processed, 0 SSE rows inserted", real)
 	}
 
 	after, err := st.LoadChatEvents(ctx, chatID, 0)
@@ -284,6 +288,18 @@ func TestRunLedgerRebuild_HealthyChatIsANoop(t *testing.T) {
 		if before[i] != after[i] {
 			t.Fatalf("row %d changed:\nbefore=%+v\nafter=%+v", i, before[i], after[i])
 		}
+	}
+
+	raw, _, lineage, gotRev, ok, err := c.LatestWithMeta(ctx, docID)
+	if err != nil || !ok {
+		t.Fatalf("LatestWithMeta after rebuild: ok=%v err=%v", ok, err)
+	}
+	if gotRev != 1 || lineage.Author != "tester" {
+		t.Fatalf("rebuild changed a healthy artifact's metadata: rev=%d lineage=%+v", gotRev, lineage)
+	}
+	var doc map[string]string
+	if err := json.Unmarshal(raw, &doc); err != nil || doc["hello"] != "world" {
+		t.Fatalf("rebuild changed a healthy artifact's bytes: %s", raw)
 	}
 }
 
@@ -334,7 +350,7 @@ func TestRunLedgerRebuild_NodeAcrossTurnsIsStillANoop(t *testing.T) {
 		t.Fatalf("seeded %d rows, want 2", len(before))
 	}
 
-	dry, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, true, false)
+	dry, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, true)
 	if err != nil {
 		t.Fatalf("RunLedgerRebuild dry-run: %v", err)
 	}
@@ -342,7 +358,7 @@ func TestRunLedgerRebuild_NodeAcrossTurnsIsStillANoop(t *testing.T) {
 		t.Fatalf("dry-run reported %d pending inserts, want 0 (turn 1's stale node_failed must not count)", dry.SSERowsInserted)
 	}
 
-	real, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false, false)
+	real, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false)
 	if err != nil {
 		t.Fatalf("RunLedgerRebuild: %v", err)
 	}
@@ -405,7 +421,7 @@ func TestRunLedgerRebuild_InsertsMissingWithoutTouchingOthers(t *testing.T) {
 		t.Fatalf("LoadChatEvents before: %v", err)
 	}
 
-	report, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false, false)
+	report, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false)
 	if err != nil {
 		t.Fatalf("RunLedgerRebuild: %v", err)
 	}

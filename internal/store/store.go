@@ -135,6 +135,17 @@ type ChatEvent struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// ProjectionWatermark tracks how far one chat's projection (sse, artifact,
+// node) has folded the WAL (#1144 P3): the projection writer advances
+// FoldedSeq in the same transaction as its own write, so a restart resumes
+// the fold from here instead of a full re-fold or a diff-against-drift guess.
+type ProjectionWatermark struct {
+	ChatID     string    `gorm:"column:chat_id;primaryKey" json:"chat_id"`
+	Projection string    `gorm:"column:projection;primaryKey" json:"projection"`
+	FoldedSeq  int64     `gorm:"column:folded_seq" json:"folded_seq"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
 // DagNode stores the execution state of one DAG node.
 type DagNode struct {
 	NodeID        string `gorm:"primaryKey;column:node_id" json:"node_id"`
@@ -375,7 +386,7 @@ func New(kind, url string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{db: db}
-	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}, &GithubSnapshot{}, &GithubReviewBaseline{}, &GithubFixState{}, &GithubMergeIntent{}, &MemoryOp{}); err != nil {
+	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}, &GithubSnapshot{}, &GithubReviewBaseline{}, &GithubFixState{}, &GithubMergeIntent{}, &MemoryOp{}, &ProjectionWatermark{}); err != nil {
 		return nil, err
 	}
 	// database.NewSessionService below calls gorm.Open again against the SAME
@@ -977,6 +988,79 @@ func (s *Store) DeleteChatEvents(ctx context.Context, chatID string) error {
 // TrimChatEvents drops events at or below upToSeq (window long runs to replay ceiling).
 func (s *Store) TrimChatEvents(ctx context.Context, chatID string, upToSeq int64) error {
 	return s.db.WithContext(ctx).Where("chat_id = ? AND seq <= ?", chatID, upToSeq).Delete(&ChatEvent{}).Error
+}
+
+// InTx runs fn inside one transaction on s's underlying db - callers that
+// need a projection write and its watermark advance to commit atomically
+// (#1144 P3) use this plus InsertChatEventTx/SetProjectionWatermarkTx.
+func (s *Store) InTx(ctx context.Context, fn func(tx *gorm.DB) error) error {
+	return s.db.WithContext(ctx).Transaction(fn)
+}
+
+// InsertChatEventTx is InsertChatEvent against an existing transaction.
+func InsertChatEventTx(tx *gorm.DB, ev ChatEvent) error {
+	return tx.Create(&ev).Error
+}
+
+// GetProjectionWatermark returns projection's folded_seq for chatID, 0 if no
+// row exists yet (a fresh chat, or one never migrated - both correctly fold
+// from the start).
+func (s *Store) GetProjectionWatermark(ctx context.Context, chatID, projection string) (int64, error) {
+	var w ProjectionWatermark
+	err := s.db.WithContext(ctx).Where("chat_id = ? AND projection = ?", chatID, projection).First(&w).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, nil
+	}
+	return w.FoldedSeq, err
+}
+
+// SetProjectionWatermarkTx upserts (chatID, projection)'s folded_seq using
+// tx, so a caller can advance it in the SAME transaction as its own
+// projection write (#1144 P3) - pass s.DB() (or the tx it's already in).
+func SetProjectionWatermarkTx(tx *gorm.DB, chatID, projection string, foldedSeq int64) error {
+	return tx.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "chat_id"}, {Name: "projection"}},
+		DoUpdates: clause.AssignmentColumns([]string{"folded_seq", "updated_at"}),
+	}).Create(&ProjectionWatermark{ChatID: chatID, Projection: projection, FoldedSeq: foldedSeq, UpdatedAt: time.Now().UTC()}).Error
+}
+
+// SetProjectionWatermark upserts (chatID, projection)'s folded_seq outside
+// any caller-owned transaction - `quack ledger rebuild`'s own writes.
+func (s *Store) SetProjectionWatermark(ctx context.Context, chatID, projection string, foldedSeq int64) error {
+	return SetProjectionWatermarkTx(s.db.WithContext(ctx), chatID, projection, foldedSeq)
+}
+
+// ResetProjectionWatermark sets (chatID, projection) back to 0 - `quack
+// ledger rebuild`'s whole job post-#1144-P3: reset the watermark and let the
+// next fold repopulate it, instead of a --force wipe-and-replace.
+func (s *Store) ResetProjectionWatermark(ctx context.Context, chatID, projection string) error {
+	return SetProjectionWatermarkTx(s.db.WithContext(ctx), chatID, projection, 0)
+}
+
+// SeedProjectionWatermarks marks every chat that already has chat_events
+// rows as caught up through its OWN ledger history, so migrating an existing
+// deployment to watermark-gated folding never replays or duplicates SSE
+// events. It seeds with the ledger's own MAX(seq) for that chat, NOT
+// MAX(chat_events.seq): the table's Seq is a PER-RUN counter that resets on
+// every run while the ledger's Seq is per-chat-LIFETIME (see
+// runlog.LoadEvents's doc for why the two spaces are never comparable) - a
+// literal copy of the table's Seq would seed a lifetime watermark from a
+// per-run number, which is wrong on any chat that has run more than once.
+// "Caught up through the whole ledger so far" is the safe superset: this
+// chat's SSE rows already came from direct live writes, not a fold, so there
+// is nothing for a fold to replay into it. Idempotent (ON CONFLICT DO
+// NOTHING) - safe to call on every boot; a chat that already has a watermark
+// row (seeded before, or written by a real fold/projection write since) is
+// never touched.
+func (s *Store) SeedProjectionWatermarks(ctx context.Context) error {
+	return s.db.WithContext(ctx).Exec(`
+		INSERT INTO projection_watermarks (chat_id, projection, folded_seq, updated_at)
+		SELECT le.chat_id, 'sse', MAX(le.seq), now()
+		FROM ledger_entries le
+		WHERE le.chat_id IN (SELECT DISTINCT chat_id FROM chat_events)
+		GROUP BY le.chat_id
+		ON CONFLICT (chat_id, projection) DO NOTHING
+	`).Error
 }
 
 // staleNodeCeiling: dead-man's-switch for orphaned nodes. Generous (runs finish in minutes).
