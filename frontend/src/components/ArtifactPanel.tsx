@@ -304,7 +304,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   // cursor as it is NOW, while the effect only re-fires on a new primary.
   const currentRevRef = useRef(currentRev)
   currentRevRef.current = currentRev
-  const loadRevisions = useCallback(() => {
+  const loadRevisions = useCallback((opts?: { toLatest?: boolean }) => {
     if (!primaryId) { setRevisions([]); setRevIdx(null); return }
     const token = ++revisionsToken.current
     return api.listArtifactRevisions(chatId, primaryId)
@@ -314,8 +314,12 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
         const asc = toAscending(r.data ?? [])
         setRevisions(asc)
         // Keep the currently viewed revision across a refresh if it still
-        // exists; a fresh primary or a vanished revision lands on latest.
-        const want = currentRevRef.current
+        // exists; a fresh primary, a vanished revision, or an explicit
+        // toLatest (live-follow) lands on latest. toLatest is passed
+        // explicitly rather than via a ref, because a ref the render body
+        // also writes (currentRevRef) can be clobbered by a re-render that
+        // lands between the intent being set and this read.
+        const want = opts?.toLatest ? null : currentRevRef.current
         const wantIdx = want != null ? asc.findIndex(x => x.revision === want) : -1
         setRevIdx(wantIdx >= 0 ? wantIdx : asc.length - 1)
       })
@@ -469,10 +473,14 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
       seenSeqRef.current = ev.seq
       const rev = ev.revision
       if (rev && rev.nodeId === nodeId) {
+        // Only the list and the primary's own revisions refetch here; an
+        // expanded MoreItem for a non-primary artifact keeps its own
+        // revision list (fetched once on expand) and goes stale until
+        // collapsed/re-expanded - a deliberate scope boundary, not a bug.
         withScrollPreserved(load)
         if (rev.id === primaryIdRef.current) {
-          if (atLatestRef.current) currentRevRef.current = null
-          withScrollPreserved(loadRevisions)
+          const toLatest = atLatestRef.current
+          withScrollPreserved(() => loadRevisions({ toLatest }))
         }
       }
       const jr = ev.judgeRound

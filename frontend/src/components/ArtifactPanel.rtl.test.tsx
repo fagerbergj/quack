@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
-import { cleanup, render as rtlRender, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render as rtlRender, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactElement } from 'react'
 import { ArtifactPanel } from './ArtifactPanel'
@@ -465,6 +465,55 @@ describe('ArtifactPanel live SSE updates (#1114)', () => {
     // the panel is subscribed to, exactly as the real SSE stream would.
     planRevisions.push({ revision: 2, mime_type: 'text/markdown', size: PLAN_V2.length, kind: 'text', class: 'blob', lineage: { node_id: 'planner-1', round: 2, author: 'worker' } })
     FakeEventSource.last!.emit('artifact_revision', { id: 'text:plan', revision: 2, kind: 'text', node_id: 'planner-1', round: 2 })
+
+    expect(await screen.findByText('Revision 2 of 2')).toBeTruthy()
+    expect(await screen.findByRole('heading', { level: 1, name: 'Plan v2' })).toBeTruthy()
+  })
+
+  // Regression for the review's blocking finding on #1223: the ref-based
+  // "advance to latest" sentinel was clobbered by the render body whenever
+  // the list refetch's re-render landed before the revisions refetch read
+  // it. The test above can't observe that - a plain mock fetch resolves
+  // both requests in one microtask flush, before any re-render task runs.
+  // This one gates the list response behind the revisions response and
+  // forces a real re-render (via act) between them, reproducing the
+  // browser-only interleaving. Confirmed failing (stuck on "Revision 1 of
+  // 2") against the pre-fix `currentRevRef.current = null` sentinel;
+  // passes once the intent is carried as an explicit loadRevisions param.
+  it('advances to latest even when the list response and its re-render land before the revisions response', async () => {
+    stubLiveFixture()
+    const store = seededStore()
+    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan" nodeArtifactKind="text" onClose={() => {}} />, store)
+    expect(await screen.findByText('Revision 1 of 1')).toBeTruthy()
+
+    planRevisions.push({ revision: 2, mime_type: 'text/markdown', size: PLAN_V2.length, kind: 'text', class: 'blob', lineage: { node_id: 'planner-1', round: 2, author: 'worker' } })
+
+    let resolveList!: () => void
+    let resolveRevisions!: () => void
+    const listGate = new Promise<void>(r => { resolveList = r })
+    const revisionsGate = new Promise<void>(r => { resolveRevisions = r })
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    const baseImpl = fetchMock.getMockImplementation() as (input: RequestInfo | URL) => Promise<Response>
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = decodeURIComponent(input instanceof Request ? input.url : String(input))
+      if (url.endsWith('/artifacts')) { await listGate; return baseImpl(input) }
+      if (url.includes('/artifacts/text:plan/revisions')) { await revisionsGate; return baseImpl(input) }
+      return baseImpl(input)
+    })
+
+    FakeEventSource.last!.emit('artifact_revision', { id: 'text:plan', revision: 2, kind: 'text', node_id: 'planner-1', round: 2 })
+
+    // Let the list response land and its setSummaries re-render commit -
+    // reassigning the render-body ref on the old code - before the
+    // revisions response is allowed to resolve.
+    await act(async () => {
+      resolveList()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      resolveRevisions()
+    })
 
     expect(await screen.findByText('Revision 2 of 2')).toBeTruthy()
     expect(await screen.findByRole('heading', { level: 1, name: 'Plan v2' })).toBeTruthy()
