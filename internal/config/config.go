@@ -462,9 +462,13 @@ type ProviderModel struct {
 }
 
 type CompactionConfig struct {
-	Enabled            bool   `yaml:"enabled"`
-	Provider           string `yaml:"provider"`
-	Model              string `yaml:"model"`
+	Enabled  bool   `yaml:"enabled"`
+	Provider string `yaml:"provider"`
+	Model    string `yaml:"model"`
+	// Engine selects the compaction implementation: "quack" (default, the
+	// homegrown model-callback below) or "adk" (adk/v2's native runner-level
+	// compaction, spiked in issue #1185).
+	Engine             string `yaml:"engine"`
 	TokenThreshold     int    `yaml:"token_threshold"`
 	EventRetentionSize int    `yaml:"event_retention_size"`
 	// CompactionInterval is the ADK-style regular cadence trigger (in

@@ -1126,6 +1126,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			Summarizer:         agent.ResolveSummarizer(workerModel, fallbackSummarizer),
 			ContextWindow:      ac.ContextWindow,
 			Enabled:            true,
+			Engine:             compCfg.Engine,
 			Sessions:           sessions,
 			TokenThreshold:     compCfg.TokenThreshold,
 			EventRetentionSize: compCfg.EventRetentionSize,
@@ -1374,7 +1375,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				if err != nil {
 					return nil, nil, nil, nil, nil, err
 				}
-				srv, err := agent.Serve(wag, sessions, memSvc)
+				srv, err := agent.Serve(wag, sessions, memSvc, compactionFor(ac, wm))
 				if err != nil {
 					return nil, nil, nil, nil, nil, fmt.Errorf("a2a serve: %w", err)
 				}
