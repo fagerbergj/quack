@@ -467,7 +467,13 @@ func buildChangedFilesSection(act workerActivity, jail *workspace.Jail, userID, 
 
 const judgeCharsPerToken = 4 // bytes/4, same as compaction estimator
 
-const judgeOutputReserveTokens = 2_000 // reserved for judge's reply
+// judgeOutputReserveTokens: fallback reply-token reserve when Config.JudgeMaxOutputTokens
+// is unset. When it IS set, judgeCharBudget reserves that instead - a mismatch
+// let prod's config (window 65536, max_output_tokens 8192) pack the prompt up
+// to window-2000 and then ask for up to 8192 reply tokens, ~6K over the slot,
+// truncating the judge mid-thought with zero tool call and an unparseable
+// empty accum (#1215 - measured a 104s single-turn stall, no verdict, no retry benefit).
+const judgeOutputReserveTokens = 2_000
 
 // defaultJudgeContextWindow: fallback when Config.JudgeContextWindow is unset (0).
 const defaultJudgeContextWindow = 32_768
@@ -481,7 +487,11 @@ func judgeCharBudget(cfg Config) int {
 	if window <= 0 {
 		window = defaultJudgeContextWindow
 	}
-	tokens := window - judgeOutputReserveTokens
+	reserve := judgeOutputReserveTokens
+	if cfg.JudgeMaxOutputTokens > 0 {
+		reserve = cfg.JudgeMaxOutputTokens
+	}
+	tokens := window - reserve
 	if tokens <= 0 {
 		tokens = window
 	}
@@ -567,7 +577,7 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	// so this returns unconditionally rather than falling into that path.
 	if errors.Is(err, ErrJudgeNoVerdict) && ctx.Err() == nil {
 		slog.Warn("judge ended without a verdict; retrying the round once with a fresh session",
-			"component", "vetting", "agent", cfg.Agent)
+			"component", "vetting", "agent", cfg.Agent, "chat", cfg.ChatID)
 		v, readc, err = runJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, known, act, emit)
 		if err == nil {
 			v = finishJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, known, act, emit, v, readc)
