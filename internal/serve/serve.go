@@ -650,12 +650,14 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		slog.Info("extension supplies delivery", "component", "startup", "extension", delivererName)
 	}
 	if ledgerStore != nil {
-		// #1144 P3: seed a caught-up watermark for any chat that already has
-		// SSE rows, before the first watermark-gated fold ever runs on it -
-		// see SeedProjectionWatermarks's doc for why this can't be a literal
-		// MAX(chat_events.seq) copy. Cheap and idempotent; runs every boot.
+		// #1144 P3: seed a caught-up watermark (sse, artifact, node_state)
+		// for any chat that already has that projection's data, before the
+		// first watermark-gated write ever runs on it - see
+		// SeedProjectionWatermarks's doc for why this can't be a literal
+		// MAX(seq) copy of the projection's own table. Cheap and idempotent;
+		// runs every boot.
 		if err := st.SeedProjectionWatermarks(ctx); err != nil {
-			slog.Warn("projection watermark seeding failed; a first-time fold may re-derive SSE history for old chats", "component", "startup", "err", err)
+			slog.Warn("projection watermark seeding failed; a first-time fold may re-derive history for old chats", "component", "startup", "err", err)
 		}
 		// Boot-time recovery: settle intents whose projection write never
 		// happened (a crash between WAL append and row write) before any run starts.

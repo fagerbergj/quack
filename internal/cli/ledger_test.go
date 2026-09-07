@@ -453,6 +453,51 @@ func TestRunLedgerRebuild_InsertsMissingWithoutTouchingOthers(t *testing.T) {
 	}
 }
 
+// TestRunLedgerRebuild_RegeneratesNodeState is #1144 P3's node_state side:
+// a node that reached "done" in the ledger but whose DagNode row still says
+// "running" (a crash between the terminal WAL entry and the row write) gets
+// its row corrected by rebuild, atomically with the node_state watermark.
+func TestRunLedgerRebuild_RegeneratesNodeState(t *testing.T) {
+	ctx := context.Background()
+	st, ls, artifacts := newTestStack(t)
+	const chatID, planID = "chat-1", "plan-1"
+
+	if err := st.SaveDagPlan(ctx, chatID, planID, "turn-1", "{}"); err != nil {
+		t.Fatalf("SaveDagPlan: %v", err)
+	}
+	if err := st.UpsertDagNode(ctx, store.DagNode{NodeID: "n1", PlanID: planID, Status: "running"}); err != nil {
+		t.Fatalf("UpsertDagNode: %v", err)
+	}
+	payload, err := json.Marshal(struct {
+		NodeID string `json:"node_id"`
+		Turn   string `json:"turn"`
+	}{NodeID: "n1", Turn: "turn-1"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindNodeStarted, Payload: payload}); err != nil {
+		t.Fatalf("AppendIntent started: %v", err)
+	}
+	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindNodeDone, Payload: payload}); err != nil {
+		t.Fatalf("AppendIntent done: %v", err)
+	}
+
+	report, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false)
+	if err != nil {
+		t.Fatalf("RunLedgerRebuild: %v", err)
+	}
+	if report.NodeStatesChanged != 1 {
+		t.Fatalf("NodeStatesChanged = %d, want 1", report.NodeStatesChanged)
+	}
+	node, err := st.GetDagNode(ctx, planID, "n1")
+	if err != nil || node == nil {
+		t.Fatalf("GetDagNode: node=%v err=%v", node, err)
+	}
+	if node.Status != "done" {
+		t.Fatalf("node status = %q, want done", node.Status)
+	}
+}
+
 // seedEvent inserts one real ChatEvent row directly - a stand-in for what a
 // live Publisher would have written, so tests can set up a table state
 // without driving an actual run.

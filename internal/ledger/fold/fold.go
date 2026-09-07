@@ -259,13 +259,11 @@ func applyEntries(entries []ledger.Entry) *Result {
 }
 
 // Fold reads every entry for chatID from fromSeq (in seq-order pages) and
-// folds them into Result.
+// folds them into Result. A fromSeq=0 convenience over Apply, the one fold
+// entry point (#1144 P3) - every catch-up (SSE, artifact, node_state) reads
+// from a watermark through Apply instead of its own loop.
 func Fold(ctx context.Context, store ledger.LedgerStore, chatID string, fromSeq int64) (*Result, error) {
-	entries, err := readAll(ctx, store, chatID, fromSeq)
-	if err != nil {
-		return nil, err
-	}
-	return applyEntries(entries), nil
+	return Apply(ctx, store, chatID, nil, fromSeq-1)
 }
 
 // Apply folds only the entries newer than from (a projection's watermark)

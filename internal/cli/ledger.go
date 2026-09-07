@@ -15,6 +15,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"gorm.io/gorm"
+
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledger/fold"
@@ -49,6 +51,7 @@ type LedgerRebuildReport struct {
 	ArtifactRevisionsChanged int      `json:"artifact_revisions_changed"`
 	ArtifactUpdateErrors     []string `json:"artifact_update_errors,omitempty"`
 	SSERowsInserted          int      `json:"sse_rows_inserted"`
+	NodeStatesChanged        int      `json:"node_states_changed"`
 }
 
 // RunLedgerRebuild resets chatID's watermarks to 0 and folds: every artifact
@@ -60,14 +63,13 @@ type LedgerRebuildReport struct {
 // resetting anything.
 func RunLedgerRebuild(ctx context.Context, ls ledger.LedgerStore, st *store.Store, artifacts *store.TurnAwareService, chatID string, dryRun bool) (*LedgerRebuildReport, error) {
 	if !dryRun {
-		if err := st.ResetProjectionWatermark(ctx, chatID, "artifact"); err != nil {
-			return nil, fmt.Errorf("ledger rebuild: reset artifact watermark for chat %q: %w", chatID, err)
-		}
-		if err := st.ResetProjectionWatermark(ctx, chatID, "sse"); err != nil {
-			return nil, fmt.Errorf("ledger rebuild: reset sse watermark for chat %q: %w", chatID, err)
+		for _, projection := range []string{"artifact", "sse", "node_state"} {
+			if err := st.ResetProjectionWatermark(ctx, chatID, projection); err != nil {
+				return nil, fmt.Errorf("ledger rebuild: reset %s watermark for chat %q: %w", projection, chatID, err)
+			}
 		}
 	}
-	res, err := fold.Fold(ctx, ls, chatID, 0)
+	res, err := fold.Apply(ctx, ls, chatID, nil, 0)
 	if err != nil {
 		return nil, fmt.Errorf("ledger rebuild: fold chat %q: %w", chatID, err)
 	}
@@ -91,8 +93,53 @@ func RunLedgerRebuild(ctx context.Context, ls ledger.LedgerStore, st *store.Stor
 		}
 	}
 	if !dryRun {
+		// Artifact rows live behind the ADK artifact.Service, which may be a
+		// wholly separate Postgres connection from this Store's own db (a
+		// dedicated NewArtifactService URL) - unlike SSE/node_state below,
+		// there is no single transaction that can span both, so the
+		// watermark advance is sequential-after, not atomic-with, the row
+		// writes. A crash in the gap just means the next rebuild reprocesses
+		// revisions it already wrote - UpdateArtifactMeta is an
+		// unconditional overwrite, so that's a harmless no-op re-write, not
+		// a correctness bug.
 		if err := st.SetProjectionWatermark(ctx, chatID, "artifact", res.LastSeq); err != nil {
 			return report, fmt.Errorf("ledger rebuild: advance artifact watermark for chat %q: %w", chatID, err)
+		}
+	}
+
+	if !dryRun {
+		planID, perr := st.GetLatestDagPlan(ctx, chatID)
+		if perr != nil {
+			return report, fmt.Errorf("ledger rebuild: latest plan for chat %q: %w", chatID, perr)
+		}
+		if planID != nil {
+			nodeIDs := make([]string, 0, len(res.Nodes))
+			for id := range res.Nodes {
+				nodeIDs = append(nodeIDs, id)
+			}
+			sort.Strings(nodeIDs) // deterministic report order
+			err = st.InTx(ctx, func(tx *gorm.DB) error {
+				for _, id := range nodeIDs {
+					n := res.Nodes[id]
+					if n.TerminalStatus == "" {
+						continue // no terminal event yet - nothing this fold can safely assert
+					}
+					if werr := store.UpsertNodeTerminalStatusTx(tx, planID.ID, n.NodeID, n.TerminalStatus); werr != nil {
+						return fmt.Errorf("node %s: %w", n.NodeID, werr)
+					}
+					report.NodeStatesChanged++
+				}
+				return store.SetProjectionWatermarkTx(tx, chatID, "node_state", res.LastSeq)
+			})
+			if err != nil {
+				return report, fmt.Errorf("ledger rebuild: write node_state for chat %q: %w", chatID, err)
+			}
+		}
+	} else {
+		for _, n := range res.Nodes {
+			if n.TerminalStatus != "" {
+				report.NodeStatesChanged++
+			}
 		}
 	}
 
@@ -129,15 +176,18 @@ func RunLedgerRebuild(ctx context.Context, ls ledger.LedgerStore, st *store.Stor
 	report.SSERowsInserted = len(missing)
 	if !dryRun {
 		now := time.Now().UTC()
-		for _, ce := range missing {
-			maxSeq++
-			ce.Seq, ce.CreatedAt = maxSeq, now
-			if err := st.InsertChatEvent(ctx, ce); err != nil {
-				return report, fmt.Errorf("ledger rebuild: insert SSE row for chat %q: %w", chatID, err)
+		err = st.InTx(ctx, func(tx *gorm.DB) error {
+			for _, ce := range missing {
+				maxSeq++
+				ce.Seq, ce.CreatedAt = maxSeq, now
+				if werr := store.InsertChatEventTx(tx, ce); werr != nil {
+					return werr
+				}
 			}
-		}
-		if err := st.SetProjectionWatermark(ctx, chatID, "sse", res.LastSeq); err != nil {
-			return report, fmt.Errorf("ledger rebuild: advance sse watermark for chat %q: %w", chatID, err)
+			return store.SetProjectionWatermarkTx(tx, chatID, "sse", res.LastSeq)
+		})
+		if err != nil {
+			return report, fmt.Errorf("ledger rebuild: write sse rows for chat %q: %w", chatID, err)
 		}
 	}
 	return report, nil
@@ -149,8 +199,8 @@ func FormatLedgerRebuildReport(r *LedgerRebuildReport) string {
 	if r.DryRun {
 		verb = "would rebuild"
 	}
-	s := fmt.Sprintf("%s chat %s: %d artifact revision(s) %s, %d SSE row(s) %s (inserted only - no row was touched or deleted)\n",
-		verb, r.ChatID, r.ArtifactRevisionsChanged, verbPast(r.DryRun), r.SSERowsInserted, verbPast(r.DryRun))
+	s := fmt.Sprintf("%s chat %s: %d artifact revision(s) %s, %d SSE row(s) %s (inserted only - no row was touched or deleted), %d node state(s) %s\n",
+		verb, r.ChatID, r.ArtifactRevisionsChanged, verbPast(r.DryRun), r.SSERowsInserted, verbPast(r.DryRun), r.NodeStatesChanged, verbPast(r.DryRun))
 	for _, e := range r.ArtifactUpdateErrors {
 		s += "  error: " + e + "\n"
 	}
@@ -352,7 +402,7 @@ func RunLedgerRecover(ctx context.Context, ls ledger.LedgerStore, chatID string,
 	if p.ArtifactRowExists == nil {
 		return report, nil
 	}
-	res, err := fold.Fold(ctx, ls, chatID, 0)
+	res, err := fold.Apply(ctx, ls, chatID, nil, 0)
 	if err != nil {
 		return nil, fmt.Errorf("ledger recover: fold chat %q: %w", chatID, err)
 	}

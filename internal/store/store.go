@@ -1030,6 +1030,19 @@ func (s *Store) SetProjectionWatermark(ctx context.Context, chatID, projection s
 	return SetProjectionWatermarkTx(s.db.WithContext(ctx), chatID, projection, foldedSeq)
 }
 
+// UpsertNodeTerminalStatusTx sets a node's terminal status (done/failed)
+// inside tx, bypassing SetNodeStatus's transition machine - `quack ledger
+// rebuild`'s node_state reconciliation write (#1144 P3), not a live
+// lifecycle transition. Creates the row if the crash that orphaned this
+// watermark also lost it - same lossy-reconstruction ceiling as
+// fold.NodeState (only status is known, not the row's other columns).
+func UpsertNodeTerminalStatusTx(tx *gorm.DB, planID, nodeID, status string) error {
+	return tx.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "plan_id"}, {Name: "node_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"status"}),
+	}).Create(&DagNode{PlanID: planID, NodeID: nodeID, Status: status}).Error
+}
+
 // ResetProjectionWatermark sets (chatID, projection) back to 0 - `quack
 // ledger rebuild`'s whole job post-#1144-P3: reset the watermark and let the
 // next fold repopulate it, instead of a --force wipe-and-replace.
@@ -1052,15 +1065,35 @@ func (s *Store) ResetProjectionWatermark(ctx context.Context, chatID, projection
 // NOTHING) - safe to call on every boot; a chat that already has a watermark
 // row (seeded before, or written by a real fold/projection write since) is
 // never touched.
+// Same seed shape for "artifact" (already-materialized artifact rows) and
+// "node_state" (already-materialized DagNode rows) as for "sse" - each marks
+// pre-existing data "caught up through the whole ledger so far" so the first
+// watermark-gated write for that projection never re-derives or duplicates
+// it. All three assume ledger_entries lives in this Store's own database
+// (true of every deployment today - a separate ledger Postgres would just
+// make this INSERT a no-op error, Warn-logged by the caller, never fatal).
 func (s *Store) SeedProjectionWatermarks(ctx context.Context) error {
-	return s.db.WithContext(ctx).Exec(`
-		INSERT INTO projection_watermarks (chat_id, projection, folded_seq, updated_at)
-		SELECT le.chat_id, 'sse', MAX(le.seq), now()
-		FROM ledger_entries le
-		WHERE le.chat_id IN (SELECT DISTINCT chat_id FROM chat_events)
-		GROUP BY le.chat_id
-		ON CONFLICT (chat_id, projection) DO NOTHING
-	`).Error
+	seeds := []struct {
+		projection, fromTable string
+	}{
+		{"sse", "(SELECT DISTINCT chat_id FROM chat_events)"},
+		{"artifact", "(SELECT DISTINCT session_id AS chat_id FROM artifacts)"},
+		{"node_state", "(SELECT DISTINCT dp.chat_id FROM dag_nodes dn JOIN dag_plans dp ON dn.plan_id = dp.id)"},
+	}
+	for _, sd := range seeds {
+		err := s.db.WithContext(ctx).Exec(`
+			INSERT INTO projection_watermarks (chat_id, projection, folded_seq, updated_at)
+			SELECT le.chat_id, ?, MAX(le.seq), now()
+			FROM ledger_entries le
+			WHERE le.chat_id IN `+sd.fromTable+`
+			GROUP BY le.chat_id
+			ON CONFLICT (chat_id, projection) DO NOTHING
+		`, sd.projection).Error
+		if err != nil {
+			return fmt.Errorf("store: seed %s projection watermark: %w", sd.projection, err)
+		}
+	}
+	return nil
 }
 
 // staleNodeCeiling: dead-man's-switch for orphaned nodes. Generous (runs finish in minutes).
