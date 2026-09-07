@@ -50,6 +50,16 @@ func (f *fakeLedger) AppendIntent(_ context.Context, e ledger.Entry) (int64, err
 		f.failNext = false
 		return 0, errors.New("fakeLedger: forced AppendIntent failure")
 	}
+	// Idempotency checked BEFORE parent-conflict, matching MemStore/PGStore
+	// (#1237 review: the reverse order here meant a same-content retry never
+	// exercised the DuplicateIntentError branch at all).
+	if e.IdempotencyKey != "" {
+		for _, ex := range f.entries[e.ChatID] {
+			if ex.IdempotencyKey == e.IdempotencyKey {
+				return 0, &ledger.DuplicateIntentError{Existing: ex}
+			}
+		}
+	}
 	if e.Kind == ledger.KindArtifactRevision {
 		var p struct {
 			ParentRevision int64 `json:"parent_revision"`
@@ -65,13 +75,6 @@ func (f *fakeLedger) AppendIntent(_ context.Context, e ledger.Entry) (int64, err
 			_ = json.Unmarshal(ex.Payload, &exp)
 			if exp.ParentRevision == p.ParentRevision {
 				return 0, ledger.ErrStaleParent
-			}
-		}
-	}
-	if e.IdempotencyKey != "" {
-		for _, ex := range f.entries[e.ChatID] {
-			if ex.IdempotencyKey == e.IdempotencyKey {
-				return 0, &ledger.DuplicateIntentError{Existing: ex}
 			}
 		}
 	}
@@ -768,8 +771,12 @@ func TestSaveRowFailureAfterAppendSelfHeals(t *testing.T) {
 // lying about having saved.
 func TestSaveRetryAfterPartialSave_CompletesOrphanedDuplicate(t *testing.T) {
 	svc := &failOnceSaveService{Service: artifact.InMemoryService(), failCall: 1}
-	fl := newFakeLedger()
-	c := New(svc, "quack", "user1", "chat1").WithLedger(fl)
+	// ledger.NewMemStore(), not the local fakeLedger double: MemStore checks
+	// idempotency before parent-conflict, same order as PGStore, so this
+	// actually exercises the DuplicateIntentError branch under test (#1237
+	// review: the fake's old, reversed check order meant it never did).
+	ls := ledger.NewMemStore()
+	c := New(svc, "quack", "user1", "chat1").WithLedger(ls)
 	ctx := context.Background()
 
 	if _, _, err := c.SaveBlob(ctx, "test.blob", []byte("same"), "text/plain", "doc:dup-orphan", Lineage{}); err == nil {
@@ -788,6 +795,41 @@ func TestSaveRetryAfterPartialSave_CompletesOrphanedDuplicate(t *testing.T) {
 	raw, storeRev, ok, err := c.Latest(ctx, id)
 	if err != nil || !ok || storeRev != 1 || string(raw) != "same" {
 		t.Fatalf("Latest after the retry = %q rev=%d ok=%v err=%v, want the row actually written at revision 1", raw, storeRev, ok, err)
+	}
+}
+
+// TestSaveRetryAfterPartialSave_ForeignAdoptionFailsClosed is the #1237
+// review fix: LoadVersion proving a row exists at the duplicate's revision
+// does NOT prove it holds THIS writer's content - a different writer can
+// adopt the same orphaned slot first (saveAtOrAdopt) with different bytes.
+// Writer A's same-content retry must get a distinct, named mismatch error,
+// never be handed writer B's content under a false "already recorded".
+func TestSaveRetryAfterPartialSave_ForeignAdoptionFailsClosed(t *testing.T) {
+	svc := &failOnceSaveService{Service: artifact.InMemoryService(), failCall: 1}
+	ls := ledger.NewMemStore()
+	c := New(svc, "quack", "user1", "chat1").WithLedger(ls)
+	ctx := context.Background()
+
+	// Writer A partial-saves: AppendIntent lands, saveRow crashes.
+	if _, _, err := c.SaveBlob(ctx, "test.blob", []byte("a-content"), "text/plain", "doc:foreign-adopt", Lineage{}); err == nil {
+		t.Fatal("expected writer A's first save (forced saveRow failure) to error")
+	}
+	// Writer B adopts the orphaned slot with DIFFERENT content.
+	id, bRev, err := c.SaveBlob(ctx, "test.blob", []byte("b-content"), "text/plain", "doc:foreign-adopt", Lineage{})
+	if err != nil || bRev != 1 {
+		t.Fatalf("writer B's adopting save: rev %d, %v, want it to adopt revision 1", bRev, err)
+	}
+	// Writer A retries with its ORIGINAL content: same idempotency key as
+	// its crashed attempt, but revision 1 now belongs to writer B.
+	if _, _, err := c.SaveBlob(ctx, "test.blob", []byte("a-content"), "text/plain", "doc:foreign-adopt", Lineage{}); err == nil {
+		t.Fatal("writer A's retry succeeded despite revision 1 holding writer B's content")
+	} else if !strings.Contains(err.Error(), "content differs") {
+		t.Fatalf("writer A's retry error = %v, want it to name the content mismatch", err)
+	}
+	// Revision 1 still holds writer B's content - never silently clobbered.
+	raw, _, ok, err := c.Latest(ctx, id)
+	if err != nil || !ok || string(raw) != "b-content" {
+		t.Fatalf("Latest after the failed-closed retry = %q ok=%v err=%v, want writer B's content untouched", raw, ok, err)
 	}
 }
 

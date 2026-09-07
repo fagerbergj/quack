@@ -9,6 +9,7 @@
 package recordstore
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -340,7 +341,15 @@ func (c *Client) saveAt(ctx context.Context, id, kind string, class Class, mime 
 		// used to report success with no row). Verify first; an orphaned
 		// duplicate is completed the same way saveAtOrAdopt completes any
 		// other orphan, never reported as a no-op without a row.
-		if _, ok, lerr := c.LoadVersion(ctx, id, p.Revision); lerr == nil && ok {
+		if existing, ok, lerr := c.LoadVersion(ctx, id, p.Revision); lerr == nil && ok {
+			// The row can exist WITHOUT matching our content: a different
+			// writer may have adopted this same orphaned slot first (#1237
+			// review). Comparing bytes, not just presence, is what makes this
+			// actually "identical content already recorded" rather than a
+			// silent handoff of someone else's data under our name.
+			if !bytes.Equal(existing, data) {
+				return 0, fmt.Errorf("recordstore: duplicate intent for %s matched idempotency key but revision %d's content differs - a different writer already adopted this slot", id, p.Revision)
+			}
 			slog.Info("recordstore: save skipped, identical content already recorded", "component", "recordstore", "id", id, "kind", kind, "revision", p.Revision)
 			return p.Revision, nil
 		}
