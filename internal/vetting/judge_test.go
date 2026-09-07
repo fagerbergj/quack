@@ -1353,3 +1353,81 @@ func TestCommitHygieneEvidenceSection(t *testing.T) {
 		t.Errorf("all-named files should yield no section, got %q", got)
 	}
 }
+
+// garbledThenSubmitsJudge answers with unparseable plain text on its first
+// turn (the #1235 attempt-2 shape: analysis complete, submission wrong), then
+// calls submit_verdict once nudged.
+type garbledThenSubmitsJudge struct{ calls int32 }
+
+func (j *garbledThenSubmitsJudge) Name() string { return "garbled-then-submits-judge" }
+
+func (j *garbledThenSubmitsJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		n := atomic.AddInt32(&j.calls, 1)
+		if n == 1 {
+			yield(stubText(`{"score": 3, "criteria": {"constructive_actionable": "reason": "garbled"}}`), nil)
+			return
+		}
+		yield(stubCall(submitVerdictTool, map[string]any{"score": 0.9, "feedback": "submitted on the nudge"}), nil)
+	}
+}
+
+// TestRunJudgeAgent_SubmitNudgeRecoversGarbledText is #1235's fix: a turn
+// that ends with unparseable text and no submit_verdict call gets one
+// in-session nudge before the fresh-session retry, and a judge that submits
+// on the nudge must not pay for a fresh round at all.
+func TestRunJudgeAgent_SubmitNudgeRecoversGarbledText(t *testing.T) {
+	judge := &garbledThenSubmitsJudge{}
+	factory := NewJudgeFactory(judge, nil, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6}
+
+	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	if err != nil {
+		t.Fatalf("runJudgeAgent: %v", err)
+	}
+	if v.Score != 0.9 {
+		t.Errorf("verdict score = %v, want 0.9 (recovered via the in-session nudge)", v.Score)
+	}
+	if got := atomic.LoadInt32(&judge.calls); got != 2 {
+		t.Errorf("judge model called %d times, want 2 (garbled text + the nudge) - no fresh-session retry should have run", got)
+	}
+}
+
+// neverSubmitsTextOnlyJudge always answers with the same unparseable plain
+// text and never calls submit_verdict, in any round - the nudge must not
+// manufacture a verdict out of a model that genuinely never submits.
+type neverSubmitsTextOnlyJudge struct{ roundsStarted int32 }
+
+func (j *neverSubmitsTextOnlyJudge) Name() string { return "never-submits-text-only-judge" }
+
+func (j *neverSubmitsTextOnlyJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		// A text-only judge never adds a FunctionCall to the session, so
+		// isFreshRound (which looks for one) can't tell "new session" from
+		// "the in-session nudge continuing this same session" - only a brand
+		// new session starts from just the one prompt message.
+		if len(req.Contents) == 1 {
+			atomic.AddInt32(&j.roundsStarted, 1)
+		}
+		yield(stubText(`{"score": "not-parseable-`), nil)
+	}
+}
+
+// TestRunJudgeAgent_SubmitNudgeExhaustedStillNoVerdict proves the nudge is
+// bounded: a judge that never submits still ends in ErrJudgeNoVerdict after
+// the nudge AND the existing fresh-session retry, no more.
+func TestRunJudgeAgent_SubmitNudgeExhaustedStillNoVerdict(t *testing.T) {
+	judge := &neverSubmitsTextOnlyJudge{}
+	factory := NewJudgeFactory(judge, nil, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6}
+
+	_, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	if !errors.Is(err, ErrJudgeNoVerdict) {
+		t.Fatalf("err = %v, want errors.Is(err, ErrJudgeNoVerdict)", err)
+	}
+	if got := atomic.LoadInt32(&judge.roundsStarted); got != 2 {
+		t.Errorf("rounds started = %d, want 2 (the original round, nudged in-session, + exactly one fresh-session retry)", got)
+	}
+}

@@ -152,10 +152,16 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 // verdict is a few hundred tokens of JSON, but an ungoverned round can decode
 // tens of thousands looping (#889). <= 0 leaves the request uncapped.
 func judgeGenConfig(maxOutputTokens int) *genai.GenerateContentConfig {
-	if maxOutputTokens <= 0 {
-		return nil
+	// Low thinking: a verdict call is a few hundred tokens of JSON, not a
+	// research task - keeps reasoning from eating the whole output budget
+	// before the model ever reaches submit_verdict (#1235). Providers that
+	// ignore ThinkingConfig (the openai adapter maps it to reasoning_effort;
+	// others no-op) are unaffected.
+	cfg := &genai.GenerateContentConfig{ThinkingConfig: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow}}
+	if maxOutputTokens > 0 {
+		cfg.MaxOutputTokens = int32(maxOutputTokens)
 	}
-	return &genai.GenerateContentConfig{MaxOutputTokens: int32(maxOutputTokens)}
+	return cfg
 }
 
 // judgeForceCloseInstruction: appended on the round's last allowed turn, or right after the judge
@@ -727,80 +733,129 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 		}
 	}
 	content := &genai.Content{Role: "user", Parts: parts}
+	sessionID := judgeSessionID(cfg.ChatID, "verdict")
 
 	var (
-		submitted bool
-		turns     int
-		accum     strings.Builder
-		repeats   repeatLoopDetector
+		submitted      bool
+		turns          int
+		accum          strings.Builder
+		repeats        repeatLoopDetector
+		budgetExceeded bool
+		lastFinish     genai.FinishReason
+		lastOutTokens  int32
 	)
-	for ev, err := range jr.Run(runCtx, "judge", judgeSessionID(cfg.ChatID, "verdict"), content, adkagent.RunConfig{}) {
-		if err != nil {
-			return verdict{}, reads, err
-		}
-		if ev == nil || ev.Content == nil {
-			continue
-		}
-		for _, p := range ev.Content.Parts {
-			if p == nil {
+	// runTurn drives one jr.Run call to completion, shared across the initial
+	// turn and the submit_verdict nudge below - turns/submitted/accum/repeats
+	// carry state across both, so the nudge counts against the same maxIters
+	// budget rather than getting one for free.
+	runTurn := func(turnContent *genai.Content) error {
+		for ev, err := range jr.Run(runCtx, "judge", sessionID, turnContent, adkagent.RunConfig{}) {
+			if err != nil {
+				return err
+			}
+			if ev == nil {
 				continue
 			}
-			switch {
-			case p.FunctionCall != nil && p.FunctionCall.Name == submitVerdictTool:
-				// suppress from generic tool-call activity; success is confirmed
-				// on the matching FunctionResponse below - a schema-rejected or
-				// garbled call (e.g. truncated by the output cap) must not be
-				// mistaken for a submitted verdict (#889).
-			case p.FunctionResponse != nil && p.FunctionResponse.Name == submitVerdictTool:
-				if _, failed := p.FunctionResponse.Response["error"]; !failed {
-					submitted = true // handler ran; sink is populated
+			lastFinish = ev.FinishReason
+			if ev.UsageMetadata != nil {
+				lastOutTokens = ev.UsageMetadata.CandidatesTokenCount
+			}
+			if ev.Content == nil {
+				continue
+			}
+			for _, p := range ev.Content.Parts {
+				if p == nil {
+					continue
 				}
-			case p.Thought && p.Text != "":
-				repeats.observe(p.Text)
-				if !emit(stream.ThinkingPart(p.Text)) {
-					return verdict{}, reads, context.Canceled
-				}
-			case p.FunctionCall != nil:
-				if !emit(&genai.Part{FunctionCall: p.FunctionCall}) {
-					return verdict{}, reads, context.Canceled
-				}
-			case p.FunctionResponse != nil:
-				if !emit(&genai.Part{FunctionResponse: p.FunctionResponse}) {
-					return verdict{}, reads, context.Canceled
-				}
-			case p.Text != "":
-				// Local model emits reasoning as plain text, not Thought parts.
-				accum.WriteString(p.Text)
-				repeats.observe(p.Text)
-				if !emit(stream.ThinkingPart(p.Text)) {
-					return verdict{}, reads, context.Canceled
+				switch {
+				case p.FunctionCall != nil && p.FunctionCall.Name == submitVerdictTool:
+					// suppress from generic tool-call activity; success is confirmed
+					// on the matching FunctionResponse below - a schema-rejected or
+					// garbled call (e.g. truncated by the output cap) must not be
+					// mistaken for a submitted verdict (#889).
+				case p.FunctionResponse != nil && p.FunctionResponse.Name == submitVerdictTool:
+					if _, failed := p.FunctionResponse.Response["error"]; !failed {
+						submitted = true // handler ran; sink is populated
+					}
+				case p.Thought && p.Text != "":
+					repeats.observe(p.Text)
+					if !emit(stream.ThinkingPart(p.Text)) {
+						return context.Canceled
+					}
+				case p.FunctionCall != nil:
+					if !emit(&genai.Part{FunctionCall: p.FunctionCall}) {
+						return context.Canceled
+					}
+				case p.FunctionResponse != nil:
+					if !emit(&genai.Part{FunctionResponse: p.FunctionResponse}) {
+						return context.Canceled
+					}
+				case p.Text != "":
+					// Local model emits reasoning as plain text, not Thought parts.
+					accum.WriteString(p.Text)
+					repeats.observe(p.Text)
+					if !emit(stream.ThinkingPart(p.Text)) {
+						return context.Canceled
+					}
 				}
 			}
-		}
-		if ev.TurnComplete {
-			turns++
-		}
-		// Safety cap: prevent infinite loop if judge never calls submit_verdict,
-		// or a runaway repeat loop is decoding the same text forever (#889).
-		if turns > maxIters || repeats.tripped {
-			if repeats.tripped {
-				slog.Warn("judge round aborted: runaway repeat detected mid-generation",
-					"component", "vetting", "agent", cfg.Agent)
+			if ev.TurnComplete {
+				turns++
 			}
-			cancel()
-			break
+			// Safety cap: prevent infinite loop if judge never calls submit_verdict,
+			// or a runaway repeat loop is decoding the same text forever (#889).
+			if turns > maxIters || repeats.tripped {
+				if repeats.tripped {
+					slog.Warn("judge round aborted: runaway repeat detected mid-generation",
+						"component", "vetting", "agent", cfg.Agent)
+				}
+				budgetExceeded = true
+				cancel()
+				break
+			}
 		}
+		return nil
 	}
 
+	if err := runTurn(content); err != nil {
+		return verdict{}, reads, err
+	}
 	if submitted {
 		return aggregateVerdict(sink), reads, nil
 	}
-	// Fallback: judge ended without a structured verdict. Try its text, else fail.
+	// Fallback: judge ended without a structured verdict. Try its text first.
 	if v, perr := parseVerdict(accum.String()); perr == nil {
 		return v, reads, nil
 	}
+
+	// One in-session nudge before giving up: a turn that ended with text but
+	// no submit_verdict call, and that text didn't parse as a verdict, is
+	// often the analysis-complete/submission-wrong shape (#1235) rather than
+	// a stuck model - worth one direct ask before paying for a fresh session.
+	// Skipped once the round already exhausted its own turn budget above, since
+	// forcedVerdictCallback already forced (and tool-stripped) that last turn.
+	if !budgetExceeded && ctx.Err() == nil && strings.TrimSpace(accum.String()) != "" {
+		nudge := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: judgeSubmitNudge}}}
+		if err := runTurn(nudge); err != nil {
+			return verdict{}, reads, err
+		}
+		if submitted {
+			return aggregateVerdict(sink), reads, nil
+		}
+		if v, perr := parseVerdict(accum.String()); perr == nil {
+			return v, reads, nil
+		}
+	}
+
+	slog.Warn("judge round ended without a verdict",
+		"component", "vetting", "agent", cfg.Agent, "finish_reason", string(lastFinish), "output_tokens", lastOutTokens)
 	return verdict{}, reads, ErrJudgeNoVerdict
 }
+
+// judgeSubmitNudge: one-shot in-session continuation when a turn ends with
+// unparseable text and no submit_verdict call (#1235) - the analysis is often
+// already correct and only the submission mechanism was wrong.
+const judgeSubmitNudge = "You did not call submit_verdict. Call submit_verdict now with your verdict as a tool call - do not write it as text."
 
 // ErrJudgeNoVerdict: the judge model ran - read files, spent its iteration
 // budget - and never called submit_verdict. Distinct from a transport/model
