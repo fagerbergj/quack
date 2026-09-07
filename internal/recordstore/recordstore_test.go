@@ -759,6 +759,38 @@ func TestSaveRowFailureAfterAppendSelfHeals(t *testing.T) {
 	}
 }
 
+// TestSaveRetryAfterPartialSave_CompletesOrphanedDuplicate is the #1237
+// review fix: the ledger's IdempotencyKey is committed by AppendIntent
+// BEFORE saveRow, so a duplicate-key hit alone does not prove a row exists -
+// the ORIGINAL save could have crashed between the two. A same-content retry
+// must never report success without a row; it must complete the orphaned
+// intent (same as saveAtOrAdopt does for a stale-parent orphan) instead of
+// lying about having saved.
+func TestSaveRetryAfterPartialSave_CompletesOrphanedDuplicate(t *testing.T) {
+	svc := &failOnceSaveService{Service: artifact.InMemoryService(), failCall: 1}
+	fl := newFakeLedger()
+	c := New(svc, "quack", "user1", "chat1").WithLedger(fl)
+	ctx := context.Background()
+
+	if _, _, err := c.SaveBlob(ctx, "test.blob", []byte("same"), "text/plain", "doc:dup-orphan", Lineage{}); err == nil {
+		t.Fatal("expected the first save (forced saveRow failure) to error")
+	}
+	// Identical content: the retry's AppendIntent hits the SAME idempotency
+	// key the crashed attempt already committed, before ever reaching
+	// ErrStaleParent/adopt.
+	id, rev, err := c.SaveBlob(ctx, "test.blob", []byte("same"), "text/plain", "doc:dup-orphan", Lineage{})
+	if err != nil {
+		t.Fatalf("retry with identical content should complete the orphaned duplicate, got: %v", err)
+	}
+	if rev != 1 {
+		t.Fatalf("rev = %d, want 1", rev)
+	}
+	raw, storeRev, ok, err := c.Latest(ctx, id)
+	if err != nil || !ok || storeRev != 1 || string(raw) != "same" {
+		t.Fatalf("Latest after the retry = %q rev=%d ok=%v err=%v, want the row actually written at revision 1", raw, storeRev, ok, err)
+	}
+}
+
 // TestRegisterPanicsOnInvalidJSONSchema: the single root-cause fix for #1108
 // finding 3 - a kind with unparseable JSONSchema must fail loudly at
 // registration time (like the existing missing-Identity/duplicate-kind

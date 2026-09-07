@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"math/rand/v2"
 	"sort"
 	"strings"
 	"sync"
@@ -245,6 +246,17 @@ func idempotencyKey(id string, data []byte) string {
 // check-and-adopt gets wrong.
 const adoptAfterAttempts = 3
 
+// retryBackoff is the delay before save/Edit's next ErrStaleParent retry -
+// small, growing, jittered, so maxSaveRetries's 20 attempts under real
+// contention are not a tight spin against Postgres.
+func retryBackoff(attempt int) time.Duration {
+	d := time.Duration(attempt+1) * 3 * time.Millisecond
+	if d > 30*time.Millisecond {
+		d = 30 * time.Millisecond
+	}
+	return d + time.Duration(rand.IntN(5))*time.Millisecond
+}
+
 // save picks id's current latest revision as the parent and retries on
 // ledger.ErrStaleParent instead of holding idLocks across read+append+write
 // (#1144 P4 - the ledger's unique index now arbitrates concurrent claims).
@@ -265,6 +277,7 @@ func (c *Client) save(ctx context.Context, id, kind string, class Class, mime st
 		}
 		rev, err := c.saveAtOrAdopt(ctx, id, kind, class, mime, data, lineage, parentRev, attempt)
 		if errors.Is(err, ledger.ErrStaleParent) && attempt < maxSaveRetries {
+			time.Sleep(retryBackoff(attempt))
 			continue
 		}
 		return rev, err
@@ -321,8 +334,25 @@ func (c *Client) saveAt(ctx context.Context, id, kind string, class Class, mime 
 		if jerr := json.Unmarshal(dup.Existing.Payload, &p); jerr != nil {
 			return 0, fmt.Errorf("recordstore: duplicate intent for %s had an unparseable payload: %w", id, jerr)
 		}
-		slog.Info("recordstore: save skipped, identical content already recorded", "component", "recordstore", "id", id, "kind", kind, "revision", p.Revision)
-		return p.Revision, nil
+		// The idempotency key is committed by AppendIntent BEFORE saveRow, so
+		// a duplicate hit alone does NOT prove the row was ever written - the
+		// original save may have crashed between the two (#1237 review: this
+		// used to report success with no row). Verify first; an orphaned
+		// duplicate is completed the same way saveAtOrAdopt completes any
+		// other orphan, never reported as a no-op without a row.
+		if _, ok, lerr := c.LoadVersion(ctx, id, p.Revision); lerr == nil && ok {
+			slog.Info("recordstore: save skipped, identical content already recorded", "component", "recordstore", "id", id, "kind", kind, "revision", p.Revision)
+			return p.Revision, nil
+		}
+		lineage.ParentRevision = p.ParentRevision
+		adopted, aerr := c.saveRow(ctx, id, kind, class, mime, data, lineage)
+		if aerr != nil {
+			return 0, aerr
+		}
+		if adopted != p.Revision {
+			return 0, fmt.Errorf("recordstore: store assigned revision %d completing duplicate intent for %s, WAL expected %d", adopted, id, p.Revision)
+		}
+		return adopted, nil
 	}
 	if err != nil {
 		// Fail-closed (#1090 §4.9 case 11), including ledger.ErrStaleParent:
@@ -619,6 +649,7 @@ func (c *Client) Edit(ctx context.Context, id string, baseRevision int, ops []Ed
 	for attempt := 0; ; attempt++ {
 		rev, merged, err := c.tryEdit(ctx, id, baseRevision, ops, lineage, attempt)
 		if errors.Is(err, ledger.ErrStaleParent) && attempt < maxSaveRetries {
+			time.Sleep(retryBackoff(attempt))
 			continue
 		}
 		return rev, merged, err
