@@ -83,7 +83,7 @@ type SubjectState string // "" (unknown) | open | merged | closed
 
 Core maps: transition→merged ⇒ `ApplyOutcome(chat, reinforced)`; transition→closed (not merged) ⇒ `ApplyOutcome(chat, invalidated, "subject closed unmerged")` — against every configured memory store (task + user — the same set `memStores()` in rest/memory.go iterates). Force-push detection drops out of v1 entirely (it was the only signal origin doesn't carry; #849's incident is fully covered by closed-unmerged). If it ever earns its way in, it arrives the same way: a typed domain fact on the origin update, never a memory API.
 
-**The consolidator job**: new `internal/memory/consolidate_job.go`, started next to `ledger.RunRetentionSweep`'s call site in server bootstrap. `Store.RunConsolidationSweep(ctx, schedule, retentionDays)` — a standard 5-field cron loop (`""` disables); it waits for the first `Next`, never running at boot (issue #961).
+**The consolidator job**: new `internal/memory/consolidate_job.go`, started in server bootstrap (`ledger.RunRetentionSweep` was deleted #1144 P5 - the ledger itself is never GC'd except by chat hard-delete; this job is unrelated and unaffected). `Store.RunConsolidationSweep(ctx, schedule, retentionDays)` — a standard 5-field cron loop (`""` disables); it waits for the first `Next`, never running at boot (issue #961).
 
 **REST/OpenAPI**: `Memory` schema gains `status`, `reinforcement_count`, `invalidation_reason` (openapi.yaml + `make generate`). `DeleteMemory` gains an optional `reason` in the request body.
 
@@ -94,7 +94,7 @@ Core maps: transition→merged ⇒ `ApplyOutcome(chat, reinforced)`; transition�
 - Memory concepts in the SDK. Extensions report typed domain facts (origin/SubjectState); core alone interprets them into memory lifecycle. No ReportMemoryOutcome-style callback, ever.
 - Silent deletion. Every status transition writes a `memory_ops` row. Consolidator DELETE and outcome-feedback invalidation are the same `invalidated` status as a human delete, never a bare `remove`.
 - Consolidation blocking a run. Both the per-commit reconcile and the periodic sweep stay fire-and-forget/background, same shape as `commitMemoryOnPass`'s goroutine.
-- Unbounded `memory_ops` (or invalidated-point) growth with no stated bound. A retention sweep, same pattern as `ledger.RunRetentionSweep`, hard-deletes invalidated rows past a configured `retention_days` (0 = forever, explicit not implicit).
+- Unbounded `memory_ops` (or invalidated-point) growth with no stated bound. A retention sweep hard-deletes invalidated rows past a configured `retention_days` (0 = forever, explicit not implicit) - unrelated to the ledger's own (deleted, #1144 P5) retention sweep: `memory_ops` isn't chat-scoped and isn't WAL-recovered, so it keeps its own independent GC.
 
 ## 7. Test cases
 

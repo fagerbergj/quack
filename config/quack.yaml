@@ -335,7 +335,8 @@ observability:
   recording:
     observations: ${QUACK_RECORDING_ENABLED}  # unset ⇒ follows otel.enabled
     store: default_postgres
-    retention_days: 30                        # whole-chat GC by last activity
+    # retention_days is gone (#1144 P5): the ledger is never GC'd except by
+    # chat hard-delete; checkpoints bound fold cost instead of trimming the log.
   # Mounts ADK's REST debug console at /debug/adk. DANGER: /run, /run_sse
   # and /run_live execute any loaded agent WITHOUT the trust gate - protected
   # only by quack's auth + this flag. MUST stay off in production.

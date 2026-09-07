@@ -213,3 +213,75 @@ func TestFold_PagingMatchesOneSlice(t *testing.T) {
 		t.Fatalf("paged revisions = %d, unpaged = %d", len(got.Artifacts["id1"].Revisions), len(want.Artifacts["id1"].Revisions))
 	}
 }
+
+// TestApplySeeded_FromCheckpointMatchesFromZero is #1144 P5's required
+// proof: a fold seeded from a checkpoint must equal a fold from scratch.
+// Two revisions land and get folded into a checkpoint Result, a third
+// arrives after that fold - ApplySeeded (from the checkpoint) and Apply
+// (always from scratch) must agree. The checkpoint itself is just a
+// *Result value here, same as internal/store.Checkpoint's row holds
+// (#1144 P5 review: it lives in one store row now, not the ledger).
+func TestApplySeeded_FromCheckpointMatchesFromZero(t *testing.T) {
+	s := newMemStore(t)
+	appendRevision(t, s, "chat1", "id1", 1, 0)
+	appendRevision(t, s, "chat1", "id1", 2, 1)
+
+	checkpoint, err := Fold(context.Background(), s, "chat1", 0)
+	if err != nil {
+		t.Fatalf("Fold before checkpoint: %v", err)
+	}
+	appendRevision(t, s, "chat1", "id1", 3, 2)
+
+	fromCheckpoint, err := ApplySeeded(context.Background(), s, "chat1", checkpoint, 0)
+	if err != nil {
+		t.Fatalf("ApplySeeded: %v", err)
+	}
+	fromScratch, err := Fold(context.Background(), s, "chat1", 0)
+	if err != nil {
+		t.Fatalf("Fold from scratch: %v", err)
+	}
+	wantLatest, _ := fromScratch.Artifacts["id1"].Latest()
+	gotLatest, _ := fromCheckpoint.Artifacts["id1"].Latest()
+	if gotLatest.Revision != wantLatest.Revision || gotLatest.Revision != 3 {
+		t.Fatalf("from checkpoint latest = %d, from scratch = %d, want 3", gotLatest.Revision, wantLatest.Revision)
+	}
+	if len(fromCheckpoint.Artifacts["id1"].Revisions) != len(fromScratch.Artifacts["id1"].Revisions) {
+		t.Fatalf("from checkpoint revisions = %d, from scratch = %d",
+			len(fromCheckpoint.Artifacts["id1"].Revisions), len(fromScratch.Artifacts["id1"].Revisions))
+	}
+	if fromCheckpoint.LastSeq != fromScratch.LastSeq {
+		t.Fatalf("from checkpoint LastSeq = %d, from scratch = %d", fromCheckpoint.LastSeq, fromScratch.LastSeq)
+	}
+}
+
+// TestApplySeeded_StaleCheckpointStillFoldsCorrectly is the concurrent-turn
+// case: a checkpoint whose OWN LastSeq is older than entries that already
+// exist in the ledger by the time it's used (the checkpoint's fold ran
+// before those entries landed; something else appended them, and only then
+// did the checkpoint get read and passed in - the write side of this race
+// is internal/store.Store.WriteCheckpoint's read-fold-write window).
+// ApplySeeded must trust seed.LastSeq, not assume the caller already
+// scoped `from` past every real entry, or it would skip entries that
+// arrived between the fold and the checkpoint's use.
+func TestApplySeeded_StaleCheckpointStillFoldsCorrectly(t *testing.T) {
+	s := newMemStore(t)
+	appendRevision(t, s, "chat1", "id1", 1, 0) // seq 1
+
+	stale, err := Fold(context.Background(), s, "chat1", 0) // LastSeq=1
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+
+	appendRevision(t, s, "chat1", "id1", 2, 1) // seq 2, lands after the checkpoint fold ran
+
+	// A caller passing from=0 (as if it didn't know any better) must still
+	// get the right answer, because ApplySeeded reads from seed.LastSeq.
+	got, err := ApplySeeded(context.Background(), s, "chat1", stale, 0)
+	if err != nil {
+		t.Fatalf("ApplySeeded: %v", err)
+	}
+	latest, ok := got.Artifacts["id1"].Latest()
+	if !ok || latest.Revision != 2 {
+		t.Fatalf("latest revision = %+v, ok=%v, want revision 2 (a stale checkpoint must not hide seq 2)", latest, ok)
+	}
+}

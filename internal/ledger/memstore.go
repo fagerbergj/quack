@@ -52,6 +52,7 @@ func (s *MemStore) AppendIntent(_ context.Context, e Entry) (int64, error) {
 		}
 	}
 	e.Seq = int64(len(s.entries[e.ChatID])) + 1
+	e.SchemaVersion = EntrySchemaVersion
 	s.entries[e.ChatID] = append(s.entries[e.ChatID], e)
 	return e.Seq, nil
 }
@@ -62,7 +63,7 @@ func (s *MemStore) ReadEntries(_ context.Context, chatID string, fromSeq int64) 
 	var out []Entry
 	for _, e := range s.entries[chatID] {
 		if e.Seq >= fromSeq {
-			out = append(out, e)
+			out = append(out, MigrateEntry(e))
 		}
 	}
 	return out, nil

@@ -263,14 +263,49 @@ func Fold(ctx context.Context, store ledger.LedgerStore, chatID string, fromSeq 
 // instead of re-folding chatID's whole history (#1144 P3). from=-1 (via
 // Fold's fromSeq=0) is a fresh fold of the whole chat.
 func Apply(ctx context.Context, store ledger.LedgerStore, chatID string, from int64) (*Result, error) {
+	return ApplySeeded(ctx, store, chatID, nil, from)
+}
+
+// ApplySeeded is Apply, but starting from a previously folded Result (a
+// checkpoint) instead of empty state (#1144 P5). seed nil is exactly Apply.
+// from is the caller's OWN already-known watermark, not the seed's - pass 0
+// (or -1, Fold's convention) when the seed is the only state you have, e.g.
+// internal/store.Store.WriteCheckpoint. Seeding is keyed off seed's OWN
+// LastSeq compared against that from, so it only activates when the seed is
+// actually newer: passing seed.LastSeq as `from` itself would make the
+// `seed.LastSeq > from` check false and silently skip seeding. A caller
+// that reads a checkpoint row written by a concurrent, slightly-behind turn
+// still folds correctly, just re-processes a few more entries than the
+// freshest checkpoint would have needed (see internal/store.Checkpoint's
+// doc for where that row now lives - #1144 P5 review moved it out of the ledger).
+func ApplySeeded(ctx context.Context, store ledger.LedgerStore, chatID string, seed *Result, from int64) (*Result, error) {
+	live := map[revKey]ArtifactRevision{}
+	nodes := map[string]*NodeState{}
+	if seed != nil && seed.LastSeq > from {
+		seedFold(seed, live, nodes)
+		from = seed.LastSeq
+	}
 	entries, err := readAll(ctx, store, chatID, from+1)
 	if err != nil {
 		return nil, err
 	}
-	res := &Result{Nodes: map[string]*NodeState{}}
-	live := map[revKey]ArtifactRevision{}
+	res := &Result{Nodes: nodes}
 	applyLoop(res, live, entries)
 	return finalize(res, live), nil
+}
+
+// seedFold populates live/nodes from a previously folded Result, so
+// ApplySeeded can resume from a checkpoint instead of an empty state.
+func seedFold(seed *Result, live map[revKey]ArtifactRevision, nodes map[string]*NodeState) {
+	for id, a := range seed.Artifacts {
+		for _, rv := range a.Revisions {
+			live[revKey{id: id, rev: rv.Revision}] = rv
+		}
+	}
+	for id, n := range seed.Nodes {
+		cp := *n
+		nodes[id] = &cp
+	}
 }
 
 // LastRevision returns id's highest materialized revision in chatID's

@@ -27,6 +27,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledger/fold"
 	"github.com/fagerbergj/quack/internal/pgdial"
 )
 
@@ -345,6 +346,100 @@ type Store struct {
 	querySQL              []string
 	// artifacts: nil unless SetArtifactService was called - DeleteChat cascades into it when set.
 	artifacts artifact.Service
+	// walLedger: the WAL's fail-closed AppendIntent path (#1144 P5), covering
+	// the direct-write projections P1-P4 left alone (chat/turn creation,
+	// plan). nil = no WAL, same as before P5 - CreateChat/SaveTurn/SaveDagPlan
+	// behave exactly as they did.
+	walLedger ledger.LedgerStore
+}
+
+// SetWALLedger wires the WAL's fail-closed AppendIntent path into
+// CreateChat/SaveTurn/SaveDagPlan (#1144 P5). Callers must pass nil unless
+// store is a postgres-backed LedgerStore - same restriction as
+// dag.Executor.SetWALLedger/recordstore.WithLedger.
+func (s *Store) SetWALLedger(store ledger.LedgerStore) { s.walLedger = store }
+
+// Checkpoint is chatID's last folded ledger state - ONE row, replaced every
+// turn end, not an entry in the WAL (#1144 P5 review: a checkpoint is
+// derived state, not a fact the ledger recorded, so it doesn't belong in an
+// append-only log; storing it as entries made per-chat ledger storage grow
+// O(turns x state size) with no GC left once the retention sweep was
+// deleted). LastSeq is denormalized from Payload for cheap inspection
+// (`SELECT last_seq FROM ledger_checkpoints`) without deserializing it -
+// fold.ApplySeeded still trusts Payload's own LastSeq, never this column,
+// so a torn write here is still safe to fold from (same invariant the
+// stale-checkpoint test proves).
+type Checkpoint struct {
+	ChatID        string `gorm:"column:chat_id;primaryKey"`
+	LastSeq       int64  `gorm:"column:last_seq"`
+	SchemaVersion int    `gorm:"column:schema_version"`
+	Payload       string `gorm:"column:payload"`
+	UpdatedAt     time.Time
+}
+
+func (Checkpoint) TableName() string { return "ledger_checkpoints" }
+
+// loadCheckpointSeed reads chatID's checkpoint row, if any. Any problem (no
+// row, a bad payload) returns nil - the safe fallback is always "fold from
+// scratch", never an error, since a checkpoint is purely an optimization.
+// fold.ApplySeeded reads the seed's OWN LastSeq to decide how far it
+// covers - callers pass 0 as their own baseline `from`, not this seed's
+// LastSeq, or ApplySeeded's "only seed if it's newer than what I already
+// have" guard skips seeding entirely.
+func (s *Store) loadCheckpointSeed(ctx context.Context, chatID string) *fold.Result {
+	var row Checkpoint
+	if err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error; err != nil {
+		return nil
+	}
+	var res fold.Result
+	if err := json.Unmarshal([]byte(row.Payload), &res); err != nil {
+		return nil
+	}
+	return &res
+}
+
+// upsertCheckpoint replaces chatID's single checkpoint row.
+func (s *Store) upsertCheckpoint(ctx context.Context, chatID string, lastSeq int64, payload []byte) error {
+	row := Checkpoint{ChatID: chatID, LastSeq: lastSeq, SchemaVersion: ledger.EntrySchemaVersion, Payload: string(payload), UpdatedAt: time.Now().UTC()}
+	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "chat_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"last_seq", "schema_version", "payload", "updated_at"}),
+	}).Create(&row).Error
+}
+
+// WriteCheckpoint folds chatID from its last checkpoint (or from scratch, if
+// it has none) and replaces the checkpoint row with the result (#1144 P5),
+// so the next fold starts here instead of reading the chat's entire
+// history. Called at every turn-end path: rest.Handler.stampRunOutcome
+// (both its WasInterrupted and normal branches) and both exits of
+// internal/serve/extensions.go's driveExtensionRunEvents - a no-op without
+// a WAL. Best-effort: a failed write only costs a slower fold later, never
+// correctness.
+//
+// NOT covered by boot recovery: unlike artifact revisions and delivery
+// intents, an orphaned chat.created/turn.created/plan.saved row (WAL
+// append succeeded, the projection write it preceded never landed) is not
+// checked by cli.RunLedgerRecover or counted in quack_ledger_unresolved_intents
+// - out of scope for P5 (see internal/store/wal_intents_test.go's kill-9
+// test, which proves the invariant a recoverer WOULD rely on, not that one
+// exists). `quack ledger show`/`list` still see every entry regardless.
+func (s *Store) WriteCheckpoint(ctx context.Context, chatID string) error {
+	if s.walLedger == nil {
+		return nil
+	}
+	seed := s.loadCheckpointSeed(ctx, chatID)
+	res, err := fold.ApplySeeded(ctx, s.walLedger, chatID, seed, 0)
+	if err != nil {
+		return fmt.Errorf("store: checkpoint fold for chat %q: %w", chatID, err)
+	}
+	payload, err := json.Marshal(res)
+	if err != nil {
+		return fmt.Errorf("store: checkpoint encode for chat %q: %w", chatID, err)
+	}
+	if err := s.upsertCheckpoint(ctx, chatID, res.LastSeq, payload); err != nil {
+		return fmt.Errorf("store: checkpoint upsert for chat %q: %w", chatID, err)
+	}
+	return nil
 }
 
 // querySQLCap bounds RecordedQuerySQL's ring buffer - the oldest entry is
@@ -387,7 +482,7 @@ func New(kind, url string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{db: db}
-	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}, &GithubSnapshot{}, &GithubReviewBaseline{}, &GithubFixState{}, &GithubMergeIntent{}, &MemoryOp{}, &ProjectionWatermark{}); err != nil {
+	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}, &GithubSnapshot{}, &GithubReviewBaseline{}, &GithubFixState{}, &GithubMergeIntent{}, &MemoryOp{}, &ProjectionWatermark{}, &Checkpoint{}); err != nil {
 		return nil, err
 	}
 	// database.NewSessionService below calls gorm.Open again against the SAME
@@ -483,10 +578,26 @@ func sqliteDSN(url string) string {
 	return url + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
 }
 
-// CreateChat inserts a new chat and returns it.
+// CreateChat inserts a new chat and returns it. Fail-closed on the WAL
+// (#1144 P5): with a ledger wired, the chat.created intent must land before
+// the row does - a failed append means no chat is created at all.
 func (s *Store) CreateChat(ctx context.Context, systemPrompt string) (*Chat, error) {
 	now := time.Now().UTC()
-	c := &Chat{ID: uuid.NewString(), SystemPrompt: systemPrompt, CreatedAt: now, UpdatedAt: now}
+	id := uuid.NewString()
+	if s.walLedger != nil {
+		payload, err := json.Marshal(struct {
+			SystemPrompt string `json:"system_prompt"`
+		}{systemPrompt})
+		if err != nil {
+			return nil, fmt.Errorf("store: marshal chat.created payload: %w", err)
+		}
+		if _, err := s.walLedger.AppendIntent(ctx, ledger.Entry{
+			ChatID: id, Kind: ledger.KindChatCreated, Key: id, At: now, Payload: payload,
+		}); err != nil {
+			return nil, fmt.Errorf("store: chat.created WAL append: %w", err)
+		}
+	}
+	c := &Chat{ID: id, SystemPrompt: systemPrompt, CreatedAt: now, UpdatedAt: now}
 	if err := s.db.WithContext(ctx).Create(c).Error; err != nil {
 		return nil, err
 	}
@@ -895,7 +1006,22 @@ func (s *Store) SaveTurn(ctx context.Context, chatID, turnID, userText string) e
 	if err := s.db.WithContext(ctx).Model(&ChatTurn{}).Where("chat_id = ?", chatID).Count(&count).Error; err != nil {
 		return err
 	}
-	t := &ChatTurn{ID: turnID, ChatID: chatID, Seq: int(count), CreatedAt: time.Now().UTC(), UserText: userText}
+	now := time.Now().UTC()
+	if s.walLedger != nil {
+		payload, err := json.Marshal(struct {
+			UserText string `json:"user_text"`
+			Seq      int    `json:"seq"`
+		}{userText, int(count)})
+		if err != nil {
+			return fmt.Errorf("store: marshal turn.created payload: %w", err)
+		}
+		if _, err := s.walLedger.AppendIntent(ctx, ledger.Entry{
+			ChatID: chatID, TurnID: turnID, Kind: ledger.KindTurnCreated, Key: turnID, At: now, Payload: payload,
+		}); err != nil {
+			return fmt.Errorf("store: turn.created WAL append: %w", err)
+		}
+	}
+	t := &ChatTurn{ID: turnID, ChatID: chatID, Seq: int(count), CreatedAt: now, UserText: userText}
 	return s.db.WithContext(ctx).Create(t).Error
 }
 
@@ -932,6 +1058,27 @@ func (s *Store) ListTurns(ctx context.Context, chatID string) ([]ChatTurn, error
 // resume re-yields the same stashed plan (same planID) through this path.
 func (s *Store) SaveDagPlan(ctx context.Context, chatID, planID, turnID, planJSON string) error {
 	now := time.Now().UTC()
+	if s.walLedger != nil {
+		payload, err := json.Marshal(struct {
+			PlanJSON string `json:"plan_json"`
+			TurnID   string `json:"turn_id"`
+		}{planJSON, turnID})
+		if err != nil {
+			return fmt.Errorf("store: marshal plan.saved payload: %w", err)
+		}
+		// IdempotencyKey = planID: a boot resume re-yields the same stashed
+		// plan through this path (see doc above) - the DB write is already
+		// skip-if-exists, so the WAL append must be too, or a resumed chat
+		// grows one plan.saved entry per resume forever.
+		_, err = s.walLedger.AppendIntent(ctx, ledger.Entry{
+			ChatID: chatID, TurnID: turnID, Kind: ledger.KindPlanSaved, Key: planID,
+			At: now, Payload: payload, IdempotencyKey: "plan.saved:" + planID,
+		})
+		var dup *ledger.DuplicateIntentError
+		if err != nil && !errors.As(err, &dup) {
+			return fmt.Errorf("store: plan.saved WAL append: %w", err)
+		}
+	}
 	p := &DagPlan{ID: planID, ChatID: chatID, TurnID: turnID, PlanJSON: planJSON, CreatedAt: now}
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(p).Error
 }
