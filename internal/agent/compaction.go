@@ -44,9 +44,12 @@ const (
 )
 
 type Compaction struct {
-	Summarizer         model.LLM
-	ContextWindow      int
-	Enabled            bool
+	Summarizer    model.LLM
+	ContextWindow int
+	Enabled       bool
+	// Engine selects "quack" (default, this file's callback) or "adk"
+	// (adk/v2's native runner-level compaction; see internal/agent/a2a.go).
+	Engine             string
 	Sessions           session.Service
 	TokenThreshold     int
 	EventRetentionSize int

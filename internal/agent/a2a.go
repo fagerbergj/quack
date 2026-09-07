@@ -23,6 +23,7 @@ import (
 	"google.golang.org/adk/v2/runner"
 	adka2a "google.golang.org/adk/v2/server/adka2a/v2"
 	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/session/compaction"
 	"google.golang.org/adk/v2/workflow"
 
 	"github.com/fagerbergj/quack/internal/httpx"
@@ -39,7 +40,11 @@ type A2AServer struct {
 }
 
 // Serve starts an A2A server for ag on 127.0.0.1:<ephemeral> and returns it with the AgentCard.
-func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service) (*A2AServer, error) {
+// comp.Engine == "adk" wires adk/v2's native runner-level compaction here
+// instead of the BeforeModelCallback build.go would otherwise install (#1185
+// spike); any other value (including the zero Compaction) leaves the runner's
+// Compaction nil and changes nothing.
+func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service, comp Compaction) (*A2AServer, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("agent %q: a2a listen: %w", ag.Name(), err)
@@ -61,6 +66,10 @@ func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service) (
 		Capabilities:       a2a.AgentCapabilities{Streaming: true},
 	}
 
+	adkComp, err := nativeCompactionConfig(comp)
+	if err != nil {
+		return nil, fmt.Errorf("agent %q: adk compaction: %w", ag.Name(), err)
+	}
 	executor := adka2a.NewExecutor(adka2a.ExecutorConfig{
 		RunnerConfig: runner.Config{
 			AppName:           ag.Name(),
@@ -68,6 +77,7 @@ func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service) (
 			SessionService:    sessions,
 			MemoryService:     mem,
 			AutoCreateSession: true,
+			Compaction:        adkComp,
 		},
 		OutputMode: adka2a.OutputArtifactPerEvent,
 	})
@@ -86,6 +96,56 @@ func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service) (
 
 // Close stops the A2A server's listener.
 func (s *A2AServer) Close() error { return s.listener.Close() }
+
+// maxTranscriptChars sizes adk's summarizer transcript cap from the model's
+// context window (0 = unknown, keeps adk's own 200k-char default) so
+// compaction keeps engaging past adk's default on large-window models.
+func maxTranscriptChars(comp Compaction) int {
+	return comp.ContextWindow * charsPerToken
+}
+
+// nativeCompactionConfig builds adk/v2's runner-level compaction.Config from
+// comp, or nil when comp isn't asking for the "adk" engine. It reuses quack's
+// own tuned summarizer prompt (compactionSystemPrompt + summaryTemplate, see
+// compaction_prompts.go) rather than adk's default, so the #1185 spike
+// compares engines, not prompts.
+func nativeCompactionConfig(comp Compaction) (*compaction.Config, error) {
+	if !comp.Enabled || comp.Engine != "adk" {
+		return nil, nil
+	}
+	if comp.Summarizer == nil {
+		return nil, fmt.Errorf("engine \"adk\" requires a summarizer model")
+	}
+	prompt := compactionSystemPrompt + "\n\n" + summaryTemplate + "\n\n" + compaction.ConversationHistoryPlaceholder
+	summarizer, err := compaction.NewLLMSummarizer(compaction.LLMSummarizerConfig{
+		Model:              comp.Summarizer,
+		PromptTemplate:     prompt,
+		MaxTranscriptChars: maxTranscriptChars(comp),
+	})
+	if err != nil {
+		return nil, err
+	}
+	cfg := &compaction.Config{
+		CompactionInterval: comp.CompactionInterval,
+		OverlapSize:        comp.OverlapSize,
+		TokenThreshold:     comp.TokenThreshold,
+		EventRetentionSize: comp.EventRetentionSize,
+		Summarizer:         summarizer,
+	}
+	// TokenThreshold defaults to 0 (disabled) in adk; quack's own threshold()
+	// falls back to the model's context window when unset, so mirror that here
+	// rather than silently disabling tail retention.
+	if cfg.TokenThreshold == 0 && comp.ContextWindow > 0 {
+		cfg.TokenThreshold = usable(comp.ContextWindow)
+	}
+	if cfg.EventRetentionSize == 0 && cfg.TokenThreshold > 0 {
+		cfg.EventRetentionSize = defaultEventRetentionSize
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
 
 // buildSkills returns the A2A skills for ag.
 func buildSkills(ag adkagent.Agent) []a2a.AgentSkill {

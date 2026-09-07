@@ -113,7 +113,7 @@ func TestA2APropagatesTraceContext(t *testing.T) {
 	var gotTraceID string
 	ag := newProbeWorker(t, &gotTraceID)
 
-	srv, err := Serve(ag, session.InMemoryService(), nil)
+	srv, err := Serve(ag, session.InMemoryService(), nil, Compaction{})
 	if err != nil {
 		t.Fatal(err)
 	}
