@@ -14,12 +14,14 @@ const (
 	// skip it when picking the parent revision so the id never wedges on a
 	// phantom revision; boot recovery appends it for the crash case.
 	KindArtifactRevisionAborted = "artifact.revision.aborted"
-	KindJudgeRound              = "judge.round"
-	KindDeliveryIntent          = "delivery.intent"
-	KindDeliveryDone            = "delivery.done"
-	KindNodeStarted             = "node.started"
-	KindNodeDone                = "node.done"
-	KindNodeFailed              = "node.failed"
+	// KindDeliveryIntent's completion is a delivery_record artifact.revision,
+	// not a second ledger entry (#1144 P2 - one representation per fact).
+	// Judge rounds likewise have no dedicated entry kind: they ARE a
+	// judge_round artifact.revision, folded via ArtifactRevision.Kind.
+	KindDeliveryIntent = "delivery.intent"
+	KindNodeStarted    = "node.started"
+	KindNodeDone       = "node.done"
+	KindNodeFailed     = "node.failed"
 
 	// Observation kinds, written by the OTel Exporter from gen_ai.* records.
 	KindLLMCall     = "llm.call"

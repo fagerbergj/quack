@@ -18,6 +18,10 @@ import (
 // shrink it to exercise the multi-page path without 1000+ fixture rows.
 var pageSize = 1000
 
+// judgeRoundKind is vetting's kindJudgeRound artifact kind name, duplicated
+// here (not imported) to keep fold dependency-free of vetting.
+const judgeRoundKind = "judge_round"
+
 // pagedReader is implemented by a LedgerStore that can page results
 // server-side (PGStore.ReadEntriesPage); a store without it is
 // read in one ReadEntries call.
@@ -108,11 +112,11 @@ type NodeState struct {
 	Round          int
 }
 
-// JudgeRound is one judge.round entry.
+// JudgeRound is one judge_round artifact.revision (#1144 P2: no dedicated
+// entry kind - the round IS the artifact write, folded like any other id).
 type JudgeRound struct {
 	ID             string
 	NodeID, TurnID string
-	Payload        json.RawMessage
 	At             time.Time
 	Seq            int64
 }
@@ -213,8 +217,6 @@ func applyEntries(entries []ledger.Entry) *Result {
 			case ledger.KindNodeFailed:
 				n.TerminalStatus, n.TerminalSeq = "failed", e.Seq
 			}
-		case ledger.KindJudgeRound:
-			res.JudgeRounds = append(res.JudgeRounds, JudgeRound{ID: e.Key, NodeID: e.NodeID, TurnID: e.TurnID, Payload: e.Payload, At: e.At, Seq: e.Seq})
 		}
 	}
 
@@ -226,8 +228,16 @@ func applyEntries(entries []ledger.Entry) *Result {
 		}
 		a.Revisions = append(a.Revisions, rv)
 	}
-	for _, a := range res.Artifacts {
+	for id, a := range res.Artifacts {
 		sort.Slice(a.Revisions, func(i, j int) bool { return a.Revisions[i].Revision < a.Revisions[j].Revision })
+		for _, r := range a.Revisions {
+			// judge_round has no dedicated entry kind (#1144 P2): the round
+			// IS the artifact write, so JudgeRounds is a view over it, not a
+			// second fold input.
+			if r.Kind == judgeRoundKind {
+				res.JudgeRounds = append(res.JudgeRounds, JudgeRound{ID: id, NodeID: r.NodeID, TurnID: r.TurnID, At: r.At, Seq: r.Seq})
+			}
+		}
 	}
 	sort.Slice(res.JudgeRounds, func(i, j int) bool { return res.JudgeRounds[i].Seq < res.JudgeRounds[j].Seq })
 	return res

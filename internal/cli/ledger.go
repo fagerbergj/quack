@@ -259,7 +259,17 @@ type DeliveryRecoverer interface {
 	RecoverDelivery(ctx context.Context, key string, dc DeliveryContext) (found bool, outcome DeliveryItemOutcome, err error)
 }
 
-// OrphanedDelivery is one delivery.intent with no matching delivery.done.
+// DeliveryRecordChecker reports whether targetID's delivery_record already
+// carries a successful revision for revision - the single "is this delivery
+// done" read (#1144 P2), shared by boot recovery and `quack ledger recover`.
+type DeliveryRecordChecker func(ctx context.Context, chatID, targetID string, revision int) (bool, error)
+
+// DeliveryRecorder persists the delivery_record revision that completes a
+// delivery.intent when the extension confirms it already landed but the
+// record write itself was lost (crash between Deliver and saveDeliveryRecord).
+type DeliveryRecorder func(ctx context.Context, chatID, nodeID, targetID string, revision int, remoteURL string) error
+
+// OrphanedDelivery is one delivery.intent with no matching delivery_record.
 type OrphanedDelivery struct {
 	Key      string `json:"key"`
 	TargetID string `json:"target_id"`
@@ -281,36 +291,27 @@ type deliveryIntentPayload struct {
 	IssueNumber int    `json:"issue_number,omitempty"`
 }
 
-// findOrphanedDeliveryIntents scans chatID's ledger for delivery.intent
-// entries with no later delivery.done sharing the same Key - the crash
-// window #1093 case 13 covers (died between intent and done).
-func findOrphanedDeliveryIntents(ctx context.Context, ls ledger.LedgerStore, chatID string) ([]OrphanedDelivery, error) {
+// findDeliveryIntents scans chatID's ledger for every delivery.intent entry.
+// Whether one is already settled is a DeliveryRecordChecker read against the
+// delivery_record artifact (#1144 P2), not a second ledger entry kind.
+func findDeliveryIntents(ctx context.Context, ls ledger.LedgerStore, chatID string) ([]OrphanedDelivery, error) {
 	entries, err := ls.ReadEntries(ctx, chatID, 0)
 	if err != nil {
 		return nil, fmt.Errorf("ledger recover: read chat %q: %w", chatID, err)
 	}
-	done := map[string]bool{}
 	var intents []OrphanedDelivery
 	for _, e := range entries {
-		switch e.Kind {
-		case ledger.KindDeliveryDone:
-			done[e.Key] = true
-		case ledger.KindDeliveryIntent:
-			var p deliveryIntentPayload
-			if json.Unmarshal(e.Payload, &p) != nil {
-				continue
-			}
-			intents = append(intents, OrphanedDelivery{Key: e.Key, TargetID: p.TargetID, Revision: p.Revision, NodeID: e.NodeID, Seq: e.Seq,
-				CloneURL: p.CloneURL, IssueNumber: p.IssueNumber})
+		if e.Kind != ledger.KindDeliveryIntent {
+			continue
 		}
-	}
-	out := intents[:0]
-	for _, in := range intents {
-		if !done[in.Key] {
-			out = append(out, in)
+		var p deliveryIntentPayload
+		if json.Unmarshal(e.Payload, &p) != nil {
+			continue
 		}
+		intents = append(intents, OrphanedDelivery{Key: e.Key, TargetID: p.TargetID, Revision: p.Revision, NodeID: e.NodeID, Seq: e.Seq,
+			CloneURL: p.CloneURL, IssueNumber: p.IssueNumber})
 	}
-	return out, nil
+	return intents, nil
 }
 
 // OrphanedRevision is one artifact.revision intent whose store row never
@@ -329,6 +330,8 @@ type Projections struct {
 	// ArtifactRowExists reports whether id@revision has a store row.
 	ArtifactRowExists func(ctx context.Context, chatID, id string, revision int) (bool, error)
 	Delivery          DeliveryRecoverer
+	DeliveryRecorded  DeliveryRecordChecker
+	RecordDelivery    DeliveryRecorder
 	Redo              func(ctx context.Context, o OrphanedDelivery) error
 }
 
@@ -343,7 +346,7 @@ func ArtifactRowChecker(st *store.Store, artifacts *store.TurnAwareService) func
 type LedgerRecoverReport struct {
 	ChatID     string             `json:"chat_id"`
 	DryRun     bool               `json:"dry_run,omitempty"`
-	Confirmed  []OrphanedDelivery `json:"confirmed"`            // delivery.done appended; extension already had it
+	Confirmed  []OrphanedDelivery `json:"confirmed"`            // delivery_record recorded; extension already had it
 	Redone     []OrphanedDelivery `json:"redone"`               // Redo called; nothing was there
 	Unresolved []OrphanedDelivery `json:"unresolved,omitempty"` // no recoverer/Redo available to check, or dry-run
 	// Aborted: artifact.revision intents with no row, now (or under
@@ -364,19 +367,27 @@ func (r *LedgerRecoverReport) unresolved() int {
 }
 
 // RunLedgerRecover reconciles one chat's intents whose projection write is
-// missing. Delivery (#1093 case 13): for each delivery.intent with no
-// delivery.done, ask p.Delivery whether the target already saw the key; if
-// so append delivery.done, else run p.Redo. Artifacts: each live
-// artifact.revision with no store row gets an artifact.revision.aborted
-// marker. Idempotent: a settled intent no longer shows up as an orphan.
-// dryRun reports without calling anything or writing.
+// missing. Delivery (#1093 case 13, #1144 P2): a delivery.intent is settled
+// once its delivery_record artifact revision exists (p.DeliveryRecorded) -
+// no separate ledger entry to check. For an unsettled one, ask p.Delivery
+// whether the target already saw the key; if so, p.RecordDelivery writes the
+// completion, else run p.Redo. Artifacts: each live artifact.revision with
+// no store row gets an artifact.revision.aborted marker. Idempotent: a
+// settled intent no longer shows up as an orphan. dryRun reports without
+// calling anything or writing.
 func RunLedgerRecover(ctx context.Context, ls ledger.LedgerStore, chatID string, p Projections, dryRun bool) (*LedgerRecoverReport, error) {
-	orphans, err := findOrphanedDeliveryIntents(ctx, ls, chatID)
+	intents, err := findDeliveryIntents(ctx, ls, chatID)
 	if err != nil {
 		return nil, err
 	}
 	report := &LedgerRecoverReport{ChatID: chatID, DryRun: dryRun}
-	for _, o := range orphans {
+	for _, o := range intents {
+		if p.DeliveryRecorded != nil {
+			done, derr := p.DeliveryRecorded(ctx, chatID, o.TargetID, o.Revision)
+			if derr == nil && done {
+				continue // settled - not orphaned
+			}
+		}
 		if !dryRun && p.Delivery != nil {
 			dc := DeliveryContext{CloneURL: o.CloneURL, IssueNumber: o.IssueNumber}
 			found, outcome, rerr := p.Delivery.RecoverDelivery(ctx, o.Key, dc)
@@ -385,11 +396,10 @@ func RunLedgerRecover(ctx context.Context, ls ledger.LedgerStore, chatID string,
 				continue
 			}
 			if found {
-				payload, _ := json.Marshal(struct {
-					RemoteURL string `json:"remote_url,omitempty"`
-				}{RemoteURL: outcome.URL})
-				if _, aerr := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, NodeID: o.NodeID, Kind: ledger.KindDeliveryDone, Key: o.Key, Payload: payload}); aerr != nil {
-					return nil, fmt.Errorf("ledger recover: append delivery.done for key %q: %w", o.Key, aerr)
+				if p.RecordDelivery != nil {
+					if aerr := p.RecordDelivery(ctx, chatID, o.NodeID, o.TargetID, o.Revision, outcome.URL); aerr != nil {
+						return nil, fmt.Errorf("ledger recover: record delivery for key %q: %w", o.Key, aerr)
+					}
 				}
 				report.Confirmed = append(report.Confirmed, o)
 				continue

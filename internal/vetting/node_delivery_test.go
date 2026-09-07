@@ -2,6 +2,7 @@ package vetting
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"iter"
 	"strings"
@@ -487,7 +488,7 @@ func TestReviewFanoutMergedDeliveryCarriesReviewerCloneURL(t *testing.T) {
 
 // #1187: a run-level cancel landing the instant Deliver returns (shutdown
 // drain, hub.CancelRun) must not lose the post-delivery bookkeeping - the
-// GitHub side effect already happened, so delivery_record and delivery.done
+// GitHub side effect already happened, so the delivery_record completion
 // must still be written even though the caller's context is now Done.
 func TestCommitDelivery_BookkeepingSurvivesCancelAfterDeliver(t *testing.T) {
 	cfg := Config{IsReviewer: true, ChatID: "ext:github:owner-repo-1187", User: "u1", Artifacts: artifact.InMemoryService()}
@@ -509,33 +510,33 @@ func TestCommitDelivery_BookkeepingSurvivesCancelAfterDeliver(t *testing.T) {
 	act := workerActivity{stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "approve", Body: "x"}}}
 	commitDelivery(ctx, nil, cfg, "n1", act, GateResult{Passed: true})
 
-	var sawDone bool
-	for _, k := range shim.kinds() {
-		if k == ledger.KindDeliveryDone {
-			sawDone = true
-		}
-	}
-	if !sawDone {
-		t.Fatal("delivery.done was not appended after the run context was cancelled")
-	}
-	if shim.doneCtxErr != nil {
-		t.Fatalf("delivery.done was appended on a context that was already Done (err=%v) - bookkeeping must run detached from the run cancel", shim.doneCtxErr)
-	}
 	targetID, _ := recordstore.IdentityFor(kindCodeReview, nil, SubjectHint(cfg.ChatID))
 	if entries := listDeliveryRecords(context.Background(), cfg, targetID); len(entries) == 0 {
 		t.Fatal("delivery_record was not saved after the run context was cancelled")
 	}
+	if !shim.sawDeliveryRecord {
+		t.Fatal("delivery_record's artifact.revision WAL entry was not appended after the run context was cancelled")
+	}
+	if shim.doneCtxErr != nil {
+		t.Fatalf("delivery_record was appended on a context that was already Done (err=%v) - bookkeeping must run detached from the run cancel", shim.doneCtxErr)
+	}
 }
 
 // ctxCapturingLedger records the Err() of the ctx passed to the
-// delivery.done AppendIntent call, since fakeGateLedger itself ignores ctx.
+// delivery_record's artifact.revision AppendIntent call (its completion,
+// #1144 P2), since fakeGateLedger itself ignores ctx.
 type ctxCapturingLedger struct {
 	*fakeGateLedger
-	doneCtxErr error
+	sawDeliveryRecord bool
+	doneCtxErr        error
 }
 
 func (c *ctxCapturingLedger) AppendIntent(ctx context.Context, e ledger.Entry) (int64, error) {
-	if e.Kind == ledger.KindDeliveryDone {
+	var p struct {
+		Kind string `json:"kind"`
+	}
+	if e.Kind == ledger.KindArtifactRevision && json.Unmarshal(e.Payload, &p) == nil && p.Kind == kindDeliveryRecord {
+		c.sawDeliveryRecord = true
 		c.doneCtxErr = ctx.Err()
 	}
 	return c.fakeGateLedger.AppendIntent(ctx, e)

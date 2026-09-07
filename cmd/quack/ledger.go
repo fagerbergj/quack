@@ -11,6 +11,7 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/serve"
 	"github.com/fagerbergj/quack/internal/store"
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // newLedgerCmd: `quack ledger list|export|show|rebuild|recover`. list and
@@ -30,13 +31,13 @@ func newLedgerCmd() *cobra.Command {
 
 // newLedgerRecoverCmd: `quack ledger recover [chat-id] [--dry-run]` - the
 // same cli.Recover the server runs at boot: delivery.intent entries with no
-// delivery.done are checked against the configured extension's
-// DeliveryRecoverer, artifact.revision intents with no store row are marked
-// aborted. Redo stays nil: redoing a delivery needs the live node context
-// this offline command doesn't have. --dry-run reports without calling the
-// extension or writing. A recoverer-build failure degrades to a stderr
-// warning rather than aborting, so a misconfigured extension cannot hide
-// the orphans it might otherwise explain.
+// completing delivery_record revision are checked against the configured
+// extension's DeliveryRecoverer, artifact.revision intents with no store row
+// are marked aborted. Redo stays nil: redoing a delivery needs the live node
+// context this offline command doesn't have. --dry-run reports without
+// calling the extension or writing. A recoverer-build failure degrades to a
+// stderr warning rather than aborting, so a misconfigured extension cannot
+// hide the orphans it might otherwise explain.
 func newLedgerRecoverCmd() *cobra.Command {
 	var dryRun bool
 	c := &cobra.Command{
@@ -49,6 +50,7 @@ func newLedgerRecoverCmd() *cobra.Command {
 				return err
 			}
 			proj := cli.Projections{ArtifactRowExists: cli.ArtifactRowChecker(st, artifacts), Delivery: buildRecovererOrWarn(cmd, dryRun)}
+			proj.DeliveryRecorded, proj.RecordDelivery = vetting.DeliveryProjections(artifacts, ls, st.SessionUserForChat)
 			sum, err := cli.Recover(cmd.Context(), ls, args, proj, dryRun)
 			if err != nil {
 				return err

@@ -2,6 +2,7 @@ package vetting
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -27,7 +28,9 @@ import (
 // gated round appends several kinds) force the Nth AppendIntent call of
 // failKind to fail, then clear themselves - RunGatedRefine drives one node's
 // WAL calls from a single goroutine, so counting occurrences synchronously
-// here is deterministic, no timing games needed.
+// here is deterministic, no timing games needed. failKind "judge_round"
+// matches an artifact.revision entry whose payload Kind is judge_round
+// (#1144 P2: no dedicated judge.round entry kind to match on directly).
 type fakeGateLedger struct {
 	mu             sync.Mutex
 	seqs           map[string]int64
@@ -44,10 +47,26 @@ func newFakeGateLedger() *fakeGateLedger {
 func (f *fakeGateLedger) List(context.Context) ([]ledger.SessionRef, error) { return nil, nil }
 func (f *fakeGateLedger) Delete(context.Context, string) error              { return nil }
 
+// entryMatchesFailKind reports whether e is the kind failKind targets - the
+// literal ledger kind, or (for "judge_round") an artifact.revision entry
+// whose payload names that artifact kind.
+func entryMatchesFailKind(e ledger.Entry, failKind string) bool {
+	if e.Kind == failKind {
+		return true
+	}
+	if failKind == "judge_round" && e.Kind == ledger.KindArtifactRevision {
+		var p struct {
+			Kind string `json:"kind"`
+		}
+		return json.Unmarshal(e.Payload, &p) == nil && p.Kind == "judge_round"
+	}
+	return false
+}
+
 func (f *fakeGateLedger) AppendIntent(_ context.Context, e ledger.Entry) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.failKind != "" && e.Kind == f.failKind {
+	if f.failKind != "" && entryMatchesFailKind(e, f.failKind) {
 		f.seenOfKind++
 		if f.seenOfKind == f.failOccurrence {
 			return 0, errors.New("fakeGateLedger: forced AppendIntent failure")
@@ -138,27 +157,25 @@ func TestGatedNodeWALEntryOrder(t *testing.T) {
 	if last := kinds[len(kinds)-1]; last != ledger.KindNodeDone && last != ledger.KindNodeFailed {
 		t.Fatalf("last entry kind = %q, want node.done or node.failed", last)
 	}
-	// Between node.started and the close, every artifact.revision run for a
-	// round must precede that round's judge.round (stubModel fails round 1,
-	// passes round 2 - so exactly 2 judge.round entries).
+	// Between node.started and the close, every entry is an artifact.revision
+	// (#1144 P2: judge_round has no dedicated entry kind - it's an
+	// artifact.revision like any other id, distinguished by its payload's
+	// Kind). stubModel fails round 1, passes round 2 - so exactly 2 of them
+	// carry a judge_round payload.
 	var judgeRounds int
-	sawRevisionSinceLastJudge := false
-	for _, k := range kinds[1 : len(kinds)-1] {
-		switch k {
-		case ledger.KindArtifactRevision:
-			sawRevisionSinceLastJudge = true
-		case ledger.KindJudgeRound:
-			if !sawRevisionSinceLastJudge {
-				t.Fatal("judge.round entry with no preceding artifact.revision entry this round")
-			}
-			sawRevisionSinceLastJudge = false
+	for _, e := range fl.entries[1 : len(fl.entries)-1] {
+		if e.Kind != ledger.KindArtifactRevision {
+			t.Fatalf("unexpected WAL entry kind in the middle of the run: %q", e.Kind)
+		}
+		var p struct {
+			Kind string `json:"kind"`
+		}
+		if json.Unmarshal(e.Payload, &p) == nil && p.Kind == "judge_round" {
 			judgeRounds++
-		default:
-			t.Fatalf("unexpected WAL entry kind in the middle of the run: %q", k)
 		}
 	}
 	if judgeRounds != 2 {
-		t.Fatalf("judge.round entries = %d, want 2 (fail then pass)", judgeRounds)
+		t.Fatalf("judge_round artifact.revision entries = %d, want 2 (fail then pass)", judgeRounds)
 	}
 }
 
@@ -282,10 +299,10 @@ func TestGatedNodeNodeEventAppendFailureIsBestEffort(t *testing.T) {
 }
 
 // TestGatedNodeJudgeRoundAppendFailureStopsOnPassingRound is #1100 review
-// case (b): appendJudgeRound is fail-closed - a forced failure on a PASSING
-// round must stop the round loop, force res.Passed=false, name the WAL
-// failure in res.Feedback, and never start another revise round (asserted
-// via the worker's own call count).
+// case (b): saveJudgeRoundRecord's WAL write is fail-closed - a forced
+// failure on a PASSING round must stop the round loop, force
+// res.Passed=false, name the WAL failure in res.Feedback, and never start
+// another revise round (asserted via the worker's own call count).
 func TestGatedNodeJudgeRoundAppendFailureStopsOnPassingRound(t *testing.T) {
 	stub := &stubModel{}
 	worker, err := llmagent.New(llmagent.Config{
@@ -300,7 +317,7 @@ func TestGatedNodeJudgeRoundAppendFailureStopsOnPassingRound(t *testing.T) {
 	// append (the passing one), so a real "would have passed" verdict is the
 	// one forced closed. AppendIntent counts occurrences synchronously, so
 	// arming this before the run is enough - no timing games needed.
-	fl.failKind = ledger.KindJudgeRound
+	fl.failKind = "judge_round"
 	fl.failOccurrence = 2
 	cfg := Config{
 		JudgeRounds: 2, Threshold: 0.7, Rubric: "score the answer 0-10",

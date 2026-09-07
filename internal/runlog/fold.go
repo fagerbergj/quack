@@ -1,7 +1,8 @@
 // This file is runlog's read of the ledger fold (V4 §4.9/#1101). The SSE
 // table (store.ChatEvent, written by EventLog.Append) stays the source of
 // truth for a live run's exact payloads - tokens, output, model - which the
-// skinny node.*/judge.round WAL entries never carried. The fold only backs
+// skinny node.* WAL entries (and judge_round's artifact.revision entry)
+// never carried. The fold only backs
 // TWO paths that have no other source once the table is gone: a from-scratch
 // Last-Event-ID resume (table empty, WAL armed, client's fromSeq == 0 - see
 // LoadEvents's doc for why fromSeq > 0 is NOT served this way), and `quack
@@ -95,10 +96,10 @@ func SynthesizeChatEvents(chatID string, res *fold.Result) []store.ChatEvent {
 			items = append(items, item{seq: n.TerminalSeq, ev: stream.NodeFailed(n.NodeID, "")})
 		}
 	}
-	// judge.round entries carry no dedicated SSE event yet (design V4 §5's
-	// stream/event.go step is a later P) - out of #1101's scope; the fold
-	// keeps them (Result.JudgeRounds) for `ledger show`/rebuild's artifact
-	// side, just not as a synthesized SSE event here.
+	// judge_round artifact.revision entries carry no dedicated SSE event yet
+	// (design V4 §5's stream/event.go step is a later P) - out of #1101's
+	// scope; the fold keeps them (Result.JudgeRounds) for `ledger
+	// show`/rebuild's artifact side, just not as a synthesized SSE event here.
 	sort.Slice(items, func(i, j int) bool { return items[i].seq < items[j].seq })
 	now := time.Now().UTC()
 	out := make([]store.ChatEvent, 0, len(items))
