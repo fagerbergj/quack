@@ -51,9 +51,6 @@ func WithMaxAttempts(n uint) Option { return func(t *transport) { t.maxAttempts 
 // WithBaseDelay sets the initial exponential-backoff interval.
 func WithBaseDelay(d time.Duration) Option { return func(t *transport) { t.baseDelay = d } }
 
-// WithMaxDelay caps the exponential-backoff interval.
-func WithMaxDelay(d time.Duration) Option { return func(t *transport) { t.maxDelay = d } }
-
 type transport struct {
 	next        http.RoundTripper
 	maxAttempts uint

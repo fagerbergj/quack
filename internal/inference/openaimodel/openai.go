@@ -29,10 +29,7 @@ import (
 
 var _ model.LLM = &OpenAIModel{}
 
-var (
-	ErrNoChoicesInResponse   = errors.New("no choices in OpenAI response")
-	ErrUnknownPartInResponse = errors.New("unknown part type in genai content")
-)
+var ErrNoChoicesInResponse = errors.New("no choices in OpenAI response")
 
 type OpenAIModel struct {
 	client    openai.Client

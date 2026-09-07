@@ -15,7 +15,7 @@ import (
 
 // fastOpts keeps retry tests from waiting out real backoff.
 func fastOpts(opts ...Option) []Option {
-	return append([]Option{WithBaseDelay(time.Millisecond), WithMaxDelay(5 * time.Millisecond)}, opts...)
+	return append([]Option{WithBaseDelay(time.Millisecond)}, opts...)
 }
 
 // --- Done-when's two headline scenarios, over a real httptest.Server ---
@@ -269,7 +269,7 @@ func TestRetryAfterSecondsHonoured(t *testing.T) {
 		{resp: statusResp(200, nil)},
 	}}
 	// A large default backoff: if Retry-After weren't honoured, this would take seconds.
-	rt := NewTransport(stub, WithBaseDelay(2*time.Second), WithMaxDelay(2*time.Second))
+	rt := NewTransport(stub, WithBaseDelay(2*time.Second))
 	start := time.Now()
 	resp, err := doReq(t, rt, http.MethodGet, nil)
 	if err != nil {
@@ -289,7 +289,7 @@ func TestRetryAfterHTTPDateHonoured(t *testing.T) {
 		{resp: statusResp(429, map[string]string{"Retry-After": when})},
 		{resp: statusResp(200, nil)},
 	}}
-	rt := NewTransport(stub, WithBaseDelay(2*time.Second), WithMaxDelay(2*time.Second))
+	rt := NewTransport(stub, WithBaseDelay(2*time.Second))
 	start := time.Now()
 	resp, err := doReq(t, rt, http.MethodGet, nil)
 	if err != nil {
