@@ -498,9 +498,8 @@ workspace:
   # disables checks entirely.
   check_commands: ["go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make"]
   # "npm run" above already covers `npm run render-check` (#1192) as a valid
-  # area:frontend gate check. Follow-up (not yet wired, tracked as #1211):
-  # hand its PNGs to the judge as `bytes:` artifacts so a visual review sees
-  # the screenshots, not just the gate's pass/fail.
+  # area:frontend gate check. Its PNGs are handed to the judge as `bytes:`
+  # artifacts whenever render-check is one of a node's checks (#1211).
 
   # check_setup: repo bootstrap commands, run once per dir (a shared clone, a
   # node's linked worktree, or the baseline worktree the gate diffs against)

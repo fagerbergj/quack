@@ -716,7 +716,10 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			if skip != "" {
 				checksSkipReason = skip
 			}
-			v, jerr := runJudgeAgent(ledgerCtx, judge, cfg, question, answer, act, det, judgePartEmitter(sink, nodeID, runID))
+			// area:frontend evidence (#1211): judge-only, never touches the
+			// worker's own question/revision content.
+			shots := renderScreenshotEvidence(judgeCtx, cfg, nodeID, skip == "", act)
+			v, jerr := runJudgeAgent(ledgerCtx, judge, cfg, attachScreenshots(question, shots), answer, act, det, judgePartEmitter(sink, nodeID, runID))
 			if jerr != nil {
 				// Judge failure means answer goes out unvetted - loud ERROR, not Warn.
 				log.Error("judge failed; surfacing answer unvetted", "round", round, "err", jerr)
