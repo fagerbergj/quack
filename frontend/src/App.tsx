@@ -5,10 +5,12 @@ import ExtensionHost from './pages/ExtensionHost'
 import { NavRail } from './components/NavRail'
 import { useRoute, useExtName } from './router'
 import { applyTheme } from './hooks/useTheme'
+import { useVisualViewportHeight } from './hooks/useVisualViewportHeight'
 
 export default function App() {
   const route = useRoute()
   const extName = useExtName()
+  const vvHeight = useVisualViewportHeight()
 
   // #1171: the nav drawer is the app's only navigation shape - always closed
   // on load and never persisted (the old navRailCollapsed localStorage key
@@ -27,8 +29,10 @@ export default function App() {
     // stays taller than what's actually visible while browser chrome (URL
     // bar/toolbar) covers part of the screen - pinning the composer at the
     // bottom of a too-tall box puts it underneath that chrome. 100dvh
-    // tracks the real visible viewport instead.
-    <div className="h-dvh flex">
+    // tracks the real visible viewport instead - except iOS Safari's
+    // keyboard, which shrinks visualViewport without shrinking dvh (#1248).
+    // The inline height (from visualViewport) overrides h-dvh once it fires.
+    <div className="h-dvh flex" style={vvHeight != null ? { height: vvHeight } : undefined}>
       {/* Nav drawer (#1171): Chats/Memory/extensions as a peer list, outside
           the page switch below so it's common to every route. It renders
           nothing (or a fixed overlay) - never layout - so the content
