@@ -64,23 +64,12 @@ func TestFold_SkipsAbortedRevision(t *testing.T) {
 	}
 }
 
-// TestFold_LaterEntryWins: a retried save reuses the same revision number
-// its aborted attempt claimed - the later artifact.revision entry must
-// re-materialize it, per KindArtifactRevisionAborted's doc.
-func TestFold_LaterEntryWins(t *testing.T) {
-	s := newMemStore(t)
-	appendRevision(t, s, "chat1", "id1", 1, 0)
-	appendAborted(t, s, "chat1", "id1", 1)
-	appendRevision(t, s, "chat1", "id1", 1, 0) // retry, same number, now succeeds
-
-	rev, err := LastRevision(context.Background(), s, "chat1", "id1")
-	if err != nil {
-		t.Fatalf("LastRevision: %v", err)
-	}
-	if rev != 1 {
-		t.Fatalf("LastRevision = %d, want 1", rev)
-	}
-}
+// TestFold_LaterEntryWins pre-#1144-P4 covered a retried save reusing its
+// aborted attempt's revision number and parent; the store-level
+// (chat_id, key, parent_revision) index now rejects that exact retry outright
+// (AppendIntent returns ledger.ErrStaleParent) instead of ever landing a
+// second entry to fold - see recordstore.saveAt's doc for the new,
+// non-self-healing contract. Deleted with the rest of the aborted-retry path.
 
 func TestLastRevision_NoEntries(t *testing.T) {
 	s := newMemStore(t)

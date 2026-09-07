@@ -6,8 +6,39 @@ package ledger
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
 )
+
+// ErrStaleParent: another entry already claimed (chat_id, key,
+// parent_revision) - the store-level index that replaced idLocks (#1144 P4).
+// Nothing was written; the caller rereads the real latest and retries.
+var ErrStaleParent = errors.New("ledger: parent revision already claimed")
+
+// DuplicateIntentError: entry.IdempotencyKey already exists for this chat
+// (#1144 P4) - nothing was written; Existing is the entry that won, and the
+// caller treats this as a no-op rather than an error to surface.
+type DuplicateIntentError struct{ Existing Entry }
+
+func (e *DuplicateIntentError) Error() string {
+	return fmt.Sprintf("ledger: duplicate idempotency key, existing seq %d", e.Existing.Seq)
+}
+
+// parentRevisionOf reads an artifact.revision entry's parent_revision out of
+// its payload, so PGStore/MemStore enforce uniqueness without either owning
+// recordstore's artifactRevisionPayload type.
+func parentRevisionOf(kind string, payload json.RawMessage) int64 {
+	if kind != KindArtifactRevision {
+		return 0
+	}
+	var p struct {
+		ParentRevision int64 `json:"parent_revision"`
+	}
+	_ = json.Unmarshal(payload, &p) // best-effort; unparseable payload just claims parent 0
+	return p.ParentRevision
+}
 
 // SessionRef describes one recorded chat for a List call.
 type SessionRef struct {

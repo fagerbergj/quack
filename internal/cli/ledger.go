@@ -358,21 +358,19 @@ type LedgerRecoverReport struct {
 	Confirmed  []OrphanedDelivery `json:"confirmed"`            // delivery_record recorded; extension already had it
 	Redone     []OrphanedDelivery `json:"redone"`               // Redo called; nothing was there
 	Unresolved []OrphanedDelivery `json:"unresolved,omitempty"` // no recoverer/Redo available to check, or dry-run
-	// Aborted: artifact.revision intents with no row, now (or under
-	// --dry-run, would be) marked artifact.revision.aborted so the next save
-	// builds on the real parent revision.
-	Aborted []OrphanedRevision `json:"aborted,omitempty"`
-	Errors  []string           `json:"errors,omitempty"`
+	// OrphanedRevisions: artifact.revision intents with no store row. #1144
+	// P4 deleted the artifact.revision.aborted compensating marker - a
+	// PLAIN SAVE on the same id now self-heals this by adopting the orphan
+	// (recordstore.saveAtOrAdopt), so recovery only reports it (unresolved
+	// count), it never writes.
+	OrphanedRevisions []OrphanedRevision `json:"orphaned_revisions,omitempty"`
+	Errors            []string           `json:"errors,omitempty"`
 }
 
 // unresolved counts the intents this pass could not settle - the
 // quack_ledger_unresolved_intents gauge's per-chat contribution.
 func (r *LedgerRecoverReport) unresolved() int {
-	n := len(r.Unresolved) + len(r.Errors)
-	if r.DryRun {
-		n += len(r.Aborted)
-	}
-	return n
+	return len(r.Unresolved) + len(r.Errors) + len(r.OrphanedRevisions)
 }
 
 // RunLedgerRecover reconciles one chat's intents whose projection write is
@@ -380,10 +378,11 @@ func (r *LedgerRecoverReport) unresolved() int {
 // once its delivery_record artifact revision exists (p.DeliveryRecorded) -
 // no separate ledger entry to check. For an unsettled one, ask p.Delivery
 // whether the target already saw the key; if so, p.RecordDelivery writes the
-// completion, else run p.Redo. Artifacts: each live artifact.revision with
-// no store row gets an artifact.revision.aborted marker. Idempotent: a
-// settled intent no longer shows up as an orphan. dryRun reports without
-// calling anything or writing.
+// completion, else run p.Redo. Artifacts: each live artifact.revision with no
+// store row is reported (OrphanedRevisions) - recordstore's own retry path
+// self-heals it on the next save to that id (see saveAtOrAdopt), so recovery
+// only surfaces it, never writes. Idempotent: a settled intent no longer
+// shows up as an orphan. dryRun changes only the delivery half.
 func RunLedgerRecover(ctx context.Context, ls ledger.LedgerStore, chatID string, p Projections, dryRun bool) (*LedgerRecoverReport, error) {
 	intents, err := findDeliveryIntents(ctx, ls, chatID)
 	if err != nil {
@@ -446,19 +445,9 @@ func RunLedgerRecover(ctx context.Context, ls ledger.LedgerStore, chatID string,
 			if exists {
 				continue
 			}
-			o := OrphanedRevision{ID: id, Revision: rev.Revision, NodeID: rev.NodeID, TurnID: rev.TurnID, Seq: rev.Seq}
-			report.Aborted = append(report.Aborted, o)
-			if dryRun {
-				continue
-			}
-			payload, _ := json.Marshal(struct {
-				Revision int    `json:"revision"`
-				Reason   string `json:"reason"`
-			}{Revision: rev.Revision, Reason: "recovery: no store row for this revision"})
-			if _, aerr := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, TurnID: rev.TurnID, NodeID: rev.NodeID,
-				Kind: ledger.KindArtifactRevisionAborted, Key: id, Payload: payload}); aerr != nil {
-				return nil, fmt.Errorf("ledger recover: append artifact.revision.aborted for %s@%d: %w", id, rev.Revision, aerr)
-			}
+			report.OrphanedRevisions = append(report.OrphanedRevisions, OrphanedRevision{
+				ID: id, Revision: rev.Revision, NodeID: rev.NodeID, TurnID: rev.TurnID, Seq: rev.Seq,
+			})
 		}
 	}
 	return report, nil
@@ -493,7 +482,7 @@ func Recover(ctx context.Context, ls ledger.LedgerStore, chatIDs []string, p Pro
 		if err != nil {
 			return nil, err
 		}
-		if len(report.Confirmed)+len(report.Redone)+len(report.Unresolved)+len(report.Aborted)+len(report.Errors) == 0 {
+		if len(report.Confirmed)+len(report.Redone)+len(report.Unresolved)+len(report.OrphanedRevisions)+len(report.Errors) == 0 {
 			continue
 		}
 		sum.Reports = append(sum.Reports, report)
@@ -506,17 +495,13 @@ func Recover(ctx context.Context, ls ledger.LedgerStore, chatIDs []string, p Pro
 
 // FormatLedgerRecoverReport renders report as the human-readable summary `recover` prints.
 func FormatLedgerRecoverReport(r *LedgerRecoverReport) string {
-	verb := "aborted"
-	if r.DryRun {
-		verb = "would abort"
-	}
-	s := fmt.Sprintf("chat %s: %d confirmed already-delivered, %d redelivered, %d unresolved, %d row-less revision(s) %s\n",
-		r.ChatID, len(r.Confirmed), len(r.Redone), len(r.Unresolved), len(r.Aborted), verb)
+	s := fmt.Sprintf("chat %s: %d confirmed already-delivered, %d redelivered, %d unresolved, %d row-less revision(s) (self-heals on next save)\n",
+		r.ChatID, len(r.Confirmed), len(r.Redone), len(r.Unresolved), len(r.OrphanedRevisions))
 	for _, o := range r.Unresolved {
 		s += fmt.Sprintf("  unresolved: key=%s target=%s rev=%d node=%s seq=%d\n", o.Key, o.TargetID, o.Revision, o.NodeID, o.Seq)
 	}
-	for _, o := range r.Aborted {
-		s += fmt.Sprintf("  %s: %s@%d node=%s seq=%d\n", verb, o.ID, o.Revision, o.NodeID, o.Seq)
+	for _, o := range r.OrphanedRevisions {
+		s += fmt.Sprintf("  no store row: %s@%d node=%s seq=%d\n", o.ID, o.Revision, o.NodeID, o.Seq)
 	}
 	for _, e := range r.Errors {
 		s += "  error: " + e + "\n"

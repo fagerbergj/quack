@@ -290,9 +290,12 @@ func TestRecover_TwoDeliveriesOnOneSubjectBothSettled(t *testing.T) {
 }
 
 // TestRecover_CrashBetweenIntentAndRow is the kill -9 case: the WAL holds an
-// artifact.revision intent whose row write never happened. After "restart",
-// Recover marks it aborted, so the fold's parent revision agrees with the
-// store again and the next save lands on the revision the store will assign.
+// artifact.revision intent whose row write never happened. #1144 P4 deleted
+// the artifact.revision.aborted self-heal in favor of the cheaper
+// recordstore.saveAtOrAdopt path (no bytes duplicated into the ledger) - a
+// PLAIN SAVE on the same id adopts the orphaned intent and completes it at
+// the same revision, so Recover only needs to REPORT the orphan (matching
+// P1: an unresolved count, never a write) until the next save clears it.
 func TestRecover_CrashBetweenIntentAndRow(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
@@ -316,30 +319,28 @@ func TestRecover_CrashBetweenIntentAndRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dry.Unresolved != 1 || len(dry.Reports) != 1 || len(dry.Reports[0].Aborted) != 1 {
+	if dry.Unresolved != 1 || len(dry.Reports) != 1 || len(dry.Reports[0].OrphanedRevisions) != 1 {
 		t.Fatalf("dry-run summary = %+v, want one row-less revision reported", dry)
-	}
-	if last, _ := fold.LastRevision(ctx, ls, chatID, id); last != 2 {
-		t.Fatalf("dry-run wrote: fold = %d", last)
 	}
 
 	sum, err := Recover(ctx, ls, nil, proj, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sum.Unresolved != 0 || len(sum.Reports) != 1 || sum.Reports[0].Aborted[0].Revision != 2 {
-		t.Fatalf("summary = %+v", sum)
+	if sum.Unresolved != 1 || len(sum.Reports) != 1 || sum.Reports[0].OrphanedRevisions[0].Revision != 2 {
+		t.Fatalf("summary = %+v, want the orphan still reported (recovery never writes)", sum)
 	}
-	if last, _ := fold.LastRevision(ctx, ls, chatID, id); last != 1 {
-		t.Fatalf("fold after recovery = %d, want the store's real revision 1", last)
+
+	// A plain save on the same id self-heals it: saveAtOrAdopt sees revision
+	// 2 has no row and adopts the orphan instead of failing.
+	_, adoptedRev, err := c.SaveStructured(ctx, testKind, map[string]string{"v": "2"}, "doc-1", recordstore.Lineage{Author: "tester"})
+	if err != nil || adoptedRev != 2 {
+		t.Fatalf("save after the crash: rev %d, %v, want it to adopt revision 2", adoptedRev, err)
 	}
-	// Idempotent: a second pass finds nothing.
-	again, _ := Recover(ctx, ls, nil, proj, false)
-	if len(again.Reports) != 0 {
-		t.Fatalf("second pass = %+v, want nothing", again)
-	}
-	// And the next save lands where the store assigns it.
-	if _, rev, err := c.SaveStructured(ctx, testKind, map[string]string{"v": "2"}, "doc-1", recordstore.Lineage{Author: "tester", ParentRevision: 1}); err != nil || rev != 2 {
-		t.Fatalf("save after recovery: rev %d, %v", rev, err)
+
+	// Recover now sees no orphans left.
+	again, err := Recover(ctx, ls, nil, proj, false)
+	if err != nil || len(again.Reports) != 0 {
+		t.Fatalf("second pass = %+v, err=%v, want nothing (adopted)", again, err)
 	}
 }

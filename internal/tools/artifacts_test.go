@@ -429,9 +429,9 @@ func findKindSpec(t *testing.T, name string) (recordstore.KindSpec, error) {
 
 // TestNewWriteKindTool_ParentRevisionChain: write_<kind> (and write_artifact)
 // build their own recordstore.Lineage with no ParentRevision (#1153) -
-// saveLocked fills it in from the WAL's own last-revision read, but only
-// when the client is WithLedger-armed, which every worker tool call site
-// used to skip. Two saves through the tool must chain revision 2 to
+// recordstore.save fills it in from the store's own latest revision, but
+// only when the client is WithLedger-armed, which every worker tool call
+// site used to skip. Two saves through the tool must chain revision 2 to
 // revision 1, both in the returned lineage and in the WAL's own
 // artifact.revision intent (fold's parent-chain oracle, epic #1090 item 1.5).
 func TestNewWriteKindTool_ParentRevisionChain(t *testing.T) {
@@ -461,7 +461,7 @@ func TestNewWriteKindTool_ParentRevisionChain(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Same id, different body: a real second revision, not a no-op
-	// identical-content skip (saveLocked's own guard, #1123).
+	// identical-content match (the ledger's IdempotencyKey, #1123/#1144 P4).
 	args2 := map[string]any{"path": "a.go", "title": "leaked resource", "state": "resolved"}
 	out2, err := rt.Run(newArtifactsToolCtx(), args2)
 	if err != nil {

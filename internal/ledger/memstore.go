@@ -23,6 +23,8 @@ var (
 
 func NewMemStore() *MemStore { return &MemStore{entries: map[string][]Entry{}} }
 
+// AppendIntent enforces the same two constraints PGStore does (#1144 P4) by
+// scanning this chat's entries - fine for a test-only store.
 func (s *MemStore) AppendIntent(_ context.Context, e Entry) (int64, error) {
 	if e.ChatID == "" || e.Kind == "" {
 		return 0, fmt.Errorf("ledger: intent needs chat_id and kind")
@@ -32,6 +34,23 @@ func (s *MemStore) AppendIntent(_ context.Context, e Entry) (int64, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Idempotency before parent-conflict: a repeat's stale parent must not
+	// mask its own no-op, or a caller retrying on ErrStaleParent loops forever.
+	if e.IdempotencyKey != "" {
+		for _, ex := range s.entries[e.ChatID] {
+			if ex.IdempotencyKey == e.IdempotencyKey {
+				return 0, &DuplicateIntentError{Existing: ex}
+			}
+		}
+	}
+	if e.Kind == KindArtifactRevision {
+		parent := parentRevisionOf(e.Kind, e.Payload)
+		for _, ex := range s.entries[e.ChatID] {
+			if ex.Kind == KindArtifactRevision && ex.Key == e.Key && parentRevisionOf(ex.Kind, ex.Payload) == parent {
+				return 0, ErrStaleParent
+			}
+		}
+	}
 	e.Seq = int64(len(s.entries[e.ChatID])) + 1
 	s.entries[e.ChatID] = append(s.entries[e.ChatID], e)
 	return e.Seq, nil

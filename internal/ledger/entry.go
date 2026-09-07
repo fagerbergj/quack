@@ -9,10 +9,9 @@ import (
 // change); node.* and the observation kinds are best-effort.
 const (
 	KindArtifactRevision = "artifact.revision"
-	// KindArtifactRevisionAborted marks an artifact.revision whose row never
-	// materialized (crash or failed write after the intent landed). Folds
-	// skip it when picking the parent revision so the id never wedges on a
-	// phantom revision; boot recovery appends it for the crash case.
+	// KindArtifactRevisionAborted: no longer written (#1144 P4's unique index
+	// makes a phantom parent unclaimable instead); kept so fold still reads
+	// pre-P4 rows correctly.
 	KindArtifactRevisionAborted = "artifact.revision.aborted"
 	// KindDeliveryIntent's completion is a delivery_record artifact.revision,
 	// not a second ledger entry (#1144 P2 - one representation per fact).
@@ -47,17 +46,20 @@ func IsObservation(kind string) bool {
 // are the replay stream identity, stamped onto each record by the emitting
 // object (SetLedgerCoords on the traced model/tools/ACP client) - a ctx value
 // set inside a node body never crosses the RunNode scheduling boundary.
+// IdempotencyKey, when set, is unique per chat at the store level (#1144 P4):
+// a repeat writes nothing and returns *DuplicateIntentError instead.
 type Entry struct {
-	Seq     int64           `json:"seq"`
-	ChatID  string          `json:"chat_id"`
-	TurnID  string          `json:"turn_id,omitempty"`
-	NodeID  string          `json:"node_id,omitempty"`
-	Agent   string          `json:"agent,omitempty"`
-	Round   string          `json:"round,omitempty"`
-	Kind    string          `json:"kind"`
-	Key     string          `json:"key,omitempty"`
-	At      time.Time       `json:"at"`
-	Payload json.RawMessage `json:"payload,omitempty"`
+	Seq            int64           `json:"seq"`
+	ChatID         string          `json:"chat_id"`
+	TurnID         string          `json:"turn_id,omitempty"`
+	NodeID         string          `json:"node_id,omitempty"`
+	Agent          string          `json:"agent,omitempty"`
+	Round          string          `json:"round,omitempty"`
+	Kind           string          `json:"kind"`
+	Key            string          `json:"key,omitempty"`
+	At             time.Time       `json:"at"`
+	Payload        json.RawMessage `json:"payload,omitempty"`
+	IdempotencyKey string          `json:"idempotency_key,omitempty"`
 }
 
 // LLMCallPayload is a KindLLMCall entry's payload (one gen_ai "chat" call).
