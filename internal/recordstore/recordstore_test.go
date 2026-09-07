@@ -39,10 +39,6 @@ func (f *fakeLedger) MaxSeq(_ context.Context, chatID string) (int64, error) {
 	return f.seqs[chatID], nil
 }
 
-func (f *fakeLedger) LastCheckpoint(context.Context, string) (ledger.Entry, bool, error) {
-	return ledger.Entry{}, false, nil
-}
-
 // AppendIntent enforces the same (chat_id, key, parent_revision) and
 // idempotency_key uniqueness the real stores do (#1144 P4), so a test using
 // fakeLedger exercises saveAt's retry/no-op paths the same way MemStore or

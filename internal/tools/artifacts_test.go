@@ -43,10 +43,6 @@ func (f *fakeLedger) MaxSeq(_ context.Context, chatID string) (int64, error) {
 	return f.seqs[chatID], nil
 }
 
-func (f *fakeLedger) LastCheckpoint(context.Context, string) (ledger.Entry, bool, error) {
-	return ledger.Entry{}, false, nil
-}
-
 func (f *fakeLedger) AppendIntent(_ context.Context, e ledger.Entry) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

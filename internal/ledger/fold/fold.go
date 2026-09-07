@@ -261,23 +261,29 @@ func Fold(ctx context.Context, store ledger.LedgerStore, chatID string, fromSeq 
 
 // Apply folds only the entries newer than from (a projection's watermark),
 // instead of re-folding chatID's whole history (#1144 P3). from=-1 (via
-// Fold's fromSeq=0) is a fresh fold of the whole chat - #1144 P5: for that
-// "no known watermark yet" case (from <= 0), this seeds from the chat's
-// last checkpoint instead of reading from seq 1, if one exists. Seeding is
-// keyed off the CHECKPOINT PAYLOAD's own LastSeq, never this entry's Seq -
-// a checkpoint appended late (a concurrent turn's WAL append raced ahead of
-// it) still folds correctly, just re-processes a few more entries than the
-// freshest checkpoint would have needed.
+// Fold's fromSeq=0) is a fresh fold of the whole chat.
 func Apply(ctx context.Context, store ledger.LedgerStore, chatID string, from int64) (*Result, error) {
+	return ApplySeeded(ctx, store, chatID, nil, from)
+}
+
+// ApplySeeded is Apply, but starting from a previously folded Result (a
+// checkpoint) instead of empty state (#1144 P5). seed nil is exactly Apply.
+// from is the caller's OWN already-known watermark, not the seed's - pass 0
+// (or -1, Fold's convention) when the seed is the only state you have, e.g.
+// internal/store.Store.WriteCheckpoint. Seeding is keyed off seed's OWN
+// LastSeq compared against that from, so it only activates when the seed is
+// actually newer: passing seed.LastSeq as `from` itself would make the
+// `seed.LastSeq > from` check false and silently skip seeding. A caller
+// that reads a checkpoint row written by a concurrent, slightly-behind turn
+// still folds correctly, just re-processes a few more entries than the
+// freshest checkpoint would have needed (see internal/store.Checkpoint's
+// doc for where that row now lives - #1144 P5 review moved it out of the ledger).
+func ApplySeeded(ctx context.Context, store ledger.LedgerStore, chatID string, seed *Result, from int64) (*Result, error) {
 	live := map[revKey]ArtifactRevision{}
 	nodes := map[string]*NodeState{}
-	if from <= 0 {
-		if cp, found, err := store.LastCheckpoint(ctx, chatID); err == nil && found {
-			if seed, derr := decodeCheckpoint(cp); derr == nil && seed.LastSeq > from {
-				seedFold(seed, live, nodes)
-				from = seed.LastSeq
-			}
-		}
+	if seed != nil && seed.LastSeq > from {
+		seedFold(seed, live, nodes)
+		from = seed.LastSeq
 	}
 	entries, err := readAll(ctx, store, chatID, from+1)
 	if err != nil {
@@ -288,17 +294,8 @@ func Apply(ctx context.Context, store ledger.LedgerStore, chatID string, from in
 	return finalize(res, live), nil
 }
 
-// decodeCheckpoint unmarshals a KindCheckpoint entry's payload back into a Result.
-func decodeCheckpoint(cp ledger.Entry) (*Result, error) {
-	var res Result
-	if err := json.Unmarshal(cp.Payload, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-// seedFold populates live/nodes from a previously folded Result, so Apply
-// can resume from a checkpoint instead of an empty state.
+// seedFold populates live/nodes from a previously folded Result, so
+// ApplySeeded can resume from a checkpoint instead of an empty state.
 func seedFold(seed *Result, live map[revKey]ArtifactRevision, nodes map[string]*NodeState) {
 	for id, a := range seed.Artifacts {
 		for _, rv := range a.Revisions {
@@ -309,13 +306,6 @@ func seedFold(seed *Result, live map[revKey]ArtifactRevision, nodes map[string]*
 		cp := *n
 		nodes[id] = &cp
 	}
-}
-
-// EncodeCheckpoint marshals res as a KindCheckpoint entry's payload - the
-// one place that shape is defined, so a caller (turn-end) never needs to
-// know Result's internals beyond "pass Fold's own output back in".
-func EncodeCheckpoint(res *Result) ([]byte, error) {
-	return json.Marshal(res)
 }
 
 // LastRevision returns id's highest materialized revision in chatID's

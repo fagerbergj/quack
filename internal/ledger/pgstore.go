@@ -310,20 +310,6 @@ func pgRowsToEntries(rows []pgEntry) []Entry {
 	return out
 }
 
-// LastCheckpoint returns chatID's highest-seq checkpoint row, if any.
-func (s *PGStore) LastCheckpoint(ctx context.Context, chatID string) (Entry, bool, error) {
-	var row pgEntry
-	err := s.db.WithContext(ctx).Where("chat_id = ? AND kind = ?", chatID, KindCheckpoint).
-		Order("seq desc").Take(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return Entry{}, false, nil
-	}
-	if err != nil {
-		return Entry{}, false, fmt.Errorf("ledger: last checkpoint for chat %q: %w", chatID, err)
-	}
-	return pgRowsToEntries([]pgEntry{row})[0], true, nil
-}
-
 // List returns one SessionRef per distinct chat_id; Size counts rows.
 func (s *PGStore) List(ctx context.Context) ([]SessionRef, error) {
 	var aggs []struct {

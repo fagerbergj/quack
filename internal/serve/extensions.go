@@ -974,9 +974,13 @@ func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrato
 	timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
 	// hub.RegisterRun's cancel func is runCtx's own - a user Stop surfaces here as Canceled.
 	cancelled := errors.Is(runCtx.Err(), context.Canceled)
-	if err := st.WriteCheckpoint(context.WithoutCancel(ctx), chatID); err != nil { // #1144 P5: best-effort
+	// #1144 P5: best-effort, bounded the same way the shutdown branch above
+	// is - a hung Postgres must not block RunEnded/delivery indefinitely.
+	checkpointCtx, checkpointCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	if err := st.WriteCheckpoint(checkpointCtx, chatID); err != nil {
 		slog.Warn("extension run: checkpoint write failed", "component", "ext."+name, "chat", chatID, "err", err)
 	}
+	checkpointCancel()
 	outcome := buildExtRunOutcome(runCtx, orch, st, userID, chatID, res.PlanID != "", res.NeedsInput, timedOut, cancelled)
 	if p := extHolder.Load(); p != nil {
 		if obs, ok := (*p).(extsdk.RunObserver); ok {

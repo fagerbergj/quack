@@ -117,8 +117,8 @@ export const getConfig = <ThrowOnError extends boolean = false>(options?: Option
  * list`/export. 200 with an empty array when a ledger store is
  * configured but nothing has been written yet; 404 when no ledger store
  * is configured - same signal as `getChatRecording`. Deliberately
- * unpaginated: one entry per chat, bounded by the ledger's own
- * retention_days GC, not an open-ended table.
+ * unpaginated: one entry per chat, bounded by the number of chats (chat
+ * hard-delete is the ledger's only GC - #1144 P5), not an open-ended table.
  *
  */
 export const listRecordings = <ThrowOnError extends boolean = false>(options?: Options<ListRecordingsData, ThrowOnError>): RequestResult<ListRecordingsResponses, ListRecordingsErrors, ThrowOnError> => (options?.client ?? client).get<ListRecordingsResponses, ListRecordingsErrors, ThrowOnError>({

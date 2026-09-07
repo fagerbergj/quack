@@ -69,19 +69,6 @@ func (s *MemStore) ReadEntries(_ context.Context, chatID string, fromSeq int64) 
 	return out, nil
 }
 
-// LastCheckpoint returns chatID's most recently appended checkpoint entry.
-func (s *MemStore) LastCheckpoint(_ context.Context, chatID string) (Entry, bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	es := s.entries[chatID]
-	for i := len(es) - 1; i >= 0; i-- {
-		if es[i].Kind == KindCheckpoint {
-			return MigrateEntry(es[i]), true, nil
-		}
-	}
-	return Entry{}, false, nil
-}
-
 // MaxSeq mirrors PGStore's: entries are appended with Seq = position+1, so
 // the count IS the max seq (0 for a chat with none).
 func (s *MemStore) MaxSeq(_ context.Context, chatID string) (int64, error) {

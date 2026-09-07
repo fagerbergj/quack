@@ -28,14 +28,6 @@ const (
 	KindTurnCreated = "turn.created"
 	KindPlanSaved   = "plan.saved"
 
-	// KindCheckpoint carries a whole fold.Result (marshaled by the caller,
-	// opaque to this package) at turn end (#1144 P5). Best-effort: a failed
-	// or missing checkpoint only costs a slower from-scratch fold, never
-	// correctness - fold.Apply always trusts the checkpoint payload's own
-	// LastSeq, not this entry's Seq, so a checkpoint appended late (a
-	// concurrent turn raced ahead of it) is still safe to fold from.
-	KindCheckpoint = "checkpoint"
-
 	// Observation kinds, written by the OTel Exporter from gen_ai.* records.
 	KindLLMCall     = "llm.call"
 	KindToolCall    = "tool.call"

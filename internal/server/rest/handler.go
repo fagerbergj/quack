@@ -1593,6 +1593,11 @@ func (h *Handler) stampRunOutcome(parent context.Context, chatID string) {
 		if err := h.store.StampRunOutcome(ctx, chatID, store.RunStatusPaused, ""); err != nil {
 			slog.Warn("stamp run outcome: paused persist failed", "component", "rest", "chat", chatID, "err", err)
 		}
+		// #1144 P5: this is a turn end too - write it here as well, so the
+		// interrupted and normal paths don't silently diverge on it.
+		if err := h.store.WriteCheckpoint(ctx, chatID); err != nil {
+			slog.Warn("checkpoint write failed", "component", "rest", "chat", chatID, "err", err)
+		}
 		return
 	}
 	turns, err := h.store.GetTurnsWithContent(ctx, orchestrator.AppName, h.sessionUser(ctx, chatID), chatID)

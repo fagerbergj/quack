@@ -151,3 +151,72 @@ func TestSaveDagPlan_ResumeIsWALIdempotent(t *testing.T) {
 		t.Fatalf("plan.saved entries = %d, want 1 (three resumes must not append three times)", planSaved)
 	}
 }
+
+// TestWriteCheckpoint_UpsertsOneRowAndSeedsNextFold is #1144 P5 review's
+// design change made concrete: the checkpoint is ONE row (chat_id primary
+// key), replaced in place, not an entry appended to the ledger every turn -
+// and a second WriteCheckpoint call must actually consume the first row as
+// its fold seed (this exact bug - passing the seed's own LastSeq as
+// fold.ApplySeeded's `from` - silently skipped seeding and would have
+// shipped un-caught without this test).
+func TestWriteCheckpoint_UpsertsOneRowAndSeedsNextFold(t *testing.T) {
+	ctx := context.Background()
+	st := newTestStore(t)
+	ls := ledger.NewMemStore()
+	st.SetWALLedger(ls)
+
+	chat, err := st.CreateChat(ctx, "sys")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	appendRev := func(rev, parent int) {
+		t.Helper()
+		payload, merr := json.Marshal(struct {
+			Revision       int `json:"revision"`
+			ParentRevision int `json:"parent_revision"`
+		}{rev, parent})
+		if merr != nil {
+			t.Fatalf("marshal: %v", merr)
+		}
+		if _, aerr := ls.AppendIntent(ctx, ledger.Entry{
+			ChatID: chat.ID, Kind: ledger.KindArtifactRevision, Key: "art1", Payload: payload,
+		}); aerr != nil {
+			t.Fatalf("AppendIntent revision: %v", aerr)
+		}
+	}
+
+	appendRev(1, 0)
+	if err := st.WriteCheckpoint(ctx, chat.ID); err != nil {
+		t.Fatalf("WriteCheckpoint 1: %v", err)
+	}
+	var count int64
+	if err := st.db.Model(&Checkpoint{}).Where("chat_id = ?", chat.ID).Count(&count).Error; err != nil {
+		t.Fatalf("count checkpoints: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("checkpoint rows = %d, want 1", count)
+	}
+
+	appendRev(2, 1)
+	if err := st.WriteCheckpoint(ctx, chat.ID); err != nil {
+		t.Fatalf("WriteCheckpoint 2: %v", err)
+	}
+	if err := st.db.Model(&Checkpoint{}).Where("chat_id = ?", chat.ID).Count(&count).Error; err != nil {
+		t.Fatalf("count checkpoints: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("checkpoint rows after second write = %d, want 1 (replaced, not appended)", count)
+	}
+
+	seed := st.loadCheckpointSeed(ctx, chat.ID)
+	if seed == nil {
+		t.Fatal("loadCheckpointSeed: nil, want the row just written")
+	}
+	latest, ok := seed.Artifacts["art1"].Latest()
+	if !ok || latest.Revision != 2 {
+		t.Fatalf("checkpoint seed latest = %+v, ok=%v, want revision 2", latest, ok)
+	}
+	if len(seed.Artifacts["art1"].Revisions) != 2 {
+		t.Fatalf("checkpoint seed revisions = %d, want 2 (must actually include both, not just the delta)", len(seed.Artifacts["art1"].Revisions))
+	}
+}

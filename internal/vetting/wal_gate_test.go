@@ -53,10 +53,6 @@ func (f *fakeGateLedger) MaxSeq(_ context.Context, chatID string) (int64, error)
 	return f.seqs[chatID], nil
 }
 
-func (f *fakeGateLedger) LastCheckpoint(context.Context, string) (ledger.Entry, bool, error) {
-	return ledger.Entry{}, false, nil
-}
-
 // entryMatchesFailKind reports whether e is the kind failKind targets - the
 // literal ledger kind, or (for "judge_round") an artifact.revision entry
 // whose payload names that artifact kind.

@@ -214,38 +214,31 @@ func TestFold_PagingMatchesOneSlice(t *testing.T) {
 	}
 }
 
-// TestApply_FromCheckpointMatchesFromZero is #1144 P5's required proof: a
-// fold seeded from a checkpoint must equal a fold from scratch. Three
-// revisions land, a checkpoint is written after the second, then a third
-// arrives after the checkpoint - Fold (checkpoint-aware) and Apply(..., -1)
-// (always from scratch) must agree.
-func TestApply_FromCheckpointMatchesFromZero(t *testing.T) {
+// TestApplySeeded_FromCheckpointMatchesFromZero is #1144 P5's required
+// proof: a fold seeded from a checkpoint must equal a fold from scratch.
+// Two revisions land and get folded into a checkpoint Result, a third
+// arrives after that fold - ApplySeeded (from the checkpoint) and Apply
+// (always from scratch) must agree. The checkpoint itself is just a
+// *Result value here, same as internal/store.Checkpoint's row holds
+// (#1144 P5 review: it lives in one store row now, not the ledger).
+func TestApplySeeded_FromCheckpointMatchesFromZero(t *testing.T) {
 	s := newMemStore(t)
 	appendRevision(t, s, "chat1", "id1", 1, 0)
 	appendRevision(t, s, "chat1", "id1", 2, 1)
 
-	mid, err := Fold(context.Background(), s, "chat1", 0)
+	checkpoint, err := Fold(context.Background(), s, "chat1", 0)
 	if err != nil {
 		t.Fatalf("Fold before checkpoint: %v", err)
 	}
-	payload, err := EncodeCheckpoint(mid)
-	if err != nil {
-		t.Fatalf("EncodeCheckpoint: %v", err)
-	}
-	if _, err := s.AppendIntent(context.Background(), ledger.Entry{
-		ChatID: "chat1", Kind: ledger.KindCheckpoint, Payload: payload,
-	}); err != nil {
-		t.Fatalf("AppendIntent checkpoint: %v", err)
-	}
 	appendRevision(t, s, "chat1", "id1", 3, 2)
 
-	fromCheckpoint, err := Fold(context.Background(), s, "chat1", 0)
+	fromCheckpoint, err := ApplySeeded(context.Background(), s, "chat1", checkpoint, 0)
 	if err != nil {
-		t.Fatalf("Fold from checkpoint: %v", err)
+		t.Fatalf("ApplySeeded: %v", err)
 	}
-	fromScratch, err := applyFromScratchIgnoringCheckpoint(s, "chat1")
+	fromScratch, err := Fold(context.Background(), s, "chat1", 0)
 	if err != nil {
-		t.Fatalf("fold from scratch: %v", err)
+		t.Fatalf("Fold from scratch: %v", err)
 	}
 	wantLatest, _ := fromScratch.Artifacts["id1"].Latest()
 	gotLatest, _ := fromCheckpoint.Artifacts["id1"].Latest()
@@ -261,26 +254,16 @@ func TestApply_FromCheckpointMatchesFromZero(t *testing.T) {
 	}
 }
 
-// applyFromScratchIgnoringCheckpoint folds every entry (including the
-// checkpoint entry itself, which applyLoop's switch simply ignores) without
-// ever consulting LastCheckpoint - the independent "ground truth" fold to
-// compare a checkpoint-seeded fold against.
-func applyFromScratchIgnoringCheckpoint(s ledger.LedgerStore, chatID string) (*Result, error) {
-	entries, err := s.ReadEntries(context.Background(), chatID, 1)
-	if err != nil {
-		return nil, err
-	}
-	return applyEntries(entries), nil
-}
-
-// TestApply_StaleCheckpointStillFoldsCorrectly is the concurrent-turn case:
-// a checkpoint appended AFTER newer entries already exist (its payload
-// reflects an older LastSeq than the chat's real state - the checkpoint's
-// own fold ran before those entries landed, but AppendIntent for it lost
-// the race to append). Apply must trust the payload's LastSeq, not this
-// entry's position in the log, or it would skip the entries that arrived
-// between the fold and the append.
-func TestApply_StaleCheckpointStillFoldsCorrectly(t *testing.T) {
+// TestApplySeeded_StaleCheckpointStillFoldsCorrectly is the concurrent-turn
+// case: a checkpoint whose OWN LastSeq is older than entries that already
+// exist in the ledger by the time it's used (the checkpoint's fold ran
+// before those entries landed; something else appended them, and only then
+// did the checkpoint get read and passed in - the write side of this race
+// is internal/store.Store.WriteCheckpoint's read-fold-write window).
+// ApplySeeded must trust seed.LastSeq, not assume the caller already
+// scoped `from` past every real entry, or it would skip entries that
+// arrived between the fold and the checkpoint's use.
+func TestApplySeeded_StaleCheckpointStillFoldsCorrectly(t *testing.T) {
 	s := newMemStore(t)
 	appendRevision(t, s, "chat1", "id1", 1, 0) // seq 1
 
@@ -288,23 +271,14 @@ func TestApply_StaleCheckpointStillFoldsCorrectly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fold: %v", err)
 	}
-	stalePayload, err := EncodeCheckpoint(stale)
-	if err != nil {
-		t.Fatalf("EncodeCheckpoint: %v", err)
-	}
 
-	appendRevision(t, s, "chat1", "id1", 2, 1) // seq 2, appended BEFORE the checkpoint
-	// The checkpoint lands last (highest seq) but its payload still only
-	// covers through seq 1 - simulating a concurrent turn racing ahead of it.
-	if _, err := s.AppendIntent(context.Background(), ledger.Entry{
-		ChatID: "chat1", Kind: ledger.KindCheckpoint, Payload: stalePayload,
-	}); err != nil {
-		t.Fatalf("AppendIntent stale checkpoint: %v", err)
-	}
+	appendRevision(t, s, "chat1", "id1", 2, 1) // seq 2, lands after the checkpoint fold ran
 
-	got, err := Fold(context.Background(), s, "chat1", 0)
+	// A caller passing from=0 (as if it didn't know any better) must still
+	// get the right answer, because ApplySeeded reads from seed.LastSeq.
+	got, err := ApplySeeded(context.Background(), s, "chat1", stale, 0)
 	if err != nil {
-		t.Fatalf("Fold: %v", err)
+		t.Fatalf("ApplySeeded: %v", err)
 	}
 	latest, ok := got.Artifacts["id1"].Latest()
 	if !ok || latest.Revision != 2 {
