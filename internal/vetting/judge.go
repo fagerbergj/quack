@@ -777,6 +777,12 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 		repeats       repeatLoopDetector
 		lastFinish    genai.FinishReason
 		lastOutTokens int32
+		// aborted is set whenever runTurn's own safety-cap break fires (turn cap
+		// or a runaway repeat, #889) - separate from forcedClose because a
+		// repeat trip can fire mid-generation, with no forced-close turn ever
+		// requested, and cancel()s runCtx either way (#1236 review: the nudge
+		// must not run on an already-cancelled context after either break).
+		aborted bool
 	)
 	// runTurn drives one jr.Run call to completion, shared across the initial
 	// turn and the submit_verdict nudge below - turns/submitted/accum/repeats
@@ -843,6 +849,7 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 					slog.Warn("judge round aborted: runaway repeat detected mid-generation",
 						"component", "vetting", "agent", cfg.Agent)
 				}
+				aborted = true
 				cancel()
 				break
 			}
@@ -868,8 +875,11 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	// Skipped once forcedVerdictCallback has already forced (and tool-stripped)
 	// a turn in this round - nudging "call submit_verdict" into a request that
 	// carries no tools, right after telling the model none are available,
-	// would just contradict that instruction (#1235 review).
-	if !forcedClose && ctx.Err() == nil && strings.TrimSpace(accum.String()) != "" {
+	// would just contradict that instruction (#1235 review). Also skipped
+	// whenever runTurn's own safety-cap break fired (turn cap or repeat trip) -
+	// that already cancel()ed runCtx, so a nudge call would just fail on a
+	// dead context (#1236 review).
+	if !forcedClose && !aborted && ctx.Err() == nil && strings.TrimSpace(accum.String()) != "" {
 		nudge := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: judgeSubmitNudge}}}
 		if err := runTurn(nudge); err != nil {
 			return verdict{}, reads, err

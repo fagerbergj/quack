@@ -1478,3 +1478,64 @@ func TestRunJudgeAgent_ForcedCloseSkipsSubmitNudge(t *testing.T) {
 		t.Errorf("judge model called %d times, want exactly 3 (2 reads + the forced-close turn) - no nudge call should follow a forced close", got)
 	}
 }
+
+// repeatTrippedJudgeModel emits the same plain (non-Thought) text every turn
+// alongside a varying tool call - the #889 runaway-repeat shape, but as plain
+// text so it lands in runJudgeRound's accum instead of being suppressed as
+// thinking. nudgeCalls counts any request carrying judgeSubmitNudge, proving
+// the nudge never runs after this abort (#1236 review: repeats.tripped
+// cancels runCtx exactly like a forced close, so the nudge must skip too).
+type repeatTrippedJudgeModel struct{ calls, nudgeCalls int32 }
+
+func (j *repeatTrippedJudgeModel) Name() string { return "repeat-tripped-judge" }
+
+func (j *repeatTrippedJudgeModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		n := atomic.AddInt32(&j.calls, 1)
+		for _, c := range req.Contents {
+			if c == nil {
+				continue
+			}
+			for _, p := range c.Parts {
+				if p != nil && strings.Contains(p.Text, judgeSubmitNudge) {
+					atomic.AddInt32(&j.nudgeCalls, 1)
+				}
+			}
+		}
+		yield(&model.LLMResponse{
+			Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{
+				{Text: "This exact sentence repeats without variation. "},
+				{FunctionCall: &genai.FunctionCall{Name: "read_file", Args: map[string]any{"path": fmt.Sprintf("file%d.go", n)}}},
+			}},
+			FinishReason: genai.FinishReasonStop,
+			TurnComplete: true,
+		}, nil)
+	}
+}
+
+// TestRunJudgeAgent_RepeatTripSkipsSubmitNudge is the fix for the #1236
+// review's second finding: the event loop's repeats.tripped break cancels
+// runCtx exactly like the turn-cap break, but forcedVerdictCallback never
+// fires for it (there's no forced turn - the abort happens mid-generation),
+// so forcedClose alone doesn't catch this shape. Calling runJudgeRound
+// directly isolates this from the separate fresh-session retry.
+func TestRunJudgeAgent_RepeatTripSkipsSubmitNudge(t *testing.T) {
+	readTool := newSpyReadTool(t, "package x\n", new(int32))
+	judge := &repeatTrippedJudgeModel{}
+	factory := NewJudgeFactory(judge, []tool.Tool{readTool}, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	// Generous turn budget so a run to the turn cap (rather than the repeat
+	// guard) would make the test fail loud, not pass by accident.
+	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 1000}
+
+	_, _, err := runJudgeRound(t.Context(), factory, cfg, q, "done.", "", "", workerActivity{}, func(*genai.Part) bool { return true })
+	if !errors.Is(err, ErrJudgeNoVerdict) {
+		t.Fatalf("err = %v, want errors.Is(err, ErrJudgeNoVerdict)", err)
+	}
+	if got := atomic.LoadInt32(&judge.calls); got >= 1000 {
+		t.Errorf("judge model called %d times, want well under the 1000-turn cap - the repeat guard should trip first", got)
+	}
+	if got := atomic.LoadInt32(&judge.nudgeCalls); got != 0 {
+		t.Errorf("judge model saw the submit_verdict nudge in %d request(s), want 0 - a repeat-trip abort must not nudge on the cancelled context", got)
+	}
+}
