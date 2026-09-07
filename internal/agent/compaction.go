@@ -55,8 +55,8 @@ func usable(contextWindow int) int {
 // a paired otel span, or does nothing for a non-compaction event or a nil
 // sink (compaction disabled, or a call site - e.g. tests - with no hub).
 //
-// ctx must be the worker's own per-request context (from agent.Serve's
-// RunnerProvider): otelhttp's server handler already parented it from the
+// ctx must be the worker's own per-request context (from compactionSessions'
+// AppendEvent): otelhttp's server handler already parented it from the
 // caller's traceparent header, so the span lands under the dispatching
 // round's trace without the ledger.Coords.SpanContext workaround the old
 // in-process callback needed (see dda27aaa's internal/agent/compaction.go).

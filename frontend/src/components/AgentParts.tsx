@@ -168,8 +168,8 @@ export function ActivityList({ activity }: { activity: Activity[] }) {
 // ever renders two short lines - current thinking state + most recent tool
 // call - however long the run has been going or however much it's done.
 export function LiveStatusLine({ activity }: { activity: Activity[] }) {
-  const { thinking, tool } = liveStatusLine(activity)
-  if (!thinking && !tool) return null
+  const { thinking, tool, compacted } = liveStatusLine(activity)
+  if (!thinking && !tool && !compacted) return null
   return (
     <div className="py-0.5 space-y-0.5 text-[11px] text-gray-400 dark:text-gray-500 not-prose">
       {thinking && (
@@ -179,6 +179,12 @@ export function LiveStatusLine({ activity }: { activity: Activity[] }) {
         </div>
       )}
       {tool && <div className="truncate font-mono">{toolActionLine(tool.name === 'other' && tool.title ? tool.title : tool.name, tool.args)}</div>}
+      {compacted && (
+        <div className="flex items-center gap-1.5 italic">
+          <Dots variant="compact" size="w-1 h-1" />
+          compacted
+        </div>
+      )}
     </div>
   )
 }

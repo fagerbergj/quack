@@ -11,12 +11,10 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// TestEmitCompactionReachesHub proves the served-path contract (#1185
-// follow-up): an adk compaction Event, observed via the sink threaded into
-// agent.Serve (see compactionRunner.Run), lands on the chat's hub as a
-// `compaction` SSE event carrying the right node id - the field an
-// A2A-relayed event could never carry, since adk drops zero-Content events
-// before they cross A2A (background in this package's compaction.go).
+// TestEmitCompactionReachesHub unit-tests emitCompaction's own translation
+// (field mapping, span attributes) against a hand-built Event; the proof that
+// adk's real compactor ever calls compactionSessions.AppendEvent with one is
+// TestCompactionSessionsObservesRealCompaction in a2a_test.go.
 //
 // It also proves the compaction row's run_id is quack's own run id - the
 // same one the node's agent_start event carries for this round (both derive

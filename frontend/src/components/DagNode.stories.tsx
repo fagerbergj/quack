@@ -553,16 +553,17 @@ export const ContextMeterDanger: Story = {
 }
 
 // A compaction event shows inline in the worker's activity feed, alongside
-// its ordinary thinking/tool-call rows - then the meter drops back down.
+// its ordinary thinking/tool-call rows.
 export const CompactionInFeed: Story = {
   args: {
     node: contextNode,
-    state: { status: 'running', startedAt: Date.now() - 40_000, contextTokens: 96_000 },
-    runs: [{
-      runId: 'r1', agent: 'web-researcher', stage: 'worker', done: false,
-      activity: [...researchActivity, { kind: 'compaction', summaryInputTokens: 210_000, summaryOutputTokens: 1_800 }],
-    }],
+    state: { status: 'done', startedAt: 0, finishedAt: 40_000, contextTokens: 96_000 },
+    runs: [workerDone([...researchActivity, { kind: 'compaction', summaryInputTokens: 210_000, summaryOutputTokens: 1_800 }])],
     answer: '',
     isFinal: false,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await canvas.findByLabelText(/context compacted, summarizer spent 210000 in \/ 1800 out tokens/i)
   },
 }

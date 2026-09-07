@@ -64,8 +64,9 @@ const (
 
 	// EventCompaction reports a worker node's session being compacted by
 	// adk/v2's native runner-level compaction (internal/agent's Compaction) -
-	// observed server-side, before A2A conversion, since a zero-Content
-	// compaction event never crosses the A2A wire (see internal/agent/a2a.go).
+	// observed by decorating the node's session.Service, since neither native
+	// strategy ever yields the summary into the runner's event stream (see
+	// internal/agent/a2a.go's compactionSessions).
 	EventCompaction = "compaction"
 
 	// EventArtifactRevision reports one artifact revision written by a judge

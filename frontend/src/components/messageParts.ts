@@ -210,18 +210,25 @@ function mapRun(runs: AgentRun[], runId: string, fn: (run: AgentRun) => AgentRun
 export interface LiveStatus {
   thinking: boolean
   tool?: ToolCall
+  compacted: boolean
 }
 
 // liveStatusLine computes LiveStatus from a run's activity - the substitute
 // for rendering the full list while running (#725: re-rendering an
 // ever-growing activity list on every streamed token is what locks the tab).
+// compacted surfaces a mid-round compaction (#1185) even while the run is
+// still shown via this substitute rather than the full ActivityList.
 export function liveStatusLine(activity: Activity[]): LiveStatus {
   let tool: ToolCall | undefined
   for (let i = activity.length - 1; i >= 0; i--) {
     const a = activity[i]
     if (a.kind === 'tool') { tool = a.tool; break }
   }
-  return { thinking: activity[activity.length - 1]?.kind === 'thinking', tool }
+  return {
+    thinking: activity[activity.length - 1]?.kind === 'thinking',
+    tool,
+    compacted: activity.some(a => a.kind === 'compaction'),
+  }
 }
 
 // showLiveSpinner decides whether the live (streaming) turn shows the "thinking"

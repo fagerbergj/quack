@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"slices"
 	"strings"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -21,7 +20,6 @@ import (
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/remoteagent/v2"
 	adkmemory "google.golang.org/adk/v2/memory"
-	"google.golang.org/adk/v2/plugin"
 	"google.golang.org/adk/v2/runner"
 	adka2a "google.golang.org/adk/v2/server/adka2a/v2"
 	"google.golang.org/adk/v2/session"
@@ -46,10 +44,10 @@ type A2AServer struct {
 // comp.Enabled wires adk/v2's native runner-level compaction here; the zero
 // Compaction leaves the runner's Compaction nil and changes nothing.
 //
-// nodeID/sink let this server's own runner loop re-emit a `compaction` SSE
-// event: adk's compaction Event carries no Content, so adk's own A2A layer
-// drops it before it would ever reach the orchestrator (#1185/#1239) - this
-// hooks the event here, server-side, before that drop. nodeID is baked in
+// nodeID/sink let this node re-emit a `compaction` SSE event: neither native
+// compaction strategy yields its summary into the runner's event stream (both
+// only ever call sessions.AppendEvent, see compactionSessions's doc), so the
+// only place to observe one is the session service itself. nodeID is baked in
 // per node (internal/serve builds one A2AServer per DAG node, see
 // nativeAgent.ForNode), so a fan-out sibling can never misattribute another
 // node's compaction. sink nil (no active run, or a caller with no hub, e.g.
@@ -81,14 +79,14 @@ func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service, c
 		return nil, fmt.Errorf("agent %q: adk compaction: %w", ag.Name(), err)
 	}
 	executor := adka2a.NewExecutor(adka2a.ExecutorConfig{
-		RunnerProvider: compactionRunnerProvider(runner.Config{
+		RunnerConfig: runner.Config{
 			AppName:           ag.Name(),
 			Agent:             ag,
-			SessionService:    sessions,
+			SessionService:    compactionSessions{Service: sessions, nodeID: nodeID, sink: sink},
 			MemoryService:     mem,
 			AutoCreateSession: true,
 			Compaction:        adkComp,
-		}, nodeID, sink),
+		},
 		OutputMode: adka2a.OutputArtifactPerEvent,
 	})
 
@@ -107,41 +105,29 @@ func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service, c
 // Close stops the A2A server's listener.
 func (s *A2AServer) Close() error { return s.listener.Close() }
 
-// compactionRunnerProvider mirrors adka2a's own default RunnerProvider (see
-// newDefaultRunnerProvider in the vendored server/adka2a/v2/executor.go) but
-// wraps the returned Runner so this executor's own event loop - not the one
-// adka2a runs internally after A2A conversion - is where a compaction event
-// is observed, before adka2a's eventProcessor drops it for having no Content.
-func compactionRunnerProvider(base runner.Config, nodeID string, sink func(stream.SSEEvent)) adka2a.RunnerProvider {
-	return func(_ context.Context, _ *a2asrv.ExecutorContext, p *plugin.Plugin) (adka2a.RunnerConfig, adka2a.Runner, error) {
-		cfg := base
-		cfg.PluginConfig.Plugins = append(slices.Clone(cfg.PluginConfig.Plugins), p)
-		r, err := runner.New(cfg)
-		if err != nil {
-			return adka2a.RunnerConfig{}, nil, err
-		}
-		rc := adka2a.RunnerConfig{Agent: cfg.Agent, AppName: cfg.AppName, SessionService: cfg.SessionService}
-		return rc, compactionRunner{runner: r, nodeID: nodeID, sink: sink}, nil
-	}
-}
-
-// compactionRunner delegates to the real runner, side-emitting a compaction
-// SSE event/span for any event it observes carrying one - see Serve's doc.
-type compactionRunner struct {
-	runner *runner.Runner
+// compactionSessions re-emits the compaction summaries adk/v2's native
+// strategies append to the session store, which the runner's event stream
+// never carries: the post-invocation sliding-window pass appends via a
+// deferred call it documents as "intentionally not yielded to the caller",
+// and the intra-invocation token-threshold pass "emits no events" - both
+// only ever call AppendEvent on the configured session.Service.
+//
+// A straggler landing mid-append can trigger a repair record covering the
+// same range, so AppendEvent can rarely fire twice for one compaction.
+// ponytail: accepted as a rare duplicate SSE/span rather than tracked and
+// deduped; revisit if a duplicate row is actually seen in the feed.
+type compactionSessions struct {
+	session.Service
 	nodeID string
 	sink   func(stream.SSEEvent)
 }
 
-func (r compactionRunner) Run(ctx context.Context, userID, sessionID string, msg *genai.Content, cfg adkagent.RunConfig) iter.Seq2[*session.Event, error] {
-	return func(yield func(*session.Event, error) bool) {
-		for ev, err := range r.runner.Run(ctx, userID, sessionID, msg, cfg) {
-			emitCompaction(ctx, r.sink, r.nodeID, ev)
-			if !yield(ev, err) {
-				return
-			}
-		}
+func (s compactionSessions) AppendEvent(ctx context.Context, sess session.Session, ev *session.Event) error {
+	if err := s.Service.AppendEvent(ctx, sess, ev); err != nil {
+		return err
 	}
+	emitCompaction(ctx, s.sink, s.nodeID, ev)
+	return nil
 }
 
 // maxTranscriptChars sizes adk's summarizer transcript cap from the model's
