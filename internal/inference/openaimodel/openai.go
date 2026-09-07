@@ -748,13 +748,9 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 	}
 
 	haveToolCalls := len(choice.Message.ToolCalls) > 0
-	var promotedChars int
-	content.Parts, _, _, promotedChars = applyFallbackLadder(ctx, resp.Model, content.Parts, haveToolCalls)
-	if promotedChars > 0 {
-		slog.Warn("promoted reasoning to answer (empty content, reasoning_content held the answer)",
-			"component", "inference", "model", resp.Model, "chars", promotedChars)
-	}
-
+	// Real tool-call parts must be in content.Parts BEFORE the ladder runs, same
+	// as the streaming path - otherwise promotion sees no answer yet and fires
+	// on a turn that already has a tool call (regression: PR #1243 review).
 	for _, toolCall := range choice.Message.ToolCalls {
 		if toolCall.Type == "function" {
 			content.Parts = append(content.Parts, &genai.Part{
@@ -765,6 +761,13 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 				},
 			})
 		}
+	}
+
+	var promotedChars int
+	content.Parts, _, _, promotedChars = applyFallbackLadder(ctx, resp.Model, content.Parts, haveToolCalls)
+	if promotedChars > 0 {
+		slog.Warn("promoted reasoning to answer (empty content, reasoning_content held the answer)",
+			"component", "inference", "model", resp.Model, "chars", promotedChars)
 	}
 
 	// reasoningUsage estimates from the FINAL (post-recovery) thinking text, same

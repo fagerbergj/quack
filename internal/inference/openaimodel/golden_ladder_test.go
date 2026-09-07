@@ -145,3 +145,110 @@ func TestGenerate_PromotedReasoningLogMessage(t *testing.T) {
 		t.Errorf("expected non-streaming's promoted-reasoning message, got: %s", buf.String())
 	}
 }
+
+// TestGenerate_ToolCallsSuppressPromotion is a regression test for PR #1243
+// review: the non-streaming path must never promote reasoning_content to the
+// answer on a turn that already has a real tool call, even when the answer
+// text is empty. Before the fix, real tool-call parts were appended AFTER
+// the fallback ladder ran, so the ladder saw no answer yet and promoted.
+func TestGenerate_ToolCallsSuppressPromotion(t *testing.T) {
+	buf := captureLogs(t)
+	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":"","reasoning_content":"deciding which tool to call","tool_calls":[{"id":"c1","type":"function","function":{"name":"web_search","arguments":"{}"}}]}}]}`)
+	defer srv.Close()
+	m := NewOpenAIModel("m", srv.URL, "k")
+
+	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
+	var final *model.LLMResponse
+	for resp, err := range m.GenerateContent(context.Background(), req, false) {
+		if err != nil {
+			t.Fatalf("GenerateContent: %v", err)
+		}
+		final = resp
+	}
+	if final == nil {
+		t.Fatal("no response")
+	}
+	var answer string
+	var calls []*genai.FunctionCall
+	for _, p := range final.Content.Parts {
+		switch {
+		case p.FunctionCall != nil:
+			calls = append(calls, p.FunctionCall)
+		case !p.Thought && p.Text != "":
+			answer += p.Text
+		}
+	}
+	if len(calls) != 1 || calls[0].Name != "web_search" {
+		t.Fatalf("calls = %+v, want one web_search", calls)
+	}
+	if answer != "" {
+		t.Errorf("answer = %q, want empty - reasoning must not be promoted on a tool-call turn", answer)
+	}
+	if strings.Contains(buf.String(), "promoted reasoning to answer") {
+		t.Errorf("promotion fired on a tool-call turn: %s", buf.String())
+	}
+}
+
+// TestGenerate_PromotionTrimsReasoning pins that the non-streaming path now
+// trims the promoted answer (and the logged char count) the same way the
+// streaming path always has - a deliberate harmonization, not a regression:
+// the two paths previously disagreed (streaming trimmed, non-streaming did
+// not) and now both trim.
+func TestGenerate_PromotionTrimsReasoning(t *testing.T) {
+	buf := captureLogs(t)
+	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"","reasoning_content":"  the answer  "}}]}`)
+	defer srv.Close()
+	m := NewOpenAIModel("m", srv.URL, "k")
+
+	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
+	var final *model.LLMResponse
+	for resp, err := range m.GenerateContent(context.Background(), req, false) {
+		if err != nil {
+			t.Fatalf("GenerateContent: %v", err)
+		}
+		final = resp
+	}
+	var answer string
+	for _, p := range final.Content.Parts {
+		if !p.Thought && p.FunctionCall == nil {
+			answer += p.Text
+		}
+	}
+	if answer != "the answer" {
+		t.Errorf("answer = %q, want trimmed %q", answer, "the answer")
+	}
+	if !strings.Contains(buf.String(), `"chars"=10`) && !strings.Contains(buf.String(), "chars=10") {
+		t.Errorf("expected logged chars=10 (trimmed length), got: %s", buf.String())
+	}
+}
+
+// TestGenerate_LeakedReasoningUsageMatchesPreRefactor pins the reasoning-token
+// estimate for a turn where a tool call leaked inside reasoning_content: the
+// estimate is based on the CLEANED (post-recovery) thinking text, same as
+// before the fallback-ladder extraction (confirmed unchanged, not a
+// divergence - see PR body).
+func TestGenerate_LeakedReasoningUsageMatchesPreRefactor(t *testing.T) {
+	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"the answer","reasoning_content":"Let me search.\n<tool_call>\n<function=web_search>\n<parameter=query>\nSMR 2026\n</parameter>\n</function>\n</tool_call>"}}],"usage":{"prompt_tokens":10,"completion_tokens":50,"total_tokens":60}}`)
+	defer srv.Close()
+	m := NewOpenAIModel("m", srv.URL, "k")
+
+	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
+	var final *model.LLMResponse
+	for resp, err := range m.GenerateContent(context.Background(), req, false) {
+		if err != nil {
+			t.Fatalf("GenerateContent: %v", err)
+		}
+		final = resp
+	}
+	if final == nil || final.UsageMetadata == nil {
+		t.Fatal("no usage metadata")
+	}
+	// "Let me search.\n" is the only text left after the <tool_call> block is
+	// stripped - 16 chars -> chars/4 = 4 estimated reasoning tokens.
+	if final.UsageMetadata.ThoughtsTokenCount != 4 {
+		t.Errorf("ThoughtsTokenCount = %d, want 4 (estimated from cleaned reasoning text)", final.UsageMetadata.ThoughtsTokenCount)
+	}
+	if final.UsageMetadata.CandidatesTokenCount != 46 {
+		t.Errorf("CandidatesTokenCount = %d, want 46 (50 completion - 4 reasoning)", final.UsageMetadata.CandidatesTokenCount)
+	}
+}
