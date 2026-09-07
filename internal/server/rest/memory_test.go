@@ -253,12 +253,22 @@ func TestListMemories_MergesAndOrdersAcrossBothStores(t *testing.T) {
 	h.userMem = newTestMemStore(t)
 
 	const bucket = "NightsOut"
+	// Stamp each commit through the shared clock seam so ordering is
+	// deterministic - RFC3339 timestamps are second-resolution, and sleeping
+	// past real second boundaries would make this test slow and flaky.
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	tick := base
+	nextTick := func() string {
+		ts := tick.Format(time.RFC3339)
+		tick = tick.Add(time.Second)
+		return ts
+	}
+	restore := memory.SetClockForTest(nextTick)
+	t.Cleanup(restore)
+
 	commitFact(t, h.taskMem, bucket, "fact A (oldest, task)")
-	time.Sleep(1100 * time.Millisecond) // RFC3339 timestamps are second-resolution
 	commitFact(t, h.userMem, bucket, "fact B (user)")
-	time.Sleep(1100 * time.Millisecond)
 	commitFact(t, h.taskMem, bucket, "fact C (task)")
-	time.Sleep(1100 * time.Millisecond)
 	commitFact(t, h.userMem, bucket, "fact D (newest, user)")
 
 	b := "repo:" + bucket
