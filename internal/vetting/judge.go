@@ -571,6 +571,16 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 		}
 	}
 
+	// A non-transient failure with images attached (400 on a multimodal
+	// request a vision-blind/misbehaving judge model rejects) degrades to a
+	// text-only retry once, rather than blocking delivery outright (#1229).
+	if err != nil && ctx.Err() == nil && !isTransientJudgeErr(err) && hasInlineData(question) {
+		slog.Warn("judge round failed with images attached; retrying once without them",
+			"component", "vetting", "agent", cfg.Agent, "chat", cfg.ChatID, "err", err)
+		textOnly := stripInlineData(question)
+		v, readc, err = runJudgeRound(ctx, factory, cfg, textOnly, fitted, changedFiles, known, act, emit)
+	}
+
 	// A round that ran but never reached a verdict (model stutter exhausting the
 	// budget, #853) gets exactly one retry with a fresh session before surfacing
 	// unvetted - shrinking the answer (the fallback below) wouldn't fix a stutter,
