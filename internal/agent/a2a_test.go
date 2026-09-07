@@ -316,35 +316,28 @@ func TestDescribeEvent_KeepsMediaParts(t *testing.T) {
 	}
 }
 
-// TestNativeCompactionConfig covers the #1185 spike's engine switch: "adk"
-// builds a runner-level Config from quack's own prompt, anything else (incl.
-// the zero Compaction) leaves native compaction off.
+// TestNativeCompactionConfig covers nativeCompactionConfig's Config build:
+// disabled leaves native compaction off; enabled builds one from quack's own
+// prompt, carrying over quack's thresholds.
 func TestNativeCompactionConfig(t *testing.T) {
 	base := Compaction{Enabled: true, Summarizer: workerModel{}, ContextWindow: 65_000, TokenThreshold: 40_000, EventRetentionSize: 20}
 
 	if cfg, err := nativeCompactionConfig(Compaction{}); err != nil || cfg != nil {
 		t.Fatalf("disabled: got (%v, %v), want (nil, nil)", cfg, err)
 	}
-	quackEngine := base
-	quackEngine.Engine = "quack"
-	if cfg, err := nativeCompactionConfig(quackEngine); err != nil || cfg != nil {
-		t.Fatalf("engine=quack: got (%v, %v), want (nil, nil)", cfg, err)
-	}
 
-	adkEngine := base
-	adkEngine.Engine = "adk"
-	cfg, err := nativeCompactionConfig(adkEngine)
+	cfg, err := nativeCompactionConfig(base)
 	if err != nil {
-		t.Fatalf("engine=adk: %v", err)
+		t.Fatalf("enabled: %v", err)
 	}
 	if cfg == nil || cfg.TokenThreshold != 40_000 || cfg.EventRetentionSize != 20 || cfg.Summarizer == nil {
-		t.Fatalf("engine=adk: got %+v, want quack's thresholds carried over with a summarizer set", cfg)
+		t.Fatalf("enabled: got %+v, want quack's thresholds carried over with a summarizer set", cfg)
 	}
 
-	noSummarizer := adkEngine
+	noSummarizer := base
 	noSummarizer.Summarizer = nil
 	if _, err := nativeCompactionConfig(noSummarizer); err == nil {
-		t.Fatal("engine=adk with no summarizer: want an error, got nil")
+		t.Fatal("no summarizer: want an error, got nil")
 	}
 }
 

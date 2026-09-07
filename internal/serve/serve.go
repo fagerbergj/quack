@@ -689,7 +689,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 				slog.Warn("advisor model build failed; ask_advisor disabled", "component", "startup", "err", merr)
 			} else if ab, berr := agent.LoadBundle("agents/advisor"); berr != nil {
 				slog.Warn("advisor bundle load failed; ask_advisor disabled", "component", "startup", "err", berr)
-			} else if built, aerr := agent.BuildChat(ab, am, nil, nil, agent.Compaction{}, "", nil, ""); aerr != nil {
+			} else if built, aerr := agent.BuildChat(ab, am, nil, nil, "", nil, ""); aerr != nil {
 				slog.Warn("advisor build failed; ask_advisor disabled", "component", "startup", "err", aerr)
 			} else {
 				// ask_advisor runs the advisor as its own nested runner.Run - never a DAG node's own model call.
@@ -958,7 +958,7 @@ func buildUserMemoryHookAgent(h config.UserMemoryHookConfig, cfg *config.Config,
 		return nil, fmt.Errorf("rubric.md: %w", err)
 	}
 	guidance := strings.TrimSpace(whatToRemember + "\n\n" + rubric)
-	return agent.BuildChat(b, m, nil, nil, agent.Compaction{}, guidance, nil, "")
+	return agent.BuildChat(b, m, nil, nil, guidance, nil, "")
 }
 
 // gitCredentialAdapter bridges tools.GitTokenSource to vetting.GitCredentialSource -
@@ -1140,8 +1140,6 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			Summarizer:         agent.ResolveSummarizer(workerModel, fallbackSummarizer),
 			ContextWindow:      ac.ContextWindow,
 			Enabled:            true,
-			Engine:             compCfg.Engine,
-			Sessions:           sessions,
 			TokenThreshold:     compCfg.TokenThreshold,
 			EventRetentionSize: compCfg.EventRetentionSize,
 			CompactionInterval: compCfg.CompactionInterval,
@@ -1351,8 +1349,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			// built per-dispatch by dag.buildGateNodes once chatID/artifacts are
 			// known - buildWorker(nil) at startup gets none (#1123).
 			builtins = append(builtins, extraTools...)
-			comp := compactionFor(ac, wm)
-			wag, err := agent.Build(bundle, wm, builtins, []tool.Toolset{agentSkillTS}, comp, memGuidance, skillFms, grading, drain)
+			wag, err := agent.Build(bundle, wm, builtins, []tool.Toolset{agentSkillTS}, memGuidance, skillFms, grading, drain)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("build: %w", err)
 			}

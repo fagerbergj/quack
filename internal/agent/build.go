@@ -15,16 +15,14 @@ import (
 )
 
 // Build turns a loaded bundle into a runnable ADK llmagent, given its model,
-// selected built-in tools, optional ADK toolsets, and optional context-
-// compaction settings. When compaction is enabled and the model's context
-// window is known, a BeforeModelCallback summarises + drops the session
-// before each model call. memoryGuidance (bundle's memory.md, M6) is appended
-// to the behaviour layer only for memory-participating agents; skills is the
-// agent's declared skill scope (promptbuilder.Agent); grading is the
-// pre-rendered trust-gate contract (promptbuilder.GradingFacts), "" when
-// ungated or judge-less.
-func Build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, comp Compaction, memoryGuidance string, skills []*skill.Frontmatter, grading string, drain func() string) (adkagent.Agent, error) {
-	return build(b, m, tools, toolsets, comp, memoryGuidance, skills, grading, "", drain)
+// selected built-in tools, and optional ADK toolsets. Context compaction is
+// wired separately, at the runner (see internal/agent/a2a.go's Serve).
+// memoryGuidance (bundle's memory.md, M6) is appended to the behaviour layer
+// only for memory-participating agents; skills is the agent's declared skill
+// scope (promptbuilder.Agent); grading is the pre-rendered trust-gate
+// contract (promptbuilder.GradingFacts), "" when ungated or judge-less.
+func Build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string, drain func() string) (adkagent.Agent, error) {
+	return build(b, m, tools, toolsets, memoryGuidance, skills, grading, "", drain)
 }
 
 // BuildChat is Build with the agent's delegation mode PINNED to ModeChat at
@@ -35,11 +33,11 @@ func Build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, c
 // A pre-set mode turns that write into a pure read. Workers keep Build's
 // unset mode, defaulting to single-turn task mode inside a workflow
 // AgentNode, which is what the gate wants.
-func BuildChat(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, comp Compaction, memoryGuidance string, skills []*skill.Frontmatter, grading string) (adkagent.Agent, error) {
-	return build(b, m, tools, toolsets, comp, memoryGuidance, skills, grading, llmagent.ModeChat, nil)
+func BuildChat(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string) (adkagent.Agent, error) {
+	return build(b, m, tools, toolsets, memoryGuidance, skills, grading, llmagent.ModeChat, nil)
 }
 
-func build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, comp Compaction, memoryGuidance string, skills []*skill.Frontmatter, grading string, mode llmagent.Mode, drain func() string) (adkagent.Agent, error) {
+func build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string, mode llmagent.Mode, drain func() string) (adkagent.Agent, error) {
 	name, desc, behaviour := b.Card.Name, b.Card.Description, b.Prompt
 	if g := strings.TrimSpace(memoryGuidance); g != "" {
 		behaviour = behaviour + "\n\n" + g
@@ -58,14 +56,7 @@ func build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, c
 		Toolsets: toolsets,
 		Mode:     mode,
 	}
-	// Steer first, so compaction's budget accounts for the injected message.
 	cfg.BeforeModelCallbacks = []llmagent.BeforeModelCallback{steerCallback(drain)}
-	// Engine "adk" is wired at the runner (internal/agent/a2a.go's Serve), not
-	// here - the quack callback below would double-compact against it.
-	if comp.Enabled && comp.ContextWindow > 0 && comp.Summarizer != nil && comp.Engine != "adk" {
-		cfg.BeforeModelCallbacks = append(cfg.BeforeModelCallbacks, compactionCallback(comp))
-		cfg.AfterModelCallbacks = []llmagent.AfterModelCallback{recordUsage()}
-	}
 	return llmagent.New(cfg)
 }
 

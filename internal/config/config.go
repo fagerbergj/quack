@@ -464,9 +464,10 @@ type CompactionConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Provider string `yaml:"provider"`
 	Model    string `yaml:"model"`
-	// Engine selects the compaction implementation: "quack" (default, the
-	// homegrown model-callback below) or "adk" (adk/v2's native runner-level
-	// compaction, spiked in issue #1185).
+	// Engine is deprecated: quack's homegrown callback engine is gone (#1185),
+	// adk/v2's native runner-level compaction is the only engine now. Kept
+	// as a no-op so an existing "engine: adk"/"provider: default" quack.yaml
+	// doesn't crash-loop a deploy; remove after one release.
 	Engine             string `yaml:"engine"`
 	TokenThreshold     int    `yaml:"token_threshold"`
 	EventRetentionSize int    `yaml:"event_retention_size"`
@@ -1181,6 +1182,9 @@ func (c *Config) validate() error {
 				return fmt.Errorf("config: gates.judge.thinking_level must be one of low, medium, high (or unset)")
 			}
 		}
+	}
+	if cc := c.Session.Compaction; cc.Engine != "" {
+		slog.Warn("session.compaction.engine is deprecated and ignored; adk is the only compaction engine", "component", "config")
 	}
 	if c.Session.Compaction.Enabled {
 		cc := c.Session.Compaction
