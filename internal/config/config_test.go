@@ -131,12 +131,11 @@ orchestrator: { provider: default, model: m }
 	}
 }
 
-// TestLoadAcceptsDeprecatedCompactionEngine pins that session.compaction.engine
-// - a real key in every deployed quack.yaml until this release - still loads
-// as a no-op rather than tripping KnownFields(true) once the field is gone
-// from CompactionConfig for good; that's what makes the "remove it" step of
-// #1185 safe rather than a crash-loop.
-func TestLoadAcceptsDeprecatedCompactionEngine(t *testing.T) {
+// TestLoadRejectsDeprecatedCompactionEngine pins that session.compaction.engine
+// - the no-op shim removed after #1239 - is now an unknown field like any
+// other, so a stale deployed quack.yaml fails loudly at load instead of
+// silently ignoring the key.
+func TestLoadRejectsDeprecatedCompactionEngine(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
   default: { kind: openai, endpoint: http://x }
@@ -147,8 +146,8 @@ stores:
 session: { store: main, compaction: { engine: adk } }
 orchestrator: { provider: default, model: m }
 `))
-	if err != nil {
-		t.Fatalf("deprecated engine key must still load: %v", err)
+	if err == nil {
+		t.Fatal("expected error for removed session.compaction.engine key")
 	}
 }
 

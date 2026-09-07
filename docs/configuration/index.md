@@ -50,8 +50,6 @@ Compaction runs on `google.golang.org/adk/v2`'s native runner-level engine (`int
 
 adk's summariser hard-errors past its transcript cap (sized from `context_window`) rather than chunking, unlike a hand-rolled summariser would.
 
-`session.compaction.engine` is deprecated and ignored (a no-op kept only so an existing `engine: adk` in a deployed `quack.yaml` doesn't crash-loop the config parser); remove it from your config.
-
 ## Key environment variables
 
 | Var | Purpose |
