@@ -120,15 +120,6 @@ func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 		// Ignores cancellation entirely - only the process-group kill ends it
 		// (the v0.5.2 hang class).
 		select {}
-	case "slow":
-		// Alive but with gaps between updates - must never trip idle timeout
-		// on its own (each gap is shorter than the test's idle window).
-		send(sdk.UpdateAgentThoughtText("planning"))
-		time.Sleep(80 * time.Millisecond)
-		send(sdk.UpdateAgentMessageText("still "))
-		time.Sleep(80 * time.Millisecond)
-		send(sdk.UpdateAgentMessageText("working"))
-		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
 	case "usage":
 		// Several streamed updates before the terminal response - proves the
 		// metric seam fires once (on PromptResponse), not once per update.
@@ -504,25 +495,8 @@ func TestRound_IdleTimeout(t *testing.T) {
 	}
 }
 
-// Updates arriving with gaps just under the idle window must never trip a
-// false timeout - the round completes normally when done fires.
-func TestRound_IdleTimeoutDoesNotFireOnSlowButAlive(t *testing.T) {
-	a := testAgent(t, "slow")
-	a.opts.IdleTimeout = 500 * time.Millisecond // each update gap is 80ms; wide margin against scheduler jitter
-
-	var specs []eventSpec
-	err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "take your time", "", "", "", "", func(s eventSpec) bool {
-		specs = append(specs, s)
-		return true
-	})
-	if err != nil {
-		t.Fatalf("round: %v", err)
-	}
-	final := specs[len(specs)-1]
-	if final.partial || final.parts[0].Text != "still working" {
-		t.Fatalf("final answer wrong: partial=%v %q", final.partial, final.parts[0].Text)
-	}
-}
+// TestRound_IdleTimeoutDoesNotFireOnSlowButAlive was deleted: see commit body
+// for why (real cross-process wall-clock margin, no deterministic seam).
 
 func TestNew_Validation(t *testing.T) {
 	if _, err := New("x", "d", Options{}); err == nil {

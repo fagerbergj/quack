@@ -33,7 +33,7 @@ func TestReadOnlyNodeIsNotHeldToTheUserRequestsDelivery(t *testing.T) {
 	// The bug: judged against the assembled prompt, the explorer inherits the user's
 	// delivery demand and can never finish.
 	if !workIncomplete(answer, assembledPrompt, act, false, true, false, false) {
-		t.Skip("the assembled prompt no longer reads as implement-and-deliver; this test can no longer detect the regression")
+		t.Fatal("assembled prompt no longer reads as implement-and-deliver - this oracle can no longer detect the regression it exists to catch")
 	}
 	// ...which is precisely why the loop must never be given the prompt. Guard it:
 	// the gate's completion test takes cfg.Task, and cfg.Task is the node's own task.
