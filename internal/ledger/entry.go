@@ -22,12 +22,43 @@ const (
 	KindNodeDone       = "node.done"
 	KindNodeFailed     = "node.failed"
 
+	// #1144 P5: the remaining direct-write projections, now covered by
+	// fail-closed intents like every other WAL-backed write.
+	KindChatCreated = "chat.created"
+	KindTurnCreated = "turn.created"
+	KindPlanSaved   = "plan.saved"
+
+	// KindCheckpoint carries a whole fold.Result (marshaled by the caller,
+	// opaque to this package) at turn end (#1144 P5). Best-effort: a failed
+	// or missing checkpoint only costs a slower from-scratch fold, never
+	// correctness - fold.Apply always trusts the checkpoint payload's own
+	// LastSeq, not this entry's Seq, so a checkpoint appended late (a
+	// concurrent turn raced ahead of it) is still safe to fold from.
+	KindCheckpoint = "checkpoint"
+
 	// Observation kinds, written by the OTel Exporter from gen_ai.* records.
 	KindLLMCall     = "llm.call"
 	KindToolCall    = "tool.call"
 	KindAgentInvoke = "agent.invoke"
 	KindEvalScore   = "eval.score"
 )
+
+// EntrySchemaVersion is the current Entry payload shape's version. A row
+// written before this field existed reads back as 0; MigrateEntry treats
+// that as version 1, not a migration failure - no backfill needed on an
+// existing Postgres.
+const EntrySchemaVersion = 1
+
+// MigrateEntry upgrades e to EntrySchemaVersion in place, one hook for
+// every store's read path (PGStore.pgRowsToEntries, MemStore.ReadEntries)
+// to share. Nothing to upgrade yet - the hook exists so a future payload
+// shape change has exactly one place to add a case, not one per reader.
+func MigrateEntry(e Entry) Entry {
+	if e.SchemaVersion == 0 {
+		e.SchemaVersion = 1
+	}
+	return e
+}
 
 // IsObservation reports whether kind is one the Exporter writes - the half
 // of the log that replay and the recording bundle read.
@@ -60,6 +91,9 @@ type Entry struct {
 	At             time.Time       `json:"at"`
 	Payload        json.RawMessage `json:"payload,omitempty"`
 	IdempotencyKey string          `json:"idempotency_key,omitempty"`
+	// SchemaVersion: set by the store on write (caller input ignored, same
+	// as Seq); see EntrySchemaVersion/MigrateEntry (#1144 P5).
+	SchemaVersion int `json:"schema_version,omitempty"`
 }
 
 // LLMCallPayload is a KindLLMCall entry's payload (one gen_ai "chat" call).

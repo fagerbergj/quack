@@ -213,3 +213,101 @@ func TestFold_PagingMatchesOneSlice(t *testing.T) {
 		t.Fatalf("paged revisions = %d, unpaged = %d", len(got.Artifacts["id1"].Revisions), len(want.Artifacts["id1"].Revisions))
 	}
 }
+
+// TestApply_FromCheckpointMatchesFromZero is #1144 P5's required proof: a
+// fold seeded from a checkpoint must equal a fold from scratch. Three
+// revisions land, a checkpoint is written after the second, then a third
+// arrives after the checkpoint - Fold (checkpoint-aware) and Apply(..., -1)
+// (always from scratch) must agree.
+func TestApply_FromCheckpointMatchesFromZero(t *testing.T) {
+	s := newMemStore(t)
+	appendRevision(t, s, "chat1", "id1", 1, 0)
+	appendRevision(t, s, "chat1", "id1", 2, 1)
+
+	mid, err := Fold(context.Background(), s, "chat1", 0)
+	if err != nil {
+		t.Fatalf("Fold before checkpoint: %v", err)
+	}
+	payload, err := EncodeCheckpoint(mid)
+	if err != nil {
+		t.Fatalf("EncodeCheckpoint: %v", err)
+	}
+	if _, err := s.AppendIntent(context.Background(), ledger.Entry{
+		ChatID: "chat1", Kind: ledger.KindCheckpoint, Payload: payload,
+	}); err != nil {
+		t.Fatalf("AppendIntent checkpoint: %v", err)
+	}
+	appendRevision(t, s, "chat1", "id1", 3, 2)
+
+	fromCheckpoint, err := Fold(context.Background(), s, "chat1", 0)
+	if err != nil {
+		t.Fatalf("Fold from checkpoint: %v", err)
+	}
+	fromScratch, err := applyFromScratchIgnoringCheckpoint(s, "chat1")
+	if err != nil {
+		t.Fatalf("fold from scratch: %v", err)
+	}
+	wantLatest, _ := fromScratch.Artifacts["id1"].Latest()
+	gotLatest, _ := fromCheckpoint.Artifacts["id1"].Latest()
+	if gotLatest.Revision != wantLatest.Revision || gotLatest.Revision != 3 {
+		t.Fatalf("from checkpoint latest = %d, from scratch = %d, want 3", gotLatest.Revision, wantLatest.Revision)
+	}
+	if len(fromCheckpoint.Artifacts["id1"].Revisions) != len(fromScratch.Artifacts["id1"].Revisions) {
+		t.Fatalf("from checkpoint revisions = %d, from scratch = %d",
+			len(fromCheckpoint.Artifacts["id1"].Revisions), len(fromScratch.Artifacts["id1"].Revisions))
+	}
+	if fromCheckpoint.LastSeq != fromScratch.LastSeq {
+		t.Fatalf("from checkpoint LastSeq = %d, from scratch = %d", fromCheckpoint.LastSeq, fromScratch.LastSeq)
+	}
+}
+
+// applyFromScratchIgnoringCheckpoint folds every entry (including the
+// checkpoint entry itself, which applyLoop's switch simply ignores) without
+// ever consulting LastCheckpoint - the independent "ground truth" fold to
+// compare a checkpoint-seeded fold against.
+func applyFromScratchIgnoringCheckpoint(s ledger.LedgerStore, chatID string) (*Result, error) {
+	entries, err := s.ReadEntries(context.Background(), chatID, 1)
+	if err != nil {
+		return nil, err
+	}
+	return applyEntries(entries), nil
+}
+
+// TestApply_StaleCheckpointStillFoldsCorrectly is the concurrent-turn case:
+// a checkpoint appended AFTER newer entries already exist (its payload
+// reflects an older LastSeq than the chat's real state - the checkpoint's
+// own fold ran before those entries landed, but AppendIntent for it lost
+// the race to append). Apply must trust the payload's LastSeq, not this
+// entry's position in the log, or it would skip the entries that arrived
+// between the fold and the append.
+func TestApply_StaleCheckpointStillFoldsCorrectly(t *testing.T) {
+	s := newMemStore(t)
+	appendRevision(t, s, "chat1", "id1", 1, 0) // seq 1
+
+	stale, err := Fold(context.Background(), s, "chat1", 0) // LastSeq=1
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+	stalePayload, err := EncodeCheckpoint(stale)
+	if err != nil {
+		t.Fatalf("EncodeCheckpoint: %v", err)
+	}
+
+	appendRevision(t, s, "chat1", "id1", 2, 1) // seq 2, appended BEFORE the checkpoint
+	// The checkpoint lands last (highest seq) but its payload still only
+	// covers through seq 1 - simulating a concurrent turn racing ahead of it.
+	if _, err := s.AppendIntent(context.Background(), ledger.Entry{
+		ChatID: "chat1", Kind: ledger.KindCheckpoint, Payload: stalePayload,
+	}); err != nil {
+		t.Fatalf("AppendIntent stale checkpoint: %v", err)
+	}
+
+	got, err := Fold(context.Background(), s, "chat1", 0)
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+	latest, ok := got.Artifacts["id1"].Latest()
+	if !ok || latest.Revision != 2 {
+		t.Fatalf("latest revision = %+v, ok=%v, want revision 2 (a stale checkpoint must not hide seq 2)", latest, ok)
+	}
+}

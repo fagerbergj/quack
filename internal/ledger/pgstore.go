@@ -38,6 +38,10 @@ type pgEntry struct {
 	Payload        string    `gorm:"column:payload;type:jsonb"`
 	ParentRevision int64     `gorm:"column:parent_revision"`
 	IdempotencyKey string    `gorm:"column:idempotency_key"`
+	// SchemaVersion: 0 on every pre-#1144-P5 row - ADD COLUMN never
+	// backfills existing rows, and it doesn't need to: pgRowsToEntries runs
+	// every row through MigrateEntry, which treats 0 as version 1.
+	SchemaVersion int `gorm:"column:schema_version"`
 }
 
 func (pgEntry) TableName() string { return "ledger_entries" }
@@ -215,6 +219,7 @@ func (s *PGStore) AppendIntent(ctx context.Context, e Entry) (int64, error) {
 		ChatID: e.ChatID, TurnID: e.TurnID, NodeID: e.NodeID, Agent: e.Agent, Round: e.Round,
 		Kind: e.Kind, Key: e.Key, At: e.At, Payload: string(payload),
 		ParentRevision: parentRevisionOf(e.Kind, payload), IdempotencyKey: e.IdempotencyKey,
+		SchemaVersion: EntrySchemaVersion,
 	})
 	if err != nil {
 		switch pgConstraintName(err) {
@@ -296,12 +301,27 @@ func (s *PGStore) ReadEntriesPage(ctx context.Context, chatID string, fromSeq in
 func pgRowsToEntries(rows []pgEntry) []Entry {
 	out := make([]Entry, len(rows))
 	for i, r := range rows {
-		out[i] = Entry{
+		out[i] = MigrateEntry(Entry{
 			Seq: r.Seq, ChatID: r.ChatID, TurnID: r.TurnID, NodeID: r.NodeID, Agent: r.Agent, Round: r.Round,
 			Kind: r.Kind, Key: r.Key, At: r.At, Payload: json.RawMessage(r.Payload), IdempotencyKey: r.IdempotencyKey,
-		}
+			SchemaVersion: r.SchemaVersion,
+		})
 	}
 	return out
+}
+
+// LastCheckpoint returns chatID's highest-seq checkpoint row, if any.
+func (s *PGStore) LastCheckpoint(ctx context.Context, chatID string) (Entry, bool, error) {
+	var row pgEntry
+	err := s.db.WithContext(ctx).Where("chat_id = ? AND kind = ?", chatID, KindCheckpoint).
+		Order("seq desc").Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return Entry{}, false, nil
+	}
+	if err != nil {
+		return Entry{}, false, fmt.Errorf("ledger: last checkpoint for chat %q: %w", chatID, err)
+	}
+	return pgRowsToEntries([]pgEntry{row})[0], true, nil
 }
 
 // List returns one SessionRef per distinct chat_id; Size counts rows.

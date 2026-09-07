@@ -433,7 +433,9 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		slog.Info("span content capture is off (observability.otel.capture_content) - generation spans export with no prompt/response text", "component", "otelobs")
 	}
 
-	go ledger.RunRetentionSweep(ctx, ledgerStore, cfg.Observability.Recording.RetentionDays, 24*time.Hour)
+	// #1144 P5: the ledger retention sweep is deleted - chat hard-delete is
+	// the only GC (V4 "never delete except chat hard-delete"); checkpoints
+	// bound fold cost instead of trimming the log.
 
 	jail, err := workspace.NewJail(cfg.Workspace.Root)
 	if err != nil {
@@ -650,6 +652,8 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		slog.Info("extension supplies delivery", "component", "startup", "extension", delivererName)
 	}
 	if ledgerStore != nil {
+		// #1144 P5: chat/turn/plan writes go through AppendIntent too now.
+		st.SetWALLedger(ledgerStore)
 		// #1144 P3: seed a caught-up watermark (sse, artifact, node_state)
 		// for any chat that already has that projection's data, before the
 		// first watermark-gated write ever runs on it - see

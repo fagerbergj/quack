@@ -1607,6 +1607,10 @@ func (h *Handler) stampRunOutcome(parent context.Context, chatID string) {
 	if err := h.store.StampRunOutcome(ctx, chatID, string(status), q); err != nil {
 		slog.Warn("stamp run outcome failed", "component", "rest", "chat", chatID, "err", err)
 	}
+	// #1144 P5: best-effort - see Store.WriteCheckpoint's doc.
+	if err := h.store.WriteCheckpoint(ctx, chatID); err != nil {
+		slog.Warn("checkpoint write failed", "component", "rest", "chat", chatID, "err", err)
+	}
 }
 
 func stateVal(s string) *schema.ChatSummaryGithubState {

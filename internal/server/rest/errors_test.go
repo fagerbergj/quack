@@ -32,6 +32,10 @@ func (failingLedgerStore) MaxSeq(context.Context, string) (int64, error) {
 	return 0, errors.New("ledger: unreachable")
 }
 
+func (failingLedgerStore) LastCheckpoint(context.Context, string) (ledger.Entry, bool, error) {
+	return ledger.Entry{}, false, errors.New("ledger: unreachable")
+}
+
 // TestErrorResponseShape is a table-driven check that every representative
 // 4xx/5xx path emits the same JSON schema.ErrorResponse shape (a non-empty
 // "error" field) with application/json content-type, never http.Error's

@@ -963,6 +963,9 @@ func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrato
 		if err := st.StampRunOutcome(stampCtx, chatID, store.RunStatusPaused, ""); err != nil {
 			slog.Warn("extension run: interrupted stamp failed", "component", "ext."+name, "chat", chatID, "err", err)
 		}
+		if err := st.WriteCheckpoint(stampCtx, chatID); err != nil { // #1144 P5: best-effort
+			slog.Warn("extension run: checkpoint write failed", "component", "ext."+name, "chat", chatID, "err", err)
+		}
 		cancel()
 		slog.Warn("extension run cut by shutdown; no RunEnded delivered", "component", "ext."+name, "chat", chatID)
 		return
@@ -971,6 +974,9 @@ func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrato
 	timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
 	// hub.RegisterRun's cancel func is runCtx's own - a user Stop surfaces here as Canceled.
 	cancelled := errors.Is(runCtx.Err(), context.Canceled)
+	if err := st.WriteCheckpoint(context.WithoutCancel(ctx), chatID); err != nil { // #1144 P5: best-effort
+		slog.Warn("extension run: checkpoint write failed", "component", "ext."+name, "chat", chatID, "err", err)
+	}
 	outcome := buildExtRunOutcome(runCtx, orch, st, userID, chatID, res.PlanID != "", res.NeedsInput, timedOut, cancelled)
 	if p := extHolder.Load(); p != nil {
 		if obs, ok := (*p).(extsdk.RunObserver); ok {

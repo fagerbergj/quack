@@ -92,10 +92,9 @@ observability:
   recording:
     observations: ${QUACK_RECORDING_ENABLED}  # unset ⇒ follows otel.enabled
     store: default_postgres                   # must be a postgres store
-    retention_days: 30
 ```
 
-`recording.store` must be a Postgres store; config refuses anything else at load, because the WAL's fail-closed append needs a transactional, gapless sequence. With a store named the ledger is always on. `recording.observations` only toggles the observation half (it rides the same logger provider as `otlp_endpoint`, so it can only be on when `otel.enabled` is); turning it off never turns the WAL off. Observation payloads are redacted (auth headers/API keys/credentials stripped) before they are written.
+`recording.store` must be a Postgres store; config refuses anything else at load, because the WAL's fail-closed append needs a transactional, gapless sequence. With a store named the ledger is always on. `recording.observations` only toggles the observation half (it rides the same logger provider as `otlp_endpoint`, so it can only be on when `otel.enabled` is); turning it off never turns the WAL off. Observation payloads are redacted (auth headers/API keys/credentials stripped) before they are written. There is no `retention_days` (#1144 P5 deleted the sweep): the ledger is never GC'd except by chat hard-delete; a `checkpoint` entry at every turn end bounds fold cost instead.
 
 At boot the server runs ledger recovery over every chat: an `artifact.revision` intent with no store row is reported (a store-level unique index on `(chat_id, key, parent_revision)` already stops that phantom parent from being reused, so recovery no longer writes a compensating marker for it - #1144 P4), and a `delivery.intent` with no completing `delivery_record` revision is checked against the extension's `DeliveryRecoverer`. The count it could not settle is the `quack_ledger_unresolved_intents` gauge; `quack ledger recover --dry-run` runs the same pass and reports instead of writing.
 

@@ -60,6 +60,12 @@ type LedgerStore interface {
 	// MaxSeq returns chatID's highest entry Seq, 0 if it has none - a cheap
 	// alternative to ReadEntries for callers that only need "how far along is this chat".
 	MaxSeq(ctx context.Context, chatID string) (int64, error)
+	// LastCheckpoint returns chatID's most recently appended KindCheckpoint
+	// entry, false if it has none (#1144 P5). "Most recent" is a heuristic
+	// for picking a fold starting point, not a correctness requirement - see
+	// fold.Apply, which trusts the checkpoint payload's own LastSeq rather
+	// than this entry's Seq.
+	LastCheckpoint(ctx context.Context, chatID string) (Entry, bool, error)
 	// List returns every chat with at least one entry.
 	List(ctx context.Context) ([]SessionRef, error)
 	// Delete removes a whole chat's entries (chat hard-delete only).

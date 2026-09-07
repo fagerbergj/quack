@@ -243,8 +243,8 @@ paths:
         list`/export. 200 with an empty array when a ledger store is
         configured but nothing has been written yet; 404 when no ledger store
         is configured - same signal as `getChatRecording`. Deliberately
-        unpaginated: one entry per chat, bounded by the ledger's own
-        retention_days GC, not an open-ended table.
+        unpaginated: one entry per chat, bounded by the number of chats (chat
+        hard-delete is the ledger's only GC - #1144 P5), not an open-ended table.
       responses:
         "200":
           description: The recorded sessions

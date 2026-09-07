@@ -237,9 +237,8 @@ type ObservabilityConfig struct {
 // kinds (llm.call, tool.call, ...) are written to it. The ledger itself is
 // always on when Store is set; Observations only gates the observation half.
 type RecordingConfig struct {
-	Observations  *bool  `yaml:"observations"`
-	Store         string `yaml:"store"`
-	RetentionDays int    `yaml:"retention_days"`
+	Observations *bool  `yaml:"observations"`
+	Store        string `yaml:"store"`
 }
 
 // ObservationsEnabled reports whether observation entries are recorded:
@@ -1258,9 +1257,6 @@ func (c *Config) validate() error {
 // validate refuses any non-Postgres ledger store: the WAL's fail-closed
 // AppendIntent needs a transactional, gapless seq no other backend gives.
 func (r RecordingConfig) validate(c *Config) error {
-	if r.RetentionDays < 0 {
-		return fmt.Errorf("config: observability.recording.retention_days must be >= 0")
-	}
 	if r.Store == "" {
 		return nil
 	}
