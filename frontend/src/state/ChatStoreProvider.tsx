@@ -3,9 +3,11 @@ import { ChatStore, EMPTY_STATE, type ChatState } from './chatStore'
 
 const ChatStoreContext = createContext<ChatStore | null>(null)
 
-export function ChatStoreProvider({ children }: { children: ReactNode }) {
-  const store = useMemo(() => new ChatStore(), [])
-  return <ChatStoreContext.Provider value={store}>{children}</ChatStoreContext.Provider>
+// `store` is test-only: lets a test inject a ChatStore it can drive directly
+// (dispatch a fake SSE event) instead of only reading through the provider.
+export function ChatStoreProvider({ children, store: injected }: { children: ReactNode; store?: ChatStore }) {
+  const own = useMemo(() => new ChatStore(), [])
+  return <ChatStoreContext.Provider value={injected ?? own}>{children}</ChatStoreContext.Provider>
 }
 
 export function useChatStore(): ChatStore {

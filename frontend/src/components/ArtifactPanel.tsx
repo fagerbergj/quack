@@ -12,6 +12,7 @@ import type { ArtifactSummary, ArtifactRevisionInfo } from '../api'
 import { CopyButton } from './CopyButton'
 import { CopyablePre } from './CopyablePre'
 import { escapeUnmatchedBackticks } from '../lib/backticks'
+import { useChatStore } from '../state/ChatStoreProvider'
 
 // JudgeRoundContent is the JSON body of a `judge_round` artifact (design V4
 // §4.3) - the only place a note's line anchor lives. Fetched and parsed
@@ -210,15 +211,11 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   const [activeRoundId, setActiveRoundId] = useState<string | null>(null)
 
   const load = useCallback(() => {
-    api.listChatArtifacts(chatId).then(l => setSummaries(l.data ?? [])).catch(e => setError(String(e)))
+    // Returns the promise (not fire-and-forget) - withScrollPreserved below
+    // awaits it to restore scroll only after the refetch actually lands.
+    return api.listChatArtifacts(chatId).then(l => setSummaries(l.data ?? [])).catch(e => setError(String(e)))
   }, [chatId])
   useEffect(() => { load() }, [load])
-  // ponytail: no live SSE wiring here - artifact_revision/artifact_judge_round
-  // are emitted by #1092 (a separate, in-progress branch), and agentStream's
-  // dispatch is a typed per-event switch, not a generic pub/sub a late
-  // subscriber can tap. Reload via REST only for now (the explicit Refresh
-  // button below); wire a real handler once #1092's payload shape exists to
-  // test against.
 
   // Membership is by the LATEST revision's lineage.node_id (ArtifactSummary
   // only carries that revision's lineage - see toArtifactSummary in
@@ -307,7 +304,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   // cursor as it is NOW, while the effect only re-fires on a new primary.
   const currentRevRef = useRef(currentRev)
   currentRevRef.current = currentRev
-  const loadRevisions = useCallback(() => {
+  const loadRevisions = useCallback((opts?: { toLatest?: boolean }) => {
     if (!primaryId) { setRevisions([]); setRevIdx(null); return }
     const token = ++revisionsToken.current
     return api.listArtifactRevisions(chatId, primaryId)
@@ -317,8 +314,12 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
         const asc = toAscending(r.data ?? [])
         setRevisions(asc)
         // Keep the currently viewed revision across a refresh if it still
-        // exists; a fresh primary or a vanished revision lands on latest.
-        const want = currentRevRef.current
+        // exists; a fresh primary, a vanished revision, or an explicit
+        // toLatest (live-follow) lands on latest. toLatest is passed
+        // explicitly rather than via a ref, because a ref the render body
+        // also writes (currentRevRef) can be clobbered by a re-render that
+        // lands between the intent being set and this read.
+        const want = opts?.toLatest ? null : currentRevRef.current
         const wantIdx = want != null ? asc.findIndex(x => x.revision === want) : -1
         setRevIdx(wantIdx >= 0 ? wantIdx : asc.length - 1)
       })
@@ -437,6 +438,57 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
     loadContent()
     loadDiff()
   }, [load, loadJudgeBodies, loadRevisions, loadContent, loadDiff])
+
+  // Live SSE follow (#1114): chatStore.subscribe already fans out to any
+  // listener while mounted (same seam DagNode/NodePopup use) - no new pub/sub.
+  // Refs, not deps, because the listener is registered once per chatId and
+  // must read state as it is at event time, not as it was at subscribe time.
+  const store = useChatStore()
+  const primaryIdRef = useRef(primaryId)
+  primaryIdRef.current = primaryId
+  const nodeArtifactNamesRef = useRef<Set<string>>(new Set())
+  nodeArtifactNamesRef.current = useMemo(() => new Set(nodeArtifacts.map(a => a.name)), [nodeArtifacts])
+  // atLatestRef: true when the cursor is on the newest revision, so a fresh
+  // one should pull the view forward; false (pinned to an older revision by
+  // the user) means the refetch must leave the cursor where it is.
+  const atLatestRef = useRef(true)
+  useEffect(() => {
+    atLatestRef.current = revIdx == null || revisions.length === 0 || revIdx === revisions.length - 1
+  }, [revIdx, revisions])
+  const seenSeqRef = useRef(0)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const withScrollPreserved = useCallback((run: () => void | Promise<unknown>) => {
+    const el = scrollRef.current
+    const top = el?.scrollTop
+    Promise.resolve(run()).then(() => {
+      requestAnimationFrame(() => {
+        if (scrollRef.current && top != null) scrollRef.current.scrollTop = top
+      })
+    })
+  }, [])
+  useEffect(() => {
+    return store.subscribe(chatId, () => {
+      const ev = store.get(chatId).artifactEvents
+      if (!ev || ev.seq === seenSeqRef.current) return
+      seenSeqRef.current = ev.seq
+      const rev = ev.revision
+      if (rev && rev.nodeId === nodeId) {
+        // Only the list and the primary's own revisions refetch here; an
+        // expanded MoreItem for a non-primary artifact keeps its own
+        // revision list (fetched once on expand) and goes stale until
+        // collapsed/re-expanded - a deliberate scope boundary, not a bug.
+        withScrollPreserved(load)
+        if (rev.id === primaryIdRef.current) {
+          const toLatest = atLatestRef.current
+          withScrollPreserved(() => loadRevisions({ toLatest }))
+        }
+      }
+      const jr = ev.judgeRound
+      if (jr && jr.scored.some(s => s.artifactId === primaryIdRef.current || nodeArtifactNamesRef.current.has(s.artifactId))) {
+        withScrollPreserved(load)
+      }
+    })
+  }, [store, chatId, nodeId, load, loadRevisions, withScrollPreserved])
 
   function move(delta: 1 | -1) {
     if (revIdx == null || revisions.length === 0) return
@@ -594,7 +646,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
 
         {/* The single scrolling region: revision bar, the rendered output
             (with judge-note highlights), More, Details. */}
-        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 sm:px-5 py-3 space-y-3">
+        <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 sm:px-5 py-3 space-y-3">
           {error && <p className="text-xs text-red-500 dark:text-red-400">{error}</p>}
 
           {empty ? (

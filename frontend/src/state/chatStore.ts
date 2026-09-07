@@ -1,4 +1,4 @@
-import { readAgentStream, attachAgentEventSource, AGENT_EVENT_NAMES, type AgentStreamHandlers, type DagNodeDef, type DagEdgeDef, type NodeDoneMeta, type Stage } from './agentStream'
+import { readAgentStream, attachAgentEventSource, AGENT_EVENT_NAMES, type AgentStreamHandlers, type DagNodeDef, type DagEdgeDef, type NodeDoneMeta, type Stage, type ArtifactRevisionPayload, type ArtifactJudgeRoundPayload } from './agentStream'
 import {
   startRun,
   appendRunThinking,
@@ -109,6 +109,12 @@ export interface ChatState {
   // Chat-wide token aggregate from ChatDetail.usage - a snapshot as of the
   // last seed(), not updated live while a run streams.
   usage?: Usage
+  // Latest artifact_revision/artifact_judge_round SSE events (#1114) - a
+  // late subscriber (ArtifactPanel) reads this off the existing subscribe()
+  // fan-out rather than a separate pub/sub mechanism. seq increments on
+  // every artifact event so a listener can detect a new one even when the
+  // payload repeats (e.g. same revision re-announced on reconnect replay).
+  artifactEvents?: { revision?: ArtifactRevisionPayload; judgeRound?: ArtifactJudgeRoundPayload; seq: number }
 }
 
 type Listener = () => void
@@ -954,6 +960,16 @@ export class ChatStore {
           const s = this.states.get(chatId)
           if (s?.live?.dag?.nodeStates[d.nodeId]?.traceId) return
           updateNodeState(d.nodeId, { traceId: d.traceId })
+        },
+        onArtifactRevision: d => {
+          const s = this.get(chatId)
+          const seq = (s.artifactEvents?.seq ?? 0) + 1
+          this.write(chatId, { ...s, artifactEvents: { ...s.artifactEvents, revision: d, seq } })
+        },
+        onArtifactJudgeRound: d => {
+          const s = this.get(chatId)
+          const seq = (s.artifactEvents?.seq ?? 0) + 1
+          this.write(chatId, { ...s, artifactEvents: { ...s.artifactEvents, judgeRound: d, seq } })
         },
       }
   }

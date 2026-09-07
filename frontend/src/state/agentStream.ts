@@ -114,6 +114,32 @@ interface DeliveryResultPayload {
   traceId?: string
 }
 
+// ArtifactRevisionPayload mirrors internal/stream.ArtifactRevisionData - one
+// artifact revision written by a judge/worker round (#1092).
+export interface ArtifactRevisionPayload {
+  id: string
+  revision: number
+  kind: string
+  nodeId: string
+  round: number
+}
+
+// ArtifactScoredRef mirrors internal/stream.ScoredRef.
+interface ArtifactScoredRef {
+  artifactId: string
+  revision: number
+}
+
+// ArtifactJudgeRoundPayload mirrors internal/stream.ArtifactJudgeRoundData -
+// the judge_round record a round wrote, referencing revisions already
+// announced via artifact_revision.
+export interface ArtifactJudgeRoundPayload {
+  id: string
+  passed: boolean
+  score: number
+  scored: ArtifactScoredRef[]
+}
+
 export interface AgentStreamHandlers {
   // Agent-run lifecycle + typed activity (flat; each carries node_id + run_id).
   onAgentStart?: (d: AgentStartPayload) => void
@@ -152,6 +178,11 @@ export interface AgentStreamHandlers {
   onNodeNeedsInput?: (nodeId: string, interruptId: string, message: string) => void
   // A node's worker history was compacted mid-round to fit its context window.
   onCompaction?: (d: CompactionPayload) => void
+  // One artifact revision written by a round - fires before the round's own
+  // artifact_judge_round event (#1092).
+  onArtifactRevision?: (d: ArtifactRevisionPayload) => void
+  // The judge_round record a round wrote.
+  onArtifactJudgeRound?: (d: ArtifactJudgeRoundPayload) => void
 }
 
 // Wire-level event names. Mirrors internal/stream/event.go.
@@ -159,7 +190,7 @@ export const AGENT_EVENT_NAMES = [
   'agent_start', 'agent_thinking', 'agent_tool_call', 'agent_tool_result', 'agent_token', 'agent_complete',
   'confirmation_request', 'chat_title', 'error', 'done', 'response_created',
   'dag_plan', 'node_queued', 'node_start', 'node_done', 'node_failed', 'node_cancelled', 'node_paused', 'node_steered', 'node_needs_input',
-  'delivery_result', 'compaction',
+  'delivery_result', 'compaction', 'artifact_revision', 'artifact_judge_round',
 ] as const
 
 // nodeIdOf extracts the optional node_id field from a parsed payload.
@@ -364,6 +395,34 @@ function dispatchAgentEvent(
           url: typeof p.url === 'string' ? p.url : undefined,
           error: typeof p.error === 'string' ? p.error : undefined,
           traceId: typeof p.trace_id === 'string' ? p.trace_id : undefined,
+        })
+      }
+      return true
+    }
+    case 'artifact_revision': {
+      const p = parsed as { id?: string; revision?: number; kind?: string; node_id?: string; round?: number }
+      if (typeof p.id === 'string') {
+        handlers.onArtifactRevision?.({
+          id: p.id,
+          revision: typeof p.revision === 'number' ? p.revision : 0,
+          kind: typeof p.kind === 'string' ? p.kind : '',
+          nodeId: typeof p.node_id === 'string' ? p.node_id : '',
+          round: typeof p.round === 'number' ? p.round : 0,
+        })
+      }
+      return true
+    }
+    case 'artifact_judge_round': {
+      const p = parsed as { id?: string; passed?: boolean; score?: number; scored?: { artifact_id?: string; revision?: number }[] }
+      if (typeof p.id === 'string') {
+        handlers.onArtifactJudgeRound?.({
+          id: p.id,
+          passed: p.passed === true,
+          score: typeof p.score === 'number' ? p.score : 0,
+          scored: (p.scored ?? []).map(s => ({
+            artifactId: typeof s.artifact_id === 'string' ? s.artifact_id : '',
+            revision: typeof s.revision === 'number' ? s.revision : 0,
+          })),
         })
       }
       return true

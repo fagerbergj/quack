@@ -1,10 +1,18 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render as rtlRender, screen } from '@testing-library/react'
+import type { ReactElement } from 'react'
 import userEvent from '@testing-library/user-event'
 import { DagNode } from './DagNode'
 import type { DagNodeDef } from '../state/agentStream'
 import { client } from '../generated/client.gen'
+import { ChatStoreProvider } from '../state/ChatStoreProvider'
+
+// ArtifactPanel (opened from DagNode's ⋮ menu) reads chatStore for live
+// SSE follow (#1114) - every render needs the provider.
+function render(ui: ReactElement) {
+  return rtlRender(<ChatStoreProvider>{ui}</ChatStoreProvider>)
+}
 
 afterEach(cleanup)
 
