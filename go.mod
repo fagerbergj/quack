@@ -13,7 +13,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/coder/acp-go-sdk v0.13.5
 	github.com/creack/pty v1.1.24
-	github.com/fagerbergj/quack-extensions/github v0.11.0
+	github.com/fagerbergj/quack-extensions/github v0.11.1
 	github.com/fagerbergj/quack-extensions/noop v0.2.0
 	github.com/fagerbergj/quack-extensions/remarkable v0.3.0
 	github.com/fagerbergj/quack-extensions/sdk v0.11.0
