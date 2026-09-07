@@ -153,16 +153,14 @@ type revKey struct {
 	rev int
 }
 
-// applyEntries is the fold's one true loop: entries MUST be in seq order (as
+// applyLoop is the fold's one true loop: entries MUST be in seq order (as
 // every ReadEntries*/readAll path returns them), since a later entry for the
 // same (id, revision) or (node, turn) key overrides an earlier one - an
 // artifact.revision.aborted deletes its revision from live, and a retried
 // save that reuses the same number (see ledger.KindArtifactRevisionAborted's
-// doc) re-adds it.
-func applyEntries(entries []ledger.Entry) *Result {
-	res := &Result{Artifacts: map[string]*Artifact{}, Nodes: map[string]*NodeState{}}
-	live := map[revKey]ArtifactRevision{}
-
+// doc) re-adds it. res and live are mutated in place so Apply can seed them
+// from a prior Result instead of always starting empty.
+func applyLoop(res *Result, live map[revKey]ArtifactRevision, entries []ledger.Entry) {
 	for _, e := range entries {
 		if e.Seq > res.LastSeq {
 			res.LastSeq = e.Seq
@@ -219,7 +217,16 @@ func applyEntries(entries []ledger.Entry) *Result {
 			}
 		}
 	}
+}
 
+// finalize rebuilds res.Artifacts and res.JudgeRounds from live - the
+// materialized (non-aborted) revision set - after applyLoop has run. Always
+// rebuilt from scratch (never incrementally patched) because an
+// artifact.revision.aborted entry can remove a revision that a prior
+// Result's Artifacts map already held.
+func finalize(res *Result, live map[revKey]ArtifactRevision) *Result {
+	res.Artifacts = map[string]*Artifact{}
+	res.JudgeRounds = nil
 	for k, rv := range live {
 		a, ok := res.Artifacts[k.id]
 		if !ok {
@@ -243,14 +250,34 @@ func applyEntries(entries []ledger.Entry) *Result {
 	return res
 }
 
+// applyEntries folds entries from scratch - Fold's and LastRevision's shared path.
+func applyEntries(entries []ledger.Entry) *Result {
+	res := &Result{Artifacts: map[string]*Artifact{}, Nodes: map[string]*NodeState{}}
+	live := map[revKey]ArtifactRevision{}
+	applyLoop(res, live, entries)
+	return finalize(res, live)
+}
+
 // Fold reads every entry for chatID from fromSeq (in seq-order pages) and
-// folds them into Result.
+// folds them into Result. A fromSeq=0 convenience over Apply, the one fold
+// entry point (#1144 P3) - every catch-up (SSE, artifact, node_state) reads
+// from a watermark through Apply instead of its own loop.
 func Fold(ctx context.Context, store ledger.LedgerStore, chatID string, fromSeq int64) (*Result, error) {
-	entries, err := readAll(ctx, store, chatID, fromSeq)
+	return Apply(ctx, store, chatID, fromSeq-1)
+}
+
+// Apply folds only the entries newer than from (a projection's watermark),
+// instead of re-folding chatID's whole history (#1144 P3). from=-1 (via
+// Fold's fromSeq=0) is a fresh fold of the whole chat.
+func Apply(ctx context.Context, store ledger.LedgerStore, chatID string, from int64) (*Result, error) {
+	entries, err := readAll(ctx, store, chatID, from+1)
 	if err != nil {
 		return nil, err
 	}
-	return applyEntries(entries), nil
+	res := &Result{Nodes: map[string]*NodeState{}}
+	live := map[revKey]ArtifactRevision{}
+	applyLoop(res, live, entries)
+	return finalize(res, live), nil
 }
 
 // LastRevision returns id's highest materialized revision in chatID's

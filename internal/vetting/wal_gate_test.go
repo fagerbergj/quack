@@ -47,6 +47,12 @@ func newFakeGateLedger() *fakeGateLedger {
 func (f *fakeGateLedger) List(context.Context) ([]ledger.SessionRef, error) { return nil, nil }
 func (f *fakeGateLedger) Delete(context.Context, string) error              { return nil }
 
+func (f *fakeGateLedger) MaxSeq(_ context.Context, chatID string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.seqs[chatID], nil
+}
+
 // entryMatchesFailKind reports whether e is the kind failKind targets - the
 // literal ledger kind, or (for "judge_round") an artifact.revision entry
 // whose payload names that artifact kind.

@@ -11,12 +11,11 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"reflect"
 	"sort"
 	"text/tabwriter"
 	"time"
 
-	"google.golang.org/adk/v2/artifact"
+	"gorm.io/gorm"
 
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/ledger"
@@ -24,6 +23,7 @@ import (
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/store"
+	"github.com/fagerbergj/quack/internal/stream"
 )
 
 // RunLedgerShow prints chatID's raw ledger entries (seq >= fromSeq) to out,
@@ -43,54 +43,46 @@ func RunLedgerShow(ctx context.Context, out io.Writer, ls ledger.LedgerStore, ch
 	return nil
 }
 
-// LedgerRebuildReport is `quack ledger rebuild`'s result: what actually
-// DIFFERED from the fold (or, under --dry-run, what WOULD differ) - #1121:
-// this is a diff against the current rows, never a raw candidate count, so
-// it reports 0 on a chat that hasn't drifted.
+// LedgerRebuildReport is `quack ledger rebuild`'s result (#1144 P3: rebuild
+// is now "reset the watermark to 0 and fold" - no more diff heuristics, the
+// watermark itself says how much was already reconciled).
 type LedgerRebuildReport struct {
 	ChatID                   string   `json:"chat_id"`
 	DryRun                   bool     `json:"dry_run"`
-	Force                    bool     `json:"force,omitempty"`
 	ArtifactRevisionsChanged int      `json:"artifact_revisions_changed"`
 	ArtifactUpdateErrors     []string `json:"artifact_update_errors,omitempty"`
-	// SSERowsInserted: node-lifecycle rows genuinely missing from the table,
-	// inserted without touching any other row. Zero in --force mode (see
-	// SSERowsReplaced instead).
-	SSERowsInserted int `json:"sse_rows_inserted"`
-	// SSERowsReplaced: --force mode ONLY - the whole table was wiped and
-	// replaced with this many synthesized rows, losing every observational
-	// event (agent_token, agent_thinking, tool calls, dag_plan, ...).
-	SSERowsReplaced int `json:"sse_rows_replaced,omitempty"`
+	SSERowsInserted          int      `json:"sse_rows_inserted"`
+	NodeStatesChanged        int      `json:"node_states_changed"`
+	// NodeStateSkippedMultiPlan is true when node_state was left untouched
+	// because chatID has more than one plan: res.Nodes folds the whole chat
+	// lifetime by bare node ID, and a node ID legitimately recurs across
+	// plans/turns (e.g. the auto-appended "synthesize" node) with no
+	// persisted plan<->invocation mapping to attribute a terminal event back
+	// to the plan it belongs to - attributing it to "the latest plan" would
+	// silently fabricate or stomp state for a plan that never ran that node.
+	NodeStateSkippedMultiPlan bool `json:"node_state_skipped_multi_plan,omitempty"`
 }
 
-// RunLedgerRebuild reconciles chatID's artifact store rows and SSE table
-// against the ledger fold. Default (force=false, the safe path, #1121):
-//   - artifact metadata: a revision's kind/class/lineage is updated ONLY if
-//     it actually differs from the fold - compared via LoadWithMeta, not
-//     assumed. Bytes and revision numbers are never touched, they aren't in
-//     the fold.
-//   - SSE table: ONLY node-lifecycle rows (node_start/node_done/node_failed)
-//     that are COMPLETELY MISSING are inserted, keyed by (node id, event
-//     name) - never by seq (the ledger's seq space and the table's per-run
-//     seq space are different counters, see runlog.LoadEvents's doc; reusing
-//     a ledger seq as a table row's Seq risks colliding with and silently
-//     overwriting an unrelated real row). Every existing row - lifecycle or
-//     observational - is left untouched, since the fold can't reconstruct
-//     ANY row's full real content (tokens/output/model/exact timestamps) and
-//     overwriting on that basis would replace real data with a placeholder.
-//
-// force=true is the OLD, destructive "replace the whole table" mode: it
-// deletes every row (including all observational history) and rewrites the
-// table from the fold alone. Only for a chat the operator has already
-// decided to treat as unrecoverable any other way.
-//
-// dryRun computes the report without writing anything.
-func RunLedgerRebuild(ctx context.Context, ls ledger.LedgerStore, st *store.Store, artifacts *store.TurnAwareService, chatID string, dryRun, force bool) (*LedgerRebuildReport, error) {
-	res, err := fold.Fold(ctx, ls, chatID, 0)
+// RunLedgerRebuild resets chatID's watermarks to 0 and folds: every artifact
+// revision's kind/class/lineage is rewritten from the fold (unconditionally
+// - no drift diff, the watermark reset already says "start over"), and the
+// SSE table is repopulated the same way LoadEvents' resume path would
+// (runlog.foldSSEFromWatermark), inserting only what the fold has that the
+// table doesn't yet. dryRun computes the report without writing or
+// resetting anything.
+func RunLedgerRebuild(ctx context.Context, ls ledger.LedgerStore, st *store.Store, artifacts *store.TurnAwareService, chatID string, dryRun bool) (*LedgerRebuildReport, error) {
+	if !dryRun {
+		for _, projection := range []string{"artifact", "sse", "node_state"} {
+			if err := st.ResetProjectionWatermark(ctx, chatID, projection); err != nil {
+				return nil, fmt.Errorf("ledger rebuild: reset %s watermark for chat %q: %w", projection, chatID, err)
+			}
+		}
+	}
+	res, err := fold.Apply(ctx, ls, chatID, 0)
 	if err != nil {
 		return nil, fmt.Errorf("ledger rebuild: fold chat %q: %w", chatID, err)
 	}
-	report := &LedgerRebuildReport{ChatID: chatID, DryRun: dryRun, Force: force}
+	report := &LedgerRebuildReport{ChatID: chatID, DryRun: dryRun}
 	userID := st.SessionUserForChat(ctx, chatID)
 
 	ids := make([]string, 0, len(res.Artifacts))
@@ -100,14 +92,6 @@ func RunLedgerRebuild(ctx context.Context, ls ledger.LedgerStore, st *store.Stor
 	sort.Strings(ids) // deterministic report order
 	for _, id := range ids {
 		for _, rev := range res.Artifacts[id].Revisions {
-			drifted, cerr := artifactMetaDrifted(ctx, artifacts, artifactref.AppName, userID, chatID, id, rev)
-			if cerr != nil {
-				report.ArtifactUpdateErrors = append(report.ArtifactUpdateErrors, fmt.Sprintf("%s@%d: %v", id, rev.Revision, cerr))
-				continue
-			}
-			if !drifted {
-				continue
-			}
 			report.ArtifactRevisionsChanged++
 			if dryRun {
 				continue
@@ -117,21 +101,68 @@ func RunLedgerRebuild(ctx context.Context, ls ledger.LedgerStore, st *store.Stor
 			}
 		}
 	}
+	if !dryRun {
+		// Artifact rows live behind the ADK artifact.Service, which may be a
+		// wholly separate Postgres connection from this Store's own db (a
+		// dedicated NewArtifactService URL) - unlike SSE/node_state below,
+		// there is no single transaction that can span both, so the
+		// watermark advance is sequential-after, not atomic-with, the row
+		// writes. A crash in the gap just means the next rebuild reprocesses
+		// revisions it already wrote - UpdateArtifactMeta is an
+		// unconditional overwrite, so that's a harmless no-op re-write, not
+		// a correctness bug.
+		if err := st.SetProjectionWatermark(ctx, chatID, "artifact", res.LastSeq); err != nil {
+			return report, fmt.Errorf("ledger rebuild: advance artifact watermark for chat %q: %w", chatID, err)
+		}
+	}
 
-	if force {
-		events := runlog.SynthesizeChatEvents(chatID, res)
-		report.SSERowsReplaced = len(events)
-		if !dryRun {
-			if err := st.DeleteChatEvents(ctx, chatID); err != nil {
-				return report, fmt.Errorf("ledger rebuild: clear SSE table for chat %q: %w", chatID, err)
-			}
-			for _, ev := range events {
-				if err := st.InsertChatEvent(ctx, ev); err != nil {
-					return report, fmt.Errorf("ledger rebuild: insert SSE row for chat %q: %w", chatID, err)
-				}
+	planCount, cerr := st.CountDagPlans(ctx, chatID)
+	if cerr != nil {
+		return report, fmt.Errorf("ledger rebuild: count plans for chat %q: %w", chatID, cerr)
+	}
+	if planCount > 1 {
+		// See NodeStateSkippedMultiPlan's doc: with >1 plan there is no way
+		// to tell which plan a folded node.* entry belongs to, so node_state
+		// is left as-is rather than guessing.
+		report.NodeStateSkippedMultiPlan = true
+	}
+	planID, perr := st.GetLatestDagPlan(ctx, chatID)
+	if perr != nil {
+		return report, fmt.Errorf("ledger rebuild: latest plan for chat %q: %w", chatID, perr)
+	}
+	if planID != nil && planCount <= 1 {
+		// Only write ids the plan actually declares (kills the phantom
+		// case), same check loadPlanNode uses to 404 an unknown node.
+		var planData stream.DagPlanData
+		if uerr := json.Unmarshal([]byte(planID.PlanJSON), &planData); uerr != nil {
+			return report, fmt.Errorf("ledger rebuild: parse latest plan JSON for chat %q: %w", chatID, uerr)
+		}
+		declared := make(map[string]bool, len(planData.Nodes))
+		for _, n := range planData.Nodes {
+			declared[n.ID] = true
+		}
+		nodeIDs := make([]string, 0, len(res.Nodes))
+		for id := range res.Nodes {
+			if declared[id] && res.Nodes[id].TerminalStatus != "" {
+				nodeIDs = append(nodeIDs, id)
 			}
 		}
-		return report, nil
+		sort.Strings(nodeIDs) // deterministic report order
+		report.NodeStatesChanged = len(nodeIDs)
+		if !dryRun {
+			err = st.InTx(ctx, func(tx *gorm.DB) error {
+				for _, id := range nodeIDs {
+					n := res.Nodes[id]
+					if werr := store.UpsertNodeTerminalStatusTx(tx, planID.ID, n.NodeID, n.TerminalStatus); werr != nil {
+						return fmt.Errorf("node %s: %w", n.NodeID, werr)
+					}
+				}
+				return store.SetProjectionWatermarkTx(tx, chatID, "node_state", res.LastSeq)
+			})
+			if err != nil {
+				return report, fmt.Errorf("ledger rebuild: write node_state for chat %q: %w", chatID, err)
+			}
+		}
 	}
 
 	existing, err := st.LoadChatEvents(ctx, chatID, 0)
@@ -152,55 +183,36 @@ func RunLedgerRebuild(ctx context.Context, ls ledger.LedgerStore, st *store.Stor
 			have[nodeID+"\x00"+ev.Name] = true
 		}
 	}
-	missing := runlog.MissingLifecycleEvents(chatID, res, func(nodeID, name string) bool {
-		return have[nodeID+"\x00"+name]
-	})
+	var missing []store.ChatEvent
+	for _, ce := range runlog.SynthesizeChatEvents(chatID, res) {
+		ev, uerr := runlog.UnmarshalEvent(ce.Event)
+		if uerr != nil {
+			continue
+		}
+		nodeID, ok := runlog.EventNodeID(ev)
+		if !ok || have[nodeID+"\x00"+ev.Name] {
+			continue
+		}
+		missing = append(missing, ce)
+	}
 	report.SSERowsInserted = len(missing)
 	if !dryRun {
 		now := time.Now().UTC()
-		for _, ce := range missing {
-			maxSeq++
-			ce.Seq, ce.CreatedAt = maxSeq, now
-			if err := st.InsertChatEvent(ctx, ce); err != nil {
-				return report, fmt.Errorf("ledger rebuild: insert SSE row for chat %q: %w", chatID, err)
+		err = st.InTx(ctx, func(tx *gorm.DB) error {
+			for _, ce := range missing {
+				maxSeq++
+				ce.Seq, ce.CreatedAt = maxSeq, now
+				if werr := store.InsertChatEventTx(tx, ce); werr != nil {
+					return werr
+				}
 			}
+			return store.SetProjectionWatermarkTx(tx, chatID, "sse", res.LastSeq)
+		})
+		if err != nil {
+			return report, fmt.Errorf("ledger rebuild: write sse rows for chat %q: %w", chatID, err)
 		}
 	}
 	return report, nil
-}
-
-// artifactMetaDrifted reports whether id@revision's STORED kind/class/
-// lineage differs from what the fold says it should be - the diff #1121
-// requires before counting or writing anything.
-func artifactMetaDrifted(ctx context.Context, artifacts *store.TurnAwareService, appName, userID, chatID, id string, rev fold.ArtifactRevision) (bool, error) {
-	_, kind, class, lineageJSON, err := artifacts.LoadWithMeta(ctx, &artifact.LoadRequest{
-		AppName: appName, UserID: userID, SessionID: chatID, FileName: id, Version: int64(rev.Revision),
-	})
-	if err != nil {
-		return false, err
-	}
-	if kind != rev.Kind || class != rev.Class {
-		return true, nil
-	}
-	equal, err := jsonEqual(lineageJSON, rev.Lineage)
-	if err != nil {
-		return true, nil // stored lineage doesn't even parse - treat as drifted
-	}
-	return !equal, nil
-}
-
-// jsonEqual compares two JSON documents structurally (map/slice/scalar),
-// immune to key-order or whitespace differences between two independent
-// marshals of the same value.
-func jsonEqual(a, b json.RawMessage) (bool, error) {
-	var va, vb any
-	if err := json.Unmarshal(a, &va); err != nil {
-		return false, err
-	}
-	if err := json.Unmarshal(b, &vb); err != nil {
-		return false, err
-	}
-	return reflect.DeepEqual(va, vb), nil
 }
 
 // FormatLedgerRebuildReport renders report as the human-readable summary `rebuild` prints.
@@ -209,16 +221,13 @@ func FormatLedgerRebuildReport(r *LedgerRebuildReport) string {
 	if r.DryRun {
 		verb = "would rebuild"
 	}
-	var s string
-	if r.Force {
-		s = fmt.Sprintf("%s chat %s (--force): %d artifact revision(s) %s, chat_events REPLACED with %d synthesized row(s) - observational history lost\n",
-			verb, r.ChatID, r.ArtifactRevisionsChanged, verbPast(r.DryRun), r.SSERowsReplaced)
-	} else {
-		s = fmt.Sprintf("%s chat %s: %d artifact revision(s) %s, %d SSE row(s) %s (inserted only - no row was touched or deleted)\n",
-			verb, r.ChatID, r.ArtifactRevisionsChanged, verbPast(r.DryRun), r.SSERowsInserted, verbPast(r.DryRun))
-	}
+	s := fmt.Sprintf("%s chat %s: %d artifact revision(s) %s, %d SSE row(s) %s (inserted only - no row was touched or deleted), %d node state(s) %s\n",
+		verb, r.ChatID, r.ArtifactRevisionsChanged, verbPast(r.DryRun), r.SSERowsInserted, verbPast(r.DryRun), r.NodeStatesChanged, verbPast(r.DryRun))
 	for _, e := range r.ArtifactUpdateErrors {
 		s += "  error: " + e + "\n"
+	}
+	if r.NodeStateSkippedMultiPlan {
+		s += "  node_state skipped: chat has more than one plan, and a node id can't be attributed to one\n"
 	}
 	return s
 }
@@ -418,7 +427,7 @@ func RunLedgerRecover(ctx context.Context, ls ledger.LedgerStore, chatID string,
 	if p.ArtifactRowExists == nil {
 		return report, nil
 	}
-	res, err := fold.Fold(ctx, ls, chatID, 0)
+	res, err := fold.Apply(ctx, ls, chatID, 0)
 	if err != nil {
 		return nil, fmt.Errorf("ledger recover: fold chat %q: %w", chatID, err)
 	}
@@ -465,8 +474,9 @@ type RecoverSummary struct {
 // Recover runs RunLedgerRecover over every chat in ls (or only chatIDs when
 // given), publishes quack_ledger_unresolved_intents and logs a summary. It
 // runs at server boot; `quack ledger recover` is the same call with dryRun.
-// ponytail: folds every chat from seq 0 on each boot; P3's projection
-// watermarks turn this into an incremental scan.
+// ponytail: folds every chat from seq 0 on each boot - P3's watermarks
+// gate SSE/artifact/node_state writes, not this recover path; make it
+// incremental if boot-time recover cost ever matters.
 func Recover(ctx context.Context, ls ledger.LedgerStore, chatIDs []string, p Projections, dryRun bool) (*RecoverSummary, error) {
 	if len(chatIDs) == 0 {
 		refs, err := ls.List(ctx)

@@ -1,13 +1,13 @@
-// This file is runlog's read of the ledger fold (V4 §4.9/#1101). The SSE
-// table (store.ChatEvent, written by EventLog.Append) stays the source of
-// truth for a live run's exact payloads - tokens, output, model - which the
-// skinny node.* WAL entries (and judge_round's artifact.revision entry)
-// never carried. The fold only backs
-// TWO paths that have no other source once the table is gone: a from-scratch
-// Last-Event-ID resume (table empty, WAL armed, client's fromSeq == 0 - see
-// LoadEvents's doc for why fromSeq > 0 is NOT served this way), and `quack
-// ledger rebuild`'s regeneration of the table from the WAL alone. Both
-// reconstructions are lossy by construction - see NodeState's doc.
+// This file is runlog's read of the ledger fold (V4 §4.9/#1101, watermarks
+// #1144 P3). The SSE table (store.ChatEvent, written by EventLog.Append)
+// stays the source of truth for a live run's exact payloads - tokens,
+// output, model - which the skinny node.* WAL entries (and judge_round's
+// artifact.revision entry) never carried. The fold only backs TWO paths that
+// have no other source once the table is gone: a from-scratch Last-Event-ID
+// resume (client's fromSeq == 0 - see LoadEvents's doc for why fromSeq > 0
+// is NOT served this way), and `quack ledger rebuild`'s regeneration of the
+// table from the WAL alone. Both reconstructions are lossy by construction -
+// see NodeState's doc.
 package runlog
 
 import (
@@ -17,11 +17,16 @@ import (
 	"sort"
 	"time"
 
+	"gorm.io/gorm"
+
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledger/fold"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
 )
+
+// sseProjection names the "sse" row in projection_watermarks (#1144 P3).
+const sseProjection = "sse"
 
 // WithLedger arms l's fold fallback and returns l. store may be nil (no
 // WAL) - LoadEvents then behaves exactly like the pre-#1101 direct table read.
@@ -32,8 +37,11 @@ func (l *EventLog) WithLedger(store ledger.LedgerStore) *EventLog {
 
 // LoadEvents is Last-Event-ID resume's read path (V4 §4.9): the SSE table
 // when it has ANY rows for chatID, else - only for a client with NO
-// Last-Event-ID yet (fromSeq == 0) and a WAL armed - a full reconstruction
-// from the ledger fold.
+// Last-Event-ID yet (fromSeq == 0) and a WAL armed - a reconstruction from
+// the ledger fold, folded incrementally from the "sse" projection's
+// watermark and written back to the table in the SAME transaction as the
+// watermark advance (#1144 P3), so a client that resumes twice in a row
+// never gets the same synthesized rows re-inserted.
 //
 // The table's Seq and the ledger's Seq are two DIFFERENT numbering spaces
 // and must never be compared: the table is per-RUN (Reset + NewPublisher
@@ -56,14 +64,44 @@ func (l *EventLog) LoadEvents(ctx context.Context, chatID string, fromSeq int64)
 	if exists || l.ledgerStore == nil || fromSeq != 0 {
 		return l.store.LoadChatEvents(ctx, chatID, fromSeq)
 	}
-	res, ferr := fold.Fold(ctx, l.ledgerStore, chatID, 0)
+	events, _, ferr := l.foldSSEFromWatermark(ctx, chatID)
 	if ferr != nil {
 		return nil, fmt.Errorf("runlog: fold chat %q for resume: %w", chatID, ferr)
 	}
-	if len(res.Nodes) == 0 && len(res.JudgeRounds) == 0 {
-		return nil, nil // no ledger data either; nothing to synthesize
+	return events, nil
+}
+
+// foldSSEFromWatermark folds chatID's ledger from the "sse" projection's
+// current watermark, synthesizes the new lifecycle rows, inserts them, and
+// advances the watermark to the fold's LastSeq - all in one transaction, so
+// a crash between the rows and the watermark can never leave the projection
+// ahead of what it actually wrote (#1144 P3). Returns the newly synthesized
+// rows (for the resume response) and the new watermark.
+func (l *EventLog) foldSSEFromWatermark(ctx context.Context, chatID string) ([]store.ChatEvent, int64, error) {
+	watermark, err := l.store.GetProjectionWatermark(ctx, chatID, sseProjection)
+	if err != nil {
+		return nil, 0, err
 	}
-	return SynthesizeChatEvents(chatID, res), nil
+	res, err := fold.Apply(ctx, l.ledgerStore, chatID, watermark)
+	if err != nil {
+		return nil, 0, err
+	}
+	if res.LastSeq <= watermark {
+		return nil, watermark, nil // nothing new since the last fold
+	}
+	events := SynthesizeChatEvents(chatID, res)
+	err = l.store.InTx(ctx, func(tx *gorm.DB) error {
+		for _, ev := range events {
+			if werr := store.InsertChatEventTx(tx, ev); werr != nil {
+				return werr
+			}
+		}
+		return store.SetProjectionWatermarkTx(tx, chatID, sseProjection, res.LastSeq)
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	return events, res.LastSeq, nil
 }
 
 // SynthesizeChatEvents turns a fold.Result into the ChatEvent rows a live
@@ -127,9 +165,7 @@ func IsLifecycleEvent(name string) bool {
 
 // EventNodeID extracts the node_id a lifecycle SSEEvent carries, regardless
 // of its concrete Data type (NodeStartData/NodeDoneData/NodeFailedData all
-// share the same "node_id" JSON field) - used to key an EXISTING stored row
-// the same way MissingLifecycleEvents keys a synthesized one, so the two
-// sides of the match agree on identity without a shared concrete type.
+// share the same "node_id" JSON field).
 func EventNodeID(ev stream.SSEEvent) (string, bool) {
 	if !IsLifecycleEvent(ev.Name) {
 		return "", false
@@ -145,29 +181,4 @@ func EventNodeID(ev stream.SSEEvent) (string, bool) {
 		return "", false
 	}
 	return d.NodeID, true
-}
-
-// MissingLifecycleEvents returns the subset of SynthesizeChatEvents(res)
-// for which have(nodeID, eventName) is false (#1121's non-destructive
-// rebuild). An EXISTING lifecycle row is NEVER a candidate here, even if its
-// content differs from the synthesized placeholder: the fold only ever
-// carries node_id/turn/round, so a real row's richer fields (tokens, output,
-// model, the real started_at) are always "different" from a reconstruction
-// that never had them - overwriting on that basis would replace real data
-// with a placeholder. Only a row that doesn't exist AT ALL is missing.
-func MissingLifecycleEvents(chatID string, res *fold.Result, have func(nodeID, eventName string) bool) []store.ChatEvent {
-	all := SynthesizeChatEvents(chatID, res)
-	out := make([]store.ChatEvent, 0, len(all))
-	for _, ce := range all {
-		ev, err := UnmarshalEvent(ce.Event)
-		if err != nil {
-			continue
-		}
-		nodeID, ok := EventNodeID(ev)
-		if !ok || have(nodeID, ev.Name) {
-			continue
-		}
-		out = append(out, ce)
-	}
-	return out
 }

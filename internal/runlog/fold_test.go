@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledger/fold"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
 )
@@ -130,6 +131,83 @@ func TestLoadEvents_CaughtUpClientNeverFolds(t *testing.T) {
 	}
 	if len(evs) != 0 {
 		t.Fatalf("LoadEvents returned %d events for a caught-up client, want 0", len(evs))
+	}
+}
+
+// TestLoadEvents_CrashBetweenIntentAndWatermark is #1144 P3's kill-9 test:
+// the ledger already has durable node.* intents (as if a live writer had
+// appended them) but the process died before this chat's "sse" projection
+// ever wrote a single row or watermark - simulating a kill -9 right after
+// the WAL append. A brand-new EventLog (a fresh boot's process) must resume
+// by folding the WHOLE chat from watermark 0 and land on exactly what an
+// independent fold.Fold computes - no CLI, no rebuild command involved. A
+// second resume on the same (now-populated) table must not re-insert or
+// duplicate anything, proving the watermark advance actually stuck.
+func TestLoadEvents_CrashBetweenIntentAndWatermark(t *testing.T) {
+	ctx := context.Background()
+	st := newTestStore(t)
+	ls := ledger.NewMemStore()
+	const chatID = "chat-crash"
+
+	// The "crash": these intents are durably in the ledger, but nothing ever
+	// wrote to chat_events or projection_watermarks for this chat - as if the
+	// process died between the ledger append and the first SSE fold+write.
+	appendNode(t, ls, chatID, "n1", "t1", ledger.KindNodeStarted)
+	appendNode(t, ls, chatID, "n1", "t1", ledger.KindNodeDone)
+	appendNode(t, ls, chatID, "n2", "t1", ledger.KindNodeStarted)
+
+	want, err := fold.Fold(ctx, ls, chatID, 0)
+	if err != nil {
+		t.Fatalf("independent fold.Fold: %v", err)
+	}
+	wantEvents := SynthesizeChatEvents(chatID, want)
+
+	// "Restart": a fresh EventLog against the same durable store/ledger, the
+	// way boot re-wires runlog.NewEventLog(st).WithLedger(ls) from scratch.
+	l := NewEventLog(st).WithLedger(ls)
+	got, err := l.LoadEvents(ctx, chatID, 0)
+	if err != nil {
+		t.Fatalf("LoadEvents after crash: %v", err)
+	}
+	if len(got) != len(wantEvents) {
+		t.Fatalf("resumed %d events, want %d (independent fold): got=%+v want=%+v", len(got), len(wantEvents), got, wantEvents)
+	}
+	// Compare node id + event name, not the raw JSON: SynthesizeChatEvents
+	// stamps a live timestamp each call, so two independent calls never
+	// produce byte-identical payloads even when they agree on everything
+	// the fold actually carries.
+	for i := range got {
+		gotEv, err := UnmarshalEvent(got[i].Event)
+		if err != nil {
+			t.Fatalf("UnmarshalEvent got[%d]: %v", i, err)
+		}
+		wantEv, err := UnmarshalEvent(wantEvents[i].Event)
+		if err != nil {
+			t.Fatalf("UnmarshalEvent want[%d]: %v", i, err)
+		}
+		gotID, _ := EventNodeID(gotEv)
+		wantID, _ := EventNodeID(wantEv)
+		if gotEv.Name != wantEv.Name || gotID != wantID {
+			t.Fatalf("event %d = (%s, %s), want (%s, %s)", i, gotEv.Name, gotID, wantEv.Name, wantID)
+		}
+	}
+
+	wm, err := st.GetProjectionWatermark(ctx, chatID, sseProjection)
+	if err != nil {
+		t.Fatalf("GetProjectionWatermark: %v", err)
+	}
+	if wm != want.LastSeq {
+		t.Fatalf("watermark = %d after resume, want %d (the fold's LastSeq)", wm, want.LastSeq)
+	}
+
+	// A second resume must not duplicate: the table now has rows, so
+	// LoadEvents serves it directly and never re-folds or re-inserts.
+	again, err := l.LoadEvents(ctx, chatID, 0)
+	if err != nil {
+		t.Fatalf("LoadEvents second resume: %v", err)
+	}
+	if len(again) != len(wantEvents) {
+		t.Fatalf("second resume returned %d events, want %d (no duplicates)", len(again), len(wantEvents))
 	}
 }
 

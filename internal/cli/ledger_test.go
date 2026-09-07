@@ -61,7 +61,7 @@ func TestRunLedgerRebuild_RegeneratesArtifactMeta(t *testing.T) {
 		t.Fatalf("seed drift: %v", err)
 	}
 
-	report, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false, false)
+	report, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false)
 	if err != nil {
 		t.Fatalf("RunLedgerRebuild: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestRunLedgerRebuild_DryRunWritesNothing(t *testing.T) {
 		t.Fatalf("seed drift: %v", err)
 	}
 
-	report, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, true, false)
+	report, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, true)
 	if err != nil {
 		t.Fatalf("RunLedgerRebuild: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestRunLedgerRebuild_RegeneratesSSETable(t *testing.T) {
 		t.Fatalf("AppendIntent n2 started: %v", err)
 	}
 
-	report, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false, false)
+	report, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false)
 	if err != nil {
 		t.Fatalf("RunLedgerRebuild: %v", err)
 	}
@@ -209,12 +209,15 @@ func TestRunLedgerRebuild_RegeneratesSSETable(t *testing.T) {
 	}
 }
 
-// TestRunLedgerRebuild_HealthyChatIsANoop is #1121's core regression: on a
-// chat whose artifact metadata and lifecycle rows ALREADY match the ledger,
-// --dry-run reports zero changes and a REAL rebuild changes nothing at all -
-// same row count, same row content, same artifact metadata, before and
-// after. This is the exact scenario that used to replace ~4000 chat_events
-// rows with 3 synthesized ones.
+// TestRunLedgerRebuild_HealthyChatIsANoop is #1121's core regression, updated
+// for #1144 P3: rebuild no longer diffs artifact metadata (that heuristic is
+// deleted - a watermark reset always re-writes every revision it finds), so
+// ArtifactRevisionsChanged now counts revisions PROCESSED, not revisions that
+// differed. What still must hold on a healthy chat is idempotence: the
+// content written is byte-identical to what was already there, and the SSE
+// table's row count and content are completely unchanged (only truly missing
+// lifecycle rows are ever inserted). This is the scenario that used to
+// replace ~4000 chat_events rows with 3 synthesized ones.
 func TestRunLedgerRebuild_HealthyChatIsANoop(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
@@ -223,7 +226,8 @@ func TestRunLedgerRebuild_HealthyChatIsANoop(t *testing.T) {
 	// A real artifact revision, saved normally - its stored kind/class/
 	// lineage is EXACTLY what recordstore wrote, so the fold agrees with it.
 	c := recordstore.New(artifacts, appName, userID, chatID).WithLedger(ls)
-	if _, _, err := c.SaveStructured(ctx, testKind, map[string]string{"hello": "world"}, "doc-1", recordstore.Lineage{Author: "tester"}); err != nil {
+	docID, _, err := c.SaveStructured(ctx, testKind, map[string]string{"hello": "world"}, "doc-1", recordstore.Lineage{Author: "tester"})
+	if err != nil {
 		t.Fatalf("SaveStructured: %v", err)
 	}
 
@@ -257,20 +261,20 @@ func TestRunLedgerRebuild_HealthyChatIsANoop(t *testing.T) {
 		t.Fatalf("seeded %d rows, want 4", len(before))
 	}
 
-	dry, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, true, false)
+	dry, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, true)
 	if err != nil {
 		t.Fatalf("RunLedgerRebuild dry-run: %v", err)
 	}
-	if dry.ArtifactRevisionsChanged != 0 || dry.SSERowsInserted != 0 {
-		t.Fatalf("dry-run on a healthy chat reported changes: %+v, want zero", dry)
+	if dry.ArtifactRevisionsChanged != 1 || dry.SSERowsInserted != 0 {
+		t.Fatalf("dry-run on a healthy chat = %+v, want 1 revision processed, 0 SSE rows inserted", dry)
 	}
 
-	real, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false, false)
+	real, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false)
 	if err != nil {
 		t.Fatalf("RunLedgerRebuild: %v", err)
 	}
-	if real.ArtifactRevisionsChanged != 0 || real.SSERowsInserted != 0 {
-		t.Fatalf("rebuild of a healthy chat reported changes: %+v, want zero", real)
+	if real.ArtifactRevisionsChanged != 1 || real.SSERowsInserted != 0 {
+		t.Fatalf("rebuild of a healthy chat = %+v, want 1 revision processed, 0 SSE rows inserted", real)
 	}
 
 	after, err := st.LoadChatEvents(ctx, chatID, 0)
@@ -284,6 +288,18 @@ func TestRunLedgerRebuild_HealthyChatIsANoop(t *testing.T) {
 		if before[i] != after[i] {
 			t.Fatalf("row %d changed:\nbefore=%+v\nafter=%+v", i, before[i], after[i])
 		}
+	}
+
+	raw, _, lineage, gotRev, ok, err := c.LatestWithMeta(ctx, docID)
+	if err != nil || !ok {
+		t.Fatalf("LatestWithMeta after rebuild: ok=%v err=%v", ok, err)
+	}
+	if gotRev != 1 || lineage.Author != "tester" {
+		t.Fatalf("rebuild changed a healthy artifact's metadata: rev=%d lineage=%+v", gotRev, lineage)
+	}
+	var doc map[string]string
+	if err := json.Unmarshal(raw, &doc); err != nil || doc["hello"] != "world" {
+		t.Fatalf("rebuild changed a healthy artifact's bytes: %s", raw)
 	}
 }
 
@@ -334,7 +350,7 @@ func TestRunLedgerRebuild_NodeAcrossTurnsIsStillANoop(t *testing.T) {
 		t.Fatalf("seeded %d rows, want 2", len(before))
 	}
 
-	dry, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, true, false)
+	dry, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, true)
 	if err != nil {
 		t.Fatalf("RunLedgerRebuild dry-run: %v", err)
 	}
@@ -342,7 +358,7 @@ func TestRunLedgerRebuild_NodeAcrossTurnsIsStillANoop(t *testing.T) {
 		t.Fatalf("dry-run reported %d pending inserts, want 0 (turn 1's stale node_failed must not count)", dry.SSERowsInserted)
 	}
 
-	real, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false, false)
+	real, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false)
 	if err != nil {
 		t.Fatalf("RunLedgerRebuild: %v", err)
 	}
@@ -405,7 +421,7 @@ func TestRunLedgerRebuild_InsertsMissingWithoutTouchingOthers(t *testing.T) {
 		t.Fatalf("LoadChatEvents before: %v", err)
 	}
 
-	report, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false, false)
+	report, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false)
 	if err != nil {
 		t.Fatalf("RunLedgerRebuild: %v", err)
 	}
@@ -434,6 +450,117 @@ func TestRunLedgerRebuild_InsertsMissingWithoutTouchingOthers(t *testing.T) {
 	nodeID, ok := runlog.EventNodeID(ev)
 	if !ok || nodeID != "n2" || ev.Name != "node_start" {
 		t.Fatalf("inserted row = %+v (node=%s), want n2's node_start", ev, nodeID)
+	}
+}
+
+// TestRunLedgerRebuild_RegeneratesNodeState is #1144 P3's node_state side:
+// a node that reached "done" in the ledger but whose DagNode row still says
+// "running" (a crash between the terminal WAL entry and the row write) gets
+// its row corrected by rebuild, atomically with the node_state watermark.
+func TestRunLedgerRebuild_RegeneratesNodeState(t *testing.T) {
+	ctx := context.Background()
+	st, ls, artifacts := newTestStack(t)
+	const chatID, planID = "chat-1", "plan-1"
+
+	if err := st.SaveDagPlan(ctx, chatID, planID, "turn-1", `{"nodes":[{"id":"n1"}]}`); err != nil {
+		t.Fatalf("SaveDagPlan: %v", err)
+	}
+	if err := st.UpsertDagNode(ctx, store.DagNode{NodeID: "n1", PlanID: planID, Status: "running"}); err != nil {
+		t.Fatalf("UpsertDagNode: %v", err)
+	}
+	payload, err := json.Marshal(struct {
+		NodeID string `json:"node_id"`
+		Turn   string `json:"turn"`
+	}{NodeID: "n1", Turn: "turn-1"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindNodeStarted, Payload: payload}); err != nil {
+		t.Fatalf("AppendIntent started: %v", err)
+	}
+	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindNodeDone, Payload: payload}); err != nil {
+		t.Fatalf("AppendIntent done: %v", err)
+	}
+
+	report, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false)
+	if err != nil {
+		t.Fatalf("RunLedgerRebuild: %v", err)
+	}
+	if report.NodeStatesChanged != 1 {
+		t.Fatalf("NodeStatesChanged = %d, want 1", report.NodeStatesChanged)
+	}
+	node, err := st.GetDagNode(ctx, planID, "n1")
+	if err != nil || node == nil {
+		t.Fatalf("GetDagNode: node=%v err=%v", node, err)
+	}
+	if node.Status != "done" {
+		t.Fatalf("node status = %q, want done", node.Status)
+	}
+}
+
+// TestRunLedgerRebuild_MultiPlanNodeIDReuse is the two-plans review finding:
+// res.Nodes folds the whole CHAT lifetime keyed by bare node ID, but a node
+// ID (e.g. the auto-appended "synthesize" node) legitimately recurs across
+// plans - rebuild must only write terminal status for node IDs the LATEST
+// plan actually declares, never stomp it with an older plan's re-run of the
+// same ID.
+func TestRunLedgerRebuild_MultiPlanNodeIDReuse(t *testing.T) {
+	ctx := context.Background()
+	st, ls, artifacts := newTestStack(t)
+	const chatID = "chat-1"
+
+	// Plan 1 declares "shared" and finishes done.
+	if err := st.SaveDagPlan(ctx, chatID, "plan-1", "turn-1", `{"nodes":[{"id":"shared"}]}`); err != nil {
+		t.Fatalf("SaveDagPlan plan-1: %v", err)
+	}
+	if err := st.UpsertDagNode(ctx, store.DagNode{NodeID: "shared", PlanID: "plan-1", Status: "queued"}); err != nil {
+		t.Fatalf("UpsertDagNode plan-1: %v", err)
+	}
+	p1, err := json.Marshal(struct {
+		NodeID string `json:"node_id"`
+		Turn   string `json:"turn"`
+	}{NodeID: "shared", Turn: "turn-1"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindNodeStarted, Payload: p1}); err != nil {
+		t.Fatalf("AppendIntent started plan-1: %v", err)
+	}
+	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindNodeDone, Payload: p1}); err != nil {
+		t.Fatalf("AppendIntent done plan-1: %v", err)
+	}
+
+	// Plan 2 (LATEST) reuses "shared", crashed before running it (still queued).
+	if err := st.SaveDagPlan(ctx, chatID, "plan-2", "turn-2", `{"nodes":[{"id":"shared"}]}`); err != nil {
+		t.Fatalf("SaveDagPlan plan-2: %v", err)
+	}
+	if err := st.UpsertDagNode(ctx, store.DagNode{NodeID: "shared", PlanID: "plan-2", Status: "queued"}); err != nil {
+		t.Fatalf("UpsertDagNode plan-2: %v", err)
+	}
+
+	report, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false)
+	if err != nil {
+		t.Fatalf("RunLedgerRebuild: %v", err)
+	}
+	if report.NodeStatesChanged != 0 {
+		t.Fatalf("NodeStatesChanged = %d, want 0 (plan 1's terminal must not attribute to plan 2)", report.NodeStatesChanged)
+	}
+	if !report.NodeStateSkippedMultiPlan {
+		t.Fatal("NodeStateSkippedMultiPlan = false, want true for a 2-plan chat")
+	}
+	latest, err := st.GetDagNode(ctx, "plan-2", "shared")
+	if err != nil || latest == nil {
+		t.Fatalf("GetDagNode plan-2: node=%v err=%v", latest, err)
+	}
+	if latest.Status != "queued" {
+		t.Fatalf("plan-2 node status = %q, want queued (unstomped)", latest.Status)
+	}
+	older, err := st.GetDagNode(ctx, "plan-1", "shared")
+	if err != nil || older == nil {
+		t.Fatalf("GetDagNode plan-1: node=%v err=%v", older, err)
+	}
+	if older.Status != "queued" {
+		t.Fatalf("plan-1 node status = %q, want queued (rebuild only ever targets the latest plan)", older.Status)
 	}
 }
 
