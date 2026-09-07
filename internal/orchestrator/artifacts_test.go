@@ -84,9 +84,12 @@ func (s *onceFailingListService) List(ctx context.Context, req *artifact.ListReq
 }
 
 // TestFailSoftListArtifacts_LoadBounded proves load_artifacts (the ADK-native
-// read path) rejects an oversized artifact instead of dumping it into model
-// context unbounded (#1006 item 7) - the same artifactref.InlineMaxBytes cap
-// read_artifact (ACP, internal/acp/memorymcp.go) already enforces.
+// read path) degrades an oversized artifact to a text notice instead of
+// dumping it into model context unbounded (#1006 item 7) - the same
+// artifactref.InlineMaxBytes cap read_artifact (ACP, internal/acp/memorymcp.go)
+// already enforces - and, per #1225, returns no error: ADK's loadartifactstool
+// runs every requested name in one errgroup, so one bad Load must not cancel
+// its siblings and fail the whole turn.
 func TestFailSoftListArtifacts_LoadBounded(t *testing.T) {
 	ctx := context.Background()
 	svc := artifact.InMemoryService()
@@ -105,15 +108,38 @@ func TestFailSoftListArtifacts_LoadBounded(t *testing.T) {
 	}
 	wrapped := failSoftListArtifacts{svc}
 
-	if _, err := wrapped.Load(ctx, &artifact.LoadRequest{AppName: AppName, UserID: "u1", SessionID: "c1", FileName: "big.bin"}); err == nil {
-		t.Fatal("Load of an oversized artifact should error, not return the bytes")
+	resp, err := wrapped.Load(ctx, &artifact.LoadRequest{AppName: AppName, UserID: "u1", SessionID: "c1", FileName: "big.bin"})
+	if err != nil {
+		t.Fatalf("Load of an oversized artifact errored (must fail-soft): %v", err)
 	}
-	resp, err := wrapped.Load(ctx, &artifact.LoadRequest{AppName: AppName, UserID: "u1", SessionID: "c1", FileName: "small.txt"})
+	if resp.Part.InlineData != nil {
+		t.Fatal("Load of an oversized artifact returned the bytes, want a text notice instead")
+	}
+	if !strings.Contains(resp.Part.Text, "big.bin") || !strings.Contains(resp.Part.Text, "unavailable") {
+		t.Fatalf("oversized Load text = %q, want it to name the artifact and say unavailable", resp.Part.Text)
+	}
+
+	resp, err = wrapped.Load(ctx, &artifact.LoadRequest{AppName: AppName, UserID: "u1", SessionID: "c1", FileName: "small.txt"})
 	if err != nil {
 		t.Fatalf("Load small.txt: %v", err)
 	}
 	if string(resp.Part.InlineData.Data) != "fits fine" {
 		t.Fatalf("small.txt content = %q", resp.Part.InlineData.Data)
+	}
+}
+
+// TestFailSoftListArtifacts_LoadMissingDegradesToText is #1225's defense in
+// depth: a not-found Load (e.g. a stale name the model still asks for) must
+// not error either, for the same errgroup-cancels-siblings reason.
+func TestFailSoftListArtifacts_LoadMissingDegradesToText(t *testing.T) {
+	ctx := context.Background()
+	wrapped := failSoftListArtifacts{artifact.InMemoryService()}
+	resp, err := wrapped.Load(ctx, &artifact.LoadRequest{AppName: AppName, UserID: "u1", SessionID: "c1", FileName: "never-written.txt"})
+	if err != nil {
+		t.Fatalf("Load of a missing artifact errored (must fail-soft): %v", err)
+	}
+	if !strings.Contains(resp.Part.Text, "never-written.txt") || !strings.Contains(resp.Part.Text, "unavailable") {
+		t.Fatalf("missing Load text = %q, want it to name the artifact and say unavailable", resp.Part.Text)
 	}
 }
 

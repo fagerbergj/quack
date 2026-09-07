@@ -454,14 +454,17 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		// carries neither Chat.Origin nor Run.Setup, and previously blanked
 		// both on this call - the exact reason turn 2 of #1180 had no PR head
 		// ref to plan a review with.
-		existingOriginJSON := ""
-		if existing, getErr := st.GetChat(runCtx, chatID); getErr != nil {
+		existing, getErr := st.GetChat(runCtx, chatID)
+		if getErr != nil {
 			slog.Warn("extension dispatch: chat origin lookup failed; not merging onto prior state",
 				"component", "ext."+name, "chat", chatID, "err", getErr)
-		} else if existing != nil {
-			existingOriginJSON = existing.Origin
-			userID = stableDispatchUser(existing.SessionUser, userID)
+			existing = nil
 		}
+		existingOriginJSON := ""
+		if existing != nil {
+			existingOriginJSON = existing.Origin
+		}
+		userID = resolveArtifactUser(existing, userID)
 
 		if req.Chat.ResetHistory {
 			if err := orch.ResetSession(runCtx, userID, chatID); err != nil {
@@ -590,6 +593,20 @@ func stableDispatchUser(existingSessionUser, reqUser string) string {
 	return reqUser
 }
 
+// resolveArtifactUser is the one place that decides which user an
+// extension-dispatched chat's ADK session and its input artifacts share:
+// existing's stored SessionUser once the chat row exists, else fallback -
+// never SessionUserForChat's id-shape ("github"/"local") default, which let
+// a pre-dispatch WriteArtifact and the later Dispatch land under different
+// users (#1225, artifacts written before the chat row existed). newExtDispatch
+// and readExtInputArtifact/writeExtInputArtifact all resolve through this.
+func resolveArtifactUser(existing *store.Chat, fallback string) string {
+	if existing == nil {
+		return fallback
+	}
+	return stableDispatchUser(existing.SessionUser, fallback)
+}
+
 // mergeExtOrigin folds a dispatch's own Origin/Setup onto whatever this chat
 // already has stored, so a dispatch missing one (a nudge or retry re-dispatch
 // - quack-extensions#47) never blanks it. Returns the JSON to persist (""
@@ -680,17 +697,23 @@ func inputArtifactLineage() recordstore.Lineage {
 // readExtInputArtifact backs Host.ReadArtifact: the latest bytes for a named
 // input artifact in chatID, or ok=false when none exists yet (first
 // dispatch - no baseline to diff against).
-func readExtInputArtifact(st *store.Store, artifacts *store.TurnAwareService) func(chatID, name string) ([]byte, bool) {
-	return func(chatID, name string) ([]byte, bool) {
+func readExtInputArtifact(st *store.Store, artifacts *store.TurnAwareService) func(chatID, user, name string) ([]byte, bool) {
+	return func(chatID, user, name string) ([]byte, bool) {
 		if artifacts == nil {
 			return nil, false
 		}
-		userID := st.SessionUserForChat(context.Background(), chatID)
+		ctx := context.Background()
+		existing, err := st.GetChat(ctx, chatID)
+		if err != nil {
+			slog.Warn("ext input artifact: chat lookup failed; using dispatch user", "component", "startup", "chat", chatID, "err", err)
+			existing = nil
+		}
+		userID := resolveArtifactUser(existing, user)
 		if userID == "" {
 			return nil, false
 		}
 		client := recordstore.New(artifacts, artifactref.AppName, userID, chatID)
-		data, _, ok, err := client.Latest(context.Background(), inputArtifactKind+":"+name)
+		data, _, ok, err := client.Latest(ctx, inputArtifactKind+":"+name)
 		if err != nil {
 			slog.Warn("ext input artifact: read failed", "component", "startup", "chat", chatID, "artifact", name, "err", err)
 			return nil, false
@@ -703,18 +726,23 @@ func readExtInputArtifact(st *store.Store, artifacts *store.TurnAwareService) fu
 // when data changed since the latest one (recordstore.SaveBlob always
 // writes a revision - the byte comparison happens here so an unchanged
 // input artifact never advances turn_id/lineage.saved_at for no reason).
-func writeExtInputArtifact(st *store.Store, artifacts *store.TurnAwareService) func(chatID, name, mimeType string, data []byte) (int64, bool, error) {
-	return func(chatID, name, mimeType string, data []byte) (int64, bool, error) {
+func writeExtInputArtifact(st *store.Store, artifacts *store.TurnAwareService) func(chatID, user, name, mimeType string, data []byte) (int64, bool, error) {
+	return func(chatID, user, name, mimeType string, data []byte) (int64, bool, error) {
 		if artifacts == nil {
 			return 0, false, fmt.Errorf("no artifact service configured")
 		}
-		userID := st.SessionUserForChat(context.Background(), chatID)
+		ctx := context.Background()
+		existing, err := st.GetChat(ctx, chatID)
+		if err != nil {
+			slog.Warn("ext input artifact: chat lookup failed; using dispatch user", "component", "startup", "chat", chatID, "err", err)
+			existing = nil
+		}
+		userID := resolveArtifactUser(existing, user)
 		if userID == "" {
 			return 0, false, fmt.Errorf("write input artifact %q: chat %s has no known user", name, chatID)
 		}
 		client := recordstore.New(artifacts, artifactref.AppName, userID, chatID)
 		id := inputArtifactKind + ":" + name
-		ctx := context.Background()
 		prev, prevRev, ok, err := client.Latest(ctx, id)
 		if err != nil {
 			slog.Warn("ext input artifact: baseline read failed; writing unconditionally", "component", "startup", "chat", chatID, "artifact", name, "err", err)

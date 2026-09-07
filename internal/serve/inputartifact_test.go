@@ -17,7 +17,7 @@ func TestWriteExtInputArtifactUnchangedNoNewRevision(t *testing.T) {
 	read := readExtInputArtifact(st, artifacts)
 
 	chatID := "github-acme-widgets-7"
-	rev1, changed1, err := write(chatID, "comments", "application/json", []byte(`[{"id":1}]`))
+	rev1, changed1, err := write(chatID, "github", "comments", "application/json", []byte(`[{"id":1}]`))
 	if err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -25,7 +25,7 @@ func TestWriteExtInputArtifactUnchangedNoNewRevision(t *testing.T) {
 		t.Fatalf("first write: rev=%d changed=%v, want rev=1 changed=true", rev1, changed1)
 	}
 
-	rev2, changed2, err := write(chatID, "comments", "application/json", []byte(`[{"id":1}]`))
+	rev2, changed2, err := write(chatID, "github", "comments", "application/json", []byte(`[{"id":1}]`))
 	if err != nil {
 		t.Fatalf("re-write same bytes: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestWriteExtInputArtifactUnchangedNoNewRevision(t *testing.T) {
 		t.Errorf("re-writing identical bytes advanced the revision: %d -> %d", rev1, rev2)
 	}
 
-	data, ok := read(chatID, "comments")
+	data, ok := read(chatID, "github", "comments")
 	if !ok {
 		t.Fatal("read after write: not found")
 	}
@@ -52,11 +52,11 @@ func TestWriteExtInputArtifactChangedNewRevision(t *testing.T) {
 	write := writeExtInputArtifact(st, artifacts)
 
 	chatID := "github-acme-widgets-7"
-	rev1, _, err := write(chatID, "comments", "application/json", []byte(`[{"id":1}]`))
+	rev1, _, err := write(chatID, "github", "comments", "application/json", []byte(`[{"id":1}]`))
 	if err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	rev2, changed, err := write(chatID, "comments", "application/json", []byte(`[{"id":1},{"id":2}]`))
+	rev2, changed, err := write(chatID, "github", "comments", "application/json", []byte(`[{"id":1},{"id":2}]`))
 	if err != nil {
 		t.Fatalf("write with new content: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestReadArtifactNeedsBytesPrefix(t *testing.T) {
 	write := writeExtInputArtifact(st, artifacts)
 
 	chatID := "github-acme-widgets-7"
-	if _, _, err := write(chatID, "comments", "application/json", []byte(`[{"id":1}]`)); err != nil {
+	if _, _, err := write(chatID, "github", "comments", "application/json", []byte(`[{"id":1}]`)); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	userID := st.SessionUserForChat(context.Background(), chatID)
@@ -103,7 +103,7 @@ func TestReadExtInputArtifactMissingReturnsNotFound(t *testing.T) {
 	st, _, _, artifacts, _ := newExtTestStack(t)
 	read := readExtInputArtifact(st, artifacts)
 
-	data, ok := read("github-acme-widgets-7", "comments")
+	data, ok := read("github-acme-widgets-7", "github", "comments")
 	if ok || data != nil {
 		t.Errorf("read of a never-written artifact = (%v, %v), want (nil, false)", data, ok)
 	}
@@ -125,7 +125,7 @@ func TestSaveExtAttachmentDoesNotCollideWithSameNamedInputArtifact(t *testing.T)
 
 	// The dispatch writes its own "pull" input artifact first.
 	inputBytes := []byte(`{"number":7}`)
-	if _, _, err := write(chatID, "pull", "application/json", inputBytes); err != nil {
+	if _, _, err := write(chatID, "github", "pull", "application/json", inputBytes); err != nil {
 		t.Fatalf("write input artifact: %v", err)
 	}
 
@@ -144,7 +144,7 @@ func TestSaveExtAttachmentDoesNotCollideWithSameNamedInputArtifact(t *testing.T)
 	}
 
 	// The input artifact must still read back untouched.
-	data, ok := read(chatID, "pull")
+	data, ok := read(chatID, "github", "pull")
 	if !ok {
 		t.Fatal("input artifact \"pull\" vanished after the attachment save")
 	}

@@ -23,6 +23,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
+	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
@@ -30,6 +31,7 @@ import (
 
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 
+	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
@@ -302,6 +304,58 @@ func TestSDKExtensionDispatchKeepsStableUserAcrossRedispatch(t *testing.T) {
 	}
 	if events := orch.PriorEvents(ctx, "alice", chatID); len(events) == 0 {
 		t.Fatalf("PriorEvents(alice) = 0 events, want both turns to have run under alice's session")
+	}
+}
+
+// TestSDKExtensionInputArtifactWrittenBeforeFirstDispatchIsVisibleToRun
+// reproduces #1225's exact shape: github writes its input artifacts (via
+// Host.WriteArtifact) BEFORE calling Dispatch, while the chat row - and thus
+// any stored SessionUser - doesn't exist yet. The write and the dispatch must
+// land under the same user (resolveArtifactUser's job) or the run's
+// load_artifacts can never find what was just written.
+func TestSDKExtensionInputArtifactWrittenBeforeFirstDispatchIsVisibleToRun(t *testing.T) {
+	st, orch, hub, artifacts, jail := newExtTestStack(t)
+	_ = jail
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+	var extHolder atomic.Pointer[extsdk.Extension]
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+	write := writeExtInputArtifact(st, artifacts)
+
+	const localID = "pre-dispatch-write"
+	chatID := "ext:noop:" + localID
+	ctx := context.Background()
+
+	// The extension writes an input artifact for a chat with no row yet -
+	// resolveArtifactUser has nothing stored to key off, so this must land
+	// under the same user the dispatch below carries.
+	if _, _, err := write(chatID, "quack-auto-review", "pull", "application/json", []byte(`{"number":7}`)); err != nil {
+		t.Fatalf("write input artifact: %v", err)
+	}
+
+	req := extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID, User: "quack-auto-review"}, Ask: extsdk.Ask{Message: "review it"}}
+	if err := dispatch(ctx, req); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	waitRunSettled(t, st, chatID)
+
+	c, err := st.GetChat(ctx, chatID)
+	if err != nil || c == nil {
+		t.Fatalf("GetChat(%s) = %v, %v", chatID, c, err)
+	}
+
+	resp, err := artifacts.List(ctx, &artifact.ListRequest{AppName: artifactref.AppName, UserID: c.SessionUser, SessionID: chatID})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	found := false
+	for _, fn := range resp.FileNames {
+		if fn == "bytes:pull" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the run's own artifact list (user %q) = %v, want it to contain the pre-dispatch write %q", c.SessionUser, resp.FileNames, "bytes:pull")
 	}
 }
 
