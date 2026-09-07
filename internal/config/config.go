@@ -1175,6 +1175,12 @@ func (c *Config) validate() error {
 			if g.Judge.MaxOutputTokens < 0 {
 				return fmt.Errorf("config: gates.judge.max_output_tokens must be >= 0")
 			}
+			// A reply reserve at or past the window leaves no room for the
+			// prompt, degrading judgeCharBudget to a full-window budget with
+			// no log and recreating the #1215 overflow (#1221).
+			if g.Judge.ContextWindow > 0 && g.Judge.MaxOutputTokens >= g.Judge.ContextWindow {
+				return fmt.Errorf("config: gates.judge.max_output_tokens %d must be less than gates.judge.context_window %d", g.Judge.MaxOutputTokens, g.Judge.ContextWindow)
+			}
 			switch g.Judge.ThinkingLevel {
 			case "", "low", "medium", "high":
 			default:

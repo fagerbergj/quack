@@ -1337,6 +1337,10 @@ gates: { rubric: r, judge: { provider: default, model: j, max_rounds: 1, thresho
 gates: { rubric: r, deterministic_checks: { max_rounds: -1 }, judge: { provider: default, model: j, max_rounds: 1 } }`,
 		"negative max_output_tokens": `
 gates: { rubric: r, judge: { provider: default, model: j, max_rounds: 1, max_output_tokens: -1 } }`,
+		// #1221: a reply reserve at or past the window leaves no room for the
+		// prompt, recreating the #1215 overflow silently.
+		"max_output_tokens at context_window": `
+gates: { rubric: r, judge: { provider: default, model: j, max_rounds: 1, context_window: 4096, max_output_tokens: 4096 } }`,
 	}
 	for name, block := range cases {
 		if _, err := Load(writeTemp(t, baseConfig+block)); err == nil {

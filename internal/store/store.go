@@ -796,6 +796,11 @@ func (s *Store) DeleteChat(ctx context.Context, id string) error {
 		if err := tx.Where("chat_id = ?", id).Delete(&ChatEvent{}).Error; err != nil {
 			return err
 		}
+		// Otherwise a leaked row per deleted chat (#1238): UUIDv4 ids never
+		// reuse, so nothing would ever read it back.
+		if err := tx.Where("chat_id = ?", id).Delete(&Checkpoint{}).Error; err != nil {
+			return err
+		}
 		return tx.Delete(&Chat{}, "id = ?", id).Error
 	})
 	if err != nil {

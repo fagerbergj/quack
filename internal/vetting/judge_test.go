@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -1537,5 +1538,85 @@ func TestRunJudgeAgent_RepeatTripSkipsSubmitNudge(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&judge.nudgeCalls); got != 0 {
 		t.Errorf("judge model saw the submit_verdict nudge in %d request(s), want 0 - a repeat-trip abort must not nudge on the cancelled context", got)
+	}
+}
+
+// reqHasInlineData reports whether any content in req carries an InlineData
+// part - used to prove images never come back once a round has stripped them.
+func reqHasInlineData(req *model.LLMRequest) bool {
+	for _, c := range req.Contents {
+		if c == nil {
+			continue
+		}
+		for _, p := range c.Parts {
+			if p != nil && p.InlineData != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// imagePersistsAfterStripJudge rejects the first call (images attached) with
+// a non-transient error, then answers unparseable text twice (round 2's own
+// turn + its in-session nudge) before finally submitting on the outer
+// fresh-session retry - recording whether InlineData ever reappeared on any
+// call after the strip fired (#1229 follow-up).
+type imagePersistsAfterStripJudge struct {
+	calls              int32
+	mu                 sync.Mutex
+	afterStripHadImage []bool
+}
+
+func (j *imagePersistsAfterStripJudge) Name() string { return "image-persists-after-strip-judge" }
+
+func (j *imagePersistsAfterStripJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		n := atomic.AddInt32(&j.calls, 1)
+		if n == 1 {
+			yield(nil, errors.New("openai judge (generate): status 400: bad request (images rejected)"))
+			return
+		}
+		j.mu.Lock()
+		j.afterStripHadImage = append(j.afterStripHadImage, reqHasInlineData(req))
+		j.mu.Unlock()
+		if n <= 3 {
+			yield(stubText(`{"score": "not-parseable-`), nil)
+			return
+		}
+		yield(stubCall(submitVerdictTool, map[string]any{"score": 0.9, "feedback": "submitted after retries"}), nil)
+	}
+}
+
+// TestRunJudgeAgent_ImageStripPersistsAcrossRetries is the fix for the #1229
+// review follow-up: once a non-transient image rejection strips InlineData
+// from the question, every later retry in the same runJudgeAgent call (the
+// no-verdict fresh-session retry, the shrink fallback) must keep using the
+// stripped content - re-attaching images would just repeat the rejection.
+func TestRunJudgeAgent_ImageStripPersistsAcrossRetries(t *testing.T) {
+	judge := &imagePersistsAfterStripJudge{}
+	factory := NewJudgeFactory(judge, nil, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{
+		{Text: "Implement the feature."},
+		{InlineData: &genai.Blob{MIMEType: "image/png", Data: []byte("fake-png")}},
+	}}
+	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6}
+
+	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	if err != nil {
+		t.Fatalf("runJudgeAgent: %v", err)
+	}
+	if v.Score != 0.9 {
+		t.Errorf("verdict score = %v, want 0.9", v.Score)
+	}
+	judge.mu.Lock()
+	defer judge.mu.Unlock()
+	if len(judge.afterStripHadImage) == 0 {
+		t.Fatal("no calls recorded after the strip fired")
+	}
+	for i, had := range judge.afterStripHadImage {
+		if had {
+			t.Errorf("call %d after the strip still carried InlineData, want the stripped content on every retry", i+2)
+		}
 	}
 }
