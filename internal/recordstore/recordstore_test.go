@@ -733,11 +733,11 @@ func (s *failOnceSaveService) Save(ctx context.Context, req *artifact.SaveReques
 // tradeoff for the #1100 wedge case: the store-level (chat_id, key,
 // parent_revision) unique index replaces the best-effort (and losable)
 // artifact.revision.aborted compensating marker, so a saveRow failure right
-// after a successful WAL append now leaves that parent PERMANENTLY claimed -
-// every retry recomputes the same parent (the store never advanced) and gets
-// ledger.ErrStaleParent again. This fails loudly and immediately instead of
-// silently wedging, at the cost of no longer self-healing; recovering the id
-// needs manual intervention, out of scope here.
+// after a successful WAL append now leaves that parent claimed until
+// something rewrites the row - every same-process retry recomputes the same
+// parent (the store never advanced) and gets ledger.ErrStaleParent again.
+// Recordstore itself no longer self-heals this; cli.RunLedgerRecover does,
+// from the intent's own recorded data (see internal/cli's recovery tests).
 func TestSaveRowFailureAfterAppendWedgesID(t *testing.T) {
 	svc := &failOnceSaveService{Service: artifact.InMemoryService(), failCall: 1}
 	fl := newFakeLedger()
@@ -748,7 +748,7 @@ func TestSaveRowFailureAfterAppendWedgesID(t *testing.T) {
 		t.Fatal("expected the first save (forced saveRow failure) to error")
 	}
 	if _, _, err := c.SaveBlob(ctx, "test.blob", []byte("v1-retry"), "text/plain", "doc:wedge", Lineage{}); !errors.Is(err, ledger.ErrStaleParent) {
-		t.Fatalf("retry after the saveRow failure = %v, want ledger.ErrStaleParent (the id is wedged until manually recovered)", err)
+		t.Fatalf("retry after the saveRow failure = %v, want ledger.ErrStaleParent (wedged until ledger recovery runs)", err)
 	}
 }
 

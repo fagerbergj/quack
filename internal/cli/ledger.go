@@ -15,6 +15,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"google.golang.org/adk/v2/artifact"
+	"google.golang.org/genai"
 	"gorm.io/gorm"
 
 	"github.com/fagerbergj/quack/internal/artifactref"
@@ -338,16 +340,39 @@ type OrphanedRevision struct {
 type Projections struct {
 	// ArtifactRowExists reports whether id@revision has a store row.
 	ArtifactRowExists func(ctx context.Context, chatID, id string, revision int) (bool, error)
-	Delivery          DeliveryRecoverer
-	DeliveryRecorded  DeliveryRecordChecker
-	RecordDelivery    DeliveryRecorder
-	Redo              func(ctx context.Context, o OrphanedDelivery) error
+	// WriteArtifactRow writes a MISSING row from the intent's own recorded
+	// content (rev.Data/rev.Mime - #1144 P4 follow-up) and returns the
+	// revision the store actually assigned. nil skips writing (orphans are
+	// only reported, the pre-this-change behavior).
+	WriteArtifactRow func(ctx context.Context, chatID, id string, rev fold.ArtifactRevision) (int64, error)
+	Delivery         DeliveryRecoverer
+	DeliveryRecorded DeliveryRecordChecker
+	RecordDelivery   DeliveryRecorder
+	Redo             func(ctx context.Context, o OrphanedDelivery) error
 }
 
 // ArtifactRowChecker adapts the artifact store to Projections.ArtifactRowExists.
 func ArtifactRowChecker(st *store.Store, artifacts *store.TurnAwareService) func(context.Context, string, string, int) (bool, error) {
 	return func(ctx context.Context, chatID, id string, revision int) (bool, error) {
 		return artifacts.RevisionExists(ctx, artifactref.AppName, st.SessionUserForChat(ctx, chatID), chatID, id, int64(revision))
+	}
+}
+
+// ArtifactRowWriter adapts the artifact store to Projections.WriteArtifactRow.
+// It writes rev.Data/rev.Mime under the SAME id and trusts the store's own
+// version counter to assign the next sequential revision - callers must
+// process one id's orphans in ascending revision order (RunLedgerRecover
+// does) so that counter lines up with what the ledger expects.
+func ArtifactRowWriter(st *store.Store, artifacts *store.TurnAwareService) func(context.Context, string, string, fold.ArtifactRevision) (int64, error) {
+	return func(ctx context.Context, chatID, id string, rev fold.ArtifactRevision) (int64, error) {
+		resp, err := artifacts.SaveWithMeta(ctx, &artifact.SaveRequest{
+			AppName: artifactref.AppName, UserID: st.SessionUserForChat(ctx, chatID), SessionID: chatID, FileName: id,
+			Part: &genai.Part{InlineData: &genai.Blob{Data: rev.Data, MIMEType: rev.Mime}},
+		}, rev.Kind, rev.Class, rev.Lineage, rev.TurnID)
+		if err != nil {
+			return 0, err
+		}
+		return resp.Version, nil
 	}
 }
 
@@ -358,17 +383,20 @@ type LedgerRecoverReport struct {
 	Confirmed  []OrphanedDelivery `json:"confirmed"`            // delivery_record recorded; extension already had it
 	Redone     []OrphanedDelivery `json:"redone"`               // Redo called; nothing was there
 	Unresolved []OrphanedDelivery `json:"unresolved,omitempty"` // no recoverer/Redo available to check, or dry-run
-	// OrphanedRevisions: artifact.revision intents with no store row. #1144
-	// P4 deleted the artifact.revision.aborted compensating marker - the
-	// store's (chat_id, key, parent_revision) unique index means a phantom
-	// parent can never be reused by a future save, so there's nothing left
-	// to write here; this is report-only, same in dry-run or not.
+	// Recovered: artifact.revision intents with no store row that got one
+	// written from the intent's own Data/Mime (#1144 P4 follow-up).
+	Recovered []OrphanedRevision `json:"recovered,omitempty"`
+	// OrphanedRevisions: artifact.revision intents with no store row that
+	// could NOT be recovered - either dry-run, no WriteArtifactRow wired, or
+	// (only possible on an entry written before this) no Data recorded to
+	// rewrite from.
 	OrphanedRevisions []OrphanedRevision `json:"orphaned_revisions,omitempty"`
 	Errors            []string           `json:"errors,omitempty"`
 }
 
 // unresolved counts the intents this pass could not settle - the
-// quack_ledger_unresolved_intents gauge's per-chat contribution.
+// quack_ledger_unresolved_intents gauge's per-chat contribution. Recovered
+// is NOT counted: it means a row now exists.
 func (r *LedgerRecoverReport) unresolved() int {
 	return len(r.Unresolved) + len(r.Errors) + len(r.OrphanedRevisions)
 }
@@ -379,11 +407,14 @@ func (r *LedgerRecoverReport) unresolved() int {
 // no separate ledger entry to check. For an unsettled one, ask p.Delivery
 // whether the target already saw the key; if so, p.RecordDelivery writes the
 // completion, else run p.Redo. Artifacts: each live artifact.revision with no
-// store row is reported (OrphanedRevisions) - #1144 P4 made that
-// unrecoverable-but-harmless (the store-level unique index already stops a
-// phantom parent from being reused), so recovery only surfaces it, never
-// writes. Idempotent: a settled intent no longer shows up as an orphan.
-// dryRun changes only the delivery half (no RecoverDelivery/Redo calls).
+// store row gets one written from the intent's own Data/Mime via
+// p.WriteArtifactRow (#1144 P4 follow-up - a saveRow failure right after a
+// successful WAL append no longer wedges the id forever). An id's orphans are
+// processed oldest-revision-first and stop at the first one that can't be
+// written, since the store's version counter must stay in lockstep with the
+// chain. Idempotent: a settled/recovered intent no longer shows up as an
+// orphan. dryRun changes only the delivery half AND skips writing rows (both
+// halves only report).
 func RunLedgerRecover(ctx context.Context, ls ledger.LedgerStore, chatID string, p Projections, dryRun bool) (*LedgerRecoverReport, error) {
 	intents, err := findDeliveryIntents(ctx, ls, chatID)
 	if err != nil {
@@ -437,18 +468,39 @@ func RunLedgerRecover(ctx context.Context, ls ledger.LedgerStore, chatID string,
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
+		// Oldest-revision-first (res.Artifacts[id].Revisions is already sorted
+		// ascending), and stop at the first orphan this pass can't write: the
+		// store's version counter must advance in lockstep with the chain, so
+		// writing a LATER revision first (or after an earlier one was skipped)
+		// would land it under the wrong revision number.
 		for _, rev := range res.Artifacts[id].Revisions {
 			exists, cerr := p.ArtifactRowExists(ctx, chatID, id, rev.Revision)
 			if cerr != nil {
 				report.Errors = append(report.Errors, fmt.Sprintf("%s@%d: %v", id, rev.Revision, cerr))
-				continue
+				break
 			}
 			if exists {
 				continue
 			}
-			report.OrphanedRevisions = append(report.OrphanedRevisions, OrphanedRevision{
-				ID: id, Revision: rev.Revision, NodeID: rev.NodeID, TurnID: rev.TurnID, Seq: rev.Seq,
-			})
+			o := OrphanedRevision{ID: id, Revision: rev.Revision, NodeID: rev.NodeID, TurnID: rev.TurnID, Seq: rev.Seq}
+			if dryRun || p.WriteArtifactRow == nil {
+				report.OrphanedRevisions = append(report.OrphanedRevisions, o)
+				break
+			}
+			if len(rev.Data) == 0 {
+				report.Errors = append(report.Errors, fmt.Sprintf("%s@%d: intent has no recorded content to recover from (written before #1144 P4)", id, rev.Revision))
+				break
+			}
+			assigned, werr := p.WriteArtifactRow(ctx, chatID, id, rev)
+			if werr != nil {
+				report.Errors = append(report.Errors, fmt.Sprintf("%s@%d: write recovered row: %v", id, rev.Revision, werr))
+				break
+			}
+			if assigned != int64(rev.Revision) {
+				report.Errors = append(report.Errors, fmt.Sprintf("%s@%d: store assigned revision %d writing the recovered row", id, rev.Revision, assigned))
+				break
+			}
+			report.Recovered = append(report.Recovered, o)
 		}
 	}
 	return report, nil
@@ -483,7 +535,7 @@ func Recover(ctx context.Context, ls ledger.LedgerStore, chatIDs []string, p Pro
 		if err != nil {
 			return nil, err
 		}
-		if len(report.Confirmed)+len(report.Redone)+len(report.Unresolved)+len(report.OrphanedRevisions)+len(report.Errors) == 0 {
+		if len(report.Confirmed)+len(report.Redone)+len(report.Unresolved)+len(report.Recovered)+len(report.OrphanedRevisions)+len(report.Errors) == 0 {
 			continue
 		}
 		sum.Reports = append(sum.Reports, report)
@@ -496,10 +548,13 @@ func Recover(ctx context.Context, ls ledger.LedgerStore, chatIDs []string, p Pro
 
 // FormatLedgerRecoverReport renders report as the human-readable summary `recover` prints.
 func FormatLedgerRecoverReport(r *LedgerRecoverReport) string {
-	s := fmt.Sprintf("chat %s: %d confirmed already-delivered, %d redelivered, %d unresolved, %d row-less revision(s) (report-only)\n",
-		r.ChatID, len(r.Confirmed), len(r.Redone), len(r.Unresolved), len(r.OrphanedRevisions))
+	s := fmt.Sprintf("chat %s: %d confirmed already-delivered, %d redelivered, %d unresolved, %d row(s) recovered, %d row-less revision(s) unrecoverable\n",
+		r.ChatID, len(r.Confirmed), len(r.Redone), len(r.Unresolved), len(r.Recovered), len(r.OrphanedRevisions))
 	for _, o := range r.Unresolved {
 		s += fmt.Sprintf("  unresolved: key=%s target=%s rev=%d node=%s seq=%d\n", o.Key, o.TargetID, o.Revision, o.NodeID, o.Seq)
+	}
+	for _, o := range r.Recovered {
+		s += fmt.Sprintf("  recovered: %s@%d node=%s seq=%d\n", o.ID, o.Revision, o.NodeID, o.Seq)
 	}
 	for _, o := range r.OrphanedRevisions {
 		s += fmt.Sprintf("  no store row: %s@%d node=%s seq=%d\n", o.ID, o.Revision, o.NodeID, o.Seq)

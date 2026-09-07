@@ -207,8 +207,11 @@ func (c *Client) WithLedger(store ledger.LedgerStore) *Client {
 }
 
 // artifactRevisionPayload is the artifact.revision WAL entry's payload
-// (#1090 §4.9): bytes_ref is the store row's key (the id), never the bytes,
-// so a large blob is one small entry.
+// (#1090 §4.9). BytesRef is the store row's key (the id) for lookups; Data/Mime
+// are the actual content (#1144 P4 follow-up) so a crashed/failed row write
+// can be recovered from the intent alone instead of wedging the id forever -
+// this does mean the ledger now carries a second copy of every artifact's
+// bytes, not just a reference.
 type artifactRevisionPayload struct {
 	ID             string  `json:"id"`
 	Revision       int     `json:"revision"`
@@ -217,6 +220,8 @@ type artifactRevisionPayload struct {
 	Class          Class   `json:"class"`
 	Lineage        Lineage `json:"lineage"`
 	BytesRef       string  `json:"bytes_ref"`
+	Data           []byte  `json:"data"`
+	Mime           string  `json:"mime"`
 }
 
 // maxSaveRetries bounds save/Edit's retry on ledger.ErrStaleParent - a real
@@ -263,17 +268,20 @@ func (c *Client) save(ctx context.Context, id, kind string, class Class, mime st
 
 // saveAt writes data as parentRev+1, first claiming that parent in the
 // ledger (#1144 P4). ponytail: a saveRow failure AFTER a successful claim is
-// no longer self-healed (the old aborted marker is deleted) - the claim
-// stays taken, so every retry hits ledger.ErrStaleParent again and the id is
-// wedged until manual recovery. Traded on purpose for an honest failure
-// over a best-effort marker that could itself silently fail.
+// no longer self-healed in-process (the old aborted marker is deleted) - the
+// claim stays taken, so every retry hits ledger.ErrStaleParent until the
+// intent's own recorded data/mime lets boot recovery (cli.RunLedgerRecover)
+// write the missing row from the intent itself.
 func (c *Client) saveAt(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage, parentRev int) (int, error) {
 	lineage.ParentRevision = parentRev
 	if c.ledgerStore == nil {
 		return c.saveRow(ctx, id, kind, class, mime, data, lineage)
 	}
 	nextRev := parentRev + 1
-	payload, err := json.Marshal(artifactRevisionPayload{ID: id, Revision: nextRev, ParentRevision: parentRev, Kind: kind, Class: class, Lineage: lineage, BytesRef: id})
+	payload, err := json.Marshal(artifactRevisionPayload{
+		ID: id, Revision: nextRev, ParentRevision: parentRev, Kind: kind, Class: class, Lineage: lineage,
+		BytesRef: id, Data: data, Mime: mime,
+	})
 	if err != nil {
 		return 0, fmt.Errorf("recordstore: marshal artifact.revision payload for %s: %w", id, err)
 	}

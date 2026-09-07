@@ -62,6 +62,10 @@ type ArtifactRevision struct {
 	NodeID, TurnID string
 	At             time.Time
 	Seq            int64
+	// Data/Mime: the actual content (#1144 P4 follow-up), nil/"" on an entry
+	// written before this - boot recovery uses these to rewrite a missing row.
+	Data []byte
+	Mime string
 }
 
 // Artifact is one id's revision chain, oldest first, aborted revisions excluded.
@@ -129,6 +133,8 @@ type revisionPayload struct {
 	Class          string          `json:"class"`
 	Lineage        json.RawMessage `json:"lineage"`
 	BytesRef       string          `json:"bytes_ref"`
+	Data           []byte          `json:"data"`
+	Mime           string          `json:"mime"`
 }
 
 type abortedPayload struct {
@@ -167,6 +173,7 @@ func applyLoop(res *Result, live map[revKey]ArtifactRevision, entries []ledger.E
 			live[revKey{id: e.Key, rev: p.Revision}] = ArtifactRevision{
 				Revision: p.Revision, ParentRevision: p.ParentRevision, Kind: p.Kind, Class: p.Class,
 				Lineage: p.Lineage, BytesRef: p.BytesRef, NodeID: e.NodeID, TurnID: e.TurnID, At: e.At, Seq: e.Seq,
+				Data: p.Data, Mime: p.Mime,
 			}
 		case ledger.KindArtifactRevisionAborted:
 			var p abortedPayload
