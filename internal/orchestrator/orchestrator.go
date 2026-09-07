@@ -102,20 +102,29 @@ func (s failSoftListArtifacts) List(ctx context.Context, req *artifact.ListReque
 	return resp, nil
 }
 
-// Load errors out over artifactref.InlineMaxBytes rather than truncating
-// silently: loadartifactstool puts the bytes straight into model context, so
-// a large artifact (video, big log) must fail loud, the same shape
-// read_artifact's caller already handles. load_artifacts is the ADK-native
-// equivalent read path and had no bound of its own before this (#1006 item 7).
+// Load degrades to a text-part message on any failure - not found, oversize,
+// or a transient store error - instead of returning an error: ADK's
+// loadartifactstool runs every requested name's Load in one errgroup, and one
+// error there cancels every sibling load and fails the whole turn (#1225 -
+// one bad name in a model's load_artifacts call killed plan+answer both).
 func (s failSoftListArtifacts) Load(ctx context.Context, req *artifact.LoadRequest) (*artifact.LoadResponse, error) {
 	resp, err := s.Service.Load(ctx, req)
-	if err != nil || resp == nil || resp.Part == nil || resp.Part.InlineData == nil {
-		return resp, err
+	if err != nil {
+		slog.Warn("orchestrator: artifact Load failed; reporting unavailable instead of failing the turn", "artifact", req.FileName, "err", err)
+		return unavailableArtifactResponse(req.FileName, err), nil
 	}
-	if n := len(resp.Part.InlineData.Data); n > artifactref.InlineMaxBytes {
-		return nil, fmt.Errorf("artifact %q is %d bytes, exceeds the %d byte load_artifacts limit", req.FileName, n, artifactref.InlineMaxBytes)
+	if resp != nil && resp.Part != nil && resp.Part.InlineData != nil {
+		if n := len(resp.Part.InlineData.Data); n > artifactref.InlineMaxBytes {
+			err := fmt.Errorf("%d bytes, exceeds the %d byte load_artifacts limit", n, artifactref.InlineMaxBytes)
+			slog.Warn("orchestrator: artifact Load oversize; reporting unavailable instead of failing the turn", "artifact", req.FileName, "err", err)
+			return unavailableArtifactResponse(req.FileName, err), nil
+		}
 	}
 	return resp, nil
+}
+
+func unavailableArtifactResponse(name string, err error) *artifact.LoadResponse {
+	return &artifact.LoadResponse{Part: genai.NewPartFromText(fmt.Sprintf("artifact %q unavailable: %v", name, err))}
 }
 
 func (o *Orchestrator) SetUserMemoryHook(memAgent adkagent.Agent) {
