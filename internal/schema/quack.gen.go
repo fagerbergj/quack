@@ -684,7 +684,7 @@ type ExtensionInfo struct {
 	// Href Same-origin relative reference into the extension's own routes; absent when the extension implements no UI descriptor.
 	Href *string `json:"href,omitempty"`
 
-	// Icon Single emoji for nav display; absent when the extension's UI descriptor sets none.
+	// Icon Nav icon - a Material Symbols icon name (preferred) or an inline `<svg>` string; anything else falls back to the generic extension glyph. Absent when the extension's UI descriptor sets none.
 	Icon *string `json:"icon,omitempty"`
 
 	// Name Registration name of the extension.
