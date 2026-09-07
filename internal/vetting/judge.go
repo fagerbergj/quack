@@ -609,11 +609,15 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	// A non-transient failure with images attached (400 on a multimodal
 	// request a vision-blind/misbehaving judge model rejects) degrades to a
 	// text-only retry once, rather than blocking delivery outright (#1229).
+	// q tracks that strip: once it fires, every later retry below must keep
+	// using the text-only content instead of re-attaching the images and
+	// re-triggering the same rejection (#1229 follow-up).
+	q := question
 	if err != nil && ctx.Err() == nil && !isTransientJudgeErr(err) && hasInlineData(question) {
 		slog.Warn("judge round failed with images attached; retrying once without them",
 			"component", "vetting", "agent", cfg.Agent, "chat", cfg.ChatID, "err", err)
-		textOnly := stripInlineData(question)
-		v, readc, err = runJudgeRound(ctx, factory, cfg, textOnly, fitted, changedFiles, known, act, emit)
+		q = stripInlineData(question)
+		v, readc, err = runJudgeRound(ctx, factory, cfg, q, fitted, changedFiles, known, act, emit)
 	}
 
 	// A round that ran but never reached a verdict (model stutter exhausting the
@@ -623,23 +627,23 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	if errors.Is(err, ErrJudgeNoVerdict) && ctx.Err() == nil {
 		slog.Warn("judge ended without a verdict; retrying the round once with a fresh session",
 			"component", "vetting", "agent", cfg.Agent, "chat", cfg.ChatID)
-		v, readc, err = runJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, known, act, emit)
+		v, readc, err = runJudgeRound(ctx, factory, cfg, q, fitted, changedFiles, known, act, emit)
 		if err == nil {
-			v = finishJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, known, act, emit, v, readc)
+			v = finishJudgeRound(ctx, factory, cfg, q, fitted, changedFiles, known, act, emit, v, readc)
 		}
 		return
 	}
 
 	if err == nil || ctx.Err() != nil {
-		v = finishJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, known, act, emit, v, readc)
+		v = finishJudgeRound(ctx, factory, cfg, q, fitted, changedFiles, known, act, emit, v, readc)
 		return
 	}
-	retryAnswer := fitJudgeAnswer(cfg, question, fitted, changedFiles, known, act, 0.5)
+	retryAnswer := fitJudgeAnswer(cfg, q, fitted, changedFiles, known, act, 0.5)
 	if retryAnswer == fitted {
 		v = verdict{} // nothing left to shrink; the retry would repeat the same call
 		return
 	}
-	v, _, err = runJudgeRound(ctx, factory, cfg, question, retryAnswer, changedFiles, known, act, emit)
+	v, _, err = runJudgeRound(ctx, factory, cfg, q, retryAnswer, changedFiles, known, act, emit)
 	return
 }
 

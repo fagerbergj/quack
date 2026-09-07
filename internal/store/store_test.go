@@ -856,3 +856,32 @@ func TestTruncateTitle_WordBoundary(t *testing.T) {
 		t.Fatalf("truncateTitle changed a title already under the cap")
 	}
 }
+
+// TestDeleteChat_RemovesCheckpointRow pins the #1238 review follow-up: a
+// chat's ledger_checkpoints row must not survive DeleteChat - UUIDv4 ids
+// never repeat, so a leftover row can never be read back and is pure leak.
+func TestDeleteChat_RemovesCheckpointRow(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "quack.db")
+	st, err := New("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("New sqlite: %v", err)
+	}
+	ctx := context.Background()
+	chat, err := st.CreateChat(ctx, "sys")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	if err := st.upsertCheckpoint(ctx, chat.ID, 1, []byte(`{}`)); err != nil {
+		t.Fatalf("upsertCheckpoint: %v", err)
+	}
+
+	if err := st.DeleteChat(ctx, chat.ID); err != nil {
+		t.Fatalf("DeleteChat: %v", err)
+	}
+
+	var count int64
+	st.db.Model(&Checkpoint{}).Where("chat_id = ?", chat.ID).Count(&count)
+	if count != 0 {
+		t.Errorf("ledger_checkpoints rows for %s after delete = %d, want 0", chat.ID, count)
+	}
+}

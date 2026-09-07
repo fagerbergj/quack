@@ -126,10 +126,7 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, or
 			DataDir:       dataDir,
 			ReadArtifact:  readExtInputArtifact(st, artifacts),
 			WriteArtifact: writeExtInputArtifact(st, artifacts),
-			ChatUser: func(chatID string) (string, bool) {
-				u := st.SessionUserForChat(context.Background(), chatID)
-				return u, u != ""
-			},
+			ChatUser:      extChatUser(st),
 			ArchiveChat: func(chatID string) error {
 				return st.ArchiveChat(context.Background(), chatID, true)
 			},
@@ -692,6 +689,21 @@ const inputArtifactKind = "bytes"
 // mid-run, only re-seeded on the next dispatch.
 func inputArtifactLineage() recordstore.Lineage {
 	return recordstore.Lineage{Author: "dispatch", SavedAt: time.Now()}
+}
+
+// extChatUser backs Host.ChatUser: the sdk doc requires ok=false for an
+// unknown chatID, so this reads the row directly rather than via
+// SessionUserForChat's id-shape fallback, which would otherwise claim a
+// stable user for a chat that doesn't exist yet (#1225 footgun).
+func extChatUser(st *store.Store) func(chatID string) (string, bool) {
+	return func(chatID string) (string, bool) {
+		c, err := st.GetChat(context.Background(), chatID)
+		if err != nil || c == nil {
+			return "", false
+		}
+		u := store.SessionUserFor(*c)
+		return u, u != ""
+	}
 }
 
 // readExtInputArtifact backs Host.ReadArtifact: the latest bytes for a named

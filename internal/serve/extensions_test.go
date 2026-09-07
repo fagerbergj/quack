@@ -159,3 +159,35 @@ func TestBuildDeliveryRecoverer_FirstInSortedOrderWins(t *testing.T) {
 		t.Fatalf("name = %q, want the first name in sorted order (fake-recoverer-a)", name)
 	}
 }
+
+// TestExtChatUserUnknownChatReturnsNotOK proves the sdk contract (ok=false
+// for an unknown chatID) instead of extChatUser's prior fallback to the
+// id-shape default with ok=true (#1225 footgun).
+func TestExtChatUserUnknownChatReturnsNotOK(t *testing.T) {
+	st, _, _, _, _ := newExtTestStack(t)
+	chatUser := extChatUser(st)
+
+	if u, ok := chatUser("github-acme-widgets-7"); ok || u != "" {
+		t.Errorf("chatUser(unknown) = (%q, %v), want (\"\", false)", u, ok)
+	}
+}
+
+// TestExtChatUserExistingChatReturnsStoredUser proves the happy path is
+// unchanged: once the chat row exists, its resolved SessionUser comes back
+// with ok=true.
+func TestExtChatUserExistingChatReturnsStoredUser(t *testing.T) {
+	st, _, _, _, _ := newExtTestStack(t)
+	chat, err := st.CreateChat(context.Background(), "sys")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	chatUser := extChatUser(st)
+
+	u, ok := chatUser(chat.ID)
+	if !ok {
+		t.Fatalf("chatUser(%s) ok = false, want true", chat.ID)
+	}
+	if u != "local" {
+		t.Errorf("chatUser(%s) = %q, want %q (no SessionUser, non-github id)", chat.ID, u, "local")
+	}
+}
