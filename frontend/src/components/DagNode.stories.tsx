@@ -551,18 +551,3 @@ export const ContextMeterDanger: Story = {
     isFinal: false,
   },
 }
-
-// A compaction event shows inline in the worker's activity feed, alongside
-// its ordinary thinking/tool-call rows - then the meter drops back down.
-export const CompactionInFeed: Story = {
-  args: {
-    node: contextNode,
-    state: { status: 'running', startedAt: Date.now() - 40_000, contextTokens: 96_000 },
-    runs: [{
-      runId: 'r1', agent: 'web-researcher', stage: 'worker', done: false,
-      activity: [...researchActivity, { kind: 'compaction', tokensBefore: 210_000, tokensAfter: 96_000 }],
-    }],
-    answer: '',
-    isFinal: false,
-  },
-}

@@ -41,19 +41,16 @@ The GitHub App extension (`extensions.github`) has its own page: [`../extensions
 
 ## Context compaction (`session.compaction`)
 
-A Go port of Google ADK's context compaction (`internal/agent/compaction.go`) — deletable once `google.golang.org/adk/v2` ships the feature natively. Two independent triggers fire a compaction round; either alone is enough:
+Compaction runs on `google.golang.org/adk/v2`'s native runner-level engine (`internal/agent/a2a.go`'s `nativeCompactionConfig`), using quack's own summariser prompt (`internal/agent/compaction_prompts.go`) rather than adk's default. `provider`/`model` name an optional fallback summariser, used only when there's no active worker model to reuse.
 
-- `token_threshold` — absolute safety limit, in estimated tokens. Unset ⇒ derived from the agent's `context_window`.
-- `compaction_interval` — regular cadence, in invocations/turns. Unset (`0`) ⇒ threshold-only, the pre-ADK-port behaviour.
+- `token_threshold` — absolute safety limit, in tokens (adk uses the provider's reported prompt-token count, not an estimate). Unset ⇒ derived from the agent's `context_window`.
+- `event_retention_size` — trailing request contents kept verbatim (default 20).
+- `compaction_interval` — regular cadence, in invocations. `0` ⇒ threshold-only.
+- `overlap_size` — how many of the newest folded-window events carry over raw into the next `compaction_interval` round instead of being folded in immediately (it does not affect a `token_threshold` round). `0` ⇒ fold the whole window each time. Requires `compaction_interval > 0` - adk rejects the combination otherwise.
 
-When a round fires, the oldest events beyond `event_retention_size` (default 20) fold into a durable summary event, at a balanced tool-call boundary so a `FunctionCall` and its `FunctionResponse` never land on opposite sides of the cut. `overlap_size` (default `0`, disabled) keeps that many of the newest folded-window events raw instead of summarizing them immediately, so they're re-offered to the summariser alongside new events next round rather than being seen only once. A window whose text exceeds the summariser's own input budget is split into ordered chunks and summarised iteratively (running summary + next chunk) — history is summarised, never hard-truncated; only tool-output verbatim tails still get the existing byte-cap clamp.
+adk's summariser hard-errors past its transcript cap (sized from `context_window`) rather than chunking, unlike a hand-rolled summariser would.
 
-### `engine: quack | adk`
-
-`session.compaction.engine` (default `quack`) picks which engine actually runs compaction; the fields above are the shared config surface, but the two engines interpret `compaction_interval` and `overlap_size` differently, not identically:
-
-- `quack` (default): the port described above — `compaction_interval` is a turn-count cadence, `overlap_size` re-offers raw events next round, oversized windows are chunk-summarised iteratively with no hard cap.
-- `adk`: `google.golang.org/adk/v2`'s native runner-level compaction (`internal/agent/a2a.go`'s `nativeCompactionConfig`), using quack's own summariser prompt. `compaction_interval` and `overlap_size` are passed through to adk's own trigger/retention logic rather than quack's, and adk's summariser hard-errors past its transcript cap (sized from `context_window` here) instead of chunking — see #1185's spike measurements for the tradeoffs. Not yet the default; needs a real judge/review-node dogfood run first.
+`session.compaction.engine` is deprecated and ignored (a no-op kept only so an existing `engine: adk` in a deployed `quack.yaml` doesn't crash-loop the config parser); remove it from your config.
 
 ## Key environment variables
 

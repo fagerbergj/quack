@@ -23,8 +23,8 @@ export function previewLine(text: string, max = 80): string {
   return (lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut) + '…'
 }
 
-// fmtTokenCount compacts a token count for tight spaces (a context meter, a
-// compaction row): thousands round to the nearest K, smaller counts show as-is.
+// fmtTokenCount compacts a token count for tight spaces (a context meter):
+// thousands round to the nearest K, smaller counts show as-is.
 export function fmtTokenCount(n: number): string {
   return n >= 1000 ? `${Math.round(n / 1000)}K` : String(n)
 }

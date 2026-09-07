@@ -82,15 +82,6 @@ export interface NodeDoneMeta {
   judgePassed?: boolean
 }
 
-// CompactionPayload is the compaction event payload: a node's worker history
-// was rewritten to fit its agent's context window mid-round.
-interface CompactionPayload {
-  nodeId: string
-  runId: string
-  tokensBefore: number
-  tokensAfter: number
-}
-
 // DagPlanPayload is the dag_plan event payload.
 interface DagPlanPayload {
   planId: string
@@ -176,8 +167,6 @@ export interface AgentStreamHandlers {
   // A node paused to ask the user a question (mid-node HITL). The next message
   // sent on the chat is delivered to the node as the answer.
   onNodeNeedsInput?: (nodeId: string, interruptId: string, message: string) => void
-  // A node's worker history was compacted mid-round to fit its context window.
-  onCompaction?: (d: CompactionPayload) => void
   // One artifact revision written by a round - fires before the round's own
   // artifact_judge_round event (#1092).
   onArtifactRevision?: (d: ArtifactRevisionPayload) => void
@@ -190,7 +179,7 @@ export const AGENT_EVENT_NAMES = [
   'agent_start', 'agent_thinking', 'agent_tool_call', 'agent_tool_result', 'agent_token', 'agent_complete',
   'confirmation_request', 'chat_title', 'error', 'done', 'response_created',
   'dag_plan', 'node_queued', 'node_start', 'node_done', 'node_failed', 'node_cancelled', 'node_paused', 'node_steered', 'node_needs_input',
-  'delivery_result', 'compaction', 'artifact_revision', 'artifact_judge_round',
+  'delivery_result', 'artifact_revision', 'artifact_judge_round',
 ] as const
 
 // nodeIdOf extracts the optional node_id field from a parsed payload.
@@ -370,18 +359,6 @@ function dispatchAgentEvent(
         handlers.onNodeNeedsInput?.(p.node_id,
           typeof p.interrupt_id === 'string' ? p.interrupt_id : '',
           typeof p.message === 'string' ? p.message : '')
-      }
-      return true
-    }
-    case 'compaction': {
-      const p = parsed as { node_id?: string; run_id?: string; tokens_before?: number; tokens_after?: number }
-      if (typeof p.node_id === 'string') {
-        handlers.onCompaction?.({
-          nodeId: p.node_id,
-          runId: typeof p.run_id === 'string' ? p.run_id : '',
-          tokensBefore: typeof p.tokens_before === 'number' ? p.tokens_before : 0,
-          tokensAfter: typeof p.tokens_after === 'number' ? p.tokens_after : 0,
-        })
       }
       return true
     }

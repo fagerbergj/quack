@@ -532,7 +532,6 @@ paths:
         - artifact_revision
         - artifact_judge_round
         - delivery_result
-        - compaction
         - chat_title
         - done
         - error
@@ -610,7 +609,6 @@ paths:
         - artifact_revision
         - artifact_judge_round
         - delivery_result
-        - compaction
         - chat_title
         - done
         - error

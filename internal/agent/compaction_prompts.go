@@ -1,20 +1,13 @@
 package agent
 
-// The compaction prompts follow GOOSE, not opencode.
-//
-// opencode blanks an old tool result in place and keeps the call ("[Old tool
-// result content cleared]"), which works when a huge-context frontier model
-// rarely triggers prune. On quack's 65k local-model window it fired
-// constantly and the agent kept re-reading the same files. The stub is gone
-// (see compaction.go).
-//
-// goose and OpenHands instead DROP old turns and replace them with one
-// knowledge-dense summary, framed explicitly as a handoff to the agent
-// itself: "ALL TECHNICAL CONTENT" preserved, files/code state kept in full,
-// "OK to make it MUCH LONGER than a normal summary". These prompts follow
-// that framing - narrative sections stay terse, but file/code-state can run
-// long, since a summary that drops what a file contained just makes the
-// agent read it again.
+// These prompts follow GOOSE, not opencode: opencode blanks an old tool
+// result in place and keeps the call, which works when a huge-context
+// frontier model rarely triggers prune - on quack's 65k local-model window it
+// fired constantly and the agent kept re-reading the same files. goose and
+// OpenHands instead DROP old turns and replace them with one knowledge-dense
+// summary, framed explicitly as a handoff to the agent itself: "ALL
+// TECHNICAL CONTENT" preserved, files/code state kept in full, "OK to make it
+// MUCH LONGER than a normal summary". These prompts follow that framing.
 const compactionSystemPrompt = `You are compacting the context of a coding/research session.
 
 The conversation history you are given is being REMOVED from the agent's context and replaced by what you write. The only reader is THE AGENT ITSELF, continuing this same session - write a handoff to yourself, not a report for a human.
@@ -75,12 +68,3 @@ Rules:
 - The narrative sections (Goal, Progress, Key Decisions, Next Steps) stay terse bullets. "Files & Code State", "Commands & Tools Run" and "Errors & Fixes" may be as long as they need to be - they carry the knowledge that stops the agent redoing work.
 - Preserve exact file paths, commands, error strings, and identifiers.
 - Do not mention the summary process or that context was compacted.`
-
-// compactionNotice is both the model's framing (so it knows the history it
-// can no longer see is folded into the summary rather than lost - goose tells
-// the model plainly: "Your context was compacted. The previous message
-// contains a summary of the conversation so far.", crates/goose/src/
-// context_mgmt/mod.rs) and the SENTINEL: it prefixes the durable summary
-// content's first text part, and isSentinel/applyView identify a compaction
-// event by this exact prefix. Do not change it without updating both readers.
-const compactionNotice = "\n\nYour context was compacted: the older turns of this session are no longer shown, and the summary below is what they contained. Treat it as your own memory of work already done - do not re-read files or re-run commands it already covers.\n\n"

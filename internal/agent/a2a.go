@@ -40,10 +40,8 @@ type A2AServer struct {
 }
 
 // Serve starts an A2A server for ag on 127.0.0.1:<ephemeral> and returns it with the AgentCard.
-// comp.Engine == "adk" wires adk/v2's native runner-level compaction here
-// instead of the BeforeModelCallback build.go would otherwise install (#1185
-// spike); any other value (including the zero Compaction) leaves the runner's
-// Compaction nil and changes nothing.
+// comp.Enabled wires adk/v2's native runner-level compaction here; the zero
+// Compaction leaves the runner's Compaction nil and changes nothing.
 func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service, comp Compaction) (*A2AServer, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -105,16 +103,15 @@ func maxTranscriptChars(comp Compaction) int {
 }
 
 // nativeCompactionConfig builds adk/v2's runner-level compaction.Config from
-// comp, or nil when comp isn't asking for the "adk" engine. It reuses quack's
-// own tuned summarizer prompt (compactionSystemPrompt + summaryTemplate, see
-// compaction_prompts.go) rather than adk's default, so the #1185 spike
-// compares engines, not prompts.
+// comp, or nil when compaction is disabled. It reuses quack's own tuned
+// summarizer prompt (compactionSystemPrompt + summaryTemplate, see
+// compaction_prompts.go) rather than adk's default.
 func nativeCompactionConfig(comp Compaction) (*compaction.Config, error) {
-	if !comp.Enabled || comp.Engine != "adk" {
+	if !comp.Enabled {
 		return nil, nil
 	}
 	if comp.Summarizer == nil {
-		return nil, fmt.Errorf("engine \"adk\" requires a summarizer model")
+		return nil, fmt.Errorf("compaction: enabled requires a summarizer model")
 	}
 	prompt := compactionSystemPrompt + "\n\n" + summaryTemplate + "\n\n" + compaction.ConversationHistoryPlaceholder
 	summarizer, err := compaction.NewLLMSummarizer(compaction.LLMSummarizerConfig{

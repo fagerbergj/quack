@@ -464,9 +464,10 @@ type CompactionConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Provider string `yaml:"provider"`
 	Model    string `yaml:"model"`
-	// Engine selects the compaction implementation: "quack" (default, the
-	// homegrown model-callback below) or "adk" (adk/v2's native runner-level
-	// compaction, spiked in issue #1185).
+	// Engine is deprecated: quack's homegrown callback engine is gone (#1185),
+	// adk/v2's native runner-level compaction is the only engine now. Kept
+	// as a no-op so an existing "engine: adk"/"provider: default" quack.yaml
+	// doesn't crash-loop a deploy; remove after one release.
 	Engine             string `yaml:"engine"`
 	TokenThreshold     int    `yaml:"token_threshold"`
 	EventRetentionSize int    `yaml:"event_retention_size"`
@@ -476,7 +477,8 @@ type CompactionConfig struct {
 	CompactionInterval int `yaml:"compaction_interval"`
 	// OverlapSize is how many already-compacted raw events carry into the
 	// next summarization window, so a fact split across a chunk boundary
-	// isn't lost. 0 ⇒ package default.
+	// isn't lost. adk has no default here - 0 disables overlap - and requires
+	// CompactionInterval > 0 whenever this is set (see validate()).
 	OverlapSize int `yaml:"overlap_size"`
 }
 
@@ -1188,6 +1190,9 @@ func (c *Config) validate() error {
 			}
 		}
 	}
+	if cc := c.Session.Compaction; cc.Engine != "" {
+		slog.Warn("session.compaction.engine is deprecated and ignored; adk is the only compaction engine", "component", "config")
+	}
 	if c.Session.Compaction.Enabled {
 		cc := c.Session.Compaction
 		if cc.Model != "" {
@@ -1197,6 +1202,12 @@ func (c *Config) validate() error {
 			if err := c.checkModelRegistered("session.compaction.model", cc.Model); err != nil {
 				return err
 			}
+		}
+		// adk's compaction.Config.Validate() rejects this combination outright
+		// (sliding-window compaction would never run); fail at load rather than
+		// on the first long session that dispatches this agent.
+		if cc.OverlapSize > 0 && cc.CompactionInterval == 0 {
+			return fmt.Errorf("config: session.compaction.overlap_size requires compaction_interval > 0")
 		}
 	}
 	for name, t := range c.Tools {
