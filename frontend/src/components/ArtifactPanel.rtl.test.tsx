@@ -1,9 +1,34 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render as rtlRender, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ReactElement } from 'react'
 import { ArtifactPanel } from './ArtifactPanel'
 import { client } from '../generated/client.gen'
+import { ChatStoreProvider } from '../state/ChatStoreProvider'
+import { ChatStore } from '../state/chatStore'
+
+// ArtifactPanel now reads chatStore (live SSE follow, #1114) - every render
+// needs the provider, same as the real app's tree under Chat.tsx.
+function render(ui: ReactElement, store?: ChatStore) {
+  return rtlRender(<ChatStoreProvider store={store}>{ui}</ChatStoreProvider>)
+}
+
+// Minimal EventSource fake, mirroring chatStore.test.ts's own (kept local -
+// the two test files don't share a helpers module today).
+class FakeEventSource {
+  static last: FakeEventSource | null = null
+  url: string
+  onerror: (() => void) | null = null
+  private listeners: Record<string, ((e: MessageEvent) => void)[]> = {}
+  constructor(url: string) { this.url = url; FakeEventSource.last = this }
+  addEventListener(name: string, cb: (e: MessageEvent) => void) { (this.listeners[name] ??= []).push(cb) }
+  close() {}
+  emit(name: string, data: unknown) {
+    const event = { data: JSON.stringify(data), lastEventId: '' } as MessageEvent
+    for (const cb of this.listeners[name] ?? []) cb(event)
+  }
+}
 
 afterEach(() => {
   cleanup()
@@ -381,4 +406,132 @@ describe('ArtifactPanel as a result view (#1178)', () => {
       })
     }
   }
+})
+
+// #1114: the panel follows artifact_revision/artifact_judge_round over the
+// chat's own SSE stream (via chatStore.subscribe) instead of the manual
+// Refresh button or polling.
+describe('ArtifactPanel live SSE updates (#1114)', () => {
+  // Mutable so a test can grow it between the initial load and the live
+  // event, simulating the server having written a new revision.
+  let planRevisions: { revision: number; mime_type: string; size: number; kind: string; class: string; lineage: Record<string, unknown> }[]
+  let judgeRoundsPresent: boolean
+
+  function stubLiveFixture() {
+    planRevisions = [
+      { revision: 1, mime_type: 'text/markdown', size: PLAN_V1.length, kind: 'text', class: 'blob', lineage: { node_id: 'planner-1', round: 1, author: 'worker' } },
+    ]
+    judgeRoundsPresent = false
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = decodeURIComponent(input instanceof Request ? input.url : String(input))
+      if (url.includes('/artifacts/text:plan/revisions')) return jsonResponse({ data: [...planRevisions].reverse() })
+      if (url.includes('/artifacts/text:plan?revision=2')) return textResponse(PLAN_V2)
+      if (url.includes('/artifacts/text:plan?revision=1')) return textResponse(PLAN_V1)
+      if (url.includes('/artifacts/judge_round:t1-planner-1-1')) return textResponse(round1)
+      if (url.endsWith('/artifacts')) {
+        const data = [
+          { name: 'text:plan', kind: 'text', class: 'blob', latest_revision: planRevisions.length, lineage: { node_id: 'planner-1', author: 'worker' }, revisions: [] },
+        ]
+        if (judgeRoundsPresent) {
+          data.push({ name: 'judge_round:t1-planner-1-1', kind: 'judge_round', class: 'structured', latest_revision: 1, lineage: { node_id: 'planner-1', author: 'judge' }, revisions: [] })
+        }
+        return jsonResponse({ data })
+      }
+      return new Response(JSON.stringify({ error: 'not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
+    }))
+  }
+
+  function seededStore(): ChatStore {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    FakeEventSource.last = null
+    const store = new ChatStore()
+    // An in_progress DAG turn is what makes attach() open the live stream -
+    // the same condition the real Chat page checks before subscribing.
+    store.seed('chat-1', [{
+      id: 't1', created_at: '', input: { role: 'user', content: 'go' },
+      output: [{ type: 'quack:dag', id: 'p', status: 'in_progress', plan_id: 'p', nodes: [{ id: 'planner-1', agent: 'planner', task: 't', depends_on: [] }], edges: [], node_states: {} }],
+    }])
+    store.attach('chat-1')
+    return store
+  }
+
+  it('advances to a freshly announced revision when the viewer is on the latest one', async () => {
+    stubLiveFixture()
+    const store = seededStore()
+    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan" nodeArtifactKind="text" onClose={() => {}} />, store)
+    expect(await screen.findByText('Revision 1 of 1')).toBeTruthy()
+
+    // The server writes revision 2 - grow the fixture, then fire the event
+    // the panel is subscribed to, exactly as the real SSE stream would.
+    planRevisions.push({ revision: 2, mime_type: 'text/markdown', size: PLAN_V2.length, kind: 'text', class: 'blob', lineage: { node_id: 'planner-1', round: 2, author: 'worker' } })
+    FakeEventSource.last!.emit('artifact_revision', { id: 'text:plan', revision: 2, kind: 'text', node_id: 'planner-1', round: 2 })
+
+    expect(await screen.findByText('Revision 2 of 2')).toBeTruthy()
+    expect(await screen.findByRole('heading', { level: 1, name: 'Plan v2' })).toBeTruthy()
+  })
+
+  it('keeps a pinned older revision on screen when a newer one arrives live', async () => {
+    const user = userEvent.setup()
+    stubLiveFixture()
+    planRevisions.push({ revision: 2, mime_type: 'text/markdown', size: PLAN_V2.length, kind: 'text', class: 'blob', lineage: { node_id: 'planner-1', round: 2, author: 'worker' } })
+    const store = seededStore()
+    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan" nodeArtifactKind="text" onClose={() => {}} />, store)
+    await screen.findByText('Revision 2 of 2')
+
+    await user.click(screen.getByRole('button', { name: 'Previous revision' }))
+    await screen.findByText('Revision 1 of 2')
+
+    planRevisions.push({ revision: 3, mime_type: 'text/markdown', size: PLAN_V2.length, kind: 'text', class: 'blob', lineage: { node_id: 'planner-1', round: 3, author: 'worker' } })
+    FakeEventSource.last!.emit('artifact_revision', { id: 'text:plan', revision: 3, kind: 'text', node_id: 'planner-1', round: 3 })
+
+    // Revision count grows to reflect the new write, but the cursor itself
+    // (pinned by the user's own Prev click) does not jump forward.
+    await waitFor(() => expect(screen.getByText('Revision 1 of 3')).toBeTruthy())
+    expect(screen.getByRole('heading', { level: 1, name: 'Plan v1' })).toBeTruthy()
+  })
+
+  it('preserves scroll position across a live revision refresh', async () => {
+    stubLiveFixture()
+    const store = seededStore()
+    const { container } = render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan" nodeArtifactKind="text" onClose={() => {}} />, store)
+    await screen.findByText('Revision 1 of 1')
+
+    const scrollEl = container.querySelector('.overflow-y-auto') as HTMLDivElement
+    Object.defineProperty(scrollEl, 'scrollTop', { value: 42, writable: true })
+
+    planRevisions.push({ revision: 2, mime_type: 'text/markdown', size: PLAN_V2.length, kind: 'text', class: 'blob', lineage: { node_id: 'planner-1', round: 2, author: 'worker' } })
+    FakeEventSource.last!.emit('artifact_revision', { id: 'text:plan', revision: 2, kind: 'text', node_id: 'planner-1', round: 2 })
+    await screen.findByText('Revision 2 of 2')
+
+    await waitFor(() => expect(scrollEl.scrollTop).toBe(42))
+  })
+
+  it('refreshes the judge timeline when artifact_judge_round arrives for this node', async () => {
+    stubLiveFixture()
+    const store = seededStore()
+    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan" nodeArtifactKind="text" onClose={() => {}} />, store)
+    await screen.findByText('Revision 1 of 1')
+    expect(screen.queryByRole('button', { name: /Round 1/ })).toBeNull()
+
+    judgeRoundsPresent = true
+    FakeEventSource.last!.emit('artifact_judge_round', {
+      id: 'judge_round:t1-planner-1-1', passed: false, score: 0.42,
+      scored: [{ artifact_id: 'text:plan', revision: 1 }],
+    })
+
+    expect(await screen.findByRole('button', { name: 'Round 1, failed, score 0.42' })).toBeTruthy()
+  })
+
+  it('does not refetch on an artifact_revision for a different node', async () => {
+    stubLiveFixture()
+    const store = seededStore()
+    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan" nodeArtifactKind="text" onClose={() => {}} />, store)
+    await screen.findByText('Revision 1 of 1')
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockClear()
+
+    FakeEventSource.last!.emit('artifact_revision', { id: 'text:other', revision: 1, kind: 'text', node_id: 'writer-9', round: 1 })
+    await new Promise(r => setTimeout(r, 20))
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
 })

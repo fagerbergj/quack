@@ -837,6 +837,60 @@ describe('ChatStore - context meter + compaction', () => {
   })
 })
 
+// #1114: artifact_revision/artifact_judge_round populate ChatState.artifactEvents
+// and fan out through the existing subscribe() seam, so a late-mounted
+// component (ArtifactPanel) not otherwise wired into chatStore can follow them.
+describe('ChatStore - artifact live events (#1114)', () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+  let store: ChatStore
+
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    store = new ChatStore()
+    store.seed('c', [])
+  })
+
+  it('records artifact_revision and artifact_judge_round, incrementing seq each time', async () => {
+    const sse = [
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}',
+      '',
+      'event: artifact_revision',
+      'data: {"id":"text:plan","revision":1,"kind":"text","node_id":"a","round":1}',
+      '',
+      'event: artifact_judge_round',
+      'data: {"id":"judge_round:t-a-1","passed":false,"score":0.4,"scored":[{"artifact_id":"text:plan","revision":1}]}',
+      '',
+    ].join('\n')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'go')
+
+    const events = store.get('c').artifactEvents
+    expect(events?.revision).toEqual({ id: 'text:plan', revision: 1, kind: 'text', nodeId: 'a', round: 1 })
+    expect(events?.judgeRound).toEqual({ id: 'judge_round:t-a-1', passed: false, score: 0.4, scored: [{ artifactId: 'text:plan', revision: 1 }] })
+    expect(events?.seq).toBe(2)
+  })
+
+  it('fans artifact events out through subscribe() to a listener not otherwise wired to the store', async () => {
+    const listener = vi.fn()
+    const unsubscribe = store.subscribe('c', listener)
+    const sse = [
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}',
+      '',
+      'event: artifact_revision',
+      'data: {"id":"text:plan","revision":1,"kind":"text","node_id":"a","round":1}',
+      '',
+    ].join('\n')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'go')
+    await new Promise(r => setTimeout(r, 20)) // notify() coalesces to one rAF/setTimeout(16) tick
+    expect(listener).toHaveBeenCalled()
+    unsubscribe()
+  })
+})
+
 // dag builds a minimal DagTurnState: two nodes, b depends on a (a is not
 // terminal, b is), so answer attribution + total tokens have a real "which node
 // is terminal" question to answer.
