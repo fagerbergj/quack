@@ -202,7 +202,7 @@ agents:
     context_window: 32768       # qwen3-omni-30b served -c 32768 --parallel 1
     tools: []
     inputs: [text, image, audio]
-    judge: false      # gemma (the judge) cannot open media - its verdict is noise
+    judge: false      # single-pass transcription with no rubric criteria to judge; not a vision limitation
   image-reader:
     bundle: agents/image-reader
     skills: [format-markdown]
@@ -211,7 +211,7 @@ agents:
     context_window: 32768       # qwen3-vl-32b served -c 32768
     tools: []
     inputs: [text, image]
-    judge: false      # gemma (the judge) cannot open media - its verdict is noise
+    judge: false      # single-pass transcription with no rubric criteria to judge; not a vision limitation
 
 # Built-in tools. A tool with a dedicated external service sets kind + url. A
 # store-backed tool references a stores[] entry (the store supplies the adapter +
@@ -497,9 +497,9 @@ workspace:
   # only) simply derives nothing instead of failing nodes. An EXPLICIT [] still
   # disables checks entirely.
   check_commands: ["go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make"]
-  # "npm run" above already covers `npm run render-check` (#1192) as a valid
-  # area:frontend gate check. Its PNGs are handed to the judge as `bytes:`
-  # artifacts whenever render-check is one of a node's checks (#1211).
+  # `npm run render-check` (#1192) is never derived automatically - it only
+  # runs when a node's own `checks:` names it explicitly. When it does, its
+  # PNGs are handed to the reviewing judge as `bytes:` artifacts (#1211).
 
   # check_setup: repo bootstrap commands, run once per dir (a shared clone, a
   # node's linked worktree, or the baseline worktree the gate diffs against)

@@ -74,6 +74,34 @@ func TestSelectScreenshotsCapsAndPrioritizesChanged(t *testing.T) {
 	}
 }
 
+func TestSelectScreenshotsSpreadsAcrossRestByStride(t *testing.T) {
+	dir := t.TempDir()
+	var names []string
+	for i := 0; i < 12; i++ {
+		names = append(names, fmt.Sprintf("shot%02d.png", i))
+	}
+	for _, n := range names {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := selectScreenshots(dir, nil) // no changed files: the whole cap comes from the stride fill
+	if len(got) != maxJudgeScreenshots {
+		t.Fatalf("got %d screenshots, want cap of %d", len(got), maxJudgeScreenshots)
+	}
+	// 12 files strided into 6 slots (stride 2) must reach into the back half,
+	// not just take the alphabetic head (shot00..shot05).
+	lastIdx := -1
+	for _, g := range got {
+		if filepath.Base(g) == "shot11.png" || filepath.Base(g) == "shot10.png" || filepath.Base(g) == "shot08.png" {
+			lastIdx++
+		}
+	}
+	if lastIdx < 0 {
+		t.Errorf("selectScreenshots(%v) = %v, want the fill spread into the back half of the sorted list, not just its head", names, got)
+	}
+}
+
 func TestSelectScreenshotsUnderCapReturnsAll(t *testing.T) {
 	dir := t.TempDir()
 	for i := 0; i < 3; i++ {
@@ -111,6 +139,7 @@ func TestRenderScreenshotEvidenceChecksNotRunReturnsNothing(t *testing.T) {
 
 func TestRenderScreenshotEvidenceAttachesCappedImageParts(t *testing.T) {
 	cfg := testChecksConfig(t, []string{renderCheckCommand}, "")
+	cfg.RubricSpecs = map[string]criterionSpec{frontendScreenshotsCriterion: {}}
 	dir, ok, err := checksDir(cfg)
 	if err != nil || !ok {
 		t.Fatalf("checksDir: ok=%v err=%v", ok, err)
@@ -129,6 +158,20 @@ func TestRenderScreenshotEvidenceAttachesCappedImageParts(t *testing.T) {
 		if p.InlineData == nil || p.InlineData.MIMEType != "image/png" {
 			t.Errorf("part = %+v, want an image/png InlineData part", p)
 		}
+	}
+}
+
+func TestRenderScreenshotEvidenceNoRubricCriterionReturnsNothing(t *testing.T) {
+	cfg := testChecksConfig(t, []string{renderCheckCommand}, "") // no RubricSpecs set, e.g. an implementer node
+	dir, ok, err := checksDir(cfg)
+	if err != nil || !ok {
+		t.Fatalf("checksDir: ok=%v err=%v", ok, err)
+	}
+	writeRenderCheckPNGs(t, dir, "shot.png")
+
+	got := renderScreenshotEvidence(context.Background(), cfg, "n1", true, workerActivity{})
+	if got != nil {
+		t.Errorf("got %d parts, want none for a node whose rubric lacks %s", len(got), frontendScreenshotsCriterion)
 	}
 }
 

@@ -716,7 +716,8 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			if skip != "" {
 				checksSkipReason = skip
 			}
-			// area:frontend evidence (#1211): judge-only, never touches the
+			// Render-check screenshot evidence (#1211): only attached when this
+			// node's own rubric scores them; judge-only, never touches the
 			// worker's own question/revision content.
 			shots := renderScreenshotEvidence(judgeCtx, cfg, nodeID, skip == "", act)
 			v, jerr := runJudgeAgent(ledgerCtx, judge, cfg, attachScreenshots(question, shots), answer, act, det, judgePartEmitter(sink, nodeID, runID))

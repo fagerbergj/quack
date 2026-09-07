@@ -1,8 +1,8 @@
 // renderscreenshots.go: hands render-check's per-story screenshots to the
-// judge as `bytes:` artifacts (#1211, follow-up to #1192). Scoping reuses
-// the check-command name itself as the "area:frontend" signal - render-check
-// only exists in a frontend package.json, so no separate area concept is
-// needed.
+// judge as `bytes:` artifacts (#1211, follow-up to #1192). The trigger is an
+// explicit `npm run render-check` entry in the node's own `checks:` list -
+// deriveChecks never emits it, so this never fires implicitly on frontend
+// nodes.
 package vetting
 
 import (
@@ -33,6 +33,12 @@ const maxJudgeScreenshots = 6
 // file's page.screenshot call).
 const renderCheckScreenshotDir = "render-check"
 
+// frontendScreenshotsCriterion is the rubric criterion name that scores
+// attached screenshots (agents/code-reviewer/rubric.yaml). Only nodes whose
+// resolved rubric declares it get screenshots - an implementer's rubric has
+// no such criterion, so attaching there would only cost tokens for nothing.
+const frontendScreenshotsCriterion = "frontend_screenshots_reviewed"
+
 // renderScreenshotEvidence returns this round's render-check PNGs as
 // judge-ready image parts, saving each as a `bytes:` artifact scoped to
 // nodeID. checksRan gates the whole path (computeDeterministicCriteria
@@ -43,6 +49,9 @@ const renderCheckScreenshotDir = "render-check"
 // dozen existing call sites for one extra bit of information.
 func renderScreenshotEvidence(ctx context.Context, cfg Config, nodeID string, checksRan bool, act workerActivity) []*genai.Part {
 	if !checksRan || cfg.Workspace == nil {
+		return nil
+	}
+	if _, ok := cfg.RubricSpecs[frontendScreenshotsCriterion]; !ok {
 		return nil
 	}
 	dir, ok, err := checksDir(cfg)
@@ -88,6 +97,30 @@ func attachScreenshots(question *genai.Content, shots []*genai.Part) *genai.Cont
 		return question
 	}
 	return &genai.Content{Role: question.Role, Parts: append(append([]*genai.Part{}, question.Parts...), shots...)}
+}
+
+// hasInlineData reports whether question carries any image (or other
+// binary) part - used to decide whether a judge failure is worth a
+// text-only retry.
+func hasInlineData(question *genai.Content) bool {
+	for _, p := range question.Parts {
+		if p != nil && p.InlineData != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// stripInlineData returns a copy of question with InlineData parts removed,
+// for the one-shot degrade-to-text-only judge retry (#1229).
+func stripInlineData(question *genai.Content) *genai.Content {
+	out := &genai.Content{Role: question.Role, Parts: make([]*genai.Part, 0, len(question.Parts))}
+	for _, p := range question.Parts {
+		if p != nil && p.InlineData == nil {
+			out.Parts = append(out.Parts, p)
+		}
+	}
+	return out
 }
 
 // selectScreenshots picks at most maxJudgeScreenshots PNGs from dir,

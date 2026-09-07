@@ -156,22 +156,23 @@ criteria:
     steps:
     - Check whether any images are attached to this review.
     - If none are attached, score 3 - this criterion does not apply.
-    - "If images are attached, check whether the review's text reflects having looked at them: a specific visual observation (a named defect, or an explicit statement that the screenshots show no visible defects), not a generic \"looks fine\" with no anchor to what changed."
-    - Check the review does not merely cite render-check's pass/fail as its only visual comment - that is the deterministic criterion, not this one.
-    - If a defect is claimed from the screenshots, sanity-check it isn't contradicted by the screenshots' own filenames (story/viewport/theme) or the rest of the review's narrative.
+    - If images are attached, independently judge whether they show any visible defect (overflow, clipped/truncated text, unreadable contrast, misaligned or overlapping controls) - decide this from the images themselves, not from what the review says.
+    - "If the images show no visible defect: score 3 if the review states a specific, correctly-grounded observation about them; score 2 if the review says little or nothing about them - silence is correct there, not a shortfall."
+    - If the images show a visible defect and the review names it, score 3. If the review says nothing about it, or cites only render-check's own pass/fail, score 1.
+    - If the review states something about the screenshots that the images contradict, score 0 regardless of the above.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: no images attached (not applicable), or images attached and the review states a specific visual observation grounded in them.
+      meaning: no images attached (not applicable); or images attached and the review states a specific, correct visual observation grounded in them; or images attached, show no visible defect, and the review's silence or generic remark about them is simply correct.
     - min: 2.0
       max: 2.0
-      meaning: images attached and addressed, but the observation is generic ("screenshots look okay") with no specific anchor to a story, viewport, or theme.
+      meaning: images attached, show no visible defect, and the review says little or nothing specific about them - not a shortfall, just nothing to report.
     - min: 1.0
       max: 1.0
-      meaning: images attached but the review shows no evidence of examining them - it cites only render-check's own pass/fail, or says nothing about them at all.
+      meaning: images attached and DO show a visible defect, but the review says nothing about it or cites only render-check's own pass/fail as its sole visual comment.
     - min: 0.0
       max: 0.0
-      meaning: images attached and the review describes something about them that the images contradict, or misses an obvious visible defect a glance at the screenshots would catch.
+      meaning: images attached and the review states something about them that the images contradict.
     anchors:
     - quote
     - omission
