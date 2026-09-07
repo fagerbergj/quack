@@ -69,7 +69,10 @@ func emitCompaction(ctx context.Context, sink func(stream.SSEEvent), nodeID stri
 	if u := ev.LLMResponse.UsageMetadata; u != nil {
 		in, out = u.PromptTokenCount, u.CandidatesTokenCount+u.ThoughtsTokenCount
 	}
-	sink(stream.Compaction(nodeID, ev.InvocationID, c.StartTimestamp, c.EndTimestamp, in, out))
+	// ev.Branch is "<name>@<runID>" (workflow.WithUseSubBranch); RunIDFromBranch
+	// is the same extraction dag.segRun uses, so this matches the round's
+	// agent_start run id exactly instead of adk's own (unrelated) invocation id.
+	sink(stream.Compaction(nodeID, stream.RunIDFromBranch(ev.Branch), c.StartTimestamp, c.EndTimestamp, in, out))
 
 	_, span := otelobs.Start(ctx, "compaction", attribute.String("node_id", nodeID))
 	if in > 0 {

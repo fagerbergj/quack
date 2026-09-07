@@ -186,16 +186,12 @@ export function freezeOpenRuns(runs: AgentRun[], nowMs?: number): AgentRun[] {
   })
 }
 
-// appendRunCompaction records a compaction event on a node's most recently
-// started run. Unlike appendRunThinking/appendRunToolCall it can't match by
-// run_id: adk's compaction event carries its own invocation id, not one of
-// quack's run_id values, so there's nothing to look up. A node's compaction
-// always belongs to whichever run is currently open (adk compacts the live
-// session, never a finished one) - a no-op if the node has no runs yet.
-export function appendRunCompaction(runs: AgentRun[], data: Extract<Activity, { kind: 'compaction' }>): AgentRun[] {
-  if (runs.length === 0) return runs
-  const last = runs[runs.length - 1]
-  return [...runs.slice(0, -1), { ...last, activity: [...last.activity, data] }]
+// appendRunCompaction records a compaction event on the run it belongs to,
+// matched exactly by run_id like appendRunThinking/appendRunToolCall - the
+// backend now sends quack's own run_id (stream.RunIDFromBranch), the same one
+// the run's agent_start carries, not adk's own invocation id.
+export function appendRunCompaction(runs: AgentRun[], runId: string, data: Extract<Activity, { kind: 'compaction' }>): AgentRun[] {
+  return mapRun(runs, runId, run => ({ ...run, activity: [...run.activity, data] }))
 }
 
 function mapRun(runs: AgentRun[], runId: string, fn: (run: AgentRun) => AgentRun): AgentRun[] {

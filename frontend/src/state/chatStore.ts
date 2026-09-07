@@ -860,7 +860,7 @@ export class ChatStore {
             updateTopLevelRuns(r => completeRun(r, d.runId, completeArgs, Date.now()))
           }
         },
-        onCompaction: d => updateNodeRuns(d.nodeId, r => appendRunCompaction(r, {
+        onCompaction: d => updateNodeRuns(d.nodeId, r => appendRunCompaction(r, d.runId, {
           kind: 'compaction',
           startTimestamp: d.startTimestamp,
           endTimestamp: d.endTimestamp,

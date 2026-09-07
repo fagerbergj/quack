@@ -70,14 +70,14 @@ describe('appendRunToolCall / fillRunToolResult (tool-call orphaning, #746)', ()
 })
 
 describe('appendRunCompaction', () => {
-  it('appends a compaction row to the most recently started run', () => {
+  it('appends a compaction row to the run matching its run_id', () => {
     let runs: AgentRun[] = startRun([], { runId: 'worker-r0', agent: 'web-researcher', stage: 'worker' })
-    runs = appendRunCompaction(runs, { kind: 'compaction', summaryInputTokens: 210_000, summaryOutputTokens: 1_800 })
+    runs = appendRunCompaction(runs, 'worker-r0', { kind: 'compaction', summaryInputTokens: 210_000, summaryOutputTokens: 1_800 })
     expect(runs[0].activity).toEqual([{ kind: 'compaction', summaryInputTokens: 210_000, summaryOutputTokens: 1_800 }])
   })
 
-  it('is a no-op when the node has no runs yet', () => {
-    const runs: AgentRun[] = []
-    expect(appendRunCompaction(runs, { kind: 'compaction' })).toBe(runs)
+  it('is a no-op when no run matches the run_id', () => {
+    const runs: AgentRun[] = startRun([], { runId: 'worker-r0', agent: 'web-researcher', stage: 'worker' })
+    expect(appendRunCompaction(runs, 'worker-r1', { kind: 'compaction' })).toBe(runs)
   })
 })

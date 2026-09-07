@@ -7,6 +7,7 @@ package stream
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"google.golang.org/adk/v2/session"
@@ -374,6 +375,17 @@ type CompactionData struct {
 // rather than sent as the epoch, and likewise for zero token counts - adk
 // leaves both unset when it has nothing to report (see
 // internal/telemetry/compaction.go in the vendored module).
+// RunIDFromBranch extracts quack's run id from an ADK branch segment of the
+// form "<name>@<runID>" (workflow.WithUseSubBranch's shape) - the one
+// producer both dag.segRun and compaction event-emission key off of, so a
+// compaction row's run id always matches its round's agent_start run id.
+func RunIDFromBranch(branch string) string {
+	if i := strings.Index(branch, "@"); i >= 0 {
+		return branch[i+1:]
+	}
+	return ""
+}
+
 func Compaction(nodeID, runID string, start, end time.Time, inputTokens, outputTokens int32) SSEEvent {
 	d := CompactionData{NodeID: nodeID, RunID: runID, SummaryInputTokens: inputTokens, SummaryOutputTokens: outputTokens}
 	if !start.IsZero() {

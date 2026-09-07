@@ -84,7 +84,8 @@ export interface NodeDoneMeta {
 
 // CompactionPayload is the compaction event payload: a node's worker session
 // was rewritten mid-round by adk's own runner-level compaction. runId is
-// adk's invocation id, not a quack agent_start run_id - see stream.CompactionData.
+// quack's own run_id (stream.RunIDFromBranch) - the same one the round's
+// agent_start carries, so it matches by exact run_id, not a heuristic.
 interface CompactionPayload {
   nodeId: string
   runId: string

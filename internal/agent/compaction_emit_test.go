@@ -17,9 +17,16 @@ import (
 // `compaction` SSE event carrying the right node id - the field an
 // A2A-relayed event could never carry, since adk drops zero-Content events
 // before they cross A2A (background in this package's compaction.go).
+//
+// It also proves the compaction row's run_id is quack's own run id - the
+// same one the node's agent_start event carries for this round (both derive
+// from the "<name>@<runID>" branch via stream.RunIDFromBranch) - not adk's
+// own invocation id, so the frontend can match by exact run_id instead of a
+// "most recent run on this node" heuristic.
 func TestEmitCompactionReachesHub(t *testing.T) {
 	hub := stream.NewHub()
 	const chatID, nodeID = "chat-1", "node-B"
+	const branch = "worker@worker-r2"
 	var seq int64
 	sink := func(ev stream.SSEEvent) {
 		seq++
@@ -28,7 +35,7 @@ func TestEmitCompactionReachesHub(t *testing.T) {
 
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	end := start.Add(5 * time.Minute)
-	ev := &session.Event{InvocationID: "inv-1"}
+	ev := &session.Event{InvocationID: "inv-1", Branch: branch}
 	ev.Actions.Compaction = &session.EventCompaction{
 		StartTimestamp:   start,
 		EndTimestamp:     end,
@@ -53,8 +60,15 @@ func TestEmitCompactionReachesHub(t *testing.T) {
 	if got.NodeID != nodeID {
 		t.Errorf("NodeID = %q, want %q", got.NodeID, nodeID)
 	}
-	if got.RunID != "inv-1" {
-		t.Errorf("RunID = %q, want the event's invocation id %q", got.RunID, "inv-1")
+	// Same round/node's agent_start would carry this exact run id (see
+	// dag.segRun, the other caller of stream.RunIDFromBranch) - never adk's
+	// own invocation id ("inv-1").
+	wantRunID := stream.RunIDFromBranch(branch)
+	if got.RunID != wantRunID {
+		t.Errorf("RunID = %q, want the round's agent_start run id %q", got.RunID, wantRunID)
+	}
+	if got.RunID == ev.InvocationID {
+		t.Fatalf("RunID must not be adk's own invocation id %q", ev.InvocationID)
 	}
 	if got.SummaryInputTokens != 900 || got.SummaryOutputTokens != 40 {
 		t.Errorf("tokens = %d/%d, want 900/40", got.SummaryInputTokens, got.SummaryOutputTokens)

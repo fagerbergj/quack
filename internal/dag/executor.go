@@ -605,10 +605,7 @@ func segName(seg string) string {
 }
 
 func segRun(seg string) string {
-	if i := strings.Index(seg, "@"); i >= 0 {
-		return seg[i+1:]
-	}
-	return ""
+	return stream.RunIDFromBranch(seg)
 }
 
 // stageRound: maps run ID to SSE stage + round. A queued round carries a
