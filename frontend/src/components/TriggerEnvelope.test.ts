@@ -1,9 +1,25 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { parseEnvelope, commentsSummaryLabel, changedFilesSummaryLabel, checksSummaryLabel, accumulateComments, type EnvelopeBlock } from './envelope'
+import { parseEnvelope, commentsSummaryLabel, changedFilesSummaryLabel, checksSummaryLabel, artifactsSummaryLabel, accumulateComments, type EnvelopeBlock } from './envelope'
+
+// api.listChatArtifacts is the only network call a click on an <artifacts>
+// row makes (it resolves the tapped artifact id to its owning node id) -
+// stubbed so the interaction test below never hits a real endpoint.
+const listChatArtifacts = vi.fn()
+vi.mock('../api', () => ({ api: { listChatArtifacts: (...args: unknown[]) => listChatArtifacts(...args) } }))
+
+// ArtifactPanel itself (its dialog, ChatStoreProvider dependency, and REST
+// surface) is covered by ArtifactPanel.rtl.test.tsx - this file only needs
+// proof that a row click resolves to the right node and that node id reaches
+// the panel, so the component is replaced with a prop-recording stub.
+const artifactPanelProps = vi.fn()
+vi.mock('./ArtifactPanel', () => ({
+  ArtifactPanel: (props: unknown) => { artifactPanelProps(props); return null },
+}))
+
 import { TriggerMessage } from './TriggerEnvelope'
 
 // A full CI-fix envelope (design: .quack/trigger-prompts-v2.md, Step 6/7) -
@@ -332,13 +348,13 @@ describe('TriggerMessage interaction (real DOM, not string assertions)', () => {
     host = undefined
   })
 
-  function mount(content: string) {
+  function mount(content: string, extra?: { chatId?: string }) {
     host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
     // @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
-    act(() => root!.render(createElement(TriggerMessage, { content })))
+    act(() => root!.render(createElement(TriggerMessage, { content, ...extra })))
     return host
   }
 
@@ -395,5 +411,73 @@ ${CHECKS_ENVELOPE.split('\n').slice(2).join('\n')}`
     expect(details.textContent).toContain('deleted')
     // Ignoring quack_status entirely would render this identically to a live comment.
     expect(details.innerHTML).toMatch(/line-through/)
+  })
+
+  it('tapping an artifact row opens the artifact panel on the row\'s owning node (#1250)', async () => {
+    listChatArtifacts.mockResolvedValue({
+      data: [
+        { name: 'bytes:comments', kind: 'bytes', lineage: { node_id: 'ctx-node-1' } },
+        { name: 'bytes:files', kind: 'bytes', lineage: { node_id: 'ctx-node-1' } },
+      ],
+    })
+    const el = mount(`<permissions>join_pr_conversation</permissions>
+<deliverable>a review</deliverable>
+<artifacts>
+  <artifact id="bytes:comments" revision="1" status="new">1 items</artifact>
+  <artifact id="bytes:files" revision="1" status="new">5 items</artifact>
+</artifacts>`, { chatId: 'chat-1' })
+    const details = [...el.querySelectorAll('details')].find(d => d.textContent?.includes('artifacts'))!
+    act(() => details.querySelector('summary')!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
+    const row = [...el.querySelectorAll('button')].find(b => b.textContent?.includes('comments'))!
+    await act(async () => {
+      row.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(listChatArtifacts).toHaveBeenCalledWith('chat-1')
+    expect(artifactPanelProps).toHaveBeenCalledWith(expect.objectContaining({ chatId: 'chat-1', nodeId: 'ctx-node-1' }))
+  })
+
+  it('a row with no chatId is disabled and never opens the panel', () => {
+    const el = mount(`<permissions>join_pr_conversation</permissions>
+<deliverable>a review</deliverable>
+<artifacts><artifact id="bytes:comments" revision="1" status="new">1 items</artifact></artifacts>`)
+    const details = [...el.querySelectorAll('details')].find(d => d.textContent?.includes('artifact'))!
+    act(() => details.querySelector('summary')!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
+    const row = el.querySelector('button')!
+    expect(row.disabled).toBe(true)
+  })
+})
+
+describe('artifacts parsing and summary/status rendering (#1250)', () => {
+  const ARTIFACTS_ENVELOPE = `<permissions>push_commits_to_pr</permissions>
+<deliverable>d</deliverable>
+<artifacts>
+  <artifact id="bytes:comments" revision="1" status="new">1 items</artifact>
+  <artifact id="structured:issue" revision="2" status="updated">1 object</artifact>
+  <artifact id="text:notes" status="unchanged">a note</artifact>
+</artifacts>`
+
+  it('parses each <artifact> row into its kind prefix, name, revision, status and summary', () => {
+    const blocks = parseEnvelope(ARTIFACTS_ENVELOPE)!
+    const block = blocks.find((b): b is Extract<EnvelopeBlock, { kind: 'artifacts' }> => b.kind === 'artifacts')!
+    expect(block.items).toEqual([
+      { id: 'bytes:comments', kindPrefix: 'bytes', name: 'comments', revision: 1, status: 'new', summary: '1 items' },
+      { id: 'structured:issue', kindPrefix: 'structured', name: 'issue', revision: 2, status: 'updated', summary: '1 object' },
+      { id: 'text:notes', kindPrefix: 'text', name: 'notes', revision: undefined, status: 'unchanged', summary: 'a note' },
+    ])
+    expect(artifactsSummaryLabel(block)).toBe('3 artifacts')
+  })
+
+  it('renders the raw XML block no longer as a code dump, with a name/status/summary row per artifact', () => {
+    const out = renderToStaticMarkup(createElement(TriggerMessage, { content: ARTIFACTS_ENVELOPE }))
+    expect(out).toContain('3 artifacts')
+    expect(out).toContain('comments')
+    expect(out).toContain('rev 1')
+    expect(out).toContain('new')
+    expect(out).toContain('updated')
+    expect(out).toContain('unchanged')
+    // The old fallback path (UnknownSection's raw <pre> dump) never renders for a recognised <artifacts> block.
+    expect(out).not.toContain('<artifact id=')
   })
 })

@@ -1,14 +1,18 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { AssistantText } from './AgentParts'
 import { Expandable } from './Expandable'
+import { ArtifactPanel } from './ArtifactPanel'
+import { api } from '../api'
 import {
   parseEnvelope,
   commentsSummaryLabel,
   changedFilesSummaryLabel,
   checksSummaryLabel,
+  artifactsSummaryLabel,
   accumulateComments,
   type EnvelopeBlock,
+  type ArtifactRow,
 } from './envelope'
 
 // Re-export the parser so import sites that only need the data (tests) don't
@@ -25,6 +29,7 @@ export function TriggerMessage({
   content,
   attachments,
   priorContents = [],
+  chatId,
 }: {
   content: string
   attachments?: ReactNode
@@ -32,14 +37,37 @@ export function TriggerMessage({
   // <comments> section fold this turn's delta onto the running history
   // instead of rendering just what this one trigger saw.
   priorContents?: string[]
+  // Present only for a real chat - gates whether an <artifacts> row can open
+  // the artifact panel (needs a chat to look the artifact's owning node up in).
+  chatId?: string
 }) {
   const blocks = useMemo(() => parseEnvelope(content), [content])
+  // The artifact panel opens onto a NODE, keyed by the row's own artifact id
+  // resolved to its owning node id (see openArtifactRow below) - null means closed.
+  const [openNodeId, setOpenNodeId] = useState<string | null>(null)
   if (blocks) {
     return (
       <div className="flex justify-end mb-3">
         <div className="max-w-3xl w-full ml-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tr-sm px-5 py-4 space-y-2.5">
-          {blocks.map((b, i) => <EnvelopeBlockView key={i} block={b} priorContents={priorContents} />)}
+          {blocks.map((b, i) => (
+            <EnvelopeBlockView
+              key={i}
+              block={b}
+              priorContents={priorContents}
+              chatId={chatId}
+              onOpenArtifact={setOpenNodeId}
+            />
+          ))}
         </div>
+        {chatId && openNodeId && (
+          <ArtifactPanel
+            chatId={chatId}
+            nodeId={openNodeId}
+            nodeAgent="Context"
+            nodeTask=""
+            onClose={() => setOpenNodeId(null)}
+          />
+        )}
       </div>
     )
   }
@@ -55,7 +83,17 @@ export function TriggerMessage({
   )
 }
 
-function EnvelopeBlockView({ block, priorContents }: { block: EnvelopeBlock; priorContents: string[] }) {
+function EnvelopeBlockView({
+  block,
+  priorContents,
+  chatId,
+  onOpenArtifact,
+}: {
+  block: EnvelopeBlock
+  priorContents: string[]
+  chatId?: string
+  onOpenArtifact: (nodeId: string) => void
+}) {
   switch (block.kind) {
     case 'permissions': return <InfoLine label="Permissions" text={block.text} />
     case 'deliverable': return <InfoLine label="Deliverable" text={block.text} />
@@ -65,6 +103,7 @@ function EnvelopeBlockView({ block, priorContents }: { block: EnvelopeBlock; pri
     case 'checks': return <ChecksSection block={block} />
     case 'event': return <EventSection block={block} />
     case 'context': return <ContextSection block={block} />
+    case 'artifacts': return <ArtifactsSection block={block} chatId={chatId} onOpenArtifact={onOpenArtifact} />
     case 'unknown': return <UnknownSection block={block} />
   }
 }
@@ -323,6 +362,99 @@ function ContextSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'cont
             <li key={i} className="flex gap-2">
               <span className="text-gray-700 dark:text-gray-200 shrink-0">{f.name}</span>
               <span className="text-gray-400 dark:text-gray-500 truncate">{f.endpoint}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </CollapsibleSection>
+  )
+}
+
+// ARTIFACT_ICON_PATHS - one inline Material-Symbols-style path per id
+// `kind:` prefix, distinguishing at a glance without a shared Icon
+// component (chore/material-icons isn't merged yet - switch to it once it is).
+const ARTIFACT_ICON_PATHS: Record<string, string> = {
+  text: 'M6 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6H6zm7 1.5L17.5 8H13V3.5zM8 13h8v1.5H8V13zm0 3h8v1.5H8V16zm0-6h4v1.5H8V10z',
+  structured: 'M8 3H7a2 2 0 0 0-2 2v3a1 1 0 0 1-1 1H3v2h1a1 1 0 0 1 1 1v3a2 2 0 0 0 2 2h1v-2H7v-4a2 2 0 0 0-1-1.73A2 2 0 0 0 7 8V5h1V3zm8 0h1a2 2 0 0 1 2 2v3a1 1 0 0 0 1 1h1v2h-1a1 1 0 0 0-1 1v3a2 2 0 0 1-2 2h-1v-2h1v-4a2 2 0 0 1 1-1.73A2 2 0 0 1 17 8V5h-1V3z',
+  image: 'M5 4a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V5a1 1 0 0 0-1-1H5zm1 2h12v8.5l-3-3-4 4-2-2-3 3V6zm2 3a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z',
+  bytes: 'M6 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6H6zm7 1.5L17.5 8H13V3.5z',
+}
+
+function ArtifactIcon({ kindPrefix }: { kindPrefix: string }) {
+  const path = ARTIFACT_ICON_PATHS[kindPrefix] ?? ARTIFACT_ICON_PATHS.bytes
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true" className="shrink-0 text-gray-400 dark:text-gray-500">
+      <path d={path} />
+    </svg>
+  )
+}
+
+// ArtifactStatusChip maps an artifact's new/updated/unchanged status onto the
+// same colour tokens ChangedFilesSection already uses for +/- churn - green
+// for new (matches +additions), amber for updated (matches StatusBadge's
+// edited), neutral gray for unchanged (no existing "unchanged" token).
+function ArtifactStatusChip({ status }: { status: string }) {
+  const cls =
+    status === 'new'
+      ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'
+      : status === 'updated'
+        ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+        : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
+  return <span className={`px-1 rounded text-[10px] font-medium uppercase tracking-wide shrink-0 ${cls}`}>{status}</span>
+}
+
+// ArtifactsSection - <artifacts>: one compact row per artifact (icon, name,
+// revision, status chip, summary), tapping a row opens that artifact in the
+// artifact panel (#1250) rather than showing the raw XML that used to fall
+// through to UnknownSection.
+function ArtifactsSection({
+  block,
+  chatId,
+  onOpenArtifact,
+}: {
+  block: Extract<EnvelopeBlock, { kind: 'artifacts' }>
+  chatId?: string
+  onOpenArtifact: (nodeId: string) => void
+}) {
+  // Resolving a row to a node is one API round trip shared by every row in
+  // this block - the artifact panel opens by node id, not artifact id (#1178
+  // removed the id-based picker), so a tap looks up the tapped artifact's
+  // owning node on demand rather than eagerly fetching for a block that's
+  // usually never opened.
+  const [pending, setPending] = useState<string | null>(null)
+  const openRow = (row: ArtifactRow) => {
+    if (!chatId || pending) return
+    setPending(row.id)
+    api.listChatArtifacts(chatId)
+      .then(l => {
+        const match = l.data?.find(a => a.name === row.id)
+        if (match?.lineage?.node_id) onOpenArtifact(match.lineage.node_id)
+      })
+      .catch(() => {})
+      .finally(() => setPending(null))
+  }
+  return (
+    <CollapsibleSection summary={artifactsSummaryLabel(block)}>
+      {block.items.length === 0 ? (
+        <RawFallback text={block.raw} />
+      ) : (
+        <ul className="space-y-1">
+          {block.items.map((row, i) => (
+            <li key={i}>
+              <button
+                type="button"
+                disabled={!chatId}
+                onClick={() => openRow(row)}
+                className="w-full flex items-start gap-2 px-1.5 py-1 rounded text-left text-[11px] hover:bg-gray-100 dark:hover:bg-gray-700/60 disabled:hover:bg-transparent disabled:cursor-default"
+              >
+                <ArtifactIcon kindPrefix={row.kindPrefix} />
+                <span className="flex-1 min-w-0 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                  <span className="font-mono text-gray-700 dark:text-gray-200 break-all">{row.name}</span>
+                  {row.revision != null && <span className="text-gray-400 dark:text-gray-500">rev {row.revision}</span>}
+                  {row.status && <ArtifactStatusChip status={row.status} />}
+                  <span className="text-gray-400 dark:text-gray-500 break-words basis-full sm:basis-auto">{row.summary}</span>
+                </span>
+              </button>
             </li>
           ))}
         </ul>

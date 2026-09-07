@@ -283,6 +283,29 @@ export const EmptyCommentHistory: Story = {
   },
 }
 
+// #1250: the <artifacts> block from the owner's phone screenshot - rendered
+// as a compact row list (icon/name/revision/status chip/summary), not the
+// raw XML code block it used to fall through to via UnknownSection.
+export const Artifacts: Story = {
+  args: {
+    content: `<permissions>push_commits_to_pr, join_pr_conversation</permissions>
+<deliverable>commits on this PR's head branch that make the failing checks pass</deliverable>
+<pull_request number="97"><title>Material 3 theming with dynamic color and dark mode</title><description>Adds dynamic color + dark mode support via Material You.</description></pull_request>
+<artifacts>
+  <artifact id="bytes:comments" revision="1" status="new">1 items</artifact>
+  <artifact id="bytes:commits" revision="1" status="new">1 items</artifact>
+  <artifact id="bytes:event" revision="1" status="new">pull_request.labeled</artifact>
+  <artifact id="bytes:files" revision="1" status="new">5 items</artifact>
+  <artifact id="bytes:issue" revision="1" status="new">1 object</artifact>
+  <artifact id="bytes:linked-issue-1248" revision="1" status="new">1 object</artifact>
+</artifacts>`,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByText('6 artifacts'))
+  },
+}
+
 // Wide, unbroken content (a long nested file path, a JSON payload with a long
 // single-token value) must scroll inside its own container - never make the
 // page itself scroll sideways. Verified at a narrow (~380px) viewport too.

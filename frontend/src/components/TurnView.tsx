@@ -72,6 +72,7 @@ export const TurnView = memo(function TurnView({
           content={turn.input.content}
           priorContents={priorContents}
           attachments={imageAttachments?.length ? <AttachmentPreviews previews={imageAttachments} /> : undefined}
+          chatId={chatId}
         />
       )}
       {/* Assistant response: DAG bubble → answer bubble, as siblings */}

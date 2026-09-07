@@ -37,6 +37,18 @@ interface CheckRun {
   conclusion?: string
 }
 
+export interface ArtifactRow {
+  id: string
+  // The id's `kind:` prefix (bytes/text/structured/image/...) - drives the
+  // row icon. No prefix (malformed id) falls back to 'bytes'.
+  kindPrefix: string
+  // id with the `kindPrefix:` stripped - the row's display name.
+  name: string
+  revision?: number
+  status?: string
+  summary: string
+}
+
 export type EnvelopeBlock =
   | { kind: 'permissions'; text: string }
   | { kind: 'deliverable'; text: string }
@@ -46,6 +58,7 @@ export type EnvelopeBlock =
   | { kind: 'checks'; count?: number; summary?: string; checks: CheckRun[] | null; raw: string }
   | { kind: 'event'; name?: string; pretty: string | null; raw: string }
   | { kind: 'context'; dir?: string; files: ContextFile[] }
+  | { kind: 'artifacts'; items: ArtifactRow[]; raw: string }
   | { kind: 'unknown'; tag: string; attrs: Record<string, string>; raw: string }
 
 // The tags that mark this string as an envelope rather than a plain chat
@@ -228,6 +241,13 @@ function toEnvelopeBlock(b: RawBlock): EnvelopeBlock {
         .map(c => ({ name: c.attrs.name ?? '(unnamed)', endpoint: c.content.trim() }))
       return { kind: 'context', dir: b.attrs.dir, files }
     }
+    case 'artifacts': {
+      const raw = b.content.trim()
+      const items = parseTopLevel(b.content)
+        .filter(c => c.tag === 'artifact')
+        .map(c => toArtifactRow(c))
+      return { kind: 'artifacts', items, raw }
+    }
     default:
       return { kind: 'unknown', tag: b.tag, attrs: b.attrs, raw: b.content.trim() }
   }
@@ -264,6 +284,24 @@ function parseChecks(raw: string): CheckRun[] | null {
     checks.push(c)
   }
   return checks
+}
+
+// toArtifactRow splits an id's `kind:instance` shape (e.g. "bytes:comments")
+// into the row's icon-driving prefix and display name; an id with no colon
+// (malformed) falls back to 'bytes' with the whole id as the name.
+function toArtifactRow(b: RawBlock): ArtifactRow {
+  const id = b.attrs.id ?? ''
+  const i = id.indexOf(':')
+  const kindPrefix = i >= 0 ? id.slice(0, i) : 'bytes'
+  const name = i >= 0 ? id.slice(i + 1) : id
+  return {
+    id,
+    kindPrefix,
+    name,
+    revision: numAttr(b.attrs.revision),
+    status: b.attrs.status,
+    summary: b.content.trim(),
+  }
 }
 
 function numAttr(v: string | undefined): number | undefined {
@@ -369,6 +407,12 @@ export function changedFilesSummaryLabel(b: Extract<EnvelopeBlock, { kind: 'chan
   const add = b.additions ?? 0
   const del = b.deletions ?? 0
   return `${n} file${n === 1 ? '' : 's'}, +${add}/-${del}`
+}
+
+// artifactsSummaryLabel is the collapsed header for an <artifacts> block.
+export function artifactsSummaryLabel(b: Extract<EnvelopeBlock, { kind: 'artifacts' }>): string {
+  const n = b.items.length
+  return `${n} artifact${n === 1 ? '' : 's'}`
 }
 
 // checksSummaryLabel is the collapsed header for a <checks> block: the
