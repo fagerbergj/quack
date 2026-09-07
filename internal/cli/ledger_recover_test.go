@@ -3,13 +3,10 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledger/fold"
 	"github.com/fagerbergj/quack/internal/recordstore"
@@ -292,60 +289,14 @@ func TestRecover_TwoDeliveriesOnOneSubjectBothSettled(t *testing.T) {
 	}
 }
 
-// recoverPayload mirrors recordstore's artifactRevisionPayload JSON shape
-// (unexported there) so a test can build a WAL entry standing in for one a
-// real crashed saveAt would have left behind.
-type recoverPayload struct {
-	ID             string          `json:"id"`
-	Revision       int             `json:"revision"`
-	ParentRevision int             `json:"parent_revision"`
-	Kind           string          `json:"kind"`
-	Class          string          `json:"class"`
-	Lineage        json.RawMessage `json:"lineage"`
-	BytesRef       string          `json:"bytes_ref"`
-	Data           []byte          `json:"data"`
-	Mime           string          `json:"mime"`
-}
-
-// TestRecover_CrashBetweenIntentAndRow_NoData covers a WAL entry written
-// before #1144 P4's Data/Mime addition: recovery has nothing to rewrite the
-// row from, says so precisely, and the id stays wedged.
-func TestRecover_CrashBetweenIntentAndRow_NoData(t *testing.T) {
-	ctx := context.Background()
-	st, ls, artifacts := newTestStack(t)
-	const chatID = "chat-crash-nodata"
-	c := recordstore.New(artifacts, "quack", "local", chatID).WithLedger(ls)
-	id, rev, err := c.SaveStructured(ctx, testKind, map[string]string{"v": "1"}, "doc-1", recordstore.Lineage{Author: "tester"})
-	if err != nil || rev != 1 {
-		t.Fatalf("SaveStructured: rev %d, %v", rev, err)
-	}
-	payload, _ := json.Marshal(recoverPayload{ID: id, Revision: 2, ParentRevision: 1, BytesRef: id})
-	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindArtifactRevision, Key: id, Payload: payload}); err != nil {
-		t.Fatal(err)
-	}
-
-	proj := Projections{ArtifactRowExists: ArtifactRowChecker(st, artifacts), WriteArtifactRow: ArtifactRowWriter(st, artifacts)}
-	sum, err := Recover(ctx, ls, nil, proj, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(sum.Reports) != 1 || len(sum.Reports[0].Recovered) != 0 || len(sum.Reports[0].Errors) != 1 {
-		t.Fatalf("summary = %+v, want one unrecoverable error, no recovery", sum)
-	}
-	if !strings.Contains(sum.Reports[0].Errors[0], "no recorded content") {
-		t.Fatalf("error = %q, want it to say precisely what's missing", sum.Reports[0].Errors[0])
-	}
-	if _, _, err := c.SaveStructured(ctx, testKind, map[string]string{"v": "2"}, "doc-1", recordstore.Lineage{Author: "tester"}); !errors.Is(err, ledger.ErrStaleParent) {
-		t.Fatalf("save after the crash = %v, want ledger.ErrStaleParent (still wedged, nothing to recover from)", err)
-	}
-}
-
-// TestRecover_CrashBetweenIntentAndRow_Recovers is the kill -9 case with a
-// REAL #1144 P4 entry (Data/Mime recorded, as saveAt always writes now): the
-// WAL holds an artifact.revision intent whose row write never happened.
-// Recover must write the missing row from the intent's own content, dry-run
-// must not, and a save after recovery must succeed rather than stay wedged.
-func TestRecover_CrashBetweenIntentAndRow_Recovers(t *testing.T) {
+// TestRecover_CrashBetweenIntentAndRow is the kill -9 case: the WAL holds an
+// artifact.revision intent whose row write never happened. #1144 P4 deleted
+// the artifact.revision.aborted self-heal in favor of the cheaper
+// recordstore.saveAtOrAdopt path (no bytes duplicated into the ledger) - a
+// PLAIN SAVE on the same id adopts the orphaned intent and completes it at
+// the same revision, so Recover only needs to REPORT the orphan (matching
+// P1: an unresolved count, never a write) until the next save clears it.
+func TestRecover_CrashBetweenIntentAndRow(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
 	const chatID = "chat-crash"
@@ -354,14 +305,8 @@ func TestRecover_CrashBetweenIntentAndRow_Recovers(t *testing.T) {
 	if err != nil || rev != 1 {
 		t.Fatalf("SaveStructured: rev %d, %v", rev, err)
 	}
-	// Crash: the intent for revision 2 (WITH its content, like a real saveAt
-	// append) lands, the process dies before the row write.
-	lineage, _ := json.Marshal(recordstore.Lineage{Author: "tester", ParentRevision: 1})
-	data := []byte(`{"v":"2"}`)
-	payload, _ := json.Marshal(recoverPayload{
-		ID: id, Revision: 2, ParentRevision: 1, Kind: testKind, Class: "structured",
-		Lineage: lineage, BytesRef: id, Data: data, Mime: "application/json",
-	})
+	// Crash: the intent for revision 2 lands, the process dies before the row.
+	payload, _ := json.Marshal(map[string]any{"id": id, "revision": 2, "parent_revision": 1, "bytes_ref": id})
 	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindArtifactRevision, Key: id, Payload: payload}); err != nil {
 		t.Fatal(err)
 	}
@@ -369,39 +314,33 @@ func TestRecover_CrashBetweenIntentAndRow_Recovers(t *testing.T) {
 		t.Fatalf("fold before recovery = %d, want the phantom 2", last)
 	}
 
-	proj := Projections{ArtifactRowExists: ArtifactRowChecker(st, artifacts), WriteArtifactRow: ArtifactRowWriter(st, artifacts)}
+	proj := Projections{ArtifactRowExists: ArtifactRowChecker(st, artifacts)}
 	dry, err := Recover(ctx, ls, nil, proj, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dry.Unresolved != 1 || len(dry.Reports) != 1 || len(dry.Reports[0].OrphanedRevisions) != 1 || len(dry.Reports[0].Recovered) != 0 {
-		t.Fatalf("dry-run summary = %+v, want one row-less revision reported, nothing written", dry)
-	}
-	if exists, _ := artifacts.RevisionExists(ctx, artifactref.AppName, st.SessionUserForChat(ctx, chatID), chatID, id, 2); exists {
-		t.Fatal("dry-run wrote a row")
+	if dry.Unresolved != 1 || len(dry.Reports) != 1 || len(dry.Reports[0].OrphanedRevisions) != 1 {
+		t.Fatalf("dry-run summary = %+v, want one row-less revision reported", dry)
 	}
 
 	sum, err := Recover(ctx, ls, nil, proj, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sum.Unresolved != 0 || len(sum.Reports) != 1 || len(sum.Reports[0].Recovered) != 1 || sum.Reports[0].Recovered[0].Revision != 2 {
-		t.Fatalf("summary = %+v, want revision 2 recovered", sum)
+	if sum.Unresolved != 1 || len(sum.Reports) != 1 || sum.Reports[0].OrphanedRevisions[0].Revision != 2 {
+		t.Fatalf("summary = %+v, want the orphan still reported (recovery never writes)", sum)
 	}
-	if exists, err := artifacts.RevisionExists(ctx, artifactref.AppName, st.SessionUserForChat(ctx, chatID), chatID, id, 2); err != nil || !exists {
-		t.Fatalf("row for revision 2 = exists=%v err=%v, want it written", exists, err)
+
+	// A plain save on the same id self-heals it: saveAtOrAdopt sees revision
+	// 2 has no row and adopts the orphan instead of failing.
+	_, adoptedRev, err := c.SaveStructured(ctx, testKind, map[string]string{"v": "2"}, "doc-1", recordstore.Lineage{Author: "tester"})
+	if err != nil || adoptedRev != 2 {
+		t.Fatalf("save after the crash: rev %d, %v, want it to adopt revision 2", adoptedRev, err)
 	}
-	raw, _, ok, err := c.Latest(ctx, id)
-	if err != nil || !ok || string(raw) != `{"v":"2"}` {
-		t.Fatalf("Latest after recovery = %q ok=%v err=%v, want the recovered content", raw, ok, err)
-	}
-	// Idempotent: a second pass finds nothing left to recover.
+
+	// Recover now sees no orphans left.
 	again, err := Recover(ctx, ls, nil, proj, false)
 	if err != nil || len(again.Reports) != 0 {
-		t.Fatalf("second pass = %+v, err=%v, want nothing (already recovered)", again, err)
-	}
-	// Unwedged: the next save builds on the recovered revision 2.
-	if _, rev, err := c.SaveStructured(ctx, testKind, map[string]string{"v": "3"}, "doc-1", recordstore.Lineage{Author: "tester"}); err != nil || rev != 3 {
-		t.Fatalf("save after recovery: rev %d, %v", rev, err)
+		t.Fatalf("second pass = %+v, err=%v, want nothing (adopted)", again, err)
 	}
 }

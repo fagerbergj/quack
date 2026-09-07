@@ -317,3 +317,36 @@ func TestPGStoreNewMigrate_RefusesDuplicateParentRevisions(t *testing.T) {
 		t.Fatal("NewPGStore succeeded despite pre-existing duplicate parent revisions")
 	}
 }
+
+// TestPGStoreNewMigrate_BackfillsNullParentRevisionBeforeDedup covers the
+// real production shape: AutoMigrate's ADD COLUMN leaves parent_revision
+// NULL on every row that predates it - Postgres never retrofits existing
+// rows. Two DIFFERENT, legitimate revisions of one id, both left NULL,
+// would otherwise look like a duplicate (GROUP BY folds NULLs together) and
+// wedge the deploy; NewPGStore must backfill from the payload before
+// scanning, so boot succeeds and the real values land in the column.
+func TestPGStoreNewMigrate_BackfillsNullParentRevisionBeforeDedup(t *testing.T) {
+	t.Parallel()
+	db := newTestPGDB(t)
+	if err := db.Exec(`CREATE TABLE ledger_entries (
+		id BIGSERIAL PRIMARY KEY, chat_id TEXT, seq BIGINT, turn_id TEXT,
+		node_id TEXT, agent TEXT, round TEXT, kind TEXT, key TEXT, at TIMESTAMPTZ,
+		payload JSONB, parent_revision BIGINT, idempotency_key TEXT)`).Error; err != nil {
+		t.Fatalf("create bare table: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO ledger_entries (chat_id, seq, kind, key, at, payload) VALUES
+		('chat1', 1, 'artifact.revision', 'id1', now(), '{"revision":1,"parent_revision":0}'),
+		('chat1', 2, 'artifact.revision', 'id1', now(), '{"revision":2,"parent_revision":1}')`).Error; err != nil {
+		t.Fatalf("seed pre-existing NULL-column rows: %v", err)
+	}
+	if _, err := NewPGStore(db); err != nil {
+		t.Fatalf("NewPGStore refused to start on legitimate pre-existing rows with a NULL parent_revision column: %v", err)
+	}
+	var got []int64
+	if err := db.Raw(`SELECT parent_revision FROM ledger_entries WHERE chat_id = 'chat1' ORDER BY seq`).Scan(&got).Error; err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if len(got) != 2 || got[0] != 0 || got[1] != 1 {
+		t.Fatalf("parent_revision after backfill = %v, want [0 1]", got)
+	}
+}

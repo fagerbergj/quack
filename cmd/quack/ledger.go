@@ -49,10 +49,7 @@ func newLedgerRecoverCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			proj := cli.Projections{
-				ArtifactRowExists: cli.ArtifactRowChecker(st, artifacts), WriteArtifactRow: cli.ArtifactRowWriter(st, artifacts),
-				Delivery: buildRecovererOrWarn(cmd, dryRun),
-			}
+			proj := cli.Projections{ArtifactRowExists: cli.ArtifactRowChecker(st, artifacts), Delivery: buildRecovererOrWarn(cmd, dryRun)}
 			proj.DeliveryRecorded, proj.RecordDelivery = vetting.DeliveryProjections(artifacts, ls, st.SessionUserForChat)
 			sum, err := cli.Recover(cmd.Context(), ls, args, proj, dryRun)
 			if err != nil {

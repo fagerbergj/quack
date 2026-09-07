@@ -90,6 +90,19 @@ func ensureParentRevisionIndex(db *gorm.DB) error {
 	if exists > 0 {
 		return nil // already created (and therefore already free of duplicates) - skip the full-table scan below on every boot
 	}
+	// AutoMigrate's ADD COLUMN leaves parent_revision NULL on every row that
+	// predates this column - Postgres never backfills a value for existing
+	// rows. Left as NULL, the dedup GROUP BY below folds ALL of them together
+	// (SQL groups NULLs as equal), so every id with more than one pre-existing
+	// revision would look like a duplicate and wedge the deploy. Backfill from
+	// the payload (which every artifact.revision entry already carries this
+	// field in) before scanning.
+	if err := db.Exec(`
+		UPDATE ledger_entries SET parent_revision = (payload->>'parent_revision')::bigint
+		WHERE kind = ? AND parent_revision IS NULL
+	`, KindArtifactRevision).Error; err != nil {
+		return fmt.Errorf("ledger: backfill parent_revision from payload: %w", err)
+	}
 	var dupes []struct {
 		ChatID         string
 		Key            string
@@ -98,7 +111,8 @@ func ensureParentRevisionIndex(db *gorm.DB) error {
 	}
 	if err := db.Raw(`
 		SELECT chat_id, key, parent_revision, count(*) as cnt FROM ledger_entries
-		WHERE kind = ? GROUP BY chat_id, key, parent_revision HAVING count(*) > 1 LIMIT 10
+		WHERE kind = ? AND parent_revision IS NOT NULL
+		GROUP BY chat_id, key, parent_revision HAVING count(*) > 1 LIMIT 10
 	`, KindArtifactRevision).Scan(&dupes).Error; err != nil {
 		return fmt.Errorf("ledger: check for duplicate parent revisions: %w", err)
 	}

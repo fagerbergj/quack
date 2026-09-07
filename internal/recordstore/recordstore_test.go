@@ -729,16 +729,15 @@ func (s *failOnceSaveService) Save(ctx context.Context, req *artifact.SaveReques
 	return s.Service.Save(ctx, req)
 }
 
-// TestSaveRowFailureAfterAppendWedgesID documents #1144 P4's accepted
-// tradeoff for the #1100 wedge case: the store-level (chat_id, key,
-// parent_revision) unique index replaces the best-effort (and losable)
-// artifact.revision.aborted compensating marker, so a saveRow failure right
-// after a successful WAL append now leaves that parent claimed until
-// something rewrites the row - every same-process retry recomputes the same
-// parent (the store never advanced) and gets ledger.ErrStaleParent again.
-// Recordstore itself no longer self-heals this; cli.RunLedgerRecover does,
-// from the intent's own recorded data (see internal/cli's recovery tests).
-func TestSaveRowFailureAfterAppendWedgesID(t *testing.T) {
+// TestSaveRowFailureAfterAppendSelfHeals is #1144 P4's cheap fix for the
+// #1100 wedge case: a saveRow failure right after a successful WAL append
+// leaves that parent claimed with no row - the store-level unique index
+// replaces the old best-effort (and losable) artifact.revision.aborted
+// marker, and instead of self-healing via a compensating entry, a PLAIN
+// SAVE on the same id later adopts the orphaned claim (saveAtOrAdopt) and
+// completes it at the exact revision the orphan reserved. No extra bytes are
+// ever duplicated into the ledger for this.
+func TestSaveRowFailureAfterAppendSelfHeals(t *testing.T) {
 	svc := &failOnceSaveService{Service: artifact.InMemoryService(), failCall: 1}
 	fl := newFakeLedger()
 	c := New(svc, "quack", "user1", "chat1").WithLedger(fl)
@@ -747,8 +746,16 @@ func TestSaveRowFailureAfterAppendWedgesID(t *testing.T) {
 	if _, _, err := c.SaveBlob(ctx, "test.blob", []byte("v1"), "text/plain", "doc:wedge", Lineage{}); err == nil {
 		t.Fatal("expected the first save (forced saveRow failure) to error")
 	}
-	if _, _, err := c.SaveBlob(ctx, "test.blob", []byte("v1-retry"), "text/plain", "doc:wedge", Lineage{}); !errors.Is(err, ledger.ErrStaleParent) {
-		t.Fatalf("retry after the saveRow failure = %v, want ledger.ErrStaleParent (wedged until ledger recovery runs)", err)
+	id, rev, err := c.SaveBlob(ctx, "test.blob", []byte("v1-retry"), "text/plain", "doc:wedge", Lineage{})
+	if err != nil {
+		t.Fatalf("save after the wedge should self-heal by adopting the orphan, got: %v", err)
+	}
+	if rev != 1 {
+		t.Fatalf("adopted revision = %d, want 1 (the orphan's own reserved revision)", rev)
+	}
+	raw, storeRev, ok, err := c.Latest(ctx, id)
+	if err != nil || !ok || storeRev != 1 || string(raw) != "v1-retry" {
+		t.Fatalf("Latest after self-heal = %q rev=%d ok=%v err=%v, want the adopting save's content at revision 1", raw, storeRev, ok, err)
 	}
 }
 

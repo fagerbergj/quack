@@ -207,11 +207,8 @@ func (c *Client) WithLedger(store ledger.LedgerStore) *Client {
 }
 
 // artifactRevisionPayload is the artifact.revision WAL entry's payload
-// (#1090 §4.9). BytesRef is the store row's key (the id) for lookups; Data/Mime
-// are the actual content (#1144 P4 follow-up) so a crashed/failed row write
-// can be recovered from the intent alone instead of wedging the id forever -
-// this does mean the ledger now carries a second copy of every artifact's
-// bytes, not just a reference.
+// (#1090 §4.9): bytes_ref is the store row's key (the id), never the bytes,
+// so a large blob is one small entry.
 type artifactRevisionPayload struct {
 	ID             string  `json:"id"`
 	Revision       int     `json:"revision"`
@@ -220,8 +217,6 @@ type artifactRevisionPayload struct {
 	Class          Class   `json:"class"`
 	Lineage        Lineage `json:"lineage"`
 	BytesRef       string  `json:"bytes_ref"`
-	Data           []byte  `json:"data"`
-	Mime           string  `json:"mime"`
 }
 
 // maxSaveRetries bounds save/Edit's retry on ledger.ErrStaleParent - a real
@@ -239,6 +234,16 @@ func idempotencyKey(id string, data []byte) string {
 	h.Write(data)
 	return hex.EncodeToString(h.Sum(nil))
 }
+
+// adoptAfterAttempts bounds how many plain retries saveAtOrAdopt insists on
+// before it will treat a still-conflicting parent as an orphan (saveAt's doc
+// below). A live concurrent writer for the SAME id needs only one AppendIntent
+// + one saveRow to finish; giving up several real round trips of headroom
+// first means "still conflicting" is overwhelmingly a genuine crash, not
+// a writer that simply hasn't reached saveRow yet - the #1100 stress test
+// (20 goroutines racing one brand-new id) is exactly the case an immediate
+// check-and-adopt gets wrong.
+const adoptAfterAttempts = 3
 
 // save picks id's current latest revision as the parent and retries on
 // ledger.ErrStaleParent instead of holding idLocks across read+append+write
@@ -258,7 +263,7 @@ func (c *Client) save(ctx context.Context, id, kind string, class Class, mime st
 				parentRev = int(versions[0])
 			}
 		}
-		rev, err := c.saveAt(ctx, id, kind, class, mime, data, lineage, parentRev)
+		rev, err := c.saveAtOrAdopt(ctx, id, kind, class, mime, data, lineage, parentRev, attempt)
 		if errors.Is(err, ledger.ErrStaleParent) && attempt < maxSaveRetries {
 			continue
 		}
@@ -266,22 +271,42 @@ func (c *Client) save(ctx context.Context, id, kind string, class Class, mime st
 	}
 }
 
+// saveAtOrAdopt tries saveAt at parentRev; on ledger.ErrStaleParent, once
+// attempt reaches adoptAfterAttempts it checks whether the intent that
+// already claimed parentRev is an orphan - a crash or transient backend
+// error left its row unwritten (#1144 P4 follow-up: this replaces
+// duplicating bytes into the ledger for boot recovery to rewrite, since
+// checking "does the row exist" costs nothing extra a normal save wasn't
+// already going to do). If parentRev+1 has no row yet, this save ADOPTS that
+// slot: writes the row with its OWN data at that exact revision, completing
+// the orphaned intent instead of failing forever. If the slot fills in
+// between the check and the write (a genuine concurrent writer that was just
+// slow), the mismatch falls through to a normal ErrStaleParent retry.
+func (c *Client) saveAtOrAdopt(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage, parentRev, attempt int) (int, error) {
+	rev, err := c.saveAt(ctx, id, kind, class, mime, data, lineage, parentRev)
+	if !errors.Is(err, ledger.ErrStaleParent) || c.ledgerStore == nil || attempt < adoptAfterAttempts {
+		return rev, err
+	}
+	if _, ok, lerr := c.LoadVersion(ctx, id, parentRev+1); lerr != nil || ok {
+		return rev, err // row already exists (or the check itself failed) - not an orphan, retry normally
+	}
+	lineage.ParentRevision = parentRev
+	adopted, aerr := c.saveRow(ctx, id, kind, class, mime, data, lineage)
+	if aerr != nil || adopted != parentRev+1 {
+		return rev, err // lost the race or the write failed - fall back to a normal retry
+	}
+	return adopted, nil
+}
+
 // saveAt writes data as parentRev+1, first claiming that parent in the
-// ledger (#1144 P4). ponytail: a saveRow failure AFTER a successful claim is
-// no longer self-healed in-process (the old aborted marker is deleted) - the
-// claim stays taken, so every retry hits ledger.ErrStaleParent until the
-// intent's own recorded data/mime lets boot recovery (cli.RunLedgerRecover)
-// write the missing row from the intent itself.
+// ledger (#1144 P4).
 func (c *Client) saveAt(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage, parentRev int) (int, error) {
 	lineage.ParentRevision = parentRev
 	if c.ledgerStore == nil {
 		return c.saveRow(ctx, id, kind, class, mime, data, lineage)
 	}
 	nextRev := parentRev + 1
-	payload, err := json.Marshal(artifactRevisionPayload{
-		ID: id, Revision: nextRev, ParentRevision: parentRev, Kind: kind, Class: class, Lineage: lineage,
-		BytesRef: id, Data: data, Mime: mime,
-	})
+	payload, err := json.Marshal(artifactRevisionPayload{ID: id, Revision: nextRev, ParentRevision: parentRev, Kind: kind, Class: class, Lineage: lineage, BytesRef: id})
 	if err != nil {
 		return 0, fmt.Errorf("recordstore: marshal artifact.revision payload for %s: %w", id, err)
 	}
@@ -592,7 +617,7 @@ func applyEdits(content []byte, ops []EditOp) ([]byte, error) {
 // new latest and reapply ops against it, same as a stale baseRevision would.
 func (c *Client) Edit(ctx context.Context, id string, baseRevision int, ops []EditOp, lineage Lineage) (int, []byte, error) {
 	for attempt := 0; ; attempt++ {
-		rev, merged, err := c.tryEdit(ctx, id, baseRevision, ops, lineage)
+		rev, merged, err := c.tryEdit(ctx, id, baseRevision, ops, lineage, attempt)
 		if errors.Is(err, ledger.ErrStaleParent) && attempt < maxSaveRetries {
 			continue
 		}
@@ -600,7 +625,7 @@ func (c *Client) Edit(ctx context.Context, id string, baseRevision int, ops []Ed
 	}
 }
 
-func (c *Client) tryEdit(ctx context.Context, id string, baseRevision int, ops []EditOp, lineage Lineage) (int, []byte, error) {
+func (c *Client) tryEdit(ctx context.Context, id string, baseRevision int, ops []EditOp, lineage Lineage, attempt int) (int, []byte, error) {
 	raw, mime, _, latestRev, ok, err := c.LatestWithMeta(ctx, id)
 	if err != nil {
 		return 0, nil, fmt.Errorf("recordstore: edit %s: %w", id, err)
@@ -634,7 +659,7 @@ func (c *Client) tryEdit(ctx context.Context, id string, baseRevision int, ops [
 		}
 	}
 	lineage.BaseRevision = baseRevision
-	rev, err := c.saveAt(ctx, id, kind, spec.Class, mime, merged, lineage, latestRev)
+	rev, err := c.saveAtOrAdopt(ctx, id, kind, spec.Class, mime, merged, lineage, latestRev, attempt)
 	if err != nil {
 		return 0, nil, err
 	}
