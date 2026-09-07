@@ -318,126 +318,29 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 			}
 		}
 
-		// Qwen3.x streams tool calls inside reasoning_content as <tool_call> XML
-		// instead of delta.tool_calls (llama.cpp#22684). When no proper tool calls
-		// arrived, recover them from the thinking so the agent acts on them instead
-		// of stalling on an empty turn (the empty-node bug).
-		recoveredFromThought := false
-		if len(toolCallsMap) == 0 {
-			var rb strings.Builder
-			for _, p := range aggregatedContent.Parts {
-				if p.Thought && p.Text != "" {
-					rb.WriteString(p.Text)
-				}
-			}
-			if calls, cleaned := reasoningToolCalls(rb.String()); len(calls) > 0 {
-				// A leaked block can span several streamed thought parts, so per-part
-				// regex stripping leaves residue - re-emit the cleaned reasoning as
-				// one thought part in place of the originals.
-				rebuilt := make([]*genai.Part, 0, len(aggregatedContent.Parts)+len(calls))
-				thoughtReplaced := false
-				for _, p := range aggregatedContent.Parts {
-					if p.Thought && p.Text != "" {
-						if !thoughtReplaced {
-							thoughtReplaced = true
-							if strings.TrimSpace(cleaned) != "" {
-								rebuilt = append(rebuilt, &genai.Part{Text: cleaned, Thought: true})
-							}
-						}
-						continue
-					}
-					rebuilt = append(rebuilt, p)
-				}
-				aggregatedContent.Parts = rebuilt
-				for _, c := range calls {
-					aggregatedContent.Parts = append(aggregatedContent.Parts, &genai.Part{FunctionCall: c})
-				}
-				recoveredFromThought = true
-				slog.WarnContext(ctx, "recovered tool calls from reasoning_content (Qwen/llama.cpp#22684)",
-					"component", "inference", "model", o.ModelName, "count", len(calls))
-			}
-		}
-
-		// #427: the same leak can land in the plain answer text instead of
-		// reasoning_content (ask_advisor leaked as literal "<function=…>" in
-		// content) - scan that too when nothing proper or recovered above.
-		if len(toolCallsMap) == 0 && !recoveredFromThought {
-			var cb strings.Builder
-			for _, p := range aggregatedContent.Parts {
-				if !p.Thought && p.Text != "" {
-					cb.WriteString(p.Text)
-				}
-			}
-			if calls, cleaned := reasoningToolCalls(cb.String()); len(calls) > 0 {
-				rebuilt := make([]*genai.Part, 0, len(aggregatedContent.Parts)+len(calls))
-				contentReplaced := false
-				for _, p := range aggregatedContent.Parts {
-					if !p.Thought && p.Text != "" {
-						if !contentReplaced {
-							contentReplaced = true
-							if strings.TrimSpace(cleaned) != "" {
-								rebuilt = append(rebuilt, &genai.Part{Text: cleaned})
-							}
-						}
-						continue
-					}
-					rebuilt = append(rebuilt, p)
-				}
-				aggregatedContent.Parts = rebuilt
-				for _, c := range calls {
-					aggregatedContent.Parts = append(aggregatedContent.Parts, &genai.Part{FunctionCall: c})
-				}
-				slog.WarnContext(ctx, "recovered tool calls leaked into answer content (bare <function=> form, #427)",
-					"component", "inference", "model", o.ModelName, "count", len(calls))
-			}
+		var hasAnswer, hadThinking bool
+		var promotedChars int
+		aggregatedContent.Parts, hasAnswer, hadThinking, promotedChars = applyFallbackLadder(
+			ctx, o.ModelName, aggregatedContent.Parts, len(toolCallsMap) > 0)
+		if promotedChars > 0 {
+			slog.WarnContext(ctx, "promoted reasoning to answer (empty content, unclosed </think>)",
+				"component", "inference", "model", o.ModelName, "chars", promotedChars)
 		}
 
 		if modelVersion == "" {
 			modelVersion = string(openaiReq.Model)
 		}
-		// Reasoning-model failure mode: a turn with neither answer text nor a tool
-		// call (the model often spends its whole output budget thinking and hits the
-		// length limit). Otherwise invisible - it surfaces downstream only as a
-		// mysteriously empty node - so log finish_reason + whether it was thinking.
-		hasAnswer, hadThinking := false, false
-		for _, p := range aggregatedContent.Parts {
-			switch {
-			case p.FunctionCall != nil, !p.Thought && p.Text != "":
-				hasAnswer = true
-			case p.Thought && p.Text != "":
-				hadThinking = true
-			}
-		}
 		if !hasAnswer {
-			// Content-side of #22684: the model wrote its answer inside an unclosed
-			// <think>, so it landed in reasoning_content and content came back empty.
-			// Promote the thinking to the answer rather than emit an empty turn - a
-			// reasoning-only turn is terminal anyway (nothing for the agent to act on),
-			// and the judge/revise gates its quality. Only tool-less answer turns reach
-			// here; tool calls were already recovered above.
-			if hadThinking {
-				var rb strings.Builder
-				for _, p := range aggregatedContent.Parts {
-					if p.Thought && p.Text != "" {
-						rb.WriteString(p.Text)
-					}
-				}
-				if txt := strings.TrimSpace(rb.String()); txt != "" {
-					aggregatedContent.Parts = append(aggregatedContent.Parts, &genai.Part{Text: txt})
-					hasAnswer = true
-					slog.WarnContext(ctx, "promoted reasoning to answer (empty content, unclosed </think>)",
-						"component", "inference", "model", o.ModelName, "chars", len(txt))
-				}
+			// Reasoning-model failure mode: no answer text and no tool call, often
+			// the model spending its whole budget thinking. The non-streaming path
+			// does not log this (pre-existing asymmetry, see golden_ladder_test.go).
+			var compl int32
+			if usageMetadata != nil {
+				compl = usageMetadata.CandidatesTokenCount
 			}
-			if !hasAnswer {
-				var compl int32
-				if usageMetadata != nil {
-					compl = usageMetadata.CandidatesTokenCount
-				}
-				slog.WarnContext(ctx, "model returned no answer content (empty turn)",
-					"component", "inference", "model", o.ModelName, "finish_reason", string(finishReason),
-					"had_thinking", hadThinking, "completion_tokens", compl)
-			}
+			slog.WarnContext(ctx, "model returned no answer content (empty turn)",
+				"component", "inference", "model", o.ModelName, "finish_reason", string(finishReason),
+				"had_thinking", hadThinking, "completion_tokens", compl)
 		}
 		if usageMetadata != nil {
 			var reasoningText strings.Builder
@@ -498,6 +401,112 @@ type toolCallBuilder struct {
 	id   string
 	name string
 	args string
+}
+
+// applyFallbackLadder is the recovery ladder shared by both paths: recover
+// tool calls leaked as XML into thinking (llama.cpp#22684) or the answer
+// (#427), then report whether reasoning should be promoted to the answer.
+// Callers log the promotion/empty-turn cases themselves - their log text
+// and whether they log an empty turn at all differ (see golden_ladder_test.go).
+func applyFallbackLadder(ctx context.Context, modelName string, parts []*genai.Part, haveToolCalls bool) (result []*genai.Part, hasAnswer, hadThinking bool, promotedChars int) {
+	result = parts
+
+	if !haveToolCalls {
+		var rb strings.Builder
+		for _, p := range result {
+			if p.Thought && p.Text != "" {
+				rb.WriteString(p.Text)
+			}
+		}
+		recoveredFromThought := false
+		if calls, cleaned := reasoningToolCalls(rb.String()); len(calls) > 0 {
+			// A leaked block can span several parts, so per-part regex stripping
+			// leaves residue - re-emit the cleaned reasoning as one thought part
+			// in place of the originals.
+			rebuilt := make([]*genai.Part, 0, len(result)+len(calls))
+			thoughtReplaced := false
+			for _, p := range result {
+				if p.Thought && p.Text != "" {
+					if !thoughtReplaced {
+						thoughtReplaced = true
+						if strings.TrimSpace(cleaned) != "" {
+							rebuilt = append(rebuilt, &genai.Part{Text: cleaned, Thought: true})
+						}
+					}
+					continue
+				}
+				rebuilt = append(rebuilt, p)
+			}
+			for _, c := range calls {
+				rebuilt = append(rebuilt, &genai.Part{FunctionCall: c})
+			}
+			result = rebuilt
+			recoveredFromThought = true
+			slog.WarnContext(ctx, "recovered tool calls from reasoning_content (Qwen/llama.cpp#22684)",
+				"component", "inference", "model", modelName, "count", len(calls))
+		}
+
+		// #427: the same leak can land in the plain answer text instead of
+		// reasoning_content - scan that too when nothing proper or recovered above.
+		if !recoveredFromThought {
+			var cb strings.Builder
+			for _, p := range result {
+				if !p.Thought && p.Text != "" {
+					cb.WriteString(p.Text)
+				}
+			}
+			if calls, cleaned := reasoningToolCalls(cb.String()); len(calls) > 0 {
+				rebuilt := make([]*genai.Part, 0, len(result)+len(calls))
+				contentReplaced := false
+				for _, p := range result {
+					if !p.Thought && p.Text != "" {
+						if !contentReplaced {
+							contentReplaced = true
+							if strings.TrimSpace(cleaned) != "" {
+								rebuilt = append(rebuilt, &genai.Part{Text: cleaned})
+							}
+						}
+						continue
+					}
+					rebuilt = append(rebuilt, p)
+				}
+				for _, c := range calls {
+					rebuilt = append(rebuilt, &genai.Part{FunctionCall: c})
+				}
+				result = rebuilt
+				slog.WarnContext(ctx, "recovered tool calls leaked into answer content (bare <function=> form, #427)",
+					"component", "inference", "model", modelName, "count", len(calls))
+			}
+		}
+	}
+
+	for _, p := range result {
+		switch {
+		case p.FunctionCall != nil, !p.Thought && p.Text != "":
+			hasAnswer = true
+		case p.Thought && p.Text != "":
+			hadThinking = true
+		}
+	}
+
+	// Content-side of #22684: the answer can land entirely in reasoning_content,
+	// leaving content empty. Promote it rather than emit an empty turn - a
+	// reasoning-only turn is terminal anyway, and judge/revise still scores it.
+	if !hasAnswer && hadThinking {
+		var rb strings.Builder
+		for _, p := range result {
+			if p.Thought && p.Text != "" {
+				rb.WriteString(p.Text)
+			}
+		}
+		if txt := strings.TrimSpace(rb.String()); txt != "" {
+			result = append(result, &genai.Part{Text: txt})
+			hasAnswer = true
+			promotedChars = len(txt)
+		}
+	}
+
+	return result, hasAnswer, hadThinking, promotedChars
 }
 
 func toOpenAIChatCompletionRequest(req *model.LLMRequest, modelName string) (openai.ChatCompletionNewParams, error) {
@@ -730,48 +739,20 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 		}
 	}
 
-	// Same recovery as the streaming path: qwen leaks <tool_call> XML into
-	// reasoning_content. Remap it into real function calls BEFORE the
-	// empty-content fallback below, so the raw XML is never promoted to the answer.
-	var recovered []*genai.FunctionCall
-	if reasoningText != "" && len(choice.Message.ToolCalls) == 0 {
-		var cleaned string
-		if recovered, cleaned = reasoningToolCalls(reasoningText); len(recovered) > 0 {
-			reasoningText = cleaned
-			slog.Warn("recovered tool calls from reasoning_content (Qwen/llama.cpp#22684)",
-				"component", "inference", "model", resp.Model, "count", len(recovered))
-		}
-	}
 	if reasoningText != "" {
 		content.Parts = append(content.Parts, &genai.Part{Text: reasoningText, Thought: true})
 	}
-
-	// #427: the same leak can land in the plain answer content instead of
-	// reasoning_content (ask_advisor leaked as literal "<function=…>" text in
-	// the answer) - scan it too when no proper/recovered tool call exists yet.
 	answerText := choice.Message.Content
-	var recoveredFromContent []*genai.FunctionCall
-	if len(choice.Message.ToolCalls) == 0 && len(recovered) == 0 && strings.TrimSpace(answerText) != "" {
-		var cleaned string
-		if recoveredFromContent, cleaned = reasoningToolCalls(answerText); len(recoveredFromContent) > 0 {
-			answerText = cleaned
-			slog.Warn("recovered tool calls leaked into answer content (bare <function=> form, #427)",
-				"component", "inference", "model", resp.Model, "count", len(recoveredFromContent))
-		}
-	}
-
 	if strings.TrimSpace(answerText) != "" {
 		content.Parts = append(content.Parts, &genai.Part{Text: answerText})
-	} else if reasoningText != "" && len(choice.Message.ToolCalls) == 0 && len(recovered) == 0 && len(recoveredFromContent) == 0 {
-		// Content-side of #22684 (non-streaming path): the synthesized answer
-		// sometimes lands entirely inside reasoning_content, leaving content
-		// empty. Promote the reasoning to the answer instead of dropping it - a
-		// reasoning-only turn is terminal anyway, and the judge/revise gate still
-		// evaluates its quality. Skip when tool calls arrived; those already make
-		// the turn non-terminal.
+	}
+
+	haveToolCalls := len(choice.Message.ToolCalls) > 0
+	var promotedChars int
+	content.Parts, _, _, promotedChars = applyFallbackLadder(ctx, resp.Model, content.Parts, haveToolCalls)
+	if promotedChars > 0 {
 		slog.Warn("promoted reasoning to answer (empty content, reasoning_content held the answer)",
-			"component", "inference", "model", resp.Model, "chars", len(reasoningText))
-		content.Parts = append(content.Parts, &genai.Part{Text: reasoningText})
+			"component", "inference", "model", resp.Model, "chars", promotedChars)
 	}
 
 	for _, toolCall := range choice.Message.ToolCalls {
@@ -785,17 +766,21 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 			})
 		}
 	}
-	for _, c := range recovered {
-		content.Parts = append(content.Parts, &genai.Part{FunctionCall: c})
-	}
-	for _, c := range recoveredFromContent {
-		content.Parts = append(content.Parts, &genai.Part{FunctionCall: c})
+
+	// reasoningUsage estimates from the FINAL (post-recovery) thinking text, same
+	// as the streaming path - a leaked tool-call block stripped from thinking
+	// shouldn't inflate the reasoning-token estimate.
+	var finalThought strings.Builder
+	for _, p := range content.Parts {
+		if p.Thought && p.Text != "" {
+			finalThought.WriteString(p.Text)
+		}
 	}
 
 	var usageMetadata *genai.GenerateContentResponseUsageMetadata
 	if resp.Usage.TotalTokens > 0 {
 		candidates, thoughts := reasoningUsage(ctx, resp.Model, int32(resp.Usage.CompletionTokens),
-			int32(resp.Usage.CompletionTokensDetails.ReasoningTokens), reasoningText)
+			int32(resp.Usage.CompletionTokensDetails.ReasoningTokens), finalThought.String())
 		usageMetadata = &genai.GenerateContentResponseUsageMetadata{
 			PromptTokenCount:        int32(resp.Usage.PromptTokens),
 			CandidatesTokenCount:    candidates,
