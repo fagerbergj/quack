@@ -346,7 +346,7 @@ func ArtifactRowChecker(st *store.Store, artifacts *store.TurnAwareService) func
 type LedgerRecoverReport struct {
 	ChatID     string             `json:"chat_id"`
 	DryRun     bool               `json:"dry_run,omitempty"`
-	Confirmed  []OrphanedDelivery `json:"confirmed"`            // delivery.done appended; extension already had it
+	Confirmed  []OrphanedDelivery `json:"confirmed"`            // delivery_record recorded; extension already had it
 	Redone     []OrphanedDelivery `json:"redone"`               // Redo called; nothing was there
 	Unresolved []OrphanedDelivery `json:"unresolved,omitempty"` // no recoverer/Redo available to check, or dry-run
 	// Aborted: artifact.revision intents with no row, now (or under

@@ -100,23 +100,36 @@ func SaveDeliveryRecord(ctx context.Context, c *recordstore.Client, nodeID strin
 	return err
 }
 
-// DeliveryRecorded reports whether targetID's delivery_record already holds a
-// successful (no Error) revision matching revision - the recovery read that
-// replaces the deleted delivery.done ledger entry.
+// DeliveryRecorded reports whether ANY revision in targetID's delivery_record
+// history is a successful (no Error) record of revision - the recovery read
+// that replaces the deleted delivery.done ledger entry. Must walk the whole
+// history, not just Latest: the record is one id per SUBJECT with one
+// revision per delivery (listDeliveryRecords's doc), so a subject delivered
+// more than once has an older settled intent whose revision is no longer the
+// latest one - a Latest-only check would re-flag it as unsettled forever.
 func DeliveryRecorded(ctx context.Context, c *recordstore.Client, targetID string, revision int) (bool, error) {
 	if c == nil {
 		return false, nil
 	}
 	id := deliveryRecordID(targetID)
-	raw, _, ok, err := c.Latest(ctx, id)
-	if err != nil || !ok {
+	versions, err := c.Versions(ctx, id)
+	if err != nil {
 		return false, err
 	}
-	var rec DeliveryRecord
-	if json.Unmarshal(raw, &rec) != nil {
-		return false, nil
+	for _, v := range versions {
+		raw, ok, err := c.LoadVersion(ctx, id, v)
+		if err != nil || !ok {
+			continue
+		}
+		var rec DeliveryRecord
+		if json.Unmarshal(raw, &rec) != nil {
+			continue
+		}
+		if rec.DeliveredRevision == revision && rec.Error == "" {
+			return true, nil
+		}
 	}
-	return rec.DeliveredRevision == revision && rec.Error == "", nil
+	return false, nil
 }
 
 // DeliveryProjections builds the checker/recorder pair boot recovery and
@@ -141,8 +154,11 @@ func DeliveryProjections(artifacts artifact.Service, ledgerStore ledger.LedgerSt
 		return DeliveryRecorded(ctx, client(ctx, chatID), targetID, revision)
 	}
 	recorder = func(ctx context.Context, chatID, nodeID, targetID string, revision int, remoteURL string) error {
+		// GatePassed left false: recovery never observed the original gate
+		// verdict (delivery.intent's payload doesn't carry it either) and
+		// must not assert an outcome it didn't see.
 		return SaveDeliveryRecord(ctx, client(ctx, chatID), nodeID, DeliveryRecord{
-			TargetID: targetID, DeliveredRevision: revision, RemoteURL: remoteURL, At: time.Now().UTC(), GatePassed: true,
+			TargetID: targetID, DeliveredRevision: revision, RemoteURL: remoteURL, At: time.Now().UTC(),
 		})
 	}
 	return checker, recorder

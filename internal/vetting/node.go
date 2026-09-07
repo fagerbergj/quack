@@ -208,8 +208,8 @@ func replyString(reply any) string {
 
 // appendNodeEvent is the WAL's node.* observational path (#1090 §4.9): a
 // best-effort AppendIntent call, Warn-logged and otherwise ignored - it must
-// never affect the run, unlike artifact.revision/judge.round which are
-// fail-closed. No-op when cfg.Ledger is unset.
+// never affect the run, unlike an artifact.revision save (including a
+// judge_round one), which is fail-closed. No-op when cfg.Ledger is unset.
 func appendNodeEvent(ctx context.Context, cfg Config, nodeID, turnID, kind string, rounds int) {
 	if cfg.Ledger == nil {
 		return
@@ -695,12 +695,13 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			// artifact.revision before the row, fail-closed) - no separate
 			// judge.round intent to append first.
 			jr := buildJudgeRoundRecord(turnID, round, res.Passed, res.Score, scored, v, det, answer)
-			jrID, _, walErr := saveJudgeRoundRecord(nodeCtx, cfg, nodeID, turnID, round, jr)
-			if walErr != nil {
-				// Fail-closed (#1090 §4.9, #1144 P2): this round's verdict
-				// didn't land in the WAL, so don't start another revise round
-				// on it - surface it the same as an unavailable judge.
-				log.Error("judge_round WAL save failed; stopping the round loop", "round", round, "err", walErr)
+			jrID, _, saveErr := saveJudgeRoundRecord(nodeCtx, cfg, nodeID, turnID, round, jr)
+			if saveErr != nil && cfg.Ledger != nil {
+				// Fail-closed (#1090 §4.9, #1144 P2), WAL-scoped only - same
+				// as the old separate judge.round append: with no ledger
+				// configured this save failure stays fail-open (Warned by
+				// saveJudgeRoundRecord's SaveStructured call, next round proceeds).
+				log.Error("judge_round WAL save failed; stopping the round loop", "round", round, "err", saveErr)
 				verdictWord := "failed"
 				if env.Passed {
 					verdictWord = "passed"

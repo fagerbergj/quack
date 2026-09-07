@@ -352,25 +352,25 @@ type episodicRoundState struct {
 	// record is saved, so round r+1's revisions point back at round r's verdict.
 	triggerAnnotation string
 	// roundWrites: ids+revisions this call to saveEpisodicRound actually
-	// wrote (reset each call) - feeds the gate's judge.round WAL entry
-	// (#1100 scope item 2: "scored" = the code_review/finding ids this
+	// wrote (reset each call) - feeds the judge_round record's own "scored"
+	// field (#1100 scope item 2: "scored" = the code_review/finding ids this
 	// round wrote).
 	roundWrites []ScoredRef
 }
 
 // ScoredRef is one artifact revision a judge round scored (#1090 §4.9
-// judge.round payload's "scored" list).
+// judge_round record's "scored" list).
 type ScoredRef struct {
 	ArtifactID string `json:"artifact_id"`
 	Revision   int    `json:"revision"`
 }
 
 // JudgeRoundRecord: the "judge_round" kind's structured body (#1092, design
-// V4 §4.3/§4.6) - one per judge round, pass or fail, written right after the
-// judge.round WAL entry. Notes anchor a quoted judge criticism to the exact
-// revision and line it concerns; Evidence carries only what the judge
-// already tracks internally (see NoteRef/JudgeEvidence doc below) - never
-// invented to fill the shape.
+// V4 §4.3/§4.6) - one per judge round, pass or fail; this record's own
+// artifact.revision save IS the round's WAL entry (#1144 P2). Notes anchor a
+// quoted judge criticism to the exact revision and line it concerns;
+// Evidence carries only what the judge already tracks internally (see
+// NoteRef/JudgeEvidence doc below) - never invented to fill the shape.
 type JudgeRoundRecord struct {
 	Turn     string             `json:"turn"`
 	Round    int                `json:"round"`
@@ -507,11 +507,13 @@ func buildJudgeRoundRecord(turnID string, round int, passed bool, score float64,
 }
 
 // saveJudgeRoundRecord writes rec as this round's judge_round revision - the
-// round's ONLY WAL entry (#1144 P2: SaveStructured itself appends
-// artifact.revision fail-closed before the row). err is non-nil on either a
-// missing artifact client or a save failure; the caller (node.go) treats a
-// non-nil err as fail-closed, exactly as the old separate judge.round append
-// did - dropping the extra entry does not relax that guarantee.
+// round's ONLY WAL entry when a ledger is configured (#1144 P2: SaveStructured
+// itself appends artifact.revision fail-closed before the row). err is nil
+// with a missing artifact client (no-op, matching every other episodic write
+// in this file); it is non-nil only on a SaveStructured failure. The caller
+// (node.go) fail-closes on a non-nil err ONLY when cfg.Ledger is set, the
+// same scope the old separate judge.round append had - a store-row failure
+// with no WAL configured stays fail-open, as before.
 func saveJudgeRoundRecord(ctx context.Context, cfg Config, nodeID, turnID string, round int, rec JudgeRoundRecord) (id string, revision int, err error) {
 	c := recordClient(cfg)
 	if c == nil {
@@ -521,6 +523,7 @@ func saveJudgeRoundRecord(ctx context.Context, cfg Config, nodeID, turnID string
 	lineage := recordstore.Lineage{NodeID: nodeID, Round: round, HeadSHA: cfg.NodeBaseSHA, SavedAt: time.Now().UTC(), Author: "judge", TurnID: turnID}
 	id, rev, err := c.SaveStructured(ctx, kindJudgeRound, rec, hint, lineage)
 	if err != nil {
+		slog.Warn("judge_round record save failed", "component", "vetting", "node", nodeID, "round", round, "err", err)
 		return "", 0, fmt.Errorf("vetting: judge_round save for node %s round %d: %w", nodeID, round, err)
 	}
 	return id, rev, nil

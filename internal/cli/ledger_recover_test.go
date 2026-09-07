@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledger/fold"
@@ -228,6 +229,63 @@ func TestRecover_CrashBetweenDeliveryIntentAndRecord(t *testing.T) {
 	}
 	if len(again.Reports) != 0 {
 		t.Fatalf("second pass = %+v, want nothing", again)
+	}
+}
+
+// TestRecover_TwoDeliveriesOnOneSubjectBothSettled is the blocker regression
+// from review: a subject delivered TWICE (normal for re-review rounds) has a
+// delivery_record history of two revisions, [rev1, rev2]. A Latest-only
+// DeliveryRecorded would see only rev2 and re-flag rev1's intent as orphaned
+// forever. Both intents must be found settled, and a recovery pass must call
+// neither the recoverer nor RecordDelivery - nothing new gets appended.
+func TestRecover_TwoDeliveriesOnOneSubjectBothSettled(t *testing.T) {
+	ctx := context.Background()
+	st, ls, artifacts := newTestStack(t)
+	const chatID, targetID = "chat-two-deliveries", "code_review:target-2"
+
+	c := recordstore.New(artifacts, "quack", "local", chatID)
+	for rev := 1; rev <= 2; rev++ {
+		if err := vetting.SaveDeliveryRecord(ctx, c, "n1", vetting.DeliveryRecord{
+			TargetID: targetID, DeliveredRevision: rev, At: time.Now().UTC(),
+		}); err != nil {
+			t.Fatalf("SaveDeliveryRecord rev %d: %v", rev, err)
+		}
+	}
+	for rev := 1; rev <= 2; rev++ {
+		payload, _ := json.Marshal(deliveryIntentPayload{TargetID: targetID, Revision: rev, Key: fmt.Sprintf("%s@%d", targetID, rev)})
+		key := fmt.Sprintf("%s@%d", targetID, rev)
+		if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, NodeID: "n1", Kind: ledger.KindDeliveryIntent, Key: key, Payload: payload}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	checker, _ := vetting.DeliveryProjections(artifacts, ls, st.SessionUserForChat)
+	rec := &fakeRecoverer{found: true} // must never be consulted - both intents are already settled
+	recordCalls := 0
+	proj := Projections{
+		DeliveryRecorded: checker,
+		Delivery:         rec,
+		RecordDelivery: func(context.Context, string, string, string, int, string) error {
+			recordCalls++
+			return nil
+		},
+	}
+
+	sum, err := Recover(ctx, ls, []string{chatID}, proj, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Unresolved != 0 || len(sum.Reports) != 0 {
+		t.Fatalf("summary = %+v, want nothing orphaned (both revisions already settled)", sum)
+	}
+	if rec.calls != 0 {
+		t.Fatalf("DeliveryRecoverer consulted %d times, want 0 - both intents were already settled", rec.calls)
+	}
+	if recordCalls != 0 {
+		t.Fatalf("RecordDelivery called %d times, want 0 - nothing should be appended", recordCalls)
+	}
+	if versions, err := c.Versions(ctx, "delivery_record:target-2"); err != nil || len(versions) != 2 {
+		t.Fatalf("delivery_record versions = %v, err=%v, want exactly the 2 seeded above", versions, err)
 	}
 }
 

@@ -31,13 +31,13 @@ func newLedgerCmd() *cobra.Command {
 
 // newLedgerRecoverCmd: `quack ledger recover [chat-id] [--dry-run]` - the
 // same cli.Recover the server runs at boot: delivery.intent entries with no
-// delivery.done are checked against the configured extension's
-// DeliveryRecoverer, artifact.revision intents with no store row are marked
-// aborted. Redo stays nil: redoing a delivery needs the live node context
-// this offline command doesn't have. --dry-run reports without calling the
-// extension or writing. A recoverer-build failure degrades to a stderr
-// warning rather than aborting, so a misconfigured extension cannot hide
-// the orphans it might otherwise explain.
+// completing delivery_record revision are checked against the configured
+// extension's DeliveryRecoverer, artifact.revision intents with no store row
+// are marked aborted. Redo stays nil: redoing a delivery needs the live node
+// context this offline command doesn't have. --dry-run reports without
+// calling the extension or writing. A recoverer-build failure degrades to a
+// stderr warning rather than aborting, so a misconfigured extension cannot
+// hide the orphans it might otherwise explain.
 func newLedgerRecoverCmd() *cobra.Command {
 	var dryRun bool
 	c := &cobra.Command{
