@@ -33,6 +33,12 @@ func newFakeLedger() *fakeLedger {
 func (f *fakeLedger) List(context.Context) ([]ledger.SessionRef, error) { return nil, nil }
 func (f *fakeLedger) Delete(context.Context, string) error              { return nil }
 
+func (f *fakeLedger) MaxSeq(_ context.Context, chatID string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.seqs[chatID], nil
+}
+
 func (f *fakeLedger) AppendIntent(_ context.Context, e ledger.Entry) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

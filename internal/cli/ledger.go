@@ -23,6 +23,7 @@ import (
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/store"
+	"github.com/fagerbergj/quack/internal/stream"
 )
 
 // RunLedgerShow prints chatID's raw ledger entries (seq >= fromSeq) to out,
@@ -52,6 +53,14 @@ type LedgerRebuildReport struct {
 	ArtifactUpdateErrors     []string `json:"artifact_update_errors,omitempty"`
 	SSERowsInserted          int      `json:"sse_rows_inserted"`
 	NodeStatesChanged        int      `json:"node_states_changed"`
+	// NodeStateSkippedMultiPlan is true when node_state was left untouched
+	// because chatID has more than one plan: res.Nodes folds the whole chat
+	// lifetime by bare node ID, and a node ID legitimately recurs across
+	// plans/turns (e.g. the auto-appended "synthesize" node) with no
+	// persisted plan<->invocation mapping to attribute a terminal event back
+	// to the plan it belongs to - attributing it to "the latest plan" would
+	// silently fabricate or stomp state for a plan that never ran that node.
+	NodeStateSkippedMultiPlan bool `json:"node_state_skipped_multi_plan,omitempty"`
 }
 
 // RunLedgerRebuild resets chatID's watermarks to 0 and folds: every artifact
@@ -107,38 +116,51 @@ func RunLedgerRebuild(ctx context.Context, ls ledger.LedgerStore, st *store.Stor
 		}
 	}
 
-	if !dryRun {
-		planID, perr := st.GetLatestDagPlan(ctx, chatID)
-		if perr != nil {
-			return report, fmt.Errorf("ledger rebuild: latest plan for chat %q: %w", chatID, perr)
+	planCount, cerr := st.CountDagPlans(ctx, chatID)
+	if cerr != nil {
+		return report, fmt.Errorf("ledger rebuild: count plans for chat %q: %w", chatID, cerr)
+	}
+	if planCount > 1 {
+		// See NodeStateSkippedMultiPlan's doc: with >1 plan there is no way
+		// to tell which plan a folded node.* entry belongs to, so node_state
+		// is left as-is rather than guessing.
+		report.NodeStateSkippedMultiPlan = true
+	}
+	planID, perr := st.GetLatestDagPlan(ctx, chatID)
+	if perr != nil {
+		return report, fmt.Errorf("ledger rebuild: latest plan for chat %q: %w", chatID, perr)
+	}
+	if planID != nil && planCount <= 1 {
+		// Only write ids the plan actually declares (kills the phantom
+		// case), same check loadPlanNode uses to 404 an unknown node.
+		var planData stream.DagPlanData
+		if uerr := json.Unmarshal([]byte(planID.PlanJSON), &planData); uerr != nil {
+			return report, fmt.Errorf("ledger rebuild: parse latest plan JSON for chat %q: %w", chatID, uerr)
 		}
-		if planID != nil {
-			nodeIDs := make([]string, 0, len(res.Nodes))
-			for id := range res.Nodes {
+		declared := make(map[string]bool, len(planData.Nodes))
+		for _, n := range planData.Nodes {
+			declared[n.ID] = true
+		}
+		nodeIDs := make([]string, 0, len(res.Nodes))
+		for id := range res.Nodes {
+			if declared[id] && res.Nodes[id].TerminalStatus != "" {
 				nodeIDs = append(nodeIDs, id)
 			}
-			sort.Strings(nodeIDs) // deterministic report order
+		}
+		sort.Strings(nodeIDs) // deterministic report order
+		report.NodeStatesChanged = len(nodeIDs)
+		if !dryRun {
 			err = st.InTx(ctx, func(tx *gorm.DB) error {
 				for _, id := range nodeIDs {
 					n := res.Nodes[id]
-					if n.TerminalStatus == "" {
-						continue // no terminal event yet - nothing this fold can safely assert
-					}
 					if werr := store.UpsertNodeTerminalStatusTx(tx, planID.ID, n.NodeID, n.TerminalStatus); werr != nil {
 						return fmt.Errorf("node %s: %w", n.NodeID, werr)
 					}
-					report.NodeStatesChanged++
 				}
 				return store.SetProjectionWatermarkTx(tx, chatID, "node_state", res.LastSeq)
 			})
 			if err != nil {
 				return report, fmt.Errorf("ledger rebuild: write node_state for chat %q: %w", chatID, err)
-			}
-		}
-	} else {
-		for _, n := range res.Nodes {
-			if n.TerminalStatus != "" {
-				report.NodeStatesChanged++
 			}
 		}
 	}
@@ -203,6 +225,9 @@ func FormatLedgerRebuildReport(r *LedgerRebuildReport) string {
 		verb, r.ChatID, r.ArtifactRevisionsChanged, verbPast(r.DryRun), r.SSERowsInserted, verbPast(r.DryRun), r.NodeStatesChanged, verbPast(r.DryRun))
 	for _, e := range r.ArtifactUpdateErrors {
 		s += "  error: " + e + "\n"
+	}
+	if r.NodeStateSkippedMultiPlan {
+		s += "  node_state skipped: chat has more than one plan, and a node id can't be attributed to one\n"
 	}
 	return s
 }

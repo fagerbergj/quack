@@ -26,6 +26,9 @@ type LedgerStore interface {
 	AppendIntent(ctx context.Context, entry Entry) (seq int64, err error)
 	// ReadEntries returns every Entry for chatID with Seq >= fromSeq, in seq order.
 	ReadEntries(ctx context.Context, chatID string, fromSeq int64) ([]Entry, error)
+	// MaxSeq returns chatID's highest entry Seq, 0 if it has none - a cheap
+	// alternative to ReadEntries for callers that only need "how far along is this chat".
+	MaxSeq(ctx context.Context, chatID string) (int64, error)
 	// List returns every chat with at least one entry.
 	List(ctx context.Context) ([]SessionRef, error)
 	// Delete removes a whole chat's entries (chat hard-delete only).

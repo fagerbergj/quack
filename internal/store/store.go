@@ -1082,21 +1082,30 @@ func (s *Store) SeedProjectionWatermarks(ctx context.Context, ledgerStore ledger
 		{"node_state", "SELECT DISTINCT dp.chat_id AS chat_id FROM dag_nodes dn JOIN dag_plans dp ON dn.plan_id = dp.id"},
 	}
 	now := time.Now().UTC()
+	// maxSeqCache: a chat can appear in more than one projection's list
+	// (chat_events + artifacts + dag_nodes), and ledgerStore.MaxSeq is one
+	// per-chat round trip - cache it instead of re-deriving the same number
+	// per projection.
+	maxSeqCache := map[string]int64{}
 	for _, sd := range seeds {
 		var chatIDs []string
 		if err := s.db.WithContext(ctx).Raw(sd.listChats).Scan(&chatIDs).Error; err != nil {
 			return fmt.Errorf("store: list chats for %s projection seed: %w", sd.projection, err)
 		}
 		for _, chatID := range chatIDs {
-			entries, err := ledgerStore.ReadEntries(ctx, chatID, 0)
-			if err != nil {
-				return fmt.Errorf("store: read ledger entries for %s seed (chat %s): %w", sd.projection, chatID, err)
+			maxSeq, ok := maxSeqCache[chatID]
+			if !ok {
+				var err error
+				maxSeq, err = ledgerStore.MaxSeq(ctx, chatID)
+				if err != nil {
+					return fmt.Errorf("store: max seq for %s seed (chat %s): %w", sd.projection, chatID, err)
+				}
+				maxSeqCache[chatID] = maxSeq
 			}
-			if len(entries) == 0 {
+			if maxSeq == 0 {
 				continue // no ledger history for this chat yet; nothing to catch up on
 			}
-			maxSeq := entries[len(entries)-1].Seq // ReadEntries returns seq-ordered
-			err = s.db.WithContext(ctx).Clauses(clause.OnConflict{
+			err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "chat_id"}, {Name: "projection"}},
 				DoNothing: true,
 			}).Create(&ProjectionWatermark{ChatID: chatID, Projection: sd.projection, FoldedSeq: maxSeq, UpdatedAt: now}).Error
@@ -1247,6 +1256,15 @@ func (s *Store) GetLatestDagPlan(ctx context.Context, chatID string) (*DagPlan, 
 		return nil, err
 	}
 	return &p, nil
+}
+
+// CountDagPlans returns how many DAG plans chatID has - `quack ledger
+// rebuild`'s multi-plan guard (a node ID recurs across plans, so node_state
+// attribution is only safe when there is exactly one plan to attribute to).
+func (s *Store) CountDagPlans(ctx context.Context, chatID string) (int64, error) {
+	var n int64
+	err := s.db.WithContext(ctx).Model(&DagPlan{}).Where("chat_id = ?", chatID).Count(&n).Error
+	return n, err
 }
 
 // GetTurnsWithContent returns fully-joined turn data with DAG plan and nodes.

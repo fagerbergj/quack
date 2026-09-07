@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -148,6 +149,21 @@ func (s *PGStore) ReadEntries(ctx context.Context, chatID string, fromSeq int64)
 		return nil, fmt.Errorf("ledger: read entries for chat %q: %w", chatID, err)
 	}
 	return pgRowsToEntries(rows), nil
+}
+
+// MaxSeq reads chatID's highest allocated seq straight off the seq counter
+// row (a PK lookup) instead of MAX(seq) over ledger_entries, 0 if the chat
+// never appended.
+func (s *PGStore) MaxSeq(ctx context.Context, chatID string) (int64, error) {
+	var row pgSeqCounter
+	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("ledger: max seq for chat %q: %w", chatID, err)
+	}
+	return row.NextSeq, nil
 }
 
 // ReadEntriesByKey is #1101's fold optimization: recordstore.lastRevision

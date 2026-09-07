@@ -462,7 +462,7 @@ func TestRunLedgerRebuild_RegeneratesNodeState(t *testing.T) {
 	st, ls, artifacts := newTestStack(t)
 	const chatID, planID = "chat-1", "plan-1"
 
-	if err := st.SaveDagPlan(ctx, chatID, planID, "turn-1", "{}"); err != nil {
+	if err := st.SaveDagPlan(ctx, chatID, planID, "turn-1", `{"nodes":[{"id":"n1"}]}`); err != nil {
 		t.Fatalf("SaveDagPlan: %v", err)
 	}
 	if err := st.UpsertDagNode(ctx, store.DagNode{NodeID: "n1", PlanID: planID, Status: "running"}); err != nil {
@@ -495,6 +495,72 @@ func TestRunLedgerRebuild_RegeneratesNodeState(t *testing.T) {
 	}
 	if node.Status != "done" {
 		t.Fatalf("node status = %q, want done", node.Status)
+	}
+}
+
+// TestRunLedgerRebuild_MultiPlanNodeIDReuse is the two-plans review finding:
+// res.Nodes folds the whole CHAT lifetime keyed by bare node ID, but a node
+// ID (e.g. the auto-appended "synthesize" node) legitimately recurs across
+// plans - rebuild must only write terminal status for node IDs the LATEST
+// plan actually declares, never stomp it with an older plan's re-run of the
+// same ID.
+func TestRunLedgerRebuild_MultiPlanNodeIDReuse(t *testing.T) {
+	ctx := context.Background()
+	st, ls, artifacts := newTestStack(t)
+	const chatID = "chat-1"
+
+	// Plan 1 declares "shared" and finishes done.
+	if err := st.SaveDagPlan(ctx, chatID, "plan-1", "turn-1", `{"nodes":[{"id":"shared"}]}`); err != nil {
+		t.Fatalf("SaveDagPlan plan-1: %v", err)
+	}
+	if err := st.UpsertDagNode(ctx, store.DagNode{NodeID: "shared", PlanID: "plan-1", Status: "queued"}); err != nil {
+		t.Fatalf("UpsertDagNode plan-1: %v", err)
+	}
+	p1, err := json.Marshal(struct {
+		NodeID string `json:"node_id"`
+		Turn   string `json:"turn"`
+	}{NodeID: "shared", Turn: "turn-1"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindNodeStarted, Payload: p1}); err != nil {
+		t.Fatalf("AppendIntent started plan-1: %v", err)
+	}
+	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindNodeDone, Payload: p1}); err != nil {
+		t.Fatalf("AppendIntent done plan-1: %v", err)
+	}
+
+	// Plan 2 (LATEST) reuses "shared", crashed before running it (still queued).
+	if err := st.SaveDagPlan(ctx, chatID, "plan-2", "turn-2", `{"nodes":[{"id":"shared"}]}`); err != nil {
+		t.Fatalf("SaveDagPlan plan-2: %v", err)
+	}
+	if err := st.UpsertDagNode(ctx, store.DagNode{NodeID: "shared", PlanID: "plan-2", Status: "queued"}); err != nil {
+		t.Fatalf("UpsertDagNode plan-2: %v", err)
+	}
+
+	report, err := RunLedgerRebuild(ctx, ls, st, artifacts, chatID, false)
+	if err != nil {
+		t.Fatalf("RunLedgerRebuild: %v", err)
+	}
+	if report.NodeStatesChanged != 0 {
+		t.Fatalf("NodeStatesChanged = %d, want 0 (plan 1's terminal must not attribute to plan 2)", report.NodeStatesChanged)
+	}
+	if !report.NodeStateSkippedMultiPlan {
+		t.Fatal("NodeStateSkippedMultiPlan = false, want true for a 2-plan chat")
+	}
+	latest, err := st.GetDagNode(ctx, "plan-2", "shared")
+	if err != nil || latest == nil {
+		t.Fatalf("GetDagNode plan-2: node=%v err=%v", latest, err)
+	}
+	if latest.Status != "queued" {
+		t.Fatalf("plan-2 node status = %q, want queued (unstomped)", latest.Status)
+	}
+	older, err := st.GetDagNode(ctx, "plan-1", "shared")
+	if err != nil || older == nil {
+		t.Fatalf("GetDagNode plan-1: node=%v err=%v", older, err)
+	}
+	if older.Status != "queued" {
+		t.Fatalf("plan-1 node status = %q, want queued (rebuild only ever targets the latest plan)", older.Status)
 	}
 }
 

@@ -49,6 +49,14 @@ func (s *MemStore) ReadEntries(_ context.Context, chatID string, fromSeq int64) 
 	return out, nil
 }
 
+// MaxSeq mirrors PGStore's: entries are appended with Seq = position+1, so
+// the count IS the max seq (0 for a chat with none).
+func (s *MemStore) MaxSeq(_ context.Context, chatID string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return int64(len(s.entries[chatID])), nil
+}
+
 func (s *MemStore) List(context.Context) ([]SessionRef, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
