@@ -837,3 +837,22 @@ func TestUpdateTitle_CapsLength(t *testing.T) {
 		t.Fatalf("Title = the full uncapped answer, want it truncated")
 	}
 }
+
+// TestTruncateTitle_WordBoundary is #1232: a long PR title must not be cut
+// mid-word with no indication it was shortened.
+func TestTruncateTitle_WordBoundary(t *testing.T) {
+	title := "fix(ledger,vetting): one representation per fact - delivery and judge rounds (#1230)"
+	got := truncateTitle(title, MaxTitleLen)
+	if n := len([]rune(got)); n > MaxTitleLen {
+		t.Fatalf("len = %d, want <= %d", n, MaxTitleLen)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Fatalf("got %q, want an ellipsis suffix", got)
+	}
+	if strings.HasSuffix(strings.TrimSuffix(got, "…"), "(#1") {
+		t.Fatalf("got %q, cut mid-word instead of at a space", got)
+	}
+	if short := "short title"; truncateTitle(short, MaxTitleLen) != short {
+		t.Fatalf("truncateTitle changed a title already under the cap")
+	}
+}
