@@ -77,6 +77,11 @@ type ChatTurn struct {
 	ReasoningTokens  int32 `json:"reasoning_tokens,omitempty"`
 	TotalTokens      int32 `json:"total_tokens,omitempty"`
 	CachedTokens     int32 `json:"cached_tokens,omitempty"`
+	// UserText is the turn's own copy of the user's message, independent of
+	// the ADK session events GetTurnsWithContent otherwise reads it from.
+	// A ResetHistory dispatch (#1226) deletes the whole session, which would
+	// otherwise strand every earlier turn with no content to render.
+	UserText string `json:"-"`
 }
 
 // GithubSnapshot stores the full GitHub state fetched at a github-origin
@@ -855,12 +860,15 @@ func (s *Store) ArchiveChat(ctx context.Context, id string, archived bool) error
 }
 
 // SaveTurn persists a new turn at the next available sequence position.
-func (s *Store) SaveTurn(ctx context.Context, chatID, turnID string) error {
+// userText is stored on the row itself (see ChatTurn.UserText) so the chat
+// view survives a later ResetHistory dispatch wiping the session events it
+// would otherwise read the turn's content from.
+func (s *Store) SaveTurn(ctx context.Context, chatID, turnID, userText string) error {
 	var count int64
 	if err := s.db.WithContext(ctx).Model(&ChatTurn{}).Where("chat_id = ?", chatID).Count(&count).Error; err != nil {
 		return err
 	}
-	t := &ChatTurn{ID: turnID, ChatID: chatID, Seq: int(count), CreatedAt: time.Now().UTC()}
+	t := &ChatTurn{ID: turnID, ChatID: chatID, Seq: int(count), CreatedAt: time.Now().UTC(), UserText: userText}
 	return s.db.WithContext(ctx).Create(t).Error
 }
 
@@ -1148,6 +1156,12 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 				tc.CachedTokens = groups[gi].cachedTokens
 				tc.TotalTokens = groups[gi].totalTokens
 			}
+		}
+		// No group for this turn (misses offset's window, or the session was
+		// deleted outright by ResetHistory - #1226) - fall back to the
+		// user's own text stamped on the turn row at SaveTurn.
+		if tc.UserText == "" {
+			tc.UserText = t.UserText
 		}
 		if plan := planByTurn[t.ID]; plan != nil {
 			tc.Plan = plan

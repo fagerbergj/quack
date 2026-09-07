@@ -63,7 +63,7 @@ func TestStampTurn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
-	if err := st.SaveTurn(ctx, c.ID, "t1"); err != nil {
+	if err := st.SaveTurn(ctx, c.ID, "t1", ""); err != nil {
 		t.Fatalf("SaveTurn: %v", err)
 	}
 
@@ -80,7 +80,7 @@ func TestStampTurn(t *testing.T) {
 
 	// A DAG turn (PlanID set) must not touch the turn row - its tokens live
 	// on DagNode instead.
-	if err := st.SaveTurn(ctx, c.ID, "t2"); err != nil {
+	if err := st.SaveTurn(ctx, c.ID, "t2", ""); err != nil {
 		t.Fatalf("SaveTurn t2: %v", err)
 	}
 	StampTurn(ctx, st, c.ID, "t2", DriveResult{Model: "qwen3", PlanID: "p1"})

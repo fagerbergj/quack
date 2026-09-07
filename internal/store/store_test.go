@@ -38,7 +38,7 @@ func TestSQLiteStoreRoundTrip(t *testing.T) {
 	}
 
 	// Turn + DAG plan + node round-trip.
-	if err := st.SaveTurn(ctx, c.ID, "t1"); err != nil {
+	if err := st.SaveTurn(ctx, c.ID, "t1", ""); err != nil {
 		t.Fatalf("SaveTurn: %v", err)
 	}
 	// The orchestrator's model + usage are stamped on the turn row at run end
@@ -79,7 +79,7 @@ func TestChatUsageAggregate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
-	if err := st.SaveTurn(ctx, c1.ID, "t1"); err != nil {
+	if err := st.SaveTurn(ctx, c1.ID, "t1", ""); err != nil {
 		t.Fatalf("SaveTurn: %v", err)
 	}
 	if err := st.SetTurnUsage(ctx, c1.ID, "t1", "gpt-oss-120b", TurnUsage{
@@ -102,7 +102,7 @@ func TestChatUsageAggregate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateChat c2: %v", err)
 	}
-	if err := st.SaveTurn(ctx, c2.ID, "t2"); err != nil {
+	if err := st.SaveTurn(ctx, c2.ID, "t2", ""); err != nil {
 		t.Fatalf("SaveTurn c2: %v", err)
 	}
 	if err := st.SaveDagPlan(ctx, c2.ID, "p2", "t2", `{"nodes":[]}`); err != nil {
@@ -536,7 +536,7 @@ func TestGetTurnsWithContent_UsageFallbackIsSymmetric(t *testing.T) {
 	}
 	// SaveTurn only - no SetTurnUsage, so the ChatTurn row's token columns
 	// stay zero and GetTurnsWithContent must fall back to the session walk.
-	if err := st.SaveTurn(ctx, c.ID, "t1"); err != nil {
+	if err := st.SaveTurn(ctx, c.ID, "t1", ""); err != nil {
 		t.Fatalf("SaveTurn: %v", err)
 	}
 
@@ -571,6 +571,74 @@ func TestGetTurnsWithContent_UsageFallbackIsSymmetric(t *testing.T) {
 	}
 }
 
+// TestGetTurnsWithContent_SurvivesSessionReset pins #1226: a ResetHistory
+// dispatch deletes the whole ADK session (orchestrator.ResetSession), which
+// leaves turns that predate it with no session events at all - not even a
+// misaligned one. GetTurnsWithContent must still show the user's original
+// text for that turn, from the ChatTurn.UserText column stamped at SaveTurn,
+// instead of rendering it as {"content": ""} forever.
+func TestGetTurnsWithContent_SurvivesSessionReset(t *testing.T) {
+	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("New sqlite: %v", err)
+	}
+	ctx := context.Background()
+	const chatID = "ext:github:c1"
+
+	// Turn 1: runs normally, with a real session event.
+	if err := st.SaveTurn(ctx, chatID, "t1", "first review"); err != nil {
+		t.Fatalf("SaveTurn t1: %v", err)
+	}
+	sessResp, err := st.Sessions.Create(ctx, &session.CreateRequest{AppName: chatAppName, UserID: "local", SessionID: chatID})
+	if err != nil {
+		t.Fatalf("session Create: %v", err)
+	}
+	userEv := session.NewEvent(ctx, "test")
+	userEv.Author = "user"
+	userEv.Content = &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "first review"}}}
+	if err := st.Sessions.AppendEvent(ctx, sessResp.Session, userEv); err != nil {
+		t.Fatalf("AppendEvent: %v", err)
+	}
+
+	// A ResetHistory dispatch for turn 2 deletes the whole session
+	// (Orchestrator.ResetSession) before the new turn's own events land.
+	// The ADK schema declares its events table as CASCADE-owned by the
+	// session row (see adk/v2/session/database storageEvent), which
+	// Postgres enforces on every delete; SQLite's enforcement is
+	// per-connection and flaky under gorm's pool, so this deletes the
+	// orphaned event row directly to pin the CASCADE behavior deterministically.
+	if err := st.Sessions.Delete(ctx, &session.DeleteRequest{AppName: chatAppName, UserID: "local", SessionID: chatID}); err != nil {
+		t.Fatalf("session Delete: %v", err)
+	}
+	if err := st.db.Exec("DELETE FROM events WHERE session_id = ?", chatID).Error; err != nil {
+		t.Fatalf("delete orphaned events: %v", err)
+	}
+	if err := st.SaveTurn(ctx, chatID, "t2", "re-review, new commits"); err != nil {
+		t.Fatalf("SaveTurn t2: %v", err)
+	}
+	sessResp, err = st.Sessions.Create(ctx, &session.CreateRequest{AppName: chatAppName, UserID: "local", SessionID: chatID})
+	if err != nil {
+		t.Fatalf("session re-Create: %v", err)
+	}
+	userEv2 := session.NewEvent(ctx, "test")
+	userEv2.Author = "user"
+	userEv2.Content = &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "re-review, new commits"}}}
+	if err := st.Sessions.AppendEvent(ctx, sessResp.Session, userEv2); err != nil {
+		t.Fatalf("AppendEvent t2: %v", err)
+	}
+
+	turns, err := st.GetTurnsWithContent(ctx, chatAppName, "local", chatID)
+	if err != nil || len(turns) != 2 {
+		t.Fatalf("GetTurnsWithContent: %+v err=%v, want 2 turns", turns, err)
+	}
+	if turns[0].UserText != "first review" {
+		t.Errorf("turn 0 (predates the reset) UserText = %q, want %q from the stored fallback", turns[0].UserText, "first review")
+	}
+	if turns[1].UserText != "re-review, new commits" {
+		t.Errorf("turn 1 UserText = %q, want %q", turns[1].UserText, "re-review, new commits")
+	}
+}
+
 // TestDeleteChat_ReapsSession pins #352 bug 2: deleting a chat must not
 // strand its turns, DAG plan/node state, durable event log, or ADK session -
 // all of it lives in tables/services keyed off the chat id, and the "chats"
@@ -591,7 +659,7 @@ func TestDeleteChat_ReapsSession(t *testing.T) {
 	if err := st.SetChatGitHub(ctx, chatID, "acme/widget-app", "https://github.com/acme/widget-app/pull/9", "", ""); err != nil {
 		t.Fatalf("SetChatGitHub: %v", err)
 	}
-	if err := st.SaveTurn(ctx, chatID, "t1"); err != nil {
+	if err := st.SaveTurn(ctx, chatID, "t1", ""); err != nil {
 		t.Fatalf("SaveTurn: %v", err)
 	}
 	if err := st.SaveDagPlan(ctx, chatID, "p1", "t1", `{"nodes":[]}`); err != nil {

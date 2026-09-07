@@ -604,7 +604,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 	}
 
 	go func() {
-		if err := h.store.SaveTurn(context.Background(), chatID, turnID); err != nil {
+		if err := h.store.SaveTurn(context.Background(), chatID, turnID, body.Content); err != nil {
 			slog.Warn("save turn failed", "component", "rest", "chat", chatID, "err", err)
 		}
 	}()

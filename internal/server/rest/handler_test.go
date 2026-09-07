@@ -65,7 +65,7 @@ func TestGetChat_GithubSessionUser(t *testing.T) {
 	if err := h.store.SetChatGitHub(ctx, chatID, "acme/widget-app", "https://github.com/acme/widget-app/pull/7", "", login); err != nil {
 		t.Fatalf("SetChatGitHub: %v", err)
 	}
-	if err := h.store.SaveTurn(ctx, chatID, "t1"); err != nil {
+	if err := h.store.SaveTurn(ctx, chatID, "t1", ""); err != nil {
 		t.Fatalf("SaveTurn: %v", err)
 	}
 
@@ -262,7 +262,7 @@ func TestChatStatusFailed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
-	if err := h.store.SaveTurn(ctx, c.ID, "t1"); err != nil {
+	if err := h.store.SaveTurn(ctx, c.ID, "t1", ""); err != nil {
 		t.Fatalf("SaveTurn: %v", err)
 	}
 	if err := h.store.SaveDagPlan(ctx, c.ID, "p1", "t1", `{"nodes":[]}`); err != nil {

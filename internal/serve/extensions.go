@@ -475,7 +475,7 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		ensureExtChatTitle(runCtx, st, chatID, req.Chat.Title, req.Chat.Origin)
 
 		turnID := uuid.NewString()
-		if err := st.SaveTurn(runCtx, chatID, turnID); err != nil {
+		if err := st.SaveTurn(runCtx, chatID, turnID, req.Ask.Message); err != nil {
 			slog.Warn("extension dispatch: save turn failed", "component", "ext."+name, "chat", chatID, "err", err)
 		}
 

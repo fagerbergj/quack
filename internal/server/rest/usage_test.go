@@ -22,7 +22,7 @@ func TestGetChat_UsageAggregatesTurnsAndNodes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
-	if err := h.store.SaveTurn(ctx, c.ID, "t1"); err != nil {
+	if err := h.store.SaveTurn(ctx, c.ID, "t1", ""); err != nil {
 		t.Fatalf("SaveTurn: %v", err)
 	}
 	if err := h.store.SetTurnUsage(ctx, c.ID, "t1", "gpt-oss-120b", store.TurnUsage{
@@ -30,7 +30,7 @@ func TestGetChat_UsageAggregatesTurnsAndNodes(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SetTurnUsage: %v", err)
 	}
-	if err := h.store.SaveTurn(ctx, c.ID, "t2"); err != nil {
+	if err := h.store.SaveTurn(ctx, c.ID, "t2", ""); err != nil {
 		t.Fatalf("SaveTurn t2: %v", err)
 	}
 	if err := h.store.SaveDagPlan(ctx, c.ID, "p1", "t2", `{"nodes":[]}`); err != nil {
@@ -74,7 +74,7 @@ func TestListChats_TotalTokens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
-	if err := h.store.SaveTurn(ctx, spent.ID, "t1"); err != nil {
+	if err := h.store.SaveTurn(ctx, spent.ID, "t1", ""); err != nil {
 		t.Fatalf("SaveTurn: %v", err)
 	}
 	if err := h.store.SetTurnUsage(ctx, spent.ID, "t1", "gpt-oss-120b", store.TurnUsage{TotalTokens: 42}); err != nil {
