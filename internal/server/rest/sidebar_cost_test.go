@@ -111,7 +111,7 @@ func TestToSummaryReadsStampedOutcome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
-	if err := h.store.SaveTurn(ctx, c.ID, "t1"); err != nil {
+	if err := h.store.SaveTurn(ctx, c.ID, "t1", ""); err != nil {
 		t.Fatalf("SaveTurn: %v", err)
 	}
 	if err := h.store.SaveDagPlan(ctx, c.ID, "p1", "t1", `{"nodes":[]}`); err != nil {

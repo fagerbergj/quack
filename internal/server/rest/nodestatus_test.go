@@ -91,7 +91,7 @@ func mustCreateChat(t *testing.T, h *Handler) string {
 func seedPlan(t *testing.T, h *Handler, chatID, planID, nodeID string) {
 	t.Helper()
 	ctx := context.Background()
-	if err := h.store.SaveTurn(ctx, chatID, "turn-"+planID); err != nil {
+	if err := h.store.SaveTurn(ctx, chatID, "turn-"+planID, ""); err != nil {
 		t.Fatalf("SaveTurn: %v", err)
 	}
 	planJSON, _ := json.Marshal(map[string]any{
