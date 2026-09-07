@@ -9,9 +9,7 @@ import { fileURLToPath } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', 'src')
 const dirs = ['components', 'pages']
 
-// pages/Chat.tsx: allowlisted for #1217 - remove this entry once
-// pages/Chat.stories.tsx exists.
-const ALLOWLIST = new Set(['pages/Chat.tsx'])
+const ALLOWLIST = new Set()
 
 // A .tsx file counts as a component file if it exports a capitalized
 // function, const/arrow, or memo() component - excludes plain utility
