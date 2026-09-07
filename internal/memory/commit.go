@@ -37,6 +37,15 @@ type Provenance struct {
 // nowRFC3339 lets tests stamp deterministically; defaults to time.Now.
 var nowRFC3339 = func() string { return time.Now().UTC().Format(time.RFC3339) }
 
+// SetClockForTest overrides the commit timestamp clock (package-global, so
+// exclusive with t.Parallel/other memory-committing tests while active) for
+// deterministic ordering without sleeping across real seconds. Returns restore.
+func SetClockForTest(now func() string) (restore func()) {
+	orig := nowRFC3339
+	nowRFC3339 = now
+	return func() { nowRFC3339 = orig }
+}
+
 // Commit vets, extracts, and consolidates memories into this collection,
 // routing each one to the BUCKET it is about (see scope.go), and returns the
 // number of points written or updated. It is the single gated writer: the

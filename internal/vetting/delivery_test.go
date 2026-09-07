@@ -416,11 +416,11 @@ func TestActivityFromSessionRecordsReview(t *testing.T) {
 // wording. It CANNOT commit, so demanding it loops forever; its completion is
 // review_posted, not delivery.
 func TestReadOnlyReviewerNotHeldToDelivery(t *testing.T) {
-	pollutedTask := "Review PR #5, and open a pull request is what it does - it will Add a Flappy Bird game. " +
+	pollutedTask := "Review PR #5, whose own description says: open a pull request and push the branch to Add a Flappy Bird game. " +
 		"Read the diff and post inline review comments; submit the review."
 	act := workerActivity{reviewSubmitted: true, ranCommand: true}
 	if !workIncomplete("Reviewed.", pollutedTask, act, false, true, true, false) {
-		t.Skip("polluted task no longer reads as implement-and-deliver; the ReadOnly guard would not fire")
+		t.Fatal("polluted task no longer reads as implement-and-deliver - this oracle can no longer detect the regression it exists to catch")
 	}
 	if workIncomplete("Reviewed.", pollutedTask, act, true, true, true, false) {
 		t.Error("a read-only reviewer with a submitted review must be COMPLETE - delivery must not apply to an agent that cannot commit")

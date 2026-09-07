@@ -17,6 +17,82 @@ func mustAdmit(t *testing.T, a *Admission, spec AdmissionSpec) {
 	}
 }
 
+// fakeClock drives Admission's now/afterFunc seam so aging tests advance
+// virtual time in one jump instead of racing a real timer against sleeps.
+type fakeClock struct {
+	mu     sync.Mutex
+	t      time.Time
+	timers []*fakeTimer
+}
+
+type fakeTimer struct {
+	mu       sync.Mutex
+	deadline time.Time
+	fn       func()
+	fired    bool
+	stopped  bool
+}
+
+func (ft *fakeTimer) Stop() bool {
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	ft.stopped = true
+	return !ft.fired
+}
+
+func newFakeClock() *fakeClock { return &fakeClock{t: time.Unix(0, 0)} }
+
+func (c *fakeClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *fakeClock) afterFunc(d time.Duration, fn func()) timerStopper {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ft := &fakeTimer{deadline: c.t.Add(d), fn: fn}
+	c.timers = append(c.timers, ft)
+	return ft
+}
+
+// advance jumps the virtual clock forward and fires (in their own goroutine,
+// like a real time.AfterFunc) any timer whose deadline is now due.
+func (c *fakeClock) advance(d time.Duration) {
+	c.mu.Lock()
+	c.t = c.t.Add(d)
+	var due []*fakeTimer
+	for _, ft := range c.timers {
+		ft.mu.Lock()
+		if !ft.fired && !ft.stopped && !ft.deadline.After(c.t) {
+			ft.fired = true
+			due = append(due, ft)
+		}
+		ft.mu.Unlock()
+	}
+	c.mu.Unlock()
+	for _, ft := range due {
+		go ft.fn()
+	}
+}
+
+// waitForWaiters polls Admission's own waiter count (bounded, condition-based
+// - not a fixed sleep) until n goroutines have registered as blocked.
+func waitForWaiters(t *testing.T, a *Admission, n int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		a.mu.Lock()
+		c := len(a.waiting)
+		a.mu.Unlock()
+		if c >= n {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d waiter(s) to register", n)
+}
+
 // mustBlock asserts Admit does NOT return within a short window (still queued).
 func mustBlock(t *testing.T, a *Admission, spec AdmissionSpec) (cancel func()) {
 	t.Helper()
@@ -129,6 +205,8 @@ func mustBlockFirstArrival(t *testing.T, a *Admission, spec AdmissionSpec) (canc
 // next admitted - a stream of smaller backfilled nodes cannot starve it forever.
 func TestAgingStopsBackfillAndAdmitsOldest(t *testing.T) {
 	a := NewAdmission(nil, map[string]int{"m": 100}, nil, 30*time.Millisecond)
+	clock := newFakeClock()
+	a.now, a.afterFunc = clock.now, clock.afterFunc
 	// Fill capacity so nothing fits.
 	filler := AdmissionSpec{Model: "m", KVTokens: 100}
 	mustAdmit(t, a, filler)
@@ -138,13 +216,14 @@ func TestAgingStopsBackfillAndAdmitsOldest(t *testing.T) {
 	fatCtx, fatCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer fatCancel()
 	go func() { fatDone <- a.Admit(fatCtx, fat, nil) }()
-	time.Sleep(10 * time.Millisecond) // fat registers as the oldest waiter
+	waitForWaiters(t, a, 1) // fat registered as the oldest waiter
 
 	// Release the filler: a small node would normally backfill ahead of fat...
 	a.Release(filler)
 
-	// ...but wait past the aging threshold, then try a small backfill candidate.
-	time.Sleep(50 * time.Millisecond) // > 30ms aging threshold
+	// ...but jump the virtual clock past the aging threshold - deterministic,
+	// no wall-clock race - which also fires fat's aging timer and wakes it.
+	clock.advance(31 * time.Millisecond)
 	small := AdmissionSpec{Model: "m", KVTokens: 5}
 	smallCtx, smallCancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer smallCancel()
@@ -168,6 +247,8 @@ func TestAgingStopsBackfillAndAdmitsOldest(t *testing.T) {
 // only be explained by aging, never by capacity.
 func TestAgingActuallyBlocksLaterBackfill(t *testing.T) {
 	a := NewAdmission(nil, map[string]int{"m": 100}, nil, 40*time.Millisecond)
+	clock := newFakeClock()
+	a.now, a.afterFunc = clock.now, clock.afterFunc
 	occupant := AdmissionSpec{Model: "m", KVTokens: 80}
 	mustAdmit(t, a, occupant) // 80/100 used, 20 free
 
@@ -176,13 +257,13 @@ func TestAgingActuallyBlocksLaterBackfill(t *testing.T) {
 	fatCtx, fatCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer fatCancel()
 	go func() { fatDone <- a.Admit(fatCtx, fat, nil) }()
-	time.Sleep(10 * time.Millisecond) // fat = sole/oldest waiter
+	waitForWaiters(t, a, 1) // fat = sole/oldest waiter, well before it ages out
 
 	smallA := AdmissionSpec{Model: "m", KVTokens: 15}
 	mustAdmit(t, a, smallA) // pre-aging backfill: 80+15=95<=100, fits
 	a.Release(smallA)       // back to 80/100 used, 20 free again
 
-	time.Sleep(60 * time.Millisecond) // fat now aged (>40ms)
+	clock.advance(41 * time.Millisecond) // fat now aged (>40ms) - deterministic, no wall-clock race
 
 	smallB := AdmissionSpec{Model: "m", KVTokens: 15} // would fit (95<=100) if backfill still allowed
 	cancel := mustBlock(t, a, smallB)                 // capacity exists - only aging can explain a block

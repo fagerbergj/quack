@@ -74,7 +74,23 @@ type Agent struct {
 
 	mu     sync.Mutex
 	coords ledger.Coords
+
+	// newIdleTimer: clock seam for the idle-wedge timer in round() below, so
+	// a test can drive it deterministically instead of racing a real timer.
+	// nil = real timer (set by New).
+	newIdleTimer func(time.Duration) idleTimer
 }
+
+// idleTimer is the subset of *time.Timer that round's idle watchdog needs.
+type idleTimer interface {
+	C() <-chan time.Time
+	Stop() bool
+	Reset(time.Duration) bool
+}
+
+type realIdleTimer struct{ *time.Timer }
+
+func (t realIdleTimer) C() <-chan time.Time { return t.Timer.C }
 
 // SetLedgerCoords stamps coordinates for the next round - copied into a
 // local at round start (round() below), not read live, since this Agent is
@@ -99,7 +115,8 @@ func New(name, description string, opts Options) (*Agent, error) {
 	if opts.IdleTimeout <= 0 {
 		opts.IdleTimeout = 10 * time.Minute
 	}
-	a := &Agent{name: name, opts: opts, log: slog.With("component", "acp", "agent", name)}
+	a := &Agent{name: name, opts: opts, log: slog.With("component", "acp", "agent", name),
+		newIdleTimer: func(d time.Duration) idleTimer { return realIdleTimer{time.NewTimer(d)} }}
 	inner, err := adkagent.New(adkagent.Config{
 		Name:        name,
 		Description: description,
@@ -389,12 +406,12 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 		return true
 	}
 
-	idleTimer := time.NewTimer(a.opts.IdleTimeout)
+	idleTimer := a.newIdleTimer(a.opts.IdleTimeout)
 	defer idleTimer.Stop()
 	resetIdle := func() {
 		if !idleTimer.Stop() {
 			select {
-			case <-idleTimer.C:
+			case <-idleTimer.C():
 			default:
 			}
 		}
@@ -446,7 +463,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 		case <-abortCtx.Done():
 			a.gracefulCancel(h, sessID, done)
 			return abortCtx.Err()
-		case <-idleTimer.C:
+		case <-idleTimer.C():
 			a.gracefulCancel(h, sessID, done)
 			return fmt.Errorf("acp: no activity for %s - treating opencode as wedged%s", a.opts.IdleTimeout, h.stderrTail())
 		}

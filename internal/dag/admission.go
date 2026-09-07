@@ -62,7 +62,16 @@ type Admission struct {
 	agingThreshold time.Duration
 	seq            int64
 	waiting        map[int64]waiter // seq -> waiter, present only while blocked in Admit
+
+	// now/afterFunc: clock seam so tests can drive aging deterministically
+	// instead of racing a real timer. Default to the real clock.
+	now       func() time.Time
+	afterFunc func(time.Duration, func()) timerStopper
 }
+
+// timerStopper is the subset of *time.Timer that Admit needs; a fake clock
+// can satisfy it without a real timer goroutine.
+type timerStopper interface{ Stop() bool }
 
 // NewAdmission builds an Admission ledger from the config's models/providers
 // registries. agingThreshold <= 0 uses DefaultAgingThreshold.
@@ -79,6 +88,8 @@ func NewAdmission(sessionsLimit, kvLimit, activeLimit map[string]int, agingThres
 		residents:      map[string]map[string]int{},
 		agingThreshold: agingThreshold,
 		waiting:        map[int64]waiter{},
+		now:            time.Now,
+		afterFunc:      func(d time.Duration, fn func()) timerStopper { return time.AfterFunc(d, fn) },
 	}
 	a.cond = sync.NewCond(&a.mu)
 	return a
@@ -102,7 +113,7 @@ func (a *Admission) Admit(ctx context.Context, spec AdmissionSpec, onQueued func
 	// even a brand-new request that would otherwise fast-path past it.
 	a.seq++
 	mySeq := a.seq
-	arrived := time.Now()
+	arrived := a.now()
 	a.waiting[mySeq] = waiter{at: arrived, spec: spec}
 	defer delete(a.waiting, mySeq)
 	queuedFired := false
@@ -116,7 +127,7 @@ func (a *Admission) Admit(ctx context.Context, spec AdmissionSpec, onQueued func
 	defer stop()
 	// Nothing else guarantees a wakeup exactly when this waiter crosses the
 	// aging threshold (no Release/cancel need ever happen) - force one.
-	agingTimer := time.AfterFunc(a.agingThreshold, func() {
+	agingTimer := a.afterFunc(a.agingThreshold, func() {
 		a.mu.Lock()
 		a.cond.Broadcast()
 		a.mu.Unlock()
@@ -265,5 +276,5 @@ func (a *Admission) agingActiveLocked(spec AdmissionSpec) bool {
 	if oldest == 0 {
 		return false
 	}
-	return time.Since(a.waiting[oldest].at) > a.agingThreshold
+	return a.now().Sub(a.waiting[oldest].at) > a.agingThreshold
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,7 +34,7 @@ func TestMain(m *testing.M) {
 
 func runFakeAgent(mode string) {
 	ag := &fakeAgent{mode: mode}
-	if mode == "steer" {
+	if mode == "steer" || mode == "idle-probe" {
 		ag.steerCh = make(chan string, 1)
 	}
 	conn := sdk.NewAgentSideConnection(ag, os.Stdout, os.Stdin)
@@ -120,15 +121,6 @@ func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 		// Ignores cancellation entirely - only the process-group kill ends it
 		// (the v0.5.2 hang class).
 		select {}
-	case "slow":
-		// Alive but with gaps between updates - must never trip idle timeout
-		// on its own (each gap is shorter than the test's idle window).
-		send(sdk.UpdateAgentThoughtText("planning"))
-		time.Sleep(80 * time.Millisecond)
-		send(sdk.UpdateAgentMessageText("still "))
-		time.Sleep(80 * time.Millisecond)
-		send(sdk.UpdateAgentMessageText("working"))
-		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
 	case "usage":
 		// Several streamed updates before the terminal response - proves the
 		// metric seam fires once (on PromptResponse), not once per update.
@@ -148,6 +140,16 @@ func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 		text := <-f.steerCh
 		send(sdk.UpdateAgentMessageText("steered: " + text))
 		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
+	case "idle-probe":
+		// Sends an update ONLY when the test nudges it via the steer
+		// extension (a real host->agent RPC) - activity timing is under the
+		// test's control, not a real sleep. Blocks forever after, like "hang".
+		for range 2 {
+			<-f.steerCh
+			send(sdk.UpdateAgentMessageText("ping"))
+		}
+		<-ctx.Done()
+		return sdk.PromptResponse{StopReason: sdk.StopReasonCancelled}, nil
 	case "resume", "resume-fail":
 		// Echoes the session id the round actually prompted against - the
 		// only way the parent test process can observe it across the
@@ -504,23 +506,107 @@ func TestRound_IdleTimeout(t *testing.T) {
 	}
 }
 
-// Updates arriving with gaps just under the idle window must never trip a
-// false timeout - the round completes normally when done fires.
-func TestRound_IdleTimeoutDoesNotFireOnSlowButAlive(t *testing.T) {
-	a := testAgent(t, "slow")
-	a.opts.IdleTimeout = 150 * time.Millisecond // each update gap is 80ms
+// fakeIdleTimer drives round()'s idle watchdog under full test control: no
+// real duration ever elapses, so "activity resets it" and "silence kills the
+// round" are asserted as exact transitions, not timing margins.
+type fakeIdleTimer struct {
+	ch     chan time.Time
+	resets int32 // atomic
+}
+
+func newFakeIdleTimer() *fakeIdleTimer { return &fakeIdleTimer{ch: make(chan time.Time, 1)} }
+
+func (f *fakeIdleTimer) C() <-chan time.Time { return f.ch }
+func (f *fakeIdleTimer) Stop() bool          { return true }
+func (f *fakeIdleTimer) Reset(time.Duration) bool {
+	atomic.AddInt32(&f.resets, 1)
+	return true
+}
+
+// TestRound_IdleTimeoutResetsOnActivityThenFiresOnSilence replaces the
+// deleted TestRound_IdleTimeoutDoesNotFireOnSlowButAlive: that test raced a
+// real subprocess's own wall-clock sleep against the Go idle timer with no
+// deterministic fix available. This one controls both sides directly - the
+// fake agent only sends "activity" when the test nudges it via the real
+// RegisterLiveSteer/steer-extension RPC (no sleep), and the idle timer is a
+// fake the test fires by hand (no real duration) - so there is no margin at
+// either end, only exact state transitions.
+func TestRound_IdleTimeoutResetsOnActivityThenFiresOnSilence(t *testing.T) {
+	a := testAgent(t, "idle-probe")
+	timer := newFakeIdleTimer()
+	a.newIdleTimer = func(time.Duration) idleTimer { return timer }
+
+	var forward atomic.Pointer[func(string) bool]
+	a.opts.RegisterLiveSteer = func(chatID, nodeID string, fwd func(string) bool) { forward.Store(&fwd) }
+	a.opts.UnregisterLiveSteer = func(string, string) {}
 
 	var specs []eventSpec
-	err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "take your time", "", "", "", "", func(s eventSpec) bool {
-		specs = append(specs, s)
-		return true
-	})
-	if err != nil {
-		t.Fatalf("round: %v", err)
+	result := make(chan error, 1)
+	go func() {
+		result <- a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "stay alive", "chat1", "node1", "", "", func(s eventSpec) bool {
+			specs = append(specs, s)
+			return true
+		})
+	}()
+
+	waitForForward := func() func(string) bool {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if p := forward.Load(); p != nil {
+				return *p
+			}
+			time.Sleep(time.Millisecond)
+		}
+		t.Fatal("RegisterLiveSteer never fired - round() did not register the live-steer hook")
+		return nil
 	}
-	final := specs[len(specs)-1]
-	if final.partial || final.parts[0].Text != "still working" {
-		t.Fatalf("final answer wrong: partial=%v %q", final.partial, final.parts[0].Text)
+	fwd := waitForForward()
+
+	waitForResets := func(n int32) {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if atomic.LoadInt32(&timer.resets) >= n {
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+		t.Fatalf("idle timer was not reset %d time(s) after activity", n)
+	}
+
+	// Two rounds of real activity, each driven over the actual host->agent
+	// RPC - each must reset the idle timer, proving activity keeps it alive.
+	if !fwd("nudge 1") {
+		t.Fatal("steer forward 1 failed")
+	}
+	waitForResets(1)
+	if !fwd("nudge 2") {
+		t.Fatal("steer forward 2 failed")
+	}
+	waitForResets(2)
+
+	// No third nudge is coming - the round must still be running (an upper
+	// bound only: this can never mask a false pass, only a slow failure).
+	select {
+	case err := <-result:
+		t.Fatalf("round returned early (err=%v) - it should still be waiting on the idle timer", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// Fire the fake timer by hand - genuine silence, no wall clock involved.
+	timer.ch <- time.Now()
+
+	select {
+	case err := <-result:
+		if err == nil || !strings.Contains(err.Error(), "wedged") {
+			t.Fatalf("want a wedged idle-timeout error, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("round did not return after the idle timer fired")
+	}
+	if len(specs) != 2 || specs[0].parts[0].Text != "ping" || specs[1].parts[0].Text != "ping" {
+		t.Fatalf("got %d activity events, want 2 pings: %+v", len(specs), specs)
 	}
 }
 
