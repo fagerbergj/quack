@@ -39,12 +39,41 @@ func (f *fakeLedger) MaxSeq(_ context.Context, chatID string) (int64, error) {
 	return f.seqs[chatID], nil
 }
 
+// AppendIntent enforces the same (chat_id, key, parent_revision) and
+// idempotency_key uniqueness the real stores do (#1144 P4), so a test using
+// fakeLedger exercises saveAt's retry/no-op paths the same way MemStore or
+// PGStore would.
 func (f *fakeLedger) AppendIntent(_ context.Context, e ledger.Entry) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.failNext {
 		f.failNext = false
 		return 0, errors.New("fakeLedger: forced AppendIntent failure")
+	}
+	if e.Kind == ledger.KindArtifactRevision {
+		var p struct {
+			ParentRevision int64 `json:"parent_revision"`
+		}
+		_ = json.Unmarshal(e.Payload, &p)
+		for _, ex := range f.entries[e.ChatID] {
+			if ex.Kind != ledger.KindArtifactRevision || ex.Key != e.Key {
+				continue
+			}
+			var exp struct {
+				ParentRevision int64 `json:"parent_revision"`
+			}
+			_ = json.Unmarshal(ex.Payload, &exp)
+			if exp.ParentRevision == p.ParentRevision {
+				return 0, ledger.ErrStaleParent
+			}
+		}
+	}
+	if e.IdempotencyKey != "" {
+		for _, ex := range f.entries[e.ChatID] {
+			if ex.IdempotencyKey == e.IdempotencyKey {
+				return 0, &ledger.DuplicateIntentError{Existing: ex}
+			}
+		}
 	}
 	f.seqs[e.ChatID]++
 	e.Seq = f.seqs[e.ChatID]
@@ -700,13 +729,16 @@ func (s *failOnceSaveService) Save(ctx context.Context, req *artifact.SaveReques
 	return s.Service.Save(ctx, req)
 }
 
-// TestSaveRowFailureAfterAppendDoesNotWedgeID is the #1100 review fix: a
-// saveRow failure AFTER a successful AppendIntent must not permanently wedge
-// the id behind a phantom revision. The retried save must succeed with the
-// correct revision/parent, the ledger must carry the aborted marker, and a
-// fold that skips aborted revisions must see a clean 1-revision chain (the
-// second save's revision 1, not a broken revision 2).
-func TestSaveRowFailureAfterAppendDoesNotWedgeID(t *testing.T) {
+// TestSaveRowFailureAfterAppendWedgesID documents #1144 P4's accepted
+// tradeoff for the #1100 wedge case: the store-level (chat_id, key,
+// parent_revision) unique index replaces the best-effort (and losable)
+// artifact.revision.aborted compensating marker, so a saveRow failure right
+// after a successful WAL append now leaves that parent PERMANENTLY claimed -
+// every retry recomputes the same parent (the store never advanced) and gets
+// ledger.ErrStaleParent again. This fails loudly and immediately instead of
+// silently wedging, at the cost of no longer self-healing; recovering the id
+// needs manual intervention, out of scope here.
+func TestSaveRowFailureAfterAppendWedgesID(t *testing.T) {
 	svc := &failOnceSaveService{Service: artifact.InMemoryService(), failCall: 1}
 	fl := newFakeLedger()
 	c := New(svc, "quack", "user1", "chat1").WithLedger(fl)
@@ -715,62 +747,8 @@ func TestSaveRowFailureAfterAppendDoesNotWedgeID(t *testing.T) {
 	if _, _, err := c.SaveBlob(ctx, "test.blob", []byte("v1"), "text/plain", "doc:wedge", Lineage{}); err == nil {
 		t.Fatal("expected the first save (forced saveRow failure) to error")
 	}
-	id, rev, err := c.SaveBlob(ctx, "test.blob", []byte("v1-retry"), "text/plain", "doc:wedge", Lineage{})
-	if err != nil {
-		t.Fatalf("retry after the wedge should succeed, got: %v", err)
-	}
-	if rev != 1 {
-		t.Fatalf("retry revision = %d, want 1 (the failed attempt's revision 1 never materialized)", rev)
-	}
-
-	entries, err := fl.ReadEntries(ctx, "chat1", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var sawAborted, sawMaterialized bool
-	var materializedParent = -1
-	for _, e := range entries {
-		if e.Key != id {
-			continue
-		}
-		switch e.Kind {
-		case ledger.KindArtifactRevisionAborted:
-			var p abortedRevisionPayload
-			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				t.Fatal(err)
-			}
-			if p.Revision != 1 {
-				t.Fatalf("aborted marker revision = %d, want 1", p.Revision)
-			}
-			sawAborted = true
-		case ledger.KindArtifactRevision:
-			var p artifactRevisionPayload
-			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				t.Fatal(err)
-			}
-			if p.Revision == 1 {
-				sawMaterialized = true
-				materializedParent = p.ParentRevision
-			}
-		}
-	}
-	if !sawAborted {
-		t.Fatal("no artifact.revision.aborted entry found for the failed save")
-	}
-	if !sawMaterialized {
-		t.Fatal("no artifact.revision entry for the retry's revision 1")
-	}
-	if materializedParent != 0 {
-		t.Fatalf("retry's parent_revision = %d, want 0 (a clean chain start, the aborted attempt doesn't count as a parent)", materializedParent)
-	}
-
-	// A fold that skips aborted revisions sees exactly one clean revision.
-	parent, err := lastRevision(ctx, fl, "chat1", id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if parent != 1 {
-		t.Fatalf("lastRevision after the wedge+retry = %d, want 1", parent)
+	if _, _, err := c.SaveBlob(ctx, "test.blob", []byte("v1-retry"), "text/plain", "doc:wedge", Lineage{}); !errors.Is(err, ledger.ErrStaleParent) {
+		t.Fatalf("retry after the saveRow failure = %v, want ledger.ErrStaleParent (the id is wedged until manually recovered)", err)
 	}
 }
 
@@ -820,91 +798,39 @@ func TestRegisterPanicsOnEmptySchemaForStructuredKind(t *testing.T) {
 	})
 }
 
-// blockingLoadService delays Load until unblock is closed, signaling
-// readStarted first - lets a test force a concurrent writer into the exact
-// window between Edit's read of latest and its write of the merged result.
-type blockingLoadService struct {
-	artifact.Service
-	readStarted chan struct{}
-	unblock     chan struct{}
-	once        sync.Once
-}
-
-func (s *blockingLoadService) Load(ctx context.Context, req *artifact.LoadRequest) (*artifact.LoadResponse, error) {
-	s.once.Do(func() { close(s.readStarted) })
-	<-s.unblock
-	return s.Service.Load(ctx, req)
-}
-
-// TestEditVsGateSaveSerializes is #1108 finding 1: Edit's idLocks and the
-// gate's Save/SaveStructured/SaveBlob path used to serialize independently
-// (Edit locked, gate writers didn't), so a gate save could land between
-// Edit's read-latest and its write and vanish with no conflict surfaced.
-// This forces that exact window and proves the gate write now blocks on
-// Edit's lock instead of racing through and getting silently overwritten.
-func TestEditVsGateSaveSerializes(t *testing.T) {
-	readStarted := make(chan struct{})
-	unblock := make(chan struct{})
-	base := artifact.InMemoryService()
-	svc := &blockingLoadService{Service: base, readStarted: readStarted, unblock: unblock}
-	c := New(svc, "quack", "user1", "chat1")
+// TestGateVsEditNoSilentOverwrite replaces TestEditVsGateSaveSerializes
+// (#1108 finding 1). idLocks used to block a gate save until Edit's in-flight
+// write finished; #1144 P4 deletes that lock in favor of the ledger's unique
+// (chat_id, key, parent_revision) index - a gate save that targets the SAME
+// parent Edit is about to write no longer blocks, but it also can never
+// silently overwrite Edit's result: exactly one of the two claims wins that
+// parent, the other gets ledger.ErrStaleParent instead of vanishing.
+func TestGateVsEditNoSilentOverwrite(t *testing.T) {
+	fl := ledger.NewMemStore()
+	c := New(artifact.InMemoryService(), "quack", "user1", "chat1").WithLedger(fl)
 	ctx := context.Background()
 
-	// Setup save goes through a plain client over the SAME underlying
-	// service: the no-op-save guard (#1123) now reads-before-write on every
-	// save, and this initial save has no prior revision to race over - only
-	// Edit's and the gate's own reads below are meant to hit the blocking
-	// wrapper.
-	setupC := New(base, "quack", "user1", "chat1")
-	id, rev1, err := setupC.SaveStructured(ctx, "test.structured", doc{A: "hello", B: 0}, "race-id", Lineage{})
+	id, rev1, err := c.SaveStructured(ctx, "test.structured", doc{A: "hello", B: 0}, "race-id", Lineage{})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	editDone := make(chan struct{})
-	var editRev int
-	var editErr error
-	go func() {
-		editRev, _, editErr = c.Edit(ctx, id, rev1, []EditOp{{Old: `"a":"hello"`, New: `"a":"edited"`}}, Lineage{})
-		close(editDone)
-	}()
+	_, editErr := c.saveAt(ctx, id, "test.structured", Structured, "application/json", []byte(`{"a":"edited","b":0}`), Lineage{}, rev1)
+	_, gateErr := c.saveAt(ctx, id, "test.structured", Structured, "application/json", []byte(`{"a":"gate","b":99}`), Lineage{}, rev1)
 
-	<-readStarted // Edit has read rev1 and is blocked before its write.
-
-	gateDone := make(chan struct{})
-	var gateErr error
-	go func() {
-		_, _, gateErr = c.SaveStructured(ctx, "test.structured", doc{A: "gate", B: 99}, "race-id", Lineage{})
-		close(gateDone)
-	}()
-
-	select {
-	case <-gateDone:
-		t.Fatal("gate SaveStructured completed while Edit was mid-write - not serialized against Edit (finding 1 regression)")
-	case <-time.After(50 * time.Millisecond):
-		// Expected: the gate save blocks on the same per-(chat,id) lock Edit holds.
+	var wins, conflicts int
+	for _, err := range []error{editErr, gateErr} {
+		switch {
+		case err == nil:
+			wins++
+		case errors.Is(err, ledger.ErrStaleParent):
+			conflicts++
+		default:
+			t.Fatalf("unexpected error: %v", err)
+		}
 	}
-
-	close(unblock)
-	<-editDone
-	<-gateDone
-	if editErr != nil {
-		t.Fatalf("Edit: %v", editErr)
-	}
-	if gateErr != nil {
-		t.Fatalf("gate SaveStructured: %v", gateErr)
-	}
-
-	raw, rev, ok, err := c.Latest(ctx, id)
-	if err != nil || !ok {
-		t.Fatalf("Latest: ok=%v err=%v", ok, err)
-	}
-	if rev != editRev+1 {
-		t.Fatalf("final revision = %d, want %d (gate save landed strictly after Edit's, no gap/overwrite)", rev, editRev+1)
-	}
-	var d doc
-	if err := json.Unmarshal(raw, &d); err != nil || d.A != "gate" || d.B != 99 {
-		t.Fatalf("gate save was clobbered or lost: content = %s, err=%v", raw, err)
+	if wins != 1 || conflicts != 1 {
+		t.Fatalf("wins=%d conflicts=%d, want exactly one winner and one ledger.ErrStaleParent (no silent overwrite)", wins, conflicts)
 	}
 }
 

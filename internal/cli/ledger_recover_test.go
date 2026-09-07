@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -290,9 +291,12 @@ func TestRecover_TwoDeliveriesOnOneSubjectBothSettled(t *testing.T) {
 }
 
 // TestRecover_CrashBetweenIntentAndRow is the kill -9 case: the WAL holds an
-// artifact.revision intent whose row write never happened. After "restart",
-// Recover marks it aborted, so the fold's parent revision agrees with the
-// store again and the next save lands on the revision the store will assign.
+// artifact.revision intent whose row write never happened. #1144 P4 deleted
+// the artifact.revision.aborted self-heal (the store-level unique index
+// means that phantom parent can never be reused anyway) - Recover now only
+// REPORTS the orphan, every pass, since there's nothing left to fix; the id
+// stays wedged (every future save for it gets ledger.ErrStaleParent) until
+// an operator resolves it manually.
 func TestRecover_CrashBetweenIntentAndRow(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
@@ -316,30 +320,31 @@ func TestRecover_CrashBetweenIntentAndRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dry.Unresolved != 1 || len(dry.Reports) != 1 || len(dry.Reports[0].Aborted) != 1 {
+	if dry.Unresolved != 1 || len(dry.Reports) != 1 || len(dry.Reports[0].OrphanedRevisions) != 1 {
 		t.Fatalf("dry-run summary = %+v, want one row-less revision reported", dry)
-	}
-	if last, _ := fold.LastRevision(ctx, ls, chatID, id); last != 2 {
-		t.Fatalf("dry-run wrote: fold = %d", last)
 	}
 
 	sum, err := Recover(ctx, ls, nil, proj, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sum.Unresolved != 0 || len(sum.Reports) != 1 || sum.Reports[0].Aborted[0].Revision != 2 {
+	if sum.Unresolved != 1 || len(sum.Reports) != 1 || sum.Reports[0].OrphanedRevisions[0].Revision != 2 {
 		t.Fatalf("summary = %+v", sum)
 	}
-	if last, _ := fold.LastRevision(ctx, ls, chatID, id); last != 1 {
-		t.Fatalf("fold after recovery = %d, want the store's real revision 1", last)
+	// Report-only: the fold and the phantom revision are unchanged, and a
+	// second pass reports the SAME orphan again (nothing to be idempotent
+	// about now - there's no write to have already happened).
+	if last, _ := fold.LastRevision(ctx, ls, chatID, id); last != 2 {
+		t.Fatalf("fold after recovery = %d, want the phantom 2 still (recovery no longer writes)", last)
 	}
-	// Idempotent: a second pass finds nothing.
-	again, _ := Recover(ctx, ls, nil, proj, false)
-	if len(again.Reports) != 0 {
-		t.Fatalf("second pass = %+v, want nothing", again)
+	again, err := Recover(ctx, ls, nil, proj, false)
+	if err != nil || len(again.Reports) != 1 || len(again.Reports[0].OrphanedRevisions) != 1 {
+		t.Fatalf("second pass = %+v, err=%v, want the same orphan reported again", again, err)
 	}
-	// And the next save lands where the store assigns it.
-	if _, rev, err := c.SaveStructured(ctx, testKind, map[string]string{"v": "2"}, "doc-1", recordstore.Lineage{Author: "tester", ParentRevision: 1}); err != nil || rev != 2 {
-		t.Fatalf("save after recovery: rev %d, %v", rev, err)
+	// The id is wedged: every future save recomputes the store's real latest
+	// (1, since revision 2 never materialized) and collides with the
+	// phantom's own claim on that exact parent.
+	if _, _, err := c.SaveStructured(ctx, testKind, map[string]string{"v": "2"}, "doc-1", recordstore.Lineage{Author: "tester"}); !errors.Is(err, ledger.ErrStaleParent) {
+		t.Fatalf("save after the crash = %v, want ledger.ErrStaleParent (wedged until manual recovery)", err)
 	}
 }

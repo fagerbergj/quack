@@ -29,13 +29,6 @@ type pagedReader interface {
 	ReadEntriesPage(ctx context.Context, chatID string, fromSeq int64, limit int) ([]ledger.Entry, error)
 }
 
-// keyedReader is implemented by a LedgerStore that can filter by key
-// server-side (PGStore.ReadEntriesByKey, backed by the (chat_id, key)
-// index); a store without it is scanned in full and filtered in memory.
-type keyedReader interface {
-	ReadEntriesByKey(ctx context.Context, chatID, key string, fromSeq int64) ([]ledger.Entry, error)
-}
-
 // readAll pages through store's entries for chatID from fromSeq, in seq
 // order, so a big chat is never loaded in one slice when the store supports it.
 func readAll(ctx context.Context, store ledger.LedgerStore, chatID string, fromSeq int64) ([]ledger.Entry, error) {
@@ -281,17 +274,11 @@ func Apply(ctx context.Context, store ledger.LedgerStore, chatID string, from in
 }
 
 // LastRevision returns id's highest materialized revision in chatID's
-// ledger, 0 if none - recordstore.save's ParentRevision source. Uses the
-// (chat_id, key) index via ReadEntriesByKey when the store supports it
-// (PGStore), instead of folding the whole chat.
+// ledger, 0 if none - a diagnostic/recovery helper (recordstore's own save
+// path no longer calls this; #1144 P4 reads the artifact store's real
+// latest instead - see recordstore.saveAt's doc).
 func LastRevision(ctx context.Context, store ledger.LedgerStore, chatID, id string) (int, error) {
-	var entries []ledger.Entry
-	var err error
-	if kr, ok := store.(keyedReader); ok {
-		entries, err = kr.ReadEntriesByKey(ctx, chatID, id, 0)
-	} else {
-		entries, err = readAll(ctx, store, chatID, 0)
-	}
+	entries, err := readAll(ctx, store, chatID, 0)
 	if err != nil {
 		return 0, err
 	}

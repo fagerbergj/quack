@@ -9,8 +9,9 @@
 package recordstore
 
 import (
-	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,7 +27,6 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/ledger"
-	"github.com/fagerbergj/quack/internal/ledger/fold"
 )
 
 // isNotFound reports whether err is the artifact.Service "no such
@@ -206,62 +206,6 @@ func (c *Client) WithLedger(store ledger.LedgerStore) *Client {
 	return c
 }
 
-// idLocks/lockFor: the ONE process-local per-(chat,id) mutex serializing
-// revision allocation for an id - held across read-parent, WAL append, edit
-// merge and row write (#1107 consolidates what used to be three separate
-// locks: this one, a second recordstore map keyed the same way around
-// saveLocked's WAL section, and internal/store's own four-part
-// artifactRevisionLocks). The key is deliberately COARSER than a
-// (appName, userID, sessionID, id) key: sessionID (chat) + id is a superset
-// of what the store serializes. Do not "fix" this toward the finer key: two
-// different users' saves under the same (chat, id) must still serialize
-// here, or their WAL entries can race the same way a same-user race would,
-// breaking the parent chain.
-//
-// ponytail: process-local only - fine for quack's single-process server.
-// Cross-process (a second replica) needs a Postgres advisory lock keyed on
-// (app, user, session, id) via pg_advisory_xact_lock(hashtext(...)); until
-// then internal/store's retry-on-duplicate-key loop is the safety net for a
-// direct artifact.Service caller racing across processes.
-var idLocks sync.Map // "chatID\x00id" -> *sync.Mutex
-
-func (c *Client) lockFor(id string) *sync.Mutex {
-	v, _ := idLocks.LoadOrStore(c.sessionID+"\x00"+id, &sync.Mutex{})
-	return v.(*sync.Mutex)
-}
-
-// lastRevision returns the highest MATERIALIZED revision recorded in an
-// artifact.revision WAL entry for id, 0 if none. Delegates to
-// internal/ledger/fold - the ONE definition of the aborted/later-entry-wins
-// rule (#1101); this used to duplicate that loop inline.
-func lastRevision(ctx context.Context, store ledger.LedgerStore, chatID, id string) (int, error) {
-	return fold.LastRevision(ctx, store, chatID, id)
-}
-
-// abortedRevisionPayload is the artifact.revision.aborted entry's payload.
-type abortedRevisionPayload struct {
-	Revision int    `json:"revision"`
-	Reason   string `json:"reason"`
-}
-
-// appendAborted records that revision never materialized (saveRow failed
-// after the artifact.revision intent already landed) - best-effort: this is
-// cleanup for lastRevision's own bookkeeping, not itself part of the
-// fail-closed contract, so a failure here is Warn-logged, not returned.
-func appendAborted(ctx context.Context, store ledger.LedgerStore, chatID, turnID, nodeID, id string, revision int, reason string) {
-	payload, err := json.Marshal(abortedRevisionPayload{Revision: revision, Reason: reason})
-	if err != nil {
-		slog.Warn("recordstore: marshal artifact.revision.aborted payload failed", "component", "recordstore", "id", id, "revision", revision, "err", err)
-		return
-	}
-	if _, err := store.AppendIntent(ctx, ledger.Entry{
-		ChatID: chatID, TurnID: turnID, NodeID: nodeID,
-		Kind: ledger.KindArtifactRevisionAborted, Key: id, At: time.Now().UTC(), Payload: payload,
-	}); err != nil {
-		slog.Warn("recordstore: append artifact.revision.aborted failed; the id may stay wedged until this is retried", "component", "recordstore", "id", id, "revision", revision, "err", err)
-	}
-}
-
 // artifactRevisionPayload is the artifact.revision WAL entry's payload
 // (#1090 §4.9): bytes_ref is the store row's key (the id), never the bytes,
 // so a large blob is one small entry.
@@ -275,76 +219,95 @@ type artifactRevisionPayload struct {
 	BytesRef       string  `json:"bytes_ref"`
 }
 
-// save acquires id's per-(chat,id) lock (the same one Edit holds) before
-// writing, so a gate save (SaveStructured/SaveBlob) can never land between
-// Edit's read-latest and its write of N+1 (#1108 finding 1 - previously only
-// Edit locked, gate writers raced it silently). Edit already holds the lock
-// when it needs to save, so it calls saveLocked directly instead.
-func (c *Client) save(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage) (int, error) {
-	mu := c.lockFor(id)
-	mu.Lock()
-	defer mu.Unlock()
-	return c.saveLocked(ctx, id, kind, class, mime, data, lineage)
+// maxSaveRetries bounds save/Edit's retry on ledger.ErrStaleParent - a real
+// conflict resolves next attempt; this only guards a wedged id (saveAt's doc).
+const maxSaveRetries = 20
+
+// idempotencyKey derives the store-level dedup key for id/data (#1144 P4),
+// replacing the old read-then-compare "identical to latest" check. Also
+// collapses a save matching an EARLIER (not just latest) revision - accepted,
+// since the point is collapsing re-runs, not distinguishing which past rev matched.
+func idempotencyKey(id string, data []byte) string {
+	h := sha256.New()
+	h.Write([]byte(id))
+	h.Write([]byte{0})
+	h.Write(data)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
-// saveLocked does the write, assuming the caller already holds id's lockFor
-// mutex (save and Edit both do) - never call this directly. Held across
-// read-parent + AppendIntent + saveRow: otherwise two concurrent saves for
-// the same id can both read the same parent and both claim the same next
-// revision in the WAL (adversarial review finding on #1100).
-func (c *Client) saveLocked(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage) (int, error) {
-	// Identical-content save: no new revision, no WAL intent - a no-op revise
-	// (e.g. a failed judge round that couldn't actually change anything) must
-	// look like nothing happened, not like an aborted or empty one (#1123).
-	// Applies to every save() and Edit() caller - the one choke point both
-	// converge on under this id's lock. A lookup error here (best-effort) just
-	// falls through to a normal save rather than risk skipping a real write.
-	if latest, latestRev, ok, err := c.Latest(ctx, id); err == nil && ok && bytes.Equal(latest, data) {
-		slog.Info("recordstore: save skipped, content identical to latest revision", "component", "recordstore", "id", id, "kind", kind, "revision", latestRev)
-		return latestRev, nil
+// save picks id's current latest revision as the parent and retries on
+// ledger.ErrStaleParent instead of holding idLocks across read+append+write
+// (#1144 P4 - the ledger's unique index now arbitrates concurrent claims).
+func (c *Client) save(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage) (int, error) {
+	for attempt := 0; ; attempt++ {
+		// No ledger: nothing arbitrates writers anyway, so keep the caller's
+		// own tracked ParentRevision as before #1144 P4.
+		parentRev := lineage.ParentRevision
+		if c.ledgerStore != nil {
+			versions, err := c.versionsDesc(ctx, id)
+			if err != nil {
+				return 0, fmt.Errorf("recordstore: read latest revision for %s: %w", id, err)
+			}
+			parentRev = 0
+			if len(versions) > 0 {
+				parentRev = int(versions[0])
+			}
+		}
+		rev, err := c.saveAt(ctx, id, kind, class, mime, data, lineage, parentRev)
+		if errors.Is(err, ledger.ErrStaleParent) && attempt < maxSaveRetries {
+			continue
+		}
+		return rev, err
 	}
-	if c.ledgerStore != nil {
-		parentRev, err := lastRevision(ctx, c.ledgerStore, c.sessionID, id)
-		if err != nil {
-			return 0, fmt.Errorf("recordstore: read ledger parent revision for %s: %w", id, err)
-		}
-		if parentRev != lineage.ParentRevision {
-			slog.Warn("recordstore: ledger parent_revision disagrees with caller-tracked revision", "component", "recordstore", "id", id, "ledger_parent", parentRev, "caller_parent", lineage.ParentRevision)
-		}
-		lineage.ParentRevision = parentRev // ledger is read, never computed (#1090 §4.9)
-		nextRev := parentRev + 1
-		payload, err := json.Marshal(artifactRevisionPayload{ID: id, Revision: nextRev, ParentRevision: parentRev, Kind: kind, Class: class, Lineage: lineage, BytesRef: id})
-		if err != nil {
-			return 0, fmt.Errorf("recordstore: marshal artifact.revision payload for %s: %w", id, err)
-		}
-		if _, err := c.ledgerStore.AppendIntent(ctx, ledger.Entry{
-			ChatID: c.sessionID, TurnID: lineage.TurnID, NodeID: lineage.NodeID,
-			Kind: ledger.KindArtifactRevision, Key: id, At: time.Now().UTC(), Payload: payload,
-		}); err != nil {
-			// Fail-closed (#1090 §4.9 case 11): no entry, no row.
-			return 0, fmt.Errorf("recordstore: WAL append failed for %s, row not written: %w", id, err)
-		}
-		rev, err := c.saveRow(ctx, id, kind, class, mime, data, lineage)
-		if err != nil {
-			// The WAL entry for nextRev already landed but the row never
-			// will - append a compensating marker (best-effort) so
-			// lastRevision skips this revision as a parent on the next
-			// save, instead of every retry re-deriving the same phantom
-			// nextRev and wedging forever behind a row that can't exist.
-			appendAborted(ctx, c.ledgerStore, c.sessionID, lineage.TurnID, lineage.NodeID, id, nextRev, err.Error())
-			return 0, err
-		}
-		if rev != nextRev {
-			// Under the lock above, with aborted revisions skipped by
-			// lastRevision, this is no longer explainable by a race or by a
-			// prior failed save - the WAL and the store have genuinely
-			// diverged. Fail closed rather than let a mismatched
-			// revision-content pairing propagate silently.
-			return 0, fmt.Errorf("recordstore: store assigned revision %d for %s, WAL expected %d", rev, id, nextRev)
-		}
-		return rev, nil
+}
+
+// saveAt writes data as parentRev+1, first claiming that parent in the
+// ledger (#1144 P4). ponytail: a saveRow failure AFTER a successful claim is
+// no longer self-healed (the old aborted marker is deleted) - the claim
+// stays taken, so every retry hits ledger.ErrStaleParent again and the id is
+// wedged until manual recovery. Traded on purpose for an honest failure
+// over a best-effort marker that could itself silently fail.
+func (c *Client) saveAt(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage, parentRev int) (int, error) {
+	lineage.ParentRevision = parentRev
+	if c.ledgerStore == nil {
+		return c.saveRow(ctx, id, kind, class, mime, data, lineage)
 	}
-	return c.saveRow(ctx, id, kind, class, mime, data, lineage)
+	nextRev := parentRev + 1
+	payload, err := json.Marshal(artifactRevisionPayload{ID: id, Revision: nextRev, ParentRevision: parentRev, Kind: kind, Class: class, Lineage: lineage, BytesRef: id})
+	if err != nil {
+		return 0, fmt.Errorf("recordstore: marshal artifact.revision payload for %s: %w", id, err)
+	}
+	_, err = c.ledgerStore.AppendIntent(ctx, ledger.Entry{
+		ChatID: c.sessionID, TurnID: lineage.TurnID, NodeID: lineage.NodeID,
+		Kind: ledger.KindArtifactRevision, Key: id, At: time.Now().UTC(), Payload: payload,
+		IdempotencyKey: idempotencyKey(id, data),
+	})
+	var dup *ledger.DuplicateIntentError
+	if errors.As(err, &dup) {
+		var p artifactRevisionPayload
+		if jerr := json.Unmarshal(dup.Existing.Payload, &p); jerr != nil {
+			return 0, fmt.Errorf("recordstore: duplicate intent for %s had an unparseable payload: %w", id, jerr)
+		}
+		slog.Info("recordstore: save skipped, identical content already recorded", "component", "recordstore", "id", id, "kind", kind, "revision", p.Revision)
+		return p.Revision, nil
+	}
+	if err != nil {
+		// Fail-closed (#1090 §4.9 case 11), including ledger.ErrStaleParent:
+		// no entry, no row.
+		return 0, err
+	}
+	rev, err := c.saveRow(ctx, id, kind, class, mime, data, lineage)
+	if err != nil {
+		return 0, err
+	}
+	if rev != nextRev {
+		// The ledger claimed nextRev but the store assigned something else -
+		// with the parent claim now exclusive at the store level, this can
+		// only mean the two have genuinely diverged. Fail closed rather than
+		// let a mismatched revision-content pairing propagate silently.
+		return 0, fmt.Errorf("recordstore: store assigned revision %d for %s, WAL expected %d", rev, id, nextRev)
+	}
+	return rev, nil
 }
 
 func (c *Client) saveRow(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage) (int, error) {
@@ -616,12 +579,20 @@ func applyEdits(content []byte, ops []EditOp) ([]byte, error) {
 // that's what makes a stale-but-non-intersecting edit merge instead of
 // failing. Structured content is re-validated before the write. Returns
 // *EditConflict (with the current latest) on any match failure - never a
-// partial write.
+// partial write. Retries on ledger.ErrStaleParent (#1144 P4 - idLocks
+// deleted): a concurrent writer that lands first just makes this reread the
+// new latest and reapply ops against it, same as a stale baseRevision would.
 func (c *Client) Edit(ctx context.Context, id string, baseRevision int, ops []EditOp, lineage Lineage) (int, []byte, error) {
-	mu := c.lockFor(id)
-	mu.Lock()
-	defer mu.Unlock()
+	for attempt := 0; ; attempt++ {
+		rev, merged, err := c.tryEdit(ctx, id, baseRevision, ops, lineage)
+		if errors.Is(err, ledger.ErrStaleParent) && attempt < maxSaveRetries {
+			continue
+		}
+		return rev, merged, err
+	}
+}
 
+func (c *Client) tryEdit(ctx context.Context, id string, baseRevision int, ops []EditOp, lineage Lineage) (int, []byte, error) {
 	raw, mime, _, latestRev, ok, err := c.LatestWithMeta(ctx, id)
 	if err != nil {
 		return 0, nil, fmt.Errorf("recordstore: edit %s: %w", id, err)
@@ -654,9 +625,8 @@ func (c *Client) Edit(ctx context.Context, id string, baseRevision int, ops []Ed
 			return 0, nil, fmt.Errorf("recordstore: edit %s: result fails validation: %w", id, verr)
 		}
 	}
-	lineage.ParentRevision = latestRev
 	lineage.BaseRevision = baseRevision
-	rev, err := c.saveLocked(ctx, id, kind, spec.Class, mime, merged, lineage)
+	rev, err := c.saveAt(ctx, id, kind, spec.Class, mime, merged, lineage, latestRev)
 	if err != nil {
 		return 0, nil, err
 	}

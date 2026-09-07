@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -143,7 +144,16 @@ func TestPGStoreReadEntriesReturnsInOrder(t *testing.T) {
 
 	var lastSeq int64
 	for i := 0; i < 5; i++ {
-		seq, err := store.AppendIntent(ctx, Entry{ChatID: chatID, Kind: KindArtifactRevision, Key: "code_review:pr:1"})
+		// Distinct parent_revision per entry: they share a key, and the
+		// #1144 P4 unique (chat_id, key, parent_revision) index would reject
+		// a repeat.
+		payload, err := json.Marshal(struct {
+			ParentRevision int `json:"parent_revision"`
+		}{ParentRevision: i})
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		seq, err := store.AppendIntent(ctx, Entry{ChatID: chatID, Kind: KindArtifactRevision, Key: "code_review:pr:1", Payload: payload})
 		if err != nil {
 			t.Fatalf("AppendIntent %d: %v", i, err)
 		}
@@ -184,5 +194,126 @@ func TestPGStoreAppendIntentValidation(t *testing.T) {
 	}
 	if _, err := store.AppendIntent(ctx, Entry{ChatID: "c"}); err == nil {
 		t.Error("expected error for missing kind")
+	}
+}
+
+// artifactRevPayload builds an artifact.revision entry's payload with just
+// the parent_revision field the unique index cares about - recordstore's
+// real payload carries more, but PGStore only ever reads this one field.
+func artifactRevPayload(t *testing.T, parent int) json.RawMessage {
+	t.Helper()
+	b, err := json.Marshal(struct {
+		ParentRevision int `json:"parent_revision"`
+	}{ParentRevision: parent})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return b
+}
+
+// TestPGStoreAppendIntent_ParentRevisionConflict is the epic's named
+// verification case for #1144 P4 against a REAL Postgres: two processes
+// (here, two goroutines against one PGStore/database) saving the same
+// artifact id concurrently, both claiming the same parent_revision - exactly
+// one must win, the other must get ErrStaleParent, and neither may silently
+// overwrite the other's WAL entry. Run with -race.
+func TestPGStoreAppendIntent_ParentRevisionConflict(t *testing.T) {
+	t.Parallel()
+	store := newTestPGStore(t)
+	ctx := context.Background()
+	const chatID, key = "chat-conflict", "code_review:pr-1"
+
+	const n = 10
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, errs[i] = store.AppendIntent(ctx, Entry{
+				ChatID: chatID, Kind: KindArtifactRevision, Key: key,
+				Payload: artifactRevPayload(t, 0), // every goroutine claims the SAME parent
+			})
+		}(i)
+	}
+	wg.Wait()
+
+	var wins, conflicts int
+	for i, err := range errs {
+		switch {
+		case err == nil:
+			wins++
+		case errors.Is(err, ErrStaleParent):
+			conflicts++
+		default:
+			t.Fatalf("AppendIntent[%d]: unexpected error: %v", i, err)
+		}
+	}
+	if wins != 1 || conflicts != n-1 {
+		t.Fatalf("wins=%d conflicts=%d, want exactly 1 winner and %d ErrStaleParent", wins, conflicts, n-1)
+	}
+
+	entries, err := store.ReadEntries(ctx, chatID, 0)
+	if err != nil {
+		t.Fatalf("ReadEntries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("got %d rows for %s, want exactly 1 (the one winner, no silent duplicate)", len(entries), key)
+	}
+}
+
+// TestPGStoreAppendIntent_IdempotencyKeyIsANoOp is #1144 P4's other store-level
+// guarantee: a repeated IdempotencyKey writes nothing and hands back the
+// entry that already claimed it, instead of erroring or duplicating.
+func TestPGStoreAppendIntent_IdempotencyKeyIsANoOp(t *testing.T) {
+	t.Parallel()
+	store := newTestPGStore(t)
+	ctx := context.Background()
+	const chatID = "chat-idem"
+
+	seq1, err := store.AppendIntent(ctx, Entry{ChatID: chatID, Kind: KindArtifactRevision, Key: "id1", IdempotencyKey: "dup"})
+	if err != nil {
+		t.Fatalf("first AppendIntent: %v", err)
+	}
+	_, err = store.AppendIntent(ctx, Entry{ChatID: chatID, Kind: KindArtifactRevision, Key: "id1", Payload: artifactRevPayload(t, 1), IdempotencyKey: "dup"})
+	var dup *DuplicateIntentError
+	if !errors.As(err, &dup) {
+		t.Fatalf("second AppendIntent = %v, want *DuplicateIntentError", err)
+	}
+	if dup.Existing.Seq != seq1 {
+		t.Fatalf("DuplicateIntentError.Existing.Seq = %d, want the first entry's %d", dup.Existing.Seq, seq1)
+	}
+	entries, err := store.ReadEntries(ctx, chatID, 0)
+	if err != nil {
+		t.Fatalf("ReadEntries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("got %d rows, want exactly 1 (the duplicate wrote nothing)", len(entries))
+	}
+}
+
+// TestPGStoreNewMigrate_RefusesDuplicateParentRevisions covers the migration
+// safety the epic calls out explicitly: an existing ledger_entries table
+// that ALREADY violates (chat_id, key, parent_revision) uniqueness (only
+// reachable pre-#1144 P4, since idLocks made it essentially impossible) must
+// not get the new unique index silently skipped or silently created broken -
+// NewPGStore refuses to start instead.
+func TestPGStoreNewMigrate_RefusesDuplicateParentRevisions(t *testing.T) {
+	t.Parallel()
+	db := newTestPGDB(t)
+	if err := db.Exec(`CREATE TABLE ledger_entries (
+		id BIGSERIAL PRIMARY KEY, chat_id TEXT, seq BIGINT, turn_id TEXT,
+		node_id TEXT, agent TEXT, round TEXT, kind TEXT, key TEXT, at TIMESTAMPTZ,
+		payload JSONB, parent_revision BIGINT, idempotency_key TEXT)`).Error; err != nil {
+		t.Fatalf("create bare table: %v", err)
+	}
+	// Two rows already claiming the same (chat_id, key, parent_revision) -
+	// simulates a database restored from before this index existed.
+	if err := db.Exec(`INSERT INTO ledger_entries (chat_id, seq, kind, key, at, payload, parent_revision)
+		VALUES ('chat1', 1, 'artifact.revision', 'id1', now(), '{}', 0), ('chat1', 2, 'artifact.revision', 'id1', now(), '{}', 0)`).Error; err != nil {
+		t.Fatalf("seed duplicates: %v", err)
+	}
+	if _, err := NewPGStore(db); err == nil {
+		t.Fatal("NewPGStore succeeded despite pre-existing duplicate parent revisions")
 	}
 }
