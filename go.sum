@@ -141,8 +141,8 @@ github.com/ebitengine/purego v0.10.1 h1:dewVBCBT2GaMu1SrNTYxQhgQBethzfhiwvZiLGP/
 github.com/ebitengine/purego v0.10.1/go.mod h1:iIjxzd6CiRiOG0UyXP+V1+jWqUXVjPKLAI0mRfJZTmQ=
 github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f h1:Y/CXytFA4m6baUTXGLOoWe4PQhGxaX0KpnayAqC48p4=
 github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f/go.mod h1:vw97MGsxSvLiUE2X8qFplwetxpGLQrlU1Q9AUEIzCaM=
-github.com/fagerbergj/quack-extensions/github v0.11.0 h1:jFDpyOdIJnRrA7PVthpFYcSjNqfbobEHIe0P9bGT/C0=
-github.com/fagerbergj/quack-extensions/github v0.11.0/go.mod h1:p/Ci0ckg+7FQSzrzqEwgzyrSTmA5RU5v9aQI6DRUf4Q=
+github.com/fagerbergj/quack-extensions/github v0.11.1 h1:0roR4r9gKvtxbiGQlmKjgepPjDJmvJb5KFD1eAG251g=
+github.com/fagerbergj/quack-extensions/github v0.11.1/go.mod h1:p/Ci0ckg+7FQSzrzqEwgzyrSTmA5RU5v9aQI6DRUf4Q=
 github.com/fagerbergj/quack-extensions/noop v0.2.0 h1:Or3gYcjGMP/tPzzgemUX11jwHMfTrGG4AXJO/ILmPEc=
 github.com/fagerbergj/quack-extensions/noop v0.2.0/go.mod h1:IxUsCKZGXXSNwyYwkSLtbM9FW6vQhnyGUgoQ6omRB60=
 github.com/fagerbergj/quack-extensions/remarkable v0.3.0 h1:9fvIO/T8Zy4dInN9nAQ4nMvSXP1SdQATnXpeK11nH+A=
