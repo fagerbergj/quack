@@ -903,6 +903,34 @@ type RecordingSummary struct {
 	SizeBytes  int64     `json:"size_bytes"`
 }
 
+// RescopeMemoriesBody defines model for RescopeMemoriesBody.
+type RescopeMemoriesBody struct {
+	// Apply false (default) only tallies what would move. true writes the bucket change and logs a memory_ops row per point.
+	Apply *bool `json:"apply,omitempty"`
+}
+
+// RescopeRepoTally defines model for RescopeRepoTally.
+type RescopeRepoTally struct {
+	// Count Memories found (dry run) or moved (apply) into this repo's bucket.
+	Count int `json:"count"`
+
+	// Examples A few content previews, for dry-run sanity checking.
+	Examples *[]string `json:"examples,omitempty"`
+
+	// Repo Target repo identity, e.g. `github.com/acme/games` (same format as a memory's `repo:` bucket suffix).
+	Repo string `json:"repo"`
+}
+
+// RescopeReport defines model for RescopeReport.
+type RescopeReport struct {
+	// Applied Whether this call actually wrote changes (mirrors the request's `apply`).
+	Applied bool               `json:"applied"`
+	Repos   []RescopeRepoTally `json:"repos"`
+
+	// SkippedNoProvenance role:* memories with no provenance chat_id (minted before
+	SkippedNoProvenance *int `json:"skipped_no_provenance,omitempty"`
+}
+
 // ResponseStatus The only supported target status for a response - cancelling the active run. (A separate enum from NodeStatus, which has states with no meaning at the response/run level.)
 type ResponseStatus string
 
@@ -1147,6 +1175,9 @@ type SendChatMessageJSONRequestBody = SendMessageBody
 
 // UpdateResponseStatusJSONRequestBody defines body for UpdateResponseStatus for application/json ContentType.
 type UpdateResponseStatusJSONRequestBody = ResponseStatusUpdateBody
+
+// RescopeMemoriesJSONRequestBody defines body for RescopeMemories for application/json ContentType.
+type RescopeMemoriesJSONRequestBody = RescopeMemoriesBody
 
 // SweepMemoriesJSONRequestBody defines body for SweepMemories for application/json ContentType.
 type SweepMemoriesJSONRequestBody = SweepMemoriesBody
@@ -1436,6 +1467,9 @@ type ServerInterface interface {
 	// Browse or search quack's semantic memory
 	// (GET /api/v1/memories)
 	ListMemories(w http.ResponseWriter, r *http.Request, params ListMemoriesParams)
+	// Move role:* memories into their resolved repo:* bucket
+	// (POST /api/v1/memories/rescope)
+	RescopeMemories(w http.ResponseWriter, r *http.Request)
 	// Run the forgetting-rule sweep on demand
 	// (POST /api/v1/memories/sweep)
 	SweepMemories(w http.ResponseWriter, r *http.Request)
@@ -1595,6 +1629,12 @@ func (_ Unimplemented) ListExtensions(w http.ResponseWriter, r *http.Request) {
 // Browse or search quack's semantic memory
 // (GET /api/v1/memories)
 func (_ Unimplemented) ListMemories(w http.ResponseWriter, r *http.Request, params ListMemoriesParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Move role:* memories into their resolved repo:* bucket
+// (POST /api/v1/memories/rescope)
+func (_ Unimplemented) RescopeMemories(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2708,6 +2748,28 @@ func (siw *ServerInterfaceWrapper) ListMemories(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// RescopeMemories operation middleware
+func (siw *ServerInterfaceWrapper) RescopeMemories(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RescopeMemories(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SweepMemories operation middleware
 func (siw *ServerInterfaceWrapper) SweepMemories(w http.ResponseWriter, r *http.Request) {
 
@@ -2984,6 +3046,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/memories", wrapper.ListMemories)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/memories/rescope", wrapper.RescopeMemories)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/memories/sweep", wrapper.SweepMemories)

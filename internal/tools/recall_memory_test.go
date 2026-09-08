@@ -102,6 +102,20 @@ func TestNewRecallMemory_LogsLedgerEntryWithCoords(t *testing.T) {
 	}
 }
 
+// TestRecallScope_NoNodeIDLegacyBucket: #1262/#1263 - recallScope's bucket
+// list is exactly [role:..., ...], never a Legacy bucket keyed by the raw
+// node id. Asserts the Scope directly (Commit never routes a Legacy-only
+// scope to a real bucket, so a round-trip-through-Commit test here would be
+// vacuous - it would pass even with Legacy: coords.Node reintroduced).
+func TestRecallScope_NoNodeIDLegacyBucket(t *testing.T) {
+	sc := recallScope(Deps{MemoryRole: "task"}, newFakeCtx(), ledger.Coords{ChatID: "chat1", Node: "node1"})
+	want := []string{"role:task"}
+	buckets := sc.Buckets()
+	if len(buckets) != len(want) || buckets[0] != want[0] {
+		t.Fatalf("Buckets() = %v, want %v (no node-id legacy bucket)", buckets, want)
+	}
+}
+
 // TestNewRecallMemory_EmptyQueryRejected guards the trivial input-validation
 // boundary every other quack tool enforces (stage_memory, commit_memory).
 func TestNewRecallMemory_EmptyQueryRejected(t *testing.T) {

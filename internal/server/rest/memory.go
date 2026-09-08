@@ -10,8 +10,11 @@ import (
 	"strings"
 	"time"
 
+	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/schema"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // memStores is every configured memory backend, task (repo:/role:) and user
@@ -235,6 +238,72 @@ func sweepReportWire(storeName string, report memory.ForgettingReport) schema.Sw
 		}
 	}
 	return schema.SweepStoreResult{Store: storeName, Evaluated: report.Evaluated, Kept: report.Kept, Rules: rules}
+}
+
+// RescopeMemories moves role:* memories whose provenance chat has a GitHub
+// origin into that repo's bucket (#1262). dry run by default; apply:true in
+// the body writes the change and audits it.
+func (h *Handler) RescopeMemories(w http.ResponseWriter, r *http.Request) {
+	var body schema.RescopeMemoriesBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		errMsg(w, http.StatusBadRequest, "malformed request body")
+		return
+	}
+	apply := body.Apply != nil && *body.Apply
+
+	byRepo := map[string]*memory.RescopeRepoStat{}
+	skippedNoProvenance := 0
+	for _, st := range h.memStores() {
+		res, err := st.Rescope(r.Context(), h.chatRepo, apply)
+		if err != nil {
+			httpError(w, http.StatusInternalServerError, err)
+			return
+		}
+		skippedNoProvenance += res.SkippedNoProvenance
+		for repo, stat := range res.ByRepo {
+			merged := byRepo[repo]
+			if merged == nil {
+				merged = &memory.RescopeRepoStat{}
+				byRepo[repo] = merged
+			}
+			merged.Count += stat.Count
+			if len(merged.Examples) < 3 {
+				merged.Examples = append(merged.Examples, stat.Examples...)
+			}
+		}
+	}
+
+	repos := make([]schema.RescopeRepoTally, 0, len(byRepo))
+	for repo, stat := range byRepo {
+		examples := stat.Examples
+		repos = append(repos, schema.RescopeRepoTally{Repo: repo, Count: stat.Count, Examples: &examples})
+	}
+	sort.Slice(repos, func(i, j int) bool { return repos[i].Repo < repos[j].Repo })
+	writeJSON(w, http.StatusOK, schema.RescopeReport{Applied: apply, Repos: repos, SkippedNoProvenance: &skippedNoProvenance})
+}
+
+// chatRepo resolves a chat's stored GitHub origin (the "repo" Labels
+// dimension the github extension stamps at dispatch) to the same identity
+// format workspace.RepoIdentity produces, so a rescoped point lands in the
+// SAME bucket a live worker's RepoKey would compute.
+func (h *Handler) chatRepo(ctx context.Context, chatID string) (string, bool) {
+	c, err := h.store.GetChat(ctx, chatID)
+	if err != nil || c == nil || c.Origin == "" {
+		return "", false
+	}
+	var origin extsdk.ChatOrigin
+	if err := json.Unmarshal([]byte(c.Origin), &origin); err != nil {
+		return "", false
+	}
+	vals, ok := origin.Labels["repo"]
+	if !ok || len(vals) == 0 || vals[0].Value == "" {
+		return "", false
+	}
+	repoKey := workspace.NormalizeRepoURL("github.com/" + vals[0].Value)
+	if repoKey == "" {
+		return "", false
+	}
+	return repoKey, true
 }
 
 func memoriesWire(mems []memory.Memory) []schema.Memory {

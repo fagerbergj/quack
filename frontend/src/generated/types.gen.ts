@@ -173,6 +173,40 @@ export type DeleteMemoryBody = {
     reason?: string;
 };
 
+export type RescopeMemoriesBody = {
+    /**
+     * false (default) only tallies what would move. true writes the bucket change and logs a memory_ops row per point.
+     */
+    apply?: boolean;
+};
+
+export type RescopeReport = {
+    /**
+     * Whether this call actually wrote changes (mirrors the request's `apply`).
+     */
+    applied: boolean;
+    repos: Array<RescopeRepoTally>;
+    /**
+     * role:* memories with no provenance chat_id (minted before
+     */
+    skipped_no_provenance?: number;
+};
+
+export type RescopeRepoTally = {
+    /**
+     * Target repo identity, e.g. `github.com/acme/games` (same format as a memory's `repo:` bucket suffix).
+     */
+    repo: string;
+    /**
+     * Memories found (dry run) or moved (apply) into this repo's bucket.
+     */
+    count: number;
+    /**
+     * A few content previews, for dry-run sanity checking.
+     */
+    examples?: Array<string>;
+};
+
 export type MemoryList = {
     memories: Array<Memory>;
     /**
@@ -1423,3 +1457,19 @@ export type SweepMemoriesResponses = {
 };
 
 export type SweepMemoriesResponse = SweepMemoriesResponses[keyof SweepMemoriesResponses];
+
+export type RescopeMemoriesData = {
+    body?: RescopeMemoriesBody;
+    path?: never;
+    query?: never;
+    url: '/api/v1/memories/rescope';
+};
+
+export type RescopeMemoriesResponses = {
+    /**
+     * Per-repo tallies (dry run) or the counts actually moved (apply)
+     */
+    200: RescopeReport;
+};
+
+export type RescopeMemoriesResponse = RescopeMemoriesResponses[keyof RescopeMemoriesResponses];

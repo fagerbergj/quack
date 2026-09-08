@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"bufio"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,17 +58,31 @@ func isRepo(dir string) bool {
 	return err == nil
 }
 
-// RepoKey: the chat's shared memory bucket key. Single repo in jail scope keyed by normalized origin. "" when none/multiple/no origin.
+// RepoKey: the chat's shared memory bucket key, keyed by origin identity not
+// repo count - worktree-per-node means a clone plus N linked worktrees of the
+// SAME origin all resolve to one bucket. "" when no repo, no origin, or the
+// found repos genuinely disagree (don't guess).
 func (j *Jail) RepoKey(userID, chatID string) string {
 	root, err := j.Resolve(userID, chatID, "")
 	if err != nil {
 		return ""
 	}
 	repos := FindRepos(root)
-	if len(repos) != 1 {
-		return ""
+	key := ""
+	for _, r := range repos {
+		id := RepoIdentity(r)
+		if id == "" {
+			continue
+		}
+		if key == "" {
+			key = id
+		} else if key != id {
+			slog.Warn("workspace: chat scope has repos with disagreeing origins, memory repo bucket disabled",
+				"component", "workspace", "chat_id", chatID)
+			return ""
+		}
 	}
-	return RepoIdentity(repos[0])
+	return key
 }
 
 // Stable, clone-URL-independent identity from .git/config origin remote. Parsed from file (no git subprocess, recall hot path).

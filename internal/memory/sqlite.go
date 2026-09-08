@@ -392,6 +392,16 @@ func (x *sqliteIndex) backfillTiers(ctx context.Context) (int, error) {
 	return int(touched + res.RowsAffected), nil
 }
 
+// updateBucket moves a row to a new bucket, unconditionally.
+func (x *sqliteIndex) updateBucket(ctx context.Context, id, bucket string) error {
+	if err := x.db.WithContext(ctx).Model(&memoryRow{}).
+		Where("collection = ? AND id = ?", x.coll, id).
+		Update("scope", bucket).Error; err != nil {
+		return fmt.Errorf("memory: sqlite rescope: %w", err)
+	}
+	return nil
+}
+
 // cosine is the cosine similarity of two equal-length vectors, in [-1, 1]; 0 for
 // a length mismatch or a zero vector. Matches Qdrant's Distance_Cosine ranking.
 func cosine(a, b []float32) float32 {

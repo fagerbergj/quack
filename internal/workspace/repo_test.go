@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -72,5 +73,53 @@ func TestRepoKey(t *testing.T) {
 	writeRepo(t, filepath.Join(scope3, "local"), "")
 	if got := j.RepoKey("u1", "c3"); got != "" {
 		t.Fatalf("origin-less repo RepoKey = %q, want \"\"", got)
+	}
+}
+
+// TestRepoKey_WorktreePerNode: worktree-per-node lays a shared clone plus one
+// linked worktree per node under the chat root - all share one origin, so
+// FindRepos returning 3 entries must still resolve to ONE bucket (#1262).
+func TestRepoKey_WorktreePerNode(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root := t.TempDir()
+	j, err := NewJail(root)
+	if err != nil {
+		t.Fatalf("NewJail: %v", err)
+	}
+	scope, err := j.Resolve("u1", "c1", "")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if err := os.MkdirAll(scope, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	clone := filepath.Join(scope, "quack-shared-repo")
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.MkdirAll(clone, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run(clone, "init", "-q")
+	run(clone, "config", "user.email", "t@example.com")
+	run(clone, "config", "user.name", "t")
+	run(clone, "remote", "add", "origin", "git@github.com:Acme/Games.git")
+	run(clone, "commit", "--allow-empty", "-q", "-m", "init")
+	run(clone, "worktree", "add", "-q", filepath.Join(scope, "quack-worktree", "review"), "-b", "review")
+	run(clone, "worktree", "add", "-q", filepath.Join(scope, "quack-worktree", "review-new-commits"), "-b", "review-new-commits")
+
+	if got, want := len(FindRepos(scope)), 3; got != want {
+		t.Fatalf("FindRepos found %d repos, want %d", got, want)
+	}
+	if got, want := j.RepoKey("u1", "c1"), "github.com/acme/games"; got != want {
+		t.Fatalf("RepoKey = %q, want %q", got, want)
 	}
 }

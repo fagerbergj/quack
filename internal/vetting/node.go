@@ -366,7 +366,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	if cfg.ExternalWorker && cfg.CommitMemory {
 		_, recallSpan := otelobs.Start(nodeCtx, "memory.recall",
 			attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID))
-		rec, hits := cfg.Memory.RecallWithHits(ctx, MemoryScope(ctx, cfg, nodeID), cfg.Task)
+		rec, hits := cfg.Memory.RecallWithHits(ctx, MemoryScope(ctx, cfg), cfg.Task)
 		recallSpan.SetAttributes(attribute.Bool("hit", rec != ""))
 		recallSpan.End()
 		otelobs.RecordMemoryRecall(rec != "")
@@ -980,7 +980,7 @@ func commitMemoryOnPass(ctx adkagent.Context, spanCtx context.Context, cfg Confi
 	if cfg.Memory == nil || !cfg.CommitMemory || strings.TrimSpace(answer) == "" {
 		return
 	}
-	sc := MemoryScope(ctx, cfg, author)
+	sc := MemoryScope(ctx, cfg)
 	prov := memory.Provenance{ChatID: cfg.ChatID, NodeID: author, Source: cfg.Source}
 	// Fire-and-forget: link span to node span (separate trace, node may finish before goroutine does).
 	parentSC := oteltrace.SpanContextFromContext(spanCtx)
@@ -1423,9 +1423,12 @@ func recordDeliveryOutcomeMetric(cfg Config, res GateResult, attempted, delivere
 	}
 }
 
-// MemoryScope: node's memory entitlement (repo, role, user, legacy key). Exported for ACP MCP surface.
-func MemoryScope(ctx adkagent.Context, cfg Config, author string) memory.Scope {
-	sc := memory.Scope{Role: cfg.MemoryRole, Legacy: author}
+// MemoryScope: node's memory entitlement (repo, role, user). Exported for ACP
+// MCP surface. Legacy is deliberately unset here - it exists only so
+// memories committed before per-scope buckets (keyed by agent NAME, e.g.
+// "web-researcher") still recall; a node id is not that key.
+func MemoryScope(ctx adkagent.Context, cfg Config) memory.Scope {
+	sc := memory.Scope{Role: cfg.MemoryRole}
 	if s := ctx.Session(); s != nil {
 		sc.User = s.UserID()
 	}

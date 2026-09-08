@@ -190,6 +190,14 @@ func (c *Client) SweepMemories(ctx context.Context, dryRun bool) (schema.SweepMe
 	return out, err
 }
 
+// RescopeMemories moves role:* memories with a resolvable GitHub-origin chat
+// into their repo:* bucket (#1262). apply=false only tallies.
+func (c *Client) RescopeMemories(ctx context.Context, apply bool) (schema.RescopeReport, error) {
+	var out schema.RescopeReport
+	err := c.postJSON(ctx, "/api/v1/memories/rescope", schema.RescopeMemoriesBody{Apply: &apply}, &out)
+	return out, err
+}
+
 // GetChat returns a chat with its turns.
 func (c *Client) GetChat(ctx context.Context, id string) (schema.ChatDetail, error) {
 	var out schema.ChatDetail

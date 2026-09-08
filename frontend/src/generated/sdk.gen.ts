@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, DeleteMemoryData, DeleteMemoryErrors, DeleteMemoryResponses, DiffArtifactRevisionsData, DiffArtifactRevisionsErrors, DiffArtifactRevisionsResponses, EditNodeTaskData, EditNodeTaskErrors, EditNodeTaskResponses, EditQueuedMessageData, EditQueuedMessageErrors, EditQueuedMessageResponses, GetChatArtifactData, GetChatArtifactErrors, GetChatArtifactResponses, GetChatData, GetChatErrors, GetChatRecordingData, GetChatRecordingErrors, GetChatRecordingResponses, GetChatResponses, GetConfigData, GetConfigResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListArtifactRevisionsData, ListArtifactRevisionsErrors, ListArtifactRevisionsResponses, ListChatArtifactsData, ListChatArtifactsErrors, ListChatArtifactsResponses, ListChatsData, ListChatsErrors, ListChatsResponses, ListExtensionsData, ListExtensionsResponses, ListMemoriesData, ListMemoriesErrors, ListMemoriesResponses, ListRecordingsData, ListRecordingsErrors, ListRecordingsResponses, QueueNodeMessageData, QueueNodeMessageErrors, QueueNodeMessageResponses, RemoveQueuedMessageData, RemoveQueuedMessageErrors, RemoveQueuedMessageResponses, SendChatMessageData, SendChatMessageErrors, SendChatMessageResponse, SendChatMessageResponses, StartNodeData, StartNodeErrors, StartNodeResponses, StopNodeData, StopNodeErrors, StopNodeResponses, SubscribeChatStreamData, SubscribeChatStreamErrors, SubscribeChatStreamResponse, SubscribeChatStreamResponses, SweepMemoriesData, SweepMemoriesErrors, SweepMemoriesResponses, UpdateChatData, UpdateChatErrors, UpdateChatResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses } from './types.gen';
+import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, DeleteMemoryData, DeleteMemoryErrors, DeleteMemoryResponses, DiffArtifactRevisionsData, DiffArtifactRevisionsErrors, DiffArtifactRevisionsResponses, EditNodeTaskData, EditNodeTaskErrors, EditNodeTaskResponses, EditQueuedMessageData, EditQueuedMessageErrors, EditQueuedMessageResponses, GetChatArtifactData, GetChatArtifactErrors, GetChatArtifactResponses, GetChatData, GetChatErrors, GetChatRecordingData, GetChatRecordingErrors, GetChatRecordingResponses, GetChatResponses, GetConfigData, GetConfigResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListArtifactRevisionsData, ListArtifactRevisionsErrors, ListArtifactRevisionsResponses, ListChatArtifactsData, ListChatArtifactsErrors, ListChatArtifactsResponses, ListChatsData, ListChatsErrors, ListChatsResponses, ListExtensionsData, ListExtensionsResponses, ListMemoriesData, ListMemoriesErrors, ListMemoriesResponses, ListRecordingsData, ListRecordingsErrors, ListRecordingsResponses, QueueNodeMessageData, QueueNodeMessageErrors, QueueNodeMessageResponses, RemoveQueuedMessageData, RemoveQueuedMessageErrors, RemoveQueuedMessageResponses, RescopeMemoriesData, RescopeMemoriesResponses, SendChatMessageData, SendChatMessageErrors, SendChatMessageResponse, SendChatMessageResponses, StartNodeData, StartNodeErrors, StartNodeResponses, StopNodeData, StopNodeErrors, StopNodeResponses, SubscribeChatStreamData, SubscribeChatStreamErrors, SubscribeChatStreamResponse, SubscribeChatStreamResponses, SweepMemoriesData, SweepMemoriesErrors, SweepMemoriesResponses, UpdateChatData, UpdateChatErrors, UpdateChatResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -536,6 +536,28 @@ export const deleteMemory = <ThrowOnError extends boolean = false>(options: Opti
 export const sweepMemories = <ThrowOnError extends boolean = false>(options?: Options<SweepMemoriesData, ThrowOnError>): RequestResult<SweepMemoriesResponses, SweepMemoriesErrors, ThrowOnError> => (options?.client ?? client).post<SweepMemoriesResponses, SweepMemoriesErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
     url: '/api/v1/memories/sweep',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers
+    }
+});
+
+/**
+ * Move role:* memories into their resolved repo:* bucket
+ *
+ * #1262: worktree-per-node made `RepoKey` return "" for every chat with
+ * a sibling worktree, so those memories landed in `role:coding`/`role:research`
+ * instead of `repo:<identity>`. This finds every live role:* memory whose
+ * provenance chat has a GitHub origin and moves it to that repo's bucket.
+ * Without `apply` (the default) it only tallies; set `apply: true` to
+ * write. Every applied move is also logged to `memory_ops` with actor
+ * `rescope`.
+ *
+ */
+export const rescopeMemories = <ThrowOnError extends boolean = false>(options?: Options<RescopeMemoriesData, ThrowOnError>): RequestResult<RescopeMemoriesResponses, unknown, ThrowOnError> => (options?.client ?? client).post<RescopeMemoriesResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/memories/rescope',
     ...options,
     headers: {
         'Content-Type': 'application/json',

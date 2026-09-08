@@ -75,6 +75,23 @@ type recallMemoryTool struct {
 
 func (t *recallMemoryTool) SetLedgerCoords(c ledger.Coords) { t.box.set(c) }
 
+// recallScope mirrors vetting.MemoryScope (role from the agent bundle, repo
+// from the workspace, user from the session) but takes coords directly - the
+// mutable-box re-derivation newRecallMemory does per call, pulled out so a
+// test can assert the bucket list without wiring a whole ADK tool call.
+// Deliberately never sets Legacy: that field is only for pre-scope memories
+// keyed by agent NAME, and a node id never had memories under it (#1262/#1263).
+func recallScope(d Deps, ctx agent.Context, coords ledger.Coords) memory.Scope {
+	sc := memory.Scope{Role: d.MemoryRole}
+	if s := ctx.Session(); s != nil {
+		sc.User = s.UserID()
+	}
+	if d.Workspace != nil {
+		sc.Repo = d.Workspace.RepoKey(d.WorkspaceUserID, coords.ChatID)
+	}
+	return sc
+}
+
 // newRecallMemory builds the registry's recall_memory for native DAG
 // workers. Scope mirrors vetting.MemoryScope (role from the agent bundle,
 // repo from the workspace, user from the session) but is re-derived on
@@ -93,13 +110,7 @@ func newRecallMemory(d Deps) (tool.Tool, error) {
 				return recallMemoryResult{}, fmt.Errorf("recall_memory: query is empty")
 			}
 			coords := box.get()
-			sc := memory.Scope{Role: d.MemoryRole, Legacy: coords.Node}
-			if s := ctx.Session(); s != nil {
-				sc.User = s.UserID()
-			}
-			if d.Workspace != nil {
-				sc.Repo = d.Workspace.RepoKey(d.WorkspaceUserID, coords.ChatID)
-			}
+			sc := recallScope(d, ctx, coords)
 			hits, truncated := d.Memory.RecallForTool(ctx, sc, a.Query, a.K)
 			d.Memory.LogRecall(ctx, d.Ledger, coords.ChatID, coords.Node, "tool", hits)
 			return recallMemoryResult{Hits: hits, Truncated: truncated}, nil
