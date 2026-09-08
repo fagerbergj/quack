@@ -115,7 +115,7 @@ func collect(t *testing.T, seq iter.Seq2[*session.Event, error]) (thinking, answ
 // client, and asserts thinking / tool_call / tool_result / token all survive the
 // round-trip (adka2a DataPart metadata ↔ genai parts).
 func TestA2ARoundTripPreservesEventVocabulary(t *testing.T) {
-	srv, err := Serve(newWorker(t), session.InMemoryService(), nil, Compaction{})
+	srv, err := Serve(newWorker(t), session.InMemoryService(), nil, Compaction{}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func (m transferModel) GenerateContent(_ context.Context, req *model.LLMRequest,
 // orchestrator with the A2A client as a sub-agent transfers to it, and the
 // sub-agent's events surface through the orchestrator's runner.
 func TestOrchestratorTransfersToA2ASubAgent(t *testing.T) {
-	srv, err := Serve(newWorker(t), session.InMemoryService(), nil, Compaction{})
+	srv, err := Serve(newWorker(t), session.InMemoryService(), nil, Compaction{}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,6 +338,99 @@ func TestNativeCompactionConfig(t *testing.T) {
 	noSummarizer.Summarizer = nil
 	if _, err := nativeCompactionConfig(noSummarizer); err == nil {
 		t.Fatal("no summarizer: want an error, got nil")
+	}
+}
+
+// summarizerModel is a canned model for compaction's LLMSummarizer: it always
+// answers with fixed summary text, regardless of the transcript it is given.
+type summarizerModel struct{}
+
+func (summarizerModel) Name() string { return "summarizer-model" }
+
+func (summarizerModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		yield(&model.LLMResponse{
+			Content:      &genai.Content{Role: "model", Parts: []*genai.Part{{Text: "the user asked a question"}}},
+			TurnComplete: true,
+		}, nil)
+	}
+}
+
+// answerOnlyModel answers immediately with no tool calls, so a single Run
+// invocation is one complete turn for the post-invocation compactor to act on.
+type answerOnlyModel struct{}
+
+func (answerOnlyModel) Name() string { return "answer-only-model" }
+
+func (answerOnlyModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		yield(&model.LLMResponse{
+			Content:      &genai.Content{Role: "model", Parts: []*genai.Part{{Text: "Answer: 42"}}},
+			TurnComplete: true,
+		}, nil)
+	}
+}
+
+// TestCompactionSessionsObservesRealCompaction proves compactionSessions
+// (a2a.go) actually catches a compaction event fired by adk/v2's own
+// runner-level compaction, not one this test hands it - CompactionInterval:1
+// makes adk's real sliding-window compactor fire its own AppendEvent after a
+// single complete invocation, the way the reviewer on #1247 required.
+func TestCompactionSessionsObservesRealCompaction(t *testing.T) {
+	ag, err := llmagent.New(llmagent.Config{
+		Name:        "compaction-worker",
+		Description: "A test worker agent.",
+		Model:       answerOnlyModel{},
+		Instruction: "Answer directly.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	adkComp, err := nativeCompactionConfig(Compaction{
+		Enabled:            true,
+		Summarizer:         summarizerModel{},
+		CompactionInterval: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var events []stream.SSEEvent
+	sink := func(ev stream.SSEEvent) { events = append(events, ev) }
+	sessions := compactionSessions{Service: session.InMemoryService(), nodeID: "node-real", sink: sink}
+
+	r, err := runner.New(runner.Config{
+		AppName:           "compaction-e2e",
+		Agent:             ag,
+		SessionService:    sessions,
+		AutoCreateSession: true,
+		Compaction:        adkComp,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "hello"}}}
+	for ev, err := range r.Run(context.Background(), "local", "s1", content, adkagent.RunConfig{}) {
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		_ = ev
+	}
+
+	if len(events) == 0 {
+		t.Fatal("compactionSessions never observed a compaction event from adk's real compactor")
+	}
+	data, ok := events[0].Data.(stream.CompactionData)
+	if !ok {
+		t.Fatalf("event data = %T, want stream.CompactionData", events[0].Data)
+	}
+	if data.NodeID != "node-real" {
+		t.Errorf("NodeID = %q, want %q", data.NodeID, "node-real")
+	}
+	if events[0].Name != stream.EventCompaction {
+		t.Errorf("event name = %q, want %q", events[0].Name, stream.EventCompaction)
 	}
 }
 

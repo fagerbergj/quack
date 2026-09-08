@@ -7,6 +7,7 @@ package stream
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"google.golang.org/adk/v2/session"
@@ -60,6 +61,13 @@ const (
 	// so a phantom "the gate passed" success is distinguishable from an actual
 	// delivery failure. See DeliveryResultData.
 	EventDeliveryResult = "delivery_result"
+
+	// EventCompaction reports a worker node's session being compacted by
+	// adk/v2's native runner-level compaction (internal/agent's Compaction) -
+	// observed by decorating the node's session.Service, since neither native
+	// strategy ever yields the summary into the runner's event stream (see
+	// internal/agent/a2a.go's compactionSessions).
+	EventCompaction = "compaction"
 
 	// EventArtifactRevision reports one artifact revision written by a judge
 	// round (#1090 §4.8/#1092) - emitted before the round's
@@ -347,6 +355,47 @@ type ArtifactJudgeRoundData struct {
 // ChatTitleData is the `chat_title` event payload.
 type ChatTitleData struct {
 	Title string `json:"title"`
+}
+
+// CompactionData: `compaction` event payload. Fields are exactly what
+// adk/v2's session.EventCompaction and the summarizer's UsageMetadata expose
+// on the compaction Event itself - no invented before/after conversation size
+// (adk does not report that; see internal/agent/compaction.go).
+type CompactionData struct {
+	NodeID string `json:"node_id,omitempty"`
+	// RunID is the adk invocation that triggered the compaction, not a quack
+	// worker-run id (adk native compaction isn't scoped to one of those).
+	RunID               string `json:"run_id,omitempty"`
+	StartTimestamp      string `json:"start_timestamp,omitempty"`
+	EndTimestamp        string `json:"end_timestamp,omitempty"`
+	SummaryInputTokens  int32  `json:"summary_input_tokens,omitempty"`
+	SummaryOutputTokens int32  `json:"summary_output_tokens,omitempty"`
+}
+
+// Compaction builds a compaction event. start/end zero values are omitted
+// rather than sent as the epoch, and likewise for zero token counts - adk
+// leaves both unset when it has nothing to report (see
+// internal/telemetry/compaction.go in the vendored module).
+// RunIDFromBranch extracts quack's run id from an ADK branch segment of the
+// form "<name>@<runID>" (workflow.WithUseSubBranch's shape) - the one
+// producer both dag.segRun and compaction event-emission key off of, so a
+// compaction row's run id always matches its round's agent_start run id.
+func RunIDFromBranch(branch string) string {
+	if i := strings.Index(branch, "@"); i >= 0 {
+		return branch[i+1:]
+	}
+	return ""
+}
+
+func Compaction(nodeID, runID string, start, end time.Time, inputTokens, outputTokens int32) SSEEvent {
+	d := CompactionData{NodeID: nodeID, RunID: runID, SummaryInputTokens: inputTokens, SummaryOutputTokens: outputTokens}
+	if !start.IsZero() {
+		d.StartTimestamp = start.UTC().Format(time.RFC3339)
+	}
+	if !end.IsZero() {
+		d.EndTimestamp = end.UTC().Format(time.RFC3339)
+	}
+	return SSEEvent{Name: EventCompaction, Data: d}
 }
 
 // ── event constructors ───

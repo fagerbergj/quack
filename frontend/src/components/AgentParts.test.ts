@@ -9,9 +9,10 @@ import {
   completeRun,
   freezeOpenRuns,
   ToolBlock,
+  ActivityList,
   type AgentRun,
 } from './AgentParts'
-import type { ToolCall } from './messageParts'
+import type { Activity, ToolCall } from './messageParts'
 
 function run(runs: AgentRun[], runId: string): AgentRun {
   const r = runs.find(x => x.runId === runId)
@@ -144,5 +145,21 @@ describe('ToolBlock - no copy button (#746 item 6)', () => {
   it('renders no button at all', () => {
     const out = renderToStaticMarkup(createElement(ToolBlock, { tool }))
     expect(out).not.toContain('<button')
+  })
+})
+
+describe('ActivityList - compaction row', () => {
+  it('renders a bare label when the summarizer reported no usage', () => {
+    const activity: Activity[] = [{ kind: 'compaction' }]
+    const out = renderToStaticMarkup(createElement(ActivityList, { activity }))
+    expect(out).toContain('compacted')
+    expect(out).toContain('aria-label="Context compacted"')
+  })
+
+  it('shows the summarizer spend when adk reports usage', () => {
+    const activity: Activity[] = [{ kind: 'compaction', summaryInputTokens: 210_000, summaryOutputTokens: 1_800 }]
+    const out = renderToStaticMarkup(createElement(ActivityList, { activity }))
+    expect(out).toContain('210K')
+    expect(out).toContain('aria-label="Context compacted, summarizer spent 210000 in / 1800 out tokens"')
   })
 })

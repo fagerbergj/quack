@@ -70,7 +70,7 @@ func TestBuildAgents_NativeNodeGetsArtifactTools(t *testing.T) {
 	if !ok {
 		t.Fatalf("clientMap[%q] = %T, want nativeAgent", "tester", clientMap["tester"])
 	}
-	_, _, tools, setRoundCoords, release, err := na.ForNode("test-plan:test-node", nil, artifacts, "quack-test", "u1", "chat-1", "test-node")
+	_, _, tools, setRoundCoords, release, err := na.ForNode("test-plan:test-node", nil, artifacts, "quack-test", "u1", "chat-1", "test-node", nil)
 	if err != nil {
 		t.Fatalf("ForNode: %v", err)
 	}

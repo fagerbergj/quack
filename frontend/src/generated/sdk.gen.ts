@@ -258,6 +258,15 @@ export const diffArtifactRevisions = <ThrowOnError extends boolean = false>(opti
  * success class this event exists to make visible). Emitted for both
  * success and failure, durably, independent of the judge verdict.
  *
+ * `compaction` ({"node_id","run_id","start_timestamp","end_timestamp",
+ * "summary_input_tokens","summary_output_tokens"}) reports a worker
+ * node's session being compacted mid-round by adk's own runner-level
+ * compaction. Fields are exactly what adk's compaction event exposes -
+ * there is no before/after conversation-size total, since adk does not
+ * report one. `run_id` is the adk invocation id, not a `run_id` from
+ * `agent_start`. Token fields are omitted when the summarizer reported
+ * no usage.
+ *
  * Lifecycle: `response_created` ({"response_id"}) is the very first event
  * of the stream, naming the turn so a client can cancel this run via
  * `PUT /chats/{chat_id}/responses/{response_id}/status`; `chat_title`

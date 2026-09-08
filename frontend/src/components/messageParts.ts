@@ -32,10 +32,21 @@ export interface ToolCall {
   title?: string
 }
 
-// Activity is one ordered item inside a run: reasoning or a tool call.
+// Activity is one ordered item inside a run: reasoning, a tool call, or a
+// context-compaction event (the node's worker session was rewritten mid-round
+// by adk's own runner-level compaction). Fields mirror stream.CompactionData -
+// adk reports no before/after conversation-size total, so unlike the old
+// tokensBefore/tokensAfter row this is a range + summarizer spend, both optional.
 export type Activity =
   | { kind: 'thinking'; text: string }
   | { kind: 'tool'; tool: ToolCall }
+  | {
+      kind: 'compaction'
+      startTimestamp?: string
+      endTimestamp?: string
+      summaryInputTokens?: number
+      summaryOutputTokens?: number
+    }
 
 // AgentRun is one agent invocation within a node. Result fields are populated on
 // agent_complete and vary by stage.
@@ -175,6 +186,14 @@ export function freezeOpenRuns(runs: AgentRun[], nowMs?: number): AgentRun[] {
   })
 }
 
+// appendRunCompaction records a compaction event on the run it belongs to,
+// matched exactly by run_id like appendRunThinking/appendRunToolCall - the
+// backend now sends quack's own run_id (stream.RunIDFromBranch), the same one
+// the run's agent_start carries, not adk's own invocation id.
+export function appendRunCompaction(runs: AgentRun[], runId: string, data: Extract<Activity, { kind: 'compaction' }>): AgentRun[] {
+  return mapRun(runs, runId, run => ({ ...run, activity: [...run.activity, data] }))
+}
+
 function mapRun(runs: AgentRun[], runId: string, fn: (run: AgentRun) => AgentRun): AgentRun[] {
   let found = false
   const next = runs.map(run => {
@@ -191,18 +210,25 @@ function mapRun(runs: AgentRun[], runId: string, fn: (run: AgentRun) => AgentRun
 export interface LiveStatus {
   thinking: boolean
   tool?: ToolCall
+  compacted: boolean
 }
 
 // liveStatusLine computes LiveStatus from a run's activity - the substitute
 // for rendering the full list while running (#725: re-rendering an
 // ever-growing activity list on every streamed token is what locks the tab).
+// compacted surfaces a mid-round compaction (#1185) even while the run is
+// still shown via this substitute rather than the full ActivityList.
 export function liveStatusLine(activity: Activity[]): LiveStatus {
   let tool: ToolCall | undefined
   for (let i = activity.length - 1; i >= 0; i--) {
     const a = activity[i]
     if (a.kind === 'tool') { tool = a.tool; break }
   }
-  return { thinking: activity[activity.length - 1]?.kind === 'thinking', tool }
+  return {
+    thinking: activity[activity.length - 1]?.kind === 'thinking',
+    tool,
+    compacted: activity.some(a => a.kind === 'compaction'),
+  }
 }
 
 // showLiveSpinner decides whether the live (streaming) turn shows the "thinking"

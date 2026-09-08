@@ -9,6 +9,7 @@ import (
 	"google.golang.org/adk/v2/tool"
 
 	"github.com/fagerbergj/quack/internal/agent"
+	"github.com/fagerbergj/quack/internal/stream"
 )
 
 // nativeAgent is buildAgents' clientMap entry for a native (co-located,
@@ -21,15 +22,18 @@ import (
 // mutable coordinate field.
 type nativeAgent struct {
 	adkagent.Agent
-	build func(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(), error)
+	build func(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(), error)
 }
 
 // ForNode builds this node's list/read/edit/write_<kind> artifact tools
 // (internal/tools.BuildNativeArtifactTools) into the worker's builtins
 // before construction - the same mechanism check_mermaid/format-markdown
 // tools go through (buildWorker's builtins), not a parallel one (#1123).
-func (n nativeAgent) ForNode(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(), error) {
-	return n.build(nodeKey, drain, artifacts, appName, userID, chatID, nodeID)
+// sink is grabbed from the caller's ctx at build time (stream.YieldFromContext)
+// and closed over by this node's own A2A server - it can't cross the A2A
+// wire later, so agent.Serve needs it passed in explicitly (see its doc).
+func (n nativeAgent) ForNode(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(), error) {
+	return n.build(nodeKey, drain, artifacts, appName, userID, chatID, nodeID, sink)
 }
 
 // perNodeServers tracks currently-open per-node A2A servers (nativeAgent.
