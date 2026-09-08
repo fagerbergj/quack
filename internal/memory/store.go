@@ -130,6 +130,11 @@ type scored struct {
 	// "" = none) - epic #1255 P4, distinct from Upvotes/Downvotes which mix
 	// judge and human votes together. Toggling re-derives the delta from this.
 	HumanVote string
+	// Vector is populated by query() only (list()/getByID leave it nil) - the
+	// MMR diversity re-rank in recall (issue #1269) needs each hit's own
+	// embedding to compute inter-hit cosine, which the query score alone
+	// (similarity to the QUERY, not to other hits) can't give it.
+	Vector []float32
 }
 
 // point is one memory to upsert.
@@ -169,7 +174,47 @@ const (
 	maxRecallRunes = 2000
 	// recallEmbedTimeout bounds how long recall waits before degrading to no-recall.
 	recallEmbedTimeout = 30 * time.Second
+	// recallFetchMultiplier: recall fetches this many times topK from the index
+	// so mmrSelect (issue #1269) has enough candidates to pick a diverse top-K
+	// from, instead of only ever seeing exactly topK (no room to swap a
+	// near-duplicate for the next-best distinct hit).
+	recallFetchMultiplier = 2
+	// recallDiversityThreshold: mmrSelect drops a candidate whose cosine to an
+	// already-selected hit is at or above this - the same near-duplicate bar
+	// the sweep dedupe uses (dedupeCosineThreshold).
+	recallDiversityThreshold float32 = dedupeCosineThreshold
 )
+
+// mmrSelect greedily picks up to k of pts (already sorted best-first by the
+// index) such that no two selected points are mutual near-duplicates: a
+// candidate is skipped if its cosine similarity to any already-selected
+// point is >= threshold. This is deliberately not full MMR (no relevance/
+// diversity tradeoff parameter) - the goal is only to stop near-identical
+// hits from crowding out a distinct one, not to optimize diversity for its
+// own sake. A point with no Vector (e.g. an index/test double that never
+// populates it) can never be judged a duplicate of anything and is kept.
+func mmrSelect(pts []scored, k int, threshold float32) []scored {
+	if k <= 0 || len(pts) == 0 {
+		return nil
+	}
+	selected := make([]scored, 0, k)
+	for _, p := range pts {
+		if len(selected) >= k {
+			break
+		}
+		dup := false
+		for _, sel := range selected {
+			if len(p.Vector) > 0 && len(sel.Vector) > 0 && cosine(p.Vector, sel.Vector) >= threshold {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			selected = append(selected, p)
+		}
+	}
+	return selected
+}
 
 // Store serves one memory collection over a vector index, shared by every agent.
 type Store struct {
@@ -262,17 +307,18 @@ func (s *Store) recall(ctx context.Context, buckets []string, query string) (res
 	if len(vecs) == 0 {
 		return &adkmemory.SearchResponse{}, nil, nil
 	}
-	// Fetch top-K then apply minScore in Go so the threshold is observable.
-	pts, qerr := s.idx.query(ctx, buckets, vecs[0], s.topK)
+	// Fetch 2*topK so the MMR re-rank below has enough candidates to pick a
+	// diverse top-K from, then apply minScore in Go so the threshold is observable.
+	pts, qerr := s.idx.query(ctx, buckets, vecs[0], s.topK*recallFetchMultiplier)
 	if qerr != nil {
 		return nil, nil, fmt.Errorf("memory: query %q: %w", s.coll, qerr)
 	}
-	entries := make([]adkmemory.Entry, 0, len(pts))
-	kept := make([]scored, 0, len(pts))
-	previews := make([]string, 0, len(pts))
+	entries := make([]adkmemory.Entry, 0, s.topK)
+	kept := make([]scored, 0, s.topK)
+	previews := make([]string, 0, s.topK)
 	var topScore float32
 	dropped := 0
-	for _, p := range pts {
+	for _, p := range mmrSelect(pts, s.topK, recallDiversityThreshold) {
 		if p.Score > topScore {
 			topScore = p.Score
 		}

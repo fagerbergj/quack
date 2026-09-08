@@ -68,6 +68,11 @@ func (s *Store) Commit(ctx context.Context, sc Scope, author string, prov Proven
 		return 0, fmt.Errorf("memory: Commit on a store with no consolidator")
 	}
 	staged = dedupCandidates(staged) // collapse the same sentence staged across passes
+	if len(staged) > maxCandidatesPerCommit {
+		dropped := len(staged) - maxCandidatesPerCommit
+		staged = staged[:maxCandidatesPerCommit]
+		s.log.Info("commit: candidate cap", "author", author, "kept", maxCandidatesPerCommit, "dropped", dropped)
+	}
 	if len(staged) == 0 && strings.TrimSpace(sourceText) == "" {
 		return 0, nil
 	}
@@ -190,6 +195,13 @@ type op struct {
 // dedup value. The memories actually written are short atomic facts embedded in
 // full.
 const maxProbeRunes = 2000
+
+// maxCandidatesPerCommit bounds how many staged candidates one node commit
+// (one judge-pass/gate call, issue #1269 item 3) can mint. Ranking them isn't
+// free - it would cost an extra LLM call - so this simply keeps the caller's
+// own priority order (stage_memory's earliest calls survive) rather than
+// asking the consolidation model to pick.
+const maxCandidatesPerCommit = 3
 
 // neighbourProbe builds the (capped) text whose nearest existing memories we
 // reconcile against. Staged candidates go first (they're closest to what we'll
@@ -492,7 +504,11 @@ var consolidatePrompts = map[string]string{
 		"agent's FINAL ANSWER, and the most similar EXISTING MEMORIES about this same subject.\n\n" +
 		"Produce a set of operations. First VET: keep only durable knowledge worth recalling in future " +
 		"unrelated tasks on this subject; drop anything volatile, request-specific, speculative, or not " +
-		"clearly supported. Then RECONCILE each kept memory against the existing ones:\n" +
+		"clearly supported. Reject CHANGE-LOG candidates that only describe the diff under review - " +
+		"phrasing like \"X was added/changed/renamed in this PR/commit\" or \"now does Y as of <sha>\" - " +
+		"NOOP those; they describe a moment, not a fact that holds once the code moves on. Keep only " +
+		"conventions, commands, layout, and dead-ends that hold independent of the change. Then RECONCILE " +
+		"each kept memory against the existing ones:\n" +
 		"- ADD: genuinely new - provide content (one atomic sentence) and a kind (e.g. convention|command|layout|source|search|fetch|deadend).\n" +
 		"- UPDATE: refines/supersedes an existing memory - provide its id plus the new content and kind.\n" +
 		"- DELETE: an existing memory is now contradicted, obsolete, or a duplicate - provide its id and a short reason " +

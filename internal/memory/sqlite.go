@@ -108,6 +108,7 @@ func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32
 	}
 	out := make([]scored, 0, len(rows))
 	for _, r := range rows {
+		rowVec := bytesToVec(r.Vector)
 		out = append(out, scored{
 			ID:                 r.ID,
 			Content:            r.Content,
@@ -133,7 +134,8 @@ func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32
 			LastRecalledAt:     r.LastRecalledAt,
 			AbsorbedIDs:        splitIDs(r.AbsorbedIDs),
 			HumanVote:          r.HumanVote,
-			Score:              cosine(vec, bytesToVec(r.Vector)),
+			Score:              cosine(vec, rowVec),
+			Vector:             rowVec,
 		})
 	}
 	// Highest cosine first; cap to k. ponytail: O(n) scan + sort - fine at memory

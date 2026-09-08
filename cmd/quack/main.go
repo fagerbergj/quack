@@ -411,19 +411,21 @@ func newMemoryForgetCmd() *cobra.Command {
 // sweep (epic #1255 P3) on demand - the same code path the nightly
 // consolidation job calls.
 func newMemorySweepCmd() *cobra.Command {
-	var asJSON, dryRun bool
+	var asJSON, dryRun, dedupe, apply bool
 	c := &cobra.Command{
 		Use:   "sweep",
 		Short: "Run the forgetting-rule sweep on demand",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return withTarget(cmd, func(t string) error {
-				return cli.RunMemorySweep(cmd.Context(), cmd.OutOrStdout(), t, dryRun, asJSON)
+				return cli.RunMemorySweep(cmd.Context(), cmd.OutOrStdout(), t, dryRun, dedupe, apply, asJSON)
 			})
 		},
 	}
 	asJSONFlag(c, &asJSON)
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "report what each rule would do without invalidating anything")
+	c.Flags().BoolVar(&dedupe, "dedupe", false, "run the per-bucket similarity dedupe sweep (#1269) instead of the forgetting-rule sweep")
+	c.Flags().BoolVar(&apply, "apply", false, "with --dedupe, actually run consolidation and write merges (default: report clusters only)")
 	return c
 }
 

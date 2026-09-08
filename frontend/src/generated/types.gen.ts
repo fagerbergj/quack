@@ -274,6 +274,14 @@ export type SweepMemoriesBody = {
      * Report what each rule would do without invalidating anything.
      */
     dry_run?: boolean;
+    /**
+     * Run the per-bucket similarity dedupe sweep (#1269) instead of the forgetting-rule sweep: clusters live memories per bucket by cosine similarity (transitive, >= 0.90) and feeds each cluster to the same consolidation model the nightly sweep uses.
+     */
+    dedupe?: boolean;
+    /**
+     * With dedupe, actually run consolidation and write the resulting merges. Without it, dedupe only clusters and reports examples - no LLM call, nothing written.
+     */
+    apply?: boolean;
 };
 
 export type SweepRuleResult = {
@@ -328,6 +336,58 @@ export type SweepMemoriesResult = {
         store: string;
         message: string;
     }>;
+    /**
+     * Present only when the request set dedupe true (#1269) - the per-store dedupe cluster report, replacing `stores`.
+     */
+    dedupe?: Array<SweepDedupeStoreResult>;
+};
+
+export type SweepDedupeExample = {
+    id: string;
+    /**
+     * Truncated preview, not the full memory content.
+     */
+    content: string;
+};
+
+export type SweepDedupeCluster = {
+    bucket: string;
+    /**
+     * How many live memories this cluster groups (>= 2).
+     */
+    size: number;
+    /**
+     * Up to 5 example members, for sanity-checking a cluster.
+     */
+    examples: Array<SweepDedupeExample>;
+};
+
+export type SweepDedupeStoreResult = {
+    /**
+     * Which configured memory store this result is for, e.g. "task" or "user".
+     */
+    store: string;
+    /**
+     * Whether merges were actually written (the request's `apply` flag).
+     */
+    applied: boolean;
+    /**
+     * Total clusters found (size >= 2), including any beyond `clusters`' cap.
+     */
+    num_clusters: number;
+    /**
+     * How many clusters were actually sent to the consolidation model, bounded per sweep run.
+     */
+    llm_calls: number;
+    ops_applied: number;
+    /**
+     * Clusters skipped once the per-sweep LLM-call budget was hit - left for the next sweep.
+     */
+    dropped: number;
+    /**
+     * Up to 20 clusters, for sanity-checking.
+     */
+    clusters: Array<SweepDedupeCluster>;
 };
 
 export type MemoryWeekStats = {

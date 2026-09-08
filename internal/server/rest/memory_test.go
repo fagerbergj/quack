@@ -641,3 +641,34 @@ func TestGetMemoryStats_WeeklyPrecisionAndScopeSnapshot(t *testing.T) {
 		t.Fatalf("scopes = %+v, want repo:NightsOut live=1", got.Scopes)
 	}
 }
+
+// TestSweepMemories_DedupeDryRun covers the REST wiring for issue #1269's
+// on-demand dedupe endpoint: {"dedupe":true} reports clusters (fixedEmbedder
+// gives every commit the same vector, so two distinct facts are still a
+// cosine-1 "duplicate" pair) without applying anything.
+func TestSweepMemories_DedupeDryRun(t *testing.T) {
+	h := newTestHandler(t)
+	h.taskMem = newTestMemStore(t)
+	commitFact(t, h.taskMem, "quack", "fact one")
+	commitFact(t, h.taskMem, "quack", "fact two")
+
+	w := httptest.NewRecorder()
+	h.SweepMemories(w, httptest.NewRequest(http.MethodPost, "/api/v1/memories/sweep", strings.NewReader(`{"dedupe":true}`)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var got schema.SweepMemoriesResult
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !got.DryRun {
+		t.Fatal("DryRun should be true (apply not requested)")
+	}
+	if got.Dedupe == nil || len(*got.Dedupe) != 1 {
+		t.Fatalf("dedupe = %+v, want one store result", got.Dedupe)
+	}
+	d := (*got.Dedupe)[0]
+	if d.NumClusters != 1 || d.LlmCalls != 0 || d.OpsApplied != 0 {
+		t.Fatalf("dedupe result = %+v, want 1 cluster, 0 llm calls, 0 ops (dry run)", d)
+	}
+}

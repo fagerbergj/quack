@@ -202,6 +202,8 @@ func (h *Handler) SweepMemories(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dryRun := body.DryRun != nil && *body.DryRun
+	dedupe := body.Dedupe != nil && *body.Dedupe
+	apply := body.Apply != nil && *body.Apply
 
 	type named struct {
 		name string
@@ -217,26 +219,64 @@ func (h *Handler) SweepMemories(w http.ResponseWriter, r *http.Request) {
 
 	// A later store's failure must not discard an earlier store's already-applied
 	// report - sweep is idempotent, so callers can retry the failing store alone.
-	out := schema.SweepMemoriesResult{DryRun: dryRun, Stores: []schema.SweepStoreResult{}}
+	reportedDryRun := dryRun
+	if dedupe {
+		reportedDryRun = !apply
+	}
+	out := schema.SweepMemoriesResult{DryRun: reportedDryRun, Stores: []schema.SweepStoreResult{}}
 	var sweepErrs []struct {
 		Message string `json:"message"`
 		Store   string `json:"store"`
 	}
-	for _, s := range stores {
-		report, err := s.st.ForgetSweep(r.Context(), dryRun)
-		if err != nil {
-			sweepErrs = append(sweepErrs, struct {
-				Message string `json:"message"`
-				Store   string `json:"store"`
-			}{Message: err.Error(), Store: s.name})
-			continue
+	if dedupe {
+		var results []schema.SweepDedupeStoreResult
+		for _, s := range stores {
+			report, err := s.st.DedupeSweep(r.Context(), apply)
+			if err != nil {
+				sweepErrs = append(sweepErrs, struct {
+					Message string `json:"message"`
+					Store   string `json:"store"`
+				}{Message: err.Error(), Store: s.name})
+				continue
+			}
+			results = append(results, dedupeReportWire(s.name, report))
 		}
-		out.Stores = append(out.Stores, sweepReportWire(s.name, report))
+		if results != nil {
+			out.Dedupe = &results
+		}
+	} else {
+		for _, s := range stores {
+			report, err := s.st.ForgetSweep(r.Context(), dryRun)
+			if err != nil {
+				sweepErrs = append(sweepErrs, struct {
+					Message string `json:"message"`
+					Store   string `json:"store"`
+				}{Message: err.Error(), Store: s.name})
+				continue
+			}
+			out.Stores = append(out.Stores, sweepReportWire(s.name, report))
+		}
 	}
 	if len(sweepErrs) > 0 {
 		out.Errors = &sweepErrs
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func dedupeReportWire(storeName string, report memory.DedupeReport) schema.SweepDedupeStoreResult {
+	clusters := make([]schema.SweepDedupeCluster, len(report.Clusters))
+	for i, c := range report.Clusters {
+		examples := make([]schema.SweepDedupeExample, len(c.Examples))
+		for j, e := range c.Examples {
+			examples[j] = schema.SweepDedupeExample{Id: e.ID, Content: e.Content}
+		}
+		clusters[i] = schema.SweepDedupeCluster{Bucket: c.Bucket, Size: c.Size, Examples: examples}
+	}
+	return schema.SweepDedupeStoreResult{
+		Store: storeName, Applied: report.Applied, NumClusters: report.NumClusters,
+		LlmCalls: report.LLMCalls, OpsApplied: report.OpsApplied, Dropped: report.Dropped,
+		Clusters: clusters,
+	}
 }
 
 func sweepReportWire(storeName string, report memory.ForgettingReport) schema.SweepStoreResult {

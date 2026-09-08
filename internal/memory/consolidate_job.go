@@ -71,6 +71,13 @@ func (s *Store) RunConsolidationSweep(ctx context.Context, schedule string, rete
 
 func (s *Store) sweepOnce(ctx context.Context, retentionDays int) {
 	s.consolidateOnce(ctx)
+	// Per-bucket similarity dedupe (issue #1269): consolidateOnce's burst
+	// clustering only ever compares memories from the same chat within a
+	// 15-minute window, so a fact re-derived by a different run days later
+	// is never caught there - this pass catches it, bucket-wide.
+	if _, err := s.DedupeSweep(ctx, true); err != nil {
+		s.log.Warn("dedupe sweep failed", "err", err)
+	}
 	s.forgetOnce(ctx, false)
 	s.retentionOnce(ctx, retentionDays)
 }

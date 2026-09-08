@@ -1200,15 +1200,63 @@ type SendMessageBody struct {
 	Content string `json:"content"`
 }
 
+// SweepDedupeCluster defines model for SweepDedupeCluster.
+type SweepDedupeCluster struct {
+	Bucket string `json:"bucket"`
+
+	// Examples Up to 5 example members, for sanity-checking a cluster.
+	Examples []SweepDedupeExample `json:"examples"`
+
+	// Size How many live memories this cluster groups (>= 2).
+	Size int `json:"size"`
+}
+
+// SweepDedupeExample defines model for SweepDedupeExample.
+type SweepDedupeExample struct {
+	// Content Truncated preview, not the full memory content.
+	Content string `json:"content"`
+	Id      string `json:"id"`
+}
+
+// SweepDedupeStoreResult defines model for SweepDedupeStoreResult.
+type SweepDedupeStoreResult struct {
+	// Applied Whether merges were actually written (the request's `apply` flag).
+	Applied bool `json:"applied"`
+
+	// Clusters Up to 20 clusters, for sanity-checking.
+	Clusters []SweepDedupeCluster `json:"clusters"`
+
+	// Dropped Clusters skipped once the per-sweep LLM-call budget was hit - left for the next sweep.
+	Dropped int `json:"dropped"`
+
+	// LlmCalls How many clusters were actually sent to the consolidation model, bounded per sweep run.
+	LlmCalls int `json:"llm_calls"`
+
+	// NumClusters Total clusters found (size >= 2), including any beyond `clusters`' cap.
+	NumClusters int `json:"num_clusters"`
+	OpsApplied  int `json:"ops_applied"`
+
+	// Store Which configured memory store this result is for, e.g. "task" or "user".
+	Store string `json:"store"`
+}
+
 // SweepMemoriesBody defines model for SweepMemoriesBody.
 type SweepMemoriesBody struct {
+	// Apply With dedupe, actually run consolidation and write the resulting merges. Without it, dedupe only clusters and reports examples - no LLM call, nothing written.
+	Apply *bool `json:"apply,omitempty"`
+
+	// Dedupe Run the per-bucket similarity dedupe sweep (#1269) instead of the forgetting-rule sweep: clusters live memories per bucket by cosine similarity (transitive, >= 0.90) and feeds each cluster to the same consolidation model the nightly sweep uses.
+	Dedupe *bool `json:"dedupe,omitempty"`
+
 	// DryRun Report what each rule would do without invalidating anything.
 	DryRun *bool `json:"dry_run,omitempty"`
 }
 
 // SweepMemoriesResult defines model for SweepMemoriesResult.
 type SweepMemoriesResult struct {
-	DryRun bool `json:"dry_run"`
+	// Dedupe Present only when the request set dedupe true (#1269) - the per-store dedupe cluster report, replacing `stores`.
+	Dedupe *[]SweepDedupeStoreResult `json:"dedupe,omitempty"`
+	DryRun bool                      `json:"dry_run"`
 
 	// Errors Per-store errors for stores not yet in `stores`. A later store's failure never discards an earlier store's already-applied report; sweeping is idempotent, so retrying is always safe.
 	Errors *[]struct {
