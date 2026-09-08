@@ -2,12 +2,16 @@ import { useEffect, useRef, useState } from 'react'
 
 export type MemorySort = 'newest' | 'oldest'
 
+export type MemoryTierFilter = '' | 'unverified' | 'verified'
+
 export interface MemorySortFilterProps {
   sort: MemorySort
   onSortChange: (sort: MemorySort) => void
   bucket: string
   buckets: string[]
   onBucketChange: (bucket: string) => void
+  tier: MemoryTierFilter
+  onTierChange: (tier: MemoryTierFilter) => void
 }
 
 // MemorySortFilter (#746 items 11/15) combines sort and the bucket filter in
@@ -16,10 +20,10 @@ export interface MemorySortFilterProps {
 // or Escape) rather than inventing a second idiom. The bucket filter is a
 // dropdown here (item 11), not the free-text input it used to be - it takes
 // no horizontal space in the toolbar until opened.
-export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucketChange }: MemorySortFilterProps) {
+export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucketChange, tier, onTierChange }: MemorySortFilterProps) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
-  const active = sort !== 'newest' || bucket !== ''
+  const active = sort !== 'newest' || bucket !== '' || tier !== ''
 
   useEffect(() => {
     if (!open) return
@@ -80,6 +84,19 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
           >
             <option value="">All buckets</option>
             {buckets.map(b => <option key={b} value={b}>{b}</option>)}
+          </select>
+          <label className="block px-1 py-0.5 mt-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+            Tier
+          </label>
+          <select
+            value={tier}
+            onChange={e => onTierChange(e.target.value as MemoryTierFilter)}
+            aria-label="Tier filter"
+            className="w-full mt-0.5 rounded border border-gray-300 dark:border-gray-600 px-2 py-1 text-xs bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">All tiers</option>
+            <option value="unverified">Unverified</option>
+            <option value="verified">Verified</option>
           </select>
         </div>
       )}

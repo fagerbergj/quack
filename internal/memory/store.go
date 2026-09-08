@@ -28,11 +28,19 @@ type index interface {
 	// empty), newest first by Timestamp, skipping `offset`. limit<=0 means no cap.
 	// includeInvalidated=false excludes status=invalidated points, matching the
 	// query()/recall filter (design doc §4(d) extended to the browse surface, phase 3).
-	list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool) ([]scored, error)
+	// tier=="" means no tier filter; "unverified" also matches a point that
+	// predates the tier field (empty/missing tier reads as unverified
+	// everywhere else in this package - #1265 review finding 10).
+	list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string) ([]scored, error)
 	// count returns how many points match buckets (all buckets if empty), under the
-	// same includeInvalidated filter as list.
-	count(ctx context.Context, buckets []string, includeInvalidated bool) (int, error)
+	// same includeInvalidated/tier filter as list.
+	count(ctx context.Context, buckets []string, includeInvalidated bool, tier string) (int, error)
 	upsert(ctx context.Context, pts []point) error
+	// getByID fetches one point by id, including an invalidated one (the
+	// caller decides what to do with that) - a direct lookup, not a
+	// list-and-scan, so it's correct past whatever page size list()/List()
+	// cap at. ok=false if id doesn't exist in this collection.
+	getByID(ctx context.Context, id string) (pt scored, ok bool, err error)
 	// remove deletes the named ids and reports how many actually existed.
 	remove(ctx context.Context, ids []string) (int, error)
 	// invalidateByID soft-invalidates the named ids in place (status=invalidated,
@@ -67,6 +75,11 @@ type index interface {
 	// reason. Returns false (no-op) if either id doesn't exist, or absorbedID
 	// is already invalidated (sticky - the first invalidation wins).
 	absorb(ctx context.Context, survivorID, absorbedID, reason string) (bool, error)
+	// setHumanVote sets the caller's own vote ("up"/"down"/"none") on id,
+	// re-deriving upvotes/downvotes/vote_score/tier from the transition away
+	// from the point's PRIOR human_vote (so a toggle or a flip never double
+	// counts). Reports whether id existed (and wasn't already invalidated).
+	setHumanVote(ctx context.Context, id, vote string, invalidateThreshold int) (bool, error)
 }
 
 // scored is one ranked memory.
@@ -107,6 +120,10 @@ type scored struct {
 	// this one (near-duplicate merge or supersession), flattened across any
 	// absorption chain - see internal/memory/lineage.go.
 	AbsorbedIDs []string
+	// HumanVote is the single-user deployment's own current vote ("up"/"down",
+	// "" = none) - epic #1255 P4, distinct from Upvotes/Downvotes which mix
+	// judge and human votes together. Toggling re-derives the delta from this.
+	HumanVote string
 }
 
 // point is one memory to upsert.
@@ -318,6 +335,7 @@ type Memory struct {
 
 	// AbsorbedIDs: see scored.AbsorbedIDs.
 	AbsorbedIDs []string
+	HumanVote   string // "up" | "down" | "" (epic #1255 P4)
 }
 
 // List returns entries in the given buckets (every bucket if empty), newest
@@ -325,25 +343,43 @@ type Memory struct {
 // the total count matching the same filter. includeInvalidated=false (the
 // default listing) excludes status=invalidated entries from both the page and
 // the total, matching query()/recall's backend-level filter (design doc §4(d)).
-// Unlike Search/recall, this never falls back to embedding search and never
-// degrades on a failure - an unreachable index is returned as an error, not an
-// empty or partial result.
-func (s *Store) List(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool) ([]Memory, int, error) {
+// tier=="" means no tier filter; "unverified"/"verified" filter server-side
+// (index-level, not a post-fetch Go filter) so it spans pages correctly
+// (#1265 review finding 10) instead of only ever seeing whatever's on the
+// current page. Unlike Search/recall, this never falls back to embedding
+// search and never degrades on a failure - an unreachable index is returned
+// as an error, not an empty or partial result.
+func (s *Store) List(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string) ([]Memory, int, error) {
 	if limit <= 0 {
 		limit = DefaultListLimit
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	pts, err := s.idx.list(ctx, buckets, offset, limit, includeInvalidated)
+	pts, err := s.idx.list(ctx, buckets, offset, limit, includeInvalidated, tier)
 	if err != nil {
 		return nil, 0, fmt.Errorf("memory: list %q: %w", s.coll, err)
 	}
-	total, err := s.idx.count(ctx, buckets, includeInvalidated)
+	total, err := s.idx.count(ctx, buckets, includeInvalidated, tier)
 	if err != nil {
 		return nil, 0, fmt.Errorf("memory: count %q: %w", s.coll, err)
 	}
 	return toMemories(pts), total, nil
+}
+
+// GetByID fetches one memory directly by id (including an invalidated one -
+// callers that care about status check Memory.Status themselves), not by
+// paging through List - correct regardless of how many memories exist or
+// which page id would land on. ErrMemoryNotFound if this store doesn't have it.
+func (s *Store) GetByID(ctx context.Context, id string) (Memory, error) {
+	pt, ok, err := s.idx.getByID(ctx, id)
+	if err != nil {
+		return Memory{}, fmt.Errorf("memory: get %q: %w", id, err)
+	}
+	if !ok {
+		return Memory{}, ErrMemoryNotFound
+	}
+	return toMemories([]scored{pt})[0], nil
 }
 
 // Search embeds q and returns up to `limit` memories across buckets ranked by
@@ -421,7 +457,7 @@ func toMemories(pts []scored) []Memory {
 			Status: p.Status, ReinforcementCount: p.ReinforcementCount, InvalidationReason: p.InvalidationReason,
 			Upvotes: p.Upvotes, Downvotes: p.Downvotes, VoteScore: p.VoteScore, Tier: p.Tier,
 			LastUpvotedAt: p.LastUpvotedAt, Recalls: p.Recalls, LastRecalledAt: p.LastRecalledAt,
-			AbsorbedIDs: p.AbsorbedIDs,
+			AbsorbedIDs: p.AbsorbedIDs, HumanVote: p.HumanVote,
 		}
 	}
 	return out

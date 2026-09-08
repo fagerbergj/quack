@@ -6,7 +6,7 @@ import type { Memory } from '../api'
 const meta: Meta<typeof MemoryEntry> = {
   title: 'Memory/MemoryEntry',
   component: MemoryEntry,
-  args: { onForget: async () => {} },
+  args: { onForget: async () => {}, onVote: async () => {} },
 }
 export default meta
 
@@ -19,6 +19,10 @@ const REPO_FACT: Memory = {
   author: 'code-implementer',
   timestamp: '2026-08-04T18:22:11Z',
   kind: 'repo',
+  vote_score: 0,
+  upvotes: 0,
+  downvotes: 0,
+  tier: 'unverified',
 }
 
 export const Default: Story = {
@@ -68,16 +72,51 @@ export const LongContent: Story = {
   },
 }
 
-// Clicking Forget reveals the Confirm/Cancel step (no delete has happened yet).
+// Verified tier (upvotes >= 1) plus recall/last-upvote metadata (epic #1255 P4).
+export const VerifiedWithRecalls: Story = {
+  args: {
+    memory: {
+      ...REPO_FACT,
+      id: 'v1',
+      tier: 'verified',
+      upvotes: 4,
+      downvotes: 1,
+      vote_score: 3,
+      recalls: 12,
+      last_upvoted_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
+      last_recalled_at: new Date(Date.now() - 45 * 60_000).toISOString(),
+    },
+  },
+}
+
+// A consolidation merge absorbed other memories into this one (epic #1255
+// P5) - a purple "merged ×N" chip, id list on hover.
+export const WithAbsorbedLineage: Story = {
+  args: {
+    memory: { ...REPO_FACT, id: 'm1', tier: 'verified', upvotes: 2, vote_score: 2, absorbed_ids: ['dup-1', 'dup-2'] },
+  },
+}
+
+// The caller's own upvote is highlighted (epic #1255 P4) - the accent color
+// on the up arrow, not a separate badge.
+export const OwnVoteActive: Story = {
+  args: {
+    memory: { ...REPO_FACT, id: 'ov1', tier: 'verified', upvotes: 2, vote_score: 2, own_vote: 'up' },
+  },
+}
+
+// Clicking the kebab reveals the Forget action (moved off the row per the
+// UI rule: secondary actions in the "…" menu, not a top-level icon button).
 export const ConfirmingForget: Story = {
   args: { memory: REPO_FACT },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    await userEvent.click(canvas.getByRole('button', { name: /^Forget:/ }))
+    await userEvent.click(canvas.getByRole('button', { name: 'Memory actions' }))
+    await userEvent.click(canvas.getByRole('button', { name: 'Forget' }))
   },
 }
 
-// onForget rejects - the row surfaces the error inline rather than silently reverting.
+// onForget rejects - the menu surfaces the error inline rather than silently reverting.
 export const ForgetFailed: Story = {
   args: {
     memory: REPO_FACT,
@@ -87,7 +126,8 @@ export const ForgetFailed: Story = {
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    await userEvent.click(canvas.getByRole('button', { name: /^Forget:/ }))
+    await userEvent.click(canvas.getByRole('button', { name: 'Memory actions' }))
+    await userEvent.click(canvas.getByRole('button', { name: 'Forget' }))
     await userEvent.click(canvas.getByRole('button', { name: 'Confirm' }))
   },
 }

@@ -92,7 +92,7 @@ func TestSQLiteAbsorb_VotesAndTimestampsMerge(t *testing.T) {
 		t.Fatal("absorb returned false, want true")
 	}
 
-	mems, _, err := s.List(ctx, nil, 0, 0, true)
+	mems, _, err := s.List(ctx, nil, 0, 0, true, "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestSQLiteAbsorb_ChainReproducesSummedVotes(t *testing.T) {
 		t.Fatalf("absorb(C,B) = %v, %v", ok, err)
 	}
 
-	mems, _, err := s.List(ctx, nil, 0, 0, true)
+	mems, _, err := s.List(ctx, nil, 0, 0, true, "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestSQLiteAbsorb_AlreadyInvalidatedIsNoop(t *testing.T) {
 	if ok {
 		t.Fatal("absorb of an already-invalidated memory should be a no-op")
 	}
-	mems, _, _ := s.List(ctx, nil, 0, 0, true)
+	mems, _, _ := s.List(ctx, nil, 0, 0, true, "")
 	for _, m := range mems {
 		if m.ID == "dup" && m.InvalidationReason != "net score" {
 			t.Fatalf("dup's original invalidation reason was overwritten: %q", m.InvalidationReason)

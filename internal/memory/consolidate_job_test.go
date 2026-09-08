@@ -88,7 +88,7 @@ func TestConsolidateOnce_BurstDedupe(t *testing.T) {
 
 	s.consolidateOnce(ctx)
 
-	valid, _, err := s.List(ctx, []string{"repo:r"}, 0, 10, false)
+	valid, _, err := s.List(ctx, []string{"repo:r"}, 0, 10, false, "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestConsolidateOnce_BurstDedupe(t *testing.T) {
 		t.Fatalf("valid memories = %+v, want exactly [m1]", valid)
 	}
 
-	all, _, err := s.List(ctx, []string{"repo:r"}, 0, 10, true)
+	all, _, err := s.List(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if err != nil {
 		t.Fatalf("List(includeInvalidated): %v", err)
 	}
@@ -217,7 +217,7 @@ func TestConsolidateOnce_SkipsReinforcedAndInvalidatedNeighbours(t *testing.T) {
 
 	s.consolidateOnce(ctx)
 
-	all, _, err := s.List(ctx, []string{"repo:r"}, 0, 10, true)
+	all, _, err := s.List(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestRetentionOnce_RemovesExpiredKeepsFreshAndValid(t *testing.T) {
 
 	s.retentionOnce(ctx, 30)
 
-	remaining, _, err := s.List(ctx, []string{"repo:r"}, 0, 10, true)
+	remaining, _, err := s.List(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestRetentionOnce_ZeroRetentionRemovesNothing(t *testing.T) {
 
 	s.retentionOnce(ctx, 0)
 
-	remaining, _, err := s.List(ctx, []string{"repo:r"}, 0, 10, true)
+	remaining, _, err := s.List(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestRunConsolidationSweep_ScheduleEmptyIsNoop(t *testing.T) {
 
 	s.RunConsolidationSweep(ctx, "", 30) // synchronous: a real sweep would block on the timer loop
 
-	remaining, _, err := s.List(ctx, []string{"repo:r"}, 0, 10, true)
+	remaining, _, err := s.List(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestConsolidateOnce_ClusterErrorContinuesToNextCluster(t *testing.T) {
 	if calls != 2 {
 		t.Fatalf("consolidator calls = %d, want 2 (both clusters attempted despite the first failing)", calls)
 	}
-	all, _, err := s.List(ctx, []string{"repo:r"}, 0, 10, true)
+	all, _, err := s.List(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -403,7 +403,7 @@ func TestRetentionOnce_RemoveErrorContinuesToPrune(t *testing.T) {
 	if len(ops.pruneCalls) != 1 {
 		t.Fatalf("PruneMemoryOps calls = %d, want 1 (still attempted despite the remove error)", len(ops.pruneCalls))
 	}
-	remaining, _, err := s.List(ctx, []string{"repo:r"}, 0, 10, true)
+	remaining, _, err := s.List(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -428,7 +428,7 @@ func TestRetentionOnce_PruneMemoryOpsErrorDoesNotAbort(t *testing.T) {
 
 	s.retentionOnce(ctx, 30) // must not panic despite PruneMemoryOps erroring
 
-	remaining, _, err := s.List(ctx, []string{"repo:r"}, 0, 10, true)
+	remaining, _, err := s.List(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}

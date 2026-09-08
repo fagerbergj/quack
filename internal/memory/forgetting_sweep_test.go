@@ -160,7 +160,7 @@ func TestSweepOnce_ForgetThenRetain(t *testing.T) {
 	s.sweepOnce(ctx, 30) // forget, then retention with a 30-day window
 	assertStatus(t, s, "ages-out", string(StatusInvalidated))
 
-	remaining, _, err := s.List(ctx, nil, 0, 10, true)
+	remaining, _, err := s.List(ctx, nil, 0, 10, true, "")
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestSweepOnce_ForgetThenRetain(t *testing.T) {
 
 func assertStatus(t *testing.T, s *Store, id, want string) {
 	t.Helper()
-	mems, _, err := s.List(context.Background(), nil, 0, 100, true)
+	mems, _, err := s.List(context.Background(), nil, 0, 100, true, "")
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}

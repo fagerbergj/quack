@@ -49,6 +49,7 @@ const (
 
 	// payloadAbsorbedIDs: comma-joined (see joinIDs/splitIDs) - epic #1255 P5.
 	payloadAbsorbedIDs = "absorbed_ids"
+	payloadHumanVote   = "human_vote"
 )
 
 // Open connects to Qdrant at addr (host:port gRPC) and returns a memory Store
@@ -135,6 +136,7 @@ func pointFromPayload(id *qdrant.PointId, payload map[string]*qdrant.Value, scor
 		Recalls:            payloadInt(payload, payloadRecalls),
 		LastRecalledAt:     payloadString(payload, payloadLastRecalledAt),
 		AbsorbedIDs:        splitIDs(payloadString(payload, payloadAbsorbedIDs)),
+		HumanVote:          payloadString(payload, payloadHumanVote),
 		Score:              score,
 	}
 }
@@ -180,11 +182,12 @@ func (x *qdrantIndex) query(ctx context.Context, buckets []string, vec []float32
 // first in Go, then slices out the requested page. Fine at memory's documented
 // scale (hundreds-thousands); avoids requiring a payload index on `timestamp`
 // for Qdrant's order_by, which a fresh collection won't have.
-func (x *qdrantIndex) list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool) ([]scored, error) {
+func (x *qdrantIndex) list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string) ([]scored, error) {
 	filter := bucketFilter(buckets)
 	if !includeInvalidated {
 		filter = excludeInvalidated(filter)
 	}
+	filter = tierFilter(filter, tier)
 	it := x.client.ScrollAll(ctx, &qdrant.ScrollPoints{
 		CollectionName: x.coll,
 		Filter:         filter,
@@ -219,17 +222,43 @@ func (x *qdrantIndex) list(ctx context.Context, buckets []string, offset, limit 
 	return all[offset:end], nil
 }
 
-func (x *qdrantIndex) count(ctx context.Context, buckets []string, includeInvalidated bool) (int, error) {
+func (x *qdrantIndex) count(ctx context.Context, buckets []string, includeInvalidated bool, tier string) (int, error) {
 	filter := bucketFilter(buckets)
 	if !includeInvalidated {
 		filter = excludeInvalidated(filter)
 	}
+	filter = tierFilter(filter, tier)
 	exact := true
 	n, err := x.client.Count(ctx, &qdrant.CountPoints{CollectionName: x.coll, Filter: filter, Exact: &exact})
 	if err != nil {
 		return 0, fmt.Errorf("memory: count: %w", err)
 	}
 	return int(n), nil
+}
+
+// tierFilter adds tier's condition to f (or a fresh filter), if any. "" means
+// no filter. "unverified" also matches a point with no tier payload key yet
+// (empty/missing reads as unverified everywhere else in this package,
+// #1265 review finding 10) - a should-match OR between "no tier key" and
+// "tier == unverified", nested as a sub-filter so it composes with the
+// caller's other must/must-not conditions.
+func tierFilter(f *qdrant.Filter, tier string) *qdrant.Filter {
+	if tier == "" {
+		return f
+	}
+	if f == nil {
+		f = &qdrant.Filter{}
+	}
+	if tier == TierUnverified {
+		f.Must = append(f.Must, &qdrant.Condition{
+			ConditionOneOf: &qdrant.Condition_Filter{Filter: &qdrant.Filter{
+				Should: []*qdrant.Condition{qdrant.NewIsEmpty(payloadTier), qdrant.NewMatchKeyword(payloadTier, TierUnverified)},
+			}},
+		})
+		return f
+	}
+	f.Must = append(f.Must, qdrant.NewMatchKeyword(payloadTier, tier))
+	return f
 }
 
 func (x *qdrantIndex) upsert(ctx context.Context, pts []point) error {
@@ -352,6 +381,20 @@ func (x *qdrantIndex) invalidateByID(ctx context.Context, ids []string, reason s
 		return 0, fmt.Errorf("memory: invalidate: %w", err)
 	}
 	return len(existing), nil
+}
+
+// getByID fetches one point by id regardless of status - the caller decides
+// what an invalidated point means for its purpose.
+func (x *qdrantIndex) getByID(ctx context.Context, id string) (scored, bool, error) {
+	existing, err := x.getExisting(ctx, []string{id})
+	if err != nil {
+		return scored{}, false, fmt.Errorf("memory: qdrant get by id: %w", err)
+	}
+	payload, ok := existing[id]
+	if !ok {
+		return scored{}, false, nil
+	}
+	return pointFromPayload(qdrant.NewID(id), payload, 0), true, nil
 }
 
 // getExisting fetches ids' current payload, skipping any that don't exist.
@@ -500,6 +543,48 @@ func (x *qdrantIndex) applyVotes(ctx context.Context, votes []Vote, invalidateTh
 		touched = append(touched, v.MemoryID)
 	}
 	return touched, nil
+}
+
+// setHumanVote reads id's current payload (for its prior human_vote and vote
+// counts), computes the toggle-safe delta, and writes both the vote fields
+// and human_vote in one SetPayload. Same read-modify-write caveat as
+// applyVotes above. Reports false if id doesn't exist or is invalidated.
+func (x *qdrantIndex) setHumanVote(ctx context.Context, id, vote string, invalidateThreshold int) (bool, error) {
+	existing, err := x.getExisting(ctx, []string{id})
+	if err != nil {
+		return false, fmt.Errorf("memory: get for human vote: %w", err)
+	}
+	payload, ok := existing[id]
+	if !ok || payloadString(payload, payloadStatus) == string(StatusInvalidated) {
+		return false, nil
+	}
+	ts := nowRFC3339()
+	d := computeHumanVoteDelta(payloadInt(payload, payloadUpvotes), payloadInt(payload, payloadDownvotes),
+		payloadString(payload, payloadTier), payloadString(payload, payloadHumanVote), vote, ts, invalidateThreshold)
+	set := map[string]any{payloadUpvotes: d.Upvotes, payloadDownvotes: d.Downvotes, payloadVoteScore: d.VoteScore, payloadTier: d.Tier}
+	if vote == HumanVoteNone {
+		set[payloadHumanVote] = ""
+	} else {
+		set[payloadHumanVote] = vote
+	}
+	if d.LastUpvotedAt != "" {
+		set[payloadLastUpvotedAt] = d.LastUpvotedAt
+	}
+	if d.Invalidate {
+		set[payloadStatus] = string(StatusInvalidated)
+		set[payloadInvalidatedAt] = ts
+		set[payloadInvalidationReason] = OutcomeReasonNetScore
+	}
+	wait := true
+	if _, err := x.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
+		CollectionName: x.coll,
+		Wait:           &wait,
+		Payload:        qdrant.NewValueMap(set),
+		PointsSelector: &qdrant.PointsSelector{PointsSelectorOneOf: &qdrant.PointsSelector_Points{Points: &qdrant.PointsIdsList{Ids: idsToPointIDs([]string{id})}}},
+	}); err != nil {
+		return false, fmt.Errorf("memory: set payload human vote: %w", err)
+	}
+	return true, nil
 }
 
 // recordRecall bumps recalls and stamps last_recalled_at per point. Qdrant

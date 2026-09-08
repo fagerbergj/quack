@@ -31,7 +31,7 @@ func (s *Store) forEachSweepPage(ctx context.Context, includeInvalidated bool, f
 		return s.listErrForTest
 	}
 	for offset := 0; ; offset += sweepPageSize {
-		page, err := s.idx.list(ctx, nil, offset, sweepPageSize, includeInvalidated)
+		page, err := s.idx.list(ctx, nil, offset, sweepPageSize, includeInvalidated, "")
 		if err != nil {
 			return err
 		}

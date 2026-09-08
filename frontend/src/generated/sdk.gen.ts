@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, DeleteMemoryData, DeleteMemoryErrors, DeleteMemoryResponses, DiffArtifactRevisionsData, DiffArtifactRevisionsErrors, DiffArtifactRevisionsResponses, EditNodeTaskData, EditNodeTaskErrors, EditNodeTaskResponses, EditQueuedMessageData, EditQueuedMessageErrors, EditQueuedMessageResponses, GetChatArtifactData, GetChatArtifactErrors, GetChatArtifactResponses, GetChatData, GetChatErrors, GetChatRecordingData, GetChatRecordingErrors, GetChatRecordingResponses, GetChatResponses, GetConfigData, GetConfigResponses, GetMemoryStatsData, GetMemoryStatsResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListArtifactRevisionsData, ListArtifactRevisionsErrors, ListArtifactRevisionsResponses, ListChatArtifactsData, ListChatArtifactsErrors, ListChatArtifactsResponses, ListChatsData, ListChatsErrors, ListChatsResponses, ListExtensionsData, ListExtensionsResponses, ListMemoriesData, ListMemoriesErrors, ListMemoriesResponses, ListRecordingsData, ListRecordingsErrors, ListRecordingsResponses, QueueNodeMessageData, QueueNodeMessageErrors, QueueNodeMessageResponses, RemoveQueuedMessageData, RemoveQueuedMessageErrors, RemoveQueuedMessageResponses, RescopeMemoriesData, RescopeMemoriesResponses, SendChatMessageData, SendChatMessageErrors, SendChatMessageResponse, SendChatMessageResponses, StartNodeData, StartNodeErrors, StartNodeResponses, StopNodeData, StopNodeErrors, StopNodeResponses, SubscribeChatStreamData, SubscribeChatStreamErrors, SubscribeChatStreamResponse, SubscribeChatStreamResponses, SweepMemoriesData, SweepMemoriesErrors, SweepMemoriesResponses, UpdateChatData, UpdateChatErrors, UpdateChatResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses } from './types.gen';
+import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, DeleteMemoryData, DeleteMemoryErrors, DeleteMemoryResponses, DiffArtifactRevisionsData, DiffArtifactRevisionsErrors, DiffArtifactRevisionsResponses, EditNodeTaskData, EditNodeTaskErrors, EditNodeTaskResponses, EditQueuedMessageData, EditQueuedMessageErrors, EditQueuedMessageResponses, GetChatArtifactData, GetChatArtifactErrors, GetChatArtifactResponses, GetChatData, GetChatErrors, GetChatRecordingData, GetChatRecordingErrors, GetChatRecordingResponses, GetChatResponses, GetConfigData, GetConfigResponses, GetMemoryStatsData, GetMemoryStatsResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListArtifactRevisionsData, ListArtifactRevisionsErrors, ListArtifactRevisionsResponses, ListChatArtifactsData, ListChatArtifactsErrors, ListChatArtifactsResponses, ListChatsData, ListChatsErrors, ListChatsResponses, ListExtensionsData, ListExtensionsResponses, ListMemoriesData, ListMemoriesErrors, ListMemoriesResponses, ListNodeMemoriesData, ListNodeMemoriesErrors, ListNodeMemoriesResponses, ListRecordingsData, ListRecordingsErrors, ListRecordingsResponses, QueueNodeMessageData, QueueNodeMessageErrors, QueueNodeMessageResponses, RemoveQueuedMessageData, RemoveQueuedMessageErrors, RemoveQueuedMessageResponses, RescopeMemoriesData, RescopeMemoriesResponses, SendChatMessageData, SendChatMessageErrors, SendChatMessageResponse, SendChatMessageResponses, StartNodeData, StartNodeErrors, StartNodeResponses, StopNodeData, StopNodeErrors, StopNodeResponses, SubscribeChatStreamData, SubscribeChatStreamErrors, SubscribeChatStreamResponse, SubscribeChatStreamResponses, SweepMemoriesData, SweepMemoriesErrors, SweepMemoriesResponses, UpdateChatData, UpdateChatErrors, UpdateChatResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses, VoteMemoryData, VoteMemoryErrors, VoteMemoryResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -518,6 +518,46 @@ export const deleteMemory = <ThrowOnError extends boolean = false>(options: Opti
         'Content-Type': 'application/json',
         ...options.headers
     }
+});
+
+/**
+ * Cast (or clear) the human's own vote on one memory
+ *
+ * A human vote counts like a judge vote (+1/-1 via the same
+ * upvotes/downvotes/tier/score projection), but is recorded with
+ * actor `human` and is independently toggleable: voting `none`
+ * removes the caller's own prior vote rather than adding a new one.
+ * Single-user deployment, so there is exactly one "own vote" per
+ * memory, tracked on the point. Fail-closed: the `memory.vote`
+ * ledger entry is appended (under the memory's provenance chat, or a
+ * fixed `human` chat key when the memory has none) before the point
+ * is mutated; a failed append leaves the vote unapplied.
+ *
+ */
+export const voteMemory = <ThrowOnError extends boolean = false>(options: Options<VoteMemoryData, ThrowOnError>): RequestResult<VoteMemoryResponses, VoteMemoryErrors, ThrowOnError> => (options.client ?? client).post<VoteMemoryResponses, VoteMemoryErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/memories/{memory_id}/vote',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * List the memories one worker node received, with votes
+ *
+ * Folds the node's `memory.recall` and `memory.vote` ledger entries
+ * (epic #1255 P1/P4) into the set of memories delivered to this node
+ * (prefill and/or the recall_memory tool) plus the judge's per-memory
+ * vote after the round, if any. Empty (not 404) for a node with no
+ * recall entries.
+ *
+ */
+export const listNodeMemories = <ThrowOnError extends boolean = false>(options: Options<ListNodeMemoriesData, ThrowOnError>): RequestResult<ListNodeMemoriesResponses, ListNodeMemoriesErrors, ThrowOnError> => (options.client ?? client).get<ListNodeMemoriesResponses, ListNodeMemoriesErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/chats/{chat_id}/nodes/{node_id}/memories',
+    ...options
 });
 
 /**

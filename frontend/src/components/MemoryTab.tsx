@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useLayoutEffect, useRef } from 'react'
-import { api, type Memory } from '../api'
+import { api, type Memory, type VoteDirection } from '../api'
 import { MemoryTimeline } from './MemoryTimeline'
-import { MemorySortFilter, type MemorySort } from './MemorySortFilter'
+import { MemorySortFilter, type MemorySort, type MemoryTierFilter } from './MemorySortFilter'
 
 const PAGE_SIZE = 20
 
@@ -19,6 +19,27 @@ function sortMemories(memories: Memory[], sort: MemorySort): Memory[] {
   return sort === 'oldest' ? sorted.reverse() : sorted
 }
 
+// applyOptimisticVote mirrors the backend's SetHumanVote delta (up:+1/undo,
+// down:+1/undo, none:remove) so the UI moves instantly; the server response
+// that follows overwrites this with the authoritative numbers.
+function applyOptimisticVote(m: Memory, vote: VoteDirection): Memory {
+  const upvotes = m.upvotes ?? 0
+  const downvotes = m.downvotes ?? 0
+  let nextUp = upvotes, nextDown = downvotes
+  if (m.own_vote === 'up') nextUp--
+  if (m.own_vote === 'down') nextDown--
+  if (vote === 'up') nextUp++
+  if (vote === 'down') nextDown++
+  return {
+    ...m,
+    upvotes: Math.max(0, nextUp),
+    downvotes: Math.max(0, nextDown),
+    vote_score: Math.max(0, nextUp) - Math.max(0, nextDown),
+    tier: vote === 'up' ? 'verified' : m.tier,
+    own_vote: vote === 'none' ? undefined : vote,
+  }
+}
+
 // The Memory tab (#727): browse what quack believes (list, never falling back
 // to search on error - a browse view that quietly shows a different result
 // set than it claims is worse than an error state), search "what would a run
@@ -27,6 +48,7 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
   const [bucket, setBucket] = useState('')
   const [q, setQ] = useState('')
   const [sort, setSort] = useState<MemorySort>('newest')
+  const [tier, setTier] = useState<MemoryTierFilter>('')
   // Local to the tab (no persisted preference, per design doc §8 step 6) - a
   // default listing shows only what quack currently trusts.
   const [includeInvalidated, setIncludeInvalidated] = useState(false)
@@ -67,6 +89,7 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
         limit: PAGE_SIZE,
         page_token: pageTokens[pageIndex],
         include_invalidated: includeInvalidated || undefined,
+        tier: tier || undefined,
       })
       setMemories(result.memories)
       setTotal(result.total)
@@ -81,7 +104,7 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
     } finally {
       setLoading(false)
     }
-  }, [bucket, q, pageIndex, pageTokens, includeInvalidated])
+  }, [bucket, q, pageIndex, pageTokens, includeInvalidated, tier])
 
   useEffect(() => {
     if (initialState !== undefined) return // story/test seam: static demo state, no live fetch
@@ -94,6 +117,24 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
     setTotal(t => Math.max(0, t - 1))
   }
 
+  // handleVote is optimistic-first (frontend-design convention): the store
+  // updates immediately so the arrow highlight/score never lags a click,
+  // and rolls back only the voted ROW on failure (#1265 review finding 8) -
+  // a page-wide snapshot would also discard any other unrelated change
+  // (e.g. another vote's own response landing) that happened while this
+  // request was in flight.
+  async function handleVote(id: string, vote: VoteDirection) {
+    const prevRow = memories.find(m => m.id === id)
+    setMemories(cur => cur.map(m => (m.id === id ? applyOptimisticVote(m, vote) : m)))
+    try {
+      const updated = await api.voteMemory(id, vote)
+      setMemories(cur => cur.map(m => (m.id === id ? updated : m)))
+    } catch (e) {
+      if (prevRow) setMemories(cur => cur.map(m => (m.id === id ? prevRow : m)))
+      throw e
+    }
+  }
+
   function resetPaging() {
     setPageIndex(0)
     setPageTokens([undefined])
@@ -101,6 +142,14 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
 
   function handleBucketChange(next: string) {
     setBucket(next)
+    resetPaging()
+  }
+
+  // Server-side filter (#1265 review finding 10) - a page reload with the
+  // new tier, not a client-side re-slice of whatever page happened to be
+  // loaded, so the filter spans the whole corpus, not just the current page.
+  function handleTierChange(next: MemoryTierFilter) {
+    setTier(next)
     resetPaging()
   }
 
@@ -127,6 +176,7 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
   const hasMore = !searching && !!nextPageToken
   const rangeStart = pageIndex * PAGE_SIZE + 1
   const rangeEnd = pageIndex * PAGE_SIZE + memories.length
+  // Tier filters server-side (the `tier` query param) - see handleTierChange.
   const sortedMemories = useMemo(() => sortMemories(memories, sort), [memories, sort])
   const bucketOptions = useMemo(() => Array.from(knownBuckets).sort(), [knownBuckets])
   const showFooter = !loading && !error && !searching && total > 0
@@ -168,6 +218,8 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
           bucket={bucket}
           buckets={bucketOptions}
           onBucketChange={handleBucketChange}
+          tier={tier}
+          onTierChange={handleTierChange}
         />
       </div>
 
@@ -186,7 +238,7 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
           </div>
         )}
         {!loading && !error && memories.length > 0 && (
-          <MemoryTimeline memories={sortedMemories} onForget={handleForget} />
+          <MemoryTimeline memories={sortedMemories} onForget={handleForget} onVote={handleVote} />
         )}
       </div>
 

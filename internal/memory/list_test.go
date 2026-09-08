@@ -31,7 +31,7 @@ func TestListIsNotSearch(t *testing.T) {
 	upsertTimed(t, s, "b", "repo:x", "unrelated fact b", "2026-08-02T00:00:00Z")
 	upsertTimed(t, s, "c", "repo:x", "unrelated fact c", "2026-08-03T00:00:00Z")
 
-	got, total, err := s.List(ctx, []string{"repo:x"}, 0, 10, false)
+	got, total, err := s.List(ctx, []string{"repo:x"}, 0, 10, false, "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestListBucketFilterIsARealBoundary(t *testing.T) {
 	upsertTimed(t, s, "a1", "repo:a", "fact about a", "2026-08-01T00:00:00Z")
 	upsertTimed(t, s, "b1", "repo:b", "fact about b", "2026-08-01T00:00:01Z")
 
-	got, total, err := s.List(ctx, []string{"repo:a"}, 0, 10, false)
+	got, total, err := s.List(ctx, []string{"repo:a"}, 0, 10, false, "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestListPagingIsStable(t *testing.T) {
 	seen := map[string]bool{}
 	var pageSizes []int
 	for _, offset := range []int{0, 10, 20} {
-		page, total, err := s.List(ctx, []string{"repo:x"}, offset, 10, false)
+		page, total, err := s.List(ctx, []string{"repo:x"}, offset, 10, false, "")
 		if err != nil {
 			t.Fatalf("List offset=%d: %v", offset, err)
 		}
@@ -164,7 +164,7 @@ func TestListPagingIncludeInvalidated_Mixed(t *testing.T) {
 
 	seen := map[string]bool{}
 	for _, offset := range []int{0, 2, 4} {
-		page, total, err := s.List(ctx, []string{"repo:x"}, offset, 2, true)
+		page, total, err := s.List(ctx, []string{"repo:x"}, offset, 2, true, "")
 		if err != nil {
 			t.Fatalf("List offset=%d: %v", offset, err)
 		}
@@ -180,6 +180,51 @@ func TestListPagingIncludeInvalidated_Mixed(t *testing.T) {
 	}
 	if len(seen) != 5 {
 		t.Fatalf("saw %d distinct ids across all pages, want 5 (no omissions)", len(seen))
+	}
+}
+
+// TestList_TierFilterSpansPages is #1265 review finding 10: the tier filter
+// is index-level (a WHERE clause / Qdrant condition), not a client-side
+// post-filter over one page - it must apply across a paged List correctly,
+// with total/paging agreeing with the filter. Also covers a legacy point
+// with no tier at all reading as "unverified" under the filter (design doc
+// §3/toMemories' wire mapping rule extended to this filter).
+func TestList_TierFilterSpansPages(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStore(t, "task", nil)
+	if err := s.idx.upsert(ctx, []point{
+		{ID: "v1", Vector: []float32{0, 1, 0, 0}, Content: "verified 1", Scope: "repo:x", Timestamp: "2026-08-01T00:00:00Z", Tier: TierVerified},
+		{ID: "v2", Vector: []float32{0, 1, 0, 0}, Content: "verified 2", Scope: "repo:x", Timestamp: "2026-08-02T00:00:00Z", Tier: TierVerified},
+		{ID: "u1", Vector: []float32{0, 1, 0, 0}, Content: "unverified explicit", Scope: "repo:x", Timestamp: "2026-08-03T00:00:00Z", Tier: TierUnverified},
+		{ID: "u2", Vector: []float32{0, 1, 0, 0}, Content: "unverified legacy (no tier field)", Scope: "repo:x", Timestamp: "2026-08-04T00:00:00Z"},
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	verified, total, err := s.List(ctx, []string{"repo:x"}, 0, 1, false, TierVerified)
+	if err != nil {
+		t.Fatalf("List verified: %v", err)
+	}
+	if total != 2 {
+		t.Fatalf("verified total = %d, want 2 (must span pages, not just page 0)", total)
+	}
+	if len(verified) != 1 {
+		t.Fatalf("verified page = %+v, want exactly 1 (limit=1)", verified)
+	}
+
+	unverified, total, err := s.List(ctx, []string{"repo:x"}, 0, 10, false, TierUnverified)
+	if err != nil {
+		t.Fatalf("List unverified: %v", err)
+	}
+	if total != 2 {
+		t.Fatalf("unverified total = %d, want 2 (u1 explicit + u2 legacy no-tier)", total)
+	}
+	gotIDs := map[string]bool{}
+	for _, m := range unverified {
+		gotIDs[m.ID] = true
+	}
+	if !gotIDs["u1"] || !gotIDs["u2"] {
+		t.Fatalf("unverified = %+v, want u1 and u2 (a legacy no-tier point reads as unverified)", unverified)
 	}
 }
 

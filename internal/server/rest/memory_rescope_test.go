@@ -71,7 +71,7 @@ func TestRescopeMemories_DryRunThenApply(t *testing.T) {
 	}
 
 	// Dry run must not have written anything - still all in role:coding.
-	mems, _, err := h.taskMem.List(ctx, []string{"role:coding"}, 0, 0, false)
+	mems, _, err := h.taskMem.List(ctx, []string{"role:coding"}, 0, 0, false, "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -93,14 +93,14 @@ func TestRescopeMemories_DryRunThenApply(t *testing.T) {
 		t.Fatalf("apply report.Applied = false, want true")
 	}
 
-	repoMems, _, err := h.taskMem.List(ctx, []string{"repo:github.com/acme/games"}, 0, 0, false)
+	repoMems, _, err := h.taskMem.List(ctx, []string{"repo:github.com/acme/games"}, 0, 0, false, "")
 	if err != nil {
 		t.Fatalf("List repo bucket: %v", err)
 	}
 	if len(repoMems) != 1 || repoMems[0].Content != "needs minSdk 30" {
 		t.Fatalf("repo:github.com/acme/games = %+v, want the one GitHub-origin memory", repoMems)
 	}
-	roleMems, _, err := h.taskMem.List(ctx, []string{"role:coding"}, 0, 0, false)
+	roleMems, _, err := h.taskMem.List(ctx, []string{"role:coding"}, 0, 0, false, "")
 	if err != nil {
 		t.Fatalf("List role bucket: %v", err)
 	}

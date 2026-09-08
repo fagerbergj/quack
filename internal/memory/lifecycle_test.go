@@ -134,7 +134,7 @@ func TestApplyOutcome_Invalidate(t *testing.T) {
 
 	// Soft-delete only: the point still exists, reachable via list with
 	// includeInvalidated=true (query never surfaces it regardless).
-	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
+	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestApplyOutcome_Reinforce(t *testing.T) {
 
 	byID := func(t *testing.T) map[string]scored {
 		t.Helper()
-		pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
+		pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "")
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
@@ -269,7 +269,7 @@ func TestApplyVotes_SupportedAndContradicted(t *testing.T) {
 		t.Fatalf("ApplyVotes touched %d, want 2", n)
 	}
 
-	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
+	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -308,7 +308,7 @@ func TestRecordRecall_BumpsCountAndTimestamp(t *testing.T) {
 	}
 
 	get := func() scored {
-		pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
+		pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "")
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
@@ -351,7 +351,7 @@ func TestApplyVotes_NetScoreInvalidates(t *testing.T) {
 		}
 	}
 
-	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
+	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -386,7 +386,7 @@ func TestApplyVotes_DuplicateVoteForSameMemoryCollapsesToOne(t *testing.T) {
 		t.Fatalf("ApplyVotes touched %d, want 1 (deduped)", n)
 	}
 
-	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
+	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -443,7 +443,7 @@ func TestApplyOutcome_ReinforceKeepsVoteScoreInvariant(t *testing.T) {
 		t.Fatalf("ApplyVotes contradicted: %v", err)
 	}
 
-	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
+	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if err != nil {
 		t.Fatalf("list (pre-reinforce): %v", err)
 	}
@@ -455,7 +455,7 @@ func TestApplyOutcome_ReinforceKeepsVoteScoreInvariant(t *testing.T) {
 		t.Fatalf("ApplyOutcome reinforce: %v", err)
 	}
 
-	pts, err = s.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
+	pts, err = s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if err != nil {
 		t.Fatalf("list (post-reinforce): %v", err)
 	}
@@ -490,7 +490,7 @@ func TestApplyOutcome_SkipsVerifiedOnInvalidate(t *testing.T) {
 		t.Fatalf("ApplyOutcome touched %d, want 1 (verified1 must be skipped)", n)
 	}
 
-	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
+	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -533,7 +533,7 @@ func TestBackfillTiers_IdempotentAcrossTwoBoots(t *testing.T) {
 	}
 
 	byID := func() map[string]scored {
-		pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
+		pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "")
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
@@ -563,7 +563,7 @@ func TestBackfillTiers_IdempotentAcrossTwoBoots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenSQLite (boot 2): %v", err)
 	}
-	pts, err := s2.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
+	pts, err := s2.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if err != nil {
 		t.Fatalf("list (boot 2): %v", err)
 	}
@@ -625,7 +625,7 @@ func TestBackfillTiers_RealPreP1SchemaMigrates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenSQLite (migrate pre-P1 file): %v", err)
 	}
-	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
+	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if err != nil {
 		t.Fatalf("list after migration: %v", err)
 	}
@@ -668,7 +668,7 @@ func TestInvalidateByID_HumanDelete(t *testing.T) {
 		t.Fatalf("InvalidateByID: %v", err)
 	}
 
-	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
+	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -754,7 +754,7 @@ func TestApply_ConsolidatorDeleteInvalidatesWithReason(t *testing.T) {
 		t.Fatalf("Commit: %v", err)
 	}
 
-	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
+	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -781,5 +781,68 @@ func TestApply_ConsolidatorDeleteInvalidatesWithReason(t *testing.T) {
 	}
 	if len(neighbours) != 0 {
 		t.Fatalf("neighbours = %+v, want none (an invalidated point must be invisible to reconcile)", neighbours)
+	}
+}
+
+// TestSetHumanVote_ToggleAndSwitch covers epic #1255 P4: an up vote is +1
+// upvote/verified; voting up again is a no-op (not a double-count); "none"
+// removes it back to 0; and switching directly from up to down moves the
+// vote rather than stacking it.
+func TestSetHumanVote_ToggleAndSwitch(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStore(t, "task", nil)
+	ops := &fakeOpsLog{}
+	s.SetOpsLog(ops)
+
+	if err := s.idx.upsert(ctx, []point{
+		{ID: "m1", Vector: []float32{1, 0, 0, 0}, Content: "some fact", Scope: "repo:r", Status: string(StatusUnverified)},
+	}); err != nil {
+		t.Fatalf("seed upsert: %v", err)
+	}
+
+	get := func() scored {
+		pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "")
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		for _, p := range pts {
+			if p.ID == "m1" {
+				return p
+			}
+		}
+		t.Fatalf("m1 not found")
+		return scored{}
+	}
+
+	if err := s.SetHumanVote(ctx, "m1", HumanVoteUp); err != nil {
+		t.Fatalf("SetHumanVote up: %v", err)
+	}
+	if m := get(); m.Upvotes != 1 || m.Tier != TierVerified || m.HumanVote != HumanVoteUp {
+		t.Fatalf("after up: %+v, want upvotes=1 tier=verified human_vote=up", m)
+	}
+
+	if err := s.SetHumanVote(ctx, "m1", HumanVoteUp); err != nil {
+		t.Fatalf("SetHumanVote up again: %v", err)
+	}
+	if m := get(); m.Upvotes != 1 {
+		t.Fatalf("after repeat up: %+v, want upvotes still 1 (no double count)", m)
+	}
+
+	if err := s.SetHumanVote(ctx, "m1", HumanVoteNone); err != nil {
+		t.Fatalf("SetHumanVote none: %v", err)
+	}
+	if m := get(); m.Upvotes != 0 || m.HumanVote != "" {
+		t.Fatalf("after none: %+v, want upvotes=0 human_vote=\"\"", m)
+	}
+
+	if err := s.SetHumanVote(ctx, "m1", HumanVoteDown); err != nil {
+		t.Fatalf("SetHumanVote down: %v", err)
+	}
+	if m := get(); m.Downvotes != 1 || m.Upvotes != 0 || m.HumanVote != HumanVoteDown {
+		t.Fatalf("after down: %+v, want downvotes=1 upvotes=0 human_vote=down", m)
+	}
+
+	if err := s.SetHumanVote(ctx, "does-not-exist", HumanVoteUp); !errors.Is(err, ErrMemoryNotFound) {
+		t.Fatalf("SetHumanVote unknown id err = %v, want ErrMemoryNotFound", err)
 	}
 }

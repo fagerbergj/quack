@@ -187,7 +187,7 @@ func TestCommit_AbsorptionMergesThreeDuplicates(t *testing.T) {
 		t.Fatalf("Commit applied %d ops, want 3 (1 update + 2 invalidate)", n)
 	}
 
-	mems, _, err := s.List(ctx, nil, 0, 0, true)
+	mems, _, err := s.List(ctx, nil, 0, 0, true, "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}

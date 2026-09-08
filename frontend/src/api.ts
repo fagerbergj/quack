@@ -11,6 +11,8 @@ import {
   getResponse as sdkGetResponse,
   listMemories as sdkListMemories,
   deleteMemory as sdkDeleteMemory,
+  voteMemory as sdkVoteMemory,
+  listNodeMemories as sdkListNodeMemories,
   listExtensions as sdkListExtensions,
   getConfig as sdkGetConfig,
   listChatArtifacts as sdkListChatArtifacts,
@@ -18,9 +20,14 @@ import {
   diffArtifactRevisions as sdkDiffArtifactRevisions,
 } from './generated'
 
-export type { ChatSummary, ChatDetail, ChatList, Turn, Memory, MemoryList, ExtensionInfo, ClientConfig, ArtifactSummary, ArtifactRevisionInfo } from './generated'
+export type { ChatSummary, ChatDetail, ChatList, Turn, Memory, MemoryList, ExtensionInfo, ClientConfig, ArtifactSummary, ArtifactRevisionInfo, NodeMemory, NodeMemoryList } from './generated'
 
-import type { ChatSummary, ChatDetail, ChatList, Turn, MemoryList, ExtensionInfo, ClientConfig, ArtifactList, ArtifactRevisionList } from './generated'
+import type { ChatSummary, ChatDetail, ChatList, Turn, MemoryList, ExtensionInfo, ClientConfig, ArtifactList, ArtifactRevisionList, NodeMemoryList } from './generated'
+
+// VoteDirection is the UI-facing shape of a manual vote - "none" clears the
+// caller's own prior vote (the Reddit-style toggle-off), matching the
+// backend's VoteMemoryBody vote enum.
+export type VoteDirection = 'up' | 'down' | 'none'
 
 type Result<T> = { data?: T; error?: unknown; response?: Response }
 
@@ -77,6 +84,7 @@ export const api = {
     limit?: number
     page_token?: string
     include_invalidated?: boolean
+    tier?: 'unverified' | 'verified'
   }): Promise<MemoryList> => unwrap(await sdkListMemories({ query: params })),
 
   forgetMemory: async (id: string): Promise<void> => {
@@ -85,6 +93,12 @@ export const api = {
       throw new Error(`Forget failed (${r.response ? r.response.status : 'no response'})`)
     }
   },
+
+  voteMemory: async (id: string, vote: VoteDirection, reason?: string) =>
+    unwrap(await sdkVoteMemory({ path: { memory_id: id }, body: { vote, reason } })),
+
+  listNodeMemories: async (chatId: string, nodeId: string): Promise<NodeMemoryList> =>
+    unwrap(await sdkListNodeMemories({ path: { chat_id: chatId, node_id: nodeId } })),
 
   listExtensions: async (): Promise<ExtensionInfo[]> => unwrap(await sdkListExtensions()),
 

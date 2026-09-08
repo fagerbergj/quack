@@ -142,6 +142,48 @@ type MemoryVoteState struct {
 	Upvotes       int
 	Downvotes     int
 	LastUpvotedAt time.Time
+	// humanVote is the LAST actor=human entry's effective direction
+	// ("up"/"down"/"" - #1265 review finding 4): a human's vote is a
+	// toggle, not a stack of judge-style additive verdicts, so re-applying
+	// it must undo the prior contribution first. Judge entries stay purely
+	// additive and never touch this field.
+	humanVote string
+}
+
+// applyHumanVote folds one actor=human memory.vote entry into s with
+// latest-wins semantics (#1265 review finding 4): a human's vote is a
+// toggle (up -> none -> down is three entries, one live vote), not a stack
+// of judge-style verdicts. It undoes s.humanVote's prior contribution (if
+// any) before applying vote's, so up -> none -> down leaves exactly one
+// downvote, never three appended votes. supported/contradicted/not_relevant
+// map to up/down/none the same way the REST vote handler's
+// humanLedgerVote does in reverse.
+func applyHumanVote(s *MemoryVoteState, vote ledger.MemoryVote, at time.Time) {
+	switch s.humanVote {
+	case "up":
+		s.Upvotes--
+	case "down":
+		s.Downvotes--
+	}
+	switch vote {
+	case ledger.MemoryVoteSupported:
+		s.humanVote = "up"
+		s.Upvotes++
+		if at.After(s.LastUpvotedAt) {
+			s.LastUpvotedAt = at
+		}
+	case ledger.MemoryVoteContradicted:
+		s.humanVote = "down"
+		s.Downvotes++
+	default: // not_relevant: the "none" retraction - no new contribution
+		s.humanVote = ""
+	}
+	if s.Upvotes < 0 {
+		s.Upvotes = 0
+	}
+	if s.Downvotes < 0 {
+		s.Downvotes = 0
+	}
 }
 
 // FoldAbsorption redirects every id in r.MemoryVotes/MemoryRecalls that
@@ -330,14 +372,18 @@ func applyLoop(res *Result, live map[revKey]ArtifactRevision, entries []ledger.E
 				s = &MemoryVoteState{ID: p.MemoryID}
 				res.MemoryVotes[p.MemoryID] = s
 			}
-			switch p.Vote {
-			case ledger.MemoryVoteSupported:
-				s.Upvotes++
-				if e.At.After(s.LastUpvotedAt) {
-					s.LastUpvotedAt = e.At
+			if p.Actor == "human" {
+				applyHumanVote(s, p.Vote, e.At)
+			} else {
+				switch p.Vote {
+				case ledger.MemoryVoteSupported:
+					s.Upvotes++
+					if e.At.After(s.LastUpvotedAt) {
+						s.LastUpvotedAt = e.At
+					}
+				case ledger.MemoryVoteContradicted:
+					s.Downvotes++
 				}
-			case ledger.MemoryVoteContradicted:
-				s.Downvotes++
 			}
 		}
 	}

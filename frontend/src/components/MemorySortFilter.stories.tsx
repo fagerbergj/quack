@@ -1,11 +1,12 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useState } from 'react'
 import { within, userEvent, expect } from 'storybook/test'
-import { MemorySortFilter, type MemorySort, type MemorySortFilterProps } from './MemorySortFilter'
+import { MemorySortFilter, type MemorySort, type MemorySortFilterProps, type MemoryTierFilter } from './MemorySortFilter'
 
-function Controlled(props: Omit<MemorySortFilterProps, 'sort' | 'onSortChange' | 'bucket' | 'onBucketChange'> & { initialSort?: MemorySort; initialBucket?: string }) {
+function Controlled(props: Omit<MemorySortFilterProps, 'sort' | 'onSortChange' | 'bucket' | 'onBucketChange' | 'tier' | 'onTierChange'> & { initialSort?: MemorySort; initialBucket?: string; initialTier?: MemoryTierFilter }) {
   const [sort, setSort] = useState<MemorySort>(props.initialSort ?? 'newest')
   const [bucket, setBucket] = useState(props.initialBucket ?? '')
+  const [tier, setTier] = useState<MemoryTierFilter>(props.initialTier ?? '')
   return (
     <MemorySortFilter
       sort={sort}
@@ -13,6 +14,8 @@ function Controlled(props: Omit<MemorySortFilterProps, 'sort' | 'onSortChange' |
       bucket={bucket}
       buckets={props.buckets}
       onBucketChange={setBucket}
+      tier={tier}
+      onTierChange={setTier}
     />
   )
 }
