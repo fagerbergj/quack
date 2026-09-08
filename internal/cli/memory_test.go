@@ -133,6 +133,87 @@ func TestRunMemoryForgetNotFound(t *testing.T) {
 	}
 }
 
+// TestRunMemoryShow covers the happy path: found on the first page, human
+// output includes the vote/tier/recall fields.
+func TestRunMemoryShow(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"memories":[
+			{"id":"m1","bucket":"repo:r","content":"a fact worth showing","author":"a","kind":"fact",
+			 "timestamp":"2026-01-02T03:04:00Z","status":"unverified","tier":"verified",
+			 "upvotes":2,"downvotes":1,"vote_score":1,"recalls":3,
+			 "last_upvoted_at":"2026-01-03T00:00:00Z","last_recalled_at":"2026-01-04T00:00:00Z"}
+		],"total":1}`)
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	if err := RunMemoryShow(context.Background(), &out, srv.URL, "m1", false); err != nil {
+		t.Fatalf("RunMemoryShow: %v", err)
+	}
+	s := out.String()
+	for _, want := range []string{"m1", "verified", "+2 / -1", "score 1", "recalls:  3", "a fact worth showing"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("show output missing %q:\n%s", want, s)
+		}
+	}
+}
+
+// TestRunMemoryShowPaging covers findMemory's page_token loop: the id lands
+// on the second page, reached via the first response's next_page_token.
+func TestRunMemoryShowPaging(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("page_token") == "" {
+			io.WriteString(w, `{"memories":[{"id":"other","bucket":"repo:r","content":"c","author":"a","kind":"fact","timestamp":"2026-01-02T03:04:00Z"}],"total":2,"next_page_token":"p2"}`)
+			return
+		}
+		if r.URL.Query().Get("page_token") != "p2" {
+			t.Errorf("page_token = %q, want p2", r.URL.Query().Get("page_token"))
+		}
+		io.WriteString(w, `{"memories":[{"id":"m2","bucket":"repo:r","content":"on page two","author":"a","kind":"fact","timestamp":"2026-01-02T03:04:00Z"}],"total":2}`)
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	if err := RunMemoryShow(context.Background(), &out, srv.URL, "m2", false); err != nil {
+		t.Fatalf("RunMemoryShow: %v", err)
+	}
+	if !strings.Contains(out.String(), "on page two") {
+		t.Errorf("show output = %q, want the second page's memory", out.String())
+	}
+	if calls != 2 {
+		t.Errorf("server calls = %d, want exactly 2 (one per page)", calls)
+	}
+}
+
+// TestRunMemoryShowNotFound covers termination: no next_page_token ends the
+// scan, and an id never seen across all pages is a not-found error, not an
+// infinite loop.
+func TestRunMemoryShowNotFound(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"memories":[{"id":"m1","bucket":"repo:r","content":"c","author":"a","kind":"fact","timestamp":"2026-01-02T03:04:00Z"}],"total":1}`)
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	err := RunMemoryShow(context.Background(), &out, srv.URL, "does-not-exist", false)
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("err = %v, want a not-found error", err)
+	}
+	if calls != 1 {
+		t.Errorf("server calls = %d, want exactly 1 (no next_page_token, must not loop)", calls)
+	}
+}
+
 func TestTruncateLine(t *testing.T) {
 	if got := truncateLine("short", 80); got != "short" {
 		t.Errorf("truncateLine short = %q", got)

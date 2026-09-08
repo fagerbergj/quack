@@ -286,7 +286,7 @@ func (x *sqliteIndex) updateStatus(ctx context.Context, ids []string, o OutcomeS
 		case OutcomeReinforced:
 			upd = map[string]any{
 				"status": string(StatusReinforced), "reinforcement_count": r.ReinforcementCount + 1,
-				"upvotes": r.Upvotes + 1, "vote_score": r.VoteScore + 1, "tier": TierVerified, "last_upvoted_at": ts,
+				"upvotes": r.Upvotes + 1, "vote_score": reinforcedVoteScore(r.Upvotes, r.Downvotes), "tier": TierVerified, "last_upvoted_at": ts,
 			}
 		case OutcomeInvalidated:
 			upd = map[string]any{"status": string(StatusInvalidated), "invalidated_at": ts, "invalidation_reason": o.Reason}

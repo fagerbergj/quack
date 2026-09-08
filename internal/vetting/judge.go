@@ -584,9 +584,9 @@ func isTransientJudgeErr(err error) bool {
 // duplicated at each return.
 func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer string, act workerActivity, det map[string]criterionScore, received []memory.Delivered, emit func(*genai.Part) bool) (v verdict, err error) {
 	changedFiles, coverage := changedFilesSection(cfg, act)
-	// Memories lead knownFailures - the worker's recalled set is round-invariant
-	// (recall runs once, before the round loop), same cache-friendly ordering
-	// buildJudgePrompt's own doc calls for.
+	// Memories lead knownFailures inside this string, but buildJudgePrompt
+	// still places the whole `known` blob in its volatile trailing section,
+	// not the cacheable prefix - this ordering is readability only.
 	known := receivedMemoriesSection(received) + judgeKnownFailuresSection(det, cfg.Threshold)
 	fitted := fitJudgeAnswer(cfg, question, answer, changedFiles, known, act, 1.0)
 	defer func() {

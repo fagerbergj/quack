@@ -190,10 +190,14 @@ func newStore(ctx context.Context, idx index, embedder inference.Embedder, conso
 // AddSessionToMemory is a deliberate no-op; writes go through the explicit gated commit.
 func (s *Store) AddSessionToMemory(ctx context.Context, _ session.Session) error { return nil }
 
-// recall embeds the query and returns top-K memories across the caller's buckets.
-func (s *Store) recall(ctx context.Context, buckets []string, query string) (*adkmemory.SearchResponse, error) {
+// recall embeds the query and returns top-K memories across the caller's
+// buckets, plus the backing scored point for each returned entry, SAME
+// ORDER and length as resp.Memories - adkmemory.Entry (ADK's own type) has
+// no Score field, so a caller that needs the cosine score (RecallWithHits,
+// for the ledger's memory.recall entry) can't get it from resp alone.
+func (s *Store) recall(ctx context.Context, buckets []string, query string) (resp *adkmemory.SearchResponse, hits []scored, err error) {
 	if len(buckets) == 0 || strings.TrimSpace(query) == "" {
-		return &adkmemory.SearchResponse{}, nil
+		return &adkmemory.SearchResponse{}, nil, nil
 	}
 	// Cap the query before embedding - a recall query is a topic, not a document.
 	if r := []rune(query); len(r) > maxRecallRunes {
@@ -202,20 +206,21 @@ func (s *Store) recall(ctx context.Context, buckets []string, query string) (*ad
 	// Bounded + best-effort: recall must never hang or fail a node.
 	ectx, cancel := context.WithTimeout(ctx, recallEmbedTimeout)
 	defer cancel()
-	vecs, err := s.embed(ectx, []string{query}, "recall")
-	if err != nil {
-		s.log.Warn("recall embed failed; proceeding without recall", "err", err)
-		return &adkmemory.SearchResponse{}, nil
+	vecs, embErr := s.embed(ectx, []string{query}, "recall")
+	if embErr != nil {
+		s.log.Warn("recall embed failed; proceeding without recall", "err", embErr)
+		return &adkmemory.SearchResponse{}, nil, nil
 	}
 	if len(vecs) == 0 {
-		return &adkmemory.SearchResponse{}, nil
+		return &adkmemory.SearchResponse{}, nil, nil
 	}
 	// Fetch top-K then apply minScore in Go so the threshold is observable.
-	pts, err := s.idx.query(ctx, buckets, vecs[0], s.topK)
-	if err != nil {
-		return nil, fmt.Errorf("memory: query %q: %w", s.coll, err)
+	pts, qerr := s.idx.query(ctx, buckets, vecs[0], s.topK)
+	if qerr != nil {
+		return nil, nil, fmt.Errorf("memory: query %q: %w", s.coll, qerr)
 	}
 	entries := make([]adkmemory.Entry, 0, len(pts))
+	kept := make([]scored, 0, len(pts))
 	previews := make([]string, 0, len(pts))
 	var topScore float32
 	dropped := 0
@@ -242,12 +247,13 @@ func (s *Store) recall(ctx context.Context, buckets []string, query string) (*ad
 			}
 		}
 		entries = append(entries, e)
+		kept = append(kept, p)
 	}
 	// Debug log: buckets, raw matches, top_score, dropped, hits.
 	s.log.Debug("recall", "buckets", buckets,
 		"query", preview(query), "raw", len(pts), "top_score", topScore,
 		"min_score", s.minScore, "dropped", dropped, "hits", len(entries), "memories", previews)
-	return &adkmemory.SearchResponse{Memories: entries}, nil
+	return &adkmemory.SearchResponse{Memories: entries}, kept, nil
 }
 
 // DefaultListLimit caps an unbounded List/Search request so one caller can't

@@ -903,6 +903,16 @@ func applyMemoryOutcome(ctx context.Context, name, chatID string, prev, next ext
 		return
 	}
 	if ledgerStore == nil {
+		// Only worth a warn when a memory store is actually configured - no
+		// stores means there was never anything to reinforce/invalidate
+		// here anyway, so this isn't a misconfiguration (#1257 review).
+		for _, s := range stores {
+			if s != nil {
+				slog.Warn("apply memory outcome: no ledger configured; skipping (recalled-set outcomes need the WAL)",
+					"component", "ext."+name, "chat", chatID, "kind", outcome.Kind)
+				break
+			}
+		}
 		return
 	}
 	res, err := fold.Fold(ctx, ledgerStore, chatID, 0)

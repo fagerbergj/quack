@@ -375,9 +375,10 @@ func (x *qdrantIndex) updateStatus(ctx context.Context, ids []string, o OutcomeS
 		return nil, fmt.Errorf("memory: get for outcome: %w", err)
 	}
 	type candidate struct {
-		id      string
-		count   int
-		upvotes int
+		id        string
+		count     int
+		upvotes   int
+		downvotes int
 	}
 	var candidates []candidate
 	for id, payload := range existing {
@@ -387,7 +388,10 @@ func (x *qdrantIndex) updateStatus(ctx context.Context, ids []string, o OutcomeS
 		if o.Kind == OutcomeInvalidated && payloadString(payload, payloadTier) == TierVerified {
 			continue
 		}
-		candidates = append(candidates, candidate{id: id, count: payloadInt(payload, payloadReinforcementCount), upvotes: payloadInt(payload, payloadUpvotes)})
+		candidates = append(candidates, candidate{
+			id: id, count: payloadInt(payload, payloadReinforcementCount),
+			upvotes: payloadInt(payload, payloadUpvotes), downvotes: payloadInt(payload, payloadDownvotes),
+		})
 	}
 	if len(candidates) == 0 {
 		return nil, nil
@@ -422,7 +426,7 @@ func (x *qdrantIndex) updateStatus(ctx context.Context, ids []string, o OutcomeS
 					payloadStatus:             string(StatusReinforced),
 					payloadReinforcementCount: c.count + 1,
 					payloadUpvotes:            c.upvotes + 1,
-					payloadVoteScore:          c.upvotes + 1,
+					payloadVoteScore:          reinforcedVoteScore(c.upvotes, c.downvotes),
 					payloadTier:               TierVerified,
 					payloadLastUpvotedAt:      ts,
 				}),
@@ -437,6 +441,17 @@ func (x *qdrantIndex) updateStatus(ctx context.Context, ids []string, o OutcomeS
 
 // applyVotes applies each vote to its point, skipping an already-invalidated
 // one (sticky). One SetPayload per point (the delta differs per point).
+// ponytail: read-modify-write, not atomic - two concurrent applyVotes calls
+// against the SAME memory (two rounds voting on one shared point at once)
+// can both read the same upvotes/downvotes and one write clobbers the
+// other, under-counting by the lost vote. This is true on BOTH backends
+// here (sqlite's applyVotes is the same Find-then-Updates shape, see
+// sqlite.go) - only recordRecall's counter differs cross-backend: sqlite
+// increments with an atomic `recalls + 1` SQL expression, qdrant still
+// reads-then-writes (no atomic increment in its payload API). Fine at
+// today's call volume (one gate round at a time per memory in practice); a
+// compare-and-set retry loop is the fix if concurrent votes on one memory
+// ever become real.
 func (x *qdrantIndex) applyVotes(ctx context.Context, votes []Vote, invalidateThreshold int) ([]string, error) {
 	if len(votes) == 0 {
 		return nil, nil

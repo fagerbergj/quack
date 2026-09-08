@@ -364,19 +364,22 @@ func Apply(ctx context.Context, store ledger.LedgerStore, chatID string, from in
 func ApplySeeded(ctx context.Context, store ledger.LedgerStore, chatID string, seed *Result, from int64) (*Result, error) {
 	live := map[revKey]ArtifactRevision{}
 	nodes := map[string]*NodeState{}
+	res := newResult()
+	// Same "seed.LastSeq > from" gate as live/nodes above (not just seed !=
+	// nil, #1257 review): a STALE seed - one the caller's own from already
+	// supersedes - must contribute nothing, memory projections included, or
+	// a stale checkpoint's counts get seeded back in even though the caller
+	// already knows better.
 	if seed != nil && seed.LastSeq > from {
 		seedFold(seed, live, nodes)
+		res.MemoryRecalls, res.MemoryVotes = seedMemory(seed)
 		from = seed.LastSeq
 	}
 	entries, err := readAll(ctx, store, chatID, from+1)
 	if err != nil {
 		return nil, err
 	}
-	res := newResult()
 	res.Nodes = nodes
-	if seed != nil {
-		res.MemoryRecalls, res.MemoryVotes = seedMemory(seed)
-	}
 	applyLoop(res, live, entries)
 	return finalize(res, live), nil
 }

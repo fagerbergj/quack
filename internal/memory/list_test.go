@@ -45,7 +45,7 @@ func TestListIsNotSearch(t *testing.T) {
 	// The same three points, via the query path a live recall would take:
 	// orthogonal vectors score 0, below minScore, so nothing comes back. This
 	// is the gap List closes - not a redundant path to the same answer.
-	resp, err := s.recall(ctx, []string{"repo:x"}, "an unrelated query")
+	resp, _, err := s.recall(ctx, []string{"repo:x"}, "an unrelated query")
 	if err != nil {
 		t.Fatalf("recall: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestForgetRemovesFromRecall(t *testing.T) {
 		t.Fatalf("upsert: %v", err)
 	}
 
-	resp, err := s.recall(ctx, []string{"repo:x"}, "what minSdk do the instrumentation tests need")
+	resp, _, err := s.recall(ctx, []string{"repo:x"}, "what minSdk do the instrumentation tests need")
 	if err != nil {
 		t.Fatalf("recall (before): %v", err)
 	}
@@ -78,7 +78,7 @@ func TestForgetRemovesFromRecall(t *testing.T) {
 		t.Fatalf("Forget: %v", err)
 	}
 
-	resp, err = s.recall(ctx, []string{"repo:x"}, "what minSdk do the instrumentation tests need")
+	resp, _, err = s.recall(ctx, []string{"repo:x"}, "what minSdk do the instrumentation tests need")
 	if err != nil {
 		t.Fatalf("recall (after): %v", err)
 	}

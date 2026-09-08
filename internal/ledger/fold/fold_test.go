@@ -267,13 +267,20 @@ func TestApplySeeded_FromCheckpointMatchesFromZero(t *testing.T) {
 func TestApplySeeded_StaleCheckpointStillFoldsCorrectly(t *testing.T) {
 	s := newMemStore(t)
 	appendRevision(t, s, "chat1", "id1", 1, 0) // seq 1
+	appendMemoryRecall(t, s, "chat1", "m1")    // recalls[m1] = 1, folded into the checkpoint below
+	appendMemoryVote(t, s, "chat1", "m1", ledger.MemoryVoteSupported)
 
-	stale, err := Fold(context.Background(), s, "chat1", 0) // LastSeq=1
+	stale, err := Fold(context.Background(), s, "chat1", 0) // LastSeq=3
 	if err != nil {
 		t.Fatalf("Fold: %v", err)
 	}
+	if stale.MemoryRecalls["m1"].Recalls != 1 || stale.MemoryVotes["m1"].Upvotes != 1 {
+		t.Fatalf("checkpoint memory state = %+v / %+v, want recalls=1 upvotes=1", stale.MemoryRecalls["m1"], stale.MemoryVotes["m1"])
+	}
 
-	appendRevision(t, s, "chat1", "id1", 2, 1) // seq 2, lands after the checkpoint fold ran
+	appendRevision(t, s, "chat1", "id1", 2, 1)                           // seq 4, lands after the checkpoint fold ran
+	appendMemoryRecall(t, s, "chat1", "m1")                              // seq 5: a second recall of the same memory
+	appendMemoryVote(t, s, "chat1", "m1", ledger.MemoryVoteContradicted) // seq 6: a later downvote
 
 	// A caller passing from=0 (as if it didn't know any better) must still
 	// get the right answer, because ApplySeeded reads from seed.LastSeq.
@@ -284,6 +291,27 @@ func TestApplySeeded_StaleCheckpointStillFoldsCorrectly(t *testing.T) {
 	latest, ok := got.Artifacts["id1"].Latest()
 	if !ok || latest.Revision != 2 {
 		t.Fatalf("latest revision = %+v, ok=%v, want revision 2 (a stale checkpoint must not hide seq 2)", latest, ok)
+	}
+
+	// seedMemory's deep copy: the checkpoint's own MemoryRecalls/MemoryVotes
+	// maps must be untouched by ApplySeeded accumulating on top of a copy.
+	if stale.MemoryRecalls["m1"].Recalls != 1 || stale.MemoryVotes["m1"].Upvotes != 1 || stale.MemoryVotes["m1"].Downvotes != 0 {
+		t.Fatalf("seed mutated in place: recalls=%+v votes=%+v, want unchanged (1 recall, 1 upvote, 0 downvotes)",
+			stale.MemoryRecalls["m1"], stale.MemoryVotes["m1"])
+	}
+	// The returned Result accumulates the checkpoint's seeded state PLUS
+	// what landed after it - not just what's in the post-checkpoint entries.
+	if got.MemoryRecalls["m1"].Recalls != 2 {
+		t.Fatalf("m1 recalls = %d, want 2 (1 seeded + 1 after the checkpoint)", got.MemoryRecalls["m1"].Recalls)
+	}
+	if v := got.MemoryVotes["m1"]; v.Upvotes != 1 || v.Downvotes != 1 {
+		t.Fatalf("m1 votes = %+v, want upvotes=1 (seeded) downvotes=1 (after the checkpoint)", v)
+	}
+	if got.MemoryRecalls["m1"].LastRecalledAt.IsZero() {
+		t.Fatal("m1 LastRecalledAt = zero, want the second recall's timestamp")
+	}
+	if got.MemoryVotes["m1"].LastUpvotedAt.IsZero() {
+		t.Fatal("m1 LastUpvotedAt = zero, want the seeded (first, supported) vote's timestamp - the later vote was a downvote and must not clear it")
 	}
 }
 

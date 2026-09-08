@@ -194,7 +194,7 @@ func (s *Store) RecallWithHits(ctx context.Context, sc Scope, query string) (tex
 	if s == nil {
 		return "", nil
 	}
-	resp, err := s.recall(ctx, sc.Buckets(), query)
+	resp, scoredHits, err := s.recall(ctx, sc.Buckets(), query)
 	if err != nil || resp == nil || len(resp.Memories) == 0 {
 		return "", nil
 	}
@@ -202,9 +202,16 @@ func (s *Store) RecallWithHits(ctx context.Context, sc Scope, query string) (tex
 	if text == "" {
 		return "", nil
 	}
+	// scoredHits is the same order/length as resp.Memories (recall's own
+	// invariant) - zip them so the real cosine score reaches the ledger's
+	// memory.recall entry instead of always recording 0 (#1257 review).
 	hits = make([]Delivered, 0, len(resp.Memories))
-	for _, m := range resp.Memories {
-		hits = append(hits, Delivered{ID: m.ID, Content: extractText(m)})
+	for i, m := range resp.Memories {
+		d := Delivered{ID: m.ID, Content: extractText(m)}
+		if i < len(scoredHits) {
+			d.Score = scoredHits[i].Score
+		}
+		hits = append(hits, d)
 	}
 	return fmt.Sprintf(recallInstructions, text), hits
 }

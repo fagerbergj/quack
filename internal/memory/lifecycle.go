@@ -178,6 +178,14 @@ func computeVoteDelta(upvotes, downvotes int, tier, now string, v Vote, invalida
 	return d
 }
 
+// reinforcedVoteScore is the one shared computation both backends' outcome
+// reinforce path calls for the new vote_score - a bug (#1257 review) had
+// qdrant recompute this from upvotes/downvotes while sqlite incremented its
+// own stored vote_score by 1, diverging once a memory carried any
+// downvotes. Both backends now call this instead of deriving it locally, so
+// vote_score == upvotes - downvotes holds identically on either.
+func reinforcedVoteScore(upvotes, downvotes int) int { return (upvotes + 1) - downvotes }
+
 // dedupeVotes keeps the LAST vote for a repeated memory id, preserving
 // stable order over the remaining ids (order rarely matters here, but
 // deterministic output makes a flaky test easier to root-cause).
