@@ -143,6 +143,31 @@ function stubLargeFixture() {
   }))
 }
 
+// #1250 review: three same-kind, same-revision artifacts on one node - with
+// no focus hint the default (compareOutput's alphabetically-earliest-name
+// tiebreak) picks `text:alpha`; focusArtifactId lets a caller override that
+// with whichever one the viewer actually tapped.
+function stubThreeArtifactsFixture() {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = decodeURIComponent(input instanceof Request ? input.url : String(input))
+    for (const name of ['alpha', 'beta', 'gamma']) {
+      if (url.includes(`/artifacts/text:${name}/revisions`)) {
+        return jsonResponse({ data: [{ revision: 1, mime_type: 'text/markdown', size: 10, kind: 'text', class: 'blob', lineage: { node_id: 'multi-1', author: 'worker', saved_at: '2026-09-04T09:00:00Z' } }] })
+      }
+      if (url.includes(`/artifacts/text:${name}?revision=1`)) return textResponse(`# ${name} content\n`)
+    }
+    if (url.endsWith('/artifacts')) {
+      return jsonResponse({
+        data: ['alpha', 'beta', 'gamma'].map(name => ({
+          name: `text:${name}`, kind: 'text', class: 'blob', latest_revision: 1,
+          lineage: { node_id: 'multi-1', author: 'worker', saved_at: '2026-09-04T09:00:00Z' }, revisions: [],
+        })),
+      })
+    }
+    return new Response(JSON.stringify({ error: 'not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
+  }))
+}
+
 function stubEmptyList() {
   vi.stubGlobal('fetch', vi.fn(async () =>
     new Response(JSON.stringify({ data: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
@@ -201,6 +226,23 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     const dialog = container.querySelector('dialog')
     expect(dialog?.className).toMatch(/h-dvh/)
     expect(container.querySelectorAll('select')).toHaveLength(0)
+  })
+
+  // #1250 review: an <artifacts> row tap must show the TAPPED artifact, not
+  // just any artifact on its node - focusArtifactId is the hint that makes
+  // that true without reintroducing #1178's id-based picker.
+  it('focusArtifactId shows the tapped artifact as primary, not the default pick', async () => {
+    stubThreeArtifactsFixture()
+    // No focus hint: the default tiebreak (earliest name) shows alpha.
+    const { unmount } = render(<ArtifactPanel chatId="chat-1" nodeId="multi-1" nodeAgent="Context" nodeTask="" onClose={() => {}} />)
+    expect(await screen.findByRole('heading', { level: 1, name: 'alpha content' })).toBeTruthy()
+    unmount()
+
+    // Tapping the SECOND row (beta) passes it as the focus hint - it's shown
+    // as primary instead, even though it isn't the default pick.
+    render(<ArtifactPanel chatId="chat-1" nodeId="multi-1" nodeAgent="Context" nodeTask="" focusArtifactId="text:beta" onClose={() => {}} />)
+    expect(await screen.findByRole('heading', { level: 1, name: 'beta content' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { level: 1, name: 'alpha content' })).toBeNull()
   })
 
   // (#1216 review): a real agent prompt can run to a kilobyte-plus - it must

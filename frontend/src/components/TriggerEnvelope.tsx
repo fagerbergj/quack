@@ -42,9 +42,12 @@ export function TriggerMessage({
   chatId?: string
 }) {
   const blocks = useMemo(() => parseEnvelope(content), [content])
-  // The artifact panel opens onto a NODE, keyed by the row's own artifact id
-  // resolved to its owning node id (see openArtifactRow below) - null means closed.
-  const [openNodeId, setOpenNodeId] = useState<string | null>(null)
+  // The artifact panel opens onto a NODE (resolved from the tapped row's
+  // artifact id - see ArtifactsSection.openRow below), with that same
+  // artifact id passed through as a focus hint so the panel shows the
+  // TAPPED artifact as primary, not just whichever of the node's outputs
+  // selectPrimaryOutput would otherwise pick (#1250 review). null means closed.
+  const [openArtifact, setOpenArtifact] = useState<{ nodeId: string; artifactId: string } | null>(null)
   if (blocks) {
     return (
       <div className="flex justify-end mb-3">
@@ -55,17 +58,18 @@ export function TriggerMessage({
               block={b}
               priorContents={priorContents}
               chatId={chatId}
-              onOpenArtifact={setOpenNodeId}
+              onOpenArtifact={(nodeId, artifactId) => setOpenArtifact({ nodeId, artifactId })}
             />
           ))}
         </div>
-        {chatId && openNodeId && (
+        {chatId && openArtifact && (
           <ArtifactPanel
             chatId={chatId}
-            nodeId={openNodeId}
+            nodeId={openArtifact.nodeId}
             nodeAgent="Context"
             nodeTask=""
-            onClose={() => setOpenNodeId(null)}
+            focusArtifactId={openArtifact.artifactId}
+            onClose={() => setOpenArtifact(null)}
           />
         )}
       </div>
@@ -92,7 +96,7 @@ function EnvelopeBlockView({
   block: EnvelopeBlock
   priorContents: string[]
   chatId?: string
-  onOpenArtifact: (nodeId: string) => void
+  onOpenArtifact: (nodeId: string, artifactId: string) => void
 }) {
   switch (block.kind) {
     case 'permissions': return <InfoLine label="Permissions" text={block.text} />
@@ -414,7 +418,7 @@ function ArtifactsSection({
 }: {
   block: Extract<EnvelopeBlock, { kind: 'artifacts' }>
   chatId?: string
-  onOpenArtifact: (nodeId: string) => void
+  onOpenArtifact: (nodeId: string, artifactId: string) => void
 }) {
   // Resolving a row to a node is one API round trip shared by every row in
   // this block - the artifact panel opens by node id, not artifact id (#1178
@@ -428,7 +432,7 @@ function ArtifactsSection({
     api.listChatArtifacts(chatId)
       .then(l => {
         const match = l.data?.find(a => a.name === row.id)
-        if (match?.lineage?.node_id) onOpenArtifact(match.lineage.node_id)
+        if (match?.lineage?.node_id) onOpenArtifact(match.lineage.node_id, row.id)
       })
       .catch(() => {})
       .finally(() => setPending(null))

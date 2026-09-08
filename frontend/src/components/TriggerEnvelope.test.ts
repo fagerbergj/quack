@@ -435,7 +435,7 @@ ${CHECKS_ENVELOPE.split('\n').slice(2).join('\n')}`
       await Promise.resolve()
     })
     expect(listChatArtifacts).toHaveBeenCalledWith('chat-1')
-    expect(artifactPanelProps).toHaveBeenCalledWith(expect.objectContaining({ chatId: 'chat-1', nodeId: 'ctx-node-1' }))
+    expect(artifactPanelProps).toHaveBeenCalledWith(expect.objectContaining({ chatId: 'chat-1', nodeId: 'ctx-node-1', focusArtifactId: 'bytes:comments' }))
   })
 
   it('a row with no chatId is disabled and never opens the panel', () => {
