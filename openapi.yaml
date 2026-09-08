@@ -1063,6 +1063,32 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/memories/rescope:
+    post:
+      operationId: rescopeMemories
+      summary: Move role:* memories into their resolved repo:* bucket
+      description: |
+        #1262: worktree-per-node made `RepoKey` return "" for every chat with
+        a sibling worktree, so those memories landed in `role:coding`/`role:research`
+        instead of `repo:<identity>`. This finds every live role:* memory whose
+        provenance chat has a GitHub origin and moves it to that repo's bucket.
+        Without `apply` (the default) it only tallies; set `apply: true` to
+        write. Every applied move is also logged to `memory_ops` with actor
+        `rescope`.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RescopeMemoriesBody"
+      responses:
+        "200":
+          description: Per-repo tallies (dry run) or the counts actually moved (apply)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RescopeReport"
+
 components:
   parameters:
     ChatID:
@@ -1313,6 +1339,42 @@ components:
         reason:
           type: string
           description: Why this memory is being invalidated. Defaults to `"manual delete"` when omitted.
+
+    RescopeMemoriesBody:
+      type: object
+      properties:
+        apply:
+          type: boolean
+          default: false
+          description: false (default) only tallies what would move. true writes the bucket change and logs a memory_ops row per point.
+
+    RescopeReport:
+      type: object
+      required: [applied, repos]
+      properties:
+        applied:
+          type: boolean
+          description: Whether this call actually wrote changes (mirrors the request's `apply`).
+        repos:
+          type: array
+          items:
+            $ref: "#/components/schemas/RescopeRepoTally"
+
+    RescopeRepoTally:
+      type: object
+      required: [repo, count]
+      properties:
+        repo:
+          type: string
+          description: Target repo identity, e.g. `github.com/acme/games` (same format as a memory's `repo:` bucket suffix).
+        count:
+          type: integer
+          description: Memories found (dry run) or moved (apply) into this repo's bucket.
+        examples:
+          type: array
+          items:
+            type: string
+          description: A few content previews, for dry-run sanity checking.
 
     MemoryList:
       type: object

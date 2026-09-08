@@ -124,7 +124,7 @@ func TestRunGatedRefine_MCPStagedMemory_CommitsOnlyOnPass(t *testing.T) {
 		t.Fatalf("OpenSQLite: %v", err)
 	}
 	// The scope commitMemoryOnPass actually writes with is computed by
-	// MemoryScope(ctx, cfg, nodeID) - cfg.MemoryRole + the runner's session user
+	// MemoryScope(ctx, cfg) - cfg.MemoryRole + the runner's session user
 	// (fixed to "u" below) - so the assertions' View must match it exactly.
 	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score 0-10", CommitMemory: true, Memory: store, MemoryRole: "coding"}
 	scope := memory.Scope{Role: "coding", User: "u"}

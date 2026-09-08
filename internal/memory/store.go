@@ -59,6 +59,9 @@ type index interface {
 	// reinforcement_count >= 1, else unverified. Idempotent - a point that
 	// already carries a tier is left alone, so a second boot touches none.
 	backfillTiers(ctx context.Context) (int, error)
+	// updateBucket moves a single point to a new bucket key (#1262's
+	// `quack memory rescope`) - a payload/column-only mutation, no re-embed.
+	updateBucket(ctx context.Context, id, bucket string) error
 }
 
 // scored is one ranked memory.
@@ -283,6 +286,7 @@ type Memory struct {
 	Author    string
 	Timestamp string
 	Kind      string
+	ChatID    string // provenance: minting chat, used by `quack memory rescope` to find its origin
 	Score     float32
 
 	// Lifecycle (design doc §3). Status "" reads as unverified (pre-lifecycle point).
@@ -397,7 +401,7 @@ func toMemories(pts []scored) []Memory {
 	out := make([]Memory, len(pts))
 	for i, p := range pts {
 		out[i] = Memory{
-			ID: p.ID, Content: p.Content, Bucket: p.Scope, Author: p.Author, Timestamp: p.Timestamp, Kind: p.Kind, Score: p.Score,
+			ID: p.ID, Content: p.Content, Bucket: p.Scope, Author: p.Author, Timestamp: p.Timestamp, Kind: p.Kind, ChatID: p.ChatID, Score: p.Score,
 			Status: p.Status, ReinforcementCount: p.ReinforcementCount, InvalidationReason: p.InvalidationReason,
 			Upvotes: p.Upvotes, Downvotes: p.Downvotes, VoteScore: p.VoteScore, Tier: p.Tier,
 			LastUpvotedAt: p.LastUpvotedAt, Recalls: p.Recalls, LastRecalledAt: p.LastRecalledAt,

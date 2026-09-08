@@ -563,6 +563,20 @@ func (x *qdrantIndex) backfillTiers(ctx context.Context) (int, error) {
 	return touched, nil
 }
 
+// updateBucket moves a point to a new bucket (payload user_id), unconditionally.
+func (x *qdrantIndex) updateBucket(ctx context.Context, id, bucket string) error {
+	wait := true
+	if _, err := x.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
+		CollectionName: x.coll,
+		Wait:           &wait,
+		Payload:        qdrant.NewValueMap(map[string]any{payloadScope: bucket}),
+		PointsSelector: &qdrant.PointsSelector{PointsSelectorOneOf: &qdrant.PointsSelector_Points{Points: &qdrant.PointsIdsList{Ids: idsToPointIDs([]string{id})}}},
+	}); err != nil {
+		return fmt.Errorf("memory: set payload rescope: %w", err)
+	}
+	return nil
+}
+
 func payloadString(payload map[string]*qdrant.Value, key string) string {
 	if v, ok := payload[key]; ok {
 		return v.GetStringValue()

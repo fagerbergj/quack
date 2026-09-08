@@ -18,14 +18,17 @@ import (
 	"google.golang.org/adk/v2/runner"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/stream"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // stubModel is a deterministic model.LLM for driving the gated-worker node offline.
@@ -1345,5 +1348,74 @@ func TestJudgePartEmitterDedupsToolCallByID(t *testing.T) {
 	want := []string{stream.EventAgentToolCall, stream.EventAgentToolResult}
 	if len(names) != len(want) || names[0] != want[0] || names[1] != want[1] {
 		t.Fatalf("events = %v, want %v (exactly one agent_tool_call)", names, want)
+	}
+}
+
+// TestMemoryScope_NoNodeIDLegacyBucket: a worker's recall buckets are exactly
+// [repo, role, user] - #1262's Legacy: nodeID leaked a per-node bucket that
+// never had memories in it (Legacy is only for pre-scope agent-name buckets).
+func TestMemoryScope_NoNodeIDLegacyBucket(t *testing.T) {
+	jail, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoDir, err := jail.Resolve("u1", "c1", "repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoDir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitCfg := "[remote \"origin\"]\n\turl = git@github.com:acme/games.git\n"
+	if err := os.WriteFile(filepath.Join(repoDir, ".git", "config"), []byte(gitCfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{MemoryRole: "coding", Workspace: jail, WorkspaceUserID: "u1", ChatID: "c1"}
+
+	var got memory.Scope
+	probe, err := functiontool.New[probeArgs, probeResult](
+		functiontool.Config{Name: "probe", Description: "probe"},
+		func(ctx adkagent.Context, _ probeArgs) (probeResult, error) {
+			got = MemoryScope(ctx, cfg)
+			return probeResult{}, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub := &toolLoopStub{}
+	worker, err := llmagent.New(llmagent.Config{
+		Name: "code-implementer", Model: stub, Description: "impl",
+		Instruction: "Do the task.", Tools: []tool.Tool{probe},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := workflow.NewAgentNode(worker, workflow.NodeConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := workflowagent.New(workflowagent.Config{
+		Name: "root", SubAgents: []adkagent.Agent{worker}, Edges: workflow.Chain(workflow.Start, node),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := runner.New(runner.Config{AppName: "test", Agent: root, SessionService: session.InMemoryService(), AutoCreateSession: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "probe then finish"}}}
+	for _, err := range r.Run(t.Context(), "u1", "review-new-commits", task, adkagent.RunConfig{}) {
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	}
+	// ctx.Session() isn't wired for a tool context in this harness, so User is
+	// unset here - the point of this test is repo+role resolve with no node-id
+	// Legacy bucket leaking in (issue used node id "review-new-commits" as session id).
+	want := []string{"repo:github.com/acme/games", "role:coding"}
+	buckets := got.Buckets()
+	if len(buckets) != len(want) || buckets[0] != want[0] || buckets[1] != want[1] {
+		t.Fatalf("Buckets() = %v, want %v (no node-id legacy bucket)", buckets, want)
 	}
 }

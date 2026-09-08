@@ -347,7 +347,7 @@ func asJSONFlag(c *cobra.Command, dst *bool) {
 // a real verb).
 func newMemoryCmd() *cobra.Command {
 	c := &cobra.Command{Use: "memory", Short: "Browse and invalidate remembered facts"}
-	c.AddCommand(newMemoryListCmd(), newMemoryShowCmd(), newMemoryForgetCmd(), newMemorySweepCmd())
+	c.AddCommand(newMemoryListCmd(), newMemoryShowCmd(), newMemoryForgetCmd(), newMemorySweepCmd(), newMemoryRescopeCmd())
 	return c
 }
 
@@ -424,6 +424,26 @@ func newMemorySweepCmd() *cobra.Command {
 	}
 	asJSONFlag(c, &asJSON)
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "report what each rule would do without invalidating anything")
+	return c
+}
+
+// newMemoryRescopeCmd: `memory rescope` (#1262) moves role:* memories whose
+// provenance chat has a GitHub origin into their repo:* bucket - a one-off
+// fix for the years of memories worktree-per-node's RepoKey="" misfiled.
+func newMemoryRescopeCmd() *cobra.Command {
+	var asJSON, apply bool
+	c := &cobra.Command{
+		Use:   "rescope",
+		Short: "Move role:* memories into their resolved repo:* bucket",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunMemoryRescope(cmd.Context(), cmd.OutOrStdout(), t, apply, asJSON)
+			})
+		},
+	}
+	asJSONFlag(c, &asJSON)
+	c.Flags().BoolVar(&apply, "apply", false, "write the bucket change (default: dry run, tally only)")
 	return c
 }
 

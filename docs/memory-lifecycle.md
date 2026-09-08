@@ -233,6 +233,28 @@ retry is just calling sweep again.
 memory this tick's forgetting step invalidates becomes retention-eligible
 on a later tick once its `invalidated_at` ages past `retention_days`.
 
+## 8d. Buckets and rescoping (#1262)
+
+A memory lives in exactly one bucket - `repo:<identity>` (the chat's
+workspace repo origin, keyed by `RepoIdentity`/`NormalizeRepoURL`), or
+`role:coding`/`role:research` when no single repo identity is resolvable for
+the chat's workspace, plus `user:<id>` for user-scoped memory. `RepoKey`
+derives the identity from every found repo (a shared clone plus its linked
+worktrees, since worktree-per-node) agreeing, not from repo count - a lone
+repo or several worktrees of the same origin both key the same bucket; a
+genuine mismatch falls back to `""` (role bucket) rather than guess.
+`Legacy` is a separate, narrower thing: a pre-scope bucket keyed by agent
+NAME (e.g. `web-researcher`), kept only so memories committed before buckets
+existed still recall - never a per-node id.
+
+`quack memory rescope [--apply]` (`POST /api/v1/memories/rescope`) is the
+one-off fix for the memories `RepoKey`'s old count-based bug misfiled into
+`role:*` before this fix landed: it finds every live `role:*` memory whose
+provenance chat has a GitHub origin and moves it into that repo's bucket.
+Dry run (the default) only tallies per-repo counts and examples; `--apply`
+writes the bucket change and logs a `memory_ops` `update` row per point,
+actor `rescope`.
+
 ## 9. Future work
 
 - **AttriMem-style attribution** (arXiv 2607.21106): which specific recalled memory actually influenced a given output, so reinforcement and invalidation can target real contribution instead of mere co-occurrence in the prompt.

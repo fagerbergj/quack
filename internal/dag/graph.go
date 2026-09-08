@@ -225,7 +225,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 					ms := vetting.MemSession{AdvisorToken: token}
 					if memParticipant {
 						ms.Memory = cfg.Memory
-						ms.Scope = vetting.MemoryScope(ctx, cfg, node.ID)
+						ms.Scope = vetting.MemoryScope(ctx, cfg)
 						ms.Staged = &vetting.MemStage{}
 						ms.Recalled = &vetting.RecallStage{}
 						ms.ChatID, ms.NodeID, ms.Ledger = chatID, node.ID, cfg.Ledger

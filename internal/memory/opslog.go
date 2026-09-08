@@ -33,6 +33,9 @@ const (
 	// ActorSweep: the forgetting-rule sweep (epic #1255 P3), distinct from
 	// ActorConsolidator (which merges duplicates, not ages memories out).
 	ActorSweep OpsLogActor = "sweep"
+	// ActorRescope: quack memory rescope (#1262), moving a pre-fix role:*
+	// point into its resolved repo:* bucket.
+	ActorRescope OpsLogActor = "rescope"
 )
 
 // OpsLog persists an append-only audit trail of memory lifecycle transitions
