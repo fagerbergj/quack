@@ -740,6 +740,11 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				// Memory votes (#1255 P1): applied only on the round that actually
 				// passes - a failed round (including one superseded by the WAL
 				// fail-closed flip above) records nothing.
+				if len(receivedMemories) > 0 && len(v.Memories) == 0 {
+					// #1259: the in-session nudge (runJudgeRound) already tried once;
+					// still empty here means the judge ignored it.
+					log.Warn("judge received memories but cast zero votes after the nudge", "round", round, "received", len(receivedMemories))
+				}
 				applyMemoryVotesOnPass(nodeCtx, cfg, nodeID, round, receivedMemories, v.Memories)
 			}
 			for _, sr := range scored {

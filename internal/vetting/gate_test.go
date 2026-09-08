@@ -343,6 +343,19 @@ func TestParseVerdictDuplicatedBlob(t *testing.T) {
 	}
 }
 
+// TestParseVerdictAcceptsMemories covers #1259: the text-JSON fallback (no
+// submit_verdict tool call) still carries the judge's per-memory votes.
+func TestParseVerdictAcceptsMemories(t *testing.T) {
+	input := `{"score":0.9,"passed":true,"feedback":"ok","memories":[{"id":"m1","vote":"supported","reason":"confirmed by the diff"}]}`
+	v, err := parseVerdict(input)
+	if err != nil {
+		t.Fatalf("parseVerdict: %v", err)
+	}
+	if len(v.Memories) != 1 || v.Memories[0].ID != "m1" || v.Memories[0].Vote != "supported" {
+		t.Fatalf("memories = %+v, want one vote for m1/supported", v.Memories)
+	}
+}
+
 func TestParseVerdictLowestCriterion(t *testing.T) {
 	// Well-formed G-Eval verdict; the overall score is the lowest criterion, so
 	// cites_sources=0 sinks it to 0.0 regardless of the model's holistic 0.96.

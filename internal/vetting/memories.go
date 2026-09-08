@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -61,6 +62,28 @@ func planMemorySection(hits []memory.Delivered) string {
 	return sb.String()
 }
 
+// memoryIDs extracts ids from a received set, for the round-scoped tool
+// description, force-close instruction, and nudge text (#1259).
+func memoryIDs(received []memory.Delivered) []string {
+	ids := make([]string, len(received))
+	for i, m := range received {
+		ids[i] = m.ID
+	}
+	return ids
+}
+
+// missingMemoryVotes reports a round that owed votes (non-empty received
+// set) but whose verdict carries none (#1259).
+func missingMemoryVotes(receivedIDs []string, v verdict) bool {
+	return len(receivedIDs) > 0 && len(v.Memories) == 0
+}
+
+// judgeMemoriesNudgeText: one-shot in-session nudge (#1236 pattern) for a
+// verdict that reached submit_verdict/text-JSON but voted on nothing.
+func judgeMemoriesNudgeText(receivedIDs []string) string {
+	return fmt.Sprintf("You did not vote on the recalled memories. Vote on memories %s via submit_verdict's `memories` array before finishing.", strings.Join(receivedIDs, ", "))
+}
+
 // mergeMemoryHits appends new into base, deduping by id (first occurrence
 // wins) so a memory recalled by both prefill and a recall_memory tool call
 // is voted on once, not twice (epic #1255 P2 adversarial review finding).
@@ -100,8 +123,13 @@ func recallLedgerEntry(ctx context.Context, cfg Config, nodeID string, round int
 	if err != nil {
 		return
 	}
+	// Agent/Round are stamped explicitly from cfg/the round argument, not read
+	// off ctx - a ctx value set inside a node body never crosses the RunNode
+	// scheduling boundary (same SetLedgerCoords discipline as the worker/judge
+	// model stamps; #1259).
 	if _, err := cfg.Ledger.AppendIntent(ctx, ledger.Entry{
-		ChatID: cfg.ChatID, NodeID: nodeID, Kind: ledger.KindMemoryRecall, At: time.Now().UTC(), Payload: payload,
+		ChatID: cfg.ChatID, NodeID: nodeID, Agent: cfg.Agent, Round: strconv.Itoa(round),
+		Kind: ledger.KindMemoryRecall, At: time.Now().UTC(), Payload: payload,
 	}); err != nil {
 		slog.Warn("ledger memory.recall append failed (observational; run unaffected)", "component", "vetting", "node", nodeID, "err", err)
 	}
@@ -157,5 +185,7 @@ func applyMemoryVotesOnPass(ctx context.Context, cfg Config, nodeID string, roun
 	}
 	if _, err := cfg.Memory.ApplyVotes(ctx, applied, memory.DefaultInvalidateThreshold); err != nil {
 		slog.Warn("apply memory votes failed", "component", "vetting", "node", nodeID, "err", err)
+		return
 	}
+	slog.Info("memory votes applied", "component", "vetting", "node", nodeID, "round", round, "applied", len(applied))
 }

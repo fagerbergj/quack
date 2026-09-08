@@ -135,14 +135,15 @@ func TestApplyMemoryVotesOnPass_IgnoresVoteForUnknownID(t *testing.T) {
 
 // TestRecallLedgerEntry_AppendsMemoryRecall covers the usage-tracking half:
 // a recall delivery appends one memory.recall ledger entry naming every
-// delivered id.
+// delivered id, stamped with the node's agent and round (#1259 - these were
+// previously left blank, unlike every other coord-bearing entry).
 func TestRecallLedgerEntry_AppendsMemoryRecall(t *testing.T) {
 	ctx := context.Background()
 	lgr := ledgertest.NewMemStore()
-	cfg := Config{ChatID: "chat1", Ledger: lgr}
+	cfg := Config{ChatID: "chat1", Agent: "worker", Ledger: lgr}
 	hits := []memory.Delivered{{ID: "m1"}, {ID: "m2"}}
 
-	recallLedgerEntry(ctx, cfg, "node1", 0, "prefill", hits)
+	recallLedgerEntry(ctx, cfg, "node1", 2, "prefill", hits)
 
 	entries, err := lgr.ReadEntries(ctx, "chat1", 0)
 	if err != nil {
@@ -150,6 +151,9 @@ func TestRecallLedgerEntry_AppendsMemoryRecall(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Kind != ledger.KindMemoryRecall {
 		t.Fatalf("entries = %+v, want exactly one memory.recall", entries)
+	}
+	if entries[0].Agent != "worker" || entries[0].Round != "2" {
+		t.Fatalf("entry coords = agent=%q round=%q, want agent=worker round=2", entries[0].Agent, entries[0].Round)
 	}
 }
 
