@@ -12,23 +12,49 @@ import (
 // tail once the eligible set spans more than one List page (DefaultListLimit
 // = 50). 100 resolvable points + 20 with no provenance, on sqlite.
 func TestRescope_ApplyMatchesDryRunAcrossPages(t *testing.T) {
-	ctx := context.Background()
-	s, err := OpenSQLite(ctx, t.TempDir()+"/mem.db", fixedTestEmbedder{}, nil, "test_rescope_scale", "task", 5, 0)
-	if err != nil {
-		t.Fatalf("OpenSQLite: %v", err)
+	backends := []struct {
+		name string
+		open func(*testing.T) *Store
+	}{
+		{"sqlite", func(t *testing.T) *Store {
+			s, err := OpenSQLite(context.Background(), t.TempDir()+"/mem.db", fixedTestEmbedder{}, nil, "test_rescope_scale", "task", 5, 0)
+			if err != nil {
+				t.Fatalf("OpenSQLite: %v", err)
+			}
+			return s
+		}},
+		{"qdrant", func(t *testing.T) *Store {
+			addr := qdrantTestAddr(t)
+			coll := fmt.Sprintf("test_rescope_scale_%d", qdrantCollSeq.Add(1))
+			s, err := Open(context.Background(), addr, fixedTestEmbedder{}, nil, coll, "task", 5, 0)
+			if err != nil {
+				t.Fatalf("Open (qdrant): %v", err)
+			}
+			return s
+		}},
 	}
+	for _, b := range backends {
+		b := b
+		t.Run(b.name, func(t *testing.T) {
+			testRescopeApplyMatchesDryRunAcrossPages(t, b.open(t))
+		})
+	}
+}
+
+func testRescopeApplyMatchesDryRunAcrossPages(t *testing.T, s *Store) {
+	ctx := context.Background()
 
 	const resolvable, noProvenance = 100, 20
 	var pts []point
 	for i := 0; i < resolvable; i++ {
 		pts = append(pts, point{
-			ID: fmt.Sprintf("gh-%d", i), Vector: []float32{1, 0, 0, 0}, Content: fmt.Sprintf("fact %d", i),
+			ID: testID(fmt.Sprintf("gh-%d", i)), Vector: []float32{1, 0, 0, 0}, Content: fmt.Sprintf("fact %d", i),
 			Scope: prefixed(bucketRole, RoleCoding), ChatID: "gh-chat", Timestamp: nowRFC3339(), MintedAt: nowRFC3339(),
 		})
 	}
 	for i := 0; i < noProvenance; i++ {
 		pts = append(pts, point{
-			ID: fmt.Sprintf("noprov-%d", i), Vector: []float32{1, 0, 0, 0}, Content: fmt.Sprintf("orphan %d", i),
+			ID: testID(fmt.Sprintf("noprov-%d", i)), Vector: []float32{1, 0, 0, 0}, Content: fmt.Sprintf("orphan %d", i),
 			Scope: prefixed(bucketRole, RoleCoding), Timestamp: nowRFC3339(), MintedAt: nowRFC3339(),
 		})
 	}

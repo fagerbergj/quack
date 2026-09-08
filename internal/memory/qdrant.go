@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/qdrant/go-client/qdrant"
 
 	"google.golang.org/adk/v2/model"
@@ -323,6 +324,9 @@ func (x *qdrantIndex) remove(ctx context.Context, ids []string) (int, error) {
 		return 0, nil
 	}
 	pids := idsToPointIDs(ids)
+	if len(pids) == 0 { // every id was malformed - an empty Ids selector is ambiguous, not "none"
+		return 0, nil
+	}
 	existing, err := x.client.Get(ctx, &qdrant.GetPoints{CollectionName: x.coll, Ids: pids, WithPayload: qdrant.NewWithPayload(false)})
 	if err != nil {
 		return 0, fmt.Errorf("memory: get before delete: %w", err)
@@ -341,11 +345,24 @@ func (x *qdrantIndex) remove(ctx context.Context, ids []string) (int, error) {
 	return len(existing), nil
 }
 
-// idsToPointIDs converts memory ids to the qdrant client's point-id type.
+// idsToPointIDs converts memory ids to the qdrant client's point-id type,
+// dropping any id that isn't a UUID: qdrant.NewID does no client-side
+// validation, and a malformed id (a stale/typo'd REST path segment, or a
+// hallucinated id in a judge's vote) otherwise reaches the server and comes
+// back as a raw "Unable to parse UUID" gRPC error - every real memory id is
+// minted via uuid.NewString() (commit.go), so this can never drop a genuine
+// one. Bug found via #1268's live harness: that raw error broke
+// findMemoryByID/invalidateMemory's try-each-store fallback in
+// internal/server/rest/memory.go, which only treats ErrMemoryNotFound as
+// "try the next store" - on qdrant it aborted with a 500 instead of the
+// clean 404 sqlite's WHERE-clause miss already gave for free.
 func idsToPointIDs(ids []string) []*qdrant.PointId {
-	pids := make([]*qdrant.PointId, len(ids))
-	for i, id := range ids {
-		pids[i] = qdrant.NewID(id)
+	pids := make([]*qdrant.PointId, 0, len(ids))
+	for _, id := range ids {
+		if _, err := uuid.Parse(id); err != nil {
+			continue
+		}
+		pids = append(pids, qdrant.NewID(id))
 	}
 	return pids
 }
@@ -359,6 +376,9 @@ func (x *qdrantIndex) invalidateByID(ctx context.Context, ids []string, reason s
 		return 0, nil
 	}
 	pids := idsToPointIDs(ids)
+	if len(pids) == 0 { // every id was malformed - an empty Ids selector is ambiguous, not "none"
+		return 0, nil
+	}
 	existing, err := x.client.Get(ctx, &qdrant.GetPoints{CollectionName: x.coll, Ids: pids, WithPayload: qdrant.NewWithPayload(false)})
 	if err != nil {
 		return 0, fmt.Errorf("memory: get before invalidate: %w", err)
@@ -399,7 +419,11 @@ func (x *qdrantIndex) getByID(ctx context.Context, id string) (scored, bool, err
 
 // getExisting fetches ids' current payload, skipping any that don't exist.
 func (x *qdrantIndex) getExisting(ctx context.Context, ids []string) (map[string]map[string]*qdrant.Value, error) {
-	pts, err := x.client.Get(ctx, &qdrant.GetPoints{CollectionName: x.coll, Ids: idsToPointIDs(ids), WithPayload: qdrant.NewWithPayload(true)})
+	pids := idsToPointIDs(ids)
+	if len(pids) == 0 { // every id was malformed - an empty Ids selector is ambiguous, not "none"
+		return map[string]map[string]*qdrant.Value{}, nil
+	}
+	pts, err := x.client.Get(ctx, &qdrant.GetPoints{CollectionName: x.coll, Ids: pids, WithPayload: qdrant.NewWithPayload(true)})
 	if err != nil {
 		return nil, err
 	}
