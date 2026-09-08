@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"slices"
 	"sort"
@@ -67,6 +68,7 @@ func (s *Store) RunConsolidationSweep(ctx context.Context, schedule string, rete
 
 func (s *Store) sweepOnce(ctx context.Context, retentionDays int) {
 	s.consolidateOnce(ctx)
+	s.forgetOnce(ctx, false)
 	s.retentionOnce(ctx, retentionDays)
 }
 
@@ -177,6 +179,183 @@ func (s *Store) consolidateCluster(ctx context.Context, bucket string, cluster [
 	// memory addressable by the same outcome-feedback event as the originals.
 	prov := Provenance{ChatID: cluster[0].ChatID, NodeID: cluster[0].NodeID, Source: cluster[0].Source}
 	return s.apply(ctx, bucket, consolidatorAuthor, prov, ops, valid)
+}
+
+// forgetExampleCap bounds how many example ids/contents a dry-run report
+// carries per rule - enough to sanity-check a rule, not a full dump.
+const forgetExampleCap = 5
+
+// SetForgettingRules validates and wires the operator's memory.forgetting.rules
+// (epic #1255 P3). Called once at server startup - a bad rule fails fast
+// there rather than surfacing later as a silently-skipped nightly sweep.
+// Unset (nil rules, never called) means DefaultRules().
+func (s *Store) SetForgettingRules(rules []Rule) error {
+	if err := ValidateRules(rules); err != nil {
+		return err
+	}
+	s.forgetRules = rules
+	return nil
+}
+
+// ForgettingExample is one matched memory shown in a dry-run report.
+type ForgettingExample struct {
+	ID      string
+	Content string
+}
+
+// ForgettingRuleResult is one rule's outcome across the sweep.
+type ForgettingRuleResult struct {
+	Index    int
+	When     string
+	Then     string
+	Matched  int
+	Examples []ForgettingExample
+}
+
+// ForgettingReport summarizes one ForgetSweep call - the nightly sweep logs
+// it, `quack memory sweep --dry-run` prints it, `quack memory sweep` prints
+// it after applying.
+type ForgettingReport struct {
+	Evaluated int
+	Kept      int // no rule matched
+	Rules     []ForgettingRuleResult
+}
+
+// forgetOnce is the sweep's forgetting step (epic #1255 P3), run before
+// retentionOnce so a memory a rule invalidates this tick is also eligible
+// for the same tick's retention cutoff check next run.
+func (s *Store) forgetOnce(ctx context.Context, dryRun bool) {
+	report, err := s.ForgetSweep(ctx, dryRun)
+	if err != nil {
+		s.log.Warn("forgetting sweep failed", "err", err)
+		return
+	}
+	for _, r := range report.Rules {
+		s.log.Info("forgetting sweep rule", "rule", r.Index, "then", r.Then, "matched", r.Matched)
+	}
+	s.log.Info("forgetting sweep", "evaluated", report.Evaluated, "kept", report.Kept, "dry_run", dryRun)
+}
+
+// ForgetSweep evaluates every currently-valid memory against the configured
+// (or default) forgetting rules, first match wins, no match keeps. dryRun
+// reports what would happen without mutating anything; otherwise matched
+// "invalidate" memories are soft-invalidated with reason "rule <index>: <expr>",
+// same sticky soft-delete every other invalidation path uses. This is the
+// ONE code path both the nightly sweep and `quack memory sweep` call -
+// no duplicated sweep logic.
+//
+// Concurrency: a point's votes can change between this read and the
+// invalidate write below; accepted as eventual consistency, last-write-wins,
+// same as every other invalidateByID caller - no new locking is introduced.
+func (s *Store) ForgetSweep(ctx context.Context, dryRun bool) (ForgettingReport, error) {
+	rules := s.forgetRules
+	if len(rules) == 0 {
+		rules = DefaultRules()
+	}
+	report := ForgettingReport{Rules: make([]ForgettingRuleResult, len(rules))}
+	for i, r := range rules {
+		report.Rules[i] = ForgettingRuleResult{Index: i, When: r.When, Then: r.Then}
+	}
+
+	type hit struct {
+		id   string
+		rule int
+	}
+	var toInvalidate []hit
+	now := time.Now().UTC()
+	err := s.forEachSweepPage(ctx, false, func(page []scored) { // currently-valid only
+		for _, p := range page {
+			report.Evaluated++
+			f := fieldsFor(p, now)
+			matched := -1
+			for i, r := range rules {
+				ok, err := Evaluate(r.When, f)
+				if err != nil {
+					s.log.Warn("forgetting sweep: rule evaluation failed, treating as no-match", "rule", i, "err", err)
+					continue
+				}
+				if ok {
+					matched = i
+					break
+				}
+			}
+			if matched < 0 {
+				report.Kept++
+				continue
+			}
+			rr := &report.Rules[matched]
+			rr.Matched++
+			if len(rr.Examples) < forgetExampleCap {
+				rr.Examples = append(rr.Examples, ForgettingExample{ID: p.ID, Content: preview(p.Content)})
+			}
+			if rules[matched].Then == ThenInvalidate {
+				toInvalidate = append(toInvalidate, hit{id: p.ID, rule: matched})
+			}
+		}
+	})
+	if err != nil {
+		return report, fmt.Errorf("memory: forgetting sweep: list: %w", err)
+	}
+	if dryRun || len(toInvalidate) == 0 {
+		return report, nil
+	}
+	byRule := map[int][]string{}
+	for _, h := range toInvalidate {
+		byRule[h.rule] = append(byRule[h.rule], h.id)
+	}
+	for rule, ids := range byRule {
+		reason := fmt.Sprintf("rule %d: %s", rule, rules[rule].When)
+		if _, err := s.idx.invalidateByID(ctx, ids, reason); err != nil {
+			s.log.Warn("forgetting sweep: invalidate failed", "rule", rule, "err", err)
+			continue
+		}
+		for _, id := range ids {
+			s.logOp(ctx, id, OpInvalidate, ActorSweep, reason)
+		}
+	}
+	return report, nil
+}
+
+// fieldsFor computes a point's Fields snapshot for forgetting-rule
+// evaluation. Missing timestamps (never upvoted/recalled) evaluate as
+// "never": days_since_upvote/days_since_recall fall back to age_days.
+// All timestamps are RFC3339 UTC (see nowRFC3339) - age math stays in UTC
+// throughout, and uses float Hours()/24 rather than integer subtraction so a
+// zero-value or malformed timestamp can't overflow into a bogus age.
+func fieldsFor(p scored, now time.Time) Fields {
+	ageDays := ageInDays(p.MintedAt, now)
+	daysSinceUpvote := ageDays
+	if p.LastUpvotedAt != "" {
+		daysSinceUpvote = ageInDays(p.LastUpvotedAt, now)
+	}
+	daysSinceRecall := ageDays
+	if p.LastRecalledAt != "" {
+		daysSinceRecall = ageInDays(p.LastRecalledAt, now)
+	}
+	tier := p.Tier
+	if tier == "" {
+		tier = TierUnverified
+	}
+	return Fields{
+		Upvotes: p.Upvotes, Downvotes: p.Downvotes, Score: p.VoteScore,
+		AgeDays: ageDays, DaysSinceUpvote: daysSinceUpvote, DaysSinceRecall: daysSinceRecall,
+		Recalls: p.Recalls, Tier: tier, Scope: p.Scope,
+	}
+}
+
+// ageInDays is the age of an RFC3339 timestamp in whole days, floored at 0.
+// An unparsable or empty timestamp reads as 0 (brand new) rather than
+// erroring the sweep over one bad row.
+func ageInDays(ts string, now time.Time) int64 {
+	t, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		return 0
+	}
+	days := int64(now.Sub(t).Hours() / 24)
+	if days < 0 {
+		return 0
+	}
+	return days
 }
 
 // retentionOnce hard-deletes invalidated points and memory_ops rows older

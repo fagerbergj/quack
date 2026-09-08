@@ -681,10 +681,28 @@ type StoreConfig struct {
 // periodic sweep (docs/memory-lifecycle.md §4(c)). Schedule nil defaults to
 // defaultConsolidationSchedule; "" disables the sweep (issue #961).
 type ConsolidationConfig struct {
-	Provider      string  `yaml:"provider"`
-	Model         string  `yaml:"model"`
-	Schedule      *string `yaml:"schedule"`
-	RetentionDays int     `yaml:"retention_days"`
+	Provider      string            `yaml:"provider"`
+	Model         string            `yaml:"model"`
+	Schedule      *string           `yaml:"schedule"`
+	RetentionDays int               `yaml:"retention_days"`
+	Forgetting    *ForgettingConfig `yaml:"forgetting"`
+}
+
+// ForgettingConfig is memory.forgetting.rules (epic #1255 P3): an ordered
+// list of {when, then} rules the nightly sweep evaluates, first match wins.
+// Absent (nil) means the built-in defaults - see memory.DefaultRules.
+type ForgettingConfig struct {
+	Rules []ForgetRule `yaml:"rules"`
+}
+
+// ForgetRule mirrors memory.Rule with yaml tags - config can't import
+// internal/memory (internal/memory already imports internal/inference,
+// which imports internal/config; that direction can't reverse), so the
+// expression itself is validated at server startup instead of config load
+// (see internal/serve's Store.SetForgettingRules wiring).
+type ForgetRule struct {
+	When string `yaml:"when"`
+	Then string `yaml:"then"`
 }
 
 // defaultConsolidationSchedule: daily at 02:00, standard 5-field cron.
@@ -1080,6 +1098,18 @@ func (c *Config) validate() error {
 		}
 		if s.Consolidation.RetentionDays < 0 {
 			return fmt.Errorf("config: store %q consolidation.retention_days must be >= 0", name)
+		}
+		if s.Consolidation.Forgetting != nil {
+			for i, r := range s.Consolidation.Forgetting.Rules {
+				if r.Then != "invalidate" && r.Then != "keep" {
+					return fmt.Errorf("config: store %q consolidation.forgetting.rules[%d].then must be \"invalidate\" or \"keep\", got %q", name, i, r.Then)
+				}
+				if strings.TrimSpace(r.When) == "" {
+					return fmt.Errorf("config: store %q consolidation.forgetting.rules[%d].when must not be empty", name, i)
+				}
+			}
+			// Full expression syntax is checked at server startup (Store.SetForgettingRules),
+			// not here - internal/config can't import internal/memory (see ForgetRule doc).
 		}
 	}
 	if ss, ok := c.Store(c.Session.Store); !ok {

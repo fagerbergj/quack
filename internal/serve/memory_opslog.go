@@ -32,3 +32,19 @@ func startConsolidationSweep(ctx context.Context, s *memory.Store, rm config.Res
 	}
 	go s.RunConsolidationSweep(ctx, schedule, rm.Consolidation.RetentionDays)
 }
+
+// wireForgettingRules validates and applies rm's memory.forgetting.rules
+// (epic #1255 P3), or leaves the store's DefaultRules() in place when the
+// operator configured none. A bad rule fails startup here - config.Validate()
+// can only check {when, then} shape, not expression syntax (internal/config
+// can't import internal/memory; see config.ForgetRule).
+func wireForgettingRules(s *memory.Store, rm config.ResolvedMemory) error {
+	if rm.Consolidation.Forgetting == nil {
+		return nil
+	}
+	rules := make([]memory.Rule, len(rm.Consolidation.Forgetting.Rules))
+	for i, r := range rm.Consolidation.Forgetting.Rules {
+		rules[i] = memory.Rule{When: r.When, Then: r.Then}
+	}
+	return s.SetForgettingRules(rules)
+}

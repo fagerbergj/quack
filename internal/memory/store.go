@@ -144,6 +144,7 @@ type Store struct {
 	log          *slog.Logger
 	embCache     *embedCache
 	opsLog       OpsLog // audit trail sink; nil unless the caller wires one (see SetOpsLog)
+	forgetRules  []Rule // epic #1255 P3; nil means DefaultRules() (see SetForgettingRules)
 }
 
 // SetOpsLog wires the memory_ops audit sink. internal/memory can't import

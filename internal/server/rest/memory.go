@@ -170,6 +170,61 @@ func invalidateMemory(ctx context.Context, stores []*memory.Store, id, reason st
 	return memory.ErrMemoryNotFound
 }
 
+// SweepMemories runs the forgetting-rule sweep (epic #1255 P3) on demand
+// against every configured store - the same Store.ForgetSweep the nightly
+// consolidation job calls, so there is exactly one sweep code path.
+func (h *Handler) SweepMemories(w http.ResponseWriter, r *http.Request) {
+	var body schema.SweepMemoriesBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		errMsg(w, http.StatusBadRequest, "malformed request body")
+		return
+	}
+	dryRun := body.DryRun != nil && *body.DryRun
+
+	type named struct {
+		name string
+		st   *memory.Store
+	}
+	var stores []named
+	if h.taskMem != nil {
+		stores = append(stores, named{"task", h.taskMem})
+	}
+	if h.userMem != nil {
+		stores = append(stores, named{"user", h.userMem})
+	}
+
+	out := schema.SweepMemoriesResult{DryRun: dryRun, Stores: []schema.SweepStoreResult{}}
+	for _, s := range stores {
+		report, err := s.st.ForgetSweep(r.Context(), dryRun)
+		if err != nil {
+			httpError(w, http.StatusInternalServerError, err)
+			return
+		}
+		out.Stores = append(out.Stores, sweepReportWire(s.name, report))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func sweepReportWire(storeName string, report memory.ForgettingReport) schema.SweepStoreResult {
+	rules := make([]schema.SweepRuleResult, len(report.Rules))
+	for i, r := range report.Rules {
+		examples := make([]struct {
+			Content string `json:"content"`
+			Id      string `json:"id"`
+		}, len(r.Examples))
+		for j, e := range r.Examples {
+			examples[j] = struct {
+				Content string `json:"content"`
+				Id      string `json:"id"`
+			}{Content: e.Content, Id: e.ID}
+		}
+		rules[i] = schema.SweepRuleResult{
+			Index: r.Index, When: r.When, Then: schema.SweepRuleResultThen(r.Then), Matched: r.Matched, Examples: &examples,
+		}
+	}
+	return schema.SweepStoreResult{Store: storeName, Evaluated: report.Evaluated, Kept: report.Kept, Rules: rules}
+}
+
 func memoriesWire(mems []memory.Memory) []schema.Memory {
 	out := make([]schema.Memory, len(mems))
 	for i, m := range mems {

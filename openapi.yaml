@@ -1030,6 +1030,39 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/memories/sweep:
+    post:
+      operationId: sweepMemories
+      summary: Run the forgetting-rule sweep on demand
+      description: |
+        Evaluates every configured memory store's `memory.forgetting.rules`
+        (epic #1255 P3) against every currently-valid memory, first rule
+        match wins. `dry_run: true` reports what each rule would do without
+        invalidating anything; otherwise it applies invalidations exactly as
+        the nightly consolidation sweep does - same code path, so this is
+        also how an operator forces the nightly sweep's forgetting step to
+        run early. Never removes a point (retention, not this endpoint, does
+        that after the configured retention window).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SweepMemoriesBody"
+      responses:
+        "200":
+          description: Per-rule sweep results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SweepMemoriesResult"
+        "500":
+          description: The memory index is unreachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   parameters:
     ChatID:
@@ -1298,6 +1331,72 @@ components:
             Opaque token - pass as `page_token` to fetch the next page. Absent
             when this page is the last, or the request set `q`. Treat as an
             opaque string: never parse it.
+
+    SweepMemoriesBody:
+      type: object
+      properties:
+        dry_run:
+          type: boolean
+          default: false
+          description: Report what each rule would do without invalidating anything.
+
+    SweepRuleResult:
+      type: object
+      required: [index, "when", then, matched]
+      properties:
+        index:
+          type: integer
+          description: The rule's position in memory.forgetting.rules (or the built-in defaults), first match wins.
+        "when":
+          type: string
+          description: The rule's expression, verbatim.
+        then:
+          type: string
+          enum: [invalidate, keep]
+        matched:
+          type: integer
+          description: How many memories this rule matched (and, when not a dry run, acted on).
+        examples:
+          type: array
+          description: Up to 5 example memories this rule matched, for sanity-checking a rule.
+          items:
+            type: object
+            required: [id, content]
+            properties:
+              id:
+                type: string
+              content:
+                type: string
+                description: Truncated preview, not the full memory content.
+
+    SweepStoreResult:
+      type: object
+      required: [store, evaluated, kept, rules]
+      properties:
+        store:
+          type: string
+          description: Which configured memory store this result is for, e.g. "task" or "user".
+        evaluated:
+          type: integer
+          description: Currently-valid memories this store's sweep looked at.
+        kept:
+          type: integer
+          description: Memories no rule matched (kept by default).
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/SweepRuleResult"
+
+    SweepMemoriesResult:
+      type: object
+      required: [dry_run, stores]
+      properties:
+        dry_run:
+          type: boolean
+        stores:
+          type: array
+          items:
+            $ref: "#/components/schemas/SweepStoreResult"
 
     # -------------------------------------------------------------------------
     # Replay ledger
