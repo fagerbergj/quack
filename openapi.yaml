@@ -1592,6 +1592,21 @@ components:
           type: boolean
           default: false
           description: Report what each rule would do without invalidating anything.
+        dedupe:
+          type: boolean
+          default: false
+          description: >-
+            Run the per-bucket similarity dedupe sweep (#1269) instead of the
+            forgetting-rule sweep: clusters live memories per bucket by
+            cosine similarity (transitive, >= 0.90) and feeds each cluster to
+            the same consolidation model the nightly sweep uses.
+        apply:
+          type: boolean
+          default: false
+          description: >-
+            With dedupe, actually run consolidation and write the resulting
+            merges. Without it, dedupe only clusters and reports examples -
+            no LLM call, nothing written.
 
     SweepRuleResult:
       type: object
@@ -1664,6 +1679,65 @@ components:
                 type: string
               message:
                 type: string
+        dedupe:
+          type: array
+          description: >-
+            Present only when the request set dedupe true (#1269) - the
+            per-store dedupe cluster report, replacing `stores`.
+          items:
+            $ref: "#/components/schemas/SweepDedupeStoreResult"
+
+    SweepDedupeExample:
+      type: object
+      required: [id, content]
+      properties:
+        id:
+          type: string
+        content:
+          type: string
+          description: Truncated preview, not the full memory content.
+
+    SweepDedupeCluster:
+      type: object
+      required: [bucket, size, examples]
+      properties:
+        bucket:
+          type: string
+        size:
+          type: integer
+          description: How many live memories this cluster groups (>= 2).
+        examples:
+          type: array
+          description: Up to 5 example members, for sanity-checking a cluster.
+          items:
+            $ref: "#/components/schemas/SweepDedupeExample"
+
+    SweepDedupeStoreResult:
+      type: object
+      required: [store, applied, num_clusters, llm_calls, ops_applied, dropped, clusters]
+      properties:
+        store:
+          type: string
+          description: Which configured memory store this result is for, e.g. "task" or "user".
+        applied:
+          type: boolean
+          description: Whether merges were actually written (the request's `apply` flag).
+        num_clusters:
+          type: integer
+          description: Total clusters found (size >= 2), including any beyond `clusters`' cap.
+        llm_calls:
+          type: integer
+          description: How many clusters were actually sent to the consolidation model, bounded per sweep run.
+        ops_applied:
+          type: integer
+        dropped:
+          type: integer
+          description: Clusters skipped once the per-sweep LLM-call budget was hit - left for the next sweep.
+        clusters:
+          type: array
+          description: Up to 20 clusters, for sanity-checking.
+          items:
+            $ref: "#/components/schemas/SweepDedupeCluster"
 
     MemoryWeekStats:
       type: object

@@ -183,10 +183,12 @@ func (c *Client) ForgetMemory(ctx context.Context, memoryID, reason string) erro
 }
 
 // SweepMemories runs the forgetting-rule sweep (epic #1255 P3) on demand,
-// dryRun reporting without mutating anything.
-func (c *Client) SweepMemories(ctx context.Context, dryRun bool) (schema.SweepMemoriesResult, error) {
+// dryRun reporting without mutating anything. dedupe switches to the
+// per-bucket similarity dedupe sweep instead (issue #1269); apply then
+// controls whether it writes merges or only reports clusters.
+func (c *Client) SweepMemories(ctx context.Context, dryRun, dedupe, apply bool) (schema.SweepMemoriesResult, error) {
 	var out schema.SweepMemoriesResult
-	err := c.postJSON(ctx, "/api/v1/memories/sweep", schema.SweepMemoriesBody{DryRun: &dryRun}, &out)
+	err := c.postJSON(ctx, "/api/v1/memories/sweep", schema.SweepMemoriesBody{DryRun: &dryRun, Dedupe: &dedupe, Apply: &apply}, &out)
 	return out, err
 }
 

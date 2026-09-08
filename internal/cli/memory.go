@@ -137,15 +137,17 @@ func RunMemoryForget(ctx context.Context, out io.Writer, server, id, reason stri
 	return nil
 }
 
-// RunMemorySweep is `quack memory sweep [--dry-run]`: runs the forgetting-rule
-// sweep on demand against every store the server has configured, printing
-// per-rule counts (and, dry-run, up to 5 example memories per rule).
-func RunMemorySweep(ctx context.Context, out io.Writer, server string, dryRun, asJSON bool) error {
+// RunMemorySweep is `quack memory sweep [--dry-run] [--dedupe [--apply]]`:
+// runs the forgetting-rule sweep (default) or, with --dedupe, the per-bucket
+// similarity dedupe sweep (issue #1269) on demand against every store the
+// server has configured. Without --apply, --dedupe only clusters and
+// reports examples - no LLM call, nothing written.
+func RunMemorySweep(ctx context.Context, out io.Writer, server string, dryRun, dedupe, apply, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
 	}
-	res, err := c.SweepMemories(ctx, dryRun)
+	res, err := c.SweepMemories(ctx, dryRun, dedupe, apply)
 	if err != nil {
 		return err
 	}
@@ -153,6 +155,9 @@ func RunMemorySweep(ctx context.Context, out io.Writer, server string, dryRun, a
 		return writeJSON(out, res)
 	}
 	hasErrors := res.Errors != nil && len(*res.Errors) > 0
+	if dedupe {
+		return printDedupeReport(out, res, hasErrors)
+	}
 	if len(res.Stores) == 0 && !hasErrors {
 		fmt.Fprintln(out, "No memory stores configured.")
 		return nil
@@ -175,6 +180,40 @@ func RunMemorySweep(ctx context.Context, out io.Writer, server string, dryRun, a
 	}
 	if res.DryRun {
 		fmt.Fprintln(out, "(dry run: nothing was invalidated)")
+	}
+	if hasErrors {
+		return fmt.Errorf("%d memory store(s) failed to sweep", len(*res.Errors))
+	}
+	return nil
+}
+
+// printDedupeReport prints one --dedupe sweep's per-store cluster report.
+func printDedupeReport(out io.Writer, res schema.SweepMemoriesResult, hasErrors bool) error {
+	dedupe := res.Dedupe
+	if dedupe == nil || len(*dedupe) == 0 {
+		if !hasErrors {
+			fmt.Fprintln(out, "No memory stores configured.")
+		}
+	}
+	if dedupe != nil {
+		for _, s := range *dedupe {
+			fmt.Fprintf(out, "store %s: %d cluster(s), %d LLM call(s), %d op(s) applied, %d dropped\n",
+				s.Store, s.NumClusters, s.LlmCalls, s.OpsApplied, s.Dropped)
+			for _, c := range s.Clusters {
+				fmt.Fprintf(out, "  [%s] cluster of %d\n", c.Bucket, c.Size)
+				for _, e := range c.Examples {
+					fmt.Fprintf(out, "    - %s: %s\n", e.Id, truncateLine(e.Content, 80))
+				}
+			}
+		}
+	}
+	if hasErrors {
+		for _, e := range *res.Errors {
+			fmt.Fprintf(out, "store %s failed: %s\n", e.Store, e.Message)
+		}
+	}
+	if res.DryRun {
+		fmt.Fprintln(out, "(dry run: nothing was merged)")
 	}
 	if hasErrors {
 		return fmt.Errorf("%d memory store(s) failed to sweep", len(*res.Errors))

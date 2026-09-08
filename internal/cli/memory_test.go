@@ -227,7 +227,7 @@ func TestRunMemorySweepPartialFailure(t *testing.T) {
 	defer srv.Close()
 
 	var out bytes.Buffer
-	err := RunMemorySweep(context.Background(), &out, srv.URL, false, false)
+	err := RunMemorySweep(context.Background(), &out, srv.URL, false, false, false, false)
 	if err == nil {
 		t.Fatalf("RunMemorySweep err = nil, want a non-nil error signalling the partial failure")
 	}
@@ -251,7 +251,7 @@ func TestRunMemorySweepPartialFailureJSON(t *testing.T) {
 	defer srv.Close()
 
 	var out bytes.Buffer
-	if err := RunMemorySweep(context.Background(), &out, srv.URL, false, true); err != nil {
+	if err := RunMemorySweep(context.Background(), &out, srv.URL, false, false, false, true); err != nil {
 		t.Fatalf("RunMemorySweep --as-json: %v", err)
 	}
 	var decoded struct {
@@ -281,7 +281,7 @@ func TestRunMemorySweepAllStoresFail(t *testing.T) {
 	defer srv.Close()
 
 	var out bytes.Buffer
-	err := RunMemorySweep(context.Background(), &out, srv.URL, false, false)
+	err := RunMemorySweep(context.Background(), &out, srv.URL, false, false, false, false)
 	if err == nil {
 		t.Fatalf("RunMemorySweep err = nil, want a non-nil error when every store failed")
 	}
@@ -306,7 +306,7 @@ func TestRunMemorySweepAllOK(t *testing.T) {
 	defer srv.Close()
 
 	var out bytes.Buffer
-	if err := RunMemorySweep(context.Background(), &out, srv.URL, false, false); err != nil {
+	if err := RunMemorySweep(context.Background(), &out, srv.URL, false, false, false, false); err != nil {
 		t.Fatalf("RunMemorySweep: %v", err)
 	}
 	if strings.Contains(out.String(), "failed") {

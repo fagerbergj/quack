@@ -112,7 +112,10 @@ func bucketFilter(buckets []string) *qdrant.Filter {
 	return &qdrant.Filter{Should: should}
 }
 
-func pointFromPayload(id *qdrant.PointId, payload map[string]*qdrant.Value, score float32) scored {
+// pointFromPayload builds a scored point from its payload. vec is the point's
+// own embedding, populated only where the caller asked Qdrant for it
+// (query()'s MMR diversity re-rank, issue #1269) - nil elsewhere.
+func pointFromPayload(id *qdrant.PointId, payload map[string]*qdrant.Value, score float32, vec []float32) scored {
 	return scored{
 		ID:                 pointID(id),
 		Content:            payloadString(payload, payloadContent),
@@ -139,6 +142,7 @@ func pointFromPayload(id *qdrant.PointId, payload map[string]*qdrant.Value, scor
 		AbsorbedIDs:        splitIDs(payloadString(payload, payloadAbsorbedIDs)),
 		HumanVote:          payloadString(payload, payloadHumanVote),
 		Score:              score,
+		Vector:             vec,
 	}
 }
 
@@ -167,15 +171,29 @@ func (x *qdrantIndex) query(ctx context.Context, buckets []string, vec []float32
 		// post-filter, so it can't crowd valid points out of the top-k first.
 		Filter:      excludeInvalidated(bucketFilter(buckets)),
 		WithPayload: qdrant.NewWithPayload(true),
+		// Recall's MMR diversity re-rank (issue #1269) needs each hit's own
+		// embedding to compute inter-hit cosine - the query score alone is
+		// only similarity to the QUERY vector, not to other hits.
+		WithVectors: qdrant.NewWithVectors(true),
 	})
 	if err != nil {
 		return nil, err
 	}
 	out := make([]scored, 0, len(pts))
 	for _, p := range pts {
-		out = append(out, pointFromPayload(p.GetId(), p.GetPayload(), p.GetScore()))
+		out = append(out, pointFromPayload(p.GetId(), p.GetPayload(), p.GetScore(), vectorData(p.GetVectors())))
 	}
 	return out, nil
+}
+
+// vectorData extracts the plain dense vector from a query result's
+// VectorsOutput (nil if the point somehow carries none/a named-vector shape
+// this collection never uses).
+func vectorData(v *qdrant.VectorsOutput) []float32 {
+	if v == nil {
+		return nil
+	}
+	return v.GetVector().GetData()
 }
 
 // list fetches every point matching buckets via Scroll (paginating internally
@@ -183,17 +201,23 @@ func (x *qdrantIndex) query(ctx context.Context, buckets []string, vec []float32
 // first in Go, then slices out the requested page. Fine at memory's documented
 // scale (hundreds-thousands); avoids requiring a payload index on `timestamp`
 // for Qdrant's order_by, which a fresh collection won't have.
-func (x *qdrantIndex) list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string, sortBy ...string) ([]scored, error) {
+func (x *qdrantIndex) list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string, withVectors bool, sortBy ...string) ([]scored, error) {
 	filter := bucketFilter(buckets)
 	if !includeInvalidated {
 		filter = excludeInvalidated(filter)
 	}
 	filter = tierFilter(filter, tier)
-	it := x.client.ScrollAll(ctx, &qdrant.ScrollPoints{
+	scroll := &qdrant.ScrollPoints{
 		CollectionName: x.coll,
 		Filter:         filter,
 		WithPayload:    qdrant.NewWithPayload(true),
-	})
+	}
+	if withVectors {
+		// DedupeSweep's clustering (issue #1269) needs each point's own stored
+		// embedding, not a re-embed - Qdrant already has it, just ask for it.
+		scroll.WithVectors = qdrant.NewWithVectors(true)
+	}
+	it := x.client.ScrollAll(ctx, scroll)
 	var all []scored
 	for {
 		pts, err := it.Next()
@@ -204,7 +228,7 @@ func (x *qdrantIndex) list(ctx context.Context, buckets []string, offset, limit 
 			return nil, fmt.Errorf("memory: scroll: %w", err)
 		}
 		for _, p := range pts {
-			all = append(all, pointFromPayload(p.GetId(), p.GetPayload(), 0))
+			all = append(all, pointFromPayload(p.GetId(), p.GetPayload(), 0, vectorData(p.GetVectors())))
 		}
 	}
 	sort.Slice(all, qdrantLess(all, firstSort(sortBy)))
@@ -471,7 +495,7 @@ func (x *qdrantIndex) getByID(ctx context.Context, id string) (scored, bool, err
 	if !ok {
 		return scored{}, false, nil
 	}
-	return pointFromPayload(qdrant.NewID(id), payload, 0), true, nil
+	return pointFromPayload(qdrant.NewID(id), payload, 0, nil), true, nil
 }
 
 // getExisting fetches ids' current payload, skipping any that don't exist.

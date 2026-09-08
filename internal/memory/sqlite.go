@@ -108,6 +108,7 @@ func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32
 	}
 	out := make([]scored, 0, len(rows))
 	for _, r := range rows {
+		rowVec := bytesToVec(r.Vector)
 		out = append(out, scored{
 			ID:                 r.ID,
 			Content:            r.Content,
@@ -133,7 +134,8 @@ func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32
 			LastRecalledAt:     r.LastRecalledAt,
 			AbsorbedIDs:        splitIDs(r.AbsorbedIDs),
 			HumanVote:          r.HumanVote,
-			Score:              cosine(vec, bytesToVec(r.Vector)),
+			Score:              cosine(vec, rowVec),
+			Vector:             rowVec,
 		})
 	}
 	// Highest cosine first; cap to k. ponytail: O(n) scan + sort - fine at memory
@@ -145,7 +147,7 @@ func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32
 	return out, nil
 }
 
-func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string, sortBy ...string) ([]scored, error) {
+func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string, withVectors bool, sortBy ...string) ([]scored, error) {
 	q := x.db.WithContext(ctx).Where("collection = ?", x.coll)
 	if len(buckets) > 0 {
 		q = q.Where("scope IN ?", buckets)
@@ -174,6 +176,9 @@ func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit 
 			Upvotes: r.Upvotes, Downvotes: r.Downvotes, VoteScore: r.VoteScore, Tier: r.Tier,
 			LastUpvotedAt: r.LastUpvotedAt, Recalls: r.Recalls, LastRecalledAt: r.LastRecalledAt,
 			AbsorbedIDs: splitIDs(r.AbsorbedIDs), HumanVote: r.HumanVote,
+		}
+		if withVectors {
+			out[i].Vector = bytesToVec(r.Vector) // already loaded on the row; no extra query
 		}
 	}
 	return out, nil
