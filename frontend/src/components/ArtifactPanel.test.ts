@@ -111,6 +111,18 @@ describe('selectPrimaryOutput', () => {
     const other = summary({ name: 'text:b', kind: 'text', latest_revision: 2, lineage: { saved_at: '2026-09-04T09:00:00Z' } })
     expect(selectPrimaryOutput([other, tie])?.name).toBe('text:a')
   })
+
+  it('#1250: a focus hint wins over the declared kind and the newest-wins default', () => {
+    const a = summary({ name: 'text:a', kind: 'text', latest_revision: 3 })
+    const b = summary({ name: 'text:b', kind: 'text', latest_revision: 1 })
+    expect(selectPrimaryOutput([a, b], 'text', 'text:b')?.name).toBe('text:b')
+  })
+
+  it('#1250: an unrecognised focus hint is ignored - default selection still applies', () => {
+    const a = summary({ name: 'text:a', kind: 'text', latest_revision: 3 })
+    const b = summary({ name: 'text:b', kind: 'text', latest_revision: 1 })
+    expect(selectPrimaryOutput([a, b], undefined, 'text:not-on-this-node')?.name).toBe('text:a')
+  })
 })
 
 describe('resolveScoredRevision', () => {

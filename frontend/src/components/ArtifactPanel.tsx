@@ -83,9 +83,14 @@ export function anchorNotes(lines: string[], notes: JudgeNote[]): AnchorResult {
 // node's declared output kind (DagNodeDef.artifact) wins when the node has
 // an artifact of that kind; otherwise the newest output - highest
 // latest_revision, then lineage saved_at, then name as the final tiebreak.
-export function selectPrimaryOutput(artifacts: ArtifactSummary[], nodeArtifactKind?: string): ArtifactSummary | null {
+export function selectPrimaryOutput(artifacts: ArtifactSummary[], nodeArtifactKind?: string, focusArtifactId?: string): ArtifactSummary | null {
   const nonJudge = artifacts.filter(a => a.kind !== 'judge_round')
   if (nonJudge.length === 0) return null
+  // The focus hint wins outright when it names one of THIS node's artifacts -
+  // it's "show what was tapped," a stronger signal than the node's declared
+  // kind or newest-wins default (#1250).
+  const focused = focusArtifactId ? nonJudge.find(a => a.name === focusArtifactId) : undefined
+  if (focused) return focused
   const declared = nodeArtifactKind ? nonJudge.find(a => a.kind === nodeArtifactKind) : undefined
   if (declared) return declared
   return nonJudge.reduce((best, a) => (compareOutput(a, best) > 0 ? a : best))
@@ -187,6 +192,12 @@ interface Props {
   // The node's declared output kind (DagNodeDef.artifact) - makes the
   // primary-output selection exact. Absent when the node declares none.
   nodeArtifactKind?: string
+  // A FOCUS HINT, not a picker (#1178 stays intact): when the caller already
+  // knows which of the node's artifacts the viewer tapped (#1250's
+  // <artifacts> rows), this makes THAT one the shown primary instead of
+  // selectPrimaryOutput's newest/declared-kind default. Ignored if it
+  // doesn't name an artifact on this node - the default selection still applies.
+  focusArtifactId?: string
   onClose: () => void
 }
 
@@ -198,7 +209,7 @@ interface Props {
 // in a collapsed "Details" disclosure at the very bottom. Both native
 // <select>s and the desktop sidebar from the picker era are gone - there is
 // nothing left to pick.
-export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, nodeArtifactKind, onClose }: Props) {
+export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, nodeArtifactKind, focusArtifactId, onClose }: Props) {
   const [summaries, setSummaries] = useState<ArtifactSummary[]>([])
   const [error, setError] = useState<string | null>(null)
   // rawView: the monospace line-list is the FALLBACK view (also what a
@@ -237,7 +248,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   // The panel's one and only artifact: computed, not chosen. Judge rounds
   // are not candidates - they are the timeline above the output, not
   // pickable content.
-  const primary = useMemo(() => selectPrimaryOutput(nodeArtifacts, nodeArtifactKind), [nodeArtifacts, nodeArtifactKind])
+  const primary = useMemo(() => selectPrimaryOutput(nodeArtifacts, nodeArtifactKind, focusArtifactId), [nodeArtifacts, nodeArtifactKind, focusArtifactId])
   const primaryId = primary?.name ?? null
 
   // A different primary (list reloaded and the computed choice changed)

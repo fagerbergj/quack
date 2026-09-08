@@ -2,9 +2,23 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
+import chatSrc from './Chat.tsx?raw'
 import { liveDagFinalText, chatGitHubLink, EditableChatTitle, shouldQueueSubmit, mergeChatsPage, pollWhileVisible, pollPageExcludingPending, nextArchivedChats, chatBelongsInActiveList, resolveActiveChat } from './Chat'
 import type { DagTurnState } from '../state/chatStore'
 import type { ChatSummary } from '../api'
+
+// The live (streaming) turn's <TriggerMessage> is the exact turn in #1250's
+// screenshot - a full render harness for this page (SSE + chatStore + DAG)
+// doesn't exist here and would be disproportionate to add for one prop, so
+// this is a source-level regression guard: chatId must keep flowing to it,
+// or its <artifacts> rows silently go back to being unclickable (#1252).
+describe('live-turn TriggerMessage chatId wiring (#1252)', () => {
+  it('passes chatId through so live-turn artifact rows can open the panel', () => {
+    const idx = chatSrc.indexOf('<TriggerMessage')
+    const call = chatSrc.slice(idx, idx + 400)
+    expect(call).toMatch(/chatId=\{activeChatId/)
+  })
+})
 
 // dag builds a minimal single-node DagTurnState (that node is the terminal node).
 function dag(nodeAnswer: Record<string, string>): DagTurnState {
