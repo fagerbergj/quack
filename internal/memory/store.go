@@ -148,10 +148,11 @@ type Store struct {
 	listErrForTest error  // test-only fault injection, see SetListErrorForTest
 }
 
-// SetListErrorForTest forces the next forEachSweepPage (and so ForgetSweep)
-// call on this store to fail with err, without touching the real index -
-// used by REST/CLI tests one layer up that can't reach the unexported index
-// interface to simulate a later store's list-phase failure.
+// SetListErrorForTest forces every forEachSweepPage (and so ForgetSweep) call
+// on this store to fail with err (sticky - persists until reset), without
+// touching the real index - used by REST/CLI tests one layer up that can't
+// reach the unexported index interface to simulate a later store's list-phase
+// failure.
 func (s *Store) SetListErrorForTest(err error) { s.listErrForTest = err }
 
 // SetOpsLog wires the memory_ops audit sink. internal/memory can't import

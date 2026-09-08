@@ -268,6 +268,34 @@ func TestRunMemorySweepPartialFailureJSON(t *testing.T) {
 	}
 }
 
+// TestRunMemorySweepAllStoresFail covers the reordering fix: empty Stores
+// with non-empty Errors must print the failures and exit non-zero, not the
+// misleading "No memory stores configured." (that early return only applies
+// when Errors is also empty).
+func TestRunMemorySweepAllStoresFail(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"dry_run":false,"stores":[],"errors":[{"store":"task","message":"list: boom"},{"store":"user","message":"list: boom"}]}`)
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	err := RunMemorySweep(context.Background(), &out, srv.URL, false, false)
+	if err == nil {
+		t.Fatalf("RunMemorySweep err = nil, want a non-nil error when every store failed")
+	}
+	s := out.String()
+	if strings.Contains(s, "No memory stores configured.") {
+		t.Errorf("output = %q, must not print the no-stores message when Errors is non-empty", s)
+	}
+	for _, want := range []string{"store task failed: list: boom", "store user failed: list: boom"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("sweep output missing %q:\n%s", want, s)
+		}
+	}
+}
+
 // TestRunMemorySweepAllOK: no errors, no store-failure lines, exit clean.
 func TestRunMemorySweepAllOK(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())

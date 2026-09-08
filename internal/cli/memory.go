@@ -152,7 +152,8 @@ func RunMemorySweep(ctx context.Context, out io.Writer, server string, dryRun, a
 	if asJSON {
 		return writeJSON(out, res)
 	}
-	if len(res.Stores) == 0 {
+	hasErrors := res.Errors != nil && len(*res.Errors) > 0
+	if len(res.Stores) == 0 && !hasErrors {
 		fmt.Fprintln(out, "No memory stores configured.")
 		return nil
 	}
@@ -167,7 +168,7 @@ func RunMemorySweep(ctx context.Context, out io.Writer, server string, dryRun, a
 			}
 		}
 	}
-	if res.Errors != nil {
+	if hasErrors {
 		for _, e := range *res.Errors {
 			fmt.Fprintf(out, "store %s failed: %s\n", e.Store, e.Message)
 		}
@@ -175,7 +176,7 @@ func RunMemorySweep(ctx context.Context, out io.Writer, server string, dryRun, a
 	if res.DryRun {
 		fmt.Fprintln(out, "(dry run: nothing was invalidated)")
 	}
-	if res.Errors != nil && len(*res.Errors) > 0 {
+	if hasErrors {
 		return fmt.Errorf("%d memory store(s) failed to sweep", len(*res.Errors))
 	}
 	return nil
