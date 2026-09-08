@@ -70,6 +70,9 @@ type memoryRow struct {
 	Recalls        int
 	LastRecalledAt string
 
+	// AbsorbedIDs: comma-joined (see joinIDs/splitIDs) - epic #1255 P5.
+	AbsorbedIDs string
+
 	Vector []byte
 }
 
@@ -126,6 +129,7 @@ func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32
 			LastUpvotedAt:      r.LastUpvotedAt,
 			Recalls:            r.Recalls,
 			LastRecalledAt:     r.LastRecalledAt,
+			AbsorbedIDs:        splitIDs(r.AbsorbedIDs),
 			Score:              cosine(vec, bytesToVec(r.Vector)),
 		})
 	}
@@ -165,6 +169,7 @@ func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit 
 			InvalidationReason: r.InvalidationReason, ReinforcementCount: r.ReinforcementCount,
 			Upvotes: r.Upvotes, Downvotes: r.Downvotes, VoteScore: r.VoteScore, Tier: r.Tier,
 			LastUpvotedAt: r.LastUpvotedAt, Recalls: r.Recalls, LastRecalledAt: r.LastRecalledAt,
+			AbsorbedIDs: splitIDs(r.AbsorbedIDs),
 		}
 	}
 	return out, nil
@@ -212,6 +217,7 @@ func (x *sqliteIndex) upsert(ctx context.Context, pts []point) error {
 			LastUpvotedAt:      p.LastUpvotedAt,
 			Recalls:            p.Recalls,
 			LastRecalledAt:     p.LastRecalledAt,
+			AbsorbedIDs:        joinIDs(p.AbsorbedIDs),
 			Vector:             vecToBytes(p.Vector),
 		}
 	}
@@ -400,6 +406,56 @@ func (x *sqliteIndex) updateBucket(ctx context.Context, id, bucket string) error
 		return fmt.Errorf("memory: sqlite rescope: %w", err)
 	}
 	return nil
+}
+
+// absorb folds absorbedID's votes/timestamps/lineage into survivorID and
+// invalidates absorbedID (epic #1255 P5). False (no-op) if either row is
+// missing, or absorbedID is already invalidated (sticky).
+func (x *sqliteIndex) absorb(ctx context.Context, survivorID, absorbedID, reason string) (bool, error) {
+	var rows []memoryRow
+	if err := x.db.WithContext(ctx).
+		Where("collection = ? AND id IN ?", x.coll, []string{survivorID, absorbedID}).
+		Find(&rows).Error; err != nil {
+		return false, fmt.Errorf("memory: sqlite absorb query: %w", err)
+	}
+	var sv, ab *memoryRow
+	for i := range rows {
+		switch rows[i].ID {
+		case survivorID:
+			sv = &rows[i]
+		case absorbedID:
+			ab = &rows[i]
+		}
+	}
+	if sv == nil || ab == nil || ab.Status == string(StatusInvalidated) {
+		return false, nil
+	}
+	d := computeAbsorbDelta(
+		absorbFields{Upvotes: sv.Upvotes, Downvotes: sv.Downvotes, LastUpvotedAt: sv.LastUpvotedAt, LastRecalledAt: sv.LastRecalledAt, AbsorbedIDs: splitIDs(sv.AbsorbedIDs)},
+		absorbFields{Upvotes: ab.Upvotes, Downvotes: ab.Downvotes, LastUpvotedAt: ab.LastUpvotedAt, LastRecalledAt: ab.LastRecalledAt, AbsorbedIDs: splitIDs(ab.AbsorbedIDs)},
+		absorbedID,
+	)
+	upd := map[string]any{
+		"upvotes": d.Upvotes, "downvotes": d.Downvotes, "vote_score": d.VoteScore, "tier": d.Tier,
+		"absorbed_ids": joinIDs(d.AbsorbedIDs),
+	}
+	if d.LastUpvotedAt != "" {
+		upd["last_upvoted_at"] = d.LastUpvotedAt
+	}
+	if d.LastRecalledAt != "" {
+		upd["last_recalled_at"] = d.LastRecalledAt
+	}
+	if err := x.db.WithContext(ctx).Model(&memoryRow{}).
+		Where("collection = ? AND id = ?", x.coll, survivorID).Updates(upd).Error; err != nil {
+		return false, fmt.Errorf("memory: sqlite absorb update survivor: %w", err)
+	}
+	ts := nowRFC3339()
+	if err := x.db.WithContext(ctx).Model(&memoryRow{}).
+		Where("collection = ? AND id = ?", x.coll, absorbedID).
+		Updates(map[string]any{"status": string(StatusInvalidated), "invalidated_at": ts, "invalidation_reason": reason}).Error; err != nil {
+		return false, fmt.Errorf("memory: sqlite absorb invalidate absorbed: %w", err)
+	}
+	return true, nil
 }
 
 // cosine is the cosine similarity of two equal-length vectors, in [-1, 1]; 0 for

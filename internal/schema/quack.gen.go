@@ -735,7 +735,9 @@ type ItemStatus string
 
 // Memory defines model for Memory.
 type Memory struct {
-	Author string `json:"author"`
+	// AbsorbedIds Ids of memories consolidation merged into this one (near-duplicate merge or supersession, epic #1255 P5), flattened across any absorption chain. This memory's votes include the absorbed ones'.
+	AbsorbedIds *[]string `json:"absorbed_ids,omitempty"`
+	Author      string    `json:"author"`
 
 	// Bucket repo:<name> / role:<coding|research> / user:<name>, or a legacy raw key.
 	Bucket  string `json:"bucket"`
@@ -793,6 +795,49 @@ type MemoryList struct {
 
 	// Total Total entries matching the filter (not just this page). With `q`, this is just len(memories) - search returns a ranked top-K, not a stable count.
 	Total int `json:"total"`
+}
+
+// MemoryScopeStats defines model for MemoryScopeStats.
+type MemoryScopeStats struct {
+	Invalidated int `json:"invalidated"`
+	Live        int `json:"live"`
+
+	// Scope Bucket key, e.g. repo:quack, role:coding, user:jason.
+	Scope string `json:"scope"`
+}
+
+// MemoryStats defines model for MemoryStats.
+type MemoryStats struct {
+	// Scopes Current live/invalidated snapshot per scope bucket.
+	Scopes []MemoryScopeStats `json:"scopes"`
+
+	// Weeks Oldest first, one entry per requested week (a week with no activity still appears, zeroed).
+	Weeks []MemoryWeekStats `json:"weeks"`
+}
+
+// MemoryWeekStats defines model for MemoryWeekStats.
+type MemoryWeekStats struct {
+	Contradicted int `json:"contradicted"`
+
+	// Invalidated Memories invalidated this week (memory_ops op=invalidate), lineage absorptions included.
+	Invalidated int `json:"invalidated"`
+
+	// Minted Memories added this week (memory_ops op=add).
+	Minted      int `json:"minted"`
+	NotRelevant int `json:"not_relevant"`
+
+	// Precision supported / (supported+contradicted+not_relevant). 0 if no votes were cast.
+	Precision float64 `json:"precision"`
+
+	// Recalls Memories delivered to a worker this week (prefill or tool), from `memory.recall` ledger entries.
+	Recalls int `json:"recalls"`
+
+	// SupportShare supported / total votes cast this week. 0 if no votes were cast.
+	SupportShare float64 `json:"support_share"`
+	Supported    int     `json:"supported"`
+
+	// Week ISO 8601 week (UTC), e.g. "2026-W23".
+	Week string `json:"week"`
 }
 
 // MessageOutputItem defines model for MessageOutputItem.
@@ -1149,6 +1194,12 @@ type ListMemoriesParams struct {
 	PageToken *string `form:"page_token,omitempty" json:"page_token,omitempty"`
 }
 
+// GetMemoryStatsParams defines parameters for GetMemoryStats.
+type GetMemoryStatsParams struct {
+	// Weeks How many ISO weeks to report, ending on the current week. Defaults to 12.
+	Weeks *int `form:"weeks,omitempty" json:"weeks,omitempty"`
+}
+
 // CreateChatJSONRequestBody defines body for CreateChat for application/json ContentType.
 type CreateChatJSONRequestBody = CreateChatBody
 
@@ -1470,6 +1521,9 @@ type ServerInterface interface {
 	// Move role:* memories into their resolved repo:* bucket
 	// (POST /api/v1/memories/rescope)
 	RescopeMemories(w http.ResponseWriter, r *http.Request)
+	// Weekly memory-usage stats
+	// (GET /api/v1/memories/stats)
+	GetMemoryStats(w http.ResponseWriter, r *http.Request, params GetMemoryStatsParams)
 	// Run the forgetting-rule sweep on demand
 	// (POST /api/v1/memories/sweep)
 	SweepMemories(w http.ResponseWriter, r *http.Request)
@@ -1635,6 +1689,12 @@ func (_ Unimplemented) ListMemories(w http.ResponseWriter, r *http.Request, para
 // Move role:* memories into their resolved repo:* bucket
 // (POST /api/v1/memories/rescope)
 func (_ Unimplemented) RescopeMemories(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Weekly memory-usage stats
+// (GET /api/v1/memories/stats)
+func (_ Unimplemented) GetMemoryStats(w http.ResponseWriter, r *http.Request, params GetMemoryStatsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2770,6 +2830,47 @@ func (siw *ServerInterfaceWrapper) RescopeMemories(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// GetMemoryStats operation middleware
+func (siw *ServerInterfaceWrapper) GetMemoryStats(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetMemoryStatsParams
+
+	// ------------- Optional query parameter "weeks" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "weeks", r.URL.Query(), &params.Weeks, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "weeks"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "weeks", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMemoryStats(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SweepMemories operation middleware
 func (siw *ServerInterfaceWrapper) SweepMemories(w http.ResponseWriter, r *http.Request) {
 
@@ -3049,6 +3150,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/memories/rescope", wrapper.RescopeMemories)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/memories/stats", wrapper.GetMemoryStats)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/memories/sweep", wrapper.SweepMemories)

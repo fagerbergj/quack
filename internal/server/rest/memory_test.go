@@ -15,6 +15,8 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/schema"
 )
@@ -491,5 +493,67 @@ func TestDeleteMemory_UnknownID_404WithBothStoresConfigured(t *testing.T) {
 	h.DeleteMemory(w, httptest.NewRequest(http.MethodDelete, "/api/v1/memories/does-not-exist", nil), "does-not-exist")
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", w.Code)
+	}
+}
+
+// TestGetMemoryStats_WeeklyPrecisionAndScopeSnapshot seeds a ledger vote/recall
+// and a memory_ops mint, then checks the stats endpoint reports them in the
+// current ISO week alongside a live-point scope snapshot (epic #1255 P5).
+func TestGetMemoryStats_WeeklyPrecisionAndScopeSnapshot(t *testing.T) {
+	ctx := context.Background()
+	h := newTestHandler(t)
+	h.taskMem = newTestMemStore(t)
+	led := ledgertest.NewMemStore()
+	h.ledgerStore = led
+
+	commitFact(t, h.taskMem, "NightsOut", "needs minSdk 30")
+
+	payload, err := json.Marshal(ledger.MemoryVotePayload{MemoryID: "m1", Vote: ledger.MemoryVoteSupported, Actor: "judge"})
+	if err != nil {
+		t.Fatalf("marshal vote: %v", err)
+	}
+	if _, err := led.AppendIntent(ctx, ledger.Entry{ChatID: "chat1", Kind: ledger.KindMemoryVote, Payload: payload, At: time.Now().UTC()}); err != nil {
+		t.Fatalf("AppendIntent vote: %v", err)
+	}
+	recallPayload, err := json.Marshal(ledger.MemoryRecallPayload{Source: "prefill", Entries: []ledger.MemoryRecallEntry{{ID: "m1"}}})
+	if err != nil {
+		t.Fatalf("marshal recall: %v", err)
+	}
+	if _, err := led.AppendIntent(ctx, ledger.Entry{ChatID: "chat1", Kind: ledger.KindMemoryRecall, Payload: recallPayload, At: time.Now().UTC()}); err != nil {
+		t.Fatalf("AppendIntent recall: %v", err)
+	}
+	if err := h.store.InsertMemoryOp(ctx, "m1", "add", "run", ""); err != nil {
+		t.Fatalf("InsertMemoryOp: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/memories/stats", nil)
+	w := httptest.NewRecorder()
+	h.GetMemoryStats(w, req, schema.GetMemoryStatsParams{})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body %s", w.Code, w.Body.String())
+	}
+	var got schema.MemoryStats
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Weeks) != 12 {
+		t.Fatalf("len(weeks) = %d, want the default 12", len(got.Weeks))
+	}
+	last := got.Weeks[len(got.Weeks)-1]
+	if last.Supported != 1 || last.Recalls != 1 || last.Minted != 1 {
+		t.Fatalf("current week = %+v, want supported=1 recalls=1 minted=1", last)
+	}
+	if last.Precision != 1 {
+		t.Fatalf("current week precision = %v, want 1 (one supported vote, nothing else)", last.Precision)
+	}
+
+	foundScope := false
+	for _, s := range got.Scopes {
+		if s.Scope == "repo:NightsOut" && s.Live == 1 {
+			foundScope = true
+		}
+	}
+	if !foundScope {
+		t.Fatalf("scopes = %+v, want repo:NightsOut live=1", got.Scopes)
 	}
 }

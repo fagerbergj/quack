@@ -384,3 +384,52 @@ func TestFold_MemoryRecallAndVoteProjections(t *testing.T) {
 		t.Fatalf("rebuild projections = %+v / %+v, want unchanged from the first fold", rebuilt.MemoryRecalls["m1"], rebuilt.MemoryVotes["m1"])
 	}
 }
+
+// TestFoldAbsorption_RedirectsVotesAndRecallsToSurvivor is epic #1255 P5's
+// rebuild verification: votes/recalls cast on a memory BEFORE it was
+// consolidation-merged into another must still be attributed to the
+// survivor once absorbedBy (built from the live store's AbsorbedIDs) says
+// so - otherwise a rebuild would "lose" history to an id the store no
+// longer serves. Also covers a chain (dup absorbed by survivor, and
+// dup2 also absorbed by survivor - both must resolve to survivor).
+func TestFoldAbsorption_RedirectsVotesAndRecallsToSurvivor(t *testing.T) {
+	s := newMemStore(t)
+	appendMemoryRecall(t, s, "chat1", "dup", "dup2", "survivor")
+	appendMemoryVote(t, s, "chat1", "dup", ledger.MemoryVoteSupported)
+	appendMemoryVote(t, s, "chat1", "dup2", ledger.MemoryVoteSupported)
+	appendMemoryVote(t, s, "chat1", "survivor", ledger.MemoryVoteContradicted)
+
+	res, err := Fold(context.Background(), s, "chat1", 0)
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+
+	res.FoldAbsorption(map[string]string{"dup": "survivor", "dup2": "survivor"})
+
+	if _, ok := res.MemoryVotes["dup"]; ok {
+		t.Fatal("dup's votes should have been folded away, not left standing")
+	}
+	sv := res.MemoryVotes["survivor"]
+	if sv == nil || sv.Upvotes != 2 || sv.Downvotes != 1 {
+		t.Fatalf("survivor votes after fold = %+v, want 2 upvotes (from dup+dup2) + 1 downvote (its own)", sv)
+	}
+	if res.MemoryRecalls["survivor"].Recalls != 3 {
+		t.Fatalf("survivor recalls after fold = %d, want 3 (its own + dup's + dup2's)", res.MemoryRecalls["survivor"].Recalls)
+	}
+}
+
+// TestFoldAbsorption_EmptyMapIsNoop guards the common case (no absorption
+// has ever happened) against needlessly rebuilding the maps.
+func TestFoldAbsorption_EmptyMapIsNoop(t *testing.T) {
+	s := newMemStore(t)
+	appendMemoryVote(t, s, "chat1", "m1", ledger.MemoryVoteSupported)
+	res, err := Fold(context.Background(), s, "chat1", 0)
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+	before := res.MemoryVotes["m1"]
+	res.FoldAbsorption(nil)
+	if res.MemoryVotes["m1"] != before {
+		t.Fatal("FoldAbsorption(nil) must leave MemoryVotes untouched")
+	}
+}

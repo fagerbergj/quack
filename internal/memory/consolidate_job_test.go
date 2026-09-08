@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -59,7 +61,9 @@ func (m countingErrModel) GenerateContent(_ context.Context, _ *model.LLMRequest
 // identical claims. The (faked) consolidation model keeps one via UPDATE and
 // deletes the other two, reason "duplicate of <id>" - decide()/apply()'s
 // normal op taxonomy, applied from the sweep's ticker trigger instead of a
-// commit.
+// commit. Epic #1255 P5: a "duplicate of <id>" DELETE is a lineage-recording
+// absorption, so the applied invalidation_reason is normalized to
+// "absorbed by <id>" and the survivor's absorbed_ids records both merged ids.
 func TestConsolidateOnce_BurstDedupe(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
@@ -103,11 +107,16 @@ func TestConsolidateOnce_BurstDedupe(t *testing.T) {
 	for _, m := range all {
 		byID[m.ID] = m
 	}
-	if byID["m2"].Status != string(StatusInvalidated) || byID["m2"].InvalidationReason != "duplicate of m1" {
-		t.Fatalf("m2 = %+v, want status=invalidated reason=%q", byID["m2"], "duplicate of m1")
+	if byID["m2"].Status != string(StatusInvalidated) || byID["m2"].InvalidationReason != "absorbed by m1" {
+		t.Fatalf("m2 = %+v, want status=invalidated reason=%q", byID["m2"], "absorbed by m1")
 	}
-	if byID["m3"].Status != string(StatusInvalidated) || byID["m3"].InvalidationReason != "duplicate of m1" {
-		t.Fatalf("m3 = %+v, want status=invalidated reason=%q", byID["m3"], "duplicate of m1")
+	if byID["m3"].Status != string(StatusInvalidated) || byID["m3"].InvalidationReason != "absorbed by m1" {
+		t.Fatalf("m3 = %+v, want status=invalidated reason=%q", byID["m3"], "absorbed by m1")
+	}
+	sortedAbsorbed := append([]string(nil), byID["m1"].AbsorbedIDs...)
+	sort.Strings(sortedAbsorbed)
+	if !reflect.DeepEqual(sortedAbsorbed, []string{"m2", "m3"}) {
+		t.Fatalf("m1 absorbed_ids = %v, want [m2 m3]", sortedAbsorbed)
 	}
 
 	if len(ops.rows) != 3 {

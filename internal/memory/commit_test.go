@@ -3,6 +3,8 @@ package memory
 import (
 	"context"
 	"iter"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -157,5 +159,58 @@ func TestNeighbourProbe(t *testing.T) {
 	}
 	if len([]rune(got)) != maxProbeRunes {
 		t.Fatalf("capped probe len = %d, want %d", len([]rune(got)), maxProbeRunes)
+	}
+}
+
+// TestCommit_AbsorptionMergesThreeDuplicates is epic #1255 P5's verification
+// case end to end: a consolidation pass that UPDATEs one memory and DELETEs
+// two others "duplicate of" it must leave the survivor carrying all three
+// original ids in absorbed_ids and the summed vote score, with the absorbed
+// two invalidated with reason "absorbed by <survivor>".
+func TestCommit_AbsorptionMergesThreeDuplicates(t *testing.T) {
+	ctx := context.Background()
+	reply := `{"ops":[
+		{"action":"UPDATE","id":"survivor","content":"merged: run make test, not go test","kind":"command"},
+		{"action":"DELETE","id":"dup1","reason":"duplicate of survivor"},
+		{"action":"DELETE","id":"dup2","reason":"duplicate of survivor"}
+	]}`
+	s := newSQLiteStore(t, "task", fakeModel{reply: reply})
+	seedPoint(t, s, point{ID: "survivor", Scope: "role:coding", Content: "run make test", Upvotes: 1, VoteScore: 1})
+	seedPoint(t, s, point{ID: "dup1", Scope: "role:coding", Content: "use make test not go test", Upvotes: 1, VoteScore: 1})
+	seedPoint(t, s, point{ID: "dup2", Scope: "role:coding", Content: "make test is required", Downvotes: 1, VoteScore: -1})
+
+	n, err := s.Commit(ctx, Scope{Role: RoleCoding}, "consolidator-test", Provenance{}, []Candidate{{Content: "run make test, not go test"}}, "")
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("Commit applied %d ops, want 3 (1 update + 2 invalidate)", n)
+	}
+
+	mems, _, err := s.List(ctx, nil, 0, 0, true)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	byID := map[string]Memory{}
+	for _, m := range mems {
+		byID[m.ID] = m
+	}
+	sv := byID["survivor"]
+	sort.Strings(sv.AbsorbedIDs)
+	if !reflect.DeepEqual(sv.AbsorbedIDs, []string{"dup1", "dup2"}) {
+		t.Fatalf("survivor absorbed_ids = %v, want [dup1 dup2]", sv.AbsorbedIDs)
+	}
+	// survivor started at +1, dup1 +1, dup2 -1: summed score = 1.
+	if sv.Upvotes != 2 || sv.Downvotes != 1 || sv.VoteScore != 1 {
+		t.Fatalf("survivor votes = +%d/-%d score %d, want +2/-1 score 1", sv.Upvotes, sv.Downvotes, sv.VoteScore)
+	}
+	if sv.Content != "merged: run make test, not go test" {
+		t.Fatalf("survivor content = %q, want the consolidator's merged wording", sv.Content)
+	}
+	for _, id := range []string{"dup1", "dup2"} {
+		got := byID[id]
+		if got.Status != string(StatusInvalidated) || got.InvalidationReason != "absorbed by survivor" {
+			t.Fatalf("%s = status %q reason %q, want invalidated / %q", id, got.Status, got.InvalidationReason, "absorbed by survivor")
+		}
 	}
 }

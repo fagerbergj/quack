@@ -347,7 +347,7 @@ func asJSONFlag(c *cobra.Command, dst *bool) {
 // a real verb).
 func newMemoryCmd() *cobra.Command {
 	c := &cobra.Command{Use: "memory", Short: "Browse and invalidate remembered facts"}
-	c.AddCommand(newMemoryListCmd(), newMemoryShowCmd(), newMemoryForgetCmd(), newMemorySweepCmd(), newMemoryRescopeCmd())
+	c.AddCommand(newMemoryListCmd(), newMemoryShowCmd(), newMemoryForgetCmd(), newMemorySweepCmd(), newMemoryRescopeCmd(), newMemoryStatsCmd())
 	return c
 }
 
@@ -444,6 +444,27 @@ func newMemoryRescopeCmd() *cobra.Command {
 	}
 	asJSONFlag(c, &asJSON)
 	c.Flags().BoolVar(&apply, "apply", false, "write the bucket change (default: dry run, tally only)")
+	return c
+}
+
+// newMemoryStatsCmd: `memory stats [--weeks N]` (epic #1255 P5) - weekly
+// recall precision/support-share/vote/recall counts plus a live/invalidated
+// snapshot per scope.
+func newMemoryStatsCmd() *cobra.Command {
+	var asJSON bool
+	var weeks int
+	c := &cobra.Command{
+		Use:   "stats",
+		Short: "Weekly recall precision, vote counts, and live/invalidated points per scope",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunMemoryStats(cmd.Context(), cmd.OutOrStdout(), t, weeks, asJSON)
+			})
+		},
+	}
+	asJSONFlag(c, &asJSON)
+	c.Flags().IntVar(&weeks, "weeks", 0, "how many ISO weeks to report, ending on the current week (server default 12)")
 	return c
 }
 

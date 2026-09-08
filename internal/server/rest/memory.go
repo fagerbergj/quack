@@ -12,6 +12,7 @@ import (
 
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/workspace"
@@ -306,6 +307,145 @@ func (h *Handler) chatRepo(ctx context.Context, chatID string) (string, bool) {
 	return repoKey, true
 }
 
+// defaultStatsWeeks is `GET /api/v1/memories/stats`'s weeks default when the
+// query param is omitted (epic #1255 P5) - a quarter's worth at a glance.
+const defaultStatsWeeks = 12
+
+// GetMemoryStats serves weekly recall precision/support-share/vote/recall
+// counts plus a live/invalidated snapshot per scope (epic #1255 P5),
+// computed from every chat's ledger (memory.recall/memory.vote entries) and
+// memory_ops - no new tables. Weeks with no ledger/memory_ops activity yet
+// still appear, zeroed, so the caller can chart a continuous series.
+func (h *Handler) GetMemoryStats(w http.ResponseWriter, r *http.Request, params schema.GetMemoryStatsParams) {
+	weeks := defaultStatsWeeks
+	if params.Weeks != nil && *params.Weeks > 0 {
+		weeks = *params.Weeks
+	}
+	now := time.Now().UTC()
+
+	votes, recalls, err := memoryLedgerEvents(r.Context(), h.ledgerStore, now, weeks)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	var ops []memory.OpEvent
+	if h.store != nil {
+		since := now.AddDate(0, 0, -7*weeks)
+		rows, err := h.store.ListMemoryOps(r.Context(), since)
+		if err != nil {
+			httpError(w, http.StatusInternalServerError, err)
+			return
+		}
+		for _, row := range rows {
+			ops = append(ops, memory.OpEvent{Op: row.Op, At: row.Timestamp})
+		}
+	}
+
+	weekStats := memory.ComputeStats(now, weeks, votes, recalls, ops)
+
+	var scopes []memory.ScopeStats
+	for _, st := range h.memStores() {
+		s, _, err := st.Snapshot(r.Context())
+		if err != nil {
+			httpError(w, http.StatusInternalServerError, err)
+			return
+		}
+		scopes = mergeScopeStats(scopes, s)
+	}
+
+	writeJSON(w, http.StatusOK, schema.MemoryStats{Weeks: weekStatsWire(weekStats), Scopes: scopeStatsWire(scopes)})
+}
+
+// memoryLedgerEvents scans every chat's ledger (h.ledgerStore.List, then one
+// ReadEntries per chat) for memory.recall/memory.vote entries within the
+// weeks window - the only way to get memory usage across ALL chats, since
+// the ledger is per-chat and there is no cross-chat memory index. nil
+// ledgerStore (recording disabled) yields no events, not an error.
+func memoryLedgerEvents(ctx context.Context, led ledger.LedgerStore, now time.Time, weeks int) ([]memory.VoteEvent, []memory.RecallEvent, error) {
+	if led == nil {
+		return nil, nil, nil
+	}
+	since := now.AddDate(0, 0, -7*weeks)
+	chats, err := led.List(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	var votes []memory.VoteEvent
+	var recalls []memory.RecallEvent
+	for _, c := range chats {
+		entries, err := led.ReadEntries(ctx, c.ID, 0)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, e := range entries {
+			if e.At.Before(since) {
+				continue
+			}
+			switch e.Kind {
+			case ledger.KindMemoryVote:
+				var p ledger.MemoryVotePayload
+				if err := json.Unmarshal(e.Payload, &p); err != nil {
+					continue
+				}
+				votes = append(votes, memory.VoteEvent{MemoryID: p.MemoryID, Vote: string(p.Vote), At: e.At})
+			case ledger.KindMemoryRecall:
+				var p ledger.MemoryRecallPayload
+				if err := json.Unmarshal(e.Payload, &p); err != nil {
+					continue
+				}
+				for range p.Entries {
+					recalls = append(recalls, memory.RecallEvent{At: e.At})
+				}
+			}
+		}
+	}
+	return votes, recalls, nil
+}
+
+// mergeScopeStats sums two stores' per-scope tallies (task + user memory can
+// both use a "user:" or "role:" bucket only in principle, but never the same
+// key in practice - summed defensively either way).
+func mergeScopeStats(acc []memory.ScopeStats, add []memory.ScopeStats) []memory.ScopeStats {
+	byScope := make(map[string]memory.ScopeStats, len(acc)+len(add))
+	for _, s := range acc {
+		byScope[s.Scope] = s
+	}
+	for _, s := range add {
+		cur := byScope[s.Scope]
+		cur.Scope = s.Scope
+		cur.Live += s.Live
+		cur.Invalidated += s.Invalidated
+		byScope[s.Scope] = cur
+	}
+	out := make([]memory.ScopeStats, 0, len(byScope))
+	for _, s := range byScope {
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Scope < out[j].Scope })
+	return out
+}
+
+func weekStatsWire(weeks []memory.WeekStats) []schema.MemoryWeekStats {
+	out := make([]schema.MemoryWeekStats, len(weeks))
+	for i, w := range weeks {
+		out[i] = schema.MemoryWeekStats{
+			Week: w.Week, Recalls: w.Recalls, Supported: w.Supported, Contradicted: w.Contradicted,
+			NotRelevant: w.NotRelevant, Precision: w.Precision, SupportShare: w.SupportShare,
+			Minted: w.Minted, Invalidated: w.Invalidated,
+		}
+	}
+	return out
+}
+
+func scopeStatsWire(scopes []memory.ScopeStats) []schema.MemoryScopeStats {
+	out := make([]schema.MemoryScopeStats, len(scopes))
+	for i, s := range scopes {
+		out[i] = schema.MemoryScopeStats{Scope: s.Scope, Live: s.Live, Invalidated: s.Invalidated}
+	}
+	return out
+}
+
 func memoriesWire(mems []memory.Memory) []schema.Memory {
 	out := make([]schema.Memory, len(mems))
 	for i, m := range mems {
@@ -349,6 +489,10 @@ func memoriesWire(mems []memory.Memory) []schema.Memory {
 		}
 		if t, err := time.Parse(time.RFC3339, m.LastRecalledAt); err == nil {
 			w.LastRecalledAt = &t
+		}
+		if len(m.AbsorbedIDs) > 0 {
+			ids := m.AbsorbedIDs
+			w.AbsorbedIds = &ids
 		}
 		out[i] = w
 	}

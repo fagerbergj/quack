@@ -46,6 +46,9 @@ const (
 	payloadLastUpvotedAt  = "last_upvoted_at"
 	payloadRecalls        = "recalls"
 	payloadLastRecalledAt = "last_recalled_at"
+
+	// payloadAbsorbedIDs: comma-joined (see joinIDs/splitIDs) - epic #1255 P5.
+	payloadAbsorbedIDs = "absorbed_ids"
 )
 
 // Open connects to Qdrant at addr (host:port gRPC) and returns a memory Store
@@ -131,6 +134,7 @@ func pointFromPayload(id *qdrant.PointId, payload map[string]*qdrant.Value, scor
 		LastUpvotedAt:      payloadString(payload, payloadLastUpvotedAt),
 		Recalls:            payloadInt(payload, payloadRecalls),
 		LastRecalledAt:     payloadString(payload, payloadLastRecalledAt),
+		AbsorbedIDs:        splitIDs(payloadString(payload, payloadAbsorbedIDs)),
 		Score:              score,
 	}
 }
@@ -265,6 +269,9 @@ func (x *qdrantIndex) upsert(ctx context.Context, pts []point) error {
 		}
 		if p.InvalidationReason != "" {
 			payload[payloadInvalidationReason] = p.InvalidationReason
+		}
+		if len(p.AbsorbedIDs) > 0 {
+			payload[payloadAbsorbedIDs] = joinIDs(p.AbsorbedIDs)
 		}
 		points = append(points, &qdrant.PointStruct{
 			Id:      qdrant.NewID(p.ID),
@@ -575,6 +582,60 @@ func (x *qdrantIndex) updateBucket(ctx context.Context, id, bucket string) error
 		return fmt.Errorf("memory: set payload rescope: %w", err)
 	}
 	return nil
+}
+
+// absorb folds absorbedID's votes/timestamps/lineage into survivorID and
+// invalidates absorbedID (epic #1255 P5). False (no-op) if either point is
+// missing, or absorbedID is already invalidated (sticky).
+func (x *qdrantIndex) absorb(ctx context.Context, survivorID, absorbedID, reason string) (bool, error) {
+	existing, err := x.getExisting(ctx, []string{survivorID, absorbedID})
+	if err != nil {
+		return false, fmt.Errorf("memory: get for absorb: %w", err)
+	}
+	svP, ok1 := existing[survivorID]
+	abP, ok2 := existing[absorbedID]
+	if !ok1 || !ok2 || payloadString(abP, payloadStatus) == string(StatusInvalidated) {
+		return false, nil
+	}
+	d := computeAbsorbDelta(
+		absorbFields{
+			Upvotes: payloadInt(svP, payloadUpvotes), Downvotes: payloadInt(svP, payloadDownvotes),
+			LastUpvotedAt: payloadString(svP, payloadLastUpvotedAt), LastRecalledAt: payloadString(svP, payloadLastRecalledAt),
+			AbsorbedIDs: splitIDs(payloadString(svP, payloadAbsorbedIDs)),
+		},
+		absorbFields{
+			Upvotes: payloadInt(abP, payloadUpvotes), Downvotes: payloadInt(abP, payloadDownvotes),
+			LastUpvotedAt: payloadString(abP, payloadLastUpvotedAt), LastRecalledAt: payloadString(abP, payloadLastRecalledAt),
+			AbsorbedIDs: splitIDs(payloadString(abP, payloadAbsorbedIDs)),
+		},
+		absorbedID,
+	)
+	wait := true
+	set := map[string]any{
+		payloadUpvotes: d.Upvotes, payloadDownvotes: d.Downvotes, payloadVoteScore: d.VoteScore, payloadTier: d.Tier,
+		payloadAbsorbedIDs: joinIDs(d.AbsorbedIDs),
+	}
+	if d.LastUpvotedAt != "" {
+		set[payloadLastUpvotedAt] = d.LastUpvotedAt
+	}
+	if d.LastRecalledAt != "" {
+		set[payloadLastRecalledAt] = d.LastRecalledAt
+	}
+	if _, err := x.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
+		CollectionName: x.coll, Wait: &wait, Payload: qdrant.NewValueMap(set),
+		PointsSelector: &qdrant.PointsSelector{PointsSelectorOneOf: &qdrant.PointsSelector_Points{Points: &qdrant.PointsIdsList{Ids: idsToPointIDs([]string{survivorID})}}},
+	}); err != nil {
+		return false, fmt.Errorf("memory: set payload absorb survivor: %w", err)
+	}
+	ts := nowRFC3339()
+	if _, err := x.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
+		CollectionName: x.coll, Wait: &wait,
+		Payload:        qdrant.NewValueMap(map[string]any{payloadStatus: string(StatusInvalidated), payloadInvalidatedAt: ts, payloadInvalidationReason: reason}),
+		PointsSelector: &qdrant.PointsSelector{PointsSelectorOneOf: &qdrant.PointsSelector_Points{Points: &qdrant.PointsIdsList{Ids: idsToPointIDs([]string{absorbedID})}}},
+	}); err != nil {
+		return false, fmt.Errorf("memory: set payload absorb invalidate: %w", err)
+	}
+	return true, nil
 }
 
 func payloadString(payload map[string]*qdrant.Value, key string) string {

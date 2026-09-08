@@ -164,6 +164,10 @@ export type Memory = {
      * When this memory was last delivered to a worker. Absent if never recalled.
      */
     last_recalled_at?: string;
+    /**
+     * Ids of memories consolidation merged into this one (near-duplicate merge or supersession, epic #1255 P5), flattened across any absorption chain. This memory's votes include the absorbed ones'.
+     */
+    absorbed_ids?: Array<string>;
 };
 
 export type DeleteMemoryBody = {
@@ -279,6 +283,56 @@ export type SweepMemoriesResult = {
         store: string;
         message: string;
     }>;
+};
+
+export type MemoryWeekStats = {
+    /**
+     * ISO 8601 week (UTC), e.g. "2026-W23".
+     */
+    week: string;
+    /**
+     * Memories delivered to a worker this week (prefill or tool), from `memory.recall` ledger entries.
+     */
+    recalls: number;
+    supported: number;
+    contradicted: number;
+    not_relevant: number;
+    /**
+     * supported / (supported+contradicted+not_relevant). 0 if no votes were cast.
+     */
+    precision: number;
+    /**
+     * supported / total votes cast this week. 0 if no votes were cast.
+     */
+    support_share: number;
+    /**
+     * Memories added this week (memory_ops op=add).
+     */
+    minted: number;
+    /**
+     * Memories invalidated this week (memory_ops op=invalidate), lineage absorptions included.
+     */
+    invalidated: number;
+};
+
+export type MemoryScopeStats = {
+    /**
+     * Bucket key, e.g. repo:quack, role:coding, user:jason.
+     */
+    scope: string;
+    live: number;
+    invalidated: number;
+};
+
+export type MemoryStats = {
+    /**
+     * Oldest first, one entry per requested week (a week with no activity still appears, zeroed).
+     */
+    weeks: Array<MemoryWeekStats>;
+    /**
+     * Current live/invalidated snapshot per scope bucket.
+     */
+    scopes: Array<MemoryScopeStats>;
 };
 
 export type RecordingSummary = {
@@ -1473,3 +1527,24 @@ export type RescopeMemoriesResponses = {
 };
 
 export type RescopeMemoriesResponse = RescopeMemoriesResponses[keyof RescopeMemoriesResponses];
+
+export type GetMemoryStatsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * How many ISO weeks to report, ending on the current week. Defaults to 12.
+         */
+        weeks?: number;
+    };
+    url: '/api/v1/memories/stats';
+};
+
+export type GetMemoryStatsResponses = {
+    /**
+     * Weekly stats and the current per-scope snapshot
+     */
+    200: MemoryStats;
+};
+
+export type GetMemoryStatsResponse = GetMemoryStatsResponses[keyof GetMemoryStatsResponses];

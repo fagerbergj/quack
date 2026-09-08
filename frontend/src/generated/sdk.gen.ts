@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, DeleteMemoryData, DeleteMemoryErrors, DeleteMemoryResponses, DiffArtifactRevisionsData, DiffArtifactRevisionsErrors, DiffArtifactRevisionsResponses, EditNodeTaskData, EditNodeTaskErrors, EditNodeTaskResponses, EditQueuedMessageData, EditQueuedMessageErrors, EditQueuedMessageResponses, GetChatArtifactData, GetChatArtifactErrors, GetChatArtifactResponses, GetChatData, GetChatErrors, GetChatRecordingData, GetChatRecordingErrors, GetChatRecordingResponses, GetChatResponses, GetConfigData, GetConfigResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListArtifactRevisionsData, ListArtifactRevisionsErrors, ListArtifactRevisionsResponses, ListChatArtifactsData, ListChatArtifactsErrors, ListChatArtifactsResponses, ListChatsData, ListChatsErrors, ListChatsResponses, ListExtensionsData, ListExtensionsResponses, ListMemoriesData, ListMemoriesErrors, ListMemoriesResponses, ListRecordingsData, ListRecordingsErrors, ListRecordingsResponses, QueueNodeMessageData, QueueNodeMessageErrors, QueueNodeMessageResponses, RemoveQueuedMessageData, RemoveQueuedMessageErrors, RemoveQueuedMessageResponses, RescopeMemoriesData, RescopeMemoriesResponses, SendChatMessageData, SendChatMessageErrors, SendChatMessageResponse, SendChatMessageResponses, StartNodeData, StartNodeErrors, StartNodeResponses, StopNodeData, StopNodeErrors, StopNodeResponses, SubscribeChatStreamData, SubscribeChatStreamErrors, SubscribeChatStreamResponse, SubscribeChatStreamResponses, SweepMemoriesData, SweepMemoriesErrors, SweepMemoriesResponses, UpdateChatData, UpdateChatErrors, UpdateChatResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses } from './types.gen';
+import type { CreateChatData, CreateChatResponses, DeleteChatData, DeleteChatResponses, DeleteMemoryData, DeleteMemoryErrors, DeleteMemoryResponses, DiffArtifactRevisionsData, DiffArtifactRevisionsErrors, DiffArtifactRevisionsResponses, EditNodeTaskData, EditNodeTaskErrors, EditNodeTaskResponses, EditQueuedMessageData, EditQueuedMessageErrors, EditQueuedMessageResponses, GetChatArtifactData, GetChatArtifactErrors, GetChatArtifactResponses, GetChatData, GetChatErrors, GetChatRecordingData, GetChatRecordingErrors, GetChatRecordingResponses, GetChatResponses, GetConfigData, GetConfigResponses, GetMemoryStatsData, GetMemoryStatsResponses, GetResponseData, GetResponseErrors, GetResponseResponses, HealthCheckData, HealthCheckResponses, ListArtifactRevisionsData, ListArtifactRevisionsErrors, ListArtifactRevisionsResponses, ListChatArtifactsData, ListChatArtifactsErrors, ListChatArtifactsResponses, ListChatsData, ListChatsErrors, ListChatsResponses, ListExtensionsData, ListExtensionsResponses, ListMemoriesData, ListMemoriesErrors, ListMemoriesResponses, ListRecordingsData, ListRecordingsErrors, ListRecordingsResponses, QueueNodeMessageData, QueueNodeMessageErrors, QueueNodeMessageResponses, RemoveQueuedMessageData, RemoveQueuedMessageErrors, RemoveQueuedMessageResponses, RescopeMemoriesData, RescopeMemoriesResponses, SendChatMessageData, SendChatMessageErrors, SendChatMessageResponse, SendChatMessageResponses, StartNodeData, StartNodeErrors, StartNodeResponses, StopNodeData, StopNodeErrors, StopNodeResponses, SubscribeChatStreamData, SubscribeChatStreamErrors, SubscribeChatStreamResponse, SubscribeChatStreamResponses, SweepMemoriesData, SweepMemoriesErrors, SweepMemoriesResponses, UpdateChatData, UpdateChatErrors, UpdateChatResponses, UpdateNodeStatusData, UpdateNodeStatusErrors, UpdateNodeStatusResponses, UpdateResponseStatusData, UpdateResponseStatusErrors, UpdateResponseStatusResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -563,4 +563,22 @@ export const rescopeMemories = <ThrowOnError extends boolean = false>(options?: 
         'Content-Type': 'application/json',
         ...options?.headers
     }
+});
+
+/**
+ * Weekly memory-usage stats
+ *
+ * Epic #1255 P5. Computed from the ledger's `memory.recall`/`memory.vote`
+ * entries and `memory_ops`, no new tables. Per ISO week (UTC): recall
+ * precision (`supported / (supported+contradicted+not_relevant)`),
+ * support share (`supported / total votes`), vote counts by kind,
+ * recalls, and memories minted/invalidated that week. Also returns a
+ * current snapshot of live/invalidated points per scope bucket. A week
+ * with no activity still appears, zeroed.
+ *
+ */
+export const getMemoryStats = <ThrowOnError extends boolean = false>(options?: Options<GetMemoryStatsData, ThrowOnError>): RequestResult<GetMemoryStatsResponses, unknown, ThrowOnError> => (options?.client ?? client).get<GetMemoryStatsResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }, { name: 'X-Authentik-Username', type: 'apiKey' }],
+    url: '/api/v1/memories/stats',
+    ...options
 });

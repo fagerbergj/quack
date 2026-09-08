@@ -182,6 +182,42 @@ func RunMemorySweep(ctx context.Context, out io.Writer, server string, dryRun, a
 	return nil
 }
 
+// RunMemoryStats is `quack memory stats [--weeks N]`: prints the weekly
+// recall precision/support-share/vote/recall table plus the current
+// live/invalidated snapshot per scope (epic #1255 P5).
+func RunMemoryStats(ctx context.Context, out io.Writer, server string, weeks int, asJSON bool) error {
+	c, err := NewClient(ctx, server)
+	if err != nil {
+		return err
+	}
+	stats, err := c.GetMemoryStats(ctx, weeks)
+	if err != nil {
+		return err
+	}
+	if asJSON {
+		return writeJSON(out, stats)
+	}
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "WEEK\tRECALLS\tSUPPORTED\tCONTRADICTED\tNOT_RELEVANT\tPRECISION\tSUPPORT_SHARE\tMINTED\tINVALIDATED")
+	for _, w := range stats.Weeks {
+		fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\t%.2f\t%.2f\t%d\t%d\n",
+			w.Week, w.Recalls, w.Supported, w.Contradicted, w.NotRelevant, w.Precision, w.SupportShare, w.Minted, w.Invalidated)
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	if len(stats.Scopes) > 0 {
+		fmt.Fprintln(out)
+		tw2 := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw2, "SCOPE\tLIVE\tINVALIDATED")
+		for _, s := range stats.Scopes {
+			fmt.Fprintf(tw2, "%s\t%d\t%d\n", s.Scope, s.Live, s.Invalidated)
+		}
+		return tw2.Flush()
+	}
+	return nil
+}
+
 // truncateLine collapses newlines to spaces and clips to n runes (with a "…"
 // marker) - memory content is free text and can run to paragraphs, which
 // would wreck the table's row-per-memory layout.

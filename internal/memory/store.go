@@ -62,6 +62,11 @@ type index interface {
 	// updateBucket moves a single point to a new bucket key (#1262's
 	// `quack memory rescope`) - a payload/column-only mutation, no re-embed.
 	updateBucket(ctx context.Context, id, bucket string) error
+	// absorb folds absorbedID's votes/timestamps/lineage into survivorID
+	// (epic #1255 P5 consolidation merge) and invalidates absorbedID with
+	// reason. Returns false (no-op) if either id doesn't exist, or absorbedID
+	// is already invalidated (sticky - the first invalidation wins).
+	absorb(ctx context.Context, survivorID, absorbedID, reason string) (bool, error)
 }
 
 // scored is one ranked memory.
@@ -97,6 +102,11 @@ type scored struct {
 	LastUpvotedAt  string
 	Recalls        int
 	LastRecalledAt string
+
+	// AbsorbedIDs (epic #1255 P5): ids of memories consolidation merged into
+	// this one (near-duplicate merge or supersession), flattened across any
+	// absorption chain - see internal/memory/lineage.go.
+	AbsorbedIDs []string
 }
 
 // point is one memory to upsert.
@@ -126,6 +136,9 @@ type point struct {
 	LastUpvotedAt  string
 	Recalls        int
 	LastRecalledAt string
+
+	// AbsorbedIDs: see scored.AbsorbedIDs.
+	AbsorbedIDs []string
 }
 
 const (
@@ -302,6 +315,9 @@ type Memory struct {
 	LastUpvotedAt  string
 	Recalls        int
 	LastRecalledAt string
+
+	// AbsorbedIDs: see scored.AbsorbedIDs.
+	AbsorbedIDs []string
 }
 
 // List returns entries in the given buckets (every bucket if empty), newest
@@ -405,6 +421,7 @@ func toMemories(pts []scored) []Memory {
 			Status: p.Status, ReinforcementCount: p.ReinforcementCount, InvalidationReason: p.InvalidationReason,
 			Upvotes: p.Upvotes, Downvotes: p.Downvotes, VoteScore: p.VoteScore, Tier: p.Tier,
 			LastUpvotedAt: p.LastUpvotedAt, Recalls: p.Recalls, LastRecalledAt: p.LastRecalledAt,
+			AbsorbedIDs: p.AbsorbedIDs,
 		}
 	}
 	return out
