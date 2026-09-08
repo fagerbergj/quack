@@ -132,12 +132,12 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
   }
 
   return (
-    // #1248: floating pill, not a full-width bar - no bg/border here, the
-    // pill surface below carries its own bg/shadow. Bottom padding is exactly
-    // env(safe-area-inset-bottom): any fixed amount on top of that was the
-    // "too much dead space at rest" complaint, so there's no medium:-only
-    // addition either - the pill's own py provides the visual margin instead.
-    <div className="px-3 pt-2 pb-[env(safe-area-inset-bottom)] medium:px-6 medium:pt-3">
+    // #1248 follow-up: floating pill, not a full-width bar - no bg/border here,
+    // the pill surface below carries its own bg/shadow. Bottom offset is the
+    // shared --composer-gap (index.css) - 12px on inset-less devices, 12px
+    // above the home indicator on iPhones. Don't add another safe-area-inset
+    // read here; that's the doubling that caused the pre-#1249 excess.
+    <div className="px-3 pt-2 pb-[var(--composer-gap)] medium:px-6 medium:pt-3">
       {queue != null && queue.length > 0 && (
         compact ? (
           // #1174: a row per queued bubble stacks on top of the 60px budget -

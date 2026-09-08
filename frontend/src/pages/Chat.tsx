@@ -680,7 +680,10 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
             scroll pane's own bottom padding (below) is what keeps the last
             message clear of it. */}
         <div className="relative flex-1 min-h-0">
-        <div ref={scrollRef} className="absolute inset-0 overflow-y-auto overscroll-contain px-6 pt-6 pb-28 medium:pb-32 space-y-6">
+        {/* #1248 follow-up: bottom padding is a fixed composer-height clearance
+            PLUS the shared --composer-gap, so the inset (when present) grows
+            the clearance instead of getting counted twice. */}
+        <div ref={scrollRef} className="absolute inset-0 overflow-y-auto overscroll-contain px-6 pt-6 pb-[calc(7rem+var(--composer-gap))] medium:pb-[calc(8rem+var(--composer-gap))] space-y-6">
           {!activeChatId && (
             <div className="text-center text-gray-400 dark:text-gray-500 text-sm mt-20">
               Select or start a chat
