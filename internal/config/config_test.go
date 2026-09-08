@@ -486,6 +486,44 @@ tools:
 	}
 }
 
+// TestLoadRejectsBadForgettingRuleExpression pins that a syntactically bad
+// memory.forgetting.rules[].when expression fails at Load, not just at
+// server startup (regression guard for the internal/config <-> memory
+// import cycle that used to defer this check).
+func TestLoadRejectsBadForgettingRuleExpression(t *testing.T) {
+	const cfg = `
+providers:
+  default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
+  e: { provider: default, role: embed }
+  c: { provider: default, role: worker }
+stores:
+  main: { kind: postgres, url: u }
+  vec:
+    kind: qdrant
+    url: qdrant:6334
+    embedder: { provider: default, model: e }
+    consolidation:
+      provider: default
+      model: c
+      forgetting:
+        rules:
+          - { when: "score @ 1", then: invalidate }
+session: { store: main }
+orchestrator: { provider: default, model: m }
+tools:
+  stage_memory: { store: vec, collection: task_memory }
+`
+	_, err := Load(writeTemp(t, cfg))
+	if err == nil {
+		t.Fatal("expected error for malformed forgetting rule expression")
+	}
+	if !strings.Contains(err.Error(), "rule 0") || !strings.Contains(err.Error(), `'@'`) {
+		t.Errorf("error should name rule index and bad token, got: %v", err)
+	}
+}
+
 // TestStoreExtends checks a child store inherits the parent's connection and
 // overrides only the fields it sets.
 func TestStoreExtends(t *testing.T) {
