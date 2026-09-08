@@ -182,7 +182,7 @@ func (x *qdrantIndex) query(ctx context.Context, buckets []string, vec []float32
 // first in Go, then slices out the requested page. Fine at memory's documented
 // scale (hundreds-thousands); avoids requiring a payload index on `timestamp`
 // for Qdrant's order_by, which a fresh collection won't have.
-func (x *qdrantIndex) list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string) ([]scored, error) {
+func (x *qdrantIndex) list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string, sortBy ...string) ([]scored, error) {
 	filter := bucketFilter(buckets)
 	if !includeInvalidated {
 		filter = excludeInvalidated(filter)
@@ -206,12 +206,7 @@ func (x *qdrantIndex) list(ctx context.Context, buckets []string, offset, limit 
 			all = append(all, pointFromPayload(p.GetId(), p.GetPayload(), 0))
 		}
 	}
-	sort.Slice(all, func(i, j int) bool {
-		if all[i].Timestamp != all[j].Timestamp {
-			return all[i].Timestamp > all[j].Timestamp
-		}
-		return all[i].ID > all[j].ID
-	})
+	sort.Slice(all, qdrantLess(all, firstSort(sortBy)))
 	if offset >= len(all) {
 		return []scored{}, nil
 	}
@@ -234,6 +229,68 @@ func (x *qdrantIndex) count(ctx context.Context, buckets []string, includeInvali
 		return 0, fmt.Errorf("memory: count: %w", err)
 	}
 	return int(n), nil
+}
+
+// qdrantLess builds sort.Slice's less func for one ListSort value (#1266),
+// mirroring sqliteOrderBy: an `ID` tie-break so paging is stable, and
+// last_recalled treats "" (never recalled) as sorting last, not first (a
+// bare string compare would put "" before any RFC3339 timestamp).
+func qdrantLess(all []scored, sortBy string) func(i, j int) bool {
+	switch sortBy {
+	case SortOldest:
+		return func(i, j int) bool {
+			if all[i].Timestamp != all[j].Timestamp {
+				return all[i].Timestamp < all[j].Timestamp
+			}
+			return all[i].ID > all[j].ID
+		}
+	case SortScore:
+		return func(i, j int) bool {
+			if all[i].VoteScore != all[j].VoteScore {
+				return all[i].VoteScore > all[j].VoteScore
+			}
+			return all[i].ID > all[j].ID
+		}
+	case SortUpvotes:
+		return func(i, j int) bool {
+			if all[i].Upvotes != all[j].Upvotes {
+				return all[i].Upvotes > all[j].Upvotes
+			}
+			return all[i].ID > all[j].ID
+		}
+	case SortDownvotes:
+		return func(i, j int) bool {
+			if all[i].Downvotes != all[j].Downvotes {
+				return all[i].Downvotes > all[j].Downvotes
+			}
+			return all[i].ID > all[j].ID
+		}
+	case SortRecalls:
+		return func(i, j int) bool {
+			if all[i].Recalls != all[j].Recalls {
+				return all[i].Recalls > all[j].Recalls
+			}
+			return all[i].ID > all[j].ID
+		}
+	case SortLastRecalled:
+		return func(i, j int) bool {
+			iEmpty, jEmpty := all[i].LastRecalledAt == "", all[j].LastRecalledAt == ""
+			if iEmpty != jEmpty {
+				return jEmpty // non-empty sorts before empty
+			}
+			if all[i].LastRecalledAt != all[j].LastRecalledAt {
+				return all[i].LastRecalledAt > all[j].LastRecalledAt
+			}
+			return all[i].ID > all[j].ID
+		}
+	default: // SortNewest
+		return func(i, j int) bool {
+			if all[i].Timestamp != all[j].Timestamp {
+				return all[i].Timestamp > all[j].Timestamp
+			}
+			return all[i].ID > all[j].ID
+		}
+	}
 }
 
 // tierFilter adds tier's condition to f (or a fresh filter), if any. "" means

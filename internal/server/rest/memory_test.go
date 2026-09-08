@@ -342,6 +342,60 @@ func TestListMemories_MergesAndOrdersAcrossBothStores(t *testing.T) {
 	}
 }
 
+// idOfContent finds a just-committed memory's id by its content, so a test
+// can vote on it - Commit itself returns only a count, not the minted id(s).
+func idOfContent(t *testing.T, s *memory.Store, bucket, content string) string {
+	t.Helper()
+	mems, _, err := s.List(context.Background(), []string{"repo:" + bucket}, 0, 0, false, "")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	for _, m := range mems {
+		if m.Content == content {
+			return m.ID
+		}
+	}
+	t.Fatalf("no memory with content %q in bucket %q", content, bucket)
+	return ""
+}
+
+// TestListMemories_SortSpansBothStores (#1266 owner follow-up): `sort` must
+// order the MERGED set from both configured stores, not just re-sort within
+// whichever store happened to be listed first - fact C is minted oldest but
+// carries the only upvote, in the store listed SECOND (userMem), so
+// `sort=upvotes` only passes if the merge, not per-store order, drives it.
+func TestListMemories_SortSpansBothStores(t *testing.T) {
+	h := newTestHandler(t)
+	h.taskMem = newTestMemStore(t)
+	h.userMem = newTestMemStore(t)
+	const bucket = "NightsOut"
+
+	commitFact(t, h.taskMem, bucket, "fact A (no votes, task)")
+	commitFact(t, h.userMem, bucket, "fact B (no votes, user)")
+	commitFact(t, h.userMem, bucket, "fact C (upvoted, user)")
+	if err := h.userMem.SetHumanVote(context.Background(), idOfContent(t, h.userMem, bucket, "fact C (upvoted, user)"), memory.HumanVoteUp); err != nil {
+		t.Fatalf("SetHumanVote: %v", err)
+	}
+
+	b := "repo:" + bucket
+	sortBy := schema.ListMemoriesParamsSort("upvotes")
+	w := httptest.NewRecorder()
+	h.ListMemories(w, httptest.NewRequest(http.MethodGet, "/api/v1/memories", nil), schema.ListMemoriesParams{Bucket: &b, Sort: &sortBy})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var got schema.MemoryList
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Memories) != 3 {
+		t.Fatalf("got %d memories, want 3", len(got.Memories))
+	}
+	if got.Memories[0].Content != "fact C (upvoted, user)" {
+		t.Fatalf("top result = %q, want the upvoted fact C regardless of which store or age it comes from", got.Memories[0].Content)
+	}
+}
+
 // TestListMemories_InvalidPageToken400: a page_token the store can't decode
 // is a client error, not a 500 - mirrors TestListChats_InvalidPageToken400.
 func TestListMemories_InvalidPageToken400(t *testing.T) {

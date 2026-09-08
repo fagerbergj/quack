@@ -1479,6 +1479,10 @@ export type ListMemoriesData = {
          */
         tier?: 'unverified' | 'verified';
         /**
+         * Order results (#1266). Defaults to `newest`. Every value orders server-side (index-level for a single store, a re-sort of the full merged set for two), so paging sees a globally sorted corpus, not a client re-sort of whatever page happened to load. Ignored when `q` is set (search always ranks by `score`, its embedding-similarity meaning there - descending).
+         */
+        sort?: 'newest' | 'oldest' | 'score' | 'upvotes' | 'downvotes' | 'recalls' | 'last_recalled';
+        /**
          * Opaque continuation token from a previous response's `next_page_token`. Treat it as an opaque string: never parse or construct one, pass back exactly what was returned. Omit for the first page. Ignored when `q` is set (search ranks by score, not a stable page). Only valid against the exact `bucket` filter it was issued for.
          *
          */

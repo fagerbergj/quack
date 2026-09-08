@@ -105,6 +105,19 @@ export const OwnVoteActive: Story = {
   },
 }
 
+// #1266 regression check: one tier chip (not a duplicate "unverified"), the
+// author/node-id pill neutral rather than hash-red, vote control reachable
+// below the text, no horizontal overflow at 390px.
+export const MobileViewport: Story = {
+  args: { memory: { ...REPO_FACT, author: 'review-new-commits', tier: 'verified', upvotes: 2, vote_score: 2 } },
+  parameters: { layout: 'fullscreen' },
+  decorators: [Story => (
+    <div className="w-[390px] mx-auto overflow-hidden border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900">
+      <Story />
+    </div>
+  )],
+}
+
 // Clicking the kebab reveals the Forget action (moved off the row per the
 // UI rule: secondary actions in the "…" menu, not a top-level icon button).
 export const ConfirmingForget: Story = {

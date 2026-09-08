@@ -74,7 +74,11 @@ func (h *Handler) ListMemories(w http.ResponseWriter, r *http.Request, params sc
 	if params.Tier != nil {
 		tier = string(*params.Tier)
 	}
-	mems, total, err := listMemories(r.Context(), stores, buckets, offset, limit, includeInvalidated, tier)
+	sortBy := memory.SortNewest
+	if params.Sort != nil {
+		sortBy = string(*params.Sort)
+	}
+	mems, total, err := listMemories(r.Context(), stores, buckets, offset, limit, includeInvalidated, tier, sortBy)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
 		return
@@ -119,22 +123,25 @@ func (h *Handler) DeleteMemory(w http.ResponseWriter, r *http.Request, memoryID 
 // offset/limit meaningful across two independent backends. includeInvalidated
 // rides straight through to the index-level filter (Store.List) so the total
 // and the page both agree, rather than a Go post-filter after paging.
-func listMemories(ctx context.Context, stores []*memory.Store, buckets []string, offset, limit int, includeInvalidated bool, tier string) ([]memory.Memory, int, error) {
+func listMemories(ctx context.Context, stores []*memory.Store, buckets []string, offset, limit int, includeInvalidated bool, tier, sortBy string) ([]memory.Memory, int, error) {
 	if len(stores) == 0 {
 		return nil, 0, nil
 	}
 	if len(stores) == 1 {
-		return stores[0].List(ctx, buckets, offset, limit, includeInvalidated, tier)
+		return stores[0].List(ctx, buckets, offset, limit, includeInvalidated, tier, sortBy)
 	}
 	var all []memory.Memory
 	for _, st := range stores {
-		mems, _, err := st.List(ctx, buckets, 0, 0, includeInvalidated, tier)
+		// 0,0: each store contributes its FULL matching set (already sorted,
+		// but per-store order doesn't matter here) - SortMemories re-sorts the
+		// merge below by the requested key so two stores agree with one.
+		mems, _, err := st.List(ctx, buckets, 0, 0, includeInvalidated, tier, sortBy)
 		if err != nil {
 			return nil, 0, err
 		}
 		all = append(all, mems...)
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].Timestamp > all[j].Timestamp })
+	memory.SortMemories(all, sortBy)
 	total := len(all)
 	if offset >= total {
 		return []memory.Memory{}, total, nil

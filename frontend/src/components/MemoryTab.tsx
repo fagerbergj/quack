@@ -11,14 +11,6 @@ export interface MemoryTabProps {
   initialState?: { memories: Memory[]; total: number; error?: string }
 }
 
-// sortMemories orders a loaded page client-side (#746 items 11/15) - the API
-// has no sort param (Forbidden: no endpoint/contract changes), so this only
-// ever reorders what's already been fetched, not the underlying corpus.
-function sortMemories(memories: Memory[], sort: MemorySort): Memory[] {
-  const sorted = [...memories].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-  return sort === 'oldest' ? sorted.reverse() : sorted
-}
-
 // applyOptimisticVote mirrors the backend's SetHumanVote delta (up:+1/undo,
 // down:+1/undo, none:remove) so the UI moves instantly; the server response
 // that follows overwrites this with the authoritative numbers.
@@ -90,6 +82,7 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
         page_token: pageTokens[pageIndex],
         include_invalidated: includeInvalidated || undefined,
         tier: tier || undefined,
+        sort,
       })
       setMemories(result.memories)
       setTotal(result.total)
@@ -104,7 +97,7 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
     } finally {
       setLoading(false)
     }
-  }, [bucket, q, pageIndex, pageTokens, includeInvalidated, tier])
+  }, [bucket, q, pageIndex, pageTokens, includeInvalidated, tier, sort])
 
   useEffect(() => {
     if (initialState !== undefined) return // story/test seam: static demo state, no live fetch
@@ -153,6 +146,13 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
     resetPaging()
   }
 
+  // Server-side sort (#1266 owner follow-up), same reasoning as tier above -
+  // a page reload with the new sort, not a client-side re-slice.
+  function handleSortChange(next: MemorySort) {
+    setSort(next)
+    resetPaging()
+  }
+
   function handleIncludeInvalidatedChange(next: boolean) {
     setIncludeInvalidated(next)
     resetPaging()
@@ -176,8 +176,6 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
   const hasMore = !searching && !!nextPageToken
   const rangeStart = pageIndex * PAGE_SIZE + 1
   const rangeEnd = pageIndex * PAGE_SIZE + memories.length
-  // Tier filters server-side (the `tier` query param) - see handleTierChange.
-  const sortedMemories = useMemo(() => sortMemories(memories, sort), [memories, sort])
   const bucketOptions = useMemo(() => Array.from(knownBuckets).sort(), [knownBuckets])
   const showFooter = !loading && !error && !searching && total > 0
 
@@ -214,7 +212,7 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
         </label>
         <MemorySortFilter
           sort={sort}
-          onSortChange={setSort}
+          onSortChange={handleSortChange}
           bucket={bucket}
           buckets={bucketOptions}
           onBucketChange={handleBucketChange}
@@ -238,7 +236,7 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
           </div>
         )}
         {!loading && !error && memories.length > 0 && (
-          <MemoryTimeline memories={sortedMemories} onForget={handleForget} onVote={handleVote} />
+          <MemoryTimeline memories={memories} onForget={handleForget} onVote={handleVote} />
         )}
       </div>
 

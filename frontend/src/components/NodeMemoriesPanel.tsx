@@ -55,12 +55,13 @@ function SourceBadge({ source }: { source: string }) {
 // round has voted yet), and a manual vote control. NodeMemory carries no
 // corpus-wide vote_score (that lives on the full Memory the memory page
 // shows) - this control only reflects the caller's own vote highlight.
+// Vote control sits at the row's end (#1266 owner follow-up), matching the
+// memory page's row layout - not a left gutter, so the text gets full width.
 function NodeMemoryRow({ memory, onVote }: { memory: NodeMemory; onVote: (id: string, vote: VoteDirection) => Promise<void> }) {
   return (
     <div className="px-3 py-2.5 border-b border-gray-100 dark:border-gray-700 flex items-start gap-2">
-      <VoteControl score={0} ownVote={memory.own_vote} onVote={v => onVote(memory.id, v)} />
       <div className="flex-1 min-w-0">
-        {memory.content && <p className="text-sm text-gray-800 dark:text-gray-100 whitespace-pre-wrap">{memory.content}</p>}
+        {memory.content && <p className="text-sm text-gray-800 dark:text-gray-100 whitespace-pre-wrap break-words">{memory.content}</p>}
         <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
           <SourceBadge source={memory.source} />
           {memory.tier && (
@@ -73,6 +74,9 @@ function NodeMemoryRow({ memory, onVote }: { memory: NodeMemory; onVote: (id: st
           )}
           {memory.vote && <JudgeVoteIcon vote={memory.vote} reason={memory.reason} />}
         </div>
+      </div>
+      <div className="flex-shrink-0">
+        <VoteControl score={0} ownVote={memory.own_vote} onVote={v => onVote(memory.id, v)} />
       </div>
     </div>
   )

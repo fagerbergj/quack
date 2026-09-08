@@ -29,6 +29,10 @@ import type { ChatSummary, ChatDetail, ChatList, Turn, MemoryList, ExtensionInfo
 // backend's VoteMemoryBody vote enum.
 export type VoteDirection = 'up' | 'down' | 'none'
 
+// MemoryListSort mirrors openapi.yaml's listMemories `sort` enum (#1266) -
+// server-side ordering that spans every page, not a client re-sort of one.
+export type MemoryListSort = 'newest' | 'oldest' | 'score' | 'upvotes' | 'downvotes' | 'recalls' | 'last_recalled'
+
 type Result<T> = { data?: T; error?: unknown; response?: Response }
 
 function unwrap<T>(r: Result<T>): T {
@@ -85,6 +89,7 @@ export const api = {
     page_token?: string
     include_invalidated?: boolean
     tier?: 'unverified' | 'verified'
+    sort?: MemoryListSort
   }): Promise<MemoryList> => unwrap(await sdkListMemories({ query: params })),
 
   forgetMemory: async (id: string): Promise<void> => {

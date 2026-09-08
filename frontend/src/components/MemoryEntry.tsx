@@ -72,16 +72,13 @@ function TierBadge({ memory }: { memory: Memory }) {
   )
 }
 
-// VoteTierBadge - the vote-based tier (epic #1255 P4, memory.tier), distinct
-// from the lifecycle status TierBadge above: verified once upvotes>=1, never
-// demoted. Blue (not green) so it reads as a different axis than the
-// lifecycle badge, not a duplicate of it.
+// VoteTierBadge - the vote-based tier (epic #1255 P4, memory.tier). Only
+// rendered for 'verified' (#1266): 'unverified' duplicates the lifecycle
+// TierBadge's default label, so the caller skips it in that case instead of
+// showing two chips that both say "unverified".
 function VoteTierBadge({ tier }: { tier: 'unverified' | 'verified' }) {
-  const cls = tier === 'verified'
-    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400'
-    : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'
   return (
-    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${cls}`}>
+    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400">
       {tier}
     </span>
   )
@@ -89,10 +86,13 @@ function VoteTierBadge({ tier }: { tier: 'unverified' | 'verified' }) {
 
 // Pill - a category-coloured pill (#746 item 13): the colour is deterministic
 // (hashed from the label itself, not assignment order) and always rendered
-// WITH the label text - colour is never the only signal.
-function Pill({ label, seed }: { label: string; seed: string }) {
+// WITH the label text - colour is never the only signal. `neutral` opts out
+// of the hash (#1266): a node id used as provenance can hash to red, which
+// reads as an error rather than "this node wrote it".
+function Pill({ label, seed, neutral }: { label: string; seed: string; neutral?: boolean }) {
+  const cls = neutral ? 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400' : paletteClasses(seed)
   return (
-    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${paletteClasses(seed)}`}>
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${cls}`}>
       {label}
     </span>
   )
@@ -189,22 +189,21 @@ export function MemoryEntry({ memory, onForget, onVote }: MemoryEntryProps) {
   const lastUpvoted = relativeTime(memory.last_upvoted_at)
   const lastRecalled = relativeTime(memory.last_recalled_at)
 
+  const mintedTime = new Date(memory.timestamp)
+  const mintedTimeText = Number.isNaN(mintedTime.getTime()) ? memory.timestamp : mintedTime.toLocaleString()
+  const mintedTimeRelative = relativeTime(memory.timestamp) ?? mintedTimeText
+
   return (
     <div className="px-3 py-2.5 border-b border-gray-100 dark:border-gray-700 flex items-start gap-2">
-      <VoteControl
-        score={memory.vote_score ?? 0}
-        ownVote={memory.own_vote}
-        onVote={v => onVote(memory.id, v)}
-      />
       <div className="flex-1 min-w-0">
-        <p className="text-sm text-gray-800 dark:text-gray-100 whitespace-pre-wrap">{memory.content}</p>
+        <p className="text-sm text-gray-800 dark:text-gray-100 whitespace-pre-wrap break-words">{memory.content}</p>
         <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
           <Pill label={memory.bucket} seed={memory.bucket} />
-          <Pill label={memory.author} seed={memory.author} />
+          <Pill label={memory.author} seed={memory.author} neutral />
           {memory.kind && <Pill label={memory.kind} seed={memory.kind} />}
           <TierBadge memory={memory} />
-          <VoteTierBadge tier={voteTier} />
-          <span className="text-[11px] text-gray-400 dark:text-gray-500">{new Date(memory.timestamp).toLocaleString()}</span>
+          {voteTier === 'verified' && <VoteTierBadge tier={voteTier} />}
+          <span title={mintedTimeText} className="text-[11px] text-gray-400 dark:text-gray-500">{mintedTimeRelative}</span>
           {memory.score != null && (
             <span className="text-[11px] text-gray-400 dark:text-gray-500">score {memory.score.toFixed(2)}</span>
           )}
@@ -234,7 +233,15 @@ export function MemoryEntry({ memory, onForget, onVote }: MemoryEntryProps) {
           </p>
         )}
       </div>
-      <div className="flex-shrink-0">
+      {/* End of row, every viewport (#1266 owner follow-up) - not a left
+          gutter, not folded into the metadata row - so the text column
+          above always gets the row's full remaining width. */}
+      <div className="flex-shrink-0 flex items-start gap-1">
+        <VoteControl
+          score={memory.vote_score ?? 0}
+          ownVote={memory.own_vote}
+          onVote={v => onVote(memory.id, v)}
+        />
         <KebabMenu memory={memory} onForget={onForget} />
       </div>
     </div>
