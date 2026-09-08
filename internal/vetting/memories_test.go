@@ -194,6 +194,46 @@ func TestApplyMemoryVotesOnPass_LedgerAppendFailureSkipsMutation(t *testing.T) {
 	}
 }
 
+// TestMergeMemoryHits_DedupesByID covers the adversarial review finding: a
+// memory recalled by both prefill and a recall_memory tool call must appear
+// once in the received set, not twice (double-voting).
+func TestMergeMemoryHits_DedupesByID(t *testing.T) {
+	base := []memory.Delivered{{ID: "m1", Content: "from prefill"}}
+	add := []memory.Delivered{{ID: "m1", Content: "from tool call"}, {ID: "m2", Content: "new"}}
+	got := mergeMemoryHits(base, add)
+	if len(got) != 2 {
+		t.Fatalf("merged = %+v, want 2 (m1 deduped, m2 added)", got)
+	}
+	if got[0].ID != "m1" || got[0].Content != "from prefill" {
+		t.Fatalf("m1 = %+v, want the FIRST occurrence kept (prefill's), not overwritten by the tool's", got[0])
+	}
+	// Merging again with the same add must not grow the set further.
+	got2 := mergeMemoryHits(got, add)
+	if len(got2) != 2 {
+		t.Fatalf("re-merge grew the set: %+v", got2)
+	}
+}
+
+// TestRecallMemoryHits_ParsesFunctionResponse covers a native worker's
+// recall_memory call: its FunctionResponse (a recallMemoryResult round-
+// tripped through session-event JSON) must parse back into the hits it
+// returned, the shape the round loop merges into the received set.
+func TestRecallMemoryHits_ParsesFunctionResponse(t *testing.T) {
+	resp := map[string]any{
+		"hits": []any{
+			map[string]any{"id": "m1", "tier": "unverified", "score": 0.9, "content": "a fact"},
+		},
+		"truncated": false,
+	}
+	hits := recallMemoryHits(resp)
+	if len(hits) != 1 || hits[0].ID != "m1" || hits[0].Content != "a fact" {
+		t.Fatalf("recallMemoryHits = %+v, want one hit for m1", hits)
+	}
+	if got := recallMemoryHits(nil); got != nil {
+		t.Fatalf("nil response: got %+v, want nil", got)
+	}
+}
+
 // fakeOpsLogRecorder records every memory_ops write, mirroring
 // internal/memory's own lifecycle_test.go fixture (unexported there).
 type fakeOpsLogRecorder struct {

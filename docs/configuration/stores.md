@@ -69,4 +69,4 @@ tools:
     collection: user_memory
 ```
 
-The store supplies the adapter and connection; the tool may override `collection` / `schema` / `top_k` / `min_score` for its own namespace. See [agents.md](agents.md) for which agents bind `stage_memory` (task memory) and the orchestrator's `commit_memory` (user memory).
+The store supplies the adapter and connection; the tool may override `collection` / `schema` / `top_k` / `min_score` for its own namespace. See [agents.md](agents.md) for which agents bind `stage_memory` (task memory) and the orchestrator's `commit_memory` (user memory). `recall_memory` (on-demand recall, epic #1255 P2) has no `tools:` entry of its own - it reads `stage_memory`'s store/collection/`top_k`/`min_score`, just on demand instead of at prefill time.

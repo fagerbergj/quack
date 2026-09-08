@@ -2,6 +2,7 @@ package vetting
 
 import (
 	"context"
+	"encoding/json"
 	"iter"
 	"strings"
 	"sync/atomic"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
+	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
@@ -66,8 +69,8 @@ func (m maxTokensRecordingPlanJudge) GenerateContent(_ context.Context, req *mod
 // argument reaches the plan judge's own model request.
 func TestPlanJudge_RequestCarriesConfiguredMaxOutputTokens(t *testing.T) {
 	got := int32(-1)
-	judge := NewPlanJudge(maxTokensRecordingPlanJudge{got: &got}, 1024, "")
-	if _, _, err := judge(context.Background(), "write a plan", "1 node(s):\n- explore (web-researcher)"); err != nil {
+	judge := NewPlanJudge(maxTokensRecordingPlanJudge{got: &got}, 1024, "", nil, nil)
+	if _, _, err := judge(context.Background(), "write a plan", "1 node(s):\n- explore (web-researcher)", ""); err != nil {
 		t.Fatalf("PlanJudge: %v", err)
 	}
 	if got != 1024 {
@@ -109,8 +112,8 @@ func (m *loopingPlanJudgeModel) GenerateContent(_ context.Context, _ *model.LLMR
 // call reply does.
 func TestPlanJudge_RunawayRepeatRoutesToNoVerdict(t *testing.T) {
 	m := &loopingPlanJudgeModel{}
-	judge := NewPlanJudge(m, 0, "")
-	_, _, err := judge(context.Background(), "write a plan", "1 node(s):\n- explore (web-researcher)")
+	judge := NewPlanJudge(m, 0, "", nil, nil)
+	_, _, err := judge(context.Background(), "write a plan", "1 node(s):\n- explore (web-researcher)", "")
 	if err == nil {
 		t.Fatal("PlanJudge: expected an error - the model never calls submit_plan_verdict")
 	}
@@ -119,9 +122,115 @@ func TestPlanJudge_RunawayRepeatRoutesToNoVerdict(t *testing.T) {
 	}
 }
 
+// planPromptCapturingModel records every text part of the request it's
+// asked to generate over - lets a test see the assembled plan-judge prompt.
+type planPromptCapturingModel struct{ capture *string }
+
+func (planPromptCapturingModel) Name() string { return "prompt-capturing-plan-judge" }
+
+func (m planPromptCapturingModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		for _, c := range req.Contents {
+			for _, p := range c.Parts {
+				if p != nil && p.Text != "" {
+					*m.capture += p.Text
+				}
+			}
+		}
+		yield(stubCall(submitPlanVerdictTool, map[string]any{"accept": true, "reason": ""}), nil)
+	}
+}
+
+// TestNewPlanJudge_ProjectMemorySection_LoggedNotVoted covers epic #1255 P2's
+// plan-judge verification: top-k memories for the chat's scope reach the
+// prompt as a delimited section, get logged as memory.recall with source
+// "plan_judge" - and, unlike a worker round, are never voted on (no
+// memory.vote entry, no vote field on planVerdictArgs to carry one).
+func TestNewPlanJudge_ProjectMemorySection_LoggedNotVoted(t *testing.T) {
+	ctx := context.Background()
+	store := newMemoryStoreForVoteTest(t)
+	if _, err := store.Commit(ctx, memory.Scope{User: "u1"}, "seed", memory.Provenance{},
+		[]memory.Candidate{{Content: "prefers terse commit messages"}}, ""); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	lgr := ledgertest.NewMemStore()
+	var prompt string
+	judge := NewPlanJudge(planPromptCapturingModel{capture: &prompt}, 0, "", store, lgr)
+
+	runCtx := ledger.WithCoords(ctx, ledger.Coords{ChatID: "chat-plan", User: "u1"})
+	accept, _, err := judge(runCtx, "write a plan", "1 node(s):\n- explore (web-researcher)", "")
+	if err != nil {
+		t.Fatalf("PlanJudge: %v", err)
+	}
+	if !accept {
+		t.Fatal("want accept")
+	}
+	if !strings.Contains(prompt, "PROJECT MEMORY") || !strings.Contains(prompt, "terse commit messages") {
+		t.Fatalf("prompt missing the project-memory section: %q", prompt)
+	}
+
+	entries, err := lgr.ReadEntries(ctx, "chat-plan", 0)
+	if err != nil {
+		t.Fatalf("ReadEntries: %v", err)
+	}
+	var recalls, votes int
+	for _, e := range entries {
+		switch e.Kind {
+		case ledger.KindMemoryRecall:
+			recalls++
+			var p ledger.MemoryRecallPayload
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				t.Fatalf("unmarshal memory.recall payload: %v", err)
+			}
+			if p.Source != "plan_judge" {
+				t.Errorf("memory.recall source = %q, want %q", p.Source, "plan_judge")
+			}
+		case ledger.KindMemoryVote:
+			votes++
+		}
+	}
+	if recalls != 1 {
+		t.Fatalf("memory.recall entries = %d, want 1", recalls)
+	}
+	if votes != 0 {
+		t.Fatalf("memory.vote entries = %d, want 0 - the plan judge never votes", votes)
+	}
+}
+
+// TestNewPlanJudge_RepoScopeRecall_NotUserOnly proves the fix for a
+// GitHub-dispatched chat: the plan is known to belong to a repo before it's
+// judged (the plan declares setup), so the judge's recall must query the
+// repo bucket - a memory seeded with no user attribution, only a repo key,
+// must still surface, which a user-only scope would miss entirely.
+func TestNewPlanJudge_RepoScopeRecall_NotUserOnly(t *testing.T) {
+	ctx := context.Background()
+	store := newMemoryStoreForVoteTest(t)
+	const repoKey = "github.com/acme/widgets"
+	if _, err := store.Commit(ctx, memory.Scope{Repo: repoKey}, "seed", memory.Provenance{},
+		[]memory.Candidate{{Content: "this repo requires conventional commits"}}, ""); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	var prompt string
+	judge := NewPlanJudge(planPromptCapturingModel{capture: &prompt}, 0, "", store, ledgertest.NewMemStore())
+
+	runCtx := ledger.WithCoords(ctx, ledger.Coords{ChatID: "chat-repo"})
+	accept, _, err := judge(runCtx, "review the PR", "1 node(s):\n- review (code-reviewer)", repoKey)
+	if err != nil {
+		t.Fatalf("PlanJudge: %v", err)
+	}
+	if !accept {
+		t.Fatal("want accept")
+	}
+	if !strings.Contains(prompt, "conventional commits") {
+		t.Fatalf("prompt missing the repo-scoped memory - recall fell back to user-only scope: %q", prompt)
+	}
+}
+
 func TestPlanJudgeAccepts(t *testing.T) {
-	judge := NewPlanJudge(stubPlanJudgeModel{accept: true, reason: ""}, 0, "")
-	accept, reason, err := judge(context.Background(), "write a plan", "1 node(s):\n- explore (web-researcher)")
+	judge := NewPlanJudge(stubPlanJudgeModel{accept: true, reason: ""}, 0, "", nil, nil)
+	accept, reason, err := judge(context.Background(), "write a plan", "1 node(s):\n- explore (web-researcher)", "")
 	if err != nil {
 		t.Fatalf("PlanJudge: %v", err)
 	}
@@ -131,8 +240,8 @@ func TestPlanJudgeAccepts(t *testing.T) {
 }
 
 func TestPlanJudgeRejectsWithReason(t *testing.T) {
-	judge := NewPlanJudge(stubPlanJudgeModel{accept: false, reason: "add a code-implementer node"}, 0, "")
-	accept, reason, err := judge(context.Background(), "implement and ship it", "1 node(s):\n- explore (web-researcher)")
+	judge := NewPlanJudge(stubPlanJudgeModel{accept: false, reason: "add a code-implementer node"}, 0, "", nil, nil)
+	accept, reason, err := judge(context.Background(), "implement and ship it", "1 node(s):\n- explore (web-researcher)", "")
 	if err != nil {
 		t.Fatalf("PlanJudge: %v", err)
 	}
@@ -145,8 +254,8 @@ func TestPlanJudgeRejectsWithReason(t *testing.T) {
 }
 
 func TestPlanJudgeErrorsWithoutVerdict(t *testing.T) {
-	judge := NewPlanJudge(noVerdictModel{}, 0, "")
-	if _, _, err := judge(context.Background(), "x", "y"); err == nil {
+	judge := NewPlanJudge(noVerdictModel{}, 0, "", nil, nil)
+	if _, _, err := judge(context.Background(), "x", "y", ""); err == nil {
 		t.Fatal("PlanJudge: expected an error when the model never calls submit_plan_verdict")
 	}
 }
@@ -163,11 +272,11 @@ func TestPlanJudge_ChatEventCarriesCallerCoords(t *testing.T) {
 	defer restore()
 
 	traced := inference.TracedModelForTesting(stubPlanJudgeModel{accept: true}, "plan-judge-test-model")
-	judge := NewPlanJudge(traced, 0, "")
+	judge := NewPlanJudge(traced, 0, "", nil, nil)
 
 	const chatID = "planner-chat"
 	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: chatID})
-	if _, _, err := judge(ctx, "write a plan", "1 node(s):\n- explore (web-researcher)"); err != nil {
+	if _, _, err := judge(ctx, "write a plan", "1 node(s):\n- explore (web-researcher)", ""); err != nil {
 		t.Fatalf("PlanJudge: %v", err)
 	}
 
@@ -202,12 +311,12 @@ func TestPlanJudge_ChatEventCarriesCallerCoords(t *testing.T) {
 // reaction to an API) with setup + delivery declared is a ONE-node plan, and
 // must be accepted rather than forced into an API/logic/tests chain.
 func TestPlanJudgeAcceptsCohesiveSingleNodePlan(t *testing.T) {
-	judge := NewPlanJudge(stubPlanJudgeModel{accept: true, reason: ""}, 0, "")
+	judge := NewPlanJudge(stubPlanJudgeModel{accept: true, reason: ""}, 0, "", nil, nil)
 	planSummary := "1 node(s):\n" +
 		"- implement (code-implementer): add a 👀 reaction to the API, implement the logic, write tests, and run checks\n" +
 		"setup: repo=github.com/example/app work_branch=feat/eyes-reaction\n" +
 		"delivery: kind=pull_request"
-	accept, reason, err := judge(context.Background(), "add a 👀-reaction feature", planSummary)
+	accept, reason, err := judge(context.Background(), "add a 👀-reaction feature", planSummary, "")
 	if err != nil {
 		t.Fatalf("PlanJudge: %v", err)
 	}
@@ -296,13 +405,13 @@ func TestPlanRubricRequiresRequestArtifactMatch(t *testing.T) {
 // rather than the model's judgment, which is untestable without one.
 func TestPlanJudgeRejectsExplorationTerminalForPlanRequest(t *testing.T) {
 	reason := "add a terminal node that actually writes the plan - the current terminal node only explores and produces a report"
-	judge := NewPlanJudge(stubPlanJudgeModel{accept: false, reason: reason}, 0, "")
+	judge := NewPlanJudge(stubPlanJudgeModel{accept: false, reason: reason}, 0, "", nil, nil)
 	planSummary := "1 node(s):\n" +
 		"- explore (code-explorer): Explore the repository and produce a detailed report covering: files, Compose patterns, Gradle config, navigation\n" +
 		"delivery: kind=comment"
 	accept, gotReason, err := judge(context.Background(),
 		"Produce an implementation plan for issue #63: lay out a concrete plan - the approach, the files to change, and how to verify it.",
-		planSummary)
+		planSummary, "")
 	if err != nil {
 		t.Fatalf("PlanJudge: %v", err)
 	}
@@ -319,12 +428,12 @@ func TestPlanJudgeRejectsExplorationTerminalForPlanRequest(t *testing.T) {
 // request whose deliverable is shipped code either.
 func TestPlanJudgeRejectsExplorationTerminalForImplementRequest(t *testing.T) {
 	reason := "this plan stops at exploration; add a terminal code-implementer node that ships the change"
-	judge := NewPlanJudge(stubPlanJudgeModel{accept: false, reason: reason}, 0, "")
+	judge := NewPlanJudge(stubPlanJudgeModel{accept: false, reason: reason}, 0, "", nil, nil)
 	planSummary := "1 node(s):\n" +
 		"- explore (code-explorer): Explore the repository and report where the dark-mode toggle should be added\n"
 	accept, gotReason, err := judge(context.Background(),
 		"Add a dark-mode toggle to the settings screen and open a pull request.",
-		planSummary)
+		planSummary, "")
 	if err != nil {
 		t.Fatalf("PlanJudge: %v", err)
 	}

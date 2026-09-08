@@ -164,7 +164,11 @@ func (p *Planner) judgeRouting(ctx context.Context, plan *Plan, message string) 
 	ctx, span := otelobs.Start(ctx, "plan.judge")
 	defer span.End()
 
-	accept, reason, err := p.judge(ctx, message, planSummary(plan))
+	var repoKey string
+	if plan.Setup != nil {
+		repoKey = workspace.NormalizeRepoURL(plan.Setup.Repo)
+	}
+	accept, reason, err := p.judge(ctx, message, planSummary(plan), repoKey)
 	if err != nil {
 		span.RecordError(err)
 		slog.Warn("plan judge unavailable, allowing plan", "component", "planner", "error", err)

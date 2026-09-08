@@ -17,6 +17,8 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
@@ -291,6 +293,92 @@ func TestMemoryMCP_CrossNodeIsolation(t *testing.T) {
 	}
 	if got := stageA.Drain(); len(got) != 1 || got[0].Content != "poisoned by node A" {
 		t.Fatalf("node A's own stage_memory call didn't land in A's own buffer: %+v", got)
+	}
+}
+
+// TestMemoryMCP_RecallMemory_JoinsReceivedSetAndVotes covers epic #1255 P2's
+// core ACP verification end to end: a recall_memory call mid-run lands in the
+// node's RecallStage (the received set a live round loop reads every round -
+// see node.go's per-round merge), logs a memory.recall ledger entry with
+// source "tool", and - once fed to applyMemoryVotesOnPass as node.go's round
+// loop would - is voted on like any other received memory.
+func TestMemoryMCP_RecallMemory_JoinsReceivedSetAndVotes(t *testing.T) {
+	ctx := context.Background()
+	store, err := memory.OpenSQLite(ctx, t.TempDir()+"/mem.db", fakeMCPEmbedder{}, verbatimConsolidator{}, "test_mcp_recall", "task", 5, 0)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	sc := memory.Scope{Repo: "acme/recall-repo"}
+	if _, err := store.Commit(ctx, sc, "seed", memory.Provenance{}, nil, "the CI pipeline retries flaky steps twice"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	mems, _, err := store.List(ctx, []string{"repo:acme/recall-repo"}, 0, 10, true)
+	if err != nil || len(mems) != 1 {
+		t.Fatalf("List: %v mems=%+v", err, mems)
+	}
+	wantID := mems[0].ID
+
+	lgr := ledgertest.NewMemStore()
+	recalled := &vetting.RecallStage{}
+	secret := mustMemSecret(t)
+	vetting.RegisterMemSession(secret, vetting.MemSession{
+		Memory: store, Scope: sc, Recalled: recalled,
+		Ledger: lgr, ChatID: "chat-recall", NodeID: "node-recall",
+	})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "recall_memory", Arguments: map[string]any{"query": "CI pipeline"}})
+	if err != nil {
+		t.Fatalf("CallTool recall_memory: %v", err)
+	}
+	text := toolResultText(t, res)
+	if !strings.Contains(text, "retries flaky steps") || !strings.Contains(text, wantID) {
+		t.Fatalf("recall_memory result missing the seeded memory: %q", text)
+	}
+
+	// 1) Joins the received set: a live round loop reads this without draining it.
+	snap := recalled.Snapshot()
+	if len(snap) != 1 || snap[0].ID != wantID {
+		t.Fatalf("RecallStage snapshot = %+v, want exactly the seeded memory", snap)
+	}
+
+	// 2) Logged with source "tool" - the P1 prefill path uses "prefill".
+	entries, err := lgr.ReadEntries(ctx, "chat-recall", 0)
+	if err != nil {
+		t.Fatalf("ReadEntries: %v", err)
+	}
+	var recallEntry *ledger.Entry
+	for i := range entries {
+		if entries[i].Kind == ledger.KindMemoryRecall {
+			recallEntry = &entries[i]
+		}
+	}
+	if recallEntry == nil {
+		t.Fatal("no memory.recall ledger entry appended")
+	}
+	var payload ledger.MemoryRecallPayload
+	if err := json.Unmarshal(recallEntry.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload.Source != "tool" || len(payload.Entries) != 1 || payload.Entries[0].ID != wantID {
+		t.Fatalf("memory.recall payload = %+v, want source=tool entries=[%s]", payload, wantID)
+	}
+	if recallEntry.NodeID != "node-recall" {
+		t.Fatalf("memory.recall NodeID = %q, want %q", recallEntry.NodeID, "node-recall")
+	}
+
+	// 3) The recalls counter (the same projection prefill bumps) confirms
+	// RecordRecall ran - node.go's round loop feeds this snapshot into
+	// applyMemoryVotesOnPass exactly like prefill's hits (see package
+	// vetting's TestApplyMemoryVotesOnPass_SupportedAndContradicted, which
+	// covers the vote outcome itself against this same Delivered shape).
+	mems, _, err = store.List(ctx, []string{"repo:acme/recall-repo"}, 0, 10, true)
+	if err != nil || mems[0].Recalls < 1 {
+		t.Fatalf("point recalls not bumped: %v mems=%+v", err, mems)
 	}
 }
 

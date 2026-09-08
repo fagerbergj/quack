@@ -13,7 +13,9 @@ import (
 
 // alwaysAcceptJudge accepts the first plan it sees - the plan tool must run
 // (and save the dag_plan record) without a rejection round muddying the count.
-func alwaysAcceptJudge(context.Context, string, string) (bool, string, error) { return true, "", nil }
+func alwaysAcceptJudge(context.Context, string, string, string) (bool, string, error) {
+	return true, "", nil
+}
 
 // TestOrchestratorRun_AcceptedPlan_WritesDagPlanArtifact proves #1122: an
 // orchestrator wired with SetArtifacts writes "dag_plan:main" the moment a

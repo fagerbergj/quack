@@ -25,7 +25,7 @@ import (
 // rejectAlwaysJudge always rejects with reason - mimics a plan judge that
 // never finds an acceptable plan.
 func rejectAlwaysJudge(reason string) vetting.PlanJudge {
-	return func(context.Context, string, string) (bool, string, error) {
+	return func(context.Context, string, string, string) (bool, string, error) {
 		return false, reason, nil
 	}
 }
@@ -147,7 +147,7 @@ func TestOrchestrator_RejectionDoesNotLeakAcrossTurns(t *testing.T) {
 // intended.
 func TestOrchestrator_PlanRejectedThenAccepted_NotTreatedAsExhausted(t *testing.T) {
 	calls := 0
-	judge := vetting.PlanJudge(func(context.Context, string, string) (bool, string, error) {
+	judge := vetting.PlanJudge(func(context.Context, string, string, string) (bool, string, error) {
 		calls++
 		if calls == 1 {
 			return false, "add a terminal node", nil

@@ -72,7 +72,7 @@ func TestBuildAgents_PlanJudgeDoesNotInheritGatedNodeStamp(t *testing.T) {
 		ledger.Coords{ChatID: "other-chat", Node: "n-gated", Agent: "judge", Round: "judge-r1"})
 
 	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "plan-chat"})
-	ok, reason, err := planJudge(ctx, "do a thing", "node a: do the thing")
+	ok, reason, err := planJudge(ctx, "do a thing", "node a: do the thing", "")
 	if err != nil {
 		t.Fatalf("plan judge call: %v (a stamped gate model leaked its node/agent/round into this call)", err)
 	}

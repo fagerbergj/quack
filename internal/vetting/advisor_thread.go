@@ -72,6 +72,7 @@ type MemSession struct {
 	Memory     *memory.Store
 	Scope      memory.Scope
 	Staged     *MemStage    // stage_memory buffer
+	Recalled   *RecallStage // recall_memory hits (#1255 P2)
 	Review     *ReviewStage // non-nil for review-delivery nodes
 	PRStage    *PRStage     // non-nil for implement-delivery nodes
 	ExistingPR bool         // PRStage != nil and the run pushes onto an already-open PR - offer stage_push, not stage_pr
@@ -318,6 +319,30 @@ func (s *MemStage) Drain() []memory.Candidate {
 	defer s.mu.Unlock()
 	out := s.items
 	s.items = nil
+	return out
+}
+
+// RecallStage: per-node collector for the ACP loopback MCP's recall_memory
+// calls (epic #1255 P2). Unlike MemStage, it's Snapshot-read (not Drain'd):
+// an ACP worker's tool calls are otherwise invisible to this session, so the
+// round loop needs to see hits so far EVERY round, not just once at the end.
+type RecallStage struct {
+	mu   sync.Mutex
+	hits []memory.Delivered
+}
+
+func (s *RecallStage) Add(hits ...memory.Delivered) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hits = append(s.hits, hits...)
+}
+
+// Snapshot returns every hit collected so far, without clearing it.
+func (s *RecallStage) Snapshot() []memory.Delivered {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]memory.Delivered, len(s.hits))
+	copy(out, s.hits)
 	return out
 }
 

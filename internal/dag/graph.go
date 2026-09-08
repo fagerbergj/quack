@@ -227,6 +227,8 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 						ms.Memory = cfg.Memory
 						ms.Scope = vetting.MemoryScope(ctx, cfg, node.ID)
 						ms.Staged = &vetting.MemStage{}
+						ms.Recalled = &vetting.RecallStage{}
+						ms.ChatID, ms.NodeID, ms.Ledger = chatID, node.ID, cfg.Ledger
 					}
 					if reviewNode {
 						ms.Review = vetting.NewReviewStage(cfg.ReviewFanout)

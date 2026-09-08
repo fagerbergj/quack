@@ -141,7 +141,7 @@ func TestBuildErrorsEnumerateValidOptions(t *testing.T) {
 // the bound path involves no LLM call at all (not even the optional one).
 func TestBuildBoundProducesExactPlanWithoutJudge(t *testing.T) {
 	judgeCalled := false
-	judge := func(context.Context, string, string) (bool, string, error) {
+	judge := func(context.Context, string, string, string) (bool, string, error) {
 		judgeCalled = true
 		return true, "", nil
 	}
@@ -318,16 +318,44 @@ func TestBuildAcceptsImplementerNodeWithChecks(t *testing.T) {
 // fakePlanJudge returns a vetting.PlanJudge that records the last request/plan
 // summary it was called with and returns the canned verdict.
 func fakePlanJudge(accept bool, reason string, callErr error) (judge vetting.PlanJudge, calls *int, lastRequest, lastSummary *string) {
+	judge, calls, lastRequest, lastSummary, _ = fakePlanJudgeWithRepoKey(accept, reason, callErr)
+	return judge, calls, lastRequest, lastSummary
+}
+
+// fakePlanJudgeWithRepoKey is fakePlanJudge plus the repoKey the judge was called with.
+func fakePlanJudgeWithRepoKey(accept bool, reason string, callErr error) (judge vetting.PlanJudge, calls *int, lastRequest, lastSummary, lastRepoKey *string) {
 	calls = new(int)
 	lastRequest = new(string)
 	lastSummary = new(string)
-	judge = func(_ context.Context, request, planSummary string) (bool, string, error) {
+	lastRepoKey = new(string)
+	judge = func(_ context.Context, request, planSummary, repoKey string) (bool, string, error) {
 		*calls++
 		*lastRequest = request
 		*lastSummary = planSummary
+		*lastRepoKey = repoKey
 		return accept, reason, callErr
 	}
-	return judge, calls, lastRequest, lastSummary
+	return judge, calls, lastRequest, lastSummary, lastRepoKey
+}
+
+// TestJudgeRoutingPassesRepoKeyFromDeclaredSetup pins the fix for a
+// GitHub-dispatched chat: the repo is known before the plan is judged (the
+// plan declares setup with a clone URL), so the judge must receive the
+// normalized repo key - not "" (which would force its recall to user-only
+// scope).
+func TestJudgeRoutingPassesRepoKeyFromDeclaredSetup(t *testing.T) {
+	judge, _, _, _, lastRepoKey := fakePlanJudgeWithRepoKey(true, "", nil)
+	p := NewPlanner([]AgentInfo{{Name: "code-reviewer"}}, nil, judge)
+	setup := &Setup{Repo: "https://github.com/Acme/Widgets.git", BaseRef: "main", WorkBranch: "quack/issue-1"}
+	_, err := p.Build(context.Background(), []RawNode{
+		{ID: "review", Agent: "code-reviewer", Task: "Review the PR."},
+	}, setup, nil, nil, "review this PR", nil, nil)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if *lastRepoKey != "github.com/acme/widgets" {
+		t.Errorf("judge saw repoKey %q, want %q", *lastRepoKey, "github.com/acme/widgets")
+	}
 }
 
 // A plan-only run (explore → synthesize, no code-implementer) that the judge

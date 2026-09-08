@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -12,6 +13,8 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/ledger"
 )
 
 // preloadInstructions matches ADK's preloadmemorytool wording so recalled memory
@@ -180,10 +183,13 @@ func (s *Store) Recall(ctx context.Context, sc Scope, query string) string {
 
 // Delivered is one memory handed to a worker - the received-set entry the
 // judge is asked to vote on and the ledger's memory.recall entry records.
+// JSON tags let it double as recall_memory's tool-visible output (#1255 P2):
+// a compact id/tier/score/content list the model can cite by id.
 type Delivered struct {
-	ID      string
-	Content string
-	Score   float32
+	ID      string  `json:"id"`
+	Tier    string  `json:"tier"`
+	Score   float32 `json:"score"`
+	Content string  `json:"content"`
 }
 
 // RecallWithHits is Recall plus the delivered set (ids/content/score) so a
@@ -207,13 +213,110 @@ func (s *Store) RecallWithHits(ctx context.Context, sc Scope, query string) (tex
 	// memory.recall entry instead of always recording 0 (#1257 review).
 	hits = make([]Delivered, 0, len(resp.Memories))
 	for i, m := range resp.Memories {
-		d := Delivered{ID: m.ID, Content: extractText(m)}
+		d := Delivered{ID: m.ID, Content: extractText(m), Tier: TierUnverified}
 		if i < len(scoredHits) {
 			d.Score = scoredHits[i].Score
+			if scoredHits[i].Tier != "" {
+				d.Tier = scoredHits[i].Tier
+			}
 		}
 		hits = append(hits, d)
 	}
 	return fmt.Sprintf(recallInstructions, text), hits
+}
+
+// TopK is the store's configured recall size - the ceiling recall_memory's
+// own k argument is capped against (epic #1255 P2), so a tool caller can
+// narrow a recall but never widen it past what prefill itself is allowed.
+func (s *Store) TopK() int {
+	if s == nil {
+		return 0
+	}
+	return s.topK
+}
+
+// InjectionByteBudget bounds the total Content bytes a single recall_memory
+// call hands back to a worker - shared with prefill's own recall (both read
+// through RecallWithHits/RecallForTool), so a tool call can never inject
+// more than an ordinary prefill already could.
+const InjectionByteBudget = 8000
+
+// CapForInjection drops hits from the tail once their cumulative Content
+// bytes would exceed budget (<=0 disables the cap), reporting whether
+// anything was dropped so the caller can tell the model.
+func CapForInjection(hits []Delivered, budget int) (kept []Delivered, truncated bool) {
+	if budget <= 0 {
+		return hits, false
+	}
+	used := 0
+	for i, h := range hits {
+		used += len(h.Content)
+		if used > budget {
+			return hits[:i], true
+		}
+	}
+	return hits, false
+}
+
+// RecallForTool is recall_memory's core: RecallWithHits's full hit set,
+// capped to k (<=0 or > the store's own top_k uses top_k - a tool call can
+// narrow a recall but never widen it) and then to InjectionByteBudget.
+func (s *Store) RecallForTool(ctx context.Context, sc Scope, query string, k int) (hits []Delivered, truncated bool) {
+	if s == nil {
+		return nil, false
+	}
+	_, all := s.RecallWithHits(ctx, sc, query)
+	if k > 0 && k < len(all) {
+		all = all[:k]
+	}
+	return CapForInjection(all, InjectionByteBudget)
+}
+
+// FormatForModel renders recall_memory's result as the tool's return text -
+// the compact id/tier/score/content list the model can cite by id, plus a
+// truncation notice when InjectionByteBudget dropped hits (epic #1255 P2).
+func FormatForModel(hits []Delivered, truncated bool) string {
+	if len(hits) == 0 {
+		return "(no relevant memory found)"
+	}
+	var b strings.Builder
+	for _, h := range hits {
+		fmt.Fprintf(&b, "- id=%s tier=%s score=%.2f: %s\n", h.ID, h.Tier, h.Score, h.Content)
+	}
+	if truncated {
+		b.WriteString("(truncated: more memories matched than fit the injection budget)\n")
+	}
+	return b.String()
+}
+
+// LogRecall appends a best-effort memory.recall ledger entry for a
+// recall_memory call and bumps recalls/last_recalled_at - the tool-call twin
+// of vetting's recallLedgerEntry+RecordRecall pair for prefill, shared here
+// so both the native tool and the ACP loopback MCP write identically shaped
+// entries without either depending on package vetting. round is always 0:
+// a tool call has no round of its own to stamp (mirrors prefill's call,
+// which is also always round 0).
+func (s *Store) LogRecall(ctx context.Context, led ledger.LedgerStore, chatID, nodeID, source string, hits []Delivered) {
+	if s == nil || led == nil || len(hits) == 0 {
+		return
+	}
+	entries := make([]ledger.MemoryRecallEntry, len(hits))
+	ids := make([]string, len(hits))
+	for i, h := range hits {
+		entries[i] = ledger.MemoryRecallEntry{ID: h.ID, Score: h.Score}
+		ids[i] = h.ID
+	}
+	payload, err := json.Marshal(ledger.MemoryRecallPayload{Source: source, Entries: entries})
+	if err != nil {
+		return
+	}
+	if _, err := led.AppendIntent(ctx, ledger.Entry{
+		ChatID: chatID, NodeID: nodeID, Kind: ledger.KindMemoryRecall, At: time.Now().UTC(), Payload: payload,
+	}); err != nil {
+		s.log.Warn("ledger memory.recall append failed (observational; call unaffected)", "chat_id", chatID, "node_id", nodeID, "err", err)
+		return
+	}
+	s.RecordRecall(ctx, ids)
 }
 
 // RecordRecall bumps recalls and last_recalled_at for every id in one

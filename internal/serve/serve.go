@@ -1092,7 +1092,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("gates.judge: plan judge model: %w", err)
 			}
 			safetyJudge = tools.NewSafetyJudge(safetyModel)
-			planJudge = vetting.NewPlanJudge(planModel, cfg.Gates.Judge.MaxOutputTokens, cfg.Gates.Judge.ThinkingLevel)
+			planJudge = vetting.NewPlanJudge(planModel, cfg.Gates.Judge.MaxOutputTokens, cfg.Gates.Judge.ThinkingLevel, taskStore, ledgerStore)
 		}
 		slog.Info("trust gate enabled", "component", "startup",
 			"deterministic_rounds", gateCfg.DeterministicRounds,
@@ -1335,6 +1335,9 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 					NodeCancelled:   nodeCancelled,
 					ExtTools:        extToolsByName,
 					Replayer:        nativeReplay,
+					Memory:          taskStore,
+					MemoryRole:      ac.Memory.Bucket,
+					Ledger:          ledgerStore,
 				}); err != nil {
 					return nil, nil, nil, fmt.Errorf("tools: %w", err)
 				}
@@ -1680,7 +1683,7 @@ func resolveToolNames(configured []string, taskMemAvailable, advisorAvailable bo
 		case "load_memory":
 			wantLoadMemory = true
 			continue
-		case "stage_memory":
+		case "stage_memory", "recall_memory":
 			if !taskMemAvailable {
 				continue
 			}

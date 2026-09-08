@@ -643,6 +643,20 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				}
 			}
 			act := actFor(answer)
+			// recall_memory hits merge in fresh every round, from wherever this
+			// round's answer actually came from - re-scanning the FULL session
+			// (native) each round, and a live (non-destructive) snapshot of the
+			// ACP MemSession's collector, so a call made mid-round is captured
+			// by THIS round's judge, not missed because the set was snapshotted
+			// before the call happened (epic #1255 P2 adversarial review finding).
+			receivedMemories = mergeMemoryHits(receivedMemories, act.recalled)
+			if advisorToken != "" {
+				if t, ok := LookupAdvisorThread(advisorToken); ok && t.MemSecret != "" {
+					if ms, ok := LookupMemSession(t.MemSecret); ok && ms.Recalled != nil {
+						receivedMemories = mergeMemoryHits(receivedMemories, ms.Recalled.Snapshot())
+					}
+				}
+			}
 			// Every judge round writes a revision, gate-passed or not - only
 			// delivery stays gate-passed-only (#1090 P2: rounds are history).
 			// Every gated node writes one, not just reviewer/document nodes
@@ -875,6 +889,28 @@ func parkForInput(ctrl NodeControl, question string, ierr error) error {
 		ctrl.PauseForInput(question)
 	}
 	return fmt.Errorf("%w: %w", ErrNodePaused, ierr)
+}
+
+// recallMemoryHits: parses a native recall_memory FunctionResponse (a
+// tools.recallMemoryResult round-tripped through session-event JSON) back
+// into the hits it delivered - a JSON roundtrip rather than manual map
+// assertions, since ADK's own representation of a nested slice varies by
+// path (live run vs replay) and json.Marshal handles either uniformly.
+func recallMemoryHits(resp map[string]any) []memory.Delivered {
+	if resp == nil {
+		return nil
+	}
+	b, err := json.Marshal(resp)
+	if err != nil {
+		return nil
+	}
+	var out struct {
+		Hits []memory.Delivered `json:"hits"`
+	}
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil
+	}
+	return out.Hits
 }
 
 // stagedCandidate: parses stage_memory args into memory candidate. Bucket routes the write.
@@ -1807,6 +1843,9 @@ func activityFromSessionAt(sess session.Session, nodeDir string) workerActivity 
 			}
 			if p.FunctionResponse != nil && p.FunctionResponse.Name == "web_search" {
 				recordSearchResults(s.act.seen, p.FunctionResponse.Response)
+			}
+			if p.FunctionResponse != nil && p.FunctionResponse.Name == "recall_memory" {
+				s.act.recalled = append(s.act.recalled, recallMemoryHits(p.FunctionResponse.Response)...)
 			}
 			if p.FunctionResponse != nil && p.FunctionResponse.Name == "cd" {
 				if pendingCd[p.FunctionResponse.ID] {

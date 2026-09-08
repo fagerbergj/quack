@@ -205,6 +205,12 @@ type workerActivity struct {
 	staged    []memory.Candidate
 	workspace []wsOp
 
+	// recalled: recall_memory hits a NATIVE worker's own tool call returned
+	// this run (epic #1255 P2) - scanned from session events (see
+	// activityFromSessionAt's "recall_memory" case), since a native worker's
+	// tool calls, unlike an ACP worker's, land in this session directly.
+	recalled []memory.Delivered
+
 	clonedRepos []string
 	clonedDirs  []string
 	paths       map[string]bool // successful fs ops paths, normalizePath'd

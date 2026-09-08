@@ -58,9 +58,14 @@ func registerCheckMermaidTool(srv *mcp.Server) {
 const mcpServerName = "quackmcp"
 
 // Tool names shared between registrations and mcpToolNames.
+// toolRecallMemory matches the native registry tool's name exactly, same
+// convention as toolStageMemory - opencode's own "<server>_<tool>" prefix
+// (mcpServerName) is what keeps it collision-free (#630), not a locally
+// unique name, so it must read identically to a worker on either surface.
 const (
 	toolLoadMemory    = "load_memory"
 	toolStageMemory   = "stage_memory"
+	toolRecallMemory  = "recall_memory"
 	toolReadArtifact  = "read_artifact"
 	toolListArtifacts = "list_artifacts"
 	toolEditArtifact  = "edit_artifact"
@@ -341,6 +346,12 @@ type stageMemoryInput struct {
 	Kind    string `json:"kind,omitempty" jsonschema:"which bucket this belongs to: repo, role, or user (default: repo)"`
 }
 
+// recallMemoryInput is the recall_memory tool's input.
+type recallMemoryInput struct {
+	Query string `json:"query" jsonschema:"what to recall (a topic, not a document)"`
+	K     int    `json:"k,omitempty" jsonschema:"max memories to return; capped by the server's own top_k"`
+}
+
 // memoryMCP: process-local loopback MCP server, scoped by URL path.
 var memoryMCP struct {
 	once sync.Once
@@ -395,6 +406,17 @@ func memoryMCPHandler() http.Handler {
 				}
 				sess.Staged.Add(memory.Candidate{Content: args.Content, Metadata: map[string]string{"bucket": args.Kind}})
 				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "staged"}}}, nil, nil
+			})
+			mcp.AddTool(srv, &mcp.Tool{
+				Name:        toolRecallMemory,
+				Description: "Recall up to k durable facts from shared memory relevant to `query`. Returns a compact id/tier/score/content list - cite an id in your answer when you rely on it. Every call is logged and may be voted on.",
+			}, func(ctx context.Context, _ *mcp.CallToolRequest, args recallMemoryInput) (*mcp.CallToolResult, any, error) {
+				hits, truncated := sess.Memory.RecallForTool(ctx, sess.Scope, args.Query, args.K)
+				sess.Memory.LogRecall(ctx, sess.Ledger, sess.ChatID, sess.NodeID, "tool", hits)
+				if sess.Recalled != nil {
+					sess.Recalled.Add(hits...)
+				}
+				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: memory.FormatForModel(hits, truncated)}}}, nil, nil
 			})
 		}
 		if sess.Artifacts != nil {

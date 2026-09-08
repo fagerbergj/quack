@@ -41,6 +41,47 @@ func receivedMemoriesSection(received []memory.Delivered) string {
 	return sb.String()
 }
 
+// planJudgeMemoryHeader: unlike judgeMemoriesInstructions, these are NOT
+// voted on - the plan judge scores plan shape, not delivered work, so there
+// is nothing yet to check a memory against (epic #1255 P2).
+const planJudgeMemoryHeader = "PROJECT MEMORY - background notes about this repo/task family, for context only. Do not vote on these; there is no submit_plan_verdict field for them.\n\n"
+
+// planMemorySection renders top-k memories for the plan judge's prompt -
+// the receivedMemoriesSection twin for a round that never votes.
+func planMemorySection(hits []memory.Delivered) string {
+	if len(hits) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString(planJudgeMemoryHeader)
+	for _, m := range hits {
+		fmt.Fprintf(&sb, "- id=%s: %s\n", m.ID, m.Content)
+	}
+	sb.WriteString("\n")
+	return sb.String()
+}
+
+// mergeMemoryHits appends new into base, deduping by id (first occurrence
+// wins) so a memory recalled by both prefill and a recall_memory tool call
+// is voted on once, not twice (epic #1255 P2 adversarial review finding).
+func mergeMemoryHits(base, add []memory.Delivered) []memory.Delivered {
+	if len(add) == 0 {
+		return base
+	}
+	seen := make(map[string]bool, len(base))
+	for _, m := range base {
+		seen[m.ID] = true
+	}
+	for _, m := range add {
+		if seen[m.ID] {
+			continue
+		}
+		seen[m.ID] = true
+		base = append(base, m)
+	}
+	return base
+}
+
 // recallLedgerEntry appends a best-effort memory.recall ledger entry for one
 // injection (design decision #1255 P1: the ledger is the source of truth for
 // what a chat retrieved). Best-effort, unlike memory.vote below: it records

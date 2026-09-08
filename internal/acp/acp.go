@@ -482,6 +482,7 @@ func mcpToolNames(sess vetting.MemSession, offered bool) []string {
 	if sess.Memory != nil {
 		add(toolLoadMemory)
 		add(toolStageMemory)
+		add(toolRecallMemory)
 	}
 	if sess.Artifacts != nil {
 		add(toolReadArtifact)

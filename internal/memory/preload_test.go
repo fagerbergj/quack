@@ -86,3 +86,67 @@ func TestRecallWithHits_PopulatesScore(t *testing.T) {
 		t.Fatalf("hits[0].Score = %v, want non-zero (real cosine similarity)", hits[0].Score)
 	}
 }
+
+// TestCapForInjection_TruncatesAndReports covers epic #1255 P2's byte-budget
+// requirement: once cumulative Content bytes exceed budget, later hits are
+// dropped and truncated is reported - not silently swallowed.
+func TestCapForInjection_TruncatesAndReports(t *testing.T) {
+	hits := []Delivered{{ID: "a", Content: strings.Repeat("x", 6)}, {ID: "b", Content: strings.Repeat("y", 6)}}
+	kept, truncated := CapForInjection(hits, 10)
+	if !truncated {
+		t.Fatal("truncated = false, want true (12 bytes over a 10-byte budget)")
+	}
+	if len(kept) != 1 || kept[0].ID != "a" {
+		t.Fatalf("kept = %+v, want just the first hit", kept)
+	}
+	kept, truncated = CapForInjection(hits, 100)
+	if truncated || len(kept) != 2 {
+		t.Fatalf("kept = %+v truncated = %v, want both hits under budget", kept, truncated)
+	}
+	// budget<=0 disables the cap entirely.
+	kept, truncated = CapForInjection(hits, 0)
+	if truncated || len(kept) != 2 {
+		t.Fatalf("budget<=0: kept = %+v truncated = %v, want the cap disabled", kept, truncated)
+	}
+}
+
+// TestRecallForTool_CapsToTopKAndScopeIsolation covers two of P2's required
+// verifications together: k narrows but never widens past the store's own
+// top_k, and a caller in one repo's scope never sees another repo's memories.
+func TestRecallForTool_CapsToTopKAndScopeIsolation(t *testing.T) {
+	consolidator := fakeModel{reply: `{"ops":[{"action":"ADD","content":"seed","kind":"note"}]}`}
+	s := newSQLiteStore(t, "task", consolidator) // top_k=5, min_score=0.5
+	sc := Scope{Repo: "acme/repo-a"}
+	other := Scope{Repo: "acme/repo-b"}
+	for i := 0; i < 3; i++ {
+		if _, err := s.Commit(context.Background(), sc, "explorer", Provenance{}, []Candidate{{Content: "repo-a fact"}}, ""); err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+	}
+	if _, err := s.Commit(context.Background(), other, "explorer", Provenance{}, []Candidate{{Content: "repo-b secret"}}, ""); err != nil {
+		t.Fatalf("commit other repo: %v", err)
+	}
+
+	// k=1 narrows below top_k.
+	hits, _ := s.RecallForTool(context.Background(), sc, "fact", 1)
+	if len(hits) != 1 {
+		t.Fatalf("k=1: got %d hits, want 1", len(hits))
+	}
+	// k > top_k never widens past top_k.
+	hits, _ = s.RecallForTool(context.Background(), sc, "fact", 999)
+	if len(hits) > s.TopK() {
+		t.Fatalf("k=999: got %d hits, want capped at top_k=%d", len(hits), s.TopK())
+	}
+	for _, h := range hits {
+		if strings.Contains(h.Content, "repo-b") {
+			t.Fatalf("scope isolation violated: repo-a's recall returned repo-b's memory: %+v", h)
+		}
+	}
+	// A caller scoped to repo-b never sees repo-a's memories either.
+	hits, _ = s.RecallForTool(context.Background(), other, "fact", 0)
+	for _, h := range hits {
+		if strings.Contains(h.Content, "repo-a") {
+			t.Fatalf("scope isolation violated: repo-b's recall returned repo-a's memory: %+v", h)
+		}
+	}
+}
