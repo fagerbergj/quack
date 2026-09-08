@@ -34,12 +34,14 @@ func qdrantTestAddr(t *testing.T) string {
 	qdrantAddrOnce.Do(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
-		// Pinned to roughly match the go-client version in go.mod (v1.19) -
-		// CollectionExists against a too-old server 501s ("Unimplemented"). Raise
-		// the container's nofile ulimit above Docker's 1024 default: RocksDB opens
-		// several file handles per collection, and this suite creates one
-		// collection per converted test on a single shared container.
-		ctr, err := tcqdrant.Run(ctx, "qdrant/qdrant:v1.12.4",
+		// Pinned to match prod's server exactly (v1.19.1) - a too-old server
+		// (was v1.12.4) sends the legacy VectorOutput.Data wire shape and
+		// can't catch a client that only reads the new Dense oneof arm, or
+		// vice versa (#1269/#1268). Raise the container's nofile ulimit above
+		// Docker's 1024 default: RocksDB opens several file handles per
+		// collection, and this suite creates one collection per converted
+		// test on a single shared container.
+		ctr, err := tcqdrant.Run(ctx, "qdrant/qdrant:v1.19.1",
 			testcontainers.WithHostConfigModifier(func(hc *container.HostConfig) {
 				hc.Ulimits = []*container.Ulimit{{Name: "nofile", Soft: 65536, Hard: 65536}}
 			}),
@@ -74,6 +76,28 @@ func newQdrantStore(t *testing.T, domain string, consolidator model.LLM) *Store 
 		t.Fatalf("Open (qdrant): %v", err)
 	}
 	return s
+}
+
+// TestQdrant_ListWithVectorsReturnsNonEmptyVector is the regression guard for
+// #1268/#1269: a v1.19 server answers with the newer VectorOutput.Dense oneof
+// arm, not the deprecated top-level Data field vectorData used to read alone,
+// which silently made every retrieved vector nil (cosine 0 everywhere, so
+// DedupeSweep and the MMR re-rank never found any pair similar).
+func TestQdrant_ListWithVectorsReturnsNonEmptyVector(t *testing.T) {
+	ctx := context.Background()
+	s := newQdrantStore(t, "task", nil)
+	seedMemory(t, s, point{ID: testID("v"), Content: "vector round trip", Scope: "repo:x", Vector: []float32{1, 0, 0, 0}})
+
+	got, err := s.idx.list(ctx, []string{"repo:x"}, 0, 10, false, "", true)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("list returned %d points, want 1", len(got))
+	}
+	if len(got[0].Vector) != 4 {
+		t.Fatalf("vector = %v, want a non-empty 4-dim vector", got[0].Vector)
+	}
 }
 
 // testID maps a readable test fixture name (e.g. "m1", "verified-old") to a

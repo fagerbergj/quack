@@ -190,10 +190,16 @@ func (x *qdrantIndex) query(ctx context.Context, buckets []string, vec []float32
 // VectorsOutput (nil if the point somehow carries none/a named-vector shape
 // this collection never uses).
 func vectorData(v *qdrant.VectorsOutput) []float32 {
-	if v == nil {
+	vo := v.GetVector()
+	if vo == nil {
 		return nil
 	}
-	return v.GetVector().GetData()
+	// Qdrant 1.19 servers populate the newer Dense oneof arm instead of the
+	// deprecated top-level Data field; check both or every vector reads nil.
+	if d := vo.GetData(); d != nil {
+		return d
+	}
+	return vo.GetDense().GetData()
 }
 
 // list fetches every point matching buckets via Scroll (paginating internally
