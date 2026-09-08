@@ -26,8 +26,11 @@ func RunMemoryRescope(ctx context.Context, out io.Writer, server string, apply, 
 	if report.Applied {
 		verb = "moved"
 	}
+	skipped := report.SkippedNoProvenance != nil && *report.SkippedNoProvenance > 0
 	if len(report.Repos) == 0 {
-		fmt.Fprintln(out, "No role:* memories resolve to a GitHub-origin chat.")
+		if !skipped {
+			fmt.Fprintln(out, "No role:* memories resolve to a GitHub-origin chat.")
+		}
 	} else {
 		tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 		fmt.Fprintf(tw, "REPO\t%s\tEXAMPLE\n", "COUNT")
@@ -47,7 +50,7 @@ func RunMemoryRescope(ctx context.Context, out io.Writer, server string, apply, 
 		}
 		fmt.Fprintf(out, "\n%s %d memories across %d repos.\n", verb, total, len(report.Repos))
 	}
-	if report.SkippedNoProvenance != nil && *report.SkippedNoProvenance > 0 {
+	if skipped {
 		fmt.Fprintf(out, "%d role:* memories have no provenance chat_id (minted before #875) - not moved.\n", *report.SkippedNoProvenance)
 	}
 	return nil

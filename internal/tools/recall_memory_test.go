@@ -102,42 +102,17 @@ func TestNewRecallMemory_LogsLedgerEntryWithCoords(t *testing.T) {
 	}
 }
 
-// TestNewRecallMemory_NoNodeIDLegacyBucket: #1262 companion for the native
-// P2 recall path (vetting.MemoryScope's ACP-side twin) - a fact committed
-// directly to a bucket literally named after the node id must NOT be found,
-// proving recall_memory no longer queries Legacy: coords.Node.
-func TestNewRecallMemory_NoNodeIDLegacyBucket(t *testing.T) {
-	ctx := context.Background()
-	store, err := memory.OpenSQLite(ctx, t.TempDir()+"/mem.db", fakeToolEmbedder{}, echoToolConsolidator{content: "node-id-bucket fact"}, "test_recall_legacy", "task", 5, 0)
-	if err != nil {
-		t.Fatalf("OpenSQLite: %v", err)
-	}
-	// Simulates what the old Legacy: coords.Node bug would have queried -
-	// a bucket keyed by the raw node id, which never legitimately holds anything.
-	if _, err := store.Commit(ctx, memory.Scope{Legacy: "node1"}, "explorer", memory.Provenance{}, []memory.Candidate{{Content: "node-id-bucket fact"}}, ""); err != nil {
-		t.Fatalf("commit: %v", err)
-	}
-
-	lgr := ledgertest.NewMemStore()
-	tl, err := newRecallMemory(Deps{Memory: store, Ledger: lgr, MemoryRole: "task"})
-	if err != nil {
-		t.Fatalf("newRecallMemory: %v", err)
-	}
-	tl.(ledger.CoordSetter).SetLedgerCoords(ledger.Coords{ChatID: "chat1", Node: "node1"})
-	out, err := tl.(runnableTool).Run(newFakeCtx(), map[string]any{"query": "node-id-bucket fact"})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	b, err := json.Marshal(out)
-	if err != nil {
-		t.Fatalf("marshal Run result: %v", err)
-	}
-	var result recallMemoryResult
-	if err := json.Unmarshal(b, &result); err != nil {
-		t.Fatalf("unmarshal Run result: %v", err)
-	}
-	if len(result.Hits) != 0 {
-		t.Fatalf("Run result = %+v, want zero hits (no node-id legacy bucket recall)", out)
+// TestRecallScope_NoNodeIDLegacyBucket: #1262/#1263 - recallScope's bucket
+// list is exactly [role:..., ...], never a Legacy bucket keyed by the raw
+// node id. Asserts the Scope directly (Commit never routes a Legacy-only
+// scope to a real bucket, so a round-trip-through-Commit test here would be
+// vacuous - it would pass even with Legacy: coords.Node reintroduced).
+func TestRecallScope_NoNodeIDLegacyBucket(t *testing.T) {
+	sc := recallScope(Deps{MemoryRole: "task"}, newFakeCtx(), ledger.Coords{ChatID: "chat1", Node: "node1"})
+	want := []string{"role:task"}
+	buckets := sc.Buckets()
+	if len(buckets) != len(want) || buckets[0] != want[0] {
+		t.Fatalf("Buckets() = %v, want %v (no node-id legacy bucket)", buckets, want)
 	}
 }
 
