@@ -34,6 +34,50 @@ export const Empty: Story = {
   args: { memories: [] },
 }
 
+// #1266 review: a non-time sort (e.g. upvotes) hands the timeline a page
+// whose ages are non-monotonic - `grouped=false` renders a flat list instead
+// of interleaved, repeating age-band headers.
+export const FlatNonTimeSort: Story = {
+  args: {
+    grouped: false,
+    memories: [
+      mem({ id: '1', content: 'Highest upvotes, but oldest.', timestamp: '2026-02-10T09:00:00Z' }),
+      mem({ id: '2', content: 'Second, minted today.', timestamp: '2026-08-06T10:00:00Z' }),
+      mem({ id: '3', content: 'Third, minted last month.', timestamp: '2026-07-01T09:00:00Z' }),
+    ],
+  },
+}
+
+// #1266 regression check: at <600px the date gutter collapses (the row's own
+// relative-time chip carries it) and the vote control moves into the
+// metadata row, so the text column isn't squeezed to a couple of words wide.
+// The frame IS the simulated device width, like Composer's MobileViewport.
+export const MobileViewport: Story = {
+  args: {
+    memories: [
+      mem({
+        id: 'v1',
+        content: "The consolidator drops a near-duplicate candidate above cosine similarity 0.92.",
+        author: 'review-new-commits',
+        tier: 'verified',
+        upvotes: 4,
+        vote_score: 3,
+        recalls: 12,
+        last_upvoted_at: '2026-08-06T09:00:00Z',
+        last_recalled_at: '2026-08-06T11:15:00Z',
+        timestamp: '2026-08-06T08:00:00Z',
+      }),
+      mem({ id: 'v2', content: "NightsOut's instrumentation tests need minSdk 30.", timestamp: '2026-08-04T18:22:11Z' }),
+    ],
+  },
+  parameters: { layout: 'fullscreen' },
+  decorators: [Story => (
+    <div className="w-[390px] mx-auto overflow-hidden border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900">
+      <Story />
+    </div>
+  )],
+}
+
 // Every entry here is well outside "This month" - the whole timeline is one
 // "Older" group, so old memories stay visibly distinct even when that's ALL
 // there is (no Today/This week bands crowding them).

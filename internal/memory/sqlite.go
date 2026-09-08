@@ -145,7 +145,7 @@ func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32
 	return out, nil
 }
 
-func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string) ([]scored, error) {
+func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string, sortBy ...string) ([]scored, error) {
 	q := x.db.WithContext(ctx).Where("collection = ?", x.coll)
 	if len(buckets) > 0 {
 		q = q.Where("scope IN ?", buckets)
@@ -154,9 +154,9 @@ func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit 
 		q = q.Where("status IS NULL OR status <> ?", string(StatusInvalidated))
 	}
 	q = tierWhere(q, tier)
-	// id DESC breaks timestamp ties deterministically, so paging never
-	// duplicates or drops a row across offset boundaries.
-	q = q.Order("timestamp DESC, id DESC").Offset(offset)
+	// id DESC breaks every ordering's ties deterministically, so paging
+	// never duplicates or drops a row across offset boundaries.
+	q = q.Order(sqliteOrderBy(firstSort(sortBy))).Offset(offset)
 	if limit > 0 {
 		q = q.Limit(limit)
 	}
@@ -215,6 +215,31 @@ func (x *sqliteIndex) count(ctx context.Context, buckets []string, includeInvali
 		return 0, fmt.Errorf("memory: sqlite count: %w", err)
 	}
 	return int(n), nil
+}
+
+// sqliteOrderBy maps a ListSort constant to an ORDER BY clause, always with
+// an `id DESC` tie-break (#1266) so paging never duplicates/drops a row when
+// two rows share the sort column's value (e.g. two never-recalled memories
+// both have last_recalled_at = ""). last_recalled sorts descending with ""
+// (never recalled) last, via a CASE, not a plain string sort (empty string
+// sorts before any timestamp lexically, which would put it first).
+func sqliteOrderBy(sortBy string) string {
+	switch sortBy {
+	case SortOldest:
+		return "timestamp ASC, id DESC"
+	case SortScore:
+		return "vote_score DESC, id DESC"
+	case SortUpvotes:
+		return "upvotes DESC, id DESC"
+	case SortDownvotes:
+		return "downvotes DESC, id DESC"
+	case SortRecalls:
+		return "recalls DESC, id DESC"
+	case SortLastRecalled:
+		return "CASE WHEN last_recalled_at IS NULL OR last_recalled_at = '' THEN 1 ELSE 0 END, last_recalled_at DESC, id DESC"
+	default:
+		return "timestamp DESC, id DESC"
+	}
 }
 
 // tierWhere applies tier's filter to q, if any. "" means no filter.

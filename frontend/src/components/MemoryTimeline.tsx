@@ -49,27 +49,39 @@ export interface MemoryTimelineProps {
   onVote: (id: string, vote: VoteDirection) => Promise<void>
   // Test/story seam: pins "now" so age-band assignment is deterministic.
   now?: number
+  // grouped=false (#1266 review) renders a flat list, no age-band headers.
+  // groupByAge assumes time-ordered input - fed a page sorted by
+  // upvotes/score/downvotes/recalls/last_recalled (ages non-monotonic), it
+  // produces repeating, interleaved "Today...Older...Today" headers. Only
+  // the two time sorts (newest/oldest) are actually time-ordered.
+  grouped?: boolean
 }
 
 // MemoryTimeline (#746 item 14): a vertical line down the left carries each
 // entry's date, with entries grouped into age bands (Today / This week / This
 // month / Older) so old memories are visibly at the end instead of mixed
-// through a flat list.
-export function MemoryTimeline({ memories, onForget, onVote, now }: MemoryTimelineProps) {
-  const groups = groupByAge(memories, now)
+// through a flat list - only meaningful when the caller's sort is time-order
+// (see `grouped` above).
+export function MemoryTimeline({ memories, onForget, onVote, now, grouped = true }: MemoryTimelineProps) {
+  const groups = grouped ? groupByAge(memories, now) : [{ label: '', memories }]
   return (
     <div className="py-2">
-      {groups.map(g => (
-        <div key={`${g.label}-${g.memories[0]?.id}`}>
-          <div className="pl-[4.75rem] pr-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
-            {g.label}
-          </div>
+      {groups.map((g, i) => (
+        <div key={g.label ? `${g.label}-${g.memories[0]?.id}` : `flat-${i}`}>
+          {g.label && (
+            <div className="pl-3 medium:pl-[4.75rem] pr-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+              {g.label}
+            </div>
+          )}
           {g.memories.map(m => (
             <div key={m.id} className="flex">
-              <div className="w-14 shrink-0 pt-3 pl-3 text-right text-[11px] text-gray-400 dark:text-gray-500 tabular-nums">
+              {/* Date gutter collapses below `medium` (#1266): the row's own
+                  relative-time chip already carries this, so the gutter is
+                  pure redundant width at 390px, not an information loss. */}
+              <div className="hidden medium:block w-14 shrink-0 pt-3 pl-3 text-right text-[11px] text-gray-400 dark:text-gray-500 tabular-nums">
                 {shortDate(m.timestamp)}
               </div>
-              <div className="relative shrink-0 w-4 flex justify-center">
+              <div className="hidden medium:flex relative shrink-0 w-4 justify-center">
                 <div className="absolute inset-y-0 w-px bg-gray-200 dark:bg-gray-700" />
                 <span className="relative mt-[1.15rem] w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-gray-600 ring-2 ring-white dark:ring-gray-900" />
               </div>

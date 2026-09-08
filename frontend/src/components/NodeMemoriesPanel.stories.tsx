@@ -73,3 +73,20 @@ export const OwnVoteActive: Story = {
     await waitFor(() => canvas.getByRole('button', { name: 'Upvote' }))
   },
 }
+
+// #1266: opened from a Chat/DagNode kebab at 390px - the vote control at the
+// row's end (mirrors MemoryEntry) so the text isn't squeezed narrow, same
+// fixed-size-box pattern as ArtifactPanel's WithResultMobile (no viewport
+// addon in this repo).
+export const MobileViewport: Story = {
+  args: { chatId: 'chat-votes', nodeId: 'node-1', onClose: () => {} },
+  decorators: [Story => (
+    <div style={{ width: 390, height: 844, border: '1px solid #888', overflow: 'hidden' }}>
+      <Story />
+    </div>
+  )],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await waitFor(() => canvas.getByText('the deploy script needs sudo'))
+  },
+}

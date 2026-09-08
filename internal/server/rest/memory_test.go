@@ -342,6 +342,76 @@ func TestListMemories_MergesAndOrdersAcrossBothStores(t *testing.T) {
 	}
 }
 
+// TestListMemories_SortSpansBothStores (#1266 review): `sort` must order the
+// MERGED set from both configured stores AND survive paging, not just
+// re-sort within whichever store happened to be listed first or only get
+// checked on an unpaged page 0. Timestamps are pinned via memory.SetClockForTest
+// (not the real clock) so `oldest` is unambiguous, and the store listed
+// SECOND (userMem) holds the two oldest facts - a merge that silently fell
+// back to "whichever store's page 0" or ignored sortBy (defaulting to
+// newest) both produce a different, wrong, easily-asserted order here.
+func TestListMemories_SortSpansBothStores(t *testing.T) {
+	h := newTestHandler(t)
+	h.taskMem = newTestMemStore(t)
+	h.userMem = newTestMemStore(t)
+	const bucket = "NightsOut"
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	tick := base
+	nextTick := func() string {
+		ts := tick.Format(time.RFC3339)
+		tick = tick.Add(time.Hour)
+		return ts
+	}
+	restore := memory.SetClockForTest(nextTick)
+	t.Cleanup(restore)
+
+	commitFact(t, h.userMem, bucket, "fact A (oldest, user)")
+	commitFact(t, h.userMem, bucket, "fact B (user)")
+	commitFact(t, h.taskMem, bucket, "fact C (task)")
+	commitFact(t, h.taskMem, bucket, "fact D (newest, task)")
+
+	b := "repo:" + bucket
+	sortBy := schema.ListMemoriesParamsSort("oldest")
+	limit := 1
+	wantOrder := []string{"fact A (oldest, user)", "fact B (user)", "fact C (task)", "fact D (newest, task)"}
+
+	var pageToken *string
+	var gotOrder []string
+	seen := map[string]bool{}
+	for i := 0; i < len(wantOrder); i++ {
+		params := schema.ListMemoriesParams{Bucket: &b, Sort: &sortBy, Limit: &limit, PageToken: pageToken}
+		w := httptest.NewRecorder()
+		h.ListMemories(w, httptest.NewRequest(http.MethodGet, "/api/v1/memories", nil), params)
+		if w.Code != http.StatusOK {
+			t.Fatalf("page %d: status = %d, want 200; body=%s", i, w.Code, w.Body.String())
+		}
+		var got schema.MemoryList
+		if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+			t.Fatalf("page %d: decode: %v", i, err)
+		}
+		if got.Total != len(wantOrder) {
+			t.Fatalf("page %d: total = %d, want %d (sort must not change the count)", i, got.Total, len(wantOrder))
+		}
+		if len(got.Memories) != 1 {
+			t.Fatalf("page %d: got %d memories, want 1 (limit=1)", i, len(got.Memories))
+		}
+		m := got.Memories[0]
+		if seen[m.Id] {
+			t.Fatalf("page %d: id %s repeated - paging is broken under this sort", i, m.Id)
+		}
+		seen[m.Id] = true
+		gotOrder = append(gotOrder, m.Content)
+		pageToken = got.NextPageToken
+	}
+	if pageToken != nil {
+		t.Fatalf("carried a next_page_token past the last page = %q", *pageToken)
+	}
+	if strings.Join(gotOrder, "|") != strings.Join(wantOrder, "|") {
+		t.Fatalf("merged+paged order = %v, want %v", gotOrder, wantOrder)
+	}
+}
+
 // TestListMemories_InvalidPageToken400: a page_token the store can't decode
 // is a client error, not a 500 - mirrors TestListChats_InvalidPageToken400.
 func TestListMemories_InvalidPageToken400(t *testing.T) {
@@ -350,6 +420,20 @@ func TestListMemories_InvalidPageToken400(t *testing.T) {
 	bad := "not-a-valid-token!!"
 	w := httptest.NewRecorder()
 	h.ListMemories(w, httptest.NewRequest(http.MethodGet, "/api/v1/memories", nil), schema.ListMemoriesParams{PageToken: &bad})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestListMemories_InvalidSort400 (#1266 review): an unrecognized `sort`
+// value is a client error, matching this same handler's page_token
+// convention above - never a silent fallback to newest.
+func TestListMemories_InvalidSort400(t *testing.T) {
+	h := newTestHandler(t)
+	h.taskMem = newTestMemStore(t)
+	bad := schema.ListMemoriesParamsSort("popularity")
+	w := httptest.NewRecorder()
+	h.ListMemories(w, httptest.NewRequest(http.MethodGet, "/api/v1/memories", nil), schema.ListMemoriesParams{Sort: &bad})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
 	}

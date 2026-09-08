@@ -285,6 +285,49 @@ func TestGetByID_FindsAcrossBackendsAndTiersInvalidated(t *testing.T) {
 	})
 }
 
+// TestList_SortSpansPages (#1266): each non-default sort orders the WHOLE
+// matching set, not just whatever page a plain timestamp order would have
+// put first - a limit=1 page 0 under `upvotes` must be the single highest
+// upvote count across all 3 rows, not row 0 of the newest-first order.
+func TestList_SortSpansPages(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStore(t, "task", nil)
+	if err := s.idx.upsert(ctx, []point{
+		// Deliberately newest-first-adjacent to the sort order it's NOT under
+		// test for, so a test that silently ignored `sortBy` would fail.
+		{ID: "a", Vector: []float32{0, 1, 0, 0}, Scope: "repo:x", Timestamp: "2026-08-01T00:00:00Z", Upvotes: 1, Downvotes: 5, VoteScore: -4, Recalls: 1, LastRecalledAt: "2026-08-01T00:00:00Z"},
+		{ID: "b", Vector: []float32{0, 1, 0, 0}, Scope: "repo:x", Timestamp: "2026-08-02T00:00:00Z", Upvotes: 5, Downvotes: 1, VoteScore: 4, Recalls: 9, LastRecalledAt: "2026-08-03T00:00:00Z"},
+		{ID: "c", Vector: []float32{0, 1, 0, 0}, Scope: "repo:x", Timestamp: "2026-08-03T00:00:00Z", Upvotes: 3, Downvotes: 3, VoteScore: 0, Recalls: 5}, // never recalled
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	cases := []struct {
+		sortBy string
+		want   string // id of the top-ranked entry, page 0 with limit=1
+	}{
+		{SortNewest, "c"},
+		{SortOldest, "a"},
+		{SortScore, "b"},
+		{SortUpvotes, "b"},
+		{SortDownvotes, "a"},
+		{SortRecalls, "b"},
+		{SortLastRecalled, "b"}, // c (never recalled) must sort last, not first
+	}
+	for _, tc := range cases {
+		page, total, err := s.List(ctx, []string{"repo:x"}, 0, 1, false, "", tc.sortBy)
+		if err != nil {
+			t.Fatalf("List sort=%s: %v", tc.sortBy, err)
+		}
+		if total != 3 {
+			t.Fatalf("List sort=%s: total = %d, want 3 (sort must not change the count)", tc.sortBy, total)
+		}
+		if len(page) != 1 || page[0].ID != tc.want {
+			t.Fatalf("List sort=%s page 0 = %+v, want id %q", tc.sortBy, page, tc.want)
+		}
+	}
+}
+
 // Search (the ?q= path) carries a score and the bucket each hit came from,
 // unlike List.
 func TestSearchReturnsScoredEntries(t *testing.T) {

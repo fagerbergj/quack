@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -30,8 +31,13 @@ type index interface {
 	// query()/recall filter (design doc §4(d) extended to the browse surface, phase 3).
 	// tier=="" means no tier filter; "unverified" also matches a point that
 	// predates the tier field (empty/missing tier reads as unverified
-	// everywhere else in this package - #1265 review finding 10).
-	list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string) ([]scored, error)
+	// everywhere else in this package - #1265 review finding 10). sortBy is
+	// variadic (#1266) so every existing caller's positional call keeps
+	// compiling unchanged: sortBy[0], if given and non-empty, is one of the
+	// ListSort constants below and orders the WHOLE matching set (index-side
+	// for sqlite, in-Go for qdrant which already fetches everything) before
+	// offset/limit slice it, so a sort spans pages correctly.
+	list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string, sortBy ...string) ([]scored, error)
 	// count returns how many points match buckets (all buckets if empty), under the
 	// same includeInvalidated/tier filter as list.
 	count(ctx context.Context, buckets []string, includeInvalidated bool, tier string) (int, error)
@@ -306,6 +312,73 @@ const DefaultListLimit = 50
 // ErrMemoryNotFound is returned by Forget when id names nothing in the index.
 var ErrMemoryNotFound = errors.New("memory: not found")
 
+// ListSort values for Store.List/index.list's variadic sortBy (#1266, owner
+// follow-up to the mobile layout fix). "" (or omitted) means SortNewest.
+const (
+	SortNewest       = "newest"
+	SortOldest       = "oldest"
+	SortScore        = "score"         // net vote score (VoteScore), descending
+	SortUpvotes      = "upvotes"       // descending
+	SortDownvotes    = "downvotes"     // descending
+	SortRecalls      = "recalls"       // descending
+	SortLastRecalled = "last_recalled" // most recently recalled first; never-recalled last
+)
+
+// firstSort picks sortBy[0] if given and non-empty, else SortNewest - the
+// shared default for every index.list implementation's variadic arg.
+func firstSort(sortBy []string) string {
+	if len(sortBy) > 0 && sortBy[0] != "" {
+		return sortBy[0]
+	}
+	return SortNewest
+}
+
+// SortMemories orders a merged, in-Go []Memory (the REST handler's two-store
+// merge path, #1266) by the same ListSort vocabulary each index.list applies
+// server-side for a single store - so a deployment with both task and user
+// memory enabled sorts identically to one with either alone, not just by
+// timestamp regardless of the requested sort.
+func SortMemories(mems []Memory, sortBy string) {
+	less := func(i, j int) bool {
+		switch sortBy {
+		case SortOldest:
+			if mems[i].Timestamp != mems[j].Timestamp {
+				return mems[i].Timestamp < mems[j].Timestamp
+			}
+		case SortScore:
+			if mems[i].VoteScore != mems[j].VoteScore {
+				return mems[i].VoteScore > mems[j].VoteScore
+			}
+		case SortUpvotes:
+			if mems[i].Upvotes != mems[j].Upvotes {
+				return mems[i].Upvotes > mems[j].Upvotes
+			}
+		case SortDownvotes:
+			if mems[i].Downvotes != mems[j].Downvotes {
+				return mems[i].Downvotes > mems[j].Downvotes
+			}
+		case SortRecalls:
+			if mems[i].Recalls != mems[j].Recalls {
+				return mems[i].Recalls > mems[j].Recalls
+			}
+		case SortLastRecalled:
+			iEmpty, jEmpty := mems[i].LastRecalledAt == "", mems[j].LastRecalledAt == ""
+			if iEmpty != jEmpty {
+				return jEmpty
+			}
+			if mems[i].LastRecalledAt != mems[j].LastRecalledAt {
+				return mems[i].LastRecalledAt > mems[j].LastRecalledAt
+			}
+		default: // SortNewest
+			if mems[i].Timestamp != mems[j].Timestamp {
+				return mems[i].Timestamp > mems[j].Timestamp
+			}
+		}
+		return mems[i].ID > mems[j].ID // tie-break, every sort
+	}
+	sort.SliceStable(mems, less)
+}
+
 // Memory is one entry as the explorer (browse or search) sees it - the M6
 // storage-layer scored/point pair flattened to what a caller outside this
 // package needs. Score is meaningful only from Search; List leaves it zero.
@@ -349,14 +422,14 @@ type Memory struct {
 // current page. Unlike Search/recall, this never falls back to embedding
 // search and never degrades on a failure - an unreachable index is returned
 // as an error, not an empty or partial result.
-func (s *Store) List(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string) ([]Memory, int, error) {
+func (s *Store) List(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string, sortBy ...string) ([]Memory, int, error) {
 	if limit <= 0 {
 		limit = DefaultListLimit
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	pts, err := s.idx.list(ctx, buckets, offset, limit, includeInvalidated, tier)
+	pts, err := s.idx.list(ctx, buckets, offset, limit, includeInvalidated, tier, sortBy...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("memory: list %q: %w", s.coll, err)
 	}

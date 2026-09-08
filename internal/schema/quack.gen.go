@@ -539,6 +539,39 @@ func (e ListMemoriesParamsTier) Valid() bool {
 	}
 }
 
+// Defines values for ListMemoriesParamsSort.
+const (
+	Downvotes    ListMemoriesParamsSort = "downvotes"
+	LastRecalled ListMemoriesParamsSort = "last_recalled"
+	Newest       ListMemoriesParamsSort = "newest"
+	Oldest       ListMemoriesParamsSort = "oldest"
+	Recalls      ListMemoriesParamsSort = "recalls"
+	Score        ListMemoriesParamsSort = "score"
+	Upvotes      ListMemoriesParamsSort = "upvotes"
+)
+
+// Valid indicates whether the value is a known member of the ListMemoriesParamsSort enum.
+func (e ListMemoriesParamsSort) Valid() bool {
+	switch e {
+	case Downvotes:
+		return true
+	case LastRecalled:
+		return true
+	case Newest:
+		return true
+	case Oldest:
+		return true
+	case Recalls:
+		return true
+	case Score:
+		return true
+	case Upvotes:
+		return true
+	default:
+		return false
+	}
+}
+
 // AgentActivityOutputItem defines model for AgentActivityOutputItem.
 type AgentActivityOutputItem struct {
 	Id        string                      `json:"id"`
@@ -1382,12 +1415,18 @@ type ListMemoriesParams struct {
 	// Tier Restrict to one vote-based tier (epic #1255 P4). Filtered index-side so it spans pages correctly, unlike a client-side filter over one page. `unverified` also matches a memory that predates the tier field.
 	Tier *ListMemoriesParamsTier `form:"tier,omitempty" json:"tier,omitempty"`
 
+	// Sort Order results (#1266). Defaults to `newest`. Every value orders server-side (index-level for a single store, a re-sort of the full merged set for two), so paging sees a globally sorted corpus, not a client re-sort of whatever page happened to load. Ignored when `q` is set (search always ranks by `score`, its embedding-similarity meaning there - descending).
+	Sort *ListMemoriesParamsSort `form:"sort,omitempty" json:"sort,omitempty"`
+
 	// PageToken Opaque continuation token from a previous response's `next_page_token`. Treat it as an opaque string: never parse or construct one, pass back exactly what was returned. Omit for the first page. Ignored when `q` is set (search ranks by score, not a stable page). Only valid against the exact `bucket` filter it was issued for.
 	PageToken *string `form:"page_token,omitempty" json:"page_token,omitempty"`
 }
 
 // ListMemoriesParamsTier defines parameters for ListMemories.
 type ListMemoriesParamsTier string
+
+// ListMemoriesParamsSort defines parameters for ListMemories.
+type ListMemoriesParamsSort string
 
 // GetMemoryStatsParams defines parameters for GetMemoryStats.
 type GetMemoryStatsParams struct {
@@ -3052,6 +3091,19 @@ func (siw *ServerInterfaceWrapper) ListMemories(w http.ResponseWriter, r *http.R
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tier"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tier", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "sort" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "sort", r.URL.Query(), &params.Sort, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "sort"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sort", Err: err})
 		}
 		return
 	}

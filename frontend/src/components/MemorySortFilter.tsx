@@ -1,6 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
+import type { MemoryListSort } from '../api'
 
-export type MemorySort = 'newest' | 'oldest'
+export type MemorySort = MemoryListSort
+
+// SORT_OPTIONS labels every server-side sort (#1266 owner follow-up) - the
+// order they list in here is the order they appear in the popover.
+const SORT_OPTIONS: { value: MemorySort; label: string }[] = [
+  { value: 'newest', label: 'Newest first' },
+  { value: 'oldest', label: 'Oldest first' },
+  { value: 'score', label: 'Highest score' },
+  { value: 'upvotes', label: 'Most upvoted' },
+  { value: 'downvotes', label: 'Most downvoted' },
+  { value: 'recalls', label: 'Most recalled' },
+  { value: 'last_recalled', label: 'Recently recalled' },
+]
 
 export type MemoryTierFilter = '' | 'unverified' | 'verified'
 
@@ -60,16 +73,16 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
       {open && (
         <div role="dialog" aria-label="Sort and filter memories" className="absolute z-50 mt-1 right-0 w-56 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg p-2 text-xs">
           <div className="px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">Sort</div>
-          {(['newest', 'oldest'] as const).map(s => (
-            <label key={s} className="flex items-center gap-2 px-1 py-1 rounded cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700">
+          {SORT_OPTIONS.map(({ value, label }) => (
+            <label key={value} className="flex items-center gap-2 px-1 py-1 rounded cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700">
               <input
                 type="radio"
                 name="memory-sort"
-                checked={sort === s}
-                onChange={() => onSortChange(s)}
+                checked={sort === value}
+                onChange={() => onSortChange(value)}
                 className="accent-blue-600"
               />
-              <span className="text-gray-700 dark:text-gray-200">{s === 'newest' ? 'Newest first' : 'Oldest first'}</span>
+              <span className="text-gray-700 dark:text-gray-200">{label}</span>
             </label>
           ))}
           <div className="mt-2 mb-1 border-t border-gray-100 dark:border-gray-700" />
