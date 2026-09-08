@@ -113,6 +113,63 @@ Core maps: transition→merged ⇒ `ApplyOutcome(chat, reinforced)`; transition�
 5. **Periodic consolidator job** (burst-dedupe) + config `schedule` + retention sweep. ~1–2 PRs.
 6. **Frontend**: `MemoryEntry`/`MemoryTab` render the tier badge and invalidation reason. ~1 PR, can land any time after step 2.
 
+## 8b. Epic #1255 P1: usage tracking and judge votes
+
+Supersedes this doc's §5 `ApplyOutcome`/reinforcement description with the
+following (full epic in issue #1255; only P1 is implemented here).
+
+**New point fields** (both backends): `upvotes`, `downvotes`, `vote_score`
+(upvotes - downvotes), `tier` (`unverified` | `verified`, verified once
+`upvotes >= 1`), `last_upvoted_at`, `recalls`, `last_recalled_at`.
+`reinforcement_count`/`status=reinforced` are unchanged and kept as a mirror
+- reinforcement still bumps both.
+
+**Usage tracking.** Every recall delivery (today: the prefill injection in
+`vetting/node.go`) appends a `memory.recall` ledger entry (chat, node,
+round, source, delivered ids+scores) and directly bumps `recalls`/
+`last_recalled_at` on the point (one batched write). The ledger is the
+source of truth for what a chat retrieved - unlike a vote, a recall never
+writes a `memory_ops` row; the audit trail for retrieval lives entirely in
+the ledger (`internal/ledger`'s `KindMemoryRecall`), and
+`internal/ledger/fold` folds it into per-id recall counts so `quack ledger
+rebuild` can re-derive the same projection from scratch.
+
+**Judge votes.** The judge's prompt lists the worker's received memory set
+(id + content); `submit_verdict` gains an optional `memories:
+[{id, vote, reason}]` (`supported` | `contradicted` | `not_relevant`),
+applied ONLY when the round passes (`vetting.applyMemoryVotesOnPass`) - a
+failed round records nothing. A vote appends a `memory.vote` ledger entry
+(also folded for rebuild) AND is projected onto the point immediately
+(`memory.Store.ApplyVotes`): supported is +1 upvote (tier→verified,
+`last_upvoted_at` stamped); contradicted is +1 downvote, and a net score at
+or below the configured threshold (default -2, `OutcomeReasonNetScore`)
+soft-invalidates the memory, same sticky invalidation as everything else. A
+memory named twice by one round's votes collapses to the LAST vote (no
+double count). Every applied vote (including `not_relevant`) writes one
+`memory_ops` row, actor `judge`.
+
+**Reinforcement is recall-based, not birth-based.** `ApplyOutcome`'s
+signature changed from `(ctx, chatID, outcome)` to `(ctx, ids, outcome)`:
+the caller (`serve.applyMemoryOutcome`) folds the chat's ledger for its
+`memory.recall` entries and passes that id set - memories RECALLED into the
+chat, not memories MINTED there (minting still stamps provenance via
+`Commit`, it just no longer drives what gets reinforced). Reinforce is +1
+upvote (mirrored into `reinforcement_count`/`status=reinforced`) with actor
+`outcome-feedback`. Closed-unmerged invalidation now additionally skips any
+id already at tier `verified` - a verified memory recalled into a
+closed-unmerged chat gets no vote at all, not a demotion.
+
+**Migration.** New fields default zero-value; a one-time, idempotent boot
+backfill (`index.backfillTiers`, logged once per boot with a nonzero count)
+sets `tier=verified, upvotes=reinforcement_count` where
+`reinforcement_count >= 1`, else `tier=unverified` - skipping any point that
+already carries a tier, so a second boot (or a vote landing between boots)
+touches nothing.
+
+**Observability.** `quack memory show <id>` prints votes/tier/last
+recalled/last upvoted. `Memory`/`MemoryList` (openapi.yaml) expose the new
+fields; no frontend rendering change (P4).
+
 ## 9. Future work
 
 - **AttriMem-style attribution** (arXiv 2607.21106): which specific recalled memory actually influenced a given output, so reinforcement and invalidation can target real contribution instead of mere co-occurrence in the prompt.

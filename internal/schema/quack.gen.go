@@ -184,19 +184,37 @@ func (e ItemStatus) Valid() bool {
 
 // Defines values for MemoryStatus.
 const (
-	Invalidated MemoryStatus = "invalidated"
-	Reinforced  MemoryStatus = "reinforced"
-	Unverified  MemoryStatus = "unverified"
+	MemoryStatusInvalidated MemoryStatus = "invalidated"
+	MemoryStatusReinforced  MemoryStatus = "reinforced"
+	MemoryStatusUnverified  MemoryStatus = "unverified"
 )
 
 // Valid indicates whether the value is a known member of the MemoryStatus enum.
 func (e MemoryStatus) Valid() bool {
 	switch e {
-	case Invalidated:
+	case MemoryStatusInvalidated:
 		return true
-	case Reinforced:
+	case MemoryStatusReinforced:
 		return true
-	case Unverified:
+	case MemoryStatusUnverified:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MemoryTier.
+const (
+	MemoryTierUnverified MemoryTier = "unverified"
+	MemoryTierVerified   MemoryTier = "verified"
+)
+
+// Valid indicates whether the value is a known member of the MemoryTier enum.
+func (e MemoryTier) Valid() bool {
+	switch e {
+	case MemoryTierUnverified:
+		return true
+	case MemoryTierVerified:
 		return true
 	default:
 		return false
@@ -704,11 +722,23 @@ type Memory struct {
 	// Bucket repo:<name> / role:<coding|research> / user:<name>, or a legacy raw key.
 	Bucket  string `json:"bucket"`
 	Content string `json:"content"`
-	Id      string `json:"id"`
+
+	// Downvotes Judge/human votes marking this memory `contradicted` against delivered work.
+	Downvotes *int   `json:"downvotes,omitempty"`
+	Id        string `json:"id"`
 
 	// InvalidationReason Why this memory was invalidated. Present only when `status` is `invalidated`.
 	InvalidationReason *string `json:"invalidation_reason,omitempty"`
 	Kind               string  `json:"kind"`
+
+	// LastRecalledAt When this memory was last delivered to a worker. Absent if never recalled.
+	LastRecalledAt *time.Time `json:"last_recalled_at,omitempty"`
+
+	// LastUpvotedAt When this memory was last marked `supported`. Absent if never upvoted.
+	LastUpvotedAt *time.Time `json:"last_upvoted_at,omitempty"`
+
+	// Recalls How many times this memory has been delivered to a worker (prefill or, from P2, the recall_memory tool).
+	Recalls *int `json:"recalls,omitempty"`
 
 	// ReinforcementCount How many positive outcome events (e.g. a PR merged) have reinforced this memory.
 	ReinforcementCount *int `json:"reinforcement_count,omitempty"`
@@ -717,12 +747,24 @@ type Memory struct {
 	Score *float32 `json:"score,omitempty"`
 
 	// Status Epistemic tier (memory lifecycle design doc §3). A memory written before this field existed reads as `unverified`.
-	Status    *MemoryStatus `json:"status,omitempty"`
-	Timestamp time.Time     `json:"timestamp"`
+	Status *MemoryStatus `json:"status,omitempty"`
+
+	// Tier Vote-based tier - `verified` once upvotes >= 1. Independent of `status`; a verified memory is never aged out, only invalidated by net score or a human.
+	Tier      *MemoryTier `json:"tier,omitempty"`
+	Timestamp time.Time   `json:"timestamp"`
+
+	// Upvotes Judge/human votes marking this memory `supported` against delivered work, plus outcome-feedback reinforcement (epic
+	Upvotes *int `json:"upvotes,omitempty"`
+
+	// VoteScore upvotes - downvotes. A memory at or below the configured invalidation threshold (default -2) is invalidated.
+	VoteScore *int `json:"vote_score,omitempty"`
 }
 
 // MemoryStatus Epistemic tier (memory lifecycle design doc §3). A memory written before this field existed reads as `unverified`.
 type MemoryStatus string
+
+// MemoryTier Vote-based tier - `verified` once upvotes >= 1. Independent of `status`; a verified memory is never aged out, only invalidated by net score or a human.
+type MemoryTier string
 
 // MemoryList defines model for MemoryList.
 type MemoryList struct {

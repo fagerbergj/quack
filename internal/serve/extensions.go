@@ -25,6 +25,8 @@ import (
 	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledger/fold"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/otelobs"
@@ -70,7 +72,7 @@ type builtSDKExtension struct {
 // nil-is-valid contract). taskMem/userMem are already-built by the time this
 // runs (buildFromConfig constructs them first) and may each be nil - the same
 // task/user split rest/memory.go's memStores() iterates.
-func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskMem, userMem *memory.Store) ([]builtSDKExtension, error) {
+func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskMem, userMem *memory.Store, ledgerStore ledger.LedgerStore) ([]builtSDKExtension, error) {
 	factories := extsdk.Registered()
 	names := make([]string, 0, len(cfg.Extensions.Modules))
 	for name := range cfg.Extensions.Modules {
@@ -130,7 +132,7 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, or
 			ArchiveChat: func(chatID string) error {
 				return st.ArchiveChat(context.Background(), chatID, true)
 			},
-			UpdateChatOrigin: newExtUpdateChatOrigin(name, st, taskMem, userMem),
+			UpdateChatOrigin: newExtUpdateChatOrigin(name, st, taskMem, userMem, ledgerStore),
 			InvalidateSetup: func(chatID string) error {
 				dag.MarkSetupStale(chatID)
 				return nil
@@ -836,7 +838,7 @@ func ensureExtChatTitle(ctx context.Context, st *store.Store, chatID, title stri
 // State transition to a memory outcome, and which stores that outcome
 // touches, is core's own call - memory concepts never cross the SDK
 // boundary. taskMem/userMem stay nil-tolerant like every other Host field.
-func newExtUpdateChatOrigin(name string, st *store.Store, taskMem, userMem *memory.Store) func(localID string, origin extsdk.ChatOrigin) error {
+func newExtUpdateChatOrigin(name string, st *store.Store, taskMem, userMem *memory.Store, ledgerStore ledger.LedgerStore) func(localID string, origin extsdk.ChatOrigin) error {
 	return func(localID string, origin extsdk.ChatOrigin) error {
 		chatID := fmt.Sprintf("ext:%s:%s", name, localID)
 		ctx := context.Background()
@@ -856,7 +858,7 @@ func newExtUpdateChatOrigin(name string, st *store.Store, taskMem, userMem *memo
 		if err := st.SetChatOrigin(ctx, chatID, c.SessionUser, originJSON); err != nil {
 			return fmt.Errorf("extensions.%s: update chat origin: %w", name, err)
 		}
-		applyMemoryOutcome(ctx, name, chatID, prevState, origin.State, taskMem, userMem)
+		applyMemoryOutcome(ctx, name, chatID, prevState, origin.State, ledgerStore, taskMem, userMem)
 		return nil
 	}
 }
@@ -878,13 +880,16 @@ func priorOriginState(originJSON string) extsdk.SubjectState {
 }
 
 // applyMemoryOutcome maps a ChatOrigin.State transition to a memory outcome
-// (design doc §4(b)/§5): merged reinforces, closed (from anything) invalidates
-// with a fixed reason, open/"" is a no-op either direction - stickiness
-// against a reopen-after-close lives in memory.Store.ApplyOutcome itself, not
-// here. Steady state (prev == next, e.g. a repeated closed webhook) never
-// reaches an outcome. Fire-and-forget: a memory store error is logged, never
+// (design doc §4(b)/§5, recall-based per epic #1255 P1): merged reinforces,
+// closed (from anything) invalidates with a fixed reason, open/"" is a no-op
+// either direction - stickiness against a reopen-after-close lives in
+// memory.Store.ApplyOutcome itself, not here. The outcome targets memories
+// RECALLED into chatID (folded from the ledger's memory.recall entries), not
+// minted there - minting still sets provenance, but no longer drives
+// reinforcement. Steady state (prev == next, e.g. a repeated closed webhook)
+// never reaches an outcome. Fire-and-forget: an error is logged, never
 // surfaced - the origin update it rides on must not fail because of it.
-func applyMemoryOutcome(ctx context.Context, name, chatID string, prev, next extsdk.SubjectState, stores ...*memory.Store) {
+func applyMemoryOutcome(ctx context.Context, name, chatID string, prev, next extsdk.SubjectState, ledgerStore ledger.LedgerStore, stores ...*memory.Store) {
 	if prev == next {
 		return
 	}
@@ -897,11 +902,23 @@ func applyMemoryOutcome(ctx context.Context, name, chatID string, prev, next ext
 	default:
 		return
 	}
+	if ledgerStore == nil {
+		return
+	}
+	res, err := fold.Fold(ctx, ledgerStore, chatID, 0)
+	if err != nil {
+		slog.Warn("apply memory outcome: fold ledger failed", "component", "ext."+name, "chat", chatID, "err", err)
+		return
+	}
+	ids := res.RecalledIDs()
+	if len(ids) == 0 {
+		return
+	}
 	for _, s := range stores {
 		if s == nil {
 			continue
 		}
-		if _, err := s.ApplyOutcome(ctx, chatID, outcome); err != nil {
+		if _, err := s.ApplyOutcome(ctx, ids, outcome); err != nil {
 			slog.Warn("apply memory outcome failed", "component", "ext."+name, "chat", chatID, "kind", outcome.Kind, "err", err)
 		}
 	}

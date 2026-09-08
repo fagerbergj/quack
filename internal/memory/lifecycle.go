@@ -40,21 +40,19 @@ type OutcomeSignal struct {
 // callers and tests compare against this constant rather than a literal.
 const OutcomeReasonClosedUnmerged = "subject closed unmerged"
 
-// ApplyOutcome matches memories by provenance chat_id and applies o to every
-// one of them that isn't already invalidated (sticky: nothing revives an
-// invalidated memory, and invalidating twice is idempotent). Returns the
-// count touched. Reinforce bumps reinforcement_count and promotes
-// unverified→reinforced; invalidate stamps invalidated_at/invalidation_reason.
-// Every touched memory writes one memory_ops row (actor=outcome-feedback).
-//
-// updateStatus is read-then-write per row, not serializable: two concurrent
-// calls for the same chatID could both read the same reinforcement_count and
-// under-count by one. Invalidate is idempotent either way; only a
-// simultaneous double-reinforce is affected, and only quack's own webhook
-// dedup keeps that rare in practice.
-func (s *Store) ApplyOutcome(ctx context.Context, chatID string, o OutcomeSignal) (int, error) {
-	chatID = strings.TrimSpace(chatID)
-	if chatID == "" {
+// ApplyOutcome applies o to every id in ids that isn't already invalidated
+// (sticky: nothing revives an invalidated memory, and invalidating twice is
+// idempotent). ids is the chat's RECALLED set (epic #1255 P1: reinforcement
+// is recall-based, not birth-based) - the caller folds the chat's ledger for
+// memory.recall entries and passes their ids; minting still sets provenance,
+// but no longer drives what gets reinforced/invalidated. Returns the count
+// touched. Reinforce is +1 upvote (see applyVotes) with actor
+// outcome-feedback; invalidate stamps invalidated_at/invalidation_reason on
+// every unverified id (a verified memory recalled into a closed-unmerged
+// chat gets no vote, not an invalidation - it's never demoted by this path).
+// Every touched memory writes one memory_ops row.
+func (s *Store) ApplyOutcome(ctx context.Context, ids []string, o OutcomeSignal) (int, error) {
+	if len(ids) == 0 {
 		return 0, nil
 	}
 	if o.Kind == OutcomeInvalidated && strings.TrimSpace(o.Reason) == "" {
@@ -63,7 +61,7 @@ func (s *Store) ApplyOutcome(ctx context.Context, chatID string, o OutcomeSignal
 	if o.Kind != OutcomeReinforced && o.Kind != OutcomeInvalidated {
 		return 0, fmt.Errorf("memory: ApplyOutcome: unknown outcome kind %q", o.Kind)
 	}
-	ids, err := s.idx.updateStatus(ctx, chatID, o)
+	touched, err := s.idx.updateStatus(ctx, ids, o)
 	if err != nil {
 		return 0, fmt.Errorf("memory: apply outcome: %w", err)
 	}
@@ -71,15 +69,132 @@ func (s *Store) ApplyOutcome(ctx context.Context, chatID string, o OutcomeSignal
 	if o.Kind == OutcomeInvalidated {
 		op = OpInvalidate
 	}
-	for _, id := range ids {
+	for _, id := range touched {
 		s.logOp(ctx, id, op, ActorOutcomeFeedback, o.Reason)
 	}
-	if len(ids) > 0 {
-		s.log.Info("apply outcome", "chat_id", chatID, "kind", o.Kind, "touched", len(ids))
+	if len(touched) > 0 {
+		s.log.Info("apply outcome", "kind", o.Kind, "recalled", len(ids), "touched", len(touched))
 	} else {
-		s.log.Debug("apply outcome", "chat_id", chatID, "kind", o.Kind, "touched", 0)
+		s.log.Debug("apply outcome", "kind", o.Kind, "recalled", len(ids), "touched", 0)
 	}
-	return len(ids), nil
+	return len(touched), nil
+}
+
+// OutcomeReasonNetScore is the fixed invalidation_reason a memory's net
+// vote score dropping to invalidateThreshold or below stamps.
+const OutcomeReasonNetScore = "net score"
+
+// Vote is one judge's (or human's) verdict on a recalled memory (epic #1255
+// P1). NotRelevant carries no score delta but still logs a memory_ops row -
+// an audit trail of what the judge considered, not just what it moved.
+type Vote struct {
+	MemoryID string
+	Vote     string // "supported" | "contradicted" | "not_relevant"
+	Reason   string
+	Actor    OpsLogActor
+}
+
+const (
+	VoteSupported    = "supported"
+	VoteContradicted = "contradicted"
+	VoteNotRelevant  = "not_relevant"
+)
+
+// DefaultInvalidateThreshold: a memory's net score (upvotes-downvotes) at or
+// below this invalidates it (design decision #1255).
+const DefaultInvalidateThreshold = -2
+
+// ApplyVotes applies each vote to its memory (supported: +1 upvote,
+// last_upvoted_at, tier→verified; contradicted: +1 downvote, and a net score
+// <= invalidateThreshold also invalidates; not_relevant: no score change).
+// Duplicate votes for the same id in one call are collapsed to the last one
+// (a judge that names a memory twice in one round should not double-count
+// it). Sticky: an already-invalidated memory is skipped. Every applied vote
+// (including not_relevant) writes one memory_ops row (op=vote).
+func (s *Store) ApplyVotes(ctx context.Context, votes []Vote, invalidateThreshold int) (int, error) {
+	if len(votes) == 0 {
+		return 0, nil
+	}
+	deduped := dedupeVotes(votes)
+	touched, err := s.idx.applyVotes(ctx, deduped, invalidateThreshold)
+	if err != nil {
+		return 0, fmt.Errorf("memory: apply votes: %w", err)
+	}
+	byID := make(map[string]Vote, len(deduped))
+	for _, v := range deduped {
+		byID[v.MemoryID] = v
+	}
+	for _, id := range touched {
+		v := byID[id]
+		s.logOp(ctx, id, OpVote, v.Actor, v.Reason)
+	}
+	s.log.Info("apply votes", "votes", len(votes), "touched", len(touched))
+	return len(touched), nil
+}
+
+// TierUnverified/TierVerified: a memory's vote-based tier (epic #1255 P1),
+// independent of Status (which tracks invalidation, not votes). Verified is
+// sticky once reached - a downvote can invalidate via net score, but never
+// demotes a memory back to unverified.
+const (
+	TierUnverified = "unverified"
+	TierVerified   = "verified"
+)
+
+// voteDelta is the field-level result of applying one vote to a memory's
+// current upvotes/downvotes/vote_score - the backend-agnostic core both
+// sqlite (a map of column updates) and qdrant (a payload SetPayload) build
+// their own write from.
+type voteDelta struct {
+	Upvotes, Downvotes, VoteScore int
+	Tier                          string
+	LastUpvotedAt                 string // "" = unchanged
+	Invalidate                    bool
+}
+
+// computeVoteDelta is the one place vote arithmetic lives. supported: +1
+// upvote, tier verified, last_upvoted_at stamped. contradicted: +1
+// downvote; net score <= invalidateThreshold also invalidates.
+// not_relevant: no score change (still returns the unchanged counts so the
+// caller has a uniform write, and still gets logged by the caller).
+func computeVoteDelta(upvotes, downvotes int, tier, now string, v Vote, invalidateThreshold int) voteDelta {
+	d := voteDelta{Upvotes: upvotes, Downvotes: downvotes, VoteScore: upvotes - downvotes, Tier: tier}
+	if d.Tier == "" {
+		d.Tier = TierUnverified
+	}
+	switch v.Vote {
+	case VoteSupported:
+		d.Upvotes++
+		d.VoteScore++
+		d.Tier = TierVerified
+		d.LastUpvotedAt = now
+	case VoteContradicted:
+		d.Downvotes++
+		d.VoteScore--
+		if d.VoteScore <= invalidateThreshold {
+			d.Invalidate = true
+		}
+	}
+	return d
+}
+
+// dedupeVotes keeps the LAST vote for a repeated memory id, preserving
+// stable order over the remaining ids (order rarely matters here, but
+// deterministic output makes a flaky test easier to root-cause).
+func dedupeVotes(votes []Vote) []Vote {
+	last := make(map[string]Vote, len(votes))
+	var order []string
+	for _, v := range votes {
+		if _, ok := last[v.MemoryID]; !ok {
+			order = append(order, v.MemoryID)
+		}
+		last[v.MemoryID] = v
+	}
+	out := make([]Vote, len(order))
+	for i, id := range order {
+		out[i] = last[id]
+	}
+	return out
 }
 
 // tierPrefix is the compact plain-string epistemic tag prepended to a

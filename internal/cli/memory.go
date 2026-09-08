@@ -7,6 +7,9 @@ import (
 	"io"
 	"strings"
 	"text/tabwriter"
+	"time"
+
+	"github.com/fagerbergj/quack/internal/schema"
 )
 
 // RunMemoryList is `quack memory list`: browse or (with q) search the
@@ -37,6 +40,84 @@ func RunMemoryList(ctx context.Context, out io.Writer, server, bucket, q string,
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", m.Id, m.Bucket, status, truncateLine(m.Content, 80))
 	}
 	return tw.Flush()
+}
+
+// RunMemoryShow is `quack memory show <memory-id>`: prints one memory's full
+// detail, including votes/tier/last-recalled (epic #1255 P1 observability).
+// No single-memory GET endpoint exists yet - this pages through
+// include_invalidated=true listings looking for the id, fine at memory's
+// documented scale (hundreds-thousands).
+func RunMemoryShow(ctx context.Context, out io.Writer, server, id string, asJSON bool) error {
+	c, err := NewClient(ctx, server)
+	if err != nil {
+		return err
+	}
+	m, err := findMemory(ctx, c, id)
+	if err != nil {
+		return err
+	}
+	if m == nil {
+		return fmt.Errorf("memory %s not found", id)
+	}
+	if asJSON {
+		return writeJSON(out, m)
+	}
+	tier := "unverified"
+	if m.Tier != nil {
+		tier = string(*m.Tier)
+	}
+	status := "unverified"
+	if m.Status != nil {
+		status = string(*m.Status)
+	}
+	fmt.Fprintf(out, "id:       %s\n", m.Id)
+	fmt.Fprintf(out, "bucket:   %s\n", m.Bucket)
+	fmt.Fprintf(out, "status:   %s\n", status)
+	fmt.Fprintf(out, "tier:     %s\n", tier)
+	fmt.Fprintf(out, "votes:    +%d / -%d (score %d)\n", intOr(m.Upvotes), intOr(m.Downvotes), intOr(m.VoteScore))
+	fmt.Fprintf(out, "recalls:  %d\n", intOr(m.Recalls))
+	if m.LastUpvotedAt != nil {
+		fmt.Fprintf(out, "last upvoted:  %s\n", m.LastUpvotedAt.Format(time.RFC3339))
+	}
+	if m.LastRecalledAt != nil {
+		fmt.Fprintf(out, "last recalled: %s\n", m.LastRecalledAt.Format(time.RFC3339))
+	}
+	if m.InvalidationReason != nil {
+		fmt.Fprintf(out, "invalidation reason: %s\n", *m.InvalidationReason)
+	}
+	fmt.Fprintf(out, "content:\n%s\n", m.Content)
+	return nil
+}
+
+// findMemory pages through every bucket's listing (include_invalidated so a
+// forgotten memory is still showable) looking for id.
+func findMemory(ctx context.Context, c *Client, id string) (*schema.Memory, error) {
+	var pageToken string
+	for {
+		list, err := c.ListMemoriesPage(ctx, "", pageToken, memoryShowPageSize, true)
+		if err != nil {
+			return nil, err
+		}
+		for i := range list.Memories {
+			if list.Memories[i].Id == id {
+				return &list.Memories[i], nil
+			}
+		}
+		if list.NextPageToken == nil || *list.NextPageToken == "" {
+			return nil, nil
+		}
+		pageToken = *list.NextPageToken
+	}
+}
+
+// memoryShowPageSize bounds each page findMemory fetches while scanning for one id.
+const memoryShowPageSize = 200
+
+func intOr(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 // RunMemoryForget is `quack memory forget <memory-id> [--reason text]`:

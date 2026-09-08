@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"iter"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,8 @@ import (
 
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 
+	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 )
@@ -129,8 +132,12 @@ func (f *fakeOpsLog) snapshot() []fakeOpRow {
 
 // seedMemory mints one memory under chatID via the real Commit path (not a
 // direct index poke), so it carries the same provenance/status a live run
-// would leave behind.
-func seedMemory(t *testing.T, s *memory.Store, sc memory.Scope, bucket, chatID, content string) {
+// would leave behind, then records it as RECALLED into chatID via a
+// memory.recall ledger entry (epic #1255 P1: applyMemoryOutcome now targets
+// the recalled set, not the minted one) - mirroring what a real gate's
+// recall injection + recallLedgerEntry would have written. Returns the
+// minted memory's id.
+func seedMemory(t *testing.T, s *memory.Store, ledgerStore ledger.LedgerStore, sc memory.Scope, bucket, chatID, content string) string {
 	t.Helper()
 	n, err := s.Commit(context.Background(), sc, "test", memory.Provenance{ChatID: chatID},
 		[]memory.Candidate{{Content: content, Metadata: map[string]string{"bucket": bucket}}}, "")
@@ -140,7 +147,31 @@ func seedMemory(t *testing.T, s *memory.Store, sc memory.Scope, bucket, chatID, 
 	if n != 1 {
 		t.Fatalf("seedMemory Commit wrote %d, want 1", n)
 	}
+	mems := listAll(t, s, sc.Buckets())
+	var id string
+	for _, m := range mems {
+		if m.Content == content {
+			id = m.ID
+		}
+	}
+	if id == "" {
+		t.Fatalf("seedMemory: minted memory for %q not found", content)
+	}
+	payload, err := json.Marshal(ledger.MemoryRecallPayload{Source: "prefill", Entries: []ledger.MemoryRecallEntry{{ID: id}}})
+	if err != nil {
+		t.Fatalf("seedMemory: marshal recall payload: %v", err)
+	}
+	if _, err := ledgerStore.AppendIntent(context.Background(), ledger.Entry{
+		ChatID: chatID, Kind: ledger.KindMemoryRecall, At: time.Now().UTC(), Payload: payload,
+	}); err != nil {
+		t.Fatalf("seedMemory: append memory.recall: %v", err)
+	}
+	return id
 }
+
+// newLedgerStoreForTest returns a fresh in-memory ledger for a test's
+// memory.recall entries - applyMemoryOutcome's source of the recalled set.
+func newLedgerStoreForTest() *ledgertest.MemStore { return ledgertest.NewMemStore() }
 
 func listAll(t *testing.T, s *memory.Store, buckets []string) []memory.Memory {
 	t.Helper()
@@ -165,7 +196,8 @@ func TestUpdateChatOriginOpenToClosedInvalidatesBothStores(t *testing.T) {
 
 	taskMem, _ := newMemStoreForTest(t, "task")
 	userMem, _ := newMemStoreForTest(t, "user")
-	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, userMem)
+	lgr := newLedgerStoreForTest()
+	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, userMem, lgr)
 
 	const localID = "closes-unmerged"
 	chatID := "ext:noop:" + localID
@@ -176,8 +208,8 @@ func TestUpdateChatOriginOpenToClosedInvalidatesBothStores(t *testing.T) {
 	}
 	waitRunSettled(t, st, chatID)
 
-	seedMemory(t, taskMem, memory.Scope{Repo: "r"}, "repo", chatID, "a coding convention this run minted")
-	seedMemory(t, userMem, memory.Scope{User: "u"}, "user", chatID, "a user fact this run minted")
+	seedMemory(t, taskMem, lgr, memory.Scope{Repo: "r"}, "repo", chatID, "a coding convention this run minted")
+	seedMemory(t, userMem, lgr, memory.Scope{User: "u"}, "user", chatID, "a user fact this run minted")
 
 	// Wired after seeding, so the fake only captures the outcome-feedback
 	// rows this test asserts on, not the seed Commit's own ADD rows.
@@ -222,7 +254,8 @@ func TestUpdateChatOriginOpenToMergedReinforces(t *testing.T) {
 	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
 
 	taskMem, _ := newMemStoreForTest(t, "task")
-	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, nil)
+	lgr := newLedgerStoreForTest()
+	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, nil, lgr)
 
 	const localID = "merges-clean"
 	chatID := "ext:noop:" + localID
@@ -233,7 +266,7 @@ func TestUpdateChatOriginOpenToMergedReinforces(t *testing.T) {
 	}
 	waitRunSettled(t, st, chatID)
 
-	seedMemory(t, taskMem, memory.Scope{Repo: "r"}, "repo", chatID, "a repo convention that survived to merge")
+	seedMemory(t, taskMem, lgr, memory.Scope{Repo: "r"}, "repo", chatID, "a repo convention that survived to merge")
 
 	ops := &fakeOpsLog{}
 	taskMem.SetOpsLog(ops)
@@ -277,7 +310,8 @@ func TestUpdateChatOriginRepeatedClosedAppliesNothing(t *testing.T) {
 	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
 
 	taskMem, _ := newMemStoreForTest(t, "task")
-	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, nil)
+	lgr := newLedgerStoreForTest()
+	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, nil, lgr)
 
 	const localID = "already-closed"
 	chatID := "ext:noop:" + localID
@@ -288,7 +322,7 @@ func TestUpdateChatOriginRepeatedClosedAppliesNothing(t *testing.T) {
 	}
 	waitRunSettled(t, st, chatID)
 
-	seedMemory(t, taskMem, memory.Scope{Repo: "r"}, "repo", chatID, "a fact minted after this chat had already closed")
+	seedMemory(t, taskMem, lgr, memory.Scope{Repo: "r"}, "repo", chatID, "a fact minted after this chat had already closed")
 
 	ops := &fakeOpsLog{}
 	taskMem.SetOpsLog(ops)
@@ -319,7 +353,8 @@ func TestUpdateChatOriginStatelessOriginAppliesNothing(t *testing.T) {
 	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
 
 	taskMem, _ := newMemStoreForTest(t, "task")
-	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, nil)
+	lgr := newLedgerStoreForTest()
+	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, nil, lgr)
 
 	const localID = "stateless-origin"
 	chatID := "ext:noop:" + localID
@@ -330,7 +365,7 @@ func TestUpdateChatOriginStatelessOriginAppliesNothing(t *testing.T) {
 	}
 	waitRunSettled(t, st, chatID)
 
-	seedMemory(t, taskMem, memory.Scope{Repo: "r"}, "repo", chatID, "a fact from a State-less extension version")
+	seedMemory(t, taskMem, lgr, memory.Scope{Repo: "r"}, "repo", chatID, "a fact from a State-less extension version")
 
 	ops := &fakeOpsLog{}
 	taskMem.SetOpsLog(ops)
@@ -363,7 +398,8 @@ func TestUpdateChatOriginFollowsStateNotBadge(t *testing.T) {
 	taskMem, _ := newMemStoreForTest(t, "task")
 	ops := &fakeOpsLog{}
 	taskMem.SetOpsLog(ops)
-	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, nil)
+	lgr := newLedgerStoreForTest()
+	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, nil, lgr)
 
 	const localID = "badge-lies"
 	chatID := "ext:noop:" + localID
@@ -374,7 +410,7 @@ func TestUpdateChatOriginFollowsStateNotBadge(t *testing.T) {
 	}
 	waitRunSettled(t, st, chatID)
 
-	seedMemory(t, taskMem, memory.Scope{Repo: "r"}, "repo", chatID, "a fact that must go by State, not Badge")
+	seedMemory(t, taskMem, lgr, memory.Scope{Repo: "r"}, "repo", chatID, "a fact that must go by State, not Badge")
 
 	// Badge still says "open" - only State moved to closed.
 	if err := updateOrigin(localID, extsdk.ChatOrigin{Extension: "noop", Label: "acme/widgets#13", Kind: "pull_request", Badge: "open", State: extsdk.SubjectClosed}); err != nil {
@@ -403,7 +439,8 @@ func TestUpdateChatOriginSucceedsDespiteMemoryStoreFailure(t *testing.T) {
 	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
 
 	taskMem, taskPath := newMemStoreForTest(t, "task")
-	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, nil) // userMem absent (nil)
+	lgr := newLedgerStoreForTest()
+	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, nil, lgr) // userMem absent (nil)
 
 	const localID = "store-breaks"
 	chatID := "ext:noop:" + localID
@@ -427,5 +464,61 @@ func TestUpdateChatOriginSucceedsDespiteMemoryStoreFailure(t *testing.T) {
 	}
 	if got := priorOriginState(c.Origin); got != extsdk.SubjectClosed {
 		t.Fatalf("stored origin state = %q, want %q", got, extsdk.SubjectClosed)
+	}
+}
+
+// TestUpdateChatOriginReinforcesRecalledNotMinted covers epic #1255 P1's
+// reinforcement-semantics change directly: a memory minted in the chat but
+// NEVER recalled (no memory.recall ledger entry) must not be reinforced by a
+// merged outcome, while one that WAS recalled is.
+func TestUpdateChatOriginReinforcesRecalledNotMinted(t *testing.T) {
+	st, orch, hub, artifacts, jail := newExtTestStack(t)
+	_ = jail
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+	var extHolder atomic.Pointer[extsdk.Extension]
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+
+	taskMem, _ := newMemStoreForTest(t, "task")
+	lgr := newLedgerStoreForTest()
+	updateOrigin := newExtUpdateChatOrigin("noop", st, taskMem, nil, lgr)
+
+	const localID = "recall-vs-mint"
+	chatID := "ext:noop:" + localID
+	origin := &extsdk.ChatOrigin{Extension: "noop", Label: "acme/widgets#20", Kind: "pull_request", Badge: "open", State: extsdk.SubjectOpen}
+	req := extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID, Origin: origin}, Ask: extsdk.Ask{Message: "hi"}}
+	if err := dispatch(context.Background(), req); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	waitRunSettled(t, st, chatID)
+
+	// Recalled: seedMemory mints AND appends a memory.recall entry.
+	recalledID := seedMemory(t, taskMem, lgr, memory.Scope{Repo: "r"}, "repo", chatID, "a memory this run recalled and used")
+
+	// Minted-only: no memory.recall entry for it - Commit directly, bypassing seedMemory.
+	if _, err := taskMem.Commit(context.Background(), memory.Scope{Repo: "r"}, "test", memory.Provenance{ChatID: chatID},
+		[]memory.Candidate{{Content: "a memory this run minted but never recalled"}}, ""); err != nil {
+		t.Fatalf("commit minted-only: %v", err)
+	}
+
+	if err := updateOrigin(localID, extsdk.ChatOrigin{Extension: "noop", Label: "acme/widgets#20", Kind: "pull_request", Badge: "merged", State: extsdk.SubjectMerged}); err != nil {
+		t.Fatalf("updateOrigin: %v", err)
+	}
+
+	mems := listAll(t, taskMem, []string{"repo:r"})
+	byID := map[string]memory.Memory{}
+	for _, m := range mems {
+		byID[m.ID] = m
+	}
+	if g := byID[recalledID]; g.Status != string(memory.StatusReinforced) {
+		t.Fatalf("recalled memory = %+v, want reinforced", g)
+	}
+	for id, m := range byID {
+		if id == recalledID {
+			continue
+		}
+		if m.Status == string(memory.StatusReinforced) {
+			t.Fatalf("minted-only memory %+v was reinforced, want untouched (recall-based reinforcement, not birth-based)", m)
+		}
 	}
 }

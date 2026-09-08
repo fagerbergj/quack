@@ -152,6 +152,29 @@ func (c *Client) ListMemories(ctx context.Context, bucket, q string, limit int, 
 	return out, err
 }
 
+// ListMemoriesPage is ListMemories plus page_token, for a caller (RunMemoryShow)
+// that needs to page through a whole bucket rather than one bounded request.
+func (c *Client) ListMemoriesPage(ctx context.Context, bucket, pageToken string, limit int, includeInvalidated bool) (schema.MemoryList, error) {
+	var out schema.MemoryList
+	path := "/api/v1/memories?"
+	q2 := url.Values{}
+	if bucket != "" {
+		q2.Set("bucket", bucket)
+	}
+	if pageToken != "" {
+		q2.Set("page_token", pageToken)
+	}
+	if limit > 0 {
+		q2.Set("limit", strconv.Itoa(limit))
+	}
+	if includeInvalidated {
+		q2.Set("include_invalidated", "true")
+	}
+	path += q2.Encode()
+	err := c.getJSON(ctx, path, &out)
+	return out, err
+}
+
 // ForgetMemory invalidates (soft-deletes) one memory. 404 (unknown id)
 // surfaces as ErrNotFound.
 func (c *Client) ForgetMemory(ctx context.Context, memoryID, reason string) error {

@@ -190,7 +190,7 @@ func memoriesWire(mems []memory.Memory) []schema.Memory {
 		// Status "" predates the lifecycle fields (design doc §3) and reads as unverified.
 		status := schema.MemoryStatus(m.Status)
 		if status == "" {
-			status = schema.Unverified
+			status = schema.MemoryStatusUnverified
 		}
 		w.Status = &status
 		count := m.ReinforcementCount
@@ -198,6 +198,21 @@ func memoriesWire(mems []memory.Memory) []schema.Memory {
 		if m.InvalidationReason != "" {
 			reason := m.InvalidationReason
 			w.InvalidationReason = &reason
+		}
+		upvotes, downvotes, voteScore := m.Upvotes, m.Downvotes, m.VoteScore
+		w.Upvotes, w.Downvotes, w.VoteScore = &upvotes, &downvotes, &voteScore
+		tier := schema.MemoryTier(m.Tier)
+		if tier == "" {
+			tier = schema.MemoryTierUnverified
+		}
+		w.Tier = &tier
+		recalls := m.Recalls
+		w.Recalls = &recalls
+		if t, err := time.Parse(time.RFC3339, m.LastUpvotedAt); err == nil {
+			w.LastUpvotedAt = &t
+		}
+		if t, err := time.Parse(time.RFC3339, m.LastRecalledAt); err == nil {
+			w.LastRecalledAt = &t
 		}
 		out[i] = w
 	}

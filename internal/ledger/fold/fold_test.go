@@ -286,3 +286,73 @@ func TestApplySeeded_StaleCheckpointStillFoldsCorrectly(t *testing.T) {
 		t.Fatalf("latest revision = %+v, ok=%v, want revision 2 (a stale checkpoint must not hide seq 2)", latest, ok)
 	}
 }
+
+func appendMemoryRecall(t *testing.T, s ledger.LedgerStore, chatID string, ids ...string) {
+	t.Helper()
+	entries := make([]ledger.MemoryRecallEntry, len(ids))
+	for i, id := range ids {
+		entries[i] = ledger.MemoryRecallEntry{ID: id}
+	}
+	payload, err := json.Marshal(ledger.MemoryRecallPayload{Source: "prefill", Entries: entries})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if _, err := s.AppendIntent(context.Background(), ledger.Entry{ChatID: chatID, Kind: ledger.KindMemoryRecall, Payload: payload}); err != nil {
+		t.Fatalf("AppendIntent memory.recall: %v", err)
+	}
+}
+
+func appendMemoryVote(t *testing.T, s ledger.LedgerStore, chatID, memoryID string, vote ledger.MemoryVote) {
+	t.Helper()
+	payload, err := json.Marshal(ledger.MemoryVotePayload{MemoryID: memoryID, Vote: vote, Actor: "judge"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if _, err := s.AppendIntent(context.Background(), ledger.Entry{ChatID: chatID, Kind: ledger.KindMemoryVote, Payload: payload}); err != nil {
+		t.Fatalf("AppendIntent memory.vote: %v", err)
+	}
+}
+
+// TestFold_MemoryRecallAndVoteProjections covers epic #1255 P1's rebuild
+// requirement: a chat's memory.recall/memory.vote entries fold into per-id
+// recall counts and vote tallies, and RecalledIDs names exactly the recalled
+// set (not any minted-but-never-recalled id).
+func TestFold_MemoryRecallAndVoteProjections(t *testing.T) {
+	s := newMemStore(t)
+	appendMemoryRecall(t, s, "chat1", "m1", "m2")
+	appendMemoryRecall(t, s, "chat1", "m1") // m1 recalled again in a later round
+	appendMemoryVote(t, s, "chat1", "m1", ledger.MemoryVoteSupported)
+	appendMemoryVote(t, s, "chat1", "m2", ledger.MemoryVoteContradicted)
+
+	res, err := Fold(context.Background(), s, "chat1", 0)
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+
+	if res.MemoryRecalls["m1"].Recalls != 2 {
+		t.Fatalf("m1 recalls = %d, want 2", res.MemoryRecalls["m1"].Recalls)
+	}
+	if res.MemoryRecalls["m2"].Recalls != 1 {
+		t.Fatalf("m2 recalls = %d, want 1", res.MemoryRecalls["m2"].Recalls)
+	}
+	if res.MemoryVotes["m1"].Upvotes != 1 || res.MemoryVotes["m1"].Downvotes != 0 {
+		t.Fatalf("m1 votes = %+v, want 1 upvote 0 downvotes", res.MemoryVotes["m1"])
+	}
+	if res.MemoryVotes["m2"].Downvotes != 1 || res.MemoryVotes["m2"].Upvotes != 0 {
+		t.Fatalf("m2 votes = %+v, want 0 upvotes 1 downvote", res.MemoryVotes["m2"])
+	}
+
+	ids := res.RecalledIDs()
+	if len(ids) != 2 || ids[0] != "m1" || ids[1] != "m2" {
+		t.Fatalf("RecalledIDs = %v, want [m1 m2]", ids)
+	}
+
+	// A second fold from scratch (a rebuild) reproduces the same projections.
+	rebuilt, err := Fold(context.Background(), s, "chat1", 0)
+	if err != nil {
+		t.Fatalf("Fold (rebuild): %v", err)
+	}
+	if rebuilt.MemoryRecalls["m1"].Recalls != 2 || rebuilt.MemoryVotes["m1"].Upvotes != 1 {
+		t.Fatalf("rebuild projections = %+v / %+v, want unchanged from the first fold", rebuilt.MemoryRecalls["m1"], rebuilt.MemoryVotes["m1"])
+	}
+}

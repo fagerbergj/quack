@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -112,7 +113,7 @@ func TestApplyOutcome_Invalidate(t *testing.T) {
 		t.Fatalf("recall (before) got %d, want 1", len(resp.Memories))
 	}
 
-	n, err := s.ApplyOutcome(ctx, "chat-x", OutcomeSignal{Kind: OutcomeInvalidated, Reason: "pr closed unmerged"})
+	n, err := s.ApplyOutcome(ctx, []string{"m1"}, OutcomeSignal{Kind: OutcomeInvalidated, Reason: "pr closed unmerged"})
 	if err != nil {
 		t.Fatalf("ApplyOutcome: %v", err)
 	}
@@ -152,7 +153,7 @@ func TestApplyOutcome_Invalidate(t *testing.T) {
 // TestApplyOutcome_Reinforce covers design doc §5/§7 case 2 plus the sticky
 // invalidation rule: reinforce bumps unverified→reinforced and 0→1, a second
 // reinforce bumps to ×2, and an already-invalidated memory is skipped even
-// though it shares the same chat_id.
+// when its id is explicitly named (recalled-set semantics, epic #1255 P1).
 func TestApplyOutcome_Reinforce(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
@@ -175,7 +176,7 @@ func TestApplyOutcome_Reinforce(t *testing.T) {
 		t.Fatalf("seed upsert: %v", err)
 	}
 
-	n, err := s.ApplyOutcome(ctx, "chat-y", OutcomeSignal{Kind: OutcomeReinforced})
+	n, err := s.ApplyOutcome(ctx, []string{"m1", "m2"}, OutcomeSignal{Kind: OutcomeReinforced})
 	if err != nil {
 		t.Fatalf("ApplyOutcome: %v", err)
 	}
@@ -217,7 +218,7 @@ func TestApplyOutcome_Reinforce(t *testing.T) {
 	}
 
 	// Second reinforce bumps to ×2.
-	if _, err := s.ApplyOutcome(ctx, "chat-y", OutcomeSignal{Kind: OutcomeReinforced}); err != nil {
+	if _, err := s.ApplyOutcome(ctx, []string{"m1", "m2"}, OutcomeSignal{Kind: OutcomeReinforced}); err != nil {
 		t.Fatalf("ApplyOutcome (2nd): %v", err)
 	}
 	rows = byID(t)
@@ -232,6 +233,253 @@ func TestApplyOutcome_Reinforce(t *testing.T) {
 		if r.memoryID != "m1" || r.op != OpReinforce || r.actor != ActorOutcomeFeedback {
 			t.Fatalf("op row = %+v, want {m1 reinforce outcome-feedback}", r)
 		}
+	}
+}
+
+// TestApplyVotes_SupportedAndContradicted covers epic #1255 P1: a supported
+// vote is +1 upvote and flips tier to verified, a contradicted vote is +1
+// downvote, and each vote writes one memory_ops row (actor=judge).
+func TestApplyVotes_SupportedAndContradicted(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStore(t, "task", nil)
+	ops := &fakeOpsLog{}
+	s.SetOpsLog(ops)
+
+	if err := s.idx.upsert(ctx, []point{
+		{ID: "m1", Vector: []float32{1, 0, 0, 0}, Content: "supported memory", Scope: "repo:r", Status: string(StatusUnverified)},
+		{ID: "m2", Vector: []float32{1, 0, 0, 0}, Content: "contradicted memory", Scope: "repo:r", Status: string(StatusUnverified)},
+	}); err != nil {
+		t.Fatalf("seed upsert: %v", err)
+	}
+
+	n, err := s.ApplyVotes(ctx, []Vote{
+		{MemoryID: "m1", Vote: VoteSupported, Reason: "diff matches", Actor: ActorJudge},
+		{MemoryID: "m2", Vote: VoteContradicted, Reason: "diff disagrees", Actor: ActorJudge},
+	}, DefaultInvalidateThreshold)
+	if err != nil {
+		t.Fatalf("ApplyVotes: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("ApplyVotes touched %d, want 2", n)
+	}
+
+	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	byID := map[string]scored{}
+	for _, p := range pts {
+		byID[p.ID] = p
+	}
+	if m1 := byID["m1"]; m1.Upvotes != 1 || m1.Tier != TierVerified {
+		t.Fatalf("m1 = %+v, want upvotes=1 tier=verified", m1)
+	}
+	if m2 := byID["m2"]; m2.Downvotes != 1 || m2.VoteScore != -1 || m2.Status == string(StatusInvalidated) {
+		t.Fatalf("m2 = %+v, want downvotes=1 score=-1 not yet invalidated", m2)
+	}
+
+	if len(ops.rows) != 2 {
+		t.Fatalf("ops rows = %+v, want exactly 2", ops.rows)
+	}
+	for _, r := range ops.rows {
+		if r.op != OpVote || r.actor != ActorJudge {
+			t.Fatalf("op row = %+v, want {op:vote actor:judge}", r)
+		}
+	}
+}
+
+// TestApplyVotes_NetScoreInvalidates covers the net-score invalidation rule:
+// a second contradicted vote drops the score to the threshold and the
+// memory is soft-invalidated with the fixed reason.
+func TestApplyVotes_NetScoreInvalidates(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStore(t, "task", nil)
+
+	if err := s.idx.upsert(ctx, []point{
+		{ID: "m1", Vector: []float32{1, 0, 0, 0}, Content: "twice contradicted", Scope: "repo:r", Status: string(StatusUnverified)},
+	}); err != nil {
+		t.Fatalf("seed upsert: %v", err)
+	}
+
+	for i := 0; i < 2; i++ {
+		if _, err := s.ApplyVotes(ctx, []Vote{{MemoryID: "m1", Vote: VoteContradicted, Actor: ActorJudge}}, DefaultInvalidateThreshold); err != nil {
+			t.Fatalf("ApplyVotes (%d): %v", i, err)
+		}
+	}
+
+	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if pts[0].Status != string(StatusInvalidated) || pts[0].InvalidationReason != OutcomeReasonNetScore {
+		t.Fatalf("m1 = %+v, want status=invalidated reason=%q", pts[0], OutcomeReasonNetScore)
+	}
+}
+
+// TestApplyVotes_DuplicateVoteForSameMemoryCollapsesToOne covers the
+// "duplicate votes for the same memory in one round" edge case: a judge
+// that names the same id twice in one submit_verdict call must not double
+// count - only the last vote applies.
+func TestApplyVotes_DuplicateVoteForSameMemoryCollapsesToOne(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStore(t, "task", nil)
+
+	if err := s.idx.upsert(ctx, []point{
+		{ID: "m1", Vector: []float32{1, 0, 0, 0}, Content: "voted on twice in one round", Scope: "repo:r", Status: string(StatusUnverified)},
+	}); err != nil {
+		t.Fatalf("seed upsert: %v", err)
+	}
+
+	// Same id twice: supported then contradicted - only the LAST should stick.
+	n, err := s.ApplyVotes(ctx, []Vote{
+		{MemoryID: "m1", Vote: VoteSupported, Actor: ActorJudge},
+		{MemoryID: "m1", Vote: VoteContradicted, Actor: ActorJudge},
+	}, DefaultInvalidateThreshold)
+	if err != nil {
+		t.Fatalf("ApplyVotes: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("ApplyVotes touched %d, want 1 (deduped)", n)
+	}
+
+	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if pts[0].Upvotes != 0 || pts[0].Downvotes != 1 {
+		t.Fatalf("m1 = %+v, want upvotes=0 downvotes=1 (last vote wins, no double count)", pts[0])
+	}
+}
+
+// TestApplyVotes_SkipsAlreadyInvalidated covers stickiness: a vote for an
+// already-invalidated memory is skipped entirely.
+func TestApplyVotes_SkipsAlreadyInvalidated(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStore(t, "task", nil)
+
+	if err := s.idx.upsert(ctx, []point{
+		{ID: "m1", Vector: []float32{1, 0, 0, 0}, Content: "already gone", Scope: "repo:r", Status: string(StatusInvalidated), InvalidationReason: "stale"},
+	}); err != nil {
+		t.Fatalf("seed upsert: %v", err)
+	}
+
+	n, err := s.ApplyVotes(ctx, []Vote{{MemoryID: "m1", Vote: VoteSupported, Actor: ActorJudge}}, DefaultInvalidateThreshold)
+	if err != nil {
+		t.Fatalf("ApplyVotes: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("ApplyVotes touched %d, want 0 (sticky invalidation)", n)
+	}
+}
+
+// TestApplyOutcome_SkipsVerifiedOnInvalidate covers design decision #1255:
+// closed-unmerged only invalidates recalled-and-UNVERIFIED memories - a
+// verified one recalled into the same chat gets no vote, not an invalidation.
+func TestApplyOutcome_SkipsVerifiedOnInvalidate(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStore(t, "task", nil)
+
+	if err := s.idx.upsert(ctx, []point{
+		{ID: "unverified1", Vector: []float32{1, 0, 0, 0}, Content: "still unverified", Scope: "repo:r", Status: string(StatusUnverified)},
+		{ID: "verified1", Vector: []float32{1, 0, 0, 0}, Content: "already verified", Scope: "repo:r", Status: string(StatusUnverified), Tier: TierVerified, Upvotes: 1},
+	}); err != nil {
+		t.Fatalf("seed upsert: %v", err)
+	}
+
+	n, err := s.ApplyOutcome(ctx, []string{"unverified1", "verified1"}, OutcomeSignal{Kind: OutcomeInvalidated, Reason: OutcomeReasonClosedUnmerged})
+	if err != nil {
+		t.Fatalf("ApplyOutcome: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("ApplyOutcome touched %d, want 1 (verified1 must be skipped)", n)
+	}
+
+	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	byID := map[string]scored{}
+	for _, p := range pts {
+		byID[p.ID] = p
+	}
+	if byID["unverified1"].Status != string(StatusInvalidated) {
+		t.Fatalf("unverified1 = %+v, want invalidated", byID["unverified1"])
+	}
+	if byID["verified1"].Status == string(StatusInvalidated) {
+		t.Fatalf("verified1 = %+v, want untouched (verified memories are never demoted by closed-unmerged)", byID["verified1"])
+	}
+}
+
+// TestBackfillTiers_IdempotentAcrossTwoBoots covers epic #1255 P1's
+// migration: a point with reinforcement_count>=1 backfills to tier=verified
+// with upvotes mirroring the count, a point with none backfills to
+// unverified, and a second boot (a fresh OpenSQLite against the same file)
+// touches neither again - a manually-set upvotes value from between boots
+// survives untouched.
+func TestBackfillTiers_IdempotentAcrossTwoBoots(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "mem.db")
+
+	s, err := OpenSQLite(ctx, path, fakeEmbedder{}, nil, "test_task", "task", 5, 0.5)
+	if err != nil {
+		t.Fatalf("OpenSQLite (boot 1): %v", err)
+	}
+	if err := s.idx.upsert(ctx, []point{
+		{ID: "reinforced1", Vector: []float32{1, 0, 0, 0}, Content: "was reinforced pre-P1", Scope: "repo:r", Status: string(StatusReinforced), ReinforcementCount: 3},
+		{ID: "fresh1", Vector: []float32{1, 0, 0, 0}, Content: "never reinforced", Scope: "repo:r", Status: string(StatusUnverified)},
+	}); err != nil {
+		t.Fatalf("seed upsert: %v", err)
+	}
+	// upsert happened after boot 1's own (no-op, empty collection) backfill -
+	// run it again directly, exactly as a boot that found existing data would.
+	if _, err := s.idx.backfillTiers(ctx); err != nil {
+		t.Fatalf("backfillTiers: %v", err)
+	}
+
+	byID := func() map[string]scored {
+		pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		out := make(map[string]scored, len(pts))
+		for _, p := range pts {
+			out[p.ID] = p
+		}
+		return out
+	}
+
+	rows := byID()
+	if r := rows["reinforced1"]; r.Tier != TierVerified || r.Upvotes != 3 {
+		t.Fatalf("reinforced1 = %+v, want tier=verified upvotes=3", r)
+	}
+	if r := rows["fresh1"]; r.Tier != TierUnverified || r.Upvotes != 0 {
+		t.Fatalf("fresh1 = %+v, want tier=unverified upvotes=0", r)
+	}
+
+	// Simulate a judge vote landing between boots - backfill must never touch
+	// a point that already has a tier again.
+	if _, err := s.ApplyVotes(ctx, []Vote{{MemoryID: "fresh1", Vote: VoteSupported, Actor: ActorJudge}}, DefaultInvalidateThreshold); err != nil {
+		t.Fatalf("ApplyVotes: %v", err)
+	}
+
+	// Boot 2: a fresh OpenSQLite against the same file re-runs backfill.
+	s2, err := OpenSQLite(ctx, path, fakeEmbedder{}, nil, "test_task", "task", 5, 0.5)
+	if err != nil {
+		t.Fatalf("OpenSQLite (boot 2): %v", err)
+	}
+	pts, err := s2.idx.list(ctx, []string{"repo:r"}, 0, 10, true)
+	if err != nil {
+		t.Fatalf("list (boot 2): %v", err)
+	}
+	after := make(map[string]scored, len(pts))
+	for _, p := range pts {
+		after[p.ID] = p
+	}
+	if r := after["fresh1"]; r.Tier != TierVerified || r.Upvotes != 1 {
+		t.Fatalf("fresh1 after boot 2 = %+v, want unchanged from its vote (tier=verified upvotes=1) - backfill must not re-touch it", r)
+	}
+	if r := after["reinforced1"]; r.Upvotes != 3 {
+		t.Fatalf("reinforced1 after boot 2 = %+v, want still upvotes=3 (idempotent)", r)
 	}
 }
 

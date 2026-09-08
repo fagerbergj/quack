@@ -107,7 +107,7 @@ func TestUpdateChatOrigin_PreservesStoredSetup(t *testing.T) {
 	orchRef.Store(orch)
 	var extHolder atomic.Pointer[extsdk.Extension]
 	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
-	updateOrigin := newExtUpdateChatOrigin("noop", st, nil, nil)
+	updateOrigin := newExtUpdateChatOrigin("noop", st, nil, nil, nil)
 
 	const localID = "update-origin-1181"
 	chatID := "ext:noop:" + localID

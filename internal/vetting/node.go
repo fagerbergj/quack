@@ -362,16 +362,24 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 
 	// Memory recall for ACP workers; append after the prompt so sibling nodes'
 	// shared BACKGROUND prefix (dag.buildTask) stays a cache hit.
+	var receivedMemories []memory.Delivered
 	if cfg.ExternalWorker && cfg.CommitMemory {
 		_, recallSpan := otelobs.Start(nodeCtx, "memory.recall",
 			attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID))
-		rec := cfg.Memory.Recall(ctx, MemoryScope(ctx, cfg, nodeID), cfg.Task)
+		rec, hits := cfg.Memory.RecallWithHits(ctx, MemoryScope(ctx, cfg, nodeID), cfg.Task)
 		recallSpan.SetAttributes(attribute.Bool("hit", rec != ""))
 		recallSpan.End()
 		otelobs.RecordMemoryRecall(rec != "")
 		if rec != "" {
 			prompt = prompt + "\n\n" + rec
 			log.Info("recalled memory injected into the worker prompt", "bytes", len(rec))
+			receivedMemories = hits
+			ids := make([]string, len(hits))
+			for i, h := range hits {
+				ids[i] = h.ID
+			}
+			cfg.Memory.RecordRecall(nodeCtx, ids)
+			recallLedgerEntry(nodeCtx, cfg, nodeID, 0, "prefill", hits)
 		}
 	}
 	// Episodic record preload (#1006): review for reviewer nodes (ancestry +
@@ -667,7 +675,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			// node's own rubric scores them; judge-only, never touches the
 			// worker's own question/revision content.
 			shots := renderScreenshotEvidence(judgeCtx, cfg, nodeID, skip == "", act)
-			v, jerr := runJudgeAgent(ledgerCtx, judge, cfg, attachScreenshots(question, shots), answer, act, det, judgePartEmitter(sink, nodeID, runID))
+			v, jerr := runJudgeAgent(ledgerCtx, judge, cfg, attachScreenshots(question, shots), answer, act, det, receivedMemories, judgePartEmitter(sink, nodeID, runID))
 			if jerr != nil {
 				// Judge failure means answer goes out unvetted - loud ERROR, not Warn.
 				log.Error("judge failed; surfacing answer unvetted", "round", round, "err", jerr)
@@ -713,6 +721,12 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				res.Passed = false
 				res.Feedback = fmt.Sprintf("Round %d %s (score %.2f) but could not be recorded in the write-ahead log; treating as failed.", round, verdictWord, v.Score)
 				break
+			}
+			if res.Passed {
+				// Memory votes (#1255 P1): applied only on the round that actually
+				// passes - a failed round (including one superseded by the WAL
+				// fail-closed flip above) records nothing.
+				applyMemoryVotesOnPass(nodeCtx, cfg, nodeID, round, receivedMemories, v.Memories)
 			}
 			for _, sr := range scored {
 				emitArtifactRevision(sink, sr.ArtifactID, sr.Revision, recordstore.KindOf(sr.ArtifactID), nodeID, round)
