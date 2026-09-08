@@ -252,13 +252,15 @@ func (h *Handler) RescopeMemories(w http.ResponseWriter, r *http.Request) {
 	apply := body.Apply != nil && *body.Apply
 
 	byRepo := map[string]*memory.RescopeRepoStat{}
+	skippedNoProvenance := 0
 	for _, st := range h.memStores() {
 		res, err := st.Rescope(r.Context(), h.chatRepo, apply)
 		if err != nil {
 			httpError(w, http.StatusInternalServerError, err)
 			return
 		}
-		for repo, stat := range res {
+		skippedNoProvenance += res.SkippedNoProvenance
+		for repo, stat := range res.ByRepo {
 			merged := byRepo[repo]
 			if merged == nil {
 				merged = &memory.RescopeRepoStat{}
@@ -277,7 +279,7 @@ func (h *Handler) RescopeMemories(w http.ResponseWriter, r *http.Request) {
 		repos = append(repos, schema.RescopeRepoTally{Repo: repo, Count: stat.Count, Examples: &examples})
 	}
 	sort.Slice(repos, func(i, j int) bool { return repos[i].Repo < repos[j].Repo })
-	writeJSON(w, http.StatusOK, schema.RescopeReport{Applied: apply, Repos: repos})
+	writeJSON(w, http.StatusOK, schema.RescopeReport{Applied: apply, Repos: repos, SkippedNoProvenance: &skippedNoProvenance})
 }
 
 // chatRepo resolves a chat's stored GitHub origin (the "repo" Labels

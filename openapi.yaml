@@ -1359,6 +1359,9 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/RescopeRepoTally"
+        skipped_no_provenance:
+          type: integer
+          description: role:* memories with no provenance chat_id (minted before #875) - unresolvable, not moved.
 
     RescopeRepoTally:
       type: object

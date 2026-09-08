@@ -102,6 +102,45 @@ func TestNewRecallMemory_LogsLedgerEntryWithCoords(t *testing.T) {
 	}
 }
 
+// TestNewRecallMemory_NoNodeIDLegacyBucket: #1262 companion for the native
+// P2 recall path (vetting.MemoryScope's ACP-side twin) - a fact committed
+// directly to a bucket literally named after the node id must NOT be found,
+// proving recall_memory no longer queries Legacy: coords.Node.
+func TestNewRecallMemory_NoNodeIDLegacyBucket(t *testing.T) {
+	ctx := context.Background()
+	store, err := memory.OpenSQLite(ctx, t.TempDir()+"/mem.db", fakeToolEmbedder{}, echoToolConsolidator{content: "node-id-bucket fact"}, "test_recall_legacy", "task", 5, 0)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	// Simulates what the old Legacy: coords.Node bug would have queried -
+	// a bucket keyed by the raw node id, which never legitimately holds anything.
+	if _, err := store.Commit(ctx, memory.Scope{Legacy: "node1"}, "explorer", memory.Provenance{}, []memory.Candidate{{Content: "node-id-bucket fact"}}, ""); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	lgr := ledgertest.NewMemStore()
+	tl, err := newRecallMemory(Deps{Memory: store, Ledger: lgr, MemoryRole: "task"})
+	if err != nil {
+		t.Fatalf("newRecallMemory: %v", err)
+	}
+	tl.(ledger.CoordSetter).SetLedgerCoords(ledger.Coords{ChatID: "chat1", Node: "node1"})
+	out, err := tl.(runnableTool).Run(newFakeCtx(), map[string]any{"query": "node-id-bucket fact"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshal Run result: %v", err)
+	}
+	var result recallMemoryResult
+	if err := json.Unmarshal(b, &result); err != nil {
+		t.Fatalf("unmarshal Run result: %v", err)
+	}
+	if len(result.Hits) != 0 {
+		t.Fatalf("Run result = %+v, want zero hits (no node-id legacy bucket recall)", out)
+	}
+}
+
 // TestNewRecallMemory_EmptyQueryRejected guards the trivial input-validation
 // boundary every other quack tool enforces (stage_memory, commit_memory).
 func TestNewRecallMemory_EmptyQueryRejected(t *testing.T) {

@@ -93,7 +93,7 @@ func newRecallMemory(d Deps) (tool.Tool, error) {
 				return recallMemoryResult{}, fmt.Errorf("recall_memory: query is empty")
 			}
 			coords := box.get()
-			sc := memory.Scope{Role: d.MemoryRole, Legacy: coords.Node}
+			sc := memory.Scope{Role: d.MemoryRole}
 			if s := ctx.Session(); s != nil {
 				sc.User = s.UserID()
 			}

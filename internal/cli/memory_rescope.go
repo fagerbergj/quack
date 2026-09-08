@@ -28,24 +28,27 @@ func RunMemoryRescope(ctx context.Context, out io.Writer, server string, apply, 
 	}
 	if len(report.Repos) == 0 {
 		fmt.Fprintln(out, "No role:* memories resolve to a GitHub-origin chat.")
-		return nil
-	}
-	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(tw, "REPO\t%s\tEXAMPLE\n", "COUNT")
-	for _, r := range report.Repos {
-		example := ""
-		if r.Examples != nil && len(*r.Examples) > 0 {
-			example = truncateLine((*r.Examples)[0], 60)
+	} else {
+		tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		fmt.Fprintf(tw, "REPO\t%s\tEXAMPLE\n", "COUNT")
+		for _, r := range report.Repos {
+			example := ""
+			if r.Examples != nil && len(*r.Examples) > 0 {
+				example = truncateLine((*r.Examples)[0], 60)
+			}
+			fmt.Fprintf(tw, "%s\t%d\t%s\n", r.Repo, r.Count, example)
 		}
-		fmt.Fprintf(tw, "%s\t%d\t%s\n", r.Repo, r.Count, example)
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+		total := 0
+		for _, r := range report.Repos {
+			total += r.Count
+		}
+		fmt.Fprintf(out, "\n%s %d memories across %d repos.\n", verb, total, len(report.Repos))
 	}
-	if err := tw.Flush(); err != nil {
-		return err
+	if report.SkippedNoProvenance != nil && *report.SkippedNoProvenance > 0 {
+		fmt.Fprintf(out, "%d role:* memories have no provenance chat_id (minted before #875) - not moved.\n", *report.SkippedNoProvenance)
 	}
-	total := 0
-	for _, r := range report.Repos {
-		total += r.Count
-	}
-	fmt.Fprintf(out, "\n%s %d memories across %d repos.\n", verb, total, len(report.Repos))
 	return nil
 }
