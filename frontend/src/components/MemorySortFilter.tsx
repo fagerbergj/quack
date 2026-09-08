@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { MemoryListSort } from '../api'
+import type { MemoryListSort, MemoryScopeStats } from '../api'
 
 export type MemorySort = MemoryListSort
 
@@ -25,6 +25,10 @@ export interface MemorySortFilterProps {
   onBucketChange: (bucket: string) => void
   tier: MemoryTierFilter
   onTierChange: (tier: MemoryTierFilter) => void
+  // Current live/invalidated snapshot per bucket (#1267), shown read-only
+  // below the filters - not another filter, just where recall-stats context
+  // lives now that this popover is the one place bucket-scoped numbers show.
+  scopes?: MemoryScopeStats[]
 }
 
 // MemorySortFilter (#746 items 11/15) combines sort and the bucket filter in
@@ -33,7 +37,7 @@ export interface MemorySortFilterProps {
 // or Escape) rather than inventing a second idiom. The bucket filter is a
 // dropdown here (item 11), not the free-text input it used to be - it takes
 // no horizontal space in the toolbar until opened.
-export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucketChange, tier, onTierChange }: MemorySortFilterProps) {
+export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucketChange, tier, onTierChange, scopes }: MemorySortFilterProps) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const active = sort !== 'newest' || bucket !== '' || tier !== ''
@@ -111,6 +115,22 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
             <option value="unverified">Unverified</option>
             <option value="verified">Verified</option>
           </select>
+          {scopes && scopes.length > 0 && (
+            <>
+              <div className="mt-2 mb-1 border-t border-gray-100 dark:border-gray-700" />
+              <div className="px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                Live / invalidated
+              </div>
+              <ul className="max-h-32 overflow-y-auto">
+                {scopes.map(s => (
+                  <li key={s.scope} className="flex items-center justify-between gap-2 px-1 py-0.5 text-gray-600 dark:text-gray-300">
+                    <span className="truncate">{s.scope}</span>
+                    <span className="flex-shrink-0 tabular-nums text-gray-400 dark:text-gray-500">{s.live} / {s.invalidated}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </div>
       )}
     </div>

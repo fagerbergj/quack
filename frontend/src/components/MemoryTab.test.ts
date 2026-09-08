@@ -27,13 +27,23 @@ const MEMORY = {
 describe('MemoryTab', () => {
   let root: ReturnType<typeof createRoot> | undefined
   let host: HTMLDivElement | undefined
-  let fetchMock: ReturnType<typeof vi.fn>
+  let fetchMock: ReturnType<typeof vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>>
 
   beforeEach(() => {
     // @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     fetchMock = vi.fn()
-    vi.stubGlobal('fetch', fetchMock)
+    // MemoryTab now also fires an independent GET /memories/stats (#1267) on
+    // mount; intercept it ahead of fetchMock so every existing test's call
+    // count/indexing still refers only to the memories-list/vote/delete
+    // requests it was written against.
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.includes('/memories/stats')) {
+        return Promise.resolve(jsonResponse({ weeks: [], scopes: [] }))
+      }
+      return fetchMock(input, init)
+    }))
   })
 
   afterEach(() => {
