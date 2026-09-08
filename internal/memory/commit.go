@@ -162,6 +162,17 @@ type neighbour struct {
 	Status             string
 	ValidFrom          string
 	ReinforcementCount int
+
+	// Vote/lineage fields (epic #1255 P5): carried forward by apply()'s
+	// UPDATE path so a consolidation merge never wipes accumulated votes -
+	// they used to be dropped on every UPDATE (a latent bug this phase
+	// fixes as a prerequisite for absorption inheriting anything real).
+	Upvotes, Downvotes, VoteScore int
+	Tier                          string
+	LastUpvotedAt                 string
+	Recalls                       int
+	LastRecalledAt                string
+	AbsorbedIDs                   []string
 }
 
 // op is one consolidation decision from the LLM.
@@ -220,6 +231,9 @@ func (s *Store) neighbours(ctx context.Context, bucket, sourceText string, stage
 				ID: p.ID, Content: p.Content,
 				ChatID: p.ChatID, NodeID: p.NodeID, Source: p.Source, MintedAt: p.MintedAt,
 				Status: p.Status, ValidFrom: p.ValidFrom, ReinforcementCount: p.ReinforcementCount,
+				Upvotes: p.Upvotes, Downvotes: p.Downvotes, VoteScore: p.VoteScore, Tier: p.Tier,
+				LastUpvotedAt: p.LastUpvotedAt, Recalls: p.Recalls, LastRecalledAt: p.LastRecalledAt,
+				AbsorbedIDs: p.AbsorbedIDs,
 			})
 		}
 	}
@@ -369,6 +383,9 @@ func (s *Store) apply(ctx context.Context, bucket, author string, prov Provenanc
 			fresh := strings.ToUpper(strings.TrimSpace(o.Action)) == "ADD" || id == ""
 			mintedAt, chatID, nodeID, source := ts, prov.ChatID, prov.NodeID, prov.Source
 			status, reinforcementCount, validFrom := string(StatusUnverified), 0, ts
+			var upvotes, downvotes, voteScore, recalls int
+			var tier, lastUpvotedAt, lastRecalledAt string
+			var absorbedIDs []string
 			if !fresh {
 				if n, ok := valid[id]; ok {
 					mintedAt, chatID, nodeID, source = n.MintedAt, n.ChatID, n.NodeID, n.Source
@@ -379,6 +396,12 @@ func (s *Store) apply(ctx context.Context, bucket, author string, prov Provenanc
 					if n.ValidFrom != "" {
 						validFrom = n.ValidFrom
 					}
+					// Carry votes/lineage forward - an UPDATE re-words a memory, it
+					// doesn't reset earned trust (see neighbour's doc).
+					upvotes, downvotes, voteScore = n.Upvotes, n.Downvotes, n.VoteScore
+					tier, lastUpvotedAt = n.Tier, n.LastUpvotedAt
+					recalls, lastRecalledAt = n.Recalls, n.LastRecalledAt
+					absorbedIDs = n.AbsorbedIDs
 				}
 			} else {
 				id = uuid.NewString()
@@ -398,6 +421,14 @@ func (s *Store) apply(ctx context.Context, bucket, author string, prov Provenanc
 				Status:             status,
 				ValidFrom:          validFrom,
 				ReinforcementCount: reinforcementCount,
+				Upvotes:            upvotes,
+				Downvotes:          downvotes,
+				VoteScore:          voteScore,
+				Tier:               tier,
+				LastUpvotedAt:      lastUpvotedAt,
+				Recalls:            recalls,
+				LastRecalledAt:     lastRecalledAt,
+				AbsorbedIDs:        absorbedIDs,
 			})
 			writeIDs = append(writeIDs, struct {
 				ID    string
@@ -423,12 +454,27 @@ func (s *Store) apply(ctx context.Context, bucket, author string, prov Provenanc
 			if reason == "" {
 				reason = "invalidated by consolidator"
 			}
+			// Epic #1255 P5: a DELETE naming its survivor ("duplicate of <id>")
+			// is a merge, not a bare invalidation - the survivor inherits
+			// absorbed's votes/lineage. Falls through to a plain invalidate if
+			// the named survivor doesn't actually exist (hallucinated id).
+			if survivorID := parseSurvivorID(reason); survivorID != "" && survivorID != o.ID {
+				ok, err := s.idx.absorb(ctx, survivorID, o.ID, absorbedByReason(survivorID))
+				if err != nil {
+					return count, err
+				}
+				if ok {
+					s.logOp(ctx, o.ID, OpInvalidate, ActorConsolidator, absorbedByReason(survivorID))
+					count++
+					continue
+				}
+			}
 			if _, err := s.idx.invalidateByID(ctx, []string{o.ID}, reason); err != nil {
 				return count, err
 			}
 			s.logOp(ctx, o.ID, OpInvalidate, ActorConsolidator, reason)
+			count++
 		}
-		count += len(invalidations)
 	}
 
 	s.log.Debug("commit", "bucket", bucket, "author", author, "ops", len(ops), "writes", count)

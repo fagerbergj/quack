@@ -1089,6 +1089,32 @@ paths:
               schema:
                 $ref: "#/components/schemas/RescopeReport"
 
+  /api/v1/memories/stats:
+    get:
+      operationId: getMemoryStats
+      summary: Weekly memory-usage stats
+      description: |
+        Epic #1255 P5. Computed from the ledger's `memory.recall`/`memory.vote`
+        entries and `memory_ops`, no new tables. Per ISO week (UTC): recall
+        precision (`supported / (supported+contradicted+not_relevant)`),
+        support share (`supported / total votes`), vote counts by kind,
+        recalls, and memories minted/invalidated that week. Also returns a
+        current snapshot of live/invalidated points per scope bucket. A week
+        with no activity still appears, zeroed.
+      parameters:
+        - name: weeks
+          in: query
+          description: How many ISO weeks to report, ending on the current week. Defaults to 12.
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Weekly stats and the current per-scope snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryStats"
+
 components:
   parameters:
     ChatID:
@@ -1332,6 +1358,14 @@ components:
           type: string
           format: date-time
           description: When this memory was last delivered to a worker. Absent if never recalled.
+        absorbed_ids:
+          type: array
+          items:
+            type: string
+          description: >-
+            Ids of memories consolidation merged into this one (near-duplicate
+            merge or supersession, epic #1255 P5), flattened across any
+            absorption chain. This memory's votes include the absorbed ones'.
 
     DeleteMemoryBody:
       type: object
@@ -1476,6 +1510,64 @@ components:
                 type: string
               message:
                 type: string
+
+    MemoryWeekStats:
+      type: object
+      required: [week, recalls, supported, contradicted, not_relevant, precision, support_share, minted, invalidated]
+      properties:
+        week:
+          type: string
+          description: ISO 8601 week (UTC), e.g. "2026-W23".
+        recalls:
+          type: integer
+          description: Memories delivered to a worker this week (prefill or tool), from `memory.recall` ledger entries.
+        supported:
+          type: integer
+        contradicted:
+          type: integer
+        not_relevant:
+          type: integer
+        precision:
+          type: number
+          format: double
+          description: supported / (supported+contradicted+not_relevant). 0 if no votes were cast.
+        support_share:
+          type: number
+          format: double
+          description: supported / total votes cast this week. 0 if no votes were cast.
+        minted:
+          type: integer
+          description: Memories added this week (memory_ops op=add).
+        invalidated:
+          type: integer
+          description: Memories invalidated this week (memory_ops op=invalidate), lineage absorptions included.
+
+    MemoryScopeStats:
+      type: object
+      required: [scope, live, invalidated]
+      properties:
+        scope:
+          type: string
+          description: Bucket key, e.g. repo:quack, role:coding, user:jason.
+        live:
+          type: integer
+        invalidated:
+          type: integer
+
+    MemoryStats:
+      type: object
+      required: [weeks, scopes]
+      properties:
+        weeks:
+          type: array
+          description: Oldest first, one entry per requested week (a week with no activity still appears, zeroed).
+          items:
+            $ref: "#/components/schemas/MemoryWeekStats"
+        scopes:
+          type: array
+          description: Current live/invalidated snapshot per scope bucket.
+          items:
+            $ref: "#/components/schemas/MemoryScopeStats"
 
     # -------------------------------------------------------------------------
     # Replay ledger

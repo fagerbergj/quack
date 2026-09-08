@@ -255,6 +255,68 @@ Dry run (the default) only tallies per-repo counts and examples; `--apply`
 writes the bucket change and logs a `memory_ops` `update` row per point,
 actor `rescope`.
 
+## 8e. Epic #1255 P5: lineage on merge and weekly stats
+
+**Absorption.** When the consolidation sweep (or a commit's own reconcile
+pass) DELETEs a memory whose reason names its survivor (`"duplicate of
+<id>"` - the shape both consolidation prompts already produce), `apply()`
+treats it as a merge rather than a bare invalidation: the survivor's
+`upvotes`/`downvotes`/`vote_score` are summed with the absorbed memory's,
+its `tier` is recomputed (`verified` once the combined `upvotes >= 1`,
+same rule as a supported vote), `last_upvoted_at`/`last_recalled_at` take
+the later of the two, and `absorbed_ids` gains the absorbed id. The
+absorbed memory is invalidated with the normalized reason `"absorbed by
+<survivor-id>"` (not the raw "duplicate of" text) and one `memory_ops`
+`invalidate` row, actor `consolidator`. A DELETE reason that doesn't name a
+resolvable survivor (or names one the store doesn't have) falls back to a
+plain invalidation, unchanged from before this phase.
+
+**Chains.** If A is absorbed by B, and B is later itself absorbed by C, C's
+`absorbed_ids` ends up with BOTH `A` and `B` (an absorbed memory's own
+`absorbed_ids` flattens into whatever absorbs it), and C's vote totals
+already include A's (folded into B first, then B's - A's included -
+folded into C). A's own `invalidation_reason` stays `"absorbed by B"`
+forever; it is never rewritten to name C. Finding the CURRENT survivor of
+an absorbed id means checking whose `absorbed_ids` contains it, not
+following the invalidation-reason chain forward.
+
+**A vote for an already-absorbed id is dropped, not redirected.**
+`ApplyVotes`/`applyVotes` already skip any already-invalidated memory
+(sticky); an absorbed memory is invalidated, so a vote naming it never
+reaches a write. This phase doesn't add a redirect-to-survivor path for
+votes - the survivor's own recall (not the absorbed id's) is what a live
+run would deliver going forward, so a stale vote target should be rare in
+practice.
+
+**Rebuild.** `internal/ledger/fold`'s `Result.FoldAbsorption(absorbedBy)`
+redirects a folded chat's `MemoryVotes`/`MemoryRecalls` for an absorbed id
+onto its survivor (summing counts, taking the later timestamp), resolving
+a chain (`A -> B -> C`) to its final survivor. `absorbedBy` comes from
+`Store.Snapshot`, which pages every point once and returns both the
+current live/invalidated count per scope and the absorbed-id -> survivor
+map built from every point's `AbsorbedIDs`. `quack ledger rebuild` itself
+still only reconstructs artifact/node/SSE state (P1's documented
+limitation stands - the runtime vote/recall path is the live mirror, not
+a rebuild-and-diff); `FoldAbsorption` is the fold-side mechanics a future
+memory-projection reconciliation pass would call before comparing a
+rebuilt chat's projections against the live store.
+
+**Weekly stats.** `GET /api/v1/memories/stats?weeks=N` and `quack memory
+stats [--weeks N]` report, per ISO week (UTC, Monday-Sunday, computed via
+Go's `time.Time.ISOWeek` on a UTC time): recall precision (`supported /
+(supported+contradicted+not_relevant)`), support share (`supported / total
+votes cast that week` - the same value as precision today, computed
+separately per the epic's own two formulas), vote counts by kind, recalls,
+and memories minted/invalidated (from `memory_ops`, lineage absorptions
+counted as an invalidation like any other). A week with no activity still
+appears, zeroed, so the memory page's header (a P4 follow-up) can chart a
+continuous series. Alongside the weekly series, the same endpoint returns
+a live/invalidated snapshot per scope bucket, from the store directly (not
+week-bucketed). Everything is computed from the ledger's
+`memory.recall`/`memory.vote` entries (scanned across every chat -
+`memory_ops` and the ledger are the only sources of truth here) and
+`memory_ops`; no new tables.
+
 ## 9. Future work
 
 - **AttriMem-style attribution** (arXiv 2607.21106): which specific recalled memory actually influenced a given output, so reinforcement and invalidation can target real contribution instead of mere co-occurrence in the prompt.

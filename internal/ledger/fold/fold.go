@@ -144,6 +144,65 @@ type MemoryVoteState struct {
 	LastUpvotedAt time.Time
 }
 
+// FoldAbsorption redirects every id in r.MemoryVotes/MemoryRecalls that
+// absorbedBy (an absorbed id -> its current survivor id, built from the live
+// store's AbsorbedIDs) names onto its survivor, summing counts and taking
+// the later timestamp - epic #1255 P5: a consolidation merge that happens
+// AFTER a vote/recall was cast must not orphan that history on an id the
+// store no longer serves. absorbedBy is resolved to its final survivor
+// (chain-safe: A absorbed by B absorbed by C resolves A and B both to C).
+// Call after Fold/Apply, before comparing a rebuild against the live store.
+func (r *Result) FoldAbsorption(absorbedBy map[string]string) {
+	if r == nil || len(absorbedBy) == 0 {
+		return
+	}
+	votes := map[string]*MemoryVoteState{}
+	for id, v := range r.MemoryVotes {
+		sid := resolveSurvivor(id, absorbedBy)
+		s, ok := votes[sid]
+		if !ok {
+			s = &MemoryVoteState{ID: sid}
+			votes[sid] = s
+		}
+		s.Upvotes += v.Upvotes
+		s.Downvotes += v.Downvotes
+		if v.LastUpvotedAt.After(s.LastUpvotedAt) {
+			s.LastUpvotedAt = v.LastUpvotedAt
+		}
+	}
+	r.MemoryVotes = votes
+
+	recalls := map[string]*MemoryRecallState{}
+	for id, v := range r.MemoryRecalls {
+		sid := resolveSurvivor(id, absorbedBy)
+		s, ok := recalls[sid]
+		if !ok {
+			s = &MemoryRecallState{ID: sid}
+			recalls[sid] = s
+		}
+		s.Recalls += v.Recalls
+		if v.LastRecalledAt.After(s.LastRecalledAt) {
+			s.LastRecalledAt = v.LastRecalledAt
+		}
+	}
+	r.MemoryRecalls = recalls
+}
+
+// resolveSurvivor follows absorbedBy to its end (an id absorbedBy doesn't
+// mention resolves to itself), guarding against a cyclic map so a bad input
+// can't loop forever.
+func resolveSurvivor(id string, absorbedBy map[string]string) string {
+	seen := map[string]bool{}
+	for {
+		next, ok := absorbedBy[id]
+		if !ok || seen[id] {
+			return id
+		}
+		seen[id] = true
+		id = next
+	}
+}
+
 // RecalledIDs returns every memory id this chat's ledger recorded a
 // memory.recall for - the recalled set applyMemoryOutcome (design decision
 // #1255) reinforces/invalidates instead of the memories minted in the chat.

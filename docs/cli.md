@@ -82,6 +82,7 @@ Browse or invalidate what quack has remembered (memory lifecycle design doc); `f
 | `quack memory forget <memory-id> [--reason <text>]` | Invalidate (soft-delete) one memory. |
 | `quack memory sweep [--dry-run]` | Run the forgetting-rule sweep on demand (epic #1255 P3); `--dry-run` reports per-rule matches without invalidating anything. |
 | `quack memory rescope [--apply]` | Move role:\* memories with a resolvable GitHub-origin chat into their repo:\* bucket (#1262); dry run by default. |
+| `quack memory stats [--weeks N]` | Weekly recall precision/support-share/vote/recall counts plus live/invalidated points per scope (epic #1255 P5); defaults to 12 weeks. |
 
 ## Sandbox
 

@@ -168,6 +168,9 @@ func (s *Store) consolidateCluster(ctx context.Context, bucket string, cluster [
 		n := neighbour{
 			ID: p.ID, Content: p.Content, ChatID: p.ChatID, NodeID: p.NodeID, Source: p.Source,
 			MintedAt: p.MintedAt, Status: p.Status, ValidFrom: p.ValidFrom, ReinforcementCount: p.ReinforcementCount,
+			Upvotes: p.Upvotes, Downvotes: p.Downvotes, VoteScore: p.VoteScore, Tier: p.Tier,
+			LastUpvotedAt: p.LastUpvotedAt, Recalls: p.Recalls, LastRecalledAt: p.LastRecalledAt,
+			AbsorbedIDs: p.AbsorbedIDs,
 		}
 		neighbours[i] = n
 		valid[p.ID] = n

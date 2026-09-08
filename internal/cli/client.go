@@ -198,6 +198,18 @@ func (c *Client) RescopeMemories(ctx context.Context, apply bool) (schema.Rescop
 	return out, err
 }
 
+// GetMemoryStats fetches weekly recall precision/support-share/vote/recall
+// counts plus a live/invalidated snapshot per scope (epic #1255 P5).
+func (c *Client) GetMemoryStats(ctx context.Context, weeks int) (schema.MemoryStats, error) {
+	var out schema.MemoryStats
+	path := "/api/v1/memories/stats"
+	if weeks > 0 {
+		path += "?weeks=" + strconv.Itoa(weeks)
+	}
+	err := c.getJSON(ctx, path, &out)
+	return out, err
+}
+
 // GetChat returns a chat with its turns.
 func (c *Client) GetChat(ctx context.Context, id string) (schema.ChatDetail, error) {
 	var out schema.ChatDetail
