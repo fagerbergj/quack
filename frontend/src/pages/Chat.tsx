@@ -16,6 +16,7 @@ import { GitHubLink } from '../components/GitHubLink'
 import { TriggerMessage } from '../components/TriggerEnvelope'
 import { ChatMenu } from '../components/ChatMenu'
 import { NavToggle } from '../components/NavToggle'
+import { Icon } from '../components/Icon'
 import { imageAttachmentsByTurn } from '../lib/turnAttachments'
 
 // liveDagFinalText extracts the answer from the terminal node's accumulated answer.
@@ -159,9 +160,7 @@ export function EditableChatTitle({ title, editable, onRename }: EditableChatTit
           single-line truncate once the header has room. */}
       <span className="line-clamp-2 medium:line-clamp-1 medium:truncate">{title}</span>
       {editable && (
-        <span className="opacity-0 group-hover:opacity-100 text-gray-400 text-xs transition-opacity flex-shrink-0" aria-hidden="true">
-          ✎
-        </span>
+        <Icon name="edit" className="opacity-0 group-hover:opacity-100 text-gray-400 w-3.5 h-3.5 transition-opacity flex-shrink-0" />
       )}
     </h1>
   )
@@ -630,7 +629,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
               className="md:hidden flex-shrink-0 w-11 h-11 flex items-center justify-center rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
               aria-label="Toggle chat list"
             >
-              ☰
+              <Icon name="menu" className="w-5 h-5" />
             </button>
             {/* #1171: the nav drawer's toggle - visible at ALL widths (the ☰
                 above is md:hidden) and with its own glyph, so the chat-list

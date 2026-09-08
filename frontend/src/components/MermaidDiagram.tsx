@@ -1,6 +1,7 @@
 import { memo, useEffect, useId, useState } from 'react'
 import type { MermaidConfig } from 'mermaid'
 import { CopyablePre } from './CopyablePre'
+import { Icon } from './Icon'
 
 // The mermaid package is large (parser + layout + renderer, ~1MB+ minified)
 // and most chat messages never contain a diagram - load it only when a
@@ -63,7 +64,7 @@ export const MermaidDiagram = memo(function MermaidDiagram({ code }: { code: str
     return (
       <div className="not-prose">
         <div className="mb-1 flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400" title={error}>
-          <span aria-hidden="true">⚠</span> Diagram failed to render - showing source
+          <Icon name="warning" className="w-3.5 h-3.5" /> Diagram failed to render - showing source
         </div>
         <CopyablePre><code className="language-mermaid">{code}</code></CopyablePre>
       </div>

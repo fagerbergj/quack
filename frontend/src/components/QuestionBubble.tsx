@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { agentLabel } from './messageParts'
+import { Icon } from './Icon'
 
 // QuestionBubble is the single, attributed question-prompt UI shared by every
 // place the app needs a human answer mid-conversation:
@@ -39,7 +40,7 @@ export function QuestionBubble({
     return (
       <div className="mt-3 rounded-xl border border-gray-200 dark:border-gray-700 border-l-4 bg-gray-50 dark:bg-gray-800/40 px-4 py-3">
         <div className="flex items-center gap-1.5 text-xs font-medium text-green-700 dark:text-green-400">
-          <span aria-hidden="true">✓</span>
+          <Icon name="check" className="w-3.5 h-3.5" />
           Answered · {agentLabel(agent)}
         </div>
         {question && (
@@ -57,7 +58,7 @@ export function QuestionBubble({
       aria-label={`${agentLabel(agent)} needs your input`}
     >
       <div className="flex items-center gap-1.5 text-xs font-medium text-blue-700 dark:text-blue-300">
-        <span aria-hidden="true">❓</span>
+        <Icon name="help" className="w-3.5 h-3.5" />
         {agentLabel(agent)} needs your input
       </div>
       {question && (

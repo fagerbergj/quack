@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AssistantText, BubbleHeader } from './AgentParts'
+import { Icon } from './Icon'
 import { type DagNodeDef } from '../state/agentStream'
 import type { NodeState, QueuedMessage } from '../state/chatStore'
 
@@ -68,8 +69,8 @@ function QueuedMessageRow({ msg, onEdit, onRemove }: {
       >
         parked
       </span>
-      {onEdit && <button onClick={() => setEditing(true)} aria-label="Edit" title="Edit" className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300">✎</button>}
-      {onRemove && <button onClick={onRemove} aria-label="Remove" title="Remove" className="text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400">✕</button>}
+      {onEdit && <button onClick={() => setEditing(true)} aria-label="Edit" title="Edit" className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"><Icon name="edit" className="w-3.5 h-3.5" /></button>}
+      {onRemove && <button onClick={onRemove} aria-label="Remove" title="Remove" className="text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400"><Icon name="close" className="w-3.5 h-3.5" /></button>}
     </li>
   )
 }
@@ -130,7 +131,7 @@ export function NodePopup({
             aria-label="Close"
             className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-500 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
           >
-            ✕
+            <Icon name="close" className="w-4 h-4" />
           </button>
         </div>
 
@@ -140,7 +141,7 @@ export function NodePopup({
             <BubbleHeader agent={node.agent} />
             {notStarted && onEditTask && !editingTask && (
               <button onClick={() => { setTaskText(node.task); setEditingTask(true) }} aria-label="Edit prompt" title="Edit prompt" className="shrink-0 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300">
-                ✎
+                <Icon name="edit" className="w-3.5 h-3.5" />
               </button>
             )}
           </div>
@@ -173,7 +174,7 @@ export function NodePopup({
         {answering && (
           <div className="bg-white dark:bg-gray-800 border border-blue-300 dark:border-blue-700 border-l-4 rounded-2xl rounded-tl-sm px-5 py-4">
             <div className="flex items-center gap-1.5 text-xs font-medium text-blue-700 dark:text-blue-300 mb-1">
-              <span aria-hidden="true">❓</span>
+              <Icon name="help" className="w-3.5 h-3.5" />
               <BubbleHeader agent={node.agent} />
             </div>
             <AssistantText text={state.question ?? ''} />
@@ -230,7 +231,7 @@ export function NodePopup({
                 answering ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-700 hover:bg-gray-600 dark:bg-gray-600 dark:hover:bg-gray-500'
               }`}
             >
-              ➤
+              <Icon name="send" className="w-4 h-4" />
             </button>
           </div>
         )}

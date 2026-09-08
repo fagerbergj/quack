@@ -5,7 +5,7 @@ import { createRoot } from 'react-dom/client'
 
 import { filterChats } from '../lib/chatFilters'
 import { isGithubChat } from '../lib/github'
-import { ChatList, githubStateBadgeClass, githubStateLabel, originBadgeClass } from './ChatList'
+import { ChatList, githubStateBadgeClass, githubStateLabel, githubStateIcon, originBadgeClass } from './ChatList'
 import type { ChatSummary } from '../api'
 
 // No @testing-library/react in this repo - ChatList's filter/facet logic
@@ -244,13 +244,14 @@ describe('ChatList "Load more" affordance', () => {
 
 describe('github_state badge', () => {
   it.each([
-    { state: 'open', label: '◉ open', cls: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400' },
-    { state: 'closed', label: '✕ closed', cls: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' },
-    { state: 'merged', label: '✓ merged', cls: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400' },
-    { state: 'draft', label: '⊘ draft', cls: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-500' },
-  ])('renders correct class and label for state="$state"', ({ state, label, cls }) => {
+    { state: 'open', label: 'open', icon: 'dot', cls: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400' },
+    { state: 'closed', label: 'closed', icon: 'close', cls: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' },
+    { state: 'merged', label: 'merged', icon: 'check', cls: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400' },
+    { state: 'draft', label: 'draft', icon: 'edit', cls: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-500' },
+  ])('renders correct class, icon and label for state="$state"', ({ state, label, icon, cls }) => {
     expect(githubStateBadgeClass(state)).toBe(cls)
     expect(githubStateLabel(state)).toBe(label)
+    expect(githubStateIcon(state)).toBe(icon)
   })
 
   it.each([
@@ -264,10 +265,10 @@ describe('github_state badge', () => {
   })
 
   it.each([
-    { input: 'open', expected: '◉ open' },
-    { input: 'closed', expected: '✕ closed' },
-    { input: 'merged', expected: '✓ merged' },
-    { input: 'draft', expected: '⊘ draft' },
+    { input: 'open', expected: 'open' },
+    { input: 'closed', expected: 'closed' },
+    { input: 'merged', expected: 'merged' },
+    { input: 'draft', expected: 'draft' },
     { input: '', expected: '' },
     { input: 'unknown', expected: '' },
   ])('githubStateLabel("$input") returns label or empty string', ({ input, expected }) => {
@@ -297,30 +298,25 @@ describe('github_state badge', () => {
   }
 
   it.each([
-    { state: 'open', expected: ['◉ open'] },
-    { state: 'closed', expected: ['✕ closed'] },
-    { state: 'merged', expected: ['✓ merged'] },
-    { state: 'draft', expected: ['⊘ draft'] },
-  ])('renders state badge text when github_state="$state"', ({ state, expected }) => {
+    { state: 'open', expected: 'open' },
+    { state: 'closed', expected: 'closed' },
+    { state: 'merged', expected: 'merged' },
+    { state: 'draft', expected: 'draft' },
+  ])('renders state badge text and icon when github_state="$state"', ({ state, expected }) => {
     renderGithubChats(state as ChatSummary['github_state'])
     const allText = host!.textContent ?? ''
-    for (const t of expected) {
-      expect(allText).toContain(t)
-    }
+    expect(allText).toContain(expected)
+    expect(host!.querySelector('span[title="' + state + '"] svg')).toBeTruthy()
   })
 
   it('does not render a badge when github_state is undefined', () => {
     renderGithubChats(undefined)
-    expect(host!.textContent).not.toContain('◉ open')
-    expect(host!.textContent).not.toContain('✕ closed')
-    expect(host!.textContent).not.toContain('✓ merged')
-    expect(host!.textContent).not.toContain('⊘ draft')
+    expect(host!.querySelector('span[title="open"], span[title="closed"], span[title="merged"], span[title="draft"]')).toBeNull()
   })
 
   it('does not render a badge when github_state is empty string', () => {
     renderGithubChats('' as unknown as ChatSummary['github_state'])
-    expect(host!.textContent).not.toContain('◉ open')
-    expect(host!.textContent).not.toContain('✕ closed')
+    expect(host!.querySelector('span[title="open"], span[title="closed"]')).toBeNull()
   })
 
   it('renders state badge alongside Issue/PR badge', () => {
@@ -329,12 +325,12 @@ describe('github_state badge', () => {
     const badgeTexts: string[] = []
     for (const s of spans) {
       const t = (s as HTMLElement).textContent?.trim() ?? ''
-      if (t && ['◉ open', '✕ closed', '✓ merged', '⊘ draft'].includes(t)) {
+      if (['open', 'closed', 'merged', 'draft'].includes(t)) {
         badgeTexts.push(t)
       }
     }
     expect(badgeTexts.length).toBe(1)
-    expect(badgeTexts[0]).toBe('✓ merged')
+    expect(badgeTexts[0]).toBe('merged')
   })
 })
 

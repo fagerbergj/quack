@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { navigate, type Route } from '../router'
 import { api, type ExtensionInfo } from '../api'
 import { useDrawer } from '../hooks/useDrawer'
+import { Icon, ICON_NAMES, type IconName } from './Icon'
 
 export interface NavRailProps {
   route: Route
@@ -81,12 +82,12 @@ export function NavRail({ route, activeExtension, initialExtensions, open, onClo
             title="Close navigation"
             className="flex items-center justify-center w-11 h-11 rounded-lg text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
           >
-            ✕
+            <Icon name="close" className="w-4 h-4" />
           </button>
         </div>
         <div className="flex-1 py-2 px-2 space-y-1 overflow-y-auto">
-          <NavItem icon="💬" label="Chats" active={route === 'chat'} onClick={() => { navigate('/chat'); onClose() }} />
-          <NavItem icon="🧠" label="Memory" active={route === 'memory'} onClick={() => { navigate('/memory'); onClose() }} />
+          <NavItem icon={<Icon name="chat" className="w-4 h-4" />} label="Chats" active={route === 'chat'} onClick={() => { navigate('/chat'); onClose() }} />
+          <NavItem icon={<Icon name="psychology" className="w-4 h-4" />} label="Memory" active={route === 'memory'} onClick={() => { navigate('/memory'); onClose() }} />
           {linkedExtensions.length > 0 && (
             <div className="pt-1 mt-1 border-t border-gray-100 dark:border-gray-700 space-y-1">
               {linkedExtensions.map(ext => (
@@ -103,7 +104,7 @@ export function NavRail({ route, activeExtension, initialExtensions, open, onClo
 function NavItem({
   icon, label, active, onClick,
 }: {
-  icon: string
+  icon: ReactNode
   label: string
   active: boolean
   onClick: () => void
@@ -119,14 +120,28 @@ function NavItem({
           : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
       }`}
     >
-      <span aria-hidden="true" className="text-base shrink-0 leading-none">{icon}</span>
+      <span aria-hidden="true" className="shrink-0 leading-none flex items-center">{icon}</span>
       <span className="truncate">{label}</span>
     </button>
   )
 }
 
-function extensionIcon(ext: ExtensionInfo): string {
-  return ext.icon ?? '🧩'
+// Extension entries get their icon from the extension's own UI descriptor
+// (ExtensionInfo.icon) - the SDK's `icon` field isn't changed in this PR, so
+// it still accepts any string. A value matching a known Material icon name
+// renders as that icon; an inline `<svg ...>` string renders as raw SVG
+// (dangerouslySetInnerHTML - the extension registry is trusted, same trust
+// boundary as its href/title); anything else (including a raw emoji, the
+// legacy shape) falls back to the generic "extension" glyph instead of
+// rendering arbitrary plugin-supplied emoji. Extensions should migrate to
+// sending a Material icon name.
+function extensionIcon(ext: ExtensionInfo): ReactNode {
+  const icon = ext.icon
+  if (icon && ICON_NAMES.has(icon)) return <Icon name={icon as IconName} className="w-4 h-4" />
+  if (icon && icon.trim().startsWith('<svg')) {
+    return <span className="w-4 h-4 [&>svg]:w-4 [&>svg]:h-4" dangerouslySetInnerHTML={{ __html: icon }} />
+  }
+  return <Icon name="extension" className="w-4 h-4" />
 }
 
 // ExtensionNavItem navigates client-side to this app's own /ext/:name host

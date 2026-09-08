@@ -14,7 +14,9 @@
     "build-storybook": "storybook build",
     "knip": "knip",
     "check-stories": "node scripts/check-stories.mjs",
-    "render-check": "vitest run --config vitest.render-check.config.ts"
+    "check-no-emoji": "node scripts/check-no-emoji.mjs",
+    "render-check": "vitest run --config vitest.render-check.config.ts",
+    "lint": "eslint . && npm run check-stories && npm run check-no-emoji"
   },
   "dependencies": {
     "highlight.js": "11.12.0",

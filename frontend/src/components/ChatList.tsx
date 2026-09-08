@@ -8,6 +8,7 @@ import { StatusDot } from './StatusDot'
 import { navigate, useSearch } from '../router'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useDrawer } from '../hooks/useDrawer'
+import { Icon, type IconName } from './Icon'
 
 export function githubStateBadgeClass(state: string): string {
   switch (state) {
@@ -34,12 +35,25 @@ export function originBadgeClass(badge: string): string {
 
 export function githubStateLabel(state: string): string {
   const map: Record<string, string> = {
-    open: '◉ open',
-    closed: '✕ closed',
-    merged: '✓ merged',
-    draft: '⊘ draft',
+    open: 'open',
+    closed: 'closed',
+    merged: 'merged',
+    draft: 'draft',
   }
   return map[state] ?? ''
+}
+
+// githubStateIcon is the Material icon paired with githubStateLabel's text -
+// the badge's color (githubStateBadgeClass) plus this icon convey the state,
+// not color alone (WCAG 1.4.1).
+export function githubStateIcon(state: string): IconName | undefined {
+  const map: Record<string, IconName> = {
+    open: 'dot',
+    closed: 'close',
+    merged: 'check',
+    draft: 'edit',
+  }
+  return map[state]
 }
 
 function relativeDate(iso: string): string {
@@ -171,9 +185,10 @@ function ChatRow({
         )}
         {s.github_state && (
           <span
-            className={`flex-shrink-0 text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded ${githubStateBadgeClass(s.github_state)}`}
+            className={`flex-shrink-0 inline-flex items-center gap-0.5 text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded ${githubStateBadgeClass(s.github_state)}`}
             title={s.github_state}
           >
+            {githubStateIcon(s.github_state) && <Icon name={githubStateIcon(s.github_state)!} className="w-2.5 h-2.5" />}
             {githubStateLabel(s.github_state)}
           </span>
         )}
@@ -346,7 +361,7 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
           className="md:hidden text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1.5 rounded transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
           aria-label="Close chat list"
         >
-          ✕
+          <Icon name="close" className="w-4 h-4" />
         </button>
       </div>
       <div className="p-2 border-b border-gray-200 dark:border-gray-700 flex items-center gap-1.5">

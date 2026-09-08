@@ -182,7 +182,7 @@ export type ExtensionInfo = {
      */
     href?: string;
     /**
-     * Single emoji for nav display; absent when the extension's UI descriptor sets none.
+     * Nav icon - a Material Symbols icon name (preferred) or an inline `<svg>` string; anything else falls back to the generic extension glyph. Absent when the extension's UI descriptor sets none.
      */
     icon?: string;
 };

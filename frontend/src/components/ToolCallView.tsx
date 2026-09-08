@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import type { ToolCall } from './messageParts'
 import { Expandable } from './Expandable'
+import { Icon } from './Icon'
 import {
   prettyJSON,
   str,
@@ -300,7 +301,7 @@ function ListDirView({ tool }: { tool: ToolCall }) {
         <ul className="bg-gray-50 dark:bg-gray-900 rounded p-2 text-[11px] font-mono">
           {entries.map((e, i) => (
             <li key={i} className="text-gray-700 dark:text-gray-200 truncate">
-              <span className="text-gray-400 dark:text-gray-500 mr-1">{bool(e, 'dir') ? '📁' : ' '}</span>
+              <span className="text-gray-400 dark:text-gray-500 mr-1 inline-flex align-middle">{bool(e, 'dir') ? <Icon name="folder" className="w-3 h-3" /> : ' '}</span>
               {str(e, 'path')}
             </li>
           ))}
@@ -500,7 +501,7 @@ function GetUserChoiceView({ tool }: { tool: ToolCall }) {
           const chosen = choice != null && opt === choice
           return (
             <li key={i} className={`text-[11px] rounded px-2 py-1 ${chosen ? 'bg-green-50 dark:bg-green-900/30 text-green-800 dark:text-green-300 font-medium' : 'bg-gray-50 dark:bg-gray-900 text-gray-600 dark:text-gray-300'}`}>
-              {chosen && '✓ '}{opt}
+              {chosen && <Icon name="check" className="inline w-3 h-3 mr-1 align-[-1px]" />}{opt}
             </li>
           )
         })}

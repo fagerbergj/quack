@@ -10,6 +10,7 @@ import { previewLine, fmtTokenCount } from './toolFormat'
 import { type DagNodeDef } from '../state/agentStream'
 import { fmtMs, LiveTimer } from '../utils/timer'
 import { traceUrl } from '../state/clientConfig'
+import { Icon } from './Icon'
 
 // NodeMenu is the node's ⋮ overflow menu: one click for pause/start/stop (no
 // popup round-trip), with "queue a message…" / "edit prompt" / "answer
@@ -85,31 +86,31 @@ function NodeMenu({
             </button>
           )}
           {cancellable && onCancel && (
-            <button role="menuitem" onClick={() => { onCancel(nodeId); setOpen(false) }} className="w-full text-left px-3 py-1.5 text-red-500 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700">
-              ✕ Stop
+            <button role="menuitem" onClick={() => { onCancel(nodeId); setOpen(false) }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-red-500 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+              <Icon name="close" className="w-3.5 h-3.5" /> Stop
             </button>
           )}
           {hasSecondary && <div className="my-1 border-t border-gray-100 dark:border-gray-700" />}
           {canAnswer && (
-            <button role="menuitem" onClick={() => { onOpenPopup(); setOpen(false) }} className="w-full text-left px-3 py-1.5 text-amber-700 dark:text-amber-400 hover:bg-gray-50 dark:hover:bg-gray-700">
-              ❓ Answer question…
+            <button role="menuitem" onClick={() => { onOpenPopup(); setOpen(false) }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-amber-700 dark:text-amber-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+              <Icon name="help" className="w-3.5 h-3.5" /> Answer question…
             </button>
           )}
           {canQueue && (
-            <button role="menuitem" onClick={() => { onOpenPopup(); setOpen(false) }} className="w-full text-left px-3 py-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
-              ✉ Queue a message…
+            <button role="menuitem" onClick={() => { onOpenPopup(); setOpen(false) }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+              <Icon name="mail" className="w-3.5 h-3.5" /> Queue a message…
             </button>
           )}
           {canEdit && (
-            <button role="menuitem" onClick={() => { onOpenPopup(); setOpen(false) }} className="w-full text-left px-3 py-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
-              ✎ Edit prompt
+            <button role="menuitem" onClick={() => { onOpenPopup(); setOpen(false) }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+              <Icon name="edit" className="w-3.5 h-3.5" /> Edit prompt
             </button>
           )}
           {onOpenArtifacts && (
             <>
               {!terminal && <div className="my-1 border-t border-gray-100 dark:border-gray-700" />}
-              <button role="menuitem" onClick={() => { onOpenArtifacts(); setOpen(false) }} className="w-full text-left px-3 py-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
-                🗃 Artifacts
+              <button role="menuitem" onClick={() => { onOpenArtifacts(); setOpen(false) }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+                <Icon name="archive" className="w-3.5 h-3.5" /> Artifacts
               </button>
             </>
           )}
@@ -124,10 +125,10 @@ function QueuedBadge({ count }: { count: number }) {
   if (count === 0) return null
   return (
     <span
-      className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400"
+      className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 inline-flex items-center gap-0.5"
       title={`${count} parked message${count === 1 ? '' : 's'} - delivers when the current round ends`}
     >
-      ✉ {count}
+      <Icon name="mail" className="w-3 h-3" /> {count}
     </span>
   )
 }
@@ -227,7 +228,7 @@ function ContentPopup({ title, text, onClose }: { title: string; text: string; o
             aria-label="Close"
             className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-500 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
           >
-            ✕
+            <Icon name="close" className="w-4 h-4" />
           </button>
         </div>
         <div className="group/verdict relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
@@ -386,8 +387,8 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
   if (failureHeading) {
     return (
       <div className="border-t border-gray-100 dark:border-gray-700 px-4 py-2 bg-yellow-50 dark:bg-yellow-900/15">
-        <span className="text-[10px] font-semibold text-yellow-700 dark:text-yellow-400 uppercase tracking-wide">
-          ⚠ {failureHeading} · round {run.round}
+        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-yellow-700 dark:text-yellow-400 uppercase tracking-wide">
+          <Icon name="warning" className="w-3 h-3" /> {failureHeading} · round {run.round}
         </span>
         <div className="text-[11px] text-yellow-700 dark:text-yellow-400/90 mt-0.5">
           Answer surfaced without quality vetting - {run.reason}
@@ -403,8 +404,8 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
             Judge · round {run.round}
           </span>
           {run.score != null && (
-            <span className={`text-[10px] font-medium ${run.passed ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
-              {run.passed ? '✓' : '✗'} {(run.score * 100).toFixed(0)}%
+            <span className={`inline-flex items-center gap-0.5 text-[10px] font-medium ${run.passed ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+              <Icon name={run.passed ? 'check' : 'close'} className="w-3 h-3" /> {(run.score * 100).toFixed(0)}%
             </span>
           )}
           <RunModel run={run} />
@@ -579,10 +580,10 @@ export const DagNode = memo(function DagNode({
           )}
           {state.judgeRounds != null && state.judgeRounds > 0 && state.judgePassed === false && (
             <span
-              className="text-[10px] font-medium text-amber-600 dark:text-amber-400"
+              className="inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
               title={`Judge rejected this output after ${state.judgeRounds} round${state.judgeRounds === 1 ? '' : 's'}${state.judgeFinalScore != null ? ` (final score ${(state.judgeFinalScore * 100).toFixed(0)}%)` : ''} - surfaced unvetted`}
             >
-              ⚠ unvetted
+              <Icon name="warning" className="w-3 h-3" /> unvetted
             </span>
           )}
           {state.totalTokens != null && state.totalTokens > 0 && (
