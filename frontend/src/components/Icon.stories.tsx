@@ -4,6 +4,7 @@ import { Icon, type IconName } from './Icon'
 const NAMES: IconName[] = [
   'close', 'check', 'send', 'edit', 'menu', 'help', 'warning',
   'mail', 'archive', 'music', 'folder', 'memory', 'extension', 'chat',
+  'draw', 'monitoring', 'lightbulb',
 ]
 
 const meta: Meta<typeof Icon> = {

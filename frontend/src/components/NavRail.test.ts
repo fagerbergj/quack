@@ -132,6 +132,29 @@ describe('NavRail', () => {
     expect(remarkableBtn.querySelector('svg')).toBeTruthy() // falls back to the generic glyph
   })
 
+  // quack-extensions#70: extensions now send real Material Symbols names
+  // (e.g. "draw", "monitoring") that must render as their own icon, not the
+  // generic fallback; a name the local map doesn't know still degrades to
+  // the fallback glyph, visibly, with a one-time console warning.
+  it('renders a known Material icon name and warns once for an unknown one', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      render({
+        initialExtensions: [
+          { name: 'remarkable', title: 'reMarkable', href: '/remarkable/review', icon: 'draw' } as ExtensionInfo,
+          { name: 'nope', title: 'Nope', href: '/nope', icon: 'not-a-real-icon' } as ExtensionInfo,
+          { name: 'nope2', title: 'Nope2', href: '/nope2', icon: 'not-a-real-icon' } as ExtensionInfo,
+        ],
+      })
+      const nopeBtn = Array.from(host!.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Nope')!
+      expect(nopeBtn.querySelector('svg')).toBeTruthy() // still renders the fallback glyph, never nothing
+      expect(warn).toHaveBeenCalledTimes(1) // once per unknown name, not once per render
+      expect(warn.mock.calls[0][0]).toContain('not-a-real-icon')
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   it('renders no extensions section when the list is empty', () => {
     render({ initialExtensions: [] })
     expect(host!.querySelector('a')).toBeNull()
