@@ -132,6 +132,75 @@ func (s *Store) ApplyVotes(ctx context.Context, votes []Vote, invalidateThreshol
 	return len(touched), nil
 }
 
+// HumanVoteUp/Down/None: the request-body values for SetHumanVote.
+const (
+	HumanVoteUp   = "up"
+	HumanVoteDown = "down"
+	HumanVoteNone = "none"
+)
+
+// SetHumanVote casts or clears the single human deployment's own vote on id
+// (epic #1255 P4). Unlike ApplyVotes (judge, additive-only), this is
+// idempotent under repeated identical calls and reversible: voting the same
+// direction twice is a no-op, voting the opposite direction flips it, and
+// "none" removes whatever the caller's prior vote was - the point's stored
+// human_vote is always the source of truth for what to undo.
+func (s *Store) SetHumanVote(ctx context.Context, id, vote string) error {
+	switch vote {
+	case HumanVoteUp, HumanVoteDown, HumanVoteNone:
+	default:
+		return fmt.Errorf("memory: SetHumanVote: unknown vote %q", vote)
+	}
+	touched, err := s.idx.setHumanVote(ctx, id, vote, DefaultInvalidateThreshold)
+	if err != nil {
+		return fmt.Errorf("memory: set human vote: %w", err)
+	}
+	if !touched {
+		return ErrMemoryNotFound
+	}
+	s.logOp(ctx, id, OpVote, ActorHuman, "")
+	s.log.Info("set human vote", "id", id, "vote", vote)
+	return nil
+}
+
+// computeHumanVoteDelta re-derives upvotes/downvotes/vote_score/tier by
+// undoing oldVote's effect (if any) and applying newVote's - the toggle-safe
+// twin of computeVoteDelta, which only ever adds. Tier is sticky-verified
+// (never demoted, matching computeVoteDelta/#1255 P1) even if undoing the
+// vote that earned it drops upvotes back to 0.
+func computeHumanVoteDelta(upvotes, downvotes int, tier, oldVote, newVote, now string, invalidateThreshold int) voteDelta {
+	switch oldVote {
+	case HumanVoteUp:
+		upvotes--
+	case HumanVoteDown:
+		downvotes--
+	}
+	switch newVote {
+	case HumanVoteUp:
+		upvotes++
+	case HumanVoteDown:
+		downvotes++
+	}
+	if upvotes < 0 {
+		upvotes = 0
+	}
+	if downvotes < 0 {
+		downvotes = 0
+	}
+	d := voteDelta{Upvotes: upvotes, Downvotes: downvotes, VoteScore: upvotes - downvotes, Tier: tier}
+	if d.Tier == "" {
+		d.Tier = TierUnverified
+	}
+	if newVote == HumanVoteUp {
+		d.Tier = TierVerified
+		d.LastUpvotedAt = now
+	}
+	if d.VoteScore <= invalidateThreshold {
+		d.Invalidate = true
+	}
+	return d
+}
+
 // TierUnverified/TierVerified: a memory's vote-based tier (epic #1255 P1),
 // independent of Status (which tracks invalidation, not votes). Verified is
 // sticky once reached - a downvote can invalidate via net score, but never

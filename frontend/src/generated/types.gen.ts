@@ -168,6 +168,51 @@ export type Memory = {
      * Ids of memories consolidation merged into this one (near-duplicate merge or supersession, epic #1255 P5), flattened across any absorption chain. This memory's votes include the absorbed ones'.
      */
     absorbed_ids?: Array<string>;
+    /**
+     * The human caller's own current vote on this memory (epic
+     */
+    own_vote?: 'up' | 'down';
+};
+
+export type VoteMemoryBody = {
+    /**
+     * up/down casts the human's own vote (+1/-1); none removes it if the caller had previously voted.
+     */
+    vote: 'up' | 'down' | 'none';
+    /**
+     * Optional one-line note, stored on the memory.vote ledger entry.
+     */
+    reason?: string;
+};
+
+export type NodeMemoryList = {
+    memories: Array<NodeMemory>;
+};
+
+export type NodeMemory = {
+    id: string;
+    /**
+     * How this memory reached the worker - prefill injection or a recall_memory tool call.
+     */
+    source: 'prefill' | 'tool';
+    content?: string;
+    tier?: 'unverified' | 'verified';
+    /**
+     * Cosine similarity at delivery time.
+     */
+    score?: number;
+    /**
+     * The judge's (or a human's) vote on this memory after the round, if any.
+     */
+    vote?: 'supported' | 'contradicted' | 'not_relevant';
+    /**
+     * The voter's one-line reason, if given.
+     */
+    reason?: string;
+    /**
+     * The human caller's own current vote on this memory, for the manual vote control.
+     */
+    own_vote?: 'up' | 'down';
 };
 
 export type DeleteMemoryBody = {
@@ -1486,6 +1531,65 @@ export type DeleteMemoryResponses = {
 };
 
 export type DeleteMemoryResponse = DeleteMemoryResponses[keyof DeleteMemoryResponses];
+
+export type VoteMemoryData = {
+    body: VoteMemoryBody;
+    path: {
+        memory_id: string;
+    };
+    query?: never;
+    url: '/api/v1/memories/{memory_id}/vote';
+};
+
+export type VoteMemoryErrors = {
+    /**
+     * No such memory
+     */
+    404: ErrorResponse;
+    /**
+     * The memory index is unreachable, or the vote ledger entry failed to append
+     */
+    500: ErrorResponse;
+};
+
+export type VoteMemoryError = VoteMemoryErrors[keyof VoteMemoryErrors];
+
+export type VoteMemoryResponses = {
+    /**
+     * The memory's updated vote state
+     */
+    200: Memory;
+};
+
+export type VoteMemoryResponse = VoteMemoryResponses[keyof VoteMemoryResponses];
+
+export type ListNodeMemoriesData = {
+    body?: never;
+    path: {
+        chat_id: string;
+        node_id: string;
+    };
+    query?: never;
+    url: '/api/v1/chats/{chat_id}/nodes/{node_id}/memories';
+};
+
+export type ListNodeMemoriesErrors = {
+    /**
+     * No such chat
+     */
+    404: ErrorResponse;
+};
+
+export type ListNodeMemoriesError = ListNodeMemoriesErrors[keyof ListNodeMemoriesErrors];
+
+export type ListNodeMemoriesResponses = {
+    /**
+     * The node's received memories
+     */
+    200: NodeMemoryList;
+};
+
+export type ListNodeMemoriesResponse = ListNodeMemoriesResponses[keyof ListNodeMemoriesResponses];
 
 export type SweepMemoriesData = {
     body?: SweepMemoriesBody;

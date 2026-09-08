@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -69,6 +70,7 @@ type memoryRow struct {
 	LastUpvotedAt  string
 	Recalls        int
 	LastRecalledAt string
+	HumanVote      string
 
 	// AbsorbedIDs: comma-joined (see joinIDs/splitIDs) - epic #1255 P5.
 	AbsorbedIDs string
@@ -130,6 +132,7 @@ func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32
 			Recalls:            r.Recalls,
 			LastRecalledAt:     r.LastRecalledAt,
 			AbsorbedIDs:        splitIDs(r.AbsorbedIDs),
+			HumanVote:          r.HumanVote,
 			Score:              cosine(vec, bytesToVec(r.Vector)),
 		})
 	}
@@ -169,7 +172,7 @@ func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit 
 			InvalidationReason: r.InvalidationReason, ReinforcementCount: r.ReinforcementCount,
 			Upvotes: r.Upvotes, Downvotes: r.Downvotes, VoteScore: r.VoteScore, Tier: r.Tier,
 			LastUpvotedAt: r.LastUpvotedAt, Recalls: r.Recalls, LastRecalledAt: r.LastRecalledAt,
-			AbsorbedIDs: splitIDs(r.AbsorbedIDs),
+			AbsorbedIDs: splitIDs(r.AbsorbedIDs), HumanVote: r.HumanVote,
 		}
 	}
 	return out, nil
@@ -359,6 +362,46 @@ func voteUpdate(r memoryRow, v Vote, ts string, invalidateThreshold int) map[str
 		upd["invalidation_reason"] = OutcomeReasonNetScore
 	}
 	return upd
+}
+
+// setHumanVote reads the row's current human_vote to compute the delta
+// (computeHumanVoteDelta), then writes both the new vote fields and
+// human_vote in one UPDATE. Returns false if id doesn't exist or is already
+// invalidated (sticky, same as applyVotes).
+func (x *sqliteIndex) setHumanVote(ctx context.Context, id, vote string, invalidateThreshold int) (bool, error) {
+	var r memoryRow
+	err := x.db.WithContext(ctx).
+		Where("collection = ? AND id = ?", x.coll, id).
+		Where("status IS NULL OR status <> ?", string(StatusInvalidated)).
+		First(&r).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("memory: sqlite human-vote query: %w", err)
+	}
+	ts := nowRFC3339()
+	d := computeHumanVoteDelta(r.Upvotes, r.Downvotes, r.Tier, r.HumanVote, vote, ts, invalidateThreshold)
+	upd := map[string]any{"upvotes": d.Upvotes, "downvotes": d.Downvotes, "vote_score": d.VoteScore, "tier": d.Tier}
+	if vote == HumanVoteNone {
+		upd["human_vote"] = ""
+	} else {
+		upd["human_vote"] = vote
+	}
+	if d.LastUpvotedAt != "" {
+		upd["last_upvoted_at"] = d.LastUpvotedAt
+	}
+	if d.Invalidate {
+		upd["status"] = string(StatusInvalidated)
+		upd["invalidated_at"] = ts
+		upd["invalidation_reason"] = OutcomeReasonNetScore
+	}
+	if err := x.db.WithContext(ctx).Model(&memoryRow{}).
+		Where("collection = ? AND id = ?", x.coll, id).
+		Updates(upd).Error; err != nil {
+		return false, fmt.Errorf("memory: sqlite human-vote update: %w", err)
+	}
+	return true, nil
 }
 
 // recordRecall bumps recalls and stamps last_recalled_at for ids in one

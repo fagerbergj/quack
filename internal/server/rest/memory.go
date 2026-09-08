@@ -494,7 +494,233 @@ func memoriesWire(mems []memory.Memory) []schema.Memory {
 			ids := m.AbsorbedIDs
 			w.AbsorbedIds = &ids
 		}
+		if ov := ownVoteWire(m.HumanVote); ov != nil {
+			w.OwnVote = ov
+		}
 		out[i] = w
 	}
 	return out
+}
+
+// ownVoteWire maps the store's internal "up"/"down"/"" to the wire enum -
+// "" (never voted, or last voted "none") comes back as a nil pointer, so
+// the field is simply absent from the JSON.
+func ownVoteWire(humanVote string) *schema.MemoryOwnVote {
+	switch humanVote {
+	case memory.HumanVoteUp:
+		v := schema.MemoryOwnVoteUp
+		return &v
+	case memory.HumanVoteDown:
+		v := schema.MemoryOwnVoteDown
+		return &v
+	default:
+		return nil
+	}
+}
+
+// VoteMemory casts or clears the human's own vote on one memory (epic #1255
+// P4). Fail-closed: the memory.vote ledger entry is appended before the
+// point is mutated, under the memory's provenance chat if it has one, else
+// a fixed "human" chat key (chat-less human votes need a ledger home, and
+// nothing else keys entries by anything BUT a chat).
+func (h *Handler) VoteMemory(w http.ResponseWriter, r *http.Request, memoryID schema.MemoryID) {
+	var body schema.VoteMemoryBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		errMsg(w, http.StatusBadRequest, "malformed request body")
+		return
+	}
+	vote := strings.ToLower(strings.TrimSpace(string(body.Vote)))
+	switch vote {
+	case memory.HumanVoteUp, memory.HumanVoteDown, memory.HumanVoteNone:
+	default:
+		errMsg(w, http.StatusBadRequest, "vote must be up, down, or none")
+		return
+	}
+	reason := ""
+	if body.Reason != nil {
+		reason = *body.Reason
+	}
+
+	st, m, err := findMemoryByID(r.Context(), h.memStores(), memoryID)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if st == nil {
+		errMsg(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	if h.ledgerStore != nil {
+		chatID := m.ChatID
+		if chatID == "" {
+			chatID = humanVoteChatKey
+		}
+		payload, err := json.Marshal(ledger.MemoryVotePayload{MemoryID: memoryID, Vote: humanLedgerVote(vote), Reason: reason, Actor: string(memory.ActorHuman)})
+		if err != nil {
+			httpError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if _, err := h.ledgerStore.AppendIntent(r.Context(), ledger.Entry{
+			ChatID: chatID, Kind: ledger.KindMemoryVote, At: time.Now().UTC(), Payload: payload,
+		}); err != nil {
+			httpError(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+
+	if err := st.SetHumanVote(r.Context(), memoryID, vote); err != nil {
+		if errors.Is(err, memory.ErrMemoryNotFound) {
+			errMsg(w, http.StatusNotFound, "not found")
+			return
+		}
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
+	_, updated, err := findMemoryByID(r.Context(), []*memory.Store{st}, memoryID)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, memoriesWire([]memory.Memory{updated})[0])
+}
+
+// humanVoteChatKey is the fixed ledger chat id for a human vote on a memory
+// with no provenance chat (minted before #875, or never associated with a
+// chat) - the ledger has no chat-less entry shape, so this is its home.
+const humanVoteChatKey = "human"
+
+// humanLedgerVote maps up/down/none to the judge's supported/contradicted
+// vocabulary so a human vote uses the same ledger vote kind; "none" (a
+// retraction, not itself a stance) logs as not_relevant, still an audit
+// trail of what happened even though it carries no score delta.
+func humanLedgerVote(vote string) ledger.MemoryVote {
+	switch vote {
+	case memory.HumanVoteUp:
+		return ledger.MemoryVoteSupported
+	case memory.HumanVoteDown:
+		return ledger.MemoryVoteContradicted
+	default:
+		return ledger.MemoryVoteNotRelevant
+	}
+}
+
+// findMemoryByID scans the given stores (list+scan, same cost profile as
+// the rest of this file at memory's documented hundreds-thousands scale;
+// there is no store.GetByID) for id, including invalidated points so a vote
+// target is still found mid-race. Returns a nil store, zero Memory if none
+// of the stores has it.
+func findMemoryByID(ctx context.Context, stores []*memory.Store, id string) (*memory.Store, memory.Memory, error) {
+	for _, st := range stores {
+		mems, _, err := st.List(ctx, nil, 0, 0, true)
+		if err != nil {
+			return nil, memory.Memory{}, err
+		}
+		for _, m := range mems {
+			if m.ID == id {
+				return st, m, nil
+			}
+		}
+	}
+	return nil, memory.Memory{}, nil
+}
+
+// ListNodeMemories folds one node's memory.recall/memory.vote ledger entries
+// into its received-memories set (epic #1255 P4), enriched with each
+// memory's current content/tier from the store (the ledger entries carry
+// only id+score, not the point's live fields) and the human's own vote.
+func (h *Handler) ListNodeMemories(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
+	out := schema.NodeMemoryList{Memories: []schema.NodeMemory{}}
+	if h.ledgerStore == nil {
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	entries, err := h.ledgerStore.ReadEntries(r.Context(), chatID, 0)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	type recallInfo struct {
+		source string
+		score  float32
+	}
+	recalls := map[string]recallInfo{}
+	var order []string
+	type voteInfo struct {
+		vote, reason string
+	}
+	votes := map[string]voteInfo{}
+
+	for _, e := range entries {
+		if e.NodeID != nodeID {
+			continue
+		}
+		switch e.Kind {
+		case ledger.KindMemoryRecall:
+			var p ledger.MemoryRecallPayload
+			if json.Unmarshal(e.Payload, &p) != nil {
+				continue
+			}
+			for _, m := range p.Entries {
+				if _, ok := recalls[m.ID]; !ok {
+					order = append(order, m.ID)
+				}
+				recalls[m.ID] = recallInfo{source: p.Source, score: m.Score}
+			}
+		case ledger.KindMemoryVote:
+			var p ledger.MemoryVotePayload
+			if json.Unmarshal(e.Payload, &p) != nil {
+				continue
+			}
+			votes[p.MemoryID] = voteInfo{vote: string(p.Vote), reason: p.Reason}
+		}
+	}
+	if len(order) == 0 {
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+
+	stores := h.memStores()
+	content := map[string]memory.Memory{}
+	for _, st := range stores {
+		mems, _, err := st.List(r.Context(), nil, 0, 0, true)
+		if err != nil {
+			httpError(w, http.StatusInternalServerError, err)
+			return
+		}
+		for _, m := range mems {
+			content[m.ID] = m
+		}
+	}
+
+	for _, id := range order {
+		ri := recalls[id]
+		nm := schema.NodeMemory{Id: id, Source: schema.NodeMemorySource(ri.source)}
+		score := ri.score
+		nm.Score = &score
+		if m, ok := content[id]; ok {
+			c := m.Content
+			nm.Content = &c
+			tier := schema.NodeMemoryTier(m.Tier)
+			if tier == "" {
+				tier = schema.Unverified
+			}
+			nm.Tier = &tier
+			if ov := m.HumanVote; ov == memory.HumanVoteUp || ov == memory.HumanVoteDown {
+				own := schema.NodeMemoryOwnVote(ov)
+				nm.OwnVote = &own
+			}
+		}
+		if v, ok := votes[id]; ok {
+			vote := schema.NodeMemoryVote(v.vote)
+			nm.Vote = &vote
+			if v.reason != "" {
+				r := v.reason
+				nm.Reason = &r
+			}
+		}
+		out.Memories = append(out.Memories, nm)
+	}
+	writeJSON(w, http.StatusOK, out)
 }

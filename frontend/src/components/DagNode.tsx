@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { AssistantText, ActivityList, LiveStatusLine, AcpBadge, isAcpAgent } from './AgentParts'
 import { ArtifactPanel } from './ArtifactPanel'
+import { NodeMemoriesPanel } from './NodeMemoriesPanel'
 import { CopyButton } from './CopyButton'
 import { NodePopup } from './NodePopup'
 import { StatusDot } from './StatusDot'
@@ -17,7 +18,7 @@ import { Icon } from './Icon'
 // question…" opening the popup only when they need its input/editor. Hidden
 // entirely on a terminal node (done/failed/cancelled) - nothing left to do.
 function NodeMenu({
-  nodeId, status, onCancel, onPause, onResume, canQueue, canEdit, canAnswer, onOpenPopup, onOpenArtifacts,
+  nodeId, status, onCancel, onPause, onResume, canQueue, canEdit, canAnswer, onOpenPopup, onOpenArtifacts, onOpenMemories,
 }: {
   nodeId: string
   status: NodeStatus
@@ -32,6 +33,9 @@ function NodeMenu({
   // own chatId doc. A terminal node still needs this menu for its outputs,
   // so unlike the rest of this menu's items, it isn't gated by node status.
   onOpenArtifacts?: () => void
+  // Same gating as onOpenArtifacts (epic #1255 P4) - a terminal node's
+  // received memories are still worth reviewing after the fact.
+  onOpenMemories?: () => void
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -52,7 +56,7 @@ function NodeMenu({
   // A terminal node has nothing left to control, but its output artifacts are
   // still worth a menu - the whole point of viewing them is usually AFTER a
   // node finishes. Only fully hide the menu when there's truly nothing in it.
-  if (terminal && !onOpenArtifacts) return null
+  if (terminal && !onOpenArtifacts && !onOpenMemories) return null
 
   const running = status === 'running'
   // needs_input is the legacy DB/SSE spelling of paused/awaiting_input - both
@@ -113,6 +117,11 @@ function NodeMenu({
                 <Icon name="archive" className="w-3.5 h-3.5" /> Artifacts
               </button>
             </>
+          )}
+          {onOpenMemories && (
+            <button role="menuitem" onClick={() => { onOpenMemories(); setOpen(false) }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+              <Icon name="memory" className="w-3.5 h-3.5" /> Memories
+            </button>
           )}
         </div>
       )}
@@ -538,6 +547,7 @@ export const DagNode = memo(function DagNode({
   const activeIdx = running ? runs.map(r => r.done).lastIndexOf(false) : -1
   const [popupOpen, setPopupOpen] = useState(false)
   const [artifactsOpen, setArtifactsOpen] = useState(false)
+  const [memoriesOpen, setMemoriesOpen] = useState(false)
   const pendingQueueCount = (state.queue ?? []).filter(m => !m.delivered).length
   const isPaused = state.status === 'paused' || state.status === 'needs_input'
   const pauseLabel = isPaused ? pausedStatusLabel(state.pauseReason) : null
@@ -626,6 +636,7 @@ export const DagNode = memo(function DagNode({
             canAnswer={(state.status === 'needs_input' || state.pauseReason === 'awaiting_input') && !!onAnswerQuestion}
             onOpenPopup={() => setPopupOpen(true)}
             onOpenArtifacts={chatId ? () => setArtifactsOpen(true) : undefined}
+            onOpenMemories={chatId ? () => setMemoriesOpen(true) : undefined}
           />
         </div>
       </div>
@@ -669,6 +680,14 @@ export const DagNode = memo(function DagNode({
           nodeError={state.status === 'failed' && state.error ? state.error : undefined}
           nodeArtifactKind={node.artifact ?? undefined}
           onClose={() => setArtifactsOpen(false)}
+        />
+      )}
+      {memoriesOpen && chatId && (
+        <NodeMemoriesPanel
+          chatId={chatId}
+          nodeId={node.id}
+          judgeRounds={state.judgeRounds}
+          onClose={() => setMemoriesOpen(false)}
         />
       )}
 

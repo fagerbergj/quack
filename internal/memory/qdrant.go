@@ -49,6 +49,7 @@ const (
 
 	// payloadAbsorbedIDs: comma-joined (see joinIDs/splitIDs) - epic #1255 P5.
 	payloadAbsorbedIDs = "absorbed_ids"
+	payloadHumanVote   = "human_vote"
 )
 
 // Open connects to Qdrant at addr (host:port gRPC) and returns a memory Store
@@ -135,6 +136,7 @@ func pointFromPayload(id *qdrant.PointId, payload map[string]*qdrant.Value, scor
 		Recalls:            payloadInt(payload, payloadRecalls),
 		LastRecalledAt:     payloadString(payload, payloadLastRecalledAt),
 		AbsorbedIDs:        splitIDs(payloadString(payload, payloadAbsorbedIDs)),
+		HumanVote:          payloadString(payload, payloadHumanVote),
 		Score:              score,
 	}
 }
@@ -500,6 +502,48 @@ func (x *qdrantIndex) applyVotes(ctx context.Context, votes []Vote, invalidateTh
 		touched = append(touched, v.MemoryID)
 	}
 	return touched, nil
+}
+
+// setHumanVote reads id's current payload (for its prior human_vote and vote
+// counts), computes the toggle-safe delta, and writes both the vote fields
+// and human_vote in one SetPayload. Same read-modify-write caveat as
+// applyVotes above. Reports false if id doesn't exist or is invalidated.
+func (x *qdrantIndex) setHumanVote(ctx context.Context, id, vote string, invalidateThreshold int) (bool, error) {
+	existing, err := x.getExisting(ctx, []string{id})
+	if err != nil {
+		return false, fmt.Errorf("memory: get for human vote: %w", err)
+	}
+	payload, ok := existing[id]
+	if !ok || payloadString(payload, payloadStatus) == string(StatusInvalidated) {
+		return false, nil
+	}
+	ts := nowRFC3339()
+	d := computeHumanVoteDelta(payloadInt(payload, payloadUpvotes), payloadInt(payload, payloadDownvotes),
+		payloadString(payload, payloadTier), payloadString(payload, payloadHumanVote), vote, ts, invalidateThreshold)
+	set := map[string]any{payloadUpvotes: d.Upvotes, payloadDownvotes: d.Downvotes, payloadVoteScore: d.VoteScore, payloadTier: d.Tier}
+	if vote == HumanVoteNone {
+		set[payloadHumanVote] = ""
+	} else {
+		set[payloadHumanVote] = vote
+	}
+	if d.LastUpvotedAt != "" {
+		set[payloadLastUpvotedAt] = d.LastUpvotedAt
+	}
+	if d.Invalidate {
+		set[payloadStatus] = string(StatusInvalidated)
+		set[payloadInvalidatedAt] = ts
+		set[payloadInvalidationReason] = OutcomeReasonNetScore
+	}
+	wait := true
+	if _, err := x.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
+		CollectionName: x.coll,
+		Wait:           &wait,
+		Payload:        qdrant.NewValueMap(set),
+		PointsSelector: &qdrant.PointsSelector{PointsSelectorOneOf: &qdrant.PointsSelector_Points{Points: &qdrant.PointsIdsList{Ids: idsToPointIDs([]string{id})}}},
+	}); err != nil {
+		return false, fmt.Errorf("memory: set payload human vote: %w", err)
+	}
+	return true, nil
 }
 
 // recordRecall bumps recalls and stamps last_recalled_at per point. Qdrant

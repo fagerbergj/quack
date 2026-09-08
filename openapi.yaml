@@ -1030,6 +1030,75 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/memories/{memory_id}/vote:
+    post:
+      operationId: voteMemory
+      summary: Cast (or clear) the human's own vote on one memory
+      description: |
+        A human vote counts like a judge vote (+1/-1 via the same
+        upvotes/downvotes/tier/score projection), but is recorded with
+        actor `human` and is independently toggleable: voting `none`
+        removes the caller's own prior vote rather than adding a new one.
+        Single-user deployment, so there is exactly one "own vote" per
+        memory, tracked on the point. Fail-closed: the `memory.vote`
+        ledger entry is appended (under the memory's provenance chat, or a
+        fixed `human` chat key when the memory has none) before the point
+        is mutated; a failed append leaves the vote unapplied.
+      parameters:
+        - $ref: "#/components/parameters/MemoryID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoteMemoryBody"
+      responses:
+        "200":
+          description: The memory's updated vote state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Memory"
+        "404":
+          description: No such memory
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: The memory index is unreachable, or the vote ledger entry failed to append
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/chats/{chat_id}/nodes/{node_id}/memories:
+    get:
+      operationId: listNodeMemories
+      summary: List the memories one worker node received, with votes
+      description: |
+        Folds the node's `memory.recall` and `memory.vote` ledger entries
+        (epic #1255 P1/P4) into the set of memories delivered to this node
+        (prefill and/or the recall_memory tool) plus the judge's per-memory
+        vote after the round, if any. Empty (not 404) for a node with no
+        recall entries.
+      parameters:
+        - $ref: "#/components/parameters/ChatID"
+        - $ref: "#/components/parameters/NodeID"
+      responses:
+        "200":
+          description: The node's received memories
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeMemoryList"
+        "404":
+          description: No such chat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/memories/sweep:
     post:
       operationId: sweepMemories
@@ -1366,6 +1435,62 @@ components:
             Ids of memories consolidation merged into this one (near-duplicate
             merge or supersession, epic #1255 P5), flattened across any
             absorption chain. This memory's votes include the absorbed ones'.
+        own_vote:
+          type: string
+          enum: [up, down]
+          description: The human caller's own current vote on this memory (epic #1255 P4), for highlighting the active arrow. Absent if the human has never voted (or last voted `none`).
+
+    VoteMemoryBody:
+      type: object
+      required: [vote]
+      properties:
+        vote:
+          type: string
+          enum: [up, down, none]
+          description: up/down casts the human's own vote (+1/-1); none removes it if the caller had previously voted.
+        reason:
+          type: string
+          description: Optional one-line note, stored on the memory.vote ledger entry.
+
+    NodeMemoryList:
+      type: object
+      required: [memories]
+      properties:
+        memories:
+          type: array
+          items:
+            $ref: "#/components/schemas/NodeMemory"
+
+    NodeMemory:
+      type: object
+      required: [id, source]
+      properties:
+        id:
+          type: string
+        source:
+          type: string
+          enum: [prefill, tool]
+          description: How this memory reached the worker - prefill injection or a recall_memory tool call.
+        content:
+          type: string
+        tier:
+          type: string
+          enum: [unverified, verified]
+        score:
+          type: number
+          format: float
+          description: Cosine similarity at delivery time.
+        vote:
+          type: string
+          enum: [supported, contradicted, not_relevant]
+          description: The judge's (or a human's) vote on this memory after the round, if any.
+        reason:
+          type: string
+          description: The voter's one-line reason, if given.
+        own_vote:
+          type: string
+          enum: [up, down]
+          description: The human caller's own current vote on this memory, for the manual vote control.
 
     DeleteMemoryBody:
       type: object

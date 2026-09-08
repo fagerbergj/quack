@@ -92,7 +92,9 @@ describe('MemoryTab', () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ memories: [MEMORY], total: 1 }))
     await renderAndFlush()
 
-    const forgetButton = findButton(host!, b => (b.getAttribute('aria-label') ?? '').startsWith('Forget:'))
+    const kebabButton = findButton(host!, b => (b.getAttribute('aria-label') ?? '') === 'Memory actions')
+    act(() => kebabButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
+    const forgetButton = findButton(host!, b => b.textContent === 'Forget')
     act(() => forgetButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
 
     // Confirm/Cancel is now showing; the GET was the only request so far.
@@ -116,7 +118,9 @@ describe('MemoryTab', () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ memories: [MEMORY], total: 1 }))
     await renderAndFlush()
 
-    const forgetButton = findButton(host!, b => (b.getAttribute('aria-label') ?? '').startsWith('Forget:'))
+    const kebabButton = findButton(host!, b => (b.getAttribute('aria-label') ?? '') === 'Memory actions')
+    act(() => kebabButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
+    const forgetButton = findButton(host!, b => b.textContent === 'Forget')
     act(() => forgetButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
     const cancelButton = findButton(host!, b => b.textContent === 'Cancel')
     act(() => cancelButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
@@ -154,5 +158,40 @@ describe('MemoryTab', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
     const request = fetchMock.mock.calls[1][0] as Request
     expect(request.url).toContain('include_invalidated=true')
+  })
+
+  // epic #1255 P4: clicking an arrow sends the vote request and updates the
+  // score optimistically; a second click on the now-active arrow toggles it off.
+  it('vote click sends the request and updates optimistically; toggle removes it', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ memories: [{ ...MEMORY, vote_score: 0, upvotes: 0 }], total: 1 }))
+    await renderAndFlush()
+
+    const upButton = findButton(host!, b => (b.getAttribute('aria-label') ?? '') === 'Upvote')
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ...MEMORY, vote_score: 1, upvotes: 1, tier: 'verified', own_vote: 'up' }))
+    await act(async () => {
+      upButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const voteRequest = fetchMock.mock.calls[1][0] as Request
+    expect(voteRequest.method).toBe('POST')
+    expect(voteRequest.url).toContain(`/api/v1/memories/${MEMORY.id}/vote`)
+    expect(host!.textContent).toContain('verified')
+
+    // Optimistic update happens before the response lands - re-fetch the
+    // (now re-rendered) button reference and click it again to toggle off.
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ...MEMORY, vote_score: 0, upvotes: 0, tier: 'verified' }))
+    const upButtonAgain = findButton(host!, b => (b.getAttribute('aria-label') ?? '') === 'Upvote')
+    await act(async () => {
+      upButtonAgain.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    const toggleRequest = fetchMock.mock.calls[2][0] as Request
+    const body = await toggleRequest.clone().json()
+    expect(body.vote).toBe('none')
   })
 })

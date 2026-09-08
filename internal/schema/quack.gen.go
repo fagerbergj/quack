@@ -182,6 +182,24 @@ func (e ItemStatus) Valid() bool {
 	}
 }
 
+// Defines values for MemoryOwnVote.
+const (
+	MemoryOwnVoteDown MemoryOwnVote = "down"
+	MemoryOwnVoteUp   MemoryOwnVote = "up"
+)
+
+// Valid indicates whether the value is a known member of the MemoryOwnVote enum.
+func (e MemoryOwnVote) Valid() bool {
+	switch e {
+	case MemoryOwnVoteDown:
+		return true
+	case MemoryOwnVoteUp:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for MemoryStatus.
 const (
 	MemoryStatusInvalidated MemoryStatus = "invalidated"
@@ -230,6 +248,81 @@ const (
 func (e MessageOutputItemType) Valid() bool {
 	switch e {
 	case Message:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for NodeMemoryOwnVote.
+const (
+	NodeMemoryOwnVoteDown NodeMemoryOwnVote = "down"
+	NodeMemoryOwnVoteUp   NodeMemoryOwnVote = "up"
+)
+
+// Valid indicates whether the value is a known member of the NodeMemoryOwnVote enum.
+func (e NodeMemoryOwnVote) Valid() bool {
+	switch e {
+	case NodeMemoryOwnVoteDown:
+		return true
+	case NodeMemoryOwnVoteUp:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for NodeMemorySource.
+const (
+	Prefill NodeMemorySource = "prefill"
+	Tool    NodeMemorySource = "tool"
+)
+
+// Valid indicates whether the value is a known member of the NodeMemorySource enum.
+func (e NodeMemorySource) Valid() bool {
+	switch e {
+	case Prefill:
+		return true
+	case Tool:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for NodeMemoryTier.
+const (
+	Unverified NodeMemoryTier = "unverified"
+	Verified   NodeMemoryTier = "verified"
+)
+
+// Valid indicates whether the value is a known member of the NodeMemoryTier enum.
+func (e NodeMemoryTier) Valid() bool {
+	switch e {
+	case Unverified:
+		return true
+	case Verified:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for NodeMemoryVote.
+const (
+	Contradicted NodeMemoryVote = "contradicted"
+	NotRelevant  NodeMemoryVote = "not_relevant"
+	Supported    NodeMemoryVote = "supported"
+)
+
+// Valid indicates whether the value is a known member of the NodeMemoryVote enum.
+func (e NodeMemoryVote) Valid() bool {
+	switch e {
+	case Contradicted:
+		return true
+	case NotRelevant:
+		return true
+	case Supported:
 		return true
 	default:
 		return false
@@ -383,6 +476,27 @@ const (
 func (e TurnInputRole) Valid() bool {
 	switch e {
 	case TurnInputRoleUser:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for VoteMemoryBodyVote.
+const (
+	Down VoteMemoryBodyVote = "down"
+	None VoteMemoryBodyVote = "none"
+	Up   VoteMemoryBodyVote = "up"
+)
+
+// Valid indicates whether the value is a known member of the VoteMemoryBodyVote enum.
+func (e VoteMemoryBodyVote) Valid() bool {
+	switch e {
+	case Down:
+		return true
+	case None:
+		return true
+	case Up:
 		return true
 	default:
 		return false
@@ -757,6 +871,9 @@ type Memory struct {
 	// LastUpvotedAt When this memory was last marked `supported`. Absent if never upvoted.
 	LastUpvotedAt *time.Time `json:"last_upvoted_at,omitempty"`
 
+	// OwnVote The human caller's own current vote on this memory (epic
+	OwnVote *MemoryOwnVote `json:"own_vote,omitempty"`
+
 	// Recalls How many times this memory has been delivered to a worker (prefill or, from P2, the recall_memory tool).
 	Recalls *int `json:"recalls,omitempty"`
 
@@ -779,6 +896,9 @@ type Memory struct {
 	// VoteScore upvotes - downvotes. A memory at or below the configured invalidation threshold (default -2) is invalidated.
 	VoteScore *int `json:"vote_score,omitempty"`
 }
+
+// MemoryOwnVote The human caller's own current vote on this memory (epic
+type MemoryOwnVote string
 
 // MemoryStatus Epistemic tier (memory lifecycle design doc §3). A memory written before this field existed reads as `unverified`.
 type MemoryStatus string
@@ -850,6 +970,45 @@ type MessageOutputItem struct {
 
 // MessageOutputItemType defines model for MessageOutputItem.Type.
 type MessageOutputItemType string
+
+// NodeMemory defines model for NodeMemory.
+type NodeMemory struct {
+	Content *string `json:"content,omitempty"`
+	Id      string  `json:"id"`
+
+	// OwnVote The human caller's own current vote on this memory, for the manual vote control.
+	OwnVote *NodeMemoryOwnVote `json:"own_vote,omitempty"`
+
+	// Reason The voter's one-line reason, if given.
+	Reason *string `json:"reason,omitempty"`
+
+	// Score Cosine similarity at delivery time.
+	Score *float32 `json:"score,omitempty"`
+
+	// Source How this memory reached the worker - prefill injection or a recall_memory tool call.
+	Source NodeMemorySource `json:"source"`
+	Tier   *NodeMemoryTier  `json:"tier,omitempty"`
+
+	// Vote The judge's (or a human's) vote on this memory after the round, if any.
+	Vote *NodeMemoryVote `json:"vote,omitempty"`
+}
+
+// NodeMemoryOwnVote The human caller's own current vote on this memory, for the manual vote control.
+type NodeMemoryOwnVote string
+
+// NodeMemorySource How this memory reached the worker - prefill injection or a recall_memory tool call.
+type NodeMemorySource string
+
+// NodeMemoryTier defines model for NodeMemory.Tier.
+type NodeMemoryTier string
+
+// NodeMemoryVote The judge's (or a human's) vote on this memory after the round, if any.
+type NodeMemoryVote string
+
+// NodeMemoryList defines model for NodeMemoryList.
+type NodeMemoryList struct {
+	Memories []NodeMemory `json:"memories"`
+}
 
 // NodeStartBody defines model for NodeStartBody.
 type NodeStartBody struct {
@@ -1116,6 +1275,18 @@ type Usage struct {
 	TotalTokens     *int `json:"total_tokens,omitempty"`
 }
 
+// VoteMemoryBody defines model for VoteMemoryBody.
+type VoteMemoryBody struct {
+	// Reason Optional one-line note, stored on the memory.vote ledger entry.
+	Reason *string `json:"reason,omitempty"`
+
+	// Vote up/down casts the human's own vote (+1/-1); none removes it if the caller had previously voted.
+	Vote VoteMemoryBodyVote `json:"vote"`
+}
+
+// VoteMemoryBodyVote up/down casts the human's own vote (+1/-1); none removes it if the caller had previously voted.
+type VoteMemoryBodyVote string
+
 // ArtifactName defines model for ArtifactName.
 type ArtifactName = string
 
@@ -1235,6 +1406,9 @@ type SweepMemoriesJSONRequestBody = SweepMemoriesBody
 
 // DeleteMemoryJSONRequestBody defines body for DeleteMemory for application/json ContentType.
 type DeleteMemoryJSONRequestBody = DeleteMemoryBody
+
+// VoteMemoryJSONRequestBody defines body for VoteMemory for application/json ContentType.
+type VoteMemoryJSONRequestBody = VoteMemoryBody
 
 // AsOutputTextPart returns the union data inside the ContentPart as a OutputTextPart
 func (t ContentPart) AsOutputTextPart() (OutputTextPart, error) {
@@ -1476,6 +1650,9 @@ type ServerInterface interface {
 	// Edit a not-yet-started node's prompt
 	// (PATCH /api/v1/chats/{chat_id}/nodes/{node_id})
 	EditNodeTask(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
+	// List the memories one worker node received, with votes
+	// (GET /api/v1/chats/{chat_id}/nodes/{node_id}/memories)
+	ListNodeMemories(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
 	// Queue a message for a running node, delivered at its next turn boundary
 	// (POST /api/v1/chats/{chat_id}/nodes/{node_id}/queue)
 	QueueNodeMessage(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
@@ -1530,6 +1707,9 @@ type ServerInterface interface {
 	// Invalidate one memory
 	// (DELETE /api/v1/memories/{memory_id})
 	DeleteMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryID)
+	// Cast (or clear) the human's own vote on one memory
+	// (POST /api/v1/memories/{memory_id}/vote)
+	VoteMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryID)
 	// List recorded chat sessions
 	// (GET /api/v1/recordings)
 	ListRecordings(w http.ResponseWriter, r *http.Request)
@@ -1599,6 +1779,12 @@ func (_ Unimplemented) ListArtifactRevisions(w http.ResponseWriter, r *http.Requ
 // Edit a not-yet-started node's prompt
 // (PATCH /api/v1/chats/{chat_id}/nodes/{node_id})
 func (_ Unimplemented) EditNodeTask(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// List the memories one worker node received, with votes
+// (GET /api/v1/chats/{chat_id}/nodes/{node_id}/memories)
+func (_ Unimplemented) ListNodeMemories(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1707,6 +1893,12 @@ func (_ Unimplemented) SweepMemories(w http.ResponseWriter, r *http.Request) {
 // Invalidate one memory
 // (DELETE /api/v1/memories/{memory_id})
 func (_ Unimplemented) DeleteMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Cast (or clear) the human's own vote on one memory
+// (POST /api/v1/memories/{memory_id}/vote)
+func (_ Unimplemented) VoteMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2198,6 +2390,49 @@ func (siw *ServerInterfaceWrapper) EditNodeTask(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.EditNodeTask(w, r, chatId, nodeId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListNodeMemories operation middleware
+func (siw *ServerInterfaceWrapper) ListNodeMemories(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "chat_id" -------------
+	var chatId ChatID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "chat_id", chi.URLParam(r, "chat_id"), &chatId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "chat_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "node_id" -------------
+	var nodeId NodeID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "node_id", chi.URLParam(r, "node_id"), &nodeId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "node_id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListNodeMemories(w, r, chatId, nodeId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2927,6 +3162,40 @@ func (siw *ServerInterfaceWrapper) DeleteMemory(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// VoteMemory operation middleware
+func (siw *ServerInterfaceWrapper) VoteMemory(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "memory_id" -------------
+	var memoryId MemoryID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "memory_id", chi.URLParam(r, "memory_id"), &memoryId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "memory_id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.VoteMemory(w, r, memoryId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListRecordings operation middleware
 func (siw *ServerInterfaceWrapper) ListRecordings(w http.ResponseWriter, r *http.Request) {
 
@@ -3107,6 +3376,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Patch(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}", wrapper.EditNodeTask)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}/memories", wrapper.ListNodeMemories)
+	})
+	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/chats/{chat_id}/nodes/{node_id}/queue", wrapper.QueueNodeMessage)
 	})
 	r.Group(func(r chi.Router) {
@@ -3159,6 +3431,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Delete(options.BaseURL+"/api/v1/memories/{memory_id}", wrapper.DeleteMemory)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/memories/{memory_id}/vote", wrapper.VoteMemory)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/recordings", wrapper.ListRecordings)

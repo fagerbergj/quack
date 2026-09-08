@@ -6,7 +6,7 @@ const meta: Meta<typeof MemoryTimeline> = {
   title: 'Memory/MemoryTimeline',
   component: MemoryTimeline,
   parameters: { layout: 'padded' },
-  args: { onForget: async () => {}, now: new Date('2026-08-06T12:00:00Z').getTime() },
+  args: { onForget: async () => {}, onVote: async () => {}, now: new Date('2026-08-06T12:00:00Z').getTime() },
 }
 export default meta
 

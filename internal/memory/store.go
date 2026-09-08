@@ -67,6 +67,11 @@ type index interface {
 	// reason. Returns false (no-op) if either id doesn't exist, or absorbedID
 	// is already invalidated (sticky - the first invalidation wins).
 	absorb(ctx context.Context, survivorID, absorbedID, reason string) (bool, error)
+	// setHumanVote sets the caller's own vote ("up"/"down"/"none") on id,
+	// re-deriving upvotes/downvotes/vote_score/tier from the transition away
+	// from the point's PRIOR human_vote (so a toggle or a flip never double
+	// counts). Reports whether id existed (and wasn't already invalidated).
+	setHumanVote(ctx context.Context, id, vote string, invalidateThreshold int) (bool, error)
 }
 
 // scored is one ranked memory.
@@ -107,6 +112,10 @@ type scored struct {
 	// this one (near-duplicate merge or supersession), flattened across any
 	// absorption chain - see internal/memory/lineage.go.
 	AbsorbedIDs []string
+	// HumanVote is the single-user deployment's own current vote ("up"/"down",
+	// "" = none) - epic #1255 P4, distinct from Upvotes/Downvotes which mix
+	// judge and human votes together. Toggling re-derives the delta from this.
+	HumanVote string
 }
 
 // point is one memory to upsert.
@@ -318,6 +327,7 @@ type Memory struct {
 
 	// AbsorbedIDs: see scored.AbsorbedIDs.
 	AbsorbedIDs []string
+	HumanVote   string // "up" | "down" | "" (epic #1255 P4)
 }
 
 // List returns entries in the given buckets (every bucket if empty), newest
@@ -421,7 +431,7 @@ func toMemories(pts []scored) []Memory {
 			Status: p.Status, ReinforcementCount: p.ReinforcementCount, InvalidationReason: p.InvalidationReason,
 			Upvotes: p.Upvotes, Downvotes: p.Downvotes, VoteScore: p.VoteScore, Tier: p.Tier,
 			LastUpvotedAt: p.LastUpvotedAt, Recalls: p.Recalls, LastRecalledAt: p.LastRecalledAt,
-			AbsorbedIDs: p.AbsorbedIDs,
+			AbsorbedIDs: p.AbsorbedIDs, HumanVote: p.HumanVote,
 		}
 	}
 	return out

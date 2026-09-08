@@ -1,4 +1,4 @@
-import type { Memory } from '../api'
+import type { Memory, VoteDirection } from '../api'
 import { MemoryEntry } from './MemoryEntry'
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -46,6 +46,7 @@ export function groupByAge(memories: Memory[], now = Date.now()): AgeGroup[] {
 export interface MemoryTimelineProps {
   memories: Memory[]
   onForget: (id: string) => Promise<void>
+  onVote: (id: string, vote: VoteDirection) => Promise<void>
   // Test/story seam: pins "now" so age-band assignment is deterministic.
   now?: number
 }
@@ -54,7 +55,7 @@ export interface MemoryTimelineProps {
 // entry's date, with entries grouped into age bands (Today / This week / This
 // month / Older) so old memories are visibly at the end instead of mixed
 // through a flat list.
-export function MemoryTimeline({ memories, onForget, now }: MemoryTimelineProps) {
+export function MemoryTimeline({ memories, onForget, onVote, now }: MemoryTimelineProps) {
   const groups = groupByAge(memories, now)
   return (
     <div className="py-2">
@@ -73,7 +74,7 @@ export function MemoryTimeline({ memories, onForget, now }: MemoryTimelineProps)
                 <span className="relative mt-[1.15rem] w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-gray-600 ring-2 ring-white dark:ring-gray-900" />
               </div>
               <div className="flex-1 min-w-0 pr-3">
-                <MemoryEntry memory={m} onForget={onForget} />
+                <MemoryEntry memory={m} onForget={onForget} onVote={onVote} />
               </div>
             </div>
           ))}
