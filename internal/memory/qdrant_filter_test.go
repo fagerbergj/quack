@@ -7,10 +7,10 @@ import (
 )
 
 // TestExcludeInvalidatedFilter pins qdrant's leg of the recall/neighbour
-// backend-query exclusion (design doc §4(d)). No live qdrant harness exists in
-// this repo (store_test.go: sqlite is "the always-on backend for unit tests"),
-// same gap PR #875 left for provenance - so this asserts the filter
-// construction directly instead.
+// backend-query exclusion (design doc §4(d)) at the filter-construction level -
+// cheaper than a live round-trip for this one. The live qdrant harness
+// (qdranttest_test.go, #1268) covers the end-to-end recall exclusion instead
+// (see TestInvalidateByID_HumanDelete/TestListIsNotSearch).
 func TestExcludeInvalidatedFilter(t *testing.T) {
 	assertExcludesInvalidated := func(t *testing.T, f *qdrant.Filter) {
 		t.Helper()

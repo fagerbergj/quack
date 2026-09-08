@@ -11,6 +11,8 @@ import (
 	"time"
 
 	_ "github.com/glebarez/go-sqlite"
+
+	"google.golang.org/adk/v2/model"
 )
 
 // fakeOpsLog records every memory_ops write for assertion, mirroring how a
@@ -246,90 +248,96 @@ func TestApplyOutcome_Reinforce(t *testing.T) {
 // vote is +1 upvote and flips tier to verified, a contradicted vote is +1
 // downvote, and each vote writes one memory_ops row (actor=judge).
 func TestApplyVotes_SupportedAndContradicted(t *testing.T) {
-	ctx := context.Background()
-	s := newSQLiteStore(t, "task", nil)
-	ops := &fakeOpsLog{}
-	s.SetOpsLog(ops)
+	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
+		ctx := context.Background()
+		s := newStore("task", nil)
+		ops := &fakeOpsLog{}
+		s.SetOpsLog(ops)
+		m1ID, m2ID := testID("m1"), testID("m2")
 
-	if err := s.idx.upsert(ctx, []point{
-		{ID: "m1", Vector: []float32{1, 0, 0, 0}, Content: "supported memory", Scope: "repo:r", Status: string(StatusUnverified)},
-		{ID: "m2", Vector: []float32{1, 0, 0, 0}, Content: "contradicted memory", Scope: "repo:r", Status: string(StatusUnverified)},
-	}); err != nil {
-		t.Fatalf("seed upsert: %v", err)
-	}
-
-	n, err := s.ApplyVotes(ctx, []Vote{
-		{MemoryID: "m1", Vote: VoteSupported, Reason: "diff matches", Actor: ActorJudge},
-		{MemoryID: "m2", Vote: VoteContradicted, Reason: "diff disagrees", Actor: ActorJudge},
-	}, DefaultInvalidateThreshold)
-	if err != nil {
-		t.Fatalf("ApplyVotes: %v", err)
-	}
-	if n != 2 {
-		t.Fatalf("ApplyVotes touched %d, want 2", n)
-	}
-
-	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "")
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	byID := map[string]scored{}
-	for _, p := range pts {
-		byID[p.ID] = p
-	}
-	if m1 := byID["m1"]; m1.Upvotes != 1 || m1.Tier != TierVerified || m1.LastUpvotedAt == "" {
-		t.Fatalf("m1 = %+v, want upvotes=1 tier=verified last_upvoted_at set", m1)
-	}
-	if m2 := byID["m2"]; m2.Downvotes != 1 || m2.VoteScore != -1 || m2.Status == string(StatusInvalidated) || m2.LastUpvotedAt != "" {
-		t.Fatalf("m2 = %+v, want downvotes=1 score=-1 not yet invalidated, last_upvoted_at NOT set (never supported)", m2)
-	}
-
-	if len(ops.rows) != 2 {
-		t.Fatalf("ops rows = %+v, want exactly 2", ops.rows)
-	}
-	for _, r := range ops.rows {
-		if r.op != OpVote || r.actor != ActorJudge {
-			t.Fatalf("op row = %+v, want {op:vote actor:judge}", r)
+		if err := s.idx.upsert(ctx, []point{
+			{ID: m1ID, Vector: []float32{1, 0, 0, 0}, Content: "supported memory", Scope: "repo:r", Status: string(StatusUnverified)},
+			{ID: m2ID, Vector: []float32{1, 0, 0, 0}, Content: "contradicted memory", Scope: "repo:r", Status: string(StatusUnverified)},
+		}); err != nil {
+			t.Fatalf("seed upsert: %v", err)
 		}
-	}
+
+		n, err := s.ApplyVotes(ctx, []Vote{
+			{MemoryID: m1ID, Vote: VoteSupported, Reason: "diff matches", Actor: ActorJudge},
+			{MemoryID: m2ID, Vote: VoteContradicted, Reason: "diff disagrees", Actor: ActorJudge},
+		}, DefaultInvalidateThreshold)
+		if err != nil {
+			t.Fatalf("ApplyVotes: %v", err)
+		}
+		if n != 2 {
+			t.Fatalf("ApplyVotes touched %d, want 2", n)
+		}
+
+		pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "")
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		byID := map[string]scored{}
+		for _, p := range pts {
+			byID[p.ID] = p
+		}
+		if m1 := byID[m1ID]; m1.Upvotes != 1 || m1.Tier != TierVerified || m1.LastUpvotedAt == "" {
+			t.Fatalf("m1 = %+v, want upvotes=1 tier=verified last_upvoted_at set", m1)
+		}
+		if m2 := byID[m2ID]; m2.Downvotes != 1 || m2.VoteScore != -1 || m2.Status == string(StatusInvalidated) || m2.LastUpvotedAt != "" {
+			t.Fatalf("m2 = %+v, want downvotes=1 score=-1 not yet invalidated, last_upvoted_at NOT set (never supported)", m2)
+		}
+
+		if len(ops.rows) != 2 {
+			t.Fatalf("ops rows = %+v, want exactly 2", ops.rows)
+		}
+		for _, r := range ops.rows {
+			if r.op != OpVote || r.actor != ActorJudge {
+				t.Fatalf("op row = %+v, want {op:vote actor:judge}", r)
+			}
+		}
+	})
 }
 
 // TestRecordRecall_BumpsCountAndTimestamp covers the usage-tracking half of
 // #1255 P1: RecordRecall bumps recalls and stamps last_recalled_at, and a
 // second delivery accumulates rather than overwriting the count.
 func TestRecordRecall_BumpsCountAndTimestamp(t *testing.T) {
-	ctx := context.Background()
-	s := newSQLiteStore(t, "task", nil)
+	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
+		ctx := context.Background()
+		s := newStore("task", nil)
+		m1ID := testID("m1")
 
-	if err := s.idx.upsert(ctx, []point{
-		{ID: "m1", Vector: []float32{1, 0, 0, 0}, Content: "recalled twice", Scope: "repo:r", Status: string(StatusUnverified)},
-	}); err != nil {
-		t.Fatalf("seed upsert: %v", err)
-	}
-
-	get := func() scored {
-		pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "")
-		if err != nil {
-			t.Fatalf("list: %v", err)
+		if err := s.idx.upsert(ctx, []point{
+			{ID: m1ID, Vector: []float32{1, 0, 0, 0}, Content: "recalled twice", Scope: "repo:r", Status: string(StatusUnverified)},
+		}); err != nil {
+			t.Fatalf("seed upsert: %v", err)
 		}
-		return pts[0]
-	}
 
-	if g := get(); g.Recalls != 0 || g.LastRecalledAt != "" {
-		t.Fatalf("m1 before any recall = %+v, want recalls=0 last_recalled_at empty", g)
-	}
+		get := func() scored {
+			pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "")
+			if err != nil {
+				t.Fatalf("list: %v", err)
+			}
+			return pts[0]
+		}
 
-	s.RecordRecall(ctx, []string{"m1"})
-	after1 := get()
-	if after1.Recalls != 1 || after1.LastRecalledAt == "" {
-		t.Fatalf("m1 after 1st recall = %+v, want recalls=1 last_recalled_at set", after1)
-	}
+		if g := get(); g.Recalls != 0 || g.LastRecalledAt != "" {
+			t.Fatalf("m1 before any recall = %+v, want recalls=0 last_recalled_at empty", g)
+		}
 
-	s.RecordRecall(ctx, []string{"m1"})
-	after2 := get()
-	if after2.Recalls != 2 {
-		t.Fatalf("m1 after 2nd recall = %+v, want recalls=2 (accumulates, not overwrites)", after2)
-	}
+		s.RecordRecall(ctx, []string{m1ID})
+		after1 := get()
+		if after1.Recalls != 1 || after1.LastRecalledAt == "" {
+			t.Fatalf("m1 after 1st recall = %+v, want recalls=1 last_recalled_at set", after1)
+		}
+
+		s.RecordRecall(ctx, []string{m1ID})
+		after2 := get()
+		if after2.Recalls != 2 {
+			t.Fatalf("m1 after 2nd recall = %+v, want recalls=2 (accumulates, not overwrites)", after2)
+		}
+	})
 }
 
 // TestApplyVotes_NetScoreInvalidates covers the net-score invalidation rule:
@@ -422,8 +430,8 @@ func TestApplyVotes_SkipsAlreadyInvalidated(t *testing.T) {
 // upvotes-downvotes (1), not upvotes+1 (2) or vote_score+1 (1, coincidentally
 // right here - the divergence only shows once downvotes != 0, which this
 // case exercises). reinforcedVoteScore is the one function both backends
-// call for this, so this pins the invariant for both without a live qdrant
-// harness (see qdrant_filter_test.go's doc on why one doesn't exist here).
+// call for this, so pinning it once here (sqlite) covers both backends
+// without needing the live qdrant harness (qdranttest_test.go, #1268).
 func TestApplyOutcome_ReinforceKeepsVoteScoreInvariant(t *testing.T) {
 	if got := reinforcedVoteScore(1, 1); got != 1 {
 		t.Fatalf("reinforcedVoteScore(1, 1) = %d, want 1 (upvotes+1 - downvotes)", got)
@@ -652,57 +660,60 @@ func TestBackfillTiers_RealPreP1SchemaMigrates(t *testing.T) {
 // "human" op "invalidate", excludes the point from recall, and is idempotent
 // on a second call against the same (now-invalidated) id.
 func TestInvalidateByID_HumanDelete(t *testing.T) {
-	ctx := context.Background()
-	s := newSQLiteStore(t, "task", nil)
-	ops := &fakeOpsLog{}
-	s.SetOpsLog(ops)
+	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
+		ctx := context.Background()
+		s := newStore("task", nil)
+		ops := &fakeOpsLog{}
+		s.SetOpsLog(ops)
+		m1ID := testID("m1")
 
-	if err := s.idx.upsert(ctx, []point{{
-		ID: "m1", Vector: []float32{1, 0, 0, 0}, Content: "a memory a maintainer wants gone", Scope: "repo:r",
-		Author: "a", Timestamp: "t", Status: string(StatusUnverified), ValidFrom: "t",
-	}}); err != nil {
-		t.Fatalf("seed upsert: %v", err)
-	}
+		if err := s.idx.upsert(ctx, []point{{
+			ID: m1ID, Vector: []float32{1, 0, 0, 0}, Content: "a memory a maintainer wants gone", Scope: "repo:r",
+			Author: "a", Timestamp: "t", Status: string(StatusUnverified), ValidFrom: "t",
+		}}); err != nil {
+			t.Fatalf("seed upsert: %v", err)
+		}
 
-	if err := s.InvalidateByID(ctx, "m1", "", ActorHuman); err != nil {
-		t.Fatalf("InvalidateByID: %v", err)
-	}
+		if err := s.InvalidateByID(ctx, m1ID, "", ActorHuman); err != nil {
+			t.Fatalf("InvalidateByID: %v", err)
+		}
 
-	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "")
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	if len(pts) != 1 || pts[0].Status != string(StatusInvalidated) || pts[0].InvalidationReason != "manual delete" {
-		t.Fatalf("point after delete = %+v, want status=invalidated reason=%q (default)", pts, "manual delete")
-	}
+		pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "")
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		if len(pts) != 1 || pts[0].Status != string(StatusInvalidated) || pts[0].InvalidationReason != "manual delete" {
+			t.Fatalf("point after delete = %+v, want status=invalidated reason=%q (default)", pts, "manual delete")
+		}
 
-	if len(ops.rows) != 1 {
-		t.Fatalf("ops rows = %+v, want exactly 1", ops.rows)
-	}
-	if r := ops.rows[0]; r.memoryID != "m1" || r.op != OpInvalidate || r.actor != ActorHuman || r.reason != "manual delete" {
-		t.Fatalf("op row = %+v, want {m1 invalidate human \"manual delete\"}", r)
-	}
+		if len(ops.rows) != 1 {
+			t.Fatalf("ops rows = %+v, want exactly 1", ops.rows)
+		}
+		if r := ops.rows[0]; r.memoryID != m1ID || r.op != OpInvalidate || r.actor != ActorHuman || r.reason != "manual delete" {
+			t.Fatalf("op row = %+v, want {m1 invalidate human \"manual delete\"}", r)
+		}
 
-	resp, _, err := s.recall(ctx, []string{"repo:r"}, "a memory a maintainer wants gone")
-	if err != nil {
-		t.Fatalf("recall: %v", err)
-	}
-	if len(resp.Memories) != 0 {
-		t.Fatalf("recall after delete got %d, want 0 - excluded at the backend query", len(resp.Memories))
-	}
+		resp, _, err := s.recall(ctx, []string{"repo:r"}, "a memory a maintainer wants gone")
+		if err != nil {
+			t.Fatalf("recall: %v", err)
+		}
+		if len(resp.Memories) != 0 {
+			t.Fatalf("recall after delete got %d, want 0 - excluded at the backend query", len(resp.Memories))
+		}
 
-	// Deleting an already-invalidated id is idempotent: the point exists, so
-	// it succeeds again rather than 404-ing, but nothing revives it.
-	if err := s.InvalidateByID(ctx, "m1", "second delete", ActorHuman); err != nil {
-		t.Fatalf("InvalidateByID (idempotent 2nd call): %v", err)
-	}
-	if len(ops.rows) != 2 {
-		t.Fatalf("ops rows after 2nd delete = %+v, want exactly 2", ops.rows)
-	}
+		// Deleting an already-invalidated id is idempotent: the point exists, so
+		// it succeeds again rather than 404-ing, but nothing revives it.
+		if err := s.InvalidateByID(ctx, m1ID, "second delete", ActorHuman); err != nil {
+			t.Fatalf("InvalidateByID (idempotent 2nd call): %v", err)
+		}
+		if len(ops.rows) != 2 {
+			t.Fatalf("ops rows after 2nd delete = %+v, want exactly 2", ops.rows)
+		}
 
-	if err := s.InvalidateByID(ctx, "does-not-exist", "", ActorHuman); !errors.Is(err, ErrMemoryNotFound) {
-		t.Fatalf("InvalidateByID(unknown) = %v, want ErrMemoryNotFound", err)
-	}
+		if err := s.InvalidateByID(ctx, testID("does-not-exist"), "", ActorHuman); !errors.Is(err, ErrMemoryNotFound) {
+			t.Fatalf("InvalidateByID(unknown) = %v, want ErrMemoryNotFound", err)
+		}
+	})
 }
 
 // TestRecall_PreLifecyclePointsReadAsValidAndUnverified covers points minted
@@ -789,60 +800,63 @@ func TestApply_ConsolidatorDeleteInvalidatesWithReason(t *testing.T) {
 // removes it back to 0; and switching directly from up to down moves the
 // vote rather than stacking it.
 func TestSetHumanVote_ToggleAndSwitch(t *testing.T) {
-	ctx := context.Background()
-	s := newSQLiteStore(t, "task", nil)
-	ops := &fakeOpsLog{}
-	s.SetOpsLog(ops)
+	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
+		ctx := context.Background()
+		s := newStore("task", nil)
+		ops := &fakeOpsLog{}
+		s.SetOpsLog(ops)
+		m1ID := testID("m1")
 
-	if err := s.idx.upsert(ctx, []point{
-		{ID: "m1", Vector: []float32{1, 0, 0, 0}, Content: "some fact", Scope: "repo:r", Status: string(StatusUnverified)},
-	}); err != nil {
-		t.Fatalf("seed upsert: %v", err)
-	}
-
-	get := func() scored {
-		pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "")
-		if err != nil {
-			t.Fatalf("list: %v", err)
+		if err := s.idx.upsert(ctx, []point{
+			{ID: m1ID, Vector: []float32{1, 0, 0, 0}, Content: "some fact", Scope: "repo:r", Status: string(StatusUnverified)},
+		}); err != nil {
+			t.Fatalf("seed upsert: %v", err)
 		}
-		for _, p := range pts {
-			if p.ID == "m1" {
-				return p
+
+		get := func() scored {
+			pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "")
+			if err != nil {
+				t.Fatalf("list: %v", err)
 			}
+			for _, p := range pts {
+				if p.ID == m1ID {
+					return p
+				}
+			}
+			t.Fatalf("m1 not found")
+			return scored{}
 		}
-		t.Fatalf("m1 not found")
-		return scored{}
-	}
 
-	if err := s.SetHumanVote(ctx, "m1", HumanVoteUp); err != nil {
-		t.Fatalf("SetHumanVote up: %v", err)
-	}
-	if m := get(); m.Upvotes != 1 || m.Tier != TierVerified || m.HumanVote != HumanVoteUp {
-		t.Fatalf("after up: %+v, want upvotes=1 tier=verified human_vote=up", m)
-	}
+		if err := s.SetHumanVote(ctx, m1ID, HumanVoteUp); err != nil {
+			t.Fatalf("SetHumanVote up: %v", err)
+		}
+		if m := get(); m.Upvotes != 1 || m.Tier != TierVerified || m.HumanVote != HumanVoteUp {
+			t.Fatalf("after up: %+v, want upvotes=1 tier=verified human_vote=up", m)
+		}
 
-	if err := s.SetHumanVote(ctx, "m1", HumanVoteUp); err != nil {
-		t.Fatalf("SetHumanVote up again: %v", err)
-	}
-	if m := get(); m.Upvotes != 1 {
-		t.Fatalf("after repeat up: %+v, want upvotes still 1 (no double count)", m)
-	}
+		if err := s.SetHumanVote(ctx, m1ID, HumanVoteUp); err != nil {
+			t.Fatalf("SetHumanVote up again: %v", err)
+		}
+		if m := get(); m.Upvotes != 1 {
+			t.Fatalf("after repeat up: %+v, want upvotes still 1 (no double count)", m)
+		}
 
-	if err := s.SetHumanVote(ctx, "m1", HumanVoteNone); err != nil {
-		t.Fatalf("SetHumanVote none: %v", err)
-	}
-	if m := get(); m.Upvotes != 0 || m.HumanVote != "" {
-		t.Fatalf("after none: %+v, want upvotes=0 human_vote=\"\"", m)
-	}
+		if err := s.SetHumanVote(ctx, m1ID, HumanVoteNone); err != nil {
+			t.Fatalf("SetHumanVote none: %v", err)
+		}
+		if m := get(); m.Upvotes != 0 || m.HumanVote != "" {
+			t.Fatalf("after none: %+v, want upvotes=0 human_vote=\"\"", m)
+		}
 
-	if err := s.SetHumanVote(ctx, "m1", HumanVoteDown); err != nil {
-		t.Fatalf("SetHumanVote down: %v", err)
-	}
-	if m := get(); m.Downvotes != 1 || m.Upvotes != 0 || m.HumanVote != HumanVoteDown {
-		t.Fatalf("after down: %+v, want downvotes=1 upvotes=0 human_vote=down", m)
-	}
+		if err := s.SetHumanVote(ctx, m1ID, HumanVoteDown); err != nil {
+			t.Fatalf("SetHumanVote down: %v", err)
+		}
+		if m := get(); m.Downvotes != 1 || m.Upvotes != 0 || m.HumanVote != HumanVoteDown {
+			t.Fatalf("after down: %+v, want downvotes=1 upvotes=0 human_vote=down", m)
+		}
 
-	if err := s.SetHumanVote(ctx, "does-not-exist", HumanVoteUp); !errors.Is(err, ErrMemoryNotFound) {
-		t.Fatalf("SetHumanVote unknown id err = %v, want ErrMemoryNotFound", err)
-	}
+		if err := s.SetHumanVote(ctx, testID("does-not-exist"), HumanVoteUp); !errors.Is(err, ErrMemoryNotFound) {
+			t.Fatalf("SetHumanVote unknown id err = %v, want ErrMemoryNotFound", err)
+		}
+	})
 }

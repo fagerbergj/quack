@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+
+	"google.golang.org/adk/v2/model"
 )
 
 func TestParseSurvivorID(t *testing.T) {
@@ -129,42 +131,47 @@ func TestSQLiteAbsorb_VotesAndTimestampsMerge(t *testing.T) {
 // TestSQLiteAbsorb_ChainReproducesSummedVotes proves A absorbed by B absorbed
 // by C ends with C carrying BOTH ids and A's votes (folded into B first,
 // then B's total - including A's - folded into C).
-func TestSQLiteAbsorb_ChainReproducesSummedVotes(t *testing.T) {
-	ctx := context.Background()
-	s := newSQLiteStore(t, "task", nil)
-	seedPoint(t, s, point{ID: "A", Scope: "role:coding", Content: "a", Upvotes: 1, VoteScore: 1})
-	seedPoint(t, s, point{ID: "B", Scope: "role:coding", Content: "b", Upvotes: 1, VoteScore: 1})
-	seedPoint(t, s, point{ID: "C", Scope: "role:coding", Content: "c"})
+func TestAbsorb_ChainReproducesSummedVotes(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
+		ctx := context.Background()
+		s := newStore("task", nil)
+		aID, bID, cID := testID("A"), testID("B"), testID("C")
+		seedPoint(t, s, point{ID: aID, Scope: "role:coding", Content: "a", Upvotes: 1, VoteScore: 1})
+		seedPoint(t, s, point{ID: bID, Scope: "role:coding", Content: "b", Upvotes: 1, VoteScore: 1})
+		seedPoint(t, s, point{ID: cID, Scope: "role:coding", Content: "c"})
 
-	if ok, err := s.idx.absorb(ctx, "B", "A", absorbedByReason("B")); err != nil || !ok {
-		t.Fatalf("absorb(B,A) = %v, %v", ok, err)
-	}
-	if ok, err := s.idx.absorb(ctx, "C", "B", absorbedByReason("C")); err != nil || !ok {
-		t.Fatalf("absorb(C,B) = %v, %v", ok, err)
-	}
+		if ok, err := s.idx.absorb(ctx, bID, aID, absorbedByReason(bID)); err != nil || !ok {
+			t.Fatalf("absorb(B,A) = %v, %v", ok, err)
+		}
+		if ok, err := s.idx.absorb(ctx, cID, bID, absorbedByReason(cID)); err != nil || !ok {
+			t.Fatalf("absorb(C,B) = %v, %v", ok, err)
+		}
 
-	mems, _, err := s.List(ctx, nil, 0, 0, true, "")
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	byID := map[string]Memory{}
-	for _, m := range mems {
-		byID[m.ID] = m
-	}
-	c := byID["C"]
-	if c.Upvotes != 2 {
-		t.Fatalf("C upvotes = %d, want 2 (A's + B's, chained)", c.Upvotes)
-	}
-	sort.Strings(c.AbsorbedIDs)
-	if !reflect.DeepEqual(c.AbsorbedIDs, []string{"A", "B"}) {
-		t.Fatalf("C absorbed_ids = %v, want [A B]", c.AbsorbedIDs)
-	}
-	if byID["A"].InvalidationReason != "absorbed by B" {
-		t.Fatalf("A's own invalidation reason = %q, want unchanged %q (never rewritten to C)", byID["A"].InvalidationReason, "absorbed by B")
-	}
-	if byID["B"].InvalidationReason != "absorbed by C" {
-		t.Fatalf("B invalidation reason = %q, want %q", byID["B"].InvalidationReason, "absorbed by C")
-	}
+		mems, _, err := s.List(ctx, nil, 0, 0, true, "")
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		byID := map[string]Memory{}
+		for _, m := range mems {
+			byID[m.ID] = m
+		}
+		c := byID[cID]
+		if c.Upvotes != 2 {
+			t.Fatalf("C upvotes = %d, want 2 (A's + B's, chained)", c.Upvotes)
+		}
+		sort.Strings(c.AbsorbedIDs)
+		wantAbsorbed := []string{aID, bID}
+		sort.Strings(wantAbsorbed)
+		if !reflect.DeepEqual(c.AbsorbedIDs, wantAbsorbed) {
+			t.Fatalf("C absorbed_ids = %v, want [A B]", c.AbsorbedIDs)
+		}
+		if byID[aID].InvalidationReason != absorbedByReason(bID) {
+			t.Fatalf("A's own invalidation reason = %q, want unchanged %q (never rewritten to C)", byID[aID].InvalidationReason, absorbedByReason(bID))
+		}
+		if byID[bID].InvalidationReason != absorbedByReason(cID) {
+			t.Fatalf("B invalidation reason = %q, want %q", byID[bID].InvalidationReason, absorbedByReason(cID))
+		}
+	})
 }
 
 // TestSQLiteAbsorb_AlreadyInvalidatedIsNoop: absorbing an id that's already
