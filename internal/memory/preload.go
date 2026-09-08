@@ -174,16 +174,60 @@ be stale, so verify anything load-bearing against the code itself.
 // embedder is unavailable: recall is best-effort and bounded (Store.recall),
 // so it can never fail or hang a node.
 func (s *Store) Recall(ctx context.Context, sc Scope, query string) string {
+	text, _ := s.RecallWithHits(ctx, sc, query)
+	return text
+}
+
+// Delivered is one memory handed to a worker - the received-set entry the
+// judge is asked to vote on and the ledger's memory.recall entry records.
+type Delivered struct {
+	ID      string
+	Content string
+	Score   float32
+}
+
+// RecallWithHits is Recall plus the delivered set (ids/content/score) so a
+// caller can log usage (ledger memory.recall) and hand the same set to the
+// judge for voting (epic #1255 P1). hits is nil, not empty, when nothing
+// was delivered.
+func (s *Store) RecallWithHits(ctx context.Context, sc Scope, query string) (text string, hits []Delivered) {
 	if s == nil {
-		return ""
+		return "", nil
 	}
-	resp, err := s.recall(ctx, sc.Buckets(), query)
-	if err != nil || resp == nil {
-		return ""
+	resp, scoredHits, err := s.recall(ctx, sc.Buckets(), query)
+	if err != nil || resp == nil || len(resp.Memories) == 0 {
+		return "", nil
 	}
-	text := formatMemories(resp.Memories)
+	text = formatMemories(resp.Memories)
 	if text == "" {
-		return ""
+		return "", nil
 	}
-	return fmt.Sprintf(recallInstructions, text)
+	// scoredHits is the same order/length as resp.Memories (recall's own
+	// invariant) - zip them so the real cosine score reaches the ledger's
+	// memory.recall entry instead of always recording 0 (#1257 review).
+	hits = make([]Delivered, 0, len(resp.Memories))
+	for i, m := range resp.Memories {
+		d := Delivered{ID: m.ID, Content: extractText(m)}
+		if i < len(scoredHits) {
+			d.Score = scoredHits[i].Score
+		}
+		hits = append(hits, d)
+	}
+	return fmt.Sprintf(recallInstructions, text), hits
+}
+
+// RecordRecall bumps recalls and last_recalled_at for every id in one
+// batched write - the usage-tracking half of a recall delivery (design
+// decision #1255 P1). Best-effort like Recall itself: a failure is logged,
+// never returned, so usage tracking can never fail or slow a node. Does NOT
+// write a memory_ops row - the ledger's memory.recall entry (appended by the
+// caller) is the audit trail for what a chat retrieved; this only updates
+// the point's own denormalized counters.
+func (s *Store) RecordRecall(ctx context.Context, ids []string) {
+	if s == nil || len(ids) == 0 {
+		return
+	}
+	if err := s.idx.recordRecall(ctx, ids); err != nil {
+		s.log.Warn("record recall failed", "ids", ids, "err", err)
+	}
 }

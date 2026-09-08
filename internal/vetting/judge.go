@@ -27,6 +27,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/promptbuilder"
 	"github.com/fagerbergj/quack/internal/stream"
@@ -107,6 +108,7 @@ type verdict struct {
 	Passed   bool                      `json:"passed"`
 	Feedback string                    `json:"feedback"`
 	Findings []findingVerdict          `json:"findings,omitempty"` // per-finding verification; "contradicted" folds into findingsGroundingCriterion
+	Memories []memoryVerdict           `json:"memories,omitempty"` // per-recalled-memory vote (#1255 P1); applied only when the round passes
 
 	// ChangedFiles* are set from changedFilesCoverage after the round, not by
 	// the model - how much of the diff the judge actually saw (#779).
@@ -249,6 +251,7 @@ type verdictArgs struct {
 	Criteria map[string]criterionScore `json:"criteria,omitempty"`
 	Feedback string                    `json:"feedback,omitempty"`
 	Findings []findingVerdict          `json:"findings,omitempty"`
+	Memories []memoryVerdict           `json:"memories,omitempty"`
 }
 
 // lenientVerdictSchema: verdictArgs schema with every optional string property
@@ -293,10 +296,10 @@ func newSubmitVerdictTool(sink *verdict) (tool.Tool, error) {
 	}
 	return functiontool.New(functiontool.Config{
 		Name:        submitVerdictTool,
-		Description: "Record your final verdict and end the evaluation. Call this exactly once, after independently verifying the answer against every rubric criterion - and, when the prompt lists staged findings to verify, after recording a result for each one in `findings`.",
+		Description: "Record your final verdict and end the evaluation. Call this exactly once, after independently verifying the answer against every rubric criterion - and, when the prompt lists staged findings to verify, after recording a result for each one in `findings`. When the prompt lists RECALLED MEMORIES, vote on every one of them in `memories`.",
 		InputSchema: schema,
 	}, func(ctx adkagent.Context, args verdictArgs) (map[string]any, error) {
-		v := verdict{Score: args.Score, Criteria: args.Criteria, Feedback: args.Feedback, Findings: args.Findings}
+		v := verdict{Score: args.Score, Criteria: args.Criteria, Feedback: args.Feedback, Findings: args.Findings, Memories: args.Memories}
 		normalizeScale(&v)
 		*sink = v
 		ctx.Actions().Escalate = true
@@ -579,9 +582,12 @@ func isTransientJudgeErr(err error) bool {
 // runJudgeAgent: budgets judge prompt, retries transient faults, falls back to one harder-clamped retry.
 // Named returns so the deferred coverage stamp is a single choke point across every exit (#779) instead of
 // duplicated at each return.
-func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer string, act workerActivity, det map[string]criterionScore, emit func(*genai.Part) bool) (v verdict, err error) {
+func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer string, act workerActivity, det map[string]criterionScore, received []memory.Delivered, emit func(*genai.Part) bool) (v verdict, err error) {
 	changedFiles, coverage := changedFilesSection(cfg, act)
-	known := judgeKnownFailuresSection(det, cfg.Threshold)
+	// Memories lead knownFailures inside this string, but buildJudgePrompt
+	// still places the whole `known` blob in its volatile trailing section,
+	// not the cacheable prefix - this ordering is readability only.
+	known := receivedMemoriesSection(received) + judgeKnownFailuresSection(det, cfg.Threshold)
 	fitted := fitJudgeAnswer(cfg, question, answer, changedFiles, known, act, 1.0)
 	defer func() {
 		if err == nil {

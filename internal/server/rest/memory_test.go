@@ -154,8 +154,17 @@ func TestListAndDeleteMemory_RoundTrip(t *testing.T) {
 		t.Fatalf("got %+v, want exactly one memory", got)
 	}
 	id := got.Memories[0].Id
-	if s := got.Memories[0].Status; s == nil || *s != schema.Unverified {
+	if s := got.Memories[0].Status; s == nil || *s != schema.MemoryStatusUnverified {
 		t.Fatalf("status before delete = %v, want unverified", s)
+	}
+	// Epic #1255 P1: a fresh memory carries the new vote fields at their zero
+	// value/default tier, not omitted or nil.
+	m0 := got.Memories[0]
+	if m0.Tier == nil || *m0.Tier != schema.MemoryTierUnverified {
+		t.Fatalf("tier = %v, want unverified", m0.Tier)
+	}
+	if m0.Upvotes == nil || *m0.Upvotes != 0 || m0.Downvotes == nil || *m0.Downvotes != 0 || m0.Recalls == nil || *m0.Recalls != 0 {
+		t.Fatalf("votes/recalls = %+v, want all zero", m0)
 	}
 
 	delReq := httptest.NewRequest(http.MethodDelete, "/api/v1/memories/"+id, nil)
@@ -188,7 +197,7 @@ func TestListAndDeleteMemory_RoundTrip(t *testing.T) {
 		t.Fatalf("include_invalidated=true listing = %+v, want the one invalidated memory", got3)
 	}
 	m := got3.Memories[0]
-	if m.Status == nil || *m.Status != schema.Invalidated {
+	if m.Status == nil || *m.Status != schema.MemoryStatusInvalidated {
 		t.Fatalf("status after delete = %v, want invalidated", m.Status)
 	}
 	if m.InvalidationReason == nil || *m.InvalidationReason != "manual delete" {

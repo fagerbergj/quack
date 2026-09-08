@@ -111,7 +111,7 @@ func TestJudgeReadsFileBeforeVerdict(t *testing.T) {
 			factory := NewJudgeFactory(scriptedJudge{}, []tool.Tool{readTool}, nil)
 			q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the game in game.go"}}}
 			v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q,
-				"I implemented game.go", workerActivity{}, nil, func(*genai.Part) bool { return true })
+				"I implemented game.go", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
 			if err != nil {
 				t.Fatalf("runJudgeAgent: %v", err)
 			}
@@ -176,7 +176,7 @@ func TestRunJudgeAgent_OverBudgetAnswerFitsBudget(t *testing.T) {
 	hugeAnswer := strings.Repeat("the worker wrote a very long answer. ", 15_000)
 	cfg := Config{Rubric: "score 0-10", JudgeContextWindow: 8_000} // small window forces a real clamp
 
-	v, err := runJudgeAgent(t.Context(), factory, cfg, q, hugeAnswer, workerActivity{}, nil, func(*genai.Part) bool { return true })
+	v, err := runJudgeAgent(t.Context(), factory, cfg, q, hugeAnswer, workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestRunJudgeAgent_SessionIDIsChatIDNotConstant(t *testing.T) {
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the game in game.go"}}}
 	cfg := Config{Rubric: "score 0-10", ChatID: "chat-42"}
 
-	if _, err := runJudgeAgent(t.Context(), factory, cfg, q, "I implemented game.go", workerActivity{}, nil, func(*genai.Part) bool { return true }); err != nil {
+	if _, err := runJudgeAgent(t.Context(), factory, cfg, q, "I implemented game.go", workerActivity{}, nil, nil, func(*genai.Part) bool { return true }); err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
 	if gotSessionID != "chat-42" {
@@ -255,7 +255,7 @@ func TestRunJudgeAgent_RetriesTransientErrorThenSucceeds(t *testing.T) {
 	judge := &flakyTransientJudge{failures: 2}
 	factory := NewJudgeFactory(judge, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
-	v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestRunJudgeAgent_PermanentTransientErrorFailsClosed(t *testing.T) {
 	judge := &flakyTransientJudge{failures: 100} // never recovers
 	factory := NewJudgeFactory(judge, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
-	_, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	_, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
 	if err == nil {
 		t.Fatal("runJudgeAgent: expected an error when the judge model never recovers, got nil")
 	}
@@ -409,7 +409,7 @@ func TestJudgeLoadsSkillBeforeVerdict(t *testing.T) {
 			factory := NewJudgeFactory(skillJudge{}, nil, []tool.Toolset{ts})
 			q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the game in game.go"}}}
 			v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q,
-				"I implemented game.go", workerActivity{}, nil, func(*genai.Part) bool { return true })
+				"I implemented game.go", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
 			if err != nil {
 				t.Fatalf("runJudgeAgent: %v", err)
 			}
@@ -442,7 +442,7 @@ func TestJudgeNoReadToolsOneShot(t *testing.T) {
 	factory := NewJudgeFactory(oneShotJudge{}, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "What is the capital of France?"}}}
 	v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q,
-		"Paris.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+		"Paris.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
@@ -651,7 +651,7 @@ func TestRunJudgeAgent_ExhaustedIterationsReturnsErrJudgeNoVerdict(t *testing.T)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 2}
 
-	_, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	_, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
 	if err == nil {
 		t.Fatal("runJudgeAgent: expected an error - the judge never called submit_verdict")
 	}
@@ -705,7 +705,7 @@ func TestRunJudgeAgent_ChangedFilesCoverage(t *testing.T) {
 		cfg, act := changedFilesFixture(t, 5)
 		var prompt string
 		factory := NewJudgeFactory(recordingJudge{prompt: &prompt}, nil, nil)
-		v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", act, nil, func(*genai.Part) bool { return true })
+		v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", act, nil, nil, func(*genai.Part) bool { return true })
 		if err != nil {
 			t.Fatalf("runJudgeAgent: %v", err)
 		}
@@ -721,7 +721,7 @@ func TestRunJudgeAgent_ChangedFilesCoverage(t *testing.T) {
 		cfg, act := changedFilesFixture(t, 18)
 		var prompt string
 		factory := NewJudgeFactory(recordingJudge{prompt: &prompt}, nil, nil)
-		v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", act, nil, func(*genai.Part) bool { return true })
+		v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", act, nil, nil, func(*genai.Part) bool { return true })
 		if err != nil {
 			t.Fatalf("runJudgeAgent: %v", err)
 		}
@@ -866,7 +866,7 @@ func TestJudgeRequestCarriesConfiguredMaxOutputTokens(t *testing.T) {
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxOutputTokens: 4096}
 
-	if _, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true }); err != nil {
+	if _, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true }); err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
 	if got != 4096 {
@@ -883,7 +883,7 @@ func TestJudgeRequestZeroMaxOutputTokensLeavesUncapped(t *testing.T) {
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10"} // JudgeMaxOutputTokens left unset
 
-	if _, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true }); err != nil {
+	if _, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true }); err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
 	if got != 0 {
@@ -919,7 +919,7 @@ func TestRunJudgeAgent_GarbledSubmitVerdictRoutesToNoVerdict(t *testing.T) {
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 2}
 
-	_, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	_, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
 	if !errors.Is(err, ErrJudgeNoVerdict) {
 		t.Fatalf("err = %v, want errors.Is(err, ErrJudgeNoVerdict) - a garbled submit_verdict call must never look like a real verdict", err)
 	}
@@ -967,7 +967,7 @@ func TestRunJudgeAgent_RunawayRepeatAbortsEarly(t *testing.T) {
 	// round if the repeat guard were not what stopped it.
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 1000}
 
-	_, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	_, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
 	if !errors.Is(err, ErrJudgeNoVerdict) {
 		t.Fatalf("err = %v, want errors.Is(err, ErrJudgeNoVerdict)", err)
 	}
@@ -1014,7 +1014,7 @@ func TestRunJudgeAgent_VariedReplyNotAborted(t *testing.T) {
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6}
 
-	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
@@ -1058,7 +1058,7 @@ func TestRunJudgeAgent_ForcedVerdictOnRepeatedToolCall(t *testing.T) {
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6} // plenty of budget left - only the repeat should force the close
 
-	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
@@ -1123,7 +1123,7 @@ func TestRunJudgeAgent_NoVerdictRetriesOnceThenSucceeds(t *testing.T) {
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 2}
 
-	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
@@ -1162,7 +1162,7 @@ func TestRunJudgeAgent_NoVerdictRetryExhausted(t *testing.T) {
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 2}
 
-	_, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	_, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
 	if err == nil {
 		t.Fatal("runJudgeAgent: expected an error - the judge never reaches a verdict in either round")
 	}
@@ -1199,7 +1199,7 @@ func TestRunJudgeAgent_NormalRoundKeepsTools(t *testing.T) {
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6}
 
-	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
@@ -1383,7 +1383,7 @@ func TestRunJudgeAgent_SubmitNudgeRecoversGarbledText(t *testing.T) {
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6}
 
-	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
@@ -1424,7 +1424,7 @@ func TestRunJudgeAgent_SubmitNudgeExhaustedStillNoVerdict(t *testing.T) {
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6}
 
-	_, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	_, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
 	if !errors.Is(err, ErrJudgeNoVerdict) {
 		t.Fatalf("err = %v, want errors.Is(err, ErrJudgeNoVerdict)", err)
 	}
@@ -1602,7 +1602,7 @@ func TestRunJudgeAgent_ImageStripPersistsAcrossRetries(t *testing.T) {
 	}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6}
 
-	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}

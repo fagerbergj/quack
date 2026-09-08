@@ -136,6 +136,34 @@ export type Memory = {
      * Why this memory was invalidated. Present only when `status` is `invalidated`.
      */
     invalidation_reason?: string;
+    /**
+     * Judge/human votes marking this memory `supported` against delivered work, plus outcome-feedback reinforcement (epic
+     */
+    upvotes?: number;
+    /**
+     * Judge/human votes marking this memory `contradicted` against delivered work.
+     */
+    downvotes?: number;
+    /**
+     * upvotes - downvotes. A memory at or below the configured invalidation threshold (default -2) is invalidated.
+     */
+    vote_score?: number;
+    /**
+     * Vote-based tier - `verified` once upvotes >= 1. Independent of `status`; a verified memory is never aged out, only invalidated by net score or a human.
+     */
+    tier?: 'unverified' | 'verified';
+    /**
+     * When this memory was last marked `supported`. Absent if never upvoted.
+     */
+    last_upvoted_at?: string;
+    /**
+     * How many times this memory has been delivered to a worker (prefill or, from P2, the recall_memory tool).
+     */
+    recalls?: number;
+    /**
+     * When this memory was last delivered to a worker. Absent if never recalled.
+     */
+    last_recalled_at?: string;
 };
 
 export type DeleteMemoryBody = {

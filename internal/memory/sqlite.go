@@ -62,6 +62,14 @@ type memoryRow struct {
 	InvalidationReason string
 	ReinforcementCount int
 
+	Upvotes        int
+	Downvotes      int
+	VoteScore      int
+	Tier           string
+	LastUpvotedAt  string
+	Recalls        int
+	LastRecalledAt string
+
 	Vector []byte
 }
 
@@ -111,6 +119,13 @@ func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32
 			InvalidatedAt:      r.InvalidatedAt,
 			InvalidationReason: r.InvalidationReason,
 			ReinforcementCount: r.ReinforcementCount,
+			Upvotes:            r.Upvotes,
+			Downvotes:          r.Downvotes,
+			VoteScore:          r.VoteScore,
+			Tier:               r.Tier,
+			LastUpvotedAt:      r.LastUpvotedAt,
+			Recalls:            r.Recalls,
+			LastRecalledAt:     r.LastRecalledAt,
 			Score:              cosine(vec, bytesToVec(r.Vector)),
 		})
 	}
@@ -148,6 +163,8 @@ func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit 
 			ChatID: r.ChatID, NodeID: r.NodeID, Source: r.Source, MintedAt: r.MintedAt,
 			Status: r.Status, ValidFrom: r.ValidFrom, InvalidatedAt: r.InvalidatedAt,
 			InvalidationReason: r.InvalidationReason, ReinforcementCount: r.ReinforcementCount,
+			Upvotes: r.Upvotes, Downvotes: r.Downvotes, VoteScore: r.VoteScore, Tier: r.Tier,
+			LastUpvotedAt: r.LastUpvotedAt, Recalls: r.Recalls, LastRecalledAt: r.LastRecalledAt,
 		}
 	}
 	return out, nil
@@ -188,6 +205,13 @@ func (x *sqliteIndex) upsert(ctx context.Context, pts []point) error {
 			InvalidatedAt:      p.InvalidatedAt,
 			InvalidationReason: p.InvalidationReason,
 			ReinforcementCount: p.ReinforcementCount,
+			Upvotes:            p.Upvotes,
+			Downvotes:          p.Downvotes,
+			VoteScore:          p.VoteScore,
+			Tier:               p.Tier,
+			LastUpvotedAt:      p.LastUpvotedAt,
+			Recalls:            p.Recalls,
+			LastRecalledAt:     p.LastRecalledAt,
 			Vector:             vecToBytes(p.Vector),
 		}
 	}
@@ -231,29 +255,39 @@ func (x *sqliteIndex) invalidateByID(ctx context.Context, ids []string, reason s
 	return int(res.RowsAffected), nil
 }
 
-// updateStatus applies o to every row whose chat_id matches and isn't
-// already invalidated (sticky), one UPDATE per row since reinforcement_count
-// differs per row. Returns the ids touched.
-func (x *sqliteIndex) updateStatus(ctx context.Context, chatID string, o OutcomeSignal) ([]string, error) {
+// updateStatus applies o to every id in ids that isn't already invalidated
+// (sticky) and, for invalidate, isn't already tier verified (design decision
+// #1255: a verified memory recalled into a closed-unmerged chat gets no
+// vote). One UPDATE per row since reinforcement_count/upvotes differ per
+// row. Returns the ids touched.
+func (x *sqliteIndex) updateStatus(ctx context.Context, ids []string, o OutcomeSignal) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	q := x.db.WithContext(ctx).
+		Where("collection = ? AND id IN ?", x.coll, ids).
+		Where("status IS NULL OR status <> ?", string(StatusInvalidated))
+	if o.Kind == OutcomeInvalidated {
+		q = q.Where("tier IS NULL OR tier <> ?", TierVerified)
+	}
 	var rows []memoryRow
-	err := x.db.WithContext(ctx).
-		Where("collection = ? AND chat_id = ?", x.coll, chatID).
-		Where("status IS NULL OR status <> ?", string(StatusInvalidated)).
-		Find(&rows).Error
-	if err != nil {
+	if err := q.Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("memory: sqlite outcome query: %w", err)
 	}
 	if len(rows) == 0 {
 		return nil, nil
 	}
 	ts := nowRFC3339()
-	ids := make([]string, len(rows))
+	touched := make([]string, len(rows))
 	for i, r := range rows {
-		ids[i] = r.ID
+		touched[i] = r.ID
 		var upd map[string]any
 		switch o.Kind {
 		case OutcomeReinforced:
-			upd = map[string]any{"status": string(StatusReinforced), "reinforcement_count": r.ReinforcementCount + 1}
+			upd = map[string]any{
+				"status": string(StatusReinforced), "reinforcement_count": r.ReinforcementCount + 1,
+				"upvotes": r.Upvotes + 1, "vote_score": reinforcedVoteScore(r.Upvotes, r.Downvotes), "tier": TierVerified, "last_upvoted_at": ts,
+			}
 		case OutcomeInvalidated:
 			upd = map[string]any{"status": string(StatusInvalidated), "invalidated_at": ts, "invalidation_reason": o.Reason}
 		}
@@ -263,7 +297,99 @@ func (x *sqliteIndex) updateStatus(ctx context.Context, chatID string, o Outcome
 			return nil, fmt.Errorf("memory: sqlite outcome update: %w", err)
 		}
 	}
-	return ids, nil
+	return touched, nil
+}
+
+// applyVotes applies each vote to its memory row, skipping an
+// already-invalidated one (sticky). A net score at or below
+// invalidateThreshold also invalidates. Returns the ids touched.
+func (x *sqliteIndex) applyVotes(ctx context.Context, votes []Vote, invalidateThreshold int) ([]string, error) {
+	if len(votes) == 0 {
+		return nil, nil
+	}
+	ids := make([]string, len(votes))
+	for i, v := range votes {
+		ids[i] = v.MemoryID
+	}
+	var rows []memoryRow
+	if err := x.db.WithContext(ctx).
+		Where("collection = ? AND id IN ?", x.coll, ids).
+		Where("status IS NULL OR status <> ?", string(StatusInvalidated)).
+		Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("memory: sqlite vote query: %w", err)
+	}
+	byID := make(map[string]memoryRow, len(rows))
+	for _, r := range rows {
+		byID[r.ID] = r
+	}
+	ts := nowRFC3339()
+	var touched []string
+	for _, v := range votes {
+		r, ok := byID[v.MemoryID]
+		if !ok {
+			continue
+		}
+		upd := voteUpdate(r, v, ts, invalidateThreshold)
+		if err := x.db.WithContext(ctx).Model(&memoryRow{}).
+			Where("collection = ? AND id = ?", x.coll, r.ID).
+			Updates(upd).Error; err != nil {
+			return nil, fmt.Errorf("memory: sqlite vote update: %w", err)
+		}
+		touched = append(touched, r.ID)
+	}
+	return touched, nil
+}
+
+// voteUpdate builds one row's column updates from computeVoteDelta.
+func voteUpdate(r memoryRow, v Vote, ts string, invalidateThreshold int) map[string]any {
+	d := computeVoteDelta(r.Upvotes, r.Downvotes, r.Tier, ts, v, invalidateThreshold)
+	upd := map[string]any{"upvotes": d.Upvotes, "downvotes": d.Downvotes, "vote_score": d.VoteScore, "tier": d.Tier}
+	if d.LastUpvotedAt != "" {
+		upd["last_upvoted_at"] = d.LastUpvotedAt
+	}
+	if d.Invalidate {
+		upd["status"] = string(StatusInvalidated)
+		upd["invalidated_at"] = ts
+		upd["invalidation_reason"] = OutcomeReasonNetScore
+	}
+	return upd
+}
+
+// recordRecall bumps recalls and stamps last_recalled_at for ids in one
+// batched UPDATE.
+func (x *sqliteIndex) recordRecall(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	err := x.db.WithContext(ctx).Model(&memoryRow{}).
+		Where("collection = ? AND id IN ?", x.coll, ids).
+		Updates(map[string]any{"recalls": gorm.Expr("recalls + 1"), "last_recalled_at": nowRFC3339()}).Error
+	if err != nil {
+		return fmt.Errorf("memory: sqlite record recall: %w", err)
+	}
+	return nil
+}
+
+// backfillTiers is the one-time migration for a point with no tier yet
+// (epic #1255 P1). Idempotent: only "" tier rows match, so a second boot's
+// UPDATE affects zero rows. Two statements (verified/unverified) since the
+// upvotes mirror value differs; both are unconditionally safe to re-run.
+func (x *sqliteIndex) backfillTiers(ctx context.Context) (int, error) {
+	db := x.db.WithContext(ctx).Model(&memoryRow{}).
+		Where("collection = ? AND (tier IS NULL OR tier = '')", x.coll)
+	res := db.Where("reinforcement_count >= 1").
+		Updates(map[string]any{"tier": TierVerified, "upvotes": gorm.Expr("reinforcement_count"), "vote_score": gorm.Expr("reinforcement_count")})
+	if res.Error != nil {
+		return 0, fmt.Errorf("memory: sqlite backfill verified: %w", res.Error)
+	}
+	touched := res.RowsAffected
+	res = x.db.WithContext(ctx).Model(&memoryRow{}).
+		Where("collection = ? AND (tier IS NULL OR tier = '') AND reinforcement_count < 1", x.coll).
+		Updates(map[string]any{"tier": TierUnverified})
+	if res.Error != nil {
+		return 0, fmt.Errorf("memory: sqlite backfill unverified: %w", res.Error)
+	}
+	return int(touched + res.RowsAffected), nil
 }
 
 // cosine is the cosine similarity of two equal-length vectors, in [-1, 1]; 0 for

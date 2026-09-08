@@ -60,3 +60,29 @@ func TestStoreRecall(t *testing.T) {
 		t.Fatal("nil store must recall nothing")
 	}
 }
+
+// TestRecallWithHits_PopulatesScore covers the #1257 review finding: a
+// Delivered hit must carry the real cosine score, not the zero value every
+// memory.recall ledger entry silently recorded before recall() threaded its
+// scored points back out.
+func TestRecallWithHits_PopulatesScore(t *testing.T) {
+	consolidator := fakeModel{reply: `{"ops":[{"action":"ADD","content":"build with make dev, not npm run build","kind":"convention"}]}`}
+	s := newSQLiteStore(t, "task", consolidator)
+	sc := Scope{Role: RoleCoding}
+	if _, err := s.Commit(context.Background(), sc, "explorer", Provenance{}, []Candidate{{Content: "build with make dev"}}, "report"); err != nil {
+		t.Fatal(err)
+	}
+	text, hits := s.RecallWithHits(context.Background(), sc, "how do I build this repo")
+	if text == "" {
+		t.Fatal("expected a non-empty recall block")
+	}
+	if len(hits) != 1 {
+		t.Fatalf("hits = %+v, want exactly 1", hits)
+	}
+	// fakeEmbedder returns the same fixed vector for every text, so cosine
+	// similarity is exactly 1 - any non-zero value proves the score reached
+	// Delivered rather than being silently dropped.
+	if hits[0].Score == 0 {
+		t.Fatalf("hits[0].Score = %v, want non-zero (real cosine similarity)", hits[0].Score)
+	}
+}

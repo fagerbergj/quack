@@ -347,7 +347,7 @@ func asJSONFlag(c *cobra.Command, dst *bool) {
 // a real verb).
 func newMemoryCmd() *cobra.Command {
 	c := &cobra.Command{Use: "memory", Short: "Browse and invalidate remembered facts"}
-	c.AddCommand(newMemoryListCmd(), newMemoryForgetCmd())
+	c.AddCommand(newMemoryListCmd(), newMemoryShowCmd(), newMemoryForgetCmd())
 	return c
 }
 
@@ -370,6 +370,24 @@ func newMemoryListCmd() *cobra.Command {
 	c.Flags().StringVar(&q, "q", "", "embedding search instead of listing")
 	c.Flags().IntVar(&limit, "limit", 0, "max memories to return (server default 50, capped at 200)")
 	c.Flags().BoolVar(&includeInvalidated, "include-invalidated", false, "include invalidated memories")
+	return c
+}
+
+// newMemoryShowCmd: `memory show <id>` prints one memory's votes/tier/last
+// recalled (epic #1255 P1 observability).
+func newMemoryShowCmd() *cobra.Command {
+	var asJSON bool
+	c := &cobra.Command{
+		Use:   "show <memory-id>",
+		Short: "Show one memory's full detail, including votes/tier/last recalled",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunMemoryShow(cmd.Context(), cmd.OutOrStdout(), t, args[0], asJSON)
+			})
+		},
+	}
+	asJSONFlag(c, &asJSON)
 	return c
 }
 

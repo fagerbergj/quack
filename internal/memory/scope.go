@@ -114,7 +114,8 @@ func (v *View) SearchMemory(ctx context.Context, req *adkmemory.SearchRequest) (
 	if req == nil {
 		return &adkmemory.SearchResponse{}, nil
 	}
-	return v.store.recall(ctx, v.Scope(ctx).Buckets(), req.Query)
+	resp, _, err := v.store.recall(ctx, v.Scope(ctx).Buckets(), req.Query)
+	return resp, err
 }
 
 // AddSessionToMemory is a deliberate no-op (see Store.AddSessionToMemory).

@@ -22,6 +22,15 @@ const (
 	KindNodeDone       = "node.done"
 	KindNodeFailed     = "node.failed"
 
+	// KindMemoryRecall/KindMemoryVote (epic #1255 P1): best-effort like
+	// node.*, not fail-closed - memory recall/voting must never fail a
+	// node. The ledger is the source of truth for what a chat recalled;
+	// recalls/last_recalled_at on the point are projections folded from
+	// memory.recall, and memory.vote is likewise projected onto upvotes/
+	// downvotes/score/tier (see internal/ledger/fold and memory.Store).
+	KindMemoryRecall = "memory.recall"
+	KindMemoryVote   = "memory.vote"
+
 	// #1144 P5: the remaining direct-write projections, now covered by
 	// fail-closed intents like every other WAL-backed write.
 	KindChatCreated = "chat.created"
@@ -133,4 +142,40 @@ type EvalScorePayload struct {
 	Criterion   string  `json:"criterion"`
 	Score       float64 `json:"score"`
 	Explanation string  `json:"explanation,omitempty"`
+}
+
+// MemoryRecallEntry is one memory delivered to a worker (KindMemoryRecall).
+// Source is "prefill" (P1) or "tool" (P2's recall_memory).
+type MemoryRecallEntry struct {
+	ID    string  `json:"id"`
+	Score float32 `json:"score,omitempty"`
+}
+
+// MemoryRecallPayload is a KindMemoryRecall entry's payload: every memory
+// one injection delivered to a node, so a chat outcome can later target
+// exactly the recalled set (design decision #1255: recall-based, not
+// birth-based, reinforcement).
+type MemoryRecallPayload struct {
+	Source  string              `json:"source"` // "prefill" | "tool"
+	Round   int                 `json:"round,omitempty"`
+	Entries []MemoryRecallEntry `json:"entries"`
+}
+
+// MemoryVote is one judge (or human) verdict on a recalled memory.
+type MemoryVote string
+
+const (
+	MemoryVoteSupported    MemoryVote = "supported"
+	MemoryVoteContradicted MemoryVote = "contradicted"
+	MemoryVoteNotRelevant  MemoryVote = "not_relevant"
+)
+
+// MemoryVotePayload is a KindMemoryVote entry's payload: one memory's vote
+// on a gate-passed round. Actor is "judge" or "human" (memory.OpsLogActor).
+type MemoryVotePayload struct {
+	MemoryID string     `json:"memory_id"`
+	Vote     MemoryVote `json:"vote"`
+	Reason   string     `json:"reason,omitempty"`
+	Actor    string     `json:"actor"`
+	Round    int        `json:"round,omitempty"`
 }

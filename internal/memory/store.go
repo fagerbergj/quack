@@ -40,10 +40,25 @@ type index interface {
 	// and the human-delete REST path, neither of which ever removes a point
 	// (design doc §4(a)/(b), soft-delete only). Reports how many ids actually existed.
 	invalidateByID(ctx context.Context, ids []string, reason string) (int, error)
-	// updateStatus applies an outcome to every point matching chatID that is not
-	// already invalidated (sticky: nothing revives an invalidated memory), and
-	// returns the ids actually touched - a payload-only mutation, no re-embed.
-	updateStatus(ctx context.Context, chatID string, o OutcomeSignal) ([]string, error)
+	// updateStatus applies an outcome to every id in ids that is not already
+	// invalidated (sticky) and, for OutcomeInvalidated, not already tier
+	// "verified" (design decision #1255: a verified memory recalled into a
+	// closed-unmerged chat gets no vote, not an invalidation). Returns the
+	// ids actually touched - a payload-only mutation, no re-embed.
+	updateStatus(ctx context.Context, ids []string, o OutcomeSignal) ([]string, error)
+	// applyVotes applies each vote to its memory id (skipping an
+	// already-invalidated one, sticky) and returns the ids touched. A
+	// net score <= invalidateThreshold invalidates the memory (reason
+	// OutcomeReasonNetScore), same soft-invalidate as everything else.
+	applyVotes(ctx context.Context, votes []Vote, invalidateThreshold int) ([]string, error)
+	// recordRecall bumps recalls and stamps last_recalled_at for ids, one
+	// batched write - the usage-tracking half of a recall delivery.
+	recordRecall(ctx context.Context, ids []string) error
+	// backfillTiers is the one-time migration (epic #1255 P1) for every
+	// point with no tier yet: verified (upvotes=reinforcement_count) if
+	// reinforcement_count >= 1, else unverified. Idempotent - a point that
+	// already carries a tier is left alone, so a second boot touches none.
+	backfillTiers(ctx context.Context) (int, error)
 }
 
 // scored is one ranked memory.
@@ -66,6 +81,19 @@ type scored struct {
 	InvalidationReason string
 	ReinforcementCount int
 	Score              float32
+
+	// Vote fields (epic #1255 P1): Upvotes/Downvotes/VoteScore are the
+	// judge's (or a human's) accumulated votes on this memory, independent
+	// of Score (cosine rank). Tier is "verified" once Upvotes >= 1, else
+	// "unverified" - never demoted by a downvote alone (only net<=-2
+	// invalidates, via Status).
+	Upvotes        int
+	Downvotes      int
+	VoteScore      int
+	Tier           string
+	LastUpvotedAt  string
+	Recalls        int
+	LastRecalledAt string
 }
 
 // point is one memory to upsert.
@@ -87,6 +115,14 @@ type point struct {
 	InvalidatedAt      string
 	InvalidationReason string
 	ReinforcementCount int
+
+	Upvotes        int
+	Downvotes      int
+	VoteScore      int
+	Tier           string
+	LastUpvotedAt  string
+	Recalls        int
+	LastRecalledAt string
 }
 
 const (
@@ -142,16 +178,26 @@ func newStore(ctx context.Context, idx index, embedder inference.Embedder, conso
 	}); err != nil {
 		return nil, err
 	}
+	n, err := idx.backfillTiers(ctx)
+	if err != nil {
+		s.log.Warn("memory tier backfill failed", "err", err)
+	} else if n > 0 {
+		s.log.Info("memory tier backfill", "touched", n)
+	}
 	return s, nil
 }
 
 // AddSessionToMemory is a deliberate no-op; writes go through the explicit gated commit.
 func (s *Store) AddSessionToMemory(ctx context.Context, _ session.Session) error { return nil }
 
-// recall embeds the query and returns top-K memories across the caller's buckets.
-func (s *Store) recall(ctx context.Context, buckets []string, query string) (*adkmemory.SearchResponse, error) {
+// recall embeds the query and returns top-K memories across the caller's
+// buckets, plus the backing scored point for each returned entry, SAME
+// ORDER and length as resp.Memories - adkmemory.Entry (ADK's own type) has
+// no Score field, so a caller that needs the cosine score (RecallWithHits,
+// for the ledger's memory.recall entry) can't get it from resp alone.
+func (s *Store) recall(ctx context.Context, buckets []string, query string) (resp *adkmemory.SearchResponse, hits []scored, err error) {
 	if len(buckets) == 0 || strings.TrimSpace(query) == "" {
-		return &adkmemory.SearchResponse{}, nil
+		return &adkmemory.SearchResponse{}, nil, nil
 	}
 	// Cap the query before embedding - a recall query is a topic, not a document.
 	if r := []rune(query); len(r) > maxRecallRunes {
@@ -160,20 +206,21 @@ func (s *Store) recall(ctx context.Context, buckets []string, query string) (*ad
 	// Bounded + best-effort: recall must never hang or fail a node.
 	ectx, cancel := context.WithTimeout(ctx, recallEmbedTimeout)
 	defer cancel()
-	vecs, err := s.embed(ectx, []string{query}, "recall")
-	if err != nil {
-		s.log.Warn("recall embed failed; proceeding without recall", "err", err)
-		return &adkmemory.SearchResponse{}, nil
+	vecs, embErr := s.embed(ectx, []string{query}, "recall")
+	if embErr != nil {
+		s.log.Warn("recall embed failed; proceeding without recall", "err", embErr)
+		return &adkmemory.SearchResponse{}, nil, nil
 	}
 	if len(vecs) == 0 {
-		return &adkmemory.SearchResponse{}, nil
+		return &adkmemory.SearchResponse{}, nil, nil
 	}
 	// Fetch top-K then apply minScore in Go so the threshold is observable.
-	pts, err := s.idx.query(ctx, buckets, vecs[0], s.topK)
-	if err != nil {
-		return nil, fmt.Errorf("memory: query %q: %w", s.coll, err)
+	pts, qerr := s.idx.query(ctx, buckets, vecs[0], s.topK)
+	if qerr != nil {
+		return nil, nil, fmt.Errorf("memory: query %q: %w", s.coll, qerr)
 	}
 	entries := make([]adkmemory.Entry, 0, len(pts))
+	kept := make([]scored, 0, len(pts))
 	previews := make([]string, 0, len(pts))
 	var topScore float32
 	dropped := 0
@@ -200,12 +247,13 @@ func (s *Store) recall(ctx context.Context, buckets []string, query string) (*ad
 			}
 		}
 		entries = append(entries, e)
+		kept = append(kept, p)
 	}
 	// Debug log: buckets, raw matches, top_score, dropped, hits.
 	s.log.Debug("recall", "buckets", buckets,
 		"query", preview(query), "raw", len(pts), "top_score", topScore,
 		"min_score", s.minScore, "dropped", dropped, "hits", len(entries), "memories", previews)
-	return &adkmemory.SearchResponse{Memories: entries}, nil
+	return &adkmemory.SearchResponse{Memories: entries}, kept, nil
 }
 
 // DefaultListLimit caps an unbounded List/Search request so one caller can't
@@ -232,6 +280,15 @@ type Memory struct {
 	Status             string
 	ReinforcementCount int
 	InvalidationReason string
+
+	// Vote fields (epic #1255 P1).
+	Upvotes        int
+	Downvotes      int
+	VoteScore      int
+	Tier           string
+	LastUpvotedAt  string
+	Recalls        int
+	LastRecalledAt string
 }
 
 // List returns entries in the given buckets (every bucket if empty), newest
@@ -333,6 +390,8 @@ func toMemories(pts []scored) []Memory {
 		out[i] = Memory{
 			ID: p.ID, Content: p.Content, Bucket: p.Scope, Author: p.Author, Timestamp: p.Timestamp, Kind: p.Kind, Score: p.Score,
 			Status: p.Status, ReinforcementCount: p.ReinforcementCount, InvalidationReason: p.InvalidationReason,
+			Upvotes: p.Upvotes, Downvotes: p.Downvotes, VoteScore: p.VoteScore, Tier: p.Tier,
+			LastUpvotedAt: p.LastUpvotedAt, Recalls: p.Recalls, LastRecalledAt: p.LastRecalledAt,
 		}
 	}
 	return out

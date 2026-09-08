@@ -14,6 +14,11 @@ const (
 	OpDelete     OpsLogOp = "delete"
 	OpReinforce  OpsLogOp = "reinforce"
 	OpInvalidate OpsLogOp = "invalidate"
+	// OpVote: a judge or human's per-memory vote (epic #1255 P1). Recall
+	// delivery itself is NOT logged here - the ledger's memory.recall entry
+	// is the source of truth for what a chat retrieved (see internal/ledger
+	// and internal/ledger/fold).
+	OpVote OpsLogOp = "vote"
 )
 
 // OpsLogActor names who caused a memory_ops transition.
@@ -24,6 +29,7 @@ const (
 	ActorOutcomeFeedback OpsLogActor = "outcome-feedback"
 	ActorHuman           OpsLogActor = "human"
 	ActorRun             OpsLogActor = "run"
+	ActorJudge           OpsLogActor = "judge"
 )
 
 // OpsLog persists an append-only audit trail of memory lifecycle transitions

@@ -120,6 +120,43 @@ type Result struct {
 	Nodes       map[string]*NodeState // by NodeID alone - see NodeState's doc for why not (node_id, turn_id)
 	JudgeRounds []JudgeRound          // seq order
 	LastSeq     int64
+
+	// MemoryRecalls/MemoryVotes (epic #1255 P1): by memory id, folded from
+	// memory.recall/memory.vote entries. Pure counters - unlike artifacts,
+	// nothing ever retracts a recall or a vote, so they accumulate directly
+	// into Result rather than going through the live/finalize rebuild.
+	MemoryRecalls map[string]*MemoryRecallState
+	MemoryVotes   map[string]*MemoryVoteState
+}
+
+// MemoryRecallState is one memory's recall projection within a chat.
+type MemoryRecallState struct {
+	ID             string
+	Recalls        int
+	LastRecalledAt time.Time
+}
+
+// MemoryVoteState is one memory's vote projection within a chat.
+type MemoryVoteState struct {
+	ID            string
+	Upvotes       int
+	Downvotes     int
+	LastUpvotedAt time.Time
+}
+
+// RecalledIDs returns every memory id this chat's ledger recorded a
+// memory.recall for - the recalled set applyMemoryOutcome (design decision
+// #1255) reinforces/invalidates instead of the memories minted in the chat.
+func (r *Result) RecalledIDs() []string {
+	if r == nil {
+		return nil
+	}
+	ids := make([]string, 0, len(r.MemoryRecalls))
+	for id := range r.MemoryRecalls {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 type revisionPayload struct {
@@ -208,6 +245,41 @@ func applyLoop(res *Result, live map[revKey]ArtifactRevision, entries []ledger.E
 			case ledger.KindNodeFailed:
 				n.TerminalStatus, n.TerminalSeq = "failed", e.Seq
 			}
+		case ledger.KindMemoryRecall:
+			var p ledger.MemoryRecallPayload
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				continue
+			}
+			for _, m := range p.Entries {
+				s, ok := res.MemoryRecalls[m.ID]
+				if !ok {
+					s = &MemoryRecallState{ID: m.ID}
+					res.MemoryRecalls[m.ID] = s
+				}
+				s.Recalls++
+				if e.At.After(s.LastRecalledAt) {
+					s.LastRecalledAt = e.At
+				}
+			}
+		case ledger.KindMemoryVote:
+			var p ledger.MemoryVotePayload
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				continue
+			}
+			s, ok := res.MemoryVotes[p.MemoryID]
+			if !ok {
+				s = &MemoryVoteState{ID: p.MemoryID}
+				res.MemoryVotes[p.MemoryID] = s
+			}
+			switch p.Vote {
+			case ledger.MemoryVoteSupported:
+				s.Upvotes++
+				if e.At.After(s.LastUpvotedAt) {
+					s.LastUpvotedAt = e.At
+				}
+			case ledger.MemoryVoteContradicted:
+				s.Downvotes++
+			}
 		}
 	}
 }
@@ -245,10 +317,21 @@ func finalize(res *Result, live map[revKey]ArtifactRevision) *Result {
 
 // applyEntries folds entries from scratch - Fold's and LastRevision's shared path.
 func applyEntries(entries []ledger.Entry) *Result {
-	res := &Result{Artifacts: map[string]*Artifact{}, Nodes: map[string]*NodeState{}}
+	res := newResult()
 	live := map[revKey]ArtifactRevision{}
 	applyLoop(res, live, entries)
 	return finalize(res, live)
+}
+
+// newResult allocates every Result map so applyLoop can write into them
+// unconditionally regardless of which entry kinds a chat actually has.
+func newResult() *Result {
+	return &Result{
+		Artifacts:     map[string]*Artifact{},
+		Nodes:         map[string]*NodeState{},
+		MemoryRecalls: map[string]*MemoryRecallState{},
+		MemoryVotes:   map[string]*MemoryVoteState{},
+	}
 }
 
 // Fold reads every entry for chatID from fromSeq (in seq-order pages) and
@@ -281,17 +364,40 @@ func Apply(ctx context.Context, store ledger.LedgerStore, chatID string, from in
 func ApplySeeded(ctx context.Context, store ledger.LedgerStore, chatID string, seed *Result, from int64) (*Result, error) {
 	live := map[revKey]ArtifactRevision{}
 	nodes := map[string]*NodeState{}
+	res := newResult()
+	// Same "seed.LastSeq > from" gate as live/nodes above (not just seed !=
+	// nil, #1257 review): a STALE seed - one the caller's own from already
+	// supersedes - must contribute nothing, memory projections included, or
+	// a stale checkpoint's counts get seeded back in even though the caller
+	// already knows better.
 	if seed != nil && seed.LastSeq > from {
 		seedFold(seed, live, nodes)
+		res.MemoryRecalls, res.MemoryVotes = seedMemory(seed)
 		from = seed.LastSeq
 	}
 	entries, err := readAll(ctx, store, chatID, from+1)
 	if err != nil {
 		return nil, err
 	}
-	res := &Result{Nodes: nodes}
+	res.Nodes = nodes
 	applyLoop(res, live, entries)
 	return finalize(res, live), nil
+}
+
+// seedMemory deep-copies a prior Result's memory projections so ApplySeeded
+// can keep accumulating into them instead of dropping counts already folded.
+func seedMemory(seed *Result) (map[string]*MemoryRecallState, map[string]*MemoryVoteState) {
+	recalls := map[string]*MemoryRecallState{}
+	for id, s := range seed.MemoryRecalls {
+		cp := *s
+		recalls[id] = &cp
+	}
+	votes := map[string]*MemoryVoteState{}
+	for id, s := range seed.MemoryVotes {
+		cp := *s
+		votes[id] = &cp
+	}
+	return recalls, votes
 }
 
 // seedFold populates live/nodes from a previously folded Result, so

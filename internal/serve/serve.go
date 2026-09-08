@@ -622,7 +622,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	// Built after taskStore/userStore so UpdateChatOrigin's memory-outcome
 	// mapping (design doc §4(b)/§5) can close over the concrete stores
 	// instead of a lazily-resolved ref.
-	sdkExts, err := buildSDKExtensions(cfg, st, runHub, &orchRef, artifacts, jail, &judgeModelRef, taskStore, userStore)
+	sdkExts, err := buildSDKExtensions(cfg, st, runHub, &orchRef, artifacts, jail, &judgeModelRef, taskStore, userStore, ledgerStore)
 	if err != nil {
 		return nil, nil, "", err
 	}
