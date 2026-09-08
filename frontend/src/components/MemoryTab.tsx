@@ -236,7 +236,12 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
           </div>
         )}
         {!loading && !error && memories.length > 0 && (
-          <MemoryTimeline memories={memories} onForget={handleForget} onVote={handleVote} />
+          <MemoryTimeline
+            memories={memories}
+            onForget={handleForget}
+            onVote={handleVote}
+            grouped={sort === 'newest' || sort === 'oldest'}
+          />
         )}
       </div>
 

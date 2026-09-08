@@ -76,6 +76,10 @@ func (h *Handler) ListMemories(w http.ResponseWriter, r *http.Request, params sc
 	}
 	sortBy := memory.SortNewest
 	if params.Sort != nil {
+		if !params.Sort.Valid() {
+			errMsg(w, http.StatusBadRequest, "sort must be one of the documented values")
+			return
+		}
 		sortBy = string(*params.Sort)
 	}
 	mems, total, err := listMemories(r.Context(), stores, buckets, offset, limit, includeInvalidated, tier, sortBy)
@@ -117,9 +121,9 @@ func (h *Handler) DeleteMemory(w http.ResponseWriter, r *http.Request, memoryID 
 }
 
 // listMemories delegates straight to the one configured store when there's
-// only one; with two (task + user both enabled) it fetches everything each
-// store holds for the filter, merges, and pages in Go - memory's documented
-// scale (hundreds-thousands) makes that cheap, and it's the only way to keep
+// only one; with two (task + user both enabled) it fetches each store's
+// matching set (capped at DefaultListLimit=50 per store - see the ponytail
+// comment below), merges, and pages in Go, which is the only way to keep
 // offset/limit meaningful across two independent backends. includeInvalidated
 // rides straight through to the index-level filter (Store.List) so the total
 // and the page both agree, rather than a Go post-filter after paging.
@@ -132,9 +136,12 @@ func listMemories(ctx context.Context, stores []*memory.Store, buckets []string,
 	}
 	var all []memory.Memory
 	for _, st := range stores {
-		// 0,0: each store contributes its FULL matching set (already sorted,
-		// but per-store order doesn't matter here) - SortMemories re-sorts the
-		// merge below by the requested key so two stores agree with one.
+		// ponytail: 0,0 does NOT fetch each store's full matching set - Store.List
+		// coerces limit<=0 to DefaultListLimit (50, store.go), so two-store mode
+		// is only correct up to ~50 matches per store (~100 combined); beyond
+		// that, total/every page/next_page_token silently go wrong. Predates
+		// this PR (not introduced by sortBy) - fix is an unbounded List variant
+		// or an explicit high cap, if a deployment's corpus ever needs it.
 		mems, _, err := st.List(ctx, buckets, 0, 0, includeInvalidated, tier, sortBy)
 		if err != nil {
 			return nil, 0, err
