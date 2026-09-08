@@ -51,7 +51,7 @@ func TestApplyMemoryVotesOnPass_SupportedAndContradicted(t *testing.T) {
 		[]memory.Candidate{{Content: "contradicted fact"}}, ""); err != nil {
 		t.Fatalf("commit m2: %v", err)
 	}
-	mems, _, err := store.List(ctx, []string{"repo:r"}, 0, 10, true)
+	mems, _, err := store.List(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if err != nil || len(mems) != 2 {
 		t.Fatalf("List: %v mems=%+v", err, mems)
 	}
@@ -78,7 +78,7 @@ func TestApplyMemoryVotesOnPass_SupportedAndContradicted(t *testing.T) {
 
 	applyMemoryVotesOnPass(ctx, cfg, "node1", 1, received, votes)
 
-	mems, _, err = store.List(ctx, []string{"repo:r"}, 0, 10, true)
+	mems, _, err = store.List(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if err != nil {
 		t.Fatalf("List after votes: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestApplyMemoryVotesOnPass_IgnoresVoteForUnknownID(t *testing.T) {
 		[]memory.Candidate{{Content: "only memory"}}, ""); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	mems, _, _ := store.List(ctx, []string{"repo:r"}, 0, 10, true)
+	mems, _, _ := store.List(ctx, []string{"repo:r"}, 0, 10, true, "")
 	m1 := mems[0].ID
 
 	cfg := Config{ChatID: "chat1", Memory: store, Ledger: ledgertest.NewMemStore()}
@@ -127,7 +127,7 @@ func TestApplyMemoryVotesOnPass_IgnoresVoteForUnknownID(t *testing.T) {
 
 	applyMemoryVotesOnPass(ctx, cfg, "node1", 1, received, votes)
 
-	mems, _, _ = store.List(ctx, []string{"repo:r"}, 0, 10, true)
+	mems, _, _ = store.List(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if mems[0].Upvotes != 0 {
 		t.Fatalf("m1 upvotes = %d, want 0 (vote for an unreceived id must be dropped)", mems[0].Upvotes)
 	}
@@ -169,7 +169,7 @@ func TestApplyMemoryVotesOnPass_LedgerAppendFailureSkipsMutation(t *testing.T) {
 		[]memory.Candidate{{Content: "vote that never durably lands"}}, ""); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	mems, _, _ := store.List(ctx, []string{"repo:r"}, 0, 10, true)
+	mems, _, _ := store.List(ctx, []string{"repo:r"}, 0, 10, true, "")
 	m1 := mems[0].ID
 
 	ops := &fakeOpsLogRecorder{}
@@ -182,7 +182,7 @@ func TestApplyMemoryVotesOnPass_LedgerAppendFailureSkipsMutation(t *testing.T) {
 
 	applyMemoryVotesOnPass(ctx, cfg, "node1", 1, received, votes)
 
-	mems, _, _ = store.List(ctx, []string{"repo:r"}, 0, 10, true)
+	mems, _, _ = store.List(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if mems[0].Upvotes != 0 || mems[0].Tier == memory.TierVerified {
 		t.Fatalf("m1 = %+v, want untouched (ledger append failed, so nothing may be projected)", mems[0])
 	}
@@ -273,14 +273,14 @@ func TestApplyMemoryVotesOnPass_NoVotesWhenNoneGiven(t *testing.T) {
 		[]memory.Candidate{{Content: "untouched"}}, ""); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	mems, _, _ := store.List(ctx, []string{"repo:r"}, 0, 10, true)
+	mems, _, _ := store.List(ctx, []string{"repo:r"}, 0, 10, true, "")
 	m1 := mems[0].ID
 
 	lgr := ledgertest.NewMemStore()
 	cfg := Config{ChatID: "chat1", Memory: store, Ledger: lgr}
 	applyMemoryVotesOnPass(ctx, cfg, "node1", 1, []memory.Delivered{{ID: m1}}, nil)
 
-	mems, _, _ = store.List(ctx, []string{"repo:r"}, 0, 10, true)
+	mems, _, _ = store.List(ctx, []string{"repo:r"}, 0, 10, true, "")
 	if mems[0].Upvotes != 0 || mems[0].Downvotes != 0 {
 		t.Fatalf("m1 = %+v, want untouched", mems[0])
 	}

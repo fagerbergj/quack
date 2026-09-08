@@ -48,7 +48,7 @@ func (s *Store) Rescope(ctx context.Context, resolve ChatRepoResolver, apply boo
 	for _, bucket := range []string{prefixed(bucketRole, RoleCoding), prefixed(bucketRole, RoleResearch)} {
 		offset := 0
 		for {
-			mems, total, err := s.List(ctx, []string{bucket}, offset, DefaultListLimit, false)
+			mems, total, err := s.List(ctx, []string{bucket}, offset, DefaultListLimit, false, "")
 			if err != nil {
 				return RescopeResult{}, fmt.Errorf("memory: rescope list %q: %w", bucket, err)
 			}

@@ -70,7 +70,11 @@ func (h *Handler) ListMemories(w http.ResponseWriter, r *http.Request, params sc
 		offset = off
 	}
 	includeInvalidated := params.IncludeInvalidated != nil && *params.IncludeInvalidated
-	mems, total, err := listMemories(r.Context(), stores, buckets, offset, limit, includeInvalidated)
+	tier := ""
+	if params.Tier != nil {
+		tier = string(*params.Tier)
+	}
+	mems, total, err := listMemories(r.Context(), stores, buckets, offset, limit, includeInvalidated, tier)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
 		return
@@ -115,16 +119,16 @@ func (h *Handler) DeleteMemory(w http.ResponseWriter, r *http.Request, memoryID 
 // offset/limit meaningful across two independent backends. includeInvalidated
 // rides straight through to the index-level filter (Store.List) so the total
 // and the page both agree, rather than a Go post-filter after paging.
-func listMemories(ctx context.Context, stores []*memory.Store, buckets []string, offset, limit int, includeInvalidated bool) ([]memory.Memory, int, error) {
+func listMemories(ctx context.Context, stores []*memory.Store, buckets []string, offset, limit int, includeInvalidated bool, tier string) ([]memory.Memory, int, error) {
 	if len(stores) == 0 {
 		return nil, 0, nil
 	}
 	if len(stores) == 1 {
-		return stores[0].List(ctx, buckets, offset, limit, includeInvalidated)
+		return stores[0].List(ctx, buckets, offset, limit, includeInvalidated, tier)
 	}
 	var all []memory.Memory
 	for _, st := range stores {
-		mems, _, err := st.List(ctx, buckets, 0, 0, includeInvalidated)
+		mems, _, err := st.List(ctx, buckets, 0, 0, includeInvalidated, tier)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -550,6 +554,13 @@ func (h *Handler) VoteMemory(w http.ResponseWriter, r *http.Request, memoryID sc
 		errMsg(w, http.StatusNotFound, "not found")
 		return
 	}
+	// Validated BEFORE the ledger entry is appended (#1265 review finding 3):
+	// an invalidated memory gets neither an orphan memory.vote entry nor a
+	// misleading "not found" - a clear 409 instead.
+	if m.Status == string(memory.StatusInvalidated) {
+		errMsg(w, http.StatusConflict, "memory is invalidated")
+		return
+	}
 
 	if h.ledgerStore != nil {
 		chatID := m.ChatID
@@ -605,21 +616,19 @@ func humanLedgerVote(vote string) ledger.MemoryVote {
 	}
 }
 
-// findMemoryByID scans the given stores (list+scan, same cost profile as
-// the rest of this file at memory's documented hundreds-thousands scale;
-// there is no store.GetByID) for id, including invalidated points so a vote
-// target is still found mid-race. Returns a nil store, zero Memory if none
-// of the stores has it.
+// findMemoryByID tries each store's direct GetByID in turn (correct
+// regardless of how many memories exist or which List page id would land
+// on - #1265 review finding 1) and returns the first hit, including an
+// invalidated point so the caller can decide what that means for its
+// purpose. Returns a nil store, zero Memory if none of the stores has it.
 func findMemoryByID(ctx context.Context, stores []*memory.Store, id string) (*memory.Store, memory.Memory, error) {
 	for _, st := range stores {
-		mems, _, err := st.List(ctx, nil, 0, 0, true)
-		if err != nil {
-			return nil, memory.Memory{}, err
+		m, err := st.GetByID(ctx, id)
+		if err == nil {
+			return st, m, nil
 		}
-		for _, m := range mems {
-			if m.ID == id {
-				return st, m, nil
-			}
+		if !errors.Is(err, memory.ErrMemoryNotFound) {
+			return nil, memory.Memory{}, err
 		}
 	}
 	return nil, memory.Memory{}, nil
@@ -630,6 +639,9 @@ func findMemoryByID(ctx context.Context, stores []*memory.Store, id string) (*me
 // memory's current content/tier from the store (the ledger entries carry
 // only id+score, not the point's live fields) and the human's own vote.
 func (h *Handler) ListNodeMemories(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
+	if !h.requireChat(w, r, chatID) {
+		return
+	}
 	out := schema.NodeMemoryList{Memories: []schema.NodeMemory{}}
 	if h.ledgerStore == nil {
 		writeJSON(w, http.StatusOK, out)
@@ -681,16 +693,18 @@ func (h *Handler) ListNodeMemories(w http.ResponseWriter, r *http.Request, chatI
 		return
 	}
 
+	// Direct per-id lookup (#1265 review finding 1), not a bulk List+scan -
+	// correct regardless of corpus size, unlike paging through List looking
+	// for a match. include-invalidated: an old memory that was later
+	// invalidated should still render its content/tier here.
 	stores := h.memStores()
 	content := map[string]memory.Memory{}
-	for _, st := range stores {
-		mems, _, err := st.List(r.Context(), nil, 0, 0, true)
-		if err != nil {
+	for _, id := range order {
+		if _, m, err := findMemoryByID(r.Context(), stores, id); err == nil && m.ID != "" {
+			content[id] = m
+		} else if err != nil {
 			httpError(w, http.StatusInternalServerError, err)
 			return
-		}
-		for _, m := range mems {
-			content[m.ID] = m
 		}
 	}
 
@@ -704,7 +718,7 @@ func (h *Handler) ListNodeMemories(w http.ResponseWriter, r *http.Request, chatI
 			nm.Content = &c
 			tier := schema.NodeMemoryTier(m.Tier)
 			if tier == "" {
-				tier = schema.Unverified
+				tier = schema.NodeMemoryTierUnverified
 			}
 			nm.Tier = &tier
 			if ov := m.HumanVote; ov == memory.HumanVoteUp || ov == memory.HumanVoteDown {

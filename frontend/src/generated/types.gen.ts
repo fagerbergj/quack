@@ -202,7 +202,7 @@ export type NodeMemory = {
      */
     score?: number;
     /**
-     * The judge's (or a human's) vote on this memory after the round, if any.
+     * The judge's vote on this memory after the round, if any.
      */
     vote?: 'supported' | 'contradicted' | 'not_relevant';
     /**
@@ -1475,6 +1475,10 @@ export type ListMemoriesData = {
          */
         include_invalidated?: boolean;
         /**
+         * Restrict to one vote-based tier (epic #1255 P4). Filtered index-side so it spans pages correctly, unlike a client-side filter over one page. `unverified` also matches a memory that predates the tier field.
+         */
+        tier?: 'unverified' | 'verified';
+        /**
          * Opaque continuation token from a previous response's `next_page_token`. Treat it as an opaque string: never parse or construct one, pass back exactly what was returned. Omit for the first page. Ignored when `q` is set (search ranks by score, not a stable page). Only valid against the exact `bucket` filter it was issued for.
          *
          */
@@ -1546,6 +1550,10 @@ export type VoteMemoryErrors = {
      * No such memory
      */
     404: ErrorResponse;
+    /**
+     * The memory is invalidated (checked before the ledger entry is appended, so no orphan entry is written)
+     */
+    409: ErrorResponse;
     /**
      * The memory index is unreachable, or the vote ledger entry failed to append
      */

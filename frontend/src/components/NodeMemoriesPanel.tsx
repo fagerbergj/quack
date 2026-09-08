@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, type NodeMemory, type VoteDirection } from '../api'
 import { Icon, type IconName } from './Icon'
 import { VoteControl } from './VoteControl'
@@ -101,25 +101,38 @@ export function NodeMemoriesPanel({ chatId, nodeId, judgeRounds, onClose }: Node
     const prev = memories
     setMemories(cur => cur.map(m => (m.id === id ? { ...m, own_vote: vote === 'none' ? undefined : vote } : m)))
     try {
-      await api.voteMemory(id, vote)
+      // Merge the server's authoritative tier/own_vote back onto the row
+      // (#1265 review finding 7) - the optimistic own_vote above can be
+      // right about direction but not about tier (e.g. an up-vote can
+      // newly verify the memory).
+      const updated = await api.voteMemory(id, vote)
+      setMemories(cur => cur.map(m => (m.id === id ? { ...m, tier: updated.tier, own_vote: updated.own_vote } : m)))
     } catch (e) {
       setMemories(prev)
       throw e
     }
   }
 
+  // Native <dialog> + showModal() (mirrors ArtifactPanel): Esc closes,
+  // focus is trapped in the top layer, and the browser itself restores
+  // focus to whatever opened this once it closes - no manual focus-trap or
+  // focus-restore code needed (#1265 review finding 6).
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  useEffect(() => { dialogRef.current?.showModal() }, [])
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div
-        role="dialog"
-        aria-label="Memories received by this node"
-        className="w-full max-w-lg max-h-[80vh] flex flex-col rounded-lg bg-white dark:bg-gray-800 shadow-xl"
-        onClick={e => e.stopPropagation()}
-      >
+    <dialog
+      ref={dialogRef}
+      aria-label="Memories received by this node"
+      onClose={onClose}
+      onClick={e => { if (e.target === dialogRef.current) dialogRef.current?.close() }}
+      className="m-auto w-full max-w-lg max-h-[80vh] p-0 border-0 rounded-lg bg-transparent backdrop:bg-black/40"
+    >
+      <div className="flex flex-col max-h-[80vh] rounded-lg bg-white dark:bg-gray-800 shadow-xl">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700">
           <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Memories</h2>
           <button
-            onClick={onClose}
+            onClick={() => dialogRef.current?.close()}
             aria-label="Close"
             className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
           >
@@ -139,6 +152,6 @@ export function NodeMemoriesPanel({ chatId, nodeId, judgeRounds, onClose }: Node
           {!loading && !error && memories.map(m => <NodeMemoryRow key={m.id} memory={m} onVote={handleVote} />)}
         </div>
       </div>
-    </div>
+    </dialog>
   )
 }

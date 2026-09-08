@@ -89,6 +89,14 @@ export const VerifiedWithRecalls: Story = {
   },
 }
 
+// A consolidation merge absorbed other memories into this one (epic #1255
+// P5) - a purple "merged ×N" chip, id list on hover.
+export const WithAbsorbedLineage: Story = {
+  args: {
+    memory: { ...REPO_FACT, id: 'm1', tier: 'verified', upvotes: 2, vote_score: 2, absorbed_ids: ['dup-1', 'dup-2'] },
+  },
+}
+
 // The caller's own upvote is highlighted (epic #1255 P4) - the accent color
 // on the up arrow, not a separate badge.
 export const OwnVoteActive: Story = {

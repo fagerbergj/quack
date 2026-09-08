@@ -84,6 +84,7 @@ export const api = {
     limit?: number
     page_token?: string
     include_invalidated?: boolean
+    tier?: 'unverified' | 'verified'
   }): Promise<MemoryList> => unwrap(await sdkListMemories({ query: params })),
 
   forgetMemory: async (id: string): Promise<void> => {

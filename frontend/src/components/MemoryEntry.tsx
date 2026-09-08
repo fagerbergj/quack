@@ -216,6 +216,14 @@ export function MemoryEntry({ memory, onForget, onVote }: MemoryEntryProps) {
               recalled {memory.recalls}× {lastRecalled ? `(last ${lastRecalled})` : ''}
             </span>
           )}
+          {(memory.absorbed_ids?.length ?? 0) > 0 && (
+            <span
+              title={`Absorbed: ${memory.absorbed_ids!.join(', ')}`}
+              className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400"
+            >
+              merged ×{memory.absorbed_ids!.length}
+            </span>
+          )}
         </div>
         {memory.status === 'invalidated' && memory.invalidation_reason && (
           <p

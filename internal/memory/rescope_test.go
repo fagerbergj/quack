@@ -55,7 +55,7 @@ func TestRescope_ApplyMatchesDryRunAcrossPages(t *testing.T) {
 	}
 
 	// Dry run must not have written anything.
-	_, total, err := s.List(ctx, []string{prefixed(bucketRole, RoleCoding)}, 0, 0, false)
+	_, total, err := s.List(ctx, []string{prefixed(bucketRole, RoleCoding)}, 0, 0, false, "")
 	if err != nil {
 		t.Fatalf("List after dry run: %v", err)
 	}
@@ -71,14 +71,14 @@ func TestRescope_ApplyMatchesDryRunAcrossPages(t *testing.T) {
 		t.Fatalf("apply tally = %+v, want it to match the dry run tally %+v", apply.ByRepo["github.com/acme/games"], dry.ByRepo["github.com/acme/games"])
 	}
 
-	_, movedTotal, err := s.List(ctx, []string{prefixed(bucketRepo, "github.com/acme/games")}, 0, 0, false)
+	_, movedTotal, err := s.List(ctx, []string{prefixed(bucketRepo, "github.com/acme/games")}, 0, 0, false, "")
 	if err != nil {
 		t.Fatalf("List repo bucket: %v", err)
 	}
 	if movedTotal != resolvable {
 		t.Fatalf("repo:github.com/acme/games has %d points, want all %d moved", movedTotal, resolvable)
 	}
-	_, leftTotal, err := s.List(ctx, []string{prefixed(bucketRole, RoleCoding)}, 0, 0, false)
+	_, leftTotal, err := s.List(ctx, []string{prefixed(bucketRole, RoleCoding)}, 0, 0, false, "")
 	if err != nil {
 		t.Fatalf("List role bucket after apply: %v", err)
 	}

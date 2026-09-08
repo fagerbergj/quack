@@ -145,7 +145,7 @@ func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32
 	return out, nil
 }
 
-func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool) ([]scored, error) {
+func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string) ([]scored, error) {
 	q := x.db.WithContext(ctx).Where("collection = ?", x.coll)
 	if len(buckets) > 0 {
 		q = q.Where("scope IN ?", buckets)
@@ -153,6 +153,7 @@ func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit 
 	if !includeInvalidated {
 		q = q.Where("status IS NULL OR status <> ?", string(StatusInvalidated))
 	}
+	q = tierWhere(q, tier)
 	// id DESC breaks timestamp ties deterministically, so paging never
 	// duplicates or drops a row across offset boundaries.
 	q = q.Order("timestamp DESC, id DESC").Offset(offset)
@@ -178,7 +179,29 @@ func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit 
 	return out, nil
 }
 
-func (x *sqliteIndex) count(ctx context.Context, buckets []string, includeInvalidated bool) (int, error) {
+// getByID fetches one row by id regardless of status - the caller decides
+// what an invalidated point means for its purpose.
+func (x *sqliteIndex) getByID(ctx context.Context, id string) (scored, bool, error) {
+	var r memoryRow
+	err := x.db.WithContext(ctx).Where("collection = ? AND id = ?", x.coll, id).First(&r).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return scored{}, false, nil
+	}
+	if err != nil {
+		return scored{}, false, fmt.Errorf("memory: sqlite get by id: %w", err)
+	}
+	return scored{
+		ID: r.ID, Content: r.Content, Author: r.Author, Timestamp: r.Timestamp, Kind: r.Kind, Scope: r.Scope,
+		ChatID: r.ChatID, NodeID: r.NodeID, Source: r.Source, MintedAt: r.MintedAt,
+		Status: r.Status, ValidFrom: r.ValidFrom, InvalidatedAt: r.InvalidatedAt,
+		InvalidationReason: r.InvalidationReason, ReinforcementCount: r.ReinforcementCount,
+		Upvotes: r.Upvotes, Downvotes: r.Downvotes, VoteScore: r.VoteScore, Tier: r.Tier,
+		LastUpvotedAt: r.LastUpvotedAt, Recalls: r.Recalls, LastRecalledAt: r.LastRecalledAt,
+		AbsorbedIDs: splitIDs(r.AbsorbedIDs), HumanVote: r.HumanVote,
+	}, true, nil
+}
+
+func (x *sqliteIndex) count(ctx context.Context, buckets []string, includeInvalidated bool, tier string) (int, error) {
 	q := x.db.WithContext(ctx).Model(&memoryRow{}).Where("collection = ?", x.coll)
 	if len(buckets) > 0 {
 		q = q.Where("scope IN ?", buckets)
@@ -186,11 +209,26 @@ func (x *sqliteIndex) count(ctx context.Context, buckets []string, includeInvali
 	if !includeInvalidated {
 		q = q.Where("status IS NULL OR status <> ?", string(StatusInvalidated))
 	}
+	q = tierWhere(q, tier)
 	var n int64
 	if err := q.Count(&n).Error; err != nil {
 		return 0, fmt.Errorf("memory: sqlite count: %w", err)
 	}
 	return int(n), nil
+}
+
+// tierWhere applies tier's filter to q, if any. "" means no filter.
+// "unverified" also matches a row with no tier yet (empty/missing reads as
+// unverified everywhere else in this package, e.g. toMemories' wire mapping).
+func tierWhere(q *gorm.DB, tier string) *gorm.DB {
+	switch tier {
+	case "":
+		return q
+	case TierUnverified:
+		return q.Where("tier IS NULL OR tier = '' OR tier = ?", TierUnverified)
+	default:
+		return q.Where("tier = ?", tier)
+	}
 }
 
 func (x *sqliteIndex) upsert(ctx context.Context, pts []point) error {

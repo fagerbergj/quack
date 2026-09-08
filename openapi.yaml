@@ -971,6 +971,16 @@ paths:
           schema:
             type: boolean
             default: false
+        - name: tier
+          in: query
+          description: >-
+            Restrict to one vote-based tier (epic #1255 P4). Filtered
+            index-side so it spans pages correctly, unlike a client-side
+            filter over one page. `unverified` also matches a memory that
+            predates the tier field.
+          schema:
+            type: string
+            enum: [unverified, verified]
         - name: page_token
           in: query
           required: false
@@ -1061,6 +1071,12 @@ paths:
                 $ref: "#/components/schemas/Memory"
         "404":
           description: No such memory
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The memory is invalidated (checked before the ledger entry is appended, so no orphan entry is written)
           content:
             application/json:
               schema:
@@ -1483,7 +1499,7 @@ components:
         vote:
           type: string
           enum: [supported, contradicted, not_relevant]
-          description: The judge's (or a human's) vote on this memory after the round, if any.
+          description: The judge's vote on this memory after the round, if any.
         reason:
           type: string
           description: The voter's one-line reason, if given.

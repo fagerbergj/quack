@@ -292,16 +292,16 @@ func (e NodeMemorySource) Valid() bool {
 
 // Defines values for NodeMemoryTier.
 const (
-	Unverified NodeMemoryTier = "unverified"
-	Verified   NodeMemoryTier = "verified"
+	NodeMemoryTierUnverified NodeMemoryTier = "unverified"
+	NodeMemoryTierVerified   NodeMemoryTier = "verified"
 )
 
 // Valid indicates whether the value is a known member of the NodeMemoryTier enum.
 func (e NodeMemoryTier) Valid() bool {
 	switch e {
-	case Unverified:
+	case NodeMemoryTierUnverified:
 		return true
-	case Verified:
+	case NodeMemoryTierVerified:
 		return true
 	default:
 		return false
@@ -515,6 +515,24 @@ func (e ListChatsParamsStatus) Valid() bool {
 	case Active:
 		return true
 	case Archived:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListMemoriesParamsTier.
+const (
+	ListMemoriesParamsTierUnverified ListMemoriesParamsTier = "unverified"
+	ListMemoriesParamsTierVerified   ListMemoriesParamsTier = "verified"
+)
+
+// Valid indicates whether the value is a known member of the ListMemoriesParamsTier enum.
+func (e ListMemoriesParamsTier) Valid() bool {
+	switch e {
+	case ListMemoriesParamsTierUnverified:
+		return true
+	case ListMemoriesParamsTierVerified:
 		return true
 	default:
 		return false
@@ -989,7 +1007,7 @@ type NodeMemory struct {
 	Source NodeMemorySource `json:"source"`
 	Tier   *NodeMemoryTier  `json:"tier,omitempty"`
 
-	// Vote The judge's (or a human's) vote on this memory after the round, if any.
+	// Vote The judge's vote on this memory after the round, if any.
 	Vote *NodeMemoryVote `json:"vote,omitempty"`
 }
 
@@ -1002,7 +1020,7 @@ type NodeMemorySource string
 // NodeMemoryTier defines model for NodeMemory.Tier.
 type NodeMemoryTier string
 
-// NodeMemoryVote The judge's (or a human's) vote on this memory after the round, if any.
+// NodeMemoryVote The judge's vote on this memory after the round, if any.
 type NodeMemoryVote string
 
 // NodeMemoryList defines model for NodeMemoryList.
@@ -1361,9 +1379,15 @@ type ListMemoriesParams struct {
 	// IncludeInvalidated Include invalidated memories (memory lifecycle design doc §4(d)). Defaults to false - a default listing shows only what quack currently trusts.
 	IncludeInvalidated *bool `form:"include_invalidated,omitempty" json:"include_invalidated,omitempty"`
 
+	// Tier Restrict to one vote-based tier (epic #1255 P4). Filtered index-side so it spans pages correctly, unlike a client-side filter over one page. `unverified` also matches a memory that predates the tier field.
+	Tier *ListMemoriesParamsTier `form:"tier,omitempty" json:"tier,omitempty"`
+
 	// PageToken Opaque continuation token from a previous response's `next_page_token`. Treat it as an opaque string: never parse or construct one, pass back exactly what was returned. Omit for the first page. Ignored when `q` is set (search ranks by score, not a stable page). Only valid against the exact `bucket` filter it was issued for.
 	PageToken *string `form:"page_token,omitempty" json:"page_token,omitempty"`
 }
+
+// ListMemoriesParamsTier defines parameters for ListMemories.
+type ListMemoriesParamsTier string
 
 // GetMemoryStatsParams defines parameters for GetMemoryStats.
 type GetMemoryStatsParams struct {
@@ -3015,6 +3039,19 @@ func (siw *ServerInterfaceWrapper) ListMemories(w http.ResponseWriter, r *http.R
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "include_invalidated"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "include_invalidated", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "tier" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "tier", r.URL.Query(), &params.Tier, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tier"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tier", Err: err})
 		}
 		return
 	}

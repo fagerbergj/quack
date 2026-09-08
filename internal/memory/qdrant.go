@@ -182,11 +182,12 @@ func (x *qdrantIndex) query(ctx context.Context, buckets []string, vec []float32
 // first in Go, then slices out the requested page. Fine at memory's documented
 // scale (hundreds-thousands); avoids requiring a payload index on `timestamp`
 // for Qdrant's order_by, which a fresh collection won't have.
-func (x *qdrantIndex) list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool) ([]scored, error) {
+func (x *qdrantIndex) list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string) ([]scored, error) {
 	filter := bucketFilter(buckets)
 	if !includeInvalidated {
 		filter = excludeInvalidated(filter)
 	}
+	filter = tierFilter(filter, tier)
 	it := x.client.ScrollAll(ctx, &qdrant.ScrollPoints{
 		CollectionName: x.coll,
 		Filter:         filter,
@@ -221,17 +222,43 @@ func (x *qdrantIndex) list(ctx context.Context, buckets []string, offset, limit 
 	return all[offset:end], nil
 }
 
-func (x *qdrantIndex) count(ctx context.Context, buckets []string, includeInvalidated bool) (int, error) {
+func (x *qdrantIndex) count(ctx context.Context, buckets []string, includeInvalidated bool, tier string) (int, error) {
 	filter := bucketFilter(buckets)
 	if !includeInvalidated {
 		filter = excludeInvalidated(filter)
 	}
+	filter = tierFilter(filter, tier)
 	exact := true
 	n, err := x.client.Count(ctx, &qdrant.CountPoints{CollectionName: x.coll, Filter: filter, Exact: &exact})
 	if err != nil {
 		return 0, fmt.Errorf("memory: count: %w", err)
 	}
 	return int(n), nil
+}
+
+// tierFilter adds tier's condition to f (or a fresh filter), if any. "" means
+// no filter. "unverified" also matches a point with no tier payload key yet
+// (empty/missing reads as unverified everywhere else in this package,
+// #1265 review finding 10) - a should-match OR between "no tier key" and
+// "tier == unverified", nested as a sub-filter so it composes with the
+// caller's other must/must-not conditions.
+func tierFilter(f *qdrant.Filter, tier string) *qdrant.Filter {
+	if tier == "" {
+		return f
+	}
+	if f == nil {
+		f = &qdrant.Filter{}
+	}
+	if tier == TierUnverified {
+		f.Must = append(f.Must, &qdrant.Condition{
+			ConditionOneOf: &qdrant.Condition_Filter{Filter: &qdrant.Filter{
+				Should: []*qdrant.Condition{qdrant.NewIsEmpty(payloadTier), qdrant.NewMatchKeyword(payloadTier, TierUnverified)},
+			}},
+		})
+		return f
+	}
+	f.Must = append(f.Must, qdrant.NewMatchKeyword(payloadTier, tier))
+	return f
 }
 
 func (x *qdrantIndex) upsert(ctx context.Context, pts []point) error {
@@ -354,6 +381,20 @@ func (x *qdrantIndex) invalidateByID(ctx context.Context, ids []string, reason s
 		return 0, fmt.Errorf("memory: invalidate: %w", err)
 	}
 	return len(existing), nil
+}
+
+// getByID fetches one point by id regardless of status - the caller decides
+// what an invalidated point means for its purpose.
+func (x *qdrantIndex) getByID(ctx context.Context, id string) (scored, bool, error) {
+	existing, err := x.getExisting(ctx, []string{id})
+	if err != nil {
+		return scored{}, false, fmt.Errorf("memory: qdrant get by id: %w", err)
+	}
+	payload, ok := existing[id]
+	if !ok {
+		return scored{}, false, nil
+	}
+	return pointFromPayload(qdrant.NewID(id), payload, 0), true, nil
 }
 
 // getExisting fetches ids' current payload, skipping any that don't exist.

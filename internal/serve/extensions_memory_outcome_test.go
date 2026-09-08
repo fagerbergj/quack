@@ -175,7 +175,7 @@ func newLedgerStoreForTest() *ledgertest.MemStore { return ledgertest.NewMemStor
 
 func listAll(t *testing.T, s *memory.Store, buckets []string) []memory.Memory {
 	t.Helper()
-	mems, _, err := s.List(context.Background(), buckets, 0, 10, true)
+	mems, _, err := s.List(context.Background(), buckets, 0, 10, true, "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}

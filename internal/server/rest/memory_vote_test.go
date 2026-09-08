@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
@@ -67,7 +69,7 @@ func TestVoteMemory_UpThenNoneRoundTrip(t *testing.T) {
 	h.ledgerStore = &fakeLedgerStore{}
 	commitFact(t, h.taskMem, "NightsOut", "the deploy script needs sudo")
 
-	mems, _, err := h.taskMem.List(context.Background(), nil, 0, 10, false)
+	mems, _, err := h.taskMem.List(context.Background(), nil, 0, 10, false, "")
 	if err != nil || len(mems) != 1 {
 		t.Fatalf("seed list: %v, %d mems", err, len(mems))
 	}
@@ -124,6 +126,35 @@ func TestVoteMemory_UnknownID404(t *testing.T) {
 	}
 }
 
+// TestVoteMemory_Invalidated409 is #1265 review finding 3: voting on an
+// invalidated memory is a 409, checked BEFORE the ledger entry is appended -
+// no orphan memory.vote entry, no misleading 404.
+func TestVoteMemory_Invalidated409(t *testing.T) {
+	h := newTestHandler(t)
+	h.taskMem = newTestMemStore(t)
+	h.ledgerStore = &fakeLedgerStore{}
+	commitFact(t, h.taskMem, "NightsOut", "a fact that turned out wrong")
+	mems, _, err := h.taskMem.List(context.Background(), nil, 0, 10, false, "")
+	if err != nil || len(mems) != 1 {
+		t.Fatalf("seed list: %v, %d mems", err, len(mems))
+	}
+	id := mems[0].ID
+	if err := h.taskMem.InvalidateByID(context.Background(), id, "wrong", memory.ActorHuman); err != nil {
+		t.Fatalf("InvalidateByID: %v", err)
+	}
+
+	body, _ := json.Marshal(schema.VoteMemoryBody{Vote: schema.Up})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/memories/"+id+"/vote", bytes.NewReader(body))
+	h.VoteMemory(rec, req, id)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%s, want 409", rec.Code, rec.Body.String())
+	}
+	if len(h.ledgerStore.(*fakeLedgerStore).entries) != 0 {
+		t.Fatalf("ledger entries = %+v, want none (checked before the append)", h.ledgerStore.(*fakeLedgerStore).entries)
+	}
+}
+
 // TestListNodeMemories_FoldsRecallAndVote covers the P4 node-memories read:
 // a memory.recall entry for a node surfaces with its source, and a
 // memory.vote entry for the same node/memory attaches the vote+reason.
@@ -132,12 +163,12 @@ func TestListNodeMemories_FoldsRecallAndVote(t *testing.T) {
 	h.taskMem = newTestMemStore(t)
 	h.ledgerStore = &fakeLedgerStore{}
 	commitFact(t, h.taskMem, "NightsOut", "retry uploads on 5xx")
-	mems, _, err := h.taskMem.List(context.Background(), nil, 0, 10, false)
+	mems, _, err := h.taskMem.List(context.Background(), nil, 0, 10, false, "")
 	if err != nil || len(mems) != 1 {
 		t.Fatalf("seed list: %v, %d mems", err, len(mems))
 	}
 	id := mems[0].ID
-	chatID, nodeID := "chat-1", "node-1"
+	chatID, nodeID := mustCreateChat(t, h), "node-1"
 
 	recallPayload, _ := json.Marshal(ledger.MemoryRecallPayload{
 		Source: "prefill", Round: 1, Entries: []ledger.MemoryRecallEntry{{ID: id, Score: 0.9}},
@@ -178,9 +209,10 @@ func TestListNodeMemories_FoldsRecallAndVote(t *testing.T) {
 // GetChatRecording's ledgerStore-nil path elsewhere in this package.
 func TestListNodeMemories_NoLedger_Empty(t *testing.T) {
 	h := newTestHandler(t)
+	chatID := mustCreateChat(t, h)
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats/c/nodes/n/memories", nil)
-	h.ListNodeMemories(rec, req, "c", "n")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats/"+chatID+"/nodes/n/memories", nil)
+	h.ListNodeMemories(rec, req, chatID, "n")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -190,5 +222,45 @@ func TestListNodeMemories_NoLedger_Empty(t *testing.T) {
 	}
 	if len(out.Memories) != 0 {
 		t.Fatalf("memories = %+v, want empty", out.Memories)
+	}
+}
+
+// TestListNodeMemories_UnknownChat404 is #1265 review finding 2: a bogus
+// chat_id must 404 (documented in openapi.yaml), not silently return an
+// empty list as if the chat existed with no memories.
+func TestListNodeMemories_UnknownChat404(t *testing.T) {
+	h := newTestHandler(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats/no-such-chat/nodes/n/memories", nil)
+	h.ListNodeMemories(rec, req, "no-such-chat", "n")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+// TestVoteMemory_FindsMemoryPastFirstListPage is #1265 review finding 1: a
+// direct GetByID lookup, not a paged List scan, so voting on a memory older
+// than one List page still finds it. Seeds DefaultListLimit+1 memories and
+// votes on the one that would land past page 0 in a newest-first list.
+func TestVoteMemory_FindsMemoryPastFirstListPage(t *testing.T) {
+	h := newTestHandler(t)
+	h.taskMem = newTestMemStore(t)
+	for i := 0; i < memory.DefaultListLimit+1; i++ {
+		commitFact(t, h.taskMem, "NightsOut", fmt.Sprintf("fact %d", i))
+	}
+	mems, total, err := h.taskMem.List(context.Background(), nil, 0, memory.DefaultListLimit+1, false, "")
+	if err != nil || total != memory.DefaultListLimit+1 {
+		t.Fatalf("seed: err=%v total=%d, want %d", err, total, memory.DefaultListLimit+1)
+	}
+	// List is newest-first; the corpus's very first commit is the oldest and
+	// so the last id a naive first-page scan would ever see.
+	oldest := mems[len(mems)-1].ID
+
+	body, _ := json.Marshal(schema.VoteMemoryBody{Vote: schema.Up})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/memories/"+oldest+"/vote", bytes.NewReader(body))
+	h.VoteMemory(rec, req, oldest)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200 (memory past the first List page must still be found)", rec.Code, rec.Body.String())
 	}
 }

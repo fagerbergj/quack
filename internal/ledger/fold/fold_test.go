@@ -332,7 +332,12 @@ func appendMemoryRecall(t *testing.T, s ledger.LedgerStore, chatID string, ids .
 
 func appendMemoryVote(t *testing.T, s ledger.LedgerStore, chatID, memoryID string, vote ledger.MemoryVote) {
 	t.Helper()
-	payload, err := json.Marshal(ledger.MemoryVotePayload{MemoryID: memoryID, Vote: vote, Actor: "judge"})
+	appendMemoryVoteAs(t, s, chatID, memoryID, vote, "judge")
+}
+
+func appendMemoryVoteAs(t *testing.T, s ledger.LedgerStore, chatID, memoryID string, vote ledger.MemoryVote, actor string) {
+	t.Helper()
+	payload, err := json.Marshal(ledger.MemoryVotePayload{MemoryID: memoryID, Vote: vote, Actor: actor})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -382,6 +387,32 @@ func TestFold_MemoryRecallAndVoteProjections(t *testing.T) {
 	}
 	if rebuilt.MemoryRecalls["m1"].Recalls != 2 || rebuilt.MemoryVotes["m1"].Upvotes != 1 {
 		t.Fatalf("rebuild projections = %+v / %+v, want unchanged from the first fold", rebuilt.MemoryRecalls["m1"], rebuilt.MemoryVotes["m1"])
+	}
+}
+
+// TestFold_HumanVoteTogglesInsteadOfStacking is #1265 review finding 4: a
+// human's repeated votes on one memory are a toggle, not judge-style
+// additive stacking. up -> none -> down must leave exactly one downvote,
+// never three appended entries' worth of score. A judge vote on a
+// different memory in between stays purely additive, unaffected by the
+// human's toggling.
+func TestFold_HumanVoteTogglesInsteadOfStacking(t *testing.T) {
+	s := newMemStore(t)
+	appendMemoryVoteAs(t, s, "chat1", "m1", ledger.MemoryVoteSupported, "human")    // up
+	appendMemoryVoteAs(t, s, "chat1", "m1", ledger.MemoryVoteNotRelevant, "human")  // none (retract)
+	appendMemoryVoteAs(t, s, "chat1", "m1", ledger.MemoryVoteContradicted, "human") // down
+	appendMemoryVote(t, s, "chat1", "m2", ledger.MemoryVoteSupported)               // unrelated judge vote
+
+	res, err := Fold(context.Background(), s, "chat1", 0)
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+	m1 := res.MemoryVotes["m1"]
+	if m1.Upvotes != 0 || m1.Downvotes != 1 {
+		t.Fatalf("m1 votes after up->none->down = %+v, want 0 upvotes 1 downvote", m1)
+	}
+	if m2 := res.MemoryVotes["m2"]; m2.Upvotes != 1 {
+		t.Fatalf("m2 (judge, additive, untouched by m1's toggling) = %+v, want 1 upvote", m2)
 	}
 }
 

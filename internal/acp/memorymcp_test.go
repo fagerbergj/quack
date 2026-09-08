@@ -312,7 +312,7 @@ func TestMemoryMCP_RecallMemory_JoinsReceivedSetAndVotes(t *testing.T) {
 	if _, err := store.Commit(ctx, sc, "seed", memory.Provenance{}, nil, "the CI pipeline retries flaky steps twice"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	mems, _, err := store.List(ctx, []string{"repo:acme/recall-repo"}, 0, 10, true)
+	mems, _, err := store.List(ctx, []string{"repo:acme/recall-repo"}, 0, 10, true, "")
 	if err != nil || len(mems) != 1 {
 		t.Fatalf("List: %v mems=%+v", err, mems)
 	}
@@ -376,7 +376,7 @@ func TestMemoryMCP_RecallMemory_JoinsReceivedSetAndVotes(t *testing.T) {
 	// applyMemoryVotesOnPass exactly like prefill's hits (see package
 	// vetting's TestApplyMemoryVotesOnPass_SupportedAndContradicted, which
 	// covers the vote outcome itself against this same Delivered shape).
-	mems, _, err = store.List(ctx, []string{"repo:acme/recall-repo"}, 0, 10, true)
+	mems, _, err = store.List(ctx, []string{"repo:acme/recall-repo"}, 0, 10, true, "")
 	if err != nil || mems[0].Recalls < 1 {
 		t.Fatalf("point recalls not bumped: %v mems=%+v", err, mems)
 	}

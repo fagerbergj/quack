@@ -89,6 +89,7 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
         limit: PAGE_SIZE,
         page_token: pageTokens[pageIndex],
         include_invalidated: includeInvalidated || undefined,
+        tier: tier || undefined,
       })
       setMemories(result.memories)
       setTotal(result.total)
@@ -103,7 +104,7 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
     } finally {
       setLoading(false)
     }
-  }, [bucket, q, pageIndex, pageTokens, includeInvalidated])
+  }, [bucket, q, pageIndex, pageTokens, includeInvalidated, tier])
 
   useEffect(() => {
     if (initialState !== undefined) return // story/test seam: static demo state, no live fetch
@@ -117,16 +118,19 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
   }
 
   // handleVote is optimistic-first (frontend-design convention): the store
-  // updates immediately so the arrow highlight/score never lags a click, and
-  // rolls back to the pre-click snapshot if the request fails.
+  // updates immediately so the arrow highlight/score never lags a click,
+  // and rolls back only the voted ROW on failure (#1265 review finding 8) -
+  // a page-wide snapshot would also discard any other unrelated change
+  // (e.g. another vote's own response landing) that happened while this
+  // request was in flight.
   async function handleVote(id: string, vote: VoteDirection) {
-    const prev = memories
+    const prevRow = memories.find(m => m.id === id)
     setMemories(cur => cur.map(m => (m.id === id ? applyOptimisticVote(m, vote) : m)))
     try {
       const updated = await api.voteMemory(id, vote)
       setMemories(cur => cur.map(m => (m.id === id ? updated : m)))
     } catch (e) {
-      setMemories(prev)
+      if (prevRow) setMemories(cur => cur.map(m => (m.id === id ? prevRow : m)))
       throw e
     }
   }
@@ -138,6 +142,14 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
 
   function handleBucketChange(next: string) {
     setBucket(next)
+    resetPaging()
+  }
+
+  // Server-side filter (#1265 review finding 10) - a page reload with the
+  // new tier, not a client-side re-slice of whatever page happened to be
+  // loaded, so the filter spans the whole corpus, not just the current page.
+  function handleTierChange(next: MemoryTierFilter) {
+    setTier(next)
     resetPaging()
   }
 
@@ -164,14 +176,8 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
   const hasMore = !searching && !!nextPageToken
   const rangeStart = pageIndex * PAGE_SIZE + 1
   const rangeEnd = pageIndex * PAGE_SIZE + memories.length
-  // Tier has no server-side filter param (Forbidden: no endpoint changes
-  // beyond vote/node-memories) - filtered client-side over the loaded page,
-  // same "reorder what's already fetched" scope as sort above.
-  const tierFiltered = useMemo(
-    () => (tier ? memories.filter(m => (m.tier ?? 'unverified') === tier) : memories),
-    [memories, tier],
-  )
-  const sortedMemories = useMemo(() => sortMemories(tierFiltered, sort), [tierFiltered, sort])
+  // Tier filters server-side (the `tier` query param) - see handleTierChange.
+  const sortedMemories = useMemo(() => sortMemories(memories, sort), [memories, sort])
   const bucketOptions = useMemo(() => Array.from(knownBuckets).sort(), [knownBuckets])
   const showFooter = !loading && !error && !searching && total > 0
 
@@ -213,7 +219,7 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
           buckets={bucketOptions}
           onBucketChange={handleBucketChange}
           tier={tier}
-          onTierChange={setTier}
+          onTierChange={handleTierChange}
         />
       </div>
 
