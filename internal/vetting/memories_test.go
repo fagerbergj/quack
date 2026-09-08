@@ -2,12 +2,29 @@ package vetting
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledgertest"
 	"github.com/fagerbergj/quack/internal/memory"
 )
+
+// failingLedger wraps a real LedgerStore but fails AppendIntent for a
+// chosen entry kind - proves memory.vote's fail-closed path against a
+// genuine append failure, not a mock returning a canned success.
+type failingLedger struct {
+	*ledgertest.MemStore
+	failKind string
+}
+
+func (f *failingLedger) AppendIntent(ctx context.Context, e ledger.Entry) (int64, error) {
+	if e.Kind == f.failKind {
+		return 0, errors.New("simulated ledger append failure")
+	}
+	return f.MemStore.AppendIntent(ctx, e)
+}
 
 func newMemoryStoreForVoteTest(t *testing.T) *memory.Store {
 	t.Helper()
@@ -135,6 +152,70 @@ func TestRecallLedgerEntry_AppendsMemoryRecall(t *testing.T) {
 		t.Fatalf("entries = %+v, want exactly one memory.recall", entries)
 	}
 }
+
+// TestApplyMemoryVotesOnPass_LedgerAppendFailureSkipsMutation covers the
+// fail-closed discipline: the point mutation is a PROJECTION of the
+// memory.vote ledger entry, so a failed AppendIntent must skip the point
+// mutation AND the memory_ops row entirely - never apply a vote the ledger
+// never durably recorded.
+func TestApplyMemoryVotesOnPass_LedgerAppendFailureSkipsMutation(t *testing.T) {
+	ctx := context.Background()
+	store := newMemoryStoreForVoteTest(t)
+	if _, err := store.Commit(ctx, memory.Scope{Repo: "r"}, "author", memory.Provenance{ChatID: "chat1"},
+		[]memory.Candidate{{Content: "vote that never durably lands"}}, ""); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	mems, _, _ := store.List(ctx, []string{"repo:r"}, 0, 10, true)
+	m1 := mems[0].ID
+
+	ops := &fakeOpsLogRecorder{}
+	store.SetOpsLog(ops)
+
+	lgr := &failingLedger{MemStore: ledgertest.NewMemStore(), failKind: ledger.KindMemoryVote}
+	cfg := Config{ChatID: "chat1", Memory: store, Ledger: lgr}
+	received := []memory.Delivered{{ID: m1, Content: "vote that never durably lands"}}
+	votes := []memoryVerdict{{ID: m1, Vote: memory.VoteSupported, Reason: "would have applied"}}
+
+	applyMemoryVotesOnPass(ctx, cfg, "node1", 1, received, votes)
+
+	mems, _, _ = store.List(ctx, []string{"repo:r"}, 0, 10, true)
+	if mems[0].Upvotes != 0 || mems[0].Tier == memory.TierVerified {
+		t.Fatalf("m1 = %+v, want untouched (ledger append failed, so nothing may be projected)", mems[0])
+	}
+	if len(ops.rows) != 0 {
+		t.Fatalf("memory_ops rows = %+v, want none (no vote row for an entry that never landed)", ops.rows)
+	}
+	entries, err := lgr.ReadEntries(ctx, "chat1", 0)
+	if err != nil {
+		t.Fatalf("ReadEntries: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("ledger entries = %+v, want none (the failing append must not have landed anything)", entries)
+	}
+}
+
+// fakeOpsLogRecorder records every memory_ops write, mirroring
+// internal/memory's own lifecycle_test.go fixture (unexported there).
+type fakeOpsLogRecorder struct {
+	rows []struct {
+		memoryID string
+		op       memory.OpsLogOp
+		actor    memory.OpsLogActor
+		reason   string
+	}
+}
+
+func (f *fakeOpsLogRecorder) LogMemoryOp(_ context.Context, memoryID string, op memory.OpsLogOp, actor memory.OpsLogActor, reason string) error {
+	f.rows = append(f.rows, struct {
+		memoryID string
+		op       memory.OpsLogOp
+		actor    memory.OpsLogActor
+		reason   string
+	}{memoryID, op, actor, reason})
+	return nil
+}
+
+func (f *fakeOpsLogRecorder) PruneMemoryOps(context.Context, time.Time) (int, error) { return 0, nil }
 
 // TestApplyMemoryVotesOnPass_NoVotesWhenNoneGiven covers "a failed round
 // yields no votes": RunGatedRefine never calls applyMemoryVotesOnPass for a
