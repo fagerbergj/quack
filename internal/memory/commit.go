@@ -542,6 +542,8 @@ var consolidateDedupePrompts = map[string]string{
 	"task": "You maintain a team of agents' SHARED long-term memory about one subject. Below is a BURST of " +
 		"unverified memories minted by the same run within minutes of each other - they may restate the same " +
 		"claim more than once.\n\n" +
+		"Memories are listed best-candidate-survivor first (highest-voted, then oldest) when that ordering " +
+		"applies - prefer keeping that one when wording is otherwise comparable.\n\n" +
 		"For each group of near-identical memories in the burst:\n" +
 		"- UPDATE the id whose wording is worth keeping with the clearest merged content and kind (or NOOP it " +
 		"if its wording is already the best one).\n" +
@@ -555,6 +557,8 @@ var consolidateDedupePrompts = map[string]string{
 
 	"user": "You maintain durable facts ABOUT THE USER. Below is a BURST of unverified facts minted within " +
 		"minutes of each other - they may restate the same fact more than once.\n\n" +
+		"Facts are listed best-candidate-survivor first (highest-voted, then oldest) when that ordering " +
+		"applies - prefer keeping that one when wording is otherwise comparable.\n\n" +
 		"For each group of near-identical facts in the burst:\n" +
 		"- UPDATE the id whose wording is worth keeping with the clearest merged content and kind (or NOOP it " +
 		"if its wording is already the best one).\n" +

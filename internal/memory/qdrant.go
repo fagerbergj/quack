@@ -201,17 +201,23 @@ func vectorData(v *qdrant.VectorsOutput) []float32 {
 // first in Go, then slices out the requested page. Fine at memory's documented
 // scale (hundreds-thousands); avoids requiring a payload index on `timestamp`
 // for Qdrant's order_by, which a fresh collection won't have.
-func (x *qdrantIndex) list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string, sortBy ...string) ([]scored, error) {
+func (x *qdrantIndex) list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string, withVectors bool, sortBy ...string) ([]scored, error) {
 	filter := bucketFilter(buckets)
 	if !includeInvalidated {
 		filter = excludeInvalidated(filter)
 	}
 	filter = tierFilter(filter, tier)
-	it := x.client.ScrollAll(ctx, &qdrant.ScrollPoints{
+	scroll := &qdrant.ScrollPoints{
 		CollectionName: x.coll,
 		Filter:         filter,
 		WithPayload:    qdrant.NewWithPayload(true),
-	})
+	}
+	if withVectors {
+		// DedupeSweep's clustering (issue #1269) needs each point's own stored
+		// embedding, not a re-embed - Qdrant already has it, just ask for it.
+		scroll.WithVectors = qdrant.NewWithVectors(true)
+	}
+	it := x.client.ScrollAll(ctx, scroll)
 	var all []scored
 	for {
 		pts, err := it.Next()
@@ -222,7 +228,7 @@ func (x *qdrantIndex) list(ctx context.Context, buckets []string, offset, limit 
 			return nil, fmt.Errorf("memory: scroll: %w", err)
 		}
 		for _, p := range pts {
-			all = append(all, pointFromPayload(p.GetId(), p.GetPayload(), 0, nil))
+			all = append(all, pointFromPayload(p.GetId(), p.GetPayload(), 0, vectorData(p.GetVectors())))
 		}
 	}
 	sort.Slice(all, qdrantLess(all, firstSort(sortBy)))

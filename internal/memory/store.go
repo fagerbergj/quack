@@ -31,13 +31,17 @@ type index interface {
 	// query()/recall filter (design doc §4(d) extended to the browse surface, phase 3).
 	// tier=="" means no tier filter; "unverified" also matches a point that
 	// predates the tier field (empty/missing tier reads as unverified
-	// everywhere else in this package - #1265 review finding 10). sortBy is
-	// variadic (#1266) so every existing caller's positional call keeps
-	// compiling unchanged: sortBy[0], if given and non-empty, is one of the
+	// everywhere else in this package - #1265 review finding 10). withVectors
+	// populates each result's Vector from the already-stored embedding
+	// (DedupeSweep's clustering, issue #1269) - never a re-embed, both
+	// backends already have it on hand at list time; false everywhere else to
+	// skip the extra payload. sortBy is variadic (#1266) so every existing
+	// caller's positional call keeps compiling unchanged past this second
+	// added parameter: sortBy[0], if given and non-empty, is one of the
 	// ListSort constants below and orders the WHOLE matching set (index-side
 	// for sqlite, in-Go for qdrant which already fetches everything) before
 	// offset/limit slice it, so a sort spans pages correctly.
-	list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string, sortBy ...string) ([]scored, error)
+	list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string, withVectors bool, sortBy ...string) ([]scored, error)
 	// count returns how many points match buckets (all buckets if empty), under the
 	// same includeInvalidated/tier filter as list.
 	count(ctx context.Context, buckets []string, includeInvalidated bool, tier string) (int, error)
@@ -475,7 +479,7 @@ func (s *Store) List(ctx context.Context, buckets []string, offset, limit int, i
 	if offset < 0 {
 		offset = 0
 	}
-	pts, err := s.idx.list(ctx, buckets, offset, limit, includeInvalidated, tier, sortBy...)
+	pts, err := s.idx.list(ctx, buckets, offset, limit, includeInvalidated, tier, false, sortBy...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("memory: list %q: %w", s.coll, err)
 	}

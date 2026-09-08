@@ -147,7 +147,7 @@ func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32
 	return out, nil
 }
 
-func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string, sortBy ...string) ([]scored, error) {
+func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string, withVectors bool, sortBy ...string) ([]scored, error) {
 	q := x.db.WithContext(ctx).Where("collection = ?", x.coll)
 	if len(buckets) > 0 {
 		q = q.Where("scope IN ?", buckets)
@@ -176,6 +176,9 @@ func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit 
 			Upvotes: r.Upvotes, Downvotes: r.Downvotes, VoteScore: r.VoteScore, Tier: r.Tier,
 			LastUpvotedAt: r.LastUpvotedAt, Recalls: r.Recalls, LastRecalledAt: r.LastRecalledAt,
 			AbsorbedIDs: splitIDs(r.AbsorbedIDs), HumanVote: r.HumanVote,
+		}
+		if withVectors {
+			out[i].Vector = bytesToVec(r.Vector) // already loaded on the row; no extra query
 		}
 	}
 	return out, nil

@@ -26,12 +26,16 @@ const sweepPageSize = 500
 
 // forEachSweepPage walks every point across all buckets in pages of
 // sweepPageSize, calling fn once per page until the backend is exhausted.
-func (s *Store) forEachSweepPage(ctx context.Context, includeInvalidated bool, fn func([]scored)) error {
+// withVectors asks the backend to also populate each point's stored
+// embedding (DedupeSweep's cosine clustering, issue #1269) - both backends
+// already have the vector on hand at list time, so this is never a
+// re-embed, just an extra field on the same read.
+func (s *Store) forEachSweepPage(ctx context.Context, includeInvalidated, withVectors bool, fn func([]scored)) error {
 	if s.listErrForTest != nil {
 		return s.listErrForTest
 	}
 	for offset := 0; ; offset += sweepPageSize {
-		page, err := s.idx.list(ctx, nil, offset, sweepPageSize, includeInvalidated, "")
+		page, err := s.idx.list(ctx, nil, offset, sweepPageSize, includeInvalidated, "", withVectors)
 		if err != nil {
 			return err
 		}
@@ -92,7 +96,7 @@ func (s *Store) consolidateOnce(ctx context.Context) {
 	// avoidable here - but paging the fetch still bounds each backend call
 	// (vs. one unbounded scroll/select) as the collection grows.
 	byBucket := map[string][]scored{}
-	err := s.forEachSweepPage(ctx, false, func(page []scored) { // currently-valid only
+	err := s.forEachSweepPage(ctx, false, false, func(page []scored) { // currently-valid only
 		for _, p := range page {
 			if p.Status == string(StatusReinforced) {
 				continue // earned trust; never a dedupe candidate
@@ -276,7 +280,7 @@ func (s *Store) ForgetSweep(ctx context.Context, dryRun bool) (ForgettingReport,
 	}
 	var toInvalidate []hit
 	now := time.Now().UTC()
-	err := s.forEachSweepPage(ctx, false, func(page []scored) { // currently-valid only
+	err := s.forEachSweepPage(ctx, false, false, func(page []scored) { // currently-valid only
 		for _, p := range page {
 			report.Evaluated++
 			f := fieldsFor(p, now)
@@ -388,7 +392,7 @@ func (s *Store) retentionOnce(ctx context.Context, retentionDays int) {
 	// would shift a later page's window and skip a still-expired row (it
 	// would just be caught on the next tick, but there's no reason to risk it).
 	var expired []string
-	err := s.forEachSweepPage(ctx, true, func(page []scored) { // every bucket, including invalidated
+	err := s.forEachSweepPage(ctx, true, false, func(page []scored) { // every bucket, including invalidated
 		for _, p := range page {
 			if p.Status != string(StatusInvalidated) || p.InvalidatedAt == "" {
 				continue

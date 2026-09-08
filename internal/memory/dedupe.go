@@ -55,25 +55,27 @@ type DedupeReport struct {
 	Dropped     int // clusters skipped once LLMCalls hit dedupeMaxLLMCalls
 }
 
-// DedupeSweep clusters every bucket's live, non-reinforced memories by
+// DedupeSweep clusters every bucket's live memories (reinforced/verified
+// included - a duplicate pair among verified memories is exactly the one
+// that should merge, P5 lineage sums their votes onto the survivor) by
 // cosine similarity (issue #1269): the burst sweep only ever compares
 // memories minted by the same chat within a 15-minute window, so a fact
 // re-derived independently by a different run - even days later - never
-// gets compared. This pass re-embeds every candidate (one batch call per
-// bucket) and clusters transitively at >= dedupeCosineThreshold, then feeds
-// each cluster of size >= 2 to the same consolidation model the burst sweep
-// uses (consolidateCluster, with P5 lineage: the survivor keeps summed
-// votes, the absorbed is invalidated "absorbed by <id>").
+// gets compared. It reads each point's ALREADY-STORED vector via list()
+// (both backends keep it - qdrant's WithVectors, sqlite's blob column) -
+// never re-embeds - and clusters transitively at >= dedupeCosineThreshold,
+// then feeds each cluster of size >= 2 to the same consolidation model the
+// burst sweep uses (consolidateCluster, with P5 lineage: the survivor keeps
+// summed votes, the absorbed is invalidated "absorbed by <id>"). Cluster
+// members are ordered highest-voted-then-oldest first so the dedupe prompt
+// can prefer that one as the survivor.
 //
 // apply=false only clusters and reports - no LLM call, no write. apply=true
 // runs consolidation (bounded by dedupeMaxLLMCalls) and applies its ops.
 func (s *Store) DedupeSweep(ctx context.Context, apply bool) (DedupeReport, error) {
 	byBucket := map[string][]scored{}
-	err := s.forEachSweepPage(ctx, false, func(page []scored) { // currently-valid only
+	err := s.forEachSweepPage(ctx, false, true, func(page []scored) { // currently-valid only, with vectors
 		for _, p := range page {
-			if p.Status == string(StatusReinforced) {
-				continue // earned trust; never a dedupe candidate
-			}
 			byBucket[p.Scope] = append(byBucket[p.Scope], p)
 		}
 	})
@@ -83,13 +85,7 @@ func (s *Store) DedupeSweep(ctx context.Context, apply bool) (DedupeReport, erro
 
 	report := DedupeReport{Applied: apply}
 	for _, bucket := range slices.Sorted(maps.Keys(byBucket)) { // deterministic order
-		pts := byBucket[bucket]
-		vecs, err := s.embedContents(ctx, pts)
-		if err != nil {
-			s.log.Warn("dedupe sweep: embed failed", "bucket", bucket, "err", err)
-			continue
-		}
-		for _, cluster := range cosineClusters(pts, vecs, dedupeCosineThreshold, dedupeMaxClusterSize) {
+		for _, cluster := range cosineClusters(byBucket[bucket], dedupeCosineThreshold, dedupeMaxClusterSize) {
 			report.NumClusters++
 			if len(report.Clusters) < dedupeReportClusterCap {
 				report.Clusters = append(report.Clusters, clusterReport(bucket, cluster))
@@ -115,15 +111,6 @@ func (s *Store) DedupeSweep(ctx context.Context, apply bool) (DedupeReport, erro
 	return report, nil
 }
 
-// embedContents batch-embeds pts' content in one call, same order as pts.
-func (s *Store) embedContents(ctx context.Context, pts []scored) ([][]float32, error) {
-	texts := make([]string, len(pts))
-	for i, p := range pts {
-		texts[i] = p.Content
-	}
-	return s.embed(ctx, texts, "dedupe-sweep")
-}
-
 func clusterReport(bucket string, cluster []scored) DedupeCluster {
 	c := DedupeCluster{Bucket: bucket, Size: len(cluster)}
 	for i, p := range cluster {
@@ -135,15 +122,19 @@ func clusterReport(bucket string, cluster []scored) DedupeCluster {
 	return c
 }
 
-// cosineClusters unions pts[i]/pts[j] whenever their vectors' cosine
-// similarity is >= threshold (transitive: a-b and b-c above threshold puts
-// a, b, c in one cluster even if a-c is below it), bounded to maxSize per
-// cluster. Only clusters of size >= 2 are returned.
+// cosineClusters unions pts[i]/pts[j] whenever their OWN stored vectors'
+// cosine similarity is >= threshold (transitive: a-b and b-c above threshold
+// puts a, b, c in one cluster even if a-c is below it), bounded to maxSize
+// per cluster. Only clusters of size >= 2 are returned. Each cluster is
+// ordered highest-VoteScore-then-oldest-MintedAt first: the dedupe prompt is
+// told to prefer keeping that member as the survivor when wording is
+// otherwise comparable, so a verified/upvoted memory outranks a freshly
+// re-derived duplicate rather than being the one absorbed.
 //
 // ponytail: O(n²) pairwise cosine per bucket - fine at memory's documented
 // scale (hundreds-thousands per bucket, run nightly off the hot path);
 // revisit with an ANN index only if a bucket's dedupe pass measurably lags.
-func cosineClusters(pts []scored, vecs [][]float32, threshold float32, maxSize int) [][]scored {
+func cosineClusters(pts []scored, threshold float32, maxSize int) [][]scored {
 	n := len(pts)
 	parent := make([]int, n)
 	size := make([]int, n)
@@ -169,7 +160,7 @@ func cosineClusters(pts []scored, vecs [][]float32, threshold float32, maxSize i
 	}
 	for i := 0; i < n; i++ {
 		for j := i + 1; j < n; j++ {
-			if cosine(vecs[i], vecs[j]) >= threshold {
+			if cosine(pts[i].Vector, pts[j].Vector) >= threshold {
 				union(i, j)
 			}
 		}
@@ -185,9 +176,17 @@ func cosineClusters(pts []scored, vecs [][]float32, threshold float32, maxSize i
 		if len(g) < 2 {
 			continue
 		}
-		sort.Slice(g, func(i, j int) bool { return g[i].ID < g[j].ID })
+		sort.Slice(g, func(i, j int) bool {
+			if g[i].VoteScore != g[j].VoteScore {
+				return g[i].VoteScore > g[j].VoteScore // highest-voted first: preferred survivor
+			}
+			if g[i].MintedAt != g[j].MintedAt {
+				return g[i].MintedAt < g[j].MintedAt // then oldest first
+			}
+			return g[i].ID < g[j].ID // deterministic tiebreak
+		})
 		out = append(out, g)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i][0].ID < out[j][0].ID }) // deterministic order
+	sort.Slice(out, func(i, j int) bool { return out[i][0].ID < out[j][0].ID }) // deterministic cluster order
 	return out
 }

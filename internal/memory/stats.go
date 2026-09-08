@@ -24,7 +24,7 @@ type ScopeStats struct {
 func (s *Store) Snapshot(ctx context.Context) ([]ScopeStats, map[string]string, error) {
 	byScope := map[string]*ScopeStats{}
 	absorbedBy := map[string]string{}
-	err := s.forEachSweepPage(ctx, true, func(page []scored) {
+	err := s.forEachSweepPage(ctx, true, false, func(page []scored) {
 		for _, p := range page {
 			st, ok := byScope[p.Scope]
 			if !ok {
