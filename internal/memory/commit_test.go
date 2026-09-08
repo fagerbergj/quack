@@ -217,25 +217,29 @@ func TestCommit_AbsorptionMergesThreeDuplicates(t *testing.T) {
 
 // TestCommit_CandidateCap is issue #1269 item 3: a node that stages more
 // than maxCandidatesPerCommit candidates only gets the first three
-// forwarded to consolidation - the rest never even reach the LLM.
+// forwarded to consolidation - the rest never even reach the LLM. Run
+// against both backends (#1268's forEachBackend); every op here is a fresh
+// ADD, so there's no fixed id for qdrant's UUID-only point-id to reject.
 func TestCommit_CandidateCap(t *testing.T) {
-	ctx := context.Background()
-	reply := `{"ops":[
-		{"action":"ADD","content":"one","kind":"convention"},
-		{"action":"ADD","content":"two","kind":"convention"},
-		{"action":"ADD","content":"three","kind":"convention"}
-	]}`
-	s := newSQLiteStore(t, "task", fakeModel{reply: reply})
-	staged := []Candidate{
-		{Content: "one"}, {Content: "two"}, {Content: "three"}, {Content: "four"}, {Content: "five"},
-	}
-	n, err := s.Commit(ctx, Scope{Role: RoleCoding}, "chatty-reviewer", Provenance{}, staged, "")
-	if err != nil {
-		t.Fatalf("Commit: %v", err)
-	}
-	if n != 3 {
-		t.Fatalf("Commit wrote %d, want 3 (capped from 5 staged)", n)
-	}
+	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
+		ctx := context.Background()
+		reply := `{"ops":[
+			{"action":"ADD","content":"one","kind":"convention"},
+			{"action":"ADD","content":"two","kind":"convention"},
+			{"action":"ADD","content":"three","kind":"convention"}
+		]}`
+		s := newStore("task", fakeModel{reply: reply})
+		staged := []Candidate{
+			{Content: "one"}, {Content: "two"}, {Content: "three"}, {Content: "four"}, {Content: "five"},
+		}
+		n, err := s.Commit(ctx, Scope{Role: RoleCoding}, "chatty-reviewer", Provenance{}, staged, "")
+		if err != nil {
+			t.Fatalf("Commit: %v", err)
+		}
+		if n != 3 {
+			t.Fatalf("Commit wrote %d, want 3 (capped from 5 staged)", n)
+		}
+	})
 }
 
 // TestConsolidatePrompt_RejectsChangeLog exercises the wiring the prompt
@@ -244,26 +248,28 @@ func TestCommit_CandidateCap(t *testing.T) {
 // follows the prompt's instruction (NOOP the change-log one, ADD the
 // convention) must result in exactly one memory written, not two. The fake
 // model here is scripted to the desired behavior - it doesn't validate the
-// real model's judgment, only that Commit correctly applies a
-// NOOP+ADD response.
+// real model's judgment, only that Commit correctly applies a NOOP+ADD
+// response. Run against both backends; the ADD op needs no fixed id.
 func TestConsolidatePrompt_RejectsChangeLog(t *testing.T) {
-	ctx := context.Background()
-	reply := `{"ops":[
-		{"action":"NOOP"},
-		{"action":"ADD","content":"the tier filter is applied index-level, not post-fetch","kind":"convention"}
-	]}`
-	s := newSQLiteStore(t, "task", fakeModel{reply: reply})
-	staged := []Candidate{
-		{Content: "getByID was added to both indexes in this PR"},
-		{Content: "the tier filter is applied index-level, not post-fetch"},
-	}
-	n, err := s.Commit(ctx, Scope{Role: RoleCoding}, "reviewer", Provenance{}, staged, "")
-	if err != nil {
-		t.Fatalf("Commit: %v", err)
-	}
-	if n != 1 {
-		t.Fatalf("Commit wrote %d, want 1 (change-log NOOPed, convention ADDed)", n)
-	}
+	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
+		ctx := context.Background()
+		reply := `{"ops":[
+			{"action":"NOOP"},
+			{"action":"ADD","content":"the tier filter is applied index-level, not post-fetch","kind":"convention"}
+		]}`
+		s := newStore("task", fakeModel{reply: reply})
+		staged := []Candidate{
+			{Content: "getByID was added to both indexes in this PR"},
+			{Content: "the tier filter is applied index-level, not post-fetch"},
+		}
+		n, err := s.Commit(ctx, Scope{Role: RoleCoding}, "reviewer", Provenance{}, staged, "")
+		if err != nil {
+			t.Fatalf("Commit: %v", err)
+		}
+		if n != 1 {
+			t.Fatalf("Commit wrote %d, want 1 (change-log NOOPed, convention ADDed)", n)
+		}
+	})
 }
 
 // TestConsolidatePromptTask_MentionsChangeLog pins the prompt text itself
