@@ -86,8 +86,9 @@ export const WithExtensions: Story = {
     route: 'chat',
     open: true,
     initialExtensions: [
-      { name: 'remarkable', title: 'reMarkable', href: '/remarkable/review' },
-      { name: 'usage', title: 'Usage', href: '/usage', icon: '📊' },
+      { name: 'remarkable', title: 'reMarkable', href: '/remarkable/review', icon: 'draw' },
+      { name: 'usage', title: 'Usage', href: '/usage', icon: 'monitoring' },
+      { name: 'legacy', title: 'Legacy', href: '/legacy', icon: '📊' },
       { name: 'github' },
     ],
   },

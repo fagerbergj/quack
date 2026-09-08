@@ -87,7 +87,7 @@ export function NavRail({ route, activeExtension, initialExtensions, open, onClo
         </div>
         <div className="flex-1 py-2 px-2 space-y-1 overflow-y-auto">
           <NavItem icon={<Icon name="chat" className="w-4 h-4" />} label="Chats" active={route === 'chat'} onClick={() => { navigate('/chat'); onClose() }} />
-          <NavItem icon={<Icon name="psychology" className="w-4 h-4" />} label="Memory" active={route === 'memory'} onClick={() => { navigate('/memory'); onClose() }} />
+          <NavItem icon={<Icon name="lightbulb" className="w-4 h-4" />} label="Memory" active={route === 'memory'} onClick={() => { navigate('/memory'); onClose() }} />
           {linkedExtensions.length > 0 && (
             <div className="pt-1 mt-1 border-t border-gray-100 dark:border-gray-700 space-y-1">
               {linkedExtensions.map(ext => (
@@ -135,11 +135,19 @@ function NavItem({
 // legacy shape) falls back to the generic "extension" glyph instead of
 // rendering arbitrary plugin-supplied emoji. Extensions should migrate to
 // sending a Material icon name.
+const warnedUnknownIcons = new Set<string>()
+
 function extensionIcon(ext: ExtensionInfo): ReactNode {
   const icon = ext.icon
   if (icon && ICON_NAMES.has(icon)) return <Icon name={icon as IconName} className="w-4 h-4" />
   if (icon && icon.trim().startsWith('<svg')) {
     return <span className="w-4 h-4 [&>svg]:w-4 [&>svg]:h-4" dangerouslySetInnerHTML={{ __html: icon }} />
+  }
+  // Named but unrecognized icon: warn once so a new extension icon name gets
+  // noticed and added to Icon.tsx's PATHS, instead of silently staying generic.
+  if (icon && !warnedUnknownIcons.has(icon)) {
+    warnedUnknownIcons.add(icon)
+    console.warn(`NavRail: unknown extension icon "${icon}", falling back to the generic icon`)
   }
   return <Icon name="extension" className="w-4 h-4" />
 }
