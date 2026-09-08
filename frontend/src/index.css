@@ -16,6 +16,12 @@
 :root { color-scheme: light; }
 .dark { color-scheme: dark; }
 
+/* #1248 follow-up: single source for the composer's bottom offset (12px rest
+   gap, or 12px above the home indicator when the inset is present) - apply
+   it ONLY here, never add env(safe-area-inset-bottom) again elsewhere, or
+   it stacks (the pre-#1249 "too much padding" bug). */
+:root { --composer-gap: calc(env(safe-area-inset-bottom, 0px) + 12px); }
+
 /* ponytail: global tone via the color scale - softer, slightly warm neutrals
    and a calmer accent. Overriding the built-in gray and blue scale here recolors
    every existing gray/blue utility (backgrounds, borders, text) across the app at
