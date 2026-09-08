@@ -2,11 +2,15 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import Memory from './Memory'
 
 // Memory renders MemoryTab, which talks to the real REST client - stub
-// global.fetch with one canned empty page (same pattern as ArtifactPanel's
-// story) rather than pulling in MSW for one page-level story.
+// global.fetch with canned empty responses (same pattern as ArtifactPanel's
+// story) rather than pulling in MSW for one page-level story. Routed by URL
+// since MemoryTab now also fetches /memories/stats (#1267).
 function stubFetch() {
-  window.fetch = async () =>
-    new Response(JSON.stringify({ memories: [], total: 0 }), { headers: { 'Content-Type': 'application/json' } })
+  window.fetch = async (input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+    const body = url.includes('/memories/stats') ? { weeks: [], scopes: [] } : { memories: [], total: 0 }
+    return new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } })
+  }
 }
 
 const meta: Meta<typeof Memory> = {

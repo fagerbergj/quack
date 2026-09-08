@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useLayoutEffect, useRef } from 'react'
-import { api, type Memory, type VoteDirection } from '../api'
+import { api, type Memory, type VoteDirection, type MemoryWeekStats, type MemoryScopeStats } from '../api'
 import { MemoryTimeline } from './MemoryTimeline'
 import { MemorySortFilter, type MemorySort, type MemoryTierFilter } from './MemorySortFilter'
+import { MemoryStatsHeader } from './MemoryStatsHeader'
 
 const PAGE_SIZE = 20
 
@@ -9,6 +10,10 @@ export interface MemoryTabProps {
   // Storybook/test seam: pre-seeds state and skips the live fetch, so a story
   // can show empty/populated/error deterministically with no backend.
   initialState?: { memories: Memory[]; total: number; error?: string }
+  // Same seam for the stats header (#1267) - independent of initialState so
+  // a story can show the list and the header loading/empty/populated in any
+  // combination.
+  initialStats?: { weeks: MemoryWeekStats[]; scopes: MemoryScopeStats[]; error?: string }
 }
 
 // applyOptimisticVote mirrors the backend's SetHumanVote delta (up:+1/undo,
@@ -36,7 +41,7 @@ function applyOptimisticVote(m: Memory, vote: VoteDirection): Memory {
 // to search on error - a browse view that quietly shows a different result
 // set than it claims is worse than an error state), search "what would a run
 // recall for this", and forget one entry at a time.
-export function MemoryTab({ initialState }: MemoryTabProps = {}) {
+export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
   const [bucket, setBucket] = useState('')
   const [q, setQ] = useState('')
   const [sort, setSort] = useState<MemorySort>('newest')
@@ -70,6 +75,33 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
   // clear it once scrolled fully into view.
   const footerRef = useRef<HTMLDivElement>(null)
   const [footerHeight, setFooterHeight] = useState(0)
+
+  // Stats fetch (#1267) is independent of the memory list fetch above - it
+  // doesn't page or filter, so it has its own loading/error state and only
+  // runs once per mount.
+  const [statsWeeks, setStatsWeeks] = useState<MemoryWeekStats[]>(initialStats?.weeks ?? [])
+  const [statsScopes, setStatsScopes] = useState<MemoryScopeStats[]>(initialStats?.scopes ?? [])
+  const [statsLoading, setStatsLoading] = useState(initialStats === undefined)
+  const [statsError, setStatsError] = useState<string | null>(initialStats?.error ?? null)
+
+  useEffect(() => {
+    if (initialStats !== undefined) return // story/test seam
+    let cancelled = false
+    setStatsLoading(true)
+    api.getMemoryStats()
+      .then(result => {
+        if (cancelled) return
+        setStatsWeeks(result.weeks ?? [])
+        setStatsScopes(result.scopes ?? [])
+        setStatsError(null)
+      })
+      .catch(e => {
+        if (cancelled) return
+        setStatsError(e instanceof Error ? e.message : 'Failed to load stats')
+      })
+      .finally(() => { if (!cancelled) setStatsLoading(false) })
+    return () => { cancelled = true }
+  }, [initialStats])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -192,6 +224,7 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
 
   return (
     <div className="flex flex-col h-full">
+      <MemoryStatsHeader weeks={statsWeeks} loading={statsLoading} error={statsError} />
       <div className="p-3 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2">
         <input
           type="search"
@@ -218,6 +251,7 @@ export function MemoryTab({ initialState }: MemoryTabProps = {}) {
           onBucketChange={handleBucketChange}
           tier={tier}
           onTierChange={handleTierChange}
+          scopes={statsScopes}
         />
       </div>
 

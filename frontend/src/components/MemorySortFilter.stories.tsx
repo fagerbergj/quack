@@ -16,6 +16,7 @@ function Controlled(props: Omit<MemorySortFilterProps, 'sort' | 'onSortChange' |
       onBucketChange={setBucket}
       tier={tier}
       onTierChange={setTier}
+      scopes={props.scopes}
     />
   )
 }
@@ -56,5 +57,24 @@ export const WithActiveFilters: Story = {
     await userEvent.click(canvas.getByRole('button', { name: 'Sort and filter memories' }))
     expect(canvas.getByLabelText('Oldest first')).toBeChecked()
     expect(canvas.getByLabelText('Bucket filter')).toHaveValue('repo:quack')
+  },
+}
+
+// #1267: live/invalidated per bucket, read-only, below the tier filter.
+export const WithScopes: Story = {
+  render: () => (
+    <Controlled
+      buckets={BUCKETS}
+      scopes={[
+        { scope: 'repo:quack', live: 42, invalidated: 5 },
+        { scope: 'repo:NightsOut', live: 11, invalidated: 2 },
+        { scope: 'user:jason', live: 8, invalidated: 0 },
+      ]}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: 'Sort and filter memories' }))
+    await canvas.findByText('Live / invalidated')
   },
 }

@@ -14,15 +14,16 @@ import {
   voteMemory as sdkVoteMemory,
   listNodeMemories as sdkListNodeMemories,
   listExtensions as sdkListExtensions,
+  getMemoryStats as sdkGetMemoryStats,
   getConfig as sdkGetConfig,
   listChatArtifacts as sdkListChatArtifacts,
   listArtifactRevisions as sdkListArtifactRevisions,
   diffArtifactRevisions as sdkDiffArtifactRevisions,
 } from './generated'
 
-export type { ChatSummary, ChatDetail, ChatList, Turn, Memory, MemoryList, ExtensionInfo, ClientConfig, ArtifactSummary, ArtifactRevisionInfo, NodeMemory, NodeMemoryList } from './generated'
+export type { ChatSummary, ChatDetail, ChatList, Turn, Memory, MemoryList, ExtensionInfo, ClientConfig, ArtifactSummary, ArtifactRevisionInfo, NodeMemory, NodeMemoryList, MemoryStats, MemoryWeekStats, MemoryScopeStats } from './generated'
 
-import type { ChatSummary, ChatDetail, ChatList, Turn, MemoryList, ExtensionInfo, ClientConfig, ArtifactList, ArtifactRevisionList, NodeMemoryList } from './generated'
+import type { ChatSummary, ChatDetail, ChatList, Turn, MemoryList, ExtensionInfo, ClientConfig, ArtifactList, ArtifactRevisionList, NodeMemoryList, MemoryStats } from './generated'
 
 // VoteDirection is the UI-facing shape of a manual vote - "none" clears the
 // caller's own prior vote (the Reddit-style toggle-off), matching the
@@ -106,6 +107,11 @@ export const api = {
     unwrap(await sdkListNodeMemories({ path: { chat_id: chatId, node_id: nodeId } })),
 
   listExtensions: async (): Promise<ExtensionInfo[]> => unwrap(await sdkListExtensions()),
+
+  // weeks defaults server-side to 12; the header only shows the last 4 but
+  // asks for that default so a future "see more" needs no new request shape.
+  getMemoryStats: async (weeks?: number): Promise<MemoryStats> =>
+    unwrap(await sdkGetMemoryStats({ query: { weeks } })),
 
   getConfig: async (): Promise<ClientConfig> => unwrap(await sdkGetConfig()),
 
