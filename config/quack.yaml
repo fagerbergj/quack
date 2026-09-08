@@ -78,6 +78,14 @@ stores:
       # schedule: "0 2 * * *"  # standard 5-field cron, local time; never runs at boot
                                # (issue #961). Unset ⇒ this default; "" disables.
       # retention_days: 30  # hard-delete invalidated points + memory_ops rows past this age; 0 = forever
+      # forgetting:            # epic #1255 P3; optional - omitted means the built-in defaults below
+      #   rules:
+      #     - when: 'tier == "unverified" && days_since_upvote > 90'
+      #       then: invalidate
+      #     - when: "score <= -2"
+      #       then: invalidate
+      #     - when: 'tier == "verified"'
+      #       then: keep
     top_k: 5
     min_score: 0.5                # drop recall hits below this cosine similarity (0 disables)
 

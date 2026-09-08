@@ -416,6 +416,70 @@ func TestDeleteMemory_FindsIDInSecondStore(t *testing.T) {
 	}
 }
 
+// TestSweepMemories_BothStoresOK covers the happy path that apparently had
+// no coverage at all before: both configured stores succeed and both show up
+// in the response, with no errors.
+func TestSweepMemories_BothStoresOK(t *testing.T) {
+	h := newTestHandler(t)
+	h.taskMem = newTestMemStore(t)
+	h.userMem = newTestMemStore(t)
+
+	w := httptest.NewRecorder()
+	h.SweepMemories(w, httptest.NewRequest(http.MethodPost, "/api/v1/memories/sweep", strings.NewReader(`{}`)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var got schema.SweepMemoriesResult
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Stores) != 2 {
+		t.Fatalf("stores = %+v, want 2 (task and user)", got.Stores)
+	}
+	if got.Errors != nil && len(*got.Errors) > 0 {
+		t.Fatalf("errors = %+v, want none", *got.Errors)
+	}
+	names := map[string]bool{}
+	for _, s := range got.Stores {
+		names[s.Store] = true
+	}
+	if !names["task"] || !names["user"] {
+		t.Fatalf("store names = %v, want task and user", names)
+	}
+}
+
+// TestSweepMemories_LaterStoreFails covers the review finding: the second
+// (user) store failing during its list phase must not discard the first
+// (task) store's already-applied report, and the response is still 200 with
+// the failure surfaced in errors. Fault injection via Store.SetListErrorForTest,
+// since the index interface is unexported outside internal/memory.
+func TestSweepMemories_LaterStoreFails(t *testing.T) {
+	h := newTestHandler(t)
+	h.taskMem = newTestMemStore(t)
+	h.userMem = newTestMemStore(t)
+	h.userMem.SetListErrorForTest(fmt.Errorf("list: boom"))
+
+	w := httptest.NewRecorder()
+	h.SweepMemories(w, httptest.NewRequest(http.MethodPost, "/api/v1/memories/sweep", strings.NewReader(`{}`)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var got schema.SweepMemoriesResult
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Stores) != 1 || got.Stores[0].Store != "task" {
+		t.Fatalf("stores = %+v, want exactly the task store's report", got.Stores)
+	}
+	if got.Errors == nil || len(*got.Errors) != 1 {
+		t.Fatalf("errors = %v, want exactly one entry", got.Errors)
+	}
+	e := (*got.Errors)[0]
+	if e.Store != "user" || !strings.Contains(e.Message, "boom") {
+		t.Fatalf("error = %+v, want store=user with the injected message", e)
+	}
+}
+
 // An id in neither configured store is a 404, not a silent success or a
 // crash from exhausting the store list.
 func TestDeleteMemory_UnknownID_404WithBothStoresConfigured(t *testing.T) {

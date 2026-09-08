@@ -186,6 +186,67 @@ export type MemoryList = {
     next_page_token?: string;
 };
 
+export type SweepMemoriesBody = {
+    /**
+     * Report what each rule would do without invalidating anything.
+     */
+    dry_run?: boolean;
+};
+
+export type SweepRuleResult = {
+    /**
+     * The rule's position in memory.forgetting.rules (or the built-in defaults), first match wins.
+     */
+    index: number;
+    /**
+     * The rule's expression, verbatim.
+     */
+    when: string;
+    then: 'invalidate' | 'keep';
+    /**
+     * How many memories this rule matched (and, when not a dry run, acted on).
+     */
+    matched: number;
+    /**
+     * Up to 5 example memories this rule matched, for sanity-checking a rule.
+     */
+    examples?: Array<{
+        id: string;
+        /**
+         * Truncated preview, not the full memory content.
+         */
+        content: string;
+    }>;
+};
+
+export type SweepStoreResult = {
+    /**
+     * Which configured memory store this result is for, e.g. "task" or "user".
+     */
+    store: string;
+    /**
+     * Currently-valid memories this store's sweep looked at.
+     */
+    evaluated: number;
+    /**
+     * Memories no rule matched (kept by default).
+     */
+    kept: number;
+    rules: Array<SweepRuleResult>;
+};
+
+export type SweepMemoriesResult = {
+    dry_run: boolean;
+    stores: Array<SweepStoreResult>;
+    /**
+     * Per-store errors for stores not yet in `stores`. A later store's failure never discards an earlier store's already-applied report; sweeping is idempotent, so retrying is always safe.
+     */
+    errors?: Array<{
+        store: string;
+        message: string;
+    }>;
+};
+
 export type RecordingSummary = {
     chat_id: string;
     size_bytes: number;
@@ -1337,3 +1398,28 @@ export type DeleteMemoryResponses = {
 };
 
 export type DeleteMemoryResponse = DeleteMemoryResponses[keyof DeleteMemoryResponses];
+
+export type SweepMemoriesData = {
+    body?: SweepMemoriesBody;
+    path?: never;
+    query?: never;
+    url: '/api/v1/memories/sweep';
+};
+
+export type SweepMemoriesErrors = {
+    /**
+     * The memory index is unreachable
+     */
+    500: ErrorResponse;
+};
+
+export type SweepMemoriesError = SweepMemoriesErrors[keyof SweepMemoriesErrors];
+
+export type SweepMemoriesResponses = {
+    /**
+     * Per-rule sweep results
+     */
+    200: SweepMemoriesResult;
+};
+
+export type SweepMemoriesResponse = SweepMemoriesResponses[keyof SweepMemoriesResponses];

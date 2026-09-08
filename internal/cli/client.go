@@ -182,6 +182,14 @@ func (c *Client) ForgetMemory(ctx context.Context, memoryID, reason string) erro
 	return c.sendBody(ctx, http.MethodDelete, "/api/v1/memories/"+memoryID, b)
 }
 
+// SweepMemories runs the forgetting-rule sweep (epic #1255 P3) on demand,
+// dryRun reporting without mutating anything.
+func (c *Client) SweepMemories(ctx context.Context, dryRun bool) (schema.SweepMemoriesResult, error) {
+	var out schema.SweepMemoriesResult
+	err := c.postJSON(ctx, "/api/v1/memories/sweep", schema.SweepMemoriesBody{DryRun: &dryRun}, &out)
+	return out, err
+}
+
 // GetChat returns a chat with its turns.
 func (c *Client) GetChat(ctx context.Context, id string) (schema.ChatDetail, error) {
 	var out schema.ChatDetail

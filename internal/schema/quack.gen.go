@@ -356,6 +356,24 @@ func (e ResponseStatus) Valid() bool {
 	}
 }
 
+// Defines values for SweepRuleResultThen.
+const (
+	Invalidate SweepRuleResultThen = "invalidate"
+	Keep       SweepRuleResultThen = "keep"
+)
+
+// Valid indicates whether the value is a known member of the SweepRuleResultThen enum.
+func (e SweepRuleResultThen) Valid() bool {
+	switch e {
+	case Invalidate:
+		return true
+	case Keep:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TurnInputRole.
 const (
 	TurnInputRoleUser TurnInputRole = "user"
@@ -899,6 +917,60 @@ type SendMessageBody struct {
 	Content string `json:"content"`
 }
 
+// SweepMemoriesBody defines model for SweepMemoriesBody.
+type SweepMemoriesBody struct {
+	// DryRun Report what each rule would do without invalidating anything.
+	DryRun *bool `json:"dry_run,omitempty"`
+}
+
+// SweepMemoriesResult defines model for SweepMemoriesResult.
+type SweepMemoriesResult struct {
+	DryRun bool `json:"dry_run"`
+
+	// Errors Per-store errors for stores not yet in `stores`. A later store's failure never discards an earlier store's already-applied report; sweeping is idempotent, so retrying is always safe.
+	Errors *[]struct {
+		Message string `json:"message"`
+		Store   string `json:"store"`
+	} `json:"errors,omitempty"`
+	Stores []SweepStoreResult `json:"stores"`
+}
+
+// SweepRuleResult defines model for SweepRuleResult.
+type SweepRuleResult struct {
+	// Examples Up to 5 example memories this rule matched, for sanity-checking a rule.
+	Examples *[]struct {
+		// Content Truncated preview, not the full memory content.
+		Content string `json:"content"`
+		Id      string `json:"id"`
+	} `json:"examples,omitempty"`
+
+	// Index The rule's position in memory.forgetting.rules (or the built-in defaults), first match wins.
+	Index int `json:"index"`
+
+	// Matched How many memories this rule matched (and, when not a dry run, acted on).
+	Matched int                 `json:"matched"`
+	Then    SweepRuleResultThen `json:"then"`
+
+	// When The rule's expression, verbatim.
+	When string `json:"when"`
+}
+
+// SweepRuleResultThen defines model for SweepRuleResult.Then.
+type SweepRuleResultThen string
+
+// SweepStoreResult defines model for SweepStoreResult.
+type SweepStoreResult struct {
+	// Evaluated Currently-valid memories this store's sweep looked at.
+	Evaluated int `json:"evaluated"`
+
+	// Kept Memories no rule matched (kept by default).
+	Kept  int               `json:"kept"`
+	Rules []SweepRuleResult `json:"rules"`
+
+	// Store Which configured memory store this result is for, e.g. "task" or "user".
+	Store string `json:"store"`
+}
+
 // ToolCallItem defines model for ToolCallItem.
 type ToolCallItem struct {
 	Args   *map[string]interface{} `json:"args,omitempty"`
@@ -1075,6 +1147,9 @@ type SendChatMessageJSONRequestBody = SendMessageBody
 
 // UpdateResponseStatusJSONRequestBody defines body for UpdateResponseStatus for application/json ContentType.
 type UpdateResponseStatusJSONRequestBody = ResponseStatusUpdateBody
+
+// SweepMemoriesJSONRequestBody defines body for SweepMemories for application/json ContentType.
+type SweepMemoriesJSONRequestBody = SweepMemoriesBody
 
 // DeleteMemoryJSONRequestBody defines body for DeleteMemory for application/json ContentType.
 type DeleteMemoryJSONRequestBody = DeleteMemoryBody
@@ -1361,6 +1436,9 @@ type ServerInterface interface {
 	// Browse or search quack's semantic memory
 	// (GET /api/v1/memories)
 	ListMemories(w http.ResponseWriter, r *http.Request, params ListMemoriesParams)
+	// Run the forgetting-rule sweep on demand
+	// (POST /api/v1/memories/sweep)
+	SweepMemories(w http.ResponseWriter, r *http.Request)
 	// Invalidate one memory
 	// (DELETE /api/v1/memories/{memory_id})
 	DeleteMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryID)
@@ -1517,6 +1595,12 @@ func (_ Unimplemented) ListExtensions(w http.ResponseWriter, r *http.Request) {
 // Browse or search quack's semantic memory
 // (GET /api/v1/memories)
 func (_ Unimplemented) ListMemories(w http.ResponseWriter, r *http.Request, params ListMemoriesParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Run the forgetting-rule sweep on demand
+// (POST /api/v1/memories/sweep)
+func (_ Unimplemented) SweepMemories(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2624,6 +2708,28 @@ func (siw *ServerInterfaceWrapper) ListMemories(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// SweepMemories operation middleware
+func (siw *ServerInterfaceWrapper) SweepMemories(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SweepMemories(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteMemory operation middleware
 func (siw *ServerInterfaceWrapper) DeleteMemory(w http.ResponseWriter, r *http.Request) {
 
@@ -2878,6 +2984,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/memories", wrapper.ListMemories)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/memories/sweep", wrapper.SweepMemories)
 	})
 	r.Group(func(r chi.Router) {
 		r.Delete(options.BaseURL+"/api/v1/memories/{memory_id}", wrapper.DeleteMemory)

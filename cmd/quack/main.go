@@ -347,7 +347,7 @@ func asJSONFlag(c *cobra.Command, dst *bool) {
 // a real verb).
 func newMemoryCmd() *cobra.Command {
 	c := &cobra.Command{Use: "memory", Short: "Browse and invalidate remembered facts"}
-	c.AddCommand(newMemoryListCmd(), newMemoryShowCmd(), newMemoryForgetCmd())
+	c.AddCommand(newMemoryListCmd(), newMemoryShowCmd(), newMemoryForgetCmd(), newMemorySweepCmd())
 	return c
 }
 
@@ -404,6 +404,26 @@ func newMemoryForgetCmd() *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&reason, "reason", "", "why this memory is being invalidated (default: \"manual delete\")")
+	return c
+}
+
+// newMemorySweepCmd: `memory sweep [--dry-run]` runs the forgetting-rule
+// sweep (epic #1255 P3) on demand - the same code path the nightly
+// consolidation job calls.
+func newMemorySweepCmd() *cobra.Command {
+	var asJSON, dryRun bool
+	c := &cobra.Command{
+		Use:   "sweep",
+		Short: "Run the forgetting-rule sweep on demand",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunMemorySweep(cmd.Context(), cmd.OutOrStdout(), t, dryRun, asJSON)
+			})
+		},
+	}
+	asJSONFlag(c, &asJSON)
+	c.Flags().BoolVar(&dryRun, "dry-run", false, "report what each rule would do without invalidating anything")
 	return c
 }
 

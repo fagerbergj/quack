@@ -137,6 +137,51 @@ func RunMemoryForget(ctx context.Context, out io.Writer, server, id, reason stri
 	return nil
 }
 
+// RunMemorySweep is `quack memory sweep [--dry-run]`: runs the forgetting-rule
+// sweep on demand against every store the server has configured, printing
+// per-rule counts (and, dry-run, up to 5 example memories per rule).
+func RunMemorySweep(ctx context.Context, out io.Writer, server string, dryRun, asJSON bool) error {
+	c, err := NewClient(ctx, server)
+	if err != nil {
+		return err
+	}
+	res, err := c.SweepMemories(ctx, dryRun)
+	if err != nil {
+		return err
+	}
+	if asJSON {
+		return writeJSON(out, res)
+	}
+	hasErrors := res.Errors != nil && len(*res.Errors) > 0
+	if len(res.Stores) == 0 && !hasErrors {
+		fmt.Fprintln(out, "No memory stores configured.")
+		return nil
+	}
+	for _, s := range res.Stores {
+		fmt.Fprintf(out, "store %s: evaluated %d, kept %d\n", s.Store, s.Evaluated, s.Kept)
+		for _, r := range s.Rules {
+			fmt.Fprintf(out, "  rule %d [%s -> %s]: matched %d\n", r.Index, r.When, r.Then, r.Matched)
+			if r.Examples != nil {
+				for _, e := range *r.Examples {
+					fmt.Fprintf(out, "    - %s: %s\n", e.Id, truncateLine(e.Content, 80))
+				}
+			}
+		}
+	}
+	if hasErrors {
+		for _, e := range *res.Errors {
+			fmt.Fprintf(out, "store %s failed: %s\n", e.Store, e.Message)
+		}
+	}
+	if res.DryRun {
+		fmt.Fprintln(out, "(dry run: nothing was invalidated)")
+	}
+	if hasErrors {
+		return fmt.Errorf("%d memory store(s) failed to sweep", len(*res.Errors))
+	}
+	return nil
+}
+
 // truncateLine collapses newlines to spaces and clips to n runes (with a "…"
 // marker) - memory content is free text and can run to paragraphs, which
 // would wreck the table's row-per-memory layout.

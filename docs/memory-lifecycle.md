@@ -170,6 +170,69 @@ touches nothing.
 recalled/last upvoted. `Memory`/`MemoryList` (openapi.yaml) expose the new
 fields; no frontend rendering change (P4).
 
+## 8c. Epic #1255 P3: criteria builder, age-out, retention
+
+`stores.<name>.consolidation.forgetting.rules` is an ordered list of
+`{when: <expr>, then: invalidate | keep}`, evaluated by `Store.forgetOnce`
+in the existing nightly sweep, right before `retentionOnce`. First match
+wins; no match keeps the memory. `when` is a tiny hand-written expression
+language (`internal/memory/forgetting.go`, `Evaluate`) - no external
+dependency, no reflection:
+
+- fields: `upvotes`, `downvotes`, `score` (`vote_score`), `recalls` (all
+  int), `age_days`, `days_since_upvote`, `days_since_recall` (int, days
+  since `minted_at`/`last_upvoted_at`/`last_recalled_at`; a memory never
+  upvoted/recalled reads `days_since_upvote`/`days_since_recall` as
+  `age_days` - "never" is not zero), `tier` / `scope` (string).
+- operators: `== != < <= > >=`, `&&`, `||`, `!`, `(...)`, integer and
+  double-quoted string literals. `<`/`<=`/`>`/`>=` require both sides
+  numeric; `==`/`!=` also compare strings. Precedence, low to high: `||`,
+  `&&`, unary `!`, comparison. `scope` is compared with plain string
+  equality (`scope == "repo:foo"` is how a caller expresses a prefix-shaped
+  match - there is no dedicated prefix operator).
+
+Default (unset `forgetting` key), in order:
+
+```
+tier == "unverified" && days_since_upvote > 90 -> invalidate
+score <= -2                                    -> invalidate
+tier == "verified"                             -> keep
+```
+
+**Validation.** `config.Validate()` fully parses and validates each rule's
+expression via `internal/memoryrules` (a leaf package with no quack
+imports, so `internal/config` can use it directly) - a bad rule fails
+`quack server validate`/config load with the rule index and the bad
+token's position, before the server ever starts.
+
+**Sweep.** `Store.ForgetSweep(ctx, dryRun)` is the one code path both the
+nightly job and `quack memory sweep [--dry-run]` (`POST
+/api/v1/memories/sweep`) call. It pages every currently-valid memory
+(`forEachSweepPage`, same pagination the consolidator already uses),
+evaluates the rules in order, and for a `then: invalidate` match calls the
+same sticky `idx.invalidateByID` every other invalidation path uses, with
+reason `"rule <index>: <expr>"` and `memory_ops` actor `sweep` (a new actor,
+distinct from `consolidator` and `outcome-feedback`). `dryRun` skips the
+write and returns a report per rule (matched count + up to 5 example
+id/content pairs) plus a `kept` count for no-match - never lists more than
+that per rule.
+
+**Concurrency.** A memory's votes can change between `ForgetSweep`'s read
+and its invalidate write; accepted as eventual consistency (last write
+wins), same as every other `invalidateByID` caller - no new locking.
+
+**Idempotent, safe to retry.** A sweep only ever invalidates memories that
+still match a rule, so re-running it (all stores or just a failed one)
+never double-applies anything. If one store's sweep fails after an earlier
+store's already succeeded, `POST /api/v1/memories/sweep` still returns 200
+with the earlier store's report in `stores` and the failure in `errors` -
+retry is just calling sweep again.
+
+**Retention unchanged.** `retentionOnce`'s hard-delete logic is untouched;
+`sweepOnce` now runs consolidate -> forget -> retention in that order, so a
+memory this tick's forgetting step invalidates becomes retention-eligible
+on a later tick once its `invalidated_at` ages past `retention_days`.
+
 ## 9. Future work
 
 - **AttriMem-style attribution** (arXiv 2607.21106): which specific recalled memory actually influenced a given output, so reinforcement and invalidation can target real contribution instead of mere co-occurrence in the prompt.

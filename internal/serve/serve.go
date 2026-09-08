@@ -602,6 +602,9 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		if err != nil {
 			return nil, nil, "", fmt.Errorf("task memory init failed: %w", err)
 		}
+		if err := wireForgettingRules(s, rm); err != nil {
+			return nil, nil, "", fmt.Errorf("task memory forgetting rules: %w", err)
+		}
 		taskStore = s
 		slog.Info("semantic memory enabled", "component", "startup", "collection", rm.Collection,
 			"embedder", rm.Embedder.Model, "consolidation", rm.Consolidation.Model)
@@ -612,6 +615,9 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 			s, err := openMemory(rm, "user")
 			if err != nil {
 				return nil, nil, "", fmt.Errorf("user memory init failed: %w", err)
+			}
+			if err := wireForgettingRules(s, rm); err != nil {
+				return nil, nil, "", fmt.Errorf("user memory forgetting rules: %w", err)
 			}
 			userStore = s
 			slog.Info("user memory enabled", "component", "startup", "collection", rm.Collection)

@@ -30,6 +30,9 @@ const (
 	ActorHuman           OpsLogActor = "human"
 	ActorRun             OpsLogActor = "run"
 	ActorJudge           OpsLogActor = "judge"
+	// ActorSweep: the forgetting-rule sweep (epic #1255 P3), distinct from
+	// ActorConsolidator (which merges duplicates, not ages memories out).
+	ActorSweep OpsLogActor = "sweep"
 )
 
 // OpsLog persists an append-only audit trail of memory lifecycle transitions
