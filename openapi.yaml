@@ -1397,6 +1397,20 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SweepStoreResult"
+        errors:
+          type: array
+          description: >-
+            Per-store errors for stores not yet in `stores`. A later store's
+            failure never discards an earlier store's already-applied report;
+            sweeping is idempotent, so retrying is always safe.
+          items:
+            type: object
+            required: [store, message]
+            properties:
+              store:
+                type: string
+              message:
+                type: string
 
     # -------------------------------------------------------------------------
     # Replay ledger

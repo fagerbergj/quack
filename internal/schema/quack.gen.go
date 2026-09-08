@@ -925,7 +925,13 @@ type SweepMemoriesBody struct {
 
 // SweepMemoriesResult defines model for SweepMemoriesResult.
 type SweepMemoriesResult struct {
-	DryRun bool               `json:"dry_run"`
+	DryRun bool `json:"dry_run"`
+
+	// Errors Per-store errors for stores not yet in `stores`. A later store's failure never discards an earlier store's already-applied report; sweeping is idempotent, so retrying is always safe.
+	Errors *[]struct {
+		Message string `json:"message"`
+		Store   string `json:"store"`
+	} `json:"errors,omitempty"`
 	Stores []SweepStoreResult `json:"stores"`
 }
 

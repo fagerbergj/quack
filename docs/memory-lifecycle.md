@@ -199,13 +199,11 @@ score <= -2                                    -> invalidate
 tier == "verified"                             -> keep
 ```
 
-**Validation.** `config.Validate()` checks each rule's `then` is
-`invalidate`/`keep` and `when` is non-empty; full expression syntax can't be
-checked there (`internal/config` can't import `internal/memory` - the
-reverse edge already exists via `internal/inference`), so it's checked at
-server startup instead (`Store.SetForgettingRules`, called right after
-`openMemory`) - a bad rule fails boot with the rule index and the bad
-token's position, not a silently-skipped nightly sweep.
+**Validation.** `config.Validate()` fully parses and validates each rule's
+expression via `internal/memoryrules` (a leaf package with no quack
+imports, so `internal/config` can use it directly) - a bad rule fails
+`quack server validate`/config load with the rule index and the bad
+token's position, before the server ever starts.
 
 **Sweep.** `Store.ForgetSweep(ctx, dryRun)` is the one code path both the
 nightly job and `quack memory sweep [--dry-run]` (`POST
@@ -222,6 +220,13 @@ that per rule.
 **Concurrency.** A memory's votes can change between `ForgetSweep`'s read
 and its invalidate write; accepted as eventual consistency (last write
 wins), same as every other `invalidateByID` caller - no new locking.
+
+**Idempotent, safe to retry.** A sweep only ever invalidates memories that
+still match a rule, so re-running it (all stores or just a failed one)
+never double-applies anything. If one store's sweep fails after an earlier
+store's already succeeded, `POST /api/v1/memories/sweep` still returns 200
+with the earlier store's report in `stores` and the failure in `errors` -
+retry is just calling sweep again.
 
 **Retention unchanged.** `retentionOnce`'s hard-delete logic is untouched;
 `sweepOnce` now runs consolidate -> forget -> retention in that order, so a

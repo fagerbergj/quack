@@ -238,6 +238,13 @@ export type SweepStoreResult = {
 export type SweepMemoriesResult = {
     dry_run: boolean;
     stores: Array<SweepStoreResult>;
+    /**
+     * Per-store errors for stores not yet in `stores`. A later store's failure never discards an earlier store's already-applied report; sweeping is idempotent, so retrying is always safe.
+     */
+    errors?: Array<{
+        store: string;
+        message: string;
+    }>;
 };
 
 export type RecordingSummary = {

@@ -193,14 +193,26 @@ func (h *Handler) SweepMemories(w http.ResponseWriter, r *http.Request) {
 		stores = append(stores, named{"user", h.userMem})
 	}
 
+	// A later store's failure must not discard an earlier store's already-applied
+	// report - sweep is idempotent, so callers can retry the failing store alone.
 	out := schema.SweepMemoriesResult{DryRun: dryRun, Stores: []schema.SweepStoreResult{}}
+	var sweepErrs []struct {
+		Message string `json:"message"`
+		Store   string `json:"store"`
+	}
 	for _, s := range stores {
 		report, err := s.st.ForgetSweep(r.Context(), dryRun)
 		if err != nil {
-			httpError(w, http.StatusInternalServerError, err)
-			return
+			sweepErrs = append(sweepErrs, struct {
+				Message string `json:"message"`
+				Store   string `json:"store"`
+			}{Message: err.Error(), Store: s.name})
+			continue
 		}
 		out.Stores = append(out.Stores, sweepReportWire(s.name, report))
+	}
+	if len(sweepErrs) > 0 {
+		out.Errors = &sweepErrs
 	}
 	writeJSON(w, http.StatusOK, out)
 }
