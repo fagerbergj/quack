@@ -27,6 +27,9 @@ const sweepPageSize = 500
 // forEachSweepPage walks every point across all buckets in pages of
 // sweepPageSize, calling fn once per page until the backend is exhausted.
 func (s *Store) forEachSweepPage(ctx context.Context, includeInvalidated bool, fn func([]scored)) error {
+	if s.listErrForTest != nil {
+		return s.listErrForTest
+	}
 	for offset := 0; ; offset += sweepPageSize {
 		page, err := s.idx.list(ctx, nil, offset, sweepPageSize, includeInvalidated)
 		if err != nil {

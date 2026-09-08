@@ -167,8 +167,16 @@ func RunMemorySweep(ctx context.Context, out io.Writer, server string, dryRun, a
 			}
 		}
 	}
+	if res.Errors != nil {
+		for _, e := range *res.Errors {
+			fmt.Fprintf(out, "store %s failed: %s\n", e.Store, e.Message)
+		}
+	}
 	if res.DryRun {
 		fmt.Fprintln(out, "(dry run: nothing was invalidated)")
+	}
+	if res.Errors != nil && len(*res.Errors) > 0 {
+		return fmt.Errorf("%d memory store(s) failed to sweep", len(*res.Errors))
 	}
 	return nil
 }

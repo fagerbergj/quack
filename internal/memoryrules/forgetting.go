@@ -68,6 +68,9 @@ func ValidateRules(rules []Rule) error {
 // literal, parenthesized expr). Comparison operators other than == and !=
 // require both sides numeric; == and != also work on strings.
 func Evaluate(expr string, f Fields) (bool, error) {
+	if strings.TrimSpace(expr) == "" {
+		return false, fmt.Errorf("when must not be empty")
+	}
 	toks, err := tokenize(expr)
 	if err != nil {
 		return false, err

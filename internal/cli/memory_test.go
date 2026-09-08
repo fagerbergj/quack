@@ -214,6 +214,78 @@ func TestRunMemoryShowNotFound(t *testing.T) {
 	}
 }
 
+// TestRunMemorySweepPartialFailure covers the CLI regression fixed alongside
+// the partial-failure REST change: a non-empty res.Errors must show up in
+// human output and make the command fail, not silently exit 0.
+func TestRunMemorySweepPartialFailure(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"dry_run":false,"stores":[{"store":"task","evaluated":2,"kept":1,"rules":[]}],
+			"errors":[{"store":"user","message":"list: boom"}]}`)
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	err := RunMemorySweep(context.Background(), &out, srv.URL, false, false)
+	if err == nil {
+		t.Fatalf("RunMemorySweep err = nil, want a non-nil error signalling the partial failure")
+	}
+	s := out.String()
+	for _, want := range []string{"store task: evaluated 2, kept 1", "store user failed: list: boom"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("sweep output missing %q:\n%s", want, s)
+		}
+	}
+}
+
+// TestRunMemorySweepPartialFailureJSON: --as-json must still print the full
+// response (including errors) and, unlike the human path, RunMemorySweep
+// itself doesn't error on the JSON path since the response was decoded fine.
+func TestRunMemorySweepPartialFailureJSON(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"dry_run":false,"stores":[],"errors":[{"store":"user","message":"list: boom"}]}`)
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	if err := RunMemorySweep(context.Background(), &out, srv.URL, false, true); err != nil {
+		t.Fatalf("RunMemorySweep --as-json: %v", err)
+	}
+	var decoded struct {
+		Errors []struct {
+			Store   string
+			Message string
+		}
+	}
+	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
+		t.Fatalf("output not valid JSON: %v\n%s", err, out.String())
+	}
+	if len(decoded.Errors) != 1 || decoded.Errors[0].Store != "user" || decoded.Errors[0].Message != "list: boom" {
+		t.Errorf("decoded errors = %+v, want one user/list: boom entry", decoded.Errors)
+	}
+}
+
+// TestRunMemorySweepAllOK: no errors, no store-failure lines, exit clean.
+func TestRunMemorySweepAllOK(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"dry_run":false,"stores":[{"store":"task","evaluated":1,"kept":1,"rules":[]}]}`)
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	if err := RunMemorySweep(context.Background(), &out, srv.URL, false, false); err != nil {
+		t.Fatalf("RunMemorySweep: %v", err)
+	}
+	if strings.Contains(out.String(), "failed") {
+		t.Errorf("output = %q, want no failure line", out.String())
+	}
+}
+
 func TestTruncateLine(t *testing.T) {
 	if got := truncateLine("short", 80); got != "short" {
 		t.Errorf("truncateLine short = %q", got)

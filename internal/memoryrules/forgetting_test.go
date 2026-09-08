@@ -61,7 +61,8 @@ func TestEvaluateErrors(t *testing.T) {
 		{"type mismatch numeric op on string", `tier < "x"`, "requires numeric"},
 		{"type mismatch eq", `tier == 1`, "same type"},
 		{"non-bool result", "score", "does not evaluate to a boolean"},
-		{"empty expr", "", "unexpected token"},
+		{"empty expr", "", "when must not be empty"},
+		{"blank expr", "   ", "when must not be empty"},
 	}
 	for _, c := range cases {
 		c := c

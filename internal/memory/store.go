@@ -134,18 +134,25 @@ const (
 
 // Store serves one memory collection over a vector index, shared by every agent.
 type Store struct {
-	idx          index
-	embedder     inference.Embedder
-	consolidator model.LLM
-	coll         string
-	domain       string // selects the consolidation prompt ("task" | "user")
-	topK         int
-	minScore     float32 // recall hits below this cosine are dropped (0 = none)
-	log          *slog.Logger
-	embCache     *embedCache
-	opsLog       OpsLog // audit trail sink; nil unless the caller wires one (see SetOpsLog)
-	forgetRules  []Rule // epic #1255 P3; nil means DefaultRules() (see SetForgettingRules)
+	idx            index
+	embedder       inference.Embedder
+	consolidator   model.LLM
+	coll           string
+	domain         string // selects the consolidation prompt ("task" | "user")
+	topK           int
+	minScore       float32 // recall hits below this cosine are dropped (0 = none)
+	log            *slog.Logger
+	embCache       *embedCache
+	opsLog         OpsLog // audit trail sink; nil unless the caller wires one (see SetOpsLog)
+	forgetRules    []Rule // epic #1255 P3; nil means DefaultRules() (see SetForgettingRules)
+	listErrForTest error  // test-only fault injection, see SetListErrorForTest
 }
+
+// SetListErrorForTest forces the next forEachSweepPage (and so ForgetSweep)
+// call on this store to fail with err, without touching the real index -
+// used by REST/CLI tests one layer up that can't reach the unexported index
+// interface to simulate a later store's list-phase failure.
+func (s *Store) SetListErrorForTest(err error) { s.listErrForTest = err }
 
 // SetOpsLog wires the memory_ops audit sink. internal/memory can't import
 // internal/store (dependency direction runs the other way) - the server
