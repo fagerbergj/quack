@@ -70,7 +70,7 @@ func (m maxTokensRecordingPlanJudge) GenerateContent(_ context.Context, req *mod
 func TestPlanJudge_RequestCarriesConfiguredMaxOutputTokens(t *testing.T) {
 	got := int32(-1)
 	judge := NewPlanJudge(maxTokensRecordingPlanJudge{got: &got}, 1024, "", nil, nil)
-	if _, _, err := judge(context.Background(), "write a plan", "1 node(s):\n- explore (web-researcher)"); err != nil {
+	if _, _, err := judge(context.Background(), "write a plan", "1 node(s):\n- explore (web-researcher)", ""); err != nil {
 		t.Fatalf("PlanJudge: %v", err)
 	}
 	if got != 1024 {
@@ -113,7 +113,7 @@ func (m *loopingPlanJudgeModel) GenerateContent(_ context.Context, _ *model.LLMR
 func TestPlanJudge_RunawayRepeatRoutesToNoVerdict(t *testing.T) {
 	m := &loopingPlanJudgeModel{}
 	judge := NewPlanJudge(m, 0, "", nil, nil)
-	_, _, err := judge(context.Background(), "write a plan", "1 node(s):\n- explore (web-researcher)")
+	_, _, err := judge(context.Background(), "write a plan", "1 node(s):\n- explore (web-researcher)", "")
 	if err == nil {
 		t.Fatal("PlanJudge: expected an error - the model never calls submit_plan_verdict")
 	}
@@ -159,7 +159,7 @@ func TestNewPlanJudge_ProjectMemorySection_LoggedNotVoted(t *testing.T) {
 	judge := NewPlanJudge(planPromptCapturingModel{capture: &prompt}, 0, "", store, lgr)
 
 	runCtx := ledger.WithCoords(ctx, ledger.Coords{ChatID: "chat-plan", User: "u1"})
-	accept, _, err := judge(runCtx, "write a plan", "1 node(s):\n- explore (web-researcher)")
+	accept, _, err := judge(runCtx, "write a plan", "1 node(s):\n- explore (web-researcher)", "")
 	if err != nil {
 		t.Fatalf("PlanJudge: %v", err)
 	}
@@ -198,9 +198,39 @@ func TestNewPlanJudge_ProjectMemorySection_LoggedNotVoted(t *testing.T) {
 	}
 }
 
+// TestNewPlanJudge_RepoScopeRecall_NotUserOnly proves the fix for a
+// GitHub-dispatched chat: the plan is known to belong to a repo before it's
+// judged (the plan declares setup), so the judge's recall must query the
+// repo bucket - a memory seeded with no user attribution, only a repo key,
+// must still surface, which a user-only scope would miss entirely.
+func TestNewPlanJudge_RepoScopeRecall_NotUserOnly(t *testing.T) {
+	ctx := context.Background()
+	store := newMemoryStoreForVoteTest(t)
+	const repoKey = "github.com/acme/widgets"
+	if _, err := store.Commit(ctx, memory.Scope{Repo: repoKey}, "seed", memory.Provenance{},
+		[]memory.Candidate{{Content: "this repo requires conventional commits"}}, ""); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	var prompt string
+	judge := NewPlanJudge(planPromptCapturingModel{capture: &prompt}, 0, "", store, ledgertest.NewMemStore())
+
+	runCtx := ledger.WithCoords(ctx, ledger.Coords{ChatID: "chat-repo"})
+	accept, _, err := judge(runCtx, "review the PR", "1 node(s):\n- review (code-reviewer)", repoKey)
+	if err != nil {
+		t.Fatalf("PlanJudge: %v", err)
+	}
+	if !accept {
+		t.Fatal("want accept")
+	}
+	if !strings.Contains(prompt, "conventional commits") {
+		t.Fatalf("prompt missing the repo-scoped memory - recall fell back to user-only scope: %q", prompt)
+	}
+}
+
 func TestPlanJudgeAccepts(t *testing.T) {
 	judge := NewPlanJudge(stubPlanJudgeModel{accept: true, reason: ""}, 0, "", nil, nil)
-	accept, reason, err := judge(context.Background(), "write a plan", "1 node(s):\n- explore (web-researcher)")
+	accept, reason, err := judge(context.Background(), "write a plan", "1 node(s):\n- explore (web-researcher)", "")
 	if err != nil {
 		t.Fatalf("PlanJudge: %v", err)
 	}
@@ -211,7 +241,7 @@ func TestPlanJudgeAccepts(t *testing.T) {
 
 func TestPlanJudgeRejectsWithReason(t *testing.T) {
 	judge := NewPlanJudge(stubPlanJudgeModel{accept: false, reason: "add a code-implementer node"}, 0, "", nil, nil)
-	accept, reason, err := judge(context.Background(), "implement and ship it", "1 node(s):\n- explore (web-researcher)")
+	accept, reason, err := judge(context.Background(), "implement and ship it", "1 node(s):\n- explore (web-researcher)", "")
 	if err != nil {
 		t.Fatalf("PlanJudge: %v", err)
 	}
@@ -225,7 +255,7 @@ func TestPlanJudgeRejectsWithReason(t *testing.T) {
 
 func TestPlanJudgeErrorsWithoutVerdict(t *testing.T) {
 	judge := NewPlanJudge(noVerdictModel{}, 0, "", nil, nil)
-	if _, _, err := judge(context.Background(), "x", "y"); err == nil {
+	if _, _, err := judge(context.Background(), "x", "y", ""); err == nil {
 		t.Fatal("PlanJudge: expected an error when the model never calls submit_plan_verdict")
 	}
 }
@@ -246,7 +276,7 @@ func TestPlanJudge_ChatEventCarriesCallerCoords(t *testing.T) {
 
 	const chatID = "planner-chat"
 	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: chatID})
-	if _, _, err := judge(ctx, "write a plan", "1 node(s):\n- explore (web-researcher)"); err != nil {
+	if _, _, err := judge(ctx, "write a plan", "1 node(s):\n- explore (web-researcher)", ""); err != nil {
 		t.Fatalf("PlanJudge: %v", err)
 	}
 
@@ -286,7 +316,7 @@ func TestPlanJudgeAcceptsCohesiveSingleNodePlan(t *testing.T) {
 		"- implement (code-implementer): add a 👀 reaction to the API, implement the logic, write tests, and run checks\n" +
 		"setup: repo=github.com/example/app work_branch=feat/eyes-reaction\n" +
 		"delivery: kind=pull_request"
-	accept, reason, err := judge(context.Background(), "add a 👀-reaction feature", planSummary)
+	accept, reason, err := judge(context.Background(), "add a 👀-reaction feature", planSummary, "")
 	if err != nil {
 		t.Fatalf("PlanJudge: %v", err)
 	}
@@ -381,7 +411,7 @@ func TestPlanJudgeRejectsExplorationTerminalForPlanRequest(t *testing.T) {
 		"delivery: kind=comment"
 	accept, gotReason, err := judge(context.Background(),
 		"Produce an implementation plan for issue #63: lay out a concrete plan - the approach, the files to change, and how to verify it.",
-		planSummary)
+		planSummary, "")
 	if err != nil {
 		t.Fatalf("PlanJudge: %v", err)
 	}
@@ -403,7 +433,7 @@ func TestPlanJudgeRejectsExplorationTerminalForImplementRequest(t *testing.T) {
 		"- explore (code-explorer): Explore the repository and report where the dark-mode toggle should be added\n"
 	accept, gotReason, err := judge(context.Background(),
 		"Add a dark-mode toggle to the settings screen and open a pull request.",
-		planSummary)
+		planSummary, "")
 	if err != nil {
 		t.Fatalf("PlanJudge: %v", err)
 	}

@@ -39,6 +39,7 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/vetting"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 const AppName = "quack"
@@ -613,9 +614,12 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			memSvc = o.userMem.View(memory.Scope{User: userID, Legacy: userID}, nil)
 		}
 		if o.taskMem != nil {
-			// ponytail: user-only scope - repo/role need a resolved workspace,
-			// which doesn't exist before a plan runs; widen once one does.
+			// ponytail: repo scope from the dispatch's known origin when
+			// present; user-only ceiling remains for chats with no origin.
 			recallSc := memory.Scope{User: userID, Legacy: userID}
+			if githubSetup != nil {
+				recallSc.Repo = workspace.NormalizeRepoURL(githubSetup.Repo)
+			}
 			recallTool, err := tools.NewRecallMemoryTool(o.taskMem, recallSc, o.ledgerStore, sessionID)
 			if err != nil {
 				yield(stream.Errorf("orchestrator: recall_memory tool: "+err.Error()), nil)

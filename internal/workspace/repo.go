@@ -97,15 +97,18 @@ func RepoIdentity(dir string) string {
 		}
 		if url, ok := strings.CutPrefix(line, "url"); ok {
 			if _, v, found := strings.Cut(url, "="); found {
-				return normalizeRepoURL(strings.TrimSpace(v))
+				return NormalizeRepoURL(strings.TrimSpace(v))
 			}
 		}
 	}
 	return ""
 }
 
-// Collapses git@/https:///ssh:// forms to one key: "github.com/owner/repo".
-func normalizeRepoURL(raw string) string {
+// NormalizeRepoURL collapses git@/https:///ssh:// forms to one key:
+// "github.com/owner/repo". Exported so callers with a raw clone URL (e.g. a
+// dispatch's dag.Setup.Repo) but no cloned worktree can derive the same
+// memory.Scope.Repo key RepoIdentity computes from an actual clone's origin.
+func NormalizeRepoURL(raw string) string {
 	u := strings.TrimSpace(raw)
 	if u == "" {
 		return ""

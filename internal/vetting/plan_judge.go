@@ -20,8 +20,10 @@ import (
 	"github.com/fagerbergj/quack/internal/memory"
 )
 
-// PlanJudge: decides whether a proposed DAG plan is a well-formed answer to the user's request.
-type PlanJudge func(ctx context.Context, request, planSummary string) (accept bool, reason string, err error)
+// PlanJudge: decides whether a proposed DAG plan is a well-formed answer to
+// the user's request. repoKey is the plan's normalized repo identity (e.g.
+// "github.com/owner/repo") when the plan declares setup, "" otherwise.
+type PlanJudge func(ctx context.Context, request, planSummary, repoKey string) (accept bool, reason string, err error)
 
 // submitPlanVerdictTool: structured-termination tool for plan judge, mirrors submit_verdict.
 const submitPlanVerdictTool = "submit_plan_verdict"
@@ -54,13 +56,13 @@ Call submit_plan_verdict exactly once with accept (bool) and reason (if rejectin
 // thinkingLevel is gates.judge.thinking_level ("", "low", "medium", "high"); "" sends no ThinkingConfig.
 // mem/led are optional (epic #1255 P2): nil skips the project-memory section entirely.
 func NewPlanJudge(judgeModel model.LLM, maxOutputTokens int, thinkingLevel string, mem *memory.Store, led ledger.LedgerStore) PlanJudge {
-	return func(ctx context.Context, request, planSummary string) (bool, string, error) {
+	return func(ctx context.Context, request, planSummary, repoKey string) (bool, string, error) {
 		var memSection string
 		if mem != nil {
 			coords := ledger.CoordsFromContext(ctx)
-			// ponytail: user-only scope - repo/role need a resolved workspace,
-			// which doesn't exist before a plan is accepted; widen once one does.
-			hits, _ := mem.RecallForTool(ctx, memory.Scope{User: coords.User}, request, 0)
+			// ponytail: repo scope only when the plan declares setup (repoKey
+			// non-empty); user-only ceiling remains for chats with no origin.
+			hits, _ := mem.RecallForTool(ctx, memory.Scope{User: coords.User, Repo: repoKey}, request, 0)
 			if len(hits) > 0 {
 				memSection = planMemorySection(hits)
 				mem.LogRecall(ctx, led, coords.ChatID, "", "plan_judge", hits)
