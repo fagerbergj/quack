@@ -13,6 +13,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/httpx"
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/replay"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -38,6 +39,9 @@ type Deps struct {
 	ExtTools        map[string]tool.Tool
 	Replayer        *replay.Session
 	LedgerCoords    ledger.Coords
+	Memory          *memory.Store      // recall_memory (nil = not offered - see resolveToolNames)
+	MemoryRole      string             // recall_memory's role bucket; empty falls back to repo then user
+	Ledger          ledger.LedgerStore // recall_memory's memory.recall ledger entries
 }
 
 // constructor builds one tool from Deps.
@@ -49,6 +53,7 @@ var registry = map[string]constructor{
 	"summarize":     newSummarize,
 	"current_date":  newCurrentDate,
 	"stage_memory":  newStageMemory,
+	"recall_memory": newRecallMemory,
 	"ask_user":      func(Deps) (tool.Tool, error) { return NewAskUserTool() },
 	"ask_advisor":   func(d Deps) (tool.Tool, error) { return NewAskAdvisorTool(d.Advisor, d.Sessions) },
 	"read_file":     newReadFile,

@@ -17,6 +17,7 @@ import (
 	"google.golang.org/adk/v2/tool/functiontool"
 
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/memory"
 )
 
 // PlanJudge: decides whether a proposed DAG plan is a well-formed answer to the user's request.
@@ -51,8 +52,20 @@ Call submit_plan_verdict exactly once with accept (bool) and reason (if rejectin
 // NewPlanJudge: builds PlanJudge backed by judgeModel (reuses the trust gate's judge). Isolated in-memory
 // session per call. maxOutputTokens caps the round's own reply tokens; <= 0 leaves it uncapped (#889).
 // thinkingLevel is gates.judge.thinking_level ("", "low", "medium", "high"); "" sends no ThinkingConfig.
-func NewPlanJudge(judgeModel model.LLM, maxOutputTokens int, thinkingLevel string) PlanJudge {
+// mem/led are optional (epic #1255 P2): nil skips the project-memory section entirely.
+func NewPlanJudge(judgeModel model.LLM, maxOutputTokens int, thinkingLevel string, mem *memory.Store, led ledger.LedgerStore) PlanJudge {
 	return func(ctx context.Context, request, planSummary string) (bool, string, error) {
+		var memSection string
+		if mem != nil {
+			coords := ledger.CoordsFromContext(ctx)
+			// ponytail: user-only scope - repo/role need a resolved workspace,
+			// which doesn't exist before a plan is accepted; widen once one does.
+			hits, _ := mem.RecallForTool(ctx, memory.Scope{User: coords.User}, request, 0)
+			if len(hits) > 0 {
+				memSection = planMemorySection(hits)
+				mem.LogRecall(ctx, led, coords.ChatID, "", "plan_judge", hits)
+			}
+		}
 		var sink planVerdictArgs
 		var submitted bool
 		submit, err := functiontool.New[planVerdictArgs, map[string]any](
@@ -93,7 +106,7 @@ func NewPlanJudge(judgeModel model.LLM, maxOutputTokens int, thinkingLevel strin
 		runCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
-		prompt := buildPlanJudgePrompt(request, planSummary)
+		prompt := buildPlanJudgePrompt(request, planSummary, memSection)
 		content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: prompt}}}
 		var repeats repeatLoopDetector
 		chatID := ledger.CoordsFromContext(runCtx).ChatID
@@ -123,9 +136,13 @@ func NewPlanJudge(judgeModel model.LLM, maxOutputTokens int, thinkingLevel strin
 	}
 }
 
-// buildPlanJudgePrompt: assembles the plan judge's user message.
-func buildPlanJudgePrompt(request, planSummary string) string {
+// buildPlanJudgePrompt: assembles the plan judge's user message. memSection
+// is "" when no project memory matched (epic #1255 P2).
+func buildPlanJudgePrompt(request, planSummary, memSection string) string {
 	var sb strings.Builder
+	if memSection != "" {
+		sb.WriteString(memSection)
+	}
 	sb.WriteString("User's request:\n")
 	sb.WriteString(strings.TrimSpace(request))
 	sb.WriteString("\n\nProposed plan:\n")

@@ -9,6 +9,7 @@ import (
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/tool/toolconfirmation"
 	"google.golang.org/genai"
 )
 
@@ -46,13 +47,15 @@ func newFakeCtx() *fakeCtx {
 	}
 }
 
-func (c *fakeCtx) UserContent() *genai.Content          { return nil }
-func (c *fakeCtx) InvocationID() string                 { return "inv" }
-func (c *fakeCtx) AgentName() string                    { return "test" }
-func (c *fakeCtx) ReadonlyState() session.ReadonlyState { return c.state }
-func (c *fakeCtx) UserID() string                       { return "u" }
-func (c *fakeCtx) AppName() string                      { return "app" }
-func (c *fakeCtx) SessionID() string                    { return "sess" }
-func (c *fakeCtx) Branch() string                       { return "" }
-func (c *fakeCtx) Artifacts() adkagent.Artifacts        { return nil }
-func (c *fakeCtx) State() session.State                 { return c.state }
+func (c *fakeCtx) UserContent() *genai.Content                          { return nil }
+func (c *fakeCtx) InvocationID() string                                 { return "inv" }
+func (c *fakeCtx) AgentName() string                                    { return "test" }
+func (c *fakeCtx) ReadonlyState() session.ReadonlyState                 { return c.state }
+func (c *fakeCtx) UserID() string                                       { return "u" }
+func (c *fakeCtx) AppName() string                                      { return "app" }
+func (c *fakeCtx) SessionID() string                                    { return "sess" }
+func (c *fakeCtx) Session() session.Session                             { return nil }
+func (c *fakeCtx) ToolConfirmation() *toolconfirmation.ToolConfirmation { return nil }
+func (c *fakeCtx) Branch() string                                       { return "" }
+func (c *fakeCtx) Artifacts() adkagent.Artifacts                        { return nil }
+func (c *fakeCtx) State() session.State                                 { return c.state }

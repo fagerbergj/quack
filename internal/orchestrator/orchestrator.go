@@ -612,6 +612,17 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			toolList = append(toolList, memory.NewPreload(), commitTool)
 			memSvc = o.userMem.View(memory.Scope{User: userID, Legacy: userID}, nil)
 		}
+		if o.taskMem != nil {
+			// ponytail: user-only scope - repo/role need a resolved workspace,
+			// which doesn't exist before a plan runs; widen once one does.
+			recallSc := memory.Scope{User: userID, Legacy: userID}
+			recallTool, err := tools.NewRecallMemoryTool(o.taskMem, recallSc, o.ledgerStore, sessionID)
+			if err != nil {
+				yield(stream.Errorf("orchestrator: recall_memory tool: "+err.Error()), nil)
+				return
+			}
+			toolList = append(toolList, recallTool)
+		}
 		var artifacts artifact.Service
 		if o.artifacts != nil {
 			toolList = append(toolList, loadartifactstool.New())

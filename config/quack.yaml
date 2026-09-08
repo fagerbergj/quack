@@ -106,7 +106,7 @@ orchestrator:
   skills: [plan-work, format-markdown, present-coding-plan, contribute, mermaid-authoring]
   provider: default
   model: ${QUACK_ORCH_MODEL}            # the thin dispatcher: routes requests to agents
-  tools: [commit_memory, load_artifacts]  # commit_memory: user memory; load_artifacts: read artifacts saved to this chat's session
+  tools: [commit_memory, recall_memory, load_artifacts]  # commit_memory: user memory; recall_memory: task memory (repo/role/user), on-demand (#1255 P2); load_artifacts: read artifacts saved to this chat's session
   # End-of-turn memory hook (#262): the orchestrator model won't reliably call
   # commit_memory itself, so a dedicated memory-agent bundle (agents/memory-agent)
   # extracts durable preferences from the user's message and commits them
@@ -131,7 +131,7 @@ agents:
     model: ${QUACK_RESEARCHER_MODEL}
     context_window: 65536       # qwen3.6-35b served -c 131072 --parallel 2 ⇒ 65536/slot (one node = one slot)
     judge_rounds: 1             # research converges in one draft; extra rounds burn tokens re-fetching to fix citations. Draft must cite inline (see prompt.md).
-    tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, ask_user, ask_advisor,
+    tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, recall_memory, ask_user, ask_advisor,
             ]  # NO repo tools: reading source is code-explorer's job (see its card)  # read-only fs + clone, so research can pull a repo apart
     # no skills scoped: it has no repo tools to act on research-git-repos with, and no plan/review/code skills apply to it
   code-implementer:
@@ -235,6 +235,8 @@ tools:
     kind: crawl4ai                # direct (plain GET, no service) | crawl4ai (GET + browser render). empty ⇒ direct
     url: ${QUACK_CRAWL4AI_URL}          # required for crawl4ai (e.g. http://crawl4ai:11235); unused by kind: direct
   # Memory tools (M6) - store-backed; binding one to an agent enables that memory.
+  # recall_memory (#1255 P2) has no entry of its own - it reads the same
+  # store this one configures, just on demand instead of at prefill time.
   stage_memory:                   # task memory: researchers stage tradecraft, the gate commits it
     store: default_vector
     collection: task_memory
