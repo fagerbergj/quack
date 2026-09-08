@@ -1239,7 +1239,7 @@ func runVerdictTool(t *testing.T, tl tool.Tool, args map[string]any) (map[string
 func TestSubmitVerdict_NearMissPayloads(t *testing.T) {
 	t.Run("anchor missing kind", func(t *testing.T) {
 		var sink verdict
-		submit, err := newSubmitVerdictTool(&sink)
+		submit, err := newSubmitVerdictTool(&sink, nil)
 		if err != nil {
 			t.Fatalf("newSubmitVerdictTool: %v", err)
 		}
@@ -1273,7 +1273,7 @@ func TestSubmitVerdict_NearMissPayloads(t *testing.T) {
 
 	t.Run("null shortfall and fix", func(t *testing.T) {
 		var sink verdict
-		submit, err := newSubmitVerdictTool(&sink)
+		submit, err := newSubmitVerdictTool(&sink, nil)
 		if err != nil {
 			t.Fatalf("newSubmitVerdictTool: %v", err)
 		}
@@ -1302,7 +1302,7 @@ func TestSubmitVerdict_NearMissPayloads(t *testing.T) {
 	// retry sees WHY it was rejected.
 	t.Run("still rejects wrong-typed criteria", func(t *testing.T) {
 		var sink verdict
-		submit, err := newSubmitVerdictTool(&sink)
+		submit, err := newSubmitVerdictTool(&sink, nil)
 		if err != nil {
 			t.Fatalf("newSubmitVerdictTool: %v", err)
 		}
@@ -1471,7 +1471,7 @@ func TestRunJudgeAgent_ForcedCloseSkipsSubmitNudge(t *testing.T) {
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 3}
 
-	_, _, err := runJudgeRound(t.Context(), factory, cfg, q, "done.", "", "", workerActivity{}, func(*genai.Part) bool { return true })
+	_, _, err := runJudgeRound(t.Context(), factory, cfg, q, "done.", "", "", workerActivity{}, nil, func(*genai.Part) bool { return true })
 	if !errors.Is(err, ErrJudgeNoVerdict) {
 		t.Fatalf("err = %v, want errors.Is(err, ErrJudgeNoVerdict)", err)
 	}
@@ -1529,7 +1529,7 @@ func TestRunJudgeAgent_RepeatTripSkipsSubmitNudge(t *testing.T) {
 	// guard) would make the test fail loud, not pass by accident.
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 1000}
 
-	_, _, err := runJudgeRound(t.Context(), factory, cfg, q, "done.", "", "", workerActivity{}, func(*genai.Part) bool { return true })
+	_, _, err := runJudgeRound(t.Context(), factory, cfg, q, "done.", "", "", workerActivity{}, nil, func(*genai.Part) bool { return true })
 	if !errors.Is(err, ErrJudgeNoVerdict) {
 		t.Fatalf("err = %v, want errors.Is(err, ErrJudgeNoVerdict)", err)
 	}
