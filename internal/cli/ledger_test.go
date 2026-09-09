@@ -34,6 +34,11 @@ func newTestStack(t *testing.T) (*store.Store, ledger.LedgerStore, *store.TurnAw
 	if err != nil {
 		t.Fatalf("store.New: %v", err)
 	}
+	// Every test in this file seeds chat-1 - chat_turns/dag_plans/
+	// projection_watermarks now FK to chats.id (#1296).
+	if err := st.SetChatOrigin(context.Background(), "chat-1", "", ""); err != nil {
+		t.Fatalf("seed chat-1: %v", err)
+	}
 	ls := ledgertest.NewMemStore()
 	rowSvc, err := st.RowArtifactService()
 	if err != nil {

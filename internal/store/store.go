@@ -64,8 +64,12 @@ type Chat struct {
 
 // ChatTurn is one user→assistant exchange. Its ID is the response_id in the REST API.
 type ChatTurn struct {
-	ID        string    `gorm:"primaryKey" json:"id"`
-	ChatID    string    `gorm:"index" json:"chat_id"`
+	ID     string `gorm:"primaryKey" json:"id"`
+	ChatID string `gorm:"index" json:"chat_id"`
+	// Chat is constraint-only (#1296): never populated, so GORM's
+	// zero-value skip never tries to save it - it exists purely to teach
+	// AutoMigrate the ON DELETE CASCADE FK to chats.id.
+	Chat      Chat      `gorm:"foreignKey:ChatID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 	Seq       int       `json:"seq"`
 	CreatedAt time.Time `json:"created_at"`
 	// Model that produced the orchestrator's reply; ADK drops ModelVersion on read.
@@ -122,8 +126,10 @@ type GithubMergeIntent struct {
 
 // DagPlan stores the JSON-encoded DAG plan for a chat turn (re-display on reload).
 type DagPlan struct {
-	ID        string    `gorm:"primaryKey" json:"id"`
-	ChatID    string    `gorm:"index" json:"chat_id"`
+	ID     string `gorm:"primaryKey" json:"id"`
+	ChatID string `gorm:"index" json:"chat_id"`
+	// Chat is constraint-only (#1296) - see ChatTurn.Chat's doc.
+	Chat      Chat      `gorm:"foreignKey:ChatID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 	TurnID    string    `gorm:"index" json:"turn_id"`
 	PlanJSON  string    `json:"plan_json"`
 	CreatedAt time.Time `json:"created_at"`
@@ -131,7 +137,9 @@ type DagPlan struct {
 
 // ChatEvent backs the hub's durable replay after restart. Cleared on new run per chat.
 type ChatEvent struct {
-	ChatID    string    `gorm:"primaryKey;column:chat_id" json:"chat_id"`
+	ChatID string `gorm:"primaryKey;column:chat_id" json:"chat_id"`
+	// Chat is constraint-only (#1296) - see ChatTurn.Chat's doc.
+	Chat      Chat      `gorm:"foreignKey:ChatID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 	Seq       int64     `gorm:"primaryKey;autoIncrement:false" json:"seq"`
 	Event     string    `json:"event"`
 	CreatedAt time.Time `json:"created_at"`
@@ -142,7 +150,9 @@ type ChatEvent struct {
 // FoldedSeq in the same transaction as its own write, so a restart resumes
 // the fold from here instead of a full re-fold or a diff-against-drift guess.
 type ProjectionWatermark struct {
-	ChatID     string    `gorm:"column:chat_id;primaryKey" json:"chat_id"`
+	ChatID string `gorm:"column:chat_id;primaryKey" json:"chat_id"`
+	// Chat is constraint-only (#1296) - see ChatTurn.Chat's doc.
+	Chat       Chat      `gorm:"foreignKey:ChatID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 	Projection string    `gorm:"column:projection;primaryKey" json:"projection"`
 	FoldedSeq  int64     `gorm:"column:folded_seq" json:"folded_seq"`
 	UpdatedAt  time.Time `json:"updated_at"`
@@ -372,7 +382,9 @@ func (s *Store) SetWALLedger(store ledger.LedgerStore) { s.walLedger = store }
 // so a torn write here is still safe to fold from (same invariant the
 // stale-checkpoint test proves).
 type Checkpoint struct {
-	ChatID        string `gorm:"column:chat_id;primaryKey"`
+	ChatID string `gorm:"column:chat_id;primaryKey"`
+	// Chat is constraint-only (#1296) - see ChatTurn.Chat's doc.
+	Chat          Chat   `gorm:"foreignKey:ChatID;references:ID;constraint:OnDelete:CASCADE"`
 	LastSeq       int64  `gorm:"column:last_seq"`
 	SchemaVersion int    `gorm:"column:schema_version"`
 	Payload       string `gorm:"column:payload"`
@@ -472,6 +484,37 @@ func (s *Store) RecordedQuerySQL() []string {
 // (see internal/serve) and may be a different store than this one's.
 func (s *Store) SetArtifactService(svc artifact.Service) { s.artifacts = svc }
 
+// chatFKTables are the tables gaining the chats(id) ON DELETE CASCADE FK
+// (#1296), in the same order New() migrates them.
+var chatFKTables = []string{"chat_turns", "dag_plans", "chat_events", "projection_watermarks", "ledger_checkpoints"}
+
+// sweepOrphanChatRows deletes rows whose chat_id has no matching chats row,
+// before AutoMigrate below adds the ON DELETE CASCADE FK. A pre-existing
+// orphan - a chat hard-deleted by raw SQL before this FK existed - makes the
+// ALTER TABLE ADD CONSTRAINT (Postgres) or table-rebuild (SQLite) that
+// follows fail outright, and the orphan survives a restart, so that's a
+// crash loop rather than a one-time failure. No-op on a fresh DB (no chats
+// table yet) or once every table is already clean.
+func sweepOrphanChatRows(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&Chat{}) {
+		return nil
+	}
+	for _, table := range chatFKTables {
+		if !db.Migrator().HasTable(table) {
+			continue
+		}
+		res := db.Exec(fmt.Sprintf("DELETE FROM %s WHERE chat_id NOT IN (SELECT id FROM chats)", table))
+		if res.Error != nil {
+			return fmt.Errorf("store: sweep orphan %s rows: %w", table, res.Error)
+		}
+		if res.RowsAffected > 0 {
+			slog.Warn("store: swept orphan rows with no owning chat before migration",
+				"component", "store", "table", table, "count", res.RowsAffected)
+		}
+	}
+	return nil
+}
+
 // New opens the persistence store, runs migrations, and returns it.
 func New(kind, url string) (*Store, error) {
 	dialector, err := dialectorFor(kind, url)
@@ -484,6 +527,9 @@ func New(kind, url string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{db: db}
+	if err := sweepOrphanChatRows(db); err != nil {
+		return nil, err
+	}
 	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}, &GithubSnapshot{}, &GithubReviewBaseline{}, &GithubFixState{}, &GithubMergeIntent{}, &MemoryOp{}, &ProjectionWatermark{}, &Checkpoint{}); err != nil {
 		return nil, err
 	}
@@ -578,12 +624,14 @@ func dialectorFor(kind, url string) (func() gorm.Dialector, error) {
 	}
 }
 
-// sqliteDSN enables WAL + busy timeout. Existing query params are left untouched.
+// sqliteDSN enables WAL + busy timeout + FK enforcement (SQLite defaults
+// foreign_keys OFF per connection; the chat cascade FKs, #1296, are inert
+// without this). Existing query params are left untouched.
 func sqliteDSN(url string) string {
 	if strings.Contains(url, "?") {
 		return url
 	}
-	return url + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	return url + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
 }
 
 // CreateChat inserts a new chat and returns it. Fail-closed on the WAL
@@ -752,6 +800,16 @@ func (s *Store) GetChat(ctx context.Context, id string) (*Chat, error) {
 		return nil, err
 	}
 	return &c, nil
+}
+
+// ChatExists reports whether id has a live chats row - the shared check
+// behind every boot-time resume/recovery pass (#1296), so a chat hard-deleted
+// by raw SQL (bypassing DeleteChat's cascade) is never resumed from its
+// leftover dag_plans/dag_nodes rows.
+func (s *Store) ChatExists(ctx context.Context, id string) (bool, error) {
+	var count int64
+	err := s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", id).Count(&count).Error
+	return count > 0, err
 }
 
 // Mirrors orchestrator.AppName (store can't import it).
@@ -1282,6 +1340,14 @@ func (s *Store) SeedProjectionWatermarks(ctx context.Context, ledgerStore ledger
 				Columns:   []clause.Column{{Name: "chat_id"}, {Name: "projection"}},
 				DoNothing: true,
 			}).Create(&ProjectionWatermark{ChatID: chatID, Projection: sd.projection, FoldedSeq: maxSeq, UpdatedAt: now}).Error
+			// artifact/node_state read chat ids from OTHER tables (artifacts,
+			// dag_nodes) that the chats(id) FK (#1296) doesn't cover - a chat_id
+			// with no chats row there is a pre-existing dangling reference, not
+			// a new bug; skip it instead of aborting every other chat's seed.
+			if errors.Is(err, gorm.ErrForeignKeyViolated) {
+				slog.Warn("projection watermark seed: chat row is gone; skipping", "component", "store", "projection", sd.projection, "chat", chatID)
+				continue
+			}
 			if err != nil {
 				return fmt.Errorf("store: seed %s projection watermark (chat %s): %w", sd.projection, chatID, err)
 			}
@@ -1347,6 +1413,7 @@ func (s *Store) ResumePausedDagNodes(ctx context.Context, resumable func(chatID,
 	}
 
 	chatOf := map[string]string{} // planID -> chatID, "" = plan row gone
+	chatLive := map[string]bool{} // chatID -> chats row still exists (#1296)
 	for _, n := range nodes {
 		chatID, ok := chatOf[n.PlanID]
 		if !ok {
@@ -1358,6 +1425,24 @@ func (s *Store) ResumePausedDagNodes(ctx context.Context, resumable func(chatID,
 		}
 		if chatID == "" {
 			rep.Failed = append(rep.Failed, s.failUnresumable(ctx, n, "plan row is gone"))
+			continue
+		}
+		// A raw SQL delete of the chats row bypasses DeleteChat's cascade and
+		// leaves this plan/node behind (#1296) - never resume into a chat that
+		// no longer exists, or the run writes chat_events for a phantom chat.
+		live, ok := chatLive[chatID]
+		if !ok {
+			var e error
+			live, e = s.ChatExists(ctx, chatID)
+			if e != nil {
+				live = true // DB hiccup: fail open to the existing behavior, not a false skip
+			}
+			chatLive[chatID] = live
+		}
+		if !live {
+			slog.Warn("resume paused dag nodes: chat row is gone; skipping", "component", "store",
+				"chat", chatID, "plan", n.PlanID, "node", n.NodeID)
+			rep.Failed = append(rep.Failed, s.failUnresumable(ctx, n, "chat row is gone"))
 			continue
 		}
 		if resumable != nil {

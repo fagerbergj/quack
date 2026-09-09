@@ -341,6 +341,11 @@ type Projections struct {
 	DeliveryRecorded  DeliveryRecordChecker
 	RecordDelivery    DeliveryRecorder
 	Redo              func(ctx context.Context, o OrphanedDelivery) error
+	// ChatExists guards the recovery pass itself (#1296): a chat hard-deleted
+	// by raw SQL can still have ledger entries (a separate store), so without
+	// this RunLedgerRecover would resurrect delivery/artifact work for a chat
+	// that no longer exists. Nil skips the check (existing callers/tests).
+	ChatExists func(ctx context.Context, chatID string) (bool, error)
 }
 
 // ArtifactRowChecker adapts the artifact store to Projections.ArtifactRowExists.
@@ -383,6 +388,16 @@ func (r *LedgerRecoverReport) unresolved() int {
 // only surfaces it, never writes. Idempotent: a settled intent no longer
 // shows up as an orphan. dryRun changes only the delivery half.
 func RunLedgerRecover(ctx context.Context, ls ledger.LedgerStore, chatID string, p Projections, dryRun bool) (*LedgerRecoverReport, error) {
+	if p.ChatExists != nil {
+		exists, err := p.ChatExists(ctx, chatID)
+		if err != nil {
+			return nil, fmt.Errorf("ledger recover: chat exists check for %q: %w", chatID, err)
+		}
+		if !exists {
+			slog.Warn("ledger recover: chat row is gone; skipping", "component", "ledger", "chat", chatID)
+			return &LedgerRecoverReport{ChatID: chatID, DryRun: dryRun}, nil
+		}
+	}
 	// One projected read serves both passes below (delivery intents, then
 	// fold.ApplyEntries for the artifact pass) instead of reading the whole
 	// chat twice (perf audit #1) - kinds is the union both passes need.

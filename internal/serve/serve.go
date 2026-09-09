@@ -672,7 +672,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		}
 		// Boot-time recovery: settle intents whose projection write never
 		// happened (a crash between WAL append and row write) before any run starts.
-		proj := cli.Projections{ArtifactRowExists: cli.ArtifactRowChecker(st, artifacts)}
+		proj := cli.Projections{ArtifactRowExists: cli.ArtifactRowChecker(st, artifacts), ChatExists: st.ChatExists}
 		proj.DeliveryRecorded, proj.RecordDelivery = vetting.DeliveryProjections(artifacts, ledgerStore, st.SessionUserForChat)
 		if rec, _ := findRecoverer(sdkExts); rec != nil {
 			proj.Delivery = sdkRecoverAdapter{recoverer: rec}
