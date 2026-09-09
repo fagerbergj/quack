@@ -1,3 +1,4 @@
+import { Icon } from './Icon'
 import { useState, useRef, useEffect } from 'react'
 import { Sheet } from './Sheet'
 
@@ -50,16 +51,13 @@ export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanel
         onClick={() => setOpen(o => !o)}
         aria-label="Filter chats"
         aria-expanded={open}
-        className={`relative flex items-center justify-center rounded-lg border px-2 py-1.5 transition-colors ${
+        className={`relative flex items-center justify-center rounded-lg border min-w-[44px] min-h-[44px] transition-colors ${
           count > 0
             ? 'border-blue-500 text-blue-600 dark:text-blue-400'
             : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
         }`}
       >
-        {/* funnel icon */}
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M1.5 2.5h13l-5 6v4l-3 1.5V8.5l-5-6z" fill="currentColor" />
-        </svg>
+        <Icon name="filter_alt" className="w-4 h-4" />
         {count > 0 && (
           <span className="absolute -top-1.5 -right-1.5 min-w-[15px] h-[15px] px-1 rounded-full bg-blue-600 text-white text-[9px] font-semibold flex items-center justify-center">
             {count}
