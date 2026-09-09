@@ -223,13 +223,6 @@ func commitReachable(dir string, caps workspace.Caps, sha string) bool {
 	return err == nil && res.ExitCode == 0
 }
 
-// fileUnchangedSince reports whether file is byte-identical between a and b -
-// the preload validity rule (#1006): `git diff --quiet` exits 0 for no diff.
-func fileUnchangedSince(dir string, caps workspace.Caps, a, b, file string) bool {
-	res, err := workspace.RunArgv(context.Background(), dir, []string{"git", "diff", "--quiet", a, b, "--", file}, caps)
-	return err == nil && res.ExitCode == 0
-}
-
 // fileLineAt returns one line (1-based) of file as it read at sha, "" on any
 // failure (missing sha/file/line - the finding-hash snippet input degrades
 // gracefully, never blocks the write). Used instead of reading off disk
