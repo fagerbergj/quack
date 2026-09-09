@@ -54,10 +54,14 @@ export default function App() {
             routed by src/router.ts's plain path matcher, no router
             dependency. Each page's header leading slot carries the NavToggle
             for the drawer above, fed by this one state. */}
+        {/* key=route: memory and ext share this JSX slot, so without a key
+            React reuses the same LazyLoadBoundary instance across a
+            navigation between them - a failure on one route would then
+            keep showing its error screen on the other, unrelated route. */}
         {route === 'memory'
-          ? <LazyLoadBoundary><Suspense fallback={null}><Memory navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} /></Suspense></LazyLoadBoundary>
+          ? <LazyLoadBoundary key={route}><Suspense fallback={null}><Memory navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} /></Suspense></LazyLoadBoundary>
           : route === 'ext'
-            ? <LazyLoadBoundary><Suspense fallback={null}><ExtensionHost navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} /></Suspense></LazyLoadBoundary>
+            ? <LazyLoadBoundary key={route}><Suspense fallback={null}><ExtensionHost navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} /></Suspense></LazyLoadBoundary>
             : <Chat navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} />}
       </div>
     </div>
