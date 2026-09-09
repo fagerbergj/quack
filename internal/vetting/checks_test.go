@@ -405,6 +405,66 @@ func TestChecksDirIgnoresGarbageWorkdirWhenDeriving(t *testing.T) {
 	}
 }
 
+// TestChecksDirNamesRealRootWhenSetupKnown covers the prod failure's
+// planner-facing side (quack#1083 follow-up): a setup-qualifying node
+// (cfg.Setup != nil, so there's exactly one deterministic clone for it) got
+// a Workdir the planner guessed wrong. checksDir must reject with an error
+// naming the real repo root, not silently fail closed on the low-level
+// "workdir does not exist" exec error the planner can't act on.
+func TestChecksDirNamesRealRootWhenSetupKnown(t *testing.T) {
+	cfg := testChecksConfig(t, []string{"go build ./..."}, "review-f65532f/repo")
+	cfg.ChatID = "chat-1"
+	cfg.NodeID = "review"
+	cfg.Setup = &SetupBranch{Repo: "https://github.com/fagerbergj/quack-extensions", WorkBranch: "review"}
+	nodeDir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, "review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(nodeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, ok, err := checksDir(cfg)
+	if err == nil {
+		t.Fatal("checksDir: want an error naming the real repo root, got nil")
+	}
+	if ok {
+		t.Error("checksDir: ok = true, want false alongside the error")
+	}
+	if !strings.Contains(err.Error(), "review-f65532f/repo") || !strings.Contains(err.Error(), nodeDir) {
+		t.Errorf("checksDir error = %q, want it to name both the guessed workdir and the real root %q", err, nodeDir)
+	}
+}
+
+// TestChecksDirFailsClosedGenericallyWithoutSetup: the contrast case - no
+// cfg.Setup (this checksDir test suite's own default), so checksDir cannot
+// know a single clone is authoritative for this node. It must keep the old
+// fail-closed behavior (no guess at a "real root") rather than risk naming
+// an unrelated repo.
+func TestChecksDirFailsClosedGenericallyWithoutSetup(t *testing.T) {
+	cfg := testChecksConfig(t, []string{"go build ./..."}, "newservice")
+	cfg.ChatID = "chat-1"
+	cfg.NodeID = "impl"
+	nodeDir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, "impl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(nodeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	dir, ok, err := checksDir(cfg)
+	if err != nil {
+		t.Fatalf("checksDir: %v, want no error without cfg.Setup", err)
+	}
+	if !ok {
+		t.Fatal("checksDir: ok = false, want the old fail-closed nodeStart fallback")
+	}
+	if !strings.HasSuffix(dir, "/impl/newservice") {
+		t.Errorf("checksDir = %q, want the guessed (nonexistent) nodeStart, unchanged from before", dir)
+	}
+}
+
 // A default-ON check_commands allowlist must be safe on a host WITHOUT the
 // toolchain: deriveChecks additionally gates each candidate on its binary
 // existing (toolchainPresent), so a missing `go` derives nothing instead of

@@ -197,11 +197,20 @@ func checksDir(cfg Config) (string, bool, error) {
 			return chatStart, true, nil
 		}
 		if !isDir(nodeStart) {
+			nodeBare, berr := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.NodeDir(cfg.NodeID))
 			// Only fall back to the bare node dir when it IS the repo the discarded
 			// workdir segment named - otherwise an uncreated subdir silently falls
 			// back onto an unrelated module and reports a false pass (quack#1083).
-			if nodeBare, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.NodeDir(cfg.NodeID)); err == nil && repoNameMatches(nodeBare, workdir) {
+			if berr == nil && repoNameMatches(nodeBare, workdir) {
 				return nodeBare, true, nil
+			}
+			// cfg.Setup is set only when this node has one deterministic
+			// pre-cloned checkout (dag.setupQualifyingAgent) - unlike the
+			// ambiguous case above, nodeBare is unambiguously the target repo,
+			// so name it for the planner instead of fail-closing on the raw
+			// "workdir does not exist" exec error.
+			if berr == nil && cfg.Setup != nil && isDir(nodeBare) {
+				return "", false, fmt.Errorf("planner set workdir %q; the repo root is %q", workdir, nodeBare)
 			}
 		}
 		return nodeStart, true, nil

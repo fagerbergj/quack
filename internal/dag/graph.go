@@ -154,6 +154,19 @@ func nodeGateConfig(plan Plan, node Node, worker adkagent.Agent, cfgFor func(str
 		cfg.ReadOnly = true
 		cfg.Deliver = nil
 	}
+	// A read-only node (no delivery tools - review/exploration/research) can
+	// never satisfy a build/test check: cfg.ReadOnly already reflects the
+	// agent's actual capability (perAgentGateCfg), not its name, so this
+	// catches every read-only agent, not just code-reviewer (#1083 follow-up:
+	// the trust gate fail-closed on a reviewer's guessed workdir).
+	if cfg.ReadOnly && len(cfg.Checks) > 0 {
+		slog.Info("dropping planner-authored checks for a read-only node",
+			"component", "dag", "node", node.ID, "agent", node.AgentName, "checks", cfg.Checks)
+		cfg.Checks = nil
+	}
+	if cfg.ReadOnly {
+		cfg.Workdir = "" // only meaningful alongside Checks
+	}
 	return cfg
 }
 
