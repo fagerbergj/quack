@@ -218,7 +218,10 @@ func forcedVerdictCallback(maxIters int, forced *bool, receivedIDs []string) llm
 	turn := 0
 	instruction := judgeForceCloseInstruction
 	if len(receivedIDs) > 0 {
-		instruction += fmt.Sprintf(` Also include a "memories" array voting on every one of these ids: %s (each {"id": ..., "vote": "supported"|"contradicted"|"not_relevant", "reason": "..."}).`, strings.Join(receivedIDs, ", "))
+		// Appended to Contents (the user message), not the system prompt, so this
+		// doesn't break prefix caching - but stays worded the same as the
+		// round-invariant submit_verdict description for consistency.
+		instruction += ` Also include a "memories" array voting on every RECALLED MEMORIES id listed above (each {"id": ..., "vote": "supported"|"contradicted"|"not_relevant", "reason": "..."}).`
 	}
 	return func(_ adkagent.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
 		turn++
@@ -308,12 +311,11 @@ func newSubmitVerdictTool(sink *verdict, receivedIDs []string) (tool.Tool, error
 	if err != nil {
 		return nil, err
 	}
-	desc := "Record your final verdict and end the evaluation. Call this exactly once, after independently verifying the answer against every rubric criterion - and, when the prompt lists staged findings to verify, after recording a result for each one in `findings`."
-	if len(receivedIDs) > 0 {
-		desc += fmt.Sprintf(" RECALLED MEMORIES were given to the worker - `memories` is REQUIRED: vote on every one of these ids before finishing: %s.", strings.Join(receivedIDs, ", "))
-	} else {
-		desc += " When the prompt lists RECALLED MEMORIES, vote on every one of them in `memories`."
-	}
+	// Description stays round-invariant (no ids) so it never breaks the
+	// system-prompt prefix cache across rounds - the ids live in the user
+	// prompt's trailing receivedMemoriesSection instead.
+	desc := "Record your final verdict and end the evaluation. Call this exactly once, after independently verifying the answer against every rubric criterion - and, when the prompt lists staged findings to verify, after recording a result for each one in `findings`." +
+		" When the prompt lists RECALLED MEMORIES, `memories` is REQUIRED: vote on every one of them before finishing."
 	return functiontool.New(functiontool.Config{
 		Name:        submitVerdictTool,
 		Description: desc,
