@@ -1111,23 +1111,29 @@ func allowedStatuses(from dag.NodeStatus) []schema.NodeStatus {
 	return out
 }
 
-// Starts (or resumes) nodeID in background via Orchestrator.StartNode - a
-// fresh dispatch from queued, or a re-entry at the node's last gate boundary
-// from paused, delivering message as the parked question's answer when the
-// node paused awaiting_input. Progress publishes through the same hub as
-// retryNodeAsync.
-// startNodeAsync dispatches nodeID and returns whether it did. false means a
-// run is already dispatched for this chat or this node is already live (a
-// pause is cooperative: the persisted row can say "paused" while the first
-// run is still executing) - the caller must 409 rather than double-dispatch.
+// startNodeAsync starts (or resumes) nodeID in background via
+// Orchestrator.StartNode - a fresh dispatch from queued, or a re-entry at the
+// node's last gate boundary from paused, delivering message as the parked
+// question's answer when the node paused awaiting_input. Progress publishes
+// through the same hub as retryNodeAsync.
+//
+// Returns whether it dispatched. false means a run is already dispatched for
+// this chat or this node is already live (a pause is cooperative: the
+// persisted row can say "paused" while the first run is still executing) -
+// the caller must 409 rather than double-dispatch. RegisterRun happens here,
+// synchronously, before returning - like startRun, "so cancel can never miss
+// the run": registering inside the spawned goroutine left a window where a
+// shutdown drain's hub.ActiveChatIDs() snapshot, taken right after this
+// function returns, could run before the goroutine reached RegisterRun and
+// silently never wait for or cancel this dispatch.
 func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message string) bool {
 	if h.hub.HasRegisteredRun(chatID) || h.orch.NodeIsLive(chatID, nodeID) {
 		return false
 	}
+	runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
+	h.hub.RegisterRun(chatID, dp.TurnID, cancelRun)
+	_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
 	go func() {
-		runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
-		h.hub.RegisterRun(chatID, dp.TurnID, cancelRun)
-		_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
 		defer recoverRun(chatID, dp.TurnID)
 		// FinishRun flushes then closes then unregisters, in that order - see its doc.
 		defer h.eventLog.FinishRun(h.hub, chatID, cancelRun)
@@ -1173,10 +1179,10 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 			seeded[n.NodeID] = n.Output
 		}
 	}
+	runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
+	h.hub.RegisterRun(chatID, dp.TurnID, cancelRun)
+	_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
 	go func() {
-		runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
-		h.hub.RegisterRun(chatID, dp.TurnID, cancelRun)
-		_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
 		defer recoverRun(chatID, dp.TurnID)
 		// FinishRun flushes then closes then unregisters, in that order - see its doc.
 		defer h.eventLog.FinishRun(h.hub, chatID, cancelRun)

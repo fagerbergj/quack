@@ -228,8 +228,12 @@ func (o *Orchestrator) CancelNode(chatID, nodeID string) bool {
 	return o.executor.CancelNode(chatID, nodeID)
 }
 
-// NodeIsLive reports whether nodeID already has a dispatch running it.
+// NodeIsLive reports whether nodeID already has a dispatch running it. A nil
+// receiver (no orchestrator wired) has nothing live, by definition.
 func (o *Orchestrator) NodeIsLive(chatID, nodeID string) bool {
+	if o == nil {
+		return false
+	}
 	return o.executor.NodeIsLive(chatID, nodeID)
 }
 

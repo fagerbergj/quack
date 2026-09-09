@@ -279,6 +279,48 @@ func TestStartNode_ResumeAlreadyLiveConflict409(t *testing.T) {
 	}
 }
 
+// TestUpdateNodeStatus_ResumeRegistersRunSynchronously pins finding 14:
+// startRun registers synchronously "so cancel can never miss the run"
+// (handler.go's own doc); retryNodeAsync/startNodeAsync must match that shape
+// instead of registering inside the spawned goroutine, or a shutdown drain
+// snapshotting hub.ActiveChatIDs() right after the handler returns can miss
+// a dispatch that hasn't reached RegisterRun yet.
+func TestUpdateNodeStatus_ResumeRegistersRunSynchronously(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID, nodeID := "c1", "p1", "n1"
+	seedPlan(t, h, chatID, planID, nodeID)
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "paused"}); err != nil {
+		t.Fatalf("seed paused node: %v", err)
+	}
+
+	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusRunning})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if !h.hub.HasRegisteredRun(chatID) {
+		t.Fatal("the run was not registered on the hub by the time the handler returned - a drain snapshot taken right after would miss it")
+	}
+}
+
+// TestStartNode_AwaitingInputRegistersRunSynchronously is the startNodeAsync
+// half of finding 14.
+func TestStartNode_AwaitingInputRegistersRunSynchronously(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID, nodeID := "c1", "p1", "n1"
+	seedPlan(t, h, chatID, planID, nodeID)
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "needs_input", PendingQuestion: "which region?"}); err != nil {
+		t.Fatalf("seed parked node: %v", err)
+	}
+
+	rec := postNodeStart(t, h, chatID, nodeID, schema.NodeStartBody{Content: strPtr("us-east")})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if !h.hub.HasRegisteredRun(chatID) {
+		t.Fatal("the run was not registered on the hub by the time the handler returned - a drain snapshot taken right after would miss it")
+	}
+}
+
 // TestUpdateNodeStatus_RunningSelfLoopIllegal: the old steer-via-status
 // (running → running) no longer exists - steering is queueing a message
 // (POST .../queue), which doesn't transition the node's status at all.
