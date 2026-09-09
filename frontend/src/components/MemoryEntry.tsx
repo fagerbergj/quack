@@ -53,7 +53,7 @@ export function memoryTierBadgeClass(tier: MemoryTier): string {
   switch (tier) {
     case 'reinforced': return 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400'
     case 'invalidated': return 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
-    default: return 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'
+    default: return 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300'
   }
 }
 
@@ -90,7 +90,7 @@ function VoteTierBadge({ tier }: { tier: 'unverified' | 'verified' }) {
 // of the hash (#1266): a node id used as provenance can hash to red, which
 // reads as an error rather than "this node wrote it".
 function Pill({ label, seed, neutral }: { label: string; seed: string; neutral?: boolean }) {
-  const cls = neutral ? 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400' : paletteClasses(seed)
+  const cls = neutral ? 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300' : paletteClasses(seed)
   return (
     <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium ${cls}`}>
       {label}

@@ -270,7 +270,7 @@ function ThoughtIcon() {
 function ThinkBlock({ text }: { text: string }) {
   return (
     <details className="group my-0.5 not-prose">
-      <summary className="cursor-pointer select-none flex items-center gap-1.5 py-0.5 text-[11px] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+      <summary className="cursor-pointer select-none flex items-center gap-1.5 py-1 text-[11px] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
         <ThoughtIcon />
         <span className="italic shrink-0">Thought</span>
         <span className="truncate text-gray-500 dark:text-gray-400 group-open:hidden">{previewLine(text)}</span>
@@ -342,7 +342,7 @@ export function ToolBlock({ tool }: { tool: ToolCall }) {
   return (
     <div className="relative my-0.5 not-prose">
       <details className="group">
-        <summary className="cursor-pointer select-none flex items-center gap-1.5 py-0.5 text-[11px]">
+        <summary className="cursor-pointer select-none flex items-center gap-1.5 py-1 text-[11px]">
           <ToolStatusIcon tool={tool} />
           <span className="text-gray-600 dark:text-gray-300 truncate" title={label}>{toolActionLine(label, tool.args)}</span>
         </summary>

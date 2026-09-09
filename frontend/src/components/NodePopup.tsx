@@ -70,8 +70,8 @@ function QueuedMessageRow({ msg, onEdit, onRemove }: {
       >
         parked
       </span>
-      {onEdit && <button onClick={() => setEditing(true)} aria-label="Edit" title="Edit" className="text-gray-500 hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300"><Icon name="edit" className="w-3.5 h-3.5" /></button>}
-      {onRemove && <button onClick={onRemove} aria-label="Remove" title="Remove" className="text-gray-500 hover:text-red-500 dark:text-gray-400 dark:hover:text-red-400"><Icon name="close" className="w-3.5 h-3.5" /></button>}
+      {onEdit && <button onClick={() => setEditing(true)} aria-label="Edit" title="Edit" className="min-w-[24px] min-h-[24px] inline-flex items-center justify-center text-gray-500 hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300"><Icon name="edit" className="w-3.5 h-3.5" /></button>}
+      {onRemove && <button onClick={onRemove} aria-label="Remove" title="Remove" className="min-w-[24px] min-h-[24px] inline-flex items-center justify-center text-gray-500 hover:text-red-500 dark:text-gray-400 dark:hover:text-red-400"><Icon name="close" className="w-3.5 h-3.5" /></button>}
     </li>
   )
 }
@@ -126,7 +126,7 @@ export function NodePopup({
         <div className="flex items-center justify-between">
           <BubbleHeader agent={node.agent} />
           {notStarted && onEditTask && !editingTask && (
-            <button onClick={() => { setTaskText(node.task); setEditingTask(true) }} aria-label="Edit prompt" title="Edit prompt" className="shrink-0 text-gray-500 hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300">
+            <button onClick={() => { setTaskText(node.task); setEditingTask(true) }} aria-label="Edit prompt" title="Edit prompt" className="shrink-0 min-w-[24px] min-h-[24px] inline-flex items-center justify-center text-gray-500 hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300">
               <Icon name="edit" className="w-3.5 h-3.5" />
             </button>
           )}

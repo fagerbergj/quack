@@ -260,7 +260,7 @@ function CollapsedPreview({ label, text, popupTitle }: { label: string; text: st
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="w-full flex items-center gap-1.5 py-0.5 text-[11px] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-left"
+        className="w-full flex items-center gap-1.5 py-1 text-[11px] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-left"
       >
         <span className="italic shrink-0">{label}</span>
         <span className="truncate text-gray-500 dark:text-gray-400">{previewLine(text)}</span>
@@ -435,7 +435,7 @@ const RevisionCard = memo(function RevisionCard({ run, running }: { run: AgentRu
     <div className="border-t border-gray-100 dark:border-gray-700">
       <details open={running} className="not-prose">
         <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2">
-          <span className="text-[11px] font-semibold text-blue-500 dark:text-blue-400 uppercase tracking-wide">
+          <span className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide">
             ↺ Revised · round {run.round}
           </span>
           <RunModel run={run} />

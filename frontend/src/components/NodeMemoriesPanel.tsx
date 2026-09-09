@@ -45,7 +45,7 @@ function JudgeVoteIcon({ vote, reason }: { vote: string; reason?: string }) {
 // reach a worker.
 function SourceBadge({ source }: { source: string }) {
   return (
-    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400">
+    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300">
       {source}
     </span>
   )

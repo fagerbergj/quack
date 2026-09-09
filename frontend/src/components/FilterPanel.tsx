@@ -70,7 +70,7 @@ export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanel
           <div className="flex items-center justify-between px-1 pb-1.5 mb-1 border-b border-gray-100 dark:border-gray-700">
             <span className="font-semibold text-gray-700 dark:text-gray-200">Filters</span>
             {count > 0 && (
-              <button onClick={onClear} className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline">
+              <button onClick={onClear} className="min-h-[24px] inline-flex items-center text-[11px] text-blue-600 dark:text-blue-400 hover:underline">
                 Clear all
               </button>
             )}

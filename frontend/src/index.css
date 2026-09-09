@@ -32,7 +32,7 @@
   --color-gray-100: #efefed;
   --color-gray-200: #e3e3e0;
   --color-gray-300: #d2d2ce;
-  --color-gray-400: #909089;  /* 3:1 on light - icons only; 4.5:1 on gray-800 - dark secondary text */
+  --color-gray-400: #939390;  /* 3:1 on light - icons only; 4.67:1 on gray-800 - dark secondary text */
   --color-gray-500: #6b6b63;  /* ≥4.5:1 on light - secondary text; never as dark text (2.7:1 on gray-800) */
   --color-gray-600: #565651;
   --color-gray-700: #3c3c38;
