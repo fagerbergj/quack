@@ -171,21 +171,14 @@ export function ActivityList({ activity }: { activity: Activity[] }) {
 export function LiveStatusLine({ activity }: { activity: Activity[] }) {
   const { thinking, tool, compacted } = liveStatusLine(activity)
   if (!thinking && !tool && !compacted) return null
+  // One line, not one per fact: on a phone the card's running state is this
+  // line plus the header, so the tool action truncates rather than stacking.
   return (
-    <div className="py-0.5 space-y-0.5 text-[11px] text-gray-400 dark:text-gray-500 not-prose">
-      {thinking && (
-        <div className="flex items-center gap-1.5 italic">
-          <Dots variant="compact" size="w-1 h-1" />
-          thinking
-        </div>
-      )}
-      {tool && <div className="truncate font-mono">{toolActionLine(tool.name === 'other' && tool.title ? tool.title : tool.name, tool.args)}</div>}
-      {compacted && (
-        <div className="flex items-center gap-1.5 italic">
-          <Dots variant="compact" size="w-1 h-1" />
-          compacted
-        </div>
-      )}
+    <div className="flex items-center gap-1.5 min-w-0 py-0.5 text-[11px] text-gray-400 dark:text-gray-500 not-prose">
+      <Dots variant="compact" size="w-1 h-1" />
+      {thinking && <span className="italic shrink-0">thinking</span>}
+      {compacted && <span className="italic shrink-0">compacted</span>}
+      {tool && <span className="truncate font-mono">{toolActionLine(tool.name === 'other' && tool.title ? tool.title : tool.name, tool.args)}</span>}
     </div>
   )
 }

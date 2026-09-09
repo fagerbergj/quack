@@ -39,11 +39,15 @@ function NodeMenu({
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
+  // The items unmount on close, so without an explicit return a keyboard or
+  // screen-reader user is dropped on <body> (APG menu button pattern).
+  const close = () => { setOpen(false); btnRef.current?.focus() }
 
   useEffect(() => {
     if (!open) return
     const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
     return () => {
@@ -67,59 +71,63 @@ function NodeMenu({
   const hasSecondary = !terminal && (canAnswer || canQueue || canEdit)
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="relative shrink-0">
+      {/* Always visible (touch has no hover to reveal it) and a 44px target
+          that overlaps the header's padding via negative margins so the
+          row stays one line high. */}
       <button
+        ref={btnRef}
         onClick={() => setOpen(o => !o)}
         aria-label="Node actions"
         aria-haspopup="menu"
         aria-expanded={open}
-        className={`w-5 h-5 flex items-center justify-center rounded text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-opacity ${open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'}`}
+        className="w-11 h-11 -my-3 -me-3 flex items-center justify-center rounded-lg text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
       >
-        ⋮
+        <Icon name="more_vert" className="w-5 h-5" />
       </button>
       {open && (
         <div role="menu" className="absolute z-20 right-0 mt-1 w-48 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1 text-xs">
           {running && onPause && (
-            <button role="menuitem" onClick={() => { onPause(nodeId); setOpen(false) }} className="w-full text-left px-3 py-1.5 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700">
-              ⏸ Pause
+            <button role="menuitem" onClick={() => { onPause(nodeId); close() }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+              <Icon name="pause" className="w-3.5 h-3.5" /> Pause
             </button>
           )}
           {startable && onResume && (
-            <button role="menuitem" onClick={() => { onResume(nodeId); setOpen(false) }} className="w-full text-left px-3 py-1.5 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700">
-              ▶ Start
+            <button role="menuitem" onClick={() => { onResume(nodeId); close() }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+              <Icon name="play_arrow" className="w-3.5 h-3.5" /> Start
             </button>
           )}
           {cancellable && onCancel && (
-            <button role="menuitem" onClick={() => { onCancel(nodeId); setOpen(false) }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-red-500 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700">
-              <Icon name="close" className="w-3.5 h-3.5" /> Stop
+            <button role="menuitem" onClick={() => { onCancel(nodeId); close() }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-red-500 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+              <Icon name="stop" className="w-3.5 h-3.5" /> Stop
             </button>
           )}
           {hasSecondary && <div className="my-1 border-t border-gray-100 dark:border-gray-700" />}
           {canAnswer && (
-            <button role="menuitem" onClick={() => { onOpenPopup(); setOpen(false) }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-amber-700 dark:text-amber-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+            <button role="menuitem" onClick={() => { onOpenPopup(); close() }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-amber-700 dark:text-amber-400 hover:bg-gray-50 dark:hover:bg-gray-700">
               <Icon name="help" className="w-3.5 h-3.5" /> Answer question…
             </button>
           )}
           {canQueue && (
-            <button role="menuitem" onClick={() => { onOpenPopup(); setOpen(false) }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+            <button role="menuitem" onClick={() => { onOpenPopup(); close() }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
               <Icon name="mail" className="w-3.5 h-3.5" /> Queue a message…
             </button>
           )}
           {canEdit && (
-            <button role="menuitem" onClick={() => { onOpenPopup(); setOpen(false) }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+            <button role="menuitem" onClick={() => { onOpenPopup(); close() }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
               <Icon name="edit" className="w-3.5 h-3.5" /> Edit prompt
             </button>
           )}
           {onOpenArtifacts && (
             <>
               {!terminal && <div className="my-1 border-t border-gray-100 dark:border-gray-700" />}
-              <button role="menuitem" onClick={() => { onOpenArtifacts(); setOpen(false) }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+              <button role="menuitem" onClick={() => { onOpenArtifacts(); close() }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
                 <Icon name="archive" className="w-3.5 h-3.5" /> Artifacts
               </button>
             </>
           )}
           {onOpenMemories && (
-            <button role="menuitem" onClick={() => { onOpenMemories(); setOpen(false) }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+            <button role="menuitem" onClick={() => { onOpenMemories(); close() }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
               <Icon name="memory" className="w-3.5 h-3.5" /> Memories
             </button>
           )}
@@ -210,7 +218,7 @@ function ContextMeter({ used, limit }: { used: number; limit: number }) {
 // ContentPopup shows one block of prose (a judge verdict, a node's vetted
 // answer) full-size, as an extension of the main chat rather than a bespoke
 // modal - the same structure NodePopup uses (#384/#406): a light overlay, a
-// close ✕ on its own row (never overlapping the content - the maintainer just
+// close button on its own row (never overlapping the content - the maintainer just
 // fixed exactly that overlap on NodePopup), Escape-to-close, click-outside-to-
 // close, and the content in a chat-style bubble via AssistantText so it reads
 // as formatted markdown.
@@ -552,32 +560,37 @@ export const DagNode = memo(function DagNode({
   const isPaused = state.status === 'paused' || state.status === 'needs_input'
   const pauseLabel = isPaused ? pausedStatusLabel(state.pauseReason) : null
 
+  // overflow-hidden clips the rounded corners, but it also clipped the kebab's
+  // menu to the card height - a short card at the foot of a chat lost every
+  // item past the first - so it lifts while the menu is open.
   return (
-    <div className={`group rounded-xl border shadow-sm overflow-hidden ${
+    <div className={`rounded-xl border shadow-sm overflow-hidden has-[[aria-expanded=true]]:overflow-visible ${
       isFinal
         ? 'border-indigo-200 dark:border-indigo-800 bg-white dark:bg-gray-800'
         : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'
     }`}>
-      {/* Node header */}
-      <div className="flex items-start min-[600px]:items-center gap-2 px-4 py-3 border-b border-gray-100 dark:border-gray-700 flex-wrap min-[600px]:flex-nowrap">
+      {/* Node header: one line at every width - dot, name, badges, elapsed,
+          kebab. Below `medium` the secondary metadata group wraps onto its own
+          muted line (basis-full + order-last) instead of stacking the row. */}
+      <div className="flex flex-wrap medium:flex-nowrap items-center gap-x-2 gap-y-1 px-4 py-3 border-b border-gray-100 dark:border-gray-700">
         <StatusDot status={state.status} />
-        <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 min-w-0 flex-1 basis-full min-[600px]:basis-auto min-[600px]:truncate max-[599px]:line-clamp-2">
+        <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 min-w-0 flex-1 truncate" title={agentLabel(node.agent)}>
           {agentLabel(node.agent)}
         </span>
         {pauseLabel && (
-          <span className="text-[10px] font-medium text-blue-600 dark:text-blue-400">{pauseLabel}</span>
+          <span className="shrink-0 text-[10px] font-medium text-blue-600 dark:text-blue-400">{pauseLabel}</span>
         )}
         {isAcpAgent(node.agent) && <AcpBadge />}
         <QueuedBadge count={pendingQueueCount} />
         {state.steers && state.steers.length > 0 && (
           <span
-            className="text-[10px] font-medium text-amber-600 dark:text-amber-400"
+            className="shrink-0 text-[10px] font-medium text-amber-600 dark:text-amber-400"
             title={`Queued message(s) delivered:\n${state.steers.join('\n')}`}
           >
             ↻ steered{state.steers.length > 1 ? ` ×${state.steers.length}` : ''}
           </span>
         )}
-        <div className="ml-auto flex items-center gap-2">
+        <div className="empty:hidden flex flex-wrap medium:flex-nowrap items-center gap-x-2 gap-y-0.5 basis-full order-last medium:basis-auto medium:order-none">
           {state.model && (
             <span className="text-[10px] text-gray-400 dark:text-gray-500 font-mono truncate max-w-[120px]" title={state.model}>
               {state.model}
@@ -616,29 +629,29 @@ export const DagNode = memo(function DagNode({
             </a>
           )}
           <ContextMeter used={state.contextTokens ?? 0} limit={node.context_window ?? 0} />
-          {/* A finished node shows the server-measured duration (reconnect-proof);
-              a running one ticks live from the server start time. */}
-          {(state.finishedAt != null && state.serverDurationMs != null) ? (
-            <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">{fmtMs(state.serverDurationMs)}</span>
-          ) : state.startedAt != null ? (
-            <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
-              <LiveTimer startedAt={state.startedAt} finishedAt={state.finishedAt} />
-            </span>
-          ) : null}
-          <NodeMenu
-            nodeId={node.id}
-            status={state.status}
-            onCancel={onCancel}
-            onPause={onPause}
-            onResume={onResume}
-            canQueue={running && !!onQueueMessage}
-            canEdit={notStarted && !!onEditTask}
-            canAnswer={(state.status === 'needs_input' || state.pauseReason === 'awaiting_input') && !!onAnswerQuestion}
-            onOpenPopup={() => setPopupOpen(true)}
-            onOpenArtifacts={chatId ? () => setArtifactsOpen(true) : undefined}
-            onOpenMemories={chatId ? () => setMemoriesOpen(true) : undefined}
-          />
         </div>
+        {/* A finished node shows the server-measured duration (reconnect-proof);
+            a running one ticks live from the server start time. */}
+        {(state.finishedAt != null && state.serverDurationMs != null) ? (
+          <span className="shrink-0 text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">{fmtMs(state.serverDurationMs)}</span>
+        ) : state.startedAt != null ? (
+          <span className="shrink-0 text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
+            <LiveTimer startedAt={state.startedAt} finishedAt={state.finishedAt} />
+          </span>
+        ) : null}
+        <NodeMenu
+          nodeId={node.id}
+          status={state.status}
+          onCancel={onCancel}
+          onPause={onPause}
+          onResume={onResume}
+          canQueue={running && !!onQueueMessage}
+          canEdit={notStarted && !!onEditTask}
+          canAnswer={(state.status === 'needs_input' || state.pauseReason === 'awaiting_input') && !!onAnswerQuestion}
+          onOpenPopup={() => setPopupOpen(true)}
+          onOpenArtifacts={chatId ? () => setArtifactsOpen(true) : undefined}
+          onOpenMemories={chatId ? () => setMemoriesOpen(true) : undefined}
+        />
       </div>
 
       {/* Node summary - click to open the popup (#384): the full prompt
