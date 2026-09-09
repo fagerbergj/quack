@@ -36,7 +36,7 @@ func TestDagStream_TraceIDFromRealSpan(t *testing.T) {
 		map[string]string{},
 		func(string) gateScore { return gateScore{} },
 		func(string) bool { return false },
-		func(string) bool { return false },
+		func(string) PauseReason { return "" },
 		func(string, int) string { return "" },
 	)
 
