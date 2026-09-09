@@ -563,7 +563,24 @@ func buildDirGrants(work string, configured []string) []string {
 	var out []string
 	add := func(rel string) {
 		rel = filepath.Clean(rel)
-		if rel == "." || rel == "" || seen[rel] {
+		// filepath.IsLocal rejects "..", an absolute path, and anything else
+		// that would walk filepath.Join(work, rel) outside work - required
+		// since the bonus loop below feeds this a bare .gitignore line
+		// VERBATIM, and that file is untrusted content in the repo under
+		// review (e.g. a malicious PR branch), not workspace config.
+		if rel == "." || rel == "" || seen[rel] || !filepath.IsLocal(rel) {
+			return
+		}
+		// A build dir that is ITSELF a symlink (checked out from the repo
+		// under review, or planted by the agent using a prior grant) must
+		// never be granted: landlock resolves the granted path through the
+		// symlink and rw's its target, and bwrap's --bind-try binds the
+		// target's real directory - either way this is a full escape to
+		// wherever the symlink points, proven by
+		// TestBuildDirGrantsRejectsSymlinkedBuildDir. Lstat (not Stat) so the
+		// check itself never follows the link; a missing path is fine (it
+		// gets mkdir'd fresh by PrecreateBuildDirs).
+		if fi, err := os.Lstat(filepath.Join(work, rel)); err == nil && fi.Mode()&os.ModeSymlink != 0 {
 			return
 		}
 		seen[rel] = true
