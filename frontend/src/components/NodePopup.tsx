@@ -109,7 +109,7 @@ export function NodePopup({
   }
 
   return (
-    <Sheet onClose={onClose} className="relative max-w-2xl medium:max-h-[85vh] medium:rounded-2xl bg-gray-50 dark:bg-gray-900 px-5 medium:pb-6 pt-2 space-y-2">
+    <Sheet onClose={onClose} className="relative max-w-2xl medium:max-h-[85dvh] medium:rounded-2xl bg-gray-50 dark:bg-gray-900 px-5 medium:pb-6 pt-2 space-y-2">
       {/* Close on its own row so it never overlaps the content bubbles. */}
       <div className="flex justify-end -mb-2">
         <button

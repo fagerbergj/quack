@@ -221,7 +221,7 @@ function ContextMeter({ used, limit }: { used: number; limit: number }) {
 // as formatted markdown.
 function ContentPopup({ title, text, onClose }: { title: string; text: string; onClose: () => void }) {
   return (
-    <Sheet onClose={onClose} className="relative max-w-2xl medium:max-h-[85vh] medium:rounded-2xl bg-gray-50 dark:bg-gray-900 px-5 medium:pb-6 pt-2 space-y-2">
+    <Sheet onClose={onClose} className="relative max-w-2xl medium:max-h-[85dvh] medium:rounded-2xl bg-gray-50 dark:bg-gray-900 px-5 medium:pb-6 pt-2 space-y-2">
       <div className="flex justify-end -mb-2">
         <button
           onClick={onClose}
