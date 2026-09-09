@@ -490,6 +490,9 @@ func mcpToolNames(sess vetting.MemSession, offered bool) []string {
 		add(toolEditArtifact)
 		add(toolWriteArtifact)
 		for _, spec := range recordstore.Kinds() {
+			if !spec.AgentWritable {
+				continue // mirrors registerArtifactWriteTools' own skip: gate-only kind
+			}
 			// Mirrors registerArtifactWriteTools' own skip (#1148).
 			if spec.Name() == "code_review" && sess.Review != nil && sess.Review.IsNonDeliveringSlice() {
 				continue

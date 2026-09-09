@@ -24,8 +24,8 @@ const kindDeliveryRecord = "delivery_record"
 func init() {
 	recordstore.Register(kindDeliveryRecord, recordstore.KindSpec{
 		Class: recordstore.Structured,
-		// Schema-less: gate-written only, no worker ever calls
-		// write_delivery_record (mirrors kindJudgeRound's rationale).
+		// Schema-less: gate-written only. AgentWritable stays false (mirrors
+		// kindJudgeRound) so no write_delivery_record tool reaches a worker.
 		JSONSchema: `{"type":"object"}`,
 		Validate:   validateJSONObject[DeliveryRecord],
 		// Instance = hint verbatim, the subject (e.g. "pr:123") - one id per

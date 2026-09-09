@@ -52,8 +52,10 @@ func captureWarnings(t *testing.T) *warnCapture {
 
 // TestArtifactWriteToolsMCP_EveryKindRegistersWithoutWarning covers the
 // "invalid generated JSON schema silently skips the tool" landmine: every
-// kind recordstore.Kinds() currently returns must register a write_<kind>
-// tool with no Warn/skip.
+// AGENT-WRITABLE kind recordstore.Kinds() currently returns must register a
+// write_<kind> tool with no Warn/skip. A gate-only kind (judge_round,
+// delivery_record - AgentWritable false) must register NEITHER a tool NOR a
+// skip-Warn: it was never offered in the first place.
 func TestArtifactWriteToolsMCP_EveryKindRegistersWithoutWarning(t *testing.T) {
 	w := captureWarnings(t)
 
@@ -75,6 +77,12 @@ func TestArtifactWriteToolsMCP_EveryKindRegistersWithoutWarning(t *testing.T) {
 		announced[tl.Name] = true
 	}
 	for _, spec := range recordstore.Kinds() {
+		if !spec.AgentWritable {
+			if announced[writeKindPrefix+spec.Name()] {
+				t.Errorf("write_%s is gate-only (AgentWritable=false) but was registered on the loopback server", spec.Name())
+			}
+			continue
+		}
 		if !announced[writeKindPrefix+spec.Name()] {
 			t.Errorf("write_%s was not registered on the loopback server (a bad JSONSchema silently drops the tool)", spec.Name())
 		}
