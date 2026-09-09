@@ -173,17 +173,32 @@ export const WithArchivedChats: Story = {
   },
 }
 
-// Opens an archived row's overflow menu to reveal the Restore action. Hovering
-// first isn't needed for the click itself, but mirrors how a user reaches it.
-export const ArchivedRowOverflowMenu: Story = {
+// Opens an archived row's kebab menu to reveal Restore and Delete. Checked at
+// mobile width too - the off-canvas drawer is how this list is reached there.
+export const ArchivedRowKebabMenu: Story = {
   args: {
     chats: [],
     archivedChats: [chat('archived-1', 'Old debugging session', 'idle', true)],
     activeChatId: null,
   },
+  parameters: { renderCheck: { viewports: ['mobile', 'desktop'] } },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     await userEvent.click(canvas.getByRole('button', { name: /^Archived/ }))
-    await userEvent.click(canvas.getByRole('button', { name: 'Row actions' }))
+    await userEvent.click(canvas.getByRole('button', { name: 'Chat actions' }))
+  },
+}
+
+// #1319: opens an active row's kebab menu to reveal the sole Archive action -
+// archive and delete both live behind the kebab now, never a bare row button.
+export const ActiveRowKebabMenu: Story = {
+  args: {
+    chats: [chat('active-1', 'Current project notes')],
+    activeChatId: null,
+  },
+  parameters: { renderCheck: { viewports: ['mobile', 'desktop'] } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: 'Chat actions' }))
   },
 }

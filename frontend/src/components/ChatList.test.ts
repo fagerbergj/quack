@@ -334,10 +334,10 @@ describe('github_state badge', () => {
   })
 })
 
-// The × is a two-stage trash: archive on an active row, hard-delete on an
+// The kebab is a two-stage trash: archive on an active row, hard-delete on an
 // archived one. This is the regression guard - a mis-wiring here would
 // silently hard-delete an active chat on a single click.
-describe('ChatRow trash button (archive vs. hard delete)', () => {
+describe('ChatRow kebab menu (archive vs. hard delete)', () => {
   let root: ReturnType<typeof createRoot> | undefined
   let host: HTMLDivElement | undefined
 
@@ -380,14 +380,15 @@ describe('ChatRow trash button (archive vs. hard delete)', () => {
     act(() => { el!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
   }
 
-  it('on an active row, archives and does NOT delete', () => {
+  it('on an active row, the kebab menu archives and does NOT delete', () => {
     const onArchive = vi.fn()
     const onDelete = vi.fn()
     renderList([chat({ id: 'a1', title: 'Active chat' })], { onArchive, onDelete })
 
-    const trash = host!.querySelector('button[aria-label="Archive chat"]')
-    expect(trash).toBeTruthy()
-    click(trash)
+    click(host!.querySelector('button[aria-label="Chat actions"]'))
+    const archiveItem = host!.querySelector('[role="menuitem"][aria-label="Archive chat"]')
+    expect(archiveItem).toBeTruthy()
+    click(archiveItem)
 
     expect(onArchive).toHaveBeenCalledWith('a1')
     expect(onDelete).not.toHaveBeenCalled()
@@ -402,7 +403,7 @@ describe('ChatRow trash button (archive vs. hard delete)', () => {
     expandArchived()
 
     expect(host!.querySelector('button[aria-label="Delete chat permanently"]')).toBeNull() // menu closed
-    click(host!.querySelector('button[aria-label="Row actions"]'))
+    click(host!.querySelector('button[aria-label="Chat actions"]'))
     const trash = host!.querySelector('[role="menuitem"][aria-label="Delete chat permanently"]')
     expect(trash).toBeTruthy()
     click(trash)
@@ -417,79 +418,79 @@ describe('ChatRow trash button (archive vs. hard delete)', () => {
     renderList([], { onDelete, archivedChats: [chat({ id: 'a3', archived: true })] })
     expandArchived()
 
-    click(host!.querySelector('button[aria-label="Row actions"]'))
-    click(host!.querySelector('button[aria-label="Delete chat permanently"]'))
+    click(host!.querySelector('button[aria-label="Chat actions"]'))
+    click(host!.querySelector('[role="menuitem"][aria-label="Delete chat permanently"]'))
 
     expect(onDelete).not.toHaveBeenCalled()
   })
 
-  it('an active row has a bare Archive control; an archived row has only the kebab', () => {
+  // #1319: owner instruction - every row has exactly one kebab, no bare
+  // Archive/Delete button sitting directly on the row.
+  it('every row has exactly one kebab and no bare Archive/Delete button', () => {
     renderList([chat({ id: 'a4', title: 'Active' })], {
       archivedChats: [chat({ id: 'a5', title: 'Archived', archived: true })],
     })
     expandArchived()
 
-    const archiveBtn = host!.querySelector('button[aria-label="Archive chat"]')
-    expect(archiveBtn).toBeTruthy()
-    expect(archiveBtn!.getAttribute('title')).toBe('Archive chat')
-    expect(host!.querySelectorAll('button[aria-label="Row actions"]').length).toBe(1)
+    expect(host!.querySelectorAll('button[aria-label="Chat actions"]').length).toBe(2)
+    expect(host!.querySelector('button[aria-label="Archive chat"]')).toBeNull() // hidden until opened
     expect(host!.querySelector('button[aria-label="Delete chat permanently"]')).toBeNull()
   })
 
-  it('an archived row exposes Restore through its overflow menu', () => {
+  it('an archived row exposes Restore through its kebab menu', () => {
     const onUnarchive = vi.fn()
     renderList([], { onUnarchive, archivedChats: [chat({ id: 'a6', archived: true })] })
     expandArchived()
 
-    const overflow = host!.querySelector('button[aria-label="Row actions"]')
-    expect(overflow).toBeTruthy()
-    expect(host!.querySelector('button[aria-label="Unarchive chat"]')).toBeNull() // menu closed
+    const kebab = host!.querySelector('button[aria-label="Chat actions"]')
+    expect(kebab).toBeTruthy()
+    expect(host!.querySelector('[role="menuitem"][aria-label="Unarchive chat"]')).toBeNull() // menu closed
 
-    click(overflow)
-    const restore = host!.querySelector('button[aria-label="Unarchive chat"]')
+    click(kebab)
+    const restore = host!.querySelector('[role="menuitem"][aria-label="Unarchive chat"]')
     expect(restore).toBeTruthy()
     click(restore)
 
     expect(onUnarchive).toHaveBeenCalledWith('a6')
   })
 
-  it('closes the overflow menu after Restore is clicked', () => {
+  it('closes the kebab menu after Restore is clicked', () => {
     renderList([], { onUnarchive: vi.fn(), archivedChats: [chat({ id: 'a8', archived: true })] })
     expandArchived()
-    click(host!.querySelector('button[aria-label="Row actions"]'))
-    click(host!.querySelector('button[aria-label="Unarchive chat"]'))
+    click(host!.querySelector('button[aria-label="Chat actions"]'))
+    click(host!.querySelector('[role="menuitem"][aria-label="Unarchive chat"]'))
 
-    expect(host!.querySelector('button[aria-label="Unarchive chat"]')).toBeNull()
+    expect(host!.querySelector('[role="menuitem"][aria-label="Unarchive chat"]')).toBeNull()
   })
 
-  it('closes the overflow menu on an outside click', () => {
+  it('closes the kebab menu on an outside click', () => {
     renderList([], { onUnarchive: vi.fn(), archivedChats: [chat({ id: 'a9', archived: true })] })
     expandArchived()
-    click(host!.querySelector('button[aria-label="Row actions"]'))
-    expect(host!.querySelector('button[aria-label="Unarchive chat"]')).toBeTruthy()
+    click(host!.querySelector('button[aria-label="Chat actions"]'))
+    expect(host!.querySelector('[role="menuitem"][aria-label="Unarchive chat"]')).toBeTruthy()
 
     act(() => { document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })) })
-    expect(host!.querySelector('button[aria-label="Unarchive chat"]')).toBeNull()
+    expect(host!.querySelector('[role="menuitem"][aria-label="Unarchive chat"]')).toBeNull()
   })
 
-  it('an active row has no overflow menu or Restore control', () => {
+  it('an active row\'s kebab has no Restore control', () => {
     renderList([chat({ id: 'a7' })])
-    expect(host!.querySelector('button[aria-label="Row actions"]')).toBeNull()
-    expect(host!.querySelector('button[aria-label="Unarchive chat"]')).toBeNull()
+    click(host!.querySelector('button[aria-label="Chat actions"]'))
+    expect(host!.querySelector('[role="menuitem"][aria-label="Unarchive chat"]')).toBeNull()
   })
 
   // Sits top-right, out of flow (absolute), and always visible - touch has
   // no hover, so a hover-only reveal hid it on every phone. Icons, not glyphs.
-  it('the overflow trigger is an always visible Material icon, out of flow', () => {
+  it('the kebab trigger is an always visible Material icon, out of flow', () => {
     renderList([], { onUnarchive: vi.fn(), archivedChats: [chat({ id: 'a10', archived: true })] })
     expandArchived()
 
-    const overflow = host!.querySelector('button[aria-label="Row actions"]')
-    expect(overflow?.querySelector('svg')).not.toBeNull()
-    expect(overflow?.textContent?.trim()).toBe('')
-    expect(overflow?.className).not.toEqual(expect.stringContaining('opacity-0'))
-    expect(overflow?.parentElement?.className).toEqual(expect.stringContaining('absolute')) // the wrapper, not the button, is positioned
-    click(overflow)
+    const kebab = host!.querySelector('button[aria-label="Chat actions"]')
+    expect(kebab?.querySelector('svg')).not.toBeNull()
+    expect(kebab?.textContent?.trim()).toBe('')
+    expect(kebab?.className).not.toEqual(expect.stringContaining('opacity-0'))
+    expect(kebab?.parentElement?.className).toEqual(expect.stringContaining('absolute')) // the wrapper, not the button, is positioned
+    click(kebab)
     for (const item of host!.querySelectorAll('[role="menuitem"]')) expect(item.querySelector('svg')).not.toBeNull()
   })
 })

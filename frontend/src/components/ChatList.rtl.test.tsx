@@ -80,28 +80,114 @@ describe('ChatList "Load more" touch target (#1201)', () => {
   })
 })
 
-// #1137: the per-row "Archive chat" (×) button was packed tightly against the
-// row's own "Row actions" (⋮) menu trigger on archived rows - both are now
-// full 44x44 tap areas placed side by side instead of overlapping/adjacent
-// small boxes.
-describe('ChatList archive/row-actions touch targets (#1137)', () => {
+// #1137/#1319: every row's kebab (the row's only action point) is a 44x44
+// tap area, on both active and archived rows.
+describe('ChatList kebab touch target (#1137)', () => {
   const chat = {
     id: 'c1', title: 'A chat', system_prompt: '', created_at: '', updated_at: '', status: 'idle',
   } as const
 
-  it('the archive/delete button is a 44x44 tap area', () => {
+  it('an active row\'s kebab is a 44x44 tap area', () => {
     render(<ChatList {...baseProps(() => {})} open={false} chats={[chat]} />)
-    const btn = screen.getByRole('button', { name: 'Archive chat' })
+    const btn = screen.getByRole('button', { name: 'Chat actions' })
     expect(btn.className).toContain('min-w-[44px]')
     expect(btn.className).toContain('min-h-[44px]')
   })
 
-  it('an archived row\'s row-actions menu trigger is also a 44x44 tap area', async () => {
+  it('an archived row\'s kebab is also a 44x44 tap area', async () => {
     const user = userEvent.setup()
     render(<ChatList {...baseProps(() => {})} open={false} archivedChats={[chat]} onUnarchive={() => {}} />)
     await user.click(screen.getByRole('button', { name: /Archived/ }))
-    const btn = screen.getByRole('button', { name: 'Row actions' })
+    const btn = screen.getByRole('button', { name: 'Chat actions' })
     expect(btn.className).toContain('min-w-[44px]')
     expect(btn.className).toContain('min-h-[44px]')
+  })
+})
+
+// #1319: owner instruction - archive and delete both live behind the same
+// always-visible kebab (two clicks), never a bare one-tap control.
+describe('ChatList row kebab (#1319)', () => {
+  const activeChat = {
+    id: 'c1', title: 'Active chat', system_prompt: '', created_at: '', updated_at: '', status: 'idle',
+  } as const
+  const archivedChat = {
+    id: 'c2', title: 'Archived chat', system_prompt: '', created_at: '', updated_at: '', status: 'idle', archived: true,
+  } as const
+
+  it('active row: kebab is visible, Archive is hidden until opened, and choosing it calls onArchive', async () => {
+    const user = userEvent.setup()
+    const onArchive = vi.fn()
+    render(<ChatList {...baseProps(() => {})} open={false} chats={[activeChat]} onArchive={onArchive} />)
+
+    expect(screen.getByRole('button', { name: 'Chat actions' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Archive chat' })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: 'Archive chat' })).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: 'Chat actions' }))
+    const archiveItem = screen.getByRole('menuitem', { name: 'Archive chat' })
+    expect(archiveItem).toBeTruthy()
+
+    await user.click(archiveItem)
+    expect(onArchive).toHaveBeenCalledWith('c1')
+  })
+
+  it('archived row: kebab menu shows Restore and Delete, and Delete asks for confirmation', async () => {
+    const user = userEvent.setup()
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const onUnarchive = vi.fn()
+    const onDelete = vi.fn()
+    render(<ChatList {...baseProps(() => {})} open={false} archivedChats={[archivedChat]} onUnarchive={onUnarchive} onDelete={onDelete} />)
+    await user.click(screen.getByRole('button', { name: /Archived/ }))
+
+    await user.click(screen.getByRole('button', { name: 'Chat actions' }))
+    expect(screen.getByRole('menuitem', { name: 'Unarchive chat' })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: 'Delete chat permanently' })).toBeTruthy()
+
+    await user.click(screen.getByRole('menuitem', { name: 'Delete chat permanently' }))
+    expect(confirmSpy).toHaveBeenCalledOnce()
+    expect(onDelete).toHaveBeenCalledWith('c2', expect.anything())
+
+    confirmSpy.mockRestore()
+  })
+
+  it('Escape closes the menu and returns focus to the kebab', async () => {
+    const user = userEvent.setup()
+    render(<ChatList {...baseProps(() => {})} open={false} chats={[activeChat]} />)
+
+    const kebab = screen.getByRole('button', { name: 'Chat actions' })
+    await user.click(kebab)
+    expect(screen.getByRole('menu')).toBeTruthy()
+
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(document.activeElement).toBe(kebab)
+  })
+})
+
+// The kebab's items are the only way to archive/restore/delete on a phone,
+// so each is a 44px row at compact width (desktop keeps the dense menu).
+describe('ChatList row kebab items are 44px at compact width', () => {
+  const activeChat = {
+    id: 'c1', title: 'Active chat', system_prompt: '', created_at: '', updated_at: '', status: 'idle',
+  } as const
+  const archivedChat = {
+    id: 'c2', title: 'Archived chat', system_prompt: '', created_at: '', updated_at: '', status: 'idle', archived: true,
+  } as const
+
+  it('active row: Archive item', async () => {
+    const user = userEvent.setup()
+    render(<ChatList {...baseProps(() => {})} open={false} chats={[activeChat]} onArchive={() => {}} />)
+    await user.click(screen.getByRole('button', { name: 'Chat actions' }))
+    expect(screen.getByRole('menuitem', { name: 'Archive chat' }).className).toContain('min-h-[44px]')
+  })
+
+  it('archived row: Restore and Delete items', async () => {
+    const user = userEvent.setup()
+    render(<ChatList {...baseProps(() => {})} open={false} archivedChats={[archivedChat]} onUnarchive={() => {}} onDelete={() => {}} />)
+    await user.click(screen.getByRole('button', { name: /Archived/ }))
+    await user.click(screen.getByRole('button', { name: 'Chat actions' }))
+    for (const name of ['Unarchive chat', 'Delete chat permanently']) {
+      expect(screen.getByRole('menuitem', { name }).className).toContain('min-h-[44px]')
+    }
   })
 })
