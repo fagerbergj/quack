@@ -116,4 +116,30 @@ describe('lead C: memory search keystroke behavior', () => {
     expect(overwritten).toBe(false)
   })
 
+  // #1300 review: the debounce effect's cleanup (clearTimeout) must win a
+  // race against unmount - if it didn't, the pending setTimeout would fire
+  // after teardown and call setState (setDebouncedQ/resetPaging) on an
+  // unmounted component. Confirms unmounting mid-debounce neither leaks a
+  // request nor throws.
+  it('unmounting before the debounce fires cancels it - no leaked request, no post-unmount setState', async () => {
+    await renderTab()
+    const input = host!.querySelector('input[type="search"]') as HTMLInputElement
+
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      act(() => { typeChar(input, 'graphlit') })
+      await act(async () => { await vi.advanceTimersByTimeAsync(100) }) // well under the 250ms debounce
+      expect(listCalls).toEqual(['']) // debounce hasn't fired yet
+
+      act(() => { root!.unmount() })
+      root = undefined
+
+      // Advance well past the debounce window - if the timer weren't
+      // cancelled, it would fire here and call setState post-unmount.
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+      expect(listCalls).toEqual(['']) // still just the initial load - nothing leaked
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

@@ -617,7 +617,14 @@ describe('ArtifactPanel live SSE updates (#1114)', () => {
     stubLiveFixture()
     const store = seededStore()
     render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan" nodeArtifactKind="text" onClose={() => {}} />, store)
+    // "Revision 1 of 1" is set as soon as the revisions list resolves, but
+    // loadContent's own GET fires from a LATER effect (once currentRev
+    // updates) - clearing the mock before that content fetch has actually
+    // been dispatched attributes the panel's own trailing initial-load call
+    // to the event fired below (flaky under load: #1300 review). Waiting for
+    // the rendered content confirms that fetch has already landed.
     await screen.findByText('Revision 1 of 1')
+    await screen.findByRole('heading', { level: 1, name: 'Plan v1' })
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockClear()
 
