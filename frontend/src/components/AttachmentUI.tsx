@@ -33,11 +33,11 @@ function ImageThumbnail({
       <dialog
         ref={dialogRef}
         aria-label={alt}
-        className="max-w-[92vw] max-h-[92vh] bg-transparent p-0 backdrop:bg-black/70"
+        className="max-w-[92vw] max-h-[92dvh] bg-transparent p-0 backdrop:bg-black/70"
         onClick={e => { if (e.target === dialogRef.current) dialogRef.current?.close() }}
       >
         <div className="relative">
-          <img src={src} alt={alt} className="max-w-[92vw] max-h-[92vh] object-contain" />
+          <img src={src} alt={alt} className="max-w-[92vw] max-h-[92dvh] object-contain" />
           <button
             type="button"
             onClick={() => dialogRef.current?.close()}
