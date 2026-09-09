@@ -113,17 +113,20 @@ func startResumedNodes(ctx context.Context, nodes []store.ResumableNode, orch *o
 }
 
 // boundedGoRun starts run(id) in its own goroutine for every id, at most
-// maxConcurrent at a time - split out from startResumedNodes so the
-// concurrency cap is testable without a real orchestrator/LLM. Blocks until
-// every run has been dispatched (not until they finish).
+// maxConcurrent running at a time - split out from startResumedNodes so the
+// concurrency cap is testable without a real orchestrator/LLM. Returns as
+// soon as every id has a goroutine dispatched, not once every run has
+// started or finished: the semaphore acquire happens inside the goroutine, so
+// dispatch never blocks the caller (buildFromConfig, ahead of ListenAndServe)
+// on an in-flight run - excess ids just park their goroutine on the acquire.
 func boundedGoRun(ids []string, maxConcurrent int, run func(id string)) {
 	if maxConcurrent < 1 {
 		maxConcurrent = 1
 	}
 	sem := make(chan struct{}, maxConcurrent)
 	for _, id := range ids {
-		sem <- struct{}{}
 		go func(id string) {
+			sem <- struct{}{}
 			defer func() { <-sem }()
 			run(id)
 		}(id)

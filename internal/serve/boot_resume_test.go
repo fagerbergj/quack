@@ -177,36 +177,66 @@ func TestResumeGuardArchivedOrStale(t *testing.T) {
 // TestBoundedGoRun_CapsConcurrency pins #1176 review: resumed runs skip the
 // orchestrator's own admission (their old slot died with the process), so
 // startResumedNodes must cap concurrency itself, at max_active_runs, or a
-// restart with many resumable chats hammers the host at once. With limit 1
-// and two ids, the second must not start until the first finishes.
+// restart with many resumable chats hammers the host at once. Dispatch order
+// is not guaranteed (the semaphore acquire lives inside each goroutine, see
+// finding 1), so this only pins the concurrency ceiling: at most `limit`
+// of the 5 ids may be running at once.
 func TestBoundedGoRun_CapsConcurrency(t *testing.T) {
-	release1 := make(chan struct{})
-	var started2 atomic.Bool
-	done := make(chan struct{})
+	const limit = 2
+	ids := []string{"c1", "c2", "c3", "c4", "c5"}
+	release := make(chan struct{})
+	defer close(release)
 
-	go boundedGoRun([]string{"chat-1", "chat-2"}, 1, func(id string) {
-		if id == "chat-1" {
-			<-release1
-			return
+	var running, maxRunning atomic.Int32
+
+	go boundedGoRun(ids, limit, func(string) {
+		n := running.Add(1)
+		for {
+			old := maxRunning.Load()
+			if n <= old || maxRunning.CompareAndSwap(old, n) {
+				break
+			}
 		}
-		started2.Store(true)
+		<-release
+		running.Add(-1)
 	})
 
-	time.Sleep(50 * time.Millisecond)
-	if started2.Load() {
-		t.Fatal("chat-2 started while chat-1 held the only slot")
+	// Give every goroutine a chance to acquire and block on release.
+	time.Sleep(200 * time.Millisecond)
+	if got := maxRunning.Load(); got > limit {
+		t.Fatalf("max concurrently running = %d, want <= %d", got, limit)
 	}
-	close(release1)
+	if got := running.Load(); got != limit {
+		t.Fatalf("currently running = %d, want exactly %d (the rest should be parked on the semaphore)", got, limit)
+	}
+}
+
+// TestBoundedGoRun_DispatchDoesNotBlockOnFullSemaphore pins finding 1: with
+// more resumable chats than max_active_runs, boundedGoRun must dispatch every
+// id and return without waiting for any run to finish - it is called
+// synchronously from buildFromConfig, before srv.ListenAndServe, so blocking
+// here means the HTTP listener never opens. A real driveResume takes minutes
+// to hours, so the semaphore must be acquired inside each goroutine, not
+// before spawning it.
+func TestBoundedGoRun_DispatchDoesNotBlockOnFullSemaphore(t *testing.T) {
+	const maxConcurrent = 6 // prod cfg.Dag.MaxActiveRuns
+	ids := []string{"c1", "c2", "c3", "c4", "c5", "c6", "c7"}
+
+	release := make(chan struct{})
+	defer close(release)
+	returned := make(chan struct{})
+
 	go func() {
-		for !started2.Load() {
-			time.Sleep(time.Millisecond)
-		}
-		close(done)
+		boundedGoRun(ids, maxConcurrent, func(string) {
+			<-release // a real driveResume: minutes to hours
+		})
+		close(returned)
 	}()
+
 	select {
-	case <-done:
+	case <-returned:
 	case <-time.After(2 * time.Second):
-		t.Fatal("chat-2 never started after chat-1 released its slot")
+		t.Fatal("boundedGoRun blocked on the 7th id instead of parking a goroutine for it")
 	}
 }
 
