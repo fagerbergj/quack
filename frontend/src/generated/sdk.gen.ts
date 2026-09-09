@@ -613,8 +613,10 @@ export const rescopeMemories = <ThrowOnError extends boolean = false>(options?: 
  *
  * Epic #1255 P5. Computed from the ledger's `memory.recall`/`memory.vote`
  * entries and `memory_ops`, no new tables. Per ISO week (UTC): recall
- * precision (`supported / (supported+contradicted+not_relevant)`),
- * support share (`supported / total votes`), vote counts by kind,
+ * precision (`supported / (supported+contradicted)`: of the recalls the
+ * judge ruled on, how often the memory was right), support share
+ * (`supported / recalls`: how much of what was delivered helped; unvoted
+ * and not-relevant recalls count as no help), vote counts by kind,
  * recalls, and memories minted/invalidated that week. Also returns a
  * current snapshot of live/invalidated points per scope bucket. A week
  * with no activity still appears, zeroed.

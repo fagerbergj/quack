@@ -997,13 +997,13 @@ type MemoryWeekStats struct {
 	Minted      int `json:"minted"`
 	NotRelevant int `json:"not_relevant"`
 
-	// Precision supported / (supported+contradicted+not_relevant). 0 if no votes were cast.
+	// Precision supported / (supported+contradicted), not-relevant votes excluded. 0 if no such votes.
 	Precision float64 `json:"precision"`
 
 	// Recalls Memories delivered to a worker this week (prefill or tool), from `memory.recall` ledger entries.
 	Recalls int `json:"recalls"`
 
-	// SupportShare supported / total votes cast this week. 0 if no votes were cast.
+	// SupportShare supported / recalls delivered this week; unvoted and not-relevant recalls count as no help. 0 if nothing was recalled.
 	SupportShare float64 `json:"support_share"`
 	Supported    int     `json:"supported"`
 
