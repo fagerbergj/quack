@@ -19,6 +19,10 @@ frontend/src/__screenshots__/
 # Local env (secrets)
 .env
 
+# quack init / quack -p output when run from the repo root (README quickstart)
+/quack.yaml
+/workspace/
+
 # Local-only scratch: design specs, notes, throwaway configs (never committed)
 .quack/
 

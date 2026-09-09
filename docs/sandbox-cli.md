@@ -31,6 +31,10 @@ minted under the workspace root; `--cwd .` jails the current directory
 instead. `--mode` overrides the agent's configured sandbox (`none` on a dev
 box that has no bwrap/landlock).
 
+Under `--mode landlock`, the child's env carries `QUACK_SANDBOX` (visible in
+`info`'s env dump) - a marker the Landlock shim stamps in for observability
+only, never read back to change the sandbox decision.
+
 ## Probe table
 
 Each row is one probe from `internal/cli/sandbox_check.go`, run as `sandbox

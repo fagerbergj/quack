@@ -78,6 +78,8 @@ The active/queued/in-flight gauges (`quack.runs.active`, `quack.runs.queued`, `q
 
 `internal/otelobs/sloghandler.go` bridges `log/slog` to trace correlation — see [`AGENTS.md`](../../AGENTS.md)'s `QUACK_LOG_LEVEL`/`QUACK_LOG_FORMAT` for the logging side of this. Separately, `internal/otelobs` also runs an OTel *logger* provider (`internal/otelobs/logs.go`) — this is the replay ledger's transport, not `slog`.
 
+`QUACK_PPROF_ADDR` (unset by default) starts a `net/http/pprof` debug listener on that address - a deliberate opt-in, since it's an unauthenticated profiling endpoint.
+
 ## Ledger and recording
 
 The ledger is quack's write-ahead log: one append-only stream of typed entries per chat in Postgres (`ledger_entries`). Intents (artifact revisions, delivery, node lifecycle, judge rounds) are appended before the state change they describe; observations (`llm.call`, `tool.call`, `agent.invoke`, `eval.score`) are appended after the fact from the `gen_ai.*` OTel log records that `inference.NewModel`, `tools.Build`, the ACP subprocess connection and the judge emit. Every entry carries the chat id plus `node_id`/`agent`/`round`, the replay stream identity, stamped by the vetting gate on the emitting object.

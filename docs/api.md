@@ -16,16 +16,21 @@ Mounted at the process root (`internal/server/router.go`), modeled after OpenRes
 | `GET /api/v1/chats/{chat_id}/stream` | Reattach to a chat's in-progress (or most recent) run - replays, then streams live. |
 | `PUT /api/v1/chats/{chat_id}/responses/{response_id}/status` | Cancel the active run. |
 | `PUT /api/v1/chats/{chat_id}/nodes/{node_id}/status` | Transition a DAG node: cancel, pause/resume, retry. |
+| `POST /api/v1/chats/{chat_id}/nodes/{node_id}/start` | Explicit per-node start: queued or paused into running. |
+| `POST /api/v1/chats/{chat_id}/nodes/{node_id}/stop` | Explicit per-node stop: any non-terminal status into cancelled. |
 | `PATCH /api/v1/chats/{chat_id}/nodes/{node_id}` | Edit a not-yet-started node's prompt. |
 | `POST` / `PATCH` / `DELETE /api/v1/chats/{chat_id}/nodes/{node_id}/queue[/{message_id}]` | Queue, edit, or remove a message for a running node - delivered at its next turn boundary, never mid-turn. |
+| `GET /api/v1/chats/{chat_id}/artifacts` / `GET .../artifacts/{artifact_name}` | List a chat's artifacts, or fetch one's current bytes. |
+| `GET .../artifacts/{artifact_name}/revisions` / `GET .../artifacts/{artifact_name}/diff` | List an artifact's revision history, or diff two revisions. |
+| `GET` / `DELETE /api/v1/memories/{memory_id}`, `GET /api/v1/memories`, `POST .../vote`, `POST /api/v1/memories/sweep`, `POST /api/v1/memories/rescope`, `GET /api/v1/memories/stats`, `GET .../nodes/{node_id}/memories` | The `quack memory` surface ([`cli.md`](cli.md#memory)): list/search, forget, vote, sweep, rescope, stats, and one node's memories. |
 
-This is what `quack chat` / `quack chat node` ([`cli.md`](cli.md)) and the [web SPA](ui.md) both ride.
+This is what `quack chat` / `quack chat node` / `quack memory` ([`cli.md`](cli.md)) and the [web SPA](ui.md) both ride. `GET /api/v1/config`, `GET /api/v1/extensions`, `GET /api/v1/recordings`, and `GET .../chats/{chat_id}/recording` are SPA-internal (settings/extensions panels, recording browser) and not part of the CLI-facing surface above.
 
 ## Streaming
 
 `POST .../responses` and `GET .../stream` both emit `text/event-stream`: `event: <name>` followed by `data: <json>`. The DAG (`dag_plan` + `node_*` events) is the static structure; within a node, the trust gate runs a sequence of agent invocations ("runs") - the worker draft, each judge round, each revision - each delimited by `agent_start`/`agent_complete` and carrying a `run_id` + `stage` (`worker`/`judge`/`revise`).
 
-Event names: `response_created`, `agent_start`, `agent_thinking`, `agent_tool_call`, `agent_tool_result`, `agent_token`, `agent_complete`, `dag_plan`, `node_queued`, `node_start`, `node_done`, `node_failed`, `node_cancelled`, `node_needs_input`, `node_paused`, `node_steered`, `delivery_result`, `compaction`, `chat_title`, `done`, `error`. Full shapes are on `sendChatMessage`'s description and `x-sse-events` in `openapi.yaml`.
+Event names: `response_created`, `agent_start`, `agent_thinking`, `agent_tool_call`, `agent_tool_result`, `agent_token`, `agent_complete`, `dag_plan`, `node_queued`, `node_start`, `node_done`, `node_failed`, `node_cancelled`, `node_needs_input`, `node_paused`, `node_steered`, `artifact_revision`, `artifact_judge_round`, `delivery_result`, `compaction`, `chat_title`, `done`, `error`. Full shapes are on `sendChatMessage`'s description and `x-sse-events` in `openapi.yaml`.
 
 ## MCP
 
