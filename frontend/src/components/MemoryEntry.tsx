@@ -170,9 +170,9 @@ function KebabMenu({ memory, onForget }: { memory: Memory; onForget: (id: string
             <button
               role="menuitem"
               onClick={() => setConfirming(true)}
-              className="w-full text-left px-3 py-1.5 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700"
+              className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700"
             >
-              Forget
+              <Icon name="delete" className="w-3.5 h-3.5" /> Forget
             </button>
           )}
         </div>
