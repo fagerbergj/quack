@@ -131,7 +131,7 @@ function ChatRow({
     return () => document.removeEventListener('mousedown', onDocMouseDown)
   }, [menuOpen])
 
-  // The × is a two-stage trash: archive first (reversible), hard-delete second.
+  // The trash button is two-stage: archive first (reversible), hard-delete second.
   // Only the irreversible path needs a confirm.
   function handleTrashClick(e: React.MouseEvent) {
     e.stopPropagation()
@@ -230,8 +230,8 @@ function ChatRow({
       <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{relativeDate(s.updated_at)}</span>
       {/* Archived rows get an overflow menu for Restore - the only way back once a
           chat has left the active list. Absolutely positioned in the top-right
-          corner alongside ×, NOT in flow, so it never grows the row's height.
-          Hover-only like ×, but stays visible while its own menu is open. */}
+          corner alongside the archive/delete button, NOT in flow, so it never
+          grows the row's height. Always visible: touch has no hover to reveal it. */}
       {archived && onUnarchive && (
         <div
           ref={menuRef}
@@ -246,9 +246,9 @@ function ChatRow({
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             title="Row actions"
-            className={`inline-flex items-center justify-center min-w-[44px] min-h-[44px] rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-opacity ${menuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+            className="inline-flex items-center justify-center min-w-[44px] min-h-[44px] rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
           >
-            ⋮
+            <Icon name="more_vert" className="w-5 h-5" />
           </button>
           {menuOpen && (
             <div
@@ -262,7 +262,7 @@ function ChatRow({
                 title="Unarchive chat"
                 className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-blue-50 dark:hover:bg-blue-900/40 hover:text-blue-700 dark:hover:text-blue-400 transition-colors"
               >
-                <span aria-hidden="true">↺</span> Restore
+                <Icon name="history" className="w-3.5 h-3.5" /> Restore
               </button>
             </div>
           )}
@@ -272,9 +272,9 @@ function ChatRow({
         onClick={handleTrashClick}
         aria-label={archived ? 'Delete chat permanently' : 'Archive chat'}
         title={archived ? 'Delete chat permanently' : 'Archive chat'}
-        className="absolute right-0 top-0 min-w-[44px] min-h-[44px] flex items-center justify-center opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity rounded"
+        className="absolute right-0 top-0 min-w-[44px] min-h-[44px] flex items-center justify-center text-gray-400 hover:text-red-500 transition-colors rounded"
       >
-        ×
+        <Icon name={archived ? 'delete' : 'archive'} className="w-4 h-4" />
       </button>
     </div>
   )

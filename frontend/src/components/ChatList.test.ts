@@ -474,20 +474,20 @@ describe('ChatRow trash button (archive vs. hard delete)', () => {
     expect(host!.querySelector('button[aria-label="Unarchive chat"]')).toBeNull()
   })
 
-  // Both sit top-right, out of flow (absolute), and hover-only - a regression here
-  // would either grow the row's height or leave a control visible at rest.
-  it('the overflow trigger uses the vertical-ellipsis glyph and is hover-only, like ×', () => {
+  // Both sit top-right, out of flow (absolute), and always visible - touch has
+  // no hover, so a hover-only reveal hid them on every phone. Icons, not glyphs.
+  it('the overflow trigger and trash are always visible Material icons, out of flow', () => {
     renderList([], { onUnarchive: vi.fn(), archivedChats: [chat({ id: 'a10', archived: true })] })
     expandArchived()
 
     const overflow = host!.querySelector('button[aria-label="Row actions"]')
     const trash = host!.querySelector('button[aria-label="Delete chat permanently"]')
-    expect(overflow?.textContent).toBe('⋮')
-    expect(overflow?.className).toEqual(expect.stringContaining('opacity-0'))
-    expect(overflow?.className).toEqual(expect.stringContaining('group-hover:opacity-100'))
+    expect(overflow?.querySelector('svg')).not.toBeNull()
+    expect(overflow?.textContent?.trim()).toBe('')
+    expect(overflow?.className).not.toEqual(expect.stringContaining('opacity-0'))
     expect(overflow?.parentElement?.className).toEqual(expect.stringContaining('absolute')) // the wrapper, not the button, is positioned
-    expect(trash?.className).toEqual(expect.stringContaining('opacity-0'))
-    expect(trash?.className).toEqual(expect.stringContaining('group-hover:opacity-100'))
+    expect(trash?.querySelector('svg')).not.toBeNull()
+    expect(trash?.className).not.toEqual(expect.stringContaining('opacity-0'))
   })
 })
 
