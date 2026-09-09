@@ -13,7 +13,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/coder/acp-go-sdk v0.13.5
 	github.com/creack/pty v1.1.24
-	github.com/fagerbergj/quack-extensions/github v0.11.3
+	github.com/fagerbergj/quack-extensions/github v0.12.0
 	github.com/fagerbergj/quack-extensions/noop v0.2.1
 	github.com/fagerbergj/quack-extensions/remarkable v0.3.2
 	github.com/fagerbergj/quack-extensions/sdk v0.12.0
@@ -54,6 +54,7 @@ require (
 	golang.org/x/term v0.45.0
 	google.golang.org/adk/v2 v2.3.0
 	google.golang.org/genai v1.71.0
+	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/postgres v1.6.2
 	gorm.io/gorm v1.31.2
@@ -174,7 +175,6 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20260819154853-08b0e4226688 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260819154853-08b0e4226688 // indirect
 	google.golang.org/grpc v1.83.1 // indirect
-	google.golang.org/protobuf v1.36.12 // indirect
 	kernel.org/pub/linux/libs/security/libcap/psx v1.2.77 // indirect
 	modernc.org/libc v1.74.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
