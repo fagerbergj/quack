@@ -96,9 +96,10 @@ export interface ChatListProps {
   onExpandArchived?: () => void
 }
 
-// ChatRow renders a single chat row. An active row has one direct control
-// (archive - reversible); an archived row's Restore and permanent Delete live
-// in its kebab. Reusable by both the active groups and the archived section.
+// ChatRow renders a single chat row. Every row has exactly one always-visible
+// kebab (#1319): an active row's menu holds Archive (reversible); an archived
+// row's holds Restore and permanent Delete. Reusable by both the active
+// groups and the archived section.
 function ChatRow({
   s,
   activeChatId,
@@ -119,16 +120,42 @@ function ChatRow({
   const ref = parseGithubRef(s)
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
+  // The menu unmounts on close, so without an explicit return a keyboard or
+  // screen-reader user is dropped on <body> (APG menu button pattern, same as
+  // DagNode's NodeMenu).
+  const close = () => { setMenuOpen(false); btnRef.current?.focus() }
 
-  // Close on an outside click - blur alone misses a mouse click that never
-  // focuses anything inside the menu.
+  // Outside click/tap closes; Escape closes and returns focus to the kebab;
+  // arrow keys move between items.
   useEffect(() => {
     if (!menuOpen) return
     function onDocMouseDown(e: MouseEvent) {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
     }
+    function onDocKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') { close(); return }
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+      const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])
+      if (items.length === 0) return
+      e.preventDefault()
+      const idx = items.indexOf(document.activeElement as HTMLElement)
+      const next = e.key === 'ArrowDown' ? (idx + 1) % items.length : (idx - 1 + items.length) % items.length
+      items[next]?.focus()
+    }
     document.addEventListener('mousedown', onDocMouseDown)
-    return () => document.removeEventListener('mousedown', onDocMouseDown)
+    document.addEventListener('keydown', onDocKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onDocMouseDown)
+      document.removeEventListener('keydown', onDocKeyDown)
+    }
+  }, [menuOpen])
+
+  // Move focus onto the first item when the menu opens (keyboard Enter/Space
+  // on the trigger, or a mouse click - refocusing on click is harmless).
+  useEffect(() => {
+    if (!menuOpen) return
+    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
   }, [menuOpen])
 
   // Only the irreversible path needs a confirm.
@@ -224,44 +251,50 @@ function ChatRow({
         )}
       </div>
       <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{relativeDate(s.updated_at)}</span>
-      {/* Archived rows get one kebab holding Restore and permanent Delete - both
-          secondary, so neither sits bare on the row. Absolutely positioned in the
-          top-right corner, NOT in flow, so it never grows the row's height.
-          Always visible: touch has no hover to reveal it. */}
-      {archived && (
-        <div
-          ref={menuRef}
-          className="absolute right-0 top-0"
-          onBlur={e => {
-            if (!menuRef.current?.contains(e.relatedTarget as Node)) setMenuOpen(false)
-          }}
+      {/* Every row's one action point (#1319 - archive/delete both live here,
+          two clicks instead of a bare one-tap control). Absolutely positioned
+          in the top-right corner, NOT in flow, so it never grows the row's
+          height. Always visible: touch has no hover to reveal it. */}
+      <div ref={menuRef} className="absolute right-0 top-0">
+        <button
+          ref={btnRef}
+          onClick={e => { e.stopPropagation(); setMenuOpen(o => !o) }}
+          aria-label="Chat actions"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          title="Chat actions"
+          className="inline-flex items-center justify-center min-w-[44px] min-h-[44px] rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
         >
-          <button
-            onClick={e => { e.stopPropagation(); setMenuOpen(o => !o) }}
-            aria-label="Row actions"
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            title="Row actions"
-            className="inline-flex items-center justify-center min-w-[44px] min-h-[44px] rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+          <Icon name="more_vert" className="w-5 h-5" />
+        </button>
+        {menuOpen && (
+          <div
+            role="menu"
+            className="absolute right-0 top-full mt-1 z-10 min-w-[8rem] rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1"
           >
-            <Icon name="more_vert" className="w-5 h-5" />
-          </button>
-          {menuOpen && (
-            <div
-              role="menu"
-              className="absolute right-0 top-full mt-1 z-10 min-w-[8rem] rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1"
-            >
-              {onUnarchive && (
-                <button
-                  role="menuitem"
-                  onClick={e => { e.stopPropagation(); setMenuOpen(false); onUnarchive(s.id) }}
-                  aria-label="Unarchive chat"
-                  title="Unarchive chat"
-                  className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-blue-50 dark:hover:bg-blue-900/40 hover:text-blue-700 dark:hover:text-blue-400 transition-colors"
-                >
-                  <Icon name="history" className="w-3.5 h-3.5" /> Restore
-                </button>
-              )}
+            {!archived && (
+              <button
+                role="menuitem"
+                onClick={e => { e.stopPropagation(); setMenuOpen(false); onArchive?.(s.id) }}
+                aria-label="Archive chat"
+                title="Archive chat"
+                className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              >
+                <Icon name="archive" className="w-3.5 h-3.5" /> Archive
+              </button>
+            )}
+            {archived && onUnarchive && (
+              <button
+                role="menuitem"
+                onClick={e => { e.stopPropagation(); setMenuOpen(false); onUnarchive(s.id) }}
+                aria-label="Unarchive chat"
+                title="Unarchive chat"
+                className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-blue-50 dark:hover:bg-blue-900/40 hover:text-blue-700 dark:hover:text-blue-400 transition-colors"
+              >
+                <Icon name="history" className="w-3.5 h-3.5" /> Restore
+              </button>
+            )}
+            {archived && (
               <button
                 role="menuitem"
                 onClick={handleDelete}
@@ -271,20 +304,10 @@ function ChatRow({
               >
                 <Icon name="delete" className="w-3.5 h-3.5" /> Delete
               </button>
-            </div>
-          )}
-        </div>
-      )}
-      {!archived && (
-        <button
-          onClick={e => { e.stopPropagation(); onArchive?.(s.id) }}
-          aria-label="Archive chat"
-          title="Archive chat"
-          className="absolute right-0 top-0 min-w-[44px] min-h-[44px] flex items-center justify-center text-gray-400 hover:text-red-500 transition-colors rounded"
-        >
-          <Icon name="archive" className="w-4 h-4" />
-        </button>
-      )}
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
