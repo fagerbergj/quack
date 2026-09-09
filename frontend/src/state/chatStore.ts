@@ -812,7 +812,7 @@ export class ChatStore {
         onAgentThinking: (runId, text, nid) => nid
           ? updateNodeRuns(nid, r => appendRunThinking(r, runId, text))
           : updateTopLevelRuns(r => appendRunThinking(r, runId, text)),
-        onAgentToolCall: (runId, callId, name, args, nid, title) => {
+        onAgentToolCall: (runId, callId, name, args, nid) => {
           // A tool call means everything narrated so far in this run was
           // pre-action throat-clearing, not the answer - mirrors the reset
           // internal/acp/translate.go performs backend-side (#358), applied
@@ -822,10 +822,10 @@ export class ChatStore {
             const st = this.states.get(chatId)
             const run = st?.live?.dag?.nodeRuns?.[nid]?.find(r => r.runId === runId)
             if (run) resetAnswer(nid, run.stage)
-            updateNodeRuns(nid, r => appendRunToolCall(r, runId, callId, name, args, title))
+            updateNodeRuns(nid, r => appendRunToolCall(r, runId, callId, name, args))
           } else {
             resetTopLevelText()
-            updateTopLevelRuns(r => appendRunToolCall(r, runId, callId, name, args, title))
+            updateTopLevelRuns(r => appendRunToolCall(r, runId, callId, name, args))
           }
         },
         onAgentToolResult: (runId, callId, name, result, nid) => nid

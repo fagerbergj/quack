@@ -26,10 +26,6 @@ export interface ToolCall {
   args: Record<string, unknown>
   result?: unknown
   done: boolean
-  // title carries the ACP-supplied human label for calls the backend maps to
-  // the catch-all kind "other" (a stage_review MCP call, "Loaded skill: …") -
-  // name alone is meaningless for those, so the row should prefer title (#959).
-  title?: string
 }
 
 // Activity is one ordered item inside a run: reasoning, a tool call, or a
@@ -132,14 +128,14 @@ export function appendRunThinking(runs: AgentRun[], runId: string, text: string)
 // resolve (translate.go emits the pending call, then pairs the resolved one) -
 // update that row in place rather than pushing a second, since the eventual
 // result only ever fills the most recent match, orphaning the first (#746).
-export function appendRunToolCall(runs: AgentRun[], runId: string, callId: string, name: string, args: Record<string, unknown>, title?: string): AgentRun[] {
+export function appendRunToolCall(runs: AgentRun[], runId: string, callId: string, name: string, args: Record<string, unknown>): AgentRun[] {
   return mapRun(runs, runId, run => {
     const idx = callId === '' ? -1 : run.activity.findIndex(a => a.kind === 'tool' && !a.tool.done && a.tool.callId === callId)
     if (idx >= 0) {
-      run.activity[idx] = { kind: 'tool', tool: { callId, name, args, title, done: false } }
+      run.activity[idx] = { kind: 'tool', tool: { callId, name, args, done: false } }
       return { ...run }
     }
-    run.activity.push({ kind: 'tool', tool: { callId, name, args, title, done: false } })
+    run.activity.push({ kind: 'tool', tool: { callId, name, args, done: false } })
     return { ...run }
   })
 }

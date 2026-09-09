@@ -184,7 +184,7 @@ export function LiveStatusLine({ activity }: { activity: Activity[] }) {
       <Dots variant="compact" size="w-1 h-1" />
       {thinking && <span className="italic shrink-0">thinking</span>}
       {compacted && <span className="italic shrink-0">compacted</span>}
-      {tool && <span className="truncate font-mono">{toolActionLine(tool.name === 'other' && tool.title ? tool.title : tool.name, tool.args)}</span>}
+      {tool && <span className="truncate font-mono">{toolActionLine(tool.name, tool.args)}</span>}
     </div>
   )
 }
@@ -280,10 +280,7 @@ export function AcpBadge() {
 // summary vs. the nested button conflict).
 export function ToolBlock({ tool }: { tool: ToolCall }) {
   const argSummary = summarizeArgs(tool.args)
-  // name "other" means the ACP relay's bounded kind enum didn't match (a
-  // stage_review MCP call, "Loaded skill: …") and the real identity only
-  // lives in title (#959) - show that instead of the meaningless "other".
-  const label = tool.name === 'other' && tool.title ? tool.title : tool.name
+  const label = tool.name
   return (
     <div className="relative my-0.5 not-prose">
       <details className="group">
