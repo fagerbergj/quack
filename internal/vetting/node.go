@@ -82,6 +82,10 @@ type NodeControl interface {
 	// PauseForInput parks the node on a worker question, persisting it
 	// before the pause is acted on (dag.PauseAwaitingInput).
 	PauseForInput(question string)
+	// MarkDelivered records that commitDelivery ran for this node, so
+	// dagStream can report NodeDone even if a pause/cancel flag races in
+	// right after (the delivered==true call site below).
+	MarkDelivered()
 }
 
 const AskToolName = "ask_user"
@@ -759,10 +763,10 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				// Memory votes (#1255 P1): applied only on the round that actually
 				// passes - a failed round (including one superseded by the WAL
 				// fail-closed flip above) records nothing.
-				if len(receivedMemories) > 0 && len(v.Memories) == 0 {
+				if missingMemoryVotes(memoryIDs(receivedMemories), v) {
 					// #1259: the in-session nudge (runJudgeRound) already tried once;
-					// still empty here means the judge ignored it.
-					log.Warn("judge received memories but cast zero votes after the nudge", "round", round, "received", len(receivedMemories))
+					// still incomplete here means the judge ignored it.
+					log.Warn("judge received memories but left some unvoted after the nudge", "round", round, "received", len(receivedMemories), "voted", len(v.Memories))
 				}
 				applyMemoryVotesOnPass(nodeCtx, cfg, nodeID, round, receivedMemories, v.Memories)
 			}
@@ -874,6 +878,11 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		}
 		// Deliver even on judge FAIL (graceful degradation). Memory stays pass-only.
 		delivered = true
+		if ctrl != nil {
+			// Before commitDelivery: a pause/cancel landing during it must still
+			// see delivered==true (dagStream's terminal-event race, #1340 review).
+			ctrl.MarkDelivered()
+		}
 		act.answer = answer
 		commitDelivery(nodeCtx, sink, cfg, nodeID, act, res)
 		// commitDelivery already ran on the full answer (memory, episodic

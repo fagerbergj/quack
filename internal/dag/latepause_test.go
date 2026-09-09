@@ -62,3 +62,33 @@ func TestDagStream_LiveUserPauseStillWinsOverDraftOutput(t *testing.T) {
 	}
 	t.Fatalf("got %v; want node_paused - a live user pause must not be reported as delivered", names(got))
 }
+
+// TestDagStream_DeliveredOutranksLivePauseRace closes the gap
+// TestDagStream_LiveUserPauseStillWinsOverDraftOutput's own out!="" heuristic
+// could not: a live user pause racing in AFTER commitDelivery already ran
+// (not caught by node.go's own cooperative check beforehand) leaves the
+// node's answer genuinely delivered - node.go's own MarkDelivered signal,
+// not the ambiguous "is Output non-empty" guess, must win. The #1340 review
+// only closed this race for PauseShutdown; a live PauseUser still needed it.
+func TestDagStream_DeliveredOutranksLivePauseRace(t *testing.T) {
+	agentByID := map[string]string{"n1": "a"}
+	var got []stream.SSEEvent
+	ds := newDagStream("", "", agentByID, nil,
+		func(ev stream.SSEEvent, _ error) bool { got = append(got, ev); return true },
+		map[string]string{},
+		func(string) gateScore { return gateScore{} },
+		func(string) bool { return false },
+		func(string) PauseReason { return PauseUser },
+		func(string, int) string { return "" },
+	)
+	ds.deliveredOf = func(string) bool { return true }
+	ds.handle(&session.Event{NodeInfo: &session.NodeInfo{Path: "n1"}, Output: "the delivered answer"})
+	ds.flush()
+
+	for _, e := range got {
+		if e.Name == stream.EventNodeDone {
+			return
+		}
+	}
+	t.Fatalf("got %v; want node_done - MarkDelivered must outrank a pause that raced in after commitDelivery", names(got))
+}

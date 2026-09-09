@@ -109,18 +109,17 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 		agentByID[n.ID] = n.AgentName
 		scopeByID[n.ID] = workspaceNodeID(plan, n)
 	}
-	return &DagStream{
-		ctx: ctx, plan: plan, agentByID: agentByID, yield: yield,
-		ds: newDagStream(otelobs.TraceIDOf(ctx), cancelKey, agentByID, scopeByID, yield, nodeOutputs, func(nodeID string) gateScore {
-			return e.gateScore(ctx, appName, userID, sessionID, nodeID)
-		}, func(nodeID string) bool {
-			return e.controls.wasCancelled(cancelKey, nodeID)
-		}, func(nodeID string) PauseReason {
-			return e.controls.pauseReason(cancelKey, nodeID)
-		}, func(nodeID string, gen int) string {
-			return e.NodeQueueGuidance(cancelKey, nodeID, gen)
-		}),
-	}
+	ds := newDagStream(otelobs.TraceIDOf(ctx), cancelKey, agentByID, scopeByID, yield, nodeOutputs, func(nodeID string) gateScore {
+		return e.gateScore(ctx, appName, userID, sessionID, nodeID)
+	}, func(nodeID string) bool {
+		return e.controls.wasCancelled(cancelKey, nodeID)
+	}, func(nodeID string) PauseReason {
+		return e.controls.pauseReason(cancelKey, nodeID)
+	}, func(nodeID string, gen int) string {
+		return e.NodeQueueGuidance(cancelKey, nodeID, gen)
+	})
+	ds.deliveredOf = func(nodeID string) bool { return e.controls.wasDelivered(cancelKey, nodeID) }
+	return &DagStream{ctx: ctx, plan: plan, agentByID: agentByID, yield: yield, ds: ds}
 }
 
 // Handle: routes gate-node events → SSE (true) or orchestrator events → caller (false).
@@ -156,15 +155,16 @@ func (s *DagStream) Finish() {
 		if len(s.ds.needsInput) > 0 && !s.ds.started[n.ID] {
 			continue
 		}
-		if s.ds.pauseReasonOf != nil && s.ds.pauseReasonOf(n.ID) != "" {
+		delivered := s.ds.deliveredOf != nil && s.ds.deliveredOf(n.ID)
+		if !delivered && s.ds.pauseReasonOf != nil && s.ds.pauseReasonOf(n.ID) != "" {
 			s.yield(stream.NodePaused(n.ID), nil)
 			continue
 		}
-		if s.ds.cancelled != nil && s.ds.cancelled(n.ID) {
+		if !delivered && s.ds.cancelled != nil && s.ds.cancelled(n.ID) {
 			s.yield(stream.NodeCancelled(n.ID), nil)
 			continue
 		}
-		if strings.TrimSpace(s.ds.outputs[n.ID]) == "" {
+		if !delivered && strings.TrimSpace(s.ds.outputs[n.ID]) == "" {
 			s.yield(stream.NodeFailed(n.ID, emptyNodeError(s.ds.chatID, s.ds.scope(n.ID), s.ds.agentByID[n.ID])), nil)
 			continue
 		}
@@ -294,6 +294,11 @@ type dagStream struct {
 	// handle()'s switch.
 	pauseReasonOf func(string) PauseReason
 	steerOf       func(string, int) string
+	// deliveredOf: true once RunGatedRefine reached commitDelivery for this
+	// node. Set only by the one production caller (NewDagStream) - nil in
+	// every test, which is safe (handle's switch guards it) and keeps every
+	// existing newDagStream(...) test call site unchanged.
+	deliveredOf func(string) bool
 
 	started     map[string]bool
 	doneEmitted map[string]bool
@@ -394,6 +399,16 @@ func (s *dagStream) handle(ev *session.Event) bool {
 				pauseReason = s.pauseReasonOf(node)
 			}
 			switch {
+			case s.deliveredOf != nil && s.deliveredOf(node):
+				// ctrl.MarkDelivered() fired inside RunGatedRefine's commitDelivery
+				// call - the authoritative signal, unlike out!="" below (a mid-gate
+				// draft can be non-empty too). Outranks every pause/cancel reason,
+				// live or shutdown: the work is genuinely done regardless of a flag
+				// that raced in afterward (#1340 review, out!=""'s case only closed
+				// this for PauseShutdown).
+				if !s.emit(stream.NodeDone(node, s.nodeDoneData(node))) {
+					return false
+				}
 			case pauseReason != "" && pauseReason != PauseShutdown:
 				// A live user/HITL pause: node.go's own cooperative check caught
 				// this before commitDelivery ran, so the draft answer (if any)
