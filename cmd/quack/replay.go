@@ -47,15 +47,15 @@ func newReplayCmd() *cobra.Command {
 			"                                    locally.\n\n" +
 			"<chat-id-or-bundle.zip> is either a local bundle file (dropped in\n" +
 			"testdata/, or downloaded via `quack api GET .../recording`) or a chat\n" +
-			"id - fetched from --server (default: the active registered server)'s\n" +
-			"recording endpoint.",
+			"id - fetched from --from-server (default: the active registered\n" +
+			"server)'s recording endpoint.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runReplay(cmd, args[0], forkFrom, sourceServer, asJSON)
 		},
 	}
 	c.Flags().StringVar(&forkFrom, "fork-from", "", "fork to LIVE model/agent calls from this node's boundary onward (requires a real provider in quack.yaml)")
-	c.Flags().StringVar(&sourceServer, "server", "", "server to fetch the recording from, when the argument is a chat id (default: active registered server)")
+	c.Flags().StringVar(&sourceServer, "from-server", "", "server to fetch the recording from, when the argument is a chat id (default: active registered server) - distinct from the global --server")
 	asJSONFlag(c, &asJSON)
 	return c
 }

@@ -62,3 +62,18 @@ workspace:
 		t.Errorf("expected output to contain %q, got:\n%s", "ok", got)
 	}
 }
+
+// TestSandboxCheck_JSONFlagRegistered covers cli.md audit finding 12:
+// `sandbox check` needs a --json flag (the natural CI consumer of a
+// PASS/FAIL table). Checked at the flag-registration level, not by actually
+// running the probes - several of them (a real `git push`, `go build
+// offline`) are environment-dependent and a FAIL exits the process
+// (exitIfNonZero), which would kill the test binary along with it. The JSON
+// encoding shape itself is covered in internal/cli's
+// TestSandboxProbeResultJSONShape.
+func TestSandboxCheck_JSONFlagRegistered(t *testing.T) {
+	c := newSandboxCheckCmd()
+	if c.Flags().Lookup("json") == nil {
+		t.Error("sandbox check is missing --json")
+	}
+}

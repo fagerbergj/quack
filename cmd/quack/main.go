@@ -10,11 +10,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 
@@ -129,12 +131,22 @@ func newInitCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out, _ := cmd.Flags().GetString("output")
 			force, _ := cmd.Flags().GetBool("force")
-			return wizard.ClientInit(cmd.Context(), out, force)
+			return friendlyTTYErr(wizard.ClientInit(cmd.Context(), out, force))
 		},
 	}
 	c.Flags().StringP("output", "o", "quack.yaml", "path to write quack.yaml (local)")
 	c.Flags().Bool("force", false, "overwrite an existing quack.yaml")
 	return c
+}
+
+// friendlyTTYErr rewrites huh's raw "could not open a new TTY" error (hit
+// under CI, `< /dev/null`, or any run with no real terminal) into a message
+// that names the actual fix instead of a bare library error.
+func friendlyTTYErr(err error) error {
+	if err != nil && strings.Contains(err.Error(), "could not open a new TTY") {
+		return fmt.Errorf("no terminal available for the interactive wizard - pass --answers <file> to `quack server init` for a non-interactive setup")
+	}
+	return err
 }
 
 // newChatCmd: create and drive chat sessions, plus per-node lifecycle control.
@@ -159,6 +171,9 @@ func newChatCmd() *cobra.Command {
 		newChatExportCmd(),
 		newChatStopCmd(),
 		newChatDeleteCmd(),
+		newChatRenameCmd(),
+		newChatArchiveCmd(true),
+		newChatArchiveCmd(false),
 		node,
 		artifact,
 	)
@@ -195,7 +210,7 @@ func newArtifactDownloadCmd() *cobra.Command {
 		},
 	}
 	c.Flags().IntVar(&revision, "revision", 0, "which revision to fetch (default: latest)")
-	c.Flags().StringVarP(&output, "output", "o", "", "output file path (default: the artifact's own name)")
+	c.Flags().StringVarP(&output, "output", "o", "", "output file path, or - for stdout (default: the artifact's own name, sanitised)")
 	return c
 }
 
@@ -273,23 +288,57 @@ func withTarget(cmd *cobra.Command, fn func(target string) error) error {
 
 func newChatListCmd() *cobra.Command {
 	var asJSON bool
-	var filter, status, repo, kind string
+	var filter, status, repo, kind, archived string
 	c := &cobra.Command{
 		Use:   "list",
 		Short: "List chats",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return withTarget(cmd, func(t string) error {
-				return cli.RunChatList(cmd.Context(), cmd.OutOrStdout(), t, asJSON, cli.NewChatListFilters(filter, status, repo, kind))
+				return cli.RunChatList(cmd.Context(), cmd.OutOrStdout(), t, asJSON, cli.NewChatListFilters(filter, status, repo, kind, archived))
 			})
 		},
 	}
 	asJSONFlag(c, &asJSON)
 	c.Flags().StringVar(&filter, "filter", "all", "filter by origin: all, github, direct")
-	c.Flags().StringVar(&status, "status", "", "filter by status: idle, running, needs_input, failed")
+	c.Flags().StringVar(&status, "status", "", "filter by status: idle, queued, running, needs_input, failed")
 	c.Flags().StringVar(&repo, "repo", "", "filter to a github repo (owner/repo); github chats only")
 	c.Flags().StringVar(&kind, "type", "", "filter by github ref type: issue, pr")
+	c.Flags().StringVar(&archived, "archived", "exclude", "archived chats: exclude, include, only")
 	return c
+}
+
+func newChatRenameCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "rename <id> <title>",
+		Short: "Rename a chat",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunChatRename(cmd.Context(), cmd.OutOrStdout(), t, args[0], args[1])
+			})
+		},
+	}
+}
+
+// newChatArchiveCmd builds `chat archive` (archived=true) and `chat
+// unarchive` (archived=false) - the only CLI path to a chat archived in the
+// web UI, and the only way to bring one back.
+func newChatArchiveCmd(archived bool) *cobra.Command {
+	use, short := "archive <id>", "Archive a chat"
+	if !archived {
+		use, short = "unarchive <id>", "Unarchive a chat"
+	}
+	return &cobra.Command{
+		Use:   use,
+		Short: short,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTarget(cmd, func(t string) error {
+				return cli.RunChatArchive(cmd.Context(), cmd.OutOrStdout(), t, args[0], archived)
+			})
+		},
+	}
 }
 
 func newChatExportCmd() *cobra.Command {
@@ -329,7 +378,7 @@ func newChatDeleteCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withTarget(cmd, func(t string) error {
-				return cli.RunChatDelete(cmd.Context(), cmd.OutOrStdout(), cmd.InOrStdin(), t, args[0], yes)
+				return cli.RunChatDelete(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), cmd.InOrStdin(), t, args[0], yes)
 			})
 		},
 	}
@@ -353,7 +402,7 @@ func newMemoryCmd() *cobra.Command {
 
 func newMemoryListCmd() *cobra.Command {
 	var asJSON, includeInvalidated bool
-	var bucket, q string
+	var bucket, q, tier, sort string
 	var limit int
 	c := &cobra.Command{
 		Use:   "list",
@@ -361,14 +410,16 @@ func newMemoryListCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return withTarget(cmd, func(t string) error {
-				return cli.RunMemoryList(cmd.Context(), cmd.OutOrStdout(), t, bucket, q, limit, includeInvalidated, asJSON)
+				return cli.RunMemoryList(cmd.Context(), cmd.OutOrStdout(), t, bucket, q, tier, sort, limit, includeInvalidated, asJSON)
 			})
 		},
 	}
 	asJSONFlag(c, &asJSON)
 	c.Flags().StringVar(&bucket, "bucket", "", "restrict to one bucket (e.g. repo:quack, role:coding, user:jason)")
 	c.Flags().StringVar(&q, "q", "", "embedding search instead of listing")
-	c.Flags().IntVar(&limit, "limit", 0, "max memories to return (server default 50, capped at 200)")
+	c.Flags().StringVar(&tier, "tier", "", "restrict to one vote-based tier: unverified, verified")
+	c.Flags().StringVar(&sort, "sort", "", "order results: newest, oldest, score, upvotes, downvotes, recalls, last_recalled (default newest; ignored with -q)")
+	c.Flags().IntVar(&limit, "limit", 0, "max memories to return (default: auto-page through everything; ignored with -q, which is a bounded top-K)")
 	c.Flags().BoolVar(&includeInvalidated, "include-invalidated", false, "include invalidated memories")
 	return c
 }
@@ -685,21 +736,51 @@ func newServerValidateCmd() *cobra.Command {
 // newServerInitCmd: `quack server init` - the server-config wizard (LLM
 // provider, models, stores). Writes quack.yaml.
 func newServerInitCmd() *cobra.Command {
+	var answersPath string
 	c := &cobra.Command{
 		Use:   "init",
-		Short: "Interactive setup wizard that writes quack.yaml",
+		Short: "Interactive setup wizard that writes quack.yaml (or non-interactive with --answers)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out, _ := cmd.Flags().GetString("output")
 			force, _ := cmd.Flags().GetBool("force")
-			if err := wizard.ServerInit(cmd.Context(), out, force); err != nil && !errors.Is(err, wizard.ErrAborted) {
-				return err
+			if answersPath != "" {
+				return runServerInitAnswers(answersPath, out, force)
+			}
+			wrote, err := wizard.ServerInit(cmd.Context(), out, force, false)
+			if err != nil && !errors.Is(err, wizard.ErrAborted) {
+				return friendlyTTYErr(err)
+			}
+			if wrote {
+				fmt.Println("\nRun `quack server run` to start.")
 			}
 			return nil
 		},
 	}
 	c.Flags().StringP("output", "o", "quack.yaml", "path to write quack.yaml")
 	c.Flags().Bool("force", false, "overwrite an existing quack.yaml")
+	c.Flags().StringVar(&answersPath, "answers", "", "path to a YAML file of InitAnswers fields - skips the wizard for a headless setup (Dockerfile, CI, Ansible)")
 	return c
+}
+
+// runServerInitAnswers is `quack server init --answers <file>`: the headless
+// path (no huh form, no TTY needed). Mirrors the wizard's own existing-file
+// guard - errors rather than silently overwriting, since there's no form to
+// ask "use it as-is / overwrite / write elsewhere" in a script.
+func runServerInitAnswers(answersPath, outPath string, force bool) error {
+	if !force {
+		if _, err := os.Stat(outPath); err == nil {
+			return fmt.Errorf("%s already exists - pass --force to overwrite", outPath)
+		}
+	}
+	a, err := cli.LoadInitAnswersFile(answersPath)
+	if err != nil {
+		return err
+	}
+	if err := cli.WriteServerConfig(a, outPath); err != nil {
+		return err
+	}
+	fmt.Println("\nRun `quack server run` to start.")
+	return nil
 }
 
 func newServerUseCmd() *cobra.Command {
@@ -740,35 +821,63 @@ func newServerAddCmd() *cobra.Command {
 			if err := c.Save(); err != nil {
 				return err
 			}
-			fmt.Printf("added %s (%s)\n", args[0], args[1])
+			if c.Active == args[0] {
+				fmt.Printf("added %s (%s) - now active\n", args[0], args[1])
+			} else {
+				fmt.Printf("added %s (%s)\nrun `quack server use %s` to make it active\n", args[0], args[1], args[0])
+			}
 			return nil
 		},
 	}
 }
 
+// serverListRow is one `server list --json` entry.
+type serverListRow struct {
+	Name   string `json:"name"`
+	URL    string `json:"url"`
+	Active bool   `json:"active"`
+}
+
 func newServerListCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	c := &cobra.Command{
 		Use:   "list",
 		Short: "List configured servers (* = active)",
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, err := cli.LoadClient()
 			if err != nil {
 				return err
 			}
-			if len(c.Servers) == 0 {
+			names := make([]string, 0, len(c.Servers))
+			for name := range c.Servers {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			if asJSON {
+				rows := make([]serverListRow, len(names))
+				for i, name := range names {
+					rows[i] = serverListRow{Name: name, URL: c.Servers[name].URL, Active: name == c.Active}
+				}
+				enc := json.NewEncoder(cmd.OutOrStdout())
+				enc.SetIndent("", "  ")
+				return enc.Encode(rows)
+			}
+			if len(names) == 0 {
 				fmt.Println("no servers registered - run `quack init` or `quack server add`")
 				return nil
 			}
-			for name, s := range c.Servers {
+			for _, name := range names {
 				mark := " "
 				if name == c.Active {
 					mark = "*"
 				}
-				fmt.Printf("%s %-12s %s\n", mark, name, s.URL)
+				fmt.Printf("%s %-12s %s\n", mark, name, c.Servers[name].URL)
 			}
 			return nil
 		},
 	}
+	asJSONFlag(c, &asJSON)
+	return c
 }
 
 func newServerRemoveCmd() *cobra.Command {

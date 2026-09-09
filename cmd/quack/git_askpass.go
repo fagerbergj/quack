@@ -45,6 +45,7 @@ func isGitAskpassInvocation() bool {
 func newGitAskpassCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:    "git-askpass [prompt]",
+		Short:  "Answer a git credential prompt (debugging aid; git normally invokes this via argv[0])",
 		Hidden: true,
 		Args:   cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
