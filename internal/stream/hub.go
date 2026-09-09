@@ -160,6 +160,20 @@ func (h *Hub) Active(key string) bool {
 func (h *Hub) Close(key string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.closeLocked(key)
+}
+
+// EndRun unregisters the run and closes its topic under one lock, so a
+// dispatch that sees the run gone cannot Reset a fresh topic before the
+// old run's Close lands on it.
+func (h *Hub) EndRun(chatID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.runs.Delete(chatID)
+	h.closeLocked(chatID)
+}
+
+func (h *Hub) closeLocked(key string) {
 	t := h.topics[key]
 	if t == nil {
 		return

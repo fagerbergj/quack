@@ -125,15 +125,15 @@ func (l *EventLog) Flush() {
 }
 
 // FinishRun is the one correct sequence for ending a run: flush, THEN
-// cancel+unregister, THEN close the hub (which lets a client's stream
-// return) - Close must come last, or a cancel racing the client's "stream
-// ended" signal can still find the run registered and wrongly succeed
-// (see TestSendChatMessage_ResponseCreatedFirst).
+// cancel, THEN unregister+close atomically. Unregister must precede the
+// close that lets a client's stream return, or a cancel racing "stream
+// ended" still finds the run registered (TestSendChatMessage_ResponseCreatedFirst);
+// doing both under the hub lock keeps a new dispatch from being closed by
+// the old run's tail.
 func (l *EventLog) FinishRun(hub *stream.Hub, chatID string, cancelRun context.CancelFunc) {
 	l.Flush()
 	cancelRun()
-	hub.UnregisterRun(chatID)
-	hub.Close(chatID)
+	hub.EndRun(chatID)
 }
 
 // Append enqueues an event row (non-blocking; drops if queue is full).
