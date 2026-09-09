@@ -1,8 +1,12 @@
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import Chat from './pages/Chat'
-import Memory from './pages/Memory'
-import ExtensionHost from './pages/ExtensionHost'
 import { NavRail } from './components/NavRail'
+import { LazyLoadBoundary } from './components/LazyLoadBoundary'
+
+// Chat is the default route and loads eagerly; Memory and the extension
+// iframe host are route-split out of the entry chunk (~19.7 kB gzip).
+const Memory = lazy(() => import('./pages/Memory'))
+const ExtensionHost = lazy(() => import('./pages/ExtensionHost'))
 import { useRoute, useExtName } from './router'
 import { applyTheme } from './hooks/useTheme'
 import { useVisualViewportHeight } from './hooks/useVisualViewportHeight'
@@ -50,10 +54,14 @@ export default function App() {
             routed by src/router.ts's plain path matcher, no router
             dependency. Each page's header leading slot carries the NavToggle
             for the drawer above, fed by this one state. */}
+        {/* key=route: memory and ext share this JSX slot, so without a key
+            React reuses the same LazyLoadBoundary instance across a
+            navigation between them - a failure on one route would then
+            keep showing its error screen on the other, unrelated route. */}
         {route === 'memory'
-          ? <Memory navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} />
+          ? <LazyLoadBoundary key={route}><Suspense fallback={null}><Memory navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} /></Suspense></LazyLoadBoundary>
           : route === 'ext'
-            ? <ExtensionHost navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} />
+            ? <LazyLoadBoundary key={route}><Suspense fallback={null}><ExtensionHost navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} /></Suspense></LazyLoadBoundary>
             : <Chat navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} />}
       </div>
     </div>

@@ -443,20 +443,29 @@ function dispatchAgentEvent(
 
 // readAgentStream parses a fetched SSE ReadableStream (used by the chat send
 // flow, which posts a request body and reads the response stream). Returns
-// whether a `done` event was actually seen before the body ended - the POST
-// body carries no Last-Event-ID, so the caller's only signal that the stream
-// ended cleanly (vs. a dropped connection worth reconnecting over) is this.
+// whether a `done` event was actually seen before the body ended - the
+// caller's only signal that the stream ended cleanly (vs. a dropped
+// connection worth reconnecting over) is this - plus the highest `id:` line
+// seen, so a dropped-connection handoff can resume past it instead of
+// replaying the whole run (the wire format carries `id:` on every event,
+// same sseWriter as the GET stream; EventSource just parses it for us there).
 // A read error (anything but an intentional abort) is treated the same as the
 // body simply closing: report done=false and let the caller reconnect.
 export async function readAgentStream(
   body: ReadableStream<Uint8Array>,
   handlers: AgentStreamHandlers,
-): Promise<{ done: boolean }> {
+): Promise<{ done: boolean; lastEventId: number }> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
   let buf = ''
   let currentEvent = 'message'
   let sawDone = false
+  let lastEventId = 0
+  // pendingId is the `id:` line's value for the event currently being
+  // parsed; it only becomes lastEventId once that event's `data:` line
+  // actually dispatches, so a drop between the two (a real TCP boundary,
+  // not a corner case) can't advance past an event never applied.
+  let pendingId = 0
   while (true) {
     let chunk: ReadableStreamReadResult<Uint8Array>
     try {
@@ -470,6 +479,11 @@ export async function readAgentStream(
     const lines = buf.split('\n')
     buf = lines.pop()!
     for (const line of lines) {
+      if (line.startsWith('id: ')) {
+        const id = Number(line.slice(4).trim())
+        if (Number.isFinite(id)) pendingId = id
+        continue
+      }
       if (line.startsWith('event: ')) {
         currentEvent = line.slice(7).trim()
         continue
@@ -481,9 +495,10 @@ export async function readAgentStream(
       try { parsed = JSON.parse(raw) } catch { continue }
       if (currentEvent === 'done') sawDone = true
       dispatchAgentEvent(currentEvent, parsed, handlers)
+      if (pendingId > lastEventId) lastEventId = pendingId
     }
   }
-  return { done: sawDone }
+  return { done: sawDone, lastEventId }
 }
 
 // attachAgentEventSource wires an EventSource (used by the job live log) to
