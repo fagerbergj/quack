@@ -13,15 +13,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..', 'src')
 // ellipsis) that check-no-emoji isn't concerned with.
 const EMOJI = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu
 
-// file:line pairs (relative to frontend/src) known to still carry an emoji,
-// each with a reason - update alongside any intentional new occurrence.
-const ALLOWLIST = new Set([
-  'components/Composer.tsx:224', // handled by #1248 (composer rework)
-  'components/Composer.tsx:225', // handled by #1248
-  'components/Composer.tsx:269', // handled by #1248
-  'components/NavRail.tsx:30',   // comment prose
-  'components/NavRail.tsx:32',   // comment prose
-])
+// An intentional emoji is allowed by a pragma ON THE SAME LINE, with a reason:
+//   `// allow-emoji: <why>` - a file:line allowlist silently drifted on every
+// edit above it (an entry stopped pointing at any emoji, or masked a new one).
+const ALLOW_PRAGMA = /allow-emoji:\s*\S/
 
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
@@ -43,9 +38,8 @@ for (const file of walk(root)) {
   lines.forEach((line, i) => {
     if (!EMOJI.test(line)) return
     EMOJI.lastIndex = 0
-    const key = `${rel}:${i + 1}`
-    if (ALLOWLIST.has(key)) return
-    console.error(`${key}: emoji found - use the Icon component (frontend/src/components/Icon.tsx) or add to the ALLOWLIST with a reason`)
+    if (ALLOW_PRAGMA.test(line)) return
+    console.error(`${rel}:${i + 1}: emoji found - use the Icon component (frontend/src/components/Icon.tsx) or append "// allow-emoji: <reason>" to this line`)
     failed = true
   })
 }
