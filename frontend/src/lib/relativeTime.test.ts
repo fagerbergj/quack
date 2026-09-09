@@ -12,11 +12,11 @@ describe('relativeTime', () => {
     const ago = (ms: number) => new Date(now - ms).toISOString()
     expect(relativeTime(ago(0))).toBe('just now')
     expect(relativeTime(ago(59_000))).toBe('just now')
-    expect(relativeTime(ago(5 * 60_000))).toBe('5m ago')
-    expect(relativeTime(ago(3 * 3600_000))).toBe('3h ago')
-    expect(relativeTime(ago(2 * 86_400_000))).toBe('2d ago')
-    expect(relativeTime(ago(60 * 86_400_000))).toBe('2mo ago')
-    expect(relativeTime(ago(400 * 86_400_000))).toBe('1y ago')
+ expect(relativeTime(ago(5* 60_000))).toBe('5m ago')
+ expect(relativeTime(ago(3* 3600_000))).toBe('3h ago')
+ expect(relativeTime(ago(2* 86_400_000))).toBe('2d ago')
+ expect(relativeTime(ago(60* 86_400_000))).toBe('2mo ago')
+ expect(relativeTime(ago(400* 86_400_000))).toBe('1y ago')
   })
 
   it('never goes negative for a future timestamp', () => {

@@ -11,7 +11,7 @@ import type { ArtifactSummary, ArtifactRevisionInfo } from '../api'
 
 const lines = [
   'function review(x) {',
-  '  // x may be nil here',
+ '// x may be nil here',
   '  return x.value',
   '}',
 ]
@@ -30,7 +30,7 @@ describe('anchorNotes', () => {
       { ref: { artifact_id: 'a', revision: 1, snippet: 'no longer present', line_hint: 3 }, text: 'fallback note' },
     ])
     expect(unanchored).toHaveLength(0)
-    // line_hint is 1-based; line 3 -> index 2.
+// line_hint is 1-based; line 3 -> index 2.
     expect(byLine.get(2)?.[0].text).toBe('fallback note')
   })
 
@@ -92,7 +92,7 @@ describe('selectPrimaryOutput', () => {
   it('prefers the artifact whose kind is the node\'s declared output', () => {
     const plan = summary({ name: 'text:plan', kind: 'text', latest_revision: 1 })
     const strayDoc = summary({ name: 'document:spec', kind: 'document', latest_revision: 9 })
-    // The document is NEWER, but the node declared `text` - the plan wins.
+// The document is NEWER, but the node declared `text` - the plan wins.
     expect(selectPrimaryOutput([strayDoc, plan], 'text')?.name).toBe('text:plan')
   })
 
@@ -100,7 +100,7 @@ describe('selectPrimaryOutput', () => {
     const older = summary({ name: 'text:plan', kind: 'text', latest_revision: 1 })
     const newer = summary({ name: 'document:spec', kind: 'document', latest_revision: 3 })
     expect(selectPrimaryOutput([older, newer])?.name).toBe('document:spec')
-    expect(selectPrimaryOutput([older, newer], 'bytes')?.name).toBe('document:spec') // declared kind absent -> fallback
+ expect(selectPrimaryOutput([older, newer], 'bytes')?.name).toBe('document:spec')// declared kind absent -> fallback
   })
 
   it('breaks latest_revision ties on lineage saved_at, then name', () => {

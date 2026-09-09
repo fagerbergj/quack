@@ -52,21 +52,21 @@ export interface AgentRun {
   stage: Stage
   round?: number
   activity: Activity[]
-  // Index of the run's most recent thinking item, so appendRunThinking can
-  // fold a delta into it in O(1) even across intervening tool calls (#959),
-  // rather than rescanning activity for the last thinking item.
+// Index of the run's most recent thinking item, so appendRunThinking can
+// fold a delta into it in O(1) even across intervening tool calls (#959),
+// rather than rescanning activity for the last thinking item.
   lastThinkIdx?: number
   done: boolean
-  startedAt?: number    // ms timestamp when the run opened
-  durationMs?: number   // set on complete
-  // results (set on complete)
-  score?: number       // judge
-  passed?: boolean     // judge
-  threshold?: number   // judge: the score a round must reach to pass
-  feedback?: string    // judge
-  status?: string      // '' ok | 'unavailable' (judge unreachable) | 'no_verdict' (judge ran, never committed one)
+ startedAt?: number// ms timestamp when the run opened
+ durationMs?: number// set on complete
+// results (set on complete)
+ score?: number// judge
+ passed?: boolean// judge
+ threshold?: number// judge: the score a round must reach to pass
+ feedback?: string// judge
+ status?: string// '' ok | 'unavailable' (judge unreachable) | 'no_verdict' (judge ran, never committed one)
   reason?: string
-  finishReason?: string // worker
+ finishReason?: string// worker
   model?: string
   totalTokens?: number
 }
@@ -213,7 +213,7 @@ export interface LiveStatus {
 // liveStatusLine computes LiveStatus from a run's activity - the substitute
 // for rendering the full list while running (#725: re-rendering an
 // ever-growing activity list on every streamed token is what locks the tab).
-// compacted surfaces a mid-round compaction (#1185) even while the run is
+// compacted surfaces a mid-round compaction even while the run is
 // still shown via this substitute rather than the full ActivityList.
 export function liveStatusLine(activity: Activity[]): LiveStatus {
   let tool: ToolCall | undefined

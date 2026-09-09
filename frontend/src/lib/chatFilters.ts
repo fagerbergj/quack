@@ -126,9 +126,9 @@ export function computeFacets(chats: ChatSummary[]): Facet[] {
     })
   }
 
-  // One facet per origin.labels dimension actually present - an extension's
-  // own grouping (repo, folder, tags, ...), generic to whichever extension
-  // supplied it.
+// One facet per origin.labels dimension actually present - an extension's
+// own grouping (repo, folder, tags, ...), generic to whichever extension
+// supplied it.
   for (const dim of originLabelDimensions(chats)) {
     const counts = countByLabelValue(chats, dim)
     if (counts.size === 0) continue
@@ -159,7 +159,7 @@ export function matchesFacets(chat: ChatSummary, selected: SelectedFacets): bool
       if (!chatValues.some(v => values.includes(v))) return false
       continue
     }
-    if (!(FACET_KEYS as readonly string[]).includes(key)) continue // unknown key: no constraint
+ if (!(FACET_KEYS as readonly string[]).includes(key)) continue// unknown key: no constraint
     const value = facetValue(chat, key as FacetKey)
     if (value === undefined || !values.includes(value)) return false
   }

@@ -18,7 +18,7 @@ function topoLayers(nodeIds: string[], dependsOnMap: Record<string, string[]>): 
   const remaining = new Set(nodeIds)
   while (remaining.size > 0) {
     const layer = [...remaining].filter(id => inDegree[id] === 0)
-    if (layer.length === 0) break // cycle guard
+ if (layer.length === 0) break// cycle guard
     layers.push(layer)
     for (const id of layer) {
       remaining.delete(id)
@@ -34,11 +34,11 @@ function topoLayers(nodeIds: string[], dependsOnMap: Record<string, string[]>): 
 
 interface Props {
   dag: DagTurnState
-  // Present only for a real chat (not a Storybook fixture) - gates each
-  // node's Artifacts button, since the panel reads the REST artifacts API.
+// Present only for a real chat (not a Storybook fixture) - gates each
+// node's Artifacts button, since the panel reads the REST artifacts API.
   chatId?: string
-  // Present only for a live, streaming run: per-node controls (cancel / pause /
-  // resume / queue a message), surfaced in the node popup (#265).
+// Present only for a live, streaming run: per-node controls (cancel / pause /
+// resume / queue a message), surfaced in the node popup (#265).
   onCancelNode?: (nodeId: string) => void
   onPauseNode?: (nodeId: string) => void
   onResumeNode?: (nodeId: string) => void
@@ -46,11 +46,11 @@ interface Props {
   onEditQueuedMessage?: (nodeId: string, messageId: string, text: string) => void
   onRemoveQueuedMessage?: (nodeId: string, messageId: string) => void
   onEditNodeTask?: (nodeId: string, task: string) => void
-  // Retry a finished node (failed or done) + its downstream. Present when the turn
-  // is the live one and not currently streaming.
+// Retry a finished node (failed or done) + its downstream. Present when the turn
+// is the live one and not currently streaming.
   onRetryNode?: (nodeId: string, guidance?: string) => void
-  // Answers a paused node's mid-node question (needs_input), via the same
-  // resume path the top-level QuestionBubble uses.
+// Answers a paused node's mid-node question (needs_input), via the same
+// resume path the top-level QuestionBubble uses.
   onAnswerNodeQuestion?: (nodeId: string, answer: string) => void
 }
 

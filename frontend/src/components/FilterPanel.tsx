@@ -16,7 +16,7 @@ export interface Facet {
 
 export interface FilterPanelProps {
   facets: Facet[]
-  // selected values per facet key
+// selected values per facet key
   selected: Record<string, string[]>
   onToggle: (facetKey: string, value: string) => void
   onClear: () => void
@@ -35,7 +35,7 @@ export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanel
   const ref = useRef<HTMLDivElement>(null)
   const count = activeFilterCount(selected)
 
-  // Close on outside click / Escape.
+// Close on outside click / Escape.
   useEffect(() => {
     if (!open) return
     const onDown = (e: MouseEvent) => {

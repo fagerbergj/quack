@@ -7,8 +7,8 @@ import type { AgentRun, Activity } from './messageParts'
 const meta: Meta<typeof DagNode> = {
   title: 'Chat/DagNode',
   component: DagNode,
-  // Every node-card story renders at 390px too (render-check): the header
-  // must stay one line and the kebab visible without hover on a phone.
+// Every node-card story renders at 390px too (render-check): the header
+// must stay one line and the kebab visible without hover on a phone.
   parameters: { layout: 'padded', renderCheck: { viewports: ['mobile', 'desktop'] } },
 }
 export default meta
@@ -35,8 +35,8 @@ const synthNode: DagNodeDef = {
 
 const researchActivity: Activity[] = [
   { kind: 'thinking', text: 'I need the best months to visit Dublin based on weather data.' },
-  { kind: 'tool', tool: { callId: 'c1', name: 'web_search', args: { query: 'best time to visit Dublin weather' }, result: { results: [{ title: 'Dublin Climate Guide', url: 'https://example.com/climate' }] }, done: true } },
-  { kind: 'tool', tool: { callId: 'c2', name: 'web_fetch', args: { url: 'https://example.com/climate' }, result: 'Dublin is mild year-round; May–September is warmest (15–18 °C).', done: true } },
+ { kind: 'tool', tool: { callId: 'c1', name: 'web_search', args: { query: 'best time to visit Dublin weather' }, result: { results: [{ title: 'Dublin Climate Guide', url: 'https://example.com/climate' }] }, done: true } },
+ { kind: 'tool', tool: { callId: 'c2', name: 'web_fetch', args: { url: 'https://example.com/climate' }, result: 'Dublin is mild year-round; May–September is warmest (15–18 °C).', done: true } },
 ]
 
 const workerDone = (activity: Activity[]): AgentRun => ({
@@ -44,7 +44,7 @@ const workerDone = (activity: Activity[]): AgentRun => ({
 })
 
 const judgeRun = (round: number, score: number, passed: boolean, feedback: string): AgentRun => ({
-  // threshold mirrors the live envelope.threshold so the "(needs 70%)" bar renders.
+// threshold mirrors the live envelope.threshold so the "(needs 70%)" bar renders.
   runId: `j${round}`, agent: 'judge', stage: 'judge', round, done: true, score, passed, threshold: 0.7, feedback,
   activity: [{ kind: 'thinking', text: 'Re-checking cited URLs against the claims…' }],
 })
@@ -84,7 +84,7 @@ export const DoneWithTokens: Story = {
     node: wrNode,
     state: { status: 'done', startedAt: 0, finishedAt: 34_000, totalTokens: 1_847, model: 'qwen3-30b-a3b', finishReason: 'STOP' },
     runs: [workerDone(researchActivity)],
-    answer: 'Best months to visit Dublin: **May–September**, warmest June–August.',
+ answer: 'Best months to visit Dublin:**May–September**, warmest June–August.',
     isFinal: false,
   },
 }
@@ -94,7 +94,7 @@ export const DoneWithCachedTokens: Story = {
     node: wrNode,
     state: { status: 'done', startedAt: 0, finishedAt: 34_000, totalTokens: 1_847, cachedTokens: 1_200, model: 'qwen3-30b-a3b', finishReason: 'STOP' },
     runs: [workerDone(researchActivity)],
-    answer: 'Best months to visit Dublin: **May–September**, warmest June–August.',
+ answer: 'Best months to visit Dublin:**May–September**, warmest June–August.',
     isFinal: false,
   },
 }
@@ -104,7 +104,7 @@ export const FinalNodeDone: Story = {
     node: synthNode,
     state: { status: 'done', startedAt: 0, finishedAt: 22_500, totalTokens: 892, model: 'qwen3-30b-a3b' },
     runs: [workerDone([{ kind: 'thinking', text: 'Combining the research into a guide.' }])],
-    answer: '## Dublin Travel Guide\n\nVisit between **May and September** for the best weather.\n\n- Guinness Storehouse\n- Trinity College\n- Phoenix Park',
+ answer: '## Dublin Travel Guide\n\nVisit between**May and September** for the best weather.\n\n- Guinness Storehouse\n- Trinity College\n- Phoenix Park',
     isFinal: true,
   },
 }
@@ -116,7 +116,7 @@ export const JudgeRunning: Story = {
       state={{ status: 'running', startedAt: Date.now() - 15_000 }}
       runs={[
         workerDone(researchActivity),
-        { runId: 'j1', agent: 'judge', stage: 'judge', round: 1, done: false, activity: [{ kind: 'thinking', text: 'Independently re-fetching the cited URLs…' }, { kind: 'tool', tool: { callId: 'jc1', name: 'web_fetch', args: { url: 'https://example.com/climate' }, done: false } }] },
+ { runId: 'j1', agent: 'judge', stage: 'judge', round: 1, done: false, activity: [{ kind: 'thinking', text: 'Independently re-fetching the cited URLs…' }, { kind: 'tool', tool: { callId: 'jc1', name: 'web_fetch', args: { url: 'https://example.com/climate' }, done: false } }] },
       ]}
       answer=""
       isFinal={false}
@@ -133,10 +133,10 @@ export const JudgeRoundsAllDone: Story = {
     runs: [
       { ...workerDone(researchActivity), model: 'qwen3-30b-a3b' },
       { ...judgeRun(1, 0.52, false, 'Add a source URL for the weather claim.'), model: 'gemma3-27b' },
-      { runId: 'rev1', agent: 'web-researcher', stage: 'revise', round: 1, done: true, model: 'qwen3-30b-a3b', activity: [{ kind: 'tool', tool: { callId: 'rc1', name: 'web_fetch', args: { url: 'https://example.com/met' }, result: 'Met Éireann climate averages…', done: true } }] },
+ { runId: 'rev1', agent: 'web-researcher', stage: 'revise', round: 1, done: true, model: 'qwen3-30b-a3b', activity: [{ kind: 'tool', tool: { callId: 'rc1', name: 'web_fetch', args: { url: 'https://example.com/met' }, result: 'Met Éireann climate averages…', done: true } }] },
       { ...judgeRun(2, 0.88, true, ''), model: 'gemma3-27b' },
     ],
-    answer: 'Best time: **May–September**, per [Met Éireann](https://example.com).',
+ answer: 'Best time:**May–September**, per [Met Éireann](https://example.com).',
     isFinal: false,
   },
 }
@@ -149,7 +149,7 @@ export const JudgeUnavailable: Story = {
       workerDone(researchActivity),
       { runId: 'j1', agent: 'judge', stage: 'judge', round: 1, done: true, status: 'unavailable', reason: 'judge model timeout', activity: [] },
     ],
-    answer: 'Best time: **May–September**.',
+ answer: 'Best time:**May–September**.',
     isFinal: false,
   },
 }
@@ -164,7 +164,7 @@ export const JudgeNoVerdict: Story = {
       workerDone(researchActivity),
       { runId: 'j1', agent: 'judge', stage: 'judge', round: 1, done: true, status: 'no_verdict', reason: 'vetting: judge ended without a verdict', activity: [] },
     ],
-    answer: 'Best time: **May–September**.',
+ answer: 'Best time:**May–September**.',
     isFinal: false,
   },
 }
@@ -174,7 +174,7 @@ export const Truncated: Story = {
     node: wrNode,
     state: { status: 'done', startedAt: 0, finishedAt: 45_000, totalTokens: 8_192, model: 'qwen3-30b-a3b', finishReason: 'MAX_TOKENS' },
     runs: [workerDone(researchActivity)],
-    answer: 'Best months to visit Dublin: **May–September**.',
+ answer: 'Best months to visit Dublin:**May–September**.',
     isFinal: false,
   },
 }
@@ -229,7 +229,7 @@ export const Paused: Story = {
       node={wrNode}
       state={{ status: 'paused', pauseReason: 'user', startedAt: Date.now() - 20_000 }}
       runs={[workerDone(researchActivity)]}
-      answer="Best months to visit Dublin so far: **May–September** (draft, paused before the judge round)."
+ answer="Best months to visit Dublin so far:**May–September** (draft, paused before the judge round)."
       isFinal={false}
       onResume={() => {}}
       onCancel={() => {}}
@@ -245,7 +245,7 @@ export const PausedShutdown: Story = {
       node={wrNode}
       state={{ status: 'paused', pauseReason: 'shutdown', startedAt: Date.now() - 20_000 }}
       runs={[workerDone(researchActivity)]}
-      answer="Best months to visit Dublin so far: **May–September** (draft, paused for a server restart)."
+ answer="Best months to visit Dublin so far:**May–September** (draft, paused for a server restart)."
       isFinal={false}
       onResume={() => {}}
       onCancel={() => {}}
@@ -318,7 +318,7 @@ export const LongContentManyRounds: Story = {
       ] },
       judgeRun(1, 0.48, false, 'The loud path is untested. Add a case asserting the "!" suffix.'),
       { runId: 'rev1', agent: 'web-researcher', stage: 'revise', round: 1, done: true, model: 'qwen3-30b-a3b', activity: [
-        { kind: 'tool', tool: { callId: 't3', name: 'write_file', done: true, args: { path: 'internal/greet/greet_test.go', content: 'package greet\n\nimport "testing"\n\nfunc TestLoud(t *testing.T) { /* … */ }' }, result: { created: true } } },
+ { kind: 'tool', tool: { callId: 't3', name: 'write_file', done: true, args: { path: 'internal/greet/greet_test.go', content: 'package greet\n\nimport "testing"\n\nfunc TestLoud(t*testing.T) {/* …*/ }' }, result: { created: true } } },
       ] },
       judgeRun(2, 0.6, false, 'Closer, but assert the exact output.'),
       { runId: 'rev2', agent: 'web-researcher', stage: 'revise', round: 2, done: true, model: 'qwen3-30b-a3b', activity: [] },
@@ -413,7 +413,7 @@ export const OverflowMenuHiddenOnTerminal: Story = {
     node: wrNode,
     state: { status: 'done', startedAt: 0, finishedAt: 10_000 },
     runs: [workerDone(researchActivity.slice(0, 1))],
-    answer: 'Best months to visit Dublin: **May–September**.',
+ answer: 'Best months to visit Dublin:**May–September**.',
     isFinal: false,
   },
 }
@@ -421,10 +421,10 @@ export const OverflowMenuHiddenOnTerminal: Story = {
 // ---- 0.9.0: compact collapse-to-one-line ethos (live UI feedback) ----------
 
 const markdownVerdict = [
-  '**Mostly solid**, but the rainfall claim is unbacked.',
+ '**Mostly solid**, but the rainfall claim is unbacked.',
   '',
   '- Cite a source for "Dublin gets 150 rainy days a year"',
-  '- The [Met Éireann](https://www.met.ie) climate page has monthly averages',
+ '- The [Met Éireann](https://www.met.ie) climate page has monthly averages',
 ].join('\n')
 
 // The judge verdict collapses to one line by default, matching ThinkBlock's
@@ -438,7 +438,7 @@ export const JudgeVerdictCollapsed: Story = {
       workerDone(researchActivity),
       judgeRun(1, 0.52, false, markdownVerdict),
     ],
-    answer: 'Best time: **May–September**.',
+ answer: 'Best time:**May–September**.',
     isFinal: false,
   },
 }
@@ -457,12 +457,12 @@ export const JudgeVerdictPopup: Story = {
 const markdownAnswer = [
   '## Dublin in brief',
   '',
-  'Visit between **May and September** for the best weather.',
+ 'Visit between**May and September** for the best weather.',
   '',
   '- Guinness Storehouse',
   '- Trinity College',
   '',
-  'See [Met Éireann](https://www.met.ie) for monthly averages.',
+ 'See [Met Éireann](https://www.met.ie) for monthly averages.',
 ].join('\n')
 
 // The answer collapses to a one-line preview by default (same ethos as the
@@ -503,18 +503,18 @@ export const DeterministicRetryOneFeed: Story = {
         activity: researchActivity,
       },
       {
-        // Same stage ('worker'), a NEW run_id - the gate's continuation after a
-        // failed deterministic check, not a judge-triggered revise.
+// Same stage ('worker'), a NEW run_id - the gate's continuation after a
+// failed deterministic check, not a judge-triggered revise.
         runId: 'worker-cont1', agent: 'web-researcher', stage: 'worker', done: true, model: 'qwen3-30b-a3b',
         activity: [{ kind: 'tool', tool: { callId: 'c9', name: 'run_command', args: { command: 'go test ./...' }, result: { exit_code: 0 }, done: true } }],
       },
     ],
-    answer: 'Best months to visit Dublin: **May–September**.',
+ answer: 'Best months to visit Dublin:**May–September**.',
     isFinal: false,
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    // One merged "N tool calls" summary, not two separate worker cards.
+// One merged "N tool calls" summary, not two separate worker cards.
     await canvas.findByText('3 tool calls')
   },
 }
@@ -580,7 +580,7 @@ export const DoneWithRetryAndSteered: Story = {
     node: wrNode,
     state: { status: 'done', startedAt: 0, finishedAt: 62_000, totalTokens: 3_421, model: 'qwen3-30b-a3b', steers: ['Focus on rainfall, skip hotels.'] },
     runs: [workerDone(researchActivity)],
-    answer: 'Best time: **May–September**.',
+ answer: 'Best time:**May–September**.',
     isFinal: false,
     onRetry: () => {},
   },

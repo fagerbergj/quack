@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import type { Memory, VoteDirection } from '../api'
 import { MemoryEntry } from './MemoryEntry'
 
-const DAY_MS = 24 * 60 * 60 * 1000
+const DAY_MS = 24* 60* 60* 1000
 
 // AGE_BANDS is checked in order - the first band whose cutoff the memory's
 // age is under wins. Grouping is by AGE ONLY (#746 item 14): NOT by
@@ -10,8 +10,8 @@ const DAY_MS = 24 * 60 * 60 * 1000
 // PR needing a schema field + a write on the recall path).
 const AGE_BANDS: { label: string; underMs: number }[] = [
   { label: 'Today', underMs: DAY_MS },
-  { label: 'This week', underMs: 7 * DAY_MS },
-  { label: 'This month', underMs: 30 * DAY_MS },
+ { label: 'This week', underMs: 7* DAY_MS },
+ { label: 'This month', underMs: 30* DAY_MS },
   { label: 'Older', underMs: Infinity },
 ]
 
@@ -52,13 +52,13 @@ export interface MemoryTimelineProps {
   memories: Memory[]
   onForget: (id: string) => Promise<void>
   onVote: (id: string, vote: VoteDirection) => Promise<void>
-  // Test/story seam: pins "now" so age-band assignment is deterministic.
+// Test/story seam: pins "now" so age-band assignment is deterministic.
   now?: number
-  // grouped=false (#1266 review) renders a flat list, no age-band headers.
-  // groupByAge assumes time-ordered input - fed a page sorted by
-  // upvotes/score/downvotes/recalls/last_recalled (ages non-monotonic), it
-  // produces repeating, interleaved "Today...Older...Today" headers. Only
-  // the two time sorts (newest/oldest) are actually time-ordered.
+// grouped=false renders a flat list, no age-band headers.
+// groupByAge assumes time-ordered input - fed a page sorted by
+// upvotes/score/downvotes/recalls/last_recalled (ages non-monotonic), it
+// produces repeating, interleaved "Today...Older...Today" headers. Only
+// the two time sorts (newest/oldest) are actually time-ordered.
   grouped?: boolean
 }
 
@@ -68,8 +68,8 @@ export interface MemoryTimelineProps {
 // through a flat list - only meaningful when the caller's sort is time-order
 // (see `grouped` above).
 export function MemoryTimeline({ memories, onForget, onVote, now, grouped = true }: MemoryTimelineProps) {
-  // groupByAge is O(n) but was rebuilt on every render (any unrelated state
-  // change, e.g. a vote) with no memoization - #1286.
+// groupByAge is O(n) but was rebuilt on every render (any unrelated state
+// change, e.g. a vote) with no memoization - #1286.
   const groups = useMemo(
     () => (grouped ? groupByAge(memories, now) : [{ label: '', memories }]),
     [grouped, memories, now],
@@ -85,9 +85,9 @@ export function MemoryTimeline({ memories, onForget, onVote, now, grouped = true
           )}
           {g.memories.map(m => (
             <div key={m.id} className="flex">
-              {/* Date gutter collapses below `medium` (#1266): the row's own
+ {/* Date gutter collapses below `medium` : the row's own
                   relative-time chip already carries this, so the gutter is
-                  pure redundant width at 390px, not an information loss. */}
+ pure redundant width at 390px, not an information loss.*/}
               <div className="hidden medium:block w-14 shrink-0 pt-3 pl-3 text-right text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">
                 {shortDate(m.timestamp)}
               </div>

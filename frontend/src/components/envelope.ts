@@ -14,8 +14,8 @@ interface Comment {
   createdAt?: string
   author?: string
   body: string
-  // quack_status (delta mode only): "new" | "edited" | "deleted" - a retracted
-  // comment's body reads identically to a live one, so this is the only signal.
+// quack_status (delta mode only): "new" | "edited" | "deleted" - a retracted
+// comment's body reads identically to a live one, so this is the only signal.
   quackStatus?: string
 }
 
@@ -39,10 +39,10 @@ interface CheckRun {
 
 export interface ArtifactRow {
   id: string
-  // The id's `kind:` prefix (bytes/text/structured/image/...) - drives the
-  // row icon. No prefix (malformed id) falls back to 'bytes'.
+// The id's `kind:` prefix (bytes/text/structured/image/...) - drives the
+// row icon. No prefix (malformed id) falls back to 'bytes'.
   kindPrefix: string
-  // id with the `kindPrefix:` stripped - the row's display name.
+// id with the `kindPrefix:` stripped - the row's display name.
   name: string
   revision?: number
   status?: string
@@ -76,7 +76,7 @@ interface RawBlock {
 // parseAttrs reads double-quoted `key="value"` pairs off a tag's attribute string.
 function parseAttrs(attrsStr: string): Record<string, string> {
   const attrs: Record<string, string> = {}
-  const re = /([\w-]+)="([^"]*)"/g
+ const re = /([\w-]+)="([^"]*)"/g
   let m: RegExpExecArray | null
   while ((m = re.exec(attrsStr))) attrs[m[1]] = m[2]
   return attrs
@@ -89,7 +89,7 @@ function parseAttrs(attrsStr: string): Record<string, string> {
 // content that isn't strictly valid XML.
 function parseTopLevel(src: string): RawBlock[] {
   const blocks: RawBlock[] = []
-  const tagRe = /<([a-zA-Z][\w-]*)((?:\s+[\w-]+="[^"]*")*)\s*(\/)?>/g
+ const tagRe = /<([a-zA-Z][\w-]*)((?:\s+[\w-]+="[^"]*")*)\s*(\/)?>/g
   let idx = 0
   while (idx < src.length) {
     tagRe.lastIndex = idx
@@ -106,7 +106,7 @@ function parseTopLevel(src: string): RawBlock[] {
     const closeTag = `</${tag}>`
     const closeIdx = src.indexOf(closeTag, afterOpen)
     if (closeIdx === -1) {
-      // Unterminated: take the rest of the string as this block's content and stop.
+// Unterminated: take the rest of the string as this block's content and stop.
       blocks.push({ tag, attrs, content: src.slice(afterOpen) })
       break
     }
@@ -183,8 +183,8 @@ function toEnvelopeBlock(b: RawBlock): EnvelopeBlock {
         askKind: b.tag,
         number: b.attrs.number,
         title: title?.trim() ?? '',
-        // Neither child tag found (malformed) - fall back to the raw block so
-        // nothing silently disappears.
+// Neither child tag found (malformed) - fall back to the raw block so
+// nothing silently disappears.
         description: description != null ? description.trim() : (title == null ? b.content.trim() : ''),
       }
     }
@@ -344,10 +344,10 @@ function isSeed(b: CommentsBlock): boolean {
 
 export interface AccumulatedComments {
   comments: Comment[]
-  // False when the earliest turn this client can see is itself a delta (no
-  // seed in the visible window - a rehydrated store, or a chat opened after
-  // reaping) - the list below is everything captured so far, not the issue's
-  // whole history.
+// False when the earliest turn this client can see is itself a delta (no
+// seed in the visible window - a rehydrated store, or a chat opened after
+// reaping) - the list below is everything captured so far, not the issue's
+// whole history.
   complete: boolean
 }
 
@@ -370,11 +370,11 @@ export function accumulateComments(priorContents: string[], current: CommentsBlo
     for (const c of b.comments ?? []) {
       const id = c.id ?? `_${anonymous++}`
       if (c.quackStatus === 'deleted') {
-        // A comment already in the running history is removed outright. One
-        // this client never saw alive (its own removal is the first record of
-        // it - no seed in the visible window) is kept and marked deleted
-        // instead of silently vanishing: the incompleteness is what `complete`
-        // is for, not a reason to drop data this delta actually carried.
+// A comment already in the running history is removed outright. One
+// this client never saw alive (its own removal is the first record of
+// it - no seed in the visible window) is kept and marked deleted
+// instead of silently vanishing: the incompleteness is what `complete`
+// is for, not a reason to drop data this delta actually carried.
         if (byId.has(id)) {
           byId.delete(id)
           order.splice(order.indexOf(id), 1)

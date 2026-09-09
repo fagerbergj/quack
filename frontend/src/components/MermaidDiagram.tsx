@@ -79,7 +79,7 @@ export const MermaidDiagram = memo(function MermaidDiagram({ code }: { code: str
     )
   }
 
-  // mermaid's own 'strict' securityLevel already sanitized this SVG string
-  // (see BASE_CONFIG above) - safe to inject directly.
+// mermaid's own 'strict' securityLevel already sanitized this SVG string
+// (see BASE_CONFIG above) - safe to inject directly.
   return <div className="not-prose my-2 overflow-x-auto" data-testid="mermaid-diagram" dangerouslySetInnerHTML={{ __html: svg }} />
 })

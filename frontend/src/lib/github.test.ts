@@ -15,7 +15,7 @@ function chat(overrides: Partial<ChatSummary>): ChatSummary {
 
 describe('isGithubChat', () => {
   it('is true when github_url is set', () => {
-    expect(isGithubChat(chat({ id: 'random', github_url: 'https://github.com/a/b/issues/1' }))).toBe(true)
+ expect(isGithubChat(chat({ id: 'random', github_url: 'https://github.com/a/b/issues/1' }))).toBe(true)
   })
 
   it('falls back to the id prefix when github_url is absent', () => {
@@ -29,17 +29,17 @@ describe('isGithubChat', () => {
 
 describe('parseGithubRef', () => {
   it('parses an issue URL', () => {
-    const ref = parseGithubRef(chat({ github_url: 'https://github.com/acme/widget/issues/249', github_repo: 'acme/widget' }))
+ const ref = parseGithubRef(chat({ github_url: 'https://github.com/acme/widget/issues/249', github_repo: 'acme/widget' }))
     expect(ref).toEqual({ repo: 'acme/widget', kind: 'issue', number: 249 })
   })
 
   it('parses a pull request URL', () => {
-    const ref = parseGithubRef(chat({ github_url: 'https://github.com/acme/widget/pull/257', github_repo: 'acme/widget' }))
+ const ref = parseGithubRef(chat({ github_url: 'https://github.com/acme/widget/pull/257', github_repo: 'acme/widget' }))
     expect(ref).toEqual({ repo: 'acme/widget', kind: 'pr', number: 257 })
   })
 
   it('falls back to the repo parsed from the URL when github_repo is absent', () => {
-    const ref = parseGithubRef(chat({ github_url: 'https://github.com/acme/widget/issues/1' }))
+ const ref = parseGithubRef(chat({ github_url: 'https://github.com/acme/widget/issues/1' }))
     expect(ref?.repo).toBe('acme/widget')
   })
 
@@ -48,6 +48,6 @@ describe('parseGithubRef', () => {
   })
 
   it('is undefined for an unrecognized URL shape', () => {
-    expect(parseGithubRef(chat({ github_url: 'https://github.com/acme/widget' }))).toBeUndefined()
+ expect(parseGithubRef(chat({ github_url: 'https://github.com/acme/widget' }))).toBeUndefined()
   })
 })

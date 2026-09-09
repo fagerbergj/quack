@@ -74,7 +74,7 @@ export const ErrorState: Story = {
 export const SearchResults: Story = {
   args: {
     initialState: {
-      memories: MEMORIES.map((m, i) => ({ ...m, score: 0.91 - i * 0.15 })),
+ memories: MEMORIES.map((m, i) => ({ ...m, score: 0.91 - i* 0.15 })),
       total: MEMORIES.length,
     },
     initialStats: { weeks: [], scopes: [] },

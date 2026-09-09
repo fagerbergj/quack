@@ -16,13 +16,13 @@ type Story = StoryObj<typeof DagView>
 
 const climateActivity: Activity[] = [
   { kind: 'thinking', text: 'Searching for Dublin climate data…' },
-  { kind: 'tool', tool: { callId: 'c1', name: 'web_search', args: { query: 'best time to visit Dublin weather' }, result: { results: [{ title: 'Dublin Climate Guide', url: 'https://example.com/climate' }] }, done: true } },
-  { kind: 'tool', tool: { callId: 'c2', name: 'web_fetch', args: { url: 'https://example.com/climate' }, result: 'Dublin is mild year-round; May–September warmest.', done: true } },
+ { kind: 'tool', tool: { callId: 'c1', name: 'web_search', args: { query: 'best time to visit Dublin weather' }, result: { results: [{ title: 'Dublin Climate Guide', url: 'https://example.com/climate' }] }, done: true } },
+ { kind: 'tool', tool: { callId: 'c2', name: 'web_fetch', args: { url: 'https://example.com/climate' }, result: 'Dublin is mild year-round; May–September warmest.', done: true } },
 ]
 
 const attractionsActivity: Activity[] = [
   { kind: 'thinking', text: 'Looking up top Dublin attractions.' },
-  { kind: 'tool', tool: { callId: 'c3', name: 'web_search', args: { query: 'top things to do Dublin' }, result: { results: [{ title: 'Visit Dublin', url: 'https://example.com/visit' }] }, done: true } },
+ { kind: 'tool', tool: { callId: 'c3', name: 'web_search', args: { query: 'top things to do Dublin' }, result: { results: [{ title: 'Visit Dublin', url: 'https://example.com/visit' }] }, done: true } },
 ]
 
 const worker = (id: string, activity: Activity[], done: boolean): AgentRun =>
@@ -31,9 +31,9 @@ const worker = (id: string, activity: Activity[], done: boolean): AgentRun =>
 const judge = (id: string, round: number, score: number, passed: boolean, feedback: string): AgentRun =>
   ({ runId: `${id}-j${round}`, agent: 'judge', stage: 'judge', round, done: true, score, passed, feedback, activity: [{ kind: 'thinking', text: 'Re-fetching cited URLs to verify the claims…' }] })
 
-const climateAnswer = 'Best months to visit Dublin: **May–September**, per [Met Éireann](https://example.com/met).'
-const attractionsAnswer = 'Top things to do: **Guinness Storehouse**, **Trinity College**, **Phoenix Park**, **Temple Bar**.'
-const synthAnswer = '## Dublin Guide\n\nVisit **May–September**. Don\'t miss the Guinness Storehouse, Trinity College, and Phoenix Park.'
+const climateAnswer = 'Best months to visit Dublin:**May–September**, per [Met Éireann](https://example.com/met).'
+const attractionsAnswer = 'Top things to do:**Guinness Storehouse**,**Trinity College**,**Phoenix Park**,**Temple Bar**.'
+const synthAnswer = '## Dublin Guide\n\nVisit**May–September**. Don\'t miss the Guinness Storehouse, Trinity College, and Phoenix Park.'
 
 function dag(over: {
   r1?: { status: DagTurnState['nodeStates'][string]['status']; error?: string; runs?: AgentRun[]; answer?: string }
@@ -95,7 +95,7 @@ export const WithJudgeRounds: Story = {
         status: 'done', answer: climateAnswer, runs: [
           worker('r1', climateActivity, true),
           judge('r1', 1, 0.52, false, 'Add a source URL for the weather claim.'),
-          { runId: 'r1-rev1', agent: 'web-researcher', stage: 'revise', round: 1, done: true, activity: [{ kind: 'tool', tool: { callId: 'rc1', name: 'web_fetch', args: { url: 'https://example.com/met' }, result: 'Met Éireann averages…', done: true } }] },
+ { runId: 'r1-rev1', agent: 'web-researcher', stage: 'revise', round: 1, done: true, activity: [{ kind: 'tool', tool: { callId: 'rc1', name: 'web_fetch', args: { url: 'https://example.com/met' }, result: 'Met Éireann averages…', done: true } }] },
           judge('r1', 2, 0.88, true, ''),
         ],
       },

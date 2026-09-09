@@ -12,7 +12,7 @@ describe('ChatMenu', () => {
   let host: HTMLDivElement | undefined
 
   beforeEach(() => {
-    // jsdom has no matchMedia; ChatMenu's theme picker (useTheme) calls it on mount.
+// jsdom has no matchMedia; ChatMenu's theme picker (useTheme) calls it on mount.
     vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
       matches: false,
       media: query,
@@ -30,7 +30,7 @@ describe('ChatMenu', () => {
   })
 
   function render() {
-    // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     host = document.createElement('div')
     document.body.appendChild(host)

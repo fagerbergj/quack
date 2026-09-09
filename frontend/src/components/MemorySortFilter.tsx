@@ -5,7 +5,7 @@ import { Sheet } from './Sheet'
 
 export type MemorySort = MemoryListSort
 
-// SORT_OPTIONS labels every server-side sort (#1266 owner follow-up) - the
+// SORT_OPTIONS labels every server-side sort - the
 // order they list in here is the order they appear in the popover.
 const SORT_OPTIONS: { value: MemorySort; label: string }[] = [
   { value: 'newest', label: 'Newest first' },
@@ -27,9 +27,9 @@ export interface MemorySortFilterProps {
   onBucketChange: (bucket: string) => void
   tier: MemoryTierFilter
   onTierChange: (tier: MemoryTierFilter) => void
-  // Current live/invalidated snapshot per bucket (#1267), shown read-only
-  // below the filters - not another filter, just where recall-stats context
-  // lives now that this popover is the one place bucket-scoped numbers show.
+// Current live/invalidated snapshot per bucket , shown read-only
+// below the filters - not another filter, just where recall-stats context
+// lives now that this popover is the one place bucket-scoped numbers show.
   scopes?: MemoryScopeStats[]
 }
 

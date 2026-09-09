@@ -41,7 +41,7 @@ describe('AssistantText mermaid wiring', () => {
     host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
-    // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     act(() => {
       root!.render(createElement(AssistantText, { text }))
@@ -56,19 +56,19 @@ describe('AssistantText mermaid wiring', () => {
 
   it('does not attempt to render an unclosed (streaming) mermaid block', async () => {
     mount('Here:\n\n```mermaid\nflowchart TD\n  A --> B')
-    // Give any (incorrect) async render attempt a chance to happen, then assert it didn't.
+// Give any (incorrect) async render attempt a chance to happen, then assert it didn't.
     await act(async () => {
       await new Promise(r => setTimeout(r, 200))
     })
     expect(host!.querySelector('[data-testid="mermaid-diagram"]')).toBeNull()
     expect(host!.textContent).not.toContain('Diagram failed to render')
-    // Falls back to the plain streaming code block - the fence content is still visible as text.
+// Falls back to the plain streaming code block - the fence content is still visible as text.
     expect(host!.querySelector('pre')).not.toBeNull()
     expect(host!.textContent).toContain('flowchart TD')
   }, mermaidTestTimeout)
 
   it('renders normal markdown untouched when there is no mermaid block', () => {
-    mount('**bold** text and a [link](https://example.com)')
+ mount('**bold** text and a [link](https://example.com)')
     expect(host!.querySelector('strong')?.textContent).toBe('bold')
     expect(host!.querySelector('[data-testid="mermaid-diagram"]')).toBeNull()
   })

@@ -8,8 +8,8 @@ const meta: Meta<typeof ArtifactPanel> = {
   title: 'Chat/ArtifactPanel',
   component: ArtifactPanel,
   parameters: { layout: 'fullscreen' },
-  // The panel reads chatStore for live SSE follow (#1114) - every story
-  // needs the provider, same as the real app's tree under Chat.tsx.
+// The panel reads chatStore for live SSE follow - every story
+// needs the provider, same as the real app's tree under Chat.tsx.
   decorators: [Story => <ChatStoreProvider><Story /></ChatStoreProvider>],
 }
 export default meta
@@ -31,10 +31,10 @@ const reviewJudge = JSON.stringify({
   round: 1,
   passed: false,
   score: 0.6,
-  // Judge criteria are 0-3 by design (#941), not a 0-1 fraction (#1139).
+// Judge criteria are 0-3 by design (#941), not a 0-1 fraction .
   criteria: [{ name: 'evidence', score: 1.5 }, { name: 'coverage', score: 2.5 }],
-  // The round judged revision 1 of the review - tapping the chip jumps to
-  // it and stamps its notes.
+// The round judged revision 1 of the review - tapping the chip jumps to
+// it and stamps its notes.
   scored: [{ artifact_id: 'text:review-1', revision: 1 }],
   notes: [
     { ref: { artifact_id: 'text:review-1', revision: 1, snippet: 'apple pie recipe' }, text: 'This needs a concrete source.', criterion: 'evidence' },
@@ -56,15 +56,15 @@ let reviewRev3Written = false
 const reviewMdV3 = '# Review summary (live update)\n\nA third revision just landed over SSE.\n'
 
 window.fetch = async (input: RequestInfo | URL) => {
-  // The generated client's per-request fetch always calls this with a real
-  // Request instance (client.gen.ts) - String(aRequest) is "[object
-  // Request]", so its own .url must be read; getArtifactText's plain
-  // fetch() call still passes a bare string, which the ternary also covers.
-  // buildUrl percent-encodes the artifact_name path param (":" -> "%3A").
+// The generated client's per-request fetch always calls this with a real
+// Request instance (client.gen.ts) - String(aRequest) is "[object
+// Request]", so its own .url must be read; getArtifactText's plain
+// fetch() call still passes a bare string, which the ternary also covers.
+// buildUrl percent-encodes the artifact_name path param (":" -> "%3A").
   const url = decodeURIComponent(input instanceof Request ? input.url : String(input))
 
   if (url.includes('/chats/chat-failed/')) {
-    return jsonResponse({ data: [] }) // nothing for a failed node
+ return jsonResponse({ data: [] })// nothing for a failed node
   }
   if (url.includes('/chats/chat-more/')) {
     if (url.endsWith('/artifacts')) {
@@ -110,11 +110,11 @@ window.fetch = async (input: RequestInfo | URL) => {
     return jsonResponse({ data: [] })
   }
 
-  // chat-1: the finished review node (#1178's primary story).
+// chat-1: the finished review node .
   if (url.includes('/artifacts/text:review-1/revisions')) {
     return jsonResponse({
       data: [
-        // Newest first, like the endpoint (openapi.yaml's ArtifactRevisionList).
+// Newest first, like the endpoint (openapi.yaml's ArtifactRevisionList).
         ...(reviewRev3Written ? [{ revision: 3, mime_type: 'text/markdown', size: reviewMdV3.length, kind: 'text', class: 'blob', lineage: { node_id: 'reviewer-1', round: 3, author: 'worker' } }] : []),
         { revision: 2, mime_type: 'text/markdown', size: reviewMd.length, kind: 'text', class: 'blob', lineage: { node_id: 'reviewer-1', round: 2, author: 'worker', trigger_annotation: 'judge_round:t1-1-1' } },
         { revision: 1, mime_type: 'text/markdown', size: reviewMdV1.length, kind: 'text', class: 'blob', lineage: { node_id: 'reviewer-1', round: 1, author: 'worker' } },
@@ -158,7 +158,7 @@ function textResponse(body: string): Response {
   return new Response(body, { status: 200, headers: { 'Content-Type': 'text/plain' } })
 }
 
-// A finished review node (#1178): the panel opens directly on the node's
+// A finished review node : the panel opens directly on the node's
 // result - the review markdown under the node's own name - with the
 // two-round judge timeline pinned under the header. Tap a chip to see that
 // round's notes on the revision it judged; the revision bar diffs against
@@ -217,7 +217,7 @@ export const LiveUpdate: Story = {
   },
 }
 
-// The bug this story exists to catch (#1216 review): a real agent prompt can
+// The bug this story exists to catch : a real agent prompt can
 // run to a kilobyte-plus. The header must stay 2 lines regardless - the full
 // text is only reachable in Details.
 export const WithLongTask: Story = {
@@ -230,10 +230,10 @@ export const WithLongTask: Story = {
 
 export const WithResultDark: Story = {
   ...WithResult,
-  // A local `.dark` ancestor is enough - Tailwind's dark: custom-variant
-  // (`&:where(.dark, .dark *)`) matches any dark-classed ancestor, not just
-  // <html>, so this pins the theme without touching the global toolbar
-  // toggle .storybook/preview.tsx already provides for every other story.
+// A local `.dark` ancestor is enough - Tailwind's dark: custom-variant
+// (`&:where(.dark, .dark*)`) matches any dark-classed ancestor, not just
+// <html>, so this pins the theme without touching the global toolbar
+// toggle .storybook/preview.tsx already provides for every other story.
   decorators: [Story => <div className="dark"><Story /></div>],
 }
 

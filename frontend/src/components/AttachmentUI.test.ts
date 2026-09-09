@@ -21,7 +21,7 @@ describe('ChatStore.submit - attachment transport', () => {
     fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     store = new ChatStore()
-    // Seed a fake chat so submit can proceed without an active chat guard.
+// Seed a fake chat so submit can proceed without an active chat guard.
     store.seed('chat-1', [])
   })
 

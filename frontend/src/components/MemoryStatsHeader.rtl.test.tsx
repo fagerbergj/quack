@@ -22,7 +22,7 @@ describe('MemoryStatsHeader via MemoryTab (#1267)', () => {
     })
     render(<MemoryTab initialState={{ memories: [], total: 0 }} />)
     expect((await screen.findAllByText('87%')).length).toBeGreaterThan(0)
-    expect(screen.getByText('69%')).toBeDefined() // last-4-weeks number for W35
+ expect(screen.getByText('69%')).toBeDefined()// last-4-weeks number for W35
   })
 
   it('shows a dash, not NaN or 0%, when no votes were cast this week', async () => {

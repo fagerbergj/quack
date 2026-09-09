@@ -25,9 +25,9 @@ describe('memoryTier (design doc §3/§8 step 6 - lifecycle tier)', () => {
     expect(memoryTier({ status: 'invalidated' })).toBe('invalidated')
   })
 
-  // The generated type only names three statuses, but the backend's actual
-  // JSON can drift from it at runtime (a future status added server-side
-  // before the frontend regenerates) - cast past the type to simulate that.
+// The generated type only names three statuses, but the backend's actual
+// JSON can drift from it at runtime (a future status added server-side
+// before the frontend regenerates) - cast past the type to simulate that.
   it('reads a status this build does not recognize as unknown, never as unverified', () => {
     expect(memoryTier({ status: 'pending_review' as Memory['status'] })).toBe('unknown')
   })
@@ -79,7 +79,7 @@ describe('MemoryEntry tier rendering', () => {
   })
 
   function render(memory: Memory) {
-    // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     host = document.createElement('div')
     document.body.appendChild(host)
@@ -112,11 +112,11 @@ describe('MemoryEntry tier rendering', () => {
   })
 
   it('renders an unrecognized status as its raw value on the lifecycle badge', () => {
-    // Row text can legitimately still say "unverified" elsewhere - the
-    // separate vote-based tier badge (epic #1255 P4, memory.tier) defaults
-    // to unverified independent of this lifecycle status; memoryTierLabel's
-    // own unit tests above cover the "never masquerades as unverified" claim
-    // for THIS badge specifically.
+// Row text can legitimately still say "unverified" elsewhere - the
+// separate vote-based tier badge (epic #1255 P4, memory.tier) defaults
+// to unverified independent of this lifecycle status; memoryTierLabel's
+// own unit tests above cover the "never masquerades as unverified" claim
+// for THIS badge specifically.
     const el = render({ ...BASE, status: 'pending_review' as Memory['status'] })
     expect(el.textContent).toContain('pending_review')
   })

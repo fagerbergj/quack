@@ -331,7 +331,7 @@ function GlobView({ tool }: { tool: ToolCall }) {
   )
 }
 
-// GrepView - matches as `path:line  text`, headed by the pattern (+ glob filter).
+// GrepView - matches as `path:line text`, headed by the pattern (+ glob filter).
 function GrepView({ tool }: { tool: ToolCall }) {
   const pattern = str(tool.args, 'pattern') ?? ''
   const glob = str(tool.args, 'glob')

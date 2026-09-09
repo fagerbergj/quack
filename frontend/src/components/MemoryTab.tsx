@@ -7,12 +7,12 @@ import { MemoryStatsHeader } from './MemoryStatsHeader'
 const PAGE_SIZE = 20
 
 export interface MemoryTabProps {
-  // Storybook/test seam: pre-seeds state and skips the live fetch, so a story
-  // can show empty/populated/error deterministically with no backend.
+// Storybook/test seam: pre-seeds state and skips the live fetch, so a story
+// can show empty/populated/error deterministically with no backend.
   initialState?: { memories: Memory[]; total: number; error?: string }
-  // Same seam for the stats header (#1267) - independent of initialState so
-  // a story can show the list and the header loading/empty/populated in any
-  // combination.
+// Same seam for the stats header - independent of initialState so
+// a story can show the list and the header loading/empty/populated in any
+// combination.
   initialStats?: { weeks: MemoryWeekStats[]; scopes: MemoryScopeStats[]; error?: string }
 }
 
@@ -44,57 +44,57 @@ function applyOptimisticVote(m: Memory, vote: VoteDirection): Memory {
 export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
   const [bucket, setBucket] = useState('')
   const [q, setQ] = useState('')
-  // Debounced 250ms behind `q` (the input's live value, used only for display)
-  // so a fast typist doesn't fire one search request per keystroke (#1285).
+// Debounced 250ms behind `q` (the input's live value, used only for display)
+// so a fast typist doesn't fire one search request per keystroke .
   const [debouncedQ, setDebouncedQ] = useState('')
   const requestSeq = useRef(0)
   const [sort, setSort] = useState<MemorySort>('newest')
   const [tier, setTier] = useState<MemoryTierFilter>('')
-  // Local to the tab (no persisted preference, per design doc §8 step 6) - a
-  // default listing shows only what quack currently trusts.
+// Local to the tab (no persisted preference, per design doc §8 step 6) - a
+// default listing shows only what quack currently trusts.
   const [includeInvalidated, setIncludeInvalidated] = useState(false)
-  // page_token is opaque (never parsed/constructed) - pageTokens[i] is the
-  // token that fetched page i (pageTokens[0] is undefined: first page).
-  // Going back replays a token this component already received, going
-  // forward stores the next one the server just gave it.
+// page_token is opaque (never parsed/constructed) - pageTokens[i] is the
+// token that fetched page i (pageTokens[0] is undefined: first page).
+// Going back replays a token this component already received, going
+// forward stores the next one the server just gave it.
   const [pageIndex, setPageIndex] = useState(0)
   const [pageTokens, setPageTokens] = useState<(string | undefined)[]>([undefined])
   const [nextPageToken, setNextPageToken] = useState<string | undefined>(undefined)
   const [memories, setMemories] = useState<Memory[]>(initialState?.memories ?? [])
-  // Mirrors `memories` for handleVote's rollback (finding 1, PR #1300 review) -
-  // a ref read there stays outside the setMemories updater, which React may
-  // invoke more than once and must stay pure.
+// Mirrors `memories` for handleVote's rollback (finding 1, review) -
+// a ref read there stays outside the setMemories updater, which React may
+// invoke more than once and must stay pure.
   const memoriesRef = useRef(memories)
   useEffect(() => { memoriesRef.current = memories })
   const [total, setTotal] = useState(initialState?.total ?? 0)
   const [loading, setLoading] = useState(initialState === undefined)
   const [error, setError] = useState<string | null>(initialState?.error ?? null)
-  // Every bucket value seen across any load, accumulated (never shrunk) - the
-  // dropdown's option list (item 11). There's no "list distinct buckets"
-  // endpoint to call instead (Forbidden: don't add one), so this is
-  // best-effort against whatever pages this session has actually fetched.
+// Every bucket value seen across any load, accumulated (never shrunk) - the
+// dropdown's option list (item 11). There's no "list distinct buckets"
+// endpoint to call instead (Forbidden: don't add one), so this is
+// best-effort against whatever pages this session has actually fetched.
   const [knownBuckets, setKnownBuckets] = useState<Set<string>>(
     () => new Set((initialState?.memories ?? []).map(m => m.bucket)),
   )
-  // The pagination footer is a normal flex sibling below the scroll area, not
-  // an overlay - but on short viewports (#759 item 3) the last row can land
-  // flush against it with no breathing room, reading as clipped. Padding the
-  // scroll area by the footer's own measured height (never a guessed pixel
-  // value, so it survives a font-size change) gives the last row room to
-  // clear it once scrolled fully into view.
+// The pagination footer is a normal flex sibling below the scroll area, not
+// an overlay - but on short viewports (#759 item 3) the last row can land
+// flush against it with no breathing room, reading as clipped. Padding the
+// scroll area by the footer's own measured height (never a guessed pixel
+// value, so it survives a font-size change) gives the last row room to
+// clear it once scrolled fully into view.
   const footerRef = useRef<HTMLDivElement>(null)
   const [footerHeight, setFooterHeight] = useState(0)
 
-  // Stats fetch (#1267) is independent of the memory list fetch above - it
-  // doesn't page or filter, so it has its own loading/error state and only
-  // runs once per mount.
+// Stats fetch is independent of the memory list fetch above - it
+// doesn't page or filter, so it has its own loading/error state and only
+// runs once per mount.
   const [statsWeeks, setStatsWeeks] = useState<MemoryWeekStats[]>(initialStats?.weeks ?? [])
   const [statsScopes, setStatsScopes] = useState<MemoryScopeStats[]>(initialStats?.scopes ?? [])
   const [statsLoading, setStatsLoading] = useState(initialStats === undefined)
   const [statsError, setStatsError] = useState<string | null>(initialStats?.error ?? null)
 
   useEffect(() => {
-    if (initialStats !== undefined) return // story/test seam
+ if (initialStats !== undefined) return// story/test seam
     let cancelled = false
     setStatsLoading(true)
     api.getMemoryStats()
@@ -112,11 +112,11 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
     return () => { cancelled = true }
   }, [initialStats])
 
-  // Debounce: reset paging and adopt the typed query only after 250ms of
-  // no further keystrokes (prototype: 9 requests -> 2 for an 8-char query).
-  // Guarded on q !== debouncedQ so mount (both '') never schedules a no-op
-  // resetPaging - that would still create a new pageTokens array and fire
-  // a redundant, extra initial fetch.
+// Debounce: reset paging and adopt the typed query only after 250ms of
+// no further keystrokes (prototype: 9 requests -> 2 for an 8-char query).
+// Guarded on q !== debouncedQ so mount (both '') never schedules a no-op
+// resetPaging - that would still create a new pageTokens array and fire
+// a redundant, extra initial fetch.
   useEffect(() => {
     if (q === debouncedQ) return
     const t = setTimeout(() => {
@@ -140,8 +140,8 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
         tier: tier || undefined,
         sort,
       })
-      // A slower earlier request can resolve after a faster later one; only
-      // the most recently issued request may write to state (#1285 race).
+// A slower earlier request can resolve after a faster later one; only
+// the most recently issued request may write to state .
       if (seq !== requestSeq.current) return
       setMemories(result.memories)
       setTotal(result.total)
@@ -160,29 +160,29 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
   }, [bucket, debouncedQ, pageIndex, pageTokens, includeInvalidated, tier, sort])
 
   useEffect(() => {
-    if (initialState !== undefined) return // story/test seam: static demo state, no live fetch
+ if (initialState !== undefined) return// story/test seam: static demo state, no live fetch
     void load()
   }, [load, initialState])
 
-  // Stable identity (empty deps, via functional setState) so memo(MemoryEntry)
-  // (#1286) can actually skip the other 19 rows when one row is voted/forgotten.
+// Stable identity (empty deps, via functional setState) so memo(MemoryEntry)
+// can actually skip the other 19 rows when one row is voted/forgotten.
   const handleForget = useCallback(async (id: string) => {
     await api.forgetMemory(id)
     setMemories(prev => prev.filter(m => m.id !== id))
     setTotal(t => Math.max(0, t - 1))
   }, [])
 
-  // handleVote is optimistic-first (frontend-design convention): the store
-  // updates immediately so the arrow highlight/score never lags a click,
-  // and rolls back only the voted ROW on failure (#1265 review finding 8) -
-  // a page-wide snapshot would also discard any other unrelated change
-  // (e.g. another vote's own response landing) that happened while this
-  // request was in flight.
+// handleVote is optimistic-first (frontend-design convention): the store
+// updates immediately so the arrow highlight/score never lags a click,
+// and rolls back only the voted ROW on failure -
+// a page-wide snapshot would also discard any other unrelated change
+// (e.g. another vote's own response landing) that happened while this
+// request was in flight.
   const handleVote = useCallback(async (id: string, vote: VoteDirection) => {
-    // Read the pre-vote row from the ref, not from inside the setMemories
-    // updater - an updater must be pure, and a synchronous throw from
-    // voteMemory (below) would otherwise reach the catch with prevRow still
-    // unset, skipping the rollback.
+// Read the pre-vote row from the ref, not from inside the setMemories
+// updater - an updater must be pure, and a synchronous throw from
+// voteMemory (below) would otherwise reach the catch with prevRow still
+// unset, skipping the rollback.
     const prevRow = memoriesRef.current.find(m => m.id === id)
     setMemories(cur => cur.map(m => (m.id === id ? applyOptimisticVote(m, vote) : m)))
     try {
@@ -204,16 +204,16 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
     resetPaging()
   }
 
-  // Server-side filter (#1265 review finding 10) - a page reload with the
-  // new tier, not a client-side re-slice of whatever page happened to be
-  // loaded, so the filter spans the whole corpus, not just the current page.
+// Server-side filter - a page reload with the
+// new tier, not a client-side re-slice of whatever page happened to be
+// loaded, so the filter spans the whole corpus, not just the current page.
   function handleTierChange(next: MemoryTierFilter) {
     setTier(next)
     resetPaging()
   }
 
-  // Server-side sort (#1266 owner follow-up), same reasoning as tier above -
-  // a page reload with the new sort, not a client-side re-slice.
+// Server-side sort , same reasoning as tier above -
+// a page reload with the new sort, not a client-side re-slice.
   function handleSortChange(next: MemorySort) {
     setSort(next)
     resetPaging()
@@ -240,8 +240,8 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
 
   const searching = q.trim() !== ''
   const hasMore = !searching && !!nextPageToken
-  const rangeStart = pageIndex * PAGE_SIZE + 1
-  const rangeEnd = pageIndex * PAGE_SIZE + memories.length
+ const rangeStart = pageIndex* PAGE_SIZE + 1
+ const rangeEnd = pageIndex* PAGE_SIZE + memories.length
   const bucketOptions = useMemo(() => Array.from(knownBuckets).sort(), [knownBuckets])
   const showFooter = !loading && !error && !searching && total > 0
 
@@ -260,8 +260,8 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
     <div className="flex flex-col h-full">
       <MemoryStatsHeader weeks={statsWeeks} loading={statsLoading} error={statsError} />
       <div className="p-3 border-b border-gray-200 dark:border-gray-700 flex flex-wrap items-center gap-2">
-        {/* Own line below `medium` so the placeholder (the only explanation
-            of memory search) isn't clipped at 390px. */}
+ {/* Own line below `medium` so the placeholder (the only explanation
+ of memory search) isn't clipped at 390px.*/}
         <input
           type="search"
           value={q}

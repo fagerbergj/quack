@@ -31,13 +31,13 @@ describe('MemoryTab', () => {
   let fetchMock: ReturnType<typeof vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>>
 
   beforeEach(() => {
-    // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     fetchMock = vi.fn()
-    // MemoryTab now also fires an independent GET /memories/stats (#1267) on
-    // mount; intercept it ahead of fetchMock so every existing test's call
-    // count/indexing still refers only to the memories-list/vote/delete
-    // requests it was written against.
+// MemoryTab now also fires an independent GET /memories/stats on
+// mount; intercept it ahead of fetchMock so every existing test's call
+// count/indexing still refers only to the memories-list/vote/delete
+// requests it was written against.
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
       if (url.includes('/memories/stats')) {
@@ -55,9 +55,9 @@ describe('MemoryTab', () => {
     vi.unstubAllGlobals()
   })
 
-  // The component's own GET fires from a useEffect, so mount + the fetch's
-  // promise chain (unwrap → generated SDK → fetch → .text() → JSON.parse →
-  // setState) both need flushing before assertions.
+// The component's own GET fires from a useEffect, so mount + the fetch's
+// promise chain (unwrap → generated SDK → fetch → .text() → JSON.parse →
+// setState) both need flushing before assertions.
   async function renderAndFlush() {
     host = document.createElement('div')
     document.body.appendChild(host)
@@ -108,7 +108,7 @@ describe('MemoryTab', () => {
     const forgetButton = findButton(host!, b => b.textContent?.trim() === 'Forget')
     act(() => forgetButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
 
-    // Confirm/Cancel is now showing; the GET was the only request so far.
+// Confirm/Cancel is now showing; the GET was the only request so far.
     const confirmButton = findButton(host!, b => b.textContent === 'Confirm')
     expect(fetchMock).toHaveBeenCalledTimes(1)
 
@@ -136,7 +136,7 @@ describe('MemoryTab', () => {
     const cancelButton = findButton(host!, b => b.textContent === 'Cancel')
     act(() => cancelButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
 
-    expect(fetchMock).toHaveBeenCalledTimes(1) // just the initial GET
+ expect(fetchMock).toHaveBeenCalledTimes(1)// just the initial GET
     expect(host!.textContent).toContain(MEMORY.content)
   })
 
@@ -159,9 +159,9 @@ describe('MemoryTab', () => {
 
     fetchMock.mockResolvedValueOnce(jsonResponse({ memories: [MEMORY], total: 1 }))
     await act(async () => {
-      // React tracks a checkbox's toggle via the native 'click' event, not
-      // 'change' - dispatching MouseEvent click (as the forget-button tests
-      // above do) is what actually flips it through React's onChange.
+// React tracks a checkbox's toggle via the native 'click' event, not
+// 'change' - dispatching MouseEvent click (as the forget-button tests
+// above do) is what actually flips it through React's onChange.
       toggle.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
       await new Promise(resolve => setTimeout(resolve, 0))
     })
@@ -171,8 +171,8 @@ describe('MemoryTab', () => {
     expect(request.url).toContain('include_invalidated=true')
   })
 
-  // epic #1255 P4: clicking an arrow sends the vote request and updates the
-  // score optimistically; a second click on the now-active arrow toggles it off.
+// epic #1255 P4: clicking an arrow sends the vote request and updates the
+// score optimistically; a second click on the now-active arrow toggles it off.
   it('vote click sends the request and updates optimistically; toggle removes it', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ memories: [{ ...MEMORY, vote_score: 0, upvotes: 0 }], total: 1 }))
     await renderAndFlush()
@@ -191,8 +191,8 @@ describe('MemoryTab', () => {
     expect(voteRequest.url).toContain(`/api/v1/memories/${MEMORY.id}/vote`)
     expect(host!.textContent).toContain('verified')
 
-    // Optimistic update happens before the response lands - re-fetch the
-    // (now re-rendered) button reference and click it again to toggle off.
+// Optimistic update happens before the response lands - re-fetch the
+// (now re-rendered) button reference and click it again to toggle off.
     fetchMock.mockResolvedValueOnce(jsonResponse({ ...MEMORY, vote_score: 0, upvotes: 0, tier: 'verified' }))
     const upButtonAgain = findButton(host!, b => (b.getAttribute('aria-label') ?? '') === 'Upvote')
     await act(async () => {
@@ -206,10 +206,10 @@ describe('MemoryTab', () => {
     expect(body.vote).toBe('none')
   })
 
-  // #1300 review finding 1: a synchronous throw from voteMemory reaches
-  // handleVote's catch before React has flushed the setMemories updater, so
-  // the pre-vote row must come from a ref, not a variable set as a side
-  // effect inside that updater.
+// #1300 review finding 1: a synchronous throw from voteMemory reaches
+// handleVote's catch before React has flushed the setMemories updater, so
+// the pre-vote row must come from a ref, not a variable set as a side
+// effect inside that updater.
   it('rolls back the optimistic vote when voteMemory rejects synchronously', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ memories: [{ ...MEMORY, vote_score: 0, upvotes: 0 }], total: 1 }))
     await renderAndFlush()

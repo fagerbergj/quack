@@ -8,10 +8,10 @@ import { useEffect, useRef } from 'react'
 // identically, not just look identical.
 export function useDrawer(open: boolean, onClose: () => void) {
   const panelRef = useRef<HTMLDivElement>(null)
-  // Both call sites pass an inline closure, so it gets a new identity on
-  // every render of the owning component - a ref keeps the effect below
-  // from tearing down/re-running (and re-stealing focus) on every one of
-  // those re-renders (e.g. Chat's 5s chat-list poll) while the drawer is open.
+// Both call sites pass an inline closure, so it gets a new identity on
+// every render of the owning component - a ref keeps the effect below
+// from tearing down/re-running (and re-stealing focus) on every one of
+// those re-renders (e.g. Chat's 5s chat-list poll) while the drawer is open.
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
 
@@ -22,7 +22,7 @@ export function useDrawer(open: boolean, onClose: () => void) {
     function focusable(): HTMLElement[] {
       return Array.from(panel?.querySelectorAll<HTMLElement>('button, a[href], input, [tabindex]:not([tabindex="-1"])') ?? [])
     }
-    // A panel that autofocuses its own input (NodePopup's answer box) keeps it.
+// A panel that autofocuses its own input (NodePopup's answer box) keeps it.
     if (!panel?.contains(document.activeElement)) focusable()[0]?.focus()
 
     function onKeyDown(e: KeyboardEvent) {

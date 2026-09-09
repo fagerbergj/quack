@@ -30,7 +30,7 @@ import type { ChatSummary, ChatDetail, ChatList, Turn, MemoryList, ExtensionInfo
 // backend's VoteMemoryBody vote enum.
 export type VoteDirection = 'up' | 'down' | 'none'
 
-// MemoryListSort mirrors openapi.yaml's listMemories `sort` enum (#1266) -
+// MemoryListSort mirrors openapi.yaml's listMemories `sort` enum -
 // server-side ordering that spans every page, not a client re-sort of one.
 export type MemoryListSort = 'newest' | 'oldest' | 'score' | 'upvotes' | 'downvotes' | 'recalls' | 'last_recalled'
 
@@ -48,11 +48,11 @@ function unwrap<T>(r: Result<T>): T {
 }
 
 export const api = {
-  // page_token is opaque - pass back exactly what a previous response's
-  // next_page_token gave, never parsed or constructed here. status is a
-  // multi-select (default ['active']); order doesn't matter, but a token is
-  // only valid against the exact status set it was issued for, so switching
-  // it starts a fresh page walk. An explicitly empty array is a 400.
+// page_token is opaque - pass back exactly what a previous response's
+// next_page_token gave, never parsed or constructed here. status is a
+// multi-select (default ['active']); order doesn't matter, but a token is
+// only valid against the exact status set it was issued for, so switching
+// it starts a fresh page walk. An explicitly empty array is a 400.
   listChats: async (opts?: { limit?: number; page_token?: string; status?: Array<'active' | 'archived'> }): Promise<ChatList> =>
     unwrap(await sdkListChats({ query: opts })),
 
@@ -81,8 +81,8 @@ export const api = {
     return unwrap(r)
   },
 
-  // page_token is opaque, same contract as listChats' - pass back exactly what
-  // a previous response's next_page_token gave, never parsed or constructed here.
+// page_token is opaque, same contract as listChats' - pass back exactly what
+// a previous response's next_page_token gave, never parsed or constructed here.
   listMemories: async (params: {
     bucket?: string
     q?: string
@@ -108,8 +108,8 @@ export const api = {
 
   listExtensions: async (): Promise<ExtensionInfo[]> => unwrap(await sdkListExtensions()),
 
-  // weeks defaults server-side to 12; the header only shows the last 4 but
-  // asks for that default so a future "see more" needs no new request shape.
+// weeks defaults server-side to 12; the header only shows the last 4 but
+// asks for that default so a future "see more" needs no new request shape.
   getMemoryStats: async (weeks?: number): Promise<MemoryStats> =>
     unwrap(await sdkGetMemoryStats({ query: { weeks } })),
 
@@ -121,12 +121,12 @@ export const api = {
   listArtifactRevisions: async (chatId: string, artifactName: string): Promise<ArtifactRevisionList> =>
     unwrap(await sdkListArtifactRevisions({ path: { chat_id: chatId, artifact_name: artifactName } })),
 
-  // Returns the raw unified diff text (endpoint answers text/plain, not JSON).
-  // Unlike the other unwrap() callers this keeps the HTTP status on the
-  // thrown error: the artifact panel disables the Diff toggle with its own
-  // display reason for the two server rejections (413 over the 256KB bound,
-  // 415 binary) - the 413 body embeds the artifact's id, which the panel
-  // must not render outside its Details disclosure (#1178).
+// Returns the raw unified diff text (endpoint answers text/plain, not JSON).
+// Unlike the other unwrap() callers this keeps the HTTP status on the
+// thrown error: the artifact panel disables the Diff toggle with its own
+// display reason for the two server rejections (413 over the 256KB bound,
+// 415 binary) - the 413 body embeds the artifact's id, which the panel
+// must not render outside its Details disclosure .
   diffArtifactRevisions: async (chatId: string, artifactName: string, from: number, to: number): Promise<string> => {
     const r = await sdkDiffArtifactRevisions({ path: { chat_id: chatId, artifact_name: artifactName }, query: { from, to } })
     if (!r.response || !r.response.ok || r.error !== undefined) {
@@ -141,10 +141,10 @@ export const api = {
     return r.data as string
   },
 
-  // Plain fetch, not the generated client: getChatArtifact's response is
-  // application/octet-stream (any mime), and the panel only ever wants it as
-  // text (markdown/JSON revisions) - a Blob round-trip would just get
-  // .text()'d right back.
+// Plain fetch, not the generated client: getChatArtifact's response is
+// application/octet-stream (any mime), and the panel only ever wants it as
+// text (markdown/JSON revisions) - a Blob round-trip would just get
+// .text()'d right back.
   getArtifactText: async (chatId: string, artifactName: string, revision?: number): Promise<string> => {
     const res = await fetch(artifactUrl(chatId, artifactName, revision))
     if (!res.ok) throw new Error(`Fetch artifact failed (${res.status})`)

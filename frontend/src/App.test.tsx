@@ -31,8 +31,8 @@ function mockMatchMedia() {
 // empty-but-valid body so the pages settle without a server.
 function stubFetch() {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-    // The generated client calls fetch with a Request, and String() of a
-    // Request is "[object Request]" in Node - go through .url instead.
+// The generated client calls fetch with a Request, and String() of a
+// Request is "[object Request]" in Node - go through .url instead.
     const url = input instanceof URL ? input.href : typeof input === 'string' ? input : (input as Request).url
     if (url.includes('/api/v1/chats')) return jsonResponse({ data: [] })
     if (url.includes('/api/v1/memories')) return jsonResponse({ memories: [], total: 0 })
@@ -69,7 +69,7 @@ describe('App nav drawer', () => {
     localStorage.setItem('navRailCollapsed', '1')
     renderAt('/chat')
     expect(screen.queryByRole('dialog', { name: 'Main navigation' })).toBeNull()
-    expect(localStorage.getItem('navRailCollapsed')).toBe('1') // the key is no longer read or rewritten
+ expect(localStorage.getItem('navRailCollapsed')).toBe('1')// the key is no longer read or rewritten
   })
 
   it('carries the toggle on all three routes', async () => {
@@ -77,18 +77,18 @@ describe('App nav drawer', () => {
     expect(screen.getByRole('button', { name: 'Toggle navigation' })).toBeTruthy()
     cleanup()
     renderAt('/memory')
-    // Memory is route-split (React.lazy) - its toggle only exists once the
-    // chunk resolves through Suspense.
+// Memory is route-split (React.lazy) - its toggle only exists once the
+// chunk resolves through Suspense.
     expect(await screen.findByRole('button', { name: 'Toggle navigation' })).toBeTruthy()
     cleanup()
     renderAt('/ext/usage')
     expect(await screen.findByRole('button', { name: 'Toggle navigation' })).toBeTruthy()
-    // The extension's own UI lands when the extensions fetch resolves.
+// The extension's own UI lands when the extensions fetch resolves.
     await waitFor(() => expect(document.querySelector('iframe')).toBeTruthy())
   })
 
-  // #1175: the rail's hamburger duplicated the chat-list toggle's glyph. With
-  // the rail's column gone, the chat-list toggle is the only hamburger button.
+// #1175: the rail's hamburger duplicated the chat-list toggle's glyph. With
+// the rail's column gone, the chat-list toggle is the only hamburger button.
   it('has exactly one hamburger toggle in the DOM - the chat-list one', () => {
     renderAt('/chat')
     const toggles = Array.from(document.querySelectorAll('button[aria-label="Toggle chat list"]'))
@@ -108,17 +108,17 @@ describe('App nav drawer', () => {
     expect(trigger.getAttribute('aria-expanded')).toBe('true')
     expect(screen.getByRole('button', { name: 'Chats' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Memory' })).toBeTruthy()
-    // useDrawer moves focus into the panel on open - its first focusable is
-    // the ✕ close button.
+// useDrawer moves focus into the panel on open - its first focusable is
+// the ✕ close button.
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close navigation' }))
   })
 
-  // Regression for the desktop-width stacking bug caught in PR review: jsdom
-  // does no layout, so document.elementFromPoint can't reproduce the real
-  // hit-test - instead assert the z-index ordering the bug depends on. The
-  // drawer overlay must outrank ChatList's z-40 (needed only for ChatList's
-  // own off-canvas stacking below md) or the drawer is unclickable behind it
-  // at md+ widths where ChatList renders in-flow.
+// Regression for the desktop-width stacking bug caught in PR review: jsdom
+// does no layout, so document.elementFromPoint can't reproduce the real
+// hit-test - instead assert the z-index ordering the bug depends on. The
+// drawer overlay must outrank ChatList's z-40 (needed only for ChatList's
+// own off-canvas stacking below md) or the drawer is unclickable behind it
+// at md+ widths where ChatList renders in-flow.
   it('drawer overlay outranks the chat list z-index at desktop widths', async () => {
     const user = userEvent.setup()
     renderAt('/chat')
@@ -128,7 +128,7 @@ describe('App nav drawer', () => {
     const overlay = dialog.closest('.fixed.inset-0') as HTMLElement
     expect(overlay).not.toBeNull()
     const overlayZ = Number(overlay.className.match(/z-(\d+)/)?.[1])
-    const chatListZ = Number(screen.getByText('New Chat').closest('[class*="z-"]')!.className.match(/z-(\d+)/)?.[1])
+ const chatListZ = Number(screen.getByText('New Chat').closest('[class*="z-"]')!.className.match(/z-(\d+)/)?.[1])
     expect(overlayZ).toBeGreaterThan(chatListZ)
   })
 

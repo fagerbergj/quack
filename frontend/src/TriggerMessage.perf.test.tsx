@@ -4,7 +4,7 @@
 // to a single real invocation of TriggerMessage's function body, as long as its
 // props (crucially `attachments`) stay referentially stable across store
 // updates. Pins the count directly on production TriggerMessage via
-// triggerMessageRenderProbe (PR #1300 review finding 2) rather than inferring
+// triggerMessageRenderProbe ( review finding 2) rather than inferring
 // it from render timing - AssistantText's own useMemo chain already skips most
 // of the markdown re-parse cost regardless of TriggerMessage's memo, so a
 // duration bound measured under jsdom is too small and noisy to pin reliably.
@@ -63,8 +63,8 @@ describe('TriggerMessage re-render cost (#1284)', () => {
   it('memo(TriggerMessage) collapses N unrelated parent re-renders to 1 when props are stable', () => {
     render(<Parent freshAttachments={false} />)
     bumpNTimes()
-    // Fails if memo(TriggerMessage) is removed: every one of the N re-renders
-    // would then reach the production function body instead of bailing.
+// Fails if memo(TriggerMessage) is removed: every one of the N re-renders
+// would then reach the production function body instead of bailing.
     expect(triggerMessageRenderProbe.count).toBe(1)
   }, 60000)
 

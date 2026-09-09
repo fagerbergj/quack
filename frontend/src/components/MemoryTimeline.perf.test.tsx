@@ -11,7 +11,7 @@ import { memoryEntryRenderProbe } from './MemoryEntry'
 import type { Memory } from '../api'
 
 beforeAll(() => {
-  // @ts-expect-error react act env flag
+// @ts-expect-error react act env flag
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
 })
 
@@ -22,7 +22,7 @@ function makeRows(n: number): Memory[] {
     content: `Memory ${i}`,
     bucket: i % 5 === 0 ? 'global' : `repo:project-${i % 7}`,
     author: 'code-reviewer',
-    timestamp: new Date(now - i * 3600_000 * 7).toISOString(),
+ timestamp: new Date(now - i* 3600_000* 7).toISOString(),
     kind: 'repo',
     upvotes: 0,
     downvotes: 0,
@@ -56,7 +56,7 @@ describe('MemoryTimeline memoization', () => {
     expect(groupByAgeProbe.count).toBe(1)
     expect(memoryEntryRenderProbe.count).toBe(20)
 
-    // A genuinely new list re-groups and re-renders the rows it contains.
+// A genuinely new list re-groups and re-renders the rows it contains.
     act(() => root.unmount())
     host.remove()
   })

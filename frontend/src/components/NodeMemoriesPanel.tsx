@@ -6,10 +6,10 @@ import { VoteControl } from './VoteControl'
 export interface NodeMemoriesPanelProps {
   chatId: string
   nodeId: string
-  // Bumping this (the node's judge-round counter, chatStore's
-  // NodeState.judgeRounds) triggers a refetch - the chat's SSE stream
-  // already carries judge-round completion, so this is the "live update"
-  // hook the epic #1255 P4 spec asks for without a dedicated subscription.
+// Bumping this (the node's judge-round counter, chatStore's
+// NodeState.judgeRounds) triggers a refetch - the chat's SSE stream
+// already carries judge-round completion, so this is the "live update"
+// hook the epic #1255 P4 spec asks for without a dedicated subscription.
   judgeRounds?: number
   onClose: () => void
 }
@@ -55,7 +55,7 @@ function SourceBadge({ source }: { source: string }) {
 // round has voted yet), and a manual vote control. NodeMemory carries no
 // corpus-wide vote_score (that lives on the full Memory the memory page
 // shows) - this control only reflects the caller's own vote highlight.
-// Vote control sits at the row's end (#1266 owner follow-up), matching the
+// Vote control sits at the row's end , matching the
 // memory page's row layout - not a left gutter, so the text gets full width.
 function NodeMemoryRow({ memory, onVote }: { memory: NodeMemory; onVote: (id: string, vote: VoteDirection) => Promise<void> }) {
   return (
@@ -105,10 +105,10 @@ export function NodeMemoriesPanel({ chatId, nodeId, judgeRounds, onClose }: Node
     const prev = memories
     setMemories(cur => cur.map(m => (m.id === id ? { ...m, own_vote: vote === 'none' ? undefined : vote } : m)))
     try {
-      // Merge the server's authoritative tier/own_vote back onto the row
-      // (#1265 review finding 7) - the optimistic own_vote above can be
-      // right about direction but not about tier (e.g. an up-vote can
-      // newly verify the memory).
+// Merge the server's authoritative tier/own_vote back onto the row
+// - the optimistic own_vote above can be
+// right about direction but not about tier (e.g. an up-vote can
+// newly verify the memory).
       const updated = await api.voteMemory(id, vote)
       setMemories(cur => cur.map(m => (m.id === id ? { ...m, tier: updated.tier, own_vote: updated.own_vote } : m)))
     } catch (e) {
@@ -117,10 +117,10 @@ export function NodeMemoriesPanel({ chatId, nodeId, judgeRounds, onClose }: Node
     }
   }
 
-  // Native <dialog> + showModal() (mirrors ArtifactPanel): Esc closes,
-  // focus is trapped in the top layer, and the browser itself restores
-  // focus to whatever opened this once it closes - no manual focus-trap or
-  // focus-restore code needed (#1265 review finding 6).
+// Native <dialog> + showModal() (mirrors ArtifactPanel): Esc closes,
+// focus is trapped in the top layer, and the browser itself restores
+// focus to whatever opened this once it closes - no manual focus-trap or
+// focus-restore code needed .
   const dialogRef = useRef<HTMLDialogElement>(null)
   useEffect(() => { dialogRef.current?.showModal() }, [])
 

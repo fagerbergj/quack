@@ -12,8 +12,8 @@ import { Icon } from './Icon'
 export function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false)
   const copy = (e: React.MouseEvent) => {
-    // Tool calls render inside a <details>/<summary>; a click on this button
-    // must copy WITHOUT toggling the enclosing disclosure.
+// Tool calls render inside a <details>/<summary>; a click on this button
+// must copy WITHOUT toggling the enclosing disclosure.
     e.preventDefault()
     e.stopPropagation()
     navigator.clipboard.writeText(text)

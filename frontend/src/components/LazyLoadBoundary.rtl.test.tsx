@@ -13,7 +13,7 @@ const BrokenChunk = lazy(() => Promise.reject(new Error('Failed to fetch dynamic
 
 describe('LazyLoadBoundary', () => {
   it('shows a reload fallback instead of white-screening when the lazy import rejects', async () => {
-    // React logs the caught error to console.error - expected here, not a test failure.
+// React logs the caught error to console.error - expected here, not a test failure.
     vi.spyOn(console, 'error').mockImplementation(() => {})
     render(
       <LazyLoadBoundary>

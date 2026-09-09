@@ -86,7 +86,7 @@ describe('parseEnvelope', () => {
 
   it('returns null for a plain chat message (no envelope markers)', () => {
     expect(parseEnvelope('Please add dark mode support.')).toBeNull()
-    // Starts with "<" but isn't envelope-shaped - still falls back.
+// Starts with "<" but isn't envelope-shaped - still falls back.
     expect(parseEnvelope('<3 this feature, ship it')).toBeNull()
   })
 
@@ -99,7 +99,7 @@ describe('parseEnvelope', () => {
 
   it('never throws on malformed/unterminated tags', () => {
     const brokenInputs = [
-      '<permissions>join_issue_conversation<deliverable>a plan</deliverable>', // unterminated permissions
+ '<permissions>join_issue_conversation<deliverable>a plan</deliverable>',// unterminated permissions
       '<<<not a tag at all',
       '<permissions',
       '',
@@ -167,7 +167,7 @@ lint: completed success
     const b = checksBlockOf(malformed)
     expect(b.checks).toBeNull()
     expect(b.raw).toBe('not a valid check line')
-    // The summary attribute still parses independently of the body.
+// The summary attribute still parses independently of the body.
     expect(checksSummaryLabel(b)).toBe('checks: 1 passing')
   })
 
@@ -213,7 +213,7 @@ describe('accumulateComments', () => {
     expect(acc.comments.map(c => c.body)).toEqual([
       'Alpha: first question', 'Bravo: second question', 'Charlie: follow-up', 'Delta: another follow-up',
     ])
-    // Turn 3's own collapsed header still reports just its own delta, not the total.
+// Turn 3's own collapsed header still reports just its own delta, not the total.
     expect(commentsSummaryLabel(commentsBlock(TURN3_DELTA))).toBe('1 new, 0 edited, 0 deleted')
   })
 
@@ -231,7 +231,7 @@ describe('accumulateComments', () => {
   it('reports an incomplete view when no seed is visible (test case 3)', () => {
     const acc = accumulateComments([], commentsBlock(TURN2_DELTA))
     expect(acc.complete).toBe(false)
-    // What IS known is still surfaced - the incompleteness is a flag, not a blackout.
+// What IS known is still surfaced - the incompleteness is a flag, not a blackout.
     expect(acc.comments.map(c => c.body)).toEqual(['Charlie: follow-up'])
   })
 
@@ -259,11 +259,11 @@ describe('TriggerMessage', () => {
     expect(out).toContain('push_commits_to_pr, join_pr_conversation')
     expect(out).toContain('Deliverable:')
     expect(out).toContain('Material 3 theming with dynamic color and dark mode')
-    // Ask (title/description) is not behind a <details> disclosure.
-    expect(out).not.toMatch(/<summary[^>]*>[^<]*Material 3 theming/)
-    // The collapsed sections exist but none carry the `open` attribute.
-    const detailsOpenTags = out.match(/<details[^>]*>/g) ?? []
-    expect(detailsOpenTags.length).toBeGreaterThanOrEqual(4) // comments, changed_files, event, context
+// Ask (title/description) is not behind a <details> disclosure.
+ expect(out).not.toMatch(/<summary[^>]*>[^<]*Material 3 theming/)
+// The collapsed sections exist but none carry the `open` attribute.
+ const detailsOpenTags = out.match(/<details[^>]*>/g) ?? []
+ expect(detailsOpenTags.length).toBeGreaterThanOrEqual(4)// comments, changed_files, event, context
     for (const tag of detailsOpenTags) expect(tag).not.toContain('open')
     expect(out).toContain('1 new, 0 edited, 0 deleted')
     expect(out).toContain('16 files, +880/-330')
@@ -297,9 +297,9 @@ describe('TriggerMessage', () => {
 
   it('renders the accumulated comment history, not just this turn\'s own slice (#730)', () => {
     const out = renderToStaticMarkup(createElement(TriggerMessage, { content: TURN3_DELTA, priorContents: [SEED_TURN, TURN2_DELTA] }))
-    // The header still reports this turn's own delta only.
+// The header still reports this turn's own delta only.
     expect(out).toContain('1 new, 0 edited, 0 deleted')
-    // But the body shows the whole folded history.
+// But the body shows the whole folded history.
     expect(out).toContain('Alpha: first question')
     expect(out).toContain('Bravo: second question')
     expect(out).toContain('Charlie: follow-up')
@@ -310,7 +310,7 @@ describe('TriggerMessage', () => {
   it('renders an explicit incomplete-history notice when no seed is in the visible window (#730)', () => {
     const out = renderToStaticMarkup(createElement(TriggerMessage, { content: TURN2_DELTA }))
     expect(out).toContain('Incomplete history')
-    // The delta comment it DOES know about is still shown, just flagged.
+// The delta comment it DOES know about is still shown, just flagged.
     expect(out).toContain('Charlie: follow-up')
   })
 
@@ -326,9 +326,9 @@ describe('TriggerMessage', () => {
 <comments count="40">${JSON.stringify(comments)}</comments>`
     const out = renderToStaticMarkup(createElement(TriggerMessage, { content: envelope }))
     expect(out).toContain('40 comments')
-    const detailsTags = out.match(/<details[^>]*>/g) ?? []
+ const detailsTags = out.match(/<details[^>]*>/g) ?? []
     expect(detailsTags.length).toBeGreaterThan(0)
-    for (const tag of detailsTags) expect(tag).not.toContain('open') // collapsed by default
+ for (const tag of detailsTags) expect(tag).not.toContain('open')// collapsed by default
   })
 })
 
@@ -352,7 +352,7 @@ describe('TriggerMessage interaction (real DOM, not string assertions)', () => {
     host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
-    // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     act(() => root!.render(createElement(TriggerMessage, { content, ...extra })))
     return host
@@ -366,7 +366,7 @@ describe('TriggerMessage interaction (real DOM, not string assertions)', () => {
     const commentsDetails = [...details].find(d => d.querySelector('summary')?.textContent?.includes('new'))!
     act(() => commentsDetails.querySelector('summary')!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
     expect(commentsDetails.open).toBe(true)
-    // Only the clicked section opened - the others stay collapsed.
+// Only the clicked section opened - the others stay collapsed.
     for (const d of details) if (d !== commentsDetails) expect(d.open).toBe(false)
   })
 
@@ -394,8 +394,8 @@ ${CHECKS_ENVELOPE.split('\n').slice(2).join('\n')}`
     expect(details.open).toBe(true)
     expect(details.textContent).toContain('build')
     expect(details.textContent).toContain('failure')
-    // The failing check's danger styling, not shared by the passing/pending rows.
-    expect(details.innerHTML).toMatch(/text-red-500[^"]*"[^>]*>build/)
+// The failing check's danger styling, not shared by the passing/pending rows.
+ expect(details.innerHTML).toMatch(/text-red-500[^"]*"[^>]*>build/)
   })
 
   it('a deleted comment is visibly distinguishable from a live one once its section is opened', () => {
@@ -409,7 +409,7 @@ ${CHECKS_ENVELOPE.split('\n').slice(2).join('\n')}`
     act(() => details.querySelector('summary')!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
     expect(details.open).toBe(true)
     expect(details.textContent).toContain('deleted')
-    // Ignoring quack_status entirely would render this identically to a live comment.
+// Ignoring quack_status entirely would render this identically to a live comment.
     expect(details.innerHTML).toMatch(/line-through/)
   })
 
@@ -477,7 +477,7 @@ describe('artifacts parsing and summary/status rendering (#1250)', () => {
     expect(out).toContain('new')
     expect(out).toContain('updated')
     expect(out).toContain('unchanged')
-    // The old fallback path (UnknownSection's raw <pre> dump) never renders for a recognised <artifacts> block.
+// The old fallback path (UnknownSection's raw <pre> dump) never renders for a recognised <artifacts> block.
     expect(out).not.toContain('<artifact id=')
   })
 })

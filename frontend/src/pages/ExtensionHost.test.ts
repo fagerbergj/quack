@@ -22,7 +22,7 @@ describe('ExtensionHost', () => {
   let host: HTMLDivElement | undefined
 
   beforeEach(() => {
-    // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
   })
 

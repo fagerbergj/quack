@@ -31,14 +31,14 @@ describe('previewLine', () => {
   it('leaves short text untouched', () => {
     expect(previewLine('short')).toBe('short')
   })
-  // Audit #8: the collapsed row must not show raw markdown syntax.
+// Audit #8: the collapsed row must not show raw markdown syntax.
   it('strips headings, list and quote markers, and inline emphasis', () => {
-    expect(previewLine('## Dublin in brief\nVisit between **May and Sept**.')).toBe('Dublin in brief Visit between May and Sept.')
-    expect(previewLine('- one\n* two\n> three')).toBe('one two three')
+ expect(previewLine('## Dublin in brief\nVisit between**May and Sept**.')).toBe('Dublin in brief Visit between May and Sept.')
+ expect(previewLine('- one\n* two\n> three')).toBe('one two three')
     expect(previewLine('__Mostly solid__, run `go test`.')).toBe('Mostly solid, run go test.')
   })
   it('keeps a lone asterisk or underscore that is not markup', () => {
-    expect(previewLine('2 * 3 in snake_case')).toBe('2 * 3 in snake_case')
+ expect(previewLine('2* 3 in snake_case')).toBe('2* 3 in snake_case')
   })
 })
 
@@ -59,9 +59,9 @@ describe('typed arg extractors', () => {
     expect(str(bag, 'path')).toBe('a.ts')
     expect(num(bag, 'replacements')).toBe(3)
     expect(bool(bag, 'replace_all')).toBe(true)
-    expect(str(bag, 'replacements')).toBeUndefined() // wrong type
+ expect(str(bag, 'replacements')).toBeUndefined()// wrong type
     expect(num(bag, 'missing')).toBeUndefined()
-    expect(str(null, 'path')).toBeUndefined() // non-object
+ expect(str(null, 'path')).toBeUndefined()// non-object
   })
 })
 

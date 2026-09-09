@@ -15,8 +15,8 @@ type Story = StoryObj<typeof ActivityList>
 // One run's activity: reasoning interleaved with completed and in-flight tools.
 const activity: Activity[] = [
   { kind: 'thinking', text: 'I need the best months to visit Dublin based on weather data.' },
-  { kind: 'tool', tool: { callId: 'c1', name: 'web_search', args: { query: 'best time to visit Dublin weather' }, result: { results: [{ title: 'Dublin Climate Guide', url: 'https://example.com/climate' }] }, done: true } },
-  { kind: 'tool', tool: { callId: 'c2', name: 'web_fetch', args: { url: 'https://example.com/climate' }, result: 'Dublin is mild year-round; May–September is warmest (15–18 °C).', done: true } },
+ { kind: 'tool', tool: { callId: 'c1', name: 'web_search', args: { query: 'best time to visit Dublin weather' }, result: { results: [{ title: 'Dublin Climate Guide', url: 'https://example.com/climate' }] }, done: true } },
+ { kind: 'tool', tool: { callId: 'c2', name: 'web_fetch', args: { url: 'https://example.com/climate' }, result: 'Dublin is mild year-round; May–September is warmest (15–18 °C).', done: true } },
 ]
 
 export const Basic: Story = {
@@ -111,7 +111,7 @@ export const Windowed: Story = {
       { kind: 'thinking', text: 'step 1' },
       { kind: 'tool', tool: { callId: 'a', name: 'web_search', args: { query: 'a' }, result: {}, done: true } },
       { kind: 'tool', tool: { callId: 'b', name: 'web_search', args: { query: 'b' }, result: {}, done: true } },
-      { kind: 'tool', tool: { callId: 'c', name: 'web_fetch', args: { url: 'https://example.com' }, result: 'page', done: true } },
+ { kind: 'tool', tool: { callId: 'c', name: 'web_fetch', args: { url: 'https://example.com' }, result: 'page', done: true } },
       { kind: 'thinking', text: 'now compiling the answer' },
     ],
   },
@@ -142,11 +142,11 @@ function buildInterleavedFixture(): Activity[] {
   for (let i = 0; i < fragments.length; i++) {
     runs = appendRunThinking(runs, 'r1', fragments[i])
     const callId = `c${i}`
-    // i===3/7 stand in for calls the ACP relay used to collapse onto the
-    // meaningless name "other" (a bridged MCP call, a third-party tool with
-    // no ACP kind match) - the relay now resolves each to its real name
-    // (internal/acp/translate.go's mapToolCall, #1278), so the fixture never
-    // constructs the literal "other" here either.
+// i===3/7 stand in for calls the ACP relay used to collapse onto the
+// meaningless name "other" (a bridged MCP call, a third-party tool with
+// no ACP kind match) - the relay now resolves each to its real name
+// (internal/acp/translate.go's mapToolCall, #1278), so the fixture never
+// constructs the literal "other" here either.
     const isBridged = i === 3 || i === 7
     const name = isBridged ? (i === 3 ? 'stage_review' : 'load_skill') : 'read_file'
     runs = appendRunToolCall(runs, 'r1', callId, name, isBridged ? {} : { path: `src/file${i}.go` })
@@ -159,12 +159,12 @@ export const InterleavedThinkingAndOtherTools: Story = {
   args: { activity: buildInterleavedFixture() },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    // The folded Thought block is the run's oldest item, so it's behind the
-    // windowing toggle - expand it before asserting.
+// The folded Thought block is the run's oldest item, so it's behind the
+// windowing toggle - expand it before asserting.
     await userEvent.click(canvas.getByText(/earlier/))
-    // All ten thought fragments folded into one Thought block, not ten.
+// All ten thought fragments folded into one Thought block, not ten.
     expect(canvas.getAllByText('Thought')).toHaveLength(1)
-    // Every tool row shows its real identity - never the bare "other".
+// Every tool row shows its real identity - never the bare "other".
     expect(canvas.queryByText('other')).toBeNull()
     expect(canvas.getByText('stage_review')).toBeInTheDocument()
     expect(canvas.getByText('load_skill')).toBeInTheDocument()
@@ -383,7 +383,7 @@ export const ProseWideContent: StoryObj = {
       '| August | 19 °C | 12 °C | 12 | 15h | high | 130 | peak season, book early |',
       '',
       '```sh',
-      'curl -s "https://example.com/api/v1/climate?city=dublin&months=may,june,july,august,september&fields=high,low,rain_days,daylight" | jq .',
+ 'curl -s "https://example.com/api/v1/climate?city=dublin&months=may,june,july,august,september&fields=high,low,rain_days,daylight" | jq .',
       '```',
     ].join('\n')} />
   ),

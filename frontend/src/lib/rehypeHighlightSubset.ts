@@ -14,7 +14,7 @@ import sql from 'highlight.js/lib/languages/sql'
 import diff from 'highlight.js/lib/languages/diff'
 
 // rehype-highlight statically imports lowlight's `common` set (37 grammars,
-// 156 kB gzip) with no way to shrink it via options (#1297). Agents only ever
+// 156 kB gzip) with no way to shrink it via options . Agents only ever
 // emit these 11 languages, so registering just them is the whole fix.
 const lowlight = createLowlight({ go, typescript, javascript, python, bash, json, yaml, xml, markdown, sql, diff })
 

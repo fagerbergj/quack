@@ -26,7 +26,7 @@ function chat(overrides: Partial<ChatSummary>): ChatSummary {
 
 const CHATS: ChatSummary[] = [
   chat({ id: 'direct-1', title: 'Direct chat' }),
-  chat({ id: 'github-acme-widget-1', title: 'GitHub chat', github_repo: 'acme/widget', github_url: 'https://github.com/acme/widget/issues/1' }),
+ chat({ id: 'github-acme-widget-1', title: 'GitHub chat', github_repo: 'acme/widget', github_url: 'https://github.com/acme/widget/issues/1' }),
 ]
 
 describe('filterChats (origin facet)', () => {
@@ -72,7 +72,7 @@ describe('repo badge text', () => {
   })
 
   it('shows only the repo name, with the full owner/name in the title', () => {
-    // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     host = document.createElement('div')
     document.body.appendChild(host)
@@ -107,7 +107,7 @@ describe('origin chip', () => {
   })
 
   function renderList(chats: ChatSummary[]) {
-    // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     host = document.createElement('div')
     document.body.appendChild(host)
@@ -118,8 +118,8 @@ describe('origin chip', () => {
   }
 
   it('renders the label as a link when origin.href is present', () => {
-    renderList([chat({ id: 'e1', origin: { extension: 'remarkable', label: 'Meeting notes', href: 'https://remarkable.example/doc/42' } })])
-    const link = host!.querySelector('a[href="https://remarkable.example/doc/42"]')
+ renderList([chat({ id: 'e1', origin: { extension: 'remarkable', label: 'Meeting notes', href: 'https://remarkable.example/doc/42' } })])
+ const link = host!.querySelector('a[href="https://remarkable.example/doc/42"]')
     expect(link?.textContent).toBe('Meeting notes')
   })
 
@@ -139,9 +139,9 @@ describe('origin chip', () => {
     expect(host!.textContent).not.toContain('undefined')
   })
 
-  // #870: the origin badge mirrors GitHub's own state colors for exactly
-  // these three values - any other extension-defined badge stays the
-  // existing neutral chip rather than guessing at unknown semantics.
+// #870: the origin badge mirrors GitHub's own state colors for exactly
+// these three values - any other extension-defined badge stays the
+// existing neutral chip rather than guessing at unknown semantics.
   it('colors the badge chip for open/merged/closed like GitHub, and leaves anything else neutral', () => {
     expect(originBadgeClass('open')).toContain('green')
     expect(originBadgeClass('merged')).toContain('purple')
@@ -170,7 +170,7 @@ describe('ChatList scroll container', () => {
   })
 
   it('carries the themed thin-scrollbar class', () => {
-    // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     host = document.createElement('div')
     document.body.appendChild(host)
@@ -200,7 +200,7 @@ describe('ChatList "Load more" affordance', () => {
   })
 
   function renderList(props: Partial<Parameters<typeof ChatList>[0]> = {}) {
-    // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     host = document.createElement('div')
     document.body.appendChild(host)
@@ -286,12 +286,12 @@ describe('github_state badge', () => {
   })
 
   function renderGithubChats(githubState: ChatSummary['github_state']) {
-    // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
-    const githubChats: ChatSummary[] = [chat({ id: 'pr-1', title: 'PR chat', github_repo: 'acme/widget', github_url: 'https://github.com/acme/widget/pull/42', github_state: githubState })]
+ const githubChats: ChatSummary[] = [chat({ id: 'pr-1', title: 'PR chat', github_repo: 'acme/widget', github_url: 'https://github.com/acme/widget/pull/42', github_state: githubState })]
     act(() => {
       root!.render(createElement(ChatList, { chats: githubChats, activeChatId: null, open: true, onSelect: () => {}, onNewChat: () => {}, onDelete: () => {}, onCloseMobile: () => {} }))
     })
@@ -321,7 +321,7 @@ describe('github_state badge', () => {
 
   it('renders state badge alongside Issue/PR badge', () => {
     renderGithubChats('merged')
-    const spans = host!.querySelectorAll('span[class*="rounded"]')
+ const spans = host!.querySelectorAll('span[class*="rounded"]')
     const badgeTexts: string[] = []
     for (const s of spans) {
       const t = (s as HTMLElement).textContent?.trim() ?? ''
@@ -349,10 +349,10 @@ describe('ChatRow kebab menu (archive vs. hard delete)', () => {
     vi.restoreAllMocks()
   })
 
-  // #809: the active list never carries archived rows, so an archived fixture
-  // is passed via archivedChats (the section's own server-scoped list), not chats.
+// #809: the active list never carries archived rows, so an archived fixture
+// is passed via archivedChats (the section's own server-scoped list), not chats.
   function renderList(chats: ChatSummary[], props: Partial<Parameters<typeof ChatList>[0]> = {}) {
-    // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     host = document.createElement('div')
     document.body.appendChild(host)
@@ -394,15 +394,15 @@ describe('ChatRow kebab menu (archive vs. hard delete)', () => {
     expect(onDelete).not.toHaveBeenCalled()
   })
 
-  // Delete is the row's only irreversible action, so it lives in the kebab
-  // (secondary actions) behind a confirm - never a bare one-tap on a touch row.
+// Delete is the row's only irreversible action, so it lives in the kebab
+// (secondary actions) behind a confirm - never a bare one-tap on a touch row.
   it('on an archived row, permanently deletes from the kebab after confirmation', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const onDelete = vi.fn()
     renderList([], { onDelete, archivedChats: [chat({ id: 'a2', title: 'Archived chat', archived: true })] })
     expandArchived()
 
-    expect(host!.querySelector('button[aria-label="Delete chat permanently"]')).toBeNull() // menu closed
+ expect(host!.querySelector('button[aria-label="Delete chat permanently"]')).toBeNull()// menu closed
     click(host!.querySelector('button[aria-label="Chat actions"]'))
     const trash = host!.querySelector('[role="menuitem"][aria-label="Delete chat permanently"]')
     expect(trash).toBeTruthy()
@@ -424,8 +424,8 @@ describe('ChatRow kebab menu (archive vs. hard delete)', () => {
     expect(onDelete).not.toHaveBeenCalled()
   })
 
-  // #1319: owner instruction - every row has exactly one kebab, no bare
-  // Archive/Delete button sitting directly on the row.
+// #1319: owner instruction - every row has exactly one kebab, no bare
+// Archive/Delete button sitting directly on the row.
   it('every row has exactly one kebab and no bare Archive/Delete button', () => {
     renderList([chat({ id: 'a4', title: 'Active' })], {
       archivedChats: [chat({ id: 'a5', title: 'Archived', archived: true })],
@@ -433,7 +433,7 @@ describe('ChatRow kebab menu (archive vs. hard delete)', () => {
     expandArchived()
 
     expect(host!.querySelectorAll('button[aria-label="Chat actions"]').length).toBe(2)
-    expect(host!.querySelector('button[aria-label="Archive chat"]')).toBeNull() // hidden until opened
+ expect(host!.querySelector('button[aria-label="Archive chat"]')).toBeNull()// hidden until opened
     expect(host!.querySelector('button[aria-label="Delete chat permanently"]')).toBeNull()
   })
 
@@ -444,7 +444,7 @@ describe('ChatRow kebab menu (archive vs. hard delete)', () => {
 
     const kebab = host!.querySelector('button[aria-label="Chat actions"]')
     expect(kebab).toBeTruthy()
-    expect(host!.querySelector('[role="menuitem"][aria-label="Unarchive chat"]')).toBeNull() // menu closed
+ expect(host!.querySelector('[role="menuitem"][aria-label="Unarchive chat"]')).toBeNull()// menu closed
 
     click(kebab)
     const restore = host!.querySelector('[role="menuitem"][aria-label="Unarchive chat"]')
@@ -479,8 +479,8 @@ describe('ChatRow kebab menu (archive vs. hard delete)', () => {
     expect(host!.querySelector('[role="menuitem"][aria-label="Unarchive chat"]')).toBeNull()
   })
 
-  // Sits top-right, out of flow (absolute), and always visible - touch has
-  // no hover, so a hover-only reveal hid it on every phone. Icons, not glyphs.
+// Sits top-right, out of flow (absolute), and always visible - touch has
+// no hover, so a hover-only reveal hid it on every phone. Icons, not glyphs.
   it('the kebab trigger is an always visible Material icon, out of flow', () => {
     renderList([], { onUnarchive: vi.fn(), archivedChats: [chat({ id: 'a10', archived: true })] })
     expandArchived()
@@ -489,7 +489,7 @@ describe('ChatRow kebab menu (archive vs. hard delete)', () => {
     expect(kebab?.querySelector('svg')).not.toBeNull()
     expect(kebab?.textContent?.trim()).toBe('')
     expect(kebab?.className).not.toEqual(expect.stringContaining('opacity-0'))
-    expect(kebab?.parentElement?.className).toEqual(expect.stringContaining('absolute')) // the wrapper, not the button, is positioned
+ expect(kebab?.parentElement?.className).toEqual(expect.stringContaining('absolute'))// the wrapper, not the button, is positioned
     click(kebab)
     for (const item of host!.querySelectorAll('[role="menuitem"]')) expect(item.querySelector('svg')).not.toBeNull()
   })
@@ -510,7 +510,7 @@ describe('Archived section fetches its own list only on expand', () => {
   })
 
   function renderList(props: Partial<Parameters<typeof ChatList>[0]> = {}) {
-    // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     host = document.createElement('div')
     document.body.appendChild(host)
@@ -550,8 +550,8 @@ describe('Archived section fetches its own list only on expand', () => {
     renderList({ onExpandArchived })
 
     const btn = Array.from(host!.querySelectorAll('button')).find(b => b.textContent?.includes('Archived'))
-    act(() => { btn!.dispatchEvent(new MouseEvent('click', { bubbles: true })) }) // expand
-    act(() => { btn!.dispatchEvent(new MouseEvent('click', { bubbles: true })) }) // collapse
+ act(() => { btn!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })// expand
+ act(() => { btn!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })// collapse
 
     expect(onExpandArchived).toHaveBeenCalledTimes(1)
   })

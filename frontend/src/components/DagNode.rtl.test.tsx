@@ -9,7 +9,7 @@ import { client } from '../generated/client.gen'
 import { ChatStoreProvider } from '../state/ChatStoreProvider'
 
 // ArtifactPanel (opened from DagNode's ⋮ menu) reads chatStore for live
-// SSE follow (#1114) - every render needs the provider.
+// SSE follow - every render needs the provider.
 function render(ui: ReactElement) {
   return rtlRender(<ChatStoreProvider>{ui}</ChatStoreProvider>)
 }
@@ -26,16 +26,16 @@ async function openArtifacts(user: ReturnType<typeof userEvent.setup>) {
 }
 
 beforeEach(() => {
-  // See ArtifactPanel.rtl.test.tsx for why these stubs are needed: jsdom has
-  // no <dialog> support and no matchMedia at all, and the generated client's
-  // Request construction needs an absolute base to resolve against in a
-  // jsdom document.
+// See ArtifactPanel.rtl.test.tsx for why these stubs are needed: jsdom has
+// no <dialog> support and no matchMedia at all, and the generated client's
+// Request construction needs an absolute base to resolve against in a
+// jsdom document.
   HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) { this.setAttribute('open', '') }
   HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) { this.removeAttribute('open') }
   vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
     matches: false, media: query, addEventListener: () => {}, removeEventListener: () => {},
   })))
-  client.setConfig({ baseUrl: 'http://localhost' })
+ client.setConfig({ baseUrl: 'http://localhost' })
   vi.stubGlobal('fetch', vi.fn(async () =>
     new Response(JSON.stringify({ data: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
   ))
@@ -49,7 +49,7 @@ describe('DagNode artifacts menu item (#1114)', () => {
     const user = userEvent.setup()
     render(<DagNode node={node} state={{ status: 'running' }} runs={[]} answer="" isFinal={false} chatId="chat-1" />)
 
-    expect(screen.queryByText('artifacts')).toBeNull() // the old text button is gone
+ expect(screen.queryByText('artifacts')).toBeNull()// the old text button is gone
 
     await user.click(screen.getByRole('button', { name: 'Node actions' }))
     const item = await screen.findByRole('menuitem', { name: /Artifacts/ })
@@ -89,8 +89,8 @@ describe('DagNode artifact panel props (#1178)', () => {
 
   it('passes the declared output kind: the panel opens on the matching artifact, not the newest', async () => {
     const user = userEvent.setup()
-    // document:spec is NEWER (latest revision 5), but the node declares
-    // `text` - the plan is the result view must open on.
+// document:spec is NEWER (latest revision 5), but the node declares
+// `text` - the plan is the result view must open on.
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = decodeURIComponent(input instanceof Request ? input.url : String(input))
       if (url.includes('/artifacts/text:plan/revisions')) {
@@ -111,7 +111,7 @@ describe('DagNode artifact panel props (#1178)', () => {
     }))
     render(<DagNode node={{ ...node, id: 'p1', artifact: 'text' }} state={{ status: 'done' }} runs={[]} answer="" isFinal={false} chatId="chat-1" />)
     await openArtifacts(user)
-    // The declared-kind artifact rendered, not the newer document.
+// The declared-kind artifact rendered, not the newer document.
     expect(await screen.findByRole('heading', { level: 1, name: 'The plan' })).toBeTruthy()
   })
 
@@ -120,15 +120,15 @@ describe('DagNode artifact panel props (#1178)', () => {
     render(<DagNode node={node} state={{ status: 'failed', error: 'judge gave up after 3 rounds' }} runs={[]} answer="" isFinal={false} chatId="chat-1" />)
     await openArtifacts(user)
     expect(await screen.findByText('This node failed before writing its result.')).toBeTruthy()
-    // The error text appears twice: the node card's own red banner and
-    // the panel's failure empty state.
+// The error text appears twice: the node card's own red banner and
+// the panel's failure empty state.
     expect(screen.getAllByText('judge gave up after 3 rounds').length).toBe(2)
   })
 
   it('does not read a transient error on a non-failed node as a failure', async () => {
     const user = userEvent.setup()
-    // markNodeError annotates rejected control actions on any status -
-    // the panel must not claim the node "failed" for one.
+// markNodeError annotates rejected control actions on any status -
+// the panel must not claim the node "failed" for one.
     render(<DagNode node={node} state={{ status: 'running', error: 'stop rejected (HTTP 409)' }} runs={[]} answer="" isFinal={false} chatId="chat-1" />)
     await openArtifacts(user)
     expect(await screen.findByText("This node hasn't produced anything yet.")).toBeTruthy()
@@ -185,8 +185,8 @@ describe('DagNode compact header', () => {
     expect(document.activeElement).toBe(kebab)
   })
 
-  // The card clips to its rounded corners at rest; while the menu is open it
-  // must not, or a short card cuts the menu off after the first item.
+// The card clips to its rounded corners at rest; while the menu is open it
+// must not, or a short card cuts the menu off after the first item.
   it('the card lifts its overflow clip while the menu is open', () => {
     const { container } = render(<DagNode node={node} state={running} runs={[]} answer="" isFinal={false} onPause={() => {}} />)
     const card = container.querySelector('.rounded-xl')!
@@ -202,7 +202,7 @@ describe('DagNode compact header', () => {
     expect(items.length).toBeGreaterThanOrEqual(3)
     for (const item of items) {
       expect(item.querySelector('svg')).not.toBeNull()
-      // Arrow range included so a reverted retry-arrow text glyph fails here too.
+// Arrow range included so a reverted retry-arrow text glyph fails here too.
       expect(item.textContent ?? '').not.toMatch(/[\u2190-\u21FF\u2300-\u23FF\u25A0-\u25FF\u2B00-\u2BFF]/)
     }
   })

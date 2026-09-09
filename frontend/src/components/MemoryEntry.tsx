@@ -73,7 +73,7 @@ function TierBadge({ memory }: { memory: Memory }) {
 }
 
 // VoteTierBadge - the vote-based tier (epic #1255 P4, memory.tier). Only
-// rendered for 'verified' (#1266): 'unverified' duplicates the lifecycle
+// rendered for 'verified' : 'unverified' duplicates the lifecycle
 // TierBadge's default label, so the caller skips it in that case instead of
 // showing two chips that both say "unverified".
 function VoteTierBadge({ tier }: { tier: 'unverified' | 'verified' }) {
@@ -87,7 +87,7 @@ function VoteTierBadge({ tier }: { tier: 'unverified' | 'verified' }) {
 // Pill - a category-coloured pill (#746 item 13): the colour is deterministic
 // (hashed from the label itself, not assignment order) and always rendered
 // WITH the label text - colour is never the only signal. `neutral` opts out
-// of the hash (#1266): a node id used as provenance can hash to red, which
+// of the hash : a node id used as provenance can hash to red, which
 // reads as an error rather than "this node wrote it".
 function Pill({ label, seed, neutral }: { label: string; seed: string; neutral?: boolean }) {
   const cls = neutral ? 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300' : paletteClasses(seed)
@@ -195,11 +195,11 @@ export const MemoryEntry = memo(function MemoryEntry({ memory, onForget, onVote 
   const lastUpvoted = relativeTime(memory.last_upvoted_at)
   const lastRecalled = relativeTime(memory.last_recalled_at)
 
-  // Not memoized on memory.timestamp: that value never changes for a given
-  // memory, so caching on it froze the label at whatever wall-clock time it
-  // was first computed, even across a legitimate re-render (#1300 review).
-  // memo(MemoryEntry) above already skips the whole row when memory is
-  // unchanged - this recompute only runs when the row actually re-renders.
+// Not memoized on memory.timestamp: that value never changes for a given
+// memory, so caching on it froze the label at whatever wall-clock time it
+// was first computed, even across a legitimate re-render .
+// memo(MemoryEntry) above already skips the whole row when memory is
+// unchanged - this recompute only runs when the row actually re-renders.
   const mintedTime = new Date(memory.timestamp)
   const mintedTimeText = Number.isNaN(mintedTime.getTime()) ? memory.timestamp : mintedTime.toLocaleString()
   const mintedTimeRelative = relativeTime(memory.timestamp) ?? mintedTimeText
@@ -244,9 +244,9 @@ export const MemoryEntry = memo(function MemoryEntry({ memory, onForget, onVote 
           </p>
         )}
       </div>
-      {/* End of row, every viewport (#1266 owner follow-up) - not a left
+ {/* End of row, every viewport - not a left
           gutter, not folded into the metadata row - so the text column
-          above always gets the row's full remaining width. */}
+ above always gets the row's full remaining width.*/}
       <div className="flex-shrink-0 flex items-start gap-1">
         <VoteControl
           score={memory.vote_score ?? 0}

@@ -4,8 +4,8 @@ import { Icon } from './Icon'
 
 // QuestionBubble is the single, attributed question-prompt UI shared by every
 // place the app needs a human answer mid-conversation:
-//  - the orchestrator's get_user_choice clarification (options + freeform)
-//  - a paused node's mid-node HITL question (freeform only - options is empty)
+// - the orchestrator's get_user_choice clarification (options + freeform)
+// - a paused node's mid-node HITL question (freeform only - options is empty)
 // Both render identically at the conversation level, credited to whoever asked
 // (agent). Clicking an option or submitting the box calls onSelect with that
 // text; the caller sends it as the next chat message, which the backend resumes
@@ -22,7 +22,7 @@ export function QuestionBubble({
   question?: string
   options?: string[]
   disabled?: boolean
-  answered?: string    // when set, render a read-only resolved view (no inputs)
+ answered?: string// when set, render a read-only resolved view (no inputs)
   onSelect: (answer: string) => void
 }) {
   const [freeform, setFreeform] = useState('')
@@ -35,7 +35,7 @@ export function QuestionBubble({
     onSelect(trimmed)
   }
 
-  // Resolved: the user has answered. Show the question + chosen answer, no inputs.
+// Resolved: the user has answered. Show the question + chosen answer, no inputs.
   if (answered != null) {
     return (
       <div className="mt-3 rounded-xl border border-gray-200 dark:border-gray-700 border-l-4 bg-gray-50 dark:bg-gray-800/40 px-4 py-3">

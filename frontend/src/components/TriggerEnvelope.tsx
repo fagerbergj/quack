@@ -17,9 +17,9 @@ import {
 
 // Re-export the parser so import sites that only need the data (tests) don't
 // have to pull in JSX.
-export * from './envelope'
+export* from './envelope'
 
-// Test-only render probe (PR #1300 review finding 2): counts every actual
+// Test-only render probe ( review finding 2): counts every actual
 // invocation of TriggerMessage's function body, so a perf test can pin
 // memo(TriggerMessage) directly instead of inferring it from render timing
 // (unreliable under jsdom - AssistantText's own useMemo chain already
@@ -43,21 +43,21 @@ export const TriggerMessage = memo(function TriggerMessage({
 }: {
   content: string
   attachments?: ReactNode
-  // This chat's earlier turns' raw envelope text, oldest first - lets the
-  // <comments> section fold this turn's delta onto the running history
-  // instead of rendering just what this one trigger saw.
+// This chat's earlier turns' raw envelope text, oldest first - lets the
+// <comments> section fold this turn's delta onto the running history
+// instead of rendering just what this one trigger saw.
   priorContents?: string[]
-  // Present only for a real chat - gates whether an <artifacts> row can open
-  // the artifact panel (needs a chat to look the artifact's owning node up in).
+// Present only for a real chat - gates whether an <artifacts> row can open
+// the artifact panel (needs a chat to look the artifact's owning node up in).
   chatId?: string
 }) {
   triggerMessageRenderProbe.count++
   const blocks = useMemo(() => parseEnvelope(content), [content])
-  // The artifact panel opens onto a NODE (resolved from the tapped row's
-  // artifact id - see ArtifactsSection.openRow below), with that same
-  // artifact id passed through as a focus hint so the panel shows the
-  // TAPPED artifact as primary, not just whichever of the node's outputs
-  // selectPrimaryOutput would otherwise pick (#1250 review). null means closed.
+// The artifact panel opens onto a NODE (resolved from the tapped row's
+// artifact id - see ArtifactsSection.openRow below), with that same
+// artifact id passed through as a focus hint so the panel shows the
+// TAPPED artifact as primary, not just whichever of the node's outputs
+// selectPrimaryOutput would otherwise pick . null means closed.
   const [openArtifact, setOpenArtifact] = useState<{ nodeId: string; artifactId: string } | null>(null)
   if (blocks) {
     return (
@@ -420,7 +420,7 @@ function ArtifactStatusChip({ status }: { status: string }) {
 
 // ArtifactsSection - <artifacts>: one compact row per artifact (icon, name,
 // revision, status chip, summary), tapping a row opens that artifact in the
-// artifact panel (#1250) rather than showing the raw XML that used to fall
+// artifact panel rather than showing the raw XML that used to fall
 // through to UnknownSection.
 function ArtifactsSection({
   block,
@@ -431,11 +431,11 @@ function ArtifactsSection({
   chatId?: string
   onOpenArtifact: (nodeId: string, artifactId: string) => void
 }) {
-  // Resolving a row to a node is one API round trip shared by every row in
-  // this block - the artifact panel opens by node id, not artifact id (#1178
-  // removed the id-based picker), so a tap looks up the tapped artifact's
-  // owning node on demand rather than eagerly fetching for a block that's
-  // usually never opened.
+// Resolving a row to a node is one API round trip shared by every row in
+// this block - the artifact panel opens by node id, not artifact id (#1178
+// removed the id-based picker), so a tap looks up the tapped artifact's
+// owning node on demand rather than eagerly fetching for a block that's
+// usually never opened.
   const [pending, setPending] = useState<string | null>(null)
   const openRow = (row: ArtifactRow) => {
     if (!chatId || pending) return

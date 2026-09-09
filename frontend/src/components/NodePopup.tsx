@@ -21,9 +21,9 @@ interface Props {
   onEditQueuedMessage?: (nodeId: string, messageId: string, text: string) => void
   onRemoveQueuedMessage?: (nodeId: string, messageId: string) => void
   onEditTask?: (nodeId: string, task: string) => void
-  // Answers a parked node's mid-node question via the same path the main
-  // chat's QuestionBubble uses: chatStore.startNode, with the answer as
-  // NodeStartBody.content.
+// Answers a parked node's mid-node question via the same path the main
+// chat's QuestionBubble uses: chatStore.startNode, with the answer as
+// NodeStartBody.content.
   onAnswerQuestion?: (nodeId: string, answer: string) => void
 }
 
@@ -84,14 +84,14 @@ export function NodePopup({
   const [editingTask, setEditingTask] = useState(false)
   const [taskText, setTaskText] = useState(node.task)
 
-  // A node is editable-before-start only while still `queued` (never
-  // dispatched) - matches the server's check (PATCH .../nodes/{id}).
+// A node is editable-before-start only while still `queued` (never
+// dispatched) - matches the server's check (PATCH .../nodes/{id}).
   const notStarted = state.status === 'queued'
   const running = state.status === 'running'
-  // Answering resumes the node now; queueing waits for its next turn
-  // boundary - same input widget, chosen by which state the node is in.
-  // needs_input is the legacy DB/SSE spelling; paused/awaiting_input is the
-  // wire-normalized one the REST read model returns - both mean "parked on a question".
+// Answering resumes the node now; queueing waits for its next turn
+// boundary - same input widget, chosen by which state the node is in.
+// needs_input is the legacy DB/SSE spelling; paused/awaiting_input is the
+// wire-normalized one the REST read model returns - both mean "parked on a question".
   const answering = (state.status === 'needs_input' || state.pauseReason === 'awaiting_input') && state.question != null
   const queue = state.queue ?? []
 
@@ -110,7 +110,7 @@ export function NodePopup({
 
   return (
     <Sheet onClose={onClose} className="relative max-w-2xl medium:max-h-[85vh] medium:rounded-2xl bg-gray-50 dark:bg-gray-900 px-5 medium:pb-6 pt-2 space-y-2">
-      {/* Close on its own row so it never overlaps the content bubbles. */}
+ {/* Close on its own row so it never overlaps the content bubbles.*/}
       <div className="flex justify-end -mb-2">
         <button
           onClick={onClose}
@@ -121,7 +121,7 @@ export function NodePopup({
         </button>
       </div>
 
-      {/* Prompt - the same bubble treatment as an assistant turn in chat. */}
+ {/* Prompt - the same bubble treatment as an assistant turn in chat.*/}
       <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
         <div className="flex items-center justify-between">
           <BubbleHeader agent={node.agent} />
@@ -155,8 +155,8 @@ export function NodePopup({
         )}
       </div>
 
-      {/* Pending mid-node question - rendered as its own chat-style bubble,
-          answered (or read-only, if no resume wiring was passed) below. */}
+ {/* Pending mid-node question - rendered as its own chat-style bubble,
+ answered (or read-only, if no resume wiring was passed) below.*/}
       {answering && (
         <div className="bg-white dark:bg-gray-800 border border-blue-300 dark:border-blue-700 border-l-4 rounded-2xl rounded-tl-sm px-5 py-4">
           <div className="flex items-center gap-1.5 text-xs font-medium text-blue-700 dark:text-blue-300 mb-1">
@@ -167,7 +167,7 @@ export function NodePopup({
         </div>
       )}
 
-      {/* Message queue, only while running - plain history, immutable once delivered. */}
+ {/* Message queue, only while running - plain history, immutable once delivered.*/}
       {running && !answering && queue.length > 0 && (
         <div>
           <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
@@ -189,9 +189,9 @@ export function NodePopup({
         </div>
       )}
 
-      {/* One shared input: queues a message on a running node (delivered at
+ {/* One shared input: queues a message on a running node (delivered at
           its next turn boundary), or answers a needs_input node (resumes
-          it immediately) - same widget, different destination. */}
+ it immediately) - same widget, different destination.*/}
       {((running && onQueueMessage) || (answering && onAnswerQuestion)) && (
         <div className="flex items-center gap-2">
           <input

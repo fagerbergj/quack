@@ -11,7 +11,7 @@ import type { ChatSummary } from '../api'
 // screenshot - a full render harness for this page (SSE + chatStore + DAG)
 // doesn't exist here and would be disproportionate to add for one prop, so
 // this is a source-level regression guard: chatId must keep flowing to it,
-// or its <artifacts> rows silently go back to being unclickable (#1252).
+// or its <artifacts> rows silently go back to being unclickable .
 describe('live-turn TriggerMessage chatId wiring (#1252)', () => {
   it('passes chatId through so live-turn artifact rows can open the panel', () => {
     const idx = chatSrc.indexOf('<TriggerMessage')
@@ -69,7 +69,7 @@ describe('liveText selection (Chat.tsx local formula)', () => {
 
   it('never shows orchestrator narration for a DAG turn, before or after the node answer arrives', () => {
     const narration = 'orchestrator is planning the request...'
-    const midStream = dag({}) // terminal node answer still empty
+ const midStream = dag({})// terminal node answer still empty
     expect(liveText(midStream, narration)).toBe('')
 
     const settled = dag({ a: 'final answer' })
@@ -153,8 +153,8 @@ function chat(overrides: Partial<ChatSummary>): ChatSummary {
 // a GitHub-originated chat, and nothing for a direct (local) chat.
 describe('chatGitHubLink', () => {
   it('exposes the url + repo for a GitHub-originated chat', () => {
-    const c = chat({ id: 'github-acme-widgets-7', github_url: 'https://github.com/acme/widgets/issues/7', github_repo: 'acme/widgets' })
-    expect(chatGitHubLink(c)).toEqual({ url: 'https://github.com/acme/widgets/issues/7', repo: 'acme/widgets' })
+ const c = chat({ id: 'github-acme-widgets-7', github_url: 'https://github.com/acme/widgets/issues/7', github_repo: 'acme/widgets' })
+ expect(chatGitHubLink(c)).toEqual({ url: 'https://github.com/acme/widgets/issues/7', repo: 'acme/widgets' })
   })
 
   it('is null for a direct chat with no github_url', () => {
@@ -182,9 +182,9 @@ describe('EditableChatTitle', () => {
     host = undefined
   })
 
-  // setInputValue goes through the native setter (bypassing React's value
-  // tracker) so the subsequent 'input' event is seen as a real change -
-  // setting .value directly is a no-op from React's perspective.
+// setInputValue goes through the native setter (bypassing React's value
+// tracker) so the subsequent 'input' event is seen as a real change -
+// setting .value directly is a no-op from React's perspective.
   function setInputValue(input: HTMLInputElement, value: string) {
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!
     setter.call(input, value)
@@ -192,7 +192,7 @@ describe('EditableChatTitle', () => {
   }
 
   function renderTitle(props: { title: string; editable: boolean; onRename: (title: string) => void }) {
-    // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     host = document.createElement('div')
     document.body.appendChild(host)
@@ -246,8 +246,8 @@ describe('EditableChatTitle', () => {
     expect(host!.querySelector('input')).toBeNull()
   })
 
-  // Audit #12: one line at every width so the compact header stays one row;
-  // the full text survives in the title attribute.
+// Audit #12: one line at every width so the compact header stays one row;
+// the full text survives in the title attribute.
   it('truncates to one line and keeps the full title as a tooltip', () => {
     const title = 'A very long chat title that would otherwise truncate'
     renderTitle({ title, editable: false, onRename: vi.fn() })
@@ -267,8 +267,8 @@ describe('EditableChatTitle', () => {
 // loaded count.
 describe('mergeChatsPage - poll must never shorten the loaded list', () => {
   it('keeps every already-loaded chat when the polled page is smaller than what is loaded', () => {
-    // Stands in for a sidebar paged past the server's page cap (100): the
-    // poll's response (one page) is necessarily shorter than what's on screen.
+// Stands in for a sidebar paged past the server's page cap (100): the
+// poll's response (one page) is necessarily shorter than what's on screen.
     const existing = Array.from({ length: 109 }, (_, i) => chat({ id: `c${i}` }))
     const page = existing.slice(0, 20)
 
@@ -294,16 +294,16 @@ describe('mergeChatsPage - poll must never shorten the loaded list', () => {
     expect(merged.map(c => c.id).sort()).toEqual(['c1', 'c2'])
   })
 
-  // Root cause: mergeChatsPage trusts `page` unconditionally (by design - that's
-  // what lets a real status change win). A status=active poll GET that was in
-  // flight when the user archived the open chat can still resolve with the
-  // chat listed as active (server hadn't processed the PATCH yet when the GET
-  // was served) - merged straight in, this undoes the optimistic removal. The
-  // fix is pollPageExcludingPending, applied to the page before it ever reaches
-  // mergeChatsPage - this is exactly what Chat.tsx's poll effect now does.
+// Root cause: mergeChatsPage trusts `page` unconditionally (by design - that's
+// what lets a real status change win). A status=active poll GET that was in
+// flight when the user archived the open chat can still resolve with the
+// chat listed as active (server hadn't processed the PATCH yet when the GET
+// was served) - merged straight in, this undoes the optimistic removal. The
+// fix is pollPageExcludingPending, applied to the page before it ever reaches
+// mergeChatsPage - this is exactly what Chat.tsx's poll effect now does.
   it('a stale in-flight poll page no longer resurrects a chat just optimistically archived', () => {
-    const afterOptimisticArchive = [chat({ id: 'c2' })] // c1 removed locally by handleArchiveChat
-    const staleActivePage = [chat({ id: 'c1' }), chat({ id: 'c2' })] // server hadn't caught up yet
+ const afterOptimisticArchive = [chat({ id: 'c2' })]// c1 removed locally by handleArchiveChat
+ const staleActivePage = [chat({ id: 'c1' }), chat({ id: 'c2' })]// server hadn't caught up yet
     const pendingArchiveIds = new Set(['c1'])
     const merged = mergeChatsPage(afterOptimisticArchive, pollPageExcludingPending(staleActivePage, pendingArchiveIds))
     expect(merged.some(c => c.id === 'c1')).toBe(false)

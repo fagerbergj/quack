@@ -64,8 +64,8 @@ describe('MemoryEntry minted-time freshness (#1300 review)', () => {
       const { rerender } = render(<MemoryEntry memory={original} onForget={async () => {}} onVote={async () => {}} />)
       expect(screen.queryByText('just now')).not.toBeNull()
 
-      // Two hours pass; the store refetches and hands down a brand-new object
-      // for the same memory (same timestamp value, new reference).
+// Two hours pass; the store refetches and hands down a brand-new object
+// for the same memory (same timestamp value, new reference).
       vi.setSystemTime(new Date('2026-01-01T02:00:00Z'))
       const refetched: Memory = { ...original }
       rerender(<MemoryEntry memory={refetched} onForget={async () => {}} onVote={async () => {}} />)

@@ -36,7 +36,7 @@ describe('NavRail drawer', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(screen.queryByText('Chats')).toBeNull()
     expect(screen.queryByText('Memory')).toBeNull()
-    // The only DOM the component contributes is the app's own toggle button.
+// The only DOM the component contributes is the app's own toggle button.
     expect(document.body.querySelectorAll('button')).toHaveLength(1)
     expect(screen.getByRole('button', { name: 'Toggle navigation' })).toBeTruthy()
   })
@@ -50,7 +50,7 @@ describe('NavRail drawer', () => {
     expect(dialog).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Chats' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Memory' })).toBeTruthy()
-    // Opening moves focus into the panel - the first focusable in it is "Close navigation".
+// Opening moves focus into the panel - the first focusable in it is "Close navigation".
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close navigation' }))
   })
 

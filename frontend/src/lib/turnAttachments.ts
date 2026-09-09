@@ -1,7 +1,7 @@
 import type { ArtifactList } from '../generated'
 import type { AttachmentPreview } from '../components/AttachmentUI'
 
-// imageAttachmentsByTurn (#1138) turns the chat's artifact list - the durable
+// imageAttachmentsByTurn turns the chat's artifact list - the durable
 // store attachment bytes actually land in (see internal/server/rest/handler.go's
 // saveAttachment) - into a turn_id -> image previews map, so a persisted turn
 // can render real thumbnails instead of only the "[User attached: ...]" text
@@ -13,10 +13,10 @@ export function imageAttachmentsByTurn(chatId: string, artifacts: ArtifactList):
     for (const rev of artifact.revisions) {
       if (!rev.turn_id || !rev.mime_type.startsWith('image/')) continue
       const url = `/api/v1/chats/${encodeURIComponent(chatId)}/artifacts/${encodeURIComponent(artifact.name)}?revision=${rev.revision}`
-      // Attachments save under the "bytes" recordstore kind with an "upload-"
-      // hint prefix (#1126, #1208 review: keeps an upload's id out of the
-      // dispatch input-artifact namespace) - id is "bytes:upload-<filename>",
-      // strip both back off for display/download.
+// Attachments save under the "bytes" recordstore kind with an "upload-"
+// hint prefix (#1126, #1208 review: keeps an upload's id out of the
+// dispatch input-artifact namespace) - id is "bytes:upload-<filename>",
+// strip both back off for display/download.
       const ATTACHMENT_PREFIX = 'bytes:upload-'
       const name = artifact.name.startsWith(ATTACHMENT_PREFIX) ? artifact.name.slice(ATTACHMENT_PREFIX.length) : artifact.name
       const list = byTurn[rev.turn_id] ?? (byTurn[rev.turn_id] = [])

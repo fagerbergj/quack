@@ -5,7 +5,7 @@ import type { DagNodeDef } from '../state/agentStream'
 const meta: Meta<typeof NodePopup> = {
   title: 'Chat/NodePopup',
   component: NodePopup,
-  // Bottom sheet below 600px: every story renders at 390px in render-check.
+// Bottom sheet below 600px: every story renders at 390px in render-check.
   parameters: { layout: 'fullscreen', renderCheck: { viewports: ['mobile', 'desktop'] } },
 }
 export default meta

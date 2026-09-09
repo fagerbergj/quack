@@ -34,10 +34,10 @@ interface JudgeRoundContent {
   round?: number
   passed?: boolean
   score?: number
-  // The artifact revisions this round judged (server shape:
-  // internal/vetting/reviewrecord.go's ScoredRef, json "scored"). A round
-  // can score several artifacts; the timeline uses the ref that points at
-  // the node's primary output.
+// The artifact revisions this round judged (server shape:
+// internal/vetting/reviewrecord.go's ScoredRef, json "scored"). A round
+// can score several artifacts; the timeline uses the ref that points at
+// the node's primary output.
   scored?: { artifact_id: string; revision: number }[]
   notes?: JudgeNote[]
 }
@@ -57,14 +57,14 @@ export function anchorNotes(lines: string[], notes: JudgeNote[]): AnchorResult {
   for (const note of notes) {
     let idx = -1
     if (note.ref.snippet) {
-      // A multi-line quoted snippet can never satisfy includes() against a
-      // single line - anchor on just its first line instead (same
-      // first-occurrence risk profile a single-line match already has).
+// A multi-line quoted snippet can never satisfy includes() against a
+// single line - anchor on just its first line instead (same
+// first-occurrence risk profile a single-line match already has).
       const firstLine = note.ref.snippet.split('\n')[0]
       idx = lines.findIndex(l => l.includes(firstLine))
     }
     if (idx === -1 && note.ref.line_hint != null) {
-      const hinted = note.ref.line_hint - 1 // line_hint is 1-based
+ const hinted = note.ref.line_hint - 1// line_hint is 1-based
       if (hinted >= 0 && hinted < lines.length) idx = hinted
     }
     if (idx === -1) {
@@ -79,16 +79,16 @@ export function anchorNotes(lines: string[], notes: JudgeNote[]): AnchorResult {
 }
 
 // selectPrimaryOutput is the node's RESULT: the non-judge artifact the panel
-// opens onto, computed rather than chosen (#1178 - there is no picker). The
+// opens onto, computed rather than chosen . The
 // node's declared output kind (DagNodeDef.artifact) wins when the node has
 // an artifact of that kind; otherwise the newest output - highest
 // latest_revision, then lineage saved_at, then name as the final tiebreak.
 export function selectPrimaryOutput(artifacts: ArtifactSummary[], nodeArtifactKind?: string, focusArtifactId?: string): ArtifactSummary | null {
   const nonJudge = artifacts.filter(a => a.kind !== 'judge_round')
   if (nonJudge.length === 0) return null
-  // The focus hint wins outright when it names one of THIS node's artifacts -
-  // it's "show what was tapped," a stronger signal than the node's declared
-  // kind or newest-wins default (#1250).
+// The focus hint wins outright when it names one of THIS node's artifacts -
+// it's "show what was tapped," a stronger signal than the node's declared
+// kind or newest-wins default .
   const focused = focusArtifactId ? nonJudge.find(a => a.name === focusArtifactId) : undefined
   if (focused) return focused
   const declared = nodeArtifactKind ? nonJudge.find(a => a.kind === nodeArtifactKind) : undefined
@@ -97,9 +97,9 @@ export function selectPrimaryOutput(artifacts: ArtifactSummary[], nodeArtifactKi
 }
 
 function compareOutput(a: ArtifactSummary, b: ArtifactSummary): number {
-  // Positive when `a` beats `b`: newer output first (latest_revision), then
-  // later-saved lineage, then the alphabetically EARLIER name as the final
-  // deterministic tiebreak.
+// Positive when `a` beats `b`: newer output first (latest_revision), then
+// later-saved lineage, then the alphabetically EARLIER name as the final
+// deterministic tiebreak.
   const ar = a.latest_revision ?? 0
   const br = b.latest_revision ?? 0
   if (ar !== br) return ar - br
@@ -133,7 +133,7 @@ function isDiffableMime(mime: string): boolean {
 }
 
 // humanKindLabel is the "More" section's display name for a kind - the
-// panel never shows raw ids/kinds outside the Details disclosure (#1178),
+// panel never shows raw ids/kinds outside the Details disclosure ,
 // so a kind the mapping doesn't name is at least capitalized.
 export function humanKindLabel(kind?: string): string {
   switch (kind) {
@@ -179,29 +179,29 @@ function moreItemLabel(a: ArtifactSummary, ordinal: number): string {
 interface Props {
   chatId: string
   nodeId: string
-  // The node's display name - the panel's <h2>. Same agentLabel() DagNode's
-  // own card header shows (#1216 review): the raw prompt (nodeTask) can run
-  // to a kilobyte, which blew the header past the sheet height when it was
-  // shown here instead - it now lives only in the Details "Task" row.
+// The node's display name - the panel's <h2>. Same agentLabel() DagNode's
+// own card header shows : the raw prompt (nodeTask) can run
+// to a kilobyte, which blew the header past the sheet height when it was
+// shown here instead - it now lives only in the Details "Task" row.
   nodeAgent: string
-  // The node's raw prompt - shown in Details, never the header (see above).
+// The node's raw prompt - shown in Details, never the header (see above).
   nodeTask: string
-  // The node's error text (NodeState.error). Drives the failure empty state
-  // when the node has no non-judge artifact.
+// The node's error text (NodeState.error). Drives the failure empty state
+// when the node has no non-judge artifact.
   nodeError?: string
-  // The node's declared output kind (DagNodeDef.artifact) - makes the
-  // primary-output selection exact. Absent when the node declares none.
+// The node's declared output kind (DagNodeDef.artifact) - makes the
+// primary-output selection exact. Absent when the node declares none.
   nodeArtifactKind?: string
-  // A FOCUS HINT, not a picker (#1178 stays intact): when the caller already
-  // knows which of the node's artifacts the viewer tapped (#1250's
-  // <artifacts> rows), this makes THAT one the shown primary instead of
-  // selectPrimaryOutput's newest/declared-kind default. Ignored if it
-  // doesn't name an artifact on this node - the default selection still applies.
+// A FOCUS HINT, not a picker : when the caller already
+// knows which of the node's artifacts the viewer tapped (#1250's
+// <artifacts> rows), this makes THAT one the shown primary instead of
+// selectPrimaryOutput's newest/declared-kind default. Ignored if it
+// doesn't name an artifact on this node - the default selection still applies.
   focusArtifactId?: string
   onClose: () => void
 }
 
-// A result view, not a picker (#1178): opening the panel shows the node's
+// A result view, not a picker : opening the panel shows the node's
 // primary output rendered under the node's own name, with the judge rounds
 // as a chip timeline above it, a Revision N-of-M prev/next bar with a
 // single diff toggle, secondary artifacts behind "More", and everything
@@ -212,48 +212,48 @@ interface Props {
 export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, nodeArtifactKind, focusArtifactId, onClose }: Props) {
   const [summaries, setSummaries] = useState<ArtifactSummary[]>([])
   const [error, setError] = useState<string | null>(null)
-  // rawView: the monospace line-list is the FALLBACK view (also what a
-  // judge-note highlight needs a stable line index for - #1114 keeps it as
-  // a toggle rather than dropping it), not the default; structured kinds
-  // default to the collapsible tree, blobs to rendered markdown.
+// rawView: the monospace line-list is the FALLBACK view (also what a
+// judge-note highlight needs a stable line index for - #1114 keeps it as
+// a toggle rather than dropping it), not the default; structured kinds
+// default to the collapsible tree, blobs to rendered markdown.
   const [rawView, setRawView] = useState(false)
-  // activeRoundId is the tapped timeline chip (null = no chip active, every
-  // round's matching notes anchor). Declared up here with the other state;
-  // the activation effect below is what it drives.
+// activeRoundId is the tapped timeline chip (null = no chip active, every
+// round's matching notes anchor). Declared up here with the other state;
+// the activation effect below is what it drives.
   const [activeRoundId, setActiveRoundId] = useState<string | null>(null)
 
   const load = useCallback(() => {
-    // Returns the promise (not fire-and-forget) - withScrollPreserved below
-    // awaits it to restore scroll only after the refetch actually lands.
+// Returns the promise (not fire-and-forget) - withScrollPreserved below
+// awaits it to restore scroll only after the refetch actually lands.
     return api.listChatArtifacts(chatId).then(l => setSummaries(l.data ?? [])).catch(e => setError(String(e)))
   }, [chatId])
   useEffect(() => { load() }, [load])
 
-  // Membership is by the LATEST revision's lineage.node_id (ArtifactSummary
-  // only carries that revision's lineage - see toArtifactSummary in
-  // internal/server/rest/artifacts.go), not "any revision this node wrote".
-  // If a later node revises an artifact (e.g. a judge writes revision 2 of
-  // a worker's `finding`), it moves to the reviser's panel and disappears
-  // from the original author's - a real gap against a "everything this node
-  // wrote is an output" reading of design V4, open as a question on #1094's
-  // review pending a spec answer. Fixing it needs per-revision lineage
-  // (GET .../revisions) fetched for every artifact in the chat up front,
-  // which doesn't scale to "one click opens a panel" - documented here
-  // rather than silently wrong.
+// Membership is by the LATEST revision's lineage.node_id (ArtifactSummary
+// only carries that revision's lineage - see toArtifactSummary in
+// internal/server/rest/artifacts.go), not "any revision this node wrote".
+// If a later node revises an artifact (e.g. a judge writes revision 2 of
+// a worker's `finding`), it moves to the reviser's panel and disappears
+// from the original author's - a real gap against a "everything this node
+// wrote is an output" reading of design V4, open as a question on #1094's
+// review pending a spec answer. Fixing it needs per-revision lineage
+// (GET .../revisions) fetched for every artifact in the chat up front,
+// which doesn't scale to "one click opens a panel" - documented here
+// rather than silently wrong.
   const nodeArtifacts = useMemo(
     () => summaries.filter(s => s.lineage?.node_id === nodeId),
     [summaries, nodeId],
   )
 
-  // The panel's one and only artifact: computed, not chosen. Judge rounds
-  // are not candidates - they are the timeline above the output, not
-  // pickable content.
+// The panel's one and only artifact: computed, not chosen. Judge rounds
+// are not candidates - they are the timeline above the output, not
+// pickable content.
   const primary = useMemo(() => selectPrimaryOutput(nodeArtifacts, nodeArtifactKind, focusArtifactId), [nodeArtifacts, nodeArtifactKind, focusArtifactId])
   const primaryId = primary?.name ?? null
 
-  // A different primary (list reloaded and the computed choice changed)
-  // resets the whole view to the latest, un-highlighted state - the
-  // picker-era "select artifact" reset, kept because a refresh can move it.
+// A different primary (list reloaded and the computed choice changed)
+// resets the whole view to the latest, un-highlighted state - the
+// picker-era "select artifact" reset, kept because a refresh can move it.
   const lastPrimaryId = useRef<string | null>(null)
   useEffect(() => {
     if (lastPrimaryId.current === primaryId) return
@@ -268,9 +268,9 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
     setActiveRoundId(null)
   }, [primaryId])
 
-  // Judge rounds: one body fetch per round (latest content of each
-  // judge_round artifact), kept in a map the timeline chips and the
-  // activation effect below read from.
+// Judge rounds: one body fetch per round (latest content of each
+// judge_round artifact), kept in a map the timeline chips and the
+// activation effect below read from.
   const judgeIds = useMemo(
     () => nodeArtifacts.filter(a => a.kind === 'judge_round').map(a => a.name),
     [nodeArtifacts],
@@ -295,15 +295,15 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   }, [chatId, judgeIds])
   useEffect(() => { loadJudgeBodies() }, [loadJudgeBodies])
 
-  // The timeline: one chip per parsed judge body, round order.
+// The timeline: one chip per parsed judge body, round order.
   const chips = useMemo(() => {
     const entries = Object.entries(judgeBodies).map(([id, b]) => ({ id, b }))
     entries.sort((x, y) => (x.b.round ?? 0) - (y.b.round ?? 0))
     return entries
   }, [judgeBodies])
 
-  // Revisions of the primary, ascending (the endpoint returns
-  // newest-first) - the cursor indexes this list.
+// Revisions of the primary, ascending (the endpoint returns
+// newest-first) - the cursor indexes this list.
   const [revisions, setRevisions] = useState<ArtifactRevisionInfo[]>([])
   const [revIdx, setRevIdx] = useState<number | null>(null)
   const curInfo = revIdx != null ? revisions[revIdx] ?? null : null
@@ -311,9 +311,9 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   const latestRev = revisions.length > 0 ? revisions[revisions.length - 1]?.revision ?? null : primary?.latest_revision ?? null
 
   const revisionsToken = useRef(0)
-  // Read via a ref (not a useCallback dep) so a cursor MOVE never
-  // re-fetches the list: refresh() calls this directly and wants the
-  // cursor as it is NOW, while the effect only re-fires on a new primary.
+// Read via a ref (not a useCallback dep) so a cursor MOVE never
+// re-fetches the list: refresh() calls this directly and wants the
+// cursor as it is NOW, while the effect only re-fires on a new primary.
   const currentRevRef = useRef(currentRev)
   currentRevRef.current = currentRev
   const loadRevisions = useCallback((opts?: { toLatest?: boolean }) => {
@@ -325,12 +325,12 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
         setError(null)
         const asc = toAscending(r.data ?? [])
         setRevisions(asc)
-        // Keep the currently viewed revision across a refresh if it still
-        // exists; a fresh primary, a vanished revision, or an explicit
-        // toLatest (live-follow) lands on latest. toLatest is passed
-        // explicitly rather than via a ref, because a ref the render body
-        // also writes (currentRevRef) can be clobbered by a re-render that
-        // lands between the intent being set and this read.
+// Keep the currently viewed revision across a refresh if it still
+// exists; a fresh primary, a vanished revision, or an explicit
+// toLatest (live-follow) lands on latest. toLatest is passed
+// explicitly rather than via a ref, because a ref the render body
+// also writes (currentRevRef) can be clobbered by a re-render that
+// lands between the intent being set and this read.
         const want = opts?.toLatest ? null : currentRevRef.current
         const wantIdx = want != null ? asc.findIndex(x => x.revision === want) : -1
         setRevIdx(wantIdx >= 0 ? wantIdx : asc.length - 1)
@@ -339,11 +339,11 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   }, [chatId, primaryId])
   useEffect(() => { loadRevisions() }, [loadRevisions])
 
-  // The tapped chip's judged revision, as an effect (not the click
-  // handler): a tap can land BEFORE the revision list has arrived (both
-  // fetches start together on open), and this applies it as soon as the
-  // list does. move() clears activeRoundId before the cursor changes, so
-  // this never fights a manual prev/next.
+// The tapped chip's judged revision, as an effect (not the click
+// handler): a tap can land BEFORE the revision list has arrived (both
+// fetches start together on open), and this applies it as soon as the
+// list does. move() clears activeRoundId before the cursor changes, so
+// this never fights a manual prev/next.
   const activeBody = activeRoundId != null ? judgeBodies[activeRoundId] : null
   useEffect(() => {
     if (activeRoundId == null || primaryId == null || revisions.length === 0) return
@@ -355,11 +355,11 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
     if (target !== revIdx) setRevIdx(target)
   }, [activeRoundId, judgeBodies, revisions])
 
-  // Content of the cursor's revision. A chip tap that targets an as-yet
-  // unloaded revision reaches this same path: revIdx moves, this fires the
-  // getArtifactText fetch, and the token ref below keeps a slow prior
-  // response from clobbering it (the stale-response guard the picker era
-  // built is kept - artifact switches are gone, refreshes remain).
+// Content of the cursor's revision. A chip tap that targets an as-yet
+// unloaded revision reaches this same path: revIdx moves, this fires the
+// getArtifactText fetch, and the token ref below keeps a slow prior
+// response from clobbering it (the stale-response guard the picker era
+// built is kept - artifact switches are gone, refreshes remain).
   const [content, setContent] = useState<string | null>(null)
   const [activeNote, setActiveNote] = useState<JudgeNote | null>(null)
   const contentToken = useRef(0)
@@ -373,12 +373,12 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   }, [chatId, primaryId, currentRev])
   useEffect(() => { loadContent() }, [loadContent])
 
-  // Diff, always against the PREVIOUS revision (there is no "against"
-  // picker): one toggle. Disabled with a visible reason when there is no
-  // previous revision, either side is a binary mime (endpoint 415 -
-  // checked here against the revision list's own mime_type, mirroring
-  // the server's allowlist), or the server has rejected this pair as
-  // too large (413 over the 256KB bound).
+// Diff, always against the PREVIOUS revision (there is no "against"
+// picker): one toggle. Disabled with a visible reason when there is no
+// previous revision, either side is a binary mime (endpoint 415 -
+// checked here against the revision list's own mime_type, mirroring
+// the server's allowlist), or the server has rejected this pair as
+// too large (413 over the 256KB bound).
   const [diffOn, setDiffOn] = useState(false)
   const [diffBlocked, setDiffBlocked] = useState<string | null>(null)
   const [diffFailed, setDiffFailed] = useState(false)
@@ -398,9 +398,9 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   const loadDiff = useCallback(() => {
     if (!diffActive) {
       setDiffText(null)
-      // Clear a failed-diff error only when a DIFF fetch actually set it:
-      // a content-fetch failure shares the same banner and must survive a
-      // diff toggle.
+// Clear a failed-diff error only when a DIFF fetch actually set it:
+// a content-fetch failure shares the same banner and must survive a
+// diff toggle.
       if (diffFailed) { setError(null); setDiffFailed(false) }
       return
     }
@@ -413,9 +413,9 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
         setDiffOn(false)
         const status = (e as { status?: number })?.status
         if (status === 413) {
-          // The server's 413 message embeds this artifact's id - show the
-          // panel's own reason instead, since the id may only appear in
-          // Details.
+// The server's 413 message embeds this artifact's id - show the
+// panel's own reason instead, since the id may only appear in
+// Details.
           setDiffBlocked('Too large to diff (256 KB limit)')
         } else if (status === 415) {
           setDiffBlocked('Only text and JSON revisions can be diffed')
@@ -427,11 +427,11 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   }, [diffActive, chatId, primaryId, prevInfo, curInfo, diffFailed])
   useEffect(() => { loadDiff() }, [loadDiff])
 
-  // Judge notes for what's on screen: a tapped chip contributes its OWN
-  // round's notes for the primary at the revision that round judged; with
-  // no chip active, every round's matching notes anchor (the picker era's
-  // #1139 behaviour, kept). The anchoring machinery itself - anchorNotes
-  // -> notesInRange -> the renderers - is untouched.
+// Judge notes for what's on screen: a tapped chip contributes its OWN
+// round's notes for the primary at the revision that round judged; with
+// no chip active, every round's matching notes anchor (the picker era's
+// #1139 behaviour, kept). The anchoring machinery itself - anchorNotes
+// -> notesInRange -> the renderers - is untouched.
   const notes = useMemo(() => {
     if (!primary || currentRev == null) return []
     const roundBodies = activeBody ? [activeBody] : Object.values(judgeBodies)
@@ -440,9 +440,9 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
       .filter(n => n.ref.artifact_id === primary.name && n.ref.revision === currentRev)
   }, [primary, currentRev, activeBody, judgeBodies])
 
-  // refresh re-runs every fetch the panel currently has live: the artifact
-  // list, the judge bodies, and - when there is a primary - its
-  // revisions/content/diff.
+// refresh re-runs every fetch the panel currently has live: the artifact
+// list, the judge bodies, and - when there is a primary - its
+// revisions/content/diff.
   const refresh = useCallback(() => {
     load()
     loadJudgeBodies()
@@ -451,18 +451,18 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
     loadDiff()
   }, [load, loadJudgeBodies, loadRevisions, loadContent, loadDiff])
 
-  // Live SSE follow (#1114): chatStore.subscribe already fans out to any
-  // listener while mounted (same seam DagNode/NodePopup use) - no new pub/sub.
-  // Refs, not deps, because the listener is registered once per chatId and
-  // must read state as it is at event time, not as it was at subscribe time.
+// Live SSE follow : chatStore.subscribe already fans out to any
+// listener while mounted (same seam DagNode/NodePopup use) - no new pub/sub.
+// Refs, not deps, because the listener is registered once per chatId and
+// must read state as it is at event time, not as it was at subscribe time.
   const store = useChatStore()
   const primaryIdRef = useRef(primaryId)
   primaryIdRef.current = primaryId
   const nodeArtifactNamesRef = useRef<Set<string>>(new Set())
   nodeArtifactNamesRef.current = useMemo(() => new Set(nodeArtifacts.map(a => a.name)), [nodeArtifacts])
-  // atLatestRef: true when the cursor is on the newest revision, so a fresh
-  // one should pull the view forward; false (pinned to an older revision by
-  // the user) means the refetch must leave the cursor where it is.
+// atLatestRef: true when the cursor is on the newest revision, so a fresh
+// one should pull the view forward; false (pinned to an older revision by
+// the user) means the refetch must leave the cursor where it is.
   const atLatestRef = useRef(true)
   useEffect(() => {
     atLatestRef.current = revIdx == null || revisions.length === 0 || revIdx === revisions.length - 1
@@ -485,10 +485,10 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
       seenSeqRef.current = ev.seq
       const rev = ev.revision
       if (rev && rev.nodeId === nodeId) {
-        // Only the list and the primary's own revisions refetch here; an
-        // expanded MoreItem for a non-primary artifact keeps its own
-        // revision list (fetched once on expand) and goes stale until
-        // collapsed/re-expanded - a deliberate scope boundary, not a bug.
+// Only the list and the primary's own revisions refetch here; an
+// expanded MoreItem for a non-primary artifact keeps its own
+// revision list (fetched once on expand) and goes stale until
+// collapsed/re-expanded - a deliberate scope boundary, not a bug.
         withScrollPreserved(load)
         if (rev.id === primaryIdRef.current) {
           const toLatest = atLatestRef.current
@@ -507,8 +507,8 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
     const next = revIdx + delta
     if (next < 0 || next >= revisions.length) return
     setRevIdx(next)
-    // Notes are anchored to the round's judged revision - a manual move
-    // drops them rather than highlighting lines the round never judged.
+// Notes are anchored to the round's judged revision - a manual move
+// drops them rather than highlighting lines the round never judged.
     setActiveRoundId(null)
     setDiffBlocked(null)
     const target = revisions[next]
@@ -519,13 +519,13 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   function activateRound(id: string) {
     const b = judgeBodies[id]
     if (!b) return
-    // A chip is about ONE specific revision, a diff about ADJACENT ones -
-    // showing both at once would diff a revision the user didn't ask about.
+// A chip is about ONE specific revision, a diff about ADJACENT ones -
+// showing both at once would diff a revision the user didn't ask about.
     setDiffOn(false)
     setDiffBlocked(null)
     setActiveRoundId(id)
-    // The cursor itself is set by the activation effect above, which also
-    // covers a tap that lands before the revision list has arrived.
+// The cursor itself is set by the activation effect above, which also
+// covers a tap that lands before the revision list has arrived.
   }
 
   const displayText = content != null ? prettyText(content, primary?.class) : null
@@ -534,41 +534,41 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   const isStructured = primary?.class === 'structured'
   const parsedJson = useMemo(() => (isStructured && content != null ? tryParseJSON(content) : undefined), [isStructured, content])
 
-  // "More": every secondary artifact (inputs the node read - dispatch-
-  // authored - findings, files, …) as labelled groups behind bottom
-  // disclosures; each item expands inline into the same renderer stack.
+// "More": every secondary artifact (inputs the node read - dispatch-
+// authored - findings, files, …) as labelled groups behind bottom
+// disclosures; each item expands inline into the same renderer stack.
   const moreGroups = useMemo(
     () => groupSecondary(nodeArtifacts.filter(a => a.kind !== 'judge_round' && a.name !== primaryId)),
     [nodeArtifacts, primaryId],
   )
 
-  // Details: the one place a raw id may appear. onTrigger jumps to the
-  // round that produced this revision - but only when that round is one of
-  // this node's (a known chip); otherwise it renders as plain text.
+// Details: the one place a raw id may appear. onTrigger jumps to the
+// round that produced this revision - but only when that round is one of
+// this node's (a known chip); otherwise it renders as plain text.
   const triggerId = curInfo?.lineage?.trigger_annotation
   const onTrigger =
     triggerId != null && judgeBodies[triggerId] != null
       ? () => activateRound(triggerId)
       : undefined
 
-  // Native <dialog> + showModal(): Esc closes (fires 'cancel' then 'close'),
-  // focus is trapped in the top layer, and per the HTML spec the browser
-  // itself restores focus to whatever had it before showModal() - the
-  // "artifacts" button that opened this - once the dialog closes. No manual
-  // focus-trap or focus-restore code needed; onClose (the native 'close'
-  // event, fired on Esc AND on our own .close() calls below) is the single
-  // place that tells the parent to unmount us, so that restore always
-  // finishes before React removes the dialog from the DOM.
+// Native <dialog> + showModal(): Esc closes (fires 'cancel' then 'close'),
+// focus is trapped in the top layer, and per the HTML spec the browser
+// itself restores focus to whatever had it before showModal() - the
+// "artifacts" button that opened this - once the dialog closes. No manual
+// focus-trap or focus-restore code needed; onClose (the native 'close'
+// event, fired on Esc AND on our own .close() calls below) is the single
+// place that tells the parent to unmount us, so that restore always
+// finishes before React removes the dialog from the DOM.
   const dialogRef = useRef<HTMLDialogElement>(null)
   useEffect(() => {
     dialogRef.current?.showModal()
   }, [])
 
   const empty = primary == null
-  // Details renders its content only while OPEN: a closed native <details>
-  // keeps its content in the DOM (hidden, and still readable by text-
-  // scanning tools), and the panel's one rule is that the raw id exists
-  // NOWHERE until the disclosure is opened (#1178).
+// Details renders its content only while OPEN: a closed native <details>
+// keeps its content in the DOM (hidden, and still readable by text-
+// scanning tools), and the panel's one rule is that the raw id exists
+// NOWHERE until the disclosure is opened .
   const [detailsOpen, setDetailsOpen] = useState(false)
 
   return (
@@ -577,20 +577,20 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
       aria-label={`Artifacts for node ${nodeId}`}
       onClose={onClose}
       onClick={e => { if (e.target === dialogRef.current) dialogRef.current?.close() }}
-      // Below `medium` the same bottom-sheet shell as Sheet/NodePopup: docked
-      // to the bottom edge (mt-auto against the modal's inset:0), rounded top,
-      // scrim above, safe-area padding; a centred card at medium+. dvh, not
-      // vh, so it clears mobile browser chrome (#1177). One component tree
-      // at every width: the only width-conditional code is this class.
+// Below `medium` the same bottom-sheet shell as Sheet/NodePopup: docked
+// to the bottom edge (mt-auto against the modal's inset:0), rounded top,
+// scrim above, safe-area padding; a centred card at medium+. dvh, not
+// vh, so it clears mobile browser chrome . One component tree
+// at every width: the only width-conditional code is this class.
       className="m-0 mt-auto w-screen max-w-[100vw] h-[90dvh] medium:m-auto medium:w-full medium:max-w-4xl medium:h-[min(32rem,85vh)] max-h-[100vh] medium:max-h-[85vh] p-0 border-0 rounded-t-2xl medium:rounded-2xl bg-transparent backdrop:bg-black/40"
     >
       <div
         className="relative flex flex-col w-full h-full overflow-hidden rounded-t-2xl medium:rounded-2xl bg-gray-50 dark:bg-gray-900 shadow-xl pb-[calc(0.75rem+var(--composer-gap))] medium:pb-0"
       >
-        {/* Header: the node's own name (never an artifact id or its raw
+ {/* Header: the node's own name (never an artifact id or its raw
             prompt - #1216), refresh, close - non-scrolling; >=44px targets
             (#1135). line-clamp-2 is a hard ceiling: even a future caller
-            that passes a long label can't blow the header past 2 lines. */}
+ that passes a long label can't blow the header past 2 lines.*/}
         <header className="shrink-0 flex items-start gap-1 px-4 py-1.5 border-b border-gray-200 dark:border-gray-700">
           <h2 className="flex-1 min-w-0 py-2 text-sm font-semibold text-gray-800 dark:text-gray-100 break-words line-clamp-2">
             {nodeAgent}
@@ -614,10 +614,10 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
           </div>
         </header>
 
-        {/* Judge-round timeline: pinned directly under the header,
+ {/* Judge-round timeline: pinned directly under the header,
             non-scrolling block, horizontal scroll when the rounds overflow
             390px. Chips are buttons, never a picker: tapping one shows that
-            round's notes on the revision it judged. */}
+ round's notes on the revision it judged.*/}
         {chips.length > 0 && !empty && (
           <div
             role="group"
@@ -631,7 +631,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
                   key={id}
                   type="button"
                   aria-pressed={active}
-                  aria-label={`Round ${b.round}, ${b.passed == null ? 'no verdict' : b.passed ? 'passed' : 'failed'}${b.score != null ? `, score ${Math.round(b.score * 100)}%` : ''}`}
+ aria-label={`Round ${b.round}, ${b.passed == null ? 'no verdict' : b.passed ? 'passed' : 'failed'}${b.score != null ? `, score ${Math.round(b.score* 100)}%` : ''}`}
                   onClick={() => activateRound(id)}
                   className={`shrink-0 inline-flex items-center gap-1 h-11 medium:h-8 px-3 rounded-full border text-xs transition-colors ${
                     active
@@ -647,7 +647,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
                   {b.score != null && (
                     <>
                       <span aria-hidden="true" className="text-gray-500 dark:text-gray-400">·</span>
-                      <span className="text-gray-600 dark:text-gray-300 tabular-nums">{Math.round(b.score * 100)}%</span>
+ <span className="text-gray-600 dark:text-gray-300 tabular-nums">{Math.round(b.score* 100)}%</span>
                     </>
                   )}
                 </button>
@@ -656,8 +656,8 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
           </div>
         )}
 
-        {/* The single scrolling region: revision bar, the rendered output
-            (with judge-note highlights), More, Details. */}
+ {/* The single scrolling region: revision bar, the rendered output
+ (with judge-note highlights), More, Details.*/}
         <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 medium:px-5 py-3 space-y-3">
           {error && <p className="text-xs text-red-500 dark:text-red-400">{error}</p>}
 
@@ -833,7 +833,7 @@ function tryParseJSON(raw: string): unknown {
 
 // MoreItem is one secondary artifact expanded inline inside "More": the
 // same renderer stack as the primary output, its own Revision N-of-M
-// prev/next, no selects at any level (#1178). Revisions are fetched lazily
+// prev/next, no selects at any level . Revisions are fetched lazily
 // on first expand.
 function MoreItem({ chatId, artifact, ordinal }: { chatId: string; artifact: ArtifactSummary; ordinal: number }) {
   const [open, setOpen] = useState(false)
@@ -854,7 +854,7 @@ function MoreItem({ chatId, artifact, ordinal }: { chatId: string; artifact: Art
         setRevisions(asc)
         setIdx(prev => prev ?? (asc.length > 0 ? asc.length - 1 : null))
       })
-      .catch(() => { /* a failed fetch leaves the row to retry on re-expand */ })
+ .catch(() => {/* a failed fetch leaves the row to retry on re-expand*/ })
   }, [open, chatId, artifact.name, revisions])
 
   const currentRev = idx != null && revisions != null ? revisions[idx]?.revision ?? null : null
@@ -955,10 +955,10 @@ function ArtifactLines({ lines, byLine, activeNote, onSelectNote }: {
               className={`px-3 py-0.5 whitespace-pre-wrap break-words ${highlighted ? 'bg-amber-100 dark:bg-amber-900/30' : ''}`}
             >
               {line || ' '}
-              {/* One button PER note, not one for the whole line - a line with
+ {/* One button PER note, not one for the whole line - a line with
                   several notes (anchorNotes groups them) used to expose only
                   notes[0] to click/keyboard/screen readers; each is now its
-                  own reachable, individually announced control. */}
+ own reachable, individually announced control.*/}
               {notes.map((n, ni) => (
                 <button
                   key={ni}
@@ -1025,7 +1025,7 @@ const BLOCK_TAGS = ['p', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'td', 'th', '
 // body size) - this tree sits inside DagView's `<div className="... not-
 // prose">` (escaping an ANCESTOR .prose bubble further up), and Tailwind
 // Typography's own selector (`.prose :where(h1):not(:where([class~="not-
-// prose"] *))`) excludes EVERY descendant of a not-prose ancestor from ANY
+// prose"]*))`) excludes EVERY descendant of a not-prose ancestor from ANY
 // .prose styling, including a nested one - so relying on the cascade here
 // was never going to work as long as this component renders inside DagView.
 const HEADING_CLASS: Record<string, string> = {
@@ -1111,10 +1111,10 @@ function ArtifactMarkdown({ text, byLine, activeNote, onSelectNote }: {
     return map
   }, [byLine, activeNote, onSelectNote])
 
-  // escapeUnmatchedBackticks (#746) only inserts a `\` before an isolated
-  // backtick within its line - it never adds/removes a newline, so line
-  // numbers (what byLine/data-line anchor on) are unaffected; only within-
-  // line offsets shift, which nothing here reads.
+// escapeUnmatchedBackticks (#746) only inserts a `\` before an isolated
+// backtick within its line - it never adds/removes a newline, so line
+// numbers (what byLine/data-line anchor on) are unaffected; only within-
+// line offsets shift, which nothing here reads.
   const fixed = useMemo(() => escapeUnmatchedBackticks(text), [text])
 
   return (
@@ -1189,14 +1189,14 @@ function judgeRoundSummary(data: unknown) {
           <Icon name={d.passed ? 'check' : 'close'} className="w-3.5 h-3.5" /> {d.passed ? 'passed' : 'failed'}
         </span>
       )}
-      {/* d.score (JudgeRoundRecord.Score) is a real 0-1 fraction - shown
+ {/* d.score (JudgeRoundRecord.Score) is a real 0-1 fraction - shown
           as-is, matching the timeline chips. Per-criterion scores are NOT:
           judge criteria are 0-3 by design (#941 scaleSpec,
           internal/vetting/envelope.go) while a deterministic check like
           cites_sources keeps its own native 0-1 scale, and
           buildJudgeRoundRecord copies criteria[].score through un-normalized
           with no scale field to convert by - a raw number (e.g. "evidence
-          2.5") is the only display that isn't a guess. */}
+ 2.5") is the only display that isn't a guess.*/}
       {d.score != null && <span className="text-gray-500 dark:text-gray-400 tabular-nums">{d.score}</span>}
       {d.criteria?.map((c, i) => (
         <span key={i} title={c.name} className="rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-0.5">
@@ -1208,7 +1208,7 @@ function judgeRoundSummary(data: unknown) {
 }
 
 // JsonView is the collapsible key/value tree default view for a structured
-// artifact (#1114 owner request) - the pretty-printed code block moved to
+// artifact - the pretty-printed code block moved to
 // the "Raw" toggle (ArtifactLines).
 function JsonView({ data, kind }: { data: unknown; kind?: string }) {
   return (
@@ -1227,7 +1227,7 @@ function fmtRelative(iso: string): string {
   const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
   const abs = Math.abs(diffMs)
   const units: [number, Intl.RelativeTimeFormatUnit][] = [
-    [1000 * 60 * 60 * 24, 'day'], [1000 * 60 * 60, 'hour'], [1000 * 60, 'minute'], [1000, 'second'],
+ [1000* 60* 60* 24, 'day'], [1000* 60* 60, 'hour'], [1000* 60, 'minute'], [1000, 'second'],
   ]
   for (const [ms, unit] of units) {
     if (abs >= ms || unit === 'second') return rtf.format(Math.round(diffMs / ms), unit)
@@ -1256,7 +1256,7 @@ function MetaRow({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-// ArtifactMetadata is the panel's Details disclosure content (#1178): the
+// ArtifactMetadata is the panel's Details disclosure content : the
 // one place the raw id, kind, class, per-revision lineage, timestamps and
 // the REST link appear. Plain block - the enclosing <details> in the panel
 // owns the disclosure. The trigger row (the judge_round that produced this
@@ -1305,9 +1305,9 @@ function ArtifactMetadata({ summary, revision, revisionCount, onTrigger, url }: 
         </MetaRow>
       )}
       {revision.turn_id && <MetaRow label="turn">{revision.turn_id}</MetaRow>}
-      {/* author covers "dispatch source" for an input too - dispatch is
+ {/* author covers "dispatch source" for an input too - dispatch is
           already the value lineage.author carries for one; there's no
-          separate source field in the schema to show beyond it. */}
+ separate source field in the schema to show beyond it.*/}
       {l?.author && <MetaRow label="author">{l.author}</MetaRow>}
       {revision.created_at && (
         <MetaRow label="saved">
@@ -1323,8 +1323,8 @@ function ArtifactMetadata({ summary, revision, revisionCount, onTrigger, url }: 
           rel="noreferrer"
           className="text-blue-600 dark:text-blue-400 hover:underline break-all"
         >
-          {/* Decoded for display: the href is the encoded URL, but
-              text%3Aplan is a machine's reading of text:plan. */}
+ {/* Decoded for display: the href is the encoded URL, but
+ text%3Aplan is a machine's reading of text:plan.*/}
           {decodeURIComponent(url)}
         </a>
       </MetaRow>

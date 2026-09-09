@@ -33,16 +33,16 @@ const LABEL: Record<DotStatus, string> = {
 export function StatusDot({ status, className = '', variant = 'node', label }: {
   status: DotStatus
   className?: string
-  // Node status is the default since DagNode is StatusDot's original caller.
+// Node status is the default since DagNode is StatusDot's original caller.
   variant?: 'chat' | 'node'
-  // Node variant only: replaces the generic state name with a more specific
-  // one ("needs your answer", "paused · shutdown").
+// Node variant only: replaces the generic state name with a more specific
+// one ("needs your answer", "paused · shutdown").
   label?: string
 }) {
   if (variant === 'chat' && (status === 'idle' || status === 'done')) return null
   const color = COLOR[status] ?? 'bg-gray-400 dark:bg-gray-500'
   const name = LABEL[status] ?? status
-  // Running pulses so the dot conveys "live" on its own, everywhere it appears.
+// Running pulses so the dot conveys "live" on its own, everywhere it appears.
   const pulse = status === 'running' ? 'animate-pulse' : ''
   if (variant === 'chat') {
     return (

@@ -16,7 +16,7 @@ describe('CopyButton', () => {
   })
 
   it('copies its text to the clipboard on click and flashes a confirmation', () => {
-    // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.assign(navigator, { clipboard: { writeText } })
@@ -29,18 +29,18 @@ describe('CopyButton', () => {
     })
 
     const button = host.querySelector('button')!
-    expect(button.querySelector('svg')).not.toBeNull() // content-copy glyph, not yet confirmed
+ expect(button.querySelector('svg')).not.toBeNull()// content-copy glyph, not yet confirmed
 
     act(() => {
       button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     })
 
     expect(writeText).toHaveBeenCalledWith('{"input":1}')
-    expect(button.querySelector('svg')).not.toBeNull() // check glyph on confirmation
+ expect(button.querySelector('svg')).not.toBeNull()// check glyph on confirmation
   })
 
   it('does not toggle an enclosing <details> when clicked', () => {
-    // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } })
 

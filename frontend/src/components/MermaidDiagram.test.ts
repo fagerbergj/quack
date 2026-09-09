@@ -38,7 +38,7 @@ describe('MermaidDiagram', () => {
   })
 
   it('renders a valid diagram as an SVG', async () => {
-    // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     host = document.createElement('div')
     document.body.appendChild(host)
@@ -54,7 +54,7 @@ describe('MermaidDiagram', () => {
   }, mermaidTestTimeout)
 
   it('falls back to the source without throwing when the diagram is invalid', async () => {
-    // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     host = document.createElement('div')
     document.body.appendChild(host)
@@ -69,7 +69,7 @@ describe('MermaidDiagram', () => {
     await waitFor(() => host!.textContent?.includes('Diagram failed to render') ?? false)
 
     expect(host.querySelector('[data-testid="mermaid-diagram"]')).toBeNull()
-    expect(host.querySelector('pre')).not.toBeNull() // CopyablePre fallback shows the raw source
+ expect(host.querySelector('pre')).not.toBeNull()// CopyablePre fallback shows the raw source
     expect(host.textContent).toContain('this is not @@@ %%% a diagram')
   }, mermaidTestTimeout)
 })

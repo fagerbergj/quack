@@ -23,7 +23,7 @@ function githubChat(
     updated_at: now,
     status,
     github_repo: repo,
-    github_url: `https://github.com/${repo}/${kind}/${id.match(/\d+$/)?.[0] ?? 1}`,
+ github_url: `https://github.com/${repo}/${kind}/${id.match(/\d+$/)?.[0] ?? 1}`,
   }
 }
 
@@ -159,8 +159,8 @@ export const FilteredToRepo: Story = {
 export const WithArchivedChats: Story = {
   args: {
     chats: [chat('active-1', 'Current project notes')],
-    // #809: archivedChats is the section's own already-loaded list here -
-    // in the app it stays undefined until the section is first expanded.
+// #809: archivedChats is the section's own already-loaded list here -
+// in the app it stays undefined until the section is first expanded.
     archivedChats: [
       chat('archived-1', 'Old debugging session', 'idle', true),
       chat('archived-2', 'Abandoned experiment', 'idle', true),

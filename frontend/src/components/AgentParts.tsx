@@ -32,7 +32,7 @@ const mdSchema = {
 
 // Re-export the data layer so import sites (`from '.../AgentParts'`) keep working;
 // the run model + reducers live in messageParts.ts.
-export * from './messageParts'
+export* from './messageParts'
 
 // RECENT is how many of a run's most recent activity items stay visible; older
 // ones fold into a "⋯ N earlier" toggle so a long run stays scannable.
@@ -99,18 +99,18 @@ function AssistantDocument({ text }: { text: string }) {
       }
       return <CopyablePre {...rest}>{children}</CopyablePre>
     },
-    // A wide table scrolls inside its own box instead of pushing the bubble
-    // past the 70ch measure (or the viewport on a phone).
+// A wide table scrolls inside its own box instead of pushing the bubble
+// past the 70ch measure (or the viewport on a phone).
     table: (props: ComponentPropsWithoutRef<'table'> & { node?: Element }) => {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { node, ...rest } = props
       return <div className="overflow-x-auto"><table {...rest} /></div>
     },
   }), [trailingOpen, docEnd])
-  // Memoize the parsed output itself, not just its props: ReactMarkdown
-  // re-parses on every call regardless of prop equality, and this component's
-  // parent (a streaming bubble, or FrozenAssistantDocument's memo wrapper)
-  // re-renders far more often than `text`/`components` actually change.
+// Memoize the parsed output itself, not just its props: ReactMarkdown
+// re-parses on every call regardless of prop equality, and this component's
+// parent (a streaming bubble, or FrozenAssistantDocument's memo wrapper)
+// re-renders far more often than `text`/`components` actually change.
   return useMemo(() => (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
@@ -141,17 +141,17 @@ const LIVE_TAIL_CHARS = 2000
 // a table, footnote, or link reference spanning where the split used to be
 // must resolve as a single document, not two halves.
 export function AssistantText({ text, streaming = false }: { text: string; streaming?: boolean }) {
-  // #746 item 16: a stray punctuation backtick earlier in the text can defeat
-  // CommonMark's greedy backtick pairing for every inline code span after it -
-  // fix that before parsing, never inside a fenced block. Offsets below are
-  // derived from THIS fixed string (what's actually handed to ReactMarkdown),
-  // not the original, since escaping shifts everything after it.
+// #746 item 16: a stray punctuation backtick earlier in the text can defeat
+// CommonMark's greedy backtick pairing for every inline code span after it -
+// fix that before parsing, never inside a fenced block. Offsets below are
+// derived from THIS fixed string (what's actually handed to ReactMarkdown),
+// not the original, since escaping shifts everything after it.
   const fixed = useMemo(() => escapeUnmatchedBackticks(text), [text])
-  // The frozen boundary only ever advances forward, and only once the live
-  // tail would exceed LIVE_TAIL_CHARS - re-freezing costs O(prefix length)
-  // each time (react-markdown re-parses the whole prefix, not just the new
-  // delta), so advancing every ~2000 chars instead of every paragraph keeps
-  // total streaming cost close to linear in answer length, not quadratic.
+// The frozen boundary only ever advances forward, and only once the live
+// tail would exceed LIVE_TAIL_CHARS - re-freezing costs O(prefix length)
+// each time (react-markdown re-parses the whole prefix, not just the new
+// delta), so advancing every ~2000 chars instead of every paragraph keeps
+// total streaming cost close to linear in answer length, not quadratic.
   const frozenCutRef = useRef(0)
   if (!streaming) {
     frozenCutRef.current = 0
@@ -232,8 +232,8 @@ export function ActivityList({ activity }: { activity: Activity[] }) {
 export function LiveStatusLine({ activity }: { activity: Activity[] }) {
   const { thinking, tool, compacted } = liveStatusLine(activity)
   if (!thinking && !tool && !compacted) return null
-  // One line, not one per fact: on a phone the card's running state is this
-  // line plus the header, so the tool action truncates rather than stacking.
+// One line, not one per fact: on a phone the card's running state is this
+// line plus the header, so the tool action truncates rather than stacking.
   return (
     <div className="flex items-center gap-1.5 min-w-0 py-0.5 text-[11px] text-gray-500 dark:text-gray-400 not-prose">
       <Dots variant="compact" size="w-1 h-1" />
@@ -328,17 +328,17 @@ export function AcpBadge() {
 // Refined toward the same compact, low-noise ethos as ThinkBlock (#385): a
 // thin left rail on expand instead of a bordered card, and a check/cross
 // status icon (done vs failed) rather than the "working" dots once settled.
-  // The copy button sits in a sibling header row layered over the summary's
-  // right edge (#435), not nested inside the `<summary>` itself: a `<summary>`
+// The copy button sits in a sibling header row layered over the summary's
+// right edge (#435), not nested inside the `<summary>` itself: a `<summary>`
 // is already the disclosure's own interactive control, and a button nested
 // inside it is invalid HTML that breaks keyboard use (Enter/Space on the
 // summary vs. the nested button conflict).
 export function ToolBlock({ tool }: { tool: ToolCall }) {
-  // #1312 made the relay carry the real MCP tool name instead of "other",
-  // so name alone is always meaningful now.
+// #1312 made the relay carry the real MCP tool name instead of "other",
+// so name alone is always meaningful now.
   const label = tool.name
-  // The human-readable "<verb> <target>" is the row; the raw tool id is
-  // demoted to the tooltip (audit #14).
+// The human-readable "<verb> <target>" is the row; the raw tool id is
+// demoted to the tooltip (audit #14).
   return (
     <div className="relative my-0.5 not-prose">
       <details className="group">

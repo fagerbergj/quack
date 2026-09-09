@@ -14,7 +14,7 @@ const THEME_OPTIONS: { value: Theme; label: string }[] = [
 // actions that aren't worth permanent header real estate. Today that's
 // Download Logs (the `⬇ recording` link, relabelled and moved here - it stays
 // a plain link to the same endpoint, only label and placement change), plus -
-// on compact width (#1136) - the token/model usage summary that the header
+// on compact width - the token/model usage summary that the header
 // itself hides there to give the title its width back. It does NOT hold
 // Memory - Memory is a NavRail peer of Chats, not a per-chat action. Same
 // disclosure pattern as DagNode's NodeMenu: a button that toggles a
@@ -45,10 +45,10 @@ export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSumma
       </button>
       {open && (
         <Sheet anchored role="menu" onClose={() => setOpen(false)} className="medium:absolute medium:right-0 medium:mt-1 medium:w-44 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 pt-1 medium:pb-1 text-sm medium:text-xs">
-          {/* Shown here always when the header itself hides the inline
+ {/* Shown here always when the header itself hides the inline
               UsageSummary (compact width, `hidden medium:flex` in Chat.tsx) -
               the header stays the source of truth for whether it's shown
-              inline; this is just the escape hatch when it isn't. */}
+ inline; this is just the escape hatch when it isn't.*/}
           {usage && (usage.models.length > 0 || (usage.usage?.total_tokens ?? 0) > 0) && (
             <div className="px-3 py-1.5 border-b border-gray-100 dark:border-gray-700 medium:hidden">
               <UsageSummary {...usage} />
@@ -63,10 +63,10 @@ export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSumma
           >
             <Icon name="download" className="w-3.5 h-3.5" /> Download Logs
           </a>
-          {/* #1173: Light/Dark/System - only in-app way to change theme.
+ {/* #1173: Light/Dark/System - only in-app way to change theme.
               APG menuitemradio: activating changes the selection but leaves
               the menu open (unlike Download Logs above), so a user can
-              change their mind without reopening. */}
+ change their mind without reopening.*/}
           <div role="group" aria-label="Theme" className="border-t border-gray-100 dark:border-gray-700 mt-1 pt-1">
             {THEME_OPTIONS.map(opt => (
               <button

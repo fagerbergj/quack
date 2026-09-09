@@ -3,9 +3,9 @@ import { useDrawer } from '../hooks/useDrawer'
 
 interface Props {
   onClose: () => void
-  // Anchored: at medium+ the scrim collapses to `display: contents` so the
-  // panel positions itself (medium:absolute …) inside its `relative` trigger
-  // wrapper - a popover on desktop, a bottom sheet on a phone.
+// Anchored: at medium+ the scrim collapses to `display: contents` so the
+// panel positions itself (medium:absolute …) inside its `relative` trigger
+// wrapper - a popover on desktop, a bottom sheet on a phone.
   anchored?: boolean
   role?: 'dialog' | 'menu'
   'aria-label'?: string
@@ -13,7 +13,7 @@ interface Props {
   children: ReactNode
 }
 
-// Sheet is the one modal shell for popups and menus (#1131 rule 6): below
+// Sheet is the one modal shell for popups and menus : below
 // `medium` a bottom sheet over a scrim, padded past the composer's safe-area
 // gap; at medium+ a centred dialog or an anchored popover. Escape, scrim
 // click, focus trap and focus restore come from useDrawer.

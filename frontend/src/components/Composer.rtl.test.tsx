@@ -32,9 +32,9 @@ describe('Composer compact pill', () => {
     expect(send.className).toContain('h-11')
     expect(send.className).toContain('w-11')
     expect(send.getAttribute('aria-label')).toBe('Send')
-    // The visible content is the decorative glyph only - no letters, so the
-    // accessible name above can only come from aria-label (owner rule: no
-    // full-text action buttons where an icon does).
+// The visible content is the decorative glyph only - no letters, so the
+// accessible name above can only come from aria-label (owner rule: no
+// full-text action buttons where an icon does).
     expect(send.textContent ?? '').not.toMatch(/\p{L}/u)
   })
 
@@ -55,16 +55,16 @@ describe('Composer compact pill', () => {
     expect(stop.className).toContain('h-11')
     expect(stop.className).toContain('w-11')
     expect(stop.className).toContain('rounded-full')
-    // Follow-up queueing must stay reachable on mobile - the queued chip
-    // depends on it.
+// Follow-up queueing must stay reachable on mobile - the queued chip
+// depends on it.
     const queue = screen.getByRole('button', { name: 'Queue' })
     expect(queue.className).toContain('h-11')
     expect(queue.className).toContain('w-11')
   })
 
   it('the compact row uses no physical left/right utilities under dir=rtl', () => {
-    // jsdom computes no layout - this pins the class strings; the visual
-    // dir=rtl check is the manual browser step.
+// jsdom computes no layout - this pins the class strings; the visual
+// dir=rtl check is the manual browser step.
     mockMatchMedia(true)
     render(
       <div dir="rtl">
@@ -79,18 +79,18 @@ describe('Composer compact pill', () => {
     for (const util of ['left-', 'right-', 'ml-', 'mr-']) {
       expect(row!.className).not.toContain(util)
     }
-    // Both icon buttons keep their accessible names under rtl.
+// Both icon buttons keep their accessible names under rtl.
     expect(stop).toBeTruthy()
     expect(attach).toBeTruthy()
     expect(send.getAttribute('aria-label')).toBe('Queue')
   })
 
   it('renders no stray text from a bare JS comment above the compact row', () => {
-    // Regression: a `//` line inside JSX children isn't a comment, it's a
-    // text node - catches it without pinning the wrapper's pixel height.
+// Regression: a `//` line inside JSX children isn't a comment, it's a
+// text node - catches it without pinning the wrapper's pixel height.
     mockMatchMedia(true)
     const { container } = render(<Composer disabled={false} streaming={false} onSubmit={() => {}} onStop={() => {}} />)
-    expect(container.textContent ?? '').not.toContain('//')
+ expect(container.textContent ?? '').not.toContain('//')
   })
 
   it('tapping the "N queued" chip expands the queued messages with an always-visible remove', async () => {
@@ -113,12 +113,12 @@ describe('Composer compact pill', () => {
     const details = chip.closest('details')
     expect(details).not.toBeNull()
     expect(details!.open).toBe(false)
-    // <details> is DOM-handled: tapping the summary opens the chip.
+// <details> is DOM-handled: tapping the summary opens the chip.
     const user = userEvent.setup()
     await user.click(chip)
     expect(details!.open).toBe(true)
     expect(screen.getByText('also check the staging build')).toBeTruthy()
-    // No hover on touch - every bubble's remove control is visible.
+// No hover on touch - every bubble's remove control is visible.
     const removes = screen.getAllByRole('button', { name: 'Remove queued message' })
     expect(removes).toHaveLength(2)
     await user.click(removes[0])

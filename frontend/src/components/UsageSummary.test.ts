@@ -40,14 +40,14 @@ describe('UsageSummary - session token total and breakdown', () => {
 
   it('the expandable detail carries the full input/output/reasoning/cached split', () => {
     const out = html([], usage)
-    expect(out).toContain('1,000') // input
-    expect(out).toContain('200') // output
-    expect(out).toContain('50') // reasoning
-    expect(out).toContain('300') // cached
+ expect(out).toContain('1,000')// input
+ expect(out).toContain('200')// output
+ expect(out).toContain('50')// reasoning
+ expect(out).toContain('300')// cached
   })
 
   it('shows the cache rate when cached > 0', () => {
-    expect(html([], usage)).toContain('30%') // 300/1000
+ expect(html([], usage)).toContain('30%')// 300/1000
   })
 
   it('omits the cache rate row when nothing was cached', () => {
@@ -55,9 +55,9 @@ describe('UsageSummary - session token total and breakdown', () => {
     expect(out).not.toContain('Cache rate')
   })
 
-  // Regression: UsageRow used to hide a row on a falsy value, so a
-  // genuinely-zero dimension (e.g. no reasoning tokens this turn) silently
-  // vanished instead of reading "0" - indistinguishable from "not tracked".
+// Regression: UsageRow used to hide a row on a falsy value, so a
+// genuinely-zero dimension (e.g. no reasoning tokens this turn) silently
+// vanished instead of reading "0" - indistinguishable from "not tracked".
   it('renders all four breakdown rows even when their values are 0', () => {
     const out = html([], { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, cached_tokens: 0, total_tokens: 100 })
     expect(out).toContain('Input')

@@ -116,7 +116,7 @@ export const EmptyChat: Story = {
 // SSE traffic needed for the fixture to render mid-stream chrome.
 export const StreamingTurn: Story = {
   args: baseArgs,
-  // The compact header's status dot + elapsed (audit #6) only shows here.
+// The compact header's status dot + elapsed (audit #6) only shows here.
   parameters: { renderCheck: { viewports: ['mobile', 'desktop'] } },
   decorators: withChat(
     'chat-streaming',

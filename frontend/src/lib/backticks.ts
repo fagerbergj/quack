@@ -39,7 +39,7 @@ function fixParagraph(text: string): string {
     let j = i + 1
     while (j < runs.length && runs[j].len !== r.len) j++
     if (j < runs.length) {
-      i = j + 1 // paired - the content between opener and closer is inert
+ i = j + 1// paired - the content between opener and closer is inert
     } else {
       escape.add(i)
       i++
@@ -76,17 +76,17 @@ function withNonFencedParagraphs(text: string, fn: (chunk: string) => string): s
     if (fence) {
       const marker = fence[1][0]
       const len = fence[1].length
-      const closeRe = new RegExp(`^ {0,3}[${marker}]{${len},}\\s*$`)
+ const closeRe = new RegExp(`^ {0,3}[${marker}]{${len},}\\s*$`)
       out.push(lines[i])
       i++
       while (i < lines.length && !closeRe.test(lines[i])) { out.push(lines[i]); i++ }
-      if (i < lines.length) { out.push(lines[i]); i++ } // the closing fence itself
+ if (i < lines.length) { out.push(lines[i]); i++ }// the closing fence itself
       continue
     }
     const start = i
     while (i < lines.length && !lines[i].match(fenceStart)) i++
     const chunk = lines.slice(start, i).join('\n')
-    out.push(chunk.split(/(\n[ \t]*\n)/).map((part, idx) => (idx % 2 === 0 ? fn(part) : part)).join(''))
+ out.push(chunk.split(/(\n[ \t]*\n)/).map((part, idx) => (idx % 2 === 0 ? fn(part) : part)).join(''))
   }
   return out.join('\n')
 }

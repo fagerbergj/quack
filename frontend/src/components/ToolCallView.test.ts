@@ -26,8 +26,8 @@ describe('ToolCallView - edit_file diff (flagship)', () => {
   it('shows the removed line in red and the added line in green', () => {
     expect(out).toContain('const x = 1')
     expect(out).toContain('const x = 2')
-    expect(out).toMatch(/bg-red-50[^"]*">[^<]*<span[^>]*>-<\/span>/) // remove gutter
-    expect(out).toMatch(/bg-green-50[^"]*">[^<]*<span[^>]*>\+<\/span>/) // add gutter
+ expect(out).toMatch(/bg-red-50[^"]*">[^<]*<span[^>]*>-<\/span>/)// remove gutter
+ expect(out).toMatch(/bg-green-50[^"]*">[^<]*<span[^>]*>\+<\/span>/)// add gutter
   })
   it('surfaces the applied replacement count', () => {
     expect(out).toContain('1 replacement')
@@ -54,7 +54,7 @@ describe('ToolCallView - other common tools', () => {
     })
     expect(out).toContain('fix: thing')
     expect(out).toContain('3 files changed')
-    expect(out).toContain('abcdef1') // short sha
+ expect(out).toContain('abcdef1')// short sha
   })
 
   it('write_file headers the path and reports created', () => {
@@ -73,8 +73,8 @@ describe('ToolCallView - other common tools', () => {
       args: { dir: '/w' },
       result: { diff: '@@ -1 +1 @@\n-old\n+new', truncated: false },
     })
-    expect(out).toContain('bg-green-50') // added line styled
-    expect(out).toContain('bg-red-50') // removed line styled
+ expect(out).toContain('bg-green-50')// added line styled
+ expect(out).toContain('bg-red-50')// removed line styled
   })
 })
 
@@ -84,8 +84,8 @@ describe('ToolCallView - fallback', () => {
       callId: 'c', name: 'mystery_tool', done: true,
       args: { target: { region: 'eu', tags: ['a', 'b'] } }, result: { ok: true },
     })
-    // formatted args + result labels, pretty JSON (indented) - never a bare dump.
-    // Quotes are HTML-escaped in static markup (&quot;).
+// formatted args + result labels, pretty JSON (indented) - never a bare dump.
+// Quotes are HTML-escaped in static markup (&quot;).
     expect(out).toContain('args')
     expect(out).toContain('result')
     expect(out).toContain('&quot;region&quot;: &quot;eu&quot;')
@@ -98,15 +98,15 @@ describe('ToolCallView - fallback', () => {
     })
     expect(out).toContain('title')
     expect(out).toContain('Some ACP tool title')
-    // Not a JSON blob: no braces/quoted-key punctuation in the args block.
+// Not a JSON blob: no braces/quoted-key punctuation in the args block.
     expect(out).not.toContain('&quot;title&quot;:')
   })
 
-  // A row persisted before #1278 (translate.go named every bridged MCP call
-  // literally "other", stuffing the real identity into args.title) must still
-  // render readably on replay - the identity never lived in the now-deleted
-  // ToolCall.title field, only in args, so dropping that field plumbing
-  // doesn't blank out old history.
+// A row persisted before #1278 (translate.go named every bridged MCP call
+// literally "other", stuffing the real identity into args.title) must still
+// render readably on replay - the identity never lived in the now-deleted
+// ToolCall.title field, only in args, so dropping that field plumbing
+// doesn't blank out old history.
   it('renders a pre-#1278 persisted "other" row via args.title, not blank', () => {
     const out = html({
       callId: 'c', name: 'other', done: true,
@@ -123,21 +123,21 @@ describe('ToolCallView - new per-tool views (#404)', () => {
     const out = html({
       callId: 'c', name: 'web_search', done: true,
       args: { query: 'best time to visit Dublin' },
-      result: { results: [{ title: 'Dublin Climate', url: 'https://example.com/climate', snippet: 'Mild year-round.' }] },
+ result: { results: [{ title: 'Dublin Climate', url: 'https://example.com/climate', snippet: 'Mild year-round.' }] },
     })
     expect(out).toContain('best time to visit Dublin')
     expect(out).toContain('Dublin Climate')
-    expect(out).toContain('https://example.com/climate')
+ expect(out).toContain('https://example.com/climate')
     expect(out).not.toContain('&quot;results&quot;:')
   })
 
   it('web_fetch shows the url and the fetched text (a plain string result)', () => {
     const out = html({
       callId: 'c', name: 'web_fetch', done: true,
-      args: { url: 'https://example.com/climate' },
+ args: { url: 'https://example.com/climate' },
       result: 'Dublin is mild year-round.',
     })
-    expect(out).toContain('https://example.com/climate')
+ expect(out).toContain('https://example.com/climate')
     expect(out).toContain('Dublin is mild year-round.')
   })
 
@@ -145,11 +145,11 @@ describe('ToolCallView - new per-tool views (#404)', () => {
     const out = html({
       callId: 'c', name: 'grep', done: true,
       args: { pattern: 'TODO' },
-      result: { matches: [{ path: 'a.go', line: 12, text: '// TODO: fix' }], truncated: false },
+ result: { matches: [{ path: 'a.go', line: 12, text: '// TODO: fix' }], truncated: false },
     })
     expect(out).toContain('a.go')
     expect(out).toContain('12')
-    expect(out).toContain('// TODO: fix')
+ expect(out).toContain('// TODO: fix')
   })
 
   it('get_user_choice highlights the chosen option once answered', () => {
@@ -160,7 +160,7 @@ describe('ToolCallView - new per-tool views (#404)', () => {
     })
     expect(out).toContain('Which Springfield?')
     expect(out).toContain('Springfield, IL')
-    expect(out).toContain('bg-green-50') // chosen option gets the check icon + highlight
+ expect(out).toContain('bg-green-50')// chosen option gets the check icon + highlight
   })
 
   it('get_user_choice still pending shows the awaiting marker', () => {

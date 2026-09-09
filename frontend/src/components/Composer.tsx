@@ -65,19 +65,19 @@ function placeholderFor(disabled: boolean, streaming: boolean, narrow: boolean, 
 }
 
 export interface ComposerProps {
-  // No active chat, or the active chat is archived - input is disabled.
+// No active chat, or the active chat is archived - input is disabled.
   disabled: boolean
-  // A turn is streaming - input stays live and Send queues instead of running
-  // a second turn; Stop appears alongside it to cancel the active run.
+// A turn is streaming - input stays live and Send queues instead of running
+// a second turn; Stop appears alongside it to cancel the active run.
   streaming: boolean
   onSubmit: (text: string, files: File[], previews: AttachmentPreview[]) => void
   onStop: () => void
-  // Follow-ups queued while streaming, in send order - rendered as pending
-  // rows above the input; empty/omitted when nothing is queued.
+// Follow-ups queued while streaming, in send order - rendered as pending
+// rows above the input; empty/omitted when nothing is queued.
   queue?: QueuedTurn[]
   onRemoveQueued?: (id: string) => void
-  // Distinguishes an archived chat's disabled composer (a specific, expected
-  // read-only state) from the generic "no chat selected" disabled placeholder.
+// Distinguishes an archived chat's disabled composer (a specific, expected
+// read-only state) from the generic "no chat selected" disabled placeholder.
   archived?: boolean
 }
 
@@ -91,19 +91,19 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const narrow = useNarrowViewport()
-  // #1174: the compact (<600px) branch swaps decoration/subtree (icon buttons,
-  // pill row, queued chip) rather than just resizing, so it's a JS branch -
-  // the wrapper's pure resize stays CSS via the `medium:` breakpoint.
-  // Below the 600px `medium` size class (#1145); useCompact was deleted in #1189.
+// #1174: the compact (<600px) branch swaps decoration/subtree (icon buttons,
+// pill row, queued chip) rather than just resizing, so it's a JS branch -
+// the wrapper's pure resize stays CSS via the `medium:` breakpoint.
+// Below the 600px `medium` size class ; useCompact was deleted in #1189.
   const compact = useMediaQuery('(max-width: 599px)')
 
-  // Auto-grow the textarea with its content (CSS field-sizing isn't in Firefox/
-  // Safari yet). Reset to auto first so it shrinks back when the draft is cleared;
-  // capped at MAX_HEIGHT_PX (matches max-h-32 compact / max-h-48 desktop - #1174).
-  // #425: overflow-y is toggled in JS rather than left as a permanent Tailwind
-  // class - an always-on `overflow-y-auto` renders a vertical scrollbar even on
-  // a single empty line in Chromium, since the scrollbar reserves its track
-  // regardless of whether content actually overflows.
+// Auto-grow the textarea with its content (CSS field-sizing isn't in Firefox/
+// Safari yet). Reset to auto first so it shrinks back when the draft is cleared;
+// capped at MAX_HEIGHT_PX (matches max-h-32 compact / max-h-48 desktop - #1174).
+// #425: overflow-y is toggled in JS rather than left as a permanent Tailwind
+// class - an always-on `overflow-y-auto` renders a vertical scrollbar even on
+// a single empty line in Chromium, since the scrollbar reserves its track
+// regardless of whether content actually overflows.
   const MAX_HEIGHT_PX = compact ? 128 : 192
   useLayoutEffect(() => {
     const ta = textareaRef.current
@@ -132,19 +132,19 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
   }
 
   return (
-    // #1248 follow-up: floating pill, not a full-width bar - no bg/border here,
-    // the pill surface below carries its own bg/shadow. Bottom offset is the
-    // shared --composer-gap (index.css) - 12px on inset-less devices, 12px
-    // above the home indicator on iPhones. Don't add another safe-area-inset
-    // read here; that's the doubling that caused the pre-#1249 excess.
+// #1248 follow-up: floating pill, not a full-width bar - no bg/border here,
+// the pill surface below carries its own bg/shadow. Bottom offset is the
+// shared --composer-gap (index.css) - 12px on inset-less devices, 12px
+// above the home indicator on iPhones. Don't add another safe-area-inset
+// read here; that's the doubling that caused the pre-#1249 excess.
     <div className="px-3 pt-2 pb-[var(--composer-gap)] medium:px-6 medium:pt-3">
       {queue != null && queue.length > 0 && (
         compact ? (
-          // #1174: a row per queued bubble stacks on top of the 60px budget -
-          // one "N queued" chip instead. <details> is DOM-handled, so the chip
-          // stays open across queue additions without re-rendering the composer
-          // (same disclosure pattern as TriggerEnvelope); remove is always
-          // visible because touch has no hover.
+// #1174: a row per queued bubble stacks on top of the 60px budget -
+// one "N queued" chip instead. <details> is DOM-handled, so the chip
+// stays open across queue additions without re-rendering the composer
+// (same disclosure pattern as TriggerEnvelope); remove is always
+// visible because touch has no hover.
           <details className="mb-3">
             <summary className="list-none w-fit cursor-pointer select-none px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100 rounded-full ring-1 ring-gray-300 dark:ring-gray-600 bg-white dark:bg-gray-700">
               {`${queue.length} queued`}
@@ -178,8 +178,8 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
         ) : (
           <div className="flex flex-col gap-2 mb-3" aria-label="Queued messages">
             {queue.map(item => (
-              // Looks like the user's own message bubble, just grayed out with a
-              // "queued" hint - not a separate pill design.
+// Looks like the user's own message bubble, just grayed out with a
+// "queued" hint - not a separate pill design.
               <div key={item.id} className="group flex justify-end">
                 <div className="max-w-2xl ml-auto">
                   <div className="bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
@@ -213,18 +213,18 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
             return prev.filter((_, j) => j !== i)
           })}
         />
-        {/* #1248: one floating pill surface at every width - shadow +
+ {/* #1248: one floating pill surface at every width - shadow +
         ring instead of a full-width bar/border, so it reads as a control
         floating over the chat rather than a docked toolbar. #1174: ring
         (box-shadow) rather than a border on the compact pill so the 44px
-        row box doesn't grow 2px. */}
+ row box doesn't grow 2px.*/}
         <div className={compact
           ? 'flex items-center gap-2 rounded-full ring-1 ring-gray-300 dark:ring-gray-600 bg-white dark:bg-gray-800 shadow-lg'
           : 'flex gap-2 items-end rounded-3xl ring-1 ring-gray-200 dark:ring-gray-700 bg-white dark:bg-gray-800 shadow-lg p-2'}>
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*,audio/*"
+ accept="image/*,audio/*"
             multiple
             className="hidden"
             onChange={e => {
@@ -254,11 +254,11 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
             ref={textareaRef}
             id="composer-input"
             name="message"
-            // placeholder:truncate is the layout-proof half of #759 item 2: the
-            // narrow-viewport text above is the common case, but this is what
-            // stops any placeholder from ever wrapping into a clipped second
-            // line, at any width - e.g. mid-stream, when Stop+Queue also
-            // compete for the row's space.
+// placeholder:truncate is the layout-proof half of #759 item 2: the
+// narrow-viewport text above is the common case, but this is what
+// stops any placeholder from ever wrapping into a clipped second
+// line, at any width - e.g. mid-stream, when Stop+Queue also
+// compete for the row's space.
             className={compact
               ? 'flex-1 min-w-0 bg-transparent px-4 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none max-h-32 disabled:opacity-50 dark:text-gray-100 dark:placeholder-gray-400 placeholder:truncate'
               : 'flex-1 min-w-0 bg-transparent px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-xl resize-none max-h-48 disabled:opacity-50 dark:text-gray-100 dark:placeholder-gray-400 placeholder:truncate'}
@@ -269,8 +269,8 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
             onKeyDown={handleKeyDown}
             disabled={disabled}
           />
-          {/* Red fill: while a run is live, stopping it is the primary action
-              (audit #6) - Send/Queue is the secondary one. */}
+ {/* Red fill: while a run is live, stopping it is the primary action
+ (audit #6) - Send/Queue is the secondary one.*/}
           {streaming && (
             <button
               type="button"

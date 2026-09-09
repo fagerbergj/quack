@@ -35,7 +35,7 @@ export function isTrailingMermaidFenceOpen(text: string): boolean {
 // and a short live tail without breaking an open fence, list item, footnote
 // definition, or indented code block (AgentParts.tsx's AssistantText). A
 // blank line followed by indentation is a lazy continuation, not a real
-// block boundary - e.g. "- item\n\n  more\n\n- item2" is ONE loose list, and
+// block boundary - e.g. "- item\n\n more\n\n- item2" is ONE loose list, and
 // splitting at its inner blank line renders it as two unrelated lists.
 // Falls back to an earlier boundary when the nearest one is unsafe; returns
 // -1 when no safe boundary exists at all.

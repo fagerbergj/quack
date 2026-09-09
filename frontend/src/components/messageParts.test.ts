@@ -7,9 +7,9 @@ describe('showLiveSpinner', () => {
   })
 
   it('keeps dots when an empty orchestrator run exists but has no visible activity yet', () => {
-    // Regression: a top-level run is created (empty) on the first stream event to
-    // hold the orchestrator's plan/execute tool calls. The spinner is keyed on
-    // visible activity, not run count, so it stays up during the pre-plan gap.
+// Regression: a top-level run is created (empty) on the first stream event to
+// hold the orchestrator's plan/execute tool calls. The spinner is keyed on
+// visible activity, not run count, so it stays up during the pre-plan gap.
     const runs: AgentRun[] = startRun([], { runId: 'orchestrator', agent: 'orchestrator', stage: 'worker' })
     expect(runs).toHaveLength(1)
     expect(runs[0].activity).toHaveLength(0)
@@ -38,9 +38,9 @@ describe('showLiveSpinner', () => {
 // fills only the most recent match) left the first permanently unresolved.
 describe('appendRunToolCall / fillRunToolResult (tool-call orphaning, #746)', () => {
   it('a call whose name resolves between announce and pairing produces exactly one row', () => {
-    // internal/acp/translate.go's mapToolCall on an execute call with no
-    // `command` yet falls back to the pending title ("bash"); once rawInput
-    // fills in, the same call_id re-announces with the real command.
+// internal/acp/translate.go's mapToolCall on an execute call with no
+// `command` yet falls back to the pending title ("bash"); once rawInput
+// fills in, the same call_id re-announces with the real command.
     let runs: AgentRun[] = startRun([], { runId: 'r1', agent: 'code-reviewer', stage: 'worker' })
     runs = appendRunToolCall(runs, 'r1', 'WSYgHgzEqOOLqF6e0oTpPqxqCJ7jRIS0', 'run_command', { command: 'bash' })
     runs = appendRunToolCall(runs, 'r1', 'WSYgHgzEqOOLqF6e0oTpPqxqCJ7jRIS0', 'run_command', { command: 'git diff main...HEAD --stat' })
@@ -54,9 +54,9 @@ describe('appendRunToolCall / fillRunToolResult (tool-call orphaning, #746)', ()
   })
 
   it('an MCP call whose kind stays "other" throughout still resolves to one row', () => {
-    // Same call_id, IDENTICAL name and args on both announcements (kind never
-    // leaves "other") - proves the orphaning isn't about a name/identity
-    // mismatch, only about the duplicate push.
+// Same call_id, IDENTICAL name and args on both announcements (kind never
+// leaves "other") - proves the orphaning isn't about a name/identity
+// mismatch, only about the duplicate push.
     let runs: AgentRun[] = startRun([], { runId: 'r1', agent: 'code-reviewer', stage: 'worker' })
     runs = appendRunToolCall(runs, 'r1', 'lINMRTME3tBIRdPWpW4bQTt3cyUks0nl', 'other', { title: 'quackmcp_load_memory' })
     runs = appendRunToolCall(runs, 'r1', 'lINMRTME3tBIRdPWpW4bQTt3cyUks0nl', 'other', { title: 'quackmcp_load_memory' })

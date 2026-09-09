@@ -14,18 +14,18 @@ export function summarizeArgs(args: Record<string, unknown>): string {
 // previewLine collapses to a single-line preview for thinking blocks (#385).
 // Now prefers sentence boundaries (#959) to avoid mid-word cuts in folded blocks.
 // Markdown markup is stripped first: the expanded view renders it, so a
-// collapsed row showing "## **May**" reads as noise.
+// collapsed row showing "##**May**" reads as noise.
 export function previewLine(text: string, max = 80): string {
   const oneLine = text
-    .replace(/^[ \t]*(#{1,6}\s*|>\s?|[-*]\s+)/gm, '')
-    .replace(/\*\*|__|`+/g, '')
+ .replace(/^[ \t]*(#{1,6}\s*|>\s?|[-*]\s+)/gm, '')
+ .replace(/\*\*|__|`+/g, '')
     .replace(/\s+/g, ' ').trim()
   if (oneLine.length <= max) return oneLine
-  const sentence = oneLine.slice(0, max * 2).match(/^.{10,}?[.!?](?=\s|$)/)
+ const sentence = oneLine.slice(0, max* 2).match(/^.{10,}?[.!?](?=\s|$)/)
   if (sentence) return sentence[0]
   const cut = oneLine.slice(0, max)
   const lastSpace = cut.lastIndexOf(' ')
-  return (lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut) + '…'
+ return (lastSpace > max* 0.6 ? cut.slice(0, lastSpace) : cut) + '…'
 }
 
 // fmtTokenCount compacts a token count for tight spaces (a context meter, a
@@ -109,7 +109,7 @@ export function lineDiff(oldStr: string, newStr: string): DiffLine[] {
   const b = newStr.split('\n')
   const m = a.length
   const n = b.length
-  // lcs[i][j] = length of the longest common subsequence of a[i:] and b[j:].
+// lcs[i][j] = length of the longest common subsequence of a[i:] and b[j:].
   const lcs: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0))
   for (let i = m - 1; i >= 0; i--) {
     for (let j = n - 1; j >= 0; j--) {

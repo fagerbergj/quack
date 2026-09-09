@@ -83,8 +83,8 @@ export const VerifiedWithRecalls: Story = {
       downvotes: 1,
       vote_score: 3,
       recalls: 12,
-      last_upvoted_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
-      last_recalled_at: new Date(Date.now() - 45 * 60_000).toISOString(),
+ last_upvoted_at: new Date(Date.now() - 3* 3600_000).toISOString(),
+ last_recalled_at: new Date(Date.now() - 45* 60_000).toISOString(),
     },
   },
 }

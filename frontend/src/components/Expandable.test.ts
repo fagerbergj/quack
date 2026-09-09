@@ -56,15 +56,15 @@ describe('Expandable (streaming re-measure)', () => {
         return this.style.maxHeight ? cap - 10 : cap + 50
       },
     })
-    // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
     host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
 
-    // Re-render the way a streamed answer does: same component, growing content,
-    // many commits back to back. Each commit re-measures.
+// Re-render the way a streamed answer does: same component, growing content,
+// many commits back to back. Each commit re-measures.
     expect(() => {
       for (let i = 1; i <= 60; i++) {
         act(() => {
@@ -78,7 +78,7 @@ describe('Expandable (streaming re-measure)', () => {
       }
     }).not.toThrow()
 
-    // It settled on "content overflows the cap": clamped, with a Show more toggle.
+// It settled on "content overflows the cap": clamped, with a Show more toggle.
     expect(host.textContent).toContain('Show more')
     expect(host.querySelector('.overflow-hidden')).not.toBeNull()
   })

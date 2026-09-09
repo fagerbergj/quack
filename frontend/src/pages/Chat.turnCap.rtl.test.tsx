@@ -44,7 +44,7 @@ function mockMatchMedia() {
 
 function stubFetch(turns: Turn[]) {
   mockMatchMedia()
-  client.setConfig({ baseUrl: 'http://localhost:3000' })
+ client.setConfig({ baseUrl: 'http://localhost:3000' })
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const url = String(typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url)
     let body: unknown = { data: [] }
@@ -74,14 +74,14 @@ describe('Chat turn list cap (audit finding 9)', () => {
     host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
-    // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     await act(async () => {
       root!.render(
         <ChatStoreProvider store={store}><Chat navOpen={false} onToggleNav={() => {}} /></ChatStoreProvider>,
       )
     })
-    // Let the async getChat().then(...) seed resolve.
+// Let the async getChat().then(...) seed resolve.
     for (let i = 0; i < 50 && mountedTurnIds.length === 0; i++) {
       await act(async () => { await new Promise(r => setTimeout(r, 10)) })
     }
@@ -90,12 +90,12 @@ describe('Chat turn list cap (audit finding 9)', () => {
   it('mounts only the most recent 100 TurnViews out of 500, with an older-messages control', async () => {
     await mountChatWith(makeTurns(500))
 
-    // Chat re-renders more than once while it settles (poll/getChat effects),
-    // so the same 100 ids get pushed more than once - the DISTINCT set is
-    // what actually matters (that's what's on screen at any commit).
+// Chat re-renders more than once while it settles (poll/getChat effects),
+// so the same 100 ids get pushed more than once - the DISTINCT set is
+// what actually matters (that's what's on screen at any commit).
     let mounted = new Set(mountedTurnIds)
     expect(mounted.size).toBe(100)
-    // The most recent 100 turns (t400..t499), not the first 100.
+// The most recent 100 turns (t400..t499), not the first 100.
     expect(mounted.has('t400')).toBe(true)
     expect(mounted.has('t499')).toBe(true)
     expect(mounted.has('t399')).toBe(false)
@@ -107,7 +107,7 @@ describe('Chat turn list cap (audit finding 9)', () => {
     mountedTurnIds.length = 0
     await act(async () => { button!.click() })
     mounted = new Set(mountedTurnIds)
-    expect(mounted.size).toBe(200) // 100 more revealed, capped set re-renders in full
+ expect(mounted.size).toBe(200)// 100 more revealed, capped set re-renders in full
     expect(mounted.has('t300')).toBe(true)
     expect(mounted.has('t499')).toBe(true)
     expect(mounted.has('t299')).toBe(false)

@@ -18,22 +18,22 @@ export function visibleActivity(activity: Activity[]): Activity[] {
 export interface TurnViewProps {
   turn: Turn
   idx: number
-  // Present only for a real chat - gates each node's Artifacts button.
+// Present only for a real chat - gates each node's Artifacts button.
   chatId?: string
-  // The answer to this turn's clarification (next turn's input / the live input);
-  // undefined means the clarification is still answerable.
+// The answer to this turn's clarification (next turn's input / the live input);
+// undefined means the clarification is still answerable.
   choiceAnswer?: string
-  // This turn's input is itself the answer to the previous turn's clarification.
+// This turn's input is itself the answer to the previous turn's clarification.
   isChoiceAnswer: boolean
   submittingChoice: boolean
   isCopied: boolean
-  // Earlier turns' raw envelope text, oldest first - threaded into TriggerMessage
-  // so a GitHub trigger's <comments> section can accumulate this turn's delta onto
-  // the running history instead of showing just this trigger's slice (#730).
+// Earlier turns' raw envelope text, oldest first - threaded into TriggerMessage
+// so a GitHub trigger's <comments> section can accumulate this turn's delta onto
+// the running history instead of showing just this trigger's slice (#730).
   priorContents: string[]
-  // #1138: this turn's attached images, resolved from the chat's own artifact
-  // store (turn_id-tagged revisions) - undefined/empty means no thumbnail,
-  // never an error state.
+// #1138: this turn's attached images, resolved from the chat's own artifact
+// store (turn_id-tagged revisions) - undefined/empty means no thumbnail,
+// never an error state.
   imageAttachments?: AttachmentPreview[]
   onChoice: (option: string) => void
   onCopy: (key: string, text: string) => void
@@ -52,27 +52,27 @@ export const TurnView = memo(function TurnView({
   const turnRuns = activityFromTurn(turn)
   const turnActivity = visibleActivity(turnRuns.flatMap(r => r.activity))
   const turnChoice = pendingChoice(turnRuns)
-  // Attribution for the answer bubble: a DAG turn credits its terminal node
-  // (agent + that node's own model/tokens); a plain reply credits the
-  // orchestrator, with the model persisted on the turn row (turn.model) and
-  // tokens from Turn.usage - history attribution matches the live stream.
+// Attribution for the answer bubble: a DAG turn credits its terminal node
+// (agent + that node's own model/tokens); a plain reply credits the
+// orchestrator, with the model persisted on the turn row (turn.model) and
+// tokens from Turn.usage - history attribution matches the live stream.
   const attribution = dagState ? dagAnswerAttribution(dagState) : plainReplyAttribution(turn)
-  // Skip the answer bubble when the turn produced no visible content for it
-  // (e.g. a DAG with no text yet, or a plain turn that only held a tool call).
+// Skip the answer bubble when the turn produced no visible content for it
+// (e.g. a DAG with no text yet, or a plain turn that only held a tool call).
   const hasAnswerContent = dagState ? !!text : (turnActivity.length > 0 || !!text)
   const copyKey = `turn-${turn.id}`
-  // Stable element identity (PR #1300 review nit) so memo(TriggerMessage)
-  // bails on the persisted path too, not just the live one.
+// Stable element identity ( review nit) so memo(TriggerMessage)
+// bails on the persisted path too, not just the live one.
   const attachmentsEl = useMemo(
     () => (imageAttachments?.length ? <AttachmentPreviews previews={imageAttachments} /> : undefined),
     [imageAttachments],
   )
   return (
     <div>
-      {/* User message - hidden when it's a clarification answer, or when the
+ {/* User message - hidden when it's a clarification answer, or when the
           turn has no user text at all (#434): a label/webhook-triggered plan
           turn has no typed message, just its synthesized task (rendered in
-          the DAG bubble below), so there's nothing for this bubble to show. */}
+ the DAG bubble below), so there's nothing for this bubble to show.*/}
       {!isChoiceAnswer && turn.input.content && (
         <TriggerMessage
           content={turn.input.content}
@@ -81,7 +81,7 @@ export const TurnView = memo(function TurnView({
           chatId={chatId}
         />
       )}
-      {/* Assistant response: DAG bubble → answer bubble, as siblings */}
+ {/* Assistant response: DAG bubble → answer bubble, as siblings*/}
       <div className="flex justify-start">
         <div className="w-full space-y-3">
           {dagState && (

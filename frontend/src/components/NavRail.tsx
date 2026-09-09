@@ -6,21 +6,21 @@ import { Icon, ICON_NAMES, type IconName } from './Icon'
 
 export interface NavRailProps {
   route: Route
-  // The extension name from a /ext/:name route (App.tsx's useExtName()) -
-  // which extension entry, if any, is active. Unused outside route === 'ext'.
+// The extension name from a /ext/:name route (App.tsx's useExtName()) -
+// which extension entry, if any, is active. Unused outside route === 'ext'.
   activeExtension?: string
-  // Storybook/test seam (same pattern as MemoryTab's initialState): pre-seeds
-  // the extension nav entries and skips the live GET /api/v1/extensions fetch.
+// Storybook/test seam (same pattern as MemoryTab's initialState): pre-seeds
+// the extension nav entries and skips the live GET /api/v1/extensions fetch.
   initialExtensions?: ExtensionInfo[]
-  // #1171: whether the drawer is open. This is the only shape the nav has -
-  // false renders nothing at all (zero DOM, zero layout weight), true mounts
-  // the fixed overlay at every viewport width. App.tsx owns the state; the
-  // drawer remembers nothing (always closed on load, no localStorage).
+// #1171: whether the drawer is open. This is the only shape the nav has -
+// false renders nothing at all (zero DOM, zero layout weight), true mounts
+// the fixed overlay at every viewport width. App.tsx owns the state; the
+// drawer remembers nothing (always closed on load, no localStorage).
   open: boolean
   onClose: () => void
 }
 
-// NavRail is the app's navigation drawer (#1171): Chats and Memory as peers
+// NavRail is the app's navigation drawer : Chats and Memory as peers
 // plus the extensions' own routes, in an off-canvas panel that floats over
 // the content - the same overlay #1145 shipped below 600px, now at every
 // width. There is no persistent rail anymore (the old w-40 column and the
@@ -29,37 +29,37 @@ export interface NavRailProps {
 // NavToggle in each page's header leading slot, and closes on item
 // selection, backdrop tap, the close button, or Esc (focus trap, scroll lock,
 // and focus-return come from useDrawer). The rail's old hamburger glyph
-// (the second one in the app) is deleted with the rest of the rail (#1175).
+// (the second one in the app) is deleted with the rest of the rail .
 export function NavRail({ route, activeExtension, initialExtensions, open, onClose }: NavRailProps) {
   const [extensions, setExtensions] = useState<ExtensionInfo[]>(initialExtensions ?? [])
 
-  // Hooks run in a fixed order regardless of `open`, so the early return
-  // below can never change which hooks mount.
+// Hooks run in a fixed order regardless of `open`, so the early return
+// below can never change which hooks mount.
   useEffect(() => {
-    if (initialExtensions !== undefined) return // story/test seam: static demo state, no live fetch
+ if (initialExtensions !== undefined) return// story/test seam: static demo state, no live fetch
     let cancelled = false
     api.listExtensions().then(exts => {
       if (!cancelled) setExtensions(exts)
     }).catch(() => {
-      // Nav degrades to Chats/Memory only - an extensions-list failure
-      // should never block the rest of the app from rendering.
+// Nav degrades to Chats/Memory only - an extensions-list failure
+// should never block the rest of the app from rendering.
     })
     return () => {
       cancelled = true
     }
   }, [initialExtensions])
 
-  // An extension with no UI descriptor has nowhere to navigate to - an inert
-  // entry is just noise in a nav drawer, so it's dropped entirely rather
-  // than shown unclickable.
+// An extension with no UI descriptor has nowhere to navigate to - an inert
+// entry is just noise in a nav drawer, so it's dropped entirely rather
+// than shown unclickable.
   const linkedExtensions = extensions.filter(ext => !!ext.href)
 
   const drawerPanelRef = useDrawer(open, onClose)
 
   if (!open) return null
 
-  // z-50: above ChatList's z-40 (which needs it only for its own off-canvas
-  // stacking below md) so the drawer isn't buried behind it at desktop widths.
+// z-50: above ChatList's z-40 (which needs it only for its own off-canvas
+// stacking below md) so the drawer isn't buried behind it at desktop widths.
   return (
     <div className="fixed inset-0 z-50">
       <div
@@ -143,8 +143,8 @@ function extensionIcon(ext: ExtensionInfo): ReactNode {
   if (icon && icon.trim().startsWith('<svg')) {
     return <span className="w-4 h-4 [&>svg]:w-4 [&>svg]:h-4" dangerouslySetInnerHTML={{ __html: icon }} />
   }
-  // Named but unrecognized icon: warn once so a new extension icon name gets
-  // noticed and added to Icon.tsx's PATHS, instead of silently staying generic.
+// Named but unrecognized icon: warn once so a new extension icon name gets
+// noticed and added to Icon.tsx's PATHS, instead of silently staying generic.
   if (icon && !warnedUnknownIcons.has(icon)) {
     warnedUnknownIcons.add(icon)
     console.warn(`NavRail: unknown extension icon "${icon}", falling back to the generic icon`)

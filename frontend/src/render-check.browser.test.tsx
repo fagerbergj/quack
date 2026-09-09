@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { page } from 'vitest/browser'
 import { render, cleanup } from '@testing-library/react'
 import { composeStories, setProjectAnnotations } from '@storybook/react-vite'
-import * as previewAnnotations from '../.storybook/preview'
+import* as previewAnnotations from '../.storybook/preview'
 import './index.css'
 
 // #1192: two quack-authored PRs passed every gate (tsc/eslint/424 RTL
@@ -34,7 +34,7 @@ const THEMES = ['light', 'dark'] as const
 // text node loose in ordinary prose JSX children, never intentional
 // code/data content.
 function insideCodeBlock(node: Node): boolean {
-  return !!(node.parentElement?.closest('pre, code, [class*="font-mono"]'))
+ return !!(node.parentElement?.closest('pre, code, [class*="font-mono"]'))
 }
 
 function findStrayCommentText(root: Element): string | undefined {
@@ -42,7 +42,7 @@ function findStrayCommentText(root: Element): string | undefined {
   let node = walker.nextNode()
   while (node) {
     const text = node.textContent?.trim() ?? ''
-    if ((text.startsWith('//') || text.startsWith('/*')) && !insideCodeBlock(node)) return text
+ if ((text.startsWith('//') || text.startsWith('/*')) && !insideCodeBlock(node)) return text
     node = walker.nextNode()
   }
   return undefined
@@ -97,33 +97,33 @@ async function waitForRenderSettled(root: Element): Promise<void> {
 }
 
 describe.each(Object.entries(storyModules))('%s', (path, mod) => {
-  // Composed once here just to enumerate story names - the per-theme render
-  // below recomposes with that theme's project annotations so the preview's
-  // real `withTheme` decorator (not a hand-rolled duplicate of it) drives the
-  // `dark` class, the same mechanism MermaidDiagram's own useIsDarkMode and
-  // the shipped app both rely on.
+// Composed once here just to enumerate story names - the per-theme render
+// below recomposes with that theme's project annotations so the preview's
+// real `withTheme` decorator (not a hand-rolled duplicate of it) drives the
+// `dark` class, the same mechanism MermaidDiagram's own useIsDarkMode and
+// the shipped app both rely on.
   const storyNames = Object.keys(composeStories(mod as never))
 
   describe.each(storyNames)('%s', storyName => {
     it.each(THEMES)('%s theme has no visible defects at every opted-in viewport', async theme => {
-      // Portable stories read project globals from `initialGlobals`; plain
-      // `globals` never reaches the withTheme decorator, so dark == light.
+// Portable stories read project globals from `initialGlobals`; plain
+// `globals` never reaches the withTheme decorator, so dark == light.
       setProjectAnnotations({ ...(previewAnnotations as unknown as Record<string, unknown>), initialGlobals: { theme } } as never)
       const composed = composeStories(mod as never)
       const StoryComp = composed[storyName] as React.ComponentType & { parameters?: Record<string, unknown>; play?: (ctx: { canvasElement: HTMLElement }) => Promise<void> }
-      // Pages that mount useTheme (the chat header's kebab) re-resolve the
-      // theme from storage on mount; without this they'd override the
-      // decorator with "system" = headless Chromium's light preference.
+// Pages that mount useTheme (the chat header's kebab) re-resolve the
+// theme from storage on mount; without this they'd override the
+// decorator with "system" = headless Chromium's light preference.
       localStorage.setItem('theme', theme)
 
-      // Viewport opt-in: a story's own `parameters.renderCheck.viewports` (or
-      // Storybook's own `parameters.viewport.defaultViewport`, honored as an
-      // equivalent signal) wins when present. Name-matching ("...Mobile...",
-      // matching the codebase's own MobileViewport360/WithJudgeNotesMobile
-      // convention) is only the FALLBACK for stories that haven't opted in
-      // explicitly yet - most existing stories render at a fixed desktop
-      // width with no mobile intent, so checking them at 390px would flag
-      // the story's own width choice, not a component defect.
+// Viewport opt-in: a story's own `parameters.renderCheck.viewports` (or
+// Storybook's own `parameters.viewport.defaultViewport`, honored as an
+// equivalent signal) wins when present. Name-matching ("...Mobile...",
+// matching the codebase's own MobileViewport360/WithJudgeNotesMobile
+// convention) is only the FALLBACK for stories that haven't opted in
+// explicitly yet - most existing stories render at a fixed desktop
+// width with no mobile intent, so checking them at 390px would flag
+// the story's own width choice, not a component defect.
       const renderCheckParams = StoryComp.parameters?.renderCheck as { viewports?: readonly string[]; play?: boolean } | undefined
       const storybookViewport = StoryComp.parameters?.viewport as { defaultViewport?: string } | undefined
       const wantsMobile = renderCheckParams?.viewports
@@ -141,28 +141,28 @@ describe.each(Object.entries(storyModules))('%s', (path, mod) => {
         console.error = (...args: unknown[]) => { errors.push(args); originalError(...args) }
 
         try {
-          // Most existing stories render a bare component with no app-shell
-          // frame around it (that frame is normally what bounds width and
-          // provides the "scroll inside your own container" boundary) - a
-          // raw mount would make every such story "overflow" a 390px
-          // viewport regardless of whether the component itself is at
-          // fault. Wrapping every story in a fixed width x height clipped
-          // frame reproduces the real app shell uniformly: a component with
-          // its own internal overflow-x-auto (per the frontend-design
-          // skill's convention) stays within this frame; one that pushes
-          // its own box wider does not.
+// Most existing stories render a bare component with no app-shell
+// frame around it (that frame is normally what bounds width and
+// provides the "scroll inside your own container" boundary) - a
+// raw mount would make every such story "overflow" a 390px
+// viewport regardless of whether the component itself is at
+// fault. Wrapping every story in a fixed width x height clipped
+// frame reproduces the real app shell uniformly: a component with
+// its own internal overflow-x-auto (per the frontend-design
+// skill's convention) stays within this frame; one that pushes
+// its own box wider does not.
           const { container } = render(
             <div style={{ width, height, overflow: 'hidden' }}>
               <StoryComp />
             </div>,
           )
           await waitForRenderSettled(container)
-          // Menus and sheets only exist once a story's play() opens them.
-          // Opt-in per story: most existing play() functions assume the
-          // Storybook canvas (args spies, MSW) and fail under this harness.
-          // ponytail: a failing play() only warns - four story files stomp
-          // window.fetch at module scope, so under this eager glob the last
-          // loader wins and fetch-driven plays can't be made reliable here.
+// Menus and sheets only exist once a story's play() opens them.
+// Opt-in per story: most existing play() functions assume the
+// Storybook canvas (args spies, MSW) and fail under this harness.
+// ponytail: a failing play() only warns - four story files stomp
+// window.fetch at module scope, so under this eager glob the last
+// loader wins and fetch-driven plays can't be made reliable here.
           if (renderCheckParams?.play && StoryComp.play) {
             try {
               await StoryComp.play({ canvasElement: container })
@@ -184,15 +184,15 @@ describe.each(Object.entries(storyModules))('%s', (path, mod) => {
           expect(errors, `console.error during render: ${JSON.stringify(errors)}`).toHaveLength(0)
 
           const safeName = path.replace(/[^a-zA-Z0-9]/g, '_')
-          // `path` is relative to this test file and saved server-side by
-          // Vitest's browser RPC - no fs access needed from browser code.
+// `path` is relative to this test file and saved server-side by
+// Vitest's browser RPC - no fs access needed from browser code.
           await page.screenshot({ path: `../render-check/${safeName}__${storyName}__${viewportName}__${theme}.png` })
         } finally {
           console.error = originalError
           cleanup()
-          // Mermaid renders into a `d<id>` element it appends to <body>,
-          // outside the RTL container cleanup() removes; on a parse error it
-          // leaves its error SVG there, stacking up in every later screenshot.
+// Mermaid renders into a `d<id>` element it appends to <body>,
+// outside the RTL container cleanup() removes; on a parse error it
+// leaves its error SVG there, stacking up in every later screenshot.
           document.querySelectorAll('body > [id^="dmermaid-"], body > [id^="mermaid-"]').forEach(el => el.remove())
         }
       }

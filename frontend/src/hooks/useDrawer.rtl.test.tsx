@@ -29,8 +29,8 @@ describe('useDrawer - inline onClose identity churn', () => {
     second.focus()
     expect(document.activeElement).toBe(second)
 
-    // Same as a poll/streaming update re-rendering the owner: a brand new
-    // inline () => {} is passed to useDrawer as onClose every time.
+// Same as a poll/streaming update re-rendering the owner: a brand new
+// inline () => {} is passed to useDrawer as onClose every time.
     rerender(<Owner tick={1} />)
     expect(document.activeElement).toBe(second)
   })

@@ -28,8 +28,8 @@ export function Expandable({
 }: {
   children: ReactNode
   maxHeight?: number
-  // Tailwind gradient colour-stop classes for the fade, matched to the surface
-  // the content sits on (e.g. 'from-gray-50 dark:from-gray-900' for code blocks).
+// Tailwind gradient colour-stop classes for the fade, matched to the surface
+// the content sits on (e.g. 'from-gray-50 dark:from-gray-900' for code blocks).
   fade?: string
   className?: string
 }) {

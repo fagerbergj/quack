@@ -36,7 +36,7 @@ describe('activityFromTurn', () => {
       kind: 'tool',
       tool: { callId: 'c1', name: 'web_search', args: { query: 'x' }, result: { hits: 2 }, done: true },
     })
-    // The reconstructed run feeds pendingChoice the same way the live path does.
+// The reconstructed run feeds pendingChoice the same way the live path does.
     expect(pendingChoice(runs)).toEqual({ callId: 'c2', question: '', options: ['A', 'B'] })
   })
 
@@ -71,38 +71,38 @@ describe('ChatStore.submit - loading indicator gap (regression)', () => {
     store.seed('chat-1', [])
   })
 
-  // On a follow-up message the previous finished turn lingers in `live` and must be
-  // archived via a GET round-trip. The `submitting` indicator must appear BEFORE that
-  // GET resolves - otherwise the spinner doesn't show until the first token.
+// On a follow-up message the previous finished turn lingers in `live` and must be
+// archived via a GET round-trip. The `submitting` indicator must appear BEFORE that
+// GET resolves - otherwise the spinner doesn't show until the first token.
   it('sets submitting/pendingUserText before the archive GET resolves', async () => {
-    // First turn - complete it so a finished `live` lingers (the archive trigger).
+// First turn - complete it so a finished `live` lingers (the archive trigger).
     fetchMock.mockResolvedValueOnce(makeStream(''))
     await store.submit('chat-1', 'msg1')
     expect(store.get('chat-1').live?.streaming).toBe(false)
 
-    // Second turn - make the archive GET hang so we can observe state mid-flight.
+// Second turn - make the archive GET hang so we can observe state mid-flight.
     let resolveArchive!: (r: Response) => void
     const archive = new Promise<Response>(res => { resolveArchive = res })
-    fetchMock.mockReturnValueOnce(archive)            // GET /api/v1/chats/chat-1 (archive)
-    fetchMock.mockResolvedValueOnce(makeStream(''))   // POST /responses (msg2)
+ fetchMock.mockReturnValueOnce(archive)// GET /api/v1/chats/chat-1 (archive)
+ fetchMock.mockResolvedValueOnce(makeStream(''))// POST /responses (msg2)
 
     const p = store.submit('chat-1', 'msg2')
 
-    // Synchronously after submit, before the GET resolves: the indicator is up.
+// Synchronously after submit, before the GET resolves: the indicator is up.
     expect(store.get('chat-1').submitting).toBe(true)
     expect(store.get('chat-1').pendingUserText).toBe('msg2')
 
     resolveArchive(new Response(JSON.stringify({ turns: [] }), { status: 200 }))
     await p
 
-    // Once streaming starts the indicator clears and the live turn carries the text.
+// Once streaming starts the indicator clears and the live turn carries the text.
     expect(store.get('chat-1').submitting).toBe(false)
     expect(store.get('chat-1').pendingUserText).toBeUndefined()
     expect(store.get('chat-1').live?.userText).toBe('msg2')
   })
 
-  // First message of a chat has no previous `live`, so no archive GET and no
-  // `submitting` phase - the live turn is created immediately.
+// First message of a chat has no previous `live`, so no archive GET and no
+// `submitting` phase - the live turn is created immediately.
   it('creates the live turn immediately on the first message (no archive)', async () => {
     fetchMock.mockResolvedValueOnce(makeStream(''))
     const p = store.submit('chat-1', 'hello')
@@ -111,10 +111,10 @@ describe('ChatStore.submit - loading indicator gap (regression)', () => {
     await p
   })
 
-  // Regression: the archive GET can race the server's own persistence of the
-  // turn that just finished streaming. If the refetch's `turns` doesn't yet
-  // contain that turn, the previous answer must survive (synthesized from the
-  // in-memory `live`) instead of dropping until a manual refresh.
+// Regression: the archive GET can race the server's own persistence of the
+// turn that just finished streaming. If the refetch's `turns` doesn't yet
+// contain that turn, the previous answer must survive (synthesized from the
+// in-memory `live`) instead of dropping until a manual refresh.
   it('keeps the previous answer when the archive refetch omits the just-finished turn', async () => {
     const sse = [
       'event: response_created',
@@ -129,7 +129,7 @@ describe('ChatStore.submit - loading indicator gap (regression)', () => {
     expect(store.get('chat-1').live?.id).toBe('resp-1')
     expect(store.get('chat-1').live?.text).toBe('first answer')
 
-    // The archive GET comes back WITHOUT resp-1 (server hasn't persisted it yet).
+// The archive GET comes back WITHOUT resp-1 (server hasn't persisted it yet).
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ turns: [] }), { status: 200 }))
     fetchMock.mockResolvedValueOnce(makeStream(''))
     await store.submit('chat-1', 'msg2')
@@ -179,7 +179,7 @@ describe('ChatStore - main-chat message queue', () => {
     store.queueTurn('chat-1', 'follow-up')
     expect(store.get('chat-1').queue).toHaveLength(1)
     expect(store.get('chat-1').queue[0].text).toBe('follow-up')
-    // Still streaming, and no second fetch (POST/GET) has fired for it.
+// Still streaming, and no second fetch (POST/GET) has fired for it.
     expect(store.get('chat-1').live?.userText).toBe('msg1')
     expect(fetchMock).toHaveBeenCalledTimes(1)
 
@@ -193,8 +193,8 @@ describe('ChatStore - main-chat message queue', () => {
     const p = store.submit('chat-1', 'msg1')
     store.queueTurn('chat-1', 'follow-up')
 
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ turns: [] }), { status: 200 })) // archive GET
-    fetchMock.mockResolvedValueOnce(makeStream(''))                                               // follow-up's own run
+ fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ turns: [] }), { status: 200 }))// archive GET
+ fetchMock.mockResolvedValueOnce(makeStream(''))// follow-up's own run
 
     hang.close()
     await p
@@ -211,20 +211,20 @@ describe('ChatStore - main-chat message queue', () => {
     store.queueTurn('chat-1', 'follow-up-2')
     expect(store.get('chat-1').queue.map(q => q.text)).toEqual(['follow-up-1', 'follow-up-2'])
 
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ turns: [] }), { status: 200 })) // archive GET
+ fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ turns: [] }), { status: 200 }))// archive GET
     const hang2 = makeHangingStream()
-    fetchMock.mockResolvedValueOnce(hang2.response)                                               // follow-up-1's run
+ fetchMock.mockResolvedValueOnce(hang2.response)// follow-up-1's run
 
     hang1.close()
     await p1
 
     await vi.waitFor(() => expect(store.get('chat-1').live?.userText).toBe('follow-up-1'))
-    // follow-up-2 stays queued until follow-up-1's own run finishes.
+// follow-up-2 stays queued until follow-up-1's own run finishes.
     expect(store.get('chat-1').queue.map(q => q.text)).toEqual(['follow-up-2'])
     expect(store.get('chat-1').live?.streaming).toBe(true)
 
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ turns: [] }), { status: 200 })) // archive GET
-    fetchMock.mockResolvedValueOnce(makeStream(''))                                               // follow-up-2's run
+ fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ turns: [] }), { status: 200 }))// archive GET
+ fetchMock.mockResolvedValueOnce(makeStream(''))// follow-up-2's run
     hang2.close()
 
     await vi.waitFor(() => expect(store.get('chat-1').live?.userText).toBe('follow-up-2'))
@@ -271,19 +271,19 @@ describe('ChatStore - mid-node steering', () => {
     fetchMock.mockResolvedValueOnce(makeStream(sse))
     await store.submit('c', 'go')
     const ns = store.get('c').live?.dag?.nodeStates['a']
-    // Regression (#870): onNodeSteered used to set 'queued' - an illegal
-    // running→queued transition per the backend's own state machine - and
-    // nothing ever restored 'running', so the node rendered idle chrome
-    // (no pulse, no spinner, canQueue gone) for the whole steered re-run.
+// Regression (#870): onNodeSteered used to set 'queued' - an illegal
+// running→queued transition per the backend's own state machine - and
+// nothing ever restored 'running', so the node rendered idle chrome
+// (no pulse, no spinner, canQueue gone) for the whole steered re-run.
     expect(ns?.status).toBe('running')
     expect(ns?.steers).toEqual(['focus on cost'])
   })
 
-  // Full steer→resume sequence, observed as it streams (not just at the end):
-  // the node must read 'running' (DagNode's running-derived UI -
-  // pulse/spinner/canQueue) at every point between the steer and node_done,
-  // never dropping to 'queued' or idle chrome while the resumed run streams
-  // tokens.
+// Full steer→resume sequence, observed as it streams (not just at the end):
+// the node must read 'running' (DagNode's running-derived UI -
+// pulse/spinner/canQueue) at every point between the steer and node_done,
+// never dropping to 'queued' or idle chrome while the resumed run streams
+// tokens.
   it('stays running across the full node_steered → agent_start → agent_token → node_done sequence', async () => {
     const encoder = new TextEncoder()
     let controller!: ReadableStreamDefaultController<Uint8Array>
@@ -298,12 +298,12 @@ describe('ChatStore - mid-node steering', () => {
     send('event: node_steered\ndata: {"node_id":"a","guidance":"focus on cost"}\n\n')
     await vi.waitFor(() => expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('running'))
 
-    // Resumed run: agent_start must restore/keep 'running' (the fix's (b) half).
+// Resumed run: agent_start must restore/keep 'running' (the fix's (b) half).
     send('event: agent_start\ndata: {"node_id":"a","run_id":"worker-r1","agent":"researcher","stage":"worker"}\n\n')
     await vi.waitFor(() => expect(store.get('c').live?.dag?.nodeRuns['a']?.length).toBe(1))
     expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('running')
 
-    // agent_token must not disturb it.
+// agent_token must not disturb it.
     send('event: agent_token\ndata: {"node_id":"a","run_id":"worker-r1","text":"partial"}\n\n')
     await vi.waitFor(() => expect(store.get('c').live?.dag?.nodeAnswer['a']).toBe('partial'))
     expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('running')
@@ -396,9 +396,9 @@ describe('ChatStore - mid-node steering', () => {
       'event: dag_plan',
       'data: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}',
       '',
-      // Worker's first draft (an ask_advisor consult may have happened inside this
-      // same run as an ordinary tool call - not a separate stage) - this becomes
-      // the answer.
+// Worker's first draft (an ask_advisor consult may have happened inside this
+// same run as an ordinary tool call - not a separate stage) - this becomes
+// the answer.
       'event: agent_start',
       'data: {"node_id":"a","run_id":"worker-r0","agent":"researcher","stage":"worker"}',
       '',
@@ -408,7 +408,7 @@ describe('ChatStore - mid-node steering', () => {
       'event: agent_complete',
       'data: {"node_id":"a","run_id":"worker-r0","stage":"worker"}',
       '',
-      // Judge commentary runs between draft and revision - it must never reach the answer.
+// Judge commentary runs between draft and revision - it must never reach the answer.
       'event: agent_start',
       'data: {"node_id":"a","run_id":"judge-r1","agent":"judge","stage":"judge","round":1}',
       '',
@@ -418,7 +418,7 @@ describe('ChatStore - mid-node steering', () => {
       'event: agent_complete',
       'data: {"node_id":"a","run_id":"judge-r1","stage":"judge","round":1}',
       '',
-      // Judge fails it, triggering a revision - the revision REPLACES the draft.
+// Judge fails it, triggering a revision - the revision REPLACES the draft.
       'event: agent_start',
       'data: {"node_id":"a","run_id":"worker-r1","agent":"researcher","stage":"revise","round":1}',
       '',
@@ -434,16 +434,16 @@ describe('ChatStore - mid-node steering', () => {
     const answer = store.get('c').live?.dag?.nodeAnswer['a']
     expect(answer).toBe('REVISED ANSWER (sourced)')
 
-    // #696: keeping judge text OUT of the answer must not throw it away - it
-    // belongs in the judge's own card. judgePartEmitter only emits
-    // agent_thinking for parts the model marks Thought, and local models
-    // mostly don't, so dropping agent_token discarded nearly all of it.
+// #696: keeping judge text OUT of the answer must not throw it away - it
+// belongs in the judge's own card. judgePartEmitter only emits
+// agent_thinking for parts the model marks Thought, and local models
+// mostly don't, so dropping agent_token discarded nearly all of it.
     const judgeRun = store.get('c').live?.dag?.nodeRuns?.['a']?.find(r => r.runId === 'judge-r1')
     expect(judgeRun?.activity).toContainEqual({ kind: 'thinking', text: 'Feedback: needs more sourcing.' })
   })
 
-  // The other half of #696: a revise run IS an answer stage, so its text goes to
-  // the answer box and must NOT also be duplicated into its own card.
+// The other half of #696: a revise run IS an answer stage, so its text goes to
+// the answer box and must NOT also be duplicated into its own card.
   it("a revise run's text goes to the answer box, not into its card's activity", async () => {
     const sse = [
       'event: dag_plan',
@@ -466,11 +466,11 @@ describe('ChatStore - mid-node steering', () => {
     expect(rev?.activity).toEqual([])
   })
 
-  // #387: narration a worker emits BEFORE a tool call ("I'll check X first...")
-  // must not render as if it were the answer once the real answer streams in
-  // after the call - mirrors internal/acp/translate.go's per-round reset
-  // (#358), applied here to the live stream (a node's own worker/revise run,
-  // not just the ACP-delivered final text).
+// #387: narration a worker emits BEFORE a tool call ("I'll check X first...")
+// must not render as if it were the answer once the real answer streams in
+// after the call - mirrors internal/acp/translate.go's per-round reset
+// (#358), applied here to the live stream (a node's own worker/revise run,
+// not just the ACP-delivered final text).
   it("a tool call within a worker run discards narration emitted before it from the node's answer", async () => {
     const sse = [
       'event: dag_plan',
@@ -500,7 +500,7 @@ describe('ChatStore - mid-node steering', () => {
     expect(store.get('c').live?.dag?.nodeAnswer['a']).toBe('the real answer')
   })
 
-  // Same reset for the orchestrator's own top-level (no DAG node) reply.
+// Same reset for the orchestrator's own top-level (no DAG node) reply.
   it('a top-level tool call discards narration emitted before it from the live text', async () => {
     const sse = [
       'event: agent_token',
@@ -521,10 +521,10 @@ describe('ChatStore - mid-node steering', () => {
     expect(store.get('c').live?.text).toBe('the real answer')
   })
 
-  // #422: a second top-level run against the same live turn (e.g. the GitHub
-  // dispatch driving the orchestrator twice when its first pass ran no plan)
-  // must not concatenate its answer onto the first run's - the answer bubble
-  // rendered the reply doubled before this reset existed.
+// #422: a second top-level run against the same live turn (e.g. the GitHub
+// dispatch driving the orchestrator twice when its first pass ran no plan)
+// must not concatenate its answer onto the first run's - the answer bubble
+// rendered the reply doubled before this reset existed.
   it('a second top-level run replaces the first run\'s live text instead of appending to it', async () => {
     const sse = [
       'event: agent_start',
@@ -592,8 +592,8 @@ describe('ChatStore - mid-node steering', () => {
   it('startNode mid-stream is refused with a node error note, not a silent no-op', async () => {
     vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
     FakeEventSource.last = null
-    // Stream stays OPEN (no close, no done): the run is mid-flight when
-    // startNode is called, so submit is deliberately not awaited.
+// Stream stays OPEN (no close, no done): the run is mid-flight when
+// startNode is called, so submit is deliberately not awaited.
     const sse = `event: dag_plan\ndata: ${JSON.stringify({ plan_id: 'p', nodes: [{ id: 'a', agent: 'r', task: 't', depends_on: [] }], edges: [] })}\n\nevent: node_paused\ndata: {"node_id":"a"}\n\n`
     const open = new ReadableStream({ start(ctrl) { ctrl.enqueue(new TextEncoder().encode(sse)) } })
     fetchMock.mockResolvedValueOnce(new Response(open, { status: 200, headers: { 'Content-Type': 'text/event-stream' } }))
@@ -643,7 +643,7 @@ describe('ChatStore - mid-node steering', () => {
     vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
     FakeEventSource.last = null
 
-    // Seed a live DAG: a → b, a done (with an answer), b failed.
+// Seed a live DAG: a → b, a done (with an answer), b failed.
     const sse = [
       `event: dag_plan\ndata: ${JSON.stringify({ plan_id: 'p', nodes: [{ id: 'a', agent: 'r', task: 't', depends_on: [] }, { id: 'b', agent: 'r', task: 't', depends_on: ['a'] }], edges: [{ from: 'a', to: 'b' }] })}\n\n`,
       `event: agent_token\ndata: {"node_id":"a","run_id":"worker-r0","text":"A-ANSWER"}\n\n`,
@@ -658,24 +658,24 @@ describe('ChatStore - mid-node steering', () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ status: 'queued' }), { status: 200 }))
     store.retryNode('c', 'b', '  focus on X  ')
 
-    // Synchronous reset: b (the target) cleared; a (upstream, not downstream of b) kept.
+// Synchronous reset: b (the target) cleared; a (upstream, not downstream of b) kept.
     const dag = store.get('c').live?.dag
     expect(dag?.nodeAnswer['b'] ?? '').toBe('')
     expect(dag?.nodeStates['b']?.status).toBe('queued')
     expect(dag?.nodeAnswer['a']).toContain('A-ANSWER')
 
-    await new Promise(r => setTimeout(r, 0)) // let the PUT's .then() fire
+ await new Promise(r => setTimeout(r, 0))// let the PUT's .then() fire
     expect(fetchMock).toHaveBeenLastCalledWith(
       '/api/v1/chats/c/nodes/b/status',
       expect.objectContaining({ method: 'PUT', body: JSON.stringify({ status: 'queued', guidance: 'focus on X' }) }),
     )
-    // The re-run's progress streams over GET /stream, not the PUT's own body.
+// The re-run's progress streams over GET /stream, not the PUT's own body.
     const es = FakeEventSource.last!
     expect(es.url).toBe('/api/v1/chats/c/stream')
   })
 
-  // Timers anchor to the server's start time (epoch ms), not Date.now() at event
-  // processing - so a reconnect/replay shows true elapsed instead of resetting.
+// Timers anchor to the server's start time (epoch ms), not Date.now() at event
+// processing - so a reconnect/replay shows true elapsed instead of resetting.
   it('uses server started_at_ms for the dag and node timers', async () => {
     const sse = [
       'event: dag_plan',
@@ -692,10 +692,10 @@ describe('ChatStore - mid-node steering', () => {
     expect(dag?.nodeStates['a'].startedAt).toBe(2000)
   })
 
-  // Root cause of the sub-step (worker/judge/revise) timer resetting on page
-  // refresh: agent_start carried no server timestamp, so a replayed run always
-  // anchored to Date.now() at replay time. Mirrors the dag/node test above for
-  // the run level.
+// Root cause of the sub-step (worker/judge/revise) timer resetting on page
+// refresh: agent_start carried no server timestamp, so a replayed run always
+// anchored to Date.now() at replay time. Mirrors the dag/node test above for
+// the run level.
   it('uses server started_at_ms for a sub-step (agent_start) timer, not replay-time Date.now()', async () => {
     const sse = [
       'event: dag_plan',
@@ -714,8 +714,8 @@ describe('ChatStore - mid-node steering', () => {
     expect(run?.startedAt).toBe(5000)
   })
 
-  // A live run (no replay) carries no started_at_ms yet - it still anchors, this
-  // time to Date.now() at arrival, so it starts ticking from ~0 immediately.
+// A live run (no replay) carries no started_at_ms yet - it still anchors, this
+// time to Date.now() at arrival, so it starts ticking from ~0 immediately.
   it('falls back to Date.now() for a live agent_start with no started_at_ms', async () => {
     const before = Date.now()
     const sse = [
@@ -737,12 +737,12 @@ describe('ChatStore - mid-node steering', () => {
     expect(run?.startedAt).toBeLessThanOrEqual(after)
   })
 
-  // Clock-skew: a server clock ahead of the client stores the RAW server
-  // value, unclamped - clamping it to the client's now (a prior version did
-  // this) is what corrupted a finished run's duration (finished_at_ms -
-  // clamped start) whenever the client trailed the server. The "never show a
-  // negative elapsed" guard lives in fmtMs (floors at 0) instead, so a
-  // still-live timer never renders negative even while raw start > client now.
+// Clock-skew: a server clock ahead of the client stores the RAW server
+// value, unclamped - clamping it to the client's now (a prior version did
+// this) is what corrupted a finished run's duration (finished_at_ms -
+// clamped start) whenever the client trailed the server. The "never show a
+// negative elapsed" guard lives in fmtMs (floors at 0) instead, so a
+// still-live timer never renders negative even while raw start > client now.
   it('stores a future server started_at_ms (clock skew) unclamped', async () => {
     const future = Date.now() + 60_000
     const sse = [
@@ -768,9 +768,9 @@ describe('ChatStore - mid-node steering', () => {
 // timestamps - never from Date.now() at whatever moment the client happens to
 // process (or replay) the event.
 describe('ChatStore - server-timestamped durations survive replay', () => {
-  // One node running worker -> judge(reject) -> revise -> judge(pass) -> done,
-  // every agent_start/agent_complete/node_done carrying explicit server
-  // timestamps. runDagOnce replays this SAME event list into a fresh store.
+// One node running worker -> judge(reject) -> revise -> judge(pass) -> done,
+// every agent_start/agent_complete/node_done carrying explicit server
+// timestamps. runDagOnce replays this SAME event list into a fresh store.
   function dagSSE(): string {
     return [
       'event: dag_plan',
@@ -783,28 +783,28 @@ describe('ChatStore - server-timestamped durations survive replay', () => {
       'data: {"node_id":"a","run_id":"worker-r0","agent":"r","stage":"worker","started_at_ms":2000}',
       '',
       'event: agent_complete',
-      'data: {"node_id":"a","run_id":"worker-r0","stage":"worker","finished_at_ms":8000}', // 6000ms
+ 'data: {"node_id":"a","run_id":"worker-r0","stage":"worker","finished_at_ms":8000}',// 6000ms
       '',
       'event: agent_start',
       'data: {"node_id":"a","run_id":"judge-r1","agent":"judge","stage":"judge","round":1,"started_at_ms":8000}',
       '',
       'event: agent_complete',
-      'data: {"node_id":"a","run_id":"judge-r1","stage":"judge","round":1,"passed":false,"finished_at_ms":13000}', // 5000ms
+ 'data: {"node_id":"a","run_id":"judge-r1","stage":"judge","round":1,"passed":false,"finished_at_ms":13000}',// 5000ms
       '',
       'event: agent_start',
       'data: {"node_id":"a","run_id":"worker-r1","agent":"r","stage":"revise","round":1,"started_at_ms":13000}',
       '',
       'event: agent_complete',
-      'data: {"node_id":"a","run_id":"worker-r1","stage":"revise","round":1,"finished_at_ms":20000}', // 7000ms
+ 'data: {"node_id":"a","run_id":"worker-r1","stage":"revise","round":1,"finished_at_ms":20000}',// 7000ms
       '',
       'event: agent_start',
       'data: {"node_id":"a","run_id":"judge-r2","agent":"judge","stage":"judge","round":2,"started_at_ms":20000}',
       '',
       'event: agent_complete',
-      'data: {"node_id":"a","run_id":"judge-r2","stage":"judge","round":2,"passed":true,"finished_at_ms":25000}', // 5000ms
+ 'data: {"node_id":"a","run_id":"judge-r2","stage":"judge","round":2,"passed":true,"finished_at_ms":25000}',// 5000ms
       '',
       'event: node_done',
-      'data: {"node_id":"a","duration_ms":23000,"finished_at_ms":25000}', // 25000 - 2000
+ 'data: {"node_id":"a","duration_ms":23000,"finished_at_ms":25000}',// 25000 - 2000
       '',
     ].join('\n')
   }
@@ -824,8 +824,8 @@ describe('ChatStore - server-timestamped durations survive replay', () => {
   }
 
   it('replaying the same event list at two different client Date.now() values yields identical run/node durations', async () => {
-    const dagA = await runDagOnce(10_000_000_000) // "live": processed shortly after emission
-    const dagB = await runDagOnce(20_000_000_000) // "replay": processed ~2.8 hours later
+ const dagA = await runDagOnce(10_000_000_000)// "live": processed shortly after emission
+ const dagB = await runDagOnce(20_000_000_000)// "replay": processed ~2.8 hours later
 
     const runsA = dagA.nodeRuns['a'].map(r => ({ runId: r.runId, durationMs: r.durationMs }))
     const runsB = dagB.nodeRuns['a'].map(r => ({ runId: r.runId, durationMs: r.durationMs }))
@@ -849,12 +849,12 @@ describe('ChatStore - server-timestamped durations survive replay', () => {
     }
   })
 
-  // Regression: anchorTime used to clamp a run/node/plan's stored startedAt to
-  // min(serverMs, Date.now()) - since finished_at_ms is never clamped, a
-  // client clock trailing the server picked up its OWN (earlier) now as the
-  // start, stretching every finished-start subtraction by the skew. Every
-  // dagSSE() timestamp (1000-25000ms) sits well ahead of this mocked "now"
-  // (500ms), so the old clamp fired on every single one of them.
+// Regression: anchorTime used to clamp a run/node/plan's stored startedAt to
+// min(serverMs, Date.now()) - since finished_at_ms is never clamped, a
+// client clock trailing the server picked up its OWN (earlier) now as the
+// start, stretching every finished-start subtraction by the skew. Every
+// dagSSE() timestamp (1000-25000ms) sits well ahead of this mocked "now"
+// (500ms), so the old clamp fired on every single one of them.
   it('a client clock trailing the server does not inflate sub-run or plan durations', async () => {
     const dag = await runDagOnce(500)
     expect(dag.startedAt).toBe(1000)
@@ -872,8 +872,8 @@ describe('ChatStore - finished_at_ms: remaining lifecycle paths', () => {
     store.attach('c')
     const es = FakeEventSource.last!
 
-    // The replay/reconnect itself lands long after the run actually started -
-    // this must never leak into the eventual duration.
+// The replay/reconnect itself lands long after the run actually started -
+// this must never leak into the eventual duration.
     const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(90_000)
     try {
       es.emit('dag_plan', '{"plan_id":"p","nodes":[{"id":"a","agent":"r","task":"t","depends_on":[]}],"edges":[],"started_at_ms":1000}')
@@ -881,7 +881,7 @@ describe('ChatStore - finished_at_ms: remaining lifecycle paths', () => {
       es.emit('agent_start', '{"node_id":"a","run_id":"worker-r0","agent":"r","stage":"worker","started_at_ms":2000}')
       expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('running')
 
-      // The run then finishes LIVE on this same held-open stream.
+// The run then finishes LIVE on this same held-open stream.
       es.emit('agent_complete', '{"node_id":"a","run_id":"worker-r0","stage":"worker","finished_at_ms":8000}')
       es.emit('node_done', '{"node_id":"a","finished_at_ms":8000}')
     } finally {
@@ -889,7 +889,7 @@ describe('ChatStore - finished_at_ms: remaining lifecycle paths', () => {
     }
 
     const run = store.get('c').live?.dag?.nodeRuns['a']?.find(r => r.runId === 'worker-r0')
-    expect(run?.durationMs).toBe(6000) // 8000 - 2000, not stretched by the 90_000 replay-processing clock
+ expect(run?.durationMs).toBe(6000)// 8000 - 2000, not stretched by the 90_000 replay-processing clock
     expect(store.get('c').live?.dag?.nodeStates['a'].finishedAt).toBe(8000)
   })
 
@@ -973,8 +973,8 @@ describe('ChatStore - context meter + compaction', () => {
     expect(state?.nodes[0].context_window).toBe(262144)
   })
 
-  // A judge round's own context usage has nothing to do with the worker's
-  // window - it must not overwrite the meter's reading.
+// A judge round's own context usage has nothing to do with the worker's
+// window - it must not overwrite the meter's reading.
   it('ignores context_tokens from a judge-stage agent_complete', async () => {
     const sse = [
       'event: dag_plan',
@@ -1065,7 +1065,7 @@ describe('ChatStore - artifact live events (#1114)', () => {
     ].join('\n')
     fetchMock.mockResolvedValueOnce(makeStream(sse))
     await store.submit('c', 'go')
-    await new Promise(r => setTimeout(r, 20)) // notify() coalesces to one rAF/setTimeout(16) tick
+ await new Promise(r => setTimeout(r, 20))// notify() coalesces to one rAF/setTimeout(16) tick
     expect(listener).toHaveBeenCalled()
     unsubscribe()
   })
@@ -1161,7 +1161,7 @@ describe('isTurnInProgress - re-subscribe gate', () => {
   it('is true only for a turn whose DAG is in_progress', () => {
     expect(isTurnInProgress(dagTurn('in_progress'))).toBe(true)
     expect(isTurnInProgress(dagTurn('completed'))).toBe(false)
-    expect(isTurnInProgress(turnWith())).toBe(false) // no DAG (e.g. failed nodes after restart)
+ expect(isTurnInProgress(turnWith())).toBe(false)// no DAG (e.g. failed nodes after restart)
     expect(isTurnInProgress(undefined)).toBe(false)
   })
 })
@@ -1199,7 +1199,7 @@ describe('ChatStore.attach - reconnect to a live run', () => {
     const es = FakeEventSource.last!
     expect(es.url).toBe('/api/v1/chats/c/stream')
     expect(store.get('c').live?.streaming).toBe(true)
-    // The in-progress turn was lifted out of history into `live` (no double render).
+// The in-progress turn was lifted out of history into `live` (no double render).
     expect(store.get('c').turns).toHaveLength(0)
     expect(store.get('c').live?.userText).toBe('hi')
 
@@ -1217,12 +1217,12 @@ describe('ChatStore.attach - reconnect to a live run', () => {
     store.attach('c')
     const first = FakeEventSource.last
     store.attach('c')
-    expect(FakeEventSource.last).toBe(first) // no new EventSource opened
+ expect(FakeEventSource.last).toBe(first)// no new EventSource opened
   })
 
-  // #282: opening a chat while its node is actively running must show LIVE
-  // activity (tool calls, streamed tokens) as it lands on the held-open
-  // stream - not just the terminal node_start/done bookends.
+// #282: opening a chat while its node is actively running must show LIVE
+// activity (tool calls, streamed tokens) as it lands on the held-open
+// stream - not just the terminal node_start/done bookends.
   it('activity events (tool_call, token) landing on the held-open stream update the store live, no reload', () => {
     store.seed('c', [dagTurn('in_progress')])
     store.attach('c')
@@ -1238,7 +1238,7 @@ describe('ChatStore.attach - reconnect to a live run', () => {
     const dag = store.get('c').live?.dag
     expect(dag?.nodeRuns['a']?.some(r => r.runId === 'r1')).toBe(true)
     expect(dag?.nodeAnswer['a']).toContain('partial answer text')
-    expect(es.closed).toBe(false) // still streaming - no reload needed to see this
+ expect(es.closed).toBe(false)// still streaming - no reload needed to see this
   })
 })
 
@@ -1267,36 +1267,36 @@ describe('ChatStore.detachStream - leaving mid-run does not strand the chat (fin
     expect(es1.closed).toBe(true)
     expect(store.get('c').live?.streaming).toBe(false)
 
-    // Re-open: attach must not no-op now that streaming correctly reads false.
+// Re-open: attach must not no-op now that streaming correctly reads false.
     store.attach('c')
     expect(FakeEventSource.last).not.toBe(es1)
     expect(store.get('c').live?.streaming).toBe(true)
 
-    // The server reports the re-attached run finished.
+// The server reports the re-attached run finished.
     FakeEventSource.last!.emit('done')
     expect(store.get('c').live?.streaming).toBe(false)
 
-    // Composer enabled: submit() no longer refuses to send.
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ turns: [] }), { status: 200 })) // archive GET
-    fetchMock.mockResolvedValueOnce(makeStream(''))                                              // POST
+// Composer enabled: submit() no longer refuses to send.
+ fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ turns: [] }), { status: 200 }))// archive GET
+ fetchMock.mockResolvedValueOnce(makeStream(''))// POST
     await store.submit('c', 'follow up')
     expect(fetchMock).toHaveBeenCalled()
   })
 
   it("keeps streaming true for this client's own in-flight POST run, so a return trip does not double-feed it", async () => {
     store.seed('c', [])
-    // No prior live turn, so submit() skips the archive GET and its first fetch is the POST.
+// No prior live turn, so submit() skips the archive GET and its first fetch is the POST.
     let finishPost!: (r: Response) => void
     fetchMock.mockImplementationOnce(() => new Promise<Response>(r => { finishPost = r }))
     const inFlight = store.submit('c', 'hi')
     await vi.waitFor(() => expect(store.get('c').live?.streaming).toBe(true))
     FakeEventSource.last = null
 
-    // Leave the chat while the POST body is still streaming: no EventSource exists to hand off.
+// Leave the chat while the POST body is still streaming: no EventSource exists to hand off.
     store.detachStream('c')
     expect(store.get('c').live?.streaming).toBe(true)
 
-    // Return: attach() must no-op, never opening a second feed for a run this client already owns.
+// Return: attach() must no-op, never opening a second feed for a run this client already owns.
     store.attach('c')
     expect(FakeEventSource.last).toBeNull()
 
@@ -1329,13 +1329,13 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
       es1.emit('node_start', '{"node_id":"a","agent":"researcher"}', 2)
       expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('running')
 
-      // Connection drops mid-run - no `done` was seen, so this must NOT tear
-      // the turn down (unlike the server's expected post-`done` close).
+// Connection drops mid-run - no `done` was seen, so this must NOT tear
+// the turn down (unlike the server's expected post-`done` close).
       es1.onerror?.()
       expect(es1.closed).toBe(true)
       expect(store.get('c').live?.streaming).toBe(true)
 
-      // Bounded backoff, not an immediate hammer: no reconnect until the delay elapses.
+// Bounded backoff, not an immediate hammer: no reconnect until the delay elapses.
       expect(FakeEventSource.last).toBe(es1)
       vi.advanceTimersByTime(999)
       expect(FakeEventSource.last).toBe(es1)
@@ -1343,17 +1343,17 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
 
       const es2 = FakeEventSource.last!
       expect(es2).not.toBe(es1)
-      expect(es2.url).toBe('/api/v1/chats/c/stream?last_event_id=2') // resumes past the last event actually seen
+ expect(es2.url).toBe('/api/v1/chats/c/stream?last_event_id=2')// resumes past the last event actually seen
 
-      // The node's prior state (from es1) is untouched - resuming replays only
-      // what's new, so nothing already applied is lost or re-applied.
+// The node's prior state (from es1) is untouched - resuming replays only
+// what's new, so nothing already applied is lost or re-applied.
       expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('running')
       es2.emit('node_done', '{"node_id":"a"}', 3)
       expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('done')
 
       es2.emit('done', '{}', 4)
       expect(store.get('c').live?.streaming).toBe(false)
-      expect(es2.closed).toBe(true) // onDone tore it down cleanly
+ expect(es2.closed).toBe(true)// onDone tore it down cleanly
     } finally {
       vi.useRealTimers()
     }
@@ -1365,8 +1365,8 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
     const es = FakeEventSource.last!
     es.emit('done', '{}', 1)
     expect(store.get('c').live?.streaming).toBe(false)
-    // EventSource fires `error` too once the server closes the connection -
-    // must not be mistaken for a drop and reopen a new stream.
+// EventSource fires `error` too once the server closes the connection -
+// must not be mistaken for a drop and reopen a new stream.
     es.onerror?.()
     expect(FakeEventSource.last).toBe(es)
   })
@@ -1381,12 +1381,12 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
       let attempts = 0
       while (store.get('c').live?.streaming && attempts < 20) {
         last.onerror?.()
-        vi.advanceTimersByTime(30_000) // more than the max backoff delay
+ vi.advanceTimersByTime(30_000)// more than the max backoff delay
         last = FakeEventSource.last!
         attempts++
       }
 
-      expect(attempts).toBeLessThan(20) // it gave up rather than retrying forever
+ expect(attempts).toBeLessThan(20)// it gave up rather than retrying forever
       expect(store.get('c').live?.streaming).toBe(false)
       expect(store.get('c').error).toMatch(/lost connection/i)
     } finally {
@@ -1402,7 +1402,7 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
       'event: agent_token',
       'data: {"node_id":"a","run_id":"worker-r0","text":"partial answer"}',
       '',
-      // no `done` - the body simply ends here, simulating a mid-run drop.
+// no `done` - the body simply ends here, simulating a mid-run drop.
     ].join('\n')
     const encoder = new TextEncoder()
     const stream = new ReadableStream({ start(ctrl) { ctrl.enqueue(encoder.encode(dropped)); ctrl.close() } })
@@ -1411,14 +1411,14 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
 
     await store.submit('c', 'go')
 
-    // The turn is still live - handed off to the GET stream, not failed.
+// The turn is still live - handed off to the GET stream, not failed.
     expect(store.get('c').live?.streaming).toBe(true)
     const es = FakeEventSource.last!
-    expect(es.url).toBe('/api/v1/chats/c/stream') // no `id:` line was seen on this path - full replay
+ expect(es.url).toBe('/api/v1/chats/c/stream')// no `id:` line was seen on this path - full replay
 
-    // The replayed dag_plan (a fresh plan) resets the stale top-level text
-    // from the dropped body, same as any fresh dag_plan (#463) - no separate
-    // pre-handoff reset is needed.
+// The replayed dag_plan (a fresh plan) resets the stale top-level text
+// from the dropped body, same as any fresh dag_plan (#463) - no separate
+// pre-handoff reset is needed.
     es.emit('dag_plan', '{"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}', 1)
     expect(store.get('c').live?.text).toBe('')
     es.emit('node_done', '{"node_id":"a","output_preview":"final"}', 2)
@@ -1428,9 +1428,9 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
     expect(store.get('c').live?.streaming).toBe(false)
   })
 
-  // #1090 perf audit item 4: the POST body carries `id:` lines on the wire
-  // (same sseWriter as the GET stream) - a drop mid-run should resume past
-  // whatever was already applied, not replay the run from 0.
+// #1090 perf audit item 4: the POST body carries `id:` lines on the wire
+// (same sseWriter as the GET stream) - a drop mid-run should resume past
+// whatever was already applied, not replay the run from 0.
   it('a POST stream that drops after seeing `id:` lines hands off to the GET stream past the last id applied', async () => {
     const dropped = [
       'id: 1',
@@ -1441,7 +1441,7 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
       'event: node_start',
       'data: {"node_id":"a","agent":"researcher"}',
       '',
-      // dropped before node_done/done arrive
+// dropped before node_done/done arrive
     ].join('\n')
     const encoder = new TextEncoder()
     const stream = new ReadableStream({ start(ctrl) { ctrl.enqueue(encoder.encode(dropped)); ctrl.close() } })
@@ -1452,7 +1452,7 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
 
     const es = FakeEventSource.last!
     expect(es.url).toBe('/api/v1/chats/c/stream?last_event_id=2')
-    expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('running') // already applied, not lost
+ expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('running')// already applied, not lost
 
     es.emit('node_done', '{"node_id":"a","output_preview":"final"}', 3)
     expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('done')
@@ -1460,9 +1460,9 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
     expect(store.get('c').live?.streaming).toBe(false)
   })
 
-  // A drop can land between an `id:` line and its `data:` line - a real TCP
-  // boundary, not a corner case. Resuming past an id whose event was never
-  // actually dispatched would silently drop that event from the UI.
+// A drop can land between an `id:` line and its `data:` line - a real TCP
+// boundary, not a corner case. Resuming past an id whose event was never
+// actually dispatched would silently drop that event from the UI.
   it('a POST stream that drops right after an `id:` line (before its `data:` arrives) does not resume past the undelivered event', async () => {
     const dropped = [
       'id: 1',
@@ -1471,7 +1471,7 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
       '',
       'id: 2',
       'event: node_start',
-      // dropped here - id 2's `data:` line never arrives.
+// dropped here - id 2's `data:` line never arrives.
     ].join('\n')
     const encoder = new TextEncoder()
     const stream = new ReadableStream({ start(ctrl) { ctrl.enqueue(encoder.encode(dropped)); ctrl.close() } })
@@ -1481,7 +1481,7 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
     await store.submit('c', 'go')
 
     const es = FakeEventSource.last!
-    expect(es.url).toBe('/api/v1/chats/c/stream?last_event_id=1') // not 2 - that event was never applied
+ expect(es.url).toBe('/api/v1/chats/c/stream?last_event_id=1')// not 2 - that event was never applied
   })
 })
 
@@ -1510,16 +1510,16 @@ describe('ChatStore - resume from the last contiguous id on an id gap (#audit-6)
       es1.emit('node_start', '{"node_id":"a","agent":"researcher"}', 2)
       expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('running')
 
-      // id jumps from 2 to 5 - some events in between never arrived (the hub
-      // dropped this subscriber for falling behind).
+// id jumps from 2 to 5 - some events in between never arrived (the hub
+// dropped this subscriber for falling behind).
       es1.emit('node_done', '{"node_id":"a"}', 5)
 
-      // The gapped event must not be applied, and the stream must reconnect
-      // (bounded backoff, same as a connection drop) from the last
-      // contiguous id (2), not from the jump.
+// The gapped event must not be applied, and the stream must reconnect
+// (bounded backoff, same as a connection drop) from the last
+// contiguous id (2), not from the jump.
       expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('running')
       expect(es1.closed).toBe(true)
-      expect(FakeEventSource.last).toBe(es1) // no immediate hammer
+ expect(FakeEventSource.last).toBe(es1)// no immediate hammer
       vi.advanceTimersByTime(999)
       expect(FakeEventSource.last).toBe(es1)
       vi.advanceTimersByTime(1)
@@ -1555,7 +1555,7 @@ describe('ChatStore.attach - a fresh attach has no cursor, replays from 0 (#1090
 
 // Issue #463: when a fresh dag_plan arrives on a LiveTurn that has accumulated
 // top-level content (from pre-DAG orchestrator narration or replays into an old
-// turn), the stale text/runs bleed into the new DAG scope.  The fix: onDagPlan
+// turn), the stale text/runs bleed into the new DAG scope. The fix: onDagPlan
 // also resets live.text and live.runs when creating a fresh DAG.
 describe('ChatStore - fresh dag_plan resets top-level accumulators (#463)', () => {
   let store: ChatStore
@@ -1570,16 +1570,16 @@ describe('ChatStore - fresh dag_plan resets top-level accumulators (#463)', () =
     store.attach('c')
     const es = FakeEventSource.last!
 
-    // Pre-planning phase: orchestrator emits top-level text (no DAG yet).
+// Pre-planning phase: orchestrator emits top-level text (no DAG yet).
     es.emit('agent_start', '{"run_id":"orchestrator","stage":"worker"}')
     es.emit('agent_token', '{"text":"PRE-DAG NARRATION"}')
     expect(store.get('c').live?.text).toBe('PRE-DAG NARRATION')
     expect(store.get('c').live?.runs).toHaveLength(1)
 
-    // FINALLY a dag_plan arrives - signals a fresh DAG for a new run.
+// FINALLY a dag_plan arrives - signals a fresh DAG for a new run.
     es.emit('dag_plan', '{"plan_id":"p-new","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}')
 
-    // #463: stale top-level content must be purged when replacing with a fresh DAG.
+// #463: stale top-level content must be purged when replacing with a fresh DAG.
     expect(store.get('c').live?.text).toBe('')
     expect(store.get('c').live?.runs).toEqual([])
   })
@@ -1593,10 +1593,10 @@ describe('ChatStore - attach on idle chat fires live turn (#463)', () => {
     store = new ChatStore()
   })
 
-  // #463 (part 2): when a run goes active on an already-open chat, the
-  // Chat.tsx useEffect fires attach - lifting any history turns into `live`
-  // and opening the /stream subscribe so events start flowing.  Without this
-  // path the chat box stays blank while the Running badge shows.
+// #463 (part 2): when a run goes active on an already-open chat, the
+// Chat.tsx useEffect fires attach - lifting any history turns into `live`
+// and opening the /stream subscribe so events start flowing. Without this
+// path the chat box stays blank while the Running badge shows.
   it('attach called on idle chat lifts history into live and starts streaming', () => {
     store.seed('c', [dagTurn('in_progress')])
     expect(store.get('c').live).toBeUndefined()
@@ -1605,7 +1605,7 @@ describe('ChatStore - attach on idle chat fires live turn (#463)', () => {
     const es = FakeEventSource.last!
     expect(es.url).toBe('/api/v1/chats/c/stream')
     expect(store.get('c').live?.streaming).toBe(true)
-    // The in-progress turn was lifted out of history into `live`.
+// The in-progress turn was lifted out of history into `live`.
     expect(store.get('c').turns).toHaveLength(0)
     expect(store.get('c').live?.userText).toBe('hi')
   })
@@ -1620,7 +1620,7 @@ describe('ChatStore - attach on idle chat fires live turn (#463)', () => {
     const dag = store.get('c').live?.dag
     expect(dag).toBeDefined()
     expect(dag?.nodeStates['a']?.status).toBe('queued')
-    expect(es.closed).toBe(false) // still streaming
+ expect(es.closed).toBe(false)// still streaming
   })
 })
 
@@ -1661,10 +1661,10 @@ describe('ChatStore.attach - seeds live from persisted output when the hub repla
     }
 
     store.seed('c', [done, running])
-    store.attach('c')  // no es.emit(...) at all - nothing is replayed
+ store.attach('c')// no es.emit(...) at all - nothing is replayed
 
     const s = store.get('c')
-    expect(s.turns).toEqual([done])           // earlier history is untouched
+ expect(s.turns).toEqual([done])// earlier history is untouched
     expect(s.live?.streaming).toBe(true)
     expect(s.live?.dag?.nodeStates['a']).toMatchObject({ status: 'done', outputPreview: 'node a result' })
     expect(s.live?.dag?.nodeStates['b']?.status).toBe('running')
@@ -1687,8 +1687,8 @@ describe('ChatStore.attach - rebuilds a finished turn\'s sub-run cards from repl
     store = new ChatStore()
   })
 
-  // One judge/revise round, every event server-timestamped, replayed onto a
-  // COMPLETED dag turn (not the in_progress fixture the other attach() tests use).
+// One judge/revise round, every event server-timestamped, replayed onto a
+// COMPLETED dag turn (not the in_progress fixture the other attach() tests use).
   function replayFinishedRound(es: FakeEventSource): void {
     es.emit('dag_plan', '{"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[],"started_at_ms":1000}')
     es.emit('node_start', '{"node_id":"a","agent":"researcher","started_at_ms":2000}')
@@ -1708,12 +1708,12 @@ describe('ChatStore.attach - rebuilds a finished turn\'s sub-run cards from repl
     store.seed('c', [dagTurn('completed')])
     store.attach('c')
     const es = FakeEventSource.last!
-    expect(es.url).toBe('/api/v1/chats/c/stream') // fresh replay from seq 0, same as the in-progress path
+ expect(es.url).toBe('/api/v1/chats/c/stream')// fresh replay from seq 0, same as the in-progress path
 
     replayFinishedRound(es)
 
     const s = store.get('c')
-    expect(s.live?.streaming).toBe(false) // done fired - it's history again, not a live run
+ expect(s.live?.streaming).toBe(false)// done fired - it's history again, not a live run
     const runs = s.live?.dag?.nodeRuns['a'] ?? []
     expect(runs.map(r => r.stage)).toEqual(['worker', 'judge', 'revise', 'judge'])
     expect(runs.every(r => r.done)).toBe(true)
@@ -1735,8 +1735,8 @@ describe('ChatStore.attach - rebuilds a finished turn\'s sub-run cards from repl
       }
     }
 
-    const dagA = loadOnce(10_000_000_000) // first page open
-    const dagB = loadOnce(20_000_000_000) // reload, hours later
+ const dagA = loadOnce(10_000_000_000)// first page open
+ const dagB = loadOnce(20_000_000_000)// reload, hours later
 
     const runsA = dagA.nodeRuns['a'].map(r => ({ runId: r.runId, durationMs: r.durationMs }))
     const runsB = dagB.nodeRuns['a'].map(r => ({ runId: r.runId, durationMs: r.durationMs }))
@@ -1771,7 +1771,7 @@ describe('ChatStore - submit already produces clean turns (#463)', () => {
     expect(store.get('c').live?.text).toBe('OLD ANSWER')
     expect(store.get('c').live?.streaming).toBe(false)
 
-    // Next submit: archive GET + fresh LiveTurn.  Stale text must not carry forward.
+// Next submit: archive GET + fresh LiveTurn. Stale text must not carry forward.
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ turns: [] }), { status: 200 }))
     const sseNew = [
       'event: agent_token',

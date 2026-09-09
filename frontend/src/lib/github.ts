@@ -22,6 +22,6 @@ export function parseGithubRef(c: ChatSummary): GithubRef | undefined {
   if (!c.github_url) return undefined
   const m = c.github_url.match(GITHUB_URL_RE)
   if (!m) return undefined
-  const repo = c.github_repo ?? c.github_url.replace(/^https?:\/\/github\.com\//, '').split('/').slice(0, 2).join('/')
+ const repo = c.github_repo ?? c.github_url.replace(/^https?:\/\/github\.com\//, '').split('/').slice(0, 2).join('/')
   return { repo, kind: m[1] === 'pull' ? 'pr' : 'issue', number: Number(m[2]) }
 }

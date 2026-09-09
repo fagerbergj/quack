@@ -44,14 +44,14 @@ describe('ChatList mobile drawer a11y', () => {
 
     const { rerender } = render(<ChatList {...baseProps(onCloseMobile)} open={true} />)
     await waitFor(() => expect(screen.getByRole('dialog', { name: 'Chat list' })).toBeTruthy())
-    // Opening moves focus into the panel - the first focusable in it is "New Chat".
+// Opening moves focus into the panel - the first focusable in it is "New Chat".
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'New Chat' }))
 
     await user.keyboard('{Escape}')
     expect(onCloseMobile).toHaveBeenCalled()
 
-    // onCloseMobile is a spy here (doesn't flip real state) - drive the actual
-    // close the caller would perform, so the effect's cleanup (focus-restore) runs.
+// onCloseMobile is a spy here (doesn't flip real state) - drive the actual
+// close the caller would perform, so the effect's cleanup (focus-restore) runs.
     rerender(<ChatList {...baseProps(onCloseMobile)} open={false} />)
     expect(document.activeElement).toBe(trigger)
     trigger.remove()

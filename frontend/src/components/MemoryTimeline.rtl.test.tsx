@@ -16,9 +16,9 @@ function mem(id: string, timestamp: string): Memory {
 // entirely rather than render repeating, interleaved "Today...Older...Today".
 describe('MemoryTimeline grouping (#1266)', () => {
   const nonTimeOrderedMemories = [
-    mem('a', '2026-02-10T09:00:00Z'), // Older
-    mem('b', '2026-08-06T10:00:00Z'), // Today
-    mem('c', '2026-07-20T12:00:00Z'), // This month
+ mem('a', '2026-02-10T09:00:00Z'),// Older
+ mem('b', '2026-08-06T10:00:00Z'),// Today
+ mem('c', '2026-07-20T12:00:00Z'),// This month
   ]
   const now = new Date('2026-08-06T12:00:00Z').getTime()
 

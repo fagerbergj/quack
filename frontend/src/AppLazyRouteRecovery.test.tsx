@@ -61,8 +61,8 @@ describe('App - a failed lazy route must not stay failed after navigating away (
 
     navigate('/ext/usage')
 
-    // The stale error screen from the unrelated Memory failure must be gone -
-    // ExtensionHost gets its own fresh mount, not the same failed instance.
+// The stale error screen from the unrelated Memory failure must be gone -
+// ExtensionHost gets its own fresh mount, not the same failed instance.
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Reload' })).toBeNull())
     await waitFor(() => expect(document.querySelector('iframe')).toBeTruthy())
   })

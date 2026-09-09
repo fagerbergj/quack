@@ -50,7 +50,7 @@ export const EditFileLong: Story = render({
   args: {
     path: 'src/big.ts',
     old: Array.from({ length: 30 }, (_, i) => `const before_${i} = ${i}`).join('\n'),
-    new: Array.from({ length: 30 }, (_, i) => `const after_${i} = ${i * 2}`).join('\n'),
+ new: Array.from({ length: 30 }, (_, i) => `const after_${i} = ${i* 2}`).join('\n'),
   },
   result: { replacements: 1 },
 })
@@ -144,15 +144,15 @@ export const WebSearch: Story = render({
   args: { query: 'best time to visit Dublin' },
   result: {
     results: [
-      { title: 'Dublin Climate Guide', url: 'https://example.com/climate', snippet: 'Mild year-round; May–September is warmest.' },
-      { title: 'Best Time to Visit Ireland', url: 'https://example.com/ireland', snippet: 'Shoulder seasons avoid the summer crowds.' },
+ { title: 'Dublin Climate Guide', url: 'https://example.com/climate', snippet: 'Mild year-round; May–September is warmest.' },
+ { title: 'Best Time to Visit Ireland', url: 'https://example.com/ireland', snippet: 'Shoulder seasons avoid the summer crowds.' },
     ],
   },
 })
 
 export const WebFetch: Story = render({
   callId: 'c', name: 'web_fetch', done: true,
-  args: { url: 'https://example.com/climate' },
+ args: { url: 'https://example.com/climate' },
   result: 'Dublin has a temperate maritime climate. Summers are mild, winters cool and damp.',
 })
 
@@ -164,14 +164,14 @@ export const ListDir: Story = render({
 
 export const Glob: Story = render({
   callId: 'c', name: 'glob', done: true,
-  args: { pattern: '**/*_test.go', path: 'internal/dag' },
+ args: { pattern: '**/*_test.go', path: 'internal/dag' },
   result: { paths: ['internal/dag/plan_test.go', 'internal/dag/graph_test.go'], truncated: false, cwd: '.' },
 })
 
 export const Grep: Story = render({
   callId: 'c', name: 'grep', done: true,
-  args: { pattern: 'TODO', glob: '*.go' },
-  result: { matches: [{ path: 'internal/dag/plan.go', line: 42, text: '// TODO: validate cycles' }], truncated: false, cwd: '.' },
+ args: { pattern: 'TODO', glob: '*.go' },
+ result: { matches: [{ path: 'internal/dag/plan.go', line: 42, text: '// TODO: validate cycles' }], truncated: false, cwd: '.' },
 })
 
 export const AskAdvisor: Story = render({

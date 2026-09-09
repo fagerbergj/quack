@@ -5,7 +5,7 @@ export type AttachmentItem = { file: File; url: string }
 
 export type AttachmentPreview = { url: string; mime: string; name: string }
 
-// ImageThumbnail (#1138) is the one place an attached image renders: a
+// ImageThumbnail is the one place an attached image renders: a
 // bounded, object-fit thumbnail that opens the full-size image in a native
 // <dialog> on click - shared by the composer's staged-file strip and the
 // message-bubble preview so both look and behave the same way.
@@ -28,8 +28,8 @@ function ImageThumbnail({
       >
         <img src={src} alt={alt} className="h-full w-full object-cover" />
       </button>
-      {/* Native <dialog> per the epic's dialogs-become-sheets guidance - full-
-          viewport backdrop, Esc/backdrop-click close for free. */}
+ {/* Native <dialog> per the epic's dialogs-become-sheets guidance - full-
+ viewport backdrop, Esc/backdrop-click close for free.*/}
       <dialog
         ref={dialogRef}
         aria-label={alt}
@@ -55,7 +55,7 @@ function ImageThumbnail({
 /** Attachments shown in the user message bubble: real thumbnails for images
     (click to view full size), a text chip for anything else. Always visible -
     no longer hidden behind a collapsed <details>, since an image the user
-    can't see defeats the point (#1138). */
+ can't see defeats the point .*/
 export function AttachmentPreviews({ previews }: { previews: AttachmentPreview[] }) {
   if (!previews.length) return null
   const images = previews.filter(p => p.mime.startsWith('image/'))
@@ -85,7 +85,7 @@ export function AttachmentPreviews({ previews }: { previews: AttachmentPreview[]
   )
 }
 
-/** Thumbnail strip rendered above the textarea while files are staged for send. */
+/** Thumbnail strip rendered above the textarea while files are staged for send.*/
 export function AttachmentStrip({
   attachments,
   onRemove,

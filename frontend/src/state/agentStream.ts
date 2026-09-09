@@ -19,10 +19,10 @@ interface AgentStartPayload {
   agent: string
   stage: Stage
   round?: number
-  // Server wall-clock (epoch ms) the run began - anchors the sub-step timer
-  // across reconnect/replay, mirroring node_start's started_at_ms.
+// Server wall-clock (epoch ms) the run began - anchors the sub-step timer
+// across reconnect/replay, mirroring node_start's started_at_ms.
   startedAtMs?: number
-  // Cross-references into the OTel trace for this run; absent when otel is disabled.
+// Cross-references into the OTel trace for this run; absent when otel is disabled.
   traceId?: string
 }
 
@@ -41,14 +41,14 @@ interface AgentCompletePayload {
   finishReason?: string
   model?: string
   totalTokens?: number
-  // contextTokens is the LAST measured prompt-token count of this run (not
-  // summed across tool round trips like totalTokens) - the context meter's
-  // live "used" reading.
+// contextTokens is the LAST measured prompt-token count of this run (not
+// summed across tool round trips like totalTokens) - the context meter's
+// live "used" reading.
   contextTokens?: number
-  // finishedAtMs is the server wall-clock (epoch ms) the run closed - lets a
-  // replayed/reconnected client compute this run's duration from two server
-  // timestamps instead of "now" at replay time. Absent from an
-  // older-server event; callers fall back to Date.now() then.
+// finishedAtMs is the server wall-clock (epoch ms) the run closed - lets a
+// replayed/reconnected client compute this run's duration from two server
+// timestamps instead of "now" at replay time. Absent from an
+// older-server event; callers fall back to Date.now() then.
   finishedAtMs?: number
 }
 
@@ -58,11 +58,11 @@ export interface DagNodeDef {
   agent: string
   task: string
   depends_on: string[]
-  // context_window is the assigned agent's configured limit (0/absent if
-  // unset) - the context meter's static ceiling.
+// context_window is the assigned agent's configured limit (0/absent if
+// unset) - the context meter's static ceiling.
   context_window?: number
-  // artifact is the node's declared output artifact kind - the record name
-  // its output is saved as on gate pass; absent when the node declares none.
+// artifact is the node's declared output artifact kind - the record name
+// its output is saved as on gate pass; absent when the node declares none.
   artifact?: string
 }
 
@@ -83,8 +83,8 @@ export interface NodeDoneMeta {
   contextTokens?: number
   finishReason?: string
   durationMs?: number
-  // finishedAtMs is the server wall-clock (epoch ms) the node finished - see
-  // AgentCompletePayload.finishedAtMs.
+// finishedAtMs is the server wall-clock (epoch ms) the node finished - see
+// AgentCompletePayload.finishedAtMs.
   finishedAtMs?: number
   judgeRounds?: number
   judgeFinalScore?: number
@@ -109,8 +109,8 @@ interface DagPlanPayload {
   planId: string
   nodes: DagNodeDef[]
   edges: DagEdgeDef[]
-  startedAtMs?: number // server start time, for a reconnect-stable total timer
-  // Cross-references into the OTel trace for this plan; absent when otel is disabled.
+ startedAtMs?: number// server start time, for a reconnect-stable total timer
+// Cross-references into the OTel trace for this plan; absent when otel is disabled.
   traceId?: string
 }
 
@@ -128,7 +128,7 @@ interface DeliveryResultPayload {
 }
 
 // ArtifactRevisionPayload mirrors internal/stream.ArtifactRevisionData - one
-// artifact revision written by a judge/worker round (#1092).
+// artifact revision written by a judge/worker round .
 export interface ArtifactRevisionPayload {
   id: string
   revision: number
@@ -154,7 +154,7 @@ export interface ArtifactJudgeRoundPayload {
 }
 
 export interface AgentStreamHandlers {
-  // Agent-run lifecycle + typed activity (flat; each carries node_id + run_id).
+// Agent-run lifecycle + typed activity (flat; each carries node_id + run_id).
   onAgentStart?: (d: AgentStartPayload) => void
   onAgentThinking?: (runId: string, text: string, nodeId?: string) => void
   onAgentToolCall?: (runId: string, callId: string, name: string, args: Record<string, unknown>, nodeId?: string) => void
@@ -165,39 +165,39 @@ export interface AgentStreamHandlers {
   onChatTitle?: (title: string) => void
   onError?: (msg: string) => void
   onDone?: () => void
-  // response_created is the very first event of a run, naming the turn
-  // (response_id) so the client can cancel it via
-  // PUT /chats/{chat_id}/responses/{response_id}/status.
+// response_created is the very first event of a run, naming the turn
+// (response_id) so the client can cancel it via
+// PUT /chats/{chat_id}/responses/{response_id}/status.
   onResponseCreated?: (responseId: string) => void
-  // DAG lifecycle
+// DAG lifecycle
   onDagPlan?: (plan: DagPlanPayload) => void
   onNodeQueued?: (nodeId: string) => void
   onNodeStart?: (nodeId: string, agent: string, startedAtMs?: number, traceId?: string) => void
   onNodeDone?: (nodeId: string, preview: string, meta: NodeDoneMeta) => void
-  // finishedAtMs: see AgentCompletePayload.finishedAtMs.
+// finishedAtMs: see AgentCompletePayload.finishedAtMs.
   onNodeFailed?: (nodeId: string, error: string, finishedAtMs?: number) => void
-  // The node was stopped by the user (PUT node status {"status":"cancelled"}) -
-  // rendered neutrally ("stopped"), distinct from a real gate failure.
-  // finishedAtMs: see AgentCompletePayload.finishedAtMs.
+// The node was stopped by the user (PUT node status {"status":"cancelled"}) -
+// rendered neutrally ("stopped"), distinct from a real gate failure.
+// finishedAtMs: see AgentCompletePayload.finishedAtMs.
   onNodeCancelled?: (nodeId: string, finishedAtMs?: number) => void
-  // The node was suspended by the user (PUT node status {"status":"paused"}) -
-  // keeps its accumulated work; resumable via {"status":"running"}.
+// The node was suspended by the user (PUT node status {"status":"paused"}) -
+// keeps its accumulated work; resumable via {"status":"running"}.
   onNodePaused?: (nodeId: string) => void
-  // One staged item's actual delivery outcome - not yet rendered in the UI;
-  // wired so the event is parsed rather than silently dropped (see M13/OTel
-  // observability: this is the phantom-success visibility signal).
+// One staged item's actual delivery outcome - not yet rendered in the UI;
+// wired so the event is parsed rather than silently dropped (see M13/OTel
+// observability: this is the phantom-success visibility signal).
   onDeliveryResult?: (d: DeliveryResultPayload) => void
   onNodeSteered?: (nodeId: string, guidance: string) => void
-  // A node paused to ask the user a question (mid-node HITL). The next message
-  // sent on the chat is delivered to the node as the answer.
+// A node paused to ask the user a question (mid-node HITL). The next message
+// sent on the chat is delivered to the node as the answer.
   onNodeNeedsInput?: (nodeId: string, interruptId: string, message: string) => void
-  // A node's worker session was compacted mid-round by adk's own runner-level
-  // compaction (#1185 follow-up).
+// A node's worker session was compacted mid-round by adk's own runner-level
+// compaction .
   onCompaction?: (d: CompactionPayload) => void
-  // One artifact revision written by a round - fires before the round's own
-  // artifact_judge_round event (#1092).
+// One artifact revision written by a round - fires before the round's own
+// artifact_judge_round event .
   onArtifactRevision?: (d: ArtifactRevisionPayload) => void
-  // The judge_round record a round wrote.
+// The judge_round record a round wrote.
   onArtifactJudgeRound?: (d: ArtifactJudgeRoundPayload) => void
 }
 
@@ -309,7 +309,7 @@ function dispatchAgentEvent(
     case 'response_created':
       if (hasStringField(parsed, 'response_id')) handlers.onResponseCreated?.(parsed.response_id)
       return true
-    // DAG lifecycle events (M3)
+// DAG lifecycle events (M3)
     case 'dag_plan': {
       const p = parsed as { plan_id?: string; nodes?: unknown[]; edges?: unknown[]; started_at_ms?: number; trace_id?: string }
       handlers.onDagPlan?.({
@@ -478,10 +478,10 @@ export async function readAgentStream(
   let currentEvent = 'message'
   let sawDone = false
   let lastEventId = 0
-  // pendingId is the `id:` line's value for the event currently being
-  // parsed; it only becomes lastEventId once that event's `data:` line
-  // actually dispatches, so a drop between the two (a real TCP boundary,
-  // not a corner case) can't advance past an event never applied.
+// pendingId is the `id:` line's value for the event currently being
+// parsed; it only becomes lastEventId once that event's `data:` line
+// actually dispatches, so a drop between the two (a real TCP boundary,
+// not a corner case) can't advance past an event never applied.
   let pendingId = 0
   while (true) {
     let chunk: ReadableStreamReadResult<Uint8Array>

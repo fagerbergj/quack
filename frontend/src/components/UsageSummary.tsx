@@ -2,10 +2,10 @@ import type { Usage } from '../generated'
 import { cacheRate } from '../state/chatStore'
 
 export interface UsageSummaryProps {
-  // The current/most-recent turn's model chip(s) - see chatStore.sessionModels.
+// The current/most-recent turn's model chip(s) - see chatStore.sessionModels.
   models: string[]
-  // Chat-wide token aggregate (ChatDetail.usage) - a load-time snapshot, not
-  // updated live while a run streams.
+// Chat-wide token aggregate (ChatDetail.usage) - a load-time snapshot, not
+// updated live while a run streams.
   usage?: Usage
 }
 

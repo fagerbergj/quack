@@ -26,14 +26,14 @@ const GH_ISSUE = chat({
   title: 'Issue chat',
   status: 'running',
   github_repo: 'acme/widget',
-  github_url: 'https://github.com/acme/widget/issues/249',
+ github_url: 'https://github.com/acme/widget/issues/249',
 })
 const GH_PR = chat({
   id: 'gh-pr-1',
   title: 'PR chat',
   status: 'failed',
   github_repo: 'acme/other',
-  github_url: 'https://github.com/acme/other/pull/257',
+ github_url: 'https://github.com/acme/other/pull/257',
 })
 const CHATS: ChatSummary[] = [DIRECT, GH_ISSUE, GH_PR]
 
@@ -73,9 +73,9 @@ describe('computeFacets', () => {
     expect(keys).toContain('origin')
   })
 
-  // #417: queued (admitted but waiting behind max_active_runs) is a distinct
-  // ChatStatus from running - it must appear in the status facet with its own
-  // label, not fold into or get dropped alongside running.
+// #417: queued (admitted but waiting behind max_active_runs) is a distinct
+// ChatStatus from running - it must appear in the status facet with its own
+// label, not fold into or get dropped alongside running.
   it('labels a queued chat distinctly from a running one', () => {
     const facets = computeFacets([DIRECT, chat({ id: 'q1', status: 'queued' })])
     const byKey = Object.fromEntries(facets.map(f => [f.key, f]))
@@ -83,9 +83,9 @@ describe('computeFacets', () => {
     expect(byValue.queued).toBe('Queued')
   })
 
-  // origin.labels dimensions are extension-supplied and data-driven - a
-  // "tags" dimension becomes its own facet, keyed label:tags so it can never
-  // collide with the fixed facet keys (origin/status/repo/type).
+// origin.labels dimensions are extension-supplied and data-driven - a
+// "tags" dimension becomes its own facet, keyed label:tags so it can never
+// collide with the fixed facet keys (origin/status/repo/type).
   it('derives a facet per origin.labels dimension, using display text and per-value counts', () => {
     const facets = computeFacets(EXT_CHATS)
     const byKey = Object.fromEntries(facets.map(f => [f.key, f]))

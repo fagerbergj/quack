@@ -44,13 +44,13 @@ describe('AttachmentPreviews', () => {
     render(<AttachmentPreviews previews={[{ url: 'blob:1', mime: 'image/png', name: 'cat.png' }]} />)
     await user.click(screen.getByRole('button', { name: 'View cat.png full size' }))
     const dialog = document.querySelector('dialog')!
-    dialog.setAttribute('open', '') // stubbed showModal already does this; explicit for clarity
+ dialog.setAttribute('open', '')// stubbed showModal already does this; explicit for clarity
 
-    // Clicking the full-size image (a child of the dialog) must not close it.
+// Clicking the full-size image (a child of the dialog) must not close it.
     await user.click(within(dialog).getByRole('img', { name: 'cat.png' }))
     expect(dialog.hasAttribute('open')).toBe(true)
 
-    // Clicking the dialog's own backdrop area (the <dialog> element itself) closes it.
+// Clicking the dialog's own backdrop area (the <dialog> element itself) closes it.
     await user.click(dialog)
     expect(dialog.hasAttribute('open')).toBe(false)
   })

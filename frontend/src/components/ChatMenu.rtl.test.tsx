@@ -52,8 +52,8 @@ describe('ChatMenu usage row', () => {
     expect(btn.className).toContain('min-h-[44px]')
   })
 
-  // #1314 review: same floor as the trigger, on every item inside the menu -
-  // a class regression here left compact-width rows short of 44px.
+// #1314 review: same floor as the trigger, on every item inside the menu -
+// a class regression here left compact-width rows short of 44px.
   it('pins the 44px floor on every menu item at compact width', async () => {
     const user = userEvent.setup()
     render(<ChatMenu chatId="c1" />)

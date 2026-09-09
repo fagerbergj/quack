@@ -29,19 +29,19 @@ function NodeMenu({
   canQueue: boolean
   canEdit: boolean
   onOpenPopup: () => void
-  // Present only for a real chat (gates the Artifacts item) - see DagNode's
-  // own chatId doc. A terminal node still needs this menu for its outputs,
-  // so unlike the rest of this menu's items, it isn't gated by node status.
+// Present only for a real chat (gates the Artifacts item) - see DagNode's
+// own chatId doc. A terminal node still needs this menu for its outputs,
+// so unlike the rest of this menu's items, it isn't gated by node status.
   onOpenArtifacts?: () => void
-  // Same gating as onOpenArtifacts (epic #1255 P4) - a terminal node's
-  // received memories are still worth reviewing after the fact.
+// Same gating as onOpenArtifacts (epic #1255 P4) - a terminal node's
+// received memories are still worth reviewing after the fact.
   onOpenMemories?: () => void
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
-  // The items unmount on close, so without an explicit return a keyboard or
-  // screen-reader user is dropped on <body> (APG menu button pattern).
+// The items unmount on close, so without an explicit return a keyboard or
+// screen-reader user is dropped on <body> (APG menu button pattern).
   const close = () => { setOpen(false); btnRef.current?.focus() }
 
   useEffect(() => {
@@ -57,14 +57,14 @@ function NodeMenu({
   }, [open])
 
   const terminal = status === 'done' || status === 'failed' || status === 'cancelled'
-  // A terminal node has nothing left to control, but its output artifacts are
-  // still worth a menu - the whole point of viewing them is usually AFTER a
-  // node finishes. Only fully hide the menu when there's truly nothing in it.
+// A terminal node has nothing left to control, but its output artifacts are
+// still worth a menu - the whole point of viewing them is usually AFTER a
+// node finishes. Only fully hide the menu when there's truly nothing in it.
   if (terminal && !onOpenArtifacts && !onOpenMemories) return null
 
   const running = status === 'running'
-  // needs_input is the legacy DB/SSE spelling of paused/awaiting_input - both
-  // are "paused" for transition purposes (dag.CanTransition treats them alike).
+// needs_input is the legacy DB/SSE spelling of paused/awaiting_input - both
+// are "paused" for transition purposes (dag.CanTransition treats them alike).
   const paused = status === 'paused' || status === 'needs_input'
   const startable = !terminal && (paused || status === 'queued')
   const cancellable = !terminal && (running || startable)
@@ -72,9 +72,9 @@ function NodeMenu({
 
   return (
     <div ref={ref} className="relative shrink-0">
-      {/* Always visible (touch has no hover to reveal it) and a 44px target
+ {/* Always visible (touch has no hover to reveal it) and a 44px target
           that overlaps the header's padding via negative margins so the
-          row stays one line high. */}
+ row stays one line high.*/}
       <button
         ref={btnRef}
         onClick={() => setOpen(o => !o)}
@@ -192,7 +192,7 @@ const CONTEXT_DANGER_PCT = 95
 // recent worker/revise round's measured usage. Hidden until both are known.
 function ContextMeter({ used, limit }: { used: number; limit: number }) {
   if (limit <= 0 || used <= 0) return null
-  const pct = Math.min(100, Math.round((used / limit) * 100))
+ const pct = Math.min(100, Math.round((used / limit)* 100))
   const barColor = pct >= CONTEXT_DANGER_PCT ? 'bg-red-500 dark:bg-red-400'
     : pct >= CONTEXT_WARN_PCT ? 'bg-amber-500 dark:bg-amber-400'
     : 'bg-gray-400 dark:bg-gray-500'
@@ -233,10 +233,10 @@ function ContentPopup({ title, text, onClose }: { title: string; text: string; o
       </div>
       <div className="group/verdict relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
         <span className="block mb-2 text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">{title}</span>
-        {/* #746 item 7 - hidden until THIS block (not some unrelated
+ {/* #746 item 7 - hidden until THIS block (not some unrelated
             ancestor - a NAMED group, since the popup nests inside
             DagNode's own `.group` card) is hovered/focused, aligned to the
-            block's own px-5/py-4 padding rather than a separate header row. */}
+ block's own px-5/py-4 padding rather than a separate header row.*/}
         <span className="absolute top-4 right-5 opacity-0 group-hover/verdict:opacity-100 group-focus-within/verdict:opacity-100 transition-opacity">
           <CopyButton text={text} label={`Copy ${title.toLowerCase()}`} />
         </span>
@@ -298,17 +298,17 @@ const WorkerCard = memo(function WorkerCard({ runs, running }: { runs: AgentRun[
   const startedAt = runs.find(r => r.startedAt != null)?.startedAt
   const durationMs = running ? undefined : runs.reduce((sum, r) => sum + (r.durationMs ?? 0), 0)
   const timerRun: AgentRun = { ...runs[runs.length - 1], startedAt, durationMs, model, done: !running }
-  // #746 item 4: count only tool calls - a thinking trace isn't a "step" a
-  // reader can point to. A node with pure reasoning and no tool calls shows
-  // no count at all rather than a misleading "0 tool calls".
+// #746 item 4: count only tool calls - a thinking trace isn't a "step" a
+// reader can point to. A node with pure reasoning and no tool calls shows
+// no count at all rather than a misleading "0 tool calls".
   const toolCount = activity.filter(a => a.kind === 'tool').length
   return (
     <div className="border-t border-gray-100 dark:border-gray-700">
       <details open={running} className="not-prose">
         <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2">
-          {/* Tool-call count (grows live); "running" is already the node
+ {/* Tool-call count (grows live); "running" is already the node
               header's pulsing status dot + the timer - no separate spinner
-              dot here. */}
+ dot here.*/}
           {toolCount > 0 && (
             <span className="text-xs text-gray-500 dark:text-gray-400">
               {`${toolCount} tool call${toolCount === 1 ? '' : 's'}`}
@@ -402,12 +402,12 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
           <span className="text-[11px] font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wide">
             Quality check {run.round}
           </span>
-          {/* The pass bar is rendered only when the server sent it (older
-              events carry no envelope), never assumed. */}
+ {/* The pass bar is rendered only when the server sent it (older
+ events carry no envelope), never assumed.*/}
           {run.score != null && (
             <span className={`inline-flex items-center gap-0.5 text-[11px] font-medium ${run.passed ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
-              <Icon name={run.passed ? 'check' : 'close'} className="w-3 h-3" /> {(run.score * 100).toFixed(0)}%
-              {run.threshold != null && ` (needs ${(run.threshold * 100).toFixed(0)}%)`}
+ <Icon name={run.passed ? 'check' : 'close'} className="w-3 h-3" /> {(run.score* 100).toFixed(0)}%
+ {run.threshold != null && ` (needs ${(run.threshold* 100).toFixed(0)}%)`}
             </span>
           )}
           <RunModel run={run} />
@@ -419,8 +419,8 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
           </div>
         )}
       </details>
-      {/* Verdict collapses to one line, like ThinkBlock - full reasoning opens
-          in a popup, rendered as markdown (0.9.0 feedback). */}
+ {/* Verdict collapses to one line, like ThinkBlock - full reasoning opens
+ in a popup, rendered as markdown (0.9.0 feedback).*/}
       {run.done && run.feedback && run.feedback !== 'None' && (
         <div className="px-4 pt-0 pb-2">
           <CollapsedPreview label="Verdict" text={run.feedback} popupTitle={`Quality check ${run.round} verdict`} />
@@ -507,9 +507,9 @@ interface Props {
   runs: AgentRun[]
   answer: string
   isFinal: boolean
-  // Present only when the DAG belongs to a real chat (not, say, a Storybook
-  // fixture) - gates the Artifacts button, since the panel needs it to hit
-  // the REST artifacts API.
+// Present only when the DAG belongs to a real chat (not, say, a Storybook
+// fixture) - gates the Artifacts button, since the panel needs it to hit
+// the REST artifacts API.
   chatId?: string
   onCancel?: (nodeId: string) => void
   onPause?: (nodeId: string) => void
@@ -534,9 +534,9 @@ export const DagNode = memo(function DagNode({
 }: Props) {
   const running = state.status === 'running'
   const notStarted = state.status === 'queued'
-  // Retry (→ queued) is legal from done, failed, or cancelled - see dag.CanTransition.
+// Retry (→ queued) is legal from done, failed, or cancelled - see dag.CanTransition.
   const finished = state.status === 'done' || state.status === 'failed' || state.status === 'cancelled'
-  // The actively-streaming run is the last not-yet-done run while the node runs.
+// The actively-streaming run is the last not-yet-done run while the node runs.
   const activeIdx = running ? runs.map(r => r.done).lastIndexOf(false) : -1
   const [popupOpen, setPopupOpen] = useState(false)
   const [artifactsOpen, setArtifactsOpen] = useState(false)
@@ -546,18 +546,18 @@ export const DagNode = memo(function DagNode({
   const pauseLabel = isPaused ? pausedStatusLabel(state.status, state.pauseReason) : undefined
   const canAnswer = (state.status === 'needs_input' || state.pauseReason === 'awaiting_input') && !!onAnswerQuestion
 
-  // overflow-hidden clips the rounded corners, but it also clipped the kebab's
-  // menu to the card height - a short card at the foot of a chat lost every
-  // item past the first - so it lifts while the menu is open.
+// overflow-hidden clips the rounded corners, but it also clipped the kebab's
+// menu to the card height - a short card at the foot of a chat lost every
+// item past the first - so it lifts while the menu is open.
   return (
     <div className={`rounded-xl border shadow-sm overflow-hidden has-[[aria-expanded=true]]:overflow-visible ${
       isFinal
         ? 'border-indigo-200 dark:border-indigo-800 bg-white dark:bg-gray-800'
         : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'
     }`}>
-      {/* Node header: one line at every width - dot, name, badges, elapsed,
+ {/* Node header: one line at every width - dot, name, badges, elapsed,
           kebab. Below `medium` the secondary metadata group wraps onto its own
-          muted line (basis-full + order-last) instead of stacking the row. */}
+ muted line (basis-full + order-last) instead of stacking the row.*/}
       <div className="flex flex-wrap medium:flex-nowrap items-center gap-x-2 gap-y-1 px-4 py-3 border-b border-gray-100 dark:border-gray-700">
         <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 min-w-0 flex-1 truncate" title={agentLabel(node.agent)}>
           {agentLabel(node.agent)}
@@ -572,10 +572,10 @@ export const DagNode = memo(function DagNode({
             <Icon name="mail" className="w-3 h-3" /> steered{state.steers.length > 1 ? ` ×${state.steers.length}` : ''}
           </span>
         )}
-        {/* The named state leads the metadata group so that below `medium`
+ {/* The named state leads the metadata group so that below `medium`
             it wraps onto the muted second line with the model/tokens instead
             of squeezing the agent name off the first (a needs_input node
-            also carries the Answer button there). */}
+ also carries the Answer button there).*/}
         <div className="empty:hidden flex flex-wrap medium:flex-nowrap items-center gap-x-2 gap-y-0.5 basis-full order-last medium:basis-auto medium:order-none">
           <StatusDot status={state.status} label={pauseLabel} />
           {state.model && (
@@ -591,7 +591,7 @@ export const DagNode = memo(function DagNode({
           {state.judgeRounds != null && state.judgeRounds > 0 && state.judgePassed === false && (
             <span
               className="inline-flex items-center gap-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400"
-              title={`The quality check rejected this output after ${state.judgeRounds} round${state.judgeRounds === 1 ? '' : 's'}${state.judgeFinalScore != null ? ` (final score ${(state.judgeFinalScore * 100).toFixed(0)}%)` : ''} - shown without a passing check`}
+ title={`The quality check rejected this output after ${state.judgeRounds} round${state.judgeRounds === 1 ? '' : 's'}${state.judgeFinalScore != null ? ` (final score ${(state.judgeFinalScore* 100).toFixed(0)}%)` : ''} - shown without a passing check`}
             >
               <Icon name="warning" className="w-3 h-3" /> not checked
             </span>
@@ -617,8 +617,8 @@ export const DagNode = memo(function DagNode({
           )}
           <ContextMeter used={state.contextTokens ?? 0} limit={node.context_window ?? 0} />
         </div>
-        {/* A finished node shows the server-measured duration (reconnect-proof);
-            a running one ticks live from the server start time. */}
+ {/* A finished node shows the server-measured duration (reconnect-proof);
+ a running one ticks live from the server start time.*/}
         {(state.finishedAt != null && state.serverDurationMs != null) ? (
           <span className="shrink-0 text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">{fmtMs(state.serverDurationMs)}</span>
         ) : state.startedAt != null ? (
@@ -626,8 +626,8 @@ export const DagNode = memo(function DagNode({
             <LiveTimer startedAt={state.startedAt} finishedAt={state.finishedAt} />
           </span>
         ) : null}
-        {/* A node blocked on the user is the one state where the fix is the
-            primary action, so it is a filled button, not a kebab item. */}
+ {/* A node blocked on the user is the one state where the fix is the
+ primary action, so it is a filled button, not a kebab item.*/}
         {canAnswer && (
           <button
             type="button"
@@ -651,12 +651,12 @@ export const DagNode = memo(function DagNode({
         />
       </div>
 
-      {/* Node summary - click to open the popup (#384): the full prompt
+ {/* Node summary - click to open the popup (#384): the full prompt
           rendered as a chat-native turn, plus (on a live turn) the message
           queue / prompt editor / pending-question answer - one-click
           pause/resume/cancel live in the ⋮ menu above instead. Optimized for
           clean presentation, not information density - the full prompt is
-          always recoverable from the trace. */}
+ always recoverable from the trace.*/}
       <button
         onClick={() => setPopupOpen(true)}
         className="w-full text-left px-4 py-2 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/40 truncate"
@@ -676,11 +676,11 @@ export const DagNode = memo(function DagNode({
           onAnswerQuestion={onAnswerQuestion}
         />
       )}
-      {/* Three narrow fields, not the whole NodeState: DagNode is memoized
+ {/* Three narrow fields, not the whole NodeState: DagNode is memoized
           and the panel shouldn't re-render on every SSE event for the node
           (#1178). nodeError is the same value the red banner below renders
           (failed status), so a transient non-failure error never reads as
-          "the node failed" in an empty panel. */}
+ "the node failed" in an empty panel.*/}
       {artifactsOpen && chatId && (
         <ArtifactPanel
           chatId={chatId}
@@ -701,14 +701,14 @@ export const DagNode = memo(function DagNode({
         />
       )}
 
-      {/* Retry a finished node (failed or done) + its downstream, on a live turn */}
+ {/* Retry a finished node (failed or done) + its downstream, on a live turn*/}
       {finished && onRetry && (
         <RetryControl nodeId={node.id} onRetry={onRetry} />
       )}
 
-      {/* Per-run stage cards - consecutive worker runs (e.g. a deterministic-
+ {/* Per-run stage cards - consecutive worker runs (e.g. a deterministic-
           check retry continuation) merge into one activity feed rather than a
-          new boxed block; a judge-triggered revise keeps its own labeled card. */}
+ new boxed block; a judge-triggered revise keeps its own labeled card.*/}
       {groupWorkerRuns(runs, activeIdx).map(group => {
         const groupRunning = group.activeIdx >= 0
         switch (group.stage) {
@@ -718,17 +718,17 @@ export const DagNode = memo(function DagNode({
         }
       })}
 
-      {/* Vetted answer (below the stage cards, for every node) */}
+ {/* Vetted answer (below the stage cards, for every node)*/}
       {!isFinal && <NodeAnswer answer={answer} />}
 
-      {/* Failed state */}
+ {/* Failed state*/}
       {state.status === 'failed' && state.error && (
         <div className="px-4 py-2 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20">
           {state.error}
         </div>
       )}
 
-      {/* Stopped by the user (node_cancelled) - rendered neutrally, not as an error */}
+ {/* Stopped by the user (node_cancelled) - rendered neutrally, not as an error*/}
       {state.status === 'cancelled' && (
         <div className="px-4 py-2 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/40">
           Stopped by you

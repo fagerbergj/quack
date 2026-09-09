@@ -12,7 +12,7 @@ import type { AgentRun, Activity } from './messageParts'
 // (see ToolCallView.test.ts), so we render to HTML and check the load-bearing
 // shape: collapsed-by-default one-line previews (the popup itself only opens
 // on click, which needs a DOM - that's a Storybook play-function concern, see
-// DagNode.stories.tsx's *Popup stories), and the deterministic-retry merge.
+// DagNode.stories.tsx's*Popup stories), and the deterministic-retry merge.
 
 const node: DagNodeDef = { id: 'r1', agent: 'web-researcher', task: 'Research Dublin.', depends_on: [] }
 
@@ -25,7 +25,7 @@ const activity: Activity[] = [
 ]
 
 describe('DagNode - judge verdict collapses to a one-line preview (#385/#399 ethos)', () => {
-  const verdict = '**Mostly solid**, but add a source for the rainfall claim.'
+ const verdict = '**Mostly solid**, but add a source for the rainfall claim.'
   const out = html(
     { status: 'done', startedAt: 0, finishedAt: 1000 },
     [
@@ -36,8 +36,8 @@ describe('DagNode - judge verdict collapses to a one-line preview (#385/#399 eth
   )
 
   it('renders a clickable one-line "Verdict" preview, not standing prose', () => {
-    expect(out).toMatch(/<button type="button"[^>]*><span class="italic shrink-0">Verdict<\/span>/)
-    expect(out).toContain('Mostly solid, but add a source for the rainfall claim.') // markup stripped, not rendered
+ expect(out).toMatch(/<button type="button"[^>]*><span class="italic shrink-0">Verdict<\/span>/)
+ expect(out).toContain('Mostly solid, but add a source for the rainfall claim.')// markup stripped, not rendered
   })
 
   it('does not render the verdict as markdown inline (that only happens in the popup, on click)', () => {
@@ -47,14 +47,14 @@ describe('DagNode - judge verdict collapses to a one-line preview (#385/#399 eth
 })
 
 describe('DagNode - answer collapses to a one-line preview (#385/#399 ethos)', () => {
-  const answer = '## Heading\n\nVisit in **May**.\n\n- one\n- two'
+ const answer = '## Heading\n\nVisit in**May**.\n\n- one\n- two'
   const out = html({ status: 'done', startedAt: 0, finishedAt: 1000 }, [
     { runId: 'w', agent: 'web-researcher', stage: 'worker', done: true, activity },
   ], answer)
 
   it('renders a clickable one-line "answer" preview', () => {
     expect(out).toContain('<span class="shrink-0">answer</span>')
-    expect(out).toContain('Heading Visit in May. one two') // previewLine flattens whitespace and strips markup
+ expect(out).toContain('Heading Visit in May. one two')// previewLine flattens whitespace and strips markup
   })
 
   it('omits the answer row on the FINAL node - its answer is the turn bubble below the DAG', () => {
@@ -139,7 +139,7 @@ describe('DagNode - judge verdict popup copy button (#426)', () => {
   })
 
   it('copies the full verdict text, not something else', () => {
-    // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.assign(navigator, { clipboard: { writeText } })
@@ -244,7 +244,7 @@ describe('DagNode - verb enablement per status (#962)', () => {
   })
 
   function openMenuLabels(status: NodeState['status']): string[] {
-    // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     host = document.createElement('div')
     document.body.appendChild(host)
@@ -256,7 +256,7 @@ describe('DagNode - verb enablement per status (#962)', () => {
       }))
     })
     const toggle = Array.from(host.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Node actions')
-    if (!toggle) return [] // no menu at all - terminal status
+ if (!toggle) return []// no menu at all - terminal status
     act(() => { toggle.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
     return Array.from(host.querySelectorAll('[role="menuitem"]')).map(b => b.textContent ?? '')
   }
@@ -307,9 +307,9 @@ describe('DagNode - context meter', () => {
   })
 
   it('colors the bar amber past 80% and red past 95% of the limit', () => {
-    expect(meterHtml(220_000)).toContain('bg-amber-500') // 84%
-    expect(meterHtml(255_000)).toContain('bg-red-500') // 97%
-    expect(meterHtml(50_000)).not.toContain('bg-amber-500') // 19%, plain
+ expect(meterHtml(220_000)).toContain('bg-amber-500')// 84%
+ expect(meterHtml(255_000)).toContain('bg-red-500')// 97%
+ expect(meterHtml(50_000)).not.toContain('bg-amber-500')// 19%, plain
     expect(meterHtml(50_000)).not.toContain('bg-red-500')
   })
 
@@ -343,7 +343,7 @@ describe('DagNode - queued-message badge counts only parked (undelivered) messag
       { id: 'm1', text: 'delivered live', status: 'forwarded', delivered: true, created_at: '' },
       { id: 'm2', text: 'still parked', status: 'queued', delivered: false, created_at: '' },
     ])
-    expect(out).toContain('</svg> 1</span>') // badge count next to the mail icon
+ expect(out).toContain('</svg> 1</span>')// badge count next to the mail icon
     expect(out).toContain('delivers when the current round ends')
   })
 })

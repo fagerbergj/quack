@@ -17,7 +17,7 @@ function renderHtml(text: string, streaming = false): string {
   const host = document.createElement('div')
   document.body.appendChild(host)
   const root = createRoot(host)
-  // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   act(() => { root.render(createElement(AssistantText, { text, streaming })) })
   const html = host.innerHTML
@@ -32,7 +32,7 @@ function renderHtml(text: string, streaming = false): string {
 // production, where FrozenAssistantDocument and AssistantDocument are
 // siblings inside AssistantText's single wrapping div, not two divs.
 function splitHtml(text: string, cut: number): string {
-  const unwrap = (html: string) => html.replace(/^<div class="prose[^"]*">/, '').replace(/<\/div>$/, '')
+ const unwrap = (html: string) => html.replace(/^<div class="prose[^"]*">/, '').replace(/<\/div>$/, '')
   return `<div class="prose prose-sm dark:prose-invert max-w-[70ch] break-words">`
     + unwrap(renderHtml(text.slice(0, cut))) + unwrap(renderHtml(text.slice(cut))) + `</div>`
 }
@@ -53,7 +53,7 @@ function streamThenFinish(full: string, chunk = 40): string {
   const host = document.createElement('div')
   document.body.appendChild(host)
   const root = createRoot(host)
-  // @ts-expect-error react act environment flag
+// @ts-expect-error react act environment flag
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   let text = ''
   act(() => { root.render(createElement(AssistantText, { text, streaming: true })) })
@@ -73,8 +73,8 @@ describe('AssistantText split boundary safety', () => {
     const text = 'See note.[^1]\n\n[^1]: First paragraph of note.\n\n    Second paragraph of note.\n\nMore text.\n'
     const innerBlank = text.indexOf('First paragraph of note.') + 'First paragraph of note.'.length
     const idx = lastSafeSplitOffset(text, innerBlank + 2)
-    // Must not land inside the footnote definition - either falls back
-    // before it starts, or refuses to split at all.
+// Must not land inside the footnote definition - either falls back
+// before it starts, or refuses to split at all.
     expect(idx).toBeLessThanOrEqual(text.indexOf('[^1]:'))
 
     expect(() => streamThenFinish(text)).not.toThrow()
@@ -89,36 +89,36 @@ describe('AssistantText split boundary safety', () => {
 
     expect(() => streamThenFinish(text)).not.toThrow()
     expect(streamThenFinish(text)).toBe(renderHtml(text, false))
-    // The final, non-split render keeps it as ONE code block (the blank
-    // line is content, not a boundary).
+// The final, non-split render keeps it as ONE code block (the blank
+// line is content, not a boundary).
     expect(renderHtml(text, false).match(/<pre>/g)?.length).toBe(1)
   })
 
-  // A loose list's item boundary (a "- item2" at the SAME indentation, not a
-  // continuation of the prior item) is NOT caught by the indented-lazy-
-  // continuation guard - splitting there mid-stream renders it as two
-  // adjacent <ul>s instead of one two-item list. Accepted: it self-heals the
-  // moment streaming ends (asserted below), so it's a transient visual
-  // quirk, not a data-loss or throw. Full container-nesting tracking to
-  // avoid it is not worth the complexity for a self-correcting mid-stream
-  // artifact - see AgentParts.tsx anchors/ids note for the same tradeoff.
+// A loose list's item boundary (a "- item2" at the SAME indentation, not a
+// continuation of the prior item) is NOT caught by the indented-lazy-
+// continuation guard - splitting there mid-stream renders it as two
+// adjacent <ul>s instead of one two-item list. Accepted: it self-heals the
+// moment streaming ends (asserted below), so it's a transient visual
+// quirk, not a data-loss or throw. Full container-nesting tracking to
+// avoid it is not worth the complexity for a self-correcting mid-stream
+// artifact - see AgentParts.tsx anchors/ids note for the same tradeoff.
   it('a loose list split at an item boundary is a transient visual artifact that heals once streaming ends', () => {
     const text = 'Intro.\n\n- item one\n\n  continuation paragraph within same item\n\n- item two\n\nOutro.\n'
     const itemBoundary = text.indexOf('same item') + 'same item'.length
     const idx = lastSafeSplitOffset(text, itemBoundary + 2)
-    expect(idx).toBeGreaterThan(0) // does split here - the known limitation
+ expect(idx).toBeGreaterThan(0)// does split here - the known limitation
     expect(() => splitHtml(text, idx)).not.toThrow()
 
     expect(() => streamThenFinish(text)).not.toThrow()
     expect(streamThenFinish(text)).toBe(renderHtml(text, false))
-    expect(renderHtml(text, false).match(/<ul>/g)?.length).toBe(1) // one list, final
+ expect(renderHtml(text, false).match(/<ul>/g)?.length).toBe(1)// one list, final
   })
 
   it('a setext heading can never be split between its text and underline (no blank line exists there)', () => {
     const text = 'Intro para.\n\nFoo\n===\n\nBar text.\n'
     const idx = lastSafeSplitOffset(text, text.length)
     expect(idx).toBeGreaterThan(0)
-    // Whatever boundary is chosen, "Foo" and "===" must stay on the same side.
+// Whatever boundary is chosen, "Foo" and "===" must stay on the same side.
     const headingSide = text.slice(0, idx).includes('Foo') ? text.slice(0, idx) : text.slice(idx)
     expect(headingSide).toContain('Foo\n===')
     expect(normTags(splitHtml(text, idx))).toBe(normTags(renderHtml(text, false)))
@@ -134,10 +134,10 @@ describe('AssistantText split boundary safety', () => {
   })
 
   it('a multi-line link reference definition resolves the same split or not', () => {
-    const text = 'See [the docs][ref] here.\n\n[ref]: https://example.com/docs\n  "A Title\n  spanning two lines"\n\nOutro.\n'
+ const text = 'See [the docs][ref] here.\n\n[ref]: https://example.com/docs\n "A Title\n spanning two lines"\n\nOutro.\n'
     const idx = lastSafeSplitOffset(text, text.length)
     const whole = renderHtml(text, false)
-    expect(whole).toContain('href="https://example.com/docs"')
+ expect(whole).toContain('href="https://example.com/docs"')
     if (idx > 0) expect(normTags(splitHtml(text, idx))).toBe(normTags(whole))
     expect(streamThenFinish(text)).toBe(whole)
   })
@@ -153,9 +153,9 @@ describe('AssistantText split boundary safety', () => {
   })
 
   it('a fenced code block inside a blockquote is invisible to the fence walker but has no real blank line to split on', () => {
-    // Blockquote continuation lines are prefixed with "> " - a genuinely
-    // blank ("\n\n") line always ends the blockquote in CommonMark too, so
-    // there is no unsafe internal boundary to find here.
+// Blockquote continuation lines are prefixed with "> " - a genuinely
+// blank ("\n\n") line always ends the blockquote in CommonMark too, so
+// there is no unsafe internal boundary to find here.
     const text = 'Intro.\n\n> ```js\n> const a = 1\n>\n> const b = 2\n> ```\n\nOutro.\n'
     const idx = lastSafeSplitOffset(text, text.length)
     const whole = renderHtml(text, false)

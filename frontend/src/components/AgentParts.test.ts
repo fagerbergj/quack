@@ -24,7 +24,7 @@ describe('run-model reducers', () => {
   it('startRun appends a run and is idempotent on run_id', () => {
     let runs: AgentRun[] = []
     runs = startRun(runs, { runId: 'r1', agent: 'web-researcher', stage: 'worker' })
-    runs = startRun(runs, { runId: 'r1', agent: 'web-researcher', stage: 'worker' }) // dup ignored
+ runs = startRun(runs, { runId: 'r1', agent: 'web-researcher', stage: 'worker' })// dup ignored
     expect(runs).toHaveLength(1)
     expect(run(runs, 'r1').stage).toBe('worker')
     expect(run(runs, 'r1').done).toBe(false)
@@ -65,16 +65,16 @@ describe('run-model reducers', () => {
   it('freezeOpenRuns marks a still-open run done so its timer stops at node completion', () => {
     let runs: AgentRun[] = []
     runs = startRun(runs, { runId: 'r1', agent: 'w', stage: 'worker', startedAt: 0 })
-    runs = completeRun(runs, 'r1', {}, 5_000) // worker finished cleanly
+ runs = completeRun(runs, 'r1', {}, 5_000)// worker finished cleanly
     runs = startRun(runs, { runId: 'r2', agent: 'w', stage: 'revise', round: 1, startedAt: 6_000 })
-    // r2's agent_complete never arrives (dropped/missing) - it's still counting.
+// r2's agent_complete never arrives (dropped/missing) - it's still counting.
     expect(run(runs, 'r2').done).toBe(false)
 
-    runs = freezeOpenRuns(runs, 20_000) // node finishes
+ runs = freezeOpenRuns(runs, 20_000)// node finishes
 
     expect(run(runs, 'r2').done).toBe(true)
-    expect(run(runs, 'r2').durationMs).toBe(14_000) // 20_000 - 6_000
-    // The already-complete run is untouched.
+ expect(run(runs, 'r2').durationMs).toBe(14_000)// 20_000 - 6_000
+// The already-complete run is untouched.
     expect(run(runs, 'r1').durationMs).toBe(5_000)
   })
 
@@ -97,7 +97,7 @@ describe('run-model reducers', () => {
     runs = completeRun(runs, 'r4', { score: 0.8, passed: true })
 
     expect(runs.map(r => r.stage)).toEqual(['worker', 'judge', 'revise', 'judge'])
-    expect(run(runs, 'r3').stage).toBe('revise') // revise is its own run, not under judge
+ expect(run(runs, 'r3').stage).toBe('revise')// revise is its own run, not under judge
     expect(run(runs, 'r4').passed).toBe(true)
   })
 
@@ -109,13 +109,13 @@ describe('run-model reducers', () => {
     expect(runs).toBe(before)
   })
 
-  // #379: appendRunToolCall/fillRunToolResult/appendRunThinking used to spread
-  // `run.activity` on every single event - O(run length) work per event, O(N²)
-  // over a run of N events. They now mutate the array in place, so the same
-  // array instance is reused across every append/fill rather than a fresh copy
-  // being allocated each time. Pin that directly: the activity array reference
-  // never changes across N events, which is only possible if events are O(1)
-  // amortized (a per-event copy would produce a new array reference each time).
+// #379: appendRunToolCall/fillRunToolResult/appendRunThinking used to spread
+// `run.activity` on every single event - O(run length) work per event, O(N²)
+// over a run of N events. They now mutate the array in place, so the same
+// array instance is reused across every append/fill rather than a fresh copy
+// being allocated each time. Pin that directly: the activity array reference
+// never changes across N events, which is only possible if events are O(1)
+// amortized (a per-event copy would produce a new array reference each time).
   it('appends/fills activity in place - no per-event copy of prior entries', () => {
     let runs: AgentRun[] = startRun([], { runId: 'r1', agent: 'w', stage: 'worker' })
     const activityRef = run(runs, 'r1').activity
@@ -126,10 +126,10 @@ describe('run-model reducers', () => {
       runs = appendRunThinking(runs, 'r1', `.`)
     }
     const finalRun = run(runs, 'r1')
-    expect(finalRun.activity).toBe(activityRef) // same array throughout - never re-copied
-    // #959: thinking now folds into the run's most recent thinking item across
-    // intervening tool calls, so N tool-call entries + a single folded thinking
-    // entry, not N separate fragments.
+ expect(finalRun.activity).toBe(activityRef)// same array throughout - never re-copied
+// #959: thinking now folds into the run's most recent thinking item across
+// intervening tool calls, so N tool-call entries + a single folded thinking
+// entry, not N separate fragments.
     expect(finalRun.activity).toHaveLength(N + 1)
     const thinkingEntries = finalRun.activity.filter(a => a.kind === 'thinking')
     expect(thinkingEntries).toHaveLength(1)
@@ -168,9 +168,9 @@ describe('ActivityList - compaction row', () => {
 // raw tool id demoted to the tooltip.
 describe('ToolBlock - human-readable row', () => {
   it('shows the action line and keeps the tool id as the title', () => {
-    const tool: ToolCall = { callId: 'c1', name: 'web_fetch', args: { url: 'https://x.test/a' }, result: 'ok', done: true }
+ const tool: ToolCall = { callId: 'c1', name: 'web_fetch', args: { url: 'https://x.test/a' }, result: 'ok', done: true }
     const out = renderToStaticMarkup(createElement(ToolBlock, { tool }))
     expect(out).toContain('title="web_fetch"')
-    expect(out).toContain('>fetching https://x.test/a<')
+ expect(out).toContain('>fetching https://x.test/a<')
   })
 })

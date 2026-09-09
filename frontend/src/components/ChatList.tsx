@@ -69,8 +69,8 @@ function relativeDate(iso: string): string {
 }
 
 export interface ChatListProps {
-  // #809: server-scoped to active chats only (status=active) - never carries
-  // archived rows, so this list and archivedChats page independently.
+// #809: server-scoped to active chats only (status=active) - never carries
+// archived rows, so this list and archivedChats page independently.
   chats: ChatSummary[]
   activeChatId: string | null
   open: boolean
@@ -78,26 +78,26 @@ export interface ChatListProps {
   onNewChat: () => void
   onDelete: (id: string, e: React.MouseEvent) => void
   onCloseMobile: () => void
-  // #736: the chat list is server-paginated - a `next_page_token` means more
-  // chats exist beyond what's loaded.
+// #736: the chat list is server-paginated - a `next_page_token` means more
+// chats exist beyond what's loaded.
   hasMoreChats?: boolean
   onLoadMoreChats?: () => void
   loadingMoreChats?: boolean
   onArchive?: (chatId: string) => void
   onUnarchive?: (chatId: string) => void
-  // #809: the Archived section's own scoped (status=archived) list, fetched
-  // only once the section is first expanded - absent/undefined means not yet loaded.
+// #809: the Archived section's own scoped (status=archived) list, fetched
+// only once the section is first expanded - absent/undefined means not yet loaded.
   archivedChats?: ChatSummary[]
   hasMoreArchivedChats?: boolean
   onLoadMoreArchivedChats?: () => void
   loadingMoreArchivedChats?: boolean
-  // Fired the moment the Archived section expands (not on collapse) - tells
-  // the parent to fetch archivedChats if it hasn't already.
+// Fired the moment the Archived section expands (not on collapse) - tells
+// the parent to fetch archivedChats if it hasn't already.
   onExpandArchived?: () => void
 }
 
 // ChatRow renders a single chat row. Every row has exactly one always-visible
-// kebab (#1319): an active row's menu holds Archive (reversible); an archived
+// kebab : an active row's menu holds Archive (reversible); an archived
 // row's holds Restore and permanent Delete. Reusable by both the active
 // groups and the archived section.
 function ChatRow({
@@ -121,13 +121,13 @@ function ChatRow({
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
-  // The menu unmounts on close, so without an explicit return a keyboard or
-  // screen-reader user is dropped on <body> (APG menu button pattern, same as
-  // DagNode's NodeMenu).
+// The menu unmounts on close, so without an explicit return a keyboard or
+// screen-reader user is dropped on <body> (APG menu button pattern, same as
+// DagNode's NodeMenu).
   const close = () => { setMenuOpen(false); btnRef.current?.focus() }
 
-  // Outside click/tap closes; Escape closes and returns focus to the kebab;
-  // arrow keys move between items.
+// Outside click/tap closes; Escape closes and returns focus to the kebab;
+// arrow keys move between items.
   useEffect(() => {
     if (!menuOpen) return
     function onDocMouseDown(e: MouseEvent) {
@@ -151,14 +151,14 @@ function ChatRow({
     }
   }, [menuOpen])
 
-  // Move focus onto the first item when the menu opens (keyboard Enter/Space
-  // on the trigger, or a mouse click - refocusing on click is harmless).
+// Move focus onto the first item when the menu opens (keyboard Enter/Space
+// on the trigger, or a mouse click - refocusing on click is harmless).
   useEffect(() => {
     if (!menuOpen) return
     menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
   }, [menuOpen])
 
-  // Only the irreversible path needs a confirm.
+// Only the irreversible path needs a confirm.
   function handleDelete(e: React.MouseEvent) {
     e.stopPropagation()
     setMenuOpen(false)
@@ -178,13 +178,13 @@ function ChatRow({
           {s.title || 'New chat'}
         </span>
       </span>
-      {/* Badge row below the title: always rendered so every row reserves
+ {/* Badge row below the title: always rendered so every row reserves
           the same vertical space and stays aligned. Repo/Issue/PR badges
-          link out to GitHub - filtering by repo/type lives in the FilterPanel. */}
+ link out to GitHub - filtering by repo/type lives in the FilterPanel.*/}
       <div className="flex items-center gap-1 h-4 mt-0.5 pr-6">
         {isGithubChat(s) && ref && (
           <a
-            href={`https://github.com/${ref.repo}`}
+ href={`https://github.com/${ref.repo}`}
             target="_blank"
             rel="noopener noreferrer"
             onClick={e => e.stopPropagation()}
@@ -215,9 +215,9 @@ function ChatRow({
             {githubStateLabel(s.github_state)}
           </span>
         )}
-        {/* Generic origin chip (extension-dispatched chats, e.g. reMarkable) -
+ {/* Generic origin chip (extension-dispatched chats, e.g. reMarkable) -
             label chip, optional badge, subject link. GitHub stays on its own
-            dedicated fields above until it migrates to stamping origin itself. */}
+ dedicated fields above until it migrates to stamping origin itself.*/}
         {s.origin && (
           <>
             {s.origin.href ? (
@@ -251,10 +251,10 @@ function ChatRow({
         )}
       </div>
       <span className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{relativeDate(s.updated_at)}</span>
-      {/* Every row's one action point (#1319 - archive/delete both live here,
+ {/* Every row's one action point (#1319 - archive/delete both live here,
           two clicks instead of a bare one-tap control). Absolutely positioned
           in the top-right corner, NOT in flow, so it never grows the row's
-          height. Always visible: touch has no hover to reveal it. */}
+ height. Always visible: touch has no hover to reveal it.*/}
       <div ref={menuRef} className="absolute right-0 top-0">
         <button
           ref={btnRef}
@@ -332,15 +332,15 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
   const facets = computeFacets(chats)
   const filtered = filterChats(chats, filterState)
 
-  // #722 group the sidebar by run state: running/queued first (no header),
-  // active chats below, archived in a collapsed section at bottom. Empty
-  // groups render nothing.
+// #722 group the sidebar by run state: running/queued first (no header),
+// active chats below, archived in a collapsed section at bottom. Empty
+// groups render nothing.
   const [archivedExpanded, setArchivedExpanded] = useState(false)
 
   function toggleArchived() {
     setArchivedExpanded(prev => {
       const next = !prev
-      if (next) onExpandArchived?.() // #809: fetch archived on expand only, never on collapse
+ if (next) onExpandArchived?.()// #809: fetch archived on expand only, never on collapse
       return next
     })
   }
@@ -353,15 +353,15 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
     return filtered.filter(c => c.status !== 'running' && c.status !== 'queued')
   }, [filtered])
 
-  // #809: archivedChats is server-scoped (status=archived) already - no
-  // client-side archived filter or re-sort needed, just the shared search/facet filter.
+// #809: archivedChats is server-scoped (status=archived) already - no
+// client-side archived filter or re-sort needed, just the shared search/facet filter.
   const archived = filterChats(archivedChats ?? [], filterState)
 
-  // Off-canvas below `medium` (600px, `fixed medium:static` below - the one
-  // compact/expanded line the whole app switches on), persistent alongside
-  // the chat pane above it (#1131). The drawer a11y wiring (Esc, focus trap,
-  // scroll lock, return focus) is armed on that same query so there's no
-  // width where the panel is off-canvas but the wiring is dark.
+// Off-canvas below `medium` (600px, `fixed medium:static` below - the one
+// compact/expanded line the whole app switches on), persistent alongside
+// the chat pane above it . The drawer a11y wiring (Esc, focus trap,
+// scroll lock, return focus) is armed on that same query so there's no
+// width where the panel is off-canvas but the wiring is dark.
   const offCanvas = useMediaQuery('(max-width: 599px)')
   const panelRef = useDrawer(open && offCanvas, onCloseMobile)
 
@@ -419,7 +419,7 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
           <div className="text-xs text-gray-500 dark:text-gray-400 text-center py-6 px-3">No matches</div>
         )}
 
-        {/* Active groups: running/queued then idle — empty groups render nothing */}
+ {/* Active groups: running/queued then idle — empty groups render nothing*/}
         {runningQueued.map(s => (
           <ChatRow key={s.id} s={s} activeChatId={activeChatId} onSelect={onSelect} onDelete={onDelete} onArchive={onArchive} />
         ))}
@@ -427,9 +427,9 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
           <ChatRow key={s.id} s={s} activeChatId={activeChatId} onSelect={onSelect} onDelete={onDelete} onArchive={onArchive} />
         ))}
 
-        {/* Archived section: collapsed by default. Always rendered (not gated
+ {/* Archived section: collapsed by default. Always rendered (not gated
             on archived.length) so it's discoverable before its own list has
-            ever been fetched - #809 loads it lazily on first expand. */}
+ ever been fetched - #809 loads it lazily on first expand.*/}
         <div>
           <button
             onClick={toggleArchived}
