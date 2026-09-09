@@ -258,10 +258,24 @@ func retryBackoff(attempt int) time.Duration {
 	return d + time.Duration(rand.IntN(5))*time.Millisecond
 }
 
+// idLocks serializes read-latest through row-write per (chat,id): the ledger's
+// unique index only orders WAL claims, while artifact.Service numbers revisions
+// independently, so unlocked writers can end up with claimed != stored (#1144 P4).
+// ponytail: process-local, a second replica needs a Postgres advisory lock.
+var idLocks sync.Map // "chatID\x00id" -> *sync.Mutex
+
+func (c *Client) lockFor(id string) *sync.Mutex {
+	v, _ := idLocks.LoadOrStore(c.sessionID+"\x00"+id, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
+
 // save picks id's current latest revision as the parent and retries on
-// ledger.ErrStaleParent instead of holding idLocks across read+append+write
-// (#1144 P4 - the ledger's unique index now arbitrates concurrent claims).
+// ledger.ErrStaleParent for a cross-process conflict; a same-process
+// conflict for the same id can't happen at all - lockFor serializes it.
 func (c *Client) save(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage) (int, error) {
+	mu := c.lockFor(id)
+	mu.Lock()
+	defer mu.Unlock()
 	for attempt := 0; ; attempt++ {
 		// No ledger: nothing arbitrates writers anyway, so keep the caller's
 		// own tracked ParentRevision as before #1144 P4.
@@ -651,10 +665,14 @@ func applyEdits(content []byte, ops []EditOp) ([]byte, error) {
 // that's what makes a stale-but-non-intersecting edit merge instead of
 // failing. Structured content is re-validated before the write. Returns
 // *EditConflict (with the current latest) on any match failure - never a
-// partial write. Retries on ledger.ErrStaleParent (#1144 P4 - idLocks
-// deleted): a concurrent writer that lands first just makes this reread the
+// partial write. Holds the same per-id lock save() does, so an Edit and a
+// gate save can never interleave their read-latest and write. A
+// cross-process conflict still retries on ledger.ErrStaleParent: reread the
 // new latest and reapply ops against it, same as a stale baseRevision would.
 func (c *Client) Edit(ctx context.Context, id string, baseRevision int, ops []EditOp, lineage Lineage) (int, []byte, error) {
+	mu := c.lockFor(id)
+	mu.Lock()
+	defer mu.Unlock()
 	for attempt := 0; ; attempt++ {
 		rev, merged, err := c.tryEdit(ctx, id, baseRevision, ops, lineage, attempt)
 		if errors.Is(err, ledger.ErrStaleParent) && attempt < maxSaveRetries {
