@@ -186,7 +186,11 @@ function KebabMenu({ memory, onForget }: { memory: Memory; onForget: (id: string
 // relative times, recall count, and the kebab menu for Forget.
 // memo: a page is 20 rows and a vote only changes one, so without this every
 // row re-renders (and re-formats its dates, #1286) on any sibling's vote.
+// Test-only render counter: the memo test asserts on counts, never on timings.
+export const memoryEntryRenderProbe = { count: 0 }
+
 export const MemoryEntry = memo(function MemoryEntry({ memory, onForget, onVote }: MemoryEntryProps) {
+  memoryEntryRenderProbe.count++
   const voteTier = memory.tier ?? 'unverified'
   const lastUpvoted = relativeTime(memory.last_upvoted_at)
   const lastRecalled = relativeTime(memory.last_recalled_at)

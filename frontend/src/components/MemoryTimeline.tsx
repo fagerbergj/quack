@@ -33,7 +33,11 @@ export interface AgeGroup {
 // groupByAge buckets memories (assumed already sorted by the caller) into
 // age bands without breaking up runs of the same band - so old memories stay
 // visibly grouped at the end regardless of the list's overall sort order.
+// Test-only call counter for the useMemo below.
+export const groupByAgeProbe = { count: 0 }
+
 export function groupByAge(memories: Memory[], now = Date.now()): AgeGroup[] {
+  groupByAgeProbe.count++
   const groups: AgeGroup[] = []
   for (const m of memories) {
     const label = bandLabel(m.timestamp, now)
