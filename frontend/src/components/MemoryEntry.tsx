@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { Memory, VoteDirection } from '../api'
 import { paletteClasses } from '../lib/colorHash'
 import { relativeTime } from '../lib/relativeTime'
@@ -191,11 +191,14 @@ export const MemoryEntry = memo(function MemoryEntry({ memory, onForget, onVote 
   const lastUpvoted = relativeTime(memory.last_upvoted_at)
   const lastRecalled = relativeTime(memory.last_recalled_at)
 
-  const { mintedTimeText, mintedTimeRelative } = useMemo(() => {
-    const mintedTime = new Date(memory.timestamp)
-    const text = Number.isNaN(mintedTime.getTime()) ? memory.timestamp : mintedTime.toLocaleString()
-    return { mintedTimeText: text, mintedTimeRelative: relativeTime(memory.timestamp) ?? text }
-  }, [memory.timestamp])
+  // Not memoized on memory.timestamp: that value never changes for a given
+  // memory, so caching on it froze the label at whatever wall-clock time it
+  // was first computed, even across a legitimate re-render (#1300 review).
+  // memo(MemoryEntry) above already skips the whole row when memory is
+  // unchanged - this recompute only runs when the row actually re-renders.
+  const mintedTime = new Date(memory.timestamp)
+  const mintedTimeText = Number.isNaN(mintedTime.getTime()) ? memory.timestamp : mintedTime.toLocaleString()
+  const mintedTimeRelative = relativeTime(memory.timestamp) ?? mintedTimeText
 
   return (
     <div className="px-3 py-2.5 border-b border-gray-100 dark:border-gray-700 flex items-start gap-2">

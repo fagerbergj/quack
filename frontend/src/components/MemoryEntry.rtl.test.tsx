@@ -48,3 +48,32 @@ describe('MemoryEntry vote control', () => {
     expect(onVote).toHaveBeenCalledWith('m1', 'none')
   })
 })
+
+// #1300 review: mintedTimeRelative was memoized on [memory.timestamp] - a
+// value that never changes for a given memory - so it froze at whatever
+// wall-clock time it was first computed. A refetch that hands the row a new
+// Memory object (same timestamp, different reference - exactly what a real
+// store update looks like) DOES pass memo(MemoryEntry)'s shallow prop check
+// and re-render the row, but the frozen memo hid the correct new label.
+describe('MemoryEntry minted-time freshness (#1300 review)', () => {
+  it('reflects the current time on a re-render with a new memory object, not a cached one', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+      const original: Memory = { ...memory, timestamp: '2026-01-01T00:00:00Z' }
+      const { rerender } = render(<MemoryEntry memory={original} onForget={async () => {}} onVote={async () => {}} />)
+      expect(screen.queryByText('just now')).not.toBeNull()
+
+      // Two hours pass; the store refetches and hands down a brand-new object
+      // for the same memory (same timestamp value, new reference).
+      vi.setSystemTime(new Date('2026-01-01T02:00:00Z'))
+      const refetched: Memory = { ...original }
+      rerender(<MemoryEntry memory={refetched} onForget={async () => {}} onVote={async () => {}} />)
+
+      expect(screen.queryByText('just now')).toBeNull()
+      expect(screen.queryByText('2h ago')).not.toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
