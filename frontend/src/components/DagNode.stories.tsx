@@ -571,3 +571,17 @@ export const CompactionInFeed: Story = {
     await canvas.findByLabelText(/context compacted, summarizer spent 210000 in \/ 1800 out tokens/i)
   },
 }
+
+// A finished node with a delivered queued message and the retry controls
+// visible: the "steered" badge and both retry buttons carry Material icons
+// (no text glyphs) and the buttons are 44px rows at compact width.
+export const DoneWithRetryAndSteered: Story = {
+  args: {
+    node: wrNode,
+    state: { status: 'done', startedAt: 0, finishedAt: 62_000, totalTokens: 3_421, model: 'qwen3-30b-a3b', steers: ['Focus on rainfall, skip hotels.'] },
+    runs: [workerDone(researchActivity)],
+    answer: 'Best time: **May–September**.',
+    isFinal: false,
+    onRetry: () => {},
+  },
+}
