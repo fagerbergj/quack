@@ -553,19 +553,28 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     store.startNode(activeChatId, nodeId, answer)
   }, [activeChatId, store])
 
-  // submitMessage is the Composer's send action. While the chat is streaming
-  // it queues instead of starting a second concurrent run (store.drainQueue
+  // submitMessage is the Composer's send action. With no chat selected yet
+  // (empty /chat route, audit finding 8) it first creates one via the same
+  // path New Chat uses, then sends into it. While the chat is streaming it
+  // queues instead of starting a second concurrent run (store.drainQueue
   // submits it automatically once the current run finishes); otherwise it
   // sends immediately, same as before.
-  const submitMessage = useCallback((text: string, files: File[], previews: { url: string; mime: string; name: string }[]) => {
-    if (!activeChatId) return
+  const submitMessage = useCallback(async (text: string, files: File[], previews: { url: string; mime: string; name: string }[]) => {
+    let chatId = activeChatId
+    if (!chatId) {
+      const chat = await api.createChat()
+      setChats(prev => [chat, ...prev])
+      setActiveChatId(chat.id)
+      navigate(`/chat/${chat.id}`)
+      chatId = chat.id
+    }
     if (shouldQueueSubmit(streaming)) {
-      store.queueTurn(activeChatId, text)
+      store.queueTurn(chatId, text)
       return
     }
     setLiveAttachmentPreviews(previews)
-    store.submit(activeChatId, text, files.length > 0 ? files : undefined, title => {
-      setChats(prev => prev.map(c => c.id === activeChatId ? { ...c, title } : c))
+    store.submit(chatId, text, files.length > 0 ? files : undefined, title => {
+      setChats(prev => prev.map(c => c.id === chatId ? { ...c, title } : c))
     }).then(() => loadChats().then(data => setChats(data)))
   }, [activeChatId, store, loadChats, streaming])
 
@@ -738,18 +747,10 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
             PLUS the shared --composer-gap, so the inset (when present) grows
             the clearance instead of getting counted twice. */}
         <div ref={scrollRef} className="absolute inset-0 overflow-y-auto overscroll-contain px-6 pt-6 pb-[calc(7rem+var(--composer-gap))] medium:pb-[calc(8rem+var(--composer-gap))] space-y-6">
-          {!activeChatId && (
-            <div className="text-center text-gray-500 dark:text-gray-400 text-sm mt-20 flex flex-col items-center gap-4">
-              Select or start a chat
-              <button
-                type="button"
-                onClick={handleNewChat}
-                className="min-h-[44px] px-4 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors font-medium"
-              >
-                New chat
-              </button>
-            </div>
-          )}
+          {/* Empty /chat route (no chat selected): the composer below (placeholder
+              "Ask a question") is the entry point - the first send creates the
+              chat via the same path New Chat uses (audit finding 8). No label
+              needed here, and it solves the mobile case (sidebar off-screen) free. */}
           {activeChatId && state.turns.length === 0 && !live && !state.submitting && (
             <div className="text-center text-gray-500 dark:text-gray-400 text-sm mt-20">
               Ask a question
@@ -988,13 +989,14 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
 
         <div className="absolute inset-x-0 bottom-0">
           <Composer
-            disabled={!activeChatId || isArchived}
+            disabled={isArchived}
             streaming={liveActive}
             onSubmit={submitMessage}
             onStop={handleStop}
             queue={state.queue}
             onRemoveQueued={handleRemoveQueued}
             archived={isArchived}
+            noChat={!activeChatId}
           />
         </div>
         </div>

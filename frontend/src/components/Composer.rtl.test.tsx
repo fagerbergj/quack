@@ -125,3 +125,25 @@ describe('Composer compact pill', () => {
     expect(onRemoveQueued).toHaveBeenCalledWith('q1')
   })
 })
+
+// Audit finding 8: the empty /chat route (no chat selected) must not read as
+// dead - the composer stays enabled and invites the first message, which is
+// what creates the chat (Chat.tsx's submitMessage).
+describe('Composer noChat (empty /chat route, audit finding 8)', () => {
+  it('stays enabled with an "Ask a question" placeholder, not the old disabled copy', () => {
+    mockMatchMedia(false)
+    render(<Composer disabled={false} streaming={false} onSubmit={() => {}} onStop={() => {}} noChat />)
+    const input = screen.getByPlaceholderText('Ask a question') as HTMLTextAreaElement
+    expect(input.disabled).toBe(false)
+    expect(screen.queryByPlaceholderText('Select or start a chat first')).toBeNull()
+  })
+
+  it('submits normally - the caller (Chat.tsx), not the Composer, creates the chat', async () => {
+    mockMatchMedia(false)
+    const onSubmit = vi.fn()
+    render(<Composer disabled={false} streaming={false} onSubmit={onSubmit} onStop={() => {}} noChat />)
+    const user = userEvent.setup()
+    await user.type(screen.getByPlaceholderText('Ask a question'), 'hello{Enter}')
+    expect(onSubmit).toHaveBeenCalledWith('hello', [], [])
+  })
+})
