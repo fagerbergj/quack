@@ -644,7 +644,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	// The SDK inverse interfaces' first real consumer: whichever compiled,
 	// configured module implements them (github, today) supplies quack's
 	// push credential and delivery target - detected the same way
-	// Starter/Stopper are, not hardcoded to one extension's name.
+	// Starter is, not hardcoded to one extension's name.
 	gitCredSrc, gitCredSrcName := findGitCredentialSource(sdkExts)
 	deliverer, delivererName := findDeliverer(sdkExts)
 	var gitTokenSource tools.GitTokenSource

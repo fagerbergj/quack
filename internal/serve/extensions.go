@@ -219,7 +219,7 @@ func sdkExtensionTools(exts []builtSDKExtension) []extTool {
 }
 
 // findGitCredentialSource returns the first built extension implementing
-// sdk.GitCredentialSource, detected the same way Starter/Stopper are - not
+// sdk.GitCredentialSource, detected the same way Starter is - not
 // hardcoded to one extension's name. More than one match logs a warning and
 // keeps the first (deterministic build order, sorted by name); today only
 // the GitHub extension implements this.
