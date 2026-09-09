@@ -45,7 +45,7 @@ function JudgeVoteIcon({ vote, reason }: { vote: string; reason?: string }) {
 // reach a worker.
 function SourceBadge({ source }: { source: string }) {
   return (
-    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400">
+    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400">
       {source}
     </span>
   )
@@ -65,7 +65,7 @@ function NodeMemoryRow({ memory, onVote }: { memory: NodeMemory; onVote: (id: st
         <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
           <SourceBadge source={memory.source} />
           {memory.tier && (
-            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400">
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400">
               {memory.tier}
             </span>
           )}

@@ -59,7 +59,7 @@ export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanel
       >
         <Icon name="filter_alt" className="w-4 h-4" />
         {count > 0 && (
-          <span className="absolute -top-1.5 -right-1.5 min-w-[15px] h-[15px] px-1 rounded-full bg-blue-600 text-white text-[9px] font-semibold flex items-center justify-center">
+          <span className="absolute -top-1.5 -right-1.5 min-w-[15px] h-[15px] px-1 rounded-full bg-blue-600 text-white text-[11px] font-semibold flex items-center justify-center">
             {count}
           </span>
         )}
@@ -81,7 +81,7 @@ export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanel
           <div className="medium:max-h-80 medium:overflow-y-auto">
             {facets.map(f => (
               <div key={f.key} className="mb-2 last:mb-0">
-                <div className="px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                <div className="px-1 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                   {f.label}
                 </div>
                 {f.options.map(o => {

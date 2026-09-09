@@ -189,7 +189,7 @@ function ChatRow({
             rel="noopener noreferrer"
             onClick={e => e.stopPropagation()}
             title={ref.repo}
-            className={`flex-shrink-0 max-w-[7rem] truncate text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded hover:underline ${paletteClasses(ref.repo)}`}
+            className={`flex-shrink-0 max-w-[7rem] truncate text-[11px] font-semibold tracking-wide px-1 py-0.5 rounded hover:underline ${paletteClasses(ref.repo)}`}
           >
             {ref.repo.slice(ref.repo.indexOf('/') + 1)}
           </a>
@@ -201,14 +201,14 @@ function ChatRow({
             rel="noopener noreferrer"
             onClick={e => e.stopPropagation()}
             title={ref.kind === 'pr' ? `Pull request #${ref.number}` : `Issue #${ref.number}`}
-            className="flex-shrink-0 text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
+            className="flex-shrink-0 text-[11px] font-semibold tracking-wide px-1 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
           >
             {ref.kind === 'pr' ? 'PR' : 'Issue'} #{ref.number}
           </a>
         )}
         {s.github_state && (
           <span
-            className={`flex-shrink-0 inline-flex items-center gap-0.5 text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded ${githubStateBadgeClass(s.github_state)}`}
+            className={`flex-shrink-0 inline-flex items-center gap-0.5 text-[11px] font-semibold tracking-wide px-1 py-0.5 rounded ${githubStateBadgeClass(s.github_state)}`}
             title={s.github_state}
           >
             {githubStateIcon(s.github_state) && <Icon name={githubStateIcon(s.github_state)!} className="w-2.5 h-2.5" />}
@@ -227,21 +227,21 @@ function ChatRow({
                 rel="noopener noreferrer"
                 onClick={e => e.stopPropagation()}
                 title={s.origin.label}
-                className={`flex-shrink-0 max-w-[7rem] truncate text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded hover:underline ${paletteClasses(s.origin.extension)}`}
+                className={`flex-shrink-0 max-w-[7rem] truncate text-[11px] font-semibold tracking-wide px-1 py-0.5 rounded hover:underline ${paletteClasses(s.origin.extension)}`}
               >
                 {s.origin.label}
               </a>
             ) : (
               <span
                 title={s.origin.label}
-                className={`flex-shrink-0 max-w-[7rem] truncate text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded ${paletteClasses(s.origin.extension)}`}
+                className={`flex-shrink-0 max-w-[7rem] truncate text-[11px] font-semibold tracking-wide px-1 py-0.5 rounded ${paletteClasses(s.origin.extension)}`}
               >
                 {s.origin.label}
               </span>
             )}
             {s.origin.badge && (
               <span
-                className={`flex-shrink-0 text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded ${originBadgeClass(s.origin.badge)}`}
+                className={`flex-shrink-0 text-[11px] font-semibold tracking-wide px-1 py-0.5 rounded ${originBadgeClass(s.origin.badge)}`}
                 title={s.origin.badge}
               >
                 {s.origin.badge}

@@ -744,7 +744,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
 
               {unanchored.length > 0 && (
                 <div>
-                  <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                  <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
                     Unanchored notes
                   </span>
                   <ul className="mt-1 space-y-1">
@@ -780,7 +780,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
                   onToggle={e => setDetailsOpen(e.currentTarget.open)}
                   className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg"
                 >
-                  <summary className="cursor-pointer select-none px-3 py-2 text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                  <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
                     Details
                   </summary>
                   {detailsOpen && (
@@ -965,7 +965,7 @@ function ArtifactLines({ lines, byLine, activeNote, onSelectNote }: {
                   type="button"
                   aria-label={`Judge note on line ${i + 1}${notes.length > 1 ? ` (${ni + 1} of ${notes.length})` : ''}: ${n.text}`}
                   onClick={() => onSelectNote(n)}
-                  className={`ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px] leading-none cursor-pointer ${
+                  className={`ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-[11px] leading-none cursor-pointer ${
                     n === activeNote
                       ? 'bg-amber-400 dark:bg-amber-600 text-amber-950 dark:text-amber-50'
                       : 'bg-amber-200 dark:bg-amber-800 text-amber-800 dark:text-amber-200 hover:bg-amber-300 dark:hover:bg-amber-700'
@@ -1093,7 +1093,7 @@ function ArtifactMarkdown({ text, byLine, activeNote, onSelectNote }: {
               type="button"
               aria-label={`Judge note on line ${line}${notes.length > 1 ? ` (${ni + 1} of ${notes.length})` : ''}: ${n.text}`}
               onClick={() => onSelectNote(n)}
-              className={`not-prose ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px] leading-none cursor-pointer align-middle ${
+              className={`not-prose ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-[11px] leading-none cursor-pointer align-middle ${
                 n === activeNote
                   ? 'bg-amber-400 dark:bg-amber-600 text-amber-950 dark:text-amber-50'
                   : 'bg-amber-200 dark:bg-amber-800 text-amber-800 dark:text-amber-200 hover:bg-amber-300 dark:hover:bg-amber-700'

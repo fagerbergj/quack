@@ -183,7 +183,7 @@ export function AssistantText({ text, streaming = false }: { text: string; strea
 // turns and DAG-terminal-node attribution, which have no live status to show.
 export function BubbleHeader({ agent, model, tokens, status }: { agent: string; model?: string; tokens?: number; status?: DotStatus }) {
   return (
-    <div className="flex items-center gap-2 mb-2 text-[10px] text-gray-500 dark:text-gray-400">
+    <div className="flex items-center gap-2 mb-2 text-[11px] text-gray-500 dark:text-gray-400">
       {status && <StatusDot status={status} />}
       <span className="font-semibold text-gray-500 dark:text-gray-400">{agentLabel(agent)}</span>
       {model && (
@@ -314,7 +314,7 @@ export function AcpBadge() {
   return (
     <span
       title="Run by an external ACP agent - rendered best-effort"
-      className="shrink-0 text-[9px] font-semibold tracking-wide px-1 py-0.5 rounded bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-300"
+      className="shrink-0 text-[11px] font-semibold tracking-wide px-1 py-0.5 rounded bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-300"
     >
       ACP
     </span>

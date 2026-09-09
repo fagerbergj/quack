@@ -65,7 +65,7 @@ function TierBadge({ memory }: { memory: Memory }) {
   return (
     <span
       title={memory.invalidation_reason ?? memoryTierLabel(memory)}
-      className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${memoryTierBadgeClass(tier)}`}
+      className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium ${memoryTierBadgeClass(tier)}`}
     >
       {memoryTierLabel(memory)}
     </span>
@@ -78,7 +78,7 @@ function TierBadge({ memory }: { memory: Memory }) {
 // showing two chips that both say "unverified".
 function VoteTierBadge({ tier }: { tier: 'unverified' | 'verified' }) {
   return (
-    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400">
+    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400">
       {tier}
     </span>
   )
@@ -92,7 +92,7 @@ function VoteTierBadge({ tier }: { tier: 'unverified' | 'verified' }) {
 function Pill({ label, seed, neutral }: { label: string; seed: string; neutral?: boolean }) {
   const cls = neutral ? 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400' : paletteClasses(seed)
   return (
-    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${cls}`}>
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium ${cls}`}>
       {label}
     </span>
   )
@@ -229,7 +229,7 @@ export const MemoryEntry = memo(function MemoryEntry({ memory, onForget, onVote 
           {(memory.absorbed_ids?.length ?? 0) > 0 && (
             <span
               title={`Absorbed: ${memory.absorbed_ids!.join(', ')}`}
-              className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400"
+              className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400"
             >
               merged ×{memory.absorbed_ids!.length}
             </span>

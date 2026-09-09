@@ -79,7 +79,7 @@ export function MemoryTimeline({ memories, onForget, onVote, now, grouped = true
       {groups.map((g, i) => (
         <div key={g.label ? `${g.label}-${g.memories[0]?.id}` : `flat-${i}`}>
           {g.label && (
-            <div className="pl-3 medium:pl-[4.75rem] pr-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+            <div className="pl-3 medium:pl-[4.75rem] pr-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
               {g.label}
             </div>
           )}

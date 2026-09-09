@@ -694,7 +694,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
               {isArchived && (
                 <span
                   title="This chat is archived and read-only. Restore it from the Archived section to continue."
-                  className="flex-shrink-0 text-[10px] font-semibold tracking-wide px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400"
+                  className="flex-shrink-0 text-[11px] font-semibold tracking-wide px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400"
                 >
                   Archived
                 </span>

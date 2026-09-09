@@ -137,7 +137,7 @@ function QueuedBadge({ count }: { count: number }) {
   if (count === 0) return null
   return (
     <span
-      className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 inline-flex items-center gap-0.5"
+      className="text-[11px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 inline-flex items-center gap-0.5"
       title={`${count} parked message${count === 1 ? '' : 's'} - delivers when the current round ends`}
     >
       <Icon name="mail" className="w-3 h-3" /> {count}
@@ -165,11 +165,11 @@ export function pausedStatusLabel(status: NodeStatus, reason: NodeState['pauseRe
 function RunTimer({ run }: { run: AgentRun }) {
   if (run.done) {
     return run.durationMs != null
-      ? <span className="text-[10px] text-gray-500 dark:text-gray-400 tabular-nums ml-auto">{fmtMs(run.durationMs)}</span>
+      ? <span className="text-[11px] text-gray-500 dark:text-gray-400 tabular-nums ml-auto">{fmtMs(run.durationMs)}</span>
       : null
   }
   return run.startedAt != null
-    ? <span className="text-[10px] text-gray-500 dark:text-gray-400 tabular-nums ml-auto"><LiveTimer startedAt={run.startedAt} /></span>
+    ? <span className="text-[11px] text-gray-500 dark:text-gray-400 tabular-nums ml-auto"><LiveTimer startedAt={run.startedAt} /></span>
     : null
 }
 
@@ -177,7 +177,7 @@ function RunTimer({ run }: { run: AgentRun }) {
 function RunModel({ run }: { run: AgentRun }) {
   if (!run.model) return null
   return (
-    <span className="text-[10px] text-gray-500 dark:text-gray-400 font-mono truncate max-w-[100px]" title={run.model}>
+    <span className="text-[11px] text-gray-500 dark:text-gray-400 font-mono truncate max-w-[100px]" title={run.model}>
       {run.model}
     </span>
   )
@@ -207,7 +207,7 @@ function ContextMeter({ used, limit }: { used: number; limit: number }) {
       <span className="w-8 h-1 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
         <span className={`block h-full rounded-full ${barColor}`} style={{ width: `${pct}%` }} />
       </span>
-      <span className={`text-[10px] tabular-nums ${textColor}`}>{fmtTokenCount(used)}/{fmtTokenCount(limit)}</span>
+      <span className={`text-[11px] tabular-nums ${textColor}`}>{fmtTokenCount(used)}/{fmtTokenCount(limit)}</span>
     </span>
   )
 }
@@ -232,7 +232,7 @@ function ContentPopup({ title, text, onClose }: { title: string; text: string; o
         </button>
       </div>
       <div className="group/verdict relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
-        <span className="block mb-2 text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">{title}</span>
+        <span className="block mb-2 text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">{title}</span>
         {/* #746 item 7 - hidden until THIS block (not some unrelated
             ancestor - a NAMED group, since the popup nests inside
             DagNode's own `.group` card) is hovered/focused, aligned to the
@@ -386,7 +386,7 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
   if (failureHeading) {
     return (
       <div className="border-t border-gray-100 dark:border-gray-700 px-4 py-2 bg-yellow-50 dark:bg-yellow-900/15">
-        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-yellow-700 dark:text-yellow-400 uppercase tracking-wide">
+        <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-yellow-700 dark:text-yellow-400 uppercase tracking-wide">
           <Icon name="warning" className="w-3 h-3" /> {failureHeading} · check {run.round}
         </span>
         <div className="text-[11px] text-yellow-700 dark:text-yellow-400/90 mt-0.5">
@@ -399,13 +399,13 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
     <div className="border-t border-gray-100 dark:border-gray-700">
       <details open={running} className="not-prose">
         <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2">
-          <span className="text-[10px] font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wide">
+          <span className="text-[11px] font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wide">
             Quality check {run.round}
           </span>
           {/* The pass bar is rendered only when the server sent it (older
               events carry no envelope), never assumed. */}
           {run.score != null && (
-            <span className={`inline-flex items-center gap-0.5 text-[10px] font-medium ${run.passed ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+            <span className={`inline-flex items-center gap-0.5 text-[11px] font-medium ${run.passed ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
               <Icon name={run.passed ? 'check' : 'close'} className="w-3 h-3" /> {(run.score * 100).toFixed(0)}%
               {run.threshold != null && ` (needs ${(run.threshold * 100).toFixed(0)}%)`}
             </span>
@@ -435,7 +435,7 @@ const RevisionCard = memo(function RevisionCard({ run, running }: { run: AgentRu
     <div className="border-t border-gray-100 dark:border-gray-700">
       <details open={running} className="not-prose">
         <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2">
-          <span className="text-[10px] font-semibold text-blue-500 dark:text-blue-400 uppercase tracking-wide">
+          <span className="text-[11px] font-semibold text-blue-500 dark:text-blue-400 uppercase tracking-wide">
             ↺ Revised · round {run.round}
           </span>
           <RunModel run={run} />
@@ -488,11 +488,11 @@ function RetryControl({ nodeId, onRetry }: {
   return (
     <div className="flex items-center gap-3 px-4 py-1.5 border-b border-gray-100 dark:border-gray-700">
       <button onClick={() => onRetry(nodeId)} title="Re-run this node and everything downstream of it (reuses the rest)"
-        className="text-[10px] font-medium text-indigo-600 dark:text-indigo-400 hover:underline">
+        className="text-[11px] font-medium text-indigo-600 dark:text-indigo-400 hover:underline">
         ↻ retry
       </button>
       <button onClick={() => setGuiding(true)} title="Re-run this node with new guidance"
-        className="text-[10px] font-medium text-indigo-600 dark:text-indigo-400 hover:underline">
+        className="text-[11px] font-medium text-indigo-600 dark:text-indigo-400 hover:underline">
         ↻ retry with guidance…
       </button>
     </div>
@@ -566,7 +566,7 @@ export const DagNode = memo(function DagNode({
         <QueuedBadge count={pendingQueueCount} />
         {state.steers && state.steers.length > 0 && (
           <span
-            className="shrink-0 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+            className="shrink-0 text-[11px] font-medium text-amber-600 dark:text-amber-400"
             title={`Queued message(s) delivered:\n${state.steers.join('\n')}`}
           >
             ↻ steered{state.steers.length > 1 ? ` ×${state.steers.length}` : ''}
@@ -579,25 +579,25 @@ export const DagNode = memo(function DagNode({
         <div className="empty:hidden flex flex-wrap medium:flex-nowrap items-center gap-x-2 gap-y-0.5 basis-full order-last medium:basis-auto medium:order-none">
           <StatusDot status={state.status} label={pauseLabel} />
           {state.model && (
-            <span className="text-[10px] text-gray-500 dark:text-gray-400 font-mono truncate max-w-[120px]" title={state.model}>
+            <span className="text-[11px] text-gray-500 dark:text-gray-400 font-mono truncate max-w-[120px]" title={state.model}>
               {state.model}
             </span>
           )}
           {state.finishReason === 'MAX_TOKENS' && (
-            <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400" title="Response was truncated at the token limit">
+            <span className="text-[11px] font-medium text-amber-600 dark:text-amber-400" title="Response was truncated at the token limit">
               truncated
             </span>
           )}
           {state.judgeRounds != null && state.judgeRounds > 0 && state.judgePassed === false && (
             <span
-              className="inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+              className="inline-flex items-center gap-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400"
               title={`The quality check rejected this output after ${state.judgeRounds} round${state.judgeRounds === 1 ? '' : 's'}${state.judgeFinalScore != null ? ` (final score ${(state.judgeFinalScore * 100).toFixed(0)}%)` : ''} - shown without a passing check`}
             >
               <Icon name="warning" className="w-3 h-3" /> not checked
             </span>
           )}
           {state.totalTokens != null && state.totalTokens > 0 && (
-            <span className="text-[10px] text-gray-500 dark:text-gray-400 tabular-nums">
+            <span className="text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">
               {state.totalTokens.toLocaleString()} tokens
               {state.cachedTokens != null && state.cachedTokens > 0 && (
                 <span title={`${state.cachedTokens.toLocaleString()} tokens served from cache`}> ({state.cachedTokens.toLocaleString()} cached)</span>
@@ -609,7 +609,7 @@ export const DagNode = memo(function DagNode({
               href={traceUrl(state.traceId)}
               target="_blank"
               rel="noreferrer"
-              className="text-[10px] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 underline"
+              className="text-[11px] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 underline"
               title="Open this run's trace in the tracing backend (whole run, not just this node)"
             >
               run trace
@@ -620,9 +620,9 @@ export const DagNode = memo(function DagNode({
         {/* A finished node shows the server-measured duration (reconnect-proof);
             a running one ticks live from the server start time. */}
         {(state.finishedAt != null && state.serverDurationMs != null) ? (
-          <span className="shrink-0 text-[10px] text-gray-500 dark:text-gray-400 tabular-nums">{fmtMs(state.serverDurationMs)}</span>
+          <span className="shrink-0 text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">{fmtMs(state.serverDurationMs)}</span>
         ) : state.startedAt != null ? (
-          <span className="shrink-0 text-[10px] text-gray-500 dark:text-gray-400 tabular-nums">
+          <span className="shrink-0 text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">
             <LiveTimer startedAt={state.startedAt} finishedAt={state.finishedAt} />
           </span>
         ) : null}

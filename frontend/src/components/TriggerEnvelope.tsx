@@ -196,7 +196,7 @@ function StatusBadge({ status }: { status: string }) {
   const deleted = status === 'deleted'
   return (
     <span
-      className={`px-1 rounded text-[10px] font-medium uppercase tracking-wide ${
+      className={`px-1 rounded text-[11px] font-medium uppercase tracking-wide ${
         deleted
           ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
           : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
@@ -350,7 +350,7 @@ function EventSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'event'
         <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1.5 mb-2 not-prose">
           {fields.map(([k, v]) => (
             <div key={k} className="min-w-0">
-              <dt className="text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-400">{k}</dt>
+              <dt className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">{k}</dt>
               <dd className="text-[11px] font-mono text-gray-700 dark:text-gray-200 truncate" title={v}>{v}</dd>
             </div>
           ))}
@@ -415,7 +415,7 @@ function ArtifactStatusChip({ status }: { status: string }) {
       : status === 'updated'
         ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
         : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
-  return <span className={`px-1 rounded text-[10px] font-medium uppercase tracking-wide shrink-0 ${cls}`}>{status}</span>
+  return <span className={`px-1 rounded text-[11px] font-medium uppercase tracking-wide shrink-0 ${cls}`}>{status}</span>
 }
 
 // ArtifactsSection - <artifacts>: one compact row per artifact (icon, name,

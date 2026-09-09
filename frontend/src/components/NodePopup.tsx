@@ -66,7 +66,7 @@ function QueuedMessageRow({ msg, onEdit, onRemove }: {
       <span className="flex-1 min-w-0">{msg.text}</span>
       <span
         title="Parks until the current round ends - not delivered mid-turn for this node"
-        className="shrink-0 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+        className="shrink-0 text-[11px] font-medium text-amber-600 dark:text-amber-400"
       >
         parked
       </span>
@@ -170,7 +170,7 @@ export function NodePopup({
       {/* Message queue, only while running - plain history, immutable once delivered. */}
       {running && !answering && queue.length > 0 && (
         <div>
-          <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+          <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
             Queued messages
           </span>
           <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 mb-2">

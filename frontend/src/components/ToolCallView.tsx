@@ -56,13 +56,13 @@ function PathHeader({ path, note }: { path: string; note?: ReactNode }) {
   return (
     <div className="flex items-center gap-2 mb-1">
       <code className="font-mono text-[11px] text-gray-700 dark:text-gray-200 break-all">{path}</code>
-      {note != null && <span className="text-[10px] text-gray-500 dark:text-gray-400">{note}</span>}
+      {note != null && <span className="text-[11px] text-gray-500 dark:text-gray-400">{note}</span>}
     </div>
   )
 }
 
 function Label({ children }: { children: ReactNode }) {
-  return <div className="text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-0.5">{children}</div>
+  return <div className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-0.5">{children}</div>
 }
 
 // Code is a monospace block on the code surface; long content gets height-locked.
@@ -219,7 +219,7 @@ function RunCommandView({ tool }: { tool: ToolCall }) {
           <span className="text-gray-500 dark:text-gray-400 select-none">$ </span>{command}
         </code>
         {exit != null && (
-          <span className={`text-[10px] font-medium ${exit === 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+          <span className={`text-[11px] font-medium ${exit === 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
             exit {exit}
           </span>
         )}
@@ -434,7 +434,7 @@ function StageMemoryView({ tool }: { tool: ToolCall }) {
     <div className="space-y-1">
       <PathHeader path={[bucket, kind].filter(Boolean).join(' · ') || 'memory'} />
       <div className="text-[11px] text-gray-700 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 rounded p-2 whitespace-pre-wrap">{content}</div>
-      {status && <div className="text-[10px] text-gray-500 dark:text-gray-400 italic">{status}</div>}
+      {status && <div className="text-[11px] text-gray-500 dark:text-gray-400 italic">{status}</div>}
     </div>
   )
 }
@@ -506,7 +506,7 @@ function GetUserChoiceView({ tool }: { tool: ToolCall }) {
           )
         })}
       </ul>
-      {status === 'pending' && <div className="text-[10px] text-amber-600 dark:text-amber-400 italic">awaiting your answer…</div>}
+      {status === 'pending' && <div className="text-[11px] text-amber-600 dark:text-amber-400 italic">awaiting your answer…</div>}
     </div>
   )
 }
@@ -518,7 +518,7 @@ function AskUserView({ tool }: { tool: ToolCall }) {
   return (
     <div className="space-y-1">
       <div className="text-[11px] text-gray-700 dark:text-gray-200 font-medium">{question}</div>
-      {status && <div className="text-[10px] text-gray-500 dark:text-gray-400 italic">{status}</div>}
+      {status && <div className="text-[11px] text-gray-500 dark:text-gray-400 italic">{status}</div>}
     </div>
   )
 }
