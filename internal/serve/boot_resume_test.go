@@ -339,6 +339,76 @@ func TestDriveResume_ReentryRunsPausedNodeOnly(t *testing.T) {
 	}
 }
 
+// TestDriveResume_TailSurvivesCancelledRunCtx pins finding 15: driveResume's
+// tail (StampTurn/StampTerminalOutcome/PendingQuestion) must not run on
+// runCtx itself. hub.CancelRun(chatID) is exactly what DrainActiveRuns' force
+// cancel (past the shutdown grace window) or a user cancel does in
+// production - a boot-resumed node re-entering right as the process is
+// asked to shut down again is not exotic. If the tail uses the same
+// (now-dead) context, every write in it fails with "context canceled" and
+// the chat is left run_status="" with active_turn_id still set - a chat the
+// UI shows as running forever.
+func TestDriveResume_TailSurvivesCancelledRunCtx(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	chatID := "chat-boot-resume-cancel"
+	if err := st.SetChatOrigin(ctx, chatID, "u1", ""); err != nil {
+		t.Fatalf("SetChatOrigin: %v", err)
+	}
+	userID := st.SessionUserForChat(ctx, chatID)
+
+	plan := dag.Plan{ID: "plan-cancel", UserMessage: "x", Nodes: []dag.Node{
+		{ID: "n1", AgentName: "blk", Task: "TASK-ONE"},
+	}}
+	planJSON, _ := json.Marshal(plan)
+	if err := st.SaveDagPlan(ctx, chatID, plan.ID, "turn-1", string(planJSON)); err != nil {
+		t.Fatalf("SaveDagPlan: %v", err)
+	}
+	if err := st.UpsertDagNode(ctx, store.DagNode{PlanID: plan.ID, NodeID: "n1", Status: string(dag.StatusPaused), PauseReason: string(dag.PauseShutdown)}); err != nil {
+		t.Fatalf("UpsertDagNode n1: %v", err)
+	}
+	if err := st.SetNodeStatusForChat(ctx, chatID, "n1", string(dag.StatusPaused), string(dag.PauseShutdown), ""); err != nil {
+		t.Fatalf("persist pause: %v", err)
+	}
+
+	stub := &resumeStubLLM{}
+	sessions := session.InMemoryService()
+	ag, err := llmagent.New(llmagent.Config{Name: "blk", Model: stub, Description: "blk", Instruction: "ROLE:blk Answer."})
+	if err != nil {
+		t.Fatalf("agent: %v", err)
+	}
+	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"blk": ag}, nil,
+		vetting.NewJudgeFactory(stub, nil, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	ex.SetNodeStateStore(st)
+	orch := orchestrator.New(sessions, nil, "", nil, ex, nil, nil, nil)
+	if _, err := sessions.Create(ctx, &session.CreateRequest{AppName: orchestrator.AppName, UserID: userID, SessionID: chatID,
+		State: map[string]any{tools.ExecPlanKey: string(planJSON)}}); err != nil {
+		t.Fatalf("session create: %v", err)
+	}
+
+	hub := stream.NewHub()
+	go func() {
+		for !hub.HasRegisteredRun(chatID) {
+			time.Sleep(time.Millisecond)
+		}
+		hub.CancelRun(chatID) // DrainActiveRuns' force-cancel, or a user cancel, mid-resume
+	}()
+
+	driveResume(ctx, chatID, []store.ResumableNode{{ChatID: chatID, PlanID: plan.ID, NodeID: "n1", Reason: dag.PauseShutdown}},
+		orch, st, hub, runlog.NewEventLog(st))
+
+	c, err := st.GetChat(ctx, chatID)
+	if err != nil || c == nil {
+		t.Fatalf("GetChat: %v %v", c, err)
+	}
+	if c.ActiveTurnID != "" {
+		t.Errorf("ActiveTurnID = %q, want cleared - the tail's stamp must survive runCtx being cancelled", c.ActiveTurnID)
+	}
+}
+
 // TestDriveResume_ReachesWorkerInOriginalScope pins #997: RetryNode's
 // synthetic "chatID::retry" session id must not leak into workspace/jail
 // scope - the resumed node's read_file must still find the original clone.

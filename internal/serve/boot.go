@@ -176,9 +176,16 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 		})
 	}
 	pub.Publish(stream.Done())
-	runlog.StampTurn(runCtx, st, chatID, plan.TurnID, res)
-	st.StampTerminalOutcome(runCtx, orchestrator.AppName, userID, chatID, func() (string, bool) {
-		return orch.PendingQuestion(runCtx, userID, chatID)
+	// A shutdown force-cancel or a user cancel lands on runCtx too, and this
+	// tail always runs regardless of how the node loop ended - unlike
+	// rest.stampRunOutcome's own WithoutCancel wrap, a cancelled runCtx here
+	// would fail every write below and strand the chat run_status="" with
+	// active_turn_id still set, showing as running forever.
+	tailCtx, cancel := context.WithTimeout(context.WithoutCancel(runCtx), 10*time.Second)
+	defer cancel()
+	runlog.StampTurn(tailCtx, st, chatID, plan.TurnID, res)
+	st.StampTerminalOutcome(tailCtx, orchestrator.AppName, userID, chatID, func() (string, bool) {
+		return orch.PendingQuestion(tailCtx, userID, chatID)
 	})
 }
 
