@@ -1818,6 +1818,9 @@ type ServerInterface interface {
 	// Invalidate one memory
 	// (DELETE /api/v1/memories/{memory_id})
 	DeleteMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryID)
+	// Get one memory by id
+	// (GET /api/v1/memories/{memory_id})
+	GetMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryID)
 	// Cast (or clear) the human's own vote on one memory
 	// (POST /api/v1/memories/{memory_id}/vote)
 	VoteMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryID)
@@ -2004,6 +2007,12 @@ func (_ Unimplemented) SweepMemories(w http.ResponseWriter, r *http.Request) {
 // Invalidate one memory
 // (DELETE /api/v1/memories/{memory_id})
 func (_ Unimplemented) DeleteMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Get one memory by id
+// (GET /api/v1/memories/{memory_id})
+func (_ Unimplemented) GetMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -3299,6 +3308,40 @@ func (siw *ServerInterfaceWrapper) DeleteMemory(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// GetMemory operation middleware
+func (siw *ServerInterfaceWrapper) GetMemory(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "memory_id" -------------
+	var memoryId MemoryID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "memory_id", chi.URLParam(r, "memory_id"), &memoryId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "memory_id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMemory(w, r, memoryId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // VoteMemory operation middleware
 func (siw *ServerInterfaceWrapper) VoteMemory(w http.ResponseWriter, r *http.Request) {
 
@@ -3568,6 +3611,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Delete(options.BaseURL+"/api/v1/memories/{memory_id}", wrapper.DeleteMemory)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/memories/{memory_id}", wrapper.GetMemory)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/memories/{memory_id}/vote", wrapper.VoteMemory)

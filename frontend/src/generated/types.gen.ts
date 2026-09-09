@@ -1600,6 +1600,33 @@ export type DeleteMemoryResponses = {
 
 export type DeleteMemoryResponse = DeleteMemoryResponses[keyof DeleteMemoryResponses];
 
+export type GetMemoryData = {
+    body?: never;
+    path: {
+        memory_id: string;
+    };
+    query?: never;
+    url: '/api/v1/memories/{memory_id}';
+};
+
+export type GetMemoryErrors = {
+    /**
+     * No such memory
+     */
+    404: ErrorResponse;
+};
+
+export type GetMemoryError = GetMemoryErrors[keyof GetMemoryErrors];
+
+export type GetMemoryResponses = {
+    /**
+     * The memory
+     */
+    200: Memory;
+};
+
+export type GetMemoryResponse = GetMemoryResponses[keyof GetMemoryResponses];
+
 export type VoteMemoryData = {
     body: VoteMemoryBody;
     path: {

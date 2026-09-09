@@ -116,6 +116,53 @@ func TestListMemories_NoStoreConfigured(t *testing.T) {
 	}
 }
 
+// TestGetMemory_ReturnsCommittedMemory covers cli.md audit finding 7's server
+// half: a direct per-id GET returns the same content a list would, without
+// paging.
+func TestGetMemory_ReturnsCommittedMemory(t *testing.T) {
+	ctx := context.Background()
+	h := newTestHandler(t)
+	h.taskMem = newTestMemStore(t)
+
+	if _, err := h.taskMem.Commit(ctx, memory.Scope{Repo: "NightsOut"}, "code-explorer", memory.Provenance{},
+		[]memory.Candidate{{Content: "needs minSdk 30", Metadata: map[string]string{"bucket": "repo"}}}, ""); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	bucket := "repo:NightsOut"
+	listW := httptest.NewRecorder()
+	h.ListMemories(listW, httptest.NewRequest(http.MethodGet, "/api/v1/memories?bucket="+bucket, nil), schema.ListMemoriesParams{Bucket: &bucket})
+	var list schema.MemoryList
+	if err := json.NewDecoder(listW.Body).Decode(&list); err != nil || len(list.Memories) != 1 {
+		t.Fatalf("seed list: decode err=%v len=%d", err, len(list.Memories))
+	}
+	id := list.Memories[0].Id
+
+	w := httptest.NewRecorder()
+	h.GetMemory(w, httptest.NewRequest(http.MethodGet, "/api/v1/memories/"+id, nil), id)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var got schema.Memory
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Id != id || got.Content != "needs minSdk 30" {
+		t.Fatalf("got %+v, want id=%s content=needs minSdk 30", got, id)
+	}
+}
+
+func TestGetMemory_UnknownID_404(t *testing.T) {
+	h := newTestHandler(t)
+	h.taskMem = newTestMemStore(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/memories/does-not-exist", nil)
+	w := httptest.NewRecorder()
+	h.GetMemory(w, req, "does-not-exist")
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", w.Code)
+	}
+}
+
 func TestDeleteMemory_UnknownID_404(t *testing.T) {
 	h := newTestHandler(t)
 	h.taskMem = newTestMemStore(t)
