@@ -3,6 +3,7 @@ package vetting
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -880,6 +881,81 @@ func TestResumePreloadDropsUnreachableHead(t *testing.T) {
 	if _, _, ok, _ := rc.Latest(context.Background(), codeReviewID(cfg)); !ok {
 		t.Fatal("the store must still hold the revision - filtered at read, not deleted")
 	}
+}
+
+// TestBuildReviewPreloadOneGitDiffSpawn covers perf audit #6: BuildReviewPreload
+// used to run one sandboxed `git diff --quiet` per finding/dismissed/clean
+// entry (valid()); it must now run exactly one `git diff --name-only` for the
+// whole preload, regardless of entry count. Spawns are counted by prepending a
+// counting `git` shim to PATH - the same resolution seam workspace.RunArgv's
+// ResolveExecutable uses (exec.LookPath against the process PATH; caps.Sandbox
+// is unset here so RunArgv never re-execs through bwrap/landlock).
+func TestBuildReviewPreloadOneGitDiffSpawn(t *testing.T) {
+	svc := newMetaAwareInMemory()
+	cfg := reviewerCfgWithArtifacts(t, svc, true)
+	rc := recordClient(cfg)
+	lineage := recordstore.Lineage{NodeID: cfg.NodeID, Round: 1, HeadSHA: cfg.NodeBaseSHA}
+
+	// 40-file/25-finding fixture: 25 findings + 15 clean entries = 40 files.
+	var findingIDs []string
+	for i := 0; i < 25; i++ {
+		rec := FindingRecord{Path: fmt.Sprintf("f%d.go", i), Title: fmt.Sprintf("finding %d", i), State: "new"}
+		id, _, err := rc.SaveStructured(context.Background(), kindFinding, rec, "", lineage)
+		if err != nil {
+			t.Fatal(err)
+		}
+		findingIDs = append(findingIDs, id)
+	}
+	var clean []string
+	for i := 25; i < 40; i++ {
+		clean = append(clean, fmt.Sprintf("f%d.go", i))
+	}
+	if _, _, err := rc.SaveStructured(context.Background(), kindCodeReview,
+		CodeReviewRecord{Verdict: "request_changes", FindingIDs: findingIDs, Clean: clean},
+		SubjectHint(cfg.ChatID), lineage); err != nil {
+		t.Fatal(err)
+	}
+
+	logPath := filepath.Join(t.TempDir(), "git-spawns.log")
+	shimDir := installCountingGitShim(t, logPath)
+	oldPath := os.Getenv("PATH")
+	os.Setenv("PATH", shimDir+string(os.PathListSeparator)+oldPath)
+	t.Cleanup(func() { os.Setenv("PATH", oldPath) })
+
+	block := BuildReviewPreload(context.Background(), cfg, cfg.NodeID)
+	if block == "" {
+		t.Fatal("expected a non-empty preload for the 25-finding/15-clean fixture")
+	}
+
+	spawns, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var diffCalls int
+	for _, line := range strings.Split(strings.TrimSpace(string(spawns)), "\n") {
+		if strings.HasPrefix(line, "diff --name-only") {
+			diffCalls++
+		}
+	}
+	if diffCalls != 1 {
+		t.Fatalf("git diff --name-only spawns = %d, want 1 (65 valid() calls must collapse into one diff)", diffCalls)
+	}
+}
+
+// installCountingGitShim puts a `git` on a fresh PATH dir that appends its
+// argv (one line) to logPath before exec'ing the real git.
+func installCountingGitShim(t *testing.T, logPath string) string {
+	t.Helper()
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not found")
+	}
+	dir := t.TempDir()
+	script := fmt.Sprintf("#!/bin/sh\necho \"$*\" >> %q\nexec %q \"$@\"\n", logPath, realGit)
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 // TestDocumentStagesShareOneID covers #1006 test case 8 under #1090 V4.2: the

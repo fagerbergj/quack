@@ -1028,19 +1028,34 @@ func BuildReviewPreload(ctx context.Context, cfg Config, nodeID string) string {
 	if !commitReachable(dir, caps, lineage.HeadSHA) {
 		return "" // force-push rewrote history: whole record is unreachable
 	}
-	valid := func(file string) bool { return fileUnchangedSince(dir, caps, lineage.HeadSHA, head, file) }
+	// One spawn instead of one per finding/dismissed/clean entry: a file not
+	// in this diff's name list is unchanged between the two SHAs, same rule
+	// fileUnchangedSince applied per-file via N sandboxed `git diff --quiet` calls.
+	changedSince := map[string]bool{}
+	for _, f := range gitLines(dir, caps, "diff", "--name-only", lineage.HeadSHA, head) {
+		changedSince[f] = true
+	}
+	valid := func(file string) bool { return !changedSince[file] }
 
+	// Memoized: rec.FindingIDs can repeat the same finding id, and each id is
+	// otherwise one record-store read. nil = fetched but unusable (missing or
+	// unparseable), cached so a repeat of the same bad id doesn't re-fetch.
+	fetched := make(map[string]*FindingRecord, len(rec.FindingIDs))
 	var findings []FindingRecord
 	for _, fid := range rec.FindingIDs {
-		fRaw, _, _, _, fok, ferr := c.LatestWithMeta(ctx, fid)
-		if ferr != nil || !fok {
+		f, cached := fetched[fid]
+		if !cached {
+			fRaw, _, _, _, fok, ferr := c.LatestWithMeta(ctx, fid)
+			var fr FindingRecord
+			if ferr == nil && fok && json.Unmarshal(fRaw, &fr) == nil {
+				f = &fr
+			}
+			fetched[fid] = f
+		}
+		if f == nil || f.State == "resolved" || !valid(f.Path) {
 			continue
 		}
-		var f FindingRecord
-		if json.Unmarshal(fRaw, &f) != nil || f.State == "resolved" || !valid(f.Path) {
-			continue
-		}
-		findings = append(findings, f)
+		findings = append(findings, *f)
 	}
 	var dismissed []DismissedEntry
 	for _, d := range rec.Dismissed {
