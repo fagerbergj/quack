@@ -1,4 +1,4 @@
-import { readAgentStream, attachAgentEventSource, AGENT_EVENT_NAMES, type AgentStreamHandlers, type DagNodeDef, type DagEdgeDef, type NodeDoneMeta, type Stage, type ArtifactRevisionPayload, type ArtifactJudgeRoundPayload } from './agentStream'
+import { readAgentStream, attachAgentEventSource, type AgentStreamHandlers, type DagNodeDef, type DagEdgeDef, type NodeDoneMeta, type Stage, type ArtifactRevisionPayload, type ArtifactJudgeRoundPayload } from './agentStream'
 import {
   startRun,
   appendRunThinking,
@@ -636,19 +636,14 @@ export class ChatStore {
       }),
       onDone: () => { sawDone = true; this.teardownStream(chatId, generation) },
     }
-    const close = attachAgentEventSource(es, handlers)
-    // Track the latest SSE id seen (EventSource populates MessageEvent.lastEventId
-    // from the `id:` field) so a later reconnect resumes past it, and treat any
-    // received event as proof the connection is healthy again.
-    for (const name of AGENT_EVENT_NAMES) {
-      es.addEventListener(name, e => {
-        attempt = 0
-        const id = Number((e as MessageEvent).lastEventId)
-        if (Number.isFinite(id) && id > latestId) latestId = id
-      })
-    }
-    es.onerror = () => {
-      if (sawDone) return  // teardownStream already ran from onDone
+    // reconnect tears this connection down and reopens from resumeFromId,
+    // bounded/backed-off the same way whether the drop was a genuine
+    // connection error or a detected id gap (both close the same live es).
+    // `close` is assigned below (attachAgentEventSource needs shouldDispatch,
+    // which needs reconnect, which needs close) - fine, since reconnect only
+    // runs later, once an event or error has actually landed.
+    let close: () => void = () => {}
+    const reconnect = (resumeFromId: number) => {
       close()
       this.eventSources.delete(chatId)
       if (this.generations.get(chatId) !== generation) return  // superseded by a newer run
@@ -661,9 +656,36 @@ export class ChatStore {
       const timer = setTimeout(() => {
         this.reconnectTimers.delete(chatId)
         if (this.generations.get(chatId) !== generation) return
-        this.openEventSource(chatId, generation, latestId, attempt + 1)
+        this.openEventSource(chatId, generation, resumeFromId, attempt + 1)
       }, reconnectDelay(attempt))
       this.reconnectTimers.set(chatId, timer)
+    }
+    // Gates every event BEFORE it reaches handlers (not a second listener
+    // racing dispatch - a gapped event must never be applied). Track the
+    // latest SSE id seen (EventSource populates MessageEvent.lastEventId
+    // from the `id:` field) so a later reconnect resumes past it, and treat
+    // any contiguous event as proof the connection is healthy again. Only a
+    // contiguous id advances the cursor and resets backoff - a forward jump
+    // means the hub dropped a slow subscriber mid-stream (#audit-6) rather
+    // than skipping quietly, so reconnect from the last contiguous id
+    // instead of silently accepting the gap (it would otherwise never be
+    // recoverable: the resume cursor only replays events after the id it's
+    // given).
+    const shouldDispatch = (e: MessageEvent): boolean => {
+      const id = Number(e.lastEventId)
+      if (!Number.isFinite(id) || id <= latestId) { attempt = 0; return true }
+      if (id === latestId + 1) {
+        latestId = id
+        attempt = 0
+        return true
+      }
+      reconnect(latestId)
+      return false
+    }
+    close = attachAgentEventSource(es, handlers, shouldDispatch)
+    es.onerror = () => {
+      if (sawDone) return  // teardownStream already ran from onDone
+      reconnect(latestId)
     }
     this.eventSources.set(chatId, close)
   }

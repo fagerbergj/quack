@@ -132,11 +132,16 @@ func (h *Hub) Publish(key string, seq int64, ev SSEEvent) {
 		t.buf = t.buf[len(t.buf)-MaxReplay:]
 	}
 	for ch := range t.subs {
-		// Non-blocking: a subscriber too slow to keep up drops live events; it can
-		// reconnect and replay the buffer (or the durable log) to catch up.
+		// Non-blocking: a subscriber too slow to keep up is DROPPED, not
+		// skipped past - skipping an event here would silently lose a
+		// contiguous range the resume cursor can never recover (finding 6).
+		// Closing ends the connection so the client sees the drop and
+		// reconnects, replaying from its last contiguous id.
 		select {
 		case ch <- it:
 		default:
+			close(ch)
+			delete(t.subs, ch)
 		}
 	}
 }
