@@ -41,6 +41,32 @@ func TestRestatesRecord(t *testing.T) {
 			body:   "LGTM",
 			want:   false,
 		},
+		{
+			name: "verbatim body plus a follow-up question kept",
+			// quotes the body verbatim, then asks something only the user
+			// can answer - collapsing this loses the question entirely.
+			answer: "Summary: " + reviewBody + " Given that, do you want me to fix it now, or file a follow-up and merge as-is?",
+			body:   reviewBody,
+			want:   false,
+		},
+		{
+			name: "verbatim body plus an unstaged second finding kept",
+			answer: reviewBody + " Also, separately: worker.go leaks a goroutine on every retry" +
+				" because the context is never cancelled - a second bug with nothing staged for it.",
+			body: reviewBody,
+			want: false,
+		},
+		{
+			name: "long unrelated answer with coincidental word overlap kept",
+			// shares most of a short, common-word-heavy body by chance, but
+			// carries substantial unrelated content the record never made.
+			answer: "I looked at the error handling on the new path and it looks fine to me overall, but separately: the" +
+				" retry backoff config defaults to zero which will hammer the upstream API on every failure, the new" +
+				" metrics counter is never registered so alerting on it will silently no-op, and the migration lacks" +
+				" a down script entirely.",
+			body: "approve, the error handling on this path looks fine to me",
+			want: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
