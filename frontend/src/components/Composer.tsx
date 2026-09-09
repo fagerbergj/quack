@@ -72,7 +72,9 @@ export interface ComposerProps {
   // A turn is streaming - input stays live and Send queues instead of running
   // a second turn; Stop appears alongside it to cancel the active run.
   streaming: boolean
-  onSubmit: (text: string, files: File[], previews: AttachmentPreview[]) => void
+  // A rejected return restores the draft (input + attachments) instead of
+  // losing it - see submit()'s catch below.
+  onSubmit: (text: string, files: File[], previews: AttachmentPreview[]) => void | Promise<void>
   onStop: () => void
   // Follow-ups queued while streaming, in send order - rendered as pending
   // rows above the input; empty/omitted when nothing is queued.
@@ -119,6 +121,9 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
     ta.style.overflowY = overflowing ? 'auto' : 'hidden'
   }, [input, compact])
 
+  // Clears the draft right away for a responsive send, but restores it (text
+  // and attachments) if onSubmit rejects - e.g. the empty-route chat-create
+  // failing (review finding) - instead of silently losing what was typed.
   function submit() {
     const trimmed = input.trim()
     if ((!trimmed && attachments.length === 0) || disabled) return
@@ -126,7 +131,11 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
     const previews = items.map(a => ({ url: a.url, mime: a.file.type, name: a.file.name }))
     setInput('')
     setAttachments([])
-    onSubmit(trimmed, items.map(a => a.file), previews)
+    const result = onSubmit(trimmed, items.map(a => a.file), previews)
+    result?.catch(() => {
+      setInput(trimmed)
+      setAttachments(items)
+    })
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {

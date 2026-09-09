@@ -232,6 +232,10 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
   const live = state.live
   const [chatListOpen, setChatListOpen] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
+  // createChatError surfaces a failed first-send chat creation (review
+  // finding, audit finding 8) - there's no chat yet to attach state.error to.
+  const [createChatError, setCreateChatError] = useState('')
+  useEffect(() => { setCreateChatError('') }, [activeChatId])
   const [submittingChoice, setSubmittingChoice] = useState(false)
   const [liveAttachmentPreviews, setLiveAttachmentPreviews] = useState<{url: string; mime: string; name: string}[]>([])
   // Stable element identity so memo(TriggerMessage) actually skips re-renders;
@@ -553,22 +557,45 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     store.startNode(activeChatId, nodeId, answer)
   }, [activeChatId, store])
 
+  // creatingChatRef holds the one in-flight createChat() call (review
+  // finding on audit finding 8): two rapid sends before it resolves both see
+  // activeChatId null, so without this each would create its own chat. Both
+  // await the SAME promise instead, and the second send lands in the chat
+  // the first created.
+  const creatingChatRef = useRef<Promise<string> | null>(null)
+
   // submitMessage is the Composer's send action. With no chat selected yet
   // (empty /chat route, audit finding 8) it first creates one via the same
-  // path New Chat uses, then sends into it. While the chat is streaming it
-  // queues instead of starting a second concurrent run (store.drainQueue
-  // submits it automatically once the current run finishes); otherwise it
-  // sends immediately, same as before.
+  // path New Chat uses, then sends into it - a failure surfaces via
+  // createChatError and rethrows so the Composer restores the unsent draft
+  // (review finding) instead of it silently vanishing. While the chat is
+  // streaming it queues instead of starting a second concurrent run
+  // (store.drainQueue submits it automatically once the current run
+  // finishes); otherwise it sends immediately, same as before. The queue
+  // check reads the store directly rather than the render-time `streaming`
+  // closure, since a just-created chat's live turn can start (see above)
+  // before this component re-renders.
   const submitMessage = useCallback(async (text: string, files: File[], previews: { url: string; mime: string; name: string }[]) => {
     let chatId = activeChatId
     if (!chatId) {
-      const chat = await api.createChat()
-      setChats(prev => [chat, ...prev])
-      setActiveChatId(chat.id)
-      navigate(`/chat/${chat.id}`)
-      chatId = chat.id
+      if (!creatingChatRef.current) {
+        creatingChatRef.current = api.createChat()
+          .then(chat => {
+            setChats(prev => [chat, ...prev])
+            setActiveChatId(chat.id)
+            navigate(`/chat/${chat.id}`)
+            return chat.id
+          })
+          .finally(() => { creatingChatRef.current = null })
+      }
+      try {
+        chatId = await creatingChatRef.current
+      } catch (err) {
+        setCreateChatError(err instanceof Error ? err.message : 'Failed to start a new chat')
+        throw err
+      }
     }
-    if (shouldQueueSubmit(streaming)) {
+    if (shouldQueueSubmit(store.get(chatId).live?.streaming ?? false)) {
       store.queueTurn(chatId, text)
       return
     }
@@ -576,7 +603,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     store.submit(chatId, text, files.length > 0 ? files : undefined, title => {
       setChats(prev => prev.map(c => c.id === chatId ? { ...c, title } : c))
     }).then(() => loadChats().then(data => setChats(data)))
-  }, [activeChatId, store, loadChats, streaming])
+  }, [activeChatId, store, loadChats])
 
   const handleRemoveQueued = useCallback((id: string) => {
     if (activeChatId) store.unqueueTurn(activeChatId, id)
@@ -980,9 +1007,9 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
             </div>
           )}
 
-          {error && (
+          {(error || createChatError) && (
             <div className="rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">
-              {error}
+              {error || createChatError}
             </div>
           )}
         </div>

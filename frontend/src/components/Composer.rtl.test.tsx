@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Composer } from './Composer'
 
@@ -145,5 +145,25 @@ describe('Composer noChat (empty /chat route, audit finding 8)', () => {
     const user = userEvent.setup()
     await user.type(screen.getByPlaceholderText('Ask a question'), 'hello{Enter}')
     expect(onSubmit).toHaveBeenCalledWith('hello', [], [])
+  })
+})
+
+// Review finding on #1350: onSubmit used to be fired-and-forgotten, so a
+// rejection (e.g. the empty-route chat create failing) both erased the
+// draft and left an unhandled rejection. submit() must restore it instead.
+describe('Composer restores the draft when onSubmit rejects', () => {
+  it('keeps the typed text in the input after a rejected send', async () => {
+    mockMatchMedia(false)
+    let reject!: (err: Error) => void
+    const onSubmit = vi.fn(() => new Promise<void>((_, r) => { reject = r }))
+    render(<Composer disabled={false} streaming={false} onSubmit={onSubmit} onStop={() => {}} noChat />)
+    const user = userEvent.setup()
+    const input = screen.getByPlaceholderText('Ask a question') as HTMLTextAreaElement
+    await user.type(input, 'hello{Enter}')
+    // Cleared immediately for a responsive send...
+    expect(input.value).toBe('')
+    reject(new Error('boom'))
+    // ...then restored once the send actually failed.
+    await waitFor(() => expect(input.value).toBe('hello'))
   })
 })
