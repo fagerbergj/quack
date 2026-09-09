@@ -577,15 +577,15 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
       aria-label={`Artifacts for node ${nodeId}`}
       onClose={onClose}
       onClick={e => { if (e.target === dialogRef.current) dialogRef.current?.close() }}
-      // Full-height bottom sheet below `sm` - h-dvh, not h-screen, so the
-      // sheet reaches the real bottom edge under mobile browser chrome
-      // (same fix as the app shell, #1177) - overridden back to the centered
-      // card at sm+. One component tree at every width: the only
-      // width-conditional code left is this container class.
-      className="m-0 w-screen h-dvh sm:m-auto sm:w-full sm:max-w-4xl sm:h-[min(32rem,85vh)] max-h-[100vh] sm:max-h-[85vh] p-0 border-0 rounded-none sm:rounded-2xl bg-transparent backdrop:bg-black/40"
+      // Below `medium` the same bottom-sheet shell as Sheet/NodePopup: docked
+      // to the bottom edge (mt-auto against the modal's inset:0), rounded top,
+      // scrim above, safe-area padding; a centred card at medium+. dvh, not
+      // vh, so it clears mobile browser chrome (#1177). One component tree
+      // at every width: the only width-conditional code is this class.
+      className="m-0 mt-auto w-screen max-w-[100vw] h-[90dvh] medium:m-auto medium:w-full medium:max-w-4xl medium:h-[min(32rem,85vh)] max-h-[100vh] medium:max-h-[85vh] p-0 border-0 rounded-t-2xl medium:rounded-2xl bg-transparent backdrop:bg-black/40"
     >
       <div
-        className="relative flex flex-col w-full h-full overflow-hidden rounded-none sm:rounded-2xl bg-gray-50 dark:bg-gray-900 shadow-xl"
+        className="relative flex flex-col w-full h-full overflow-hidden rounded-t-2xl medium:rounded-2xl bg-gray-50 dark:bg-gray-900 shadow-xl pb-[calc(0.75rem+var(--composer-gap))] medium:pb-0"
       >
         {/* Header: the node's own name (never an artifact id or its raw
             prompt - #1216), refresh, close - non-scrolling; >=44px targets
@@ -633,7 +633,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
                   aria-pressed={active}
                   aria-label={`Round ${b.round}, ${b.passed == null ? 'no verdict' : b.passed ? 'passed' : 'failed'}${b.score != null ? `, score ${b.score}` : ''}`}
                   onClick={() => activateRound(id)}
-                  className={`shrink-0 inline-flex items-center gap-1 h-11 sm:h-8 px-3 rounded-full border text-xs transition-colors ${
+                  className={`shrink-0 inline-flex items-center gap-1 h-11 medium:h-8 px-3 rounded-full border text-xs transition-colors ${
                     active
                       ? 'border-blue-400 dark:border-blue-500 bg-blue-50 dark:bg-blue-900/30'
                       : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700'
@@ -658,7 +658,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
 
         {/* The single scrolling region: revision bar, the rendered output
             (with judge-note highlights), More, Details. */}
-        <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 sm:px-5 py-3 space-y-3">
+        <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 medium:px-5 py-3 space-y-3">
           {error && <p className="text-xs text-red-500 dark:text-red-400">{error}</p>}
 
           {empty ? (
@@ -683,7 +683,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
                     onClick={() => move(-1)}
                     aria-label="Previous revision"
                     disabled={revIdx == null || revIdx <= 0}
-                    className="inline-flex h-11 sm:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
+                    className="inline-flex h-11 medium:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
                   >
                     ← Prev
                   </button>
@@ -691,7 +691,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
                     onClick={() => move(1)}
                     aria-label="Next revision"
                     disabled={revIdx == null || revIdx >= revisions.length - 1}
-                    className="inline-flex h-11 sm:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
+                    className="inline-flex h-11 medium:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
                   >
                     Next →
                   </button>
@@ -700,7 +700,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
                     aria-pressed={diffActive}
                     disabled={diffDisabledReason != null}
                     title={diffDisabledReason ?? undefined}
-                    className="inline-flex h-11 sm:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
+                    className="inline-flex h-11 medium:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
                   >
                     Diff
                   </button>
@@ -711,7 +711,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
                     onClick={() => setRawView(r => !r)}
                     aria-pressed={rawView && !diffActive}
                     disabled={diffActive}
-                    className="inline-flex h-11 sm:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
+                    className="inline-flex h-11 medium:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
                   >
                     Raw
                   </button>
@@ -892,7 +892,7 @@ function MoreItem({ chatId, artifact, ordinal }: { chatId: string; artifact: Art
               onClick={() => setIdx(i => (i != null && i > 0 ? i - 1 : i))}
               aria-label="Previous revision"
               disabled={idx == null || idx <= 0}
-              className="inline-flex h-11 sm:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
+              className="inline-flex h-11 medium:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
             >
               ← Prev
             </button>
@@ -900,14 +900,14 @@ function MoreItem({ chatId, artifact, ordinal }: { chatId: string; artifact: Art
               onClick={() => setIdx(i => (i != null && revisions != null && i < revisions.length - 1 ? i + 1 : i))}
               aria-label="Next revision"
               disabled={idx == null || revisions == null || idx >= revisions.length - 1}
-              className="inline-flex h-11 sm:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
+              className="inline-flex h-11 medium:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
             >
               Next →
             </button>
             <button
               onClick={() => setRawView(r => !r)}
               aria-pressed={rawView}
-              className="inline-flex h-11 sm:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300"
+              className="inline-flex h-11 medium:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300"
             >
               Raw
             </button>

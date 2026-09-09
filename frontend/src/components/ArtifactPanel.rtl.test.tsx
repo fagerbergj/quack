@@ -221,10 +221,12 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     expect(screen.getByRole('button', { name: 'Round 2, passed, score 0.81' })).toBeTruthy()
     expect(screen.getByRole('group', { name: 'Judge rounds' })).toBeTruthy()
 
-    // The sheet: h-dvh container, one scrolling region, and no native
-    // <select> anywhere in the panel (the picker is gone).
+    // The sheet: bottom-docked below medium, one scrolling region, and no
+    // native <select> anywhere in the panel (the picker is gone).
     const dialog = container.querySelector('dialog')
-    expect(dialog?.className).toMatch(/h-dvh/)
+    expect(dialog?.className).toMatch(/mt-auto/)
+    expect(dialog?.className).toMatch(/rounded-t-2xl/)
+    expect(dialog?.className).toMatch(/medium:rounded-2xl/)
     expect(container.querySelectorAll('select')).toHaveLength(0)
   })
 

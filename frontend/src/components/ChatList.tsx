@@ -334,13 +334,12 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
   // client-side archived filter or re-sort needed, just the shared search/facet filter.
   const archived = filterChats(archivedChats ?? [], filterState)
 
-  // Off-canvas below md (768px, `fixed md:static` in the className below -
-  // the exact breakpoint that switches this panel's own layout), persistent
-  // alongside the chat pane at md+ (#1131). The a11y wiring (Esc, focus trap,
-  // scroll lock, return focus) NavRail's drawer uses is armed on that same
-  // query, not the 600px "compact" line used elsewhere in #1131, so there's
-  // no 600-767px gap where the panel is off-canvas but the wiring is dark.
-  const offCanvas = useMediaQuery('(max-width: 767px)')
+  // Off-canvas below `medium` (600px, `fixed medium:static` below - the one
+  // compact/expanded line the whole app switches on), persistent alongside
+  // the chat pane above it (#1131). The drawer a11y wiring (Esc, focus trap,
+  // scroll lock, return focus) is armed on that same query so there's no
+  // width where the panel is off-canvas but the wiring is dark.
+  const offCanvas = useMediaQuery('(max-width: 599px)')
   const panelRef = useDrawer(open && offCanvas, onCloseMobile)
 
   return (
@@ -350,13 +349,13 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
       aria-modal={offCanvas && open ? true : undefined}
       aria-label={offCanvas && open ? 'Chat list' : undefined}
       className={`
-      fixed md:static inset-y-0 left-0 z-40
+      fixed medium:static inset-y-0 left-0 z-40
       h-dvh w-[250px] flex-shrink-0 flex flex-col
       border-r border-gray-200 dark:border-gray-700
       bg-white dark:bg-gray-800
       transition-transform duration-200
-      md:translate-x-0
-      ${open ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+      medium:translate-x-0
+      ${open ? 'translate-x-0' : '-translate-x-full medium:translate-x-0'}
     `}>
       <div className="p-3 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2">
         <button
@@ -367,7 +366,7 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
         </button>
         <button
           onClick={onCloseMobile}
-          className="md:hidden text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1.5 rounded transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
+          className="medium:hidden text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1.5 rounded transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
           aria-label="Close chat list"
         >
           <Icon name="close" className="w-4 h-4" />
