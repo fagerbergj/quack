@@ -20,6 +20,7 @@ func TestBatchInsertFailureDoesNotDropGoodRows(t *testing.T) {
 	ctx := context.Background()
 	l := NewEventLog(st)
 	chatID := "chat-bad-row"
+	mustSeedChat(t, st, chatID)
 
 	// Seed seq=5 directly so the batch below collides on the primary key.
 	if err := st.InsertChatEvent(ctx, store.ChatEvent{ChatID: chatID, Seq: 5, Event: `{"name":"token","data":{}}`, CreatedAt: time.Now().UTC()}); err != nil {
@@ -61,6 +62,7 @@ func TestAppendRacingFinishRunNeverLostSilently(t *testing.T) {
 	hub := stream.NewHub()
 	l := NewEventLog(st)
 	chatID := "chat-race-finish"
+	mustSeedChat(t, st, chatID)
 
 	runCtx, cancelRun := context.WithCancel(context.Background())
 	hub.RegisterRun(chatID, "turn-1", cancelRun)
