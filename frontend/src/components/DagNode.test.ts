@@ -166,7 +166,7 @@ describe('DagNode - judge verdict popup copy button (#426)', () => {
     act(() => { previewButton.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
 
     const copyButton = Array.from(host.querySelectorAll('button'))
-      .find(b => b.getAttribute('aria-label')?.startsWith('Copy judge verdict'))!
+      .find(b => b.getAttribute('aria-label')?.startsWith('Copy quality check'))!
     act(() => { copyButton.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
 
     expect(writeText).toHaveBeenCalledWith(verdict)
@@ -214,7 +214,7 @@ describe('DagNode - token badge shows cached tokens alongside the total', () => 
       [{ runId: 'w', agent: 'web-researcher', stage: 'worker', done: true, activity: [] }],
       'answer text',
     )
-    expect(out).toContain('1,500 tok')
+    expect(out).toContain('1,500 tokens')
     expect(out).toContain('(400 cached)')
   })
 
@@ -224,7 +224,7 @@ describe('DagNode - token badge shows cached tokens alongside the total', () => 
       [{ runId: 'w', agent: 'web-researcher', stage: 'worker', done: true, activity: [] }],
       'answer text',
     )
-    expect(out).toContain('1,500 tok')
+    expect(out).toContain('1,500 tokens')
     expect(out).not.toContain('cached')
   })
 })

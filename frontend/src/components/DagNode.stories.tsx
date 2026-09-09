@@ -44,7 +44,8 @@ const workerDone = (activity: Activity[]): AgentRun => ({
 })
 
 const judgeRun = (round: number, score: number, passed: boolean, feedback: string): AgentRun => ({
-  runId: `j${round}`, agent: 'judge', stage: 'judge', round, done: true, score, passed, feedback,
+  // threshold mirrors the live envelope.threshold so the "(needs 70%)" bar renders.
+  runId: `j${round}`, agent: 'judge', stage: 'judge', round, done: true, score, passed, threshold: 0.7, feedback,
   activity: [{ kind: 'thinking', text: 'Re-checking cited URLs against the claims…' }],
 })
 

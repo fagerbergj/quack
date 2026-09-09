@@ -35,14 +35,14 @@ describe('ChatMenu usage row', () => {
     render(<ChatMenu chatId="c1" usage={{ models: ['gpt-5'], usage: { total_tokens: 5522 } }} />)
     await user.click(screen.getByRole('button', { name: 'Chat actions' }))
     expect(screen.getByText('gpt-5')).toBeTruthy()
-    expect(screen.getByText('5,522 tok')).toBeTruthy()
+    expect(screen.getByText('5,522 tokens')).toBeTruthy()
   })
 
   it('omits the usage row when no usage prop is given', async () => {
     const user = userEvent.setup()
     render(<ChatMenu chatId="c1" />)
     await user.click(screen.getByRole('button', { name: 'Chat actions' }))
-    expect(screen.queryByText(/tok$/)).toBeNull()
+    expect(screen.queryByText(/tokens$/)).toBeNull()
   })
 
   it('the trigger button meets the 44px touch-target floor', () => {

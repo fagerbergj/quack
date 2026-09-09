@@ -35,7 +35,7 @@ export function UsageSummary({ models, usage }: UsageSummaryProps) {
             className="list-none cursor-pointer tabular-nums hover:text-gray-600 dark:hover:text-gray-300 select-none"
             title="Session token usage - click to expand"
           >
-            {total.toLocaleString()} tok
+            {total.toLocaleString()} tokens
           </summary>
           <div className="absolute right-0 z-20 mt-1 w-52 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg p-2.5 space-y-1 text-gray-600 dark:text-gray-300">
             <UsageRow label="Input" value={usage?.input_tokens} />

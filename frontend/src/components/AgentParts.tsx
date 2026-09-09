@@ -10,7 +10,7 @@ import type { Element } from 'hast'
 import type { Activity, ToolCall } from './messageParts'
 import { Icon } from './Icon'
 import { agentLabel, liveStatusLine } from './messageParts'
-import { summarizeArgs, previewLine, toolFailed, toolActionLine, fmtTokenCount } from './toolFormat'
+import { previewLine, toolFailed, toolActionLine, fmtTokenCount } from './toolFormat'
 import { escapeUnmatchedBackticks } from '../lib/backticks'
 import { Expandable } from './Expandable'
 import { ToolCallView } from './ToolCallView'
@@ -190,7 +190,7 @@ export function BubbleHeader({ agent, model, tokens, status }: { agent: string; 
         <span className="font-mono truncate max-w-[160px]" title={model}>{model}</span>
       )}
       {tokens != null && tokens > 0 && (
-        <span className="tabular-nums">{tokens.toLocaleString()} tok</span>
+        <span className="tabular-nums">{tokens.toLocaleString()} tokens</span>
       )}
     </div>
   )
@@ -334,15 +334,17 @@ export function AcpBadge() {
 // inside it is invalid HTML that breaks keyboard use (Enter/Space on the
 // summary vs. the nested button conflict).
 export function ToolBlock({ tool }: { tool: ToolCall }) {
-  const argSummary = summarizeArgs(tool.args)
+  // #1312 made the relay carry the real MCP tool name instead of "other",
+  // so name alone is always meaningful now.
   const label = tool.name
+  // The human-readable "<verb> <target>" is the row; the raw tool id is
+  // demoted to the tooltip (audit #14).
   return (
     <div className="relative my-0.5 not-prose">
       <details className="group">
         <summary className="cursor-pointer select-none flex items-center gap-1.5 py-0.5 text-[11px]">
           <ToolStatusIcon tool={tool} />
-         <code className="font-mono text-gray-600 dark:text-gray-300 shrink-0">{label}</code>
-           {argSummary && <span className="text-gray-400 dark:text-gray-500 truncate">{argSummary}</span>}
+          <span className="text-gray-600 dark:text-gray-300 truncate" title={label}>{toolActionLine(label, tool.args)}</span>
         </summary>
         <div className="ml-[7px] pl-2.5 pr-2 py-1 border-l border-gray-200 dark:border-gray-700 text-xs">
           <ToolCallView tool={tool} />

@@ -880,7 +880,7 @@ export class ChatStore {
         },
         onAgentComplete: d => {
           const completeArgs = {
-            score: d.score, passed: d.passed, feedback: d.feedback,
+            score: d.score, passed: d.passed, threshold: d.threshold, feedback: d.feedback,
             status: d.status, reason: d.reason, finishReason: d.finishReason, model: d.model, totalTokens: d.totalTokens,
           }
           // Freeze the run's duration off the server's own clock when it sent one

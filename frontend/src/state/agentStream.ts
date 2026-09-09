@@ -34,6 +34,7 @@ interface AgentCompletePayload {
   round?: number
   score?: number
   passed?: boolean
+  threshold?: number
   feedback?: string
   status?: string
   reason?: string
@@ -272,6 +273,7 @@ function dispatchAgentEvent(
           round: typeof p.round === 'number' ? p.round : undefined,
           score: typeof p.score === 'number' ? p.score : undefined,
           passed: p.passed === true,
+          threshold: typeof (p.envelope as { threshold?: unknown } | undefined)?.threshold === 'number' ? (p.envelope as { threshold: number }).threshold : undefined,
           feedback: typeof p.feedback === 'string' ? p.feedback : undefined,
           status: typeof p.status === 'string' ? p.status : undefined,
           reason: typeof p.reason === 'string' ? p.reason : undefined,

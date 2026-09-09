@@ -387,10 +387,10 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
     return (
       <div className="border-t border-gray-100 dark:border-gray-700 px-4 py-2 bg-yellow-50 dark:bg-yellow-900/15">
         <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-yellow-700 dark:text-yellow-400 uppercase tracking-wide">
-          <Icon name="warning" className="w-3 h-3" /> {failureHeading} · round {run.round}
+          <Icon name="warning" className="w-3 h-3" /> {failureHeading} · check {run.round}
         </span>
         <div className="text-[11px] text-yellow-700 dark:text-yellow-400/90 mt-0.5">
-          Answer surfaced without quality vetting - {run.reason}
+          Answer shown without a quality check - {run.reason}
         </div>
       </div>
     )
@@ -400,11 +400,14 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
       <details open={running} className="not-prose">
         <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2">
           <span className="text-[10px] font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wide">
-            Judge · round {run.round}
+            Quality check {run.round}
           </span>
+          {/* The pass bar is rendered only when the server sent it (older
+              events carry no envelope), never assumed. */}
           {run.score != null && (
             <span className={`inline-flex items-center gap-0.5 text-[10px] font-medium ${run.passed ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
               <Icon name={run.passed ? 'check' : 'close'} className="w-3 h-3" /> {(run.score * 100).toFixed(0)}%
+              {run.threshold != null && ` (needs ${(run.threshold * 100).toFixed(0)}%)`}
             </span>
           )}
           <RunModel run={run} />
@@ -420,7 +423,7 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
           in a popup, rendered as markdown (0.9.0 feedback). */}
       {run.done && run.feedback && run.feedback !== 'None' && (
         <div className="px-4 pt-0 pb-2">
-          <CollapsedPreview label="Verdict" text={run.feedback} popupTitle={`Judge verdict · round ${run.round}`} />
+          <CollapsedPreview label="Verdict" text={run.feedback} popupTitle={`Quality check ${run.round} verdict`} />
         </div>
       )}
     </div>
@@ -588,14 +591,14 @@ export const DagNode = memo(function DagNode({
           {state.judgeRounds != null && state.judgeRounds > 0 && state.judgePassed === false && (
             <span
               className="inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
-              title={`Judge rejected this output after ${state.judgeRounds} round${state.judgeRounds === 1 ? '' : 's'}${state.judgeFinalScore != null ? ` (final score ${(state.judgeFinalScore * 100).toFixed(0)}%)` : ''} - surfaced unvetted`}
+              title={`The quality check rejected this output after ${state.judgeRounds} round${state.judgeRounds === 1 ? '' : 's'}${state.judgeFinalScore != null ? ` (final score ${(state.judgeFinalScore * 100).toFixed(0)}%)` : ''} - shown without a passing check`}
             >
-              <Icon name="warning" className="w-3 h-3" /> unvetted
+              <Icon name="warning" className="w-3 h-3" /> not checked
             </span>
           )}
           {state.totalTokens != null && state.totalTokens > 0 && (
             <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
-              {state.totalTokens.toLocaleString()} tok
+              {state.totalTokens.toLocaleString()} tokens
               {state.cachedTokens != null && state.cachedTokens > 0 && (
                 <span title={`${state.cachedTokens.toLocaleString()} tokens served from cache`}> ({state.cachedTokens.toLocaleString()} cached)</span>
               )}

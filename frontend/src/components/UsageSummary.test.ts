@@ -35,7 +35,7 @@ describe('UsageSummary - session token total and breakdown', () => {
   const usage: Usage = { input_tokens: 1000, output_tokens: 200, reasoning_tokens: 50, cached_tokens: 300, total_tokens: 1250 }
 
   it('shows the total in the collapsed summary', () => {
-    expect(html([], usage)).toContain('1,250 tok')
+    expect(html([], usage)).toContain('1,250 tokens')
   })
 
   it('the expandable detail carries the full input/output/reasoning/cached split', () => {

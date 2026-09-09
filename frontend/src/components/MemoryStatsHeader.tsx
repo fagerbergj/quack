@@ -48,10 +48,10 @@ export function MemoryStatsHeader({ weeks, loading, error }: MemoryStatsHeaderPr
   return (
     <details className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-300">
       <summary className="flex flex-wrap items-center gap-x-4 gap-y-1 cursor-pointer list-none [&::-webkit-details-marker]:hidden">
-        <span>
+        <span title="Of the recalled memories that were voted on this week, the share voted supported">
           Precision <strong className="text-gray-900 dark:text-white">{pct(thisWeek)}</strong>
         </span>
-        <span>
+        <span title="Of all votes cast this week, the share that were supported">
           Support share <strong className="text-gray-900 dark:text-white">{supportSharePct(thisWeek)}</strong>
         </span>
         <span className="flex flex-wrap items-center gap-x-2 text-gray-400 dark:text-gray-500">
