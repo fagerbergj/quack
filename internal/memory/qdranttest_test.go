@@ -146,6 +146,47 @@ func TestQdrant_ListPagingTiesExactlyOnce(t *testing.T) {
 	}
 }
 
+// TestQdrant_ListPagingLargeTieExactlyOnce is the 500-point scale variant of
+// the tie-group regression above: a tie group larger than resolveTieBoundary's
+// typical case (23) by an order of magnitude, still on a small page size, so
+// nearly every page triggers the full-group refetch. Confirms the refetch
+// stays correct (exactly once, no omissions) at this scale, not just small n.
+func TestQdrant_ListPagingLargeTieExactlyOnce(t *testing.T) {
+	ctx := context.Background()
+	s := newQdrantStore(t, "task", nil)
+	const n = 500
+	const tied = "2026-08-01T00:00:00Z"
+	for i := 0; i < n; i++ {
+		seedMemory(t, s, point{
+			ID: testID(fmt.Sprintf("bigtie-%d", i)), Content: fmt.Sprintf("fact %d", i),
+			Scope: "repo:bigtie", Timestamp: tied,
+		})
+	}
+
+	const pageSize = 50
+	seen := map[string]int{}
+	for offset := 0; offset < n+pageSize; offset += pageSize {
+		page, total, err := s.List(ctx, []string{"repo:bigtie"}, offset, pageSize, false, "")
+		if err != nil {
+			t.Fatalf("List offset=%d: %v", offset, err)
+		}
+		if total != n {
+			t.Fatalf("total at offset=%d = %d, want %d", offset, total, n)
+		}
+		for _, m := range page {
+			seen[m.ID]++
+		}
+	}
+	for id, count := range seen {
+		if count != 1 {
+			t.Fatalf("id %s appeared %d times across pages, want exactly 1", id, count)
+		}
+	}
+	if len(seen) != n {
+		t.Fatalf("saw %d distinct ids across all pages, want %d (no omissions)", len(seen), n)
+	}
+}
+
 // testID maps a readable test fixture name (e.g. "m1", "verified-old") to a
 // stable UUID: production memory ids are always uuid.NewString() (commit.go),
 // and Qdrant's point-id wire type rejects anything that doesn't parse as a
