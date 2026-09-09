@@ -1150,7 +1150,7 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
     }
   })
 
-  it('a POST stream that drops (no `done`, body just ends) hands off to the resumable GET stream, resetting local state first so the replay is not duplicated', async () => {
+  it('a POST stream that drops (no `done`, body just ends, no `id:` seen) hands off to the resumable GET stream at event 0 - nothing to resume past', async () => {
     const dropped = [
       'event: dag_plan',
       'data: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}',
@@ -1170,17 +1170,67 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
     // The turn is still live - handed off to the GET stream, not failed.
     expect(store.get('c').live?.streaming).toBe(true)
     const es = FakeEventSource.last!
-    expect(es.url).toBe('/api/v1/chats/c/stream') // no id to resume past on this path - full replay
-    // Local state was cleared before the handoff, so the replay below isn't duplication.
-    expect(store.get('c').live?.dag).toBeUndefined()
-    expect(store.get('c').live?.text).toBe('')
+    expect(es.url).toBe('/api/v1/chats/c/stream') // no `id:` line was seen on this path - full replay
 
+    // The replayed dag_plan (a fresh plan) resets the stale top-level text
+    // from the dropped body, same as any fresh dag_plan (#463) - no separate
+    // pre-handoff reset is needed.
     es.emit('dag_plan', '{"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}', 1)
+    expect(store.get('c').live?.text).toBe('')
     es.emit('node_done', '{"node_id":"a","output_preview":"final"}', 2)
     expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('done')
 
     es.emit('done', '{}', 3)
     expect(store.get('c').live?.streaming).toBe(false)
+  })
+
+  // #1090 perf audit item 4: the POST body carries `id:` lines on the wire
+  // (same sseWriter as the GET stream) - a drop mid-run should resume past
+  // whatever was already applied, not replay the run from 0.
+  it('a POST stream that drops after seeing `id:` lines hands off to the GET stream past the last id applied', async () => {
+    const dropped = [
+      'id: 1',
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}',
+      '',
+      'id: 2',
+      'event: node_start',
+      'data: {"node_id":"a","agent":"researcher"}',
+      '',
+      // dropped before node_done/done arrive
+    ].join('\n')
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream({ start(ctrl) { ctrl.enqueue(encoder.encode(dropped)); ctrl.close() } })
+    const res = new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(res))
+
+    await store.submit('c', 'go')
+
+    const es = FakeEventSource.last!
+    expect(es.url).toBe('/api/v1/chats/c/stream?last_event_id=2')
+    expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('running') // already applied, not lost
+
+    es.emit('node_done', '{"node_id":"a","output_preview":"final"}', 3)
+    expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('done')
+    es.emit('done', '{}', 4)
+    expect(store.get('c').live?.streaming).toBe(false)
+  })
+})
+
+// #1090 perf audit item 4: a fresh attach still replays from 0 - a real page
+// reload starts a new ChatStore with no memory of what this client already
+// applied, so it has no cursor to resume from (a durable per-chat cursor
+// needs a backend field; not implemented here). The POST-drop handoff
+// (above) is the one case where this client DOES already know how far it
+// got - see the two tests just above this comment.
+describe('ChatStore.attach - a fresh attach has no cursor, replays from 0 (#1090)', () => {
+  it('attach on a chat this client has never streamed opens /stream with no last_event_id', () => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    FakeEventSource.last = null
+    const store = new ChatStore()
+    store.seed('c', [dagTurn('in_progress')])
+    store.attach('c')
+    expect(FakeEventSource.last!.url).toBe('/api/v1/chats/c/stream')
   })
 })
 

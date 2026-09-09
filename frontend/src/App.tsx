@@ -1,8 +1,11 @@
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import Chat from './pages/Chat'
-import Memory from './pages/Memory'
-import ExtensionHost from './pages/ExtensionHost'
 import { NavRail } from './components/NavRail'
+
+// Chat is the default route and loads eagerly; Memory and the extension
+// iframe host are route-split out of the entry chunk (~19.7 kB gzip).
+const Memory = lazy(() => import('./pages/Memory'))
+const ExtensionHost = lazy(() => import('./pages/ExtensionHost'))
 import { useRoute, useExtName } from './router'
 import { applyTheme } from './hooks/useTheme'
 import { useVisualViewportHeight } from './hooks/useVisualViewportHeight'
@@ -51,9 +54,9 @@ export default function App() {
             dependency. Each page's header leading slot carries the NavToggle
             for the drawer above, fed by this one state. */}
         {route === 'memory'
-          ? <Memory navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} />
+          ? <Suspense fallback={null}><Memory navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} /></Suspense>
           : route === 'ext'
-            ? <ExtensionHost navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} />
+            ? <Suspense fallback={null}><ExtensionHost navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} /></Suspense>
             : <Chat navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} />}
       </div>
     </div>

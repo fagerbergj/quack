@@ -546,11 +546,10 @@ export class ChatStore {
       if (!result.done) {
         // The body ended without a `done` event - the connection dropped
         // mid-run, not a normal completion. Hand off to the resumable GET
-        // stream (which supports Last-Event-ID reconnect) instead of failing
-        // the turn outright.
+        // stream, resuming past the highest id already applied so it doesn't
+        // replay everything the POST body already delivered.
         handedOff = true
-        this.resetLiveForResume(chatId)
-        this.openEventSource(chatId, generation, 0, 0)
+        this.openEventSource(chatId, generation, result.lastEventId, 0)
       }
     } catch (err: unknown) {
       if ((err as Error)?.name !== 'AbortError') {
@@ -597,9 +596,14 @@ export class ChatStore {
 
   // subscribeToStream opens the GET .../stream EventSource and wires it through
   // the same handlers the POST path uses - shared by attach() (reconnect to an
-  // in-progress run) and retryNode (watch a background re-run's progress, since
-  // its PUT no longer returns its own SSE body). Callers own seeding/resetting
-  // `live` beforehand; this only wires the subscription + teardown.
+  // in-progress run) and retryNode/startNode (watch a background re-run's
+  // progress, since its PUT/POST no longer returns its own SSE body). Callers
+  // own seeding/resetting `live` beforehand; this only wires the subscription
+  // + teardown. Always starts at event 0: attach() has no durable cursor to
+  // resume from yet (needs a backend field - #1090 perf audit item 4), and
+  // retryNode/startNode start a run whose seq the server resets to 1 anyway
+  // (runlog.EventLog.Reset), so resuming past a stale id would wrongly skip
+  // its early events.
   private subscribeToStream(chatId: string, generation: number): void {
     this.openEventSource(chatId, generation, 0, 0)
   }
@@ -658,17 +662,6 @@ export class ChatStore {
       this.reconnectTimers.set(chatId, timer)
     }
     this.eventSources.set(chatId, close)
-  }
-
-  // resetLiveForResume clears a live turn's accumulated DAG/text/runs before
-  // handing off to a full stream replay (openEventSource with lastEventId=0)
-  // - the POST body carries no event ids to resume past, so the replay starts
-  // from the beginning; clearing first is what keeps that idempotent instead
-  // of duplicating everything already applied.
-  private resetLiveForResume(chatId: string): void {
-    const s = this.states.get(chatId)
-    if (!s?.live) return
-    this.write(chatId, { ...s, live: { ...s.live, dag: undefined, text: '', runs: [] } })
   }
 
   // teardownStream ends an attached run: closes its subscribe stream and flips the

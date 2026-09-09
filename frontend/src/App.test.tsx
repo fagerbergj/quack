@@ -77,10 +77,12 @@ describe('App nav drawer', () => {
     expect(screen.getByRole('button', { name: 'Toggle navigation' })).toBeTruthy()
     cleanup()
     renderAt('/memory')
-    expect(screen.getByRole('button', { name: 'Toggle navigation' })).toBeTruthy()
+    // Memory is route-split (React.lazy) - its toggle only exists once the
+    // chunk resolves through Suspense.
+    expect(await screen.findByRole('button', { name: 'Toggle navigation' })).toBeTruthy()
     cleanup()
     renderAt('/ext/usage')
-    expect(screen.getByRole('button', { name: 'Toggle navigation' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: 'Toggle navigation' })).toBeTruthy()
     // The extension's own UI lands when the extensions fetch resolves.
     await waitFor(() => expect(document.querySelector('iframe')).toBeTruthy())
   })
