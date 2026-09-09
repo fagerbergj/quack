@@ -25,12 +25,21 @@ type contextT = context.Context
 
 // procHandle is one running ACP subprocess with its client-side connection.
 type procHandle struct {
-	cmd     *exec.Cmd
-	conn    *sdk.ClientSideConnection
-	updates chan sdk.SessionUpdate
-	stop    chan struct{} // closed on shutdown so the update pump never blocks forever
-	stderr  *tailBuffer
-	once    sync.Once
+	cmd  *exec.Cmd
+	conn *sdk.ClientSideConnection
+	// updatesMu guards pending/stalled - SessionUpdate must never block (it
+	// runs on the SDK's single notification-processing goroutine; blocking
+	// there backs up the SDK's own bounded notification queue and tears the
+	// connection down, masking a slow downstream consumer as "peer
+	// disconnected" - finding 10). notify is 1-cap: a full buffer just means
+	// the round loop hasn't drained the last signal yet, so this is a
+	// wakeup, not a value queue.
+	updatesMu sync.Mutex
+	pending   []sdk.SessionUpdate
+	stalled   bool
+	notify    chan struct{}
+	stderr    *tailBuffer
+	once      sync.Once
 	// sent/received tee the raw JSON-RPC frames this handle's connection
 	// exchanges over stdin/stdout - the replay ledger's invoke_agent event
 	// (emit.go) is built from these at the end of the round.
@@ -39,6 +48,43 @@ type procHandle struct {
 	// pump goroutine needs closing on every exit path, same as a real
 	// subprocess needs killing.
 	replayIO io.Closer
+}
+
+// updatesStallThreshold: the old buffered-chan cap SessionUpdate used to
+// block on. Crossing it now means the round loop can't keep up - worth one
+// log line so a torn-down-looking round reads as "slow consumer", not a
+// masked peer disconnect.
+const updatesStallThreshold = 64
+
+// pushUpdate appends u without ever blocking and wakes the round loop.
+// stalled logs once per backlog episode, not once per update, so a genuinely
+// slow consumer doesn't spam the log at the rate of streamed tokens.
+func (h *procHandle) pushUpdate(u sdk.SessionUpdate) {
+	h.updatesMu.Lock()
+	h.pending = append(h.pending, u)
+	n := len(h.pending)
+	stall := n == updatesStallThreshold && !h.stalled
+	if stall {
+		h.stalled = true
+	}
+	h.updatesMu.Unlock()
+	if stall {
+		slog.Warn("acp: event consumer stalling, updates buffering", "component", "acp", "buffered", n)
+	}
+	select {
+	case h.notify <- struct{}{}:
+	default:
+	}
+}
+
+// drainUpdates returns and clears everything buffered since the last drain.
+func (h *procHandle) drainUpdates() []sdk.SessionUpdate {
+	h.updatesMu.Lock()
+	defer h.updatesMu.Unlock()
+	u := h.pending
+	h.pending = nil
+	h.stalled = false
+	return u
 }
 
 // traceparentEnv renders the active round span as a W3C TRACEPARENT env
@@ -110,8 +156,7 @@ func (a *Agent) start(ctx context.Context, cwd string, caps workspace.Caps) (*pr
 // the only path before #605 added fork-replay's live fallback.
 func (a *Agent) startLive(ctx context.Context, cwd string, caps workspace.Caps) (*procHandle, error) {
 	h := &procHandle{
-		updates:  make(chan sdk.SessionUpdate, 64),
-		stop:     make(chan struct{}),
+		notify:   make(chan struct{}, 1),
 		stderr:   &tailBuffer{max: 4096},
 		sent:     &teeBuffer{},
 		received: &teeBuffer{},
@@ -162,8 +207,7 @@ func (a *Agent) startReplay(ctx context.Context) (*procHandle, error) {
 		return nil, fmt.Errorf("acp: replay: %w", err)
 	}
 	h := &procHandle{
-		updates:  make(chan sdk.SessionUpdate, 64),
-		stop:     make(chan struct{}),
+		notify:   make(chan struct{}, 1),
 		stderr:   &tailBuffer{max: 4096},
 		sent:     &teeBuffer{},
 		received: &teeBuffer{},
@@ -181,7 +225,6 @@ func (a *Agent) startReplay(ctx context.Context) (*procHandle, error) {
 // replayIO, unblocking its pump goroutine. Idempotent.
 func (h *procHandle) close(log *slog.Logger) {
 	h.once.Do(func() {
-		close(h.stop)
 		if h.replayIO != nil {
 			_ = h.replayIO.Close()
 		}
@@ -215,12 +258,13 @@ type clientHandler struct {
 
 var _ sdk.Client = (*clientHandler)(nil)
 
+// SessionUpdate must never block: it runs on the SDK's single
+// notification-processing goroutine, and blocking there stalls the SDK's own
+// bounded notification queue, which tears the whole connection down under a
+// slow downstream consumer (finding 10). pushUpdate only ever appends and
+// signals - ctx is unused because there is never anything to wait on.
 func (c *clientHandler) SessionUpdate(ctx contextT, n sdk.SessionNotification) error {
-	select {
-	case c.h.updates <- n.Update:
-	case <-c.h.stop:
-	case <-ctx.Done():
-	}
+	c.h.pushUpdate(n.Update)
 	return nil
 }
 

@@ -420,22 +420,18 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 
 	for {
 		select {
-		case u := <-h.updates:
+		case <-h.notify:
 			resetIdle()
-			if !relay(u) {
-				return nil
+			for _, u := range h.drainUpdates() {
+				if !relay(u) {
+					return nil
+				}
 			}
 		case d := <-done:
-			for {
-				select {
-				case u := <-h.updates:
-					if !relay(u) {
-						return nil
-					}
-					continue
-				default:
+			for _, u := range h.drainUpdates() {
+				if !relay(u) {
+					return nil
 				}
-				break
 			}
 			if d.err != nil {
 				endPrompt(d.err)
@@ -526,14 +522,29 @@ func mcpToolsBlock(names []string) string {
 	return "MCP tools available to you this round:\n  " + strings.Join(names, ", ")
 }
 
-// gracefulCancel sends session/cancel and waits for the prompt goroutine to acknowledge.
+// gracefulCancel sends session/cancel and waits for the prompt goroutine to
+// acknowledge. h.conn.Cancel is a notification write that blocks on the
+// connection's writeMu/pipe with no ctx-awareness of its own (the SDK only
+// checks ctx before attempting the write) - if the child has stopped
+// draining stdin, that write can wedge forever alongside the prompt write
+// already holding writeMu. Running it on its own goroutine and selecting on
+// cctx.Done() here is what makes cancelGrace an actual bound: once this
+// returns, the caller's deferred h.close SIGKILLs the process group, which
+// unblocks the stuck writer(s) via EPIPE.
 func (a *Agent) gracefulCancel(h *procHandle, sessID sdk.SessionId, done <-chan promptDone) {
 	cctx, cancel := context.WithTimeout(context.Background(), cancelGrace)
 	defer cancel()
-	if err := h.conn.Cancel(cctx, sdk.CancelNotification{SessionId: sessID}); err != nil {
-		return // broken pipe etc - nothing more to wait for
-	}
+	errc := make(chan error, 1)
+	go func() { errc <- h.conn.Cancel(cctx, sdk.CancelNotification{SessionId: sessID}) }()
 	select {
+	case err := <-errc:
+		if err != nil {
+			return // broken pipe etc - nothing more to wait for
+		}
+		select {
+		case <-done:
+		case <-cctx.Done():
+		}
 	case <-done:
 	case <-cctx.Done():
 	}
