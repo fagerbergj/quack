@@ -5,7 +5,7 @@ scale:
 criteria:
   catches_real_issues:
     definition: >
-      The review surfaces the change's actual defects - the correctness, security, and missing-test problems that matter - rather than only cosmetic ones, and presents them as findings for a human deciding whether to merge, not a transcript of the reviewer's own process. It never turns an environment-specific failure into a code-quality concern. Judge against what the change actually contains, not against an imagined ideal review. "The review" is the staged record (stage_review_comment/stage_review, or the structured tail) - reflected here via the staged verdict/summary and findings sections - never the chat-visible reply; a one-line reply confirming what was staged is correct, not a gap.
+      The review surfaces the change's actual defects - the correctness, security, and missing-test problems that matter - rather than only cosmetic ones, and presents them as findings for a human deciding whether to merge, not a transcript of the reviewer's own process. It never turns an environment-specific failure into a code-quality concern. Judge against what the change actually contains, not against an imagined ideal review. "The review" is the staged record (stage_review_comment/stage_review, or the structured tail) - reflected here via the staged verdict/takeaway/notes and findings sections - never the chat-visible reply; a one-line reply confirming what was staged is correct, not a gap.
     steps:
     - From the diff, identify the genuine problems in the change (bugs, unhandled edge cases, security exposure, new behavior with no test).
     - Check whether the review found each, or missed a significant one while spending its attention on trivia.
@@ -101,26 +101,26 @@ criteria:
     - omission
   structured_verdict:
     definition: >
-      The review's summary is scannable and consistent with its own findings and verdict - a fifteen-second takeaway a human can act on, not a mechanical check that a structured field matches the prose. Findings are grouped by severity (blocking → suggestions → nits), and the staged verdict (via `stage_review`'s `event`, or the answer's `VERDICT:` tail) tells the same story as the findings' own severity labels. Grade the STAGED summary and findings, not the chat-visible reply - a worker that stages the review and replies with one confirmation line has done this correctly, not omitted the summary.
+      The review's takeaway is a scannable, one-sentence read consistent with its own findings and verdict, not a mechanical check that a structured field matches the prose. Findings are grouped by severity (blocking → suggestions → nits), and the staged verdict (via `stage_review`'s `event`, or the answer's `VERDICT:` tail) tells the same story as the findings' own severity labels. Grade the STAGED takeaway/verified/notes and findings, not the chat-visible reply - a worker that stages the review and replies with one confirmation line has done this correctly, not omitted the takeaway.
     guidance: >
       The verdict is STRUCTURED DATA: your prompt surfaces the resolved value as "Staged review verdict: <event>" when one is staged. Three verdicts, three levels of confidence: any surviving `blocking:` ⇒ `request_changes`; else any unresolved `question:` ⇒ `comment`; else ⇒ `approve`, nits and suggestions okay. `comment` is legitimate ONLY when an unresolved `question:` stands, or the review states verification it could not finish - not as a way to avoid committing to a verdict with nothing unresolved behind it.
     steps:
-    - Check the review opens with a high-level summary that a reader could act on in fifteen seconds, and groups findings by severity rather than scattering them.
+    - Check the review has a one-sentence takeaway a reader could act on in fifteen seconds, and groups findings by severity rather than scattering them.
     - Read the staged verdict provided to you and check it is present.
     - Cross-check every finding's OWN severity label against the overall verdict - the two must tell the same story. A finding labeled `blocking:` sitting alongside an `approve` verdict is a direct self-contradiction, regardless of whether the underlying issue actually warrants blocking; so is a `request_changes` verdict backed by nothing but `nit:`/`suggestion:` findings. Reason about it, do not pattern-match on the label text alone.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: clear, scannable summary, severity-grouped findings, a present and consistent staged verdict (including an explicit approve on a clean change).
+      meaning: clear one-sentence takeaway, severity-grouped findings, a present and consistent staged verdict (including an explicit approve on a clean change).
     - min: 2.0
       max: 2.0
-      meaning: severity-grouped findings and a present, consistent staged verdict, but the summary is present and accurate while reading more like a findings recap than a fifteen-second takeaway.
+      meaning: severity-grouped findings and a present, consistent staged verdict, but the takeaway is present and accurate while reading more like a findings recap than a fifteen-second read.
     - min: 1.0
       max: 1.0
-      meaning: mostly clear but missing the summary entirely, or the staged verdict slightly mismatches the findings.
+      meaning: mostly clear but missing the takeaway entirely, or the staged verdict slightly mismatches the findings.
     - min: 0.0
       max: 0.0
-      meaning: an unstructured wall of comments with no summary, no staged verdict at all, a staged verdict that contradicts the findings (approves over an unresolved blocking issue, or ANY finding is labeled blocking/security-severity while the verdict is `approve`, or `request_changes` is staged over findings that are all nits/suggestions), or a clean review - empty or non-blocking findings, verification the review calls complete - resolved to `comment` instead of `approve`.
+      meaning: an unstructured wall of comments with no takeaway, no staged verdict at all, a staged verdict that contradicts the findings (approves over an unresolved blocking issue, or ANY finding is labeled blocking/security-severity while the verdict is `approve`, or `request_changes` is staged over findings that are all nits/suggestions), or a clean review - empty or non-blocking findings, verification the review calls complete - resolved to `comment` instead of `approve`.
     anchors:
     - quote
     - omission
