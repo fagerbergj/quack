@@ -215,7 +215,9 @@ func registerEditArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vetti
 		Description: "Edit an existing artifact by search/replace. Optimistic locking: if base_revision is stale, " +
 			"your edits are still applied to the current latest content as long as each `old` string still matches " +
 			"exactly once; a real conflict fails and returns the current content and revision to retry against. " +
-			"Structured artifacts are re-validated before the write.",
+			"Structured artifacts are re-validated before the write. On a structured artifact, `old`/`new` match " +
+			"against each field's decoded text, not the raw serialized JSON - `new` can contain raw newlines, quotes, " +
+			"or backslashes with no escaping. There is no need to rewrite the whole record with write_<kind> just to change one field.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, args editArtifactInput) (*mcp.CallToolResult, any, error) {
 		if len(args.Edits) == 0 {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "edit_artifact: edits must be non-empty"}}}, nil, nil

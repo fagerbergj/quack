@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"math/rand/v2"
@@ -662,6 +663,113 @@ func applyEdits(content []byte, ops []EditOp) ([]byte, error) {
 	return []byte(s), nil
 }
 
+// stringLeaf is one JSON string value found while walking a document, along
+// with the raw byte span of its quoted literal (including the quotes) - the
+// span applyStructuredEdits splices a re-encoded replacement into.
+type stringLeaf struct {
+	start, end int
+	value      string
+}
+
+// stringLeaves walks content's JSON token stream and returns every string
+// that is a value (array element or object field value), never an object
+// key - a match against a key, or one that would only exist by concatenating
+// two adjacent leaves, is therefore invisible here and correctly counts as
+// no match. Object key/value alternation is tracked with the same
+// stack+toggle trick jq/gjson-style walkers use: pushing a frame doesn't
+// toggle the parent (we're still inside the nested value), only popping does
+// (the nested value is now fully consumed).
+func stringLeaves(content []byte) ([]stringLeaf, error) {
+	dec := json.NewDecoder(bytes.NewReader(content))
+	type frame struct{ isObject, keyNext bool }
+	var stack []frame
+	var leaves []stringLeaf
+	prevEnd := 0
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		end := int(dec.InputOffset())
+		top := func() *frame {
+			if len(stack) == 0 {
+				return nil
+			}
+			return &stack[len(stack)-1]
+		}
+		switch t := tok.(type) {
+		case json.Delim:
+			switch t {
+			case '{':
+				stack = append(stack, frame{isObject: true, keyNext: true})
+			case '[':
+				stack = append(stack, frame{isObject: false})
+			case '}', ']':
+				stack = stack[:len(stack)-1]
+				if f := top(); f != nil && f.isObject {
+					f.keyNext = true
+				}
+			}
+		case string:
+			if f := top(); f != nil && f.isObject && f.keyNext {
+				f.keyNext = false // this string is a key, not a candidate leaf
+				break
+			}
+			start := bytes.IndexByte(content[prevEnd:], '"') + prevEnd
+			leaves = append(leaves, stringLeaf{start: start, end: end, value: t})
+			if f := top(); f != nil && f.isObject {
+				f.keyNext = true
+			}
+		default: // number, bool, nil - always a value, never a key
+			if f := top(); f != nil && f.isObject {
+				f.keyNext = true
+			}
+		}
+		prevEnd = end
+	}
+	return leaves, nil
+}
+
+// applyStructuredEdits is applyEdits for Structured content: each Old is
+// matched against decoded JSON string values (so a New containing a raw
+// newline, quote, or backslash is encoded correctly) rather than raw bytes.
+// Old must occur exactly once across every leaf's decoded value combined;
+// 0 or 2+ total occurrences is ambiguous, same failure as applyEdits. Only
+// the matched leaf is re-encoded and spliced back in, so everything else -
+// key order, spacing - is untouched and a no-op edit is byte-identical.
+func applyStructuredEdits(content []byte, ops []EditOp) ([]byte, error) {
+	for _, op := range ops {
+		leaves, err := stringLeaves(content)
+		if err != nil {
+			return nil, fmt.Errorf("edit: invalid JSON: %w", err)
+		}
+		total := 0
+		var match *stringLeaf
+		for i := range leaves {
+			if n := strings.Count(leaves[i].value, op.Old); n > 0 {
+				total += n
+				match = &leaves[i]
+			}
+		}
+		if total != 1 {
+			return nil, fmt.Errorf("edit old-string matched %d times (want exactly 1): %q", total, op.Old)
+		}
+		newValue, err := json.Marshal(strings.Replace(match.value, op.Old, op.New, 1))
+		if err != nil {
+			return nil, fmt.Errorf("edit: encoding replacement: %w", err)
+		}
+		out := make([]byte, 0, len(content)-(match.end-match.start)+len(newValue))
+		out = append(out, content[:match.start]...)
+		out = append(out, newValue...)
+		out = append(out, content[match.end:]...)
+		content = out
+	}
+	return content, nil
+}
+
 // Edit applies ops to id's latest revision and writes N+1 (§4.4/§9). The
 // merge is unconditional on baseRevision: whether the caller's base is
 // current or stale, edits are always re-applied against whatever is latest
@@ -706,14 +814,22 @@ func (c *Client) tryEdit(ctx context.Context, id string, baseRevision int, ops [
 		// stale base rather than applying directly.
 		slog.Debug("recordstore: edit merged against a newer revision than base_revision", "id", id, "base_revision", baseRevision, "latest_revision", latestRev)
 	}
-	merged, err := applyEdits(raw, ops)
-	if err != nil {
-		return 0, nil, &EditConflict{ID: id, Revision: latestRev, Content: raw}
-	}
 	kind := KindOf(id)
 	spec, err := lookupKind(kind)
 	if err != nil {
 		return 0, nil, err
+	}
+	// Structured edits target decoded field text - a raw byte search/replace on
+	// the serialized JSON breaks the moment New has a newline, quote, or
+	// backslash. Blob has no JSON structure to speak of, so it keeps the byte path.
+	var merged []byte
+	if spec.Class == Structured {
+		merged, err = applyStructuredEdits(raw, ops)
+	} else {
+		merged, err = applyEdits(raw, ops)
+	}
+	if err != nil {
+		return 0, nil, &EditConflict{ID: id, Revision: latestRev, Content: raw}
 	}
 	if spec.Class == Structured && spec.Validate != nil {
 		if verr := spec.Validate(merged); verr != nil {
