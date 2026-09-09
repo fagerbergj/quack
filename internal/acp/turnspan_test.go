@@ -205,3 +205,23 @@ func TestTurnSpans_ContentFallbackAndTruncation(t *testing.T) {
 		}
 	}
 }
+
+// TestTurnSpans_MCPCallNeverSpanNamedOther: a bridged MCP call's span is named
+// after the real tool, matching translate.go's mapToolCall identity
+// resolution, not the literal "acp.tool.other" (#1278).
+func TestTurnSpans_MCPCallNeverSpanNamedOther(t *testing.T) {
+	exp := withTestTracer(t)
+	turns := newTurnSpans(context.Background(), "code-reviewer")
+
+	turns.observe(sdk.SessionUpdate{ToolCall: &sdk.SessionUpdateToolCall{
+		ToolCallId: "t1", Kind: sdk.ToolKindOther, Title: "quackmcp_write_code_review",
+		Status: sdk.ToolCallStatusCompleted,
+	}})
+
+	spanByName(t, exp, "quack.acp.tool.write_code_review")
+	for _, s := range exp.GetSpans() {
+		if s.Name == "quack.acp.tool.other" {
+			t.Fatalf("span named %q, must never be the literal \"other\"", s.Name)
+		}
+	}
+}

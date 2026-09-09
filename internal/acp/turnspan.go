@@ -45,7 +45,7 @@ func (t *turnSpans) observe(u sdk.SessionUpdate) {
 	switch {
 	case u.ToolCall != nil:
 		c := u.ToolCall
-		t.start(string(c.ToolCallId), c.Kind, c.Title, c.RawInput)
+		t.start(string(c.ToolCallId), c.Kind, c.Title, c.RawInput, c.Meta)
 		t.record(string(c.ToolCallId), nil, c.RawOutput, c.Content)
 		if terminalStatus(c.Status) {
 			t.finish(string(c.ToolCallId), c.Status)
@@ -120,13 +120,20 @@ func toolContentText(content []sdk.ToolCallContent) string {
 	return b.String()
 }
 
-func (t *turnSpans) start(id string, kind sdk.ToolKind, title string, rawInput any) {
+func (t *turnSpans) start(id string, kind sdk.ToolKind, title string, rawInput any, meta map[string]any) {
 	if _, dup := t.open[id]; id == "" || dup {
 		return
 	}
+	// Same identity resolution as translate.go's mapToolCall - a bridged MCP
+	// call's span is named after the real tool, never the literal "other".
 	name := string(kind)
-	if name == "" {
-		name = "other"
+	if mcpName, ok := mcpIdentity(meta, title); ok {
+		name = mcpName
+	} else if name == "" || kind == sdk.ToolKindOther {
+		name = title
+		if name == "" {
+			name = "tool"
+		}
 	}
 	// Kind in the span name (a fixed protocol enum, so bounded cardinality)
 	// makes a trace readable without opening every span.

@@ -43,6 +43,7 @@ type pendingTool struct {
 	rawInput any
 	content  []sdk.ToolCallContent
 	loc      []sdk.ToolCallLocation
+	meta     map[string]any
 }
 
 func newTranslator(cwd string) *translator {
@@ -71,7 +72,7 @@ func (t *translator) translate(u sdk.SessionUpdate) []eventSpec {
 		t.answer.Reset()
 		c := u.ToolCall
 		id := string(c.ToolCallId)
-		p := pendingTool{kind: c.Kind, title: c.Title, rawInput: c.RawInput, content: c.Content, loc: c.Locations}
+		p := pendingTool{kind: c.Kind, title: c.Title, rawInput: c.RawInput, content: c.Content, loc: c.Locations, meta: c.Meta}
 		t.pending[id] = p
 		name, args := t.mapToolCall(p)
 		if terminalStatus(c.Status) {
@@ -98,6 +99,9 @@ func (t *translator) translate(u sdk.SessionUpdate) []eventSpec {
 		}
 		if len(up.Locations) > 0 {
 			p.loc = up.Locations
+		}
+		if len(up.Meta) > 0 {
+			p.meta = up.Meta
 		}
 		if up.Status == nil || !terminalStatus(*up.Status) {
 			t.pending[id] = p
@@ -163,9 +167,35 @@ func (t *translator) pairSpec(id, name string, args map[string]any, p pendingToo
 	}}
 }
 
+// mcpMetaKey is the _meta key an ACP agent bridging quack's own MCP tools
+// (pi-acp) sets to carry the tool's real, unprefixed name - ACP's ToolKind
+// enum has no slot for "this is one of quack's own tools" (#1278).
+const mcpMetaKey = "quack_mcp_tool"
+
+// mcpIdentity resolves an ACP tool call back to the real quack MCP tool name.
+// pi-acp sets _meta[mcpMetaKey] directly; an agent that can't touch _meta
+// (e.g. opencode) still registers the tool as "<mcpServerName>_<tool>" and
+// surfaces that as its title, so stripping the prefix there works too.
+func mcpIdentity(meta map[string]any, title string) (string, bool) {
+	if v, _ := meta[mcpMetaKey].(string); v != "" {
+		return v, true
+	}
+	if name, ok := strings.CutPrefix(title, mcpServerName+"_"); ok && name != "" {
+		return name, true
+	}
+	return "", false
+}
+
 // mapToolCall maps one ACP tool call onto quack's tool vocabulary.
 func (t *translator) mapToolCall(p pendingTool) (string, map[string]any) {
 	in, _ := p.rawInput.(map[string]any)
+	if name, ok := mcpIdentity(p.meta, p.title); ok {
+		args := map[string]any{}
+		for k, v := range in {
+			args[k] = v
+		}
+		return name, args
+	}
 	switch p.kind {
 	case sdk.ToolKindExecute:
 		cmd, _ := in["command"].(string)
@@ -219,9 +249,17 @@ func (t *translator) mapToolCall(p pendingTool) (string, map[string]any) {
 		}
 		return "grep", args
 	}
+	// A genuinely unknown kind (a third-party tool ACP has no enum slot for,
+	// including the literal "other") is named after its title, never the
+	// meaningless literal "other" - the frontend used to paper over this
+	// (#959) but a name the UI never has to special-case is the real fix.
 	name := string(p.kind)
-	if name == "" {
-		name = "tool"
+	useTitle := name == "" || p.kind == sdk.ToolKindOther
+	if useTitle {
+		name = p.title
+		if name == "" {
+			name = "tool"
+		}
 	}
 	args := map[string]any{}
 	if m, ok := p.rawInput.(map[string]any); ok {
@@ -229,7 +267,7 @@ func (t *translator) mapToolCall(p pendingTool) (string, map[string]any) {
 			args[k] = v
 		}
 	}
-	if p.title != "" {
+	if p.title != "" && !useTitle {
 		args["title"] = p.title
 	}
 	return name, args
