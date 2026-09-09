@@ -739,8 +739,15 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
             the clearance instead of getting counted twice. */}
         <div ref={scrollRef} className="absolute inset-0 overflow-y-auto overscroll-contain px-6 pt-6 pb-[calc(7rem+var(--composer-gap))] medium:pb-[calc(8rem+var(--composer-gap))] space-y-6">
           {!activeChatId && (
-            <div className="text-center text-gray-500 dark:text-gray-400 text-sm mt-20">
+            <div className="text-center text-gray-500 dark:text-gray-400 text-sm mt-20 flex flex-col items-center gap-4">
               Select or start a chat
+              <button
+                type="button"
+                onClick={handleNewChat}
+                className="min-h-[44px] px-4 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors font-medium"
+              >
+                New chat
+              </button>
             </div>
           )}
           {activeChatId && state.turns.length === 0 && !live && !state.submitting && (
