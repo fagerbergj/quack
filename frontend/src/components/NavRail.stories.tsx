@@ -98,3 +98,20 @@ export const WithExtensions: Story = {
     </div>
   ),
 }
+
+// The version footer (#1326): muted, bottom of the drawer, "v" prefixed
+// once regardless of what the server sends.
+export const WithVersion: Story = {
+  args: { route: 'chat', open: true, initialExtensions: [], versionOverride: '0.51.26' },
+  render: args => (
+    <div className="h-96 w-[360px] relative border border-dashed border-gray-300 dark:border-gray-600">
+      <NavRail {...args} />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const version = canvas.getByTitle('0.51.26')
+    expect(version).toBeInTheDocument()
+    expect(version).toHaveTextContent('v0.51.26')
+  },
+}

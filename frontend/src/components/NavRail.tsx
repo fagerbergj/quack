@@ -2,7 +2,16 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { navigate, type Route } from '../router'
 import { api, type ExtensionInfo } from '../api'
 import { useDrawer } from '../hooks/useDrawer'
+import { serverVersion } from '../state/clientConfig'
 import { Icon, ICON_NAMES, type IconName } from './Icon'
+
+// displayVersion normalizes a raw build version for display: "dev" stays
+// "dev", anything else gets exactly one leading "v" (never "vv0.51.26" if
+// the stamped value already carries one).
+export function displayVersion(v: string): string {
+  if (v === 'dev') return v
+  return v.startsWith('v') ? v : `v${v}`
+}
 
 export interface NavRailProps {
   route: Route
@@ -12,6 +21,9 @@ export interface NavRailProps {
   // Storybook/test seam (same pattern as MemoryTab's initialState): pre-seeds
   // the extension nav entries and skips the live GET /api/v1/extensions fetch.
   initialExtensions?: ExtensionInfo[]
+  // Storybook/test seam: overrides the version footer instead of reading
+  // the live clientConfig singleton (which resolves async off GET /api/v1/config).
+  versionOverride?: string
   // #1171: whether the drawer is open. This is the only shape the nav has -
   // false renders nothing at all (zero DOM, zero layout weight), true mounts
   // the fixed overlay at every viewport width. App.tsx owns the state; the
@@ -30,8 +42,9 @@ export interface NavRailProps {
 // selection, backdrop tap, the ✕ button, or Esc (focus trap, scroll lock,
 // and focus-return come from useDrawer). The rail's old hamburger glyph
 // (the second ☰ in the app) is deleted with the rest of the rail (#1175).
-export function NavRail({ route, activeExtension, initialExtensions, open, onClose }: NavRailProps) {
+export function NavRail({ route, activeExtension, initialExtensions, versionOverride, open, onClose }: NavRailProps) {
   const [extensions, setExtensions] = useState<ExtensionInfo[]>(initialExtensions ?? [])
+  const version = versionOverride ?? serverVersion()
 
   // Hooks run in a fixed order regardless of `open`, so the early return
   // below can never change which hooks mount.
@@ -96,6 +109,13 @@ export function NavRail({ route, activeExtension, initialExtensions, open, onClo
             </div>
           )}
         </div>
+        {version && (
+          <div className="shrink-0 px-3 py-1.5">
+            <span className="text-[11px] text-gray-500 dark:text-gray-400" title={version}>
+              {displayVersion(version)}
+            </span>
+          </div>
+        )}
       </div>
     </div>
   )

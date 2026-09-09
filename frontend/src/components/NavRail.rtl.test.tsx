@@ -20,12 +20,12 @@ beforeEach(() => {
 // mock the viewport for. This harness stands in for App.tsx: it owns the
 // open state (always starting closed, remembering nothing) and carries the
 // toggle the drawer's useDrawer focus-return targets.
-function Harness({ route = 'chat', initialExtensions = [] }: { route?: 'chat' | 'memory' | 'ext'; initialExtensions?: ExtensionInfo[] }) {
+function Harness({ route = 'chat', initialExtensions = [], versionOverride }: { route?: 'chat' | 'memory' | 'ext'; initialExtensions?: ExtensionInfo[]; versionOverride?: string }) {
   const [open, setOpen] = useState(false)
   return (
     <div>
       <NavToggle open={open} onToggle={() => setOpen(o => !o)} />
-      <NavRail route={route} open={open} onClose={() => setOpen(false)} initialExtensions={initialExtensions} />
+      <NavRail route={route} open={open} onClose={() => setOpen(false)} initialExtensions={initialExtensions} versionOverride={versionOverride} />
     </div>
   )
 }
@@ -106,5 +106,18 @@ describe('NavRail drawer', () => {
     await user.click(screen.getByRole('button', { name: 'reMarkable' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(window.location.pathname).toBe('/ext/remarkable')
+  })
+
+  // #1326: the version footer at the bottom of the drawer - muted, titled
+  // with the full string, not one of the Chats/Memory/extension nav buttons.
+  it('shows the version footer, muted and titled with the full string', async () => {
+    const user = userEvent.setup()
+    render(<Harness versionOverride="0.51.26" />)
+    await user.click(screen.getByRole('button', { name: 'Toggle navigation' }))
+    await screen.findByRole('dialog', { name: 'Main navigation' })
+
+    const version = screen.getByTitle('0.51.26')
+    expect(version.textContent).toBe('v0.51.26')
+    expect(version.tagName).toBe('SPAN')
   })
 })

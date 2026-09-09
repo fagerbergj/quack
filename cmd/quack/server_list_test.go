@@ -3,6 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/cli"
@@ -67,5 +71,65 @@ func TestServerList_JSONEmpty(t *testing.T) {
 	}
 	if got := bytes.TrimSpace(out.Bytes()); string(got) != "[]" {
 		t.Errorf("empty registry --json = %q, want []", got)
+	}
+}
+
+// TestServerList_ShowsVersion covers the human-readable path: a reachable
+// server's GET /api/v1/config version is appended to its row.
+func TestServerList_ShowsVersion(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"version":"0.51.26"}`)
+	}))
+	defer srv.Close()
+
+	rc, err := cli.LoadClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rc.AddServer("a", srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	if err := rc.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	c := newServerListCmd()
+	c.SetOut(&out)
+	if err := c.Execute(); err != nil {
+		t.Fatalf("server list: %v", err)
+	}
+	if !strings.Contains(out.String(), "0.51.26") {
+		t.Errorf("output = %q, want it to contain the reachable server's version", out.String())
+	}
+}
+
+// TestServerList_SkipsVersionOverTenServers: past 10 registered servers the
+// per-server version lookup (a live request each) is skipped, not attempted -
+// the list stays readable and the command doesn't stall on a slow registry.
+func TestServerList_SkipsVersionOverTenServers(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	rc, err := cli.LoadClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 11; i++ {
+		if err := rc.AddServer(fmt.Sprintf("s%d", i), fmt.Sprintf("http://s%d.example", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := rc.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	c := newServerListCmd()
+	c.SetOut(&out)
+	if err := c.Execute(); err != nil {
+		t.Fatalf("server list: %v", err)
+	}
+	if !strings.Contains(out.String(), "skipping version lookup") {
+		t.Errorf("output = %q, want a note that version lookup was skipped", out.String())
 	}
 }
