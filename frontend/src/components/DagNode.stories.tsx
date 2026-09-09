@@ -44,7 +44,8 @@ const workerDone = (activity: Activity[]): AgentRun => ({
 })
 
 const judgeRun = (round: number, score: number, passed: boolean, feedback: string): AgentRun => ({
-  runId: `j${round}`, agent: 'judge', stage: 'judge', round, done: true, score, passed, feedback,
+  // threshold mirrors the live envelope.threshold so the "(needs 70%)" bar renders.
+  runId: `j${round}`, agent: 'judge', stage: 'judge', round, done: true, score, passed, threshold: 0.7, feedback,
   activity: [{ kind: 'thinking', text: 'Re-checking cited URLs against the claims…' }],
 })
 
@@ -331,8 +332,8 @@ export const LongContentManyRounds: Story = {
 // ---- 0.9.0: ⋮ overflow menu + needs_input (#384/#265 follow-up) ------------
 
 // A mid-node HITL question (StatusDot amber, matching needs_input everywhere
-// else in the app) - answering it happens in the popup (menu → "Answer
-// question…"), not here.
+// else in the app) - the filled "Answer" button in the header opens the popup
+// where the answer is typed (audit #6: never hidden in the kebab).
 export const NeedsInput: Story = {
   args: {
     node: wrNode,
@@ -385,7 +386,8 @@ export const OverflowMenuPaused: Story = {
   },
 }
 
-// The ⋮ menu opened on a needs_input node: Stop + "Answer question…".
+// The ⋮ menu opened on a needs_input node: Stop only - "Answer" is the
+// header button beside it, not a menu item.
 export const OverflowMenuNeedsInput: Story = {
   render: () => (
     <DagNode

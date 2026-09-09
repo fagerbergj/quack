@@ -62,6 +62,7 @@ export interface AgentRun {
   // results (set on complete)
   score?: number       // judge
   passed?: boolean     // judge
+  threshold?: number   // judge: the score a round must reach to pass
   feedback?: string    // judge
   status?: string      // '' ok | 'unavailable' (judge unreachable) | 'no_verdict' (judge ran, never committed one)
   reason?: string

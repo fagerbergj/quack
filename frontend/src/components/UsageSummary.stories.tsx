@@ -31,7 +31,7 @@ export const MultipleModels: Story = {
 }
 
 // A high cache-hit session - the expandable breakdown's cache rate is the
-// headline number here (click/focus the "tok" summary to expand).
+// headline number here (click/focus the "tokens" summary to expand).
 export const HighCacheRate: Story = {
   render: () => (
     <UsageSummary

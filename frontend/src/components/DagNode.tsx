@@ -15,11 +15,11 @@ import { Icon } from './Icon'
 import { Sheet } from './Sheet'
 
 // NodeMenu is the node's ⋮ overflow menu: one click for pause/start/stop (no
-// popup round-trip), with "queue a message…" / "edit prompt" / "answer
-// question…" opening the popup only when they need its input/editor. Hidden
-// entirely on a terminal node (done/failed/cancelled) - nothing left to do.
+// popup round-trip), with "queue a message…" / "edit prompt" opening the
+// popup only when they need its input/editor. Hidden entirely on a terminal
+// node (done/failed/cancelled) - nothing left to do.
 function NodeMenu({
-  nodeId, status, onCancel, onPause, onResume, canQueue, canEdit, canAnswer, onOpenPopup, onOpenArtifacts, onOpenMemories,
+  nodeId, status, onCancel, onPause, onResume, canQueue, canEdit, onOpenPopup, onOpenArtifacts, onOpenMemories,
 }: {
   nodeId: string
   status: NodeStatus
@@ -28,7 +28,6 @@ function NodeMenu({
   onResume?: (nodeId: string) => void
   canQueue: boolean
   canEdit: boolean
-  canAnswer: boolean
   onOpenPopup: () => void
   // Present only for a real chat (gates the Artifacts item) - see DagNode's
   // own chatId doc. A terminal node still needs this menu for its outputs,
@@ -69,7 +68,7 @@ function NodeMenu({
   const paused = status === 'paused' || status === 'needs_input'
   const startable = !terminal && (paused || status === 'queued')
   const cancellable = !terminal && (running || startable)
-  const hasSecondary = !terminal && (canAnswer || canQueue || canEdit)
+  const hasSecondary = !terminal && (canQueue || canEdit)
 
   return (
     <div ref={ref} className="relative shrink-0">
@@ -104,11 +103,6 @@ function NodeMenu({
             </button>
           )}
           {hasSecondary && <div className="my-1 border-t border-gray-100 dark:border-gray-700" />}
-          {canAnswer && (
-            <button role="menuitem" onClick={() => { onOpenPopup(); close() }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-amber-700 dark:text-amber-400 hover:bg-gray-50 dark:hover:bg-gray-700">
-              <Icon name="help" className="w-3.5 h-3.5" /> Answer question…
-            </button>
-          )}
           {canQueue && (
             <button role="menuitem" onClick={() => { onOpenPopup(); close() }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
               <Icon name="mail" className="w-3.5 h-3.5" /> Queue a message…
@@ -151,13 +145,15 @@ function QueuedBadge({ count }: { count: number }) {
   )
 }
 
-// pausedStatusLabel renders "paused · <why>" for the node header - the three
-// pause_reason values a human can meaningfully tell apart.
-function pausedStatusLabel(reason: NodeState['pauseReason']): string {
+// pausedStatusLabel names a paused-family node's state for the header. A node
+// waiting on the user says so directly; "by you" needs a real pause_reason
+// (a live-streamed pause may not carry one yet), so the fallback is plain.
+export function pausedStatusLabel(status: NodeStatus, reason: NodeState['pauseReason']): string {
+  if (status === 'needs_input' || reason === 'awaiting_input') return 'needs your answer'
   switch (reason) {
-    case 'awaiting_input': return 'paused · awaiting input'
-    case 'shutdown':       return 'paused · shutdown'
-    default:                return 'paused · by you'
+    case 'user':     return 'paused · by you'
+    case 'shutdown': return 'paused · shutdown'
+    default:         return 'paused'
   }
 }
 
@@ -380,8 +376,8 @@ function NodeAnswer({ answer }: { answer: string }) {
 // "no_verdict" - it ran (read files, spent its turns) but never committed
 // one, which "unavailable" would misreport as an outage.
 function judgeFailureHeading(status?: string): string | null {
-  if (status === 'unavailable') return 'Judge unavailable'
-  if (status === 'no_verdict') return 'Judge did not reach a verdict'
+  if (status === 'unavailable') return 'Quality check unavailable'
+  if (status === 'no_verdict') return 'Quality check reached no verdict'
   return null
 }
 
@@ -391,10 +387,10 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
     return (
       <div className="border-t border-gray-100 dark:border-gray-700 px-4 py-2 bg-yellow-50 dark:bg-yellow-900/15">
         <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-yellow-700 dark:text-yellow-400 uppercase tracking-wide">
-          <Icon name="warning" className="w-3 h-3" /> {failureHeading} · round {run.round}
+          <Icon name="warning" className="w-3 h-3" /> {failureHeading} · check {run.round}
         </span>
         <div className="text-[11px] text-yellow-700 dark:text-yellow-400/90 mt-0.5">
-          Answer surfaced without quality vetting - {run.reason}
+          Answer shown without a quality check - {run.reason}
         </div>
       </div>
     )
@@ -404,11 +400,14 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
       <details open={running} className="not-prose">
         <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2">
           <span className="text-[10px] font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wide">
-            Judge · round {run.round}
+            Quality check {run.round}
           </span>
+          {/* The pass bar is rendered only when the server sent it (older
+              events carry no envelope), never assumed. */}
           {run.score != null && (
             <span className={`inline-flex items-center gap-0.5 text-[10px] font-medium ${run.passed ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
               <Icon name={run.passed ? 'check' : 'close'} className="w-3 h-3" /> {(run.score * 100).toFixed(0)}%
+              {run.threshold != null && ` (needs ${(run.threshold * 100).toFixed(0)}%)`}
             </span>
           )}
           <RunModel run={run} />
@@ -424,7 +423,7 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
           in a popup, rendered as markdown (0.9.0 feedback). */}
       {run.done && run.feedback && run.feedback !== 'None' && (
         <div className="px-4 pt-0 pb-2">
-          <CollapsedPreview label="Verdict" text={run.feedback} popupTitle={`Judge verdict · round ${run.round}`} />
+          <CollapsedPreview label="Verdict" text={run.feedback} popupTitle={`Quality check ${run.round} verdict`} />
         </div>
       )}
     </div>
@@ -544,7 +543,8 @@ export const DagNode = memo(function DagNode({
   const [memoriesOpen, setMemoriesOpen] = useState(false)
   const pendingQueueCount = (state.queue ?? []).filter(m => !m.delivered).length
   const isPaused = state.status === 'paused' || state.status === 'needs_input'
-  const pauseLabel = isPaused ? pausedStatusLabel(state.pauseReason) : null
+  const pauseLabel = isPaused ? pausedStatusLabel(state.status, state.pauseReason) : undefined
+  const canAnswer = (state.status === 'needs_input' || state.pauseReason === 'awaiting_input') && !!onAnswerQuestion
 
   // overflow-hidden clips the rounded corners, but it also clipped the kebab's
   // menu to the card height - a short card at the foot of a chat lost every
@@ -559,13 +559,9 @@ export const DagNode = memo(function DagNode({
           kebab. Below `medium` the secondary metadata group wraps onto its own
           muted line (basis-full + order-last) instead of stacking the row. */}
       <div className="flex flex-wrap medium:flex-nowrap items-center gap-x-2 gap-y-1 px-4 py-3 border-b border-gray-100 dark:border-gray-700">
-        <StatusDot status={state.status} />
         <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 min-w-0 flex-1 truncate" title={agentLabel(node.agent)}>
           {agentLabel(node.agent)}
         </span>
-        {pauseLabel && (
-          <span className="shrink-0 text-[10px] font-medium text-blue-600 dark:text-blue-400">{pauseLabel}</span>
-        )}
         {isAcpAgent(node.agent) && <AcpBadge />}
         <QueuedBadge count={pendingQueueCount} />
         {state.steers && state.steers.length > 0 && (
@@ -576,7 +572,12 @@ export const DagNode = memo(function DagNode({
             ↻ steered{state.steers.length > 1 ? ` ×${state.steers.length}` : ''}
           </span>
         )}
+        {/* The named state leads the metadata group so that below `medium`
+            it wraps onto the muted second line with the model/tokens instead
+            of squeezing the agent name off the first (a needs_input node
+            also carries the Answer button there). */}
         <div className="empty:hidden flex flex-wrap medium:flex-nowrap items-center gap-x-2 gap-y-0.5 basis-full order-last medium:basis-auto medium:order-none">
+          <StatusDot status={state.status} label={pauseLabel} />
           {state.model && (
             <span className="text-[10px] text-gray-400 dark:text-gray-500 font-mono truncate max-w-[120px]" title={state.model}>
               {state.model}
@@ -590,14 +591,14 @@ export const DagNode = memo(function DagNode({
           {state.judgeRounds != null && state.judgeRounds > 0 && state.judgePassed === false && (
             <span
               className="inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
-              title={`Judge rejected this output after ${state.judgeRounds} round${state.judgeRounds === 1 ? '' : 's'}${state.judgeFinalScore != null ? ` (final score ${(state.judgeFinalScore * 100).toFixed(0)}%)` : ''} - surfaced unvetted`}
+              title={`The quality check rejected this output after ${state.judgeRounds} round${state.judgeRounds === 1 ? '' : 's'}${state.judgeFinalScore != null ? ` (final score ${(state.judgeFinalScore * 100).toFixed(0)}%)` : ''} - shown without a passing check`}
             >
-              <Icon name="warning" className="w-3 h-3" /> unvetted
+              <Icon name="warning" className="w-3 h-3" /> not checked
             </span>
           )}
           {state.totalTokens != null && state.totalTokens > 0 && (
             <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
-              {state.totalTokens.toLocaleString()} tok
+              {state.totalTokens.toLocaleString()} tokens
               {state.cachedTokens != null && state.cachedTokens > 0 && (
                 <span title={`${state.cachedTokens.toLocaleString()} tokens served from cache`}> ({state.cachedTokens.toLocaleString()} cached)</span>
               )}
@@ -625,6 +626,17 @@ export const DagNode = memo(function DagNode({
             <LiveTimer startedAt={state.startedAt} finishedAt={state.finishedAt} />
           </span>
         ) : null}
+        {/* A node blocked on the user is the one state where the fix is the
+            primary action, so it is a filled button, not a kebab item. */}
+        {canAnswer && (
+          <button
+            type="button"
+            onClick={() => setPopupOpen(true)}
+            className="shrink-0 h-11 -my-3 px-3 inline-flex items-center gap-1 rounded-lg bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 transition-colors"
+          >
+            <Icon name="help" className="w-3.5 h-3.5" /> Answer
+          </button>
+        )}
         <NodeMenu
           nodeId={node.id}
           status={state.status}
@@ -633,7 +645,6 @@ export const DagNode = memo(function DagNode({
           onResume={onResume}
           canQueue={running && !!onQueueMessage}
           canEdit={notStarted && !!onEditTask}
-          canAnswer={(state.status === 'needs_input' || state.pauseReason === 'awaiting_input') && !!onAnswerQuestion}
           onOpenPopup={() => setPopupOpen(true)}
           onOpenArtifacts={chatId ? () => setArtifactsOpen(true) : undefined}
           onOpenMemories={chatId ? () => setMemoriesOpen(true) : undefined}

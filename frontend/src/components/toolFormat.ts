@@ -13,8 +13,13 @@ export function summarizeArgs(args: Record<string, unknown>): string {
 
 // previewLine collapses to a single-line preview for thinking blocks (#385).
 // Now prefers sentence boundaries (#959) to avoid mid-word cuts in folded blocks.
+// Markdown markup is stripped first: the expanded view renders it, so a
+// collapsed row showing "## **May**" reads as noise.
 export function previewLine(text: string, max = 80): string {
-  const oneLine = text.replace(/\s+/g, ' ').trim()
+  const oneLine = text
+    .replace(/^[ \t]*(#{1,6}\s*|>\s?|[-*]\s+)/gm, '')
+    .replace(/\*\*|__|`+/g, '')
+    .replace(/\s+/g, ' ').trim()
   if (oneLine.length <= max) return oneLine
   const sentence = oneLine.slice(0, max * 2).match(/^.{10,}?[.!?](?=\s|$)/)
   if (sentence) return sentence[0]
@@ -47,7 +52,7 @@ export function toolActionLine(name: string, args: Record<string, unknown>): str
 }
 
 // toolFailed reports whether a completed tool call's result carries an error -
-// the compact summary line's status icon (✗ vs ✓, #385) keys off this rather
+// the compact summary line's status icon (cross vs check, #385) keys off this rather
 // than any particular tool's own result shape.
 export function toolFailed(result: unknown): boolean {
   return !!(result && typeof result === 'object' && 'error' in (result as Record<string, unknown>))

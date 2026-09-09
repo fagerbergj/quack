@@ -3,7 +3,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { DagNode } from './DagNode'
+import { DagNode, pausedStatusLabel } from './DagNode'
 import type { DagNodeDef } from '../state/agentStream'
 import type { NodeState } from '../state/chatStore'
 import type { AgentRun, Activity } from './messageParts'
@@ -37,7 +37,7 @@ describe('DagNode - judge verdict collapses to a one-line preview (#385/#399 eth
 
   it('renders a clickable one-line "Verdict" preview, not standing prose', () => {
     expect(out).toMatch(/<button type="button"[^>]*><span class="italic shrink-0">Verdict<\/span>/)
-    expect(out).toContain(verdict) // the raw preview text, not yet rendered as markdown
+    expect(out).toContain('Mostly solid, but add a source for the rainfall claim.') // markup stripped, not rendered
   })
 
   it('does not render the verdict as markdown inline (that only happens in the popup, on click)', () => {
@@ -54,7 +54,7 @@ describe('DagNode - answer collapses to a one-line preview (#385/#399 ethos)', (
 
   it('renders a clickable one-line "answer" preview', () => {
     expect(out).toContain('<span class="shrink-0">answer</span>')
-    expect(out).toContain('## Heading Visit in **May**. - one - two') // previewLine flattens whitespace
+    expect(out).toContain('Heading Visit in May. one two') // previewLine flattens whitespace and strips markup
   })
 
   it('omits the answer row on the FINAL node - its answer is the turn bubble below the DAG', () => {
@@ -64,7 +64,7 @@ describe('DagNode - answer collapses to a one-line preview (#385/#399 ethos)', (
       answer, isFinal: true,
     }))
     expect(out).not.toContain('<span class="shrink-0">answer</span>')
-    expect(out).not.toContain('## Heading')
+    expect(out).not.toContain('Heading Visit')
   })
 
   it('does not render the answer as markdown inline (that only happens in the popup, on click)', () => {
@@ -166,7 +166,7 @@ describe('DagNode - judge verdict popup copy button (#426)', () => {
     act(() => { previewButton.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
 
     const copyButton = Array.from(host.querySelectorAll('button'))
-      .find(b => b.getAttribute('aria-label')?.startsWith('Copy judge verdict'))!
+      .find(b => b.getAttribute('aria-label')?.startsWith('Copy quality check'))!
     act(() => { copyButton.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
 
     expect(writeText).toHaveBeenCalledWith(verdict)
@@ -214,7 +214,7 @@ describe('DagNode - token badge shows cached tokens alongside the total', () => 
       [{ runId: 'w', agent: 'web-researcher', stage: 'worker', done: true, activity: [] }],
       'answer text',
     )
-    expect(out).toContain('1,500 tok')
+    expect(out).toContain('1,500 tokens')
     expect(out).toContain('(400 cached)')
   })
 
@@ -224,7 +224,7 @@ describe('DagNode - token badge shows cached tokens alongside the total', () => 
       [{ runId: 'w', agent: 'web-researcher', stage: 'worker', done: true, activity: [] }],
       'answer text',
     )
-    expect(out).toContain('1,500 tok')
+    expect(out).toContain('1,500 tokens')
     expect(out).not.toContain('cached')
   })
 })
@@ -345,5 +345,27 @@ describe('DagNode - queued-message badge counts only parked (undelivered) messag
     ])
     expect(out).toContain('</svg> 1</span>') // badge count next to the mail icon
     expect(out).toContain('delivers when the current round ends')
+  })
+})
+
+// Audit #7: a node waiting on the user must never read as "paused · by you",
+// and "by you" needs a real pause_reason.
+describe('pausedStatusLabel', () => {
+  it('names a node waiting on the user, under either spelling', () => {
+    expect(pausedStatusLabel('needs_input', undefined)).toBe('needs your answer')
+    expect(pausedStatusLabel('paused', 'awaiting_input')).toBe('needs your answer')
+  })
+  it('attributes a pause only when the reason says so', () => {
+    expect(pausedStatusLabel('paused', 'user')).toBe('paused · by you')
+    expect(pausedStatusLabel('paused', 'shutdown')).toBe('paused · shutdown')
+    expect(pausedStatusLabel('paused', undefined)).toBe('paused')
+  })
+})
+
+describe('DagNode - state is named, not colour-only (audit #7)', () => {
+  it('shows the state name next to the dot for quiet states too', () => {
+    expect(html({ status: 'queued' }, [], '')).toContain('>queued</span>')
+    expect(html({ status: 'done', startedAt: 0, finishedAt: 1000 }, [], '')).toContain('>done</span>')
+    expect(html({ status: 'needs_input' }, [], '')).toContain('>needs your answer</span>')
   })
 })

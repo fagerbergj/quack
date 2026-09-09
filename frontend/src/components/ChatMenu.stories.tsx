@@ -27,7 +27,7 @@ export const WithUsageOnCompact: Story = {
     const canvas = within(canvasElement)
     await userEvent.click(canvas.getByRole('button', { name: 'Chat actions' }))
     expect(canvas.getByText('gpt-5')).toBeInTheDocument()
-    expect(canvas.getByText('5,522 tok')).toBeInTheDocument()
+    expect(canvas.getByText('5,522 tokens')).toBeInTheDocument()
   },
 }
 

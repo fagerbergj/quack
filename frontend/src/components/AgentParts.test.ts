@@ -163,3 +163,14 @@ describe('ActivityList - compaction row', () => {
     expect(out).toContain('aria-label="Context compacted, summarizer spent 210000 in / 1800 out tokens"')
   })
 })
+
+// Audit #14: the collapsed tool row reads as "<verb> <target>", with the
+// raw tool id demoted to the tooltip.
+describe('ToolBlock - human-readable row', () => {
+  it('shows the action line and keeps the tool id as the title', () => {
+    const tool: ToolCall = { callId: 'c1', name: 'web_fetch', args: { url: 'https://x.test/a' }, result: 'ok', done: true }
+    const out = renderToStaticMarkup(createElement(ToolBlock, { tool }))
+    expect(out).toContain('title="web_fetch"')
+    expect(out).toContain('>fetching https://x.test/a<')
+  })
+})

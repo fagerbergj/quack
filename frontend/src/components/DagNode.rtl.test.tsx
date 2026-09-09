@@ -150,7 +150,7 @@ describe('DagNode compact header', () => {
     expect(kebab.className).toContain('w-11')
     const header = kebab.parentElement!.parentElement!
     expect(header.lastElementChild).toBe(kebab.parentElement)
-    expect(within(header).getByLabelText('Status: Running')).toBeTruthy()
+    expect(within(header).getByText('running')).toBeTruthy()
     expect(within(header).getByText('Web researcher')).toBeTruthy()
   })
 
@@ -204,5 +204,22 @@ describe('DagNode compact header', () => {
       expect(item.querySelector('svg')).not.toBeNull()
       expect(item.textContent ?? '').not.toMatch(/[\u2300-\u23FF\u25A0-\u25FF\u2B00-\u2BFF]/)
     }
+  })
+})
+
+// Audit #6: a node blocked on the user gets a visible, filled "Answer"
+// button in its header - the kebab no longer hides the only way to unblock it.
+describe('DagNode answer button', () => {
+  it('shows Answer in the header of a needs_input node and opens the popup', async () => {
+    const user = userEvent.setup()
+    render(<DagNode node={node} state={{ status: 'needs_input', question: 'Hotels only?' }} runs={[]} answer="" isFinal={false} onAnswerQuestion={() => {}} />)
+
+    await user.click(screen.getByRole('button', { name: /Answer/ }))
+    expect(await screen.findByRole('dialog')).toBeTruthy()
+  })
+
+  it('hides Answer when the node is not waiting on the user', () => {
+    render(<DagNode node={node} state={{ status: 'running' }} runs={[]} answer="" isFinal={false} onAnswerQuestion={() => {}} />)
+    expect(screen.queryByRole('button', { name: /Answer/ })).toBeNull()
   })
 })

@@ -10,46 +10,34 @@ export default meta
 
 type Story = StoryObj<typeof StatusDot>
 
-// The full set of colored (non-quiet) states, side by side.
+// Every state at DAG-node size: dot plus the state's name, so no state is
+// colour-only and queued/done/idle are visibly distinct.
 export const AllStates: Story = {
   render: () => (
-    <div className="flex items-center gap-4">
-      {(['running', 'needs_input', 'paused', 'failed', 'cancelled'] as const).map(status => (
-        <div key={status} className="flex items-center gap-1.5">
-          <StatusDot status={status} />
-          <span className="text-xs text-gray-600 dark:text-gray-300">{status}</span>
-        </div>
+    <div className="flex flex-wrap items-center gap-4">
+      {(['running', 'needs_input', 'paused', 'failed', 'cancelled', 'queued', 'done', 'idle'] as const).map(status => (
+        <StatusDot key={status} status={status} />
       ))}
     </div>
   ),
 }
 
-// idle/done/queued (node variant) render nothing - the common case stays quiet.
-export const QuietStates: Story = {
-  render: () => (
-    <div className="flex items-center gap-4">
-      {(['idle', 'done', 'queued'] as const).map(status => (
-        <div key={status} className="flex items-center gap-1.5">
-          <StatusDot status={status} />
-          <span className="text-xs text-gray-600 dark:text-gray-300">{status} (no dot)</span>
-        </div>
-      ))}
-    </div>
-  ),
+// A DagNode passes a more specific name for the paused family.
+export const CustomLabel: Story = {
+  render: () => <StatusDot status="needs_input" label="needs your answer" />,
 }
 
-// chat variant flags a queued chat (behind max_active_runs); node variant stays quiet.
-export const QueuedVariants: Story = {
+// Chat variant: a bare dot that stays quiet for idle/done, so a long chat
+// list only flags what needs attention.
+export const ChatVariant: Story = {
   render: () => (
     <div className="flex items-center gap-4">
-      <div className="flex items-center gap-1.5">
-        <StatusDot status="queued" variant="node" />
-        <span className="text-xs text-gray-600 dark:text-gray-300">node (quiet)</span>
-      </div>
-      <div className="flex items-center gap-1.5">
-        <StatusDot status="queued" variant="chat" />
-        <span className="text-xs text-gray-600 dark:text-gray-300">chat (dot)</span>
-      </div>
+      {(['running', 'needs_input', 'queued', 'failed', 'done', 'idle'] as const).map(status => (
+        <div key={status} className="flex items-center gap-1.5">
+          <StatusDot status={status} variant="chat" />
+          <span className="text-xs text-gray-600 dark:text-gray-300">{status}{status === 'done' || status === 'idle' ? ' (no dot)' : ''}</span>
+        </div>
+      ))}
     </div>
   ),
 }

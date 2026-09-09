@@ -48,7 +48,7 @@ function dagTurn(id: string, content: string): Turn {
       plan_id: 'plan-1',
       nodes: [{ id: 'r1', agent: 'web-researcher', task: 'Research the topic.', depends_on: [] }],
       edges: [],
-      node_states: { r1: { status: 'running', started_at_ms: 0 } },
+      node_states: { r1: { status: 'running', started_at_ms: Date.now() - 12_000 } },
     }],
   }
 }
@@ -116,6 +116,8 @@ export const EmptyChat: Story = {
 // SSE traffic needed for the fixture to render mid-stream chrome.
 export const StreamingTurn: Story = {
   args: baseArgs,
+  // The compact header's status dot + elapsed (audit #6) only shows here.
+  parameters: { renderCheck: { viewports: ['mobile', 'desktop'] } },
   decorators: withChat(
     'chat-streaming',
     [summary({ id: 'chat-streaming', title: 'Dublin trip planning', status: 'running' })],
