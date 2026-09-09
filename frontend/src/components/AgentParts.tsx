@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
-import rehypeHighlight from 'rehype-highlight'
+import rehypeHighlightSubset from '../lib/rehypeHighlightSubset'
 import 'highlight.js/styles/github-dark.css'
 import type { ComponentPropsWithoutRef } from 'react'
 import type { Element } from 'hast'
@@ -67,8 +67,8 @@ function hastText(node: Element | undefined): string {
   return node.children.map(c => (c.type === 'text' ? c.value : hastText(c as Element))).join('')
 }
 
-// AssistantText renders model text as markdown. rehype-highlight is placed LAST
-// so its hljs classes/spans aren't stripped by rehype-sanitize (the code's
+// AssistantText renders model text as markdown. rehypeHighlightSubset is placed
+// LAST so its hljs classes/spans aren't stripped by rehype-sanitize (the code's
 // `language-*` class survives sanitize, so highlight still detects the language).
 //
 // A ```mermaid block renders as a diagram once (and only once) its closing
@@ -115,7 +115,7 @@ export function AssistantText({ text }: { text: string }) {
   const markdown = useMemo(() => (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
-      rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSchema], rehypeHighlight]}
+      rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSchema], rehypeHighlightSubset]}
       components={components}
     >{fixed}</ReactMarkdown>
   ), [fixed, components])
