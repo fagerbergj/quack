@@ -11,6 +11,7 @@ import (
 
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 
+	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
@@ -34,11 +35,12 @@ func settledGoroutines(t *testing.T) int {
 // TestDriveExtensionRunEvents_SharesEventLogAcrossRuns is the regression test
 // for the leak fixed alongside #1292: runlog.NewEventLog per dispatched run
 // each spun up a drain goroutine that FinishRun never stops, since EventLog
-// has no Close. Dispatching many runs on the same store must not multiply
-// that goroutine - sharedEventLog (boot.go) caches one EventLog per store.
+// has no Close. Dispatching many runs against one EventLog (as serve.Run's
+// single bootEventLog does in production) must not multiply that goroutine.
 func TestDriveExtensionRunEvents_SharesEventLogAcrossRuns(t *testing.T) {
 	st := newShutdownTestStore(t)
 	hub := stream.NewHub()
+	eventLog := runlog.NewEventLog(st)
 
 	obs := &fakeRunObserver{}
 	var ext extsdk.Extension = obs
@@ -62,7 +64,7 @@ func TestDriveExtensionRunEvents_SharesEventLogAcrossRuns(t *testing.T) {
 		}
 		done := make(chan struct{})
 		go func() {
-			driveExtensionRunEvents(context.Background(), "noop", nil, st, hub, &extHolder, "ext", chatID, "turn-1", 0, run)
+			driveExtensionRunEvents(context.Background(), "noop", nil, st, hub, eventLog, &extHolder, "ext", chatID, "turn-1", 0, run)
 			close(done)
 		}()
 		<-entered

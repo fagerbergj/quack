@@ -17,6 +17,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/orchestrator"
+	"github.com/fagerbergj/quack/internal/runlog"
 )
 
 // planningFailureModel always fails GenerateContent with a gateway-shaped
@@ -61,7 +62,7 @@ func TestPlanningFailure_EndsRunFailedWithClassifiedError(t *testing.T) {
 	var extHolder atomic.Pointer[extsdk.Extension]
 	var asExt extsdk.Extension = ext
 	extHolder.Store(&asExt)
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, nil, artifacts)
 
 	const localID = "planning-failure-1156"
 	chatID := "ext:noop:" + localID

@@ -11,6 +11,7 @@ import (
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 
 	"github.com/fagerbergj/quack/internal/orchestrator"
+	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
@@ -43,7 +44,7 @@ func TestBuildSDKExtensions_UIDescriptorCaptured(t *testing.T) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "fake-ui-test:\n  enabled: true\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -73,7 +74,7 @@ func TestBuildSDKExtensions_NoUIDescriptor_NameOnly(t *testing.T) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  enabled: true\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}

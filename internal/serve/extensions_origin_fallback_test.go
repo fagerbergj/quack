@@ -10,6 +10,7 @@ import (
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 
 	"github.com/fagerbergj/quack/internal/orchestrator"
+	"github.com/fagerbergj/quack/internal/runlog"
 )
 
 // TestMergeExtOrigin_NudgeFallsBackToStoredSetup is #1180's issue-47
@@ -106,7 +107,7 @@ func TestUpdateChatOrigin_PreservesStoredSetup(t *testing.T) {
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 	var extHolder atomic.Pointer[extsdk.Extension]
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, nil, artifacts)
 	updateOrigin := newExtUpdateChatOrigin("noop", st, nil, nil, nil)
 
 	const localID = "update-origin-1181"

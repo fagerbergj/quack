@@ -16,6 +16,7 @@ import (
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/orchestrator"
+	"github.com/fagerbergj/quack/internal/runlog"
 )
 
 // rejectedPlanModel always proposes a review-delivery plan that dag's own
@@ -77,7 +78,7 @@ func TestPlanRejection_EndsRunFailedWithRejectionReason(t *testing.T) {
 	var extHolder atomic.Pointer[extsdk.Extension]
 	var asExt extsdk.Extension = ext
 	extHolder.Store(&asExt)
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, nil, artifacts)
 
 	const localID = "plan-rejection-1180"
 	chatID := "ext:noop:" + localID
@@ -153,7 +154,7 @@ func TestPlanRejection_DoesNotLeakIntoALaterSilentGap(t *testing.T) {
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 	var extHolder atomic.Pointer[extsdk.Extension]
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, nil, artifacts)
 
 	const localID = "plan-rejection-no-leak-1181"
 	chatID := "ext:noop:" + localID
