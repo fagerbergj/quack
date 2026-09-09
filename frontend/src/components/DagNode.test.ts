@@ -37,7 +37,7 @@ describe('DagNode - judge verdict collapses to a one-line preview (#385/#399 eth
 
   it('renders a clickable one-line "Verdict" preview, not standing prose', () => {
     expect(out).toMatch(/<button type="button"[^>]*><span class="italic shrink-0">Verdict<\/span>/)
-    expect(out).toContain(verdict) // the raw preview text, not yet rendered as markdown
+    expect(out).toContain('Mostly solid, but add a source for the rainfall claim.') // markup stripped, not rendered
   })
 
   it('does not render the verdict as markdown inline (that only happens in the popup, on click)', () => {
@@ -54,7 +54,7 @@ describe('DagNode - answer collapses to a one-line preview (#385/#399 ethos)', (
 
   it('renders a clickable one-line "answer" preview', () => {
     expect(out).toContain('<span class="shrink-0">answer</span>')
-    expect(out).toContain('## Heading Visit in **May**. - one - two') // previewLine flattens whitespace
+    expect(out).toContain('Heading Visit in May. one two') // previewLine flattens whitespace and strips markup
   })
 
   it('omits the answer row on the FINAL node - its answer is the turn bubble below the DAG', () => {
@@ -64,7 +64,7 @@ describe('DagNode - answer collapses to a one-line preview (#385/#399 ethos)', (
       answer, isFinal: true,
     }))
     expect(out).not.toContain('<span class="shrink-0">answer</span>')
-    expect(out).not.toContain('## Heading')
+    expect(out).not.toContain('Heading Visit')
   })
 
   it('does not render the answer as markdown inline (that only happens in the popup, on click)', () => {

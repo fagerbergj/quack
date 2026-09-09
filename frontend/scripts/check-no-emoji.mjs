@@ -23,7 +23,6 @@ const ALLOWLIST = new Set([
   'pages/Chat.tsx:665',          // comment prose
   'components/NavRail.tsx:30',   // comment prose
   'components/NavRail.tsx:32',   // comment prose
-  'components/toolFormat.ts:50', // comment prose
 ])
 
 function walk(dir, out = []) {
