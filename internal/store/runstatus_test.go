@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/adk/v2/session"
+	"google.golang.org/genai"
+
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
 )
@@ -239,5 +242,45 @@ func TestScanOrphanedRuns_LeavesHealthyChatsAlone(t *testing.T) {
 	}
 	if len(ids) != 0 {
 		t.Fatalf("ids = %v, want none", ids)
+	}
+}
+
+// TestStampTerminalOutcome_RealSessionAnsweredTurnStaysIdle pins perf audit #3's
+// StampTerminalOutcome rewire: loading just the newest turn (GetLastTurnWithContent)
+// instead of the whole chat (GetTurnsWithContent) must still derive idle for a turn with a
+// real, non-empty answer - the common case, not just the empty/failed ones the other
+// DeriveTerminalStatus fixtures cover.
+func TestStampTerminalOutcome_RealSessionAnsweredTurnStaysIdle(t *testing.T) {
+	st := newRunStatusTestStore(t)
+	ctx := context.Background()
+	const chatID = "chat-answered"
+	if err := st.SetChatOrigin(ctx, chatID, "u1", ""); err != nil {
+		t.Fatalf("SetChatOrigin: %v", err)
+	}
+	sessResp, err := st.Sessions.Create(ctx, &session.CreateRequest{AppName: chatAppName, UserID: "local", SessionID: chatID})
+	if err != nil {
+		t.Fatalf("session Create: %v", err)
+	}
+	if err := st.SaveTurn(ctx, chatID, "t1", "hi"); err != nil {
+		t.Fatalf("SaveTurn: %v", err)
+	}
+	if err := st.Sessions.AppendEvent(ctx, sessResp.Session, userEvent("hi")); err != nil {
+		t.Fatalf("AppendEvent user: %v", err)
+	}
+	if err := st.Sessions.AppendEvent(ctx, sessResp.Session, asstEvent(&genai.Part{Text: "hello there"})); err != nil {
+		t.Fatalf("AppendEvent asst: %v", err)
+	}
+
+	status, question, nodeError := st.StampTerminalOutcome(ctx, chatAppName, "local", chatID, func() (string, bool) { return "", false })
+	if status != RunStatusIdle || question != "" || nodeError != "" {
+		t.Fatalf("status/question/nodeError = %q/%q/%q, want idle/\"\"/\"\"", status, question, nodeError)
+	}
+
+	c, err := st.GetChat(ctx, chatID)
+	if err != nil || c == nil {
+		t.Fatalf("GetChat: %+v, %v", c, err)
+	}
+	if c.RunStatus != RunStatusIdle {
+		t.Errorf("stamped RunStatus = %q, want idle", c.RunStatus)
 	}
 }
