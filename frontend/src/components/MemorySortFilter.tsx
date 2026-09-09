@@ -1,3 +1,4 @@
+import { Icon } from './Icon'
 import { useEffect, useRef, useState } from 'react'
 import type { MemoryListSort, MemoryScopeStats } from '../api'
 import { Sheet } from './Sheet'
@@ -64,10 +65,7 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
             : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
         }`}
       >
-        {/* sliders icon */}
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M2 4h12M4 4a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0ZM2 8h7M9 8a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0ZM2 12h9M11 12a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0Z" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-        </svg>
+        <Icon name="tune" className="w-4 h-4" />
       </button>
 
       {open && (

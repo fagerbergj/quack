@@ -105,7 +105,7 @@ describe('MemoryTab', () => {
 
     const kebabButton = findButton(host!, b => (b.getAttribute('aria-label') ?? '') === 'Memory actions')
     act(() => kebabButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
-    const forgetButton = findButton(host!, b => b.textContent === 'Forget')
+    const forgetButton = findButton(host!, b => b.textContent?.trim() === 'Forget')
     act(() => forgetButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
 
     // Confirm/Cancel is now showing; the GET was the only request so far.
@@ -131,7 +131,7 @@ describe('MemoryTab', () => {
 
     const kebabButton = findButton(host!, b => (b.getAttribute('aria-label') ?? '') === 'Memory actions')
     act(() => kebabButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
-    const forgetButton = findButton(host!, b => b.textContent === 'Forget')
+    const forgetButton = findButton(host!, b => b.textContent?.trim() === 'Forget')
     act(() => forgetButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
     const cancelButton = findButton(host!, b => b.textContent === 'Cancel')
     act(() => cancelButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
