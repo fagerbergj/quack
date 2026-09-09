@@ -28,6 +28,13 @@ func TestSeedProjectionWatermarks_SeparateStores(t *testing.T) {
 	ls := ledgertest.NewMemStore()
 
 	chatID := "c1"
+	// The "sse" seed now lists candidate chats from `chats`, not chat_events
+	// (perf audit #8: chat_events DISTINCT was a 496 MB seq scan on prod) -
+	// a chats row always exists before any chat_events row in the real
+	// CreateChat path, so the fixture needs one too.
+	if err := st.db.WithContext(ctx).Create(&Chat{ID: chatID}).Error; err != nil {
+		t.Fatalf("create chat: %v", err)
+	}
 	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: "turn.started", At: time.Now()}); err != nil {
 		t.Fatalf("AppendIntent 1: %v", err)
 	}

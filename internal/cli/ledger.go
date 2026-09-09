@@ -300,14 +300,13 @@ type deliveryIntentPayload struct {
 	IssueNumber int    `json:"issue_number,omitempty"`
 }
 
-// findDeliveryIntents scans chatID's ledger for every delivery.intent entry.
-// Whether one is already settled is a DeliveryRecordChecker read against the
-// delivery_record artifact (#1144 P2), not a second ledger entry kind.
-func findDeliveryIntents(ctx context.Context, ls ledger.LedgerStore, chatID string) ([]OrphanedDelivery, error) {
-	entries, err := ls.ReadEntries(ctx, chatID, 0)
-	if err != nil {
-		return nil, fmt.Errorf("ledger recover: read chat %q: %w", chatID, err)
-	}
+// deliveryIntentsFromEntries extracts every delivery.intent entry from
+// entries (already read by the caller - see RunLedgerRecover, which folds
+// this over the SAME read used for the artifact pass instead of reading the
+// chat's ledger twice). Whether one is already settled is a
+// DeliveryRecordChecker read against the delivery_record artifact (#1144
+// P2), not a second ledger entry kind.
+func deliveryIntentsFromEntries(entries []ledger.Entry) []OrphanedDelivery {
 	var intents []OrphanedDelivery
 	for _, e := range entries {
 		if e.Kind != ledger.KindDeliveryIntent {
@@ -320,7 +319,7 @@ func findDeliveryIntents(ctx context.Context, ls ledger.LedgerStore, chatID stri
 		intents = append(intents, OrphanedDelivery{Key: e.Key, TargetID: p.TargetID, Revision: p.Revision, NodeID: e.NodeID, Seq: e.Seq,
 			CloneURL: p.CloneURL, IssueNumber: p.IssueNumber})
 	}
-	return intents, nil
+	return intents
 }
 
 // OrphanedRevision is one artifact.revision intent whose store row never
@@ -384,10 +383,15 @@ func (r *LedgerRecoverReport) unresolved() int {
 // only surfaces it, never writes. Idempotent: a settled intent no longer
 // shows up as an orphan. dryRun changes only the delivery half.
 func RunLedgerRecover(ctx context.Context, ls ledger.LedgerStore, chatID string, p Projections, dryRun bool) (*LedgerRecoverReport, error) {
-	intents, err := findDeliveryIntents(ctx, ls, chatID)
+	// One projected read serves both passes below (delivery intents, then
+	// fold.ApplyEntries for the artifact pass) instead of reading the whole
+	// chat twice (perf audit #1) - kinds is the union both passes need.
+	kinds := append([]string{ledger.KindDeliveryIntent}, fold.RequiredKinds...)
+	entries, err := ledger.ReadByKinds(ctx, ls, chatID, 0, kinds)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("ledger recover: read chat %q: %w", chatID, err)
 	}
+	intents := deliveryIntentsFromEntries(entries)
 	report := &LedgerRecoverReport{ChatID: chatID, DryRun: dryRun}
 	for _, o := range intents {
 		if p.DeliveryRecorded != nil {
@@ -426,10 +430,7 @@ func RunLedgerRecover(ctx context.Context, ls ledger.LedgerStore, chatID string,
 	if p.ArtifactRowExists == nil {
 		return report, nil
 	}
-	res, err := fold.Apply(ctx, ls, chatID, 0)
-	if err != nil {
-		return nil, fmt.Errorf("ledger recover: fold chat %q: %w", chatID, err)
-	}
+	res := fold.ApplyEntries(entries)
 	ids := make([]string, 0, len(res.Artifacts))
 	for id := range res.Artifacts {
 		ids = append(ids, id)

@@ -68,6 +68,48 @@ func appendDeliveryIntentWithContextForTest(t *testing.T, ls ledger.LedgerStore,
 	}
 }
 
+// countingLedgerStore wraps a LedgerStore and counts calls that read a
+// chat's entries, so a test can assert Recover reads the ledger once per
+// chat instead of once for delivery intents and again to fold artifacts
+// (perf audit #1).
+type countingLedgerStore struct {
+	ledger.LedgerStore
+	reads int
+}
+
+func (c *countingLedgerStore) ReadEntries(ctx context.Context, chatID string, fromSeq int64) ([]ledger.Entry, error) {
+	c.reads++
+	return c.LedgerStore.ReadEntries(ctx, chatID, fromSeq)
+}
+
+// TestRunLedgerRecover_ReadsLedgerOnce is perf audit #1's "read once in
+// Recover": with both a delivery intent and an artifact revision present
+// (exercising both of RunLedgerRecover's passes), the chat's ledger must be
+// read exactly once, not once per pass.
+func TestRunLedgerRecover_ReadsLedgerOnce(t *testing.T) {
+	ctx := context.Background()
+	ls := &countingLedgerStore{LedgerStore: ledgertest.NewMemStore()}
+	appendDeliveryIntentForTest(t, ls, "chat-once", "code_review:pr:9@1", "code_review:pr:9", 1)
+	revPayload, _ := json.Marshal(struct {
+		Revision int `json:"revision"`
+	}{Revision: 1})
+	if _, err := ls.AppendIntent(ctx, ledger.Entry{ChatID: "chat-once", Kind: ledger.KindArtifactRevision, Key: "art:1", Payload: revPayload}); err != nil {
+		t.Fatalf("append artifact.revision: %v", err)
+	}
+
+	rec := &fakeRecoverer{found: true}
+	_, err := RunLedgerRecover(ctx, ls, "chat-once", Projections{
+		Delivery:          rec,
+		ArtifactRowExists: func(context.Context, string, string, int) (bool, error) { return true, nil },
+	}, false)
+	if err != nil {
+		t.Fatalf("RunLedgerRecover: %v", err)
+	}
+	if ls.reads != 1 {
+		t.Fatalf("ledger read %d times, want 1", ls.reads)
+	}
+}
+
 // #1093 finding 4: the recoverer must receive a DeliveryContext rebuilt from
 // the persisted intent payload, not a zero value - offline recovery has no
 // live worker activity to derive clone/PR coordinates from.

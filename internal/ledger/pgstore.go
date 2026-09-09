@@ -271,6 +271,19 @@ func (s *PGStore) ReadEntries(ctx context.Context, chatID string, fromSeq int64)
 	return pgRowsToEntries(rows), nil
 }
 
+// ReadEntriesFiltered is ReadEntries with `kind IN (?)` pushed to SQL, so
+// Postgres never detoasts the payload of a row the caller doesn't want
+// (perf audit #1 - kinds like agent.invoke run to multi-MB jsonb).
+func (s *PGStore) ReadEntriesFiltered(ctx context.Context, chatID string, fromSeq int64, kinds []string) ([]Entry, error) {
+	var rows []pgEntry
+	if err := s.db.WithContext(ctx).
+		Where("chat_id = ? AND seq >= ? AND kind IN ?", chatID, fromSeq, kinds).
+		Order("seq asc").Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("ledger: read filtered entries for chat %q: %w", chatID, err)
+	}
+	return pgRowsToEntries(rows), nil
+}
+
 // MaxSeq reads chatID's highest allocated seq straight off the seq counter
 // row (a PK lookup) instead of MAX(seq) over ledger_entries, 0 if the chat
 // never appended.

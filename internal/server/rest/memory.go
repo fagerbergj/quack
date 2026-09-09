@@ -431,8 +431,9 @@ func memoryLedgerEvents(ctx context.Context, led ledger.LedgerStore, now time.Ti
 	}
 	var votes []memory.VoteEvent
 	var recalls []memory.RecallEvent
+	kinds := []string{ledger.KindMemoryVote, ledger.KindMemoryRecall}
 	for _, c := range chats {
-		entries, err := led.ReadEntries(ctx, c.ID, 0)
+		entries, err := ledger.ReadByKinds(ctx, led, c.ID, 0, kinds)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -701,7 +702,7 @@ func (h *Handler) ListNodeMemories(w http.ResponseWriter, r *http.Request, chatI
 		writeJSON(w, http.StatusOK, out)
 		return
 	}
-	entries, err := h.ledgerStore.ReadEntries(r.Context(), chatID, 0)
+	entries, err := ledger.ReadByKinds(r.Context(), h.ledgerStore, chatID, 0, []string{ledger.KindMemoryVote, ledger.KindMemoryRecall})
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
 		return
