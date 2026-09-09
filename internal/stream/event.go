@@ -461,9 +461,10 @@ func WithTrace(ev SSEEvent, traceID string) SSEEvent {
 	return ev
 }
 
-// NodeDone builds a node_done event, stamping FinishedAtMs now - the single
-// choke point both the live executor and the ledger-fold reconstruction
-// (runlog.SynthesizeChatEvents) call through, mirroring NodeStart's StartedAtMs.
+// NodeDone builds a node_done event, stamping FinishedAtMs now - the live
+// executor's choke point. runlog.SynthesizeChatEvents (ledger-fold
+// reconstruction) builds its own NodeDoneData instead, with the source
+// ledger entry's original At, not this call's wall-clock.
 func NodeDone(nodeID string, data NodeDoneData) SSEEvent {
 	data.NodeID = nodeID
 	data.FinishedAtMs = time.Now().UnixMilli()
