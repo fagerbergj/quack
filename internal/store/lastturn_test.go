@@ -117,3 +117,50 @@ func TestGetLastTurnWithContent_TurnBiggerThanWindowStillComplete(t *testing.T) 
 		t.Errorf("AsstText truncated: got %d chars, want %d chars", len(got.AsstText), len(want))
 	}
 }
+
+// TestGetLastTurnWithContent_PartialRunInProgress covers a run still streaming: the
+// ChatTurn row exists (SaveTurn runs before the model call starts) but no assistant event
+// has landed yet. GetLastTurnWithContent must agree with GetTurnsWithContent - empty
+// AsstText, not an error or a stale previous turn - since DeriveTerminalStatus reads
+// exactly this state on every run-end call that races a still-draining stream.
+func TestGetLastTurnWithContent_PartialRunInProgress(t *testing.T) {
+	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+	c, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	sessResp, err := st.Sessions.Create(ctx, &session.CreateRequest{AppName: chatAppName, UserID: "local", SessionID: c.ID})
+	if err != nil {
+		t.Fatalf("session Create: %v", err)
+	}
+	if err := st.SaveTurn(ctx, c.ID, "t0", "still going"); err != nil {
+		t.Fatalf("SaveTurn: %v", err)
+	}
+	if err := st.Sessions.AppendEvent(ctx, sessResp.Session, userEvent("still going")); err != nil {
+		t.Fatalf("AppendEvent user: %v", err)
+	}
+
+	full, err := st.GetTurnsWithContent(ctx, chatAppName, "local", c.ID)
+	if err != nil || len(full) != 1 {
+		t.Fatalf("GetTurnsWithContent: %+v err=%v", full, err)
+	}
+	want := full[0]
+
+	got, err := st.GetLastTurnWithContent(ctx, chatAppName, "local", c.ID)
+	if err != nil {
+		t.Fatalf("GetLastTurnWithContent: %v", err)
+	}
+	if got == nil {
+		t.Fatal("GetLastTurnWithContent: nil, want the in-progress turn")
+	}
+	if got.ID != want.ID || got.UserText != want.UserText || got.AsstText != want.AsstText {
+		t.Errorf("GetLastTurnWithContent = %+v, want %+v", *got, want)
+	}
+	if got.AsstText != "" {
+		t.Errorf("AsstText = %q, want empty (no model response yet)", got.AsstText)
+	}
+}
