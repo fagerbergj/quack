@@ -51,6 +51,29 @@ describe('ChatMenu usage row', () => {
     expect(btn.className).toContain('min-w-[44px]')
     expect(btn.className).toContain('min-h-[44px]')
   })
+
+  // #1314 review: same floor as the trigger, on every item inside the menu -
+  // a class regression here left compact-width rows short of 44px.
+  it('pins the 44px floor on every menu item at compact width', async () => {
+    const user = userEvent.setup()
+    render(<ChatMenu chatId="c1" />)
+    await user.click(screen.getByRole('button', { name: 'Chat actions' }))
+    const items = [
+      screen.getByRole('menuitem', { name: /Download Logs/ }),
+      ...screen.getAllByRole('menuitemradio'),
+    ]
+    for (const item of items) {
+      expect(item.className).toContain('min-h-[44px]')
+      expect(item.className).toContain('medium:min-h-0')
+    }
+  })
+
+  it('carries no arrow or emoji glyph anywhere in the menu', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<ChatMenu chatId="c1" usage={{ models: ['gpt-5'], usage: { total_tokens: 5522 } }} />)
+    await user.click(screen.getByRole('button', { name: 'Chat actions' }))
+    expect(container.textContent ?? '').not.toMatch(/[←-⇿⌀-⏿■-◿⬀-⯿]/)
+  })
 })
 
 // #1173: the kebab's Light/Dark/System entries are the only in-app theme

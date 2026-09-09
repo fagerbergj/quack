@@ -202,7 +202,20 @@ describe('DagNode compact header', () => {
     expect(items.length).toBeGreaterThanOrEqual(3)
     for (const item of items) {
       expect(item.querySelector('svg')).not.toBeNull()
-      expect(item.textContent ?? '').not.toMatch(/[\u2300-\u23FF\u25A0-\u25FF\u2B00-\u2BFF]/)
+      // Arrow range included so a reverted retry-arrow text glyph fails here too.
+      expect(item.textContent ?? '').not.toMatch(/[\u2190-\u21FF\u2300-\u23FF\u25A0-\u25FF\u2B00-\u2BFF]/)
+    }
+  })
+
+  it('pins the 44px floor on every node-menu item', async () => {
+    const user = userEvent.setup()
+    render(<DagNode node={node} state={running} runs={[]} answer="" isFinal={false} onCancel={() => {}} onPause={() => {}} onQueueMessage={() => {}} />)
+    await user.click(screen.getByRole('button', { name: 'Node actions' }))
+    const items = await screen.findAllByRole('menuitem')
+    expect(items.length).toBeGreaterThanOrEqual(3)
+    for (const item of items) {
+      expect(item.className).toContain('min-h-[44px]')
+      expect(item.className).toContain('medium:min-h-0')
     }
   })
 })
@@ -221,5 +234,29 @@ describe('DagNode answer button', () => {
   it('hides Answer when the node is not waiting on the user', () => {
     render(<DagNode node={node} state={{ status: 'running' }} runs={[]} answer="" isFinal={false} onAnswerQuestion={() => {}} />)
     expect(screen.queryByRole('button', { name: /Answer/ })).toBeNull()
+  })
+})
+
+// #1314 review: DoneWithRetryAndSteered mounted these controls but nothing
+// pinned the floor classes or banned the retry-arrow glyphs they replaced.
+describe('DagNode retry controls (done + retry + steered)', () => {
+  const doneWithSteer = {
+    status: 'done' as const, startedAt: 0, finishedAt: 62_000, totalTokens: 3_421,
+    model: 'qwen3-30b-a3b', steers: ['Focus on rainfall, skip hotels.'],
+  }
+
+  it('pins the 44px floor on both retry buttons', () => {
+    render(<DagNode node={node} state={doneWithSteer} runs={[]} answer="the answer" isFinal={false} onRetry={() => {}} />)
+    const retry = screen.getByRole('button', { name: 'retry' })
+    const retryWithGuidance = screen.getByRole('button', { name: /retry with guidance/ })
+    for (const btn of [retry, retryWithGuidance]) {
+      expect(btn.className).toContain('min-h-[44px]')
+      expect(btn.className).toContain('medium:min-h-0')
+    }
+  })
+
+  it('carries no arrow or emoji glyph anywhere in the card', () => {
+    const { container } = render(<DagNode node={node} state={doneWithSteer} runs={[]} answer="the answer" isFinal={false} onRetry={() => {}} />)
+    expect(container.textContent ?? '').not.toMatch(/[\u2190-\u21FF\u2300-\u23FF\u25A0-\u25FF\u2B00-\u2BFF]/)
   })
 })
