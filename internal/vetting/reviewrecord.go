@@ -1030,7 +1030,7 @@ func BuildReviewPreload(ctx context.Context, cfg Config, nodeID string) string {
 	}
 	// One spawn instead of one per finding/dismissed/clean entry: a file not
 	// in this diff's name list is unchanged between the two SHAs, same rule
-	// fileUnchangedSince applied per-file via N sandboxed `git diff --quiet` calls.
+	// per-file sandboxed `git diff --quiet` calls.
 	changedSince := map[string]bool{}
 	for _, f := range gitLines(dir, caps, "diff", "--name-only", lineage.HeadSHA, head) {
 		changedSince[f] = true
