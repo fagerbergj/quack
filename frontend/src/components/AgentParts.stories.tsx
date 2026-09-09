@@ -364,3 +364,23 @@ export const LiveStatusUnmappedTool: Story = {
     </div>
   ),
 }
+
+// Assistant prose is capped at a 70ch measure; a wide table or a long code
+// line scrolls inside its own box rather than widening the bubble.
+export const ProseWideContent: StoryObj = {
+  parameters: { renderCheck: { viewports: ['mobile', 'desktop'] } },
+  render: () => (
+    <AssistantText text={[
+      'Here is the comparison you asked for, with one long paragraph first so the measure is visible: Dublin is mild year-round, May to September is warmest at fifteen to eighteen degrees, and the rain is spread evenly enough that no month is reliably dry, which is why most guides recommend late spring for the best trade-off between daylight, temperature and crowds.',
+      '',
+      '| Month | Avg high | Avg low | Rain days | Daylight | Crowds | Hotel price index | Notes |',
+      '| --- | --- | --- | --- | --- | --- | --- | --- |',
+      '| May | 15 °C | 7 °C | 11 | 16h | moderate | 105 | best trade-off between weather, daylight and price |',
+      '| August | 19 °C | 12 °C | 12 | 15h | high | 130 | peak season, book early |',
+      '',
+      '```sh',
+      'curl -s "https://example.com/api/v1/climate?city=dublin&months=may,june,july,august,september&fields=high,low,rain_days,daylight" | jq .',
+      '```',
+    ].join('\n')} />
+  ),
+}
