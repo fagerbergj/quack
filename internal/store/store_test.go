@@ -885,3 +885,45 @@ func TestDeleteChat_RemovesCheckpointRow(t *testing.T) {
 		t.Errorf("ledger_checkpoints rows for %s after delete = %d, want 0", chat.ID, count)
 	}
 }
+
+// TestGetTurnsWithContent_NodesQueryIsConstant pins the perf audit #5 fix:
+// dag_nodes must be fetched with one plan_id IN (?) query, not one
+// GetDagNodes call per turn - so the query delta between N=5 and N=20 turns
+// (each with its own plan+node) must be the same, not proportional to N.
+func TestGetTurnsWithContent_NodesQueryIsConstant(t *testing.T) {
+	ctx := context.Background()
+	run := func(n int) int64 {
+		st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		c, err := st.CreateChat(ctx, "")
+		if err != nil {
+			t.Fatalf("CreateChat: %v", err)
+		}
+		for i := 0; i < n; i++ {
+			turnID := "t" + string(rune('a'+i))
+			if err := st.SaveTurn(ctx, c.ID, turnID, ""); err != nil {
+				t.Fatalf("SaveTurn: %v", err)
+			}
+			planID := "p" + string(rune('a'+i))
+			if err := st.SaveDagPlan(ctx, c.ID, planID, turnID, "{}"); err != nil {
+				t.Fatalf("SaveDagPlan: %v", err)
+			}
+			if err := st.UpsertDagNode(ctx, DagNode{NodeID: "n1", PlanID: planID, Status: "done"}); err != nil {
+				t.Fatalf("UpsertDagNode: %v", err)
+			}
+		}
+		before := st.QueryCount()
+		if _, err := st.GetTurnsWithContent(ctx, chatAppName, "local", c.ID); err != nil {
+			t.Fatalf("GetTurnsWithContent: %v", err)
+		}
+		return st.QueryCount() - before
+	}
+
+	q5 := run(5)
+	q20 := run(20)
+	if q5 != q20 {
+		t.Errorf("query delta = %d at N=5, %d at N=20, want equal (constant, not N+1)", q5, q20)
+	}
+}

@@ -150,8 +150,10 @@ type ProjectionWatermark struct {
 
 // DagNode stores the execution state of one DAG node.
 type DagNode struct {
-	NodeID        string `gorm:"primaryKey;column:node_id" json:"node_id"`
-	PlanID        string `gorm:"primaryKey;column:plan_id" json:"plan_id"`
+	NodeID string `gorm:"primaryKey;column:node_id" json:"node_id"`
+	// PK leads with node_id, so plan_id lookups (chat-list usage totals, item 9 of
+	// the perf audit) seq-scan without this index.
+	PlanID        string `gorm:"primaryKey;column:plan_id;index:idx_dag_nodes_plan_id" json:"plan_id"`
 	Status        string `json:"status"` // dag.NodeStatus value
 	OutputPreview string `json:"output_preview"`
 	// Full vetted text (OutputPreview truncated to 250 chars for display).
@@ -497,6 +499,12 @@ func New(kind, url string) (*Store, error) {
 		return nil, err
 	}
 	if err := database.AutoMigrate(sessions); err != nil {
+		return nil, err
+	}
+	// The ADK schema's PK on events is (id, app_name, user_id, session_id) with id
+	// leading, so Sessions.Get's WHERE on the other three columns walks the whole
+	// index (perf audit #3: 7ms/0 rows at 1x, 1.7s at 10x). Additive, idempotent.
+	if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_events_session_lookup ON events (app_name, user_id, session_id, timestamp)").Error; err != nil {
 		return nil, err
 	}
 	s.Sessions = sessions
@@ -1437,8 +1445,21 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 	var plans []DagPlan
 	_ = s.db.WithContext(ctx).Where("chat_id = ?", chatID).Find(&plans).Error
 	planByTurn := make(map[string]*DagPlan, len(plans))
+	planIDs := make([]string, len(plans))
 	for i := range plans {
 		planByTurn[plans[i].TurnID] = &plans[i]
+		planIDs[i] = plans[i].ID
+	}
+
+	// One IN query for all plans' nodes instead of one GetDagNodes per turn
+	// (perf audit #5: N+1, 56 queries at 50 turns collapses to 1 here).
+	var allNodes []DagNode
+	if len(planIDs) > 0 {
+		_ = s.db.WithContext(ctx).Where("plan_id IN ?", planIDs).Find(&allNodes).Error
+	}
+	nodesByPlan := make(map[string][]DagNode, len(planIDs))
+	for _, n := range allNodes {
+		nodesByPlan[n.PlanID] = append(nodesByPlan[n.PlanID], n)
 	}
 
 	// groups can be shorter than turns - a ResetHistory dispatch (#1195) wipes
@@ -1479,7 +1500,7 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 		}
 		if plan := planByTurn[t.ID]; plan != nil {
 			tc.Plan = plan
-			tc.Nodes, _ = s.GetDagNodes(ctx, plan.ID)
+			tc.Nodes = nodesByPlan[plan.ID]
 		}
 		result[i] = tc
 	}
