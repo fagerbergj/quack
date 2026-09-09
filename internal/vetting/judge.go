@@ -329,10 +329,11 @@ func newSubmitVerdictTool(sink *verdict, receivedIDs []string) (tool.Tool, error
 }
 
 // buildJudgePrompt: assembles judge's user message. Order is constitution →
-// rubric → task → question → answer → ledger → changed files → known
-// failures: the stable, round-invariant sections lead and the volatile,
-// per-round evidence (re-derived every round) trails, so the prefix up to
-// and including the answer stays a prompt-cache hit across rounds.
+// rubric → task → question → ledger → changed files → known failures →
+// commit-hygiene evidence → answer: every section that is byte-identical
+// round to round leads, and the one section that changes every round (the
+// answer being judged) trails last, so the whole prefix ahead of it stays a
+// prompt-cache hit across rounds instead of dying at the first volatile byte.
 // judgePromptBuilds counts buildJudgePrompt calls - test-only seam proving
 // fitJudgeAnswer's prompt isn't thrown away and rebuilt by runJudgeRound.
 var judgePromptBuilds atomic.Int64
@@ -357,8 +358,6 @@ func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Con
 	}
 	sb.WriteString("\n\nUser's question:\n")
 	sb.WriteString(contentPlainText(question))
-	sb.WriteString("\n\nAnswer to judge:\n")
-	sb.WriteString(answer)
 	if ws := buildWorkspaceSection(act); ws != "" {
 		sb.WriteString("\n\n")
 		sb.WriteString(ws)
@@ -375,6 +374,8 @@ func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Con
 		sb.WriteString("\n\n")
 		sb.WriteString(ev)
 	}
+	sb.WriteString("\n\nAnswer to judge:\n")
+	sb.WriteString(answer)
 	return sb.String()
 }
 

@@ -530,21 +530,22 @@ func TestJudgePromptScopedToNodeNotOrchestratorFileCount(t *testing.T) {
 	}
 }
 
-// TestBuildJudgePromptSectionOrder pins the cache-friendly section order:
-// the stable, round-invariant sections (constitution, rubric, task,
-// question, answer) come before the volatile, re-derived-per-round evidence
-// (ledger, changed files, known failures) - so the prefix up to and
-// including the answer stays byte-identical, and a cache hit, across rounds.
+// TestBuildJudgePromptSectionOrder pins the cache-friendly section order
+// (finding 4): every section that is byte-identical round to round -
+// constitution, rubric, task, question, ledger, changed files, known
+// failures - leads, and the one section that changes every round (the
+// answer being judged) trails last, so the prefix ahead of it stays a
+// prompt-cache hit across rounds.
 func TestBuildJudgePromptSectionOrder(t *testing.T) {
 	act := workerActivity{workspace: []wsOp{{tool: "read_file", detail: `read_file(path="README.md")`}}}
 	det := map[string]criterionScore{"checks_pass": {Score: 0, Reason: "deterministic: build failed"}}
 	known := judgeKnownFailuresSection(det, 0.7)
 
 	prompt := buildJudgePrompt("the constitution", "the rubric", "the node task",
-		questionContent("the question"), "the answer", "the changed files diff", act, known)
+		questionContent("the question"), "the answer being scored", "the changed files diff", act, known)
 
-	sections := []string{"the constitution", "the rubric", "the node task", "the question", "the answer",
-		"Workspace activity", "the changed files diff", judgeKnownFailuresHeader}
+	sections := []string{"the constitution", "the rubric", "the node task", "the question",
+		"Workspace activity", "the changed files diff", judgeKnownFailuresHeader, "the answer being scored"}
 	last := -1
 	for _, s := range sections {
 		idx := strings.Index(prompt, s)
@@ -552,31 +553,31 @@ func TestBuildJudgePromptSectionOrder(t *testing.T) {
 			t.Fatalf("prompt missing section %q:\n%s", s, prompt)
 		}
 		if idx < last {
-			t.Fatalf("section %q is out of order (want constitution, rubric, task, question, answer, ledger, changed files, known failures):\n%s", s, prompt)
+			t.Fatalf("section %q is out of order (want constitution, rubric, task, question, ledger, changed files, known failures, answer):\n%s", s, prompt)
 		}
 		last = idx
 	}
 }
 
 // TestBuildJudgePromptStablePrefixIsByteIdentical pins what the section-order
-// test above cannot: two rounds of the SAME node must produce prompts that are
-// byte-identical up to where the answer body starts. Order alone is not enough -
-// a clock, a run id, or a re-derived path leaking into the constitution/rubric/
-// task/question would keep every section in place and still move the first
-// differing byte to offset 0, which is what llama.cpp's per-slot prefix cache
-// actually measures (verified against the production judge: two rounds assembled
-// this way reuse 2,899 tokens; a prompt that diverges at byte 0 reuses none).
+// test above cannot: two rounds of the SAME node - same task, question,
+// ledger, diff and known failures, only the answer being judged differs, the
+// realistic case this ordering optimises for - must produce prompts that are
+// byte-identical up to and including the "Answer to judge:" header. Order
+// alone is not enough - a clock, a run id, or a re-derived path leaking into
+// any round-invariant section would keep every section in place and still
+// move the first differing byte earlier, which is what llama.cpp's per-slot
+// prefix cache actually measures (verified against the production judge: two
+// rounds assembled this way reuse 2,899 tokens; a prompt that diverges
+// earlier reuses less).
 func TestBuildJudgePromptStablePrefixIsByteIdentical(t *testing.T) {
 	const constitution, rubric, task = "the constitution", "the rubric", "the node task"
 	question := questionContent("the question")
+	act := workerActivity{workspace: []wsOp{{tool: "read_file", detail: `read_file(path="a.go")`}}}
+	known := judgeKnownFailuresSection(map[string]criterionScore{"checks_pass": {Score: 0, Reason: "build failed"}}, 0.7)
 
-	// Round 1 and round 2 of one node: same stable head, different answer and
-	// different volatile evidence (ledger, changed files, known failures).
-	first := buildJudgePrompt(constitution, rubric, task, question, "the first answer", "diff one",
-		workerActivity{workspace: []wsOp{{tool: "read_file", detail: `read_file(path="a.go")`}}},
-		judgeKnownFailuresSection(map[string]criterionScore{"checks_pass": {Score: 0, Reason: "build failed"}}, 0.7))
-	second := buildJudgePrompt(constitution, rubric, task, question, "a wholly different second answer", "diff two",
-		workerActivity{workspace: []wsOp{{tool: "grep", detail: `grep(pattern="TODO")`}}}, "")
+	first := buildJudgePrompt(constitution, rubric, task, question, "the first answer", "diff one", act, known)
+	second := buildJudgePrompt(constitution, rubric, task, question, "a wholly different second answer", "diff one", act, known)
 
 	const answerHeader = "\n\nAnswer to judge:\n"
 	want := strings.Index(first, answerHeader) + len(answerHeader)
