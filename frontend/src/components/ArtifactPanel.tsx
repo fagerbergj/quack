@@ -1207,6 +1207,51 @@ function judgeRoundSummary(data: unknown) {
   )
 }
 
+// codeReviewSummary is the rendered-body view for a code_review artifact:
+// the fixed format's human-facing fields (verdict, takeaway, verified,
+// notes) as prose instead of the generic JSON tree - the same fields the
+// GitHub delivery renders from (internal/vetting/reviewoverview.go), read
+// straight off the record rather than re-fetched. A pre-migration record
+// (Summary, no Takeaway/Verified/Notes) falls back to Summary under Notes,
+// truncated - same rule the backend renderer uses.
+const VERDICT_ICON = { approve: 'check_circle', request_changes: 'cancel', comment: 'chat' } as const
+
+function codeReviewSummary(data: unknown) {
+  if (data == null || typeof data !== 'object') return null
+  const d = data as {
+    verdict?: string; takeaway?: string; verified?: string[]; notes?: string[]; summary?: string
+  }
+  if (!d.verdict) return null
+  const icon = VERDICT_ICON[d.verdict as keyof typeof VERDICT_ICON]
+  const legacy = !d.takeaway && !d.verified?.length && !d.notes?.length ? d.summary : undefined
+  const notes = legacy ? [legacy.length > 320 ? legacy.slice(0, 320) + '…' : legacy, ...(d.notes ?? [])] : d.notes
+  return (
+    <div className="mb-2 text-xs space-y-2">
+      <div className="flex items-center gap-1.5 font-medium text-gray-800 dark:text-gray-100">
+        {icon && <Icon name={icon} className="w-3.5 h-3.5" />}
+        <span className="capitalize">{d.verdict.replace('_', ' ')}</span>
+      </div>
+      {d.takeaway && <p className="text-gray-700 dark:text-gray-200">{d.takeaway}</p>}
+      {!!d.verified?.length && (
+        <div>
+          <div className="text-gray-400 dark:text-gray-500 uppercase tracking-wide text-[10px] mb-0.5">Verified</div>
+          <ul className="list-disc pl-4 space-y-0.5">
+            {d.verified.map((v, i) => <li key={i} className="text-gray-700 dark:text-gray-200">{v}</li>)}
+          </ul>
+        </div>
+      )}
+      {!!notes?.length && (
+        <div>
+          <div className="text-gray-400 dark:text-gray-500 uppercase tracking-wide text-[10px] mb-0.5">Notes</div>
+          <ul className="list-disc pl-4 space-y-0.5">
+            {notes.map((n, i) => <li key={i} className="text-gray-700 dark:text-gray-200">{n}</li>)}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // JsonView is the collapsible key/value tree default view for a structured
 // artifact (#1114 owner request) - the pretty-printed code block moved to
 // the "Raw" toggle (ArtifactLines).
@@ -1214,6 +1259,7 @@ function JsonView({ data, kind }: { data: unknown; kind?: string }) {
   return (
     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 overflow-x-auto">
       {kind === 'judge_round' && judgeRoundSummary(data)}
+      {kind === 'code_review' && codeReviewSummary(data)}
       <JsonNode v={data} />
     </div>
   )
