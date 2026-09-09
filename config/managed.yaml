@@ -3,11 +3,10 @@
 # them. The no-hand-setup full stack (needs docker + host ports 5432/6334 free).
 #
 #   export QUACK_LLM_ENDPOINT="http://your-llm:11436/v1" QUACK_LLM_API_KEY="unused"
-#   export QUACK_ORCH_MODEL="qwen3.6-35b" QUACK_RESEARCHER_MODEL="qwen3.6-35b"
+#   export QUACK_ORCH_MODEL="qwen3.8-27b" QUACK_RESEARCHER_MODEL="qwen3.8-27b"
 #   export QUACK_JUDGE_MODEL="gemma4-26b-a4b" QUACK_EMBED_MODEL="qwen3-embed"
-#   ./quack server start --config config/managed.yaml
-#   ./quack server status  --config config/managed.yaml
-#   ./quack server stop    --config config/managed.yaml   # tears down stores too
+#   ./quack server run --config config/managed.yaml
+#   docker compose -p quack-stores down   # leaves stores running otherwise; see deployment.md
 #
 # Tool backends (search/fetch) are NOT managed. This preset uses Exa's keyless
 # hosted MCP for search (no API key, no container) and a direct GET for fetch -

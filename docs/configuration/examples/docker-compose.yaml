@@ -13,7 +13,7 @@ providers:
 # models: the registry every model reference must resolve into. The names are
 # the resolved *_MODEL defaults from docker-compose.yml/.env.example.
 models:
-  qwen3.6-35b:            # workhorse: orchestrator, web-researcher, synthesizer, and the 3× coding agents
+  qwen3.8-27b:            # workhorse: orchestrator, web-researcher, synthesizer, and the 3× coding agents
     provider: default
     role: worker
     context_window: 262144
@@ -60,14 +60,14 @@ session:
 orchestrator:
   skills: [plan-work, format-markdown, present-coding-plan, contribute]
   provider: default
-  model: qwen3.6-35b
+  model: qwen3.8-27b
 
 agents:
   web-researcher:
     bundle: agents/web-researcher
     skills: [format-markdown, research-git-repos]
     provider: default
-    model: qwen3.6-35b
+    model: qwen3.8-27b
     context_window: 65536
     memory:
       bucket: research
@@ -76,7 +76,7 @@ agents:
   code-implementer:
     bundle: agents/code-implementer
     provider: default
-    model: qwen3.6-35b   # falls back to the researcher model when QUACK_CODER_MODEL is unset
+    model: qwen3.8-27b   # falls back to the researcher model when QUACK_CODER_MODEL is unset
     context_window: 65536
     memory:
       bucket: coding
@@ -86,7 +86,7 @@ agents:
   code-reviewer:
     bundle: agents/code-reviewer
     provider: default
-    model: qwen3.6-35b
+    model: qwen3.8-27b
     context_window: 65536
     memory:
       bucket: coding
@@ -97,7 +97,7 @@ agents:
   code-explorer:
     bundle: agents/code-explorer
     provider: default
-    model: qwen3.6-35b
+    model: qwen3.8-27b
     context_window: 65536
     memory:
       bucket: coding
@@ -110,7 +110,7 @@ agents:
     bundle: agents/synthesizer
     skills: [format-markdown, present-coding-plan, pr-authoring]
     provider: default
-    model: qwen3.6-35b
+    model: qwen3.8-27b
     context_window: 65536
     judge_rounds: 1
     tools: []

@@ -24,7 +24,7 @@ frontend-build:
 
 ## run: build and run locally (expects env: QUACK_DATABASE_URL, QUACK_LLM_ENDPOINT, QUACK_ORCH_MODEL)
 run: build
-	./$(BINARY) --config config/quack.yaml
+	./$(BINARY) server run --config config/quack.yaml
 
 ## test: run Go tests
 test: plugins
