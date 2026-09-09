@@ -229,13 +229,27 @@ type artifactRevisionPayload struct {
 // conflict resolves next attempt; this only guards a wedged id (saveAt's doc).
 const maxSaveRetries = 20
 
-// idempotencyKey derives the store-level dedup key for id/parentRev/data
-// (#1144 P4), replacing the old read-then-compare "identical to latest"
-// check. parentRev is part of the hash so only a retry at the SAME parent
-// collapses; a save whose bytes happen to match an earlier, non-parent
-// revision (a revert) gets its own new revision instead of silently
-// reporting the old one (finding 2).
-func idempotencyKey(id string, parentRev int, data []byte) string {
+// idempotencyKey derives the store-level dedup key for id/data (#1144 P4),
+// replacing the old read-then-compare "identical to latest" check.
+// Deliberately content-only, NOT parentRev-qualified: a writer's
+// crash-then-retry must collide with its OWN original intent no matter how
+// far the tip has moved since, so claimAndSave's content-mismatch check
+// (#1237) can still catch a different writer having adopted the same
+// orphaned slot. A save whose bytes match an OLDER, non-tip revision falls
+// through to revertKey instead (finding 2).
+func idempotencyKey(id string, data []byte) string {
+	h := sha256.New()
+	h.Write([]byte(id))
+	h.Write([]byte{0})
+	h.Write(data)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// revertKey is claimAndSave's fallback claim key when a dup hit's matched
+// revision isn't the one the caller expected resolved (finding 2: a
+// deliberate revert, not a retry of the same attempt) - qualified by
+// parentRev so the retried claim can't collide with that same stale entry.
+func revertKey(id string, parentRev int, data []byte) string {
 	h := sha256.New()
 	h.Write([]byte(id))
 	h.Write([]byte{0})
@@ -244,6 +258,11 @@ func idempotencyKey(id string, parentRev int, data []byte) string {
 	h.Write(data)
 	return hex.EncodeToString(h.Sum(nil))
 }
+
+// errStaleContentMatch: claimAndSave's dup hit matched identical content at
+// a revision other than expectResolvedAt - not this attempt's own intent,
+// so the caller must retry under a fresh key rather than treat it as done.
+var errStaleContentMatch = errors.New("recordstore: idempotency key matched a stale, non-tip revision")
 
 // adoptAfterAttempts bounds how many plain retries saveAtOrAdopt insists on
 // before it will treat a still-conflicting parent as an orphan (saveAt's doc
@@ -344,12 +363,28 @@ func (c *Client) saveAtOrAdopt(ctx context.Context, id, kind string, class Class
 }
 
 // saveAt writes data as parentRev+1, first claiming that parent in the
-// ledger (#1144 P4).
+// ledger (#1144 P4). Tries the content-only key first so a crash-retry
+// fails closed against a foreign adoption (#1237); only a stale, non-tip
+// match (finding 2's revert case) falls back to a parentRev-qualified key.
 func (c *Client) saveAt(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage, parentRev int) (int, error) {
 	lineage.ParentRevision = parentRev
 	if c.ledgerStore == nil {
 		return c.saveRow(ctx, id, kind, class, mime, data, lineage)
 	}
+	rev, err := c.claimAndSave(ctx, id, kind, class, mime, data, lineage, parentRev, idempotencyKey(id, data), parentRev)
+	if errors.Is(err, errStaleContentMatch) {
+		return c.claimAndSave(ctx, id, kind, class, mime, data, lineage, parentRev, revertKey(id, parentRev, data), parentRev+1)
+	}
+	return rev, err
+}
+
+// claimAndSave appends the ledger intent under key, claiming parentRev+1,
+// and completes it. expectResolvedAt is the revision a dup hit must match
+// to count as THIS attempt's own no-op (current tip for the content-only
+// key; parentRev+1 for revertKey's fallback claim) - a dup hit anywhere
+// else with matching bytes is a stale match (errStaleContentMatch); with
+// mismatching bytes it's a foreign writer's adoption (#1237, fail closed).
+func (c *Client) claimAndSave(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage, parentRev int, key string, expectResolvedAt int) (int, error) {
 	nextRev := parentRev + 1
 	payload, err := json.Marshal(artifactRevisionPayload{ID: id, Revision: nextRev, ParentRevision: parentRev, Kind: kind, Class: class, Lineage: lineage, BytesRef: id})
 	if err != nil {
@@ -358,7 +393,7 @@ func (c *Client) saveAt(ctx context.Context, id, kind string, class Class, mime 
 	_, err = c.ledgerStore.AppendIntent(ctx, ledger.Entry{
 		ChatID: c.sessionID, TurnID: lineage.TurnID, NodeID: lineage.NodeID,
 		Kind: ledger.KindArtifactRevision, Key: id, At: time.Now().UTC(), Payload: payload,
-		IdempotencyKey: idempotencyKey(id, parentRev, data),
+		IdempotencyKey: key,
 	})
 	var dup *ledger.DuplicateIntentError
 	if errors.As(err, &dup) {
@@ -380,6 +415,9 @@ func (c *Client) saveAt(ctx context.Context, id, kind string, class Class, mime 
 			// silent handoff of someone else's data under our name.
 			if !bytes.Equal(existing, data) {
 				return 0, fmt.Errorf("recordstore: duplicate intent for %s matched idempotency key but revision %d's content differs - a different writer already adopted this slot", id, p.Revision)
+			}
+			if p.Revision != expectResolvedAt {
+				return 0, errStaleContentMatch
 			}
 			slog.Info("recordstore: save skipped, identical content already recorded", "component", "recordstore", "id", id, "kind", kind, "revision", p.Revision)
 			return p.Revision, nil

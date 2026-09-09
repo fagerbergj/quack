@@ -841,14 +841,18 @@ func TestSaveRetryAfterPartialSave_CompletesOrphanedDuplicate(t *testing.T) {
 	}
 }
 
-// TestSaveRetryAfterPartialSave_ForeignAdoptionAdvancesPastIt is the
-// finding-2 counterpart of the #1237 orphan case: once writer B has adopted
-// the orphaned slot, writer A's "retry" recomputes its parent against the
-// NEW tip (B's revision), so it's no longer the same write attempt - it's a
-// fresh save that lands its own new revision, same as any other writer
-// showing up after B. Revision 1 (B's content) is never clobbered; A's
-// content lands as revision 2, not lost and not silently mislabeled as B's.
-func TestSaveRetryAfterPartialSave_ForeignAdoptionAdvancesPastIt(t *testing.T) {
+// TestSaveRetryAfterPartialSave_ForeignAdoptionFailsClosed is the #1237
+// review fix: LoadVersion proving a row exists at the duplicate's revision
+// does NOT prove it holds THIS writer's content - a different writer can
+// adopt the same orphaned slot first (saveAtOrAdopt) with different bytes.
+// Writer A's same-content retry must get a distinct, named mismatch error,
+// never be handed writer B's content under a false "already recorded".
+// (Adversarial review of #1330: folding parentRev straight into
+// idempotencyKey broke this - A's retry recomputed its key against the NEW
+// tip and silently landed a fresh revision past content it never saw,
+// re-opening the #1237 hole. claimAndSave/revertKey restore this without
+// reintroducing finding 2's revert bug - see TestRevertGetsNewRevision.)
+func TestSaveRetryAfterPartialSave_ForeignAdoptionFailsClosed(t *testing.T) {
 	svc := &failOnceSaveService{Service: artifact.InMemoryService(), failCall: 1}
 	ls := ledgertest.NewMemStore()
 	c := New(svc, "quack", "user1", "chat1").WithLedger(ls)
@@ -863,22 +867,17 @@ func TestSaveRetryAfterPartialSave_ForeignAdoptionAdvancesPastIt(t *testing.T) {
 	if err != nil || bRev != 1 {
 		t.Fatalf("writer B's adopting save: rev %d, %v, want it to adopt revision 1", bRev, err)
 	}
-	// Writer A retries with its ORIGINAL content: the tip has moved to
-	// writer B's revision 1, so this lands as its own revision 2 instead of
-	// colliding with A's stale, orphaned intent.
-	_, aRev, err := c.SaveBlob(ctx, "test.blob", []byte("a-content"), "text/plain", "doc:foreign-adopt", Lineage{})
-	if err != nil {
-		t.Fatalf("writer A's retry after B's adoption should land as a new revision, got: %v", err)
-	}
-	if aRev != 2 {
-		t.Fatalf("writer A's retry: rev=%d, want rev=2 (B's revision 1 is untouched)", aRev)
+	// Writer A retries with its ORIGINAL content: same idempotency key as
+	// its crashed attempt, but revision 1 now belongs to writer B.
+	if _, _, err := c.SaveBlob(ctx, "test.blob", []byte("a-content"), "text/plain", "doc:foreign-adopt", Lineage{}); err == nil {
+		t.Fatal("writer A's retry succeeded despite revision 1 holding writer B's content")
+	} else if !strings.Contains(err.Error(), "content differs") {
+		t.Fatalf("writer A's retry error = %v, want it to name the content mismatch", err)
 	}
 	// Revision 1 still holds writer B's content - never silently clobbered.
-	if raw, ok, err := c.LoadVersion(ctx, id, 1); err != nil || !ok || string(raw) != "b-content" {
-		t.Fatalf("revision 1 = %q ok=%v err=%v, want writer B's content untouched", raw, ok, err)
-	}
-	if raw, rev, ok, err := c.Latest(ctx, id); err != nil || !ok || rev != 2 || string(raw) != "a-content" {
-		t.Fatalf("Latest = %q rev=%d ok=%v err=%v, want writer A's content at revision 2", raw, rev, ok, err)
+	raw, _, ok, err := c.Latest(ctx, id)
+	if err != nil || !ok || string(raw) != "b-content" {
+		t.Fatalf("Latest after the failed-closed retry = %q ok=%v err=%v, want writer B's content untouched", raw, ok, err)
 	}
 }
 
