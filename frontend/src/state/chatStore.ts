@@ -677,11 +677,13 @@ export class ChatStore {
   }
 
   // detachStream closes an attached subscribe stream WITHOUT ending the turn - the
-  // run continues server-side. For chat switch / unmount. Clearing `streaming` (not
-  // calling finishStream/drainQueue - the run hasn't actually ended) lets a return
-  // trip re-enter through the normal seed/attach path, gated on the server's
-  // detail.status, instead of getting stuck: attach() and submit() both no-op while
-  // streaming is true, and nothing else ever flips it back for a detached chat.
+  // run continues server-side. For chat switch / unmount. When an EventSource was
+  // closed, `streaming` is cleared too (not finishStream/drainQueue - the run
+  // hasn't ended) so a return trip re-enters through the normal seed/attach path,
+  // gated on the server's detail.status, instead of getting stuck: attach() and
+  // submit() no-op while streaming is true. With no EventSource the run is this
+  // client's own POST still in flight; streaming must stay true or attach() would
+  // feed the same events a second time on the return trip.
   detachStream(chatId: string): void {
     const close = this.eventSources.get(chatId)
     if (close) {
@@ -690,7 +692,7 @@ export class ChatStore {
     }
     this.cancelReconnect(chatId)
     const s = this.states.get(chatId)
-    if (s?.live?.streaming) {
+    if (close && s?.live?.streaming) {
       this.write(chatId, { ...s, live: { ...s.live, streaming: false } })
     }
   }

@@ -318,9 +318,9 @@ func (c *Client) save(ctx context.Context, id, kind string, class Class, mime st
 				// Saving exactly what's already at the tip is a genuine
 				// no-op: report it with no new revision and no WAL entry.
 				// Content matching an OLDER, non-latest revision (a revert)
-				// falls through to saveAtOrAdopt and mints its own new one -
-				// idempotencyKey is keyed to parentRev, so only THIS exact
-				// match, at the current tip, collapses (finding 2).
+				// falls through to saveAtOrAdopt and mints its own new one:
+				// this tip comparison is what makes only a same-as-tip save
+				// collapse; idempotencyKey itself is content-only (finding 2).
 				if latest, ok, lerr := c.LoadVersion(ctx, id, parentRev); lerr == nil && ok && bytes.Equal(latest, data) {
 					return parentRev, nil
 				}

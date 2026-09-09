@@ -1282,6 +1282,28 @@ describe('ChatStore.detachStream - leaving mid-run does not strand the chat (fin
     await store.submit('c', 'follow up')
     expect(fetchMock).toHaveBeenCalled()
   })
+
+  it("keeps streaming true for this client's own in-flight POST run, so a return trip does not double-feed it", async () => {
+    store.seed('c', [])
+    // No prior live turn, so submit() skips the archive GET and its first fetch is the POST.
+    let finishPost!: (r: Response) => void
+    fetchMock.mockImplementationOnce(() => new Promise<Response>(r => { finishPost = r }))
+    const inFlight = store.submit('c', 'hi')
+    await vi.waitFor(() => expect(store.get('c').live?.streaming).toBe(true))
+    FakeEventSource.last = null
+
+    // Leave the chat while the POST body is still streaming: no EventSource exists to hand off.
+    store.detachStream('c')
+    expect(store.get('c').live?.streaming).toBe(true)
+
+    // Return: attach() must no-op, never opening a second feed for a run this client already owns.
+    store.attach('c')
+    expect(FakeEventSource.last).toBeNull()
+
+    finishPost(makeStream(''))
+    await inFlight
+    expect(store.get('c').live?.streaming).toBe(false)
+  })
 })
 
 // Issue #383: a dropped SSE connection must be retried automatically -
