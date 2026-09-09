@@ -170,10 +170,38 @@ type editConflictResult struct {
 	Content  string `json:"content"`
 }
 
-// editArtifactOp is one search/replace pair.
+// editArtifactOp is one search/replace pair. OldText/NewText accept the MCP
+// filesystem-server's edit_file field spelling as an alias for old/new - an
+// ACP worker primed on that reference server's convention (rather than this
+// tool's own schema) retried the same failed edit under both spellings
+// back-to-back before getting it right (#1278 enumeration, PR #1304 round 1),
+// costing a redundant round trip every time regardless of which model drives it.
 type editArtifactOp struct {
-	Old string `json:"old" jsonschema:"exact text to replace; must match exactly once in the target content"`
-	New string `json:"new" jsonschema:"replacement text"`
+	Old     string `json:"old,omitempty" jsonschema:"exact text to replace; must match exactly once in the target content"`
+	New     string `json:"new,omitempty" jsonschema:"replacement text"`
+	OldText string `json:"oldText,omitempty" jsonschema:"alias for old"`
+	NewText string `json:"newText,omitempty" jsonschema:"alias for new"`
+}
+
+// resolve picks old/new, falling back to the oldText/newText alias. Both
+// spellings for the same field is rejected rather than silently preferring
+// one - a worker that sets both almost certainly means only one of them, and
+// picking silently risks applying an edit the caller didn't intend.
+func (e editArtifactOp) resolve() (old, new string, err error) {
+	if e.Old != "" && e.OldText != "" {
+		return "", "", errors.New("edit_artifact: set only one of old/oldText, not both")
+	}
+	if e.New != "" && e.NewText != "" {
+		return "", "", errors.New("edit_artifact: set only one of new/newText, not both")
+	}
+	old, new = e.Old, e.New
+	if old == "" {
+		old = e.OldText
+	}
+	if new == "" {
+		new = e.NewText
+	}
+	return old, new, nil
 }
 
 // registerEditArtifactTool: optimistic-locking search/replace (#1090 §4.4/§9).
@@ -194,7 +222,11 @@ func registerEditArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vetti
 		}
 		ops := make([]recordstore.EditOp, len(args.Edits))
 		for i, e := range args.Edits {
-			ops[i] = recordstore.EditOp{Old: e.Old, New: e.New}
+			old, new, err := e.resolve()
+			if err != nil {
+				return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil, nil
+			}
+			ops[i] = recordstore.EditOp{Old: old, New: new}
 		}
 		round, turnID, headSHA, trigger := currentRound(sess)
 		lineage := recordstore.Lineage{NodeID: sess.NodeID, Round: round, TurnID: turnID, HeadSHA: headSHA, TriggerAnnotation: trigger, Author: "worker", SavedAt: time.Now().UTC()}

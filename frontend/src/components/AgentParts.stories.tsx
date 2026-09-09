@@ -142,10 +142,14 @@ function buildInterleavedFixture(): Activity[] {
   for (let i = 0; i < fragments.length; i++) {
     runs = appendRunThinking(runs, 'r1', fragments[i])
     const callId = `c${i}`
-    const isOther = i === 3 || i === 7
-    const name = isOther ? 'other' : 'read_file'
-    const title = isOther ? (i === 3 ? 'quackmcp_stage_review' : 'Loaded skill: review-code') : undefined
-    runs = appendRunToolCall(runs, 'r1', callId, name, isOther ? {} : { path: `src/file${i}.go` }, title)
+    // i===3/7 stand in for calls the ACP relay used to collapse onto the
+    // meaningless name "other" (a bridged MCP call, a third-party tool with
+    // no ACP kind match) - the relay now resolves each to its real name
+    // (internal/acp/translate.go's mapToolCall, #1278), so the fixture never
+    // constructs the literal "other" here either.
+    const isBridged = i === 3 || i === 7
+    const name = isBridged ? (i === 3 ? 'stage_review' : 'load_skill') : 'read_file'
+    runs = appendRunToolCall(runs, 'r1', callId, name, isBridged ? {} : { path: `src/file${i}.go` })
     runs = fillRunToolResult(runs, 'r1', callId, name, { ok: true })
   }
   return runs[0].activity
@@ -162,8 +166,8 @@ export const InterleavedThinkingAndOtherTools: Story = {
     expect(canvas.getAllByText('Thought')).toHaveLength(1)
     // Every tool row shows its real identity - never the bare "other".
     expect(canvas.queryByText('other')).toBeNull()
-    expect(canvas.getByText('quackmcp_stage_review')).toBeInTheDocument()
-    expect(canvas.getByText('Loaded skill: review-code')).toBeInTheDocument()
+    expect(canvas.getByText('stage_review')).toBeInTheDocument()
+    expect(canvas.getByText('load_skill')).toBeInTheDocument()
   },
 }
 

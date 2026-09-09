@@ -305,6 +305,64 @@ func TestTranslate_UnmappedKindKeepsNameAndArgs(t *testing.T) {
 	}
 }
 
+// pi-acp sets _meta on the ToolCall to carry an MCP-bridged tool's real name
+// (#1278) - the relay must use it verbatim, in place of the useless kind
+// "other", with the raw args (not the title stuffed into them).
+func TestTranslate_MCPMetaResolvesRealToolName(t *testing.T) {
+	tr := newTranslator("/work")
+	specs := tr.translate(sdk.SessionUpdate{ToolCall: &sdk.SessionUpdateToolCall{
+		ToolCallId: "t1", Kind: sdk.ToolKindOther, Title: "quackmcp_write_code_review",
+		RawInput: map[string]any{"id": "code_review:pr:1304"},
+		Meta:     map[string]any{"quack_mcp_tool": "write_code_review"},
+		Status:   sdk.ToolCallStatusCompleted,
+	}})
+	call := specs[0].parts[0].FunctionCall
+	if call.Name != "write_code_review" {
+		t.Fatalf("want the real MCP tool name, got %q", call.Name)
+	}
+	if call.Args["id"] != "code_review:pr:1304" {
+		t.Fatalf("MCP call args lost: %+v", call.Args)
+	}
+	if _, ok := call.Args["title"]; ok {
+		t.Fatalf("MCP-identified call should not carry a redundant title arg: %+v", call.Args)
+	}
+}
+
+// A third-party ACP agent (e.g. opencode) can't set _meta, but it registers
+// quack's MCP tools under "<mcpServerName>_<tool>" the same way pi-acp does -
+// stripping that prefix off the title works without any agent-side change.
+func TestTranslate_MCPTitlePrefixResolvesRealToolName(t *testing.T) {
+	tr := newTranslator("/work")
+	specs := tr.translate(sdk.StartToolCall("t1", "quackmcp_stage_review",
+		sdk.WithStartKind(sdk.ToolKindOther),
+		sdk.WithStartRawInput(map[string]any{"verdict": "approve"}),
+		sdk.WithStartStatus(sdk.ToolCallStatusCompleted)))
+	call := specs[0].parts[0].FunctionCall
+	if call.Name != "stage_review" {
+		t.Fatalf("want the mcpServerName_ prefix stripped, got %q", call.Name)
+	}
+}
+
+// A genuinely unknown tool call (kind "other", no MCP identity) must still
+// never render the literal "other" - it's named after its human title, the
+// real fix for what #959 used to paper over in the frontend.
+func TestTranslate_UnknownOtherKindNamedAfterTitle(t *testing.T) {
+	tr := newTranslator("/work")
+	specs := tr.translate(sdk.StartToolCall("t1", "Loaded skill: review-code",
+		sdk.WithStartKind(sdk.ToolKindOther),
+		sdk.WithStartStatus(sdk.ToolCallStatusCompleted)))
+	call := specs[0].parts[0].FunctionCall
+	if call.Name != "Loaded skill: review-code" {
+		t.Fatalf("want the name derived from title, got %q", call.Name)
+	}
+	if call.Name == "other" {
+		t.Fatalf("must never be the literal \"other\"")
+	}
+	if _, ok := call.Args["title"]; ok {
+		t.Fatalf("title became the name, so it should not also be duplicated into args: %+v", call.Args)
+	}
+}
+
 // A long tool result is bounded, never dumped verbatim into the event stream.
 func TestTranslate_ResultPreviewIsBounded(t *testing.T) {
 	tr := newTranslator("/work")

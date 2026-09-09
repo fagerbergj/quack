@@ -101,6 +101,21 @@ describe('ToolCallView - fallback', () => {
     // Not a JSON blob: no braces/quoted-key punctuation in the args block.
     expect(out).not.toContain('&quot;title&quot;:')
   })
+
+  // A row persisted before #1278 (translate.go named every bridged MCP call
+  // literally "other", stuffing the real identity into args.title) must still
+  // render readably on replay - the identity never lived in the now-deleted
+  // ToolCall.title field, only in args, so dropping that field plumbing
+  // doesn't blank out old history.
+  it('renders a pre-#1278 persisted "other" row via args.title, not blank', () => {
+    const out = html({
+      callId: 'c', name: 'other', done: true,
+      args: { title: 'quackmcp_write_code_review', id: 'code_review:pr:1304' },
+    })
+    expect(out).toContain('title')
+    expect(out).toContain('quackmcp_write_code_review')
+    expect(out).toContain('code_review:pr:1304')
+  })
 })
 
 describe('ToolCallView - new per-tool views (#404)', () => {

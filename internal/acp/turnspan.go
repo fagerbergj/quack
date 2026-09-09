@@ -45,7 +45,7 @@ func (t *turnSpans) observe(u sdk.SessionUpdate) {
 	switch {
 	case u.ToolCall != nil:
 		c := u.ToolCall
-		t.start(string(c.ToolCallId), c.Kind, c.Title, c.RawInput)
+		t.start(string(c.ToolCallId), c.Kind, c.Title, c.RawInput, c.Meta)
 		t.record(string(c.ToolCallId), nil, c.RawOutput, c.Content)
 		if terminalStatus(c.Status) {
 			t.finish(string(c.ToolCallId), c.Status)
@@ -120,16 +120,25 @@ func toolContentText(content []sdk.ToolCallContent) string {
 	return b.String()
 }
 
-func (t *turnSpans) start(id string, kind sdk.ToolKind, title string, rawInput any) {
+func (t *turnSpans) start(id string, kind sdk.ToolKind, title string, rawInput any, meta map[string]any) {
 	if _, dup := t.open[id]; id == "" || dup {
 		return
 	}
+	// A bridged MCP call's span is named after the real tool (same identity
+	// resolution as translate.go's mapToolCall) - bounded to quack's own known
+	// MCP tool set. Unlike mapToolCall, a genuinely unresolved kind stays
+	// "other" here rather than the arbitrary title: the title is unbounded,
+	// agent-supplied text, and a span NAME (unlike an attribute) is a
+	// cardinality dimension in the tracing backend - it still rides the
+	// tool_title attribute below for identification.
 	name := string(kind)
-	if name == "" {
+	if mcpName, ok := mcpIdentity(meta, title); ok {
+		name = mcpName
+	} else if name == "" || kind == sdk.ToolKindOther {
 		name = "other"
 	}
-	// Kind in the span name (a fixed protocol enum, so bounded cardinality)
-	// makes a trace readable without opening every span.
+	// Kind in the span name (a fixed protocol enum, plus quack's own bounded
+	// MCP tool set) makes a trace readable without opening every span.
 	attrs := []attribute.KeyValue{
 		attribute.String(otelobs.GenAIAgentName, t.agent),
 		attribute.String(otelobs.GenAIToolCallID, id),

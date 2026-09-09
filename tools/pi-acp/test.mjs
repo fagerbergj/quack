@@ -151,6 +151,10 @@ if (!process.env.ACP_CMD) {
   assert.equal(mcpCalls[0].name, "stage_review");
   const btc = updates.find((u) => u.sessionUpdate === "tool_call" && u.title.startsWith("quackmcp_"));
   assert.ok(btc, "no quackmcp_* tool_call update relayed to quack");
+  // the relay must be able to recover the real tool name from _meta, not
+  // just the kind "other" (#1278) - never bash/read/... and never "other".
+  assert.equal(btc._meta?.quack_mcp_tool, "stage_review", "MCP identity missing from _meta");
+  assert.notEqual(btc.kind, "other", "MCP tool call still falls through to kind \"other\"");
   assert.ok(kinds.includes("usage_update"), "usage_update missing - quack metrics would go dark");
 }
 if (!process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
