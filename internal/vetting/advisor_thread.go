@@ -191,17 +191,27 @@ func (s *ReviewStage) IsNonDeliveringSlice() bool {
 	return s.fanout != nil && s.fanout.SynthExpected()
 }
 
-func (s *ReviewStage) AddComment(path string, line int, body string) string {
+// AddComment stages a finding, or - when the same path/line/body is already
+// staged (dup=true) - returns the existing id instead of a second copy. A
+// different body at the same line is a distinct finding, not a duplicate.
+func (s *ReviewStage) AddComment(path string, line int, body string) (id string, dup bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.seq == nil {
 		s.seq = make(map[string]int)
 	}
 	key := fmt.Sprintf("%s:%d", path, line)
+	if s.seq[key] > 0 {
+		for _, c := range s.comments {
+			if c.Path == path && c.Line == line && c.Body == body {
+				return c.ID, true
+			}
+		}
+	}
 	s.seq[key]++
-	id := fmt.Sprintf("%s#%d", key, s.seq[key])
+	id = fmt.Sprintf("%s#%d", key, s.seq[key])
 	s.comments = append(s.comments, StagedReviewComment{ID: id, ReviewComment: ReviewComment{Path: path, Line: line, Body: body}})
-	return id
+	return id, false
 }
 
 func (s *ReviewStage) ListComments() []StagedReviewComment {

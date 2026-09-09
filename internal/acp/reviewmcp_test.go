@@ -119,6 +119,49 @@ func TestReviewMCP_StageReturnsID(t *testing.T) {
 	}
 }
 
+// TestReviewMCP_StageDuplicateReportsExistingID proves staging the same
+// path/line/body twice over the live MCP surface stages exactly one comment:
+// the second stage_review_comment call reports the duplicate and hands back
+// the first id instead of a forced list_review_comments round trip.
+func TestReviewMCP_StageDuplicateReportsExistingID(t *testing.T) {
+	ctx := context.Background()
+	secret := mustMemSecret(t)
+	review := &vetting.ReviewStage{}
+	vetting.RegisterMemSession(secret, vetting.MemSession{Review: review})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	args := map[string]any{"path": "internal/judge.go", "line": 112, "body": "blocking: unchecked error"}
+	first, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "stage_review_comment", Arguments: args})
+	if err != nil || first.IsError {
+		t.Fatalf("first stage_review_comment: err=%v res=%v", err, first)
+	}
+	firstText := toolResultText(t, first)
+
+	second, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "stage_review_comment", Arguments: args})
+	if err != nil {
+		t.Fatalf("second stage_review_comment: %v", err)
+	}
+	if second.IsError {
+		t.Fatalf("re-staging an identical finding must not be a tool error: %s", toolResultText(t, second))
+	}
+	secondText := toolResultText(t, second)
+	if !strings.Contains(secondText, "duplicate of") || !strings.Contains(secondText, "internal/judge.go:112#1") {
+		t.Fatalf("duplicate call should report the existing id, got %q", secondText)
+	}
+	if strings.Contains(firstText, "duplicate") {
+		t.Fatalf("first staging must not be reported as a duplicate: %q", firstText)
+	}
+
+	staged := review.ListComments()
+	if len(staged) != 1 {
+		t.Fatalf("want exactly 1 staged comment after the duplicate call, got %+v", staged)
+	}
+}
+
 // TestReviewMCP_ListAndUnstageByID exercises the read + delete legs together:
 // list shows the staged set (id, path, line, excerpt - no need to reproduce
 // the body verbatim), unstage-by-id removes exactly that one and leaves the
