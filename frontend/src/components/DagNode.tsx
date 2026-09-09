@@ -376,8 +376,8 @@ function NodeAnswer({ answer }: { answer: string }) {
 // "no_verdict" - it ran (read files, spent its turns) but never committed
 // one, which "unavailable" would misreport as an outage.
 function judgeFailureHeading(status?: string): string | null {
-  if (status === 'unavailable') return 'Judge unavailable'
-  if (status === 'no_verdict') return 'Judge did not reach a verdict'
+  if (status === 'unavailable') return 'Quality check unavailable'
+  if (status === 'no_verdict') return 'Quality check reached no verdict'
   return null
 }
 
