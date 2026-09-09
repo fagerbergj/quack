@@ -4,12 +4,24 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"strings"
 
 	"github.com/fagerbergj/quack/internal/bundledir"
 	"github.com/fagerbergj/quack/internal/config"
 )
+
+// readWithFallback resolves path via bundledir (disk in cwd, then embedded);
+// a custom path that resolves nowhere falls back to defaultPath's embedded
+// copy instead of hard-failing - the one place this matters today is a
+// config built outside a repo checkout still pointing at gates.rubric_path's
+// default value.
+func readWithFallback(path, defaultPath string) ([]byte, error) {
+	raw, err := bundledir.ReadFile(path)
+	if err == nil || path == defaultPath {
+		return raw, err
+	}
+	return bundledir.ReadFile(defaultPath)
+}
 
 // FromConfig resolves the gates config into a gate Config, loading the
 // constitution (optional global principles) and rubric (scoring guide) from
@@ -39,6 +51,15 @@ func FromConfig(c config.GatesConfig) (Config, error) {
 	}, nil
 }
 
+// defaultRubricPath/defaultConstitutionPath are what quack init emits
+// (gates.rubric_path) and what embed.go embeds - the fallback used when the
+// configured path is unset or doesn't resolve, so a config built outside a
+// repo checkout still has a rubric/constitution to load.
+const (
+	defaultRubricPath       = "config/rubric.md"
+	defaultConstitutionPath = "config/constitution.md"
+)
+
 func loadConstitution(c config.GatesConfig) (string, error) {
 	if r := strings.TrimSpace(c.Constitution); r != "" {
 		return r, nil
@@ -46,9 +67,9 @@ func loadConstitution(c config.GatesConfig) (string, error) {
 	if c.ConstitutionPath == "" {
 		return "", nil // constitution is optional
 	}
-	raw, err := os.ReadFile(c.ConstitutionPath)
+	raw, err := readWithFallback(c.ConstitutionPath, defaultConstitutionPath)
 	if err != nil {
-		return "", fmt.Errorf("vetting: read constitution %q: %w", c.ConstitutionPath, err)
+		return "", fmt.Errorf("vetting: read constitution %q (set by gates.constitution_path): %w", c.ConstitutionPath, err)
 	}
 	return strings.TrimSpace(string(raw)), nil
 }
@@ -61,19 +82,26 @@ func loadRubric(c config.GatesConfig) (string, map[string]criterionSpec, map[str
 	if r := strings.TrimSpace(c.Rubric); r != "" {
 		return r, nil, nil, nil // raw inline override - unstructured prose, no specs
 	}
-	if c.RubricPath == "" {
-		return "", nil, nil, nil // rubric is optional for a deterministic-only gate
+	path := c.RubricPath
+	if path == "" {
+		if !c.JudgeEnabled() {
+			return "", nil, nil, nil // rubric is optional for a deterministic-only gate
+		}
+		path = defaultRubricPath
 	}
-	return loadRubricFile(c.RubricPath)
+	return loadRubricFile(path)
 }
 
 // loadRubricFile loads a rubric from disk: a .yaml path is the structured
 // format (rubricyaml.go); anything else is a raw prose override with no
-// structured specs.
+// structured specs. A path that doesn't resolve falls back to the shipped
+// default (embedded, so it works outside a checkout too) rather than
+// hard-failing gate setup - quack init emits gates.rubric_path relative to
+// cwd, which only exists on disk inside the repo.
 func loadRubricFile(path string) (string, map[string]criterionSpec, map[string]string, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := readWithFallback(path, defaultRubricPath)
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("vetting: read rubric %q: %w", path, err)
+		return "", nil, nil, fmt.Errorf("vetting: read rubric %q (set by gates.rubric_path): %w", path, err)
 	}
 	if strings.HasSuffix(path, ".yaml") || strings.HasSuffix(path, ".yml") {
 		doc, err := loadRubricYAML(raw, path)
