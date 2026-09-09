@@ -90,7 +90,7 @@ func TestReapNodeSessions_UnderscoreDoesNotWidenMatch(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	const target = "chat_1" // literal underscore
+	const target = "chat_1"   // literal underscore
 	const collider = "chatX1" // "_" in target's LIKE pattern would also match this
 	for _, id := range []string{target, collider} {
 		resp, err := st.Sessions.Create(ctx, &session.CreateRequest{AppName: "code-implementer", UserID: "A2A_USER_" + id + ":n1", SessionID: id + ":n1"})
