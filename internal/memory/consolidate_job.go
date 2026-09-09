@@ -34,19 +34,7 @@ func (s *Store) forEachSweepPage(ctx context.Context, includeInvalidated, withVe
 	if s.listErrForTest != nil {
 		return s.listErrForTest
 	}
-	for offset := 0; ; offset += sweepPageSize {
-		page, err := s.idx.list(ctx, nil, offset, sweepPageSize, includeInvalidated, "", withVectors)
-		if err != nil {
-			return err
-		}
-		if len(page) == 0 {
-			return nil
-		}
-		fn(page)
-		if len(page) < sweepPageSize {
-			return nil
-		}
-	}
+	return s.idx.scrollAll(ctx, includeInvalidated, withVectors, sweepPageSize, fn)
 }
 
 // RunConsolidationSweep runs the sweep (design doc §4(c), §6) on schedule (a
