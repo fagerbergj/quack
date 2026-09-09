@@ -109,7 +109,10 @@ func summarizeStaged(sd StagedDelivery) string {
 // record to be duplicating), and empty bodies never trigger anything.
 // Applies to any staged Kind (review, pull_request, ...), not review-only.
 func dedupeAnswerAgainstStaged(answer string, staged map[string]StagedDelivery) string {
-	for _, sd := range staged {
+	// sortedStagedDelivery, not a raw map range: if the answer happens to
+	// restate more than one staged record, which one wins the collapse must
+	// not depend on Go's randomized map iteration order.
+	for _, sd := range sortedStagedDelivery(staged) {
 		if sd.Recovered || strings.TrimSpace(sd.Body) == "" {
 			continue
 		}
