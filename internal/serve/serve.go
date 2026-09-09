@@ -682,12 +682,6 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		}
 	}
 
-	cleanups = append(cleanups, func() {
-		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer stopCancel()
-		stopSDKExtensions(stopCtx, sdkExts)
-	})
-
 	var advisorAgent adkagent.Agent
 	if cfg.Gates.JudgeEnabled() {
 		if aprov, ok := cfg.Provider(cfg.Gates.Judge.Provider); ok {
