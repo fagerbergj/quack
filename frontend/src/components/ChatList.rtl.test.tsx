@@ -163,3 +163,31 @@ describe('ChatList row kebab (#1319)', () => {
     expect(document.activeElement).toBe(kebab)
   })
 })
+
+// The kebab's items are the only way to archive/restore/delete on a phone,
+// so each is a 44px row at compact width (desktop keeps the dense menu).
+describe('ChatList row kebab items are 44px at compact width', () => {
+  const activeChat = {
+    id: 'c1', title: 'Active chat', system_prompt: '', created_at: '', updated_at: '', status: 'idle',
+  } as const
+  const archivedChat = {
+    id: 'c2', title: 'Archived chat', system_prompt: '', created_at: '', updated_at: '', status: 'idle', archived: true,
+  } as const
+
+  it('active row: Archive item', async () => {
+    const user = userEvent.setup()
+    render(<ChatList {...baseProps(() => {})} open={false} chats={[activeChat]} onArchive={() => {}} />)
+    await user.click(screen.getByRole('button', { name: 'Chat actions' }))
+    expect(screen.getByRole('menuitem', { name: 'Archive chat' }).className).toContain('min-h-[44px]')
+  })
+
+  it('archived row: Restore and Delete items', async () => {
+    const user = userEvent.setup()
+    render(<ChatList {...baseProps(() => {})} open={false} archivedChats={[archivedChat]} onUnarchive={() => {}} onDelete={() => {}} />)
+    await user.click(screen.getByRole('button', { name: /Archived/ }))
+    await user.click(screen.getByRole('button', { name: 'Chat actions' }))
+    for (const name of ['Unarchive chat', 'Delete chat permanently']) {
+      expect(screen.getByRole('menuitem', { name }).className).toContain('min-h-[44px]')
+    }
+  })
+})

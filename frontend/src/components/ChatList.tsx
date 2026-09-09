@@ -278,7 +278,7 @@ function ChatRow({
                 onClick={e => { e.stopPropagation(); setMenuOpen(false); onArchive?.(s.id) }}
                 aria-label="Archive chat"
                 title="Archive chat"
-                className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
               >
                 <Icon name="archive" className="w-3.5 h-3.5" /> Archive
               </button>
@@ -289,7 +289,7 @@ function ChatRow({
                 onClick={e => { e.stopPropagation(); setMenuOpen(false); onUnarchive(s.id) }}
                 aria-label="Unarchive chat"
                 title="Unarchive chat"
-                className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-blue-50 dark:hover:bg-blue-900/40 hover:text-blue-700 dark:hover:text-blue-400 transition-colors"
+                className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-blue-50 dark:hover:bg-blue-900/40 hover:text-blue-700 dark:hover:text-blue-400 transition-colors"
               >
                 <Icon name="history" className="w-3.5 h-3.5" /> Restore
               </button>
@@ -300,7 +300,7 @@ function ChatRow({
                 onClick={handleDelete}
                 aria-label="Delete chat permanently"
                 title="Delete chat permanently"
-                className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 text-xs font-medium text-red-500 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 text-xs font-medium text-red-500 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
               >
                 <Icon name="delete" className="w-3.5 h-3.5" /> Delete
               </button>
