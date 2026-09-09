@@ -79,8 +79,8 @@ func renderReviewFromArtifact(ctx context.Context, cfg Config, nodeID string) (S
 		}
 	}
 
-	var comments []ReviewComment      // for GitHub's inline posting
-	var highlights []ReviewComment    // Body = f.Title (keeps the label prefix), for the verdict-line counts + Highlights table
+	var comments []ReviewComment   // for GitHub's inline posting
+	var highlights []ReviewComment // Body = f.Title (keeps the label prefix), for the verdict-line counts + Highlights table
 	var newIDs, carriedIDs, resolvedIDs []string
 	for _, fid := range rec.FindingIDs {
 		fRaw, _, fok, ferr := c.Latest(ctx, fid)

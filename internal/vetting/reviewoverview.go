@@ -33,7 +33,7 @@ type reviewOverviewInput struct {
 	FirstReview  bool
 	PriorHeadSHA string // re-review only; "" omits the "since <sha7>" clause
 	CommitsSince int
-	FileCount int // 0 omits the "(N files)" parenthetical
+	FileCount    int // 0 omits the "(N files)" parenthetical
 
 	Takeaway      string
 	Verified      []string
