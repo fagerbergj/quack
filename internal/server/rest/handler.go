@@ -1590,9 +1590,15 @@ func (h *Handler) stampRunOutcome(parent context.Context, chatID string) {
 		}
 		return
 	}
-	turns, err := h.store.GetTurnsWithContent(ctx, orchestrator.AppName, h.sessionUser(ctx, chatID), chatID)
+	// terminalStatus's DeriveTerminalStatus only ever reads the last turn, so load just that
+	// one instead of decoding the whole chat's ADK session on every run end (perf audit #3).
+	last, err := h.store.GetLastTurnWithContent(ctx, orchestrator.AppName, h.sessionUser(ctx, chatID), chatID)
 	if err != nil {
-		slog.Warn("stamp run outcome: turns load failed", "component", "rest", "chat", chatID, "err", err)
+		slog.Warn("stamp run outcome: turn load failed", "component", "rest", "chat", chatID, "err", err)
+	}
+	var turns []store.TurnContent
+	if last != nil {
+		turns = []store.TurnContent{*last}
 	}
 	status, pendingQuestion := h.terminalStatus(ctx, chatID, turns)
 	q := ""

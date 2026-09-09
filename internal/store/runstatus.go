@@ -120,15 +120,23 @@ func orchestratorGiveUpError(chatID string) (string, bool) {
 	return fmt.Sprintf("%s on %d consecutive attempts over %s", class, streak, dur.Round(time.Second)), true
 }
 
-// StampTerminalOutcome loads turns, derives the terminal status via
+// StampTerminalOutcome loads the newest turn, derives the terminal status via
 // DeriveTerminalStatus, and persists it - the shared tail every dispatch
 // path (REST, SDK extensions, GitHub webhook) runs once a run's events stop
 // draining. pendingQuestion is the caller's own PendingQuestion lookup, kept
 // as a func value so callers don't need to share a concrete runner type.
+//
+// Uses GetLastTurnWithContent, not GetTurnsWithContent: DeriveTerminalStatus only ever
+// reads turns[len(turns)-1], so loading the whole chat here paid to decode the entire ADK
+// session on every run end for nothing (perf audit #3).
 func (s *Store) StampTerminalOutcome(ctx context.Context, appName, userID, chatID string, pendingQuestion func() (string, bool)) (status, question, nodeError string) {
-	turns, err := s.GetTurnsWithContent(ctx, appName, userID, chatID)
+	last, err := s.GetLastTurnWithContent(ctx, appName, userID, chatID)
 	if err != nil {
-		slog.Warn("stamp terminal outcome: turns load failed", "component", "store", "chat", chatID, "err", err)
+		slog.Warn("stamp terminal outcome: turn load failed", "component", "store", "chat", chatID, "err", err)
+	}
+	var turns []TurnContent
+	if last != nil {
+		turns = []TurnContent{*last}
 	}
 	q, hasQ := pendingQuestion()
 	status, question, nodeError = DeriveTerminalStatus(chatID, turns, q, hasQ)

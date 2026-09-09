@@ -422,11 +422,11 @@ func TestGroupSessionEvents(t *testing.T) {
 	}
 
 	g0 := groups[0]
-	if g0.userText != "which Springfield?" {
-		t.Errorf("turn 0 userText = %q", g0.userText)
+	if g0.userText.String() != "which Springfield?" {
+		t.Errorf("turn 0 userText = %q", g0.userText.String())
 	}
-	if g0.asstThink != "deciding…" {
-		t.Errorf("turn 0 asstThink = %q", g0.asstThink)
+	if g0.asstThink.String() != "deciding…" {
+		t.Errorf("turn 0 asstThink = %q", g0.asstThink.String())
 	}
 	if len(g0.toolCalls) != 1 {
 		t.Fatalf("turn 0 toolCalls = %d, want 1 (transfer_to_agent excluded)", len(g0.toolCalls))
@@ -440,7 +440,7 @@ func TestGroupSessionEvents(t *testing.T) {
 	}
 
 	g1 := groups[1]
-	if g1.userText != "IL" || g1.asstText != "Springfield, Illinois has…" {
+	if g1.userText.String() != "IL" || g1.asstText.String() != "Springfield, Illinois has…" {
 		t.Errorf("turn 1 = %+v", g1)
 	}
 	if len(g1.toolCalls) != 0 {
@@ -480,8 +480,8 @@ func TestGroupSessionEvents_NodeActivityExcluded(t *testing.T) {
 		t.Fatalf("got %d groups, want 1", len(groups))
 	}
 	g := groups[0]
-	if g.asstText != "The real, vetted answer." {
-		t.Errorf("asstText = %q, want only the top-level answer (no node-scoped leak)", g.asstText)
+	if g.asstText.String() != "The real, vetted answer." {
+		t.Errorf("asstText = %q, want only the top-level answer (no node-scoped leak)", g.asstText.String())
 	}
 	for _, tc := range g.toolCalls {
 		if tc.Name == "web_search" {
@@ -775,7 +775,7 @@ func TestGroupSessionEvents_OrchestratorOwnReplyKept(t *testing.T) {
 	if len(groups) != 1 {
 		t.Fatalf("got %d groups, want 1", len(groups))
 	}
-	if got := groups[0].asstText; got != "Mount Everest, per National Geographic." {
+	if got := groups[0].asstText.String(); got != "Mount Everest, per National Geographic." {
 		t.Errorf("asstText = %q, want the orchestrator's own reply preserved", got)
 	}
 }

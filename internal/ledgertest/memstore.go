@@ -19,7 +19,10 @@ type MemStore struct {
 	entries map[string][]ledger.Entry
 }
 
-var _ ledger.LedgerStore = (*MemStore)(nil)
+var (
+	_ ledger.LedgerStore             = (*MemStore)(nil)
+	_ ledger.CrossChatFilteredReader = (*MemStore)(nil)
+)
 
 func NewMemStore() *MemStore { return &MemStore{entries: map[string][]ledger.Entry{}} }
 
@@ -64,6 +67,32 @@ func (s *MemStore) ReadEntries(_ context.Context, chatID string, fromSeq int64) 
 	for _, e := range s.entries[chatID] {
 		if e.Seq >= fromSeq {
 			out = append(out, ledger.MigrateEntry(e))
+		}
+	}
+	return out, nil
+}
+
+// ReadEntriesFilteredSince implements ledger.CrossChatFilteredReader, so a test using
+// MemStore exercises the same one-query code path PGStore does (perf audit #12) rather than
+// always falling back to ReadAllByKindsSince's per-chat loop.
+func (s *MemStore) ReadEntriesFilteredSince(_ context.Context, kinds []string, since time.Time) ([]ledger.Entry, error) {
+	want := make(map[string]bool, len(kinds))
+	for _, k := range kinds {
+		want[k] = true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := make([]string, 0, len(s.entries))
+	for id := range s.entries {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var out []ledger.Entry
+	for _, id := range ids {
+		for _, e := range s.entries[id] {
+			if want[e.Kind] && !e.At.Before(since) {
+				out = append(out, ledger.MigrateEntry(e))
+			}
 		}
 	}
 	return out, nil

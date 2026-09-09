@@ -245,8 +245,12 @@ const (
 const orchestratorAuthor = "orchestrator"
 
 // Per-turn content extracted from a session's events.
+// userText/asstText/asstThink are strings.Builder, not string: a turn assembled from
+// streamed events otherwise appends with += for every chunk, copying the whole
+// accumulated text each time - O(n^2) in events per turn (perf audit #4, 197 MB for
+// one 2,000-event turn; strings.Builder measured at 5.6 MB for 50x280).
 type turnGroup struct {
-	userText, asstText, asstThink                                              string
+	userText, asstText, asstThink                                              strings.Builder
 	toolCalls                                                                  []ToolCallRecord
 	promptTokens, completionTokens, reasoningTokens, cachedTokens, totalTokens int32
 }
@@ -272,17 +276,17 @@ func groupSessionEvents(events iter.Seq[*session.Event]) []turnGroup {
 					switch p.FunctionResponse.Name {
 					case choiceToolName:
 						if c, ok := p.FunctionResponse.Response[choiceAnswerKey].(string); ok {
-							cur.userText += c
+							cur.userText.WriteString(c)
 						}
 					case nodeInputCallName:
 						if c, ok := p.FunctionResponse.Response[nodeInputPayloadKey].(string); ok {
-							cur.userText += c
+							cur.userText.WriteString(c)
 						}
 					}
 					continue
 				}
 				if !p.Thought && p.FunctionCall == nil {
-					cur.userText += p.Text
+					cur.userText.WriteString(p.Text)
 				}
 			}
 			continue
@@ -325,9 +329,9 @@ func groupSessionEvents(events iter.Seq[*session.Event]) []turnGroup {
 					}
 				}
 			case p.Thought:
-				cur.asstThink += p.Text
+				cur.asstThink.WriteString(p.Text)
 			default:
-				cur.asstText += p.Text
+				cur.asstText.WriteString(p.Text)
 			}
 		}
 	}
@@ -488,6 +492,16 @@ func (s *Store) SetArtifactService(svc artifact.Service) { s.artifacts = svc }
 // (#1296), in the same order New() migrates them.
 var chatFKTables = []string{"chat_turns", "dag_plans", "chat_events", "projection_watermarks", "ledger_checkpoints"}
 
+// chatFKModels maps each of chatFKTables to the struct sweepOrphanChatRows checks
+// HasConstraint against - every one carries a field named "Chat" for exactly this FK.
+var chatFKModels = map[string]any{
+	"chat_turns":            &ChatTurn{},
+	"dag_plans":             &DagPlan{},
+	"chat_events":           &ChatEvent{},
+	"projection_watermarks": &ProjectionWatermark{},
+	"ledger_checkpoints":    &Checkpoint{},
+}
+
 // sweepOrphanChatRows deletes rows whose chat_id has no matching chats row,
 // before AutoMigrate below adds the ON DELETE CASCADE FK. A pre-existing
 // orphan - a chat hard-deleted by raw SQL before this FK existed - makes the
@@ -495,12 +509,20 @@ var chatFKTables = []string{"chat_turns", "dag_plans", "chat_events", "projectio
 // follows fail outright, and the orphan survives a restart, so that's a
 // crash loop rather than a one-time failure. No-op on a fresh DB (no chats
 // table yet) or once every table is already clean.
+//
+// Once the FK exists it makes new orphans impossible, so every boot after
+// the first paid for a full anti-join scan for nothing (perf audit #11:
+// 400-510ms over 1.35M chat_events, deleting 0 rows) - skip a table the
+// moment its constraint is in place.
 func sweepOrphanChatRows(db *gorm.DB) error {
 	if !db.Migrator().HasTable(&Chat{}) {
 		return nil
 	}
 	for _, table := range chatFKTables {
 		if !db.Migrator().HasTable(table) {
+			continue
+		}
+		if db.Migrator().HasConstraint(chatFKModels[table], "Chat") {
 			continue
 		}
 		res := db.Exec(fmt.Sprintf("DELETE FROM %s WHERE chat_id NOT IN (SELECT id FROM chats)", table))
@@ -1525,6 +1547,114 @@ func (s *Store) CountDagPlans(ctx context.Context, chatID string) (int64, error)
 	return n, err
 }
 
+// buildTurnContent joins one ChatTurn row with its session-derived group (nil if the turn
+// has none - e.g. it fell outside the alignment window, or ResetHistory wiped the session
+// outright, #1226), its DAG plan, and that plan's nodes. Shared by GetTurnsWithContent and
+// GetLastTurnWithContent so the two loaders can't drift on how a turn's content is assembled.
+func buildTurnContent(t ChatTurn, g *turnGroup, plan *DagPlan, nodesByPlan map[string][]DagNode) TurnContent {
+	tc := TurnContent{
+		ID: t.ID, CreatedAt: t.CreatedAt, Model: t.Model,
+		// Stamped by SetTurnUsage at run end - the SQL-summable source of
+		// truth. Turns that predate that stamp fall back to the session
+		// walk below.
+		PromptTokens: t.PromptTokens, CompletionTokens: t.CompletionTokens,
+		ReasoningTokens: t.ReasoningTokens, TotalTokens: t.TotalTokens, CachedTokens: t.CachedTokens,
+	}
+	if g != nil {
+		tc.UserText = g.userText.String()
+		tc.AsstText = g.asstText.String()
+		tc.AsstThink = g.asstThink.String()
+		tc.ToolCalls = g.toolCalls
+		if tc.PromptTokens == 0 && tc.CompletionTokens == 0 {
+			tc.PromptTokens = g.promptTokens
+			tc.CompletionTokens = g.completionTokens
+			tc.ReasoningTokens = g.reasoningTokens
+			tc.CachedTokens = g.cachedTokens
+			tc.TotalTokens = g.totalTokens
+		}
+	}
+	// No group for this turn - fall back to the user's own text stamped on
+	// the turn row at SaveTurn.
+	if tc.UserText == "" {
+		tc.UserText = t.UserText
+	}
+	if plan != nil {
+		tc.Plan = plan
+		tc.Nodes = nodesByPlan[plan.ID]
+	}
+	return tc
+}
+
+// lastTurnWindow is getLastTurnGroup's starting NumRecentEvents window, doubled (x8) until
+// a user event comes into view. 512 covers the audit's median turn (~280 events) in one
+// round trip; only a turn bigger than the window costs a second fetch.
+const lastTurnWindow = 512
+
+// getLastTurnGroup fetches only enough of the session's tail to derive the newest turn's
+// content, instead of GetTurnsWithContent's whole-session load (perf audit #3 - 278MB/
+// 939k allocs/270-735ms per run end on a 14,050-event session). A window with no user
+// event in view means that turn is bigger than the window, not that the group is
+// incomplete: groupSessionEvents only starts a group at a user event, so a window
+// truncated mid-turn yields zero groups rather than a partial one. Growing the window
+// (not guessing a single large constant) keeps this correct regardless of turn size while
+// still bounding the fetch for the common case.
+//
+// Mirrors GetTurnsWithContent's own tolerance for a missing/unreadable session (no session
+// row yet, or one ResetHistory deleted, #1226): any Sessions.Get error just means no group,
+// not a call failure - the caller falls back to the ChatTurn row's own stored text.
+func (s *Store) getLastTurnGroup(ctx context.Context, appName, userID, chatID string) (turnGroup, bool) {
+	for n := lastTurnWindow; ; n *= 8 {
+		resp, err := s.Sessions.Get(ctx, &session.GetRequest{AppName: appName, UserID: userID, SessionID: chatID, NumRecentEvents: n})
+		if err != nil || resp == nil {
+			return turnGroup{}, false
+		}
+		groups := groupSessionEvents(resp.Session.Events().All())
+		if len(groups) > 0 {
+			return groups[len(groups)-1], true
+		}
+		if resp.Session.Events().Len() < n {
+			// Fetched the whole session and still found no user event - genuinely empty.
+			return turnGroup{}, false
+		}
+	}
+}
+
+// GetLastTurnWithContent returns just the newest turn's content. The run-end paths
+// (StampTerminalOutcome, stampRunOutcome) only ever look at the last of GetTurnsWithContent's
+// turns, so this never loads the rest of the chat (perf audit #3).
+func (s *Store) GetLastTurnWithContent(ctx context.Context, appName, userID, chatID string) (*TurnContent, error) {
+	var t ChatTurn
+	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Order("seq desc").Limit(1).First(&t).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var gPtr *turnGroup
+	if g, ok := s.getLastTurnGroup(ctx, appName, userID, chatID); ok {
+		gPtr = &g
+	}
+
+	var plan *DagPlan
+	nodesByPlan := map[string][]DagNode{}
+	var p DagPlan
+	if err := s.db.WithContext(ctx).Where("chat_id = ? AND turn_id = ?", chatID, t.ID).First(&p).Error; err == nil {
+		plan = &p
+		var nodes []DagNode
+		if err := s.db.WithContext(ctx).Where("plan_id = ?", p.ID).Find(&nodes).Error; err != nil {
+			return nil, err
+		}
+		nodesByPlan[p.ID] = nodes
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	tc := buildTurnContent(t, gPtr, plan, nodesByPlan)
+	return &tc, nil
+}
+
 // GetTurnsWithContent returns fully-joined turn data with DAG plan and nodes.
 func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID string) ([]TurnContent, error) {
 	turns, err := s.ListTurns(ctx, chatID)
@@ -1569,44 +1699,24 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 	offset := len(turns) - len(groups)
 	result := make([]TurnContent, len(turns))
 	for i, t := range turns {
-		tc := TurnContent{
-			ID: t.ID, CreatedAt: t.CreatedAt, Model: t.Model,
-			// Stamped by SetTurnUsage at run end - the SQL-summable source of
-			// truth. Turns that predate that stamp fall back to the session
-			// walk below.
-			PromptTokens: t.PromptTokens, CompletionTokens: t.CompletionTokens,
-			ReasoningTokens: t.ReasoningTokens, TotalTokens: t.TotalTokens, CachedTokens: t.CachedTokens,
-		}
+		var g *turnGroup
 		if gi := i - offset; gi >= 0 && gi < len(groups) {
-			tc.UserText = groups[gi].userText
-			tc.AsstText = groups[gi].asstText
-			tc.AsstThink = groups[gi].asstThink
-			tc.ToolCalls = groups[gi].toolCalls
-			if tc.PromptTokens == 0 && tc.CompletionTokens == 0 {
-				tc.PromptTokens = groups[gi].promptTokens
-				tc.CompletionTokens = groups[gi].completionTokens
-				tc.ReasoningTokens = groups[gi].reasoningTokens
-				tc.CachedTokens = groups[gi].cachedTokens
-				tc.TotalTokens = groups[gi].totalTokens
-			}
+			g = &groups[gi]
 		}
-		// No group for this turn (misses offset's window, or the session was
-		// deleted outright by ResetHistory - #1226) - fall back to the
-		// user's own text stamped on the turn row at SaveTurn.
-		if tc.UserText == "" {
-			tc.UserText = t.UserText
-		}
-		if plan := planByTurn[t.ID]; plan != nil {
-			tc.Plan = plan
-			tc.Nodes = nodesByPlan[plan.ID]
-		}
-		result[i] = tc
+		result[i] = buildTurnContent(t, g, planByTurn[t.ID], nodesByPlan)
 	}
 	return result, nil
 }
 
-// GetTurnWithContent returns the fully-joined content for a single turn.
+// GetTurnWithContent returns the fully-joined content for a single turn. The common case -
+// a turn just finished streaming - asks for the newest one, so try the tail-only loader
+// first (perf audit #3); only a request for an older turn pays for the full per-chat load.
 func (s *Store) GetTurnWithContent(ctx context.Context, appName, userID, chatID, turnID string) (*TurnContent, error) {
+	if last, err := s.GetLastTurnWithContent(ctx, appName, userID, chatID); err != nil {
+		return nil, err
+	} else if last != nil && last.ID == turnID {
+		return last, nil
+	}
 	turns, err := s.GetTurnsWithContent(ctx, appName, userID, chatID)
 	if err != nil {
 		return nil, err

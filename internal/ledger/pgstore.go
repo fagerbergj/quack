@@ -284,6 +284,19 @@ func (s *PGStore) ReadEntriesFiltered(ctx context.Context, chatID string, fromSe
 	return pgRowsToEntries(rows), nil
 }
 
+// ReadEntriesFilteredSince pushes down ReadAllByKindsSince's cross-chat query: one
+// `kind IN (?) AND at >= ?` scan instead of List() plus one ReadEntriesFiltered per chat
+// (perf audit #12 - 94 queries and 0.8-5.0s per memory-page load on a 465k-entry ledger).
+func (s *PGStore) ReadEntriesFilteredSince(ctx context.Context, kinds []string, since time.Time) ([]Entry, error) {
+	var rows []pgEntry
+	if err := s.db.WithContext(ctx).
+		Where("kind IN ? AND at >= ?", kinds, since).
+		Order("chat_id, seq").Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("ledger: read filtered entries since %s: %w", since, err)
+	}
+	return pgRowsToEntries(rows), nil
+}
+
 // MaxSeq reads chatID's highest allocated seq straight off the seq counter
 // row (a PK lookup) instead of MAX(seq) over ledger_entries, 0 if the chat
 // never appended.

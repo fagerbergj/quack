@@ -217,6 +217,53 @@ func TestPGStoreReadEntriesFiltered(t *testing.T) {
 	}
 }
 
+// TestPGStoreReadEntriesFilteredSince pins perf audit #12's fix: one cross-chat
+// `kind IN (?) AND at >= ?` query must return exactly what the old List() + per-chat
+// ReadByKinds + Go-side time filter did - kind-filtered, window-filtered, across every chat.
+func TestPGStoreReadEntriesFilteredSince(t *testing.T) {
+	t.Parallel()
+	store := newTestPGStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	kinds := []string{KindMemoryVote, KindMemoryRecall}
+
+	type seed struct {
+		chatID, kind string
+		at           time.Time
+	}
+	seeds := []seed{
+		{"chat-a", KindMemoryVote, now.Add(-1 * time.Hour)},       // in window, wanted kind
+		{"chat-a", KindMemoryRecall, now.Add(-2 * time.Hour)},     // in window, wanted kind
+		{"chat-a", KindLLMCall, now.Add(-1 * time.Hour)},          // in window, unwanted kind
+		{"chat-b", KindMemoryVote, now.Add(-30 * 24 * time.Hour)}, // outside the window
+	}
+	for i, sd := range seeds {
+		if _, err := store.AppendIntent(ctx, Entry{
+			ChatID: sd.chatID, Kind: sd.kind, Key: fmt.Sprintf("k%d", i), At: sd.at, Payload: json.RawMessage(`{}`),
+		}); err != nil {
+			t.Fatalf("AppendIntent %d: %v", i, err)
+		}
+	}
+
+	var _ CrossChatFilteredReader = store // pgstore must satisfy the optional interface ReadAllByKindsSince looks for
+	since := now.Add(-7 * 24 * time.Hour)
+	got, err := ReadAllByKindsSince(ctx, store, kinds, since)
+	if err != nil {
+		t.Fatalf("ReadAllByKindsSince: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d entries, want 2: %+v", len(got), got)
+	}
+	for _, e := range got {
+		if e.ChatID != "chat-a" {
+			t.Errorf("entry from chat %q, want only chat-a (chat-b is outside the window)", e.ChatID)
+		}
+		if e.Kind != KindMemoryVote && e.Kind != KindMemoryRecall {
+			t.Errorf("entry kind = %q, not in filter", e.Kind)
+		}
+	}
+}
+
 // TestPGStoreAppendIntentValidation is verification case 11's other half:
 // a malformed intent (no chat_id/kind) is rejected without writing anything.
 func TestPGStoreAppendIntentValidation(t *testing.T) {
