@@ -1556,6 +1556,81 @@ describe('ChatStore.attach - seeds live from persisted output when the hub repla
   })
 })
 
+// #1290: a page reload rebuilt a finished chat's DAG bubble from the persisted
+// node_states rollup alone (dagTurnStateFromItem), which has no per-run
+// breakdown - the judge/revise sub-run cards a live view showed vanished.
+// attach() itself never gated on turn status; the caller (Chat.tsx's getChat
+// effect) did. These guard the store half of the fix: attaching to a chat
+// whose LAST turn is a completed (not just in_progress) DAG still replays
+// chat_events and rebuilds nodeRuns through the same handlers the live path
+// uses - one parser, no separate "history" reconstruction.
+describe('ChatStore.attach - rebuilds a finished turn\'s sub-run cards from replay (#1290)', () => {
+  let store: ChatStore
+  beforeEach(() => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    FakeEventSource.last = null
+    store = new ChatStore()
+  })
+
+  // One judge/revise round, every event server-timestamped, replayed onto a
+  // COMPLETED dag turn (not the in_progress fixture the other attach() tests use).
+  function replayFinishedRound(es: FakeEventSource): void {
+    es.emit('dag_plan', '{"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[],"started_at_ms":1000}')
+    es.emit('node_start', '{"node_id":"a","agent":"researcher","started_at_ms":2000}')
+    es.emit('agent_start', '{"node_id":"a","run_id":"worker-r0","agent":"researcher","stage":"worker","started_at_ms":2000}')
+    es.emit('agent_complete', '{"node_id":"a","run_id":"worker-r0","stage":"worker","finished_at_ms":8000}')
+    es.emit('agent_start', '{"node_id":"a","run_id":"judge-r1","agent":"judge","stage":"judge","round":1,"started_at_ms":8000}')
+    es.emit('agent_complete', '{"node_id":"a","run_id":"judge-r1","stage":"judge","round":1,"passed":false,"finished_at_ms":13000}')
+    es.emit('agent_start', '{"node_id":"a","run_id":"worker-r1","agent":"researcher","stage":"revise","round":1,"started_at_ms":13000}')
+    es.emit('agent_complete', '{"node_id":"a","run_id":"worker-r1","stage":"revise","round":1,"finished_at_ms":20000}')
+    es.emit('agent_start', '{"node_id":"a","run_id":"judge-r2","agent":"judge","stage":"judge","round":2,"started_at_ms":20000}')
+    es.emit('agent_complete', '{"node_id":"a","run_id":"judge-r2","stage":"judge","round":2,"passed":true,"finished_at_ms":25000}')
+    es.emit('node_done', '{"node_id":"a","duration_ms":23000,"finished_at_ms":25000}')
+    es.emit('done')
+  }
+
+  it('attach()-ing to a completed DAG turn replays and rebuilds worker/judge/revise cards', () => {
+    store.seed('c', [dagTurn('completed')])
+    store.attach('c')
+    const es = FakeEventSource.last!
+    expect(es.url).toBe('/api/v1/chats/c/stream') // fresh replay from seq 0, same as the in-progress path
+
+    replayFinishedRound(es)
+
+    const s = store.get('c')
+    expect(s.live?.streaming).toBe(false) // done fired - it's history again, not a live run
+    const runs = s.live?.dag?.nodeRuns['a'] ?? []
+    expect(runs.map(r => r.stage)).toEqual(['worker', 'judge', 'revise', 'judge'])
+    expect(runs.every(r => r.done)).toBe(true)
+  })
+
+  it('replaying the same finished round at two different client Date.now() values yields identical run durations (no timer drift across loads)', () => {
+    function loadOnce(fetchNowMs: number): DagTurnState {
+      const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(fetchNowMs)
+      try {
+        vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+        FakeEventSource.last = null
+        const s = new ChatStore()
+        s.seed('c', [dagTurn('completed')])
+        s.attach('c')
+        replayFinishedRound(FakeEventSource.last!)
+        return s.get('c').live!.dag!
+      } finally {
+        nowSpy.mockRestore()
+      }
+    }
+
+    const dagA = loadOnce(10_000_000_000) // first page open
+    const dagB = loadOnce(20_000_000_000) // reload, hours later
+
+    const runsA = dagA.nodeRuns['a'].map(r => ({ runId: r.runId, durationMs: r.durationMs }))
+    const runsB = dagB.nodeRuns['a'].map(r => ({ runId: r.runId, durationMs: r.durationMs }))
+    expect(runsA).toEqual(runsB)
+    expect(runsA.map(r => r.durationMs)).toEqual([6000, 5000, 7000, 5000])
+    expect(dagA.nodeStates['a'].finishedAt).toBe(dagB.nodeStates['a'].finishedAt)
+  })
+})
+
 // Issue #463 (part 2): confirm sequential submits already get clean state via archive path.
 describe('ChatStore - submit already produces clean turns (#463)', () => {
   let fetchMock: ReturnType<typeof vi.fn>
