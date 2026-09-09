@@ -140,6 +140,13 @@ type StagedDelivery struct {
 	Slot         string          // comment target, for Kind == "comment"
 	Comments     []ReviewComment // inline findings
 	Recovered    bool            // parsed from answer tail, not tool-staged
+	// Takeaway/Verified/Notes: Kind == "review" only - the raw ingredients
+	// for the code_review record and the fixed-format renderer (one fixed
+	// review format). Body already carries a rendered fallback for when no
+	// code_review artifact backs this delivery.
+	Takeaway string
+	Verified []string
+	Notes    []string
 }
 
 // ReviewComment: one inline, line-anchored review finding.

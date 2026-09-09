@@ -129,13 +129,13 @@ func TestReviewStage_RefusesEarlyApproveAllowsEarlyRequestChanges(t *testing.T) 
 	fanout := freshFanout(t, 2) // 2 reviewers, neither terminal yet
 	stage := NewReviewStage(fanout)
 
-	if err := stage.SetVerdict("approve", "looks good"); err == nil {
+	if err := stage.SetVerdict("approve", "looks good", nil, nil); err == nil {
 		t.Fatal("approve must be refused while a sibling reviewer is still pending")
 	}
 	if _, ok := stage.Snapshot(); ok {
 		t.Fatal("a refused verdict must not be staged")
 	}
-	if err := stage.SetVerdict("request_changes", "found a bug"); err != nil {
+	if err := stage.SetVerdict("request_changes", "found a bug", nil, nil); err != nil {
 		t.Fatalf("request_changes must be allowed to stage early: %v", err)
 	}
 	sd, ok := stage.Snapshot()
@@ -146,7 +146,7 @@ func TestReviewStage_RefusesEarlyApproveAllowsEarlyRequestChanges(t *testing.T) 
 	// Once every sibling is terminal, approve is no longer refused.
 	fanout.Finish("other-reviewer", StagedDelivery{}, false, true)
 	soloStage := NewReviewStage(fanout)
-	if err := soloStage.SetVerdict("approve", "now fine"); err != nil {
+	if err := soloStage.SetVerdict("approve", "now fine", nil, nil); err != nil {
 		t.Fatalf("approve should be allowed once every sibling is terminal: %v", err)
 	}
 }
@@ -486,7 +486,7 @@ func TestReviewFanout_SynthesizerAbortFallsBackToConcat(t *testing.T) {
 func TestReviewStage_RefusalDoesNotInviteWaiting(t *testing.T) {
 	fanout := freshFanout(t, 2)
 	stage := NewReviewStage(fanout)
-	err := stage.SetVerdict("approve", "looks good")
+	err := stage.SetVerdict("approve", "looks good", nil, nil)
 	if err == nil {
 		t.Fatal("approve must still be refused while a sibling is pending")
 	}

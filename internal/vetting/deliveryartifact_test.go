@@ -75,7 +75,7 @@ func TestCommitDelivery_RendersReviewFromArtifact(t *testing.T) {
 // node's passed round must deliver its own prose, not markers-only.
 func TestCommitDelivery_SingleReviewerCarriesSummaryEndToEnd(t *testing.T) {
 	cfg := Config{IsReviewer: true, ChatID: "ext:github:owner-repo-45", User: "u1", Artifacts: artifact.InMemoryService(), NodeID: "n1"}
-	answer := "Looks good, one nit below.\n\nVERDICT: approve\nFINDINGS:\nCLEAN:\n"
+	answer := "VERDICT: approve\nTAKEAWAY: Looks good, one nit below.\nFINDINGS:\nCLEAN:\n"
 	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "t1", 1, answer, StagedDelivery{Kind: "review", Recovered: true}, newEpisodicRoundState())
 
 	var got DeliveryContext

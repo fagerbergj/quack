@@ -180,7 +180,9 @@ type StagedReviewComment struct {
 type ReviewStage struct {
 	mu       sync.Mutex
 	event    string
-	body     string
+	takeaway string
+	verified []string
+	notes    []string
 	set      bool
 	comments []StagedReviewComment
 	seq      map[string]int // "path:line" → highest #n; stale ids error rather than resolving to wrong comment
@@ -248,20 +250,22 @@ func (s *ReviewStage) RemoveComment(id string) (ok bool) {
 	return ok
 }
 
-// SetVerdict stages the overall event+body. Refuses to stage "approve"
-// while sibling reviewer nodes are still running (#867 defense-in-depth) -
-// a request_changes may still stage early, since it can only ever tighten
-// the run's worst-of verdict. The refusal text never says "wait": a model
-// reading it as an instruction is exactly how #1148's sleep-poll loop
-// started.
-func (s *ReviewStage) SetVerdict(event, body string) error {
+// SetVerdict stages the overall event+takeaway/verified/notes. Refuses to
+// stage "approve" while sibling reviewer nodes are still running (#867
+// defense-in-depth) - a request_changes may still stage early, since it can
+// only ever tighten the run's worst-of verdict. The refusal text never says
+// "wait": a model reading it as an instruction is exactly how #1148's
+// sleep-poll loop started. Caps on takeaway/verified/notes are enforced at
+// the tool boundary (reviewmcp.go's stage_review), not here - this is a
+// plain store.
+func (s *ReviewStage) SetVerdict(event, takeaway string, verified, notes []string) error {
 	if event == "approve" && s.fanout != nil && s.fanout.SiblingsPending() {
 		return fmt.Errorf("approve cannot be staged while sibling reviewer nodes are running; " +
 			"this node's verdict is not delivered - finish your reply without one")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.event, s.body, s.set = event, body, true
+	s.event, s.takeaway, s.verified, s.notes, s.set = event, takeaway, verified, notes, true
 	return nil
 }
 
@@ -279,11 +283,19 @@ func (s *ReviewStage) Snapshot() (StagedDelivery, bool) {
 	for i, c := range s.comments {
 		comments[i] = c.ReviewComment
 	}
+	// Rendered fallback body: used verbatim only when no code_review
+	// artifact backs this delivery (artifactRenderedDelivery falls back to
+	// this staged text) - no scope/since-last-review info available here,
+	// so those sections are simply omitted (renderReviewOverview).
+	body := renderReviewOverview(reviewOverviewInput{Verdict: event, Takeaway: s.takeaway, Verified: s.verified, Notes: s.notes, Comments: comments})
 	return StagedDelivery{
 		Kind:     "review",
 		Event:    event,
-		Body:     s.body,
+		Body:     body,
 		Comments: comments,
+		Takeaway: s.takeaway,
+		Verified: s.verified,
+		Notes:    s.notes,
 	}, true
 }
 

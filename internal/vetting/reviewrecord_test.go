@@ -184,7 +184,7 @@ func TestSaveCodeReviewRound_ToolWriteSkipsTailFallback(t *testing.T) {
 	defer UnregisterAdvisorThread(token)
 	cfg.AdvisorToken = token
 
-	toolWritten := CodeReviewRecord{Verdict: "approve", Summary: "written directly via write_code_review"}
+	toolWritten := CodeReviewRecord{Verdict: "approve", Takeaway: "written directly via write_code_review"}
 	crID, toolRev, err := rc.SaveStructured(context.Background(), kindCodeReview, toolWritten, SubjectHint(cfg.ChatID), recordstore.Lineage{NodeID: cfg.NodeID, Author: "worker"})
 	if err != nil {
 		t.Fatal(err)
@@ -1154,14 +1154,13 @@ func TestSaveTextRound_TruncatesOversizedAnswer(t *testing.T) {
 	}
 }
 
-// TestSaveCodeReviewRound_SummaryFromAnswerTail is #1198: before this fix,
-// saveCodeReviewRound never set CodeReviewRecord.Summary, so
-// deliveryartifact.go's renderReviewFromArtifact always delivered an empty
-// body (markers only) once a passed round existed to render from.
-func TestSaveCodeReviewRound_SummaryFromAnswerTail(t *testing.T) {
+// TestSaveCodeReviewRound_TakeawayFromAnswerTail is #1198, updated for the
+// fixed review format: free prose ahead of VERDICT is no longer captured -
+// the answer-tail fallback reads only the explicit TAKEAWAY: tag.
+func TestSaveCodeReviewRound_TakeawayFromAnswerTail(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	cfg := reviewerCfgWithArtifacts(t, svc, true)
-	answer := "This change looks solid overall.\n\nVERDICT: approve\nFINDINGS:\nCLEAN:\n- a.go\n"
+	answer := "VERDICT: approve\nTAKEAWAY: This change looks solid overall.\nFINDINGS:\nCLEAN:\n- a.go\n"
 	st := newEpisodicRoundState()
 	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "t1", 1, answer, StagedDelivery{Kind: "review", Recovered: true}, st)
 
@@ -1174,20 +1173,20 @@ func TestSaveCodeReviewRound_SummaryFromAnswerTail(t *testing.T) {
 	if err := json.Unmarshal(raw, &rec); err != nil {
 		t.Fatal(err)
 	}
-	if rec.Summary != "This change looks solid overall." {
-		t.Fatalf("Summary = %q, want the prose before the VERDICT tail", rec.Summary)
+	if rec.Takeaway != "This change looks solid overall." {
+		t.Fatalf("Takeaway = %q, want the TAKEAWAY: tag's text", rec.Takeaway)
 	}
 }
 
-// TestSaveCodeReviewRound_SummaryFromToolStagedBody covers the non-Recovered
-// (stage_review MCP tool) path: the body is already clean prose, so Summary
-// is the staged body verbatim.
-func TestSaveCodeReviewRound_SummaryFromToolStagedBody(t *testing.T) {
+// TestSaveCodeReviewRound_TakeawayFromToolStagedFields covers the
+// non-Recovered (stage_review MCP tool) path: Takeaway is the staged field
+// verbatim.
+func TestSaveCodeReviewRound_TakeawayFromToolStagedFields(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	cfg := reviewerCfgWithArtifacts(t, svc, true)
 	st := newEpisodicRoundState()
 	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "t1", 1, "ignored answer text",
-		StagedDelivery{Kind: "review", Event: "comment", Body: "worker's own summary"}, st)
+		StagedDelivery{Kind: "review", Event: "comment", Takeaway: "worker's own summary"}, st)
 
 	rc := recordClient(cfg)
 	raw, _, ok, err := rc.Latest(context.Background(), codeReviewID(cfg))
@@ -1198,18 +1197,18 @@ func TestSaveCodeReviewRound_SummaryFromToolStagedBody(t *testing.T) {
 	if err := json.Unmarshal(raw, &rec); err != nil {
 		t.Fatal(err)
 	}
-	if rec.Summary != "worker's own summary" {
-		t.Fatalf("Summary = %q, want the tool-staged body", rec.Summary)
+	if rec.Takeaway != "worker's own summary" {
+		t.Fatalf("Takeaway = %q, want the tool-staged field", rec.Takeaway)
 	}
 }
 
-// TestSaveCodeReviewRound_BackfillsEmptyToolWrittenSummary is #1198's
+// TestSaveCodeReviewRound_BackfillsEmptyToolWrittenTakeaway is #1198's
 // residual markers-only path (review comment thread 3937400238):
-// write_code_review's "summary" field is optional, so a compliant tool call
+// write_code_review's "takeaway" field is optional, so a compliant tool call
 // can still leave it empty. saveCodeReviewRound must backfill from the
 // findings' titles rather than leave the record - and the delivered body
 // deliveryartifact.go later renders from it - empty.
-func TestSaveCodeReviewRound_BackfillsEmptyToolWrittenSummary(t *testing.T) {
+func TestSaveCodeReviewRound_BackfillsEmptyToolWrittenTakeaway(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	cfg := reviewerCfgWithArtifacts(t, svc, true)
 	rc := recordClient(cfg)
@@ -1229,7 +1228,7 @@ func TestSaveCodeReviewRound_BackfillsEmptyToolWrittenSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	toolStage.Add(fID)
-	// No Summary - the exact gap a compliant-but-terse tool call leaves.
+	// No Takeaway - the exact gap a compliant-but-terse tool call leaves.
 	crRec := CodeReviewRecord{Verdict: "request_changes", FindingIDs: []string{fID}}
 	crID, _, err := rc.SaveStructured(context.Background(), kindCodeReview, crRec, SubjectHint(cfg.ChatID), recordstore.Lineage{NodeID: cfg.NodeID, Author: "worker"})
 	if err != nil {
@@ -1248,8 +1247,8 @@ func TestSaveCodeReviewRound_BackfillsEmptyToolWrittenSummary(t *testing.T) {
 	if err := json.Unmarshal(raw, &rec); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(rec.Summary, "off-by-one") {
-		t.Fatalf("Summary = %q, want it backfilled from the finding's title", rec.Summary)
+	if !strings.Contains(rec.Takeaway, "off-by-one") {
+		t.Fatalf("Takeaway = %q, want it backfilled from the finding's title", rec.Takeaway)
 	}
 }
 

@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 
 	"github.com/fagerbergj/quack/internal/recordstore"
@@ -73,8 +72,15 @@ func renderReviewFromArtifact(ctx context.Context, cfg Config, nodeID string) (S
 
 	// First-ever delivered revision for this subject: nothing to carry over.
 	firstDelivery := len(listDeliveryRecords(ctx, cfg, id)) == 0
+	var priorHeadSHA string
+	if !firstDelivery {
+		if prior, ok := latestDeliveryRecord(ctx, cfg, id); ok {
+			priorHeadSHA = prior.HeadSHA
+		}
+	}
 
-	var comments []ReviewComment
+	var comments []ReviewComment      // for GitHub's inline posting
+	var highlights []ReviewComment    // Body = f.Title (keeps the label prefix), for the verdict-line counts + Highlights table
 	var newIDs, carriedIDs, resolvedIDs []string
 	for _, fid := range rec.FindingIDs {
 		fRaw, _, fok, ferr := c.Latest(ctx, fid)
@@ -94,36 +100,51 @@ func renderReviewFromArtifact(ctx context.Context, cfg Config, nodeID string) (S
 			carriedIDs = append(carriedIDs, fid)
 			comments = append(comments, ReviewComment{Path: f.Path, Line: f.LineHint,
 				Body: fmt.Sprintf("(carried over, unchanged since a previous review - %s) %s: %s", fid, f.Title, f.Rationale)})
+			highlights = append(highlights, ReviewComment{Path: f.Path, Line: f.LineHint, Body: f.Title})
 		default:
 			newIDs = append(newIDs, fid)
 			comments = append(comments, ReviewComment{Path: f.Path, Line: f.LineHint, Body: f.Title + ": " + f.Rationale})
+			highlights = append(highlights, ReviewComment{Path: f.Path, Line: f.LineHint, Body: f.Title})
 		}
 	}
 
-	var b strings.Builder
-	b.WriteString(rec.Summary)
-	if len(carriedIDs) > 0 {
-		sort.Strings(carriedIDs)
-		b.WriteString("\n\nUnchanged from a previous review: " + strings.Join(carriedIDs, ", "))
+	in := reviewOverviewInput{
+		Verdict:  rec.Verdict,
+		Takeaway: rec.Takeaway,
+		Verified: rec.Verified,
+		Notes:    rec.Notes,
+		Comments: highlights,
 	}
-	if len(resolvedIDs) > 0 {
-		sort.Strings(resolvedIDs)
-		b.WriteString("\n\nResolved since a previous review: " + strings.Join(resolvedIDs, ", "))
+	// Legacy read path: a pre-migration record has Summary but never
+	// Takeaway/Verified/Notes - render it under Notes, truncated, so old
+	// history still displays (renderReviewOverview's LegacySummary).
+	if strings.TrimSpace(rec.Takeaway) == "" && len(rec.Verified) == 0 && len(rec.Notes) == 0 {
+		in.LegacySummary = rec.Summary
 	}
-	if len(rec.Clean) > 0 {
-		b.WriteString("\n\nCLEAN:\n")
-		for _, p := range rec.Clean {
-			b.WriteString("- " + p + "\n")
+	if !firstDelivery {
+		in.SinceKnown = true
+		in.Resolved = len(resolvedIDs)
+		in.Open = len(highlights)
+		in.Dismissed = rec.Dismissed
+	}
+	if scope := resolveReviewScope(cfg); scope.ok {
+		in.ScopeKnown = true
+		in.HeadSHA = scope.head
+		in.FileCount = scope.fileCount
+		in.FirstReview = firstDelivery
+		if !firstDelivery {
+			in.PriorHeadSHA = priorHeadSHA
+			if n, ok := scope.commitsSince(priorHeadSHA); ok {
+				in.CommitsSince = n
+			}
 		}
 	}
-	for _, d := range rec.Dismissed {
-		b.WriteString(fmt.Sprintf("\nDismissed: %s:%d: %s", d.Path, d.Line, d.Note))
-	}
+	body := renderReviewOverview(in)
 
 	slog.Debug("rendering review from code_review artifact", "component", "vetting", "node", nodeID,
 		"id", id, "revision", rev, "new", len(newIDs), "carried", len(carriedIDs), "resolved", len(resolvedIDs))
 
-	return StagedDelivery{Kind: "review", Event: rec.Verdict, Body: strings.TrimSpace(b.String()), Comments: comments}, true
+	return StagedDelivery{Kind: "review", Event: rec.Verdict, Body: body, Comments: comments}, true
 }
 
 // renderPRBodyFromArtifact loads the latest pr_body blob and overlays it

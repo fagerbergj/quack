@@ -11,11 +11,19 @@ import (
 var (
 	verdictRe = regexp.MustCompile(`(?mi)^\s*VERDICT:\s*(approve|request_changes|comment)\s*$`)
 	findingRe = regexp.MustCompile(`(?m)^\s*[-*]\s+([^\s:]+):(\d+):\s*(.+)$`)
-	// sectionHeaderRe: a tail section header line (FINDINGS:/DISMISSED:/CLEAN:),
-	// used to bound each section so one header's lines don't bleed into another's.
-	sectionHeaderRe = regexp.MustCompile(`(?mi)^\s*(FINDINGS|DISMISSED|CLEAN):\s*$`)
+	// sectionHeaderRe: a tail section header line (FINDINGS:/DISMISSED:/CLEAN:/
+	// VERIFIED:/NOTES:), used to bound each section so one header's lines
+	// don't bleed into another's.
+	sectionHeaderRe = regexp.MustCompile(`(?mi)^\s*(FINDINGS|DISMISSED|CLEAN|VERIFIED|NOTES):\s*$`)
 	// cleanLineRe: a CLEAN: section entry, bare path (no line number).
 	cleanLineRe = regexp.MustCompile(`(?m)^\s*[-*]\s+(\S+)\s*$`)
+	// bulletLineRe: a free-text bullet, VERIFIED:/NOTES: entries (unlike
+	// CLEAN's bare path, these carry a full sentence).
+	bulletLineRe = regexp.MustCompile(`(?m)^\s*[-*]\s+(.+)$`)
+	// takeawayRe: the tail's one-sentence takeaway, same field stage_review's
+	// takeaway arg carries - the structured-tail fallback states this as a
+	// fact too, never as prose ahead of the tags (one fixed review format).
+	takeawayRe = regexp.MustCompile(`(?mi)^\s*TAKEAWAY:\s*(.+)$`)
 	// Matches reviewer's fallback preamble (explanation for us, not human reader).
 	fallbackPreambleRe = regexp.MustCompile(`(?mi)^.*\bstaging tools?\b.*\bfallback\b.*$\n?`)
 )
@@ -26,6 +34,9 @@ type AnswerReview struct {
 	Findings  []ReviewComment
 	Dismissed []ReviewComment // DISMISSED: "- path:line: why dropped"
 	Clean     []string        // CLEAN: "- path"
+	Takeaway  string          // TAKEAWAY: <one sentence>
+	Verified  []string        // VERIFIED: "- item"
+	Notes     []string        // NOTES: "- item"
 	OK        bool
 }
 
@@ -91,6 +102,19 @@ func ParseAnswerReviewSections(answer string) AnswerReview {
 		for _, m := range cleanLineRe.FindAllStringSubmatch(cb, -1) {
 			r.Clean = append(r.Clean, m[1])
 		}
+	}
+	if vb := sectionBody(answer, "VERIFIED"); vb != "" {
+		for _, m := range bulletLineRe.FindAllStringSubmatch(vb, -1) {
+			r.Verified = append(r.Verified, strings.TrimSpace(m[1]))
+		}
+	}
+	if nb := sectionBody(answer, "NOTES"); nb != "" {
+		for _, m := range bulletLineRe.FindAllStringSubmatch(nb, -1) {
+			r.Notes = append(r.Notes, strings.TrimSpace(m[1]))
+		}
+	}
+	if tm := takeawayRe.FindStringSubmatch(answer); tm != nil {
+		r.Takeaway = strings.TrimSpace(tm[1])
 	}
 	return r
 }
@@ -165,7 +189,8 @@ func augmentFromAnswer(act *workerActivity, cfg Config, answer string) {
 	if _, staged := act.stagedDelivery["review"]; staged {
 		return
 	}
-	event, comments, ok := parseAnswerReview(answer)
+	r := ParseAnswerReviewSections(answer)
+	event, comments, ok := r.Event, r.Findings, r.OK
 	if !ok {
 		event = "comment"
 	}
@@ -178,8 +203,11 @@ func augmentFromAnswer(act *workerActivity, cfg Config, answer string) {
 	act.stagedDelivery["review"] = StagedDelivery{
 		Kind:      "review",
 		Event:     event,
-		Body:      answer,
+		Body:      renderReviewOverview(reviewOverviewInput{Verdict: event, Takeaway: r.Takeaway, Verified: r.Verified, Notes: r.Notes, Comments: comments}),
 		Comments:  comments,
+		Takeaway:  r.Takeaway,
+		Verified:  r.Verified,
+		Notes:     r.Notes,
 		Recovered: true,
 	}
 }

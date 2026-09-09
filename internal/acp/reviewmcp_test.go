@@ -46,7 +46,7 @@ func TestReviewMCP_StageToolsLandInBuffer(t *testing.T) {
 
 	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "stage_review",
-		Arguments: map[string]any{"event": "request_changes", "body": "two blockers"},
+		Arguments: map[string]any{"event": "request_changes", "takeaway": "two blockers, both in the fallback path"},
 	})
 	if err != nil {
 		t.Fatalf("CallTool stage_review: %v", err)
@@ -59,7 +59,7 @@ func TestReviewMCP_StageToolsLandInBuffer(t *testing.T) {
 	if !ok {
 		t.Fatal("review buffer empty after staging")
 	}
-	if sd.Kind != "review" || sd.Event != "request_changes" || sd.Body != "two blockers" {
+	if sd.Kind != "review" || sd.Event != "request_changes" || sd.Takeaway != "two blockers, both in the fallback path" {
 		t.Fatalf("staged review wrong: %+v", sd)
 	}
 	if len(sd.Comments) != 2 {
@@ -74,12 +74,55 @@ func TestReviewMCP_StageToolsLandInBuffer(t *testing.T) {
 		t.Fatal("stage_memory must not be registered on a review-only session")
 	}
 	// A malformed verdict is rejected loudly, not silently accepted.
-	bad, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "stage_review", Arguments: map[string]any{"event": "lgtm", "body": "x"}})
+	bad, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "stage_review", Arguments: map[string]any{"event": "lgtm", "takeaway": "x"}})
 	if err != nil {
 		t.Fatalf("CallTool stage_review (bad event): %v", err)
 	}
 	if !bad.IsError {
 		t.Fatal("an invalid verdict must return a tool error")
+	}
+}
+
+// TestReviewMCP_StageReviewEnforcesCaps proves the tool boundary rejects a
+// missing takeaway and an over-cap notes list with an actionable error - the
+// same caps validateCodeReview enforces on a native write_code_review call
+// (reviewrecord.go's CheckCodeReviewCaps), so the two surfaces can't drift.
+func TestReviewMCP_StageReviewEnforcesCaps(t *testing.T) {
+	ctx := context.Background()
+	secret := mustMemSecret(t)
+	review := &vetting.ReviewStage{}
+	vetting.RegisterMemSession(secret, vetting.MemSession{Review: review})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "stage_review",
+		Arguments: map[string]any{"event": "approve"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool stage_review (no takeaway): %v", err)
+	}
+	if !res.IsError || !strings.Contains(toolResultText(t, res), "takeaway") {
+		t.Fatalf("stage_review without a takeaway must be rejected naming the field: %+v", res)
+	}
+
+	notes := make([]any, 11)
+	for i := range notes {
+		notes[i] = "note"
+	}
+	res, err = cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "stage_review",
+		Arguments: map[string]any{"event": "approve", "takeaway": "Fine.", "notes": notes},
+	})
+	if err != nil {
+		t.Fatalf("CallTool stage_review (too many notes): %v", err)
+	}
+	got := toolResultText(t, res)
+	if !res.IsError || !strings.Contains(got, "11 items, max 8") || !strings.Contains(got, "stage_review_comment") {
+		t.Fatalf("stage_review with 11 notes must be rejected naming the cap and where content belongs, got %q", got)
 	}
 }
 

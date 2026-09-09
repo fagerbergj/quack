@@ -60,6 +60,10 @@ type DeliveryRecord struct {
 	// #1155) - kept in the history so a later revision isn't mistaken for
 	// the subject's first attempt.
 	Error string `json:"error,omitempty"`
+	// HeadSHA: the reviewed clone's HEAD at delivery time (cloneHeadSHA) -
+	// a re-review's Scope line ("N commits since <sha7>") reads the PRIOR
+	// delivery's HeadSHA via latestDeliveryRecord below.
+	HeadSHA string `json:"head_sha,omitempty"`
 }
 
 // deliverySubject strips the leading "<kind>:" off a target id ("code_review:
@@ -162,6 +166,27 @@ func DeliveryProjections(artifacts artifact.Service, ledgerStore ledger.LedgerSt
 		})
 	}
 	return checker, recorder
+}
+
+// latestDeliveryRecord loads the most recent delivery_record revision for
+// targetID's subject - the PRIOR review's delivery, since this round's own
+// delivery_record is written only after Deliver runs (node.go's
+// commitDelivery), strictly after the render this feeds. false when none
+// exists yet (a first-ever review of this subject).
+func latestDeliveryRecord(ctx context.Context, cfg Config, targetID string) (DeliveryRecord, bool) {
+	c := recordClient(cfg)
+	if c == nil {
+		return DeliveryRecord{}, false
+	}
+	raw, _, ok, err := c.Latest(ctx, deliveryRecordID(targetID))
+	if err != nil || !ok {
+		return DeliveryRecord{}, false
+	}
+	var rec DeliveryRecord
+	if json.Unmarshal(raw, &rec) != nil {
+		return DeliveryRecord{}, false
+	}
+	return rec, true
 }
 
 // listDeliveryRecords returns every delivered revision of targetID's subject,

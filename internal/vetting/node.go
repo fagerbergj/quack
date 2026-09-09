@@ -1255,14 +1255,14 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 			// delivery_record artifact is the record, not a delivery.done entry).
 			saveDeliveryRecord(bctx, cfg, nodeID, DeliveryRecord{
 				TargetID: targetID, DeliveredRevision: targetRev, RemoteURL: remoteURL, PRNumber: dc.IssueNumber, At: time.Now().UTC(),
-				GatePassed: res.Passed, RenderedFromStaged: renderedFromStaged,
+				GatePassed: res.Passed, RenderedFromStaged: renderedFromStaged, HeadSHA: cloneHeadSHA(cfg),
 			})
 		} else {
 			// No successful delivery_record revision: `quack ledger recover`
 			// finds this intent still open and can reconcile the attempt.
 			saveDeliveryRecord(bctx, cfg, nodeID, DeliveryRecord{
 				TargetID: targetID, DeliveredRevision: targetRev, PRNumber: dc.IssueNumber, At: time.Now().UTC(),
-				GatePassed: res.Passed, RenderedFromStaged: renderedFromStaged, Error: err.Error(),
+				GatePassed: res.Passed, RenderedFromStaged: renderedFromStaged, Error: err.Error(), HeadSHA: cloneHeadSHA(cfg),
 			})
 		}
 	}
