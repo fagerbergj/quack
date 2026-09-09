@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/fagerbergj/quack/internal/orchestrator"
@@ -11,6 +12,27 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
+
+// eventLogs caches one EventLog per store: boot resume and extension dispatch
+// (extensions.go) each used to call runlog.NewEventLog per run, leaking that
+// run's drain goroutine and channel forever since EventLog has no Close.
+var (
+	eventLogsMu sync.Mutex
+	eventLogs   = map[*store.Store]*runlog.EventLog{}
+)
+
+// sharedEventLog returns the one EventLog for st, a process-lifetime
+// singleton in production; a test's own *store.Store still gets its own.
+func sharedEventLog(st *store.Store) *runlog.EventLog {
+	eventLogsMu.Lock()
+	defer eventLogsMu.Unlock()
+	if l, ok := eventLogs[st]; ok {
+		return l
+	}
+	l := runlog.NewEventLog(st)
+	eventLogs[st] = l
+	return l
+}
 
 // staleResumePlanCeiling: a paused plan this old is more likely abandoned
 // than genuinely mid-run - resuming it would burn a run slot on stale work.
@@ -144,7 +166,7 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 	runCtx, cancelRun := context.WithTimeout(context.WithoutCancel(ctx), 24*time.Hour)
 	hub.RegisterRun(chatID, plan.TurnID, cancelRun)
 	_ = st.MarkRunActive(runCtx, chatID, plan.TurnID)
-	eventLog := runlog.NewEventLog(st)
+	eventLog := sharedEventLog(st)
 	eventLog.Reset(runCtx, chatID) // old run's (chat_id, seq) rows would PK-collide with the new publisher
 	// FinishRun flushes then closes then unregisters, in that order - see its doc.
 	defer eventLog.FinishRun(hub, chatID, cancelRun)
