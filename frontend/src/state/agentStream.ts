@@ -352,7 +352,7 @@ function dispatchAgentEvent(
           contextTokens: p.context_tokens,
           finishReason: p.finish_reason,
           durationMs: p.duration_ms,
-          finishedAtMs: p.finished_at_ms,
+          finishedAtMs: typeof p.finished_at_ms === 'number' ? p.finished_at_ms : undefined,
           judgeRounds: p.judge_rounds,
           judgeFinalScore: p.judge_final_score,
           judgePassed: p.judge_passed,
@@ -518,7 +518,7 @@ export async function readAgentStream(
   return { done: sawDone, lastEventId }
 }
 
-// attachAgentEventSource wires an EventSource (used by the job live log) to
+// attachAgentEventSource wires an EventSource (chatStore.openEventSource, the chat stream) to
 // the same handler shape readAgentStream consumes. Returns a teardown that
 // closes the EventSource. shouldDispatch, if given, gates each event BEFORE
 // it reaches handlers - e.g. chatStore's id-contiguity check (#audit-6):
