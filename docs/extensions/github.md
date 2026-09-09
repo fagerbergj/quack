@@ -29,9 +29,9 @@ or by mentioning it in a comment:
 |---|---|
 | `quack:plan` | Plans once when applied. While present, revises the plan on an explicit `/quack …` address or quote-reply. |
 | `quack:implement` | Implements the approved plan once, commits locally, and opens a PR pre-labeled for review. Add `quack:partial-fix` first if the PR shouldn't auto-close the issue. |
-| `quack:review` (configurable) | Reviews the PR once. Also fires automatically on PR open if the `pr_opened` trigger is enabled. While the label is present, a PR comment consisting of `/review` (from a write/admin author) re-runs the review - GitHub coalesces a fast label remove+add into no webhook, so cycling the label can't. |
+| `quack-auto-review` (configurable) | Reviews the PR once. Also fires automatically on PR open if the `pr_opened` trigger is enabled. While the label is present, a PR comment consisting of `/review` (from a write/admin author) re-runs the review - GitHub coalesces a fast label remove+add into no webhook, so cycling the label can't. |
 | `quack:fix` | Keeps the PR green: fixes it on **any** CI/CD failure while it carries this label, not only when freshly applied - re-applying it re-arms after a stop and, if CI is already failing, fixes it immediately. One fix attempt per failure (see "CI auto-heal" below). |
-| `quack:merge` | A standing authorization: quack squash-merges once its own latest review approves the PR's **current** head and every check on that head has finished. The condition is re-checked on every check, push, and review event, so a PR labeled while CI is still running merges when CI finishes; a push after approval invalidates the approval until a new review lands. Nothing is posted while the PR is not yet mergeable (the label gets a 👀). The outcome - `Merged as <sha>.` or the reason GitHub refused (conflicts, a failing required check) - is appended to quack's own approving review, never as a separate comment. Removing the label withdraws the authorization. |
+| `quack:merge` | A standing authorization: quack squash-merges once its own latest review approves the PR's **current** head and every check on that head is green (at least one exists, none missing/running/failed). The condition is re-checked on every check, push, and review event, so a PR labeled while CI is still running merges once CI turns green; a push after approval invalidates the approval until a new review lands. Nothing is posted while the PR is not yet mergeable (the label gets a 👀). The outcome - `Merged as <sha>.` or the reason GitHub refused (conflicts, a failing required check) - is appended to quack's own approving review, never as a separate comment. Removing the label withdraws the authorization. |
 
 Every label handler reacts with 👀 the instant it fires, before the run even starts.
 
@@ -49,7 +49,7 @@ While a PR carries `quack:fix` - or quack itself authored the PR - any CI/CD fai
 
 Every dispatch builds a structured envelope, not a hand-assembled paragraph: `<permissions>` (this run's grant, below), `<deliverable>` (the one thing this run should produce), the hoisted `<issue>`/`<pull_request>` title and description, `<comments>` (every comment on first load, only what's new, edited, or deleted since the last dispatch on resume), `<changed_files>` on a PR (name/additions/deletions - no patches; agents read those off the clone), and the triggering `<event>` - a compact `{action, actor, number, head_sha, comment}` summary, not the raw webhook JSON (issue #1010): the only fields any prompt in this extension actually reads, plus the triggering comment's own text.
 
-The full evidence the envelope only summarizes or caps - the raw webhook payload, the untruncated comment thread, the issue timeline, and (on a CI-triggered run) `check-runs`/`annotations-<check>` - is stored as named input artifacts, not files in a directory (issue #1010 deleted the context-dir mechanism). The envelope's `<artifacts>` manifest lists each one's local name, revision, and new/unchanged status against the last dispatch (e.g. `<artifact id="bytes:comments" revision="4" status="new">47 total, 3 new</artifact>`). `read_artifact` takes the manifest's `id` verbatim (e.g. `read_artifact("bytes:comments")`) - the pinned github v0.10.0 renders the store's real id here, so no prefixing is needed.
+The full evidence the envelope only summarizes or caps - the raw webhook payload, the untruncated comment thread, the issue timeline, and (on a CI-triggered run) `check-runs`/`annotations-<check>` - is stored as named input artifacts, not files in a directory (issue #1010 deleted the context-dir mechanism). The envelope's `<artifacts>` manifest lists each one's local name, revision, and new/unchanged status against the last dispatch (e.g. `<artifact id="bytes:comments" revision="4" status="new">47 total, 3 new</artifact>`). `read_artifact` takes the manifest's `id` verbatim (e.g. `read_artifact("bytes:comments")`) - the pinned `github` extension renders the store's real id here, so no prefixing is needed.
 
 The orchestrator gets the full envelope above. A plan's individual nodes get a narrower ask-only slice instead - permissions, deliverable, the hoisted title/description, comments, the `<artifacts>` manifest, and (on a CI-fix run) that node's own failing-check detail - never the full file list, so a node's own task isn't crowded out by planning-scale evidence it has no use for.
 
@@ -93,12 +93,22 @@ Under **Permissions → Repository**:
 | Issues | Read & write | read comments, post replies, react |
 | Pull requests | Read & write | open PRs, post reviews, merge |
 | Metadata | Read (mandatory) | required by GitHub |
-
-Grant nothing else.
+| Actions | Read | `workflow_run` events (`quack:fix` CI auto-heal, `quack:merge` merge-on-green) |
+| Checks | Read | `check_suite`/`check_run` events, and reading check runs before a merge |
 
 ### 3. Subscribe to events
 
-Under **Subscribe to events**, check: **Issue comment**, **Issues**, **Pull request**, **Pull request review**, and - for `quack:fix`'s CI auto-heal and for `quack:merge` to merge when CI finishes - **Workflow run**, **Check suite**, and **Check run** (with the **Checks: read** permission). Issue comment alone is enough if you only want the `/quack` mention path - the label workflow needs the rest, and the authorship-based engagement on quack's own PRs needs Pull request review.
+Under **Subscribe to events**, check: **Issue comment**, **Issues**, **Pull request**, **Pull request review**, and - for `quack:fix`'s CI auto-heal and for `quack:merge` to merge when CI finishes - **Workflow run**, **Check suite**, and **Check run**. Issue comment alone is enough if you only want the `/quack` mention path - the label workflow needs the rest, and the authorship-based engagement on quack's own PRs needs Pull request review.
+
+### 3b. Create the labels
+
+The label workflow needs each label to exist in the repo before a maintainer can apply it:
+
+```bash
+for l in quack:plan quack:implement quack-auto-review quack:merge quack:fix quack:partial-fix; do
+  gh label create "$l" --repo <owner>/<repo>
+done
+```
 
 ### 4. Generate the private key
 
@@ -123,21 +133,26 @@ extensions:
     mention: "/quack"                    # default; must open a line - see "Two ways to drive it"
     allowed_users: [yourgithublogin]      # empty denies every human-invoked trigger
     triggers: [mention, pr_opened, label, issue_plan, issue_implement, merge, ci_fix]
+    # run_timeout_minutes: 120           # default; bounds one dispatched run
+    # auto_archive_on_merge: false       # default; archive the chat session when quack:merge lands
+    # auto_review_label: "quack-auto-review"  # legacy alias for labels.review; set labels.review instead
     # labels:                            # defaults shown; override any of them
     #   plan: "quack:plan"
     #   implement: "quack:implement"
     #   review: "quack-auto-review"
     #   merge: "quack:merge"
+    #   partial_fix: "quack:partial-fix"  # suppresses the unconditional Closes #N when applied to an issue
     #   fix: "quack:fix"
 
 # For code tasks the agent must be allowed to push:
 workspace:
-  git_push: true
   guards:
     git_push: judge   # see "Non-interactive guard policy" below
 ```
 
 `allowed_users` gates every human-invoked trigger (mention, labels) by GitHub login, case-insensitively - seed it or quack won't respond. The automatic `pr_opened` auto-review is exempt (nobody applied it). Bot comments are always ignored, so quack never re-triggers on its own posts.
+
+`api_base` overrides `api.github.com` - QA-only, for pointing at [`docs/qa-mocks.md`](../qa-mocks.md)'s mock server; leave it unset against real GitHub.
 
 Environment:
 
@@ -171,7 +186,7 @@ npx smee-client --url https://smee.io/<channel> \
 
 ### 8. Verify it works
 
-1. Start quack with the config above; the log shows `github extension enabled`.
+1. Start quack with the config above; the log shows `sdk extension enabled extension=github`.
 2. On an installed repo, open an issue and comment `/quack say hello` (the token must open the line).
 3. Watch the logs: `github webhook received` → `github run dispatched` → `github comment posted`.
 4. The App replies on the issue with the run's answer.
@@ -184,7 +199,6 @@ A webhook-driven run has no human at a terminal, so it can never clear a `confir
 
 ```yaml
 workspace:
-  git_push: true
   guards:
     git_push: judge   # was judge+confirm - the human tier can't run in a webhook
 ```
