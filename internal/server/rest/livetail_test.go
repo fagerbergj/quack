@@ -196,3 +196,35 @@ func TestSubscribeLiveReconnectByLastEventID(t *testing.T) {
 		t.Fatal("handler did not return after client disconnect")
 	}
 }
+
+// TestSubscribeCloseRacesActiveRead is the harvest review finding: Active is
+// read before Subscribe, so a Hub.Close landing in that window leaves active
+// stale-true while Subscribe reports done and returns a nil live channel. The
+// handler must trust Subscribe's done, not the stale active, or it blocks
+// forever selecting on that nil channel.
+func TestSubscribeCloseRacesActiveRead(t *testing.T) {
+	h := newTestHandler(t)
+	chatID := mustCreateChat(t, h)
+	pub := runlog.NewPublisher(h.hub, h.eventLog, chatID)
+	pub.Publish(stream.ResponseCreated("t1"))
+	pub.Publish(stream.NodeDone("n1", stream.NodeDoneData{}))
+	pub.Publish(stream.Done())
+	h.eventLog.Flush() // Close frees the hub buffer; must wait for the durable write first.
+
+	restore := subscribeRaceHook
+	subscribeRaceHook = func() { h.hub.Close(chatID) }
+	defer func() { subscribeRaceHook = restore }()
+
+	req := httptest.NewRequest("GET", "/api/v1/chats/"+chatID+"/stream", nil)
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		h.SubscribeChatStream(rec, req, chatID)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler hung on a nil live channel when Hub.Close raced the Active read")
+	}
+}

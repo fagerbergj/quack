@@ -1234,6 +1234,12 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 }
 
 // Connects a client to a chat's live (or just-completed) run. Reconnect-safe via Last-Event-ID or the durable event log.
+// subscribeRaceHook runs between the Active and Subscribe reads in
+// SubscribeChatStream - a no-op in production, overridden in tests to
+// simulate Hub.Close landing in that window (review finding, same seam
+// pattern as workspace.sameDeviceHook).
+var subscribeRaceHook = func() {}
+
 func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
 	if !h.requireChat(w, r, chatID) {
 		return
@@ -1246,14 +1252,16 @@ func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, ch
 	lastSeq := lastEventID(r)
 	// Covers all drivers of a run on this chat (REST or GitHub-dispatched).
 	active := h.hub.Active(chatID)
-	replay, live, cancel, _ := h.hub.Subscribe(chatID)
+	subscribeRaceHook()
+	replay, live, cancel, done := h.hub.Subscribe(chatID)
 	defer cancel()
 
 	// Cold path: hub has no buffered events - replay from the durable log.
-	// done=true (a finished topic) always lands here too: Hub.Close nils the
-	// buffer and clears started, so replay is empty and active is false -
-	// there is no reachable warm/done branch past this point.
-	if len(replay) == 0 && !active {
+	// done is atomic with Subscribe's replay snapshot; active above is not -
+	// if Hub.Close lands between the two reads, active is stale-true and
+	// live would be nil, so trust done (not the stale active) here or
+	// streamHub blocks forever reading a nil channel (review finding).
+	if done || (len(replay) == 0 && !active) {
 		// LoadEvents (#1101): the SSE table when it has rows, else - only when
 		// a WAL is armed - a fold-derived reconstruction.
 		evs, err := h.eventLog.LoadEvents(r.Context(), chatID, lastSeq)
