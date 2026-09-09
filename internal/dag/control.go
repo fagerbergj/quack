@@ -477,11 +477,16 @@ func (r *runControls) setOverrideIfNotStarted(chatID, nodeID, task string) bool 
 
 // register builds the control and rehydrates its persisted queue. Starting is
 // the resume transition: restore() clears any persisted pause, and the sticky
-// pause flag goes with it so the stream can't relabel the new run as paused.
+// pause AND cancelled flags go with it, so the stream can't relabel the new
+// run as paused or cancelled (a retry is exactly the transition out of
+// "cancelled" - cancelled -> queued is the only legal move into here).
 func (r *runControls) register(chatID, nodeID string) (*nodeControl, string, bool) {
 	c, override, ok := r.registerAndTakeOverride(chatID, nodeID)
 	c.restore()
 	r.clearPausedSticky(chatID, nodeID)
+	r.mu.Lock()
+	delete(r.cancelled[chatID], nodeID)
+	r.mu.Unlock()
 	return c, override, ok
 }
 

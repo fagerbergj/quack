@@ -251,10 +251,13 @@ func nodeEnd(events []stream.SSEEvent, nodeID string) string {
 	return ""
 }
 
-// TestExecute_CancelFlagDoesNotLeakAcrossTurns: node IDs (n1, n2, …) repeat every
-// turn, and the user-cancelled flag survives its control's unregister - so without
-// a per-turn reset a node cancelled last turn marks THIS turn's same-ID node
-// "stopped". ResetNodeCancels (called at the start of each Run) clears it.
+// TestExecute_CancelFlagDoesNotLeakAcrossTurns: node IDs (n1, n2, …) repeat
+// every turn, and the user-cancelled flag survives its control's unregister -
+// so a node cancelled last turn must not mark THIS turn's same-ID node
+// "stopped". Two independent guards cover it: ResetNodeCancels, called at the
+// start of each Run, and (since the retry fix - see
+// TestExecute_RetryClearsStaleCancelSticky) register() itself clearing the
+// per-node sticky the moment the node starts again, turn or retry alike.
 func TestExecute_CancelFlagDoesNotLeakAcrossTurns(t *testing.T) {
 	// A prior turn's cancel left cancelled["s"]["n1"] set; this turn n1 completes.
 	newRun := func() (*Executor, Plan) {
@@ -265,24 +268,18 @@ func TestExecute_CancelFlagDoesNotLeakAcrossTurns(t *testing.T) {
 		return ex, plan
 	}
 
-	t.Run("reset clears it", func(t *testing.T) {
-		ex, plan := newRun()
-		ex.ResetNodeCancels("s")
-		events, _ := runPlanSSE(t, ex, plan, "s")
-		if got := nodeEnd(events, "n1"); got != stream.EventNodeDone {
-			t.Errorf("n1 ended as %q; want node_done after reset", got)
-		}
-	})
-
-	// Guard the guard: without the reset the stale flag DOES corrupt this turn, so
-	// the reset above is load-bearing rather than a no-op.
-	t.Run("without reset it leaks", func(t *testing.T) {
-		ex, plan := newRun()
-		events, _ := runPlanSSE(t, ex, plan, "s")
-		if got := nodeEnd(events, "n1"); got != stream.EventNodeCancelled {
-			t.Errorf("n1 ended as %q; want the leak (node_cancelled) that proves reset matters", got)
-		}
-	})
+	for _, name := range []string{"reset clears it", "register clears it on its own"} {
+		t.Run(name, func(t *testing.T) {
+			ex, plan := newRun()
+			if name == "reset clears it" {
+				ex.ResetNodeCancels("s")
+			}
+			events, _ := runPlanSSE(t, ex, plan, "s")
+			if got := nodeEnd(events, "n1"); got != stream.EventNodeDone {
+				t.Errorf("n1 ended as %q; want node_done", got)
+			}
+		})
+	}
 }
 
 // TestExecute_QueueNodeMessageReRunsWithGuidance: queueing a message for a
