@@ -485,10 +485,10 @@ func TestGroupSessionEvents_CompactionEventDoesNotSplitATurn(t *testing.T) {
 	if len(groups) != 2 {
 		t.Fatalf("got %d groups, want 2 (the compaction event must not start a third)", len(groups))
 	}
-	if groups[0].userText != "turn one" || groups[0].asstText != "reply one" {
+	if groups[0].userText.String() != "turn one" || groups[0].asstText.String() != "reply one" {
 		t.Errorf("turn 0 = %+v", groups[0])
 	}
-	if groups[1].userText != "turn two" || groups[1].asstText != "reply two" {
+	if groups[1].userText.String() != "turn two" || groups[1].asstText.String() != "reply two" {
 		t.Errorf("turn 1 = %+v", groups[1])
 	}
 }
