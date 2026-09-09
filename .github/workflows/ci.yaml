@@ -37,8 +37,8 @@ jobs:
       - name: fetch skill plugins (not in git; go:embed needs them)
         run: ./scripts/plugins.sh
       - run: go vet ./...
-      - run: go test ./...
-      # Without -race the concurrency regression guards (#1016, #1032) pass vacuously.
+      # One pass, under the race detector: it is a superset of the plain run and the
+      # concurrency regression guards (#1016, #1032) pass vacuously without it.
       - run: go test -race ./...
 
   go-fmt:
