@@ -2,8 +2,11 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
+
+	"github.com/glebarez/sqlite"
 
 	"github.com/fagerbergj/quack/internal/dag"
 )
@@ -106,5 +109,51 @@ func TestDeleteChatRow_CascadesPerChatTables(t *testing.T) {
 	if turnCount != 0 || planCount != 0 || eventCount != 0 || watermarkCount != 0 || checkpointCount != 0 {
 		t.Fatalf("dependents survived a raw chats delete: turns=%d plans=%d events=%d watermarks=%d checkpoints=%d",
 			turnCount, planCount, eventCount, watermarkCount, checkpointCount)
+	}
+}
+
+// TestNew_SweepsPreExistingOrphansBeforeMigrating pins the boot-safety half
+// of #1296: prod already had 1,367 orphan chat_events rows (chats hard-deleted
+// before this FK existed) when this migration ships. Without a sweep,
+// AutoMigrate's ALTER TABLE ADD CONSTRAINT (Postgres) / table-rebuild
+// (SQLite) fails validating a pre-existing orphan, and the failure repeats
+// every boot since the orphan survives a restart.
+func TestNew_SweepsPreExistingOrphansBeforeMigrating(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "quack.db")
+	raw, err := sql.Open(sqlite.DriverName, dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	// Minimal pre-#1296 schema: no FK yet, just enough for AutoMigrate to see
+	// the table exists and try to add the constraint against it.
+	if _, err := raw.Exec(`CREATE TABLE chats (id TEXT PRIMARY KEY)`); err != nil {
+		t.Fatalf("create chats: %v", err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE chat_events (chat_id TEXT, seq INTEGER, event TEXT, created_at DATETIME, PRIMARY KEY (chat_id, seq))`); err != nil {
+		t.Fatalf("create chat_events: %v", err)
+	}
+	if _, err := raw.Exec(`INSERT INTO chats (id) VALUES ('live1')`); err != nil {
+		t.Fatalf("insert live chat: %v", err)
+	}
+	if _, err := raw.Exec(`INSERT INTO chat_events (chat_id, seq, event, created_at) VALUES ('orphan1', 1, '{}', datetime('now'))`); err != nil {
+		t.Fatalf("insert orphan event: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("close raw db: %v", err)
+	}
+
+	st, err := New("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("New: %v (a pre-existing orphan must not fail boot)", err)
+	}
+
+	var orphanCount, liveCount int64
+	st.db.Model(&ChatEvent{}).Where("chat_id = ?", "orphan1").Count(&orphanCount)
+	st.db.Model(&Chat{}).Where("id = ?", "live1").Count(&liveCount)
+	if orphanCount != 0 {
+		t.Errorf("orphan chat_events row survived migration: count=%d", orphanCount)
+	}
+	if liveCount != 1 {
+		t.Errorf("unrelated chat row was dropped by the sweep: count=%d", liveCount)
 	}
 }

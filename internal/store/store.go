@@ -484,6 +484,37 @@ func (s *Store) RecordedQuerySQL() []string {
 // (see internal/serve) and may be a different store than this one's.
 func (s *Store) SetArtifactService(svc artifact.Service) { s.artifacts = svc }
 
+// chatFKTables are the tables gaining the chats(id) ON DELETE CASCADE FK
+// (#1296), in the same order New() migrates them.
+var chatFKTables = []string{"chat_turns", "dag_plans", "chat_events", "projection_watermarks", "ledger_checkpoints"}
+
+// sweepOrphanChatRows deletes rows whose chat_id has no matching chats row,
+// before AutoMigrate below adds the ON DELETE CASCADE FK. A pre-existing
+// orphan - a chat hard-deleted by raw SQL before this FK existed - makes the
+// ALTER TABLE ADD CONSTRAINT (Postgres) or table-rebuild (SQLite) that
+// follows fail outright, and the orphan survives a restart, so that's a
+// crash loop rather than a one-time failure. No-op on a fresh DB (no chats
+// table yet) or once every table is already clean.
+func sweepOrphanChatRows(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&Chat{}) {
+		return nil
+	}
+	for _, table := range chatFKTables {
+		if !db.Migrator().HasTable(table) {
+			continue
+		}
+		res := db.Exec(fmt.Sprintf("DELETE FROM %s WHERE chat_id NOT IN (SELECT id FROM chats)", table))
+		if res.Error != nil {
+			return fmt.Errorf("store: sweep orphan %s rows: %w", table, res.Error)
+		}
+		if res.RowsAffected > 0 {
+			slog.Warn("store: swept orphan rows with no owning chat before migration",
+				"component", "store", "table", table, "count", res.RowsAffected)
+		}
+	}
+	return nil
+}
+
 // New opens the persistence store, runs migrations, and returns it.
 func New(kind, url string) (*Store, error) {
 	dialector, err := dialectorFor(kind, url)
@@ -496,6 +527,9 @@ func New(kind, url string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{db: db}
+	if err := sweepOrphanChatRows(db); err != nil {
+		return nil, err
+	}
 	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}, &GithubSnapshot{}, &GithubReviewBaseline{}, &GithubFixState{}, &GithubMergeIntent{}, &MemoryOp{}, &ProjectionWatermark{}, &Checkpoint{}); err != nil {
 		return nil, err
 	}
