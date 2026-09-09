@@ -115,8 +115,8 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 			return e.gateScore(ctx, appName, userID, sessionID, nodeID)
 		}, func(nodeID string) bool {
 			return e.controls.wasCancelled(cancelKey, nodeID)
-		}, func(nodeID string) bool {
-			return e.controls.wasPaused(cancelKey, nodeID)
+		}, func(nodeID string) PauseReason {
+			return e.controls.pauseReason(cancelKey, nodeID)
 		}, func(nodeID string, gen int) string {
 			return e.NodeQueueGuidance(cancelKey, nodeID, gen)
 		}),
@@ -156,7 +156,7 @@ func (s *DagStream) Finish() {
 		if len(s.ds.needsInput) > 0 && !s.ds.started[n.ID] {
 			continue
 		}
-		if s.ds.userPaused != nil && s.ds.userPaused(n.ID) {
+		if s.ds.pauseReasonOf != nil && s.ds.pauseReasonOf(n.ID) != "" {
 			s.yield(stream.NodePaused(n.ID), nil)
 			continue
 		}
@@ -288,9 +288,12 @@ type dagStream struct {
 	outputs    map[string]string
 	scoreOf    func(string) gateScore
 	startedAt  map[string]time.Time
-	cancelled  func(string) bool
-	userPaused func(string) bool
-	steerOf    func(string, int) string
+	cancelled func(string) bool
+	// pauseReasonOf: "" if not paused. A shutdown-drain pause (PauseShutdown)
+	// doesn't block a delivered node_done the way a live user pause does - see
+	// handle()'s switch.
+	pauseReasonOf func(string) PauseReason
+	steerOf       func(string, int) string
 
 	started     map[string]bool
 	doneEmitted map[string]bool
@@ -320,9 +323,9 @@ type runUsage struct {
 	lastAt time.Time
 }
 
-func newDagStream(traceID, chatID string, agentByID, scopeByID map[string]string, yield func(stream.SSEEvent, error) bool, outputs map[string]string, scoreOf func(string) gateScore, cancelled func(string) bool, userPaused func(string) bool, steerOf func(string, int) string) *dagStream {
+func newDagStream(traceID, chatID string, agentByID, scopeByID map[string]string, yield func(stream.SSEEvent, error) bool, outputs map[string]string, scoreOf func(string) gateScore, cancelled func(string) bool, pauseReasonOf func(string) PauseReason, steerOf func(string, int) string) *dagStream {
 	return &dagStream{
-		traceID: traceID, chatID: chatID, agentByID: agentByID, scopeByID: scopeByID, yield: yield, outputs: outputs, scoreOf: scoreOf, cancelled: cancelled, userPaused: userPaused, steerOf: steerOf,
+		traceID: traceID, chatID: chatID, agentByID: agentByID, scopeByID: scopeByID, yield: yield, outputs: outputs, scoreOf: scoreOf, cancelled: cancelled, pauseReasonOf: pauseReasonOf, steerOf: steerOf,
 		started: map[string]bool{}, doneEmitted: map[string]bool{}, needsInput: map[string]bool{}, startedAt: map[string]time.Time{},
 		curRun: map[string]string{}, steerSeen: map[string]int{}, usage: map[string]*runUsage{}, nodeUsage: map[string]*runUsage{},
 	}
@@ -386,8 +389,15 @@ func (s *dagStream) handle(ev *session.Event) bool {
 				s.outputs[node] = out
 				s.last = out
 			}
+			var pauseReason PauseReason
+			if s.pauseReasonOf != nil {
+				pauseReason = s.pauseReasonOf(node)
+			}
 			switch {
-			case s.userPaused != nil && s.userPaused(node):
+			case pauseReason != "" && pauseReason != PauseShutdown:
+				// A live user/HITL pause: node.go's own cooperative check caught
+				// this before commitDelivery ran, so the draft answer (if any)
+				// was never delivered.
 				if !s.emit(stream.NodePaused(node)) {
 					return false
 				}
@@ -396,7 +406,17 @@ func (s *dagStream) handle(ev *session.Event) bool {
 					return false
 				}
 			case out != "":
+				// A delivered answer wins over a shutdown-drain pause flipped
+				// after the gate loop's last check (e.g. inside commitDelivery,
+				// which runs with the control still registered) - the work
+				// already happened, so the node is done regardless of the late
+				// flag. serve.DrainActiveRuns pauses exactly this population on
+				// every SIGTERM.
 				if !s.emit(stream.NodeDone(node, s.nodeDoneData(node))) {
+					return false
+				}
+			case pauseReason == PauseShutdown:
+				if !s.emit(stream.NodePaused(node)) {
 					return false
 				}
 			default:

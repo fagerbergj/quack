@@ -24,7 +24,7 @@ func drive(evs []*session.Event, agentByID map[string]string, score gateScore) [
 		map[string]string{},
 		func(string) gateScore { return score },
 		func(string) bool { return false },
-		func(string) bool { return false },
+		func(string) PauseReason { return "" },
 		func(string, int) string { return "" },
 	)
 	for _, ev := range evs {
@@ -130,7 +130,7 @@ func TestDagStream_EmptyNodeReportsRecordedGatewayFailure(t *testing.T) {
 		map[string]string{},
 		func(string) gateScore { return gateScore{} },
 		func(string) bool { return false },
-		func(string) bool { return false },
+		func(string) PauseReason { return "" },
 		func(string, int) string { return "" },
 	)
 	ds.handle(&session.Event{NodeInfo: &session.NodeInfo{Path: npath}, Output: ""})
@@ -175,7 +175,7 @@ func TestDagStream_EmptyNodeIgnoresOtherRolesFailure(t *testing.T) {
 		map[string]string{},
 		func(string) gateScore { return gateScore{} },
 		func(string) bool { return false },
-		func(string) bool { return false },
+		func(string) PauseReason { return "" },
 		func(string, int) string { return "" },
 	)
 	ds.handle(&session.Event{NodeInfo: &session.NodeInfo{Path: npath}, Output: ""})
@@ -322,7 +322,7 @@ func TestDagStream_WorkerCompleteStampsLastActivityNotJudgeGap(t *testing.T) {
 	ds := newDagStream("", "", agentByID, nil,
 		func(ev stream.SSEEvent, _ error) bool { got = append(got, ev); return true },
 		map[string]string{}, func(string) gateScore { return gateScore{} },
-		func(string) bool { return false }, func(string) bool { return false },
+		func(string) bool { return false }, func(string) PauseReason { return "" },
 		func(string, int) string { return "" },
 	)
 	ds.handle(ev(r0, &genai.Part{Text: "draft"}))
@@ -420,7 +420,7 @@ func TestDagStream_SteeredRunEmitsNodeSteered(t *testing.T) {
 		map[string]string{},
 		func(string) gateScore { return gateScore{} },
 		func(string) bool { return false },
-		func(string) bool { return false },
+		func(string) PauseReason { return "" },
 		func(node string, gen int) string { return fmt.Sprintf("guidance-%s-%d", node, gen) },
 	)
 	evs := []*session.Event{

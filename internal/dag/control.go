@@ -390,12 +390,11 @@ func (r *runControls) wasCancelled(chatID, nodeID string) bool {
 	return r.cancelled[chatID][nodeID]
 }
 
-// wasPaused reports whether a node was user-paused (survives unregister).
-func (r *runControls) wasPaused(chatID, nodeID string) bool {
+// pauseReason reports why a node was user-paused, "" if it wasn't (survives unregister).
+func (r *runControls) pauseReason(chatID, nodeID string) PauseReason {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	_, ok := r.paused[chatID][nodeID]
-	return ok
+	return r.paused[chatID][nodeID]
 }
 
 // markPausedSticky records the pause reason past unregister.

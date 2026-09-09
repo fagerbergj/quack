@@ -32,22 +32,40 @@ func (s *Store) planForChat(ctx context.Context, chatID string) (string, error) 
 // metadata (the HITL park, whose status arrives on the needs_input event).
 func (s *Store) SetNodeStatus(ctx context.Context, planID, nodeID string, to dag.NodeStatus, reason dag.PauseReason, question string) error {
 	fields := map[string]any{"pause_reason": string(reason), "pending_question": question}
-	if to != "" {
-		prev, err := s.GetDagNode(ctx, planID, nodeID)
-		if err != nil {
-			return err
-		}
-		from := dag.StatusQueued
-		if prev != nil {
-			from = dag.NodeStatus(prev.Status)
-		}
-		if from != to && !dag.CanTransition(from, to) {
-			return fmt.Errorf("%w: %s → %s (node %s)", ErrIllegalTransition, from, to, nodeID)
-		}
-		fields["status"] = string(to)
+	if to == "" {
+		return s.db.WithContext(ctx).Model(&DagNode{}).
+			Where("plan_id = ? AND node_id = ?", planID, nodeID).Updates(fields).Error
 	}
-	return s.db.WithContext(ctx).Model(&DagNode{}).
-		Where("plan_id = ? AND node_id = ?", planID, nodeID).Updates(fields).Error
+	prev, err := s.GetDagNode(ctx, planID, nodeID)
+	if err != nil {
+		return err
+	}
+	from := dag.StatusQueued
+	if prev != nil {
+		from = dag.NodeStatus(prev.Status)
+	}
+	if from != to && !dag.CanTransition(from, to) {
+		return fmt.Errorf("%w: %s → %s (node %s)", ErrIllegalTransition, from, to, nodeID)
+	}
+	return s.casNodeStatus(ctx, planID, nodeID, from, to, fields)
+}
+
+// casNodeStatus commits only if the row's status still equals from: a
+// legality check run against a read that's since been superseded (a pause
+// racing the node's own done write, #late-pause-cancel) must not silently
+// overwrite the newer status just because it once looked legal.
+func (s *Store) casNodeStatus(ctx context.Context, planID, nodeID string, from, to dag.NodeStatus, fields map[string]any) error {
+	fields["status"] = string(to)
+	res := s.db.WithContext(ctx).Model(&DagNode{}).
+		Where("plan_id = ? AND node_id = ? AND status = ?", planID, nodeID, string(from)).
+		Updates(fields)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return fmt.Errorf("%w: %s → %s (node %s) lost the race: status changed underneath it", ErrIllegalTransition, from, to, nodeID)
+	}
+	return nil
 }
 
 // SetNodeStatusForChat is SetNodeStatus keyed the way the control plane
