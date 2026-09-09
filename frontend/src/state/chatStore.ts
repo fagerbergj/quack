@@ -16,12 +16,16 @@ import type { Turn, DagOutputItem, NodeStatus, PauseReason, QueuedMessage, Usage
 export type { NodeStatus, PauseReason, QueuedMessage }
 
 // anchorTime resolves a dag/node/run's start time from the server's epoch-ms
-// timestamp when one arrived on the wire - clamped to now so a client/server
-// clock skew can never produce a start time in the future (negative elapsed).
-// Falls back to Date.now() for a live event that carries no server timestamp.
+// timestamp when one arrived on the wire, UNCLAMPED: a finished run's duration
+// is server_finish - server_start, both from the same clock, so skew between
+// client and server never enters the arithmetic. Clamping this to the
+// client's Date.now() (as a prior version did, to dodge a negative "still
+// running" elapsed reading) instead corrupted the frozen duration whenever
+// the client trailed the server, since finished_at_ms is never clamped -
+// LiveTimer's fmtMs floors the live-ticking case at 0 instead. Falls back to
+// Date.now() for a live event that carries no server timestamp.
 function anchorTime(serverMs?: number): number {
-  if (serverMs == null) return Date.now()
-  return Math.min(serverMs, Date.now())
+  return serverMs ?? Date.now()
 }
 
 export interface NodeState {
