@@ -60,7 +60,7 @@ func TestStreaming_TranslatesContentReasoningTools(t *testing.T) {
 		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`,
 	)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 
 	content, finish, usage := collect(t, m)
 	var text, toolName, thought string
@@ -102,7 +102,7 @@ func TestStreaming_EmptyTurnReasoningOnly(t *testing.T) {
 		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{},"finish_reason":"length"}],"usage":{"prompt_tokens":10,"completion_tokens":8,"total_tokens":18}}`,
 	)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 
 	content, finish, _ := collect(t, m)
 	var answer string
@@ -205,7 +205,7 @@ func TestStreaming_RecoversXMLToolCallsFromReasoning(t *testing.T) {
 		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`,
 	)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 
 	content, _, _ := collect(t, m)
 	var thought string
@@ -244,7 +244,7 @@ func TestStreaming_RecoversBareFunctionCallFromContent(t *testing.T) {
 		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`,
 	)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 
 	content, _, _ := collect(t, m)
 	var answer string
@@ -277,7 +277,7 @@ func TestStreaming_RecoversBareFunctionCallFromContent(t *testing.T) {
 func TestGenerate_RecoversXMLToolCallsFromReasoning(t *testing.T) {
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"","reasoning_content":"Let me search.\n<tool_call>\n<function=web_search>\n<parameter=query>\nSMR 2026\n</parameter>\n</function>\n</tool_call>"}}]}`)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 
 	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
 	var final *model.LLMResponse
@@ -364,7 +364,7 @@ func TestReasoningToolCalls_BareFunctionForm_NoFalsePositive(t *testing.T) {
 func TestGenerate_RecoversBareFunctionCallFromContent(t *testing.T) {
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"Checking in.\n<function=ask_advisor>\n<parameter=question>\nShould we ship this?\n</parameter>\n</function>\n"}}]}`)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 
 	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
 	var final *model.LLMResponse
@@ -407,7 +407,7 @@ func TestGenerate_NoFalsePositiveOnProseMentioningFunctionTag(t *testing.T) {
 		"arguments and a closing </function> tag."
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"`+body+`"}}]}`)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 
 	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
 	var final *model.LLMResponse
@@ -455,7 +455,7 @@ func jsonServer(t *testing.T, body string) *httptest.Server {
 func TestGenerate_PromotesReasoningWhenContentEmpty(t *testing.T) {
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"","reasoning_content":"Sources read and synthesized: the answer is 42."}}]}`)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 
 	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
 	var final *model.LLMResponse
@@ -484,7 +484,7 @@ func TestGenerate_PromotesReasoningWhenContentEmpty(t *testing.T) {
 func TestGenerate_ContentTakesPriorityOverReasoning(t *testing.T) {
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"the real answer","reasoning_content":"unrelated thinking"}}]}`)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 
 	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
 	var final *model.LLMResponse

@@ -34,17 +34,22 @@ var ErrNoChoicesInResponse = errors.New("no choices in OpenAI response")
 type OpenAIModel struct {
 	client    openai.Client
 	ModelName string
+	// DefaultEffort is models.<name>.effort ("", "low", "medium", "high"); it
+	// sets reasoning_effort on every call unless the request already carries
+	// its own ThinkingConfig (e.g. the judge's gates.judge.thinking_level).
+	DefaultEffort string
 }
 
-func NewOpenAIModel(modelName, endpoint, apiKey string) *OpenAIModel {
+func NewOpenAIModel(modelName, endpoint, apiKey, defaultEffort string) *OpenAIModel {
 	client := openai.NewClient(
 		option.WithBaseURL(endpoint),
 		option.WithAPIKey(apiKey),
 		option.WithHTTPClient(&http.Client{Transport: httpx.NewTransport(nil)}),
 	)
 	return &OpenAIModel{
-		client:    client,
-		ModelName: modelName,
+		client:        client,
+		ModelName:     modelName,
+		DefaultEffort: defaultEffort,
 	}
 }
 
@@ -146,7 +151,43 @@ func (o *OpenAIModel) GenerateContent(ctx context.Context, req *model.LLMRequest
 	return o.generate(ctx, req)
 }
 
+// applyDefaultEffort fills req.Config.ThinkingConfig from DefaultEffort when
+// the caller sent none - mutates req in place so the ledger's emitChatEvent
+// (which reads the same req after this call returns) records the resolved
+// effort too, not just the outgoing HTTP request.
+func (o *OpenAIModel) applyDefaultEffort(req *model.LLMRequest) {
+	if o.DefaultEffort == "" {
+		return
+	}
+	if req.Config == nil {
+		req.Config = &genai.GenerateContentConfig{}
+	}
+	if req.Config.ThinkingConfig != nil {
+		return // an explicit ThinkingConfig (e.g. judge thinking_level) wins
+	}
+	req.Config.ThinkingConfig = effortThinkingConfig(o.DefaultEffort)
+}
+
+// effortThinkingConfig maps models.<name>.effort to genai's enum - the same
+// low/medium/high vocabulary as gates.judge.thinking_level. Config.validate
+// is the gate for "low"/"medium"/"high"/""; an unrecognized value here (this
+// path is unreachable for a validated config) sends no ThinkingConfig rather
+// than silently guessing medium.
+func effortThinkingConfig(effort string) *genai.ThinkingConfig {
+	switch effort {
+	case "low":
+		return &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow}
+	case "medium":
+		return &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelMedium}
+	case "high":
+		return &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh}
+	default:
+		return nil
+	}
+}
+
 func (o *OpenAIModel) generate(ctx context.Context, req *model.LLMRequest) iter.Seq2[*model.LLMResponse, error] {
+	o.applyDefaultEffort(req)
 	return func(yield func(*model.LLMResponse, error) bool) {
 		openaiReq, err := toOpenAIChatCompletionRequest(req, o.ModelName)
 		if err != nil {
@@ -173,6 +214,7 @@ func (o *OpenAIModel) generate(ctx context.Context, req *model.LLMRequest) iter.
 }
 
 func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest) iter.Seq2[*model.LLMResponse, error] {
+	o.applyDefaultEffort(req)
 	return func(yield func(*model.LLMResponse, error) bool) {
 		openaiReq, err := toOpenAIChatCompletionRequest(req, o.ModelName)
 		if err != nil {
@@ -526,6 +568,9 @@ func toOpenAIChatCompletionRequest(req *model.LLMRequest, modelName string) (ope
 		return openaiReq, nil
 	}
 
+	// req.Config.ThinkingConfig is either set explicitly by the caller (e.g.
+	// gates.judge.thinking_level) or filled in from models.<name>.effort by
+	// applyDefaultEffort above - either way this is the resolved effort.
 	if req.Config.ThinkingConfig != nil {
 		switch req.Config.ThinkingConfig.ThinkingLevel {
 		case genai.ThinkingLevelLow:
