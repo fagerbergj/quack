@@ -73,9 +73,24 @@ func memoryIDs(received []memory.Delivered) []string {
 }
 
 // missingMemoryVotes reports a round that owed votes (non-empty received
-// set) but whose verdict carries none (#1259).
+// set) but whose verdict left at least one of them unvoted (#1259). A
+// partial vote (e.g. 1 of 5) used to read as "not missing" since only
+// len(v.Memories)==0 was checked - the rest silently never got a vote
+// recorded (applyMemoryVotesOnPass only applies ids present in v.Memories).
 func missingMemoryVotes(receivedIDs []string, v verdict) bool {
-	return len(receivedIDs) > 0 && len(v.Memories) == 0
+	if len(receivedIDs) == 0 {
+		return false
+	}
+	voted := make(map[string]bool, len(v.Memories))
+	for _, mv := range v.Memories {
+		voted[mv.ID] = true
+	}
+	for _, id := range receivedIDs {
+		if !voted[id] {
+			return true
+		}
+	}
+	return false
 }
 
 // judgeMemoriesNudgeText: one-shot in-session nudge (#1236 pattern) for a
