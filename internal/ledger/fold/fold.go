@@ -431,6 +431,11 @@ func applyEntries(entries []ledger.Entry) *Result {
 // ApplyEntries is applyEntries, exported for a caller that already has
 // entries in hand (e.g. cli.RunLedgerRecover, which folds the same read it
 // used to find delivery intents instead of re-reading the chat's ledger).
+// If entries came from a kind-filtered read, the returned Result.LastSeq is
+// the max seq among only the filtered kinds, NOT the chat's true last seq -
+// it must never be persisted as a projection watermark (a later fold would
+// then skip entries of other kinds it never actually processed). Recover's
+// caller is fine: it never persists LastSeq.
 func ApplyEntries(entries []ledger.Entry) *Result {
 	return applyEntries(entries)
 }
