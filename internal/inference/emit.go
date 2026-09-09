@@ -62,6 +62,9 @@ func emitChatEvent(ctx context.Context, name string, req *model.LLMRequest, resp
 		if req.Config.Seed != nil {
 			attrs = append(attrs, attribute.Int64(otelobs.GenAIRequestSeed, int64(*req.Config.Seed)))
 		}
+		if tc := req.Config.ThinkingConfig; tc != nil {
+			attrs = append(attrs, attribute.String(otelobs.GenAIRequestReasoningEffort, string(tc.ThinkingLevel)))
+		}
 	}
 
 	// Prompt provenance: bundle id + content hash. The bundle id isn't

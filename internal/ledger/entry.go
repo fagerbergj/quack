@@ -101,22 +101,26 @@ type Entry struct {
 // Input/Output/SystemInstructions/ToolDefinitions are the JSON strings the
 // emitter built, kept verbatim so replay hands back exactly what was seen.
 type LLMCallPayload struct {
-	Provider           string  `json:"provider,omitempty"`
-	RequestModel       string  `json:"request_model"`
-	ResponseModel      string  `json:"response_model,omitempty"`
-	ResponseID         string  `json:"response_id,omitempty"`
-	FinishReason       string  `json:"finish_reason,omitempty"`
-	InputTokens        int64   `json:"input_tokens,omitempty"`
-	OutputTokens       int64   `json:"output_tokens,omitempty"`
-	Temperature        float64 `json:"temperature,omitempty"`
-	MaxTokens          int64   `json:"max_tokens,omitempty"`
-	PromptName         string  `json:"prompt_name,omitempty"`
-	PromptVersion      string  `json:"prompt_version,omitempty"`
-	SystemInstructions string  `json:"system_instructions,omitempty"`
-	ToolDefinitions    string  `json:"tool_definitions,omitempty"`
-	Input              string  `json:"input,omitempty"`
-	Output             string  `json:"output,omitempty"`
-	Error              string  `json:"error,omitempty"`
+	Provider      string  `json:"provider,omitempty"`
+	RequestModel  string  `json:"request_model"`
+	ResponseModel string  `json:"response_model,omitempty"`
+	ResponseID    string  `json:"response_id,omitempty"`
+	FinishReason  string  `json:"finish_reason,omitempty"`
+	InputTokens   int64   `json:"input_tokens,omitempty"`
+	OutputTokens  int64   `json:"output_tokens,omitempty"`
+	Temperature   float64 `json:"temperature,omitempty"`
+	MaxTokens     int64   `json:"max_tokens,omitempty"`
+	// ReasoningEffort is the resolved effort ("low"/"medium"/"high") sent as
+	// gen_ai.request.reasoning_effort - from models.<name>.effort or an
+	// explicit ThinkingConfig (e.g. gates.judge.thinking_level); "" = neither set.
+	ReasoningEffort    string `json:"reasoning_effort,omitempty"`
+	PromptName         string `json:"prompt_name,omitempty"`
+	PromptVersion      string `json:"prompt_version,omitempty"`
+	SystemInstructions string `json:"system_instructions,omitempty"`
+	ToolDefinitions    string `json:"tool_definitions,omitempty"`
+	Input              string `json:"input,omitempty"`
+	Output             string `json:"output,omitempty"`
+	Error              string `json:"error,omitempty"`
 	// QuackVersion/BundleHash/CostUSD: provenance added for #1096 - which
 	// build and agent bundle produced this call, and what it cost. CostUSD
 	// is a pointer so an actual $0 call (a priced model with free tokens)

@@ -628,6 +628,11 @@ type ModelConfig struct {
 	ContextWindow int           `yaml:"context_window"`
 	Limits        *ModelLimits  `yaml:"limits"`
 	Cost          *ModelPricing `yaml:"cost"`
+	// Effort is a reasoning-effort default ("low"/"medium"/"high") mapped to
+	// provider-specific params (OpenAI-compatible reasoning_effort); "" (default)
+	// sends no ThinkingConfig unless the request sets its own (e.g. the judge's
+	// gates.judge.thinking_level, which always takes precedence).
+	Effort string `yaml:"effort"`
 }
 
 // ModelLimits gates admission (#1007, enforced by dag.Admission). Absent = unlimited:
@@ -665,6 +670,12 @@ func (c *Config) ModelCost(name string) *ModelPricing {
 		return m.Cost
 	}
 	return nil
+}
+
+// ModelEffort resolves a model's default reasoning effort by its registry
+// name. "" means unset - no default ThinkingConfig is sent for it.
+func (c *Config) ModelEffort(name string) string {
+	return c.Models[name].Effort
 }
 
 type StoreConfig struct {
@@ -1000,6 +1011,11 @@ func (c *Config) validate() error {
 			if _, ok := p.Limits.Active[m.Role]; !ok {
 				return fmt.Errorf("config: model %q role %q is not a key of provider %q limits.active", name, m.Role, m.Provider)
 			}
+		}
+		switch m.Effort {
+		case "", "low", "medium", "high":
+		default:
+			return fmt.Errorf("config: model %q effort must be one of low, medium, high (or unset)", name)
 		}
 	}
 	if _, ok := c.Providers[c.Orchestrator.Provider]; !ok {

@@ -31,7 +31,7 @@ func TestStreaming_EmptyTurnLogsFinishReason(t *testing.T) {
 		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{},"finish_reason":"length"}],"usage":{"prompt_tokens":10,"completion_tokens":0,"total_tokens":10}}`,
 	)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 
 	content, finish, _ := collect(t, m)
 	if len(content.Parts) != 0 {
@@ -53,7 +53,7 @@ func TestGenerate_EmptyTurnDoesNotLog(t *testing.T) {
 	buf := captureLogs(t)
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"length","message":{"role":"assistant","content":""}}]}`)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 
 	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
 	var final *model.LLMResponse
@@ -80,7 +80,7 @@ func TestStreaming_ToolCallsFinishReason(t *testing.T) {
 		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`,
 	)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 
 	_, finish, _ := collect(t, m)
 	if finish != genai.FinishReasonStop {
@@ -92,7 +92,7 @@ func TestStreaming_ToolCallsFinishReason(t *testing.T) {
 func TestGenerate_ToolCallsFinishReason(t *testing.T) {
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"web_search","arguments":"{}"}}]}}]}`)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 
 	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
 	var final *model.LLMResponse
@@ -121,7 +121,7 @@ func TestStreaming_PromotedReasoningLogMessage(t *testing.T) {
 		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{},"finish_reason":"length"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`,
 	)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 	collect(t, m)
 	if !strings.Contains(buf.String(), "promoted reasoning to answer (empty content, unclosed </think>)") {
 		t.Errorf("expected streaming's promoted-reasoning message, got: %s", buf.String())
@@ -132,7 +132,7 @@ func TestGenerate_PromotedReasoningLogMessage(t *testing.T) {
 	buf := captureLogs(t)
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"","reasoning_content":"thinking"}}]}`)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 
 	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
 	for resp, err := range m.GenerateContent(context.Background(), req, false) {
@@ -155,7 +155,7 @@ func TestGenerate_ToolCallsSuppressPromotion(t *testing.T) {
 	buf := captureLogs(t)
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":"","reasoning_content":"deciding which tool to call","tool_calls":[{"id":"c1","type":"function","function":{"name":"web_search","arguments":"{}"}}]}}]}`)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 
 	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
 	var final *model.LLMResponse
@@ -198,7 +198,7 @@ func TestGenerate_PromotionTrimsReasoning(t *testing.T) {
 	buf := captureLogs(t)
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"","reasoning_content":"  the answer  "}}]}`)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 
 	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
 	var final *model.LLMResponse
@@ -230,7 +230,7 @@ func TestGenerate_PromotionTrimsReasoning(t *testing.T) {
 func TestGenerate_LeakedReasoningUsageMatchesPreRefactor(t *testing.T) {
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"the answer","reasoning_content":"Let me search.\n<tool_call>\n<function=web_search>\n<parameter=query>\nSMR 2026\n</parameter>\n</function>\n</tool_call>"}}],"usage":{"prompt_tokens":10,"completion_tokens":50,"total_tokens":60}}`)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 
 	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
 	var final *model.LLMResponse

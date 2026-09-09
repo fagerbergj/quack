@@ -19,9 +19,16 @@ import (
 // "openai" is wrapped in hydratingModel (hydrate.go) then tracedModel
 // (traced.go) - the one factory, the one place to hook both.
 func NewModel(p config.ProviderConfig, modelName string, artifacts artifact.Service, cost *config.ModelPricing) (model.LLM, error) {
+	return NewModelWithEffort(p, modelName, artifacts, cost, "")
+}
+
+// NewModelWithEffort is NewModel plus models.<name>.effort ("", "low",
+// "medium", "high"), which sets a default reasoning_effort on every call to
+// this model unless the request already carries its own ThinkingConfig.
+func NewModelWithEffort(p config.ProviderConfig, modelName string, artifacts artifact.Service, cost *config.ModelPricing, effort string) (model.LLM, error) {
 	switch p.Kind {
 	case "openai":
-		live := &hydratingModel{LLM: openaimodel.NewOpenAIModel(modelName, p.Endpoint, p.APIKey), artifacts: artifacts}
+		live := &hydratingModel{LLM: openaimodel.NewOpenAIModel(modelName, p.Endpoint, p.APIKey, effort), artifacts: artifacts}
 		tm := &tracedModel{LLM: live, name: modelName}
 		tm.pricing = cost
 		return tm, nil
@@ -36,7 +43,7 @@ func NewModel(p config.ProviderConfig, modelName string, artifacts artifact.Serv
 		// Fork-replay (#605): p.Live is the caller's REAL provider config,
 		// built through this SAME factory - wrapped like any other model.
 		sess.EnableFork(p.ForkFrom)
-		live, err := NewModel(*p.Live, modelName, artifacts, cost)
+		live, err := NewModelWithEffort(*p.Live, modelName, artifacts, cost, effort)
 		if err != nil {
 			return nil, fmt.Errorf("inference: replay provider: live delegate: %w", err)
 		}

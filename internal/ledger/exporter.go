@@ -90,7 +90,8 @@ func EntryFromRecord(r sdklog.Record) (Entry, bool) {
 			ResponseModel: str("gen_ai.response.model"), ResponseID: str("gen_ai.response.id"),
 			InputTokens: int64(num("gen_ai.usage.input_tokens")), OutputTokens: int64(num("gen_ai.usage.output_tokens")),
 			Temperature: num("gen_ai.request.temperature"), MaxTokens: int64(num("gen_ai.request.max_tokens")),
-			PromptName: str("gen_ai.prompt.name"), PromptVersion: str("gen_ai.prompt.version"),
+			ReasoningEffort: str("gen_ai.request.reasoning_effort"),
+			PromptName:      str("gen_ai.prompt.name"), PromptVersion: str("gen_ai.prompt.version"),
 			SystemInstructions: str("gen_ai.system_instructions"), ToolDefinitions: str("gen_ai.tool.definitions"),
 			Input: str("gen_ai.input.messages"), Output: str("gen_ai.output.messages"), Error: str("error.type"),
 			QuackVersion: str("quack.version"), BundleHash: str("quack.bundle.hash")}

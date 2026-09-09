@@ -502,7 +502,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	warnIfEpisodicRecordsWontSurvive(cfg)
 
 	prov, _ := cfg.Provider(cfg.Orchestrator.Provider)
-	llm, err := inference.NewModel(prov, cfg.Orchestrator.Model, artifacts, cfg.ModelCost(cfg.Orchestrator.Model))
+	llm, err := inference.NewModelWithEffort(prov, cfg.Orchestrator.Model, artifacts, cfg.ModelCost(cfg.Orchestrator.Model), cfg.ModelEffort(cfg.Orchestrator.Model))
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("inference model init failed: %w", err)
 	}
@@ -577,7 +577,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		if !ok {
 			return nil, fmt.Errorf("consolidation provider %q not found", rm.Consolidation.Provider)
 		}
-		consolidator, err := inference.NewModel(cprov, rm.Consolidation.Model, artifacts, cfg.ModelCost(rm.Consolidation.Model))
+		consolidator, err := inference.NewModelWithEffort(cprov, rm.Consolidation.Model, artifacts, cfg.ModelCost(rm.Consolidation.Model), cfg.ModelEffort(rm.Consolidation.Model))
 		if err != nil {
 			return nil, fmt.Errorf("consolidation model: %w", err)
 		}
@@ -686,7 +686,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	var advisorAgent adkagent.Agent
 	if cfg.Gates.JudgeEnabled() {
 		if aprov, ok := cfg.Provider(cfg.Gates.Judge.Provider); ok {
-			if am, merr := inference.NewModel(aprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model)); merr != nil {
+			if am, merr := inference.NewModelWithEffort(aprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model), cfg.ModelEffort(cfg.Gates.Judge.Model)); merr != nil {
 				slog.Warn("advisor model build failed; ask_advisor disabled", "component", "startup", "err", merr)
 			} else if ab, berr := agent.LoadBundle("agents/advisor"); berr != nil {
 				slog.Warn("advisor bundle load failed; ask_advisor disabled", "component", "startup", "err", berr)
@@ -737,7 +737,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		// instance gated nodes stamp - hand it an unstamped one instead (#1049).
 		classifyModel := judgeModel
 		if jprov, ok := cfg.Provider(cfg.Gates.Judge.Provider); ok {
-			if m, err := inference.NewModel(jprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model)); err == nil {
+			if m, err := inference.NewModelWithEffort(jprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model), cfg.ModelEffort(cfg.Gates.Judge.Model)); err == nil {
 				classifyModel = m
 			} else {
 				slog.Warn("classify: own judge model unavailable; sharing the gate's (attribution may follow another node)",
@@ -939,7 +939,7 @@ func buildUserMemoryHookAgent(h config.UserMemoryHookConfig, cfg *config.Config,
 	if !ok {
 		return nil, fmt.Errorf("provider %q not found", h.Provider)
 	}
-	m, err := inference.NewModel(prov, h.Model, artifacts, cfg.ModelCost(h.Model))
+	m, err := inference.NewModelWithEffort(prov, h.Model, artifacts, cfg.ModelCost(h.Model), cfg.ModelEffort(h.Model))
 	if err != nil {
 		return nil, fmt.Errorf("model: %w", err)
 	}
@@ -1056,7 +1056,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			if !ok {
 				return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("gates.judge: provider %q not found", cfg.Gates.Judge.Provider)
 			}
-			judge, err := inference.NewModel(jprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model))
+			judge, err := inference.NewModelWithEffort(jprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model), cfg.ModelEffort(cfg.Gates.Judge.Model))
 			if err != nil {
 				return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("gates.judge: model: %w", err)
 			}
@@ -1082,7 +1082,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			// (vetting/node.go), and these callers are not nodes - sharing it
 			// makes their calls inherit whichever node stamped last (#1049).
 			unstamped := func() (model.LLM, error) {
-				return inference.NewModel(jprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model))
+				return inference.NewModelWithEffort(jprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model), cfg.ModelEffort(cfg.Gates.Judge.Model))
 			}
 			safetyModel, err := unstamped()
 			if err != nil {
@@ -1119,7 +1119,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("compaction: provider %q not found", compCfg.Provider)
 		}
 		var err error
-		if fallbackSummarizer, err = inference.NewModel(cprov, compCfg.Model, artifacts, cfg.ModelCost(compCfg.Model)); err != nil {
+		if fallbackSummarizer, err = inference.NewModelWithEffort(cprov, compCfg.Model, artifacts, cfg.ModelCost(compCfg.Model), cfg.ModelEffort(compCfg.Model)); err != nil {
 			return nil, nil, nodeServers, nil, nil, nil, nil, fmt.Errorf("compaction: model: %w", err)
 		}
 		// Only ever used when ResolveSummarizer has no active worker model - rare, but
@@ -1165,7 +1165,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "provider %q not found", ac.Provider)
 		}
 		acpPricing := cfg.ModelCost(ac.Model)
-		m, err := inference.NewModel(prov, ac.Model, artifacts, acpPricing)
+		m, err := inference.NewModelWithEffort(prov, ac.Model, artifacts, acpPricing, cfg.ModelEffort(ac.Model))
 		if err != nil {
 			return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "model: %v", err)
 		}
@@ -1315,7 +1315,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		}
 
 		buildWorker := func(drain func() string, extraTools ...tool.Tool) (adkagent.Agent, model.LLM, []tool.Tool, error) {
-			wm, err := inference.NewModel(prov, ac.Model, artifacts, cfg.ModelCost(ac.Model))
+			wm, err := inference.NewModelWithEffort(prov, ac.Model, artifacts, cfg.ModelCost(ac.Model), cfg.ModelEffort(ac.Model))
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("model: %w", err)
 			}

@@ -15,7 +15,7 @@ func TestGenerate_EstimatesReasoningTokensWhenUsageOmitsThem(t *testing.T) {
 	// 40-char reasoning_content -> chars/4 = 10 estimated reasoning tokens.
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"the answer","reasoning_content":"0123456789012345678901234567890123456789"}}],"usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}`)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 
 	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
 	var final *model.LLMResponse
@@ -43,7 +43,7 @@ func TestGenerate_EstimatesReasoningTokensWhenUsageOmitsThem(t *testing.T) {
 func TestGenerate_SubtractsProviderReportedReasoningTokens(t *testing.T) {
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"the answer","reasoning_content":"some reasoning text here"}}],"usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150,"completion_tokens_details":{"reasoning_tokens":30}}}`)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 
 	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
 	var final *model.LLMResponse
@@ -70,7 +70,7 @@ func TestGenerate_SubtractsProviderReportedReasoningTokens(t *testing.T) {
 func TestGenerate_NoReasoningLeavesUsageUnchanged(t *testing.T) {
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"the answer"}}],"usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}`)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 
 	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
 	var final *model.LLMResponse
@@ -102,7 +102,7 @@ func TestStreaming_EstimatesReasoningTokensWhenUsageOmitsThem(t *testing.T) {
 		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[],"usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}`,
 	)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 
 	_, _, usage := collect(t, m)
 	if usage == nil {
@@ -126,7 +126,7 @@ func TestStreaming_SubtractsProviderReportedReasoningTokens(t *testing.T) {
 		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[],"usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150,"completion_tokens_details":{"reasoning_tokens":30}}}`,
 	)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 
 	_, _, usage := collect(t, m)
 	if usage == nil {
@@ -151,7 +151,7 @@ func TestGenerate_EstimateClampsAtZero(t *testing.T) {
 	}
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"the answer","reasoning_content":"`+longReasoning+`"}}],"usage":{"prompt_tokens":100,"completion_tokens":10,"total_tokens":110}}`)
 	defer srv.Close()
-	m := NewOpenAIModel("m", srv.URL, "k")
+	m := NewOpenAIModel("m", srv.URL, "k", "")
 
 	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
 	var final *model.LLMResponse
