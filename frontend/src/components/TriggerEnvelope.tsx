@@ -19,6 +19,13 @@ import {
 // have to pull in JSX.
 export * from './envelope'
 
+// Test-only render probe (PR #1300 review finding 2): counts every actual
+// invocation of TriggerMessage's function body, so a perf test can pin
+// memo(TriggerMessage) directly instead of inferring it from render timing
+// (unreliable under jsdom - AssistantText's own useMemo chain already
+// prevents most of the markdown re-parse cost the memo used to be gated on).
+export const triggerMessageRenderProbe = { count: 0 }
+
 // TriggerMessage renders the user-turn bubble for a GitHub-triggered chat: the
 // XML-ish envelope (design: .quack/trigger-prompts-v2.md) as collapsible
 // structured sections, permissions/deliverable/ask always visible, everything
@@ -44,6 +51,7 @@ export const TriggerMessage = memo(function TriggerMessage({
   // the artifact panel (needs a chat to look the artifact's owning node up in).
   chatId?: string
 }) {
+  triggerMessageRenderProbe.count++
   const blocks = useMemo(() => parseEnvelope(content), [content])
   // The artifact panel opens onto a NODE (resolved from the tapped row's
   // artifact id - see ArtifactsSection.openRow below), with that same

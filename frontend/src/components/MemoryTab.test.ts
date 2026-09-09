@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryTab } from './MemoryTab'
+import { api } from '../api'
 import { client } from '../generated/client.gen'
 
 // Node's fetch/Request (unlike a browser's) refuses to build a Request from a
@@ -203,5 +204,29 @@ describe('MemoryTab', () => {
     const toggleRequest = fetchMock.mock.calls[2][0] as Request
     const body = await toggleRequest.clone().json()
     expect(body.vote).toBe('none')
+  })
+
+  // #1300 review finding 1: a synchronous throw from voteMemory reaches
+  // handleVote's catch before React has flushed the setMemories updater, so
+  // the pre-vote row must come from a ref, not a variable set as a side
+  // effect inside that updater.
+  it('rolls back the optimistic vote when voteMemory rejects synchronously', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ memories: [{ ...MEMORY, vote_score: 0, upvotes: 0 }], total: 1 }))
+    await renderAndFlush()
+
+    const upButton = findButton(host!, b => (b.getAttribute('aria-label') ?? '') === 'Upvote')
+    const voteSpy = vi.spyOn(api, 'voteMemory').mockImplementation(() => {
+      throw new Error('boom')
+    })
+
+    await act(async () => {
+      upButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+
+    expect(host!.textContent).toContain('Vote failed')
+    const upButtonAfter = findButton(host!, b => (b.getAttribute('aria-label') ?? '') === 'Upvote')
+    expect(upButtonAfter.getAttribute('aria-pressed')).toBe('false')
+    voteSpy.mockRestore()
   })
 })

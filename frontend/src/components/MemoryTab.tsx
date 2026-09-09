@@ -61,6 +61,11 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
   const [pageTokens, setPageTokens] = useState<(string | undefined)[]>([undefined])
   const [nextPageToken, setNextPageToken] = useState<string | undefined>(undefined)
   const [memories, setMemories] = useState<Memory[]>(initialState?.memories ?? [])
+  // Mirrors `memories` for handleVote's rollback (finding 1, PR #1300 review) -
+  // a ref read there stays outside the setMemories updater, which React may
+  // invoke more than once and must stay pure.
+  const memoriesRef = useRef(memories)
+  useEffect(() => { memoriesRef.current = memories })
   const [total, setTotal] = useState(initialState?.total ?? 0)
   const [loading, setLoading] = useState(initialState === undefined)
   const [error, setError] = useState<string | null>(initialState?.error ?? null)
@@ -174,17 +179,17 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
   // (e.g. another vote's own response landing) that happened while this
   // request was in flight.
   const handleVote = useCallback(async (id: string, vote: VoteDirection) => {
-    let prevRow: Memory | undefined
-    setMemories(cur => cur.map(m => {
-      if (m.id !== id) return m
-      prevRow = m
-      return applyOptimisticVote(m, vote)
-    }))
+    // Read the pre-vote row from the ref, not from inside the setMemories
+    // updater - an updater must be pure, and a synchronous throw from
+    // voteMemory (below) would otherwise reach the catch with prevRow still
+    // unset, skipping the rollback.
+    const prevRow = memoriesRef.current.find(m => m.id === id)
+    setMemories(cur => cur.map(m => (m.id === id ? applyOptimisticVote(m, vote) : m)))
     try {
       const updated = await api.voteMemory(id, vote)
       setMemories(cur => cur.map(m => (m.id === id ? updated : m)))
     } catch (e) {
-      if (prevRow) setMemories(cur => cur.map(m => (m.id === id ? prevRow! : m)))
+      if (prevRow) setMemories(cur => cur.map(m => (m.id === id ? prevRow : m)))
       throw e
     }
   }, [])

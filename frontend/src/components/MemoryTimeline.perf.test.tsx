@@ -71,7 +71,14 @@ describe('MemoryTimeline render cost', () => {
 
     const avg20 = total20 / N
     const avg200 = total200 / N
-    console.log(`20 rows: avg actualDuration=${avg20.toFixed(3)}ms  200 rows: avg=${avg200.toFixed(3)}ms  ratio=${(avg200 / avg20).toFixed(2)}x`)
+    const ratio = avg200 / avg20
+    console.log(`20 rows: avg actualDuration=${avg20.toFixed(3)}ms  200 rows: avg=${avg200.toFixed(3)}ms  ratio=${ratio.toFixed(2)}x`)
+    // 200 rows must cost more than 20 (real per-row work) but not
+    // super-linearly - linear caps the ratio near 10x, so a loose upper bound
+    // catches a pathological (e.g. quadratic) regression without pinning an
+    // absolute ms figure, which would be flaky under jsdom/CI load.
+    expect(avg200).toBeGreaterThan(avg20)
+    expect(ratio).toBeLessThan(30)
   })
 
   it('an unrelated parent re-render does not re-run groupByAge or re-render untouched rows', { timeout: 30000 }, async () => {

@@ -126,13 +126,22 @@ describe('lead C: memory search keystroke behavior', () => {
     const input = host!.querySelector('input[type="search"]') as HTMLInputElement
 
     vi.useFakeTimers({ shouldAdvanceTime: true })
+    // Since React 18, setState on an unmounted component is a silent no-op,
+    // so listCalls staying [''] alone can't tell "the cleanup cancelled the
+    // timer" from "the timer fired post-unmount and React dropped the
+    // setState" - spy clearTimeout to pin the cleanup itself. Spied AFTER
+    // useFakeTimers, which installs its own clearTimeout onto globalThis -
+    // spying first would wrap the real one and never see the fake calls.
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout')
     try {
       act(() => { typeChar(input, 'graphlit') })
       await act(async () => { await vi.advanceTimersByTimeAsync(100) }) // well under the 250ms debounce
       expect(listCalls).toEqual(['']) // debounce hasn't fired yet
 
+      clearTimeoutSpy.mockClear() // isolate the unmount phase
       act(() => { root!.unmount() })
       root = undefined
+      expect(clearTimeoutSpy).toHaveBeenCalled() // the debounce cleanup cancelled the pending timer
 
       // Advance well past the debounce window - if the timer weren't
       // cancelled, it would fire here and call setState post-unmount.
@@ -140,6 +149,7 @@ describe('lead C: memory search keystroke behavior', () => {
       expect(listCalls).toEqual(['']) // still just the initial load - nothing leaked
     } finally {
       vi.useRealTimers()
+      clearTimeoutSpy.mockRestore()
     }
   })
 })
