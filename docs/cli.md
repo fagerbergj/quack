@@ -8,7 +8,7 @@ Every command has its own `--help`; this page is the map.
 
 | Command | Does |
 | --- | --- |
-| `quack init` | Onboarding wizard: run a server locally (writes `quack.yaml`, then registers `localhost`) or register a remote one someone else runs. |
+| `quack init` | Onboarding wizard: run a server locally (writes `quack.yaml`; the CLI then runs it in-process, no server registered) or register a remote one someone else runs. |
 | `quack server init` | Just the config wizard - LLM provider, endpoint, model roles, optional features, stores. Writes `quack.yaml` without touching the client registry. |
 | `quack server use <name>` / `add <name> <url>` / `list` / `remove <name>` | Manage the set of servers this CLI knows about and which one is active. |
 | `quack server validate` | Load and validate a `quack.yaml` without starting the server. |
@@ -79,6 +79,7 @@ Browse or invalidate what quack has remembered (memory lifecycle design doc); `f
 | Command | Does |
 | --- | --- |
 | `quack memory list [--bucket <b>] [--q <query>] [--limit N] [--include-invalidated]` | List or (with `--q`) embedding-search memories. |
+| `quack memory show <memory-id>` | Print one memory in full. |
 | `quack memory forget <memory-id> [--reason <text>]` | Invalidate (soft-delete) one memory. |
 | `quack memory sweep [--dry-run]` | Run the forgetting-rule sweep on demand (epic #1255 P3); `--dry-run` reports per-rule matches without invalidating anything. |
 | `quack memory rescope [--apply]` | Move role:\* memories with a resolvable GitHub-origin chat into their repo:\* bucket (#1262); dry run by default. |
@@ -91,6 +92,7 @@ Browse or invalidate what quack has remembered (memory lifecycle design doc); `f
 | Command | Does |
 | --- | --- |
 | `quack sandbox` | Enter the jail interactively. |
+| `quack sandbox run "CMD ARGS"` | Run one command inside the jail and exit. |
 | `quack sandbox info` | Print the resolved jail (mode, cwd, tmp, home, grants, env) without running anything. |
 | `quack sandbox check` | Run the built-in jail probes; non-zero exit on any FAIL. |
 
@@ -98,7 +100,7 @@ See [`docs/sandbox-cli.md`](sandbox-cli.md) for the detail.
 
 ## Misc
 
-`quack version` prints the version. `quack git-askpass` is a helper quack invokes for itself during git operations - not something you run directly.
+`quack version` prints the version. `quack git-askpass` is a helper quack invokes for itself during git operations - not something you run directly; it reads the credential from `QUACK_GIT_ASKPASS_USERNAME`/`QUACK_GIT_ASKPASS_TOKEN`, set by the calling process for that one invocation.
 
 ## Raw API access
 

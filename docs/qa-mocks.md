@@ -3,7 +3,7 @@
 Exercises the `quack:review`/`plan`/`implement`/`fix` and reMarkable document
 flows against a QA server with no real GitHub App, no public webhook, and no
 reMarkable/rmfakecloud account. Both mocks are standalone Go tools in
-`quack-extensions` (branch `qa/github-remarkable-mocks`), not part of the
+`quack-extensions` (`github/cmd/qa-mock` on `main`), not part of the
 `quack` binary - anything that talks to the running server itself goes
 through `quack api`, per [`docs/cli.md`](cli.md).
 
@@ -11,13 +11,13 @@ through `quack api`, per [`docs/cli.md`](cli.md).
 
 ```bash
 cd quack-extensions/github
-go run ./cmd/qa-mock serve --fixtures ../../agent-researcher/testdata/qa/github --addr :8090
+go run ./cmd/qa-mock serve --fixtures ../../quack/testdata/qa/github --addr :8090
 ```
 
 The GitHub fixtures live in core, at `testdata/qa/github` (this repo) - every
 `--fixtures`/`--fixture` path below is relative to `quack-extensions/github`,
-hence the `../../agent-researcher/...` prefix. There are no reMarkable fixture files in this PR; the
-`--fixtures ../../agent-researcher/testdata/qa/remarkable` path below is
+hence the `../../quack/...` prefix. There are no committed reMarkable fixture
+files; the `--fixtures ../../quack/testdata/qa/remarkable` path below is
 just where `serve`/`drop` will persist `docs.json` and dropped PDFs the
 first time you run them - create the directory or let `drop` create it.
 
@@ -39,7 +39,7 @@ Fire a webhook at the running quack server:
 
 ```bash
 go run ./cmd/qa-mock send \
-  --fixture ../../agent-researcher/testdata/qa/github/events/pull_request.labeled.quack-review.json \
+  --fixture ../../quack/testdata/qa/github/events/pull_request.labeled.quack-review.json \
   --event pull_request \
   --secret "$QUACK_QA_WEBHOOK_SECRET" \
   --url http://localhost:8080/github/webhook
@@ -56,7 +56,7 @@ path for a while and was corrected in #1147.
 Check what quack tried to post back to GitHub:
 
 ```bash
-go run ./cmd/qa-mock deliveries --fixtures ../../agent-researcher/testdata/qa/github
+go run ./cmd/qa-mock deliveries --fixtures ../../quack/testdata/qa/github
 ```
 
 GET fixtures live at `testdata/qa/github/get/<hash>.json`, keyed by
@@ -70,7 +70,7 @@ run after that is offline and credential-free.
 
 ```bash
 cd quack-extensions/remarkable
-go run ./cmd/qa-mock serve --fixtures ../../agent-researcher/testdata/qa/remarkable --addr :8091 \
+go run ./cmd/qa-mock serve --fixtures ../../quack/testdata/qa/remarkable --addr :8091 \
   --email qa@example.com --password qa-password
 ```
 
@@ -85,7 +85,7 @@ extensions:
 Simulate a new handwritten note landing:
 
 ```bash
-go run ./cmd/qa-mock drop --fixtures ../../agent-researcher/testdata/qa/remarkable \
+go run ./cmd/qa-mock drop --fixtures ../../quack/testdata/qa/remarkable \
   --name "2-page note" --folder inbox --pdf /path/to/any.pdf
 ```
 

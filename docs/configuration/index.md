@@ -56,7 +56,7 @@ adk's summariser hard-errors past its transcript cap (sized from `context_window
 |-----|---------|
 | `QUACK_LLM_ENDPOINT` | OpenAI-compatible LLM endpoint (e.g. `http://jason-server:11436/v1`); interpolated into `providers.default.endpoint` |
 | `QUACK_LLM_API_KEY` | API key |
-| `QUACK_ORCH_MODEL` / `QUACK_RESEARCHER_MODEL` / `QUACK_CODER_MODEL` / `QUACK_JUDGE_MODEL` | Per-role model names (coder/media/image fall back to `QUACK_RESEARCHER_MODEL` if unset) |
+| `QUACK_ORCH_MODEL` / `QUACK_RESEARCHER_MODEL` / `QUACK_CODER_MODEL` / `QUACK_JUDGE_MODEL` | Per-role model names (`QUACK_CODER_MODEL` falls back to `QUACK_RESEARCHER_MODEL` if unset; media/image have no fallback) |
 | `QUACK_EMBED_MODEL` | Embedding model for the vector store |
 | `QUACK_COMPACTION_ENABLED` / `QUACK_COMPACTION_MODEL` | Toggle + model for history compaction |
 | `QUACK_DATABASE_URL` | Postgres DSN |
@@ -65,5 +65,7 @@ adk's summariser hard-errors past its transcript cap (sized from `context_window
 | `QUACK_WORKSPACE_ROOT` | Filesystem sandbox root (default `./workspace`) |
 | `QUACK_LOG_LEVEL` | slog level: `debug`, `info` (default), `warn`, `error` |
 | `QUACK_LOG_FORMAT` | slog output: `text` (default) or `json` |
+| `QUACK_CONFIG` | Path to `quack.yaml`, used when `--config` isn't passed |
+| `QUACK_HOME` | CLI state dir (server registry, cached tokens); default `~/.quack` |
 
 `QUACK_CODER_MODEL` is the one variable with a chained fallback: if it's unset, `code-implementer` and `code-reviewer` fall back to `QUACK_RESEARCHER_MODEL` (`internal/config`'s `expandEnv`), so a deployment that hasn't picked a dedicated coder model still gets a working one.

@@ -69,7 +69,7 @@ The image ships Go and Node only, so a repo in any other language needs its tool
 
 See **[toolchains.md](toolchains.md)** for the whole topic: how both keys behave under `sandbox: bwrap`, precedence against an agent's own `acp.env`, provisioning a toolchain volume, worked Java/Android and Go configs, and the JVM `user.home` trap that makes a correct-looking `JAVA_HOME` still fail.
 
-## `git_credentials` and `git_push`
+## `git_credentials`
 
 ```yaml
 workspace:
@@ -77,12 +77,11 @@ workspace:
   #   - host: github.com
   #     username: x-access-token
   #     token: ${QUACK_GITHUB_TOKEN}
-  git_push: false
 ```
 
 `git_credentials` is deployment-level, one HTTPS identity per host. `token` must be an `${VAR}` reference in the raw YAML - a literal here is a startup error, checked on the raw file text before `${VAR}` expansion, so it can't slip through as a "just for now" secret. Never put a credential in a clone URL; `git_clone` rejects that outright.
 
-`git_push` gates the one outward-facing, non-undoable git operation. Even when `true`, `git_push` can never force-push (unexpressible - no argv path ever adds `--force`) and refuses `main`/`master`.
+`git_push` (the one outward-facing, non-undoable git operation) is gated through `guards.git_push` below, not a top-level toggle - there is no `workspace.git_push` field. Even when the guard passes, a push can never force-push (unexpressible - no argv path ever adds `--force`) and refuses `main`/`master`.
 
 ## The guard ladder
 

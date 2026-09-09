@@ -12,7 +12,7 @@ description: >
 
 quack is built the way quack works - **issue-driven and agent-executed**. The authoritative version of this model lives in `CONTRIBUTING.md` at the repo root; **read it first**. This skill is the loadable summary and the pointers to the per-step craft.
 
-The `quack:plan` → `quack:implement` → `quack:review` → `quack:merge` label workflow is this loop automated.
+The `quack:plan` → `quack:implement` → `quack-auto-review` → `quack:merge` label workflow is this loop automated.
 
 ## The loop
 

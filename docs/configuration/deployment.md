@@ -21,9 +21,11 @@ cp .env.example .env   # set QUACK_LLM_ENDPOINT to something reachable from the 
 docker compose up --build
 ```
 
+Open http://localhost:8081 - the app is remapped, since host port 8080 is taken by SearXNG in this stack.
+
 This is the middle ground: full feature set, memory included, still a single `docker compose up`.
 
-`server.topology: managed` is the same idea without `docker-compose.yml`: `quack server run` brings up just the Postgres + qdrant containers itself (an embedded compose file) and tears them down on `quack server stop`. Reach for it if you want the containerized stores without hand-rolling compose.
+`server.topology: managed` is the same idea without `docker-compose.yml`: `quack server run --config config/managed.yaml` brings up just the Postgres + qdrant containers itself (an embedded compose file) and leaves them running; tear them down with `docker compose -p quack-stores down`. Reach for it if you want the containerized stores without hand-rolling compose.
 
 ## 3. Remote server, full-featured
 

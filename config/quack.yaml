@@ -141,7 +141,7 @@ agents:
     memory:
       bucket: research   # shared-memory role bucket (see internal/memory/scope.go)
     model: ${QUACK_RESEARCHER_MODEL}
-    context_window: 65536       # qwen3.6-35b served -c 131072 --parallel 2 ⇒ 65536/slot (one node = one slot)
+    context_window: 65536       # one served slot of the researcher model (one node = one slot)
     judge_rounds: 1             # research converges in one draft; extra rounds burn tokens re-fetching to fix citations. Draft must cite inline (see prompt.md).
     tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, recall_memory, ask_user, ask_advisor,
             ]  # NO repo tools: reading source is code-explorer's job (see its card)  # read-only fs + clone, so research can pull a repo apart
@@ -209,7 +209,7 @@ agents:
     bundle: agents/media-reader
     skills: [format-markdown]
     provider: default
-    model: ${QUACK_MEDIA_MODEL}       # Qwen3-Omni (media llm-swap group); falls back to QUACK_RESEARCHER_MODEL if unset
+    model: ${QUACK_MEDIA_MODEL}       # Qwen3-Omni (media llm-swap group); required - no fallback
     context_window: 32768       # qwen3-omni-30b served -c 32768 --parallel 1
     tools: []
     inputs: [text, image, audio]
@@ -309,7 +309,7 @@ server:
   # external (you run Postgres/Qdrant and point the stores above at them) just
   # run the process - the default. managed makes `quack server` bring up
   # Postgres + Qdrant via an embedded docker-compose stack (`quack-stores`),
-  # wait for them to be ready, then run; `quack server stop` tears them down
+  # wait for them to be ready, then run; they are left running on shutdown; `docker compose -p quack-stores down` tears them down
   # (volumes persist). managed needs host ports 5432 + 6334 free and docker
   # available. Tool backends (search/fetch) are NOT managed - set them via the
   # tools below (kind: exa for keyless, kind: direct for fetch).
@@ -621,6 +621,9 @@ workspace:
 #     # itself authored - needs the App subscribed to Workflow run + Pull request
 #     # review events, and Actions/Checks read).
 #     # triggers: [mention, pr_opened, label, issue_plan, issue_implement, merge, ci_fix]
+#     # run_timeout_minutes: 120  # default; bounds one dispatched run
+#     # auto_archive_on_merge: false  # default; archive the chat session when quack:merge lands
+#     # auto_review_label: "quack-auto-review"  # legacy alias for labels.review; set labels.review instead
 #     # labels: the repo labels driving the label-based workflow (applying a label
 #     # needs repo write access, so labels double as the permission model).
 #     # labels:
