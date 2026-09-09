@@ -965,8 +965,8 @@ func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrato
 	}
 	hub.RegisterRun(chatID, turnID, cancelRun)
 	_ = st.MarkRunActive(runCtx, chatID, turnID)
-	// FinishRun flushes then closes then unregisters, in that order - see its doc.
-	defer eventLog.FinishRun(hub, chatID, cancelRun)
+	// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
+	defer eventLog.FinishRun(hub, chatID, turnID, cancelRun)
 
 	pub := runlog.NewPublisher(hub, eventLog, chatID)
 	pub.Publish(stream.ResponseCreated(turnID))

@@ -680,8 +680,8 @@ func (h *Handler) startRun(chatID, turnID, content string, attachments []*genai.
 	_ = h.store.MarkRunActive(runCtx, chatID, turnID)
 	go func() {
 		defer recoverRun(chatID, turnID)
-		// FinishRun flushes then closes then unregisters, in that order - see its doc.
-		defer h.eventLog.FinishRun(h.hub, chatID, cancelRun)
+		// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
+		defer h.eventLog.FinishRun(h.hub, chatID, turnID, cancelRun)
 		h.runChat(runCtx, chatID, turnID, content, attachments)
 	}()
 }
@@ -1160,8 +1160,8 @@ func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message stri
 	_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
 	go func() {
 		defer recoverRun(chatID, dp.TurnID)
-		// FinishRun flushes then closes then unregisters, in that order - see its doc.
-		defer h.eventLog.FinishRun(h.hub, chatID, cancelRun)
+		// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
+		defer h.eventLog.FinishRun(h.hub, chatID, dp.TurnID, cancelRun)
 		defer h.stampRunOutcome(runCtx, chatID)
 
 		publish := runlog.NewPublisher(h.hub, h.eventLog, chatID).Publish
@@ -1213,8 +1213,8 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 	_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
 	go func() {
 		defer recoverRun(chatID, dp.TurnID)
-		// FinishRun flushes then closes then unregisters, in that order - see its doc.
-		defer h.eventLog.FinishRun(h.hub, chatID, cancelRun)
+		// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
+		defer h.eventLog.FinishRun(h.hub, chatID, dp.TurnID, cancelRun)
 		defer h.stampRunOutcome(runCtx, chatID)
 
 		publish := runlog.NewPublisher(h.hub, h.eventLog, chatID).Publish
@@ -1246,10 +1246,13 @@ func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, ch
 	lastSeq := lastEventID(r)
 	// Covers all drivers of a run on this chat (REST or GitHub-dispatched).
 	active := h.hub.Active(chatID)
-	replay, live, cancel, done := h.hub.Subscribe(chatID)
+	replay, live, cancel, _ := h.hub.Subscribe(chatID)
 	defer cancel()
 
 	// Cold path: hub has no buffered events - replay from the durable log.
+	// done=true (a finished topic) always lands here too: Hub.Close nils the
+	// buffer and clears started, so replay is empty and active is false -
+	// there is no reachable warm/done branch past this point.
 	if len(replay) == 0 && !active {
 		// LoadEvents (#1101): the SSE table when it has rows, else - only when
 		// a WAL is armed - a fold-derived reconstruction.
@@ -1271,16 +1274,6 @@ func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, ch
 	}
 
 	// Warm path: hub holds the run. Replay buffer (skipping what the client has seen), then tail live.
-	if done {
-		for _, it := range replay {
-			if it.Seq > lastSeq {
-				if sse.sendID(it.Seq, it.SSE) != nil {
-					return
-				}
-			}
-		}
-		return
-	}
 	streamHub(r.Context(), sse, replay, live, lastSeq)
 }
 
@@ -1301,7 +1294,11 @@ func streamHub(ctx context.Context, sse *sseWriter, replay []stream.Event, live 
 		select {
 		case it, ok := <-live:
 			if !ok {
-				return // run ended (its Done was delivered via the live channel)
+				// live closes on three paths: the run ended (Done delivered),
+				// Publish dropped this subscriber as too slow, or Reset tore
+				// down the topic mid-attach - the client's onerror→reconnect
+				// recovers the latter two from the durable log.
+				return
 			}
 			if !send(it) {
 				return

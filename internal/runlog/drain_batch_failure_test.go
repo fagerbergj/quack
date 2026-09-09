@@ -79,7 +79,7 @@ func TestAppendRacingFinishRunNeverLostSilently(t *testing.T) {
 		l.Append(chatID, 999, stream.SSEEvent{Name: "token", Data: map[string]any{"late": true}})
 	}()
 
-	l.FinishRun(hub, chatID, cancelRun)
+	l.FinishRun(hub, chatID, "turn-1", cancelRun)
 	wg.Wait()
 	if runCtx.Err() == nil {
 		t.Fatal("FinishRun must cancel the run context")

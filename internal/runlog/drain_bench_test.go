@@ -193,7 +193,7 @@ func TestFinishRunDeliversBufferedTailBeforeUnregister(t *testing.T) {
 		seenAtUnregister <- len(evs)
 	}()
 
-	l.FinishRun(hub, chatID, cancelRun)
+	l.FinishRun(hub, chatID, "turn-1", cancelRun)
 
 	if runCtx.Err() == nil {
 		t.Fatal("FinishRun must cancel the run context")
