@@ -4,13 +4,13 @@ Thanks for hacking on quack. This is the contribution **workflow**.
 
 ## The working model
 
-quack is built the way quack works - **issue-driven and agent-executed**. Every non-trivial change follows the same loop, whether a human or quack does the work. The `quack:plan` → `quack:implement` → `quack:review` → `quack:merge` label workflow is this loop automated (see [docs/extensions/github.md](docs/extensions/github.md)).
+quack is built the way quack works - **issue-driven and agent-executed**. Every non-trivial change follows the same loop, whether a human or quack does the work. The `quack:plan` → `quack:implement` → `quack-auto-review` → `quack:merge` label workflow is this loop automated (see [docs/extensions/github.md](docs/extensions/github.md)).
 
 1. **File an issue.** State a concrete failure (not a vague wish), what's **in and out of scope**, **forbidden actions**, and **acceptance criteria**. Confirm it's real and not already done. Label it: type (`bug` / `feature-request` / `enhancement`), `area:*`, and `priority:*`. Opening an issue on GitHub offers the [bug report](.github/ISSUE_TEMPLATE/bug_report.yml) or [feature/change request](.github/ISSUE_TEMPLATE/feature_request.yml) template - their fields are this spec shape, so filling them in is most of the work above. A freeform issue is fine too (e.g. quack filing one via the API).
 2. **Plan.** Post an implementation plan as a comment - **grounded in the code** (real `file:line` anchors), **summary-first**, a `mermaid` diagram where structure helps, deep detail in `<details>`. Or apply **`quack:plan`** to have quack plan it on the issue's session.
 3. **Agree.** Refine the plan in the thread until it holds - **reuse or extend before you add**, correct scoping, honest constraints. Do not implement before the plan is settled.
 4. **Implement.** Apply **`quack:implement`** (quack implements on the same session and opens a PR pre-labeled for review) or implement on a branch. Reuse before adding; write the failing test first, implement to green. A PR opened on GitHub is pre-filled from [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md) - what/why, the spec, and the pre-merge checklist.
-5. **Review.** The PR is reviewed (**`quack:review`** or a human). **Verify every finding** - reject false positives *with a reason*, fix the real ones.
+5. **Review.** The PR is reviewed (**`quack-auto-review`** or a human). **Verify every finding** - reject false positives *with a reason*, fix the real ones.
 6. **Merge.** **`quack:merge`** does a human-authorized, quack-approved squash merge; or combine related PRs into one branch and merge with green CI.
 
 The per-step craft lives in loadable skills - `plan-work`, `develop-feature`, `fix-bug`, `review-code`, and `contribute` (which points back here).
@@ -19,16 +19,17 @@ The per-step craft lives in loadable skills - `plan-work`, `develop-feature`, `f
 
 - **Cloning** - a plain `git clone`, then `make plugins`. The skill libraries under `.agents/vendor` (dotagents, ponytail) are not in git and not submodules: `.agents/vendor/plugins.yaml` pins each one and `make plugins` fetches them. `go build`/`go test` need them present (`embed.go` embeds dotagents' skills), so run it once after cloning; `make build`/`make test` do it for you. `make plugins-update` moves the pins.
 - **Go** - module `github.com/fagerbergj/quack`; server entrypoint `cmd/quack/main.go`.
-- **Frontend** - `cd frontend && npm install`, then `npm run dev` (hot reload on :5173).
+- **Frontend** - `cd frontend && npm install`, then `npm run dev` (hot reload on :3000).
 - **Full build** - `make build` (compiles the frontend and embeds `dist` into the binary).
 - **Local stack** - `cp .env.example .env` (set `QUACK_LLM_ENDPOINT` to something reachable from the container), then `make docker-up` brings up app + Postgres + searxng + qdrant via Docker.
 
 ## Before you open a PR
 
-Run what CI enforces (see AGENTS.md "Hard Rules" for the full never/always list):
+Run what CI enforces (see AGENTS.md for the full never/always list):
 
 ```bash
-go test ./...                 # add -race for concurrency changes
+make test                     # not bare go test ./... - needed for the untracked embedded skill trees
+npm --prefix scripts ci       # first, or mermaid validation coverage skips
 make vet && make fmt
 cd frontend && npm test && npx tsc --noEmit && npx eslint src/
 ```
@@ -49,9 +50,9 @@ cd frontend && npm test && npx tsc --noEmit && npx eslint src/
 ## Commits & PRs
 
 - **Conventional commits** - `feat(scope): …`, `fix(scope): …`, `docs(scope): …`, `ci(scope): …`.
-- **Comments say what the code CANNOT** (non-obvious constraints, invariants, the ceiling of a deliberate shortcut). The incident/story goes in the commit message and PR body, not the source (AGENTS.md "Comments").
-- **Non-trivial features are spec-first** (AGENTS.md "Spec-Driven Development"): scope, forbidden actions, available interfaces, output contract, and 2–3 concrete test cases in the PR description. Behavioural drift from the spec becomes a failing test, not a production incident.
+- **Comments say what the code CANNOT** (non-obvious constraints, invariants, the ceiling of a deliberate shortcut). The incident/story goes in the commit message and PR body, not the source.
+- **Non-trivial features are spec-first**: scope, forbidden actions, available interfaces, output contract, and 2–3 concrete test cases in the PR description. Behavioural drift from the spec becomes a failing test, not a production incident.
 
 ## Adding or changing an agent
 
-An agent is a **bundle** under `agents/<name>/` - exactly `agent-card.json` + `prompt.md` (plus the optional `rubric.yaml` and `memory.md`). `config/quack.yaml` binds it to a model and a tool list. **No Go changes are needed** to add or modify an agent (AGENTS.md "Agent bundles").
+An agent is a **bundle** under `agents/<name>/` - exactly `agent-card.json` + `prompt.md` (plus the optional `rubric.yaml` and `memory.md`). `config/quack.yaml` binds it to a model and a tool list. **No Go changes are needed** to add or modify an agent (see [docs/configuration/agents.md](docs/configuration/agents.md)).
