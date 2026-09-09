@@ -76,7 +76,7 @@ agents:
   code-implementer:
     bundle: agents/code-implementer
     provider: default
-    model: qwen3.8-27b   # falls back to the researcher model when QUACK_CODER_MODEL is unset
+    model: qwen3.8-27b   # the coder role; the QUACK_CODER_MODEL env fallback only applies when the value is left as ${QUACK_CODER_MODEL}
     context_window: 65536
     memory:
       bucket: coding

@@ -22,7 +22,7 @@ Mounted at the process root (`internal/server/router.go`), modeled after OpenRes
 | `POST` / `PATCH` / `DELETE /api/v1/chats/{chat_id}/nodes/{node_id}/queue[/{message_id}]` | Queue, edit, or remove a message for a running node - delivered at its next turn boundary, never mid-turn. |
 | `GET /api/v1/chats/{chat_id}/artifacts` / `GET .../artifacts/{artifact_name}` | List a chat's artifacts, or fetch one's current bytes. |
 | `GET .../artifacts/{artifact_name}/revisions` / `GET .../artifacts/{artifact_name}/diff` | List an artifact's revision history, or diff two revisions. |
-| `GET` / `DELETE /api/v1/memories/{memory_id}`, `GET /api/v1/memories`, `POST .../vote`, `POST /api/v1/memories/sweep`, `POST /api/v1/memories/rescope`, `GET /api/v1/memories/stats`, `GET .../nodes/{node_id}/memories` | The `quack memory` surface ([`cli.md`](cli.md#memory)): list/search, forget, vote, sweep, rescope, stats, and one node's memories. |
+| `DELETE /api/v1/memories/{memory_id}`, `GET /api/v1/memories`, `POST .../vote`, `POST /api/v1/memories/sweep`, `POST /api/v1/memories/rescope`, `GET /api/v1/memories/stats`, `GET .../nodes/{node_id}/memories` | The `quack memory` surface ([`cli.md`](cli.md#memory)): list/search, forget, vote, sweep, rescope, stats, and one node's memories. |
 
 This is what `quack chat` / `quack chat node` / `quack memory` ([`cli.md`](cli.md)) and the [web SPA](ui.md) both ride. `GET /api/v1/config`, `GET /api/v1/extensions`, `GET /api/v1/recordings`, and `GET .../chats/{chat_id}/recording` are SPA-internal (settings/extensions panels, recording browser) and not part of the CLI-facing surface above.
 
@@ -42,7 +42,7 @@ A2A is currently an **internal** orchestrator↔agent protocol, not something an
 
 ## GitHub App
 
-A fourth client sits in front of the REST API over its own webhook, not one of the above: the [GitHub App](extensions/github.md). It drives runs via the `quack:plan` / `quack:implement` / `quack:review` / `quack:merge` / `quack:fix` label workflow, `/quack` mentions, and (on PRs it authored itself) review engagement with no label at all - replying on the issue/PR when the run completes.
+A fourth client sits in front of the REST API over its own webhook, not one of the above: the [GitHub App](extensions/github.md). It drives runs via the `quack:plan` / `quack:implement` / `quack-auto-review` / `quack:merge` / `quack:fix` label workflow, `/quack` mentions, and (on PRs it authored itself) review engagement with no label at all - replying on the issue/PR when the run completes.
 
 ## Auth
 
