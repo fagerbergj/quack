@@ -8,7 +8,7 @@ import { Composer } from '../components/Composer'
 import { ChatList } from '../components/ChatList'
 import { TurnView, visibleActivity } from '../components/TurnView'
 import { useChatStore, useChatState } from '../state/ChatStoreProvider'
-import { activityFromTurn, isTurnInProgress, terminalNodeId, pendingNodeQuestion, dagAnswerAttribution, sessionModels, type DagTurnState } from '../state/chatStore'
+import { activityFromTurn, dagFromTurn, terminalNodeId, pendingNodeQuestion, dagAnswerAttribution, sessionModels, type DagTurnState } from '../state/chatStore'
 import { UsageSummary } from '../components/UsageSummary'
 import { pendingChoice, showLiveSpinner } from '../components/messageParts'
 import { AttachmentPreviews } from '../components/AttachmentUI'
@@ -343,11 +343,19 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
       // quack:dag item persisted yet), so a refresh during planning never
       // reconnected. queued is included: the run's hub topic is already live
       // (response_created publishes at admission, before the run slot is
-      // acquired), so a refresh while queued must still attach. The DAG check
-      // stays as a fallback for a restarted server whose in-memory hub state
-      // died with it.
+      // acquired), so a refresh while queued must still attach.
+      //
+      // A FINISHED DAG turn also attaches (#1290): chat_events durably keeps
+      // the last run's events (Reset wipes them at the NEXT run's start, so
+      // this is bounded to one run's worth, not the chat's whole history), and
+      // the cold path in SubscribeChatStream replays them from seq 0. That's
+      // the only record of the judge/revise sub-run cards - node_states (what
+      // seed() renders from) has no per-run breakdown, only the node's final
+      // rollup - so without this a reload loses the judge/revise cards a live
+      // view showed. Same handlers as the live path, so one parser.
       // Archived stays detached - read-only focus, regardless of status.
-      if (chatBelongsInActiveList(detail) && (detail.status === 'running' || detail.status === 'queued' || isTurnInProgress(detail.turns[detail.turns.length - 1]))) {
+      const lastTurn = detail.turns[detail.turns.length - 1]
+      if (chatBelongsInActiveList(detail) && (detail.status === 'running' || detail.status === 'queued' || (lastTurn && dagFromTurn(lastTurn) != null))) {
         store.attach(activeChatId)
       }
     }).catch(() => {})
