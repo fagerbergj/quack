@@ -807,9 +807,14 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			if paused, ierr := pauseIfWorkerRaisedHITL(ctx, nodeID, ctrl, emit, log); paused {
 				return "", GateResult{}, ierr // ErrNodePaused (wrapping ADK's park sentinel)
 			}
-			if strings.TrimSpace(revised) != "" {
-				answer = revised
+			if strings.TrimSpace(revised) == "" {
+				// Revise round ended on a tool call with no trailing text (finalSpec
+				// answer_len 0) - same answer would go to the same judge prompt next
+				// round; keep this round's verdict instead of re-judging it.
+				log.Info("revise produced no text; keeping current verdict", "round", round)
+				break
 			}
+			answer = revised
 		}
 		if queuedText != "" {
 			log.Info("node has a queued message; re-running with it", "node", nodeID)
