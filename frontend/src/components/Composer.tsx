@@ -164,7 +164,7 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
                           onClick={() => onRemoveQueued(item.id)}
                           aria-label="Remove queued message"
                           title="Remove"
-                          className="hover:text-red-500 dark:hover:text-red-400 transition-opacity normal-case"
+                          className="min-h-[44px] -my-2 inline-flex items-center hover:text-red-500 dark:hover:text-red-400 transition-opacity normal-case"
                         >
                           remove
                         </button>

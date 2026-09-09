@@ -270,12 +270,12 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
           aria-label="Search memories"
           className="grow basis-full medium:basis-0 min-w-0 rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
         />
-        <label className="flex-shrink-0 flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none whitespace-nowrap">
+        <label className="flex-shrink-0 min-h-[44px] -my-2 flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none whitespace-nowrap">
           <input
             type="checkbox"
             checked={includeInvalidated}
             onChange={e => handleIncludeInvalidatedChange(e.target.checked)}
-            className="accent-blue-600"
+            className="w-5 h-5 accent-blue-600"
           />
           Show invalidated
         </label>

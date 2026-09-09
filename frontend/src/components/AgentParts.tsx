@@ -208,7 +208,7 @@ export function ActivityList({ activity }: { activity: Activity[] }) {
       {hidden > 0 && (
         <button
           onClick={() => setShowAll(s => !s)}
-          className="my-1 text-[11px] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+          className="min-h-[44px] -my-2 inline-flex items-center text-[11px] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
         >
           {showAll ? '▾ show less' : `⋯ ${hidden} earlier`}
         </button>

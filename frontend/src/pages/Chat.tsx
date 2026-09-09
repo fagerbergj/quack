@@ -932,13 +932,13 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
                       <div className="flex items-center gap-3 mt-1.5 px-1">
                         <button
                           onClick={() => handleCopy(copyKey, liveText)}
-                          className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                          className="min-h-[44px] -my-2 inline-flex items-center text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                         >
                           {copied === copyKey ? 'Copied!' : 'Copy'}
                         </button>
                         <button
                           onClick={() => handleDownload(liveText, state.turns.length)}
-                          className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                          className="min-h-[44px] -my-2 inline-flex items-center text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                         >
                           Download
                         </button>

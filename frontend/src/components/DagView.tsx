@@ -138,7 +138,7 @@ export function DagView({
       <div className="flex justify-end items-center gap-3">
         <button
           onClick={copyDag}
-          className="text-[10px] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+          className="min-h-[44px] -my-2 inline-flex items-center text-[10px] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
           title="Copy DAG as JSON"
         >
           {copied ? 'copied!' : 'copy json'}
