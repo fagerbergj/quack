@@ -375,7 +375,7 @@ func (answerOnlyModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _
 // (a2a.go) actually catches a compaction event fired by adk/v2's own
 // runner-level compaction, not one this test hands it - CompactionInterval:1
 // makes adk's real sliding-window compactor fire its own AppendEvent after a
-// single complete invocation, the way the reviewer on #1247 required.
+// single complete invocation, the way the reviewer on required.
 func TestCompactionSessionsObservesRealCompaction(t *testing.T) {
 	ag, err := llmagent.New(llmagent.Config{
 		Name:        "compaction-worker",

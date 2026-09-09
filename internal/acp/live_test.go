@@ -16,7 +16,8 @@ import (
 // test. Run it by hand:
 //
 //	QUACK_ACP_LIVE=1 QUACK_LLM_ENDPOINT=http://host:port/v1 QUACK_CODER_MODEL=qwen3-coder-next \
-//	  go test ./internal/acp/ -run TestLive_OpencodeRound -v -timeout 10m
+//
+// go test ./internal/acp/ -run TestLive_OpencodeRound -v -timeout 10m
 func TestLive_OpencodeRound(t *testing.T) {
 	if os.Getenv("QUACK_ACP_LIVE") == "" {
 		t.Skip("live test: set QUACK_ACP_LIVE=1 (needs opencode on PATH and a live endpoint)")

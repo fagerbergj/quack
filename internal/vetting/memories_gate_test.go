@@ -1,4 +1,4 @@
-// memories_gate_test.go: #1259 - a judge that skips the required memory
+// memories_gate_test.go: - a judge that skips the required memory
 // votes gets the in-session nudge; a passed round logs what happened.
 package vetting
 
@@ -27,7 +27,7 @@ import (
 
 // memoryVoteJudge is a worker+judge stub (same dual-role trick as
 // fixedScoreModel): first submit_verdict call always skips memories, the
-// second (the #1259 nudge turn) either votes on every id it was told about,
+// second (the nudge turn) either votes on every id it was told about,
 // or repeats the omission - proving both the nudge fires and, when the
 // judge still ignores it, the round surfaces that instead of manufacturing
 // votes.
@@ -124,7 +124,7 @@ func runMemoryVoteNode(t *testing.T, voteOnRetry bool) (res GateResult, lgr *led
 	return res, lgr, buf.String()
 }
 
-// TestRunGatedRefine_MemoryVotesNudge_AppliesOnRetry covers #1259 item 1+3:
+// TestRunGatedRefine_MemoryVotesNudge_AppliesOnRetry covers item 1+3:
 // a judge that skips memories on its first submit_verdict gets nudged, votes
 // on the retry, and the passed round applies+logs them.
 func TestRunGatedRefine_MemoryVotesNudge_AppliesOnRetry(t *testing.T) {

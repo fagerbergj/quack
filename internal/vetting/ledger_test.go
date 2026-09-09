@@ -216,7 +216,7 @@ func TestBuildChangedFilesSectionReadsRealDisk(t *testing.T) {
 	}
 	// The worker wrote logic but NO page - the exact incomplete-deliverable the
 	// judge must be able to see rather than trust the answer's "it's done".
-	if err := os.WriteFile(filepath.Join(root, "repo/app/logic.ts"), []byte("export const GRAVITY = 0.5 // real on-disk content"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "repo/app/logic.ts"), []byte("export const GRAVITY = 0.5// real on-disk content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -298,7 +298,7 @@ func TestBuildChangedFilesSectionUsesPerChatScope(t *testing.T) {
 	if err := os.MkdirAll(chatRepo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(chatRepo, "logic.ts"), []byte("export const REAL = 1 // per-chat content"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(chatRepo, "logic.ts"), []byte("export const REAL = 1// per-chat content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	act := workerActivity{written: []string{"repo/app/logic.ts"}}
@@ -451,7 +451,7 @@ func TestJudgeRereadsFilesWrittenUnderTheNodeDir(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "logic.ts"), []byte("export const REAL = 1 // per-node content"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "logic.ts"), []byte("export const REAL = 1// per-node content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

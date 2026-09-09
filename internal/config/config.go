@@ -111,7 +111,7 @@ type WorkflowNode struct {
 	DependsOn []string `yaml:"depends_on,omitempty"`
 	Rubric    string   `yaml:"rubric,omitempty"`
 	// Artifact: the registered recordstore kind this node writes on gate pass,
-	// e.g. "document" (#1006/#1090). Empty = write nothing; operator opt-in only.
+	// e.g. "document" . Empty = write nothing; operator opt-in only.
 	Artifact string `yaml:"artifact,omitempty"`
 }
 
@@ -289,7 +289,7 @@ const (
 
 // OtelExporter: one OTLP destination and the signals sent to it. The signal
 // path (/v1/traces etc) is always appended to Endpoint, so a base URL carrying
-// a path - Langfuse's /api/public/otel - works like any other (#1045).
+// a path - Langfuse's /api/public/otel - works like any other .
 type OtelExporter struct {
 	Endpoint string       `yaml:"endpoint"`
 	Signals  []OtelSignal `yaml:"signals"`
@@ -492,17 +492,17 @@ type CompactionConfig struct {
 
 // defaultMaxActiveNodes: permissive PER-RUN host-resource ceiling (each run
 // gets its own semaphore, see rundag.go/nativegraph.go), not a GPU limiter
-// (#1007's Admission object bounds that) - jails/clones cost host CPU/RAM
+// - jails/clones cost host CPU/RAM
 // the GPU pool knows nothing about.
 const defaultMaxActiveNodes = 32
 
 // defaultMaxActiveRuns: host disk/CPU ceiling on concurrent run SETUP
-// (clone/jail), which happens before any node reaches the #1007 GPU ledger.
+// (clone/jail), which happens before any node reaches the GPU ledger.
 const defaultMaxActiveRuns = 8
 
 type DagConfig struct {
-	// MaxActiveRuns caps concurrent RUNS server-wide. #1007 removed this as a
-	// GPU knob (models.<m>.limits.sessions is that, and since #1067 it bounds
+	// MaxActiveRuns caps concurrent RUNS server-wide. removed this as a
+	// GPU knob (models.<m>.limits.sessions is that, and since it bounds
 	// orchestrator turns too); it is back only as the setup guard, and as the
 	// one way to bound how many runs are live - and so how many chats show as
 	// running - at once. 0 = defaultMaxActiveRuns.
@@ -511,7 +511,7 @@ type DagConfig struct {
 	// MaxActiveNodes caps concurrently-running nodes WITHIN ONE RUN (each run
 	// gets its own semaphore) as a host-resource guard (jail/clone CPU+RAM),
 	// NOT the GPU concurrency knob - that's models.<m>.limits.sessions/kv_tokens
-	// and providers.<p>.limits.active (#1007).
+	// and providers.<p>.limits.active .
 	MaxActiveNodes int `yaml:"max_active_nodes"`
 }
 
@@ -542,7 +542,7 @@ type JudgeConfig struct {
 	// ThinkingLevel opts the judge/plan-judge request into a capped reasoning
 	// effort ("low", "medium", "high"); "" (default) sends no ThinkingConfig at
 	// all - some OpenAI-compatible endpoints 400 on reasoning_effort for a
-	// non-reasoning model, so this must stay opt-in, not forced on (#1235).
+	// non-reasoning model, so this must stay opt-in, not forced on .
 	ThinkingLevel string `yaml:"thinking_level"`
 }
 
@@ -620,7 +620,7 @@ type ProviderConfig struct {
 	ForkFrom string          `yaml:"fork_from"`
 	Live     *ProviderConfig `yaml:"live"`
 	// Limits caps how many DISTINCT models per role may be resident at once
-	// (#1007, enforced by dag.Admission). Absent = any number of
+	// . Absent = any number of
 	// models resident.
 	Limits *ProviderLimits `yaml:"limits"`
 }
@@ -633,7 +633,7 @@ type ProviderLimits struct {
 
 // ModelConfig is a models: registry entry - the canonical binding of a model
 // name to its provider, scheduling role, default context window, admission
-// limits (#1007, enforced by dag.Admission), and cost.
+// limits , and cost.
 type ModelConfig struct {
 	Provider      string        `yaml:"provider"`
 	Role          string        `yaml:"role"`
@@ -643,13 +643,13 @@ type ModelConfig struct {
 	// Effort is a reasoning-effort default ("low"/"medium"/"high") mapped to
 	// provider-specific params (OpenAI-compatible reasoning_effort); "" (default)
 	// sends no ThinkingConfig unless the request sets its own (e.g. the judge's
-	// gates.judge.thinking_level, which always takes precedence). #1235 - some
+	// gates.judge.thinking_level, which always takes precedence). - some
 	// OpenAI-compatible endpoints 400 on reasoning_effort for a non-reasoning
 	// model, so only set this on a model that accepts it.
 	Effort string `yaml:"effort"`
 }
 
-// ModelLimits gates admission (#1007, enforced by dag.Admission). Absent = unlimited:
+// ModelLimits gates admission . Absent = unlimited:
 // no Sessions cap, and a nil/zero KVTokens means context never blocks scheduling.
 type ModelLimits struct {
 	Sessions int `yaml:"sessions"`
@@ -714,7 +714,7 @@ type ConsolidationConfig struct {
 	Forgetting    *ForgettingConfig `yaml:"forgetting"`
 }
 
-// ForgettingConfig is memory.forgetting.rules (epic #1255 P3): an ordered
+// ForgettingConfig is memory.forgetting.rules (epic P3): an ordered
 // list of {when, then} rules the nightly sweep evaluates, first match wins.
 // Absent (nil) means the built-in defaults - see memory.DefaultRules.
 type ForgettingConfig struct {
@@ -830,7 +830,7 @@ func mergeStore(parent, child StoreConfig) StoreConfig {
 type OrchestratorConfig struct {
 	Provider string `yaml:"provider"`
 	Model    string `yaml:"model"`
-	// ContextWindow is the orchestrator's kv_tokens reservation (#1067), the
+	// ContextWindow is the orchestrator's kv_tokens reservation , the
 	// counterpart to an agent's own context_window. Unset means context is not
 	// a scheduling dimension for its turns - NOT the model's full window, which
 	// one turn would reserve entirely, starving the workers it just planned.
@@ -1230,7 +1230,7 @@ func (c *Config) validate() error {
 			}
 			// A reply reserve at or past the window leaves no room for the
 			// prompt, degrading judgeCharBudget to a full-window budget with
-			// no log and recreating the #1215 overflow (#1221).
+			// no log and recreating the overflow .
 			if g.Judge.ContextWindow > 0 && g.Judge.MaxOutputTokens >= g.Judge.ContextWindow {
 				return fmt.Errorf("config: gates.judge.max_output_tokens %d must be less than gates.judge.context_window %d", g.Judge.MaxOutputTokens, g.Judge.ContextWindow)
 			}

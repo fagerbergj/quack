@@ -1,4 +1,4 @@
-// judgeround_test.go: #1092 - judge_round record, trigger_annotation chain,
+// judgeround_test.go: - judge_round record, trigger_annotation chain,
 // notes anchoring, revise-prompt sourcing, and fan-out verdict ownership.
 package vetting
 
@@ -119,7 +119,7 @@ CLEAN:
 	}
 }
 
-// TestJudgeRoundIdentityIncludesNodeID is the BLOCKING #1092 adversarial
+// TestJudgeRoundIdentityIncludesNodeID is the BLOCKING adversarial
 // review finding: turnID (ctx.InvocationID()) is shared by every node in one
 // run, so two fan-out nodes' round 1 must not resolve to the same judge_round
 // id, WAL key, or clobber each other's revision.
@@ -147,7 +147,7 @@ func TestJudgeRoundIdentityIncludesNodeID(t *testing.T) {
 
 	// WAL keys (ledger.Entry.Key) for the judge_round artifact.revision must
 	// differ too, or the second save would clobber the first's WAL row for
-	// the same (chat, turn, round) - #1144 P2: the artifact.revision entry
+	// the same (chat, turn, round) - P2: the artifact.revision entry
 	// recordstore already appends IS this round's only WAL entry.
 	var judgeRoundKeys []string
 	for _, e := range fl.entries {
@@ -264,7 +264,7 @@ func TestNonDeliveringSliceDropsStructuredVerdict(t *testing.T) {
 
 // TestMergeReviewsSynthesizerOwnsVerdict: the synthesizer's own VERDICT tail
 // is the merge's verdict, overriding the worst-of computed from slices whose
-// VERDICT lines should have been ignored (#1092, design V4 §4.6) - a
+// VERDICT lines should have been ignored - a
 // slice-only approve doesn't force delivery to approve over the
 // synthesizer's request_changes.
 func TestMergeReviewsSynthesizerOwnsVerdict(t *testing.T) {

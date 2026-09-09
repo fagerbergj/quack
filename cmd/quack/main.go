@@ -65,16 +65,16 @@ func newRootCmd() *cobra.Command {
 			"coding, and more. There is no TUI:\n" +
 			"-p, `chat send`, and `chat show` ARE the interface - pipeable, scriptable exit\n" +
 			"codes (0 answered, 1 failed, 2 paused on a question).\n\n" +
-			"  quack init                       get configured (run locally or connect to a server)\n" +
-			"  quack server run                 run the API + SPA server (foreground)\n" +
-			"  quack -p \"<prompt>\"               one-shot prompt, print and exit\n" +
-			"  quack chat new                   create a chat, print its id\n" +
-			"  quack chat send <id> \"<msg>\"      send a message (or answer a paused question)\n" +
-			"  quack chat show <id> [-f]         status snapshot, optionally follow the live run\n" +
-			"  quack chat list                  list chats with their status\n" +
+			"  quack init get configured (run locally or connect to a server)\n" +
+			"  quack server run run the API + SPA server (foreground)\n" +
+			"  quack -p \"<prompt>\" one-shot prompt, print and exit\n" +
+			"  quack chat new create a chat, print its id\n" +
+			"  quack chat send <id> \"<msg>\" send a message (or answer a paused question)\n" +
+			"  quack chat show <id> [-f] status snapshot, optionally follow the live run\n" +
+			"  quack chat list list chats with their status\n" +
 			"  quack replay <id-or-bundle.zip>  replay a recorded run - strict, or --fork-from a node\n" +
-			"  quack eval <id-or-bundle.zip>    re-run recorded turns live with a swapped model, compare judge scores\n" +
-			"  quack chat|server|api            manage chats, the server, and raw API calls",
+			"  quack eval <id-or-bundle.zip> re-run recorded turns live with a swapped model, compare judge scores\n" +
+			"  quack chat|server|api manage chats, the server, and raw API calls",
 		SilenceUsage: true, // a failing RunE is an error, not a usage mistake
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if printPrompt == "" {
@@ -374,7 +374,7 @@ func newMemoryListCmd() *cobra.Command {
 }
 
 // newMemoryShowCmd: `memory show <id>` prints one memory's votes/tier/last
-// recalled (epic #1255 P1 observability).
+// recalled (epic P1 observability).
 func newMemoryShowCmd() *cobra.Command {
 	var asJSON bool
 	c := &cobra.Command{
@@ -408,7 +408,7 @@ func newMemoryForgetCmd() *cobra.Command {
 }
 
 // newMemorySweepCmd: `memory sweep [--dry-run]` runs the forgetting-rule
-// sweep (epic #1255 P3) on demand - the same code path the nightly
+// sweep (epic P3) on demand - the same code path the nightly
 // consolidation job calls.
 func newMemorySweepCmd() *cobra.Command {
 	var asJSON, dryRun, dedupe, apply bool
@@ -429,7 +429,7 @@ func newMemorySweepCmd() *cobra.Command {
 	return c
 }
 
-// newMemoryRescopeCmd: `memory rescope` (#1262) moves role:* memories whose
+// newMemoryRescopeCmd: `memory rescope` moves role:* memories whose
 // provenance chat has a GitHub origin into their repo:* bucket - a one-off
 // fix for the years of memories worktree-per-node's RepoKey="" misfiled.
 func newMemoryRescopeCmd() *cobra.Command {
@@ -449,7 +449,7 @@ func newMemoryRescopeCmd() *cobra.Command {
 	return c
 }
 
-// newMemoryStatsCmd: `memory stats [--weeks N]` (epic #1255 P5) - weekly
+// newMemoryStatsCmd: `memory stats [--weeks N]` (epic P5) - weekly
 // recall precision/support-share/vote/recall counts plus a live/invalidated
 // snapshot per scope.
 func newMemoryStatsCmd() *cobra.Command {
@@ -805,7 +805,7 @@ func newAPICmd() *cobra.Command {
 			"  quack api /health\n" +
 			"  quack api /api/v1/chats\n" +
 			"  quack api POST /api/v1/chats -d '{\"system_prompt\":\"...\"}'\n" +
-			"  quack api POST /api/v1/chats -d @body.json   # or -d - to read stdin\n\n" +
+			"  quack api POST /api/v1/chats -d @body.json # or -d - to read stdin\n\n" +
 			"Targets the active server (or --server); with neither, runs the duck in-process.",
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {

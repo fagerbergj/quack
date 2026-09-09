@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// ScopeStats is one bucket's live/invalidated point counts (epic #1255 P5) -
+// ScopeStats is one bucket's live/invalidated point counts (epic P5) -
 // the memory-page header's "live points per scope over time" secondary
 // metric, snapshotted at call time (not itself a weekly series).
 type ScopeStats struct {
@@ -73,7 +73,7 @@ type OpEvent struct {
 	At time.Time
 }
 
-// WeekStats is one ISO week's memory-usage numbers (epic #1255 P5).
+// WeekStats is one ISO week's memory-usage numbers (epic P5).
 type WeekStats struct {
 	Week         string // ISO 8601 week, e.g. "2026-W23"
 	Recalls      int

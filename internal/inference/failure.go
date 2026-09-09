@@ -15,7 +15,7 @@ import (
 // callFailure tracks consecutive generate() failures for one chat+node+agent
 // triple. ADK's own runner swallows a worker node's returned error into a
 // silent empty completion (no error reaches the session event) - this is the
-// only place the real cause still exists once that happens (#1105).
+// only place the real cause still exists once that happens .
 type callFailure struct {
 	err     error
 	streak  int
@@ -35,7 +35,7 @@ var (
 
 // failureKey includes agent (e.g. "judge" vs. the node's real agent name) so
 // a judge failure after a worker's own success can't be mistaken for a
-// worker gateway failure on a later, unrelated empty completion (PR #1109
+// worker gateway failure on a later, unrelated empty completion (
 // review finding 3) - judge coords always stamp Agent: "judge", distinct
 // from any real node agent name.
 func failureKey(chatID, node, agent string) string { return chatID + "\x00" + node + "\x00" + agent }
@@ -93,7 +93,7 @@ func ClearFailure(chatID, node, agent string) {
 }
 
 // toolRejectionsMu/toolRejections track the last `plan` tool rejection per
-// chat (#1180): a planner turn whose plan calls were all rejected and that
+// chat : a planner turn whose plan calls were all rejected and that
 // ends with no plan and no answer needs the same terminal-failure path as a
 // gateway outage during planning, but the rejection text is quack's own
 // dag.PlanRejectedError.Reason - never sanitized like a gateway error.
@@ -133,7 +133,7 @@ func ClearPlanRejection(chatID string) {
 }
 
 // storeFailuresMu/storeFailures track the last store (DB) error per chat
-// (#1193): a dial/connection error surviving the pgdial retry gets swallowed
+// : a dial/connection error surviving the pgdial retry gets swallowed
 // into "no artifacts" by the planner's failSoftListArtifacts, so the run's
 // terminal status needs the same give-up path a gateway outage uses, keyed
 // separately from callFailure since a store error has no node/agent.
@@ -227,7 +227,7 @@ var statusRe = regexp.MustCompile(`status (\d{3})`)
 // classification safe to disclose publicly (a PR/issue comment) - unlike
 // err.Error() itself, which for an HTTP failure carries the raw endpoint URL
 // and the unmodified upstream response body (openaimodel.apiErr's shape), and
-// for a 401 can echo the API key back verbatim (#1109 review finding 1). The
+// for a 401 can echo the API key back verbatim . The
 // raw error stays available server-side via slog (apiErr already logs it) and
 // DagNode.Error is not touched by this - only the text handed to an
 // extension's RunOutcome is. transient reports whether a retry is likely to
@@ -257,7 +257,7 @@ var summaryStatusRe = regexp.MustCompile(`returned (\d{3})`)
 // TransientFromSummary reports whether a SanitizeGatewayError-shaped summary
 // names a transient status class (429/408/5xx) - callers gate "retry" advice
 // on this so it isn't shown for a 401/400/quota error that won't self-heal
-// (#1109 review finding 4).
+// .
 func TransientFromSummary(summary string) bool {
 	m := summaryStatusRe.FindStringSubmatch(summary)
 	if m == nil {

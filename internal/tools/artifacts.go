@@ -1,7 +1,7 @@
 // artifacts.go: ADK-native equivalents of the ACP loopback MCP artifact
 // tools (internal/acp/memorymcp.go) - same recordstore functions, thin
 // agent.Context wrappers, so the merge/validation/identity logic lives in
-// exactly one place (#1090 P4, issue #1091).
+// exactly one place .
 package tools
 
 import (
@@ -70,14 +70,14 @@ type editArtifactEdit struct {
 // vetting.AdvisorTask's own coordinates for a node running inside a
 // judge/revise round; the zero value ({}) is correct for a caller with no
 // round concept (e.g. the top-level orchestrator agent) rather than a
-// hardcoded literal (#1091 adversarial review finding #4).
+// hardcoded literal .
 //
 // Passed to tool constructors as a *RoundCoords, not a value: a native gated
 // node's tools are built once, before its judge/revise loop starts, while the
 // round/turn/head-sha/trigger-annotation are only known once the gate reaches
 // that round (vetting.Config.RoundCoordsSink writes through the same pointer
 // every tool closure shares) - mirrors ledger.Coords' per-round
-// SetLedgerCoords restamping (#1123).
+// SetLedgerCoords restamping .
 type RoundCoords struct {
 	Round             int
 	TurnID            string
@@ -139,7 +139,7 @@ type writeArtifactArgs struct {
 
 // writeArtifactDescription lists the registered Blob kinds by name instead of
 // a hand-written example list, so it can't drift from what the registry
-// actually holds (#1108 finding 2, mirrors internal/acp/memorymcp.go).
+// actually holds .
 func writeArtifactDescription() string {
 	var kinds []string
 	for _, spec := range recordstore.KindsForClass(recordstore.Blob) {
@@ -152,7 +152,7 @@ func writeArtifactDescription() string {
 // generated write_<kind> tool (NewWriteKindTool) instead. hint is the
 // session-derived identity hint (vetting.SubjectHint(chatID)) for kinds
 // whose Identity func requires one (e.g. document, pr_body) - never a tool
-// argument, same principle as ids (#1108 finding 2).
+// argument, same principle as ids .
 func NewWriteArtifactTool(c *recordstore.Client, nodeID string, coords *RoundCoords, hint string) (tool.Tool, error) {
 	return functiontool.New[writeArtifactArgs, string](
 		functiontool.Config{
@@ -170,7 +170,7 @@ func NewWriteArtifactTool(c *recordstore.Client, nodeID string, coords *RoundCoo
 			// Only a hint-requiring blob kind (document, pr_body) gets hint - a
 			// hint-optional kind (text, bytes) must keep deriving its id from
 			// content, or every write from this session collapses onto one id
-			// (#1108 finding 2, mirrors internal/acp/memorymcp.go).
+			// .
 			blobHint := ""
 			if spec, ok := recordstore.SpecFor(a.Kind); ok && spec.RequiresHint {
 				blobHint = hint
@@ -186,7 +186,7 @@ func NewWriteArtifactTool(c *recordstore.Client, nodeID string, coords *RoundCoo
 
 // NewWriteKindTool generates one write_<kind> tool whose input schema IS
 // spec's registered JSONSchema, parsed once here rather than reflected from
-// a Go struct (#1090 §4.4) - mirrors internal/acp/memorymcp.go's
+// a Go struct - mirrors internal/acp/memorymcp.go's
 // registerWriteKindTool.
 func NewWriteKindTool(c *recordstore.Client, nodeID, kind string, spec recordstore.KindSpec, coords *RoundCoords, hint string) (tool.Tool, error) {
 	var schema jsonschema.Schema
@@ -216,7 +216,7 @@ func NewWriteKindTool(c *recordstore.Client, nodeID, kind string, spec recordsto
 
 // NewWriteKindTools builds one write_<kind> tool per registered structured
 // kind. recordstore.Register already rejects a bad JSONSchema at process
-// startup (#1108 finding 3), so NewWriteKindTool can't fail here in
+// startup , so NewWriteKindTool can't fail here in
 // practice; a failure is still surfaced (never silently dropped) rather than
 // skipped, so the two surfaces can never drift again.
 func NewWriteKindTools(c *recordstore.Client, nodeID string, coords *RoundCoords, hint string) ([]tool.Tool, error) {
@@ -244,7 +244,7 @@ type readArtifactArgs struct {
 }
 
 // NewReadArtifactTool: the native equivalent of the MCP-only read_artifact
-// tool (#1012 wired it into ACP's loopback MCP only) - same
+// tool - same
 // recordstore.Client reads, same InlineMaxBytes cap as
 // internal/acp/memorymcp.go's registerReadArtifactTool.
 func NewReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
@@ -293,7 +293,7 @@ func NewReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
 // BuildNativeArtifactTools assembles one node's full artifact tool set -
 // list/read/edit/write/write_<kind> - the single place both the orchestrator
 // and native gated nodes (internal/dag/graph.go) construct these, so the two
-// surfaces can't drift (#1123).
+// surfaces can't drift .
 func BuildNativeArtifactTools(c *recordstore.Client, nodeID string, coords *RoundCoords, hint string) ([]tool.Tool, error) {
 	if coords == nil {
 		coords = &RoundCoords{}

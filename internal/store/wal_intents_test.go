@@ -10,7 +10,7 @@ import (
 	"github.com/fagerbergj/quack/internal/ledgertest"
 )
 
-// TestSaveTurn_CrashBetweenIntentAndRow is #1144 P5's required kill-9 test:
+// TestSaveTurn_CrashBetweenIntentAndRow is P5's required kill-9 test:
 // the process appends turn.created and dies before the ChatTurn row lands
 // (SaveTurn's real path is AppendIntent-then-Create, so this is the
 // documented gap between them, not a hypothetical). No CLI/recovery
@@ -153,7 +153,7 @@ func TestSaveDagPlan_ResumeIsWALIdempotent(t *testing.T) {
 	}
 }
 
-// TestWriteCheckpoint_UpsertsOneRowAndSeedsNextFold is #1144 P5 review's
+// TestWriteCheckpoint_UpsertsOneRowAndSeedsNextFold is P5 review's
 // design change made concrete: the checkpoint is ONE row (chat_id primary
 // key), replaced in place, not an entry appended to the ledger every turn -
 // and a second WriteCheckpoint call must actually consume the first row as

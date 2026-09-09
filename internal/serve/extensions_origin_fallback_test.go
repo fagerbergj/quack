@@ -79,7 +79,7 @@ func TestMergeExtOrigin_FreshSetupOverridesStale(t *testing.T) {
 // (issue comment: "neither the v0.9.0 nudge re-send ... nor #1181's
 // stored-origin fallback delivered a head ref"): github's own dispatch()
 // ALWAYS builds a non-nil sdk.Setup, even when its snapshot fetch came back
-// without a head ref - so "newSetup == nil" (the only case #1181 handled)
+// without a head ref - so "newSetup == nil" (the only case handled)
 // never actually happens on a real github dispatch. A Setup that is present
 // but blank must get the same fallback as a wholly-missing one.
 func TestMergeExtOrigin_BlankHeadRefBorrowsStored(t *testing.T) {
@@ -95,12 +95,12 @@ func TestMergeExtOrigin_BlankHeadRefBorrowsStored(t *testing.T) {
 	}
 }
 
-// TestUpdateChatOrigin_PreservesStoredSetup is the #1181 review's blocking
+// TestUpdateChatOrigin_PreservesStoredSetup is the review's blocking
 // finding: newExtUpdateChatOrigin (the state-transition webhook path - PR
 // synchronize/close/merge) used to marshal the bare extsdk.ChatOrigin and
 // overwrite the whole row, wiping the quackSetup field a dispatch had just
 // stored - so any such webhook between a dispatch and a nudge reopened
-// #1180. A dispatch with Origin+Setup, then an origin update, must still
+// . A dispatch with Origin+Setup, then an origin update, must still
 // have the stored Setup afterward.
 func TestUpdateChatOrigin_PreservesStoredSetup(t *testing.T) {
 	st, orch, hub, artifacts, _ := newExtTestStack(t)

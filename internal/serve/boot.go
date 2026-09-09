@@ -18,7 +18,7 @@ import (
 const staleResumePlanCeiling = 24 * time.Hour
 
 // resumeGuardArchivedOrStale is boot resume's cheap admissibility check
-// (#1176): an archived chat's paused nodes must never be resumed. A human
+// : an archived chat's paused nodes must never be resumed. A human
 // pause (dag.PauseUser) is a deliberate decision boot must not override,
 // regardless of plan age - unlike a shutdown pause, which is the server's own
 // doing and always wants resuming. A plan older than staleResumePlanCeiling
@@ -79,7 +79,7 @@ func reconcileNodes(ctx context.Context, st *store.Store, jail *workspace.Jail, 
 	return rep.Start
 }
 
-// removeStaleCloneDir clears an interrupted chat's shared-repo clone (#1213)
+// removeStaleCloneDir clears an interrupted chat's shared-repo clone
 // so the retry's setup step never inherits a read-only Go module cache left
 // by a killed `go mod download`. Best-effort: a missing/never-provisioned
 // dir is not an error.

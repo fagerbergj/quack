@@ -334,7 +334,7 @@ func TestDagPlanEventCarriesContextWindow(t *testing.T) {
 	}
 }
 
-// TestDagPlanEventCarriesArtifact pins the #1178 wire path: DagPlanEvent must
+// TestDagPlanEventCarriesArtifact pins the wire path: DagPlanEvent must
 // forward each node's declared output artifact kind (dag.Node.Artifact) onto
 // the wire DagNodeDef so the frontend can pick the node's primary output
 // artifact exactly; a node that declares none carries an empty field.

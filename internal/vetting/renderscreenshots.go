@@ -1,5 +1,5 @@
 // renderscreenshots.go: hands render-check's per-story screenshots to the
-// judge as `bytes:` artifacts (#1211, follow-up to #1192). The trigger is an
+// judge as `bytes:` artifacts . The trigger is an
 // explicit `npm run render-check` entry in the node's own `checks:` list -
 // deriveChecks never emits it, so this never fires implicitly on frontend
 // nodes.
@@ -21,7 +21,7 @@ import (
 )
 
 // renderCheckCommand: the exact npm script config/quack.yaml's check_commands
-// allowlist ("npm run" prefix) permits for this to apply (#1192).
+// allowlist ("npm run" prefix) permits for this to apply .
 const renderCheckCommand = "npm run render-check"
 
 // maxJudgeScreenshots caps image evidence handed to the judge per round -
@@ -112,7 +112,7 @@ func hasInlineData(question *genai.Content) bool {
 }
 
 // stripInlineData returns a copy of question with InlineData parts removed,
-// for the one-shot degrade-to-text-only judge retry (#1229).
+// for the one-shot degrade-to-text-only judge retry .
 func stripInlineData(question *genai.Content) *genai.Content {
 	out := &genai.Content{Role: question.Role, Parts: make([]*genai.Part, 0, len(question.Parts))}
 	for _, p := range question.Parts {

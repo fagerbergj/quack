@@ -63,7 +63,7 @@ func newTestPGStore(t *testing.T) *PGStore {
 }
 
 // TestPGStoreNewMigrate_AddsChatKeyIndexToExistingTable pins the migration
-// side of idx_ledger_chat_key (#1111 review finding): every other PG test
+// side of idx_ledger_chat_key : every other PG test
 // starts from a fresh container, so AutoMigrate always creates the table and
 // index together - the production path (adding the index to an EXISTING
 // ledger_entries table on a deployed database) was otherwise unexercised. A
@@ -145,7 +145,7 @@ func TestPGStoreReadEntriesReturnsInOrder(t *testing.T) {
 	var lastSeq int64
 	for i := 0; i < 5; i++ {
 		// Distinct parent_revision per entry: they share a key, and the
-		// #1144 P4 unique (chat_id, key, parent_revision) index would reject
+		// P4 unique (chat_id, key, parent_revision) index would reject
 		// a repeat.
 		payload, err := json.Marshal(struct {
 			ParentRevision int `json:"parent_revision"`
@@ -294,7 +294,7 @@ func artifactRevPayload(t *testing.T, parent int) json.RawMessage {
 }
 
 // TestPGStoreAppendIntent_ParentRevisionConflict is the epic's named
-// verification case for #1144 P4 against a REAL Postgres: two processes
+// verification case for P4 against a REAL Postgres: two processes
 // (here, two goroutines against one PGStore/database) saving the same
 // artifact id concurrently, both claiming the same parent_revision - exactly
 // one must win, the other must get ErrStaleParent, and neither may silently
@@ -344,7 +344,7 @@ func TestPGStoreAppendIntent_ParentRevisionConflict(t *testing.T) {
 	}
 }
 
-// TestPGStoreAppendIntent_IdempotencyKeyIsANoOp is #1144 P4's other store-level
+// TestPGStoreAppendIntent_IdempotencyKeyIsANoOp is P4's other store-level
 // guarantee: a repeated IdempotencyKey writes nothing and hands back the
 // entry that already claimed it, instead of erroring or duplicating.
 func TestPGStoreAppendIntent_IdempotencyKeyIsANoOp(t *testing.T) {

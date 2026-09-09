@@ -85,7 +85,7 @@ func TestNew_Migrations_IdempotentAcrossBoots_Postgres(t *testing.T) {
 }
 
 // TestDeleteChatRow_CascadesPerChatTables_Postgres is
-// TestDeleteChatRow_CascadesPerChatTables against real Postgres (#1296):
+// TestDeleteChatRow_CascadesPerChatTables against real Postgres :
 // AutoMigrate's relationship-driven FK creation (ALTER TABLE ADD CONSTRAINT)
 // is a different code path than glebarez/sqlite's table-rebuild one, so the
 // cascade needs its own proof on the dialect prod actually runs. Skips if
@@ -137,7 +137,7 @@ func TestDeleteChatRow_CascadesPerChatTables_Postgres(t *testing.T) {
 		t.Fatalf("upsertCheckpoint: %v", err)
 	}
 
-	// Raw SQL, not DeleteChat - the exact bypass #1296 guards against.
+	// Raw SQL, not DeleteChat - the exact bypass guards against.
 	if err := st.db.Exec("DELETE FROM chats WHERE id = ?", chatID).Error; err != nil {
 		t.Fatalf("raw delete chats row: %v", err)
 	}

@@ -224,7 +224,7 @@ func TestAgentCompleteNonJudgeOmitsScore(t *testing.T) {
 	}
 }
 
-// TestDagNodeDefArtifactWireShape pins the #1178 wire addition: the node's
+// TestDagNodeDefArtifactWireShape pins the wire addition: the node's
 // declared output kind crosses the wire as "artifact" and stays out of the
 // JSON when the node declares none, so a PlanJSON persisted before the field
 // existed still parses on reload.

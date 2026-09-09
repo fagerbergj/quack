@@ -61,7 +61,7 @@ func (m countingErrModel) GenerateContent(_ context.Context, _ *model.LLMRequest
 // identical claims. The (faked) consolidation model keeps one via UPDATE and
 // deletes the other two, reason "duplicate of <id>" - decide()/apply()'s
 // normal op taxonomy, applied from the sweep's ticker trigger instead of a
-// commit. Epic #1255 P5: a "duplicate of <id>" DELETE is a lineage-recording
+// commit. Epic P5: a "duplicate of <id>" DELETE is a lineage-recording
 // absorption, so the applied invalidation_reason is normalized to
 // "absorbed by <id>" and the survivor's absorbed_ids records both merged ids.
 func TestConsolidateOnce_BurstDedupe(t *testing.T) {

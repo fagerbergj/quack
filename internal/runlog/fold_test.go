@@ -14,7 +14,7 @@ import (
 )
 
 // mustSeedChat upserts a bare chats row - chat_events/dag_plans now FK to
-// chats.id (#1296), so a fold/table-write test needs one before it can insert.
+// chats.id , so a fold/table-write test needs one before it can insert.
 func mustSeedChat(t *testing.T, st *store.Store, chatID string) {
 	t.Helper()
 	if err := st.SetChatOrigin(context.Background(), chatID, "", ""); err != nil {
@@ -41,7 +41,7 @@ func appendNode(t *testing.T, s ledger.LedgerStore, chatID, nodeID, turn, kind s
 
 // TestLoadEvents_FallsBackToFold: an empty SSE table with a WAL armed
 // resumes from the fold instead of returning nothing - BOTH the node_start
-// and node_done rows (#1121: start and terminal are synthesized independently).
+// and node_done rows .
 func TestLoadEvents_FallsBackToFold(t *testing.T) {
 	st := newTestStore(t)
 	ls := ledgertest.NewMemStore()
@@ -147,7 +147,7 @@ func TestLoadEvents_CaughtUpClientNeverFolds(t *testing.T) {
 	}
 }
 
-// TestLoadEvents_CrashBetweenIntentAndWatermark is #1144 P3's kill-9 test:
+// TestLoadEvents_CrashBetweenIntentAndWatermark is P3's kill-9 test:
 // the ledger already has durable node.* intents (as if a live writer had
 // appended them) but the process died before this chat's "sse" projection
 // ever wrote a single row or watermark - simulating a kill -9 right after

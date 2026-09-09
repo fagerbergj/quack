@@ -524,7 +524,7 @@ func TestCommitDelivery_BookkeepingSurvivesCancelAfterDeliver(t *testing.T) {
 
 // ctxCapturingLedger records the Err() of the ctx passed to the
 // delivery_record's artifact.revision AppendIntent call (its completion,
-// #1144 P2), since fakeGateLedger itself ignores ctx.
+// P2), since fakeGateLedger itself ignores ctx.
 type ctxCapturingLedger struct {
 	*fakeGateLedger
 	sawDeliveryRecord bool

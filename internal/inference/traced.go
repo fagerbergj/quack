@@ -25,7 +25,7 @@ type usageEmbedder interface {
 
 // Version is the build stamp (serve.Version), set once at startup - inference
 // can't import serve (serve imports inference), so this mirrors that package
-// var here for the llm.call ledger payload (#1096).
+// var here for the llm.call ledger payload .
 var Version string
 
 // tracedModel wraps a model.LLM to record quack.model.call.duration.
@@ -57,7 +57,7 @@ func (t *tracedModel) SetDefaultAgent(name string) {
 
 // SetLedgerCoords stamps coordinates for calls whose ctx cannot carry their own
 // - RunNode rebuilds the child context and drops node/agent/round. Fields the
-// caller did put in ctx are never overwritten by it (#1039).
+// caller did put in ctx are never overwritten by it .
 func (t *tracedModel) SetLedgerCoords(c ledger.Coords) {
 	t.mu.Lock()
 	t.coords = c

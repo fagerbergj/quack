@@ -95,7 +95,7 @@ func TestDeleteChatRow_CascadesPerChatTables(t *testing.T) {
 		t.Fatalf("upsertCheckpoint: %v", err)
 	}
 
-	// Raw SQL, not DeleteChat - the exact bypass #1296 guards against.
+	// Raw SQL, not DeleteChat - the exact bypass guards against.
 	if err := st.db.Exec("DELETE FROM chats WHERE id = ?", chatID).Error; err != nil {
 		t.Fatalf("raw delete chats row: %v", err)
 	}

@@ -57,7 +57,7 @@ func newTestPGStore(t *testing.T) *ledger.PGStore {
 func TestFold_Postgres_KeyIndexAndPaging(t *testing.T) {
 	// No t.Parallel(): this test mutates the package-level pageSize var, as
 	// does TestFold_PagingMatchesOneSlice - running both non-parallel is what
-	// keeps that shared mutation race-free (#1111 review finding). Add
+	// keeps that shared mutation race-free . Add
 	// t.Parallel() back only after threading the page limit into readAll
 	// instead of sharing pageSize.
 	store := newTestPGStore(t)

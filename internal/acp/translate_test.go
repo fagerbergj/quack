@@ -306,7 +306,7 @@ func TestTranslate_UnmappedKindKeepsNameAndArgs(t *testing.T) {
 }
 
 // pi-acp sets _meta on the ToolCall to carry an MCP-bridged tool's real name
-// (#1278) - the relay must use it verbatim, in place of the useless kind
+// - the relay must use it verbatim, in place of the useless kind
 // "other", with the raw args (not the title stuffed into them).
 func TestTranslate_MCPMetaResolvesRealToolName(t *testing.T) {
 	tr := newTranslator("/work")

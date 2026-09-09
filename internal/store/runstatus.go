@@ -59,9 +59,9 @@ func (s *Store) StampRunOutcome(ctx context.Context, chatID, status, pendingQues
 // DeriveTerminalStatus computes a chat's terminal status from its turns and whether a
 // question is still pending. Shared by the REST and GitHub run drivers so both stamp the
 // same rule the read path relies on (#738). nodeError is the failed node's own DagNode.Error
-// (#1105) - "" for every other status, including a genuine silent gap (empty answer, no
+// - "" for every other status, including a genuine silent gap (empty answer, no
 // failed node) so that path stays exactly as it was. chatID also covers the orchestrator's
-// own pre-DAG planning give-up (#1156): a gateway outage during planning never produces a
+// own pre-DAG planning give-up : a gateway outage during planning never produces a
 // DagNode to read an error off of, so it falls back to the same failure tracker DagNode
 // failures use, keyed with an empty node/agent (see orchestratorGiveUpError).
 func DeriveTerminalStatus(chatID string, turns []TurnContent, pendingQuestion string, hasPendingQuestion bool) (status, question, nodeError string) {
@@ -75,13 +75,13 @@ func DeriveTerminalStatus(chatID string, turns []TurnContent, pendingQuestion st
 				return RunStatusFailed, "", errText
 			}
 			// Store failure checked before the gateway/plan-rejection fallbacks
-			// (#1193): a DB dial error surviving the pgdial retry (internal/store's
+			// : a DB dial error surviving the pgdial retry (internal/store's
 			// openPostgres) is stronger, more specific evidence than a generic
 			// gateway or rejection reason for the same silent-answer turn.
 			if reason, failed := inference.LastStoreFailure(chatID); failed {
 				return RunStatusFailed, "", fmt.Sprintf("database unavailable: %s", reason)
 			}
-			// Gateway failure checked first (#1181 review): a real gateway
+			// Gateway failure checked first : a real gateway
 			// outage during THIS turn is stronger evidence than an earlier
 			// rejection on the same turn, if both happened to occur.
 			if errText, failed := orchestratorGiveUpError(chatID); failed {
@@ -98,7 +98,7 @@ func DeriveTerminalStatus(chatID string, turns []TurnContent, pendingQuestion st
 // orchestratorGiveUpError reports the classified model-gateway error when the
 // orchestrator's own planning loop (orchestrator.go's Run, before any DAG plan
 // exists) exhausted its retries because every call to the model failed
-// (#1156). The orchestrator's own model calls stamp an empty node/agent in
+// . The orchestrator's own model calls stamp an empty node/agent in
 // ledger.Coords, so that's the key inference's failure tracker holds it
 // under - same tracker #1109's dag.emptyNodeError reads for a DAG node, reused
 // here via its exported classification helper (inference.SanitizeGatewayError)
@@ -211,11 +211,11 @@ func (s *Store) chatsWithPausedNodes(ctx context.Context) (map[string]bool, erro
 }
 
 // failedDagNodeError reports the first failed node's own error text, so a
-// gateway failure the node recorded (#1105) survives past DeriveTerminalStatus
+// gateway failure the node recorded survives past DeriveTerminalStatus
 // instead of collapsing into a bare "failed" with nothing to say why. A node
 // whose Error is exactly dag.SilentGapError (#568's true silent gap) reports
 // "" - that sentinel is for the DagNode row, not for downstream public text
-// (PR #1109 review finding 2).
+// (PR review finding 2).
 func failedDagNodeError(nodes []DagNode) (errText string, failed bool) {
 	for _, n := range nodes {
 		if n.Status == "failed" {

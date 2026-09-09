@@ -825,7 +825,7 @@ func TestGroupSessionEvents_OrchestratorOwnReplyKept(t *testing.T) {
 	}
 }
 
-// TestRecordedQuerySQL_OffByDefaultAndBounded is the #1113 second-review
+// TestRecordedQuerySQL_OffByDefaultAndBounded is the second-review
 // regression: record_sql's callback is registered unconditionally in New(),
 // so without a gate + cap it would grow forever on a live server. Proves
 // both halves: recording off (the production default) leaves the slice
@@ -911,7 +911,7 @@ func TestTruncateTitle_WordBoundary(t *testing.T) {
 	}
 }
 
-// TestDeleteChat_RemovesCheckpointRow pins the #1238 review follow-up: a
+// TestDeleteChat_RemovesCheckpointRow pins the review follow-up: a
 // chat's ledger_checkpoints row must not survive DeleteChat - UUIDv4 ids
 // never repeat, so a leftover row can never be read back and is pure leak.
 func TestDeleteChat_RemovesCheckpointRow(t *testing.T) {

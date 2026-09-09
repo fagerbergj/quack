@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestQdrantLess (#1266 review): qdrant's list() sorts entirely in Go (it
+// TestQdrantLess : qdrant's list() sorts entirely in Go (it
 // already fetches the whole matching set via Scroll), so qdrantLess is the
 // one place that ordering logic lives - a pure function over []scored, no
 // live qdrant harness needed (same reasoning as TestExcludeInvalidatedFilter).

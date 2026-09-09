@@ -68,7 +68,7 @@ type Config struct {
 	// at the same two points SetAdvisorThreadRound is (draft seed + every judge
 	// round) - lets a native node's already-built artifact tools (which don't
 	// have an ACP session/AdvisorToken to poll) get restamped by the gate that
-	// actually knows the current round, without vetting importing tools (#1123).
+	// actually knows the current round, without vetting importing tools .
 	RoundCoordsSink func(round int, turnID, headSHA, triggerAnnotation string)
 	// Ledger: the WAL's fail-closed AppendIntent path. nil = no WAL (no
 	// recording.store configured); recordstore and the gate then write
@@ -76,7 +76,7 @@ type Config struct {
 	Ledger ledger.LedgerStore
 	// Artifact: episodic record name this node writes on gate pass ("body" or
 	// "" for none). "review" is written for IsReviewer nodes regardless of
-	// this field - it names only the reMarkable-style extra record (#1006).
+	// this field - it names only the reMarkable-style extra record .
 	Artifact           string
 	Memory             *memory.Store // staged tradecraft on pass
 	CommitMemory       bool          // task-memory participant
@@ -90,7 +90,7 @@ type Config struct {
 	AdvisorToken       string        // fs tool scope token; empty = no scope
 	Agent              string        // observability only
 	// BundleHash: this agent's bundle content hash (agent.Bundle.Hash) -
-	// ledger provenance only (#1096), stamped onto worker ledger.Coords
+	// ledger provenance only , stamped onto worker ledger.Coords
 	// alongside Agent.
 	BundleHash      string
 	User            string          // observability only; resolved from the ADK session, not caller-set
@@ -165,14 +165,14 @@ type DeliveryContext struct {
 	// PushError: non-empty when ensurePush failed before Deliver was called -
 	// Items are still the originally staged set (never attempted). Deliver
 	// implementations should skip attempting them and report this as each
-	// item's failure instead, mirroring the PushedSHA-verify-mismatch path (#1155).
+	// item's failure instead, mirroring the PushedSHA-verify-mismatch path .
 	PushError string
 	// ChecksSkipNote: non-empty when GatePassed but no build/test check ran
 	// for a reason worth telling the reader (#780). Already worded for
 	// display; "" means say nothing (checks ran, or the reason is operator
 	// config, not a property of the change).
 	ChecksSkipNote string
-	// IdempotencyKey: target artifact id + revision (#1093 V4 §4.9) - "" when
+	// IdempotencyKey: target artifact id + revision - "" when
 	// this delivery has no backing artifact revision to key on.
 	IdempotencyKey string
 }
@@ -210,7 +210,7 @@ type workerActivity struct {
 	workspace []wsOp
 
 	// recalled: recall_memory hits a NATIVE worker's own tool call returned
-	// this run (epic #1255 P2) - scanned from session events (see
+	// this run (epic P2) - scanned from session events (see
 	// activityFromSessionAt's "recall_memory" case), since a native worker's
 	// tool calls, unlike an ACP worker's, land in this session directly.
 	recalled []memory.Delivered

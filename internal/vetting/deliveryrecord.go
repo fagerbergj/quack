@@ -77,7 +77,7 @@ func deliveryRecordID(targetID string) string {
 	return kindDeliveryRecord + ":" + deliverySubject(targetID)
 }
 
-// saveDeliveryRecord appends one delivery_record revision (#1093). Fail-open:
+// saveDeliveryRecord appends one delivery_record revision . Fail-open:
 // a save error is Warned, matching every other episodic write in this
 // package - the delivery itself already happened by the time this is called.
 func saveDeliveryRecord(ctx context.Context, cfg Config, nodeID string, rec DeliveryRecord) {
@@ -134,7 +134,7 @@ func DeliveryRecorded(ctx context.Context, c *recordstore.Client, targetID strin
 
 // DeliveryProjections builds the checker/recorder pair boot recovery and
 // `quack ledger recover` need to read and write delivery_record completions
-// (#1144 P2) without a live vetting.Config - userFor resolves the chat's
+// without a live vetting.Config - userFor resolves the chat's
 // owning user the same way ArtifactRowChecker does.
 func DeliveryProjections(artifacts artifact.Service, ledgerStore ledger.LedgerStore, userFor func(ctx context.Context, chatID string) string) (
 	checker func(ctx context.Context, chatID, targetID string, revision int) (bool, error),

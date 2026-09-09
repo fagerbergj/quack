@@ -151,7 +151,7 @@ func TestDagStream_EmptyNodeReportsRecordedGatewayFailure(t *testing.T) {
 	if !strings.Contains(nf.Error, "502 Bad Gateway") || !strings.Contains(nf.Error, "5 consecutive attempts") {
 		t.Fatalf("node_failed.Error = %q, want it to name the error class and attempt count", nf.Error)
 	}
-	// #1109 review finding 1: no URL, port, or upstream body content - the raw
+	// review finding 1: no URL, port, or upstream body content - the raw
 	// error carries all three - reaches this PUBLIC-eventually text.
 	for _, leaked := range []string{"llm-swap", "11436", "sk-fake-key-xyz", "POST"} {
 		if strings.Contains(nf.Error, leaked) {
@@ -160,7 +160,7 @@ func TestDagStream_EmptyNodeReportsRecordedGatewayFailure(t *testing.T) {
 	}
 }
 
-// TestDagStream_EmptyNodeIgnoresOtherRolesFailure is #1109 review finding 3:
+// TestDagStream_EmptyNodeIgnoresOtherRolesFailure is review finding 3:
 // a judge failure recorded under the "judge" role must not be picked up for
 // an empty completion under the node's own worker agent role.
 func TestDagStream_EmptyNodeIgnoresOtherRolesFailure(t *testing.T) {
@@ -193,7 +193,7 @@ func TestDagStream_EmptyNodeIgnoresOtherRolesFailure(t *testing.T) {
 }
 
 // TestDagStream_EmptyNodeUsesWorkspaceScopeForSetupPlanImplementer is the
-// #1109 re-review finding: for an implementer node in a setup/repo-chain
+// re-review finding: for an implementer node in a setup/repo-chain
 // plan, the recorder keys generate() calls under cfg.NodeID =
 // workspaceNodeID(plan, node) = workspace.SharedRepoScope ("quack-shared-repo"),
 // NOT the plan node id. Executor.NewDagStream must resolve the SAME scope so
@@ -255,7 +255,7 @@ func TestDagStream_EmptyNodeWithNoRecordedFailureStaysSilentGap(t *testing.T) {
 // TestDagStream_DedupsToolCallByID: ACP's start+completion updates both carry
 // the FunctionCall part for one call_id (internal/acp/translate.go's ToolCall
 // then ToolCallUpdate); dagStream.part must not turn that into two
-// agent_tool_call events for the worker's own tool calls (PR #1102 review
+// agent_tool_call events for the worker's own tool calls (PR review
 // finding - the orchestrator Translator was fixed but ACP worker calls,
 // routed through dagStream, were not).
 func TestDagStream_DedupsToolCallByID(t *testing.T) {
@@ -308,7 +308,7 @@ func TestDagStream_ReviseRoundStage(t *testing.T) {
 	}
 }
 
-// TestDagStream_WorkerCompleteStampsLastActivityNotJudgeGap (#1290): worker-r0's
+// TestDagStream_WorkerCompleteStampsLastActivityNotJudgeGap : worker-r0's
 // agent_complete isn't raised until worker-r1 (revise) starts, but its
 // FinishedAtMs must reflect worker-r0's own last event, not the gap a judge
 // round spends between them - else the worker card's duration on replay

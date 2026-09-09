@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Rule is one forgetting rule (epic #1255 P3): When is a boolean expression
+// Rule is one forgetting rule (epic P3): When is a boolean expression
 // over Fields, Then is "invalidate" or "keep". Rules are evaluated in order,
 // first match wins; no match keeps the memory.
 type Rule struct {
@@ -35,7 +35,7 @@ type Fields struct {
 }
 
 // DefaultRules are applied when config carries no memory.forgetting.rules
-// (epic #1255 decision): unverified memories age out after 90 days without
+// (epic decision): unverified memories age out after 90 days without
 // an upvote, any memory whose net score drops to -2 or below is invalidated,
 // and a verified memory is otherwise kept.
 func DefaultRules() []Rule {

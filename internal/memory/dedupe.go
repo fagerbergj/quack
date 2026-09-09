@@ -8,7 +8,7 @@ import (
 )
 
 // dedupeCosineThreshold is the near-duplicate bar for the per-bucket sweep
-// (issue #1269): the same bar the pre-implementation measurement used to
+// ( ): the same bar the pre-implementation measurement used to
 // size the duplicate rate (29 live pairs >= 0.90 across two buckets).
 const dedupeCosineThreshold = 0.90
 
@@ -58,7 +58,7 @@ type DedupeReport struct {
 // DedupeSweep clusters every bucket's live memories (reinforced/verified
 // included - a duplicate pair among verified memories is exactly the one
 // that should merge, P5 lineage sums their votes onto the survivor) by
-// cosine similarity (issue #1269): the burst sweep only ever compares
+// cosine similarity ( ): the burst sweep only ever compares
 // memories minted by the same chat within a 15-minute window, so a fact
 // re-derived independently by a different run - even days later - never
 // gets compared. It reads each point's ALREADY-STORED vector via list()

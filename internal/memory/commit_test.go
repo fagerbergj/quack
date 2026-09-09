@@ -162,7 +162,7 @@ func TestNeighbourProbe(t *testing.T) {
 	}
 }
 
-// TestCommit_AbsorptionMergesThreeDuplicates is epic #1255 P5's verification
+// TestCommit_AbsorptionMergesThreeDuplicates is epic P5's verification
 // case end to end: a consolidation pass that UPDATEs one memory and DELETEs
 // two others "duplicate of" it must leave the survivor carrying all three
 // original ids in absorbed_ids and the summed vote score, with the absorbed
@@ -215,18 +215,18 @@ func TestCommit_AbsorptionMergesThreeDuplicates(t *testing.T) {
 	}
 }
 
-// TestCommit_CandidateCap is issue #1269 item 3: a node that stages more
+// TestCommit_CandidateCap is issue item 3: a node that stages more
 // than maxCandidatesPerCommit candidates only gets the first three
 // forwarded to consolidation - the rest never even reach the LLM. Run
-// against both backends (#1268's forEachBackend); every op here is a fresh
+// against both backends ; every op here is a fresh
 // ADD, so there's no fixed id for qdrant's UUID-only point-id to reject.
 func TestCommit_CandidateCap(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
 		reply := `{"ops":[
-			{"action":"ADD","content":"one","kind":"convention"},
-			{"action":"ADD","content":"two","kind":"convention"},
-			{"action":"ADD","content":"three","kind":"convention"}
+ {"action":"ADD","content":"one","kind":"convention"},
+ {"action":"ADD","content":"two","kind":"convention"},
+ {"action":"ADD","content":"three","kind":"convention"}
 		]}`
 		s := newStore("task", fakeModel{reply: reply})
 		staged := []Candidate{
@@ -243,7 +243,7 @@ func TestCommit_CandidateCap(t *testing.T) {
 }
 
 // TestConsolidatePrompt_RejectsChangeLog exercises the wiring the prompt
-// change (issue #1269 item 2) depends on: given a change-log candidate
+// change (issue item 2) depends on: given a change-log candidate
 // ("X was added in this PR") and a durable convention, a consolidator that
 // follows the prompt's instruction (NOOP the change-log one, ADD the
 // convention) must result in exactly one memory written, not two. The fake
@@ -254,8 +254,8 @@ func TestConsolidatePrompt_RejectsChangeLog(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
 		reply := `{"ops":[
-			{"action":"NOOP"},
-			{"action":"ADD","content":"the tier filter is applied index-level, not post-fetch","kind":"convention"}
+ {"action":"NOOP"},
+ {"action":"ADD","content":"the tier filter is applied index-level, not post-fetch","kind":"convention"}
 		]}`
 		s := newStore("task", fakeModel{reply: reply})
 		staged := []Candidate{
@@ -273,7 +273,7 @@ func TestConsolidatePrompt_RejectsChangeLog(t *testing.T) {
 }
 
 // TestConsolidatePromptTask_MentionsChangeLog pins the prompt text itself
-// (issue #1269 item 2) against a future edit silently dropping the
+// (issue item 2) against a future edit silently dropping the
 // change-log rejection instruction - a fake-model test can't otherwise
 // catch a regression in prompt wording.
 func TestConsolidatePromptTask_MentionsChangeLog(t *testing.T) {

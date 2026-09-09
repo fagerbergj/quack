@@ -146,7 +146,7 @@ func TestGenerate_PromotedReasoningLogMessage(t *testing.T) {
 	}
 }
 
-// TestGenerate_ToolCallsSuppressPromotion is a regression test for PR #1243
+// TestGenerate_ToolCallsSuppressPromotion is a regression test for
 // review: the non-streaming path must never promote reasoning_content to the
 // answer on a turn that already has a real tool call, even when the answer
 // text is empty. Before the fix, real tool-call parts were appended AFTER

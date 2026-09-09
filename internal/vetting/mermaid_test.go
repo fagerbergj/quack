@@ -33,7 +33,7 @@ func requireMermaidValidator(t *testing.T) {
 func TestFindInvalidMermaid_ValidDiagramPasses(t *testing.T) {
 	t.Parallel()
 	requireMermaidValidator(t)
-	md := "Here's the plan:\n\n```mermaid\nflowchart TD\n    A[Start] --> B[Finish]\n```\n\nDone."
+	md := "Here's the plan:\n\n```mermaid\nflowchart TD\n A[Start] --> B[Finish]\n```\n\nDone."
 	if issues := FindInvalidMermaid(md); len(issues) != 0 {
 		t.Fatalf("issues = %v, want none for a valid diagram", issues)
 	}
@@ -98,7 +98,7 @@ func TestFindInvalidMermaid_FullyQuotedLabelWithEscapedQuotesPasses(t *testing.T
 func TestFindInvalidMermaid_UnquotedParenLabelDetected(t *testing.T) {
 	t.Parallel()
 	requireMermaidValidator(t)
-	md := "```mermaid\nflowchart TD\n    A[Login (OAuth)] --> B[Done]\n```"
+	md := "```mermaid\nflowchart TD\n A[Login (OAuth)] --> B[Done]\n```"
 	issues := FindInvalidMermaid(md)
 	if len(issues) != 1 {
 		t.Fatalf("issues = %v, want exactly 1 for an unquoted paren label", issues)
@@ -111,7 +111,7 @@ func TestFindInvalidMermaid_UnquotedParenLabelDetected(t *testing.T) {
 func TestFindInvalidMermaid_UnquotedBraceLabelDetected(t *testing.T) {
 	t.Parallel()
 	requireMermaidValidator(t)
-	md := "```mermaid\nflowchart TD\n    CV[ComposeView<br/>setContent { NavHost }] --> B[Done]\n```"
+	md := "```mermaid\nflowchart TD\n CV[ComposeView<br/>setContent { NavHost }] --> B[Done]\n```"
 	issues := FindInvalidMermaid(md)
 	if len(issues) != 1 {
 		t.Fatalf("issues = %v, want exactly 1 for an unquoted brace label", issues)
@@ -123,7 +123,7 @@ func TestFindInvalidMermaid_UnquotedBraceLabelDetected(t *testing.T) {
 func TestFindInvalidMermaid_QuotedBraceLabelPasses(t *testing.T) {
 	t.Parallel()
 	requireMermaidValidator(t)
-	md := "```mermaid\nflowchart TD\n    CV[\"ComposeView setContent { NavHost }\"] --> B[Done]\n```"
+	md := "```mermaid\nflowchart TD\n CV[\"ComposeView setContent { NavHost }\"] --> B[Done]\n```"
 	if issues := FindInvalidMermaid(md); len(issues) != 0 {
 		t.Fatalf("issues = %v, want none - the whole label is quoted", issues)
 	}
@@ -136,7 +136,7 @@ func TestFindInvalidMermaid_QuotedBraceLabelPasses(t *testing.T) {
 func TestFindInvalidMermaid_LiteralBackslashNPasses(t *testing.T) {
 	t.Parallel()
 	requireMermaidValidator(t)
-	md := "```mermaid\nflowchart TD\n    A[line one\\nline two] --> B[x]\n```"
+	md := "```mermaid\nflowchart TD\n A[line one\\nline two] --> B[x]\n```"
 	if issues := FindInvalidMermaid(md); len(issues) != 0 {
 		t.Fatalf("issues = %v, want none - a literal backslash-n renders as text, it doesn't break mermaid's parser", issues)
 	}
@@ -145,7 +145,7 @@ func TestFindInvalidMermaid_LiteralBackslashNPasses(t *testing.T) {
 func TestFindInvalidMermaid_UnknownSequenceArrowDetected(t *testing.T) {
 	t.Parallel()
 	requireMermaidValidator(t)
-	md := "```mermaid\nsequenceDiagram\n    Alice ->>> Bob: bad arrow\n```"
+	md := "```mermaid\nsequenceDiagram\n Alice ->>> Bob: bad arrow\n```"
 	if issues := FindInvalidMermaid(md); len(issues) != 1 {
 		t.Fatalf("issues = %v, want exactly 1 for an unrecognized sequence arrow", issues)
 	}
@@ -239,7 +239,7 @@ func TestMermaidError(t *testing.T) {
 func TestCheckMermaid_ValidDiagramPasses(t *testing.T) {
 	t.Parallel()
 	requireMermaidValidator(t)
-	ok, line, col, msg := CheckMermaid("flowchart TD\n    A[Start] --> B[Finish]")
+	ok, line, col, msg := CheckMermaid("flowchart TD\n A[Start] --> B[Finish]")
 	if !ok || line != 0 || col != 0 || msg != "" {
 		t.Fatalf("CheckMermaid(valid) = (%v, %d, %d, %q), want (true, 0, 0, \"\")", ok, line, col, msg)
 	}
@@ -251,7 +251,7 @@ func TestCheckMermaid_InvalidDiagramReportsLocation(t *testing.T) {
 	t.Parallel()
 	requireMermaidValidator(t)
 	ok, line, col, msg := CheckMermaid(`flowchart TD
-    G[Node (parens)] --> H[End]`)
+ G[Node (parens)] --> H[End]`)
 	if ok {
 		t.Fatal("want ok=false - unquoted parens inside a label")
 	}
@@ -307,7 +307,7 @@ func TestMermaidCriterion_ValidEverywherePasses(t *testing.T) {
 	t.Parallel()
 	requireMermaidValidator(t)
 	act := workerActivity{stagedDelivery: map[string]StagedDelivery{
-		"pr": {Kind: "pull_request", Body: "See the flow:\n\n```mermaid\nflowchart TD\n    A[Start] --> B[End]\n```"},
+		"pr": {Kind: "pull_request", Body: "See the flow:\n\n```mermaid\nflowchart TD\n A[Start] --> B[End]\n```"},
 	}}
 	if _, ok := mermaidCriterion("no diagrams here", act); ok {
 		t.Fatal("want ok=false - nothing invalid anywhere")
@@ -464,7 +464,7 @@ func TestFindInvalidMermaid_NewShapeSyntaxPasses(t *testing.T) {
 func TestFindInvalidMermaid_CollapsedSubgraphPasses(t *testing.T) {
 	t.Parallel()
 	requireMermaidValidator(t)
-	md := "```mermaid\nflowchart TD\n  subgraph sub1[\"Details\"]\n    X --> Y\n  end\n  sub1@{ view: collapsed }\n  A --> sub1\n```"
+	md := "```mermaid\nflowchart TD\n  subgraph sub1[\"Details\"]\n X --> Y\n  end\n  sub1@{ view: collapsed }\n  A --> sub1\n```"
 	if issues := FindInvalidMermaid(md); len(issues) != 0 {
 		t.Fatalf("issues = %v, want none for a collapsed subgraph", issues)
 	}

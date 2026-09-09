@@ -1,11 +1,11 @@
-// Package recordstore is a typed record store over the ADK artifact.Service
-// (#1090 P2). A record is identified by a kind/instance id; the id is never
-// composed by a caller - the kind registry derives it from the saved content
-// (via the kind's registered Identity func) and Save returns it. Two content
-// classes share the store: structured (JSON, validated against a registered
-// kind) and blob (raw bytes + mime, e.g. markdown/text/PDF). Kind naming,
-// schemas, and identity functions live with each record type's own package
-// (e.g. internal/vetting/reviewrecord.go); recordstore only holds the registry.
+// Package recordstore is a typed record store over the ADK artifact.Service.
+// A record is identified by a kind/instance id; the id is never composed by a
+// caller - the kind registry derives it from the saved content (via the kind's
+// registered Identity func) and Save returns it. Two content classes share the
+// store: structured (JSON, validated against a registered kind) and blob (raw
+// bytes + mime, e.g. markdown/text/PDF). Kind naming, schemas, and identity
+// functions live with each record type's own package (e.g.
+// internal/vetting/reviewrecord.go); recordstore only holds the registry.
 package recordstore
 
 import (
@@ -69,25 +69,24 @@ const (
 type IdentityFunc func(content []byte, hint string) (instance string, err error)
 
 // KindSpec is one registered kind's shape: content class, schema version and
-// JSON Schema text (for #1091's generated write_<kind> tools - "" for a blob
-// kind, which has no schema), a validator (nil for a blob kind), and the
-// identity function that derives its instance segment.
+// JSON Schema text (for generated write_<kind> tools - "" for a blob kind which
+// has no schema), a validator (nil for a blob kind), and the identity function
+// that derives its instance segment.
 type KindSpec struct {
 	Class         Class
 	SchemaVersion int
-	JSONSchema    string // #1091 tool generation input; the write_<kind> tool's input schema verbatim
+	JSONSchema    string // input to write_<kind> tool generators; the input schema verbatim
 	Validate      func(json.RawMessage) error
 	Identity      IdentityFunc
-	// RequiresHint declares that Identity fails without a non-empty hint
-	// (the requireHint pattern) - callers that can't supply a real session
-	// hint (e.g. write_artifact/write_<kind> for an arbitrary caller-chosen
-	// kind) use this to decide whether to pass one at all, rather than
-	// passing a hint unconditionally and corrupting a hint-optional kind's
-	// content-hash identity (#1108 finding 2).
+	// RequiresHint: Identity may fail without a non-empty hint (the requireHint
+	// pattern). Callers that can't supply a real session hint (e.g.
+	// write_artifact/write_<kind> for an arbitrary caller-chosen kind) use this
+	// to decide whether to pass one, rather than corrupting a hint-optional
+	// kind's content-hash identity.
 	RequiresHint bool
-	// AgentWritable gates the generic write_<kind> MCP/ADK tool generators
-	// (#1091) - false for a gate-only kind (judge_round, delivery_record) so
-	// a worker can't forge a verdict/delivery record into the gate's WAL.
+	// AgentWritable gates the generic write_<kind> MCP/ADK tool generators.
+	// False for gate-only kinds (judge_round, delivery_record) so workers can't
+	// forge verdict/delivery records into the gate's WAL.
 	AgentWritable bool
 
 	name string // set only by Kinds(); not part of the registered spec
@@ -101,15 +100,11 @@ var (
 	registry   = map[string]KindSpec{}
 )
 
-// Register declares kind's shape (§4.3/§4.4). Call once (package init) per
-// kind from the record type's own package - #1090 P2's registered kinds are
-// code_review, finding, document, pr_body, text, bytes. Panics on a
-// duplicate registration, a spec missing Identity (a wiring bug, not a
-// runtime error - every kind must derive its own id), or a JSONSchema that
-// doesn't parse - the write_<kind> tool generators (MCP and ADK) both trust
-// this schema is valid and previously skipped the tool silently on either
-// surface when it wasn't; failing here instead means both surfaces fail the
-// same way, loudly, at startup (#1108 finding 3).
+// Register declares kind's shape. Call once (package init) per kind from the
+// record type's own package. Panics on duplicate registration, missing
+// Identity (a wiring bug), or unparseable JSONSchema - the write_<kind> tool
+// generators (MCP and ADK) both trust this schema, so startup validation
+// ensures both surfaces fail consistently.
 func Register(kind string, spec KindSpec) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
@@ -120,9 +115,8 @@ func Register(kind string, spec KindSpec) {
 		panic("recordstore: kind " + kind + " registered with no Identity func")
 	}
 	if spec.Class == Structured && spec.JSONSchema == "" {
-		// An empty schema on a structured kind survives startup but then makes
-		// the two write_<kind> generators diverge - MCP Warns-and-skips, ADK
-		// hard-fails the whole run (#1108 L1) - so reject it here instead.
+		// Empty schema on structured kinds causes generator divergence (MCP skips,
+		// ADK fails); reject at startup instead.
 		panic("recordstore: kind " + kind + " registered as structured without a JSONSchema")
 	}
 	if spec.JSONSchema != "" {
@@ -154,10 +148,9 @@ func lookupKind(kind string) (KindSpec, error) {
 	return spec, nil
 }
 
-// Lineage is the per-revision provenance envelope (#1090 §4.2), stamped on
-// the store row rather than inside the bytes - so blob kinds carry it too.
-// NodeID is provenance only (the node that authored this revision), never
-// part of the artifact's id.
+// Lineage is the per-revision provenance envelope, stamped on the store row
+// rather than inside the bytes so blob kinds carry it too. NodeID is provenance
+// only (the node that authored this revision), never part of the artifact's id.
 type Lineage struct {
 	NodeID         string `json:"node_id"`
 	Round          int    `json:"round"`
@@ -191,10 +184,9 @@ type metaLoader interface {
 type Client struct {
 	svc                        artifact.Service
 	appName, userID, sessionID string
-	// ledgerStore: the WAL's fail-closed AppendIntent path (#1090 §4.9/#1100).
-	// nil = no WAL; Save* behaves exactly as before #1100. Set only via
-	// WithLedger, by a caller that has already restricted it to a
-	// transactional (postgres) backend - see vetting.Config.Ledger's doc.
+	// ledgerStore: the WAL's fail-closed AppendIntent path. nil = no WAL;
+	// Save* behaves as before WAL support. Set only via WithLedger by a caller
+	// that has already restricted it to a transactional (postgres) backend.
 	ledgerStore ledger.LedgerStore
 }
 
@@ -213,9 +205,9 @@ func (c *Client) WithLedger(store ledger.LedgerStore) *Client {
 	return c
 }
 
-// artifactRevisionPayload is the artifact.revision WAL entry's payload
-// (#1090 §4.9): bytes_ref is the store row's key (the id), never the bytes,
-// so a large blob is one small entry.
+// artifactRevisionPayload is the artifact.revision WAL entry's payload:
+// bytes_ref is the store row's key (the id), never the bytes, so a large blob
+// is one small entry.
 type artifactRevisionPayload struct {
 	ID             string  `json:"id"`
 	Revision       int     `json:"revision"`
@@ -230,14 +222,12 @@ type artifactRevisionPayload struct {
 // conflict resolves next attempt; this only guards a wedged id (saveAt's doc).
 const maxSaveRetries = 20
 
-// idempotencyKey derives the store-level dedup key for id/data (#1144 P4),
-// replacing the old read-then-compare "identical to latest" check.
-// Deliberately content-only, NOT parentRev-qualified: a writer's
-// crash-then-retry must collide with its OWN original intent no matter how
-// far the tip has moved since, so claimAndSave's content-mismatch check
-// (#1237) can still catch a different writer having adopted the same
-// orphaned slot. A save whose bytes match an OLDER, non-tip revision falls
-// through to revertKey instead (finding 2).
+// idempotencyKey derives the store-level dedup key for id/data. Deliberately
+// content-only, NOT parentRev-qualified: a writer's crash-then-retry must
+// collide with its original intent regardless of how far the tip has moved,
+// so a content-mismatch check can still catch a different writer adopting the
+// same orphaned slot. A save matching an older, non-tip revision falls through
+// to revertKey instead.
 func idempotencyKey(id string, data []byte) string {
 	h := sha256.New()
 	h.Write([]byte(id))
@@ -247,9 +237,9 @@ func idempotencyKey(id string, data []byte) string {
 }
 
 // revertKey is claimAndSave's fallback claim key when a dup hit's matched
-// revision isn't the one the caller expected resolved (finding 2: a
-// deliberate revert, not a retry of the same attempt) - qualified by
-// parentRev so the retried claim can't collide with that same stale entry.
+// revision isn't the one the caller expected (a deliberate revert, not a retry).
+// Qualified by parentRev so the retried claim can't collide with that same
+// stale entry.
 func revertKey(id string, parentRev int, data []byte) string {
 	h := sha256.New()
 	h.Write([]byte(id))
@@ -265,14 +255,11 @@ func revertKey(id string, parentRev int, data []byte) string {
 // so the caller must retry under a fresh key rather than treat it as done.
 var errStaleContentMatch = errors.New("recordstore: idempotency key matched a stale, non-tip revision")
 
-// adoptAfterAttempts bounds how many plain retries saveAtOrAdopt insists on
-// before it will treat a still-conflicting parent as an orphan (saveAt's doc
-// below). A live concurrent writer for the SAME id needs only one AppendIntent
-// + one saveRow to finish; giving up several real round trips of headroom
-// first means "still conflicting" is overwhelmingly a genuine crash, not
-// a writer that simply hasn't reached saveRow yet - the #1100 stress test
-// (20 goroutines racing one brand-new id) is exactly the case an immediate
-// check-and-adopt gets wrong.
+// adoptAfterAttempts bounds plain retries before treating a still-conflicting
+// parent as orphaned. A live concurrent writer for the same id needs only one
+// AppendIntent + one saveRow; giving headroom first means "still conflicting"
+// is overwhelmingly a genuine crash, not a slow writer - an immediate
+// check-and-adopt gets this wrong under concurrency.
 const adoptAfterAttempts = 3
 
 // retryBackoff is the delay before save/Edit's next ErrStaleParent retry -
@@ -288,8 +275,8 @@ func retryBackoff(attempt int) time.Duration {
 
 // idLocks serializes read-latest through row-write per (chat,id): the ledger's
 // unique index only orders WAL claims, while artifact.Service numbers revisions
-// independently, so unlocked writers can end up with claimed != stored (#1144 P4).
-// ponytail: process-local, a second replica needs a Postgres advisory lock.
+// independently, so unlocked writers can end up with claimed != stored.
+// ponytail: process-local; a second replica needs a Postgres advisory lock.
 var idLocks sync.Map // "chatID\x00id" -> *sync.Mutex
 
 func (c *Client) lockFor(id string) *sync.Mutex {
@@ -305,8 +292,8 @@ func (c *Client) save(ctx context.Context, id, kind string, class Class, mime st
 	mu.Lock()
 	defer mu.Unlock()
 	for attempt := 0; ; attempt++ {
-		// No ledger: nothing arbitrates writers anyway, so keep the caller's
-		// own tracked ParentRevision as before #1144 P4.
+		// No ledger: nothing arbitrates writers, so use the caller's tracked
+		// ParentRevision as the parent for the next revision.
 		parentRev := lineage.ParentRevision
 		if c.ledgerStore != nil {
 			versions, err := c.versionsDesc(ctx, id)
@@ -316,12 +303,9 @@ func (c *Client) save(ctx context.Context, id, kind string, class Class, mime st
 			parentRev = 0
 			if len(versions) > 0 {
 				parentRev = int(versions[0])
-				// Saving exactly what's already at the tip is a genuine
-				// no-op: report it with no new revision and no WAL entry.
-				// Content matching an OLDER, non-latest revision (a revert)
-				// falls through to saveAtOrAdopt and mints its own new one:
-				// this tip comparison is what makes only a same-as-tip save
-				// collapse; idempotencyKey itself is content-only (finding 2).
+				// Saving exactly what's at the tip is a no-op: report it with no
+				// new revision and no WAL entry. Older, non-latest revisions (reverts)
+				// fall through to saveAtOrAdopt. Only same-as-tip saves collapse.
 				if latest, ok, lerr := c.LoadVersion(ctx, id, parentRev); lerr == nil && ok && bytes.Equal(latest, data) {
 					return parentRev, nil
 				}
@@ -336,17 +320,13 @@ func (c *Client) save(ctx context.Context, id, kind string, class Class, mime st
 	}
 }
 
-// saveAtOrAdopt tries saveAt at parentRev; on ledger.ErrStaleParent, once
-// attempt reaches adoptAfterAttempts it checks whether the intent that
-// already claimed parentRev is an orphan - a crash or transient backend
-// error left its row unwritten (#1144 P4 follow-up: this replaces
-// duplicating bytes into the ledger for boot recovery to rewrite, since
-// checking "does the row exist" costs nothing extra a normal save wasn't
-// already going to do). If parentRev+1 has no row yet, this save ADOPTS that
-// slot: writes the row with its OWN data at that exact revision, completing
-// the orphaned intent instead of failing forever. If the slot fills in
-// between the check and the write (a genuine concurrent writer that was just
-// slow), the mismatch falls through to a normal ErrStaleParent retry.
+// saveAtOrAdopt tries saveAt at parentRev. On ledger.ErrStaleParent, if
+// attempt reaches adoptAfterAttempts, it checks whether the intent that
+// already claimed parentRev is orphaned (crash or backend error left its row
+// unwritten). If parentRev+1 has no row, this save ADOPTS that slot, writing
+// the row with its data at that revision, completing the orphaned intent. If
+// the slot fills between check and write (a slow concurrent writer), the
+// mismatch falls through to a normal ErrStaleParent retry.
 func (c *Client) saveAtOrAdopt(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage, parentRev, attempt int) (int, error) {
 	rev, err := c.saveAt(ctx, id, kind, class, mime, data, lineage, parentRev)
 	if !errors.Is(err, ledger.ErrStaleParent) || c.ledgerStore == nil || attempt < adoptAfterAttempts {
@@ -363,10 +343,10 @@ func (c *Client) saveAtOrAdopt(ctx context.Context, id, kind string, class Class
 	return adopted, nil
 }
 
-// saveAt writes data as parentRev+1, first claiming that parent in the
-// ledger (#1144 P4). Tries the content-only key first so a crash-retry
-// fails closed against a foreign adoption (#1237); only a stale, non-tip
-// match (finding 2's revert case) falls back to a parentRev-qualified key.
+// saveAt writes data as parentRev+1, first claiming that parent in the ledger.
+// Tries the content-only key first so a crash-retry fails closed against a
+// foreign adoption; only a stale, non-tip match (a revert) falls back to a
+// parentRev-qualified key.
 func (c *Client) saveAt(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage, parentRev int) (int, error) {
 	lineage.ParentRevision = parentRev
 	if c.ledgerStore == nil {
@@ -379,12 +359,12 @@ func (c *Client) saveAt(ctx context.Context, id, kind string, class Class, mime 
 	return rev, err
 }
 
-// claimAndSave appends the ledger intent under key, claiming parentRev+1,
-// and completes it. expectResolvedAt is the revision a dup hit must match
-// to count as THIS attempt's own no-op (current tip for the content-only
-// key; parentRev+1 for revertKey's fallback claim) - a dup hit anywhere
-// else with matching bytes is a stale match (errStaleContentMatch); with
-// mismatching bytes it's a foreign writer's adoption (#1237, fail closed).
+// claimAndSave appends the ledger intent under key, claiming parentRev+1, and
+// completes it. expectResolvedAt is the revision a dup hit must match to count
+// as this attempt's no-op (current tip for content-only key; parentRev+1 for
+// revertKey's fallback claim). A dup hit elsewhere with matching bytes is a
+// stale match (errStaleContentMatch); with mismatching bytes it's a foreign
+// writer's adoption (fail closed).
 func (c *Client) claimAndSave(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage, parentRev int, key string, expectResolvedAt int) (int, error) {
 	nextRev := parentRev + 1
 	payload, err := json.Marshal(artifactRevisionPayload{ID: id, Revision: nextRev, ParentRevision: parentRev, Kind: kind, Class: class, Lineage: lineage, BytesRef: id})
@@ -434,7 +414,7 @@ func (c *Client) claimAndSave(ctx context.Context, id, kind string, class Class,
 		return adopted, nil
 	}
 	if err != nil {
-		// Fail-closed (#1090 §4.9 case 11), including ledger.ErrStaleParent:
+		// Fail-closed , including ledger.ErrStaleParent:
 		// no entry, no row.
 		return 0, err
 	}
@@ -580,7 +560,7 @@ func (c *Client) Latest(ctx context.Context, id string) ([]byte, int, bool, erro
 }
 
 // LatestWithMeta is Latest, also returning mime and the row's lineage when
-// the wrapped service supports it (zero Lineage otherwise - #1090 known
+// the wrapped service supports it (zero Lineage otherwise - known
 // ceiling for a non-Postgres backend, e.g. artifact.InMemoryService() in
 // tests).
 func (c *Client) LatestWithMeta(ctx context.Context, id string) ([]byte, string, Lineage, int, bool, error) {
@@ -902,7 +882,7 @@ func Kinds() []KindSpec { return KindsForClass(Structured) }
 // KindsForClass returns every registered spec of class, name populated,
 // sorted by name - the only enumerator that can see Blob kinds (Kinds() only
 // ever returned Structured, so write_artifact's kind list rendered empty;
-// #1108 finding 2 regression).
+// finding 2 regression).
 func KindsForClass(class Class) []KindSpec {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
@@ -920,7 +900,7 @@ func KindsForClass(class Class) []KindSpec {
 
 // ArtifactKindNames returns the sorted names of every registered blob-class
 // kind - the closed set a node's `artifact` field may select, since
-// SaveBlob only accepts a registered kind (#1128).
+// SaveBlob only accepts a registered kind .
 func ArtifactKindNames() []string {
 	specs := KindsForClass(Blob)
 	names := make([]string, len(specs))
@@ -931,7 +911,7 @@ func ArtifactKindNames() []string {
 }
 
 // ValidateArtifactKind rejects an artifact selector that isn't one of
-// ArtifactKindNames() - the shared guard for #1128, used at plan-build time
+// ArtifactKindNames() - the shared guard for, used at plan-build time
 // (dag, planner-authored nodes) and at config-bind time (config,
 // operator-authored workflow nodes) so both routes to SaveBlob agree.
 func ValidateArtifactKind(kind string) error {

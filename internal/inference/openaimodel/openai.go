@@ -799,7 +799,7 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 	haveToolCalls := len(choice.Message.ToolCalls) > 0
 	// Real tool-call parts must be in content.Parts BEFORE the ladder runs, same
 	// as the streaming path - otherwise promotion sees no answer yet and fires
-	// on a turn that already has a tool call (regression: PR #1243 review).
+	// on a turn that already has a tool call (regression: PR review).
 	for _, toolCall := range choice.Message.ToolCalls {
 		if toolCall.Type == "function" {
 			content.Parts = append(content.Parts, &genai.Part{

@@ -169,7 +169,7 @@ func (t *translator) pairSpec(id, name string, args map[string]any, p pendingToo
 
 // mcpMetaKey is the _meta key an ACP agent bridging quack's own MCP tools
 // (pi-acp) sets to carry the tool's real, unprefixed name - ACP's ToolKind
-// enum has no slot for "this is one of quack's own tools" (#1278).
+// enum has no slot for "this is one of quack's own tools" .
 const mcpMetaKey = "quack_mcp_tool"
 
 // mcpIdentity resolves an ACP tool call back to the real quack MCP tool name.

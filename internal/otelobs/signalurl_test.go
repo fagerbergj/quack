@@ -15,7 +15,7 @@ func TestSignalURL(t *testing.T) {
 	}{
 		{"path-less gets the signal path", "http://otel-collector:4318", "/v1/metrics", "http://otel-collector:4318/v1/metrics"},
 		{"trailing slash does not double up", "http://otel-collector:4318/", "/v1/traces", "http://otel-collector:4318/v1/traces"},
-		{"a base URL with a path still gets the signal path (#1045)", "http://collector:4318/custom", "/v1/metrics", "http://collector:4318/custom/v1/metrics"},
+		{"a base URL with a path still gets the signal path ", "http://collector:4318/custom", "/v1/metrics", "http://collector:4318/custom/v1/metrics"},
 		{"langfuse's otlp base", "http://langfuse:3008/api/public/otel", "/v1/traces", "http://langfuse:3008/api/public/otel/v1/traces"},
 		{"an endpoint already ending in the signal path does not double up", "http://langfuse:3008/api/public/otel/v1/traces", "/v1/traces", "http://langfuse:3008/api/public/otel/v1/traces"},
 		{"https path-less", "https://otel.example.com", "/v1/traces", "https://otel.example.com/v1/traces"},

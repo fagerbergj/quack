@@ -30,7 +30,7 @@ type nativeAgent struct {
 // ForNode builds this node's list/read/edit/write_<kind> artifact tools
 // (internal/tools.BuildNativeArtifactTools) into the worker's builtins
 // before construction - the same mechanism check_mermaid/format-markdown
-// tools go through (buildWorker's builtins), not a parallel one (#1123).
+// tools go through (buildWorker's builtins), not a parallel one .
 // sink is grabbed from the caller's ctx at build time (stream.YieldFromContext)
 // and closed over by this node's own A2A server - it can't cross the A2A
 // wire later, so agent.Serve needs it passed in explicitly (see its doc).

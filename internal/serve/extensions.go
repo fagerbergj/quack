@@ -436,7 +436,7 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		// Merge onto whatever this chat already has stored, rather than
 		// replacing it wholesale: a nudge/retry re-dispatch (quack-extensions#47)
 		// carries neither Chat.Origin nor Run.Setup, and previously blanked
-		// both on this call - the exact reason turn 2 of #1180 had no PR head
+		// both on this call - the exact reason turn 2 of had no PR head
 		// ref to plan a review with.
 		existing, getErr := st.GetChat(runCtx, chatID)
 		if getErr != nil {
@@ -513,7 +513,7 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		runCtx = tools.WithAllowedDeliveryKinds(runCtx, allowedKinds)
 		if effectiveSetup != nil {
 			// mergeExtOrigin's own merged Setup, NOT req.Run.Setup directly
-			// (#1180 recurrence): github always sends a non-nil Setup, even
+			// : github always sends a non-nil Setup, even
 			// with an empty ExistingHeadRef when its snapshot fetch came back
 			// short - applying req.Run.Setup here unconditionally clobbered
 			// mergeExtOrigin's fallback/merge with that weaker value on
@@ -527,7 +527,7 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 			runCtx = tools.WithContextItems(runCtx, toDagContextItems(req.Ask.ContextItems))
 		}
 		runCtx = tools.WithPlanOnly(runCtx, req.Run.ReadOnly)
-		// Never hand the orchestrator's LLM turn an empty prompt (#1195): a
+		// Never hand the orchestrator's LLM turn an empty prompt : a
 		// caller bug upstream of here must surface as a real dispatch error
 		// the extension can post, not a run that silently produces nothing.
 		composed := composeDispatchMessage(req)
@@ -557,7 +557,7 @@ func deliveryKindStrings(kinds []extsdk.DeliveryKind) []string {
 // chat: the extension's own ChatOrigin (still at the JSON top level - a nil
 // embedded pointer marshals as absent, and priorOriginState/UpdateChatOrigin's
 // own writes decode straight into extsdk.ChatOrigin, ignoring the extra field)
-// plus, alongside it (#1180), the dispatch's own sdk Setup - the only durable
+// plus, alongside it , the dispatch's own sdk Setup - the only durable
 // record of a PR's real head ref, so a later dispatch on the same chat with no
 // Run.Setup (a nudge, a retry) can still plan a review. Kept as the SDK's own
 // Setup, not dag.Setup: dag.Setup.CheckoutExistingHead is `json:"-"` (it's
@@ -589,7 +589,7 @@ func stableDispatchUser(existingSessionUser, reqUser string) string {
 // existing's stored SessionUser once the chat row exists, else fallback -
 // never SessionUserForChat's id-shape ("github"/"local") default, which let
 // a pre-dispatch WriteArtifact and the later Dispatch land under different
-// users (#1225, artifacts written before the chat row existed). newExtDispatch
+// users . newExtDispatch
 // and readExtInputArtifact/writeExtInputArtifact all resolve through this.
 func resolveArtifactUser(existing *store.Chat, fallback string) string {
 	if existing == nil {
@@ -609,7 +609,7 @@ func resolveArtifactUser(existing *store.Chat, fallback string) string {
 // dispatch() always builds a non-nil sdk.Setup, even when its snapshot fetch
 // came back without one, so "no Setup" and "Setup with a blank
 // ExistingHeadRef" both need the same fallback to the last known-good ref
-// (#1180 recurrence - the earlier fix only handled the former).
+// .
 func mergeExtOrigin(existingOriginJSON string, newOrigin *extsdk.ChatOrigin, newSetup *extsdk.Setup) (originJSON string, effectiveSetup *dag.Setup) {
 	var rec extOriginRecord
 	if existingOriginJSON != "" {
@@ -672,14 +672,14 @@ func toDagContextItems(items []extsdk.NamedContext) []dag.ContextItem {
 }
 
 // inputArtifactKind is the recordstore kind every dispatch input artifact is
-// saved under (#1010 P3) - callers address them by name alone (ReadArtifact/
+// saved under - callers address them by name alone (ReadArtifact/
 // WriteArtifact take no kind), so the kind must be the same constant on both
 // the read and write side regardless of mime; "bytes" is the generic blob
 // kind already registered by internal/vetting/reviewrecord.go.
 const inputArtifactKind = "bytes"
 
 // inputArtifactLineage stamps every dispatch input artifact the same way:
-// author=dispatch (#1090 §4.3), no parent chain - inputs are never revised
+// author=dispatch , no parent chain - inputs are never revised
 // mid-run, only re-seeded on the next dispatch.
 func inputArtifactLineage() recordstore.Lineage {
 	return recordstore.Lineage{Author: "dispatch", SavedAt: time.Now()}
@@ -688,7 +688,7 @@ func inputArtifactLineage() recordstore.Lineage {
 // extChatUser backs Host.ChatUser: the sdk doc requires ok=false for an
 // unknown chatID, so this reads the row directly rather than via
 // SessionUserForChat's id-shape fallback, which would otherwise claim a
-// stable user for a chat that doesn't exist yet (#1225 footgun).
+// stable user for a chat that doesn't exist yet .
 func extChatUser(st *store.Store) func(chatID string) (string, bool) {
 	return func(chatID string) (string, bool) {
 		c, err := st.GetChat(context.Background(), chatID)
@@ -766,7 +766,7 @@ func writeExtInputArtifact(st *store.Store, artifacts *store.TurnAwareService) f
 // readExtInputArtifact/writeExtInputArtifact above) - both share the "bytes"
 // kind and chat session, so an attachment named e.g. "pull" or "files" would
 // otherwise silently collide with (and overwrite) an input artifact of the
-// same name (#1208 review). Mirrors internal/server/rest/handler.go's own
+// same name . Mirrors internal/server/rest/handler.go's own
 // attachmentHintPrefix.
 const attachmentHintPrefix = "upload-"
 
@@ -842,10 +842,10 @@ func newExtUpdateChatOrigin(name string, st *store.Store, taskMem, userMem *memo
 			return fmt.Errorf("extensions.%s: update chat origin: %w", name, extsdk.ErrUnknownChat)
 		}
 		prevState := priorOriginState(c.Origin)
-		// Merge, don't replace (#1181 review): a bare json.Marshal(&origin)
+		// Merge, don't replace : a bare json.Marshal(&origin)
 		// here wiped the stored quackSetup field on every state-transition
 		// webhook (synchronize/close/merge) between a dispatch and a nudge -
-		// undoing mergeExtOrigin's whole point and reopening #1180.
+		// undoing mergeExtOrigin's whole point and reopening.
 		originJSON, _ := mergeExtOrigin(c.Origin, &origin, nil)
 		if err := st.SetChatOrigin(ctx, chatID, c.SessionUser, originJSON); err != nil {
 			return fmt.Errorf("extensions.%s: update chat origin: %w", name, err)
@@ -872,7 +872,7 @@ func priorOriginState(originJSON string) extsdk.SubjectState {
 }
 
 // applyMemoryOutcome maps a ChatOrigin.State transition to a memory outcome
-// (design doc §4(b)/§5, recall-based per epic #1255 P1): merged reinforces,
+// (design doc §4(b)/§5, recall-based per epic P1): merged reinforces,
 // closed (from anything) invalidates with a fixed reason, open/"" is a no-op
 // either direction - stickiness against a reopen-after-close lives in
 // memory.Store.ApplyOutcome itself, not here. The outcome targets memories
@@ -897,7 +897,7 @@ func applyMemoryOutcome(ctx context.Context, name, chatID string, prev, next ext
 	if ledgerStore == nil {
 		// Only worth a warn when a memory store is actually configured - no
 		// stores means there was never anything to reinforce/invalidate
-		// here anyway, so this isn't a misconfiguration (#1257 review).
+		// here anyway, so this isn't a misconfiguration .
 		for _, s := range stores {
 			if s != nil {
 				slog.Warn("apply memory outcome: no ledger configured; skipping (recalled-set outcomes need the WAL)",
@@ -989,7 +989,7 @@ func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrato
 		if err := st.StampRunOutcome(stampCtx, chatID, store.RunStatusPaused, ""); err != nil {
 			slog.Warn("extension run: interrupted stamp failed", "component", "ext."+name, "chat", chatID, "err", err)
 		}
-		if err := st.WriteCheckpoint(stampCtx, chatID); err != nil { // #1144 P5: best-effort
+		if err := st.WriteCheckpoint(stampCtx, chatID); err != nil { // P5: best-effort
 			slog.Warn("extension run: checkpoint write failed", "component", "ext."+name, "chat", chatID, "err", err)
 		}
 		cancel()
@@ -1000,7 +1000,7 @@ func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrato
 	timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
 	// hub.RegisterRun's cancel func is runCtx's own - a user Stop surfaces here as Canceled.
 	cancelled := errors.Is(runCtx.Err(), context.Canceled)
-	// #1144 P5: best-effort, bounded the same way the shutdown branch above
+	// P5: best-effort, bounded the same way the shutdown branch above
 	// is - a hung Postgres must not block RunEnded/delivery indefinitely.
 	checkpointCtx, checkpointCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	if err := st.WriteCheckpoint(checkpointCtx, chatID); err != nil {
@@ -1034,7 +1034,7 @@ func buildExtRunOutcome(parent context.Context, orch *orchestrator.Orchestrator,
 // mapExtRunOutcome is buildExtRunOutcome's classification step, split out so
 // it's testable without a live store/orch. cancelled wins over status - it
 // interrupted whatever DeriveTerminalStatus derived from the turn. nodeError
-// is the failed node's own error text (#1105) - "" for a true silent gap.
+// is the failed node's own error text - "" for a true silent gap.
 func mapExtRunOutcome(status, question, nodeError, answer string, planRan bool, needsInput stream.NodeNeedsInputData, timedOut, cancelled bool) extsdk.RunOutcome {
 	out := extsdk.RunOutcome{PlanRan: planRan, TimedOut: timedOut, Answer: answer}
 	switch {
@@ -1044,7 +1044,7 @@ func mapExtRunOutcome(status, question, nodeError, answer string, planRan bool, 
 		out.Status = extsdk.RunFailed
 		// nodeError is either sanitized (dag.emptyNodeError via
 		// inference.SanitizeGatewayError) or, for a rejected `plan` call
-		// (#1180), quack's own unsanitized rejection text - never a raw
+		// , quack's own unsanitized rejection text - never a raw
 		// gateway URL/body/key either way. Answer stays for a real partial
 		// answer only; the cause goes in Error (sdk v0.10.0+).
 		out.Error = nodeError

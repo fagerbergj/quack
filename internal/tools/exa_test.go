@@ -64,8 +64,8 @@ func TestParseExaResults_SkipsNonResultBlocks(t *testing.T) {
 // a result with no highlights falls back to its text body.
 func TestParseExaREST(t *testing.T) {
 	const body = `{"results":[
-		{"title":"TFI Bus","url":"https://transportforireland.ie/","highlights":["Dublin Bus operates 130+ routes.","Wheelchair accessible."]},
-		{"title":"No Highlights","url":"https://example.com/x","text":"fallback body text"},
+ {"title":"TFI Bus","url":"https://transportforireland.ie/","highlights":["Dublin Bus operates 130+ routes.","Wheelchair accessible."]},
+ {"title":"No Highlights","url":"https://example.com/x","text":"fallback body text"},
 		{"title":"Dropped","url":""}
 	]}`
 	got, _, err := parseExaREST(strings.NewReader(body))

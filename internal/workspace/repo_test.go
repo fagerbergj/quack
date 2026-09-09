@@ -78,7 +78,7 @@ func TestRepoKey(t *testing.T) {
 
 // TestRepoKey_WorktreePerNode: worktree-per-node lays a shared clone plus one
 // linked worktree per node under the chat root - all share one origin, so
-// FindRepos returning 3 entries must still resolve to ONE bucket (#1262).
+// FindRepos returning 3 entries must still resolve to ONE bucket .
 func TestRepoKey_WorktreePerNode(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

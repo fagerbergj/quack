@@ -109,7 +109,7 @@ func TestTracedModel_GenerateContentStopsEarlyOnConsumerBreak(t *testing.T) {
 	}
 }
 
-// TestTracedModel_GenerateContentRecordsGatewayFailure proves the #1105 wire:
+// TestTracedModel_GenerateContentRecordsGatewayFailure proves the wire:
 // a generate() error still reaches the chat+node failure tracker even though
 // ADK's own runner later swallows the returned error into an empty node
 // completion - this is the only place the real cause survives that.

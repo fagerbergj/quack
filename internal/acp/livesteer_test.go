@@ -30,7 +30,7 @@ func (f *fakeExtensionCaller) CallExtension(_ context.Context, method string, pa
 }
 
 // TestSteerForward_DeliversOverAckedExtensionCall (#998, replaces the flaky
-// #1202 round()-based e2e version: that test could not be made to fail
+// round()-based e2e version: that test could not be made to fail
 // deterministically after 2000+ -race runs, so per the no-flaky-gates rule
 // it was deleted and replaced with this direct unit test of the same
 // production closure - no subprocess, no goroutine handoff, nothing to race).

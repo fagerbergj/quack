@@ -20,18 +20,18 @@ const chatShowDetailJSON = `{
   "id":"c1","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z",
   "system_prompt":"","title":"Research run","status":"needs_input","pending_question":"which region?",
   "turns":[{"id":"t1","created_at":"2026-01-01T00:00:00Z",
-    "input":{"role":"user","content":"research it"},
-    "output":[
-      {"type":"quack:dag","id":"d1","status":"in_progress","plan_id":"p1",
-       "nodes":[{"id":"n1","agent":"web-researcher","task":"t","depends_on":[]},
-                {"id":"n2","agent":"synthesizer","task":"t","depends_on":["n1"]}],
-       "edges":[{"from":"n1","to":"n2"}],
-       "node_states":{
-         "n1":{"status":"done","model":"qwen3.6-35b","total_tokens":1234,"server_duration_ms":2500,"judge_final_score":0.82},
-         "n2":{"status":"failed"}
-       }},
-      {"type":"message","id":"m1","status":"completed","content":[{"type":"output_text","text":"partial answer"}]}
-    ]}]
+ "input":{"role":"user","content":"research it"},
+ "output":[
+ {"type":"quack:dag","id":"d1","status":"in_progress","plan_id":"p1",
+ "nodes":[{"id":"n1","agent":"web-researcher","task":"t","depends_on":[]},
+ {"id":"n2","agent":"synthesizer","task":"t","depends_on":["n1"]}],
+ "edges":[{"from":"n1","to":"n2"}],
+ "node_states":{
+ "n1":{"status":"done","model":"qwen3.6-35b","total_tokens":1234,"server_duration_ms":2500,"judge_final_score":0.82},
+ "n2":{"status":"failed"}
+ }},
+ {"type":"message","id":"m1","status":"completed","content":[{"type":"output_text","text":"partial answer"}]}
+ ]}]
 }`
 
 func TestRunChatShow(t *testing.T) {
@@ -51,7 +51,7 @@ func TestRunChatShow(t *testing.T) {
 	}
 	s := out.String()
 	for _, want := range []string{
-		"id:     c1", "title:  Research run", "status: needs_input", "question: which region?",
+		"id: c1", "title:  Research run", "status: needs_input", "question: which region?",
 		"NODE", "AGENT", "STATUS", "MODEL", "TOKENS", "DURATION", "SCORE",
 		"n1", "web-researcher", "done", "qwen3.6-35b", "1234", "2.5s", "0.82",
 		"n2", "synthesizer", "failed",
@@ -71,13 +71,13 @@ const chatShowReasoningLeakJSON = `{
   "id":"c1","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z",
   "system_prompt":"","title":"Plan run","status":"completed",
   "turns":[{"id":"t1","created_at":"2026-01-01T00:00:00Z",
-    "input":{"role":"user","content":"plan it"},
-    "output":[
-      {"type":"message","id":"m1","status":"completed","content":[
-        {"type":"reasoning","text":"The user wants me to produce an implementation plan... let me start by loading the relevant skills..."},
-        {"type":"output_text","text":"Here is the plan."}
-      ]}
-    ]}]
+ "input":{"role":"user","content":"plan it"},
+ "output":[
+ {"type":"message","id":"m1","status":"completed","content":[
+ {"type":"reasoning","text":"The user wants me to produce an implementation plan... let me start by loading the relevant skills..."},
+ {"type":"output_text","text":"Here is the plan."}
+ ]}
+ ]}]
 }`
 
 // TestRunChatShowOmitsReasoning pins #419: the non-follow snapshot must not
@@ -108,10 +108,10 @@ func TestRunChatShowOmitsReasoning(t *testing.T) {
 func TestRunChatShowGithubLink(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	const withGithub = `{
-	  "id":"github-acme-widgets-7","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z",
-	  "system_prompt":"","title":"Widgets leak memory","status":"completed",
-	  "github_repo":"acme/widgets","github_url":"https://github.com/acme/widgets/issues/7",
-	  "turns":[]
+ "id":"github-acme-widgets-7","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z",
+ "system_prompt":"","title":"Widgets leak memory","status":"completed",
+ "github_repo":"acme/widgets","github_url":"https://github.com/acme/widgets/issues/7",
+ "turns":[]
 	}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, withGithub)
@@ -276,7 +276,7 @@ func TestRunChatShowFollowToolsAndThinking(t *testing.T) {
 	if !strings.Contains(s, `node n1: tool: run_command("go test ./...")`) {
 		t.Errorf("follow output missing the compact tool-call line:\n%s", s)
 	}
-	if !strings.Contains(s, "node n1:   → exit 0") {
+	if !strings.Contains(s, "node n1: → exit 0") {
 		t.Errorf("follow output missing the compact tool-result line:\n%s", s)
 	}
 	if strings.Contains(s, `"exit_code":0`) {

@@ -56,12 +56,12 @@ func RunChatShow(ctx context.Context, out, errOut io.Writer, server, id string, 
 // printChatSnapshot renders a ChatDetail's status header, the last turn's
 // per-node DAG table (if any), and the last turn's answer text (if any).
 func printChatSnapshot(out io.Writer, d schema.ChatDetail) {
-	fmt.Fprintf(out, "id:     %s\n", d.Id)
+	fmt.Fprintf(out, "id: %s\n", d.Id)
 	fmt.Fprintf(out, "title:  %s\n", chatTitle(d.Title))
 	fmt.Fprintf(out, "status: %s\n", d.Status)
 	if d.GithubUrl != nil && *d.GithubUrl != "" {
 		fmt.Fprintf(out, "github: %s\n", *d.GithubUrl)
-		fmt.Fprintf(out, "ref:    %s\n", githubRefLabel(schema.ChatSummary{GithubUrl: d.GithubUrl, GithubRepo: d.GithubRepo}))
+		fmt.Fprintf(out, "ref: %s\n", githubRefLabel(schema.ChatSummary{GithubUrl: d.GithubUrl, GithubRepo: d.GithubRepo}))
 	}
 	if d.PendingQuestion != nil && *d.PendingQuestion != "" {
 		fmt.Fprintf(out, "question: %s\n", *d.PendingQuestion)

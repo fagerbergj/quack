@@ -1,4 +1,4 @@
-// dagplanrecord.go: the "dag_plan" artifact kind (#1090 P8, issue #1095).
+// dagplanrecord.go: the "dag_plan" artifact kind .
 // One accepted plan writes one revision at id "dag_plan:main" - there is no
 // plan-judge revision loop in this codebase (the plan tool validates and
 // caches synchronously; execute runs it as-is), so "one revision per
@@ -24,15 +24,15 @@ const dagPlanJSONSchema = `{
   "type": "object",
   "required": ["ID", "Nodes"],
   "properties": {
-    "ID": {"type": "string"},
-    "Nodes": {"type": "array", "items": {"type": "object", "properties": {
-      "ID": {"type": "string"}, "AgentName": {"type": "string"}, "Task": {"type": "string"},
-      "DependsOn": {"type": "array", "items": {"type": "string"}}
-    }}},
-    "UserMessage": {"type": "string"},
-    "Setup": {"type": "object"},
-    "Delivery": {"type": "object"},
-    "PlanOnly": {"type": "boolean"}
+ "ID": {"type": "string"},
+ "Nodes": {"type": "array", "items": {"type": "object", "properties": {
+ "ID": {"type": "string"}, "AgentName": {"type": "string"}, "Task": {"type": "string"},
+ "DependsOn": {"type": "array", "items": {"type": "string"}}
+ }}},
+ "UserMessage": {"type": "string"},
+ "Setup": {"type": "object"},
+ "Delivery": {"type": "object"},
+ "PlanOnly": {"type": "boolean"}
   }
 }`
 
@@ -50,7 +50,7 @@ func init() {
 }
 
 // SaveDagPlanRecord writes p as this chat's next dag_plan revision, fail-open
-// like every other episodic write in #1090 (a save error never blocks
+// like every other episodic write in (a save error never blocks
 // execution - it's Warn-logged by the caller-shared recordClient pattern).
 // artifacts nil is the pre-#1090 case (no artifact service configured).
 func SaveDagPlanRecord(ctx context.Context, artifacts artifact.Service, appName, userID, chatID, turnID string, p Plan) (id string, revision int, err error) {

@@ -89,7 +89,7 @@ type RawNode struct {
 	Checks    []string `json:"checks,omitempty"`
 	Workdir   string   `json:"workdir,omitempty"`
 	// Artifact: registered recordstore kind this node's output is saved as on
-	// gate pass (#1006). Set either by workflowcatalog.Bind from
+	// gate pass . Set either by workflowcatalog.Bind from
 	// config.WorkflowNode.Artifact or directly by the LLM planner - assemble
 	// validates it against ArtifactKindNames() either way (#1128: a planner
 	// once put free text here, which reached SaveBlob and errored unregistered).
@@ -98,11 +98,11 @@ type RawNode struct {
 
 // ArtifactKindNames returns the sorted names of every registered blob-class
 // recordstore kind - the closed set a node's `artifact` field may select,
-// since saveDocumentRound writes it via SaveBlob (#1128).
+// since saveDocumentRound writes it via SaveBlob .
 func ArtifactKindNames() []string { return recordstore.ArtifactKindNames() }
 
 // ValidateArtifactKind rejects an artifact selector that isn't one of
-// ArtifactKindNames() - the planner-facing guard for #1128. Thin wrapper
+// ArtifactKindNames() - the planner-facing guard for. Thin wrapper
 // around recordstore.ValidateArtifactKind, kept here for plan-build callers;
 // config's own workflow-node validation calls recordstore directly to avoid
 // an import cycle (dag -> inference -> config).
@@ -205,7 +205,7 @@ func planSummary(p *Plan) string {
 		if len(n.DependsOn) > 0 {
 			fmt.Fprintf(&sb, " depends on %s", strings.Join(n.DependsOn, ", "))
 		}
-		fmt.Fprintf(&sb, "\n    task: %s", strings.TrimSpace(n.Task))
+		fmt.Fprintf(&sb, "\n task: %s", strings.TrimSpace(n.Task))
 	}
 	if p.Setup != nil {
 		fmt.Fprintf(&sb, "\nsetup: repo=%q base_ref=%q work_branch=%q", p.Setup.Repo, p.Setup.BaseRef, p.Setup.WorkBranch)

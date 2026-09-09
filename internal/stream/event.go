@@ -70,7 +70,7 @@ const (
 	EventCompaction = "compaction"
 
 	// EventArtifactRevision reports one artifact revision written by a judge
-	// round (#1090 §4.8/#1092) - emitted before the round's
+	// round - emitted before the round's
 	// EventArtifactJudgeRound, so a client sees the revision exist first.
 	EventArtifactRevision = "artifact_revision"
 	// EventArtifactJudgeRound reports the judge_round record a round wrote,
@@ -243,7 +243,7 @@ type NodeQueuedData struct {
 }
 
 // NodeQueued builds a node_queued event, emitted at admission-attempt time so
-// a node waiting on capacity (#1007) reads as "waiting", not hung.
+// a node waiting on capacity reads as "waiting", not hung.
 func NodeQueued(nodeID string) SSEEvent {
 	return SSEEvent{Name: EventNodeQueued, Data: NodeQueuedData{NodeID: nodeID}}
 }
@@ -342,7 +342,7 @@ func DeliveryResult(nodeID, outcome, kind, url, errMsg, traceID string) SSEEvent
 	}}
 }
 
-// ArtifactRevisionData: `artifact_revision` event payload (#1090 §4.8).
+// ArtifactRevisionData: `artifact_revision` event payload .
 type ArtifactRevisionData struct {
 	ID       string `json:"id"`
 	Revision int    `json:"revision"`
@@ -358,7 +358,7 @@ type ScoredRef struct {
 	Revision   int    `json:"revision"`
 }
 
-// ArtifactJudgeRoundData: `artifact_judge_round` event payload (#1090 §4.8).
+// ArtifactJudgeRoundData: `artifact_judge_round` event payload .
 type ArtifactJudgeRoundData struct {
 	ID     string      `json:"id"`
 	Passed bool        `json:"passed"`

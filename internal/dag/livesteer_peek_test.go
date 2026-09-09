@@ -2,7 +2,7 @@ package dag
 
 import "testing"
 
-// #1029 review: live delivery must PEEK. TakeQueued marks Delivered, records a
+// review: live delivery must PEEK. TakeQueued marks Delivered, records a
 // -sN generation in drained and persists; if the live callback consumed the
 // queue it would (1) burn a generation with no matching -sN run, so node_steered
 // resolves to the wrong text, (2) drop the message before it reaches the durable

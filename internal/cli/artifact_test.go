@@ -20,10 +20,10 @@ func TestRunArtifactList(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, `{"data":[
-			{"name":"scan.png","revisions":[
-				{"revision":1,"mime_type":"image/png","size":1024},
-				{"revision":2,"mime_type":"image/png","size":2048}
-			]}
+ {"name":"scan.png","revisions":[
+ {"revision":1,"mime_type":"image/png","size":1024},
+ {"revision":2,"mime_type":"image/png","size":2048}
+ ]}
 		]}`)
 	}))
 	defer srv.Close()

@@ -23,7 +23,7 @@ import (
 // LoadWithMeta over artifact.InMemoryService() - production always wraps the
 // real row-backed store, which supports these; this stands in for that in
 // tests so the preload validity path (which reads head_sha from lineage, not
-// the JSON body - #1090 P2) is actually exercised without a real database.
+// the JSON body - P2) is actually exercised without a real database.
 type metaAwareInMemory struct {
 	artifact.Service
 	mu   sync.Mutex
@@ -97,7 +97,7 @@ func findingID(t *testing.T, rec FindingRecord) string {
 	return id
 }
 
-// TestCodeReviewRoundWrite covers #1006 test case 1: a FINDINGS(2)+
+// TestCodeReviewRoundWrite covers test case 1: a FINDINGS(2)+
 // DISMISSED(1)+CLEAN(2) tail round writes a code_review record plus one
 // finding artifact per live finding, both state "new".
 func TestCodeReviewRoundWrite(t *testing.T) {
@@ -160,15 +160,15 @@ CLEAN:
 	}
 }
 
-// TestSaveCodeReviewRound_ToolWriteSkipsTailFallback covers the #1091 gate
-// fallback, exercised as round 1 (the draft phase) - the flow #1108 B2 found
+// TestSaveCodeReviewRound_ToolWriteSkipsTailFallback covers the gate
+// fallback, exercised as round 1 (the draft phase) - the flow B2 found
 // broken: a write_code_review call already wrote this round's record
 // directly (simulated the way the real MCP handler does it: SaveStructured
 // then ToolWritten.Add), so saveCodeReviewRound must not also parse the
 // (bogus) answer tail and overwrite it - it just adopts the tool-written
 // revision. st starts fresh (newEpisodicRoundState, reviewRev 0) exactly as
 // round 1 of a real run does - detection must not depend on a baseline
-// loaded after the tool write (#1108 B2), so it goes through toolWritten
+// loaded after the tool write , so it goes through toolWritten
 // instead of a revision comparison.
 func TestSaveCodeReviewRound_ToolWriteSkipsTailFallback(t *testing.T) {
 	svc := newMetaAwareInMemory()
@@ -329,7 +329,7 @@ FINDINGS:
 	}
 }
 
-// TestToolWrittenStageResetsPerRound covers #1108 finding 2: an id written
+// TestToolWrittenStageResetsPerRound covers finding 2: an id written
 // via write_finding in round 1 must not still suppress round N's tail-parse
 // write of the SAME id - the stage scopes to "this round," not the whole node
 // run, so it has to be drained between rounds.
@@ -380,7 +380,7 @@ func TestToolWrittenStageResetsPerRound(t *testing.T) {
 	}
 }
 
-// TestSaveCodeReviewRoundLogsAndSkipsOnSeedReadFailure covers #1108 finding
+// TestSaveCodeReviewRoundLogsAndSkipsOnSeedReadFailure covers finding
 // 3a: when a tool-written id can't be re-read while seeding the round (here,
 // the artifact.Service is swapped out from under the client so every Load
 // fails), the finding must not silently vanish and the tail-parse fallback
@@ -479,7 +479,7 @@ func TestSaveCodeReviewRound_ToolWroteCodeReviewStillSeedsFindings(t *testing.T)
 	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "t2", 2, "irrelevant - short-circuits on the tool write", staged, st)
 
 	if st.findingRev[findingID] != rev2 {
-		t.Fatalf("st.findingRev[%s] = %d after round 2, want %d (the seed loop must run before the toolWroteCodeReview return, #1108 B3)", findingID, st.findingRev[findingID], rev2)
+		t.Fatalf("st.findingRev[%s] = %d after round 2, want %d (the seed loop must run before the toolWroteCodeReview return, B3)", findingID, st.findingRev[findingID], rev2)
 	}
 
 	// Round 3: the tail parse drops the finding (resolved) - the gate writes
@@ -500,7 +500,7 @@ func TestSaveCodeReviewRound_ToolWroteCodeReviewStillSeedsFindings(t *testing.T)
 }
 
 // alwaysFailLoadService makes every Load fail, simulating a seed re-read
-// failure (#1108 finding 3a) without needing a real broken backend.
+// failure without needing a real broken backend.
 type alwaysFailLoadService struct{ artifact.Service }
 
 func (alwaysFailLoadService) Load(context.Context, *artifact.LoadRequest) (*artifact.LoadResponse, error) {
@@ -513,7 +513,7 @@ func (alwaysFailLoadService) Versions(context.Context, *artifact.VersionsRequest
 	return nil, os.ErrNotExist
 }
 
-// TestFindingIdentityMatchesAcrossTailParseAndToolWrite covers #1108 finding
+// TestFindingIdentityMatchesAcrossTailParseAndToolWrite covers finding
 // 3b: the exact-hash dedup between a tail-parsed finding and its tool-written
 // equivalent only holds if both code paths normalize into the same
 // FindingRecord shape. The tail-parse path (saveCodeReviewRound) splits an
@@ -538,8 +538,8 @@ func TestFindingIdentityMatchesAcrossTailParseAndToolWrite(t *testing.T) {
 	}
 }
 
-// TestFindingIdentityStableAcrossLineShiftHeadSHAAndNode covers #1006 test
-// case 2 / #1090 V4.2 verification #2: the same finding (same path, title,
+// TestFindingIdentityStableAcrossLineShiftHeadSHAAndNode covers test
+// case 2 / V4.2 verification #2: the same finding (same path, title,
 // flagged-line text) keeps its id regardless of line number, head SHA, or
 // which node's hint is passed in - findingIdentity ignores hint entirely.
 func TestFindingIdentityStableAcrossLineShiftHeadSHAAndNode(t *testing.T) {
@@ -552,7 +552,7 @@ func TestFindingIdentityStableAcrossLineShiftHeadSHAAndNode(t *testing.T) {
 		t.Fatalf("a line shift must not change the id: %q vs %q", id1, id2)
 	}
 	// A trivial reformat (whitespace/case) of the title or line must not mint a new id.
-	recNorm := FindingRecord{Path: "a.go", Title: "  Bug   One  ", Snippet: "func   Foo()  {"}
+	recNorm := FindingRecord{Path: "a.go", Title: "  Bug One  ", Snippet: "func Foo()  {"}
 	id3 := findingID(t, recNorm)
 	if id1 != id3 {
 		t.Fatalf("normalization failed: %q vs %q", id1, id3)
@@ -572,7 +572,7 @@ func TestFindingIdentityStableAcrossLineShiftHeadSHAAndNode(t *testing.T) {
 	}
 }
 
-// TestGateFailWritesNothing covers #1006 test case 4 at the call-site level:
+// TestGateFailWritesNothing covers test case 4 at the call-site level:
 // saveEpisodicRound is only ever invoked from inside RunGatedRefine's round
 // loop; calling nothing (the gate-fail-before-any-round path) leaves the
 // store empty.
@@ -594,7 +594,7 @@ func TestSaveErrorFailsOpen(t *testing.T) {
 }
 
 // failingArtifactService wraps a real InMemoryService (not a nil one) - the
-// no-op-save guard (#1123) reads the current latest revision before every
+// no-op-save guard reads the current latest revision before every
 // save, so Load/Versions must work; only Save itself needs to fail.
 type failingArtifactService struct{ artifact.Service }
 
@@ -602,8 +602,8 @@ func (failingArtifactService) Save(context.Context, *artifact.SaveRequest) (*art
 	return nil, os.ErrPermission
 }
 
-// TestFindingResolvedAcrossRounds covers #1006 test case 7 (reframed as
-// finding state, #1090 P2): a finding present in round 1 and absent from
+// TestFindingResolvedAcrossRounds covers test case 7 (reframed as
+// finding state, P2): a finding present in round 1 and absent from
 // round 2 gets one final revision with state "resolved".
 func TestFindingResolvedAcrossRounds(t *testing.T) {
 	svc := newMetaAwareInMemory()
@@ -652,7 +652,7 @@ FINDINGS:
 	}
 }
 
-// TestSecondInvocationSeedsFromStoreAndStampsParent covers #1090 adversarial
+// TestSecondInvocationSeedsFromStoreAndStampsParent covers adversarial
 // review findings #1 and #2: a fresh RunGatedRefine invocation (prev state
 // nil, as node.go passes on its very first round) on a chat that already
 // has a code_review record must load it - a repeated finding gets
@@ -789,7 +789,7 @@ func TestSetAdvisorThreadRound_ToolWriteGetsRealLineageAndPreloads(t *testing.T)
 }
 
 // TestSetAdvisorThreadRound_ToolWriteCarriesTriggerAnnotation covers the
-// #1112 follow-up: a tool-initiated write (write_finding et al, via the
+// follow-up: a tool-initiated write (write_finding et al, via the
 // registered AdvisorTask) must chain the same trigger_annotation a
 // gate-written artifact gets (the PRIOR round's judge_round id) - not leave
 // it empty just because the write bypassed saveCodeReviewRound.
@@ -831,7 +831,7 @@ func TestSetAdvisorThreadRound_ToolWriteCarriesTriggerAnnotation(t *testing.T) {
 	}
 }
 
-// TestResumePreloadFiltersByFile covers #1006 test case 2: after a commit
+// TestResumePreloadFiltersByFile covers test case 2: after a commit
 // touching only a.go, preload keeps b.go's clean entry and untouched
 // findings, drops a.go's clean entry.
 func TestResumePreloadFiltersByFile(t *testing.T) {
@@ -863,7 +863,7 @@ CLEAN:
 	}
 }
 
-// TestResumePreloadDropsUnreachableHead covers #1006 test case 3: a
+// TestResumePreloadDropsUnreachableHead covers test case 3: a
 // force-push (history rewrite) makes the record's head_sha unreachable ->
 // preload is empty, though the store still holds the revision.
 func TestResumePreloadDropsUnreachableHead(t *testing.T) {
@@ -958,7 +958,7 @@ func installCountingGitShim(t *testing.T, logPath string) string {
 	return dir
 }
 
-// TestDocumentStagesShareOneID covers #1006 test case 8 under #1090 V4.2: the
+// TestDocumentStagesShareOneID covers test case 8 under V4.2: the
 // document id carries no node segment, so every stage of one chat's
 // dispatch (ocr, summarize, clarify) appends revisions to the SAME id;
 // lineage.NodeID (not the id) is what tells them apart. No retention
@@ -1022,7 +1022,7 @@ func gitIn(t *testing.T, dir string, args ...string) {
 	}
 }
 
-// TestTextRoundWrite_PlainNodeWritesTextArtifact covers #1095 (#1090 P8): a
+// TestTextRoundWrite_PlainNodeWritesTextArtifact covers : a
 // gated node with no registered structured kind (IsReviewer=false,
 // Artifact="") still gets one revision per round, id "text:<node>", with the
 // same lineage shape code_review uses and a correct parent_revision chain.
@@ -1038,7 +1038,7 @@ func TestTextRoundWrite_PlainNodeWritesTextArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 	if textID != "text:"+base.NodeID {
-		t.Fatalf("id = %q, want %q (owning node name is the instance, #1090 V4 §4.1)", textID, "text:"+base.NodeID)
+		t.Fatalf("id = %q, want %q (owning node name is the instance, V4 §4.1)", textID, "text:"+base.NodeID)
 	}
 	rc := recordClient(base)
 
@@ -1056,7 +1056,7 @@ func TestTextRoundWrite_PlainNodeWritesTextArtifact(t *testing.T) {
 		t.Fatalf("round 1 lineage = %+v, unexpected", lineage)
 	}
 
-	// Round 2 (a failed judge round still writes a revision - #1090 §4.5).
+	// Round 2 (a failed judge round still writes a revision - §4.5).
 	saveEpisodicRound(context.Background(), base, base.NodeID, "turn-1", 2, "round two's answer", StagedDelivery{}, st)
 	_, _, lineage2, rev2, ok, err := rc.LatestWithMeta(context.Background(), textID)
 	if err != nil || !ok {
@@ -1070,7 +1070,7 @@ func TestTextRoundWrite_PlainNodeWritesTextArtifact(t *testing.T) {
 	}
 }
 
-// TestTextRoundWrite_SkippedWhenToolWrote covers #1095 item 3: an implementer/
+// TestTextRoundWrite_SkippedWhenToolWrote covers item 3: an implementer/
 // explorer node that already tool-wrote an artifact this round via ANY of the
 // loopback MCP artifact-write tools (write_<kind>, write_artifact,
 // edit_artifact - all three now record into ToolWritten, see
@@ -1123,7 +1123,7 @@ func TestTextRoundWrite_SkippedWhenToolWrote(t *testing.T) {
 	}
 }
 
-// TestSaveTextRound_TruncatesOversizedAnswer covers #1095 adversarial review
+// TestSaveTextRound_TruncatesOversizedAnswer covers adversarial review
 // finding #3: saveTextRound had no size bound, so an explorer/implementer
 // dump (a full diff, a long file listing) would be written whole. Content
 // over artifactref.InlineMaxBytes must be truncated with a trailing marker.

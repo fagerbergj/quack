@@ -68,7 +68,7 @@ func TestDagStream_LiveUserPauseStillWinsOverDraftOutput(t *testing.T) {
 // could not: a live user pause racing in AFTER commitDelivery already ran
 // (not caught by node.go's own cooperative check beforehand) leaves the
 // node's answer genuinely delivered - node.go's own MarkDelivered signal,
-// not the ambiguous "is Output non-empty" guess, must win. The #1340 review
+// not the ambiguous "is Output non-empty" guess, must win. The review
 // only closed this race for PauseShutdown; a live PauseUser still needed it.
 func TestDagStream_DeliveredOutranksLivePauseRace(t *testing.T) {
 	agentByID := map[string]string{"n1": "a"}

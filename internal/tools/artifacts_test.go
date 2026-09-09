@@ -1,6 +1,6 @@
 // artifacts_test.go: happy-path coverage for the ADK-native artifact tool
 // wrappers (mirrors internal/acp/artifact_tools_test.go's MCP-path coverage;
-// #1091 adversarial review finding #2).
+// adversarial review finding #2).
 package tools
 
 import (
@@ -23,7 +23,7 @@ import (
 
 // fakeLedger: minimal in-memory ledger.LedgerStore double (mirrors
 // internal/recordstore's own test copy) so a write_<kind> test can prove
-// parent_revision without a database (#1153).
+// parent_revision without a database .
 type fakeLedger struct {
 	mu      sync.Mutex
 	seqs    map[string]int64
@@ -186,7 +186,7 @@ func TestNewEditArtifactTool_DirectApply(t *testing.T) {
 // every kind recordstore.Kinds() currently returns must produce a write_<kind>
 // tool. recordstore.Register now rejects a bad JSONSchema at process startup
 // (TestRegisterPanicsOnInvalidJSONSchema), so this can only regress if a
-// second, un-guarded schema check is reintroduced here (#1108 finding 3).
+// second, un-guarded schema check is reintroduced here .
 func TestNewWriteKindTools_EveryKindRegistersWithoutError(t *testing.T) {
 	rc := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat-a")
 	toolsList, err := NewWriteKindTools(rc, "n1", &RoundCoords{}, "")
@@ -216,7 +216,7 @@ func TestNewWriteKindTools_EveryKindRegistersWithoutError(t *testing.T) {
 }
 
 // TestWriteArtifactDescription_ListsBlobKinds: the write_artifact tool
-// description must name every registered blob kind (#1108 B1 - Kinds() used
+// description must name every registered blob kind used
 // to return structured kinds only, so this list silently rendered empty).
 func TestWriteArtifactDescription_ListsBlobKinds(t *testing.T) {
 	desc := writeArtifactDescription()
@@ -236,7 +236,7 @@ func TestWriteArtifactDescription_ListsBlobKinds(t *testing.T) {
 // conflict; this pins the JSON payload shape ({"conflict":true,"revision":N,
 // "content":"..."} - same field names as the MCP surface's
 // editConflictResult) so the two surfaces can't drift apart again
-// (#1108 finding 3).
+// .
 func TestNewEditArtifactTool_ConflictIsStructuredSuccess(t *testing.T) {
 	svc := artifact.InMemoryService()
 	rc := recordstore.New(svc, "quack", "u1", "chat-a")
@@ -323,7 +323,7 @@ func TestNewWriteKindTool_WriteCodeReviewUsesSessionHint(t *testing.T) {
 }
 
 // TestNewWriteArtifactTool_HintRequiringAndHintOptionalKinds: the ADK-native
-// mirror of TestWriteArtifactMCP_HintRequiringKind (#1108 finding 2) -
+// mirror of TestWriteArtifactMCP_HintRequiringKind -
 // a hint-requiring blob kind (document) succeeds using the session hint,
 // while a hint-optional kind (text) keeps its content-hash identity.
 func TestNewWriteArtifactTool_HintRequiringAndHintOptionalKinds(t *testing.T) {
@@ -368,7 +368,7 @@ func TestNewWriteArtifactTool_HintRequiringAndHintOptionalKinds(t *testing.T) {
 
 // TestNewEditArtifactTool_RoundCoordsRestampBetweenRounds: a native gated
 // node's artifact tools are built ONCE, before its judge/revise loop starts
-// (#1123) - the gate restamps round/turn/head-sha/trigger-annotation onto
+// - the gate restamps round/turn/head-sha/trigger-annotation onto
 // the SAME *RoundCoords pointer every tool closure shares (mirrors
 // vetting.SetAdvisorThreadRound / ledger.Coords' SetLedgerCoords pattern), so
 // an edit made during round 2 must carry round 2's trigger_annotation (the
@@ -439,12 +439,12 @@ func findKindSpec(t *testing.T, name string) (recordstore.KindSpec, error) {
 }
 
 // TestNewWriteKindTool_ParentRevisionChain: write_<kind> (and write_artifact)
-// build their own recordstore.Lineage with no ParentRevision (#1153) -
+// build their own recordstore.Lineage with no ParentRevision -
 // recordstore.save fills it in from the store's own latest revision, but
 // only when the client is WithLedger-armed, which every worker tool call
 // site used to skip. Two saves through the tool must chain revision 2 to
 // revision 1, both in the returned lineage and in the WAL's own
-// artifact.revision intent (fold's parent-chain oracle, epic #1090 item 1.5).
+// artifact.revision intent (fold's parent-chain oracle, epic item 1.5).
 func TestNewWriteKindTool_ParentRevisionChain(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	fl := newFakeLedger()

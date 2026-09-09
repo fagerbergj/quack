@@ -72,7 +72,7 @@ type memoryRow struct {
 	LastRecalledAt string
 	HumanVote      string
 
-	// AbsorbedIDs: comma-joined (see joinIDs/splitIDs) - epic #1255 P5.
+	// AbsorbedIDs: comma-joined (see joinIDs/splitIDs) - epic P5.
 	AbsorbedIDs string
 
 	Vector []byte
@@ -242,7 +242,7 @@ func (x *sqliteIndex) count(ctx context.Context, buckets []string, includeInvali
 }
 
 // sqliteOrderBy maps a ListSort constant to an ORDER BY clause, always with
-// an `id DESC` tie-break (#1266) so paging never duplicates/drops a row when
+// an `id DESC` tie-break so paging never duplicates/drops a row when
 // two rows share the sort column's value (e.g. two never-recalled memories
 // both have last_recalled_at = ""). last_recalled sorts descending with ""
 // (never recalled) last, via a CASE, not a plain string sort (empty string
@@ -507,7 +507,7 @@ func (x *sqliteIndex) recordRecall(ctx context.Context, ids []string) error {
 }
 
 // backfillTiers is the one-time migration for a point with no tier yet
-// (epic #1255 P1). Idempotent: only "" tier rows match, so a second boot's
+// (epic P1). Idempotent: only "" tier rows match, so a second boot's
 // UPDATE affects zero rows. Two statements (verified/unverified) since the
 // upvotes mirror value differs; both are unconditionally safe to re-run.
 func (x *sqliteIndex) backfillTiers(ctx context.Context) (int, error) {
@@ -539,7 +539,7 @@ func (x *sqliteIndex) updateBucket(ctx context.Context, id, bucket string) error
 }
 
 // absorb folds absorbedID's votes/timestamps/lineage into survivorID and
-// invalidates absorbedID (epic #1255 P5). False (no-op) if either row is
+// invalidates absorbedID (epic P5). False (no-op) if either row is
 // missing, or absorbedID is already invalidated (sticky).
 func (x *sqliteIndex) absorb(ctx context.Context, survivorID, absorbedID, reason string) (bool, error) {
 	var rows []memoryRow

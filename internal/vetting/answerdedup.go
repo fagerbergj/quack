@@ -1,6 +1,6 @@
 // answerdedup.go: collapses a node's chat-visible answer when it only
 // restates a record the same round already staged (review, PR body, ...) -
-// the fix for the doubled-review-body bug (#1306-ish). Structural, not
+// the fix for the doubled-review-body bug . Structural, not
 // prompt-dependent: applies to every agent kind that stages via
 // act.stagedDelivery, keyed generically by Kind rather than "review" only.
 package vetting

@@ -35,7 +35,7 @@ func TestSafeYield_ResumesConsumerPanic(t *testing.T) {
 
 // A consumer that breaks out of the range makes yield return false - the
 // ordinary dropped-SSE-client case. Re-entering that exhausted closure is
-// itself a panic, so safeYield must latch stopped on a false return (#1033).
+// itself a panic, so safeYield must latch stopped on a false return .
 func TestSafeYield_StopsAfterConsumerBreaks(t *testing.T) {
 	var after bool
 	var panicked any

@@ -12,7 +12,7 @@ import (
 
 // runDAGSubset runs retry-set nodes with seeded outputs for the rest. maxActive
 // is a host-resource ceiling (jail/clone CPU+RAM), not the GPU limiter - each
-// gated node's Admission.Admit call (#1007) is the real one.
+// gated node's Admission.Admit call is the real one.
 // ponytail: migrate to native graph if ADK grows per-node seeding.
 func runDAGSubset(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow.Node, maxActive int, seeded map[string]string, run map[string]bool) (map[string]string, error) {
 	if maxActive < 1 {
@@ -50,7 +50,7 @@ func runDAGSubset(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow
 			go func(i int, nid string) {
 				defer wg.Done()
 				// ADK recovers node panics on its own scheduler goroutines; this one
-				// is ours, so an unrecovered panic here takes the process (#1033).
+				// is ours, so an unrecovered panic here takes the process .
 				defer func() {
 					if r := recover(); r != nil {
 						errs[i] = fmt.Errorf("node %q panicked: %v", nid, r)

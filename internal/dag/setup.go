@@ -129,7 +129,7 @@ type setupError struct {
 // localCleanupErr structurally matches internal/tools' cleanupError (dag
 // never imports internal/tools, see graph.go) - a stale-clone removal
 // failure is local, not a fetch failure, so it must never be worded as the
-// repository being unreachable (#1213).
+// repository being unreachable .
 type localCleanupErr interface{ LocalCleanupFailure() }
 
 func (e *setupError) Error() string {
@@ -168,7 +168,7 @@ var setupMu sync.Mutex
 
 // liveNodes counts a chat's currently-executing gate nodes. Read-only nodes
 // work in linked worktrees off the shared clone, so re-cloning it pulls the
-// gitdir out from under any sibling still running (#1064).
+// gitdir out from under any sibling still running .
 var liveNodes = struct {
 	sync.Mutex
 	n map[string]int

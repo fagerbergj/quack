@@ -92,7 +92,7 @@ const (
 // ProviderConfig.Limits.Active, which is keyed by role alone within one provider.
 func activeKey(provider, role string) string { return provider + "\x00" + role }
 
-// buildAdmission builds the #1007 capacity ledger from the models/providers
+// buildAdmission builds the capacity ledger from the models/providers
 // registries. Absent limits (nil ModelLimits/ProviderLimits, or a role/model
 // missing from them) are omitted from the maps, which Admission treats as unlimited.
 func buildAdmission(cfg *config.Config) *dag.Admission {
@@ -153,7 +153,7 @@ func modelSpec(mc config.ModelConfig, name string, ctxWindow int) dag.AdmissionS
 
 // orchestratorSpec: the orchestrator's own capacity spec. It shares the
 // models registry with worker agents, so when orchestrator.model reuses a
-// worker model both contend for that model's one sessions pool (#1007).
+// worker model both contend for that model's one sessions pool .
 func orchestratorSpec(cfg *config.Config) dag.AdmissionSpec {
 	mc, ok := cfg.Models[cfg.Orchestrator.Model]
 	if !ok {
@@ -172,7 +172,7 @@ func orchestratorSpec(cfg *config.Config) dag.AdmissionSpec {
 // resolvedSkillSource wraps every source in Tolerant: a builtin/plugin
 // skill dir is server-controlled but a plugin's SKILL.md is third-party
 // content, and one field ADK's strict frontmatter parser doesn't know must
-// never fail startup for skills that DID parse (#1080).
+// never fail startup for skills that DID parse .
 func resolvedSkillSource(skillDirs []string) skill.Source {
 	bundleFS := bundledir.SubFS("skills")
 	sources := []skill.Source{skillsource.Tolerant(skillsource.NewFileSystemSource(bundleFS), bundleFS, "bundled skills")}
@@ -265,7 +265,7 @@ func BuildArtifactService(cfg *config.Config) (artifact.Service, error) {
 }
 
 // warnIfEpisodicRecordsWontSurvive: artifacts.store defaults to "" (in-memory,
-// #1006 known ceiling), so any node opting into `artifact:` records dies on
+// known ceiling), so any node opting into `artifact:` records dies on
 // every restart with no other signal - loud, not fatal, since GitHub
 // workflows that never set Artifact see zero behavior change either way.
 func warnIfEpisodicRecordsWontSurvive(cfg *config.Config) {
@@ -406,7 +406,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		}
 	}()
 
-	// A node's pinned ACP process (#1006) is closed on node-finish (vetting
+	// A node's pinned ACP process is closed on node-finish (vetting
 	// cannot import acp, hence the hook) and again here on shutdown, so it
 	// never outlives its node or the server.
 	vetting.NodeSessionClosed = acp.ClosePinnedSession
@@ -423,7 +423,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	}
 
 	ledgerStore := LedgerStoreFromConfig(cfg)
-	inference.Version = Version // llm.call ledger provenance (#1096)
+	inference.Version = Version // llm.call ledger provenance
 	otelProviders, otelShutdown, err := otelobs.Init(ctx, cfg.Observability, ledgerStore, Version)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("otel init failed: %w", err)
@@ -441,7 +441,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		slog.Info("span content capture is off (observability.otel.capture_content) - generation spans export with no prompt/response text", "component", "otelobs")
 	}
 
-	// #1144 P5: the ledger retention sweep is deleted - chat hard-delete is
+	// P5: the ledger retention sweep is deleted - chat hard-delete is
 	// the only GC (V4 "never delete except chat hard-delete"); checkpoints
 	// bound fold cost instead of trimming the log.
 
@@ -672,9 +672,9 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		slog.Info("extension supplies delivery", "component", "startup", "extension", delivererName)
 	}
 	if ledgerStore != nil {
-		// #1144 P5: chat/turn/plan writes go through AppendIntent too now.
+		// P5: chat/turn/plan writes go through AppendIntent too now.
 		st.SetWALLedger(ledgerStore)
-		// #1144 P3: seed a caught-up watermark (sse, artifact, node_state)
+		// P3: seed a caught-up watermark (sse, artifact, node_state)
 		// for any chat that already has that projection's data, before the
 		// first watermark-gated write ever runs on it - see
 		// SeedProjectionWatermarks's doc for why this can't be a literal
@@ -747,7 +747,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	}
 	if judgeModel != nil {
 		// An SDK extension's Classify is not a node, but judgeModel is the
-		// instance gated nodes stamp - hand it an unstamped one instead (#1049).
+		// instance gated nodes stamp - hand it an unstamped one instead .
 		classifyModel := judgeModel
 		if jprov, ok := cfg.Provider(cfg.Gates.Judge.Provider); ok {
 			if m, err := inference.NewModelWithEffort(jprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model), cfg.ModelEffort(cfg.Gates.Judge.Model)); err == nil {
@@ -831,8 +831,8 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	orchLLM := dag.NewAdmittingLLM(llm, admission, orchestratorSpec(cfg), nil)
 	orch := orchestrator.New(st.Sessions, orchLLM, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
 	// Unconditional, like executor.SetArtifacts above: dag_plan persistence
-	// (#1095/#1118) must not depend on load_artifacts being in orchestrator.tools -
-	// a prod config without it silently dropped every plan record (#1122).
+	// must not depend on load_artifacts being in orchestrator.tools -
+	// a prod config without it silently dropped every plan record .
 	orch.SetArtifacts(artifacts)
 	orch.SetNodeSessionReaper(st.ReapNodeSessions)
 	// Same source of truth as buildAgents' per-node compactionFor
@@ -862,7 +862,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	}
 	// Bounds run SETUP (workspace clone/jail), which costs host disk/CPU before
 	// any node reaches the GPU ledger. Also the only cap on how many runs are
-	// live at once, which is what the UI shows as running (#1067).
+	// live at once, which is what the UI shows as running .
 	orch.SetMaxActiveRuns(cfg.Dag.MaxActiveRuns)
 	// is gone, capacity bounds throughput naturally via the Admission ledger.
 	orchRef.Store(orch)
@@ -1117,7 +1117,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			judgeFactory = vetting.NewJudgeFactory(judge, judgeReadTools, judgeSkillsets)
 			// Own instances: gated nodes stamp per-round coords on `judge`
 			// (vetting/node.go), and these callers are not nodes - sharing it
-			// makes their calls inherit whichever node stamped last (#1049).
+			// makes their calls inherit whichever node stamped last .
 			unstamped := func() (model.LLM, error) {
 				return inference.NewModelWithEffort(jprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model), cfg.ModelEffort(cfg.Gates.Judge.Model))
 			}
@@ -1390,7 +1390,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			}
 			// extraTools: this node's artifact tools (list/read/edit/write_<kind>),
 			// built per-dispatch by dag.buildGateNodes once chatID/artifacts are
-			// known - buildWorker(nil) at startup gets none (#1123).
+			// known - buildWorker(nil) at startup gets none .
 			builtins = append(builtins, extraTools...)
 			wag, err := agent.Build(bundle, wm, builtins, []tool.Toolset{agentSkillTS}, memGuidance, skillFms, grading, drain)
 			if err != nil {
@@ -1410,7 +1410,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				var setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string)
 				if artifacts != nil {
 					rc := recordstore.New(artifacts, appName, userID, chatID)
-					// Same PGStore-only restriction as executor.SetWALLedger (#1153):
+					// Same PGStore-only restriction as executor.SetWALLedger :
 					// a worker's write_<kind> must record parent_revision like a
 					// gate's own writes, but only over a transactional ledger.
 					if pg, ok := ledgerStore.(*ledger.PGStore); ok {

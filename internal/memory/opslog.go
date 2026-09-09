@@ -14,7 +14,7 @@ const (
 	OpDelete     OpsLogOp = "delete"
 	OpReinforce  OpsLogOp = "reinforce"
 	OpInvalidate OpsLogOp = "invalidate"
-	// OpVote: a judge or human's per-memory vote (epic #1255 P1). Recall
+	// OpVote: a judge or human's per-memory vote (epic P1). Recall
 	// delivery itself is NOT logged here - the ledger's memory.recall entry
 	// is the source of truth for what a chat retrieved (see internal/ledger
 	// and internal/ledger/fold).
@@ -30,10 +30,10 @@ const (
 	ActorHuman           OpsLogActor = "human"
 	ActorRun             OpsLogActor = "run"
 	ActorJudge           OpsLogActor = "judge"
-	// ActorSweep: the forgetting-rule sweep (epic #1255 P3), distinct from
+	// ActorSweep: the forgetting-rule sweep (epic P3), distinct from
 	// ActorConsolidator (which merges duplicates, not ages memories out).
 	ActorSweep OpsLogActor = "sweep"
-	// ActorRescope: quack memory rescope (#1262), moving a pre-fix role:*
+	// ActorRescope: quack memory rescope , moving a pre-fix role:*
 	// point into its resolved repo:* bucket.
 	ActorRescope OpsLogActor = "rescope"
 )

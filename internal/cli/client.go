@@ -182,9 +182,9 @@ func (c *Client) ForgetMemory(ctx context.Context, memoryID, reason string) erro
 	return c.sendBody(ctx, http.MethodDelete, "/api/v1/memories/"+memoryID, b)
 }
 
-// SweepMemories runs the forgetting-rule sweep (epic #1255 P3) on demand,
+// SweepMemories runs the forgetting-rule sweep (epic P3) on demand,
 // dryRun reporting without mutating anything. dedupe switches to the
-// per-bucket similarity dedupe sweep instead (issue #1269); apply then
+// per-bucket similarity dedupe sweep instead ( ); apply then
 // controls whether it writes merges or only reports clusters.
 func (c *Client) SweepMemories(ctx context.Context, dryRun, dedupe, apply bool) (schema.SweepMemoriesResult, error) {
 	var out schema.SweepMemoriesResult
@@ -193,7 +193,7 @@ func (c *Client) SweepMemories(ctx context.Context, dryRun, dedupe, apply bool) 
 }
 
 // RescopeMemories moves role:* memories with a resolvable GitHub-origin chat
-// into their repo:* bucket (#1262). apply=false only tallies.
+// into their repo:* bucket . apply=false only tallies.
 func (c *Client) RescopeMemories(ctx context.Context, apply bool) (schema.RescopeReport, error) {
 	var out schema.RescopeReport
 	err := c.postJSON(ctx, "/api/v1/memories/rescope", schema.RescopeMemoriesBody{Apply: &apply}, &out)
@@ -201,7 +201,7 @@ func (c *Client) RescopeMemories(ctx context.Context, apply bool) (schema.Rescop
 }
 
 // GetMemoryStats fetches weekly recall precision/support-share/vote/recall
-// counts plus a live/invalidated snapshot per scope (epic #1255 P5).
+// counts plus a live/invalidated snapshot per scope (epic P5).
 func (c *Client) GetMemoryStats(ctx context.Context, weeks int) (schema.MemoryStats, error) {
 	var out schema.MemoryStats
 	path := "/api/v1/memories/stats"

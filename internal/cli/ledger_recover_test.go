@@ -29,7 +29,7 @@ func (f *fakeRecoverer) RecoverDelivery(_ context.Context, _ string, dc Delivery
 
 // fakeDeliveryRecords is a Projections.DeliveryRecorded/RecordDelivery
 // double: a set of "targetID@revision" keys already recorded, standing in
-// for the real delivery_record artifact (#1144 P2).
+// for the real delivery_record artifact .
 type fakeDeliveryRecords struct {
 	done        map[string]bool
 	recordCalls int
@@ -110,7 +110,7 @@ func TestRunLedgerRecover_ReadsLedgerOnce(t *testing.T) {
 	}
 }
 
-// #1093 finding 4: the recoverer must receive a DeliveryContext rebuilt from
+// finding 4: the recoverer must receive a DeliveryContext rebuilt from
 // the persisted intent payload, not a zero value - offline recovery has no
 // live worker activity to derive clone/PR coordinates from.
 func TestRunLedgerRecover_RebuildsDeliveryContextFromIntent(t *testing.T) {
@@ -127,7 +127,7 @@ func TestRunLedgerRecover_RebuildsDeliveryContextFromIntent(t *testing.T) {
 	}
 }
 
-// #1093 case 13, "found" branch (#1144 P2: completion is a delivery_record
+// case 13, "found" branch (#1144 P2: completion is a delivery_record
 // write, not a delivery.done entry). RecoverDelivery reports found=true, so
 // recover calls RecordDelivery and never Redo (the extension is never asked
 // to post twice).
@@ -169,7 +169,7 @@ func TestRunLedgerRecover_FoundRecordsDeliveryWithoutRedo(t *testing.T) {
 	}
 }
 
-// #1093 case 13, "not found" branch: a crash BEFORE Deliver ever reached the
+// case 13, "not found" branch: a crash BEFORE Deliver ever reached the
 // extension. RecoverDelivery reports found=false, so recover calls redoFunc
 // to redo the delivery the same way it would have run the first time.
 func TestRunLedgerRecover_NotFoundRedoes(t *testing.T) {
@@ -211,7 +211,7 @@ func TestRunLedgerRecover_NoRecovererReportsUnresolved(t *testing.T) {
 }
 
 // A delivery.intent WITH a matching delivery_record is not orphaned at all
-// (#1144 P2: DeliveryRecorded is the single "is this done" read).
+// .
 func TestRunLedgerRecover_NoOrphanWhenRecordExists(t *testing.T) {
 	ctx := context.Background()
 	ls := ledgertest.NewMemStore()
@@ -229,7 +229,7 @@ func TestRunLedgerRecover_NoOrphanWhenRecordExists(t *testing.T) {
 }
 
 // TestRecover_CrashBetweenDeliveryIntentAndRecord is the kill -9 case for
-// delivery (#1144 P2): a delivery.intent lands, the process dies before the
+// delivery : a delivery.intent lands, the process dies before the
 // delivery_record artifact write. Recover (real vetting.DeliveryProjections
 // against a real store) asks the extension, finds the delivery already
 // landed, and writes the completing delivery_record - no CLI involved. A
@@ -333,7 +333,7 @@ func TestRecover_TwoDeliveriesOnOneSubjectBothSettled(t *testing.T) {
 }
 
 // TestRecover_CrashBetweenIntentAndRow is the kill -9 case: the WAL holds an
-// artifact.revision intent whose row write never happened. #1144 P4 deleted
+// artifact.revision intent whose row write never happened. P4 deleted
 // the artifact.revision.aborted self-heal in favor of the cheaper
 // recordstore.saveAtOrAdopt path (no bytes duplicated into the ledger) - a
 // PLAIN SAVE on the same id adopts the orphaned intent and completes it at

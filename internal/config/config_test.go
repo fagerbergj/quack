@@ -28,8 +28,8 @@ func TestLoadForSandbox_SkipsRuntimeValidation(t *testing.T) {
 	path := writeTemp(t, `
 providers:
   default:
-    kind: openai
-    endpoint: ${QUACK_LLM_ENDPOINT}
+ kind: openai
+ endpoint: ${QUACK_LLM_ENDPOINT}
 stores:
   main: { kind: sqlite, url: ${QUACK_DATABASE_URL} }
 session: { store: main }
@@ -38,14 +38,14 @@ orchestrator:
   model: ${QUACK_ORCH_MODEL}
 agents:
   code-reviewer:
-    bundle: agents/code-reviewer
-    provider: default
-    model: ${QUACK_CODER_MODEL}
-    acp: { command: ["opencode", "acp"], read_only: true }
+ bundle: agents/code-reviewer
+ provider: default
+ model: ${QUACK_CODER_MODEL}
+ acp: { command: ["opencode", "acp"], read_only: true }
   image-reader:
-    bundle: agents/image-reader
-    provider: default
-    model: ${QUACK_IMAGE_MODEL}
+ bundle: agents/image-reader
+ provider: default
+ model: ${QUACK_IMAGE_MODEL}
 workspace:
   root: /tmp/quack-sandbox-test-workspace
 `)
@@ -71,9 +71,9 @@ func TestLoadInterpolatesEnv(t *testing.T) {
 	c, err := Load(writeTemp(t, `
 providers:
   default:
-    kind: openai
-    endpoint: ${QUACK_LLM_ENDPOINT}
-    api_key: ${QUACK_LLM_API_KEY}
+ kind: openai
+ endpoint: ${QUACK_LLM_ENDPOINT}
+ api_key: ${QUACK_LLM_API_KEY}
 models:
   m: { provider: default, role: worker }
 stores:
@@ -118,7 +118,7 @@ func TestLoadDefaultsServerAddr(t *testing.T) {
 func TestLoadRejectsUnknownProviderKind(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
-  default: { kind: anthropic, endpoint: http://x }
+ default: { kind: anthropic, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
 stores:
@@ -135,7 +135,7 @@ func TestLoadAcceptsValidModelEffort(t *testing.T) {
 	for _, effort := range []string{"", "low", "medium", "high"} {
 		c, err := Load(writeTemp(t, fmt.Sprintf(`
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker, effort: %q }
 stores:
@@ -155,7 +155,7 @@ orchestrator: { provider: default, model: m }
 func TestLoadRejectsInvalidModelEffort(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker, effort: extreme }
 stores:
@@ -169,13 +169,13 @@ orchestrator: { provider: default, model: m }
 }
 
 // TestLoadRejectsDeprecatedCompactionEngine pins that session.compaction.engine
-// - the no-op shim removed after #1239 - is now an unknown field like any
+// - the no-op shim removed after - is now an unknown field like any
 // other, so a stale deployed quack.yaml fails loudly at load instead of
 // silently ignoring the key.
 func TestLoadRejectsDeprecatedCompactionEngine(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
 stores:
@@ -195,7 +195,7 @@ orchestrator: { provider: default, model: m }
 func TestLoadRejectsOverlapWithoutInterval(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
 stores:
@@ -215,11 +215,11 @@ func TestLoadAcceptsReplayProviderForkMode(t *testing.T) {
 	c, err := Load(writeTemp(t, `
 providers:
   default:
-    kind: replay
-    bundle: /tmp/bundle.zip
-    fork_mode: fork
-    fork_from: node-a
-    live: { kind: openai, endpoint: http://x, api_key: k }
+ kind: replay
+ bundle: /tmp/bundle.zip
+ fork_mode: fork
+ fork_from: node-a
+ live: { kind: openai, endpoint: http://x, api_key: k }
 models:
   m: { provider: default, role: worker }
 stores:
@@ -274,7 +274,7 @@ orchestrator: { provider: default, model: m }
 func TestLoadRejectsMissingOrchestratorProvider(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
 stores:
@@ -290,7 +290,7 @@ orchestrator: { provider: nope, model: m }
 func TestLoadRejectsUserMemoryHookMissingModel(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
 stores:
@@ -309,7 +309,7 @@ orchestrator:
 func TestLoadRejectsUserMemoryHookUnknownProvider(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
 stores:
@@ -338,7 +338,7 @@ func TestLoadAllowsUserMemoryHookDisabledWithoutModel(t *testing.T) {
 func TestLoadRejectsUnknownStoreKind(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
 stores:
@@ -354,7 +354,7 @@ orchestrator: { provider: default, model: m }
 func TestLoadRejectsUnknownSessionStore(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
 stores:
@@ -372,7 +372,7 @@ func TestLoadParsesAgentsAndTools(t *testing.T) {
 	t.Setenv("QUACK_CRAWL4AI_URL", "http://crawl4ai:11235")
 	c, err := Load(writeTemp(t, `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
   r-model: { provider: default, role: worker }
@@ -382,10 +382,10 @@ session: { store: main }
 orchestrator: { provider: default, model: m }
 agents:
   web-researcher:
-    bundle: agents/web-researcher
-    provider: default
-    model: r-model
-    tools: [web_search, web_fetch, summarize]
+ bundle: agents/web-researcher
+ provider: default
+ model: r-model
+ tools: [web_search, web_fetch, summarize]
 tools:
   web_search: { kind: searxng, url: ${QUACK_SEARXNG_URL} }
   web_fetch: { kind: crawl4ai, url: ${QUACK_CRAWL4AI_URL} }
@@ -423,8 +423,8 @@ func TestToolAuthAPIKey(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 tools:
   web_search:
-    kind: exa
-    auth: { kind: api_key, api_key: ${QUACK_EXA_API_KEY} }
+ kind: exa
+ auth: { kind: api_key, api_key: ${QUACK_EXA_API_KEY} }
 `))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -482,7 +482,7 @@ func TestServerTopology(t *testing.T) {
 func TestConsolidationSchedule(t *testing.T) {
 	const cfg = `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
   e: { provider: default, role: embed }
@@ -490,10 +490,10 @@ models:
 stores:
   main: { kind: postgres, url: u }
   vec:
-    kind: qdrant
-    url: qdrant:6334
-    embedder: { provider: default, model: e }
-    consolidation: { provider: default, model: c, schedule: %s }
+ kind: qdrant
+ url: qdrant:6334
+ embedder: { provider: default, model: e }
+ consolidation: { provider: default, model: c, schedule: %s }
 session: { store: main }
 orchestrator: { provider: default, model: m }
 tools:
@@ -530,7 +530,7 @@ tools:
 func TestLoadRejectsBadForgettingRuleExpression(t *testing.T) {
 	const cfg = `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
   e: { provider: default, role: embed }
@@ -538,15 +538,15 @@ models:
 stores:
   main: { kind: postgres, url: u }
   vec:
-    kind: qdrant
-    url: qdrant:6334
-    embedder: { provider: default, model: e }
-    consolidation:
-      provider: default
-      model: c
-      forgetting:
-        rules:
-          - { when: "score @ 1", then: invalidate }
+ kind: qdrant
+ url: qdrant:6334
+ embedder: { provider: default, model: e }
+ consolidation:
+ provider: default
+ model: c
+ forgetting:
+ rules:
+ - { when: "score @ 1", then: invalidate }
 session: { store: main }
 orchestrator: { provider: default, model: m }
 tools:
@@ -566,7 +566,7 @@ tools:
 func TestStoreExtends(t *testing.T) {
 	c, err := Load(writeTemp(t, `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
 stores:
@@ -595,7 +595,7 @@ orchestrator: { provider: default, model: m }
 func TestMemoryStore(t *testing.T) {
 	const cfg = `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
   e: { provider: default, role: embed }
@@ -603,10 +603,10 @@ models:
 stores:
   main: { kind: postgres, url: u }
   vec:
-    kind: qdrant
-    url: %s
-    embedder: { provider: default, model: e }
-    consolidation: { provider: default, model: c }
+ kind: qdrant
+ url: %s
+ embedder: { provider: default, model: e }
+ consolidation: { provider: default, model: c }
 session: { store: main }
 orchestrator: { provider: default, model: m }
 tools:
@@ -650,7 +650,7 @@ func TestAgentConfigIsGated(t *testing.T) {
 func TestLoadParsesPerAgentJudgeRounds(t *testing.T) {
 	c, err := Load(writeTemp(t, `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
   c-model: { provider: default, role: worker }
@@ -661,14 +661,14 @@ session: { store: main }
 orchestrator: { provider: default, model: m }
 agents:
   code-implementer:
-    bundle: agents/code-implementer
-    provider: default
-    model: c-model
-    judge_rounds: 8
+ bundle: agents/code-implementer
+ provider: default
+ model: c-model
+ judge_rounds: 8
   synthesizer:
-    bundle: agents/synthesizer
-    provider: default
-    model: s-model
+ bundle: agents/synthesizer
+ provider: default
+ model: s-model
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -706,8 +706,8 @@ func TestLoadAuthOIDC(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 auth:
   oidc:
-    issuer: https://idp.example.com
-    audience: quack
+ issuer: https://idp.example.com
+ audience: quack
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -724,8 +724,8 @@ func TestLoadAuthTrustedHeaders(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 auth:
   trusted_headers:
-    user: X-authentik-username
-    groups: X-authentik-groups
+ user: X-authentik-username
+ groups: X-authentik-groups
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -751,7 +751,7 @@ func TestLoadRejectsAuthOIDCMissingIssuer(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 auth:
   oidc:
-    audience: quack
+ audience: quack
 `))
 	if err == nil {
 		t.Fatal("expected error for oidc block missing issuer")
@@ -762,7 +762,7 @@ func TestLoadRejectsAuthOIDCMissingAudience(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 auth:
   oidc:
-    issuer: https://idp.example.com
+ issuer: https://idp.example.com
 `))
 	if err == nil {
 		t.Fatal("expected error for oidc block missing audience")
@@ -773,7 +773,7 @@ func TestLoadRejectsAuthTrustedHeadersMissingUser(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 auth:
   trusted_headers:
-    groups: X-authentik-groups
+ groups: X-authentik-groups
 `))
 	if err == nil {
 		t.Fatal("expected error for trusted_headers block missing user")
@@ -790,14 +790,14 @@ func TestLoadOldConfigWithoutPostgresLedgerStillParses(t *testing.T) {
 	}
 }
 
-// TestLoadAcceptsPostgresRecordingStore is the new capability #1100 adds:
+// TestLoadAcceptsPostgresRecordingStore is the new capability adds:
 // recording.store names a postgres store.
 func TestLoadAcceptsPostgresRecordingStore(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 observability:
   recording:
-    observations: true
-    store: main
+ observations: true
+ store: main
 `))
 	if err != nil {
 		t.Fatalf("recording.store pointing at a postgres store should load: %v", err)
@@ -811,7 +811,7 @@ observability:
 // baseConfig is a minimal valid config that adversarial tests append to.
 const baseConfig = `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
 stores:
@@ -1007,11 +1007,11 @@ func TestWorkspaceGCOverrides(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 workspace:
   gc:
-    enabled: false
-    chat_ttl_hours: 24
-    scratch_ttl_hours: 2
-    interval_hours: 4
-    home_max_mb: 100
+ enabled: false
+ chat_ttl_hours: 24
+ scratch_ttl_hours: 2
+ interval_hours: 4
+ home_max_mb: 100
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -1041,7 +1041,7 @@ func TestWorkspaceGCRejectsNegativeHours(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 workspace:
   gc:
-    chat_ttl_hours: -1
+ chat_ttl_hours: -1
 `))
 	if err == nil {
 		t.Fatal("expected error for a negative workspace.gc TTL")
@@ -1054,7 +1054,7 @@ func TestWorkspaceGCRejectsNegativeHomeMaxMB(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 workspace:
   gc:
-    home_max_mb: -1
+ home_max_mb: -1
 `))
 	if err == nil {
 		t.Fatal("expected error for a negative workspace.gc.home_max_mb")
@@ -1069,9 +1069,9 @@ func TestWorkspaceSandboxOverrides(t *testing.T) {
 workspace:
   sandbox: none
   limits:
-    address_space_mb: 2048
-    max_procs: 64
-    max_file_size_mb: 256
+ address_space_mb: 2048
+ max_procs: 64
+ max_file_size_mb: 256
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -1168,8 +1168,8 @@ func TestWorkspaceEnvGoDefaultsOverridable(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 workspace:
   env:
-    GOTOOLCHAIN: auto
-    GOMODCACHE: /custom/mod/cache
+ GOTOOLCHAIN: auto
+ GOMODCACHE: /custom/mod/cache
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -1189,8 +1189,8 @@ func TestWorkspaceEnvParsesAndInterpolates(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 workspace:
   env:
-    JAVA_HOME: ${QUACK_TEST_JAVA_HOME}
-    ANDROID_HOME: /opt/android-sdk
+ JAVA_HOME: ${QUACK_TEST_JAVA_HOME}
+ ANDROID_HOME: /opt/android-sdk
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -1208,7 +1208,7 @@ func TestWorkspaceEnvRejectsEmptyKey(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 workspace:
   env:
-    "": "x"
+ "": "x"
 `))
 	if err == nil {
 		t.Fatal("expected error for an empty workspace.env key")
@@ -1220,7 +1220,7 @@ workspace:
 // override either would undo the hermetic-child guarantees those document.
 func TestWorkspaceEnvRejectsPathAndHome(t *testing.T) {
 	for _, key := range []string{"PATH", "HOME"} {
-		_, err := Load(writeTemp(t, baseConfig+"\nworkspace:\n  env:\n    "+key+": /tmp/x\n"))
+		_, err := Load(writeTemp(t, baseConfig+"\nworkspace:\n  env:\n "+key+": /tmp/x\n"))
 		if err == nil {
 			t.Errorf("workspace.env[%s]: expected a startup error, got none", key)
 		}
@@ -1235,13 +1235,13 @@ func TestGitCredentialsParsesAndDefaultsUsername(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 workspace:
   git_credentials:
-    - host: github.com
-      token: ${QUACK_GITHUB_TOKEN}
-    - host: gitlab.example.com
-      username: custom-user
-      token: ${QUACK_GITHUB_TOKEN}
+ - host: github.com
+ token: ${QUACK_GITHUB_TOKEN}
+ - host: gitlab.example.com
+ username: custom-user
+ token: ${QUACK_GITHUB_TOKEN}
   guards:
-    web_fetch: judge
+ web_fetch: judge
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -1270,7 +1270,7 @@ func TestGitCredentialsRejectsEmptyHost(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 workspace:
   git_credentials:
-    - token: ${QUACK_GITHUB_TOKEN}
+ - token: ${QUACK_GITHUB_TOKEN}
 `))
 	if err == nil {
 		t.Fatal("expected error for a git_credentials entry with no host")
@@ -1281,7 +1281,7 @@ func TestGuardsRejectsUnknownTier(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 workspace:
   guards:
-    delete_path: yolo
+ delete_path: yolo
 `))
 	if err == nil {
 		t.Fatal("expected error for an unknown guard tier")
@@ -1295,8 +1295,8 @@ func TestGitCredentialTokenRejectsLiteralValue(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 workspace:
   git_credentials:
-    - host: github.com
-      token: ghp_this_is_a_literal_secret
+ - host: github.com
+ token: ghp_this_is_a_literal_secret
 `))
 	if err == nil {
 		t.Fatal("expected error for a literal token value")
@@ -1308,8 +1308,8 @@ func TestGitCredentialTokenAllowsEnvReference(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 workspace:
   git_credentials:
-    - host: github.com
-      token: ${QUACK_GITHUB_TOKEN}
+ - host: github.com
+ token: ${QUACK_GITHUB_TOKEN}
 `))
 	if err != nil {
 		t.Fatalf("unexpected error for a proper ${VAR} token: %v", err)
@@ -1323,7 +1323,7 @@ func TestExtensionsModulesPassThroughOpaquely(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 extensions:
   noop:
-    greeting: hi there
+ greeting: hi there
 `))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1352,10 +1352,10 @@ func TestExtensionsGitHubPassesThroughOpaquely(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 extensions:
   github:
-    app_id: 1
-    private_key: ${QUACK_GH_KEY}
-    webhook_secret: ${QUACK_GH_SECRET}
-    bogus_field: true
+ app_id: 1
+ private_key: ${QUACK_GH_KEY}
+ webhook_secret: ${QUACK_GH_SECRET}
+ bogus_field: true
 `))
 	if err != nil {
 		t.Fatalf("unexpected error: %v (extensions.github should be opaque to quack now)", err)
@@ -1391,9 +1391,9 @@ gates:
   rubric: "be good"
   deterministic_checks: { max_rounds: 4 }
   judge:
-    provider: default
-    model: m
-    max_rounds: 1
+ provider: default
+ model: m
+ max_rounds: 1
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -1456,7 +1456,7 @@ gates: { rubric: r, deterministic_checks: { max_rounds: -1 }, judge: { provider:
 		"negative max_output_tokens": `
 gates: { rubric: r, judge: { provider: default, model: j, max_rounds: 1, max_output_tokens: -1 } }`,
 		// #1221: a reply reserve at or past the window leaves no room for the
-		// prompt, recreating the #1215 overflow silently.
+		// prompt, recreating the overflow silently.
 		"max_output_tokens at context_window": `
 gates: { rubric: r, judge: { provider: default, model: j, max_rounds: 1, context_window: 4096, max_output_tokens: 4096 } }`,
 	}
@@ -1476,7 +1476,7 @@ func TestCoderModelFallsBackToResearcherModel(t *testing.T) {
 	// Deliberately NOT setting QUACK_CODER_MODEL.
 	c, err := Load(writeTemp(t, `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
   researcher-model: { provider: default, role: worker }
@@ -1502,7 +1502,7 @@ func TestCoderModelExplicitOverridesFallback(t *testing.T) {
 	t.Setenv("QUACK_CODER_MODEL", "coder-model")
 	c, err := Load(writeTemp(t, `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
   coder-model: { provider: default, role: worker }
@@ -1572,7 +1572,7 @@ func TestWorkspaceDefaults_CheckSetupNotEnabledByDefault(t *testing.T) {
 func TestKnownFieldsRejectsUnknownTopLevel(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
 stores:
@@ -1609,10 +1609,10 @@ workspace:
 gates:
   rubric: r
   judge:
-    provider: default
-    model: j
-    foobar: y
-    max_rounds: 1`,
+ provider: default
+ model: j
+ foobar: y
+ max_rounds: 1`,
 			"foobar"}, // gate/judge
 	} {
 		_, err := Load(writeTemp(t, baseConfig+desc.yaml))
@@ -1631,7 +1631,7 @@ gates:
 func TestKnownFieldsRejectsMemoryRoleRename(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
 stores:
@@ -1640,10 +1640,10 @@ session: { store: main }
 orchestrator: { provider: default, model: m }
 agents:
   code-reviewer:
-    bundle: agents/code-reviewer
-    provider: default
-    model: c-model
-    memory_role: coding
+ bundle: agents/code-reviewer
+ provider: default
+ model: c-model
+ memory_role: coding
 `))
 	if err == nil {
 		t.Fatal("expected error for deprecated memory_role key")
@@ -1662,7 +1662,7 @@ agents:
 func TestAllowCloneRequiresReadOnly(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
 stores:
@@ -1671,12 +1671,12 @@ session: { store: main }
 orchestrator: { provider: default, model: m }
 agents:
   code-implementer:
-    bundle: agents/code-implementer
-    provider: default
-    model: c-model
-    acp:
-      command: ["opencode", "acp"]
-      allow_clone: true
+ bundle: agents/code-implementer
+ provider: default
+ model: c-model
+ acp:
+ command: ["opencode", "acp"]
+ allow_clone: true
 `))
 	if err == nil {
 		t.Fatal("expected an error for acp.allow_clone without acp.read_only")
@@ -1691,7 +1691,7 @@ agents:
 func TestValidConfigStillLoads(t *testing.T) {
 	c, err := Load(writeTemp(t, `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 stores:
   main: { kind: postgres, url: u }
 session: { store: main }
@@ -1702,31 +1702,31 @@ models:
   m: { provider: default, role: worker }
   j-model: { provider: default, role: worker }
   r-model:
-    provider: default
-    role: worker
-    context_window: 65536
-    limits:
-      sessions: 4
-      kv_tokens: 65536
-    cost:
-      input_per_mtok: 0.6
-      output_per_mtok: 3.6
+ provider: default
+ role: worker
+ context_window: 65536
+ limits:
+ sessions: 4
+ kv_tokens: 65536
+ cost:
+ input_per_mtok: 0.6
+ output_per_mtok: 3.6
 agents:
   code-reviewer:
-    bundle: agents/code-reviewer
-    provider: default
-    model: r-model
-    memory:
-      bucket: coding
+ bundle: agents/code-reviewer
+ provider: default
+ model: r-model
+ memory:
+ bucket: coding
 tools:
   stage_memory: { store: main }
 gates:
   rubric: "be good"
   deterministic_checks: { max_rounds: 2 }
   judge:
-    provider: default
-    model: j-model
-    max_rounds: 1
+ provider: default
+ model: j-model
+ max_rounds: 1
 `))
 	if err != nil {
 		t.Fatalf("valid config should load without error: %v", err)
@@ -1759,7 +1759,7 @@ func TestScanForKnownRenames(t *testing.T) {
 		wantErr bool
 	}{
 		{"memory_role present", "  memory_role: coding", true},
-		{"memory_role with indent", "\nagents:\n  reviewer:\n    memory_role: x\n", true},
+		{"memory_role with indent", "\nagents:\n  reviewer:\n memory_role: x\n", true},
 		{"no renamed keys", "  bucket: coding\n  provider: default\n", false},
 	}
 	for _, tc := range cases {
@@ -1864,7 +1864,7 @@ observability:
 	for _, kind := range []string{"sqlite", "qdrant"} {
 		if _, err := Load(baseObservabilityYAML(t, `
 stores:
-  other: { kind: `+kind+`, url: http://x }
+ other: { kind: `+kind+`, url: http://x }
 observability:
   recording: { observations: false, store: other }
 `)); err == nil {
@@ -1884,9 +1884,9 @@ stores:
 const workflowAgentConfig = `
 agents:
   document-classifier:
-    bundle: agents/document-classifier
-    provider: default
-    model: m
+ bundle: agents/document-classifier
+ provider: default
+ model: m
 `
 
 // TestWorkflowShapeValidIsComposable pins issue #805 test case 1's config
@@ -1896,9 +1896,9 @@ func TestWorkflowShapeValidIsComposable(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
 workflows:
   - name: document-ingest
-    trigger: "Ingest a new document into the knowledge base"
-    agents: [document-classifier]
-    shape: "ONE `+"`document-classifier`"+` node (terminal - classifies and files the document)"
+ trigger: "Ingest a new document into the knowledge base"
+ agents: [document-classifier]
+ shape: "ONE `+"`document-classifier`"+` node (terminal - classifies and files the document)"
 `))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -1923,9 +1923,9 @@ func TestWorkflowShapeMissingAgentFailsStartup(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 workflows:
   - name: document-ingest
-    trigger: "Ingest a new document into the knowledge base"
-    agents: [document-classifier]
-    shape: "ONE `+"`document-classifier`"+` node (terminal)"
+ trigger: "Ingest a new document into the knowledge base"
+ agents: [document-classifier]
+ shape: "ONE `+"`document-classifier`"+` node (terminal)"
 `))
 	if err == nil {
 		t.Fatal("expected an error for a workflow shape naming an unconfigured agent")
@@ -1942,12 +1942,12 @@ func TestWorkflowShapeMalformedIsSkipped(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
 workflows:
   - name: broken
-    trigger: "Missing a shape"
-    agents: [document-classifier]
+ trigger: "Missing a shape"
+ agents: [document-classifier]
   - name: document-ingest
-    trigger: "Ingest a new document into the knowledge base"
-    agents: [document-classifier]
-    shape: "ONE `+"`document-classifier`"+` node (terminal)"
+ trigger: "Ingest a new document into the knowledge base"
+ agents: [document-classifier]
+ shape: "ONE `+"`document-classifier`"+` node (terminal)"
 `))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -1977,14 +1977,14 @@ func TestWorkflowShapeBoundNodesValid(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
 workflows:
   - name: document-ingest
-    trigger: "Ingest a new document into the knowledge base"
-    agents: [document-classifier]
-    shape: "ONE `+"`document-classifier`"+` node (terminal - classifies and files the document)"
-    nodes:
-      - id: classify
-        agent: document-classifier
-        task: "Classify and file this document.\n\n{{ask}}"
-        rubric: "Output names the chosen folder and a one-line reason."
+ trigger: "Ingest a new document into the knowledge base"
+ agents: [document-classifier]
+ shape: "ONE `+"`document-classifier`"+` node (terminal - classifies and files the document)"
+ nodes:
+ - id: classify
+ agent: document-classifier
+ task: "Classify and file this document.\n\n{{ask}}"
+ rubric: "Output names the chosen folder and a one-line reason."
 `))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -2003,20 +2003,20 @@ workflows:
 }
 
 // TestWorkflowShapeBoundNodeUnregisteredArtifactFailsStartup: a bound node's
-// artifact must be a registered recordstore kind (#1128) - a typo here
+// artifact must be a registered recordstore kind - a typo here
 // previously reached SaveBlob at run time and was silently warn-logged away.
 func TestWorkflowShapeBoundNodeUnregisteredArtifactFailsStartup(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
 workflows:
   - name: document-ingest
-    trigger: "Ingest a new document into the knowledge base"
-    agents: [document-classifier]
-    shape: "ONE `+"`document-classifier`"+` node (terminal)"
-    nodes:
-      - id: classify
-        agent: document-classifier
-        task: "classify it"
-        artifact: not-a-real-kind
+ trigger: "Ingest a new document into the knowledge base"
+ agents: [document-classifier]
+ shape: "ONE `+"`document-classifier`"+` node (terminal)"
+ nodes:
+ - id: classify
+ agent: document-classifier
+ task: "classify it"
+ artifact: not-a-real-kind
 `))
 	if err == nil {
 		t.Fatal("expected an error for a bound node with an unregistered artifact kind")
@@ -2033,13 +2033,13 @@ func TestWorkflowShapeBoundNodeUnknownAgentFailsStartup(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
 workflows:
   - name: document-ingest
-    trigger: "Ingest a new document into the knowledge base"
-    agents: [document-classifier]
-    shape: "ONE `+"`document-classifier`"+` node (terminal)"
-    nodes:
-      - id: classify
-        agent: nope
-        task: "classify it"
+ trigger: "Ingest a new document into the knowledge base"
+ agents: [document-classifier]
+ shape: "ONE `+"`document-classifier`"+` node (terminal)"
+ nodes:
+ - id: classify
+ agent: nope
+ task: "classify it"
 `))
 	if err == nil {
 		t.Fatal("expected an error for a bound node naming an unconfigured agent")
@@ -2056,18 +2056,18 @@ func TestWorkflowShapeBoundNodeCycleFailsStartup(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
 workflows:
   - name: document-ingest
-    trigger: "Ingest a new document into the knowledge base"
-    agents: [document-classifier]
-    shape: "two `+"`document-classifier`"+` nodes"
-    nodes:
-      - id: a
-        agent: document-classifier
-        task: "step a"
-        depends_on: [b]
-      - id: b
-        agent: document-classifier
-        task: "step b"
-        depends_on: [a]
+ trigger: "Ingest a new document into the knowledge base"
+ agents: [document-classifier]
+ shape: "two `+"`document-classifier`"+` nodes"
+ nodes:
+ - id: a
+ agent: document-classifier
+ task: "step a"
+ depends_on: [b]
+ - id: b
+ agent: document-classifier
+ task: "step b"
+ depends_on: [a]
 `))
 	if err == nil {
 		t.Fatal("expected an error for a bound node cycle")
@@ -2083,16 +2083,16 @@ func TestWorkflowShapeBoundNodeDuplicateIDFailsStartup(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
 workflows:
   - name: document-ingest
-    trigger: "Ingest a new document into the knowledge base"
-    agents: [document-classifier]
-    shape: "two `+"`document-classifier`"+` nodes"
-    nodes:
-      - id: a
-        agent: document-classifier
-        task: "step one"
-      - id: a
-        agent: document-classifier
-        task: "step two"
+ trigger: "Ingest a new document into the knowledge base"
+ agents: [document-classifier]
+ shape: "two `+"`document-classifier`"+` nodes"
+ nodes:
+ - id: a
+ agent: document-classifier
+ task: "step one"
+ - id: a
+ agent: document-classifier
+ task: "step two"
 `))
 	if err == nil {
 		t.Fatal("expected an error for duplicate bound node ids")
@@ -2110,12 +2110,12 @@ func TestWorkflowShapeBoundNodeMissingFieldFailsStartup(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
 workflows:
   - name: document-ingest
-    trigger: "Ingest a new document into the knowledge base"
-    agents: [document-classifier]
-    shape: "ONE `+"`document-classifier`"+` node (terminal)"
-    nodes:
-      - id: classify
-        agent: document-classifier
+ trigger: "Ingest a new document into the knowledge base"
+ agents: [document-classifier]
+ shape: "ONE `+"`document-classifier`"+` node (terminal)"
+ nodes:
+ - id: classify
+ agent: document-classifier
 `))
 	if err == nil {
 		t.Fatal("expected an error for a bound node missing task")
@@ -2147,22 +2147,22 @@ func TestRealConfigDocumentIngestWorkflowExampleLoads(t *testing.T) {
 	c, err := Load(writeTemp(t, string(raw)+`
 extensions:
   remarkable:
-    base_url: ${RMFAKECLOUD_URL}
-    email: ${RMFAKECLOUD_EMAIL}
-    password: ${RMFAKECLOUD_PASSWORD}
+ base_url: ${RMFAKECLOUD_URL}
+ email: ${RMFAKECLOUD_EMAIL}
+ password: ${RMFAKECLOUD_PASSWORD}
 workflows:
   - name: document-ingest
-    trigger: "Ingest a new document (e.g. a reMarkable export) into the knowledge base"
-    agents: [image-reader, synthesizer]
-    shape: "ONE `+"`image-reader`"+` node (transcribes the attached document) -> ONE `+"`synthesizer`"+` node (terminal - writes the structured summary)"
-    nodes:
-      - id: transcribe
-        agent: image-reader
-        task: "Transcribe this document's full content, preserving structure (headings, lists, sketches described in words).\n\n{{ask}}"
-      - id: summarize
-        agent: synthesizer
-        depends_on: [transcribe]
-        task: "Write a structured Markdown summary of the transcribed document above: key facts, decisions, and action items.\n\n{{ask}}"
+ trigger: "Ingest a new document (e.g. a reMarkable export) into the knowledge base"
+ agents: [image-reader, synthesizer]
+ shape: "ONE `+"`image-reader`"+` node (transcribes the attached document) -> ONE `+"`synthesizer`"+` node (terminal - writes the structured summary)"
+ nodes:
+ - id: transcribe
+ agent: image-reader
+ task: "Transcribe this document's full content, preserving structure (headings, lists, sketches described in words).\n\n{{ask}}"
+ - id: summarize
+ agent: synthesizer
+ depends_on: [transcribe]
+ task: "Write a structured Markdown summary of the transcribed document above: key facts, decisions, and action items.\n\n{{ask}}"
 `))
 	if err != nil {
 		t.Fatalf("Load with document-ingest example: %v", err)
@@ -2215,8 +2215,8 @@ func TestAcpAgentSkillsWarns(t *testing.T) {
 	_, err := LoadForSandbox(writeTemp(t, `
 providers:
   default:
-    kind: openai
-    endpoint: ${QUACK_LLM_ENDPOINT}
+ kind: openai
+ endpoint: ${QUACK_LLM_ENDPOINT}
 stores:
   main: { kind: sqlite, url: ${QUACK_DATABASE_URL} }
 session: { store: main }
@@ -2225,11 +2225,11 @@ orchestrator:
   model: ${QUACK_ORCH_MODEL}
 agents:
   code-reviewer:
-    bundle: agents/code-reviewer
-    provider: default
-    model: ${QUACK_CODER_MODEL}
-    skills: [contribute]
-    acp: { command: ["opencode", "acp"], read_only: true }
+ bundle: agents/code-reviewer
+ provider: default
+ model: ${QUACK_CODER_MODEL}
+ skills: [contribute]
+ acp: { command: ["opencode", "acp"], read_only: true }
 workspace:
   root: /tmp/quack-acp-skills-warn-test
 `))
@@ -2242,14 +2242,14 @@ workspace:
 	}
 }
 
-// TestModelsRegistry pins the #1007 config-layer prerequisite: the models:
+// TestModelsRegistry pins the config-layer prerequisite: the models:
 // registry, its validation rules, and provider derivation. Each case is a
 // full config; failure cases assert both an error and that it names the
 // offender.
 func TestModelsRegistry(t *testing.T) {
 	const providers = `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 `
 	for _, tc := range []struct {
 		name    string
@@ -2261,11 +2261,11 @@ providers:
 			yaml: providers + `
 models:
   w1:
-    provider: default
-    role: worker
-    context_window: 131072
-    limits: { sessions: 4, kv_tokens: 131072 }
-    cost: { input_per_mtok: 0.6, output_per_mtok: 3.6 }
+ provider: default
+ role: worker
+ context_window: 131072
+ limits: { sessions: 4, kv_tokens: 131072 }
+ cost: { input_per_mtok: 0.6, output_per_mtok: 3.6 }
 stores: { main: { kind: postgres, url: u } }
 session: { store: main }
 orchestrator: { provider: default, model: w1 }
@@ -2327,7 +2327,7 @@ agents:
 			name: `model role not a key of provider limits.active`,
 			yaml: `
 providers:
-  default: { kind: openai, endpoint: http://x, limits: { active: { judge: 1 } } }
+ default: { kind: openai, endpoint: http://x, limits: { active: { judge: 1 } } }
 models:
   w1: { provider: default, role: worker }
 stores: { main: { kind: postgres, url: u } }
@@ -2340,8 +2340,8 @@ orchestrator: { provider: default, model: w1 }
 			name: "agent provider disagrees with model's provider",
 			yaml: `
 providers:
-  default: { kind: openai, endpoint: http://x }
-  other: { kind: openai, endpoint: http://y }
+ default: { kind: openai, endpoint: http://x }
+ other: { kind: openai, endpoint: http://y }
 models:
   w1: { provider: default, role: worker }
 stores: { main: { kind: postgres, url: u } }
@@ -2357,10 +2357,10 @@ agents:
 			yaml: `
 providers:
   default:
-    kind: openai
-    endpoint: http://x
-    models:
-      w1: { input_per_mtok: 0.6, output_per_mtok: 3.6 }
+ kind: openai
+ endpoint: http://x
+ models:
+ w1: { input_per_mtok: 0.6, output_per_mtok: 3.6 }
 stores: { main: { kind: postgres, url: u } }
 session: { store: main }
 orchestrator: { provider: default, model: m }
@@ -2391,7 +2391,7 @@ orchestrator: { provider: default, model: m }
 func TestAgentProviderDerivedFromModel(t *testing.T) {
 	c, err := Load(writeTemp(t, `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   w1: { provider: default, role: worker }
 stores: { main: { kind: postgres, url: u } }
@@ -2414,7 +2414,7 @@ agents:
 func TestModelCostResolvesThroughNewPath(t *testing.T) {
 	c, err := Load(writeTemp(t, `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   priced: { provider: default, role: worker, cost: { input_per_mtok: 0.6, output_per_mtok: 3.6 } }
   unpriced: { provider: default, role: worker }
@@ -2443,7 +2443,7 @@ orchestrator: { provider: default, model: priced }
 func TestDuplicateModelKeyGetsHelpfulHint(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   shared: { provider: default, role: worker }
   shared: { provider: default, role: judge }
@@ -2474,7 +2474,7 @@ func TestModelRegistrationCoversNonAgentRefs(t *testing.T) {
 			name: "orchestrator.model",
 			yaml: `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 stores: { main: { kind: postgres, url: u } }
 session: { store: main }
 orchestrator: { provider: default, model: ghost }
@@ -2485,7 +2485,7 @@ orchestrator: { provider: default, model: ghost }
 			name: "orchestrator.user_memory_hook.model",
 			yaml: `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
 stores: { main: { kind: postgres, url: u } }
@@ -2501,7 +2501,7 @@ orchestrator:
 			name: "gates.judge.model",
 			yaml: `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
 stores: { main: { kind: postgres, url: u } }
@@ -2517,7 +2517,7 @@ gates:
 			name: "session.compaction.model",
 			yaml: `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
 stores: { main: { kind: postgres, url: u } }
@@ -2532,7 +2532,7 @@ orchestrator: { provider: default, model: m }
 			name: "store embedder.model",
 			yaml: `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
 stores:
@@ -2547,17 +2547,17 @@ orchestrator: { provider: default, model: m }
 			name: "store consolidation.model",
 			yaml: `
 providers:
-  default: { kind: openai, endpoint: http://x }
+ default: { kind: openai, endpoint: http://x }
 models:
   m: { provider: default, role: worker }
   e: { provider: default, role: embed }
 stores:
   main: { kind: postgres, url: u }
   vec:
-    kind: qdrant
-    url: qdrant:6334
-    embedder: { provider: default, model: e }
-    consolidation: { provider: default, model: ghost }
+ kind: qdrant
+ url: qdrant:6334
+ embedder: { provider: default, model: e }
+ consolidation: { provider: default, model: ghost }
 session: { store: main }
 orchestrator: { provider: default, model: m }
 `,

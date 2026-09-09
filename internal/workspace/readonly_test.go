@@ -568,7 +568,7 @@ func TestBuildDirGrantsHonoursNegation(t *testing.T) {
 // TestBuildDirGrantsSkipsDotGit: ".git" is a real bare gitignore-default name
 // but never a build dir - granting it is pure exposure (linked worktree's
 // gitdir pointer, or a shared clone's whole metadata dir) with no build-output
-// purpose (#1321 review).
+// purpose .
 func TestBuildDirGrantsSkipsDotGit(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".git\ndist\n"), 0o644); err != nil {

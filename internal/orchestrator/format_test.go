@@ -62,7 +62,7 @@ func eligiblePlan() dag.Plan {
 	return dag.Plan{Nodes: []dag.Node{{ID: "a", AgentName: "code-explorer"}}}
 }
 
-// TestNeedsFormatPass_StructuredShortAnswerSkipsPass: #1283 finding 14 - a
+// TestNeedsFormatPass_StructuredShortAnswerSkipsPass: finding 14 - a
 // short answer that already has Markdown structure is a near-identity
 // transform for the format pass, so it's skipped.
 func TestNeedsFormatPass_StructuredShortAnswerSkipsPass(t *testing.T) {

@@ -13,7 +13,7 @@ import (
 	"github.com/fagerbergj/quack/internal/memory"
 )
 
-// recallMemoryArgs: recall_memory(query, k?) (epic #1255 P2).
+// recallMemoryArgs: recall_memory(query, k?) (epic P2).
 type recallMemoryArgs struct {
 	Query string `json:"query"`
 	K     int    `json:"k,omitempty"`
@@ -80,7 +80,7 @@ func (t *recallMemoryTool) SetLedgerCoords(c ledger.Coords) { t.box.set(c) }
 // mutable-box re-derivation newRecallMemory does per call, pulled out so a
 // test can assert the bucket list without wiring a whole ADK tool call.
 // Deliberately never sets Legacy: that field is only for pre-scope memories
-// keyed by agent NAME, and a node id never had memories under it (#1262/#1263).
+// keyed by agent NAME, and a node id never had memories under it .
 func recallScope(d Deps, ctx agent.Context, coords ledger.Coords) memory.Scope {
 	sc := memory.Scope{Role: d.MemoryRole}
 	if s := ctx.Session(); s != nil {

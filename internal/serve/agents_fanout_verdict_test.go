@@ -6,12 +6,12 @@ import (
 	"testing"
 )
 
-// TestCodeReviewerPromptScopesSliceVerdict guards a live bug (PR #1102): a
+// TestCodeReviewerPromptScopesSliceVerdict guards a live bug ( ): a
 // slice-fanned code-reviewer reasoned it couldn't approve a PR it hadn't
 // reviewed in full, staged `comment` over an otherwise clean slice, and the
 // structured_verdict rubric criterion failed it every round (a `comment`
 // verdict over non-blocking findings is a self-contradiction), burning three
-// revise rounds per node for nothing. #1092 fixes this class of bug at the
+// revise rounds per node for nothing. fixes this class of bug at the
 // root instead: a slice never stages a verdict at all (a downstream
 // synthesizer owns it, and structured_verdict is dropped from a slice's own
 // scoring), so the prompt must say so explicitly.

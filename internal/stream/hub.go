@@ -36,7 +36,7 @@ func (h *Hub) UnregisterRun(chatID string) {
 // compare-and-delete: if a newer run already registered its own handle for
 // this chat (a fast retry racing this run's own tail between its cancelRun
 // and this call), that handle and topic are left alone instead of being
-// wiped out from under the successor (#1342 review finding).
+// wiped out from under the successor .
 func (h *Hub) EndRun(chatID, responseID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

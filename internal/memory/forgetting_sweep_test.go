@@ -150,7 +150,7 @@ func TestForgetSweep_CustomRules(t *testing.T) {
 	}
 }
 
-// TestSweepOnce_ForgetThenRetain covers epic #1255 P3 verification (f): the
+// TestSweepOnce_ForgetThenRetain covers epic P3 verification (f): the
 // forgetting step invalidates a stale memory, then retentionOnce hard-removes
 // it once its (backdated) invalidation would be past the window - proving
 // forgetOnce runs before retentionOnce in sweepOnce, not just each in isolation.

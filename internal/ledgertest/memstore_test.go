@@ -10,7 +10,7 @@ import (
 )
 
 // TestMemStoreAppendIntent_ParentRevisionConflict is the fast, no-docker
-// mirror of TestPGStoreAppendIntent_ParentRevisionConflict (#1144 P4): the
+// mirror of TestPGStoreAppendIntent_ParentRevisionConflict : the
 // same contract, checked without a real Postgres container.
 func TestMemStoreAppendIntent_ParentRevisionConflict(t *testing.T) {
 	s := NewMemStore()

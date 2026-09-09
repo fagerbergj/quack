@@ -179,7 +179,7 @@ func TestResumeGuardArchivedOrStale(t *testing.T) {
 	}
 }
 
-// TestBoundedGoRun_CapsConcurrency pins #1176 review: resumed runs skip the
+// TestBoundedGoRun_CapsConcurrency pins review: resumed runs skip the
 // orchestrator's own admission (their old slot died with the process), so
 // startResumedNodes must cap concurrency itself, at max_active_runs, or a
 // restart with many resumable chats hammers the host at once. Dispatch order

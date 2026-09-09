@@ -66,7 +66,7 @@ type Chat struct {
 type ChatTurn struct {
 	ID     string `gorm:"primaryKey" json:"id"`
 	ChatID string `gorm:"index" json:"chat_id"`
-	// Chat is constraint-only (#1296): never populated, so GORM's
+	// Chat is constraint-only : never populated, so GORM's
 	// zero-value skip never tries to save it - it exists purely to teach
 	// AutoMigrate the ON DELETE CASCADE FK to chats.id.
 	Chat      Chat      `gorm:"foreignKey:ChatID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
@@ -85,7 +85,7 @@ type ChatTurn struct {
 	CachedTokens     int32 `json:"cached_tokens,omitempty"`
 	// UserText is the turn's own copy of the user's message, independent of
 	// the ADK session events GetTurnsWithContent otherwise reads it from.
-	// A ResetHistory dispatch (#1226) deletes the whole session, which would
+	// A ResetHistory dispatch deletes the whole session, which would
 	// otherwise strand every earlier turn with no content to render.
 	UserText string `json:"-"`
 }
@@ -128,7 +128,7 @@ type GithubMergeIntent struct {
 type DagPlan struct {
 	ID     string `gorm:"primaryKey" json:"id"`
 	ChatID string `gorm:"index" json:"chat_id"`
-	// Chat is constraint-only (#1296) - see ChatTurn.Chat's doc.
+	// Chat is constraint-only - see ChatTurn.Chat's doc.
 	Chat      Chat      `gorm:"foreignKey:ChatID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 	TurnID    string    `gorm:"index" json:"turn_id"`
 	PlanJSON  string    `json:"plan_json"`
@@ -138,7 +138,7 @@ type DagPlan struct {
 // ChatEvent backs the hub's durable replay after restart. Cleared on new run per chat.
 type ChatEvent struct {
 	ChatID string `gorm:"primaryKey;column:chat_id" json:"chat_id"`
-	// Chat is constraint-only (#1296) - see ChatTurn.Chat's doc.
+	// Chat is constraint-only - see ChatTurn.Chat's doc.
 	Chat      Chat      `gorm:"foreignKey:ChatID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 	Seq       int64     `gorm:"primaryKey;autoIncrement:false" json:"seq"`
 	Event     string    `json:"event"`
@@ -146,12 +146,12 @@ type ChatEvent struct {
 }
 
 // ProjectionWatermark tracks how far one chat's projection (sse, artifact,
-// node) has folded the WAL (#1144 P3): the projection writer advances
+// node) has folded the WAL : the projection writer advances
 // FoldedSeq in the same transaction as its own write, so a restart resumes
 // the fold from here instead of a full re-fold or a diff-against-drift guess.
 type ProjectionWatermark struct {
 	ChatID string `gorm:"column:chat_id;primaryKey" json:"chat_id"`
-	// Chat is constraint-only (#1296) - see ChatTurn.Chat's doc.
+	// Chat is constraint-only - see ChatTurn.Chat's doc.
 	Chat       Chat      `gorm:"foreignKey:ChatID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 	Projection string    `gorm:"column:projection;primaryKey" json:"projection"`
 	FoldedSeq  int64     `gorm:"column:folded_seq" json:"folded_seq"`
@@ -362,7 +362,7 @@ type Store struct {
 	querySQL              []string
 	// artifacts: nil unless SetArtifactService was called - DeleteChat cascades into it when set.
 	artifacts artifact.Service
-	// walLedger: the WAL's fail-closed AppendIntent path (#1144 P5), covering
+	// walLedger: the WAL's fail-closed AppendIntent path , covering
 	// the direct-write projections P1-P4 left alone (chat/turn creation,
 	// plan). nil = no WAL, same as before P5 - CreateChat/SaveTurn/SaveDagPlan
 	// behave exactly as they did.
@@ -370,7 +370,7 @@ type Store struct {
 }
 
 // SetWALLedger wires the WAL's fail-closed AppendIntent path into
-// CreateChat/SaveTurn/SaveDagPlan (#1144 P5). Callers must pass nil unless
+// CreateChat/SaveTurn/SaveDagPlan . Callers must pass nil unless
 // store is a postgres-backed LedgerStore - same restriction as
 // dag.Executor.SetWALLedger/recordstore.WithLedger.
 func (s *Store) SetWALLedger(store ledger.LedgerStore) { s.walLedger = store }
@@ -387,7 +387,7 @@ func (s *Store) SetWALLedger(store ledger.LedgerStore) { s.walLedger = store }
 // stale-checkpoint test proves).
 type Checkpoint struct {
 	ChatID string `gorm:"column:chat_id;primaryKey"`
-	// Chat is constraint-only (#1296) - see ChatTurn.Chat's doc.
+	// Chat is constraint-only - see ChatTurn.Chat's doc.
 	Chat          Chat   `gorm:"foreignKey:ChatID;references:ID;constraint:OnDelete:CASCADE"`
 	LastSeq       int64  `gorm:"column:last_seq"`
 	SchemaVersion int    `gorm:"column:schema_version"`
@@ -426,7 +426,7 @@ func (s *Store) upsertCheckpoint(ctx context.Context, chatID string, lastSeq int
 }
 
 // WriteCheckpoint folds chatID from its last checkpoint (or from scratch, if
-// it has none) and replaces the checkpoint row with the result (#1144 P5),
+// it has none) and replaces the checkpoint row with the result ,
 // so the next fold starts here instead of reading the chat's entire
 // history. Called at every turn-end path: rest.Handler.stampRunOutcome
 // (both its WasInterrupted and normal branches) and both exits of
@@ -489,7 +489,7 @@ func (s *Store) RecordedQuerySQL() []string {
 func (s *Store) SetArtifactService(svc artifact.Service) { s.artifacts = svc }
 
 // chatFKTables are the tables gaining the chats(id) ON DELETE CASCADE FK
-// (#1296), in the same order New() migrates them.
+// , in the same order New() migrates them.
 var chatFKTables = []string{"chat_turns", "dag_plans", "chat_events", "projection_watermarks", "ledger_checkpoints"}
 
 // chatFKModels maps each of chatFKTables to the struct sweepOrphanChatRows checks
@@ -647,7 +647,7 @@ func dialectorFor(kind, url string) (func() gorm.Dialector, error) {
 }
 
 // sqliteDSN enables WAL + busy timeout + FK enforcement (SQLite defaults
-// foreign_keys OFF per connection; the chat cascade FKs, #1296, are inert
+// foreign_keys OFF per connection; the chat cascade FKs,, are inert
 // without this). Existing query params are left untouched.
 func sqliteDSN(url string) string {
 	if strings.Contains(url, "?") {
@@ -657,7 +657,7 @@ func sqliteDSN(url string) string {
 }
 
 // CreateChat inserts a new chat and returns it. Fail-closed on the WAL
-// (#1144 P5): with a ledger wired, the chat.created intent must land before
+// : with a ledger wired, the chat.created intent must land before
 // the row does - a failed append means no chat is created at all.
 func (s *Store) CreateChat(ctx context.Context, systemPrompt string) (*Chat, error) {
 	now := time.Now().UTC()
@@ -825,7 +825,7 @@ func (s *Store) GetChat(ctx context.Context, id string) (*Chat, error) {
 }
 
 // ChatExists reports whether id has a live chats row - the shared check
-// behind every boot-time resume/recovery pass (#1296), so a chat hard-deleted
+// behind every boot-time resume/recovery pass , so a chat hard-deleted
 // by raw SQL (bypassing DeleteChat's cascade) is never resumed from its
 // leftover dag_plans/dag_nodes rows.
 func (s *Store) ChatExists(ctx context.Context, id string) (bool, error) {
@@ -884,7 +884,7 @@ func (s *Store) DeleteChat(ctx context.Context, id string) error {
 		if err := tx.Where("chat_id = ?", id).Delete(&ChatEvent{}).Error; err != nil {
 			return err
 		}
-		// Otherwise a leaked row per deleted chat (#1238): UUIDv4 ids never
+		// Otherwise a leaked row per deleted chat : UUIDv4 ids never
 		// reuse, so nothing would ever read it back.
 		if err := tx.Where("chat_id = ?", id).Delete(&Checkpoint{}).Error; err != nil {
 			return err
@@ -1086,7 +1086,7 @@ func (s *Store) DeleteGithubMergeIntent(ctx context.Context, chatID string) erro
 // generated titler, its failure-path fallback, a user's manual rename, or an
 // extension's origin label) - a single backstop against a titler that
 // ignores its own "3-6 words" instruction and echoes back a long answer
-// verbatim (#1124), enforced once here rather than duplicated per caller.
+// verbatim , enforced once here rather than duplicated per caller.
 const MaxTitleLen = 80
 
 // UpdateTitle sets the human-readable title for a chat, truncated to
@@ -1096,7 +1096,7 @@ func (s *Store) UpdateTitle(ctx context.Context, id, title string) error {
 }
 
 // truncateTitle cuts title to at most maxLen runes, backing off to the last
-// preceding space so a long PR/issue title doesn't sever mid-word (#1232),
+// preceding space so a long PR/issue title doesn't sever mid-word ,
 // then appends an ellipsis. No-op if title already fits.
 func truncateTitle(title string, maxLen int) string {
 	r := []rune(title)
@@ -1254,7 +1254,7 @@ func (s *Store) LoadChatEvents(ctx context.Context, chatID string, afterSeq int6
 
 // ChatEventsExist reports whether chatID has ANY row in the SSE table,
 // regardless of seq - runlog.EventLog.LoadEvents' fold-fallback decision
-// (#1101): a chat with rows but none newer than some fromSeq is "caught
+// : a chat with rows but none newer than some fromSeq is "caught
 // up", not "table is gone", and must not trigger a resend of the whole
 // reconstructed history.
 func (s *Store) ChatEventsExist(ctx context.Context, chatID string) (bool, error) {
@@ -1275,7 +1275,7 @@ func (s *Store) TrimChatEvents(ctx context.Context, chatID string, upToSeq int64
 
 // InTx runs fn inside one transaction on s's underlying db - callers that
 // need a projection write and its watermark advance to commit atomically
-// (#1144 P3) use this plus InsertChatEventTx/SetProjectionWatermarkTx.
+// use this plus InsertChatEventTx/SetProjectionWatermarkTx.
 func (s *Store) InTx(ctx context.Context, fn func(tx *gorm.DB) error) error {
 	return s.db.WithContext(ctx).Transaction(fn)
 }
@@ -1299,7 +1299,7 @@ func (s *Store) GetProjectionWatermark(ctx context.Context, chatID, projection s
 
 // SetProjectionWatermarkTx upserts (chatID, projection)'s folded_seq using
 // tx, so a caller can advance it in the SAME transaction as its own
-// projection write (#1144 P3) - pass s.DB() (or the tx it's already in).
+// projection write - pass s.DB() (or the tx it's already in).
 func SetProjectionWatermarkTx(tx *gorm.DB, chatID, projection string, foldedSeq int64) error {
 	return tx.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "chat_id"}, {Name: "projection"}},
@@ -1315,7 +1315,7 @@ func (s *Store) SetProjectionWatermark(ctx context.Context, chatID, projection s
 
 // UpsertNodeTerminalStatusTx sets a node's terminal status (done/failed)
 // inside tx, bypassing SetNodeStatus's transition machine - `quack ledger
-// rebuild`'s node_state reconciliation write (#1144 P3), not a live
+// rebuild`'s node_state reconciliation write , not a live
 // lifecycle transition. Creates the row if the crash that orphaned this
 // watermark also lost it - same lossy-reconstruction ceiling as
 // fold.NodeState (only status is known, not the row's other columns).
@@ -1395,7 +1395,7 @@ func (s *Store) SeedProjectionWatermarks(ctx context.Context, ledgerStore ledger
 				DoNothing: true,
 			}).Create(&ProjectionWatermark{ChatID: chatID, Projection: sd.projection, FoldedSeq: maxSeq, UpdatedAt: now}).Error
 			// artifact/node_state read chat ids from OTHER tables (artifacts,
-			// dag_nodes) that the chats(id) FK (#1296) doesn't cover - a chat_id
+			// dag_nodes) that the chats(id) FK doesn't cover - a chat_id
 			// with no chats row there is a pre-existing dangling reference, not
 			// a new bug; skip it instead of aborting every other chat's seed.
 			if errors.Is(err, gorm.ErrForeignKeyViolated) {
@@ -1436,13 +1436,13 @@ type ResumeReport struct {
 // replaces the old FailStaleDagNodes: a node the last process left suspended
 // is state to resume, not damage to write off.
 //
-//   - status paused/needs_input (any reason) -> resumable; awaiting_input goes
-//     to AwaitingInput (it needs an answer first), everything else to Start.
-//   - status running belonging to THIS instance's previous life, or past
-//     staleNodeCeiling: a hard kill. Re-stamped paused/shutdown and resumed
-//     the same way - the process died, the work didn't.
-//   - queued nodes are left alone: the resumed graph re-enters at the paused
-//     node and walks its descendants, which is what schedules them.
+// - status paused/needs_input (any reason) -> resumable; awaiting_input goes
+// to AwaitingInput (it needs an answer first), everything else to Start.
+// - status running belonging to THIS instance's previous life, or past
+// staleNodeCeiling: a hard kill. Re-stamped paused/shutdown and resumed
+// the same way - the process died, the work didn't.
+// - queued nodes are left alone: the resumed graph re-enters at the paused
+// node and walks its descendants, which is what schedules them.
 //
 // resumable, when non-nil, is the caller's liveness/admissibility check for a
 // node (serve passes a clone-dir + archived-chat + stale-plan check);
@@ -1467,7 +1467,7 @@ func (s *Store) ResumePausedDagNodes(ctx context.Context, resumable func(chatID,
 	}
 
 	chatOf := map[string]string{} // planID -> chatID, "" = plan row gone
-	chatLive := map[string]bool{} // chatID -> chats row still exists (#1296)
+	chatLive := map[string]bool{} // chatID -> chats row still exists
 	for _, n := range nodes {
 		chatID, ok := chatOf[n.PlanID]
 		if !ok {
@@ -1482,7 +1482,7 @@ func (s *Store) ResumePausedDagNodes(ctx context.Context, resumable func(chatID,
 			continue
 		}
 		// A raw SQL delete of the chats row bypasses DeleteChat's cascade and
-		// leaves this plan/node behind (#1296) - never resume into a chat that
+		// leaves this plan/node behind - never resume into a chat that
 		// no longer exists, or the run writes chat_events for a phantom chat.
 		live, ok := chatLive[chatID]
 		if !ok {
@@ -1722,7 +1722,7 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 		nodesByPlan[n.PlanID] = append(nodesByPlan[n.PlanID], n)
 	}
 
-	// groups can be shorter than turns - a ResetHistory dispatch (#1195) wipes
+	// groups can be shorter than turns - a ResetHistory dispatch wipes
 	// older session events while every ChatTurn row survives forever, and
 	// only ever removes OLDER events, never reorders what's left. So the
 	// surviving groups always line up with the MOST RECENT len(groups) turns,

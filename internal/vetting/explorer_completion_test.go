@@ -15,7 +15,7 @@ func TestReadOnlyNodeIsNotHeldToTheUserRequestsDelivery(t *testing.T) {
 	const explorerTask = "Clone https://github.com/aaif-goose/goose (shallow) and read the ACTUAL SOURCE " +
 		"to understand how goose exposes tools/extensions to the model. Cite the files you read."
 
-	// The assembled worker prompt: the node's task PLUS the user's verbatim request.
+		// The assembled worker prompt: the node's task PLUS the user's verbatim request.
 	const userRequest = "Implement \"code mode\" in the quack repository. PHASE 3 - IMPLEMENT IT. " +
 		"Commit on a branch named exactly feat/code-mode, push it, and open a pull request."
 	const assembledPrompt = "BACKGROUND - the user's full request, verbatim.\n" + userRequest +

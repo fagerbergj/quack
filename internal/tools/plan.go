@@ -86,7 +86,7 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 				}
 				// Survives past this turn's PlanCache so the give-up path
 				// (orchestrator.go) and a later DeriveTerminalStatus read can
-				// both see it, whatever kind of rejection this was (#1180).
+				// both see it, whatever kind of rejection this was .
 				inference.RecordPlanRejection(tc.SessionID(), reason)
 				return planResult{}, fmt.Errorf("plan: %w", err)
 			}
@@ -111,7 +111,7 @@ func NewPlanTool(planner *dag.Planner, cache *PlanCache, attachments []*genai.Pa
 				return planResult{}, fmt.Errorf("plan: %w", err)
 			}
 			// A plan was accepted - any earlier rejection this chat recorded no
-			// longer describes why the run ended (#1180), same as
+			// longer describes why the run ended , same as
 			// RecordCallResult's own success clear.
 			inference.ClearPlanRejection(tc.SessionID())
 
@@ -217,7 +217,7 @@ func summarizePlan(p *dag.Plan) string {
 		if len(n.DependsOn) > 0 {
 			fmt.Fprintf(&sb, " depends on %s", strings.Join(n.DependsOn, ", "))
 		}
-		fmt.Fprintf(&sb, "\n    task: %s", strings.TrimSpace(n.Task))
+		fmt.Fprintf(&sb, "\n task: %s", strings.TrimSpace(n.Task))
 	}
 	if p.Setup != nil {
 		fmt.Fprintf(&sb, "\nsetup: repo=%q base_ref=%q work_branch=%q", p.Setup.Repo, p.Setup.BaseRef, p.Setup.WorkBranch)

@@ -42,7 +42,7 @@ func TestStagedCandidate(t *testing.T) {
 		t.Fatalf("bucket case: got %+v ok=%v", c, ok)
 	}
 	// blank / missing content is not staged (guards the arg-key contract)
-	for _, args := range []map[string]any{{"content": "   "}, {}, {"content": 42}} {
+	for _, args := range []map[string]any{{"content": " "}, {}, {"content": 42}} {
 		if _, ok := stagedCandidate(&genai.FunctionCall{Args: args}); ok {
 			t.Errorf("args %v should not stage", args)
 		}

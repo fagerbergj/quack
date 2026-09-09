@@ -143,7 +143,7 @@ func TestNilJailReturnsBuiltin(t *testing.T) {
 }
 
 // writeUnknownFieldSkill writes a SKILL.md carrying frontmatter keys ADK's
-// strict decoder (KnownFields(true)) doesn't recognize - the #1080 shape: a
+// strict decoder (KnownFields(true)) doesn't recognize - the shape: a
 // third-party plugin (ponytail) added `argument-hint`, and ADK's
 // FileSystemSource.ListFrontmatters aborts its ENTIRE listing on the first
 // unparseable skill, crash-looping server startup in production 0.50.0.
@@ -160,7 +160,7 @@ func writeUnknownFieldSkill(t *testing.T, dir, name string) {
 	}
 }
 
-// TestTolerantSkipsUnknownFrontmatterField is the #1080 regression: a builtin/
+// TestTolerantSkipsUnknownFrontmatterField is the regression: a builtin/
 // plugin source wrapped in Tolerant must still list every OTHER skill when one
 // carries a field ADK's strict decoder rejects, instead of erroring the whole
 // source (the crash-loop root cause - see writeUnknownFieldSkill).

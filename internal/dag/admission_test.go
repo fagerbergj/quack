@@ -326,7 +326,7 @@ func TestAdmitHonoursContextCancel(t *testing.T) {
 func activeKeyTest(provider, role string) string { return provider + "\x00" + role }
 
 // An already-cancelled ctx must never reserve capacity, even if it fits
-// immediately (#1021: a prior reorder checked fits/reserve before ctx.Err()).
+// immediately ).
 // Verified by exhausting the freed capacity afterward at full limit.
 func TestAdmitAlreadyCancelledNeverReserves(t *testing.T) {
 	a := NewAdmission(map[string]int{"m": 1}, nil, nil, time.Hour)
@@ -346,7 +346,7 @@ func TestAdmitAlreadyCancelledNeverReserves(t *testing.T) {
 
 // A panicking onQueued (arbitrary consumer code, runs unlocked) must not
 // leave Admit's deferred Unlock double-unlocking into a fatal "unlock of
-// unlocked mutex" (#1016 prod crash). A real panic is fine; only the fatal isn't.
+// unlocked mutex" . A real panic is fine; only the fatal isn't.
 func TestAdmitOnQueuedPanicNeverDoubleUnlocks(t *testing.T) {
 	a := NewAdmission(map[string]int{"m": 1}, nil, nil, time.Hour)
 	occupant := AdmissionSpec{Model: "m"}

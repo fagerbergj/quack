@@ -188,7 +188,7 @@ func TestListPagingIncludeInvalidated_Mixed(t *testing.T) {
 	}
 }
 
-// TestList_TierFilterSpansPages is #1265 review finding 10: the tier filter
+// TestList_TierFilterSpansPages is review finding 10: the tier filter
 // is index-level (a WHERE clause / Qdrant condition), not a client-side
 // post-filter over one page - it must apply across a paged List correctly,
 // with total/paging agreeing with the filter. Also covers a legacy point
@@ -272,7 +272,7 @@ func TestGetByID_FindsAcrossBackendsAndTiersInvalidated(t *testing.T) {
 			t.Fatalf("GetByID(unknown) = %v, want ErrMemoryNotFound", err)
 		}
 
-		// #1268 bug: a malformed (non-UUID) id used to reach qdrant's client
+		// bug: a malformed (non-UUID) id used to reach qdrant's client
 		// unvalidated and come back as a raw "Unable to parse UUID" gRPC error
 		// instead of ErrMemoryNotFound - breaking findMemoryByID's try-each-store
 		// fallback in internal/server/rest/memory.go. sqlite never had this
@@ -285,7 +285,7 @@ func TestGetByID_FindsAcrossBackendsAndTiersInvalidated(t *testing.T) {
 	})
 }
 
-// TestList_SortSpansPages (#1266): each non-default sort orders the WHOLE
+// TestList_SortSpansPages : each non-default sort orders the WHOLE
 // matching set, not just whatever page a plain timestamp order would have
 // put first - a limit=1 page 0 under `upvotes` must be the single highest
 // upvote count across all 3 rows, not row 0 of the newest-first order.

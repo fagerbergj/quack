@@ -8,11 +8,11 @@ import (
 	"google.golang.org/adk/v2/model"
 )
 
-// TestDedupeSweep_CrossChatClusterMerges covers issue #1269's core gap: two
+// TestDedupeSweep_CrossChatClusterMerges covers 's core gap: two
 // near-duplicate memories minted by DIFFERENT chats (so burstClusters never
 // compares them) still get clustered and merged by DedupeSweep, with P5
 // lineage carrying the absorbed point's votes into the survivor. Run against
-// both backends (#1268's forEachBackend) since clustering now reads each
+// both backends since clustering now reads each
 // backend's own stored-vector plumbing (qdrant WithVectors / sqlite blob).
 func TestDedupeSweep_CrossChatClusterMerges(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
@@ -212,7 +212,7 @@ func TestDedupeSweep_VerifiedPairMergesWithSummedVotes(t *testing.T) {
 }
 
 // TestMMRSelect_FiveNearDuplicatesYieldOne is the recall-diversity test
-// (issue #1269 item 4): five near-identical points (mutual cosine >= 0.90)
+// (issue item 4): five near-identical points (mutual cosine >= 0.90)
 // must not all occupy the top-k - at most one should survive mmrSelect.
 // Pure function, no backend.
 func TestMMRSelect_FiveNearDuplicatesYieldOne(t *testing.T) {

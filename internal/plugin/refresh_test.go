@@ -19,7 +19,7 @@ func writeManifest(t *testing.T, dir string, body string) string {
 // is bad, losing the server because GitHub is unreachable is worse.
 func TestRefreshMissingTreeIsReportedNotFatal(t *testing.T) {
 	dir := t.TempDir()
-	m := writeManifest(t, dir, "plugins:\n  - name: demo\n    url: https://example.invalid/x\n    ref: abc123\n    path: "+filepath.Join(dir, "nope")+"\n")
+	m := writeManifest(t, dir, "plugins:\n - name: demo\n url: https://example.invalid/x\n ref: abc123\n path: "+filepath.Join(dir, "nope")+"\n")
 
 	revs := Refresh(m, "")
 	if len(revs) != 1 {
@@ -44,7 +44,7 @@ func TestRefreshReportsOnDiskRevisionNotThePin(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tree, ".plugin-ref"), []byte("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m := writeManifest(t, dir, "plugins:\n  - name: demo\n    url: https://example.invalid/x\n    ref: main\n    path: "+tree+"\n")
+	m := writeManifest(t, dir, "plugins:\n - name: demo\n url: https://example.invalid/x\n ref: main\n path: "+tree+"\n")
 
 	revs := Refresh(m, "")
 	if len(revs) != 1 || revs[0].Head != "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" {
@@ -80,7 +80,7 @@ func TestRefreshParsesTheRealManifest(t *testing.T) {
 	}
 }
 
-// An annotated pin (`ref: <sha>   # v4.9.0`) must compare equal to the head it
+// An annotated pin (`ref: <sha> # v4.9.0`) must compare equal to the head it
 // names; otherwise every boot reports drift for a tree that is exactly on pin.
 func TestParseManifestStripsInlineComments(t *testing.T) {
 	dir := t.TempDir()
@@ -94,8 +94,8 @@ func TestParseManifestStripsInlineComments(t *testing.T) {
 	}
 	m := writeManifest(t, dir, "plugins:\n"+
 		"  # a full-line comment, indented\n"+
-		"  - name: demo\n    url: https://example.invalid/x#frag\n"+
-		"    ref: "+sha+"   # v4.9.0\n    path: "+tree+"\n")
+		" - name: demo\n url: https://example.invalid/x#frag\n"+
+		" ref: "+sha+" # v4.9.0\n path: "+tree+"\n")
 
 	entries, err := parseManifest(m)
 	if err != nil {

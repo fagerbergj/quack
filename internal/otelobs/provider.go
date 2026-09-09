@@ -62,7 +62,7 @@ type Providers struct {
 // signalURL appends the OTLP signal path to an endpoint. It appends
 // unconditionally - a base URL that carries a path (Langfuse's
 // /api/public/otel) still needs /v1/traces on the end, and the old
-// path-detection rule made such endpoints unusable for every signal (#1045).
+// path-detection rule made such endpoints unusable for every signal .
 // An endpoint already ending in the signal path is left alone so an
 // explicitly-specified full URL does not double up.
 func signalURL(endpoint, path string) string {
@@ -104,7 +104,7 @@ func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledge
 	mpOpts := []metric.Option{metric.WithResource(res)}
 	var shutdowns []func(context.Context) error
 	// One exporter per destination per signal: a trace backend and a metrics
-	// collector are usually different systems (#1045).
+	// collector are usually different systems .
 	for _, e := range cfg.Otel.Exporters {
 		if e.Wants(config.SignalTraces) {
 			texp, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(signalURL(e.Endpoint, "/v1/traces")))
@@ -129,7 +129,7 @@ func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledge
 	otel.SetTracerProvider(tp)
 	// otelhttp (agent/a2a.go's per-node client+server) reads the global
 	// propagator to inject/extract traceparent - unset, it's a no-op and every
-	// A2A hop starts a fresh trace root (#1046).
+	// A2A hop starts a fresh trace root .
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 
 	mp := metric.NewMeterProvider(mpOpts...)

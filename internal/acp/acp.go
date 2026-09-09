@@ -59,7 +59,7 @@ type Options struct {
 	UnregisterLiveSteer func(chatID, nodeID string)
 	// RegisterRoundAbort/UnregisterRoundAbort let CancelNode reach a running
 	// round's abort RPC directly instead of waiting for the round to end
-	// (#1030). Cancel only - never wired for pause, which must preserve
+	// . Cancel only - never wired for pause, which must preserve
 	// whatever the round has accumulated so it can resume.
 	RegisterRoundAbort   func(chatID, nodeID string, cancel context.CancelFunc)
 	UnregisterRoundAbort func(chatID, nodeID string)
@@ -234,7 +234,7 @@ type steerParams struct {
 
 // extensionCaller is the one method steerForward needs from *sdk.ClientSideConnection -
 // narrowed so the forwarding logic is unit-testable without a real ACP
-// subprocess or round() goroutine handoff (#1202).
+// subprocess or round() goroutine handoff .
 type extensionCaller interface {
 	CallExtension(ctx context.Context, method string, params any) (json.RawMessage, error)
 }
@@ -257,7 +257,7 @@ type promptDone struct {
 // pinnedProc is one node's live ACP subprocess, kept across its rounds
 // (draft -> judge -> revise -> ...): the shim holds pi alive for its own
 // stdio session's life, so a second session/prompt on the SAME connection
-// carries history forward with no re-init and no transcript replay (#1006).
+// carries history forward with no re-init and no transcript replay .
 type pinnedProc struct {
 	h         *procHandle
 	sessID    sdk.SessionId
@@ -306,7 +306,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 	coords := a.coords
 	a.mu.Unlock()
 
-	// abortCtx is CancelNode's direct line into this round (#1030), separate
+	// abortCtx is CancelNode's direct line into this round , separate
 	// from ctx (which also carries parent shutdown) so both trigger the same
 	// graceful-cancel path below without one masking the other's cause.
 	abortCtx, abortCancel := context.WithCancel(context.Background())
@@ -386,7 +386,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 			"mcp_surface_offered", len(mcpServers) > 0, "has_mem_secret", memSecret != "", "mcp_tools", toolNames)
 		// Resume via session/load only ever matters here, on a node's FIRST
 		// round (a live pinned process, above, is now the common path for
-		// every round after it - #1006, perf audit finding 8).
+		// every round after it -, perf audit finding 8).
 		sessID = sdk.SessionId(priorSessionID)
 		resumed := false
 		if priorSessionID != "" && initResp.AgentCapabilities.LoadSession {
@@ -453,7 +453,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 	// A cancel arriving during the spawn/handshake window (RegisterRoundAbort
 	// above, up to StartTimeout) has nothing to cancel yet - session/cancel
 	// for a prompt never sent is a no-op, and waiting on `done` blocks for
-	// the full cancelGrace. Bail before ever sending session/prompt (#1030 review).
+	// the full cancelGrace. Bail before ever sending session/prompt .
 	select {
 	case <-ctx.Done():
 		endPrompt(ctx.Err())
@@ -515,7 +515,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 			}
 			// The Prompt RPC returns exactly once per round with its own
 			// (not cumulative) usage - the round's usage is known here, once.
-			// ctx wins per field, the shared stamp only fills blanks (#1048) -
+			// ctx wins per field, the shared stamp only fills blanks -
 			// same rule as traced.go's tracedModel and tools/emit.go's emitTool.
 			recordUsage(a.opts.ModelName, ledger.FillBlankCoords(ledger.CoordsFromContext(ctx), coords), a.opts.Pricing, d.resp.Usage)
 			if d.resp.StopReason == sdk.StopReasonRefusal {
@@ -566,7 +566,7 @@ func mcpToolNames(sess vetting.MemSession, offered bool) []string {
 			if !spec.AgentWritable {
 				continue // mirrors registerArtifactWriteTools' own skip: gate-only kind
 			}
-			// Mirrors registerArtifactWriteTools' own skip (#1148).
+			// Mirrors registerArtifactWriteTools' own skip .
 			if spec.Name() == "code_review" && sess.Review != nil && sess.Review.IsNonDeliveringSlice() {
 				continue
 			}

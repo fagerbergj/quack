@@ -10,7 +10,7 @@ import (
 
 // setRetryBackoff is a test helper that sets RetryBackoff and restores it via
 // t.Cleanup, so the package global is restored even on test failure/panic
-// (#1200 review: manual end-of-test resets skip that on a t.Fatal).
+// .
 func setRetryBackoff(t *testing.T, d time.Duration) {
 	t.Helper()
 	orig := RetryBackoff
@@ -19,7 +19,7 @@ func setRetryBackoff(t *testing.T, d time.Duration) {
 }
 
 // TestWithDialRetry_RecoversAfterTransientFailures proves a dial-layer retry
-// absorbs the #1193 DNS-blip pattern (fails a few seconds, then resolves).
+// absorbs the DNS-blip pattern (fails a few seconds, then resolves).
 func TestWithDialRetry_RecoversAfterTransientFailures(t *testing.T) {
 	setRetryBackoff(t, time.Millisecond) // keep the test fast
 	calls := 0

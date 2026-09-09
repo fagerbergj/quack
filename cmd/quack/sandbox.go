@@ -339,14 +339,14 @@ func runSandboxInfo(cmd *cobra.Command, f sandboxFlags) error {
 	if seat.ReadOnly {
 		readWrite = "ro"
 	}
-	fmt.Fprintf(out, "agent:        %s (%s)\n", seat.AgentName, readWrite)
-	fmt.Fprintf(out, "mode:         %s\n", seat.Caps.Sandbox)
-	fmt.Fprintf(out, "cwd:          %s\n", seat.Dir)
-	fmt.Fprintf(out, "tmp:          %s\n", workspace.SandboxTmpDir(seat.Caps))
-	fmt.Fprintf(out, "home:         %s\n", seat.Caps.HomeDir)
-	fmt.Fprintf(out, "path:         %s\n", workspace.ChildPath(seat.Caps))
-	fmt.Fprintf(out, "ro grants:    %s\n", strings.Join(seat.Caps.ExtraRO, ", "))
-	fmt.Fprintf(out, "rw grants:    %s\n", seat.Dir)
+	fmt.Fprintf(out, "agent: %s (%s)\n", seat.AgentName, readWrite)
+	fmt.Fprintf(out, "mode: %s\n", seat.Caps.Sandbox)
+	fmt.Fprintf(out, "cwd: %s\n", seat.Dir)
+	fmt.Fprintf(out, "tmp: %s\n", workspace.SandboxTmpDir(seat.Caps))
+	fmt.Fprintf(out, "home: %s\n", seat.Caps.HomeDir)
+	fmt.Fprintf(out, "path: %s\n", workspace.ChildPath(seat.Caps))
+	fmt.Fprintf(out, "ro grants: %s\n", strings.Join(seat.Caps.ExtraRO, ", "))
+	fmt.Fprintf(out, "rw grants: %s\n", seat.Dir)
 	fmt.Fprintln(out, "env:")
 	for _, kv := range cli.SandboxSpawnEnv(seat.Caps, ac, nil) {
 		fmt.Fprintf(out, "  %s\n", kv)

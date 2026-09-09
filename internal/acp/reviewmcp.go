@@ -128,7 +128,7 @@ func registerReviewTools(srv *mcp.Server, review *vetting.ReviewStage) {
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("unstaged %s", id)}}}, nil, nil
 	})
-	// A slice feeding a synthesizer never owns the delivered verdict (#1148):
+	// A slice feeding a synthesizer never owns the delivered verdict :
 	// the tool is withheld rather than registered-and-refused, so the
 	// reviewer prompt's "the tool list is a fact" holds.
 	if review.IsNonDeliveringSlice() {

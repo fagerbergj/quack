@@ -83,7 +83,7 @@ const (
 	QuackModel = "quack.model"
 
 	// QuackVersion/QuackBundleHash/GenAIUsageCost/GenAIUsageCachedTokens:
-	// llm.call provenance (#1096) - no semconv equivalent exists for any of
+	// llm.call provenance - no semconv equivalent exists for any of
 	// these yet (cached tokens are a metric-only dimension in v1.41.0, not a
 	// registered log attribute).
 	QuackVersion           = "quack.version"

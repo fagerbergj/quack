@@ -160,7 +160,7 @@ func runsActiveGauge(t *testing.T, reader *metric.ManualReader) int64 {
 
 // TestRetryNodeAndRetryNodeResumed_CountTowardRunsActiveGauge drives BOTH
 // entrypoints to completion through retryNode itself (not the otelobs
-// primitives directly, #1176 review) and asserts quack.runs.active goes
+// primitives directly, review) and asserts quack.runs.active goes
 // 0 -> 1 -> 0 for each - would catch RunStarted/RunFinished being moved
 // inside the `if admit` block, which a primitives-only test cannot.
 func TestRetryNodeAndRetryNodeResumed_CountTowardRunsActiveGauge(t *testing.T) {

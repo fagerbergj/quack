@@ -134,7 +134,7 @@ func (f *fakeOpsLog) snapshot() []fakeOpRow {
 // seedMemory mints one memory under chatID via the real Commit path (not a
 // direct index poke), so it carries the same provenance/status a live run
 // would leave behind, then records it as RECALLED into chatID via a
-// memory.recall ledger entry (epic #1255 P1: applyMemoryOutcome now targets
+// memory.recall ledger entry (epic P1: applyMemoryOutcome now targets
 // the recalled set, not the minted one) - mirroring what a real gate's
 // recall injection + recallLedgerEntry would have written. Returns the
 // minted memory's id.
@@ -468,7 +468,7 @@ func TestUpdateChatOriginSucceedsDespiteMemoryStoreFailure(t *testing.T) {
 	}
 }
 
-// TestUpdateChatOriginReinforcesRecalledNotMinted covers epic #1255 P1's
+// TestUpdateChatOriginReinforcesRecalledNotMinted covers epic P1's
 // reinforcement-semantics change directly: a memory minted in the chat but
 // NEVER recalled (no memory.recall ledger entry) must not be reinforced by a
 // merged outcome, while one that WAS recalled is.

@@ -22,7 +22,7 @@ func TestRunMemoryList(t *testing.T) {
 		gotQuery = r.URL.RawQuery
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, `{"memories":[
-			{"id":"m1","bucket":"role:coding","content":"the deploy runs via github actions on merge to main","author":"jason","kind":"fact","status":"reinforced","timestamp":"2026-01-02T03:04:00Z"}
+ {"id":"m1","bucket":"role:coding","content":"the deploy runs via github actions on merge to main","author":"jason","kind":"fact","status":"reinforced","timestamp":"2026-01-02T03:04:00Z"}
 		],"total":1}`)
 	}))
 	defer srv.Close()
@@ -140,10 +140,10 @@ func TestRunMemoryShow(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, `{"memories":[
-			{"id":"m1","bucket":"repo:r","content":"a fact worth showing","author":"a","kind":"fact",
-			 "timestamp":"2026-01-02T03:04:00Z","status":"unverified","tier":"verified",
-			 "upvotes":2,"downvotes":1,"vote_score":1,"recalls":3,
-			 "last_upvoted_at":"2026-01-03T00:00:00Z","last_recalled_at":"2026-01-04T00:00:00Z"}
+ {"id":"m1","bucket":"repo:r","content":"a fact worth showing","author":"a","kind":"fact",
+ "timestamp":"2026-01-02T03:04:00Z","status":"unverified","tier":"verified",
+ "upvotes":2,"downvotes":1,"vote_score":1,"recalls":3,
+ "last_upvoted_at":"2026-01-03T00:00:00Z","last_recalled_at":"2026-01-04T00:00:00Z"}
 		],"total":1}`)
 	}))
 	defer srv.Close()
@@ -222,7 +222,7 @@ func TestRunMemorySweepPartialFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, `{"dry_run":false,"stores":[{"store":"task","evaluated":2,"kept":1,"rules":[]}],
-			"errors":[{"store":"user","message":"list: boom"}]}`)
+ "errors":[{"store":"user","message":"list: boom"}]}`)
 	}))
 	defer srv.Close()
 

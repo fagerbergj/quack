@@ -37,7 +37,7 @@ func (c *cancelGuard) IsLongRunning() bool { return c.inner.IsLongRunning() }
 
 func (c *cancelGuard) Declaration() *genai.FunctionDeclaration { return c.inner.Declaration() }
 
-// SetLedgerCoords: pass-through wrapper, forward to inner (#1052).
+// SetLedgerCoords: pass-through wrapper, forward to inner .
 func (c *cancelGuard) SetLedgerCoords(coords ledger.Coords) {
 	if cs, ok := c.inner.(ledger.CoordSetter); ok {
 		cs.SetLedgerCoords(coords)

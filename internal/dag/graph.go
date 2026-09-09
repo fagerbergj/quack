@@ -28,7 +28,7 @@ const (
 
 // nodeScopedWorker: fresh worker/model/tools per DAG node.
 type nodeScopedWorker interface {
-	// drain delivers a message queued against this node mid-round (#1029);
+	// drain delivers a message queued against this node mid-round ;
 	// it is resolved lazily because the control registers when the node runs.
 	// artifacts/appName/userID/chatID/nodeID (all "" / nil when artifacts is
 	// unavailable) let the implementation (internal/serve's nativeAgent) build
@@ -37,9 +37,9 @@ type nodeScopedWorker interface {
 	// avoid an import cycle (tools already imports dag for plan/execute).
 	// setRoundCoords, when non-nil, must be called by the gate at every
 	// judge/revise round (mirrors vetting.SetAdvisorThreadRound) so those
-	// already-built tools' writes carry the round's real lineage (#1123).
+	// already-built tools' writes carry the round's real lineage .
 	// sink lets this node's own A2A server re-emit a `compaction` SSE event
-	// (#1185 follow-up) - nil is a valid "no active hub" no-op.
+	// - nil is a valid "no active hub" no-op.
 	// release(paused): paused=false ("done") reaps this node's own worker
 	// session (#A2); paused=true (a HITL park) must leave it so a resumed
 	// dispatch - a brand new ForNode call, but to the SAME deterministic
@@ -50,7 +50,7 @@ type nodeScopedWorker interface {
 // buildGateNodes: one gated node per plan node. source: the run's origin
 // (extension name or a fixed app value) - observability only, see vetting.Config.Source.
 // userID scopes the recordstore.Client behind a native node's artifact tools
-// (#1123) - must match the userID the rest of the chat's artifacts (e.g. the
+// - must match the userID the rest of the chat's artifacts (e.g. the
 // orchestrator's own writes) were saved under, or a node's list/read/edit
 // would silently see nothing.
 func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, userID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int), admission *Admission, specFor func(agentName string) AdmissionSpec, artifacts artifact.Service, walLedger ledger.LedgerStore,
@@ -98,7 +98,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 }
 
 // liveSteerDrain: the per-node hook that delivers a steer into a RUNNING round
-// (#1029). It PEEKS - consuming here would burn the -sN generation the UI
+// . It PEEKS - consuming here would burn the -sN generation the UI
 // resolves and rob the gate boundary of its durable delivery.
 func liveSteerDrain(controls *runControls, chatID, nodeID string) func() string {
 	return func() string {

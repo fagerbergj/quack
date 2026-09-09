@@ -208,7 +208,7 @@ func TestTurnSpans_ContentFallbackAndTruncation(t *testing.T) {
 
 // TestTurnSpans_MCPCallNeverSpanNamedOther: a bridged MCP call's span is named
 // after the real tool, matching translate.go's mapToolCall identity
-// resolution, not the literal "acp.tool.other" (#1278).
+// resolution, not the literal "acp.tool.other" .
 func TestTurnSpans_MCPCallNeverSpanNamedOther(t *testing.T) {
 	exp := withTestTracer(t)
 	turns := newTurnSpans(context.Background(), "code-reviewer")

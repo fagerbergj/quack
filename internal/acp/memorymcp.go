@@ -76,7 +76,7 @@ const (
 // currentRound reads sess's live round/turn/head-sha off its AdvisorTask
 // (SetAdvisorThreadRound, refreshed by the gate at the start of every round) -
 // zero values if there's no advisor thread (sess.AdvisorToken == "") or it
-// has already been unregistered (#1091 adversarial review finding #4).
+// has already been unregistered .
 func currentRound(sess vetting.MemSession) (round int, turnID, headSHA, triggerAnnotation string) {
 	if sess.AdvisorToken == "" {
 		return 0, "", "", ""
@@ -163,7 +163,7 @@ type editArtifactInput struct {
 
 // editConflictResult is edit_artifact's structured success payload on a real
 // conflict (ambiguous/vanished match) - field names mirror
-// recordstore.EditConflict so the two never drift (#1108 finding 3).
+// recordstore.EditConflict so the two never drift .
 type editConflictResult struct {
 	Conflict bool   `json:"conflict"`
 	Revision int    `json:"revision"`
@@ -174,7 +174,7 @@ type editConflictResult struct {
 // filesystem-server's edit_file field spelling as an alias for old/new - an
 // ACP worker primed on that reference server's convention (rather than this
 // tool's own schema) retried the same failed edit under both spellings
-// back-to-back before getting it right (#1278 enumeration, PR #1304 round 1),
+// back-to-back before getting it right ,
 // costing a redundant round trip every time regardless of which model drives it.
 type editArtifactOp struct {
 	Old     string `json:"old,omitempty" jsonschema:"exact text to replace; must match exactly once in the target content"`
@@ -204,7 +204,7 @@ func (e editArtifactOp) resolve() (old, new string, err error) {
 	return old, new, nil
 }
 
-// registerEditArtifactTool: optimistic-locking search/replace (#1090 §4.4/§9).
+// registerEditArtifactTool: optimistic-locking search/replace .
 // A stale base_revision still succeeds as long as every Old snippet still
 // matches uniquely against the CURRENT latest revision - only a real
 // conflict (ambiguous or vanished match) fails, returning the latest content
@@ -237,7 +237,7 @@ func registerEditArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vetti
 			var conflict *recordstore.EditConflict
 			if errors.As(err, &conflict) {
 				// A conflict is an expected, actionable outcome (re-read and retry with
-				// fresh edits), not a tool failure - success, not IsError (#1108 finding 3).
+				// fresh edits), not a tool failure - success, not IsError .
 				out := editConflictResult{Conflict: true, Revision: conflict.Revision, Content: string(conflict.Content)}
 				return &mcp.CallToolResult{
 					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("conflict - re-read and retry.\ncurrent revision: %d\ncurrent content:\n%s", conflict.Revision, string(conflict.Content))}},
@@ -261,7 +261,7 @@ type writeArtifactInput struct {
 
 // writeArtifactDescription lists the registered Blob kinds by name instead of
 // a hand-written example list, so it can't drift from what the registry
-// actually holds (#1108 finding 2).
+// actually holds .
 func writeArtifactDescription() string {
 	var kinds []string
 	for _, spec := range recordstore.KindsForClass(recordstore.Blob) {
@@ -289,7 +289,7 @@ func registerWriteArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vett
 		// Only a hint-requiring blob kind (document, pr_body) gets the session's
 		// subject hint - a hint-optional kind (text, bytes) must keep deriving its
 		// id from content, or every write from this chat would collapse onto one
-		// id (#1108 finding 2).
+		// id .
 		var hint string
 		if spec, ok := recordstore.SpecFor(args.Kind); ok && spec.RequiresHint {
 			hint = vetting.SubjectHint(sess.ChatID)
@@ -306,14 +306,14 @@ func registerWriteArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vett
 }
 
 // registerWriteKindTool generates one write_<kind> tool whose input schema
-// IS the kind's registered JSONSchema (#1090 §4.4) - parsed once at
+// IS the kind's registered JSONSchema - parsed once at
 // registration, not reflected from a Go struct, so the agent sees exactly
 // the schema the record type owns. Input is a raw JSON object (map), so
 // AddTool doesn't infer a struct schema over it and the parsed schema wins.
 // registerWriteKindTool generates the write_<kind> tool. sess.ToolWritten
 // (when non-nil) records every id written here so saveCodeReviewRound's
 // answer-tail fallback can tell a tool-written id apart from a tail-only one
-// (#1091 adversarial review finding #1) - tracked for every kind, not just
+// - tracked for every kind, not just
 // "finding", since the fallback decision only needs to ask "is this id
 // already accounted for."
 func registerWriteKindTool(srv *mcp.Server, c *recordstore.Client, sess vetting.MemSession, kind string, spec recordstore.KindSpec) {
@@ -348,7 +348,7 @@ func registerWriteKindTool(srv *mcp.Server, c *recordstore.Client, sess vetting.
 
 // registerArtifactWriteTools wires list_artifacts, edit_artifact,
 // write_artifact and one write_<kind> per registered structured kind onto
-// srv, scoped to sess's session (#1090 §4.4). Any node may edit any output
+// srv, scoped to sess's session . Any node may edit any output
 // artifact - no per-node ownership check (V4 §4.4).
 func registerArtifactWriteTools(srv *mcp.Server, sess vetting.MemSession) {
 	c := recordstore.New(sess.Artifacts, sess.AppName, sess.UserID, sess.ChatID)
@@ -363,7 +363,7 @@ func registerArtifactWriteTools(srv *mcp.Server, sess vetting.MemSession) {
 			continue // gate-only kind (judge_round, delivery_record) - never a worker tool
 		}
 		// A slice reviewer feeding a synthesizer never owns the delivered
-		// verdict (#1148); withholding write_code_review keeps the tool list
+		// verdict ; withholding write_code_review keeps the tool list
 		// itself the fact the reviewer prompt tells it to trust.
 		if spec.Name() == "code_review" && sess.Review != nil && sess.Review.IsNonDeliveringSlice() {
 			continue

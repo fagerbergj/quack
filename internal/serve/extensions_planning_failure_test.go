@@ -51,7 +51,7 @@ func (e noopExtWithRunObserver) RunEnded(_ string, outcome extsdk.RunOutcome) { 
 // sanitized gateway error - not fall through to the generic silent-gap text
 // mapExtRunOutcome's default branch produces for status=idle/done. Extends
 // #1109's own gateway-classification coverage (dag/executor_test.go,
-// extensions_cancel_test.go) to the pre-DAG planning path #1109 missed.
+// extensions_cancel_test.go) to the pre-DAG planning path missed.
 func TestPlanningFailure_EndsRunFailedWithClassifiedError(t *testing.T) {
 	failing := inference.TracedModelForTesting(planningFailureModel{}, "test-model")
 	st, orch, hub, artifacts, _ := newExtTestStackWithModel(t, failing)

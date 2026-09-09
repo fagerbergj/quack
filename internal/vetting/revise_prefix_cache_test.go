@@ -35,7 +35,7 @@ func commonPrefixLen(a, b string) int {
 // not just section size.
 func synthReviewTask() string {
 	var sb strings.Builder
-	sb.WriteString("Review pull request #1304 in fagerbergj/quack.\n\n--- DIFF ---\n")
+	sb.WriteString("Review pull request in fagerbergj/quack.\n\n--- DIFF ---\n")
 	for i := 0; i < 900; i++ {
 		fmt.Fprintf(&sb, "+\tif err := store.lockFor(id).Lock(); err != nil { return fmt.Errorf(\"row %d: %%w\", err) }\n", i)
 	}

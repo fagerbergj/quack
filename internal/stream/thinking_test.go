@@ -13,7 +13,7 @@ func TestStripThinking(t *testing.T) {
 		{"unclosed leading block", "<think>reasoning that never closes because the budget ran out", ""},
 		{"unclosed after some answer", "Partial answer.<think>now rambling with no close", "Partial answer."},
 		{"no markers", "Just a clean answer", "Just a clean answer"},
-		{"closed then trailing whitespace", "<think>x</think>   Answer  ", "Answer"},
+		{"closed then trailing whitespace", "<think>x</think> Answer  ", "Answer"},
 		{"empty", "", ""},
 	}
 	for _, c := range cases {

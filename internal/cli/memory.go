@@ -43,7 +43,7 @@ func RunMemoryList(ctx context.Context, out io.Writer, server, bucket, q string,
 }
 
 // RunMemoryShow is `quack memory show <memory-id>`: prints one memory's full
-// detail, including votes/tier/last-recalled (epic #1255 P1 observability).
+// detail, including votes/tier/last-recalled (epic P1 observability).
 // No single-memory GET endpoint exists yet - this pages through
 // include_invalidated=true listings looking for the id, fine at memory's
 // documented scale (hundreds-thousands).
@@ -70,11 +70,11 @@ func RunMemoryShow(ctx context.Context, out io.Writer, server, id string, asJSON
 	if m.Status != nil {
 		status = string(*m.Status)
 	}
-	fmt.Fprintf(out, "id:       %s\n", m.Id)
-	fmt.Fprintf(out, "bucket:   %s\n", m.Bucket)
-	fmt.Fprintf(out, "status:   %s\n", status)
-	fmt.Fprintf(out, "tier:     %s\n", tier)
-	fmt.Fprintf(out, "votes:    +%d / -%d (score %d)\n", intOr(m.Upvotes), intOr(m.Downvotes), intOr(m.VoteScore))
+	fmt.Fprintf(out, "id: %s\n", m.Id)
+	fmt.Fprintf(out, "bucket: %s\n", m.Bucket)
+	fmt.Fprintf(out, "status: %s\n", status)
+	fmt.Fprintf(out, "tier: %s\n", tier)
+	fmt.Fprintf(out, "votes: +%d / -%d (score %d)\n", intOr(m.Upvotes), intOr(m.Downvotes), intOr(m.VoteScore))
 	fmt.Fprintf(out, "recalls:  %d\n", intOr(m.Recalls))
 	if m.LastUpvotedAt != nil {
 		fmt.Fprintf(out, "last upvoted:  %s\n", m.LastUpvotedAt.Format(time.RFC3339))
@@ -139,7 +139,7 @@ func RunMemoryForget(ctx context.Context, out io.Writer, server, id, reason stri
 
 // RunMemorySweep is `quack memory sweep [--dry-run] [--dedupe [--apply]]`:
 // runs the forgetting-rule sweep (default) or, with --dedupe, the per-bucket
-// similarity dedupe sweep (issue #1269) on demand against every store the
+// similarity dedupe sweep ( ) on demand against every store the
 // server has configured. Without --apply, --dedupe only clusters and
 // reports examples - no LLM call, nothing written.
 func RunMemorySweep(ctx context.Context, out io.Writer, server string, dryRun, dedupe, apply, asJSON bool) error {
@@ -168,7 +168,7 @@ func RunMemorySweep(ctx context.Context, out io.Writer, server string, dryRun, d
 			fmt.Fprintf(out, "  rule %d [%s -> %s]: matched %d\n", r.Index, r.When, r.Then, r.Matched)
 			if r.Examples != nil {
 				for _, e := range *r.Examples {
-					fmt.Fprintf(out, "    - %s: %s\n", e.Id, truncateLine(e.Content, 80))
+					fmt.Fprintf(out, " - %s: %s\n", e.Id, truncateLine(e.Content, 80))
 				}
 			}
 		}
@@ -202,7 +202,7 @@ func printDedupeReport(out io.Writer, res schema.SweepMemoriesResult, hasErrors 
 			for _, c := range s.Clusters {
 				fmt.Fprintf(out, "  [%s] cluster of %d\n", c.Bucket, c.Size)
 				for _, e := range c.Examples {
-					fmt.Fprintf(out, "    - %s: %s\n", e.Id, truncateLine(e.Content, 80))
+					fmt.Fprintf(out, " - %s: %s\n", e.Id, truncateLine(e.Content, 80))
 				}
 			}
 		}
@@ -223,7 +223,7 @@ func printDedupeReport(out io.Writer, res schema.SweepMemoriesResult, hasErrors 
 
 // RunMemoryStats is `quack memory stats [--weeks N]`: prints the weekly
 // recall precision/support-share/vote/recall table plus the current
-// live/invalidated snapshot per scope (epic #1255 P5).
+// live/invalidated snapshot per scope (epic P5).
 func RunMemoryStats(ctx context.Context, out io.Writer, server string, weeks int, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {

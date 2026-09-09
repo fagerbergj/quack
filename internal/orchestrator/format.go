@@ -21,7 +21,7 @@ import (
 // formatPassLengthCeiling: an answer at or above this size skips the
 // already-structured short-circuit below and always gets the format pass -
 // a big answer is exactly where a second model pass is most likely to
-// actually reorganize something, not just echo the input back (#1283 finding 14).
+// actually reorganize something, not just echo the input back .
 const formatPassLengthCeiling = 4000
 
 // listItemPattern: a Markdown bullet or ordered-list item at line start.
@@ -39,7 +39,7 @@ func alreadyStructured(answer string) bool {
 
 // needsFormatPass: true when raw specialist output needs a format pass (no
 // synthesizer, no GitHub delivery, and not already short + structured -
-// #1283 finding 14: the pass is a near-identity transform on that input).
+// finding 14: the pass is a near-identity transform on that input).
 func needsFormatPass(plan dag.Plan, answer string) bool {
 	if plan.Delivery != nil {
 		return false

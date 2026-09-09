@@ -31,11 +31,11 @@ type index interface {
 	// query()/recall filter (design doc §4(d) extended to the browse surface, phase 3).
 	// tier=="" means no tier filter; "unverified" also matches a point that
 	// predates the tier field (empty/missing tier reads as unverified
-	// everywhere else in this package - #1265 review finding 10). withVectors
+	// everywhere else in this package - review finding 10). withVectors
 	// populates each result's Vector from the already-stored embedding
-	// (DedupeSweep's clustering, issue #1269) - never a re-embed, both
+	// (DedupeSweep's clustering, ) - never a re-embed, both
 	// backends already have it on hand at list time; false everywhere else to
-	// skip the extra payload. sortBy is variadic (#1266) so every existing
+	// skip the extra payload. sortBy is variadic so every existing
 	// caller's positional call keeps compiling unchanged past this second
 	// added parameter: sortBy[0], if given and non-empty, is one of the
 	// ListSort constants below and orders the WHOLE matching set (index-side
@@ -78,7 +78,7 @@ type index interface {
 	// recordRecall bumps recalls and stamps last_recalled_at for ids, one
 	// batched write - the usage-tracking half of a recall delivery.
 	recordRecall(ctx context.Context, ids []string) error
-	// backfillTiers is the one-time migration (epic #1255 P1) for every
+	// backfillTiers is the one-time migration (epic P1) for every
 	// point with no tier yet: verified (upvotes=reinforcement_count) if
 	// reinforcement_count >= 1, else unverified. Idempotent - a point that
 	// already carries a tier is left alone, so a second boot touches none.
@@ -87,7 +87,7 @@ type index interface {
 	// `quack memory rescope`) - a payload/column-only mutation, no re-embed.
 	updateBucket(ctx context.Context, id, bucket string) error
 	// absorb folds absorbedID's votes/timestamps/lineage into survivorID
-	// (epic #1255 P5 consolidation merge) and invalidates absorbedID with
+	// (epic P5 consolidation merge) and invalidates absorbedID with
 	// reason. Returns false (no-op) if either id doesn't exist, or absorbedID
 	// is already invalidated (sticky - the first invalidation wins).
 	absorb(ctx context.Context, survivorID, absorbedID, reason string) (bool, error)
@@ -119,7 +119,7 @@ type scored struct {
 	ReinforcementCount int
 	Score              float32
 
-	// Vote fields (epic #1255 P1): Upvotes/Downvotes/VoteScore are the
+	// Vote fields (epic P1): Upvotes/Downvotes/VoteScore are the
 	// judge's (or a human's) accumulated votes on this memory, independent
 	// of Score (cosine rank). Tier is "verified" once Upvotes >= 1, else
 	// "unverified" - never demoted by a downvote alone (only net<=-2
@@ -132,16 +132,16 @@ type scored struct {
 	Recalls        int
 	LastRecalledAt string
 
-	// AbsorbedIDs (epic #1255 P5): ids of memories consolidation merged into
+	// AbsorbedIDs (epic P5): ids of memories consolidation merged into
 	// this one (near-duplicate merge or supersession), flattened across any
 	// absorption chain - see internal/memory/lineage.go.
 	AbsorbedIDs []string
 	// HumanVote is the single-user deployment's own current vote ("up"/"down",
-	// "" = none) - epic #1255 P4, distinct from Upvotes/Downvotes which mix
+	// "" = none) - epic P4, distinct from Upvotes/Downvotes which mix
 	// judge and human votes together. Toggling re-derives the delta from this.
 	HumanVote string
 	// Vector is populated by query() only (list()/getByID leave it nil) - the
-	// MMR diversity re-rank in recall (issue #1269) needs each hit's own
+	// MMR diversity re-rank in recall ( ) needs each hit's own
 	// embedding to compute inter-hit cosine, which the query score alone
 	// (similarity to the QUERY, not to other hits) can't give it.
 	Vector []float32
@@ -185,7 +185,7 @@ const (
 	// recallEmbedTimeout bounds how long recall waits before degrading to no-recall.
 	recallEmbedTimeout = 30 * time.Second
 	// recallFetchMultiplier: recall fetches this many times topK from the index
-	// so mmrSelect (issue #1269) has enough candidates to pick a diverse top-K
+	// so mmrSelect ( ) has enough candidates to pick a diverse top-K
 	// from, instead of only ever seeing exactly topK (no room to swap a
 	// near-duplicate for the next-best distinct hit).
 	recallFetchMultiplier = 2
@@ -238,7 +238,7 @@ type Store struct {
 	log            *slog.Logger
 	embCache       *embedCache
 	opsLog         OpsLog // audit trail sink; nil unless the caller wires one (see SetOpsLog)
-	forgetRules    []Rule // epic #1255 P3; nil means DefaultRules() (see SetForgettingRules)
+	forgetRules    []Rule // epic P3; nil means DefaultRules() (see SetForgettingRules)
 	listErrForTest error  // test-only fault injection, see SetListErrorForTest
 }
 
@@ -453,7 +453,7 @@ type Memory struct {
 	ReinforcementCount int
 	InvalidationReason string
 
-	// Vote fields (epic #1255 P1).
+	// Vote fields (epic P1).
 	Upvotes        int
 	Downvotes      int
 	VoteScore      int
@@ -464,7 +464,7 @@ type Memory struct {
 
 	// AbsorbedIDs: see scored.AbsorbedIDs.
 	AbsorbedIDs []string
-	HumanVote   string // "up" | "down" | "" (epic #1255 P4)
+	HumanVote   string // "up" | "down" | "" (epic P4)
 }
 
 // List returns entries in the given buckets (every bucket if empty), newest
@@ -474,7 +474,7 @@ type Memory struct {
 // the total, matching query()/recall's backend-level filter (design doc §4(d)).
 // tier=="" means no tier filter; "unverified"/"verified" filter server-side
 // (index-level, not a post-fetch Go filter) so it spans pages correctly
-// (#1265 review finding 10) instead of only ever seeing whatever's on the
+// instead of only ever seeing whatever's on the
 // current page. Unlike Search/recall, this never falls back to embedding
 // search and never degrades on a failure - an unreachable index is returned
 // as an error, not an empty or partial result.

@@ -188,7 +188,7 @@ func TestRunPlanAsGraph_LedgerCoordsReachModelAndTool(t *testing.T) {
 	// (orchestrator.go stamps ChatID/User/Source before any node runs). Starting
 	// from a bare context is what let a broken coords-precedence fix through
 	// review: node/agent/round were dropped on every worker call and this test
-	// still passed (#1039).
+	// still passed .
 	ctx := stream.WithYield(
 		ledger.WithCoords(context.Background(), ledger.Coords{ChatID: chatID, User: "u", Source: "ui"}),
 		func(stream.SSEEvent) {})

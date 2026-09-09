@@ -832,13 +832,13 @@ type DagNodeState struct {
 
 	// Status A DAG node's canonical lifecycle state. Legal transitions (enforced
 	// server-side by internal/dag.CanTransition):
-	//   queued      → running, cancelled, failed (stale-on-restart)
-	//   running     → paused, needs_input, done, failed, cancelled
-	//   paused      → running (resume), cancelled
-	//   needs_input → running (resumed), cancelled
-	//   done        → queued (retry)
-	//   failed      → queued (retry)
-	//   cancelled   → queued (retry)
+	// queued → running, cancelled, failed (stale-on-restart)
+	// running → paused, needs_input, done, failed, cancelled
+	// paused → running (resume), cancelled
+	// needs_input → running (resumed), cancelled
+	// done → queued (retry)
+	// failed → queued (retry)
+	// cancelled → queued (retry)
 	Status      NodeStatus `json:"status"`
 	TotalTokens *int       `json:"total_tokens,omitempty"`
 
@@ -900,7 +900,7 @@ type ItemStatus string
 
 // Memory defines model for Memory.
 type Memory struct {
-	// AbsorbedIds Ids of memories consolidation merged into this one (near-duplicate merge or supersession, epic #1255 P5), flattened across any absorption chain. This memory's votes include the absorbed ones'.
+	// AbsorbedIds Ids of memories consolidation merged into this one (near-duplicate merge or supersession, epic P5), flattened across any absorption chain. This memory's votes include the absorbed ones'.
 	AbsorbedIds *[]string `json:"absorbed_ids,omitempty"`
 	Author      string    `json:"author"`
 
@@ -1070,13 +1070,13 @@ type NodeStartBody struct {
 // NodeStatus A DAG node's canonical lifecycle state. Legal transitions (enforced
 // server-side by internal/dag.CanTransition):
 //
-//	queued      → running, cancelled, failed (stale-on-restart)
-//	running     → paused, needs_input, done, failed, cancelled
-//	paused      → running (resume), cancelled
+//	queued → running, cancelled, failed (stale-on-restart)
+//	running → paused, needs_input, done, failed, cancelled
+//	paused → running (resume), cancelled
 //	needs_input → running (resumed), cancelled
-//	done        → queued (retry)
-//	failed      → queued (retry)
-//	cancelled   → queued (retry)
+//	done → queued (retry)
+//	failed → queued (retry)
+//	cancelled → queued (retry)
 type NodeStatus string
 
 // NodeStatusUpdateBody defines model for NodeStatusUpdateBody.
@@ -1089,13 +1089,13 @@ type NodeStatusUpdateBody struct {
 
 	// Status A DAG node's canonical lifecycle state. Legal transitions (enforced
 	// server-side by internal/dag.CanTransition):
-	//   queued      → running, cancelled, failed (stale-on-restart)
-	//   running     → paused, needs_input, done, failed, cancelled
-	//   paused      → running (resume), cancelled
-	//   needs_input → running (resumed), cancelled
-	//   done        → queued (retry)
-	//   failed      → queued (retry)
-	//   cancelled   → queued (retry)
+	// queued → running, cancelled, failed (stale-on-restart)
+	// running → paused, needs_input, done, failed, cancelled
+	// paused → running (resume), cancelled
+	// needs_input → running (resumed), cancelled
+	// done → queued (retry)
+	// failed → queued (retry)
+	// cancelled → queued (retry)
 	Status NodeStatus `json:"status"`
 }
 
@@ -1316,13 +1316,13 @@ type TransitionError struct {
 
 	// Current A DAG node's canonical lifecycle state. Legal transitions (enforced
 	// server-side by internal/dag.CanTransition):
-	//   queued      → running, cancelled, failed (stale-on-restart)
-	//   running     → paused, needs_input, done, failed, cancelled
-	//   paused      → running (resume), cancelled
-	//   needs_input → running (resumed), cancelled
-	//   done        → queued (retry)
-	//   failed      → queued (retry)
-	//   cancelled   → queued (retry)
+	// queued → running, cancelled, failed (stale-on-restart)
+	// running → paused, needs_input, done, failed, cancelled
+	// paused → running (resume), cancelled
+	// needs_input → running (resumed), cancelled
+	// done → queued (retry)
+	// failed → queued (retry)
+	// cancelled → queued (retry)
 	Current NodeStatus `json:"current"`
 
 	// Detail Optional additional context (e.g. which field failed validation).
@@ -1460,7 +1460,7 @@ type ListMemoriesParams struct {
 	// IncludeInvalidated Include invalidated memories (memory lifecycle design doc §4(d)). Defaults to false - a default listing shows only what quack currently trusts.
 	IncludeInvalidated *bool `form:"include_invalidated,omitempty" json:"include_invalidated,omitempty"`
 
-	// Tier Restrict to one vote-based tier (epic #1255 P4). Filtered index-side so it spans pages correctly, unlike a client-side filter over one page. `unverified` also matches a memory that predates the tier field.
+	// Tier Restrict to one vote-based tier (epic P4). Filtered index-side so it spans pages correctly, unlike a client-side filter over one page. `unverified` also matches a memory that predates the tier field.
 	Tier *ListMemoriesParamsTier `form:"tier,omitempty" json:"tier,omitempty"`
 
 	// Sort Order results (#1266). Defaults to `newest`. Every value orders server-side (index-level for a single store, a re-sort of the full merged set for two), so paging sees a globally sorted corpus, not a client re-sort of whatever page happened to load. Ignored when `q` is set (search always ranks by `score`, its embedding-similarity meaning there - descending).

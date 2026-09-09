@@ -86,7 +86,7 @@ func TestExporterEmitsTypedEntries(t *testing.T) {
 	}
 }
 
-// TestExporterCostUSD_NilVsZero: #1096 - an unpriced model must not report
+// TestExporterCostUSD_NilVsZero: - an unpriced model must not report
 // cost_usd:0 (that reads as "confirmed free"); a priced model with a
 // genuine $0 call must still report the explicit 0, not omit the field.
 func TestExporterCostUSD_NilVsZero(t *testing.T) {

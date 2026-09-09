@@ -44,7 +44,7 @@ func TestSafetyJudgeAllowAndDeny(t *testing.T) {
 		stub := &safetyStub{allow: c.allow, reason: c.reason, submit: true}
 		judge := NewSafetyJudge(stub)
 		allow, reason, err := judge(context.Background(), "fix the bug", "patch pkg X", "web_fetch",
-			map[string]any{"url": "https://example.com/docs"}, "  - read_file")
+			map[string]any{"url": "https://example.com/docs"}, " - read_file")
 		if err != nil {
 			t.Fatalf("judge: %v", err)
 		}

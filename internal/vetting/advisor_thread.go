@@ -69,7 +69,7 @@ type AdvisorTask struct {
 	// write (write_finding et al, via the registered MemSession's
 	// AdvisorToken) stamps real lineage instead of Round:0/TurnID:""/
 	// HeadSHA:"" - BuildReviewPreload drops any finding with an empty HeadSHA
-	// (#1091 adversarial review finding #4).
+	// .
 	Round   int
 	TurnID  string
 	HeadSHA string
@@ -85,7 +85,7 @@ type MemSession struct {
 	Memory     *memory.Store
 	Scope      memory.Scope
 	Staged     *MemStage    // stage_memory buffer
-	Recalled   *RecallStage // recall_memory hits (#1255 P2)
+	Recalled   *RecallStage // recall_memory hits
 	Review     *ReviewStage // non-nil for review-delivery nodes
 	PRStage    *PRStage     // non-nil for implement-delivery nodes
 	ExistingPR bool         // PRStage != nil and the run pushes onto an already-open PR - offer stage_push, not stage_pr
@@ -97,22 +97,22 @@ type MemSession struct {
 	UserID    string
 	ChatID    string
 	// Ledger: same fail-closed WAL path as recordClient's cfg.Ledger, so a
-	// tool-initiated write records parent_revision like a gate write (#1153).
+	// tool-initiated write records parent_revision like a gate write .
 	Ledger ledger.LedgerStore
 	// NodeID stamps Lineage.NodeID on writes made through list_artifacts/
 	// edit_artifact/write_artifact/write_<kind> - provenance only, never
-	// part of an artifact's id (#1090 §4.1).
+	// part of an artifact's id .
 	NodeID string
 	// AdvisorToken looks up this node's AdvisorTask for its current
 	// Round/TurnID/HeadSHA (SetAdvisorThreadRound) - the MCP handlers stamp
 	// tool-initiated writes with these instead of hardcoding zero values
-	// (#1091 adversarial review finding #4).
+	// .
 	AdvisorToken string
 	// ToolWritten records every id written via any loopback MCP artifact-write
 	// tool this round (write_<kind>, write_artifact, edit_artifact), so
 	// saveCodeReviewRound's answer-tail fallback and saveTextRound's
 	// tool-wrote check can both tell a tool-written id apart from one only
-	// known from a tail parse (#1091 finding #1, #1095 review finding #1).
+	// known from a tail parse .
 	ToolWritten *ToolWrittenStage
 }
 
@@ -196,7 +196,7 @@ func NewReviewStage(fanout *ReviewFanout) *ReviewStage {
 }
 
 // IsNonDeliveringSlice reports whether this node feeds a downstream
-// synthesizer (#1148) - mirrors node.go's isNonDeliveringSlice(cfg), the
+// synthesizer - mirrors node.go's isNonDeliveringSlice(cfg), the
 // only other place this same fact is derived. Callers use it to withhold
 // the verdict tools (stage_review/write_code_review) instead of registering
 // them and refusing the call.
@@ -346,7 +346,7 @@ func (s *MemStage) Drain() []memory.Candidate {
 }
 
 // RecallStage: per-node collector for the ACP loopback MCP's recall_memory
-// calls (epic #1255 P2). Unlike MemStage, it's Snapshot-read (not Drain'd):
+// calls (epic P2). Unlike MemStage, it's Snapshot-read (not Drain'd):
 // an ACP worker's tool calls are otherwise invisible to this session, so the
 // round loop needs to see hits so far EVERY round, not just once at the end.
 type RecallStage struct {
@@ -449,7 +449,7 @@ var NodeSessionClosed func(token string)
 
 // SetAdvisorThreadSessionID records the ACP session id a round established,
 // so the next round for this same node (judge -> revise -> revise) can
-// resume it instead of starting a cold session (#1006 tool-call amnesia).
+// resume it instead of starting a cold session .
 func SetAdvisorThreadSessionID(token, sessionID string) {
 	v, ok := advisorThreads.Load(token)
 	if !ok {

@@ -54,7 +54,7 @@ const (
 	payloadRecalls        = "recalls"
 	payloadLastRecalledAt = "last_recalled_at"
 
-	// payloadAbsorbedIDs: comma-joined (see joinIDs/splitIDs) - epic #1255 P5.
+	// payloadAbsorbedIDs: comma-joined (see joinIDs/splitIDs) - epic P5.
 	payloadAbsorbedIDs = "absorbed_ids"
 	payloadHumanVote   = "human_vote"
 )
@@ -156,7 +156,7 @@ func bucketFilter(buckets []string) *qdrant.Filter {
 
 // pointFromPayload builds a scored point from its payload. vec is the point's
 // own embedding, populated only where the caller asked Qdrant for it
-// (query()'s MMR diversity re-rank, issue #1269) - nil elsewhere.
+// (query()'s MMR diversity re-rank, ) - nil elsewhere.
 func pointFromPayload(id *qdrant.PointId, payload map[string]*qdrant.Value, score float32, vec []float32) scored {
 	return scored{
 		ID:                 pointID(id),
@@ -213,7 +213,7 @@ func (x *qdrantIndex) query(ctx context.Context, buckets []string, vec []float32
 		// post-filter, so it can't crowd valid points out of the top-k first.
 		Filter:      excludeInvalidated(bucketFilter(buckets)),
 		WithPayload: qdrant.NewWithPayload(true),
-		// Recall's MMR diversity re-rank (issue #1269) needs each hit's own
+		// Recall's MMR diversity re-rank ( ) needs each hit's own
 		// embedding to compute inter-hit cosine - the query score alone is
 		// only similarity to the QUERY vector, not to other hits.
 		WithVectors: qdrant.NewWithVectors(true),
@@ -278,7 +278,7 @@ func (x *qdrantIndex) list(ctx context.Context, buckets []string, offset, limit 
 		WithPayload:    qdrant.NewWithPayload(true),
 	}
 	if withVectors {
-		// DedupeSweep's clustering (issue #1269) needs each point's own stored
+		// DedupeSweep's clustering ( ) needs each point's own stored
 		// embedding, not a re-embed - Qdrant already has it, just ask for it.
 		scroll.WithVectors = qdrant.NewWithVectors(true)
 	}
@@ -525,7 +525,7 @@ func (x *qdrantIndex) count(ctx context.Context, buckets []string, includeInvali
 	return int(n), nil
 }
 
-// qdrantLess builds sort.Slice's less func for one ListSort value (#1266),
+// qdrantLess builds sort.Slice's less func for one ListSort value ,
 // mirroring sqliteOrderBy: an `ID` tie-break so paging is stable, and
 // last_recalled treats "" (never recalled) as sorting last, not first (a
 // bare string compare would put "" before any RFC3339 timestamp).
@@ -590,7 +590,7 @@ func qdrantLess(all []scored, sortBy string) func(i, j int) bool {
 // tierFilter adds tier's condition to f (or a fresh filter), if any. "" means
 // no filter. "unverified" also matches a point with no tier payload key yet
 // (empty/missing reads as unverified everywhere else in this package,
-// #1265 review finding 10) - a should-match OR between "no tier key" and
+// review finding 10) - a should-match OR between "no tier key" and
 // "tier == unverified", nested as a sub-filter so it composes with the
 // caller's other must/must-not conditions.
 func tierFilter(f *qdrant.Filter, tier string) *qdrant.Filter {
@@ -991,7 +991,7 @@ func (x *qdrantIndex) recordRecall(ctx context.Context, ids []string) error {
 }
 
 // backfillTiers is the one-time migration for a point with no tier payload
-// key yet (epic #1255 P1). Idempotent: a point that already carries a tier
+// key yet (epic P1). Idempotent: a point that already carries a tier
 // is skipped in Go (Qdrant has no server-side "field absent" bulk update).
 func (x *qdrantIndex) backfillTiers(ctx context.Context) (int, error) {
 	it := x.client.ScrollAll(ctx, &qdrant.ScrollPoints{CollectionName: x.coll, WithPayload: qdrant.NewWithPayload(true)})
@@ -1044,7 +1044,7 @@ func (x *qdrantIndex) updateBucket(ctx context.Context, id, bucket string) error
 }
 
 // absorb folds absorbedID's votes/timestamps/lineage into survivorID and
-// invalidates absorbedID (epic #1255 P5). False (no-op) if either point is
+// invalidates absorbedID (epic P5). False (no-op) if either point is
 // missing, or absorbedID is already invalidated (sticky).
 func (x *qdrantIndex) absorb(ctx context.Context, survivorID, absorbedID, reason string) (bool, error) {
 	existing, err := x.getExisting(ctx, []string{survivorID, absorbedID})

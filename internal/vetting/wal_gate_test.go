@@ -21,7 +21,7 @@ import (
 )
 
 // fakeGateLedger is an in-memory ledger.LedgerStore double for the gate's own
-// WAL hooks (#1100): AppendIntent allocates a gapless per-chat seq, in the
+// WAL hooks : AppendIntent allocates a gapless per-chat seq, in the
 // order calls arrive - enough to assert node/judge entry ordering without a
 // real Postgres container. failKind/failOccurrence (mirrors the recordstore
 // test's fakeLedger.failNext, but per-kind and by occurrence count since a
@@ -30,7 +30,7 @@ import (
 // WAL calls from a single goroutine, so counting occurrences synchronously
 // here is deterministic, no timing games needed. failKind "judge_round"
 // matches an artifact.revision entry whose payload Kind is judge_round
-// (#1144 P2: no dedicated judge.round entry kind to match on directly).
+// .
 type fakeGateLedger struct {
 	mu             sync.Mutex
 	seqs           map[string]int64
@@ -106,7 +106,7 @@ func (f *fakeGateLedger) kinds() []string {
 	return out
 }
 
-// TestGatedNodeWALEntryOrder is #1100 test case (c): for one gated round that
+// TestGatedNodeWALEntryOrder is test case (c): for one gated round that
 // fails then passes (stubModel's usual shape), the WAL sees node.started,
 // this round's artifact.revision writes, judge.round, the next round's
 // artifact.revision writes, judge.round, node.done - in that order, and
@@ -185,8 +185,8 @@ func TestGatedNodeWALEntryOrder(t *testing.T) {
 	}
 }
 
-// TestGatedNodeNoLedgerConfiguredNoWALCalls is #1100 test case (d): a Config
-// with no Ledger set must behave exactly as before #1100 - no WAL calls, and
+// TestGatedNodeNoLedgerConfiguredNoWALCalls is test case (d): a Config
+// with no Ledger set must behave exactly as before - no WAL calls, and
 // the round loop must not itself require one.
 func TestGatedNodeNoLedgerConfiguredNoWALCalls(t *testing.T) {
 	stub := &stubModel{}
@@ -234,7 +234,7 @@ func TestGatedNodeNoLedgerConfiguredNoWALCalls(t *testing.T) {
 	}
 }
 
-// TestGatedNodeNodeEventAppendFailureIsBestEffort is #1100 review case (a):
+// TestGatedNodeNodeEventAppendFailureIsBestEffort is review case (a):
 // node.started/node.done are best-effort - a forced AppendIntent failure on
 // node.started must not affect the run, and node.done must still land at
 // the end.
@@ -304,7 +304,7 @@ func TestGatedNodeNodeEventAppendFailureIsBestEffort(t *testing.T) {
 	}
 }
 
-// TestGatedNodeJudgeRoundAppendFailureStopsOnPassingRound is #1100 review
+// TestGatedNodeJudgeRoundAppendFailureStopsOnPassingRound is review
 // case (b): saveJudgeRoundRecord's WAL write is fail-closed - a forced
 // failure on a PASSING round must stop the round loop, force
 // res.Passed=false, name the WAL failure in res.Feedback, and never start

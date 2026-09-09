@@ -270,7 +270,7 @@ type DeliveryRecoverer interface {
 
 // DeliveryRecordChecker reports whether targetID's delivery_record already
 // carries a successful revision for revision - the single "is this delivery
-// done" read (#1144 P2), shared by boot recovery and `quack ledger recover`.
+// done" read , shared by boot recovery and `quack ledger recover`.
 type DeliveryRecordChecker func(ctx context.Context, chatID, targetID string, revision int) (bool, error)
 
 // DeliveryRecorder persists the delivery_record revision that completes a
@@ -286,7 +286,7 @@ type OrphanedDelivery struct {
 	NodeID   string `json:"node_id"`
 	Seq      int64  `json:"seq"`
 	// CloneURL/IssueNumber: minimal DeliveryContext fields persisted in the
-	// delivery.intent payload (#1093 finding 4) - enough to rebuild a
+	// delivery.intent payload - enough to rebuild a
 	// DeliveryContext for a recoverer offline, without live worker activity.
 	CloneURL    string `json:"clone_url,omitempty"`
 	IssueNumber int    `json:"issue_number,omitempty"`
@@ -341,7 +341,7 @@ type Projections struct {
 	DeliveryRecorded  DeliveryRecordChecker
 	RecordDelivery    DeliveryRecorder
 	Redo              func(ctx context.Context, o OrphanedDelivery) error
-	// ChatExists guards the recovery pass itself (#1296): a chat hard-deleted
+	// ChatExists guards the recovery pass itself : a chat hard-deleted
 	// by raw SQL can still have ledger entries (a separate store), so without
 	// this RunLedgerRecover would resurrect delivery/artifact work for a chat
 	// that no longer exists. Nil skips the check (existing callers/tests).
@@ -378,7 +378,7 @@ func (r *LedgerRecoverReport) unresolved() int {
 }
 
 // RunLedgerRecover reconciles one chat's intents whose projection write is
-// missing. Delivery (#1093 case 13, #1144 P2): a delivery.intent is settled
+// missing. Delivery : a delivery.intent is settled
 // once its delivery_record artifact revision exists (p.DeliveryRecorded) -
 // no separate ledger entry to check. For an unsettled one, ask p.Delivery
 // whether the target already saw the key; if so, p.RecordDelivery writes the

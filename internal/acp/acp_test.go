@@ -492,7 +492,7 @@ func TestUnregisterAdvisorThread_KillsPinnedProcess(t *testing.T) {
 	}
 }
 
-// TestRound_AbortKillsPinnedProcess (#1030 x #1006): CancelNode's abort
+// TestRound_AbortKillsPinnedProcess : CancelNode's abort
 // during a round that would otherwise be pinned must still evict and kill
 // the process - a killed process is never handed to the node's next round.
 func TestRound_AbortKillsPinnedProcess(t *testing.T) {
@@ -586,7 +586,7 @@ func TestRound_FailedReuseFallsBackToFreshProcess(t *testing.T) {
 	if err := v.(*pinnedProc).h.cmd.Process.Kill(); err != nil {
 		t.Fatalf("kill pinned process: %v", err)
 	}
-	v.(*pinnedProc).h.cmd.Wait() //nolint:errcheck // just reaping the killed process before the next round
+	v.(*pinnedProc).h.cmd.Wait() //nolint:errcheck// just reaping the killed process before the next round
 
 	if _, err := roundOnce(); err == nil {
 		t.Fatal("round 2 against a dead pinned process: want an error, not a silent hang or success")

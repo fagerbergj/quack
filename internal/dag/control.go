@@ -98,7 +98,7 @@ type nodeControl struct {
 	liveSteer func(text string) bool
 
 	// roundAbort aborts the in-flight ACP round via its own session/cancel
-	// RPC (#1030) - cancel only, not pause: pause must keep whatever the
+	// RPC - cancel only, not pause: pause must keep whatever the
 	// round has accumulated so it can resume, so it never calls this.
 	roundAbort context.CancelFunc
 
@@ -162,7 +162,7 @@ func (c *nodeControl) Paused() bool {
 
 // PeekQueued returns pending messages WITHOUT consuming them. Live delivery
 // only nudges the running round; the gate boundary still owns durable delivery
-// - the prompt fold, the -sN generation record and persistence (#1029).
+// - the prompt fold, the -sN generation record and persistence .
 func (c *nodeControl) PeekQueued() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -387,7 +387,7 @@ type runControls struct {
 	// run. Sticky past unregister for the same reason as cancelled/paused -
 	// dagStream.handle's terminal-event case can run after unregister, and a
 	// truly delivered answer must outrank a pause/cancel flag set afterward
-	// (the race #1340 only closed for PauseShutdown; a live pause/cancel
+	// (the race only closed for PauseShutdown; a live pause/cancel
 	// arriving in the same window still needs this, not the out!="" guess).
 	delivered map[string]map[string]bool
 	overrides map[string]map[string]string // chatID → nodeID → pending prompt edit for a not-yet-started node (see graph.go's effectiveNode.Task)
@@ -614,7 +614,7 @@ func (e *Executor) SetNodeLiveSteer(chatID, nodeID string, f func(text string) b
 	}
 }
 
-// SetNodeRoundAbort registers the in-flight round's cancel func (#1030). If
+// SetNodeRoundAbort registers the in-flight round's cancel func . If
 // the node was already cancelled before the round reached this point, fires
 // it immediately instead of leaving the round to run until its next
 // boundary check.

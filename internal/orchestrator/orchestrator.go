@@ -105,7 +105,7 @@ func (o *Orchestrator) SetArtifacts(svc artifact.Service) { o.artifacts = svc }
 
 // SetLedger wires the WAL's fail-closed AppendIntent path into the
 // orchestrator's own write_<kind>/write_artifact tools, so a direct-chat
-// write records parent_revision like every gated node does (#1153). Mirrors
+// write records parent_revision like every gated node does . Mirrors
 // dag.Executor.SetWALLedger.
 func (o *Orchestrator) SetLedger(store ledger.LedgerStore) { o.ledgerStore = store }
 
@@ -120,7 +120,7 @@ func (s failSoftListArtifacts) List(ctx context.Context, req *artifact.ListReque
 	resp, err := s.Service.List(ctx, req)
 	if err != nil {
 		slog.Warn("orchestrator: artifact List failed; offering no artifacts this turn", "err", err)
-		// A dial error that survived the pgdial retry (#1193) must not vanish as a
+		// A dial error that survived the pgdial retry must not vanish as a
 		// silent gap once this degrades to "no artifacts" - stamp it for DeriveTerminalStatus.
 		inference.RecordStoreFailure(req.SessionID, err)
 		return &artifact.ListResponse{}, nil
@@ -169,7 +169,7 @@ var runAdmissionSpec = dag.AdmissionSpec{Model: "orchestrator-run"}
 // SetMaxActiveRuns caps concurrent runs server-wide via the same admission
 // queue (dag.Admission) node scheduling uses, instead of a second
 // parallel implementation. RetryNodeResumed (boot resume) bypasses this
-// admission entirely (#1176) - the caller caps its own concurrency instead
+// admission entirely - the caller caps its own concurrency instead
 // (serve.startResumedNodes), so this limit is not a true ceiling on
 // concurrent runs while resumes are in flight.
 func (o *Orchestrator) SetMaxActiveRuns(n int) {
@@ -179,7 +179,7 @@ func (o *Orchestrator) SetMaxActiveRuns(n int) {
 }
 
 // RunAdmissionUsage reports the run-level admission's current (used, limit),
-// for callers explaining a queued chat's wait (#1176). ok is false when no
+// for callers explaining a queued chat's wait . ok is false when no
 // cap is configured (SetMaxActiveRuns never called, or n < 1).
 func (o *Orchestrator) RunAdmissionUsage() (used, limit int, ok bool) {
 	if o.runAdmit == nil {
@@ -212,7 +212,7 @@ func (o *Orchestrator) acquireRun(ctx context.Context) (release func(), acquired
 
 // newSafeYield serializes concurrent node goroutines onto one yield and stops
 // after a panicking call: a second goroutine re-entering the panicked yield
-// makes Go replace the real panic value and kill the process (#1016).
+// makes Go replace the real panic value and kill the process .
 func newSafeYield(yield func(stream.SSEEvent, error) bool) func(stream.SSEEvent, error) bool {
 	var mu sync.Mutex
 	stopped := false
@@ -225,8 +225,8 @@ func newSafeYield(yield func(stream.SSEEvent, error) bool) func(stream.SSEEvent,
 		defer func() {
 			if r := recover(); r != nil {
 				// Log the real value, then resume: swallowing a loop-body panic
-				// makes the runtime panic at the range site instead (#1033).
-				// stopped keeps racing nodes out of the dead yield (#1016).
+				// makes the runtime panic at the range site instead .
+				// stopped keeps racing nodes out of the dead yield .
 				stopped = true
 				slog.Error("orchestrator: panic in stream consumer, run aborted",
 					"component", "orchestrator", "panic", r, "stack", string(debug.Stack()))
@@ -234,7 +234,7 @@ func newSafeYield(yield func(stream.SSEEvent, error) bool) func(stream.SSEEvent,
 			}
 		}()
 		// A false return means the consumer stopped ranging (client gone); calling
-		// the exhausted closure again is itself a panic (#1033).
+		// the exhausted closure again is itself a panic .
 		if !yield(ev, e) {
 			stopped = true
 			return false
@@ -324,7 +324,7 @@ func (o *Orchestrator) retryNode(ctx context.Context, userID, chatID string, see
 			}
 		}
 		// quack_runs_active must count this run whether or not it went
-		// through admission - Run/RunBoundPlan already do (#1176).
+		// through admission - Run/RunBoundPlan already do .
 		otelobs.RunStarted()
 		defer otelobs.RunFinished()
 		plan, ok := o.stashedPlan(ctx, userID, chatID)
@@ -418,7 +418,7 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 		// A prior turn's unconsumed planning failure (empty node/agent key,
 		// store.orchestratorGiveUpError's read) must not leak into THIS run's
 		// silent gap - RunBoundPlan makes no orchestrator model call to ever
-		// naturally clear it (#1109 review finding 3 precedent, #1156).
+		// naturally clear it .
 		inference.ClearFailure(sessionID, "", "")
 		// Coords first: the root span reads them for gen_ai.conversation.id/user.id.
 		ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: sessionID, User: userID, Source: source})
@@ -443,7 +443,7 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 			}
 			return origYield(ev, err)
 		}
-		// Concurrent DAG nodes below all funnel through this one yield (#1016);
+		// Concurrent DAG nodes below all funnel through this one yield ;
 		// Run/RetryNode wrap it, RunBoundPlan must too.
 		safeYield := newSafeYield(yield)
 
@@ -451,7 +451,7 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 		defer release()
 		if !acquired {
 			// Queued run's ctx was cancelled before a slot freed: never execute
-			// on a dead context (#1016).
+			// on a dead context .
 			safeYield(stream.Errorf("orchestrator: run cancelled while queued"), nil)
 			return
 		}
@@ -472,7 +472,7 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 		// A bound plan skips the llmagent turn entirely, so nothing else ever
 		// appends this turn's "user" event - without it, groupSessionEvents
 		// (store.GetTurnsWithContent) sees zero events for this ChatTurn row
-		// and misaligns every later turn's persisted content against it (#1195).
+		// and misaligns every later turn's persisted content against it .
 		o.persistUserMessage(ctx, userID, sessionID, plan.UserMessage)
 
 		// A bound plan never passes through the execute tool (no orchestrator
@@ -544,7 +544,7 @@ func New(sessions session.Service, m model.LLM, sysPrompt string, planner *dag.P
 // source: the run's origin for gen_ai.client.token.usage/cost attribution -
 // an extension's registration name, or SourceApp for a direct UI/REST/MCP chat.
 func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, message string, attachments []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
-	// Bound to this turn (#1181 review): an earlier turn's rejection must
+	// Bound to this turn : an earlier turn's rejection must
 	// never outlive it - a later silent gap or gateway failure on the same
 	// chat needs its OWN evidence, not a stale reason from a turn that
 	// already ended.
@@ -556,7 +556,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		// if this turn itself never calls the model again before ending in
 		// its own empty gap (e.g. a pending-choice reply, or a plan that runs
 		// but ends silent), the stale record would still be sitting there
-		// (#1109 review finding 3 precedent, #1156).
+		// .
 		inference.ClearFailure(sessionID, "", "")
 		// Coords first: the root span reads them for gen_ai.conversation.id/user.id.
 		ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: sessionID, User: userID, Source: source})
@@ -586,7 +586,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		defer release()
 		if !acquired {
 			// Queued run's ctx was cancelled before a slot freed: never execute
-			// on a dead context (#1016).
+			// on a dead context .
 			yield(stream.Errorf("orchestrator: run cancelled while queued"), nil)
 			return
 		}
@@ -739,9 +739,9 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			return
 		}
 
-		// Concurrent DAG nodes funnel through this one yield (#1016); ctx
+		// Concurrent DAG nodes funnel through this one yield ; ctx
 		// consumers like onQueued call it from a node goroutine, so it must be
-		// the wrapped one - #1021 fixed the other three entrypoints but missed Run().
+		// the wrapped one - fixed the other three entrypoints but missed Run().
 		safeYield := newSafeYield(yield)
 		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
 

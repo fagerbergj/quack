@@ -34,7 +34,7 @@ func SetupClone(ctx context.Context, jail *workspace.Jail, userID, chatID, dir, 
 // cleanupError: a stale-clone removal failure, never a fetch failure - the
 // dag package structurally matches LocalCleanupFailure (dag never imports
 // this package, see dag/graph.go) so its wrapping setupError doesn't reword
-// this into a bogus "repository is unreachable" (#1213).
+// this into a bogus "repository is unreachable" .
 type cleanupError struct {
 	path  string
 	cause error
@@ -61,7 +61,7 @@ func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRe
 		return "", fmt.Errorf("setup: resolve clone dir: %w", err)
 	}
 	// Clear stale clone from a previous run. Local cleanup, not a fetch - its
-	// error must never read as the repository being unreachable (#1213).
+	// error must never read as the repository being unreachable .
 	if err := workspace.RemoveAllForce(target); err != nil {
 		return "", &cleanupError{path: target, cause: err}
 	}

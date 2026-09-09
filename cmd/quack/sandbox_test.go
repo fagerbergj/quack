@@ -17,28 +17,28 @@ func TestSandboxRun_ModeNone(t *testing.T) {
 	cfg := `
 providers:
   default:
-    kind: openai
-    endpoint: http://localhost:1
-    api_key: x
+ kind: openai
+ endpoint: http://localhost:1
+ api_key: x
 orchestrator:
   provider: default
   model: m
 models:
   m:
-    provider: default
-    role: worker
+ provider: default
+ role: worker
 agents:
   code-reviewer:
-    bundle: agents/code-reviewer
-    provider: default
-    model: m
-    acp:
-      command: ["opencode", "acp"]
-      read_only: true
+ bundle: agents/code-reviewer
+ provider: default
+ model: m
+ acp:
+ command: ["opencode", "acp"]
+ read_only: true
 stores:
   default:
-    kind: sqlite
-    url: ` + filepath.Join(dir, "store.db") + `
+ kind: sqlite
+ url: ` + filepath.Join(dir, "store.db") + `
 session:
   store: default
 workspace:

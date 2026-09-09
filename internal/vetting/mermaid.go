@@ -222,7 +222,7 @@ func translateMermaidError(raw string) string {
 		return unrecognizedMermaidError(raw)
 	}
 	return fmt.Sprintf(
-		"parse error: diagram line %s, column %d:\n    %s\n    %s\n"+
+		"parse error: diagram line %s, column %d:\n %s\n %s\n"+
 			"unquoted %q inside a node label - mermaid treats it as ending the label there.\n"+
 			"Wrap the whole label in double quotes (e.g. G[\"...\"]) so %q is read as literal text.",
 		m[1], caretIdx+1, excerpt, caretLine, ch, ch)
@@ -237,7 +237,7 @@ func unrecognizedMermaidError(raw string) string {
 	var located string
 	if m := mermaidLineRe.FindStringSubmatch(lines[0]); m != nil && len(lines) >= 3 {
 		if caretIdx := strings.IndexByte(lines[2], '^'); caretIdx >= 0 {
-			located = fmt.Sprintf("diagram line %s, column %d:\n    %s\n    %s\n", m[1], caretIdx+1, lines[1], lines[2])
+			located = fmt.Sprintf("diagram line %s, column %d:\n %s\n %s\n", m[1], caretIdx+1, lines[1], lines[2])
 		}
 	}
 	return "parse error: " + located +

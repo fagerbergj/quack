@@ -158,7 +158,7 @@ func TestApplyOutcome_Invalidate(t *testing.T) {
 // TestApplyOutcome_Reinforce covers design doc §5/§7 case 2 plus the sticky
 // invalidation rule: reinforce bumps unverified→reinforced and 0→1, a second
 // reinforce bumps to ×2, and an already-invalidated memory is skipped even
-// when its id is explicitly named (recalled-set semantics, epic #1255 P1).
+// when its id is explicitly named (recalled-set semantics, epic P1).
 func TestApplyOutcome_Reinforce(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
@@ -244,7 +244,7 @@ func TestApplyOutcome_Reinforce(t *testing.T) {
 	}
 }
 
-// TestApplyVotes_SupportedAndContradicted covers epic #1255 P1: a supported
+// TestApplyVotes_SupportedAndContradicted covers epic P1: a supported
 // vote is +1 upvote and flips tier to verified, a contradicted vote is +1
 // downvote, and each vote writes one memory_ops row (actor=judge).
 func TestApplyVotes_SupportedAndContradicted(t *testing.T) {
@@ -300,7 +300,7 @@ func TestApplyVotes_SupportedAndContradicted(t *testing.T) {
 }
 
 // TestRecordRecall_BumpsCountAndTimestamp covers the usage-tracking half of
-// #1255 P1: RecordRecall bumps recalls and stamps last_recalled_at, and a
+// P1: RecordRecall bumps recalls and stamps last_recalled_at, and a
 // second delivery accumulates rather than overwriting the count.
 func TestRecordRecall_BumpsCountAndTimestamp(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
@@ -424,7 +424,7 @@ func TestApplyVotes_SkipsAlreadyInvalidated(t *testing.T) {
 	}
 }
 
-// TestApplyOutcome_ReinforceKeepsVoteScoreInvariant covers the #1257 review
+// TestApplyOutcome_ReinforceKeepsVoteScoreInvariant covers the review
 // finding: with a memory already carrying both an upvote and a downvote
 // (vote_score 0), a merged outcome's reinforce must land vote_score at
 // upvotes-downvotes (1), not upvotes+1 (2) or vote_score+1 (1, coincidentally
@@ -514,7 +514,7 @@ func TestApplyOutcome_SkipsVerifiedOnInvalidate(t *testing.T) {
 	}
 }
 
-// TestBackfillTiers_IdempotentAcrossTwoBoots covers epic #1255 P1's
+// TestBackfillTiers_IdempotentAcrossTwoBoots covers epic P1's
 // migration: a point with reinforcement_count>=1 backfills to tier=verified
 // with upvotes mirroring the count, a point with none backfills to
 // unverified, and a second boot (a fresh OpenSQLite against the same file)
@@ -587,7 +587,7 @@ func TestBackfillTiers_IdempotentAcrossTwoBoots(t *testing.T) {
 	}
 }
 
-// TestBackfillTiers_RealPreP1SchemaMigrates covers the #1257 review finding:
+// TestBackfillTiers_RealPreP1SchemaMigrates covers the review finding:
 // a genuinely pre-P1 sqlite file (created with raw SQL, none of the P1
 // columns present at all - not just a fresh AutoMigrate'd file with them
 // zero-valued) must migrate cleanly through OpenSQLite's AutoMigrate +
@@ -795,7 +795,7 @@ func TestApply_ConsolidatorDeleteInvalidatesWithReason(t *testing.T) {
 	}
 }
 
-// TestSetHumanVote_ToggleAndSwitch covers epic #1255 P4: an up vote is +1
+// TestSetHumanVote_ToggleAndSwitch covers epic P4: an up vote is +1
 // upvote/verified; voting up again is a no-op (not a double-count); "none"
 // removes it back to 0; and switching directly from up to down moves the
 // vote rather than stacking it.

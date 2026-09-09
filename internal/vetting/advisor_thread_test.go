@@ -47,7 +47,7 @@ func TestUnregisterMemSession_SilentWhenConnected(t *testing.T) {
 }
 
 // TestUnregisterAdvisorThread_FiresNodeSessionClosedHook pins the acp/vetting
-// seam a pinned ACP process's cleanup rides on (#1006 perf): every advisor
+// seam a pinned ACP process's cleanup rides on : every advisor
 // thread teardown - not just the ones dag/graph.go happens to exercise - must
 // reach NodeSessionClosed with the exact token, or a pinned subprocess for
 // that node leaks forever with nothing left to evict it.

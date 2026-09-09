@@ -46,7 +46,7 @@ func TestParseGuardTier(t *testing.T) {
 }
 
 // ── unit: the judge tier (deny short-circuits, allow executes, missing judge
-//    fails closed) ────────────────────────────────────────────────────────────
+// fails closed) ────────────────────────────────────────────────────────────
 
 // fakeRunnable is a hand-rolled runnableTool that records executions - used
 // instead of a functiontool so unit tests need no agent.Context plumbing.
@@ -173,16 +173,16 @@ func TestBuildWrapsGuardedTools(t *testing.T) {
 }
 
 // ── integration: the confirm tier pauses the NODE via the adk_request_
-//    confirmation marker + the existing HITL park, and resumes on the human's
-//    decision (mirrors internal/dag/hitl_test.go's pause/resume pattern). ────
+// confirmation marker + the existing HITL park, and resumes on the human's
+// decision (mirrors internal/dag/hitl_test.go's pause/resume pattern). ────
 
 // confirmStub drives the worker + the vetting judge:
-//   - judge requests (submit_verdict tool present) always pass;
-//   - a request whose history already carries the guarded tool's RESOLVED
-//     response (post-approval execution) → final answer;
-//   - a post-decision prompt saying APPROVED → re-issue the risky_op call;
-//   - a post-decision prompt saying DENIED → answer without the operation;
-//   - otherwise (fresh draft) → propose risky_op.
+// - judge requests (submit_verdict tool present) always pass;
+// - a request whose history already carries the guarded tool's RESOLVED
+// response (post-approval execution) → final answer;
+// - a post-decision prompt saying APPROVED → re-issue the risky_op call;
+// - a post-decision prompt saying DENIED → answer without the operation;
+// - otherwise (fresh draft) → propose risky_op.
 type confirmStub struct{}
 
 func (*confirmStub) Name() string { return "confirmStub" }
@@ -478,7 +478,7 @@ func TestGuardConfirmTier_ApprovalPinnedToArgs(t *testing.T) {
 // ── unit: the safety-judge prompt carries every context section ─────────────
 
 func TestBuildSafetyJudgePrompt(t *testing.T) {
-	p := buildSafetyJudgePrompt("find the bug", "fix pkg X", "web_fetch", map[string]any{"url": "https://example.com"}, "  - read_file")
+	p := buildSafetyJudgePrompt("find the bug", "fix pkg X", "web_fetch", map[string]any{"url": "https://example.com"}, " - read_file")
 	for _, want := range []string{"find the bug", "fix pkg X", "web_fetch", `"url":"https://example.com"`, "read_file", "submit_safety_verdict"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("prompt missing %q:\n%s", want, p)

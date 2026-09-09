@@ -52,7 +52,7 @@ func runCheckMermaid(t *testing.T, diagram string) string {
 func TestCheckMermaidTool_ValidDiagram(t *testing.T) {
 	t.Parallel()
 	requireNode(t)
-	got := runCheckMermaid(t, "flowchart TD\n    A[Start] --> B[Finish]")
+	got := runCheckMermaid(t, "flowchart TD\n A[Start] --> B[Finish]")
 	if got != "ok" {
 		t.Fatalf("result = %q, want %q", got, "ok")
 	}

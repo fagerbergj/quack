@@ -1,4 +1,4 @@
-// artifacttools_native_test.go: #1123 regression coverage - a native
+// artifacttools_native_test.go: regression coverage - a native
 // (non-ACP) gated node's worker must actually be given the ADK-native
 // artifact tools (list/read/edit/write_<kind>), not just check_mermaid/
 // format-markdown, or its revise round has nothing to read/edit its prior
@@ -24,8 +24,8 @@ import (
 // wired, a native gated node's ForNode-built tool list must include
 // list_artifacts/read_artifact/edit_artifact/write_artifact plus at least
 // one write_<kind> tool - the set previously only reached the ACP loopback
-// MCP surface (#1091/#1108), leaving native nodes (synthesizer,
-// web-researcher) with nothing to revise with (#1123).
+// MCP surface , leaving native nodes (synthesizer,
+// web-researcher) with nothing to revise with .
 func TestBuildAgents_NativeNodeGetsArtifactTools(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {

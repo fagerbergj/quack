@@ -257,7 +257,7 @@ func TestResolveAbortedReviewer_SoloReviewerDeliversStagedReviewInsteadOfDiscard
 	}
 }
 
-// #1118 regression: a solo reviewer's round that dies must still post the
+// regression: a solo reviewer's round that dies must still post the
 // staged review + abort note, not the stale code_review record left by a
 // prior round on the same chat (the artifact render would clobber both the
 // note and the current staged verdict with old content).
@@ -481,7 +481,7 @@ func TestReviewFanout_SynthesizerAbortFallsBackToConcat(t *testing.T) {
 	}
 }
 
-// The #1148 refusal text must never read as an instruction to wait - that's
+// The refusal text must never read as an instruction to wait - that's
 // what drove both slice siblings into a sleep-poll loop against each other.
 func TestReviewStage_RefusalDoesNotInviteWaiting(t *testing.T) {
 	fanout := freshFanout(t, 2)
@@ -498,7 +498,7 @@ func TestReviewStage_RefusalDoesNotInviteWaiting(t *testing.T) {
 	}
 }
 
-// A slice feeding a synthesizer (#1148) must be reported as non-delivering
+// A slice feeding a synthesizer must be reported as non-delivering
 // so callers can withhold its verdict tools; a plan with no synthesizer,
 // or with every sibling terminal, must not be.
 func TestReviewStage_IsNonDeliveringSlice(t *testing.T) {

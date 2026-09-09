@@ -191,7 +191,7 @@ func TestListArtifactRevisions_NewestFirstWithLineage(t *testing.T) {
 }
 
 // TestListArtifactRevisions_UsesNameScopedQuery is the adversarial-review
-// follow-up (#1094, then #1113): the endpoint must issue RevisionsForName's
+// follow-up : the endpoint must issue RevisionsForName's
 // WHERE name = ? query, not the ListForSession fallback's full-chat scan -
 // asserted on the raw SQL gorm renders, not QueryCount, since both paths
 // issue exactly one SELECT (a bare count can't tell them apart; it only

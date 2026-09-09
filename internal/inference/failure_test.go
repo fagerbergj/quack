@@ -40,7 +40,7 @@ func TestLastFailure_UnknownKeyReportsNotOK(t *testing.T) {
 	}
 }
 
-// TestRecordCallResult_KeysByAgentRole is #1109 review finding 3: a judge
+// TestRecordCallResult_KeysByAgentRole is review finding 3: a judge
 // failure on the same chat+node must not be visible under the worker's own
 // agent role, or a later unrelated empty completion from a healthy model
 // would misreport the judge's failure as its own gateway error.
@@ -93,7 +93,7 @@ func (a fakeAddr) Network() string { return "tcp" }
 func (a fakeAddr) String() string  { return string(a) }
 
 // TestSanitizeStoreError_NeverLeaksDSNFragments covers the two exotic DSN
-// shapes the #1200 review flagged: a single-quoted password containing an
+// shapes the review flagged: a single-quoted password containing an
 // @, and a raw user@host embedded inside a DSN. Both are baked into the
 // wrapped error's text (as a real pgconn/gorm error might carry), proving
 // SanitizeStoreError's structured-field-only approach never echoes them -

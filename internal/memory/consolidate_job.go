@@ -27,7 +27,7 @@ const sweepPageSize = 500
 // forEachSweepPage walks every point across all buckets in pages of
 // sweepPageSize, calling fn once per page until the backend is exhausted.
 // withVectors asks the backend to also populate each point's stored
-// embedding (DedupeSweep's cosine clustering, issue #1269) - both backends
+// embedding (DedupeSweep's cosine clustering, ) - both backends
 // already have the vector on hand at list time, so this is never a
 // re-embed, just an extra field on the same read.
 func (s *Store) forEachSweepPage(ctx context.Context, includeInvalidated, withVectors bool, fn func([]scored)) error {
@@ -63,7 +63,7 @@ func (s *Store) RunConsolidationSweep(ctx context.Context, schedule string, rete
 
 func (s *Store) sweepOnce(ctx context.Context, retentionDays int) {
 	s.consolidateOnce(ctx)
-	// Per-bucket similarity dedupe (issue #1269): consolidateOnce's burst
+	// Per-bucket similarity dedupe ( ): consolidateOnce's burst
 	// clustering only ever compares memories from the same chat within a
 	// 15-minute window, so a fact re-derived by a different run days later
 	// is never caught there - this pass catches it, bucket-wide.
@@ -191,7 +191,7 @@ func (s *Store) consolidateCluster(ctx context.Context, bucket string, cluster [
 const forgetExampleCap = 5
 
 // SetForgettingRules validates and wires the operator's memory.forgetting.rules
-// (epic #1255 P3). Called once at server startup - a bad rule fails fast
+// (epic P3). Called once at server startup - a bad rule fails fast
 // there rather than surfacing later as a silently-skipped nightly sweep.
 // Unset (nil rules, never called) means DefaultRules().
 func (s *Store) SetForgettingRules(rules []Rule) error {
@@ -226,7 +226,7 @@ type ForgettingReport struct {
 	Rules     []ForgettingRuleResult
 }
 
-// forgetOnce is the sweep's forgetting step (epic #1255 P3), run before
+// forgetOnce is the sweep's forgetting step (epic P3), run before
 // retentionOnce so a memory a rule invalidates this tick is also eligible
 // for the same tick's retention cutoff check next run.
 func (s *Store) forgetOnce(ctx context.Context, dryRun bool) {

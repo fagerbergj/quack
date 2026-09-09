@@ -45,7 +45,7 @@ func CoordsFromContext(ctx context.Context) Coords {
 
 // FillBlankCoords: ctx wins per field, stamp fills what ctx left empty. A
 // stamp shared by every node on one model/tool/agent must never overwrite a
-// field the caller's own ctx already set (#1039, #1048).
+// field the caller's own ctx already set .
 func FillBlankCoords(ctx, stamp Coords) Coords {
 	if ctx.ChatID == "" {
 		ctx.ChatID = stamp.ChatID

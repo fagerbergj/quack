@@ -148,7 +148,7 @@ func TestTracedModel_EmitsWellFormedChatEvent(t *testing.T) {
 	}
 }
 
-// TestTracedModel_EmitsProvenance: #1096 - quack.version, quack.bundle.hash
+// TestTracedModel_EmitsProvenance: - quack.version, quack.bundle.hash
 // and gen_ai.usage.cost land on the emitted llm.call record.
 func TestTracedModel_EmitsProvenance(t *testing.T) {
 	capExp := &captureExporter{}

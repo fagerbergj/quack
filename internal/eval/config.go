@@ -32,12 +32,12 @@ const (
 // comparison's scope).
 //
 // Role membership is structural, not name-listed:
-//   - "coder" is every agents: entry with an acp: block set (all code agents
-//     run external over ACP); its model binds through the generated
-//     OPENCODE_CONFIG_CONTENT, so overriding AgentConfig.Model is the whole fix.
-//   - "researcher" is every OTHER text-only agent (excludes media/image
-//     readers).
-//   - "orch" is the orchestrator's own top-level model (OrchestratorConfig.Model).
+// - "coder" is every agents: entry with an acp: block set (all code agents
+// run external over ACP); its model binds through the generated
+// OPENCODE_CONFIG_CONTENT, so overriding AgentConfig.Model is the whole fix.
+// - "researcher" is every OTHER text-only agent (excludes media/image
+// readers).
+// - "orch" is the orchestrator's own top-level model (OrchestratorConfig.Model).
 func OverrideModel(cfg *config.Config, role, model string) ([]string, error) {
 	switch role {
 	case RoleCoder, RoleResearcher, RoleOrch, RoleAll:

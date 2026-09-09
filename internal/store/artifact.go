@@ -38,7 +38,7 @@ type Artifact struct {
 	// TurnID: the turn that created this revision, "" if unknown. Identity
 	// is chat-level (same name, new revision across turns); this is per-revision.
 	TurnID string `gorm:"column:turn_id;index:idx_artifact_turn"`
-	// Kind/Class/Lineage (#1090 P2): additive columns, nullable/zero-value
+	// Kind/Class/Lineage : additive columns, nullable/zero-value
 	// for every pre-existing row - AutoMigrate only adds columns, never
 	// backfills or drops, so old revisions keep working with "" everywhere.
 	// Kind = registered record kind ("code_review", "finding", ...); Class =
@@ -158,7 +158,7 @@ func turnIDFromContext(ctx context.Context) string {
 
 // artifactMetaContextKey mirrors turnIDContextKey: carries kind/class/lineage
 // onto a Save through ctx, since ADK's SaveRequest has no room for them
-// either (#1090 P2). Set only by SaveWithMeta.
+// either . Set only by SaveWithMeta.
 type artifactMetaContextKey struct{}
 
 type artifactMeta struct {
@@ -277,7 +277,7 @@ func (w *TurnAwareService) ListForSession(ctx context.Context, appName, userID, 
 var _ sessionArtifactLister = (*gormArtifactService)(nil)
 
 // nameArtifactLister is implemented by gormArtifactService; not by
-// artifact.InMemoryService(). Adversarial-review follow-up (#1094): the
+// artifact.InMemoryService(). Adversarial-review follow-up : the
 // artifacts REST API's revisions endpoint used to reuse ListForSession and
 // filter client-side, pulling every artifact + revision in the chat to find
 // one name - this is the narrower query the same WHERE clause supports.
@@ -316,7 +316,7 @@ type ArtifactRevision struct {
 	Size      int64     `json:"size"`
 	TurnID    string    `json:"turn_id,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
-	// Kind/Class/Lineage (#1090 P2 columns): zero-value for a pre-#1090 row.
+	// Kind/Class/Lineage : zero-value for a pre-#1090 row.
 	Kind        string `json:"kind,omitempty"`
 	Class       string `json:"class,omitempty"`
 	LineageJSON string `json:"-"`
@@ -345,7 +345,7 @@ func (s *gormArtifactService) RevisionsByTurn(ctx context.Context, appName, user
 // session, name) key within this process - two rounds of the same node, or
 // two nodes, writing the same id can no longer both read the same MAX and
 // have one insert silently fail the unique index (#1090 adversarial review
-// finding #3). recordstore.Client's own per-(chat,id) lock (#1107) is the
+// finding #3). recordstore.Client's own per-(chat,id) lock is the
 // primary serializer for every write that goes through recordstore; this one
 // is a defensive backstop for a caller that reaches artifact.Service
 // directly, bypassing recordstore entirely (e.g. attachments, REST reads

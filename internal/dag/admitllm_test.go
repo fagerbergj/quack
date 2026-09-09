@@ -27,7 +27,7 @@ func (f *fakeLLM) GenerateContent(ctx context.Context, req *model.LLMRequest, st
 }
 
 func drainLLM(seq iter.Seq2[*model.LLMResponse, error]) {
-	for range seq { //nolint:revive // consuming for effect
+	for range seq { //nolint:revive// consuming for effect
 	}
 }
 

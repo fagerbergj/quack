@@ -60,7 +60,7 @@ func (f *fakeLedgerStore) MaxSeq(_ context.Context, chatID string) (int64, error
 func (f *fakeLedgerStore) List(context.Context) ([]ledger.SessionRef, error) { return nil, nil }
 func (f *fakeLedgerStore) Delete(context.Context, string) error              { return nil }
 
-// TestVoteMemory_UpThenNoneRoundTrip covers epic #1255 P4: an up vote raises
+// TestVoteMemory_UpThenNoneRoundTrip covers epic P4: an up vote raises
 // upvotes/tier/own_vote, appends one memory.vote ledger entry, and voting
 // "none" (the toggle-off) removes it again.
 func TestVoteMemory_UpThenNoneRoundTrip(t *testing.T) {
@@ -126,7 +126,7 @@ func TestVoteMemory_UnknownID404(t *testing.T) {
 	}
 }
 
-// TestVoteMemory_Invalidated409 is #1265 review finding 3: voting on an
+// TestVoteMemory_Invalidated409 is review finding 3: voting on an
 // invalidated memory is a 409, checked BEFORE the ledger entry is appended -
 // no orphan memory.vote entry, no misleading 404.
 func TestVoteMemory_Invalidated409(t *testing.T) {
@@ -225,7 +225,7 @@ func TestListNodeMemories_NoLedger_Empty(t *testing.T) {
 	}
 }
 
-// TestListNodeMemories_UnknownChat404 is #1265 review finding 2: a bogus
+// TestListNodeMemories_UnknownChat404 is review finding 2: a bogus
 // chat_id must 404 (documented in openapi.yaml), not silently return an
 // empty list as if the chat existed with no memories.
 func TestListNodeMemories_UnknownChat404(t *testing.T) {
@@ -238,7 +238,7 @@ func TestListNodeMemories_UnknownChat404(t *testing.T) {
 	}
 }
 
-// TestVoteMemory_FindsMemoryPastFirstListPage is #1265 review finding 1: a
+// TestVoteMemory_FindsMemoryPastFirstListPage is review finding 1: a
 // direct GetByID lookup, not a paged List scan, so voting on a memory older
 // than one List page still finds it. Seeds DefaultListLimit+1 memories and
 // votes on the one that would land past page 0 in a newest-first list.

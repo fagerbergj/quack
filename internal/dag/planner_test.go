@@ -233,8 +233,8 @@ func TestBuildNoSynthesizerAppendedForChain(t *testing.T) {
 func TestReviewFanoutBackstop(t *testing.T) {
 	roster := []AgentInfo{{Name: "code-explorer"}, {Name: "code-reviewer"}}
 	p := NewPlanner(roster, nil, nil)
-	largeMsg := "Review PR #3.\n\nChanged files (3):\n  a.ts (+600/-0)\n  b.ts (+400/-10)\n  c.ts (+50/-5)\n" // churn 1065 > 800
-	smallMsg := "Review PR #7.\n\nChanged files (1):\n  a.ts (+100/-20)\n"                                    // churn 120
+	largeMsg := "Review PR #3.\n\nChanged files (3):\n a.ts (+600/-0)\n b.ts (+400/-10)\n c.ts (+50/-5)\n" // churn 1065 > 800
+	smallMsg := "Review PR #7.\n\nChanged files (1):\n a.ts (+100/-20)\n"                                  // churn 120
 
 	if _, err := p.Build(context.Background(), []RawNode{{ID: "r", Agent: "code-reviewer", Task: "Review the PR and post."}}, nil, nil, nil, largeMsg, nil, nil); err == nil {
 		t.Error("a lone code-reviewer for a large PR must be rejected (fan out expected)")
@@ -267,7 +267,7 @@ func TestReviewFanoutBackstopInertWhenJudgePresent(t *testing.T) {
 	judge, _, _, _ := fakePlanJudge(true, "", nil)
 	p := NewPlanner(roster, nil, judge)
 	largeMsg := "Verify commit 8e50447 resolves the blocking finding; a scoped re-check of those three threads only.\n\n" +
-		"Changed files (3):\n  a.ts (+600/-0)\n  b.ts (+400/-10)\n  c.ts (+50/-5)\n" // churn 1065 > 800
+		"Changed files (3):\n a.ts (+600/-0)\n b.ts (+400/-10)\n c.ts (+50/-5)\n" // churn 1065 > 800
 
 	if _, err := p.Build(context.Background(), []RawNode{
 		{ID: "r", Agent: "code-reviewer", Task: "Verify commit 8e50447 resolves the blocking finding; re-check the three named threads only."},

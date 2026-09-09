@@ -40,7 +40,7 @@ func (c echoToolConsolidator) GenerateContent(_ context.Context, _ *model.LLMReq
 	}
 }
 
-// TestNewRecallMemory_LogsLedgerEntryWithCoords covers epic #1255 P2's native-
+// TestNewRecallMemory_LogsLedgerEntryWithCoords covers epic P2's native-
 // worker verification: a call appends one memory.recall ledger entry with
 // source "tool" and the coords ledger.StampCoords restamped onto the tool
 // after Build (dag/graph.go), not the zero value.

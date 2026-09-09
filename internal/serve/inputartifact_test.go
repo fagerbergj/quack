@@ -69,7 +69,7 @@ func TestWriteExtInputArtifactChangedNewRevision(t *testing.T) {
 }
 
 // TestReadArtifactNeedsBytesPrefix pins the cross-repo contract the docs
-// describe (PR #1110 review): the pinned github v0.8.1 manifest renders a
+// describe (PR review): the pinned github v0.8.1 manifest renders a
 // bare local name ("comments"), but read_artifact (internal/acp/memorymcp.go)
 // does an exact FileName match against what WriteArtifact actually stored -
 // "bytes:<name>". A worker must prefix the manifest's id before calling

@@ -547,7 +547,7 @@ func gitignoreDirPatterns(dir string) (bare, anchored map[string]bool) {
 			// A repo that ignores then un-ignores the same name (e.g.
 			// "node_modules" + "!node_modules") is NOT actually ignoring it -
 			// granting RW here would let a malicious .gitignore trick the
-			// sandbox into writing over tracked content (#1321 review).
+			// sandbox into writing over tracked content .
 			delete(target, p)
 			continue
 		}
@@ -598,7 +598,7 @@ func buildDirGrants(work string, configured []string) []string {
 		// Same escape via a plain regular file: a repo can track a file
 		// named e.g. "node_modules" (gitignore doesn't untrack it), and
 		// PrecreateBuildDirs' MkdirAll on it fails non-fatally while the
-		// RW grant still applies to that tracked file path (#1321 review).
+		// RW grant still applies to that tracked file path .
 		if fi, err := os.Lstat(filepath.Join(work, rel)); err == nil && (fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir()) {
 			return
 		}
@@ -621,7 +621,7 @@ func buildDirGrants(work string, configured []string) []string {
 		// but never a build dir: in a linked worktree it's the gitdir
 		// pointer file, and in a shared clone it's the whole metadata
 		// directory other worktrees link to - granting RW to either is
-		// pure exposure with no build-output purpose (#1321 review).
+		// pure exposure with no build-output purpose .
 		if name == ".git" {
 			continue
 		}

@@ -104,7 +104,7 @@ func TestSplitArgv(t *testing.T) {
 }
 
 func TestSplitArgvErrors(t *testing.T) {
-	for _, s := range []string{"", "   ", `unterminated "quote`, `trailing\`} {
+	for _, s := range []string{"", " ", `unterminated "quote`, `trailing\`} {
 		if _, err := SplitArgv(s); err == nil {
 			t.Errorf("SplitArgv(%q): want error", s)
 		}

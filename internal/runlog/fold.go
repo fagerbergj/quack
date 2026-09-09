@@ -1,5 +1,5 @@
 // This file is runlog's read of the ledger fold (V4 §4.9/#1101, watermarks
-// #1144 P3). The SSE table (store.ChatEvent, written by EventLog.Append)
+// P3). The SSE table (store.ChatEvent, written by EventLog.Append)
 // stays the source of truth for a live run's exact payloads - tokens,
 // output, model - which the skinny node.* WAL entries (and judge_round's
 // artifact.revision entry) never carried. The fold only backs TWO paths that
@@ -25,7 +25,7 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// sseProjection names the "sse" row in projection_watermarks (#1144 P3).
+// sseProjection names the "sse" row in projection_watermarks .
 const sseProjection = "sse"
 
 // WithLedger arms l's fold fallback and returns l. store may be nil (no
@@ -40,7 +40,7 @@ func (l *EventLog) WithLedger(store ledger.LedgerStore) *EventLog {
 // Last-Event-ID yet (fromSeq == 0) and a WAL armed - a reconstruction from
 // the ledger fold, folded incrementally from the "sse" projection's
 // watermark and written back to the table in the SAME transaction as the
-// watermark advance (#1144 P3), so a client that resumes twice in a row
+// watermark advance , so a client that resumes twice in a row
 // never gets the same synthesized rows re-inserted.
 //
 // The table's Seq and the ledger's Seq are two DIFFERENT numbering spaces
@@ -75,7 +75,7 @@ func (l *EventLog) LoadEvents(ctx context.Context, chatID string, fromSeq int64)
 // current watermark, synthesizes the new lifecycle rows, inserts them, and
 // advances the watermark to the fold's LastSeq - all in one transaction, so
 // a crash between the rows and the watermark can never leave the projection
-// ahead of what it actually wrote (#1144 P3). Returns the newly synthesized
+// ahead of what it actually wrote . Returns the newly synthesized
 // rows (for the resume response) and the new watermark.
 func (l *EventLog) foldSSEFromWatermark(ctx context.Context, chatID string) ([]store.ChatEvent, int64, error) {
 	watermark, err := l.store.GetProjectionWatermark(ctx, chatID, sseProjection)
@@ -166,7 +166,7 @@ func SynthesizeChatEvents(chatID string, res *fold.Result) []store.ChatEvent {
 // IsLifecycleEvent reports whether name is one this package can synthesize
 // from the fold - node_start/node_done/node_failed only. Everything else
 // (agent_token, agent_thinking, dag_plan, ...) is observational and has no
-// WAL source (#1121 - rebuild must never treat those as candidates at all).
+// WAL source .
 func IsLifecycleEvent(name string) bool {
 	switch name {
 	case stream.EventNodeStart, stream.EventNodeDone, stream.EventNodeFailed:

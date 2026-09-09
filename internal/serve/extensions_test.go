@@ -45,7 +45,7 @@ func TestSdkRecoverAdapterForwardsAndMapsOutcome(t *testing.T) {
 
 // fakeDeliverer captures the sdk.DeliveryContext it receives so the test can
 // assert sdkDeliverAdapter forwarded the fields quack's own DeliveryContext
-// set (#1158 PushError, #1093 IdempotencyKey).
+// set .
 type fakeDeliverer struct{ got extsdk.DeliveryContext }
 
 func (f *fakeDeliverer) Deliver(ctx context.Context, dc extsdk.DeliveryContext) ([]extsdk.DeliveryItemOutcome, error) {
@@ -162,7 +162,7 @@ func TestBuildDeliveryRecoverer_FirstInSortedOrderWins(t *testing.T) {
 
 // TestExtChatUserUnknownChatReturnsNotOK proves the sdk contract (ok=false
 // for an unknown chatID) instead of extChatUser's prior fallback to the
-// id-shape default with ok=true (#1225 footgun).
+// id-shape default with ok=true .
 func TestExtChatUserUnknownChatReturnsNotOK(t *testing.T) {
 	st, _, _, _, _ := newExtTestStack(t)
 	chatUser := extChatUser(st)

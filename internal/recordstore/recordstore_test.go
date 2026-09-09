@@ -17,7 +17,7 @@ import (
 )
 
 // fakeLedger is a minimal, in-memory ledger.LedgerStore double for the WAL
-// hook tests (#1100): AppendIntent allocates a gapless per-chat seq exactly
+// hook tests : AppendIntent allocates a gapless per-chat seq exactly
 // like PGStore's real transaction, and failNext forces the next AppendIntent
 // to fail closed without touching the entry log.
 type fakeLedger struct {
@@ -41,7 +41,7 @@ func (f *fakeLedger) MaxSeq(_ context.Context, chatID string) (int64, error) {
 }
 
 // AppendIntent enforces the same (chat_id, key, parent_revision) and
-// idempotency_key uniqueness the real stores do (#1144 P4), so a test using
+// idempotency_key uniqueness the real stores do , so a test using
 // fakeLedger exercises saveAt's retry/no-op paths the same way MemStore or
 // PGStore would.
 func (f *fakeLedger) AppendIntent(_ context.Context, e ledger.Entry) (int64, error) {
@@ -202,7 +202,7 @@ func TestSaveStructuredRoundTrip(t *testing.T) {
 	if err != nil || !ok || gotRev != 1 {
 		t.Fatalf("LatestWithMeta: raw=%s rev=%d ok=%v err=%v", raw, gotRev, ok, err)
 	}
-	// InMemoryService has no row to persist lineage on (#1090 known ceiling) -
+	// InMemoryService has no row to persist lineage on -
 	// zero value, not an error.
 	if lineage.NodeID != "" {
 		t.Fatalf("expected zero lineage over InMemoryService, got %+v", lineage)
@@ -424,7 +424,7 @@ func TestEditRejectsSchemaInvalidResult(t *testing.T) {
 	}
 }
 
-// TestEditRejectsNegativeBaseRevision covers #1091 adversarial review
+// TestEditRejectsNegativeBaseRevision covers adversarial review
 // suggestion #3: base_revision was accepted but never validated.
 func TestEditRejectsNegativeBaseRevision(t *testing.T) {
 	ctx := context.Background()
@@ -438,7 +438,7 @@ func TestEditRejectsNegativeBaseRevision(t *testing.T) {
 	}
 }
 
-// TestEditRejectsBaseRevisionAboveLatest covers #1091 adversarial review
+// TestEditRejectsBaseRevisionAboveLatest covers adversarial review
 // suggestion #3: a base_revision greater than the actual latest revision is
 // nonsensical (it names a revision that doesn't exist yet) and must error
 // rather than silently proceeding.
@@ -457,7 +457,7 @@ func TestEditRejectsBaseRevisionAboveLatest(t *testing.T) {
 	}
 }
 
-// TestEditRecordsBaseRevisionInLineage covers #1091 adversarial review
+// TestEditRecordsBaseRevisionInLineage covers adversarial review
 // suggestion #3: base_revision is no longer silently dropped - it lands in
 // the written revision's lineage, distinct from parent_revision (the real
 // latest the merge targeted) whenever the two differ (a merge, not a direct apply).
@@ -568,7 +568,7 @@ func TestWALAppendFailureBlocksRowWrite(t *testing.T) {
 }
 
 // TestWALParentRevisionReadFromLedger is V4 §7's parent_revision contract
-// (#1090 §4.9): the second save's parent_revision must come from the
+// : the second save's parent_revision must come from the
 // ledger's own artifact.revision entry, not be recomputed by the caller.
 func TestWALParentRevisionReadFromLedger(t *testing.T) {
 	svc := artifact.InMemoryService()
@@ -619,7 +619,7 @@ func TestWALParentRevisionReadFromLedger(t *testing.T) {
 
 // TestNoLedgerConfiguredUnchanged is V4 §7's "with no ledger, nothing
 // changes" requirement: WithLedger never called, save behaves exactly as
-// before #1100 (no error, no ledger dependency).
+// before (no error, no ledger dependency).
 func TestNoLedgerConfiguredUnchanged(t *testing.T) {
 	c := newTestClient(t)
 	ctx := context.Background()
@@ -808,8 +808,8 @@ func (s *failOnceSaveService) Save(ctx context.Context, req *artifact.SaveReques
 	return s.Service.Save(ctx, req)
 }
 
-// TestSaveRowFailureAfterAppendSelfHeals is #1144 P4's cheap fix for the
-// #1100 wedge case: a saveRow failure right after a successful WAL append
+// TestSaveRowFailureAfterAppendSelfHeals is P4's cheap fix for the
+// wedge case: a saveRow failure right after a successful WAL append
 // leaves that parent claimed with no row - the store-level unique index
 // replaces the old best-effort (and losable) artifact.revision.aborted
 // marker, and instead of self-healing via a compensating entry, a PLAIN
@@ -883,7 +883,7 @@ func TestSaveRetryAfterPartialSave_CompletesOrphanedDuplicate(t *testing.T) {
 // (Adversarial review of #1330: folding parentRev straight into
 // idempotencyKey broke this - A's retry recomputed its key against the NEW
 // tip and silently landed a fresh revision past content it never saw,
-// re-opening the #1237 hole. claimAndSave/revertKey restore this without
+// re-opening the hole. claimAndSave/revertKey restore this without
 // reintroducing finding 2's revert bug - see TestRevertGetsNewRevision.)
 func TestSaveRetryAfterPartialSave_ForeignAdoptionFailsClosed(t *testing.T) {
 	svc := &failOnceSaveService{Service: artifact.InMemoryService(), failCall: 1}
@@ -938,7 +938,7 @@ func TestRegisterPanicsOnInvalidJSONSchema(t *testing.T) {
 	})
 }
 
-// TestRegisterPanicsOnEmptySchemaForStructuredKind: #1108 L1 - an empty
+// TestRegisterPanicsOnEmptySchemaForStructuredKind: L1 - an empty
 // JSONSchema on a structured kind used to pass Register (the "" guard was
 // meant for blob kinds, which have no schema), then made MCP silently skip
 // the write_<kind> tool while ADK hard-failed the whole run for the same
@@ -961,8 +961,8 @@ func TestRegisterPanicsOnEmptySchemaForStructuredKind(t *testing.T) {
 }
 
 // TestGateVsEditNoSilentOverwrite replaces TestEditVsGateSaveSerializes
-// (#1108 finding 1). idLocks used to block a gate save until Edit's in-flight
-// write finished; #1144 P4 deletes that lock in favor of the ledger's unique
+// . idLocks used to block a gate save until Edit's in-flight
+// write finished; P4 deletes that lock in favor of the ledger's unique
 // (chat_id, key, parent_revision) index - a gate save that targets the SAME
 // parent Edit is about to write no longer blocks, but it also can never
 // silently overwrite Edit's result: exactly one of the two claims wins that

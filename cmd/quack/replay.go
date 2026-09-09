@@ -34,17 +34,17 @@ func newReplayCmd() *cobra.Command {
 			"recording no longer matches once its output diverges) go LIVE against\n" +
 			"the real provider configured in your quack.yaml instead.\n\n" +
 			"Which mode verifies which fix:\n" +
-			"  replay-strict (no --fork-from)   verifies a DETERMINISTIC-CODE fix -\n" +
-			"                                    the recording should still match\n" +
-			"                                    call-for-call; a miss fails loudly.\n" +
+			"  replay-strict (no --fork-from) verifies a DETERMINISTIC-CODE fix -\n" +
+			" the recording should still match\n" +
+			" call-for-call; a miss fails loudly.\n" +
 			"  fork-replay (--fork-from <node>) verifies a PROMPT/PLAN fix - the\n" +
-			"                                    changed node needs a REAL model call\n" +
-			"                                    to judge its new behavior (a prompt\n" +
-			"                                    edit alone rarely changes the call\n" +
-			"                                    sequence, so strict replay would\n" +
-			"                                    never naturally diverge there) -\n" +
-			"                                    requires a live provider configured\n" +
-			"                                    locally.\n\n" +
+			" changed node needs a REAL model call\n" +
+			" to judge its new behavior (a prompt\n" +
+			" edit alone rarely changes the call\n" +
+			" sequence, so strict replay would\n" +
+			" never naturally diverge there) -\n" +
+			" requires a live provider configured\n" +
+			" locally.\n\n" +
 			"<chat-id-or-bundle.zip> is either a local bundle file (dropped in\n" +
 			"testdata/, or downloaded via `quack api GET .../recording`) or a chat\n" +
 			"id - fetched from --server (default: the active registered server)'s\n" +

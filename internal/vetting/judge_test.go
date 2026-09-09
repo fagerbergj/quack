@@ -1379,7 +1379,7 @@ func TestCommitHygieneEvidenceSection(t *testing.T) {
 }
 
 // garbledThenSubmitsJudge answers with unparseable plain text on its first
-// turn (the #1235 attempt-2 shape: analysis complete, submission wrong), then
+// turn (the attempt-2 shape: analysis complete, submission wrong), then
 // calls submit_verdict once nudged.
 type garbledThenSubmitsJudge struct{ calls int32 }
 
@@ -1584,7 +1584,7 @@ func reqHasInlineData(req *model.LLMRequest) bool {
 // a non-transient error, then answers unparseable text twice (round 2's own
 // turn + its in-session nudge) before finally submitting on the outer
 // fresh-session retry - recording whether InlineData ever reappeared on any
-// call after the strip fired (#1229 follow-up).
+// call after the strip fired .
 type imagePersistsAfterStripJudge struct {
 	calls              int32
 	mu                 sync.Mutex

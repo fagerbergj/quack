@@ -103,7 +103,7 @@ func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service, a
 
 	// otelhttp extracts the client's traceparent header so the request ctx's
 	// span (see clientNamed's transport) continues the caller's trace instead
-	// of rooting a fresh one (#1046).
+	// of rooting a fresh one .
 	go func() { _ = http.Serve(listener, otelhttp.NewHandler(mux, "a2a.invoke")) }()
 
 	return &A2AServer{Card: card, listener: listener}, nil
@@ -217,7 +217,7 @@ func WorkerSessionUser(contextID string) string { return "A2A_USER_" + contextID
 // clientNamed builds a remote agent for this server under the given local name.
 func (s *A2AServer) clientNamed(name, contextID string) (adkagent.Agent, error) {
 	// otelhttp injects the caller's traceparent header so the per-node A2A
-	// server's handler continues this trace instead of starting a new one (#1046).
+	// server's handler continues this trace instead of starting a new one .
 	factory := a2aclient.NewFactory(
 		a2aclient.WithJSONRPCTransport(&http.Client{Transport: httpx.NewTransport(otelhttp.NewTransport(nil))}),
 	)

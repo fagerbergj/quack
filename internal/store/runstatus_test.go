@@ -149,7 +149,7 @@ func TestDeriveTerminalStatus_TrueSilentGapStaysUntouched(t *testing.T) {
 }
 
 // TestDeriveTerminalStatus_FailedNodeWithSilentGapSentinelReportsNoError is
-// #1109 review finding 2: a failed node whose Error is exactly
+// review finding 2: a failed node whose Error is exactly
 // dag.SilentGapError (the true #568 silent gap, persisted on the DagNode row
 // regardless) must still hand back nodeError == "" - that sentinel is not a
 // real cause to surface downstream as if it were.

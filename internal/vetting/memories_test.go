@@ -35,7 +35,7 @@ func newMemoryStoreForVoteTest(t *testing.T) *memory.Store {
 	return s
 }
 
-// TestApplyMemoryVotesOnPass_SupportedAndContradicted covers epic #1255 P1's
+// TestApplyMemoryVotesOnPass_SupportedAndContradicted covers epic P1's
 // core verification: two recalled memories, one supported and one
 // contradicted, yield +1/-1 and a memory.vote ledger entry each, and the
 // supported one's tier flips to verified.

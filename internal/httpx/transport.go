@@ -61,12 +61,12 @@ type transport struct {
 // NewTransport wraps next (http.DefaultTransport if nil) with a method-aware
 // retry policy:
 //
-//   - GET/HEAD (or any request marked via WithIdempotent) retry on connection
-//     errors, timeouts, 429, and 5xx.
-//   - Every other method retries only on errors that prove the request never
-//     reached the server (connection refused, DNS failure) - never on a
-//     mid-flight timeout or a 5xx response, since either could mean the
-//     server already processed it.
+// - GET/HEAD (or any request marked via WithIdempotent) retry on connection
+// errors, timeouts, 429, and 5xx.
+// - Every other method retries only on errors that prove the request never
+// reached the server (connection refused, DNS failure) - never on a
+// mid-flight timeout or a 5xx response, since either could mean the
+// server already processed it.
 //
 // Retry-After is honoured when present. Attempts are bounded.
 func NewTransport(next http.RoundTripper, opts ...Option) http.RoundTripper {

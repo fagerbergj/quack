@@ -178,7 +178,7 @@ func summarize(a *cli.InitAnswers, feats *[]string) string {
 		feat = strings.Join(*feats, ", ")
 	}
 	s := fmt.Sprintf(
-		"endpoint   %s\nmain       %s\njudge      %s\nembed      %s\nsession    %s\nfeatures   %s",
+		"endpoint %s\nmain %s\njudge %s\nembed %s\nsession %s\nfeatures %s",
 		a.Endpoint, a.MainModel, noneLabel(a.JudgeModel), noneLabel(a.EmbedModel), a.SessionKind, feat,
 	)
 	if slices.Contains(*feats, "coding") {
@@ -186,7 +186,7 @@ func summarize(a *cli.InitAnswers, feats *[]string) string {
 		if coder == "" {
 			coder = a.MainModel + " (main)"
 		}
-		s += fmt.Sprintf("\ncoder      %s\nsandbox    %s", coder, a.Sandbox)
+		s += fmt.Sprintf("\ncoder %s\nsandbox %s", coder, a.Sandbox)
 	}
 	return s
 }

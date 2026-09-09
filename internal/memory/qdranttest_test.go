@@ -22,7 +22,7 @@ import (
 // (fresh collections per test give isolation - a container per test would make
 // this package the slowest thing in the suite) and returns its gRPC address.
 // Skips (not fails) when Docker isn't reachable, matching the ledger's
-// postgres container tests (#1237, internal/ledger/pgstore_test.go).
+// postgres container tests .
 var (
 	qdrantAddrOnce sync.Once
 	qdrantAddr     string
@@ -38,7 +38,7 @@ func qdrantTestAddr(t *testing.T) string {
 		// Pinned to match prod's server exactly (v1.19.1) - a too-old server
 		// (was v1.12.4) sends the legacy VectorOutput.Data wire shape and
 		// can't catch a client that only reads the new Dense oneof arm, or
-		// vice versa (#1269/#1268). Raise the container's nofile ulimit above
+		// vice versa . Raise the container's nofile ulimit above
 		// Docker's 1024 default: RocksDB opens several file handles per
 		// collection, and this suite creates one collection per converted
 		// test on a single shared container.
@@ -200,7 +200,7 @@ func testID(name string) string {
 
 // forEachBackend runs run against a fresh Store on both the sqlite and qdrant
 // indexes, as a subtest per backend - the shared Store logic (votes, tiers,
-// absorption, rescope, forgetting, recall) is index-agnostic and #1268 wants it
+// absorption, rescope, forgetting, recall) is index-agnostic and wants it
 // proved against both, not just the always-on sqlite path.
 func forEachBackend(t *testing.T, run func(t *testing.T, newStore func(domain string, consolidator model.LLM) *Store)) {
 	t.Helper()

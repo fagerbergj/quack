@@ -60,7 +60,7 @@ func parseFindingLines(body string) []ReviewComment {
 }
 
 // parseAnswerReview: extracts verdict + findings from reviewer answer. Falls back to comment-review.
-// Widened (#1006) to also read DISMISSED:/CLEAN: sections; kept for existing
+// Widened to also read DISMISSED:/CLEAN: sections; kept for existing
 // callers as a (event, comments, ok) view onto ParseAnswerReviewSections.
 func parseAnswerReview(answer string) (event string, comments []ReviewComment, ok bool) {
 	r := ParseAnswerReviewSections(answer)

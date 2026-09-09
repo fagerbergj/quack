@@ -159,7 +159,7 @@ func graphNodeNameFromPath(path string, known map[string]bool) string {
 func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userID, chatID string, content *genai.Content, yield func(stream.SSEEvent, error) bool, nodeOutputs map[string]string, resumeNodes []string) (paused bool, err error) {
 	// Empty resumeNodes = fresh run; setup runs once, never on resume. Same
 	// signal clears any review fan-in left by a previous aborted run of this
-	// plan ID (#1040) - a resume/retry must NOT reset it, since a peer
+	// plan ID - a resume/retry must NOT reset it, since a peer
 	// reviewer already staged is not a descendant and never re-runs.
 	if len(resumeNodes) == 0 {
 		// Cleared first: a push landing mid-clone must stay flagged. A resume
@@ -176,7 +176,7 @@ func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userI
 	source := ledger.CoordsFromContext(ctx).Source
 	// sink travels the same way as source above, for the same reason: grabbed
 	// here while ctx is still live, then carried as a plain value past the
-	// point workflow.RunNode stops propagating it (#1185 follow-up).
+	// point workflow.RunNode stops propagating it .
 	sink, _ := stream.YieldFromContext(ctx)
 	gateNodes, _, err := buildGateNodes(plan, e.agents, e.models, e.judge, e.cfgFor, e.mediaAgents, e.controls, chatID, userID, source,
 		func(nodeID string, score float64, passed bool, rounds int) {
@@ -192,7 +192,7 @@ func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userI
 		return false, err
 	}
 	// e.maxActive is a host-resource ceiling (jail/clone CPU+RAM), not the GPU
-	// limiter - the Admission ledger inside each gate node (#1007) is the real one.
+	// limiter - the Admission ledger inside each gate node is the real one.
 	wf, err := workflow.New(planWrapperName, edges, workflow.WithMaxConcurrency(e.maxActive))
 	if err != nil {
 		return false, fmt.Errorf("dag: plan graph: %w", err)

@@ -2,7 +2,7 @@
 // edit_artifact, write_artifact and write_<kind> through the REAL loopback
 // MCP call path (registered on an actual mcp.Server, invoked as a tool call -
 // not the Go functions directly), mirroring read_artifact_test.go's pattern
-// (#1091 adversarial review finding #2).
+// .
 package acp
 
 import (
@@ -242,7 +242,7 @@ func TestEditArtifactMCP_DirectApply(t *testing.T) {
 // TestEditArtifactMCP_OldTextNewTextAlias: an ACP worker primed on the MCP
 // filesystem-server's edit_file convention sends oldText/newText instead of
 // this tool's own old/new - both spellings must apply the edit, so a worker
-// guessing the wrong one never burns a redundant round trip (#1278 enumeration).
+// guessing the wrong one never burns a redundant round trip .
 func TestEditArtifactMCP_OldTextNewTextAlias(t *testing.T) {
 	ctx := context.Background()
 	secret := mustMemSecret(t)
@@ -387,7 +387,7 @@ func TestEditArtifactMCP_ConflictReturnsCurrent(t *testing.T) {
 		t.Fatalf("CallTool edit_artifact: %v", err)
 	}
 	// A conflict is an expected, actionable outcome for the calling agent, not
-	// a tool failure - success carrying structured conflict data (#1108 finding 3).
+	// a tool failure - success carrying structured conflict data .
 	if res.IsError {
 		t.Fatalf("a non-matching Old is a conflict, not a tool error: %s", toolResultText(t, res))
 	}
@@ -515,7 +515,7 @@ func TestEditArtifactMCP_RecordsToolWritten(t *testing.T) {
 }
 
 // TestWriteArtifactDescription_ListsBlobKinds: the write_artifact tool
-// description must name every registered blob kind (#1108 B1 - Kinds() used
+// description must name every registered blob kind used
 // to return structured kinds only, so this list silently rendered empty).
 func TestWriteArtifactDescription_ListsBlobKinds(t *testing.T) {
 	desc := writeArtifactDescription()
@@ -573,7 +573,7 @@ func TestWriteCodeReviewMCP_UsesSessionSubjectHint(t *testing.T) {
 // TestWriteArtifactMCP_HintRequiringKind: write_artifact with a hint-requiring
 // blob kind ("document") must succeed by deriving its hint from the session,
 // exactly like write_code_review - the same root cause as finding 1
-// (#1108 finding 2).
+// .
 func TestWriteArtifactMCP_HintRequiringKind(t *testing.T) {
 	ctx := context.Background()
 	secret := mustMemSecret(t)

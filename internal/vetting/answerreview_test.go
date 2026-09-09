@@ -185,7 +185,7 @@ func TestParseAnswerReviewSections(t *testing.T) {
 }
 
 // A DISMISSED: line must not bleed into FINDINGS when sections are present -
-// today's unscoped regex would absorb it as a live finding (#1006 ceiling).
+// today's unscoped regex would absorb it as a live finding .
 func TestParseAnswerReviewSections_DismissedNotAbsorbedIntoFindings(t *testing.T) {
 	r := ParseAnswerReviewSections(sectionedReviewAnswer)
 	for _, f := range r.Findings {

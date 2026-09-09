@@ -195,7 +195,7 @@ func invalidateMemory(ctx context.Context, stores []*memory.Store, id, reason st
 	return memory.ErrMemoryNotFound
 }
 
-// SweepMemories runs the forgetting-rule sweep (epic #1255 P3) on demand
+// SweepMemories runs the forgetting-rule sweep (epic P3) on demand
 // against every configured store - the same Store.ForgetSweep the nightly
 // consolidation job calls, so there is exactly one sweep code path.
 func (h *Handler) SweepMemories(w http.ResponseWriter, r *http.Request) {
@@ -303,7 +303,7 @@ func sweepReportWire(storeName string, report memory.ForgettingReport) schema.Sw
 }
 
 // RescopeMemories moves role:* memories whose provenance chat has a GitHub
-// origin into that repo's bucket (#1262). dry run by default; apply:true in
+// origin into that repo's bucket . dry run by default; apply:true in
 // the body writes the change and audits it.
 func (h *Handler) RescopeMemories(w http.ResponseWriter, r *http.Request) {
 	var body schema.RescopeMemoriesBody
@@ -369,11 +369,11 @@ func (h *Handler) chatRepo(ctx context.Context, chatID string) (string, bool) {
 }
 
 // defaultStatsWeeks is `GET /api/v1/memories/stats`'s weeks default when the
-// query param is omitted (epic #1255 P5) - a quarter's worth at a glance.
+// query param is omitted (epic P5) - a quarter's worth at a glance.
 const defaultStatsWeeks = 12
 
 // GetMemoryStats serves weekly recall precision/support-share/vote/recall
-// counts plus a live/invalidated snapshot per scope (epic #1255 P5),
+// counts plus a live/invalidated snapshot per scope (epic P5),
 // computed from every chat's ledger (memory.recall/memory.vote entries) and
 // memory_ops - no new tables. Weeks with no ledger/memory_ops activity yet
 // still appear, zeroed, so the caller can chart a continuous series.
@@ -605,7 +605,7 @@ func (h *Handler) VoteMemory(w http.ResponseWriter, r *http.Request, memoryID sc
 		errMsg(w, http.StatusNotFound, "not found")
 		return
 	}
-	// Validated BEFORE the ledger entry is appended (#1265 review finding 3):
+	// Validated BEFORE the ledger entry is appended :
 	// an invalidated memory gets neither an orphan memory.vote entry nor a
 	// misleading "not found" - a clear 409 instead.
 	if m.Status == string(memory.StatusInvalidated) {
@@ -669,7 +669,7 @@ func humanLedgerVote(vote string) ledger.MemoryVote {
 
 // findMemoryByID tries each store's direct GetByID in turn (correct
 // regardless of how many memories exist or which List page id would land
-// on - #1265 review finding 1) and returns the first hit, including an
+// on - review finding 1) and returns the first hit, including an
 // invalidated point so the caller can decide what that means for its
 // purpose. Returns a nil store, zero Memory if none of the stores has it.
 func findMemoryByID(ctx context.Context, stores []*memory.Store, id string) (*memory.Store, memory.Memory, error) {
@@ -686,7 +686,7 @@ func findMemoryByID(ctx context.Context, stores []*memory.Store, id string) (*me
 }
 
 // ListNodeMemories folds one node's memory.recall/memory.vote ledger entries
-// into its received-memories set (epic #1255 P4), enriched with each
+// into its received-memories set (epic P4), enriched with each
 // memory's current content/tier from the store (the ledger entries carry
 // only id+score, not the point's live fields) and the human's own vote.
 func (h *Handler) ListNodeMemories(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
@@ -744,7 +744,7 @@ func (h *Handler) ListNodeMemories(w http.ResponseWriter, r *http.Request, chatI
 		return
 	}
 
-	// Direct per-id lookup (#1265 review finding 1), not a bulk List+scan -
+	// Direct per-id lookup , not a bulk List+scan -
 	// correct regardless of corpus size, unlike paging through List looking
 	// for a match. include-invalidated: an old memory that was later
 	// invalidated should still render its content/tier here.

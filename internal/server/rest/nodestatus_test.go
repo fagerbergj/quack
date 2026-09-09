@@ -91,7 +91,7 @@ func mustCreateChat(t *testing.T, h *Handler) string {
 func seedPlan(t *testing.T, h *Handler, chatID, planID, nodeID string) {
 	t.Helper()
 	ctx := context.Background()
-	// chat_turns/dag_plans now FK to chats.id (#1296) - upsert a bare row so
+	// chat_turns/dag_plans now FK to chats.id - upsert a bare row so
 	// callers can keep using a literal chatID instead of mustCreateChat's UUID.
 	if err := h.store.SetChatOrigin(ctx, chatID, "", ""); err != nil {
 		t.Fatalf("seed chat: %v", err)

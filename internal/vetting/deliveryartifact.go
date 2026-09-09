@@ -1,6 +1,6 @@
 // deliveryartifact.go: renders a round's delivery from the durable
 // code_review/finding/pr_body records instead of the worker's own staged
-// text (#1093, P6/P10 of the artifact-model epic #1090). commitDelivery
+// text . commitDelivery
 // calls this on every final round, passed or failed - a code_review/document
 // revision is written every round (saveEpisodicRound), so the posted content
 // and the recorded delivered_revision are always the same thing, even on a
@@ -90,7 +90,7 @@ func renderReviewFromArtifact(ctx context.Context, cfg Config, nodeID string) (S
 			resolvedIDs = append(resolvedIDs, fid)
 		case !firstDelivery && f.State == "unchanged":
 			// Carried over: referenced by id, not re-posted as a fresh inline
-			// comment (#1093 case 8) - still anchored so GitHub keeps it live.
+			// comment - still anchored so GitHub keeps it live.
 			carriedIDs = append(carriedIDs, fid)
 			comments = append(comments, ReviewComment{Path: f.Path, Line: f.LineHint,
 				Body: fmt.Sprintf("(carried over, unchanged since a previous review - %s) %s: %s", fid, f.Title, f.Rationale)})
@@ -130,7 +130,7 @@ func renderReviewFromArtifact(ctx context.Context, cfg Config, nodeID string) (S
 // onto the worker's staged PR item (branch/omitted-flag bookkeeping the
 // worker already set stays; only Title/Body come from the record). false
 // when no pr_body record exists yet (no writer produces this kind as of
-// #1093 - #1095 scope; this stays a no-op fallback until one does).
+// - scope; this stays a no-op fallback until one does).
 func renderPRBodyFromArtifact(ctx context.Context, cfg Config, nodeID string, staged StagedDelivery) (StagedDelivery, bool) {
 	c := recordClient(cfg)
 	if c == nil {

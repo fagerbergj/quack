@@ -94,7 +94,7 @@ func NewPGStore(db *gorm.DB) (*PGStore, error) {
 }
 
 // ensureParentRevisionIndex adds the unique (chat_id, key, parent_revision)
-// index (#1144 P4). A migrated/restored database isn't provably free of
+// index . A migrated/restored database isn't provably free of
 // pre-index duplicates, so this checks first and refuses to start rather
 // than create a broken index or leave the guarantee silently unenforced.
 func ensureParentRevisionIndex(db *gorm.DB) error {
@@ -134,7 +134,7 @@ func ensureParentRevisionIndex(db *gorm.DB) error {
 	if len(dupes) > 0 {
 		d := dupes[0]
 		return fmt.Errorf("ledger: %d+ (chat_id,key,parent_revision) duplicate group(s) in ledger_entries "+
-			"(e.g. chat=%q key=%q parent_revision=%d x%d) - the #1144 P4 unique index can't be created until "+
+			"(e.g. chat=%q key=%q parent_revision=%d x%d) - the P4 unique index can't be created until "+
 			"these are resolved manually; refusing to start with the guarantee silently unenforced",
 			len(dupes), d.ChatID, d.Key, d.ParentRevision, d.Cnt)
 	}
@@ -147,7 +147,7 @@ func ensureParentRevisionIndex(db *gorm.DB) error {
 // internal/store.NewArtifactService - the ledger store is meant to point at
 // the same database, but is wired independently of internal/store. Uses
 // pgdial.Open so this dialector gets the same dial retry as every other one
-// (#1200 review: this was a fourth postgres dialector missed by the first pass).
+// .
 func NewPGStoreFromURL(url string) (*PGStore, error) {
 	gormCfg := &gorm.Config{Logger: logger.New(
 		slog.NewLogLogger(slog.Default().Handler(), slog.LevelWarn),
@@ -204,7 +204,7 @@ func (s *PGStore) appendRow(ctx context.Context, row pgEntry) (int64, error) {
 	return seq, nil
 }
 
-// AppendIntent is the fail-closed WAL path (#1144 P4): a non-nil error means
+// AppendIntent is the fail-closed WAL path : a non-nil error means
 // no row was written, including the typed ErrStaleParent/DuplicateIntentError.
 func (s *PGStore) AppendIntent(ctx context.Context, e Entry) (int64, error) {
 	if e.ChatID == "" || e.Kind == "" {

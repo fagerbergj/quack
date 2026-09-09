@@ -41,7 +41,7 @@ func (s *Store) PruneMemoryOps(ctx context.Context, cutoff time.Time) (int, erro
 }
 
 // ListMemoryOps returns every memory_ops row at or after since, oldest
-// first - `quack memory stats`' (epic #1255 P5) source for weekly
+// first - `quack memory stats`' (epic P5) source for weekly
 // minted/invalidated counts. One shared audit table across every configured
 // memory backend, so this is a single query regardless of how many stores.
 func (s *Store) ListMemoryOps(ctx context.Context, since time.Time) ([]MemoryOp, error) {

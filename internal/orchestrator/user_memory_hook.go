@@ -18,7 +18,7 @@ import (
 )
 
 // userMemoryPreFilter: cheap gate on whether a message might state a
-// preference. Narrowed to preference-shaped phrases (#1283 audit finding 9):
+// preference. Narrowed to preference-shaped phrases :
 // bare never/always/instead of/don't fired on 26.1% of a 2,389-paragraph
 // technical-prose corpus (this repo's commit messages) - four keywords alone
 // were 91% of those hits. This alternation measured 0.3% on the same corpus

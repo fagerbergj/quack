@@ -557,7 +557,7 @@ func TestQueuedMsg_MarshalKeepsLegacyDeliveredForRollback(t *testing.T) {
 	}
 }
 
-// TestCancelNode_FiresRegisteredRoundAbort (#1030): CancelNode must reach a
+// TestCancelNode_FiresRegisteredRoundAbort : CancelNode must reach a
 // round already mid-flight via the abort func an ACP round registers with
 // SetNodeRoundAbort, not just the cancelled flag - that flag alone is
 // invisible to acp.Agent.round until the round returns on its own.

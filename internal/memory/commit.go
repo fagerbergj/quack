@@ -168,7 +168,7 @@ type neighbour struct {
 	ValidFrom          string
 	ReinforcementCount int
 
-	// Vote/lineage fields (epic #1255 P5): carried forward by apply()'s
+	// Vote/lineage fields (epic P5): carried forward by apply()'s
 	// UPDATE path so a consolidation merge never wipes accumulated votes -
 	// they used to be dropped on every UPDATE (a latent bug this phase
 	// fixes as a prerequisite for absorption inheriting anything real).
@@ -197,7 +197,7 @@ type op struct {
 const maxProbeRunes = 2000
 
 // maxCandidatesPerCommit bounds how many staged candidates one node commit
-// (one judge-pass/gate call, issue #1269 item 3) can mint. Ranking them isn't
+// (one judge-pass/gate call, issue item 3) can mint. Ranking them isn't
 // free - it would cost an extra LLM call - so this simply keeps the caller's
 // own priority order (stage_memory's earliest calls survive) rather than
 // asking the consolidation model to pick.
@@ -466,7 +466,7 @@ func (s *Store) apply(ctx context.Context, bucket, author string, prov Provenanc
 			if reason == "" {
 				reason = "invalidated by consolidator"
 			}
-			// Epic #1255 P5: a DELETE naming its survivor ("duplicate of <id>")
+			// Epic P5: a DELETE naming its survivor ("duplicate of <id>")
 			// is a merge, not a bare invalidation - the survivor inherits
 			// absorbed's votes/lineage. Falls through to a plain invalidate if
 			// the named survivor doesn't actually exist (hallucinated id).

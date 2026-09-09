@@ -70,7 +70,7 @@ type Node struct {
 	Checks        []string
 	Workdir       string
 	ContextWindow int
-	// Artifact: episodic record name this node writes on gate pass (#1006).
+	// Artifact: episodic record name this node writes on gate pass .
 	Artifact string
 }
 

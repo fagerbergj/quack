@@ -369,7 +369,7 @@ func TestBuildTurnDAGAnswerBubble(t *testing.T) {
 
 // TestBuildTurnDAGCarriesArtifact: a node's declared output artifact kind
 // persists in the DAG's PlanJSON and must surface on the reloaded turn's
-// quack:dag output item (#1178) - absent when the node declares none.
+// quack:dag output item - absent when the node declares none.
 func TestBuildTurnDAGCarriesArtifact(t *testing.T) {
 	planJSON := `{"nodes":[{"id":"explore","agent":"code-explorer","task":"read","depends_on":[],"artifact":"text"},{"id":"post","agent":"code-reviewer","task":"review","depends_on":["explore"]}],"edges":[{"from":"explore","to":"post"}]}`
 	tc := store.TurnContent{
@@ -484,7 +484,7 @@ func TestUpdateChat_EmptyTitle400(t *testing.T) {
 		t.Fatalf("CreateChat: %v", err)
 	}
 
-	blank := "   "
+	blank := " "
 	rec := patchUpdateChat(t, h, c.ID, schema.UpdateChatBody{Title: &blank})
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())

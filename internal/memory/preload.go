@@ -183,7 +183,7 @@ func (s *Store) Recall(ctx context.Context, sc Scope, query string) string {
 
 // Delivered is one memory handed to a worker - the received-set entry the
 // judge is asked to vote on and the ledger's memory.recall entry records.
-// JSON tags let it double as recall_memory's tool-visible output (#1255 P2):
+// JSON tags let it double as recall_memory's tool-visible output :
 // a compact id/tier/score/content list the model can cite by id.
 type Delivered struct {
 	ID      string  `json:"id"`
@@ -194,7 +194,7 @@ type Delivered struct {
 
 // RecallWithHits is Recall plus the delivered set (ids/content/score) so a
 // caller can log usage (ledger memory.recall) and hand the same set to the
-// judge for voting (epic #1255 P1). hits is nil, not empty, when nothing
+// judge for voting (epic P1). hits is nil, not empty, when nothing
 // was delivered.
 func (s *Store) RecallWithHits(ctx context.Context, sc Scope, query string) (text string, hits []Delivered) {
 	if s == nil {
@@ -210,7 +210,7 @@ func (s *Store) RecallWithHits(ctx context.Context, sc Scope, query string) (tex
 	}
 	// scoredHits is the same order/length as resp.Memories (recall's own
 	// invariant) - zip them so the real cosine score reaches the ledger's
-	// memory.recall entry instead of always recording 0 (#1257 review).
+	// memory.recall entry instead of always recording 0 .
 	hits = make([]Delivered, 0, len(resp.Memories))
 	for i, m := range resp.Memories {
 		d := Delivered{ID: m.ID, Content: extractText(m), Tier: TierUnverified}
@@ -226,7 +226,7 @@ func (s *Store) RecallWithHits(ctx context.Context, sc Scope, query string) (tex
 }
 
 // TopK is the store's configured recall size - the ceiling recall_memory's
-// own k argument is capped against (epic #1255 P2), so a tool caller can
+// own k argument is capped against (epic P2), so a tool caller can
 // narrow a recall but never widen it past what prefill itself is allowed.
 func (s *Store) TopK() int {
 	if s == nil {
@@ -274,7 +274,7 @@ func (s *Store) RecallForTool(ctx context.Context, sc Scope, query string, k int
 
 // FormatForModel renders recall_memory's result as the tool's return text -
 // the compact id/tier/score/content list the model can cite by id, plus a
-// truncation notice when InjectionByteBudget dropped hits (epic #1255 P2).
+// truncation notice when InjectionByteBudget dropped hits (epic P2).
 func FormatForModel(hits []Delivered, truncated bool) string {
 	if len(hits) == 0 {
 		return "(no relevant memory found)"
@@ -321,7 +321,7 @@ func (s *Store) LogRecall(ctx context.Context, led ledger.LedgerStore, chatID, n
 
 // RecordRecall bumps recalls and last_recalled_at for every id in one
 // batched write - the usage-tracking half of a recall delivery (design
-// decision #1255 P1). Best-effort like Recall itself: a failure is logged,
+// decision P1). Best-effort like Recall itself: a failure is logged,
 // never returned, so usage tracking can never fail or slow a node. Does NOT
 // write a memory_ops row - the ledger's memory.recall entry (appended by the
 // caller) is the audit trail for what a chat retrieved; this only updates

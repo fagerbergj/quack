@@ -42,7 +42,7 @@ const OutcomeReasonClosedUnmerged = "subject closed unmerged"
 
 // ApplyOutcome applies o to every id in ids that isn't already invalidated
 // (sticky: nothing revives an invalidated memory, and invalidating twice is
-// idempotent). ids is the chat's RECALLED set (epic #1255 P1: reinforcement
+// idempotent). ids is the chat's RECALLED set (epic P1: reinforcement
 // is recall-based, not birth-based) - the caller folds the chat's ledger for
 // memory.recall entries and passes their ids; minting still sets provenance,
 // but no longer drives what gets reinforced/invalidated. Returns the count
@@ -140,7 +140,7 @@ const (
 )
 
 // SetHumanVote casts or clears the single human deployment's own vote on id
-// (epic #1255 P4). Unlike ApplyVotes (judge, additive-only), this is
+// (epic P4). Unlike ApplyVotes (judge, additive-only), this is
 // idempotent under repeated identical calls and reversible: voting the same
 // direction twice is a no-op, voting the opposite direction flips it, and
 // "none" removes whatever the caller's prior vote was - the point's stored
@@ -201,7 +201,7 @@ func computeHumanVoteDelta(upvotes, downvotes int, tier, oldVote, newVote, now s
 	return d
 }
 
-// TierUnverified/TierVerified: a memory's vote-based tier (epic #1255 P1),
+// TierUnverified/TierVerified: a memory's vote-based tier (epic P1),
 // independent of Status (which tracks invalidation, not votes). Verified is
 // sticky once reached - a downvote can invalidate via net score, but never
 // demotes a memory back to unverified.
@@ -248,7 +248,7 @@ func computeVoteDelta(upvotes, downvotes int, tier, now string, v Vote, invalida
 }
 
 // reinforcedVoteScore is the one shared computation both backends' outcome
-// reinforce path calls for the new vote_score - a bug (#1257 review) had
+// reinforce path calls for the new vote_score - a bug had
 // qdrant recompute this from upvotes/downvotes while sqlite incremented its
 // own stored vote_score by 1, diverging once a memory carried any
 // downvotes. Both backends now call this instead of deriving it locally, so

@@ -254,7 +254,7 @@ func TestSandboxBlocksWritesOutsideTheJail(t *testing.T) {
 
 // TestChildArgvBwrapGrantsExtraROReadOnly is a pure argv-assembly check (no
 // bwrap install needed): Caps.ExtraRO (skill paths the node needs to read,
-// per serve.go - no longer a GitHub context dir, #1010 deleted that use)
+// per serve.go - no longer a GitHub context dir, deleted that use)
 // lands as a read-only bwrap bind.
 func TestChildArgvBwrapGrantsExtraROReadOnly(t *testing.T) {
 	dir := t.TempDir()

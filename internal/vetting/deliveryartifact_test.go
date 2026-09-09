@@ -111,7 +111,7 @@ func TestCommitDelivery_FallsBackToStagedTextWithoutArtifact(t *testing.T) {
 	}
 }
 
-// #1093 case 8: a second delivered revision renders unchanged findings as a
+// case 8: a second delivered revision renders unchanged findings as a
 // carried-over reference, not a duplicate full comment, and adds a second
 // delivery_record entry.
 func TestCommitDelivery_SecondRevisionCarriesOverUnchangedFindings(t *testing.T) {
@@ -156,7 +156,7 @@ func TestCommitDelivery_SecondRevisionCarriesOverUnchangedFindings(t *testing.T)
 	}
 }
 
-// #1093 finding 1: the DeliveryContext passed to Deliver must carry the
+// finding 1: the DeliveryContext passed to Deliver must carry the
 // target artifact id + revision as IdempotencyKey, so the extension can
 // embed it for later recovery.
 func TestCommitDelivery_SetsIdempotencyKey(t *testing.T) {
@@ -180,7 +180,7 @@ func TestCommitDelivery_SetsIdempotencyKey(t *testing.T) {
 	}
 }
 
-// #1093 finding 2: a judge-FAIL final round still renders and posts from the
+// finding 2: a judge-FAIL final round still renders and posts from the
 // artifact (design V4 §4.5 "draft PR on gate fail"), and the delivery_record
 // carries gate_passed=false against the SAME revision that got posted.
 func TestCommitDelivery_GateFailStillRendersAndRecordsGatePassedFalse(t *testing.T) {

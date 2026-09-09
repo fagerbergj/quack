@@ -85,9 +85,9 @@ func (s *onceFailingListService) List(ctx context.Context, req *artifact.ListReq
 
 // TestFailSoftListArtifacts_LoadBounded proves load_artifacts (the ADK-native
 // read path) degrades an oversized artifact to a text notice instead of
-// dumping it into model context unbounded (#1006 item 7) - the same
+// dumping it into model context unbounded - the same
 // artifactref.InlineMaxBytes cap read_artifact (ACP, internal/acp/memorymcp.go)
-// already enforces - and, per #1225, returns no error: ADK's loadartifactstool
+// already enforces - and, per, returns no error: ADK's loadartifactstool
 // runs every requested name in one errgroup, so one bad Load must not cancel
 // its siblings and fail the whole turn.
 func TestFailSoftListArtifacts_LoadBounded(t *testing.T) {

@@ -142,7 +142,7 @@ func (rejectThenSilentModel) GenerateContent(_ context.Context, req *model.LLMRe
 	return rejectedPlanModel{}.GenerateContent(context.Background(), req, s)
 }
 
-// TestPlanRejection_DoesNotLeakIntoALaterSilentGap is the #1181 review's
+// TestPlanRejection_DoesNotLeakIntoALaterSilentGap is the review's
 // suggestion: an earlier turn's rejection must not outlive it - a later,
 // unrelated turn on the SAME chat that genuinely produces nothing (no plan
 // call at all) must derive a true silent gap (idle, no error), not get

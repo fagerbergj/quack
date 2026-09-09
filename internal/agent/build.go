@@ -71,7 +71,7 @@ func build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, m
 
 // steerCallback delivers a message queued against a RUNNING node on the round's
 // next model call. Without it a steer waits for the next gate boundary, which
-// for a long native round is minutes away or never (#1029).
+// for a long native round is minutes away or never .
 func steerCallback(drain func() string) llmagent.BeforeModelCallback {
 	// Peeked text stays pending until the gate drains it, so without this the
 	// same steer would be re-injected on every model call of the round.

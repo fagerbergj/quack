@@ -13,12 +13,12 @@ import (
 )
 
 // ErrStaleParent: another entry already claimed (chat_id, key,
-// parent_revision) - the store-level index that replaced idLocks (#1144 P4).
+// parent_revision) - the store-level index that replaced idLocks .
 // Nothing was written; the caller rereads the real latest and retries.
 var ErrStaleParent = errors.New("ledger: parent revision already claimed")
 
 // DuplicateIntentError: entry.IdempotencyKey already exists for this chat
-// (#1144 P4) - nothing was written; Existing is the entry that won, and the
+// - nothing was written; Existing is the entry that won, and the
 // caller treats this as a no-op rather than an error to surface.
 type DuplicateIntentError struct{ Existing Entry }
 

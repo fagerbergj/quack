@@ -627,7 +627,7 @@ func (m echoProbeModel) calls() []string {
 // groups (1, only the second dispatch's) by raw slice index: turn[0] (the
 // bound-plan turn) stole turn 2's group, and turn[1] - the actual re-review -
 // read back empty. Both dispatches carry ResetHistory:true, matching every
-// production repro (#1182/#1188/#1190) and the QA fixture path.
+// production repro and the QA fixture path.
 func TestSDKExtensionRedispatchAfterBoundPlanKeepsAskOnBothTurns(t *testing.T) {
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {

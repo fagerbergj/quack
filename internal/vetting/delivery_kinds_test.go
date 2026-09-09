@@ -42,7 +42,7 @@ func TestCommitDeliveryRefusesUngrantedReview(t *testing.T) {
 	}
 }
 
-// TestCommitDeliveryRefusesReviewWithNoVerdict is #1198 part C: a staged
+// TestCommitDeliveryRefusesReviewWithNoVerdict is part C: a staged
 // review with an empty Event (findings/comments but no approve/
 // request_changes/comment) must never reach cfg.Deliver - GitHub has no
 // "no verdict" review, and posting one anyway is the markers-only bug.

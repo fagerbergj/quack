@@ -207,7 +207,7 @@ func TestHubUnregisterRun(t *testing.T) {
 	}
 }
 
-// TestHubEndRun_StaleResponseIDDoesNotWipeNewerRun pins the #1342 review
+// TestHubEndRun_StaleResponseIDDoesNotWipeNewerRun pins the review
 // finding: if a new turn registers its own run handle for a chat after an
 // old run's tail already called cancelRun() but before that old run's
 // EndRun executes, the stale EndRun must not delete the NEW run's handle or

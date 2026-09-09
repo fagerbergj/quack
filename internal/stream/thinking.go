@@ -12,11 +12,11 @@ const (
 
 // StripThinking removes a model's reasoning block from text that should hold
 // only the final answer. Two leak shapes:
-//   - Closed: "<think>…</think>answer" (or a bare leading "</think>answer") -
-//     drop up to and including the first </think>.
-//   - UNCLOSED: "<think>…" with no </think> (budget hit, or stream ended
-//     mid-think) - everything from <think> on is reasoning, so drop it all;
-//     requiring a closing tag would leak the whole block.
+// - Closed: "<think>…</think>answer" (or a bare leading "</think>answer") -
+// drop up to and including the first </think>.
+// - UNCLOSED: "<think>…" with no </think> (budget hit, or stream ended
+// mid-think) - everything from <think> on is reasoning, so drop it all;
+// requiring a closing tag would leak the whole block.
 //
 // No markers ⇒ returned unchanged. An entirely-unclosed answer becomes ""
 // - callers treat that as "no answer" and recover.

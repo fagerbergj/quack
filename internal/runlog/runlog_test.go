@@ -135,7 +135,7 @@ func TestPersistNodeEventCopiesAllTokenFields(t *testing.T) {
 }
 
 // A genuine iter.Seq2 range loop, not a fake counting yield: proves Drive's
-// recover holds against real rangefunc poisoning (#1016), which a plain
+// recover holds against real rangefunc poisoning , which a plain
 // closure test cannot exercise (see orchestrator's TestSafeYieldConcurrent*).
 //
 // Mirrors orchestrator.newSafeYield: recovers a real loop-body panic (Drive's

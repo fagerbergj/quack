@@ -168,7 +168,7 @@ func TestCrawl4AIMarkdownFitFallsBackToRaw(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		// fit pruned everything; raw still has the body.
 		io.WriteString(w, `{"success":true,"results":[{"success":true,"markdown":{`+
-			`"fit_markdown":"   ","raw_markdown":"raw body text"}}]}`)
+			`"fit_markdown":" ","raw_markdown":"raw body text"}}]}`)
 	}))
 	defer srv.Close()
 
@@ -300,8 +300,8 @@ func TestSearchWebParsesResults(t *testing.T) {
 			t.Errorf("expected q=golang, got %q", r.URL.Query().Get("q"))
 		}
 		io.WriteString(w, `{"results":[
-			{"title":"A","url":"http://a","content":"snippet a"},
-			{"title":"B","url":"http://b","content":"snippet b"}
+ {"title":"A","url":"http://a","content":"snippet a"},
+ {"title":"B","url":"http://b","content":"snippet b"}
 		]}`)
 	}))
 	defer srv.Close()
@@ -322,8 +322,8 @@ func TestSearchWebParsesResults(t *testing.T) {
 func TestSearchWebSurfacesRateLimit(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"results":[],"unresponsive_engines":[
-			["brave","Too many requests"],
-			["google","timeout"]
+ ["brave","Too many requests"],
+ ["google","timeout"]
 		]}`)
 	}))
 	defer srv.Close()
@@ -342,7 +342,7 @@ func TestSearchWebSurfacesRateLimit(t *testing.T) {
 func TestSearchWebPartialResultsNote(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"results":[
-			{"title":"A","url":"http://a","content":"snippet a"}
+ {"title":"A","url":"http://a","content":"snippet a"}
 		],"unresponsive_engines":[["brave","Too many requests"]]}`)
 	}))
 	defer srv.Close()
@@ -380,7 +380,7 @@ func TestSummarizeText(t *testing.T) {
 	if got != "a short summary" {
 		t.Errorf("summarizeText = %q, want the model's non-thought text", got)
 	}
-	if _, err := summarizeText(context.Background(), stubModel{out: "x"}, "   ", ""); err == nil {
+	if _, err := summarizeText(context.Background(), stubModel{out: "x"}, " ", ""); err == nil {
 		t.Error("summarizeText(empty) should error")
 	}
 }

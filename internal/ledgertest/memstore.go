@@ -26,7 +26,7 @@ var (
 
 func NewMemStore() *MemStore { return &MemStore{entries: map[string][]ledger.Entry{}} }
 
-// AppendIntent enforces the same two constraints PGStore does (#1144 P4) by
+// AppendIntent enforces the same two constraints PGStore does by
 // scanning this chat's entries - fine for a test-only store.
 func (s *MemStore) AppendIntent(_ context.Context, e ledger.Entry) (int64, error) {
 	if e.ChatID == "" || e.Kind == "" {

@@ -15,8 +15,8 @@ import (
 // of round 1's bytes as a common prefix - the fraction the reorder measured
 // at 91.7% on the audit's synthetic task, comfortably above the pre-fix 7.8%.
 func TestJudgePromptSharedPrefixAcrossRounds(t *testing.T) {
-	task := "Review pull request #1304 and post inline findings."
-	question := questionContent("Review PR #1304 in fagerbergj/quack")
+	task := "Review pull request and post inline findings."
+	question := questionContent("Review PR in fagerbergj/quack")
 	rubric := strings.Repeat("criterion: grounding - every claim about this repo must be verified by reading it.\n", 40)
 	constitution := strings.Repeat("Be precise. Do not fabricate.\n", 10)
 	diff := "Changed files under review (diff of the clone):\n" + synthReviewTask()

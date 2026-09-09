@@ -308,7 +308,7 @@ func TestRunGatedRefine_StampsJudgeModelWithRoundCoords(t *testing.T) {
 	}
 	// #1096: the judge round's llm.call entries must carry the worker's
 	// bundle hash too - a judge round with an empty bundle_hash is exactly
-	// the gap the adversarial review on #1278 flagged.
+	// the gap the adversarial review on flagged.
 	if spy.stamped.BundleHash != "bundlehash123456" {
 		t.Errorf("JudgeModel stamped BundleHash = %q, want %q", spy.stamped.BundleHash, "bundlehash123456")
 	}
@@ -781,7 +781,7 @@ func TestGatedWorkerNode_SingleRoundRevisesOnce(t *testing.T) {
 func TestRunGatedRefine_EntryClearDropsStaleFailureBeforeASilentGap(t *testing.T) {
 	// planNodeID (the RunGatedRefine nodeID param, e.g. dag/graph.go's
 	// node.ID) deliberately differs from cfg.NodeID (workspaceNodeID) - the
-	// #1109 re-review finding: they diverge for setup-plan implementer
+	// re-review finding: they diverge for setup-plan implementer
 	// nodes, and the entry-clear must key off cfg.NodeID, the recorder's own key.
 	const chatID, planNodeID, workspaceScope, agentName = "chat-1109-entryclear", "impl-1", "quack-shared-repo", "code-implementer"
 	inference.RecordCallResult(chatID, workspaceScope, agentName, errors.New("stale: previous invocation's gateway error"))
@@ -1338,7 +1338,7 @@ func TestWrapperSpans_ReportNoModel(t *testing.T) {
 
 // TestJudgePartEmitterDedupsToolCallByID: same fix as the orchestrator
 // Translator and dagStream - ACP's start+completion updates both carry the
-// FunctionCall part for one call_id (PR #1102 review finding).
+// FunctionCall part for one call_id (PR review finding).
 func TestJudgePartEmitterDedupsToolCallByID(t *testing.T) {
 	var got []stream.SSEEvent
 	emit := judgePartEmitter(func(ev stream.SSEEvent) { got = append(got, ev) }, "n1", "judge-r0")

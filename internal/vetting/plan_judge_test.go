@@ -141,7 +141,7 @@ func (m planPromptCapturingModel) GenerateContent(_ context.Context, req *model.
 	}
 }
 
-// TestNewPlanJudge_ProjectMemorySection_LoggedNotVoted covers epic #1255 P2's
+// TestNewPlanJudge_ProjectMemorySection_LoggedNotVoted covers epic P2's
 // plan-judge verification: top-k memories for the chat's scope reach the
 // prompt as a delimited section, get logged as memory.recall with source
 // "plan_judge" - and, unlike a worker round, are never voted on (no

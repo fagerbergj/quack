@@ -242,7 +242,7 @@ func TestLengthScore(t *testing.T) {
 		want float64
 	}{
 		{"", 0.0},
-		{"   \n\t ", 0.0},
+		{" \n\t ", 0.0},
 		{"a", 1.0},
 		{"a full enough answer", 1.0},
 	} {
@@ -256,7 +256,7 @@ func TestLengthScore(t *testing.T) {
 // 5: an empty answer's sufficient_length reason states both the actual
 // length and the length that would pass, not just a bare char count.
 func TestSufficientLengthReasonStatesActualAndRequired(t *testing.T) {
-	det, _ := computeDeterministicCriteria(t.Context(), "   ", workerActivity{}, Config{})
+	det, _ := computeDeterministicCriteria(t.Context(), " ", workerActivity{}, Config{})
 	c, ok := det["sufficient_length"]
 	if !ok {
 		t.Fatal("sufficient_length missing for an empty answer")

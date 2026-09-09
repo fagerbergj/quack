@@ -34,7 +34,7 @@ type Executor struct {
 	maxActive   int
 	setupFn     SetupFunc
 	artifacts   artifact.Service // ADK's own artifact tools/debug console; see SetArtifacts
-	// walLedger: the WAL's fail-closed AppendIntent path (#1090 §4.9/#1100),
+	// walLedger: the WAL's fail-closed AppendIntent path ,
 	// gated to a postgres-backed ledger only by SetWALLedger's caller - see
 	// vetting.Config.Ledger's doc. nil = no WAL.
 	walLedger ledger.LedgerStore
@@ -44,8 +44,8 @@ type Executor struct {
 	gateResults sync.Map
 }
 
-// SetAdmission wires the #1007 capacity ledger and its per-agent spec
-// resolver. Nil admission (the zero Executor) runs unbounded, same as before #1007.
+// SetAdmission wires the capacity ledger and its per-agent spec
+// resolver. Nil admission (the zero Executor) runs unbounded, same as before.
 func (e *Executor) SetAdmission(admission *Admission, specFor func(agentName string) AdmissionSpec) {
 	e.admission, e.specFor = admission, specFor
 }
@@ -63,7 +63,7 @@ func (e *Executor) SetMaxActive(n int) {
 func (e *Executor) SetArtifacts(svc artifact.Service) { e.artifacts = svc }
 
 // SetWALLedger wires the WAL's fail-closed AppendIntent path into every gate
-// node this executor builds (#1090 §4.9/#1100). Callers must pass nil unless
+// node this executor builds . Callers must pass nil unless
 // store is a postgres-backed LedgerStore - the filesystem ledger's
 // AppendIntent is best-effort/non-transactional and cannot back the WAL's
 // fail-closed guarantee (see internal/vetting Config.Ledger's doc).
@@ -103,7 +103,7 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 	// from the plan node id for implementer nodes in setup/repo-chain plans
 	// (workspace.SharedRepoScope, shared across sibling implementers). The
 	// failure lookup below must use this, not the raw plan node id, or the
-	// record the recorder wrote is never found (#1109 re-review finding).
+	// record the recorder wrote is never found .
 	scopeByID := make(map[string]string, len(plan.Nodes))
 	for _, n := range plan.Nodes {
 		agentByID[n.ID] = n.AgentName
@@ -217,9 +217,9 @@ const SilentGapError = "produced no answer"
 // emptyNodeError names a node's empty completion: a sanitized (no URL/body -
 // see inference.SanitizeGatewayError) classification when ADK's runner
 // swallowed a worker's repeated gateway errors into a silent empty output
-// (#1105), or SilentGapError when no failure was recorded for this node's
+// , or SilentGapError when no failure was recorded for this node's
 // own agent role (a judge failure on the same node id/chat is tracked
-// separately - #1109 review finding 3).
+// separately - review finding 3).
 func emptyNodeError(chatID, nodeID, agent string) string {
 	if err, streak, dur, ok := inference.LastFailure(chatID, nodeID, agent); ok && streak > 0 {
 		inference.ClearFailure(chatID, nodeID, agent)
@@ -277,12 +277,12 @@ type dagStream struct {
 	traceID string
 	// chatID: real chat scope (both NewDagStream call sites pass their
 	// cancelKey, which is always the chat id) - used to look up a
-	// gateway-failure record when a node's output comes back empty (#1105).
+	// gateway-failure record when a node's output comes back empty .
 	chatID    string
 	agentByID map[string]string
 	// scopeByID: per-node workspace scope (workspaceNodeID) - the failure
 	// tracker's real key component, distinct from the plan node id for
-	// setup/repo-chain implementer nodes (#1109 re-review finding).
+	// setup/repo-chain implementer nodes .
 	scopeByID map[string]string
 	yield     func(stream.SSEEvent, error) bool
 	outputs   map[string]string
@@ -324,7 +324,7 @@ type runUsage struct {
 	model, finish string
 	// lastAt: wall-clock time this run's most recent event was handled - the
 	// round's real finish, as opposed to closeRun's call time, which can lag
-	// behind it by an intervening judge round (#1290).
+	// behind it by an intervening judge round .
 	lastAt time.Time
 }
 

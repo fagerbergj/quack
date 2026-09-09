@@ -47,7 +47,7 @@ func (e *emitTool) SetLedgerCoords(c ledger.Coords) {
 	e.coords = c
 	e.mu.Unlock()
 	// Forward through the wrapper chain so a guard ladder nested below (not
-	// itself in StampCoords' item list) learns node identity too (#1052).
+	// itself in StampCoords' item list) learns node identity too .
 	if cs, ok := e.inner.(ledger.CoordSetter); ok {
 		cs.SetLedgerCoords(c)
 	}

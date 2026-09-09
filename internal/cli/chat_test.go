@@ -44,11 +44,11 @@ const chatDetailJSON = `{
   "id":"c1","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z",
   "system_prompt":"","title":"Greeting","status":"idle",
   "turns":[{"id":"t1","created_at":"2026-01-01T00:00:00Z",
-    "input":{"role":"user","content":"hi there"},
-    "output":[
-      {"type":"quack:dag","id":"d1","status":"completed","plan_id":"p1","nodes":[],"edges":[],"node_states":[]},
-      {"type":"message","id":"m1","status":"completed","content":[{"type":"output_text","text":"hello back"}]}
-    ]}]
+ "input":{"role":"user","content":"hi there"},
+ "output":[
+ {"type":"quack:dag","id":"d1","status":"completed","plan_id":"p1","nodes":[],"edges":[],"node_states":[]},
+ {"type":"message","id":"m1","status":"completed","content":[{"type":"output_text","text":"hello back"}]}
+ ]}]
 }`
 
 func TestRunChatList(t *testing.T) {
@@ -58,8 +58,8 @@ func TestRunChatList(t *testing.T) {
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 		io.WriteString(w, `{"data":[
-			{"id":"c1","title":"First","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-02T03:04:00Z","system_prompt":"","status":"idle"},
-			{"id":"c2","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle"}
+ {"id":"c1","title":"First","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-02T03:04:00Z","system_prompt":"","status":"idle"},
+ {"id":"c2","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle"}
 		]}`)
 	}))
 	defer srv.Close()
@@ -85,11 +85,11 @@ func TestRunChatListStatuses(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, `{"data":[
-			{"id":"c1","title":"Idle one","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle"},
-			{"id":"c2","title":"Waiting","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"needs_input","pending_question":"which region?"},
-			{"id":"c3","title":"Live","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"running"},
-			{"id":"c4","title":"Broke","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"failed"},
-			{"id":"c5","title":"Behind the cap","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"queued"}
+ {"id":"c1","title":"Idle one","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle"},
+ {"id":"c2","title":"Waiting","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"needs_input","pending_question":"which region?"},
+ {"id":"c3","title":"Live","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"running"},
+ {"id":"c4","title":"Broke","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"failed"},
+ {"id":"c5","title":"Behind the cap","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"queued"}
 		]}`)
 	}))
 	defer srv.Close()
@@ -146,8 +146,8 @@ func TestRunChatListOrigin(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, `{"data":[
-			{"id":"c1","title":"Direct","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle"},
-			{"id":"github-acme-widget-1","title":"Via issue","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle","github_url":"https://github.com/acme/widget/issues/1","github_repo":"acme/widget"}
+ {"id":"c1","title":"Direct","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle"},
+ {"id":"github-acme-widget-1","title":"Via issue","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle","github_url":"https://github.com/acme/widget/issues/1","github_repo":"acme/widget"}
 		]}`)
 	}))
 	defer srv.Close()
@@ -180,8 +180,8 @@ func TestRunChatListFilter(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, `{"data":[
-			{"id":"c1","title":"Direct","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle"},
-			{"id":"github-acme-widget-1","title":"Via issue","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle","github_url":"https://github.com/acme/widget/issues/1"}
+ {"id":"c1","title":"Direct","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle"},
+ {"id":"github-acme-widget-1","title":"Via issue","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle","github_url":"https://github.com/acme/widget/issues/1"}
 		]}`)
 	}))
 	defer srv.Close()
@@ -220,9 +220,9 @@ func TestRunChatListRef(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, `{"data":[
-			{"id":"c1","title":"Direct","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle"},
-			{"id":"github-acme-widget-249","title":"Issue chat","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle","github_url":"https://github.com/acme/widget/issues/249","github_repo":"acme/widget"},
-			{"id":"github-acme-widget-257","title":"PR chat","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle","github_url":"https://github.com/acme/widget/pull/257","github_repo":"acme/widget"}
+ {"id":"c1","title":"Direct","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle"},
+ {"id":"github-acme-widget-249","title":"Issue chat","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle","github_url":"https://github.com/acme/widget/issues/249","github_repo":"acme/widget"},
+ {"id":"github-acme-widget-257","title":"PR chat","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle","github_url":"https://github.com/acme/widget/pull/257","github_repo":"acme/widget"}
 		]}`)
 	}))
 	defer srv.Close()
@@ -259,8 +259,8 @@ func TestRunChatListStatusFilter(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, `{"data":[
-			{"id":"c1","title":"Idle","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle"},
-			{"id":"c2","title":"Running","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"running"}
+ {"id":"c1","title":"Idle","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle"},
+ {"id":"c2","title":"Running","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"running"}
 		]}`)
 	}))
 	defer srv.Close()
@@ -290,10 +290,10 @@ func TestRunChatListRepoAndTypeFilter(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, `{"data":[
-			{"id":"c1","title":"Direct","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle"},
-			{"id":"g1","title":"Widget issue","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle","github_url":"https://github.com/acme/widget/issues/1","github_repo":"acme/widget"},
-			{"id":"g2","title":"Widget PR","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle","github_url":"https://github.com/acme/widget/pull/2","github_repo":"acme/widget"},
-			{"id":"g3","title":"Other repo issue","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle","github_url":"https://github.com/acme/other/issues/3","github_repo":"acme/other"}
+ {"id":"c1","title":"Direct","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle"},
+ {"id":"g1","title":"Widget issue","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle","github_url":"https://github.com/acme/widget/issues/1","github_repo":"acme/widget"},
+ {"id":"g2","title":"Widget PR","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle","github_url":"https://github.com/acme/widget/pull/2","github_repo":"acme/widget"},
+ {"id":"g3","title":"Other repo issue","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle","github_url":"https://github.com/acme/other/issues/3","github_repo":"acme/other"}
 		]}`)
 	}))
 	defer srv.Close()

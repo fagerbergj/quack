@@ -296,7 +296,7 @@ func TestMemoryMCP_CrossNodeIsolation(t *testing.T) {
 	}
 }
 
-// TestMemoryMCP_RecallMemory_JoinsReceivedSetAndVotes covers epic #1255 P2's
+// TestMemoryMCP_RecallMemory_JoinsReceivedSetAndVotes covers epic P2's
 // core ACP verification end to end: a recall_memory call mid-run lands in the
 // node's RecallStage (the received set a live round loop reads every round -
 // see node.go's per-round merge), logs a memory.recall ledger entry with

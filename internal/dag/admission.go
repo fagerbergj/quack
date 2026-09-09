@@ -10,7 +10,7 @@ import (
 // backfill stops admitting past it (see Admission.Admit).
 const DefaultAgingThreshold = 2 * time.Minute
 
-// AdmissionSpec: one node's resolved capacity requirement (#1007). Zero
+// AdmissionSpec: one node's resolved capacity requirement . Zero
 // values mean "no limit on this dimension" - never "no capacity".
 type AdmissionSpec struct {
 	Model    string // models registry key; "" = no session/kv dimension
@@ -22,7 +22,7 @@ type AdmissionSpec struct {
 func (s AdmissionSpec) residencyKey() string { return s.Provider + "\x00" + s.Role }
 
 // waiter: a blocked Admit call. The spec is kept so aging only holds back
-// waiters that actually contend with it (#1038).
+// waiters that actually contend with it .
 type waiter struct {
 	at   time.Time
 	spec AdmissionSpec
@@ -30,7 +30,7 @@ type waiter struct {
 
 // contends: whether two waiters compete for any same dimension. Aging between
 // non-contending waiters is starvation protection nobody asked for - it stalls
-// a node while the capacity it wants sits idle (#1038).
+// a node while the capacity it wants sits idle .
 func contends(x, y AdmissionSpec) bool {
 	if x.Model != "" && x.Model == y.Model {
 		return true
@@ -44,7 +44,7 @@ func contends(x, y AdmissionSpec) bool {
 // DAG execution paths (rundag.go and nativegraph.go both run through
 // newGatedNode, so wiring Admit/Release there covers both). It replaces
 // dag.max_active_runs/max_active_nodes as the GPU concurrency limiter -
-// see the #1007 "Settled design" issue comment.
+// see the "Settled design" issue comment.
 //
 // No library composes this: x/sync/semaphore deliberately refuses to
 // backfill, and one semaphore per dimension deadlocks across dimensions.
@@ -138,7 +138,7 @@ func (a *Admission) Admit(ctx context.Context, spec AdmissionSpec, onQueued func
 		fits := (a.oldestContendingSeqLocked(spec) == mySeq || !a.agingActiveLocked(spec)) && a.fits(spec)
 		if fits {
 			// Never reserve on a dead ctx, even if capacity happens to be free -
-			// cancelled work must not proceed, no matter how it got here (#1016).
+			// cancelled work must not proceed, no matter how it got here .
 			if ctx.Err() != nil {
 				return false
 			}

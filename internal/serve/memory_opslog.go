@@ -33,7 +33,7 @@ func startConsolidationSweep(ctx context.Context, s *memory.Store, rm config.Res
 	go s.RunConsolidationSweep(ctx, schedule, rm.Consolidation.RetentionDays)
 }
 
-// wireForgettingRules applies rm's memory.forgetting.rules (epic #1255 P3),
+// wireForgettingRules applies rm's memory.forgetting.rules (epic P3),
 // or leaves the store's DefaultRules() in place when the operator configured
 // none. Expression syntax is already validated by config.Validate() at load
 // time (internal/memoryrules); SetForgettingRules re-validates defensively.

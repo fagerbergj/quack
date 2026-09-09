@@ -36,14 +36,14 @@ import (
 )
 
 // guardA2AStub drives the worker + judge for the confirm-over-A2A tests:
-//   - judge requests (submit_verdict) always pass;
-//   - once the request history carries the guarded tool's RESOLVED response
-//     (post-approval real execution), write the final answer;
-//   - a post-decision prompt saying APPROVED re-issues the delete with
-//     approvedPath (same as the original for the consume case, different for
-//     the pinning case);
-//   - a post-decision prompt saying DENIED answers without the operation;
-//   - otherwise (fresh draft) propose deleting victim.txt.
+// - judge requests (submit_verdict) always pass;
+// - once the request history carries the guarded tool's RESOLVED response
+// (post-approval real execution), write the final answer;
+// - a post-decision prompt saying APPROVED re-issues the delete with
+// approvedPath (same as the original for the consume case, different for
+// the pinning case);
+// - a post-decision prompt saying DENIED answers without the operation;
+// - otherwise (fresh draft) propose deleting victim.txt.
 type guardA2AStub struct {
 	mu           sync.Mutex
 	approvedPath string

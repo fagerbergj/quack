@@ -109,7 +109,7 @@ type verdict struct {
 	Passed   bool                      `json:"passed"`
 	Feedback string                    `json:"feedback"`
 	Findings []findingVerdict          `json:"findings,omitempty"` // per-finding verification; "contradicted" folds into findingsGroundingCriterion
-	Memories []memoryVerdict           `json:"memories,omitempty"` // per-recalled-memory vote (#1255 P1); applied only when the round passes
+	Memories []memoryVerdict           `json:"memories,omitempty"` // per-recalled-memory vote ; applied only when the round passes
 
 	// ChangedFiles* are set from changedFilesCoverage after the round, not by
 	// the model - how much of the diff the judge actually saw (#779).
@@ -122,8 +122,8 @@ type verdict struct {
 // call) forces a text-only verdict instead of silently exhausting the budget (#853). maxOutputTokens
 // caps the round's own reply tokens against a runaway generation loop; <= 0 leaves it uncapped (#889).
 // forced is set true by forcedVerdictCallback the moment it strips tools for a forced close - the
-// caller's own signal that this round already spent its last allowed turn (#1235).
-// receivedIDs (#1259): the round's recalled-memory ids, so the tool
+// caller's own signal that this round already spent its last allowed turn .
+// receivedIDs : the round's recalled-memory ids, so the tool
 // description and force-close instruction can require votes on the exact
 // set delivered this round, not a generic reminder.
 type JudgeFactory func(sink *verdict, forced *bool, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string) (adkagent.Agent, *readCounter, error)
@@ -167,7 +167,7 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 // tens of thousands looping (#889). <= 0 leaves the request uncapped.
 // thinkingLevel is opt-in via gates.judge.thinking_level ("low"/"medium"/"high");
 // "" (unset, the default) sends no ThinkingConfig at all, unchanged from before
-// #1235 - some OpenAI-compatible endpoints 400 on reasoning_effort for a
+// - some OpenAI-compatible endpoints 400 on reasoning_effort for a
 // non-reasoning model, so this must never be forced on unconditionally.
 func judgeGenConfig(maxOutputTokens int, thinkingLevel string) *genai.GenerateContentConfig {
 	var cfg *genai.GenerateContentConfig
@@ -546,7 +546,7 @@ const judgeCharsPerToken = 4 // bytes/4, same as compaction estimator
 // let prod's config (window 65536, max_output_tokens 8192) pack the prompt up
 // to window-2000 and then ask for up to 8192 reply tokens, ~6K over the slot,
 // truncating the judge mid-thought with zero tool call and an unparseable
-// empty accum (#1215 - measured a 104s single-turn stall, no verdict, no retry benefit).
+// empty accum .
 const judgeOutputReserveTokens = 2_000
 
 // defaultJudgeContextWindow: fallback when Config.JudgeContextWindow is unset (0).
@@ -656,10 +656,10 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 
 	// A non-transient failure with images attached (400 on a multimodal
 	// request a vision-blind/misbehaving judge model rejects) degrades to a
-	// text-only retry once, rather than blocking delivery outright (#1229).
+	// text-only retry once, rather than blocking delivery outright .
 	// q tracks that strip: once it fires, every later retry below must keep
 	// using the text-only content instead of re-attaching the images and
-	// re-triggering the same rejection (#1229 follow-up).
+	// re-triggering the same rejection .
 	q := question
 	if err != nil && ctx.Err() == nil && !isTransientJudgeErr(err) && hasInlineData(question) {
 		slog.Warn("judge round failed with images attached; retrying once without them",
@@ -793,7 +793,7 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	// tools for a forced close (turn budget spent, or a repeated tool call) -
 	// the round's own signal, not a re-derivation from our turn counter, which
 	// only reflects TurnComplete events already observed and can't see a
-	// forced close whose own (final, tool-less) turn is what's in flight (#1235).
+	// forced close whose own (final, tool-less) turn is what's in flight .
 	var forcedClose bool
 	judgeAgent, reads, err := factory(&sink, &forcedClose, maxIters, cfg.JudgeMaxOutputTokens, cfg.JudgeThinkingLevel, receivedIDs)
 	if err != nil {
@@ -957,7 +957,7 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 
 	// One in-session nudge before giving up: a turn that ended with text but
 	// no submit_verdict call, and that text didn't parse as a verdict, is
-	// often the analysis-complete/submission-wrong shape (#1235) rather than
+	// often the analysis-complete/submission-wrong shape rather than
 	// a stuck model - worth one direct ask before paying for a fresh session.
 	if nudgeAllowed() && strings.TrimSpace(accum.String()) != "" {
 		nudge := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: judgeSubmitNudge}}}
@@ -975,7 +975,7 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 }
 
 // judgeSubmitNudge: one-shot in-session continuation when a turn ends with
-// unparseable text and no submit_verdict call (#1235) - the analysis is often
+// unparseable text and no submit_verdict call - the analysis is often
 // already correct and only the submission mechanism was wrong.
 const judgeSubmitNudge = "You did not call submit_verdict. Call submit_verdict now with your verdict as a tool call - do not write it as text."
 
@@ -1230,7 +1230,7 @@ func buildRevisionContent(constitution string, question *genai.Content, answer s
 	sb.WriteString("Verdict:\n```json\n")
 	sb.WriteString(boundExcerpt(marshalEnvelope(env), maxFeedbackChars))
 	sb.WriteString("\n```\n\n")
-	// Notes source from the persisted judge_round record (#1092), each
+	// Notes source from the persisted judge_round record , each
 	// anchored to the exact prior-round artifact revision it concerns - so
 	// the worker can read_artifact/edit_artifact that revision directly
 	// instead of re-deriving what changed from prose alone.

@@ -29,7 +29,7 @@ type drainItem struct {
 type EventLog struct {
 	store *store.Store
 	ch    chan drainItem
-	// ledgerStore: LoadEvents' fold fallback (#1101, see fold.go). nil = no
+	// ledgerStore: LoadEvents' fold fallback . nil = no
 	// WAL; LoadEvents then behaves exactly like a direct table read.
 	ledgerStore ledger.LedgerStore
 }
@@ -271,7 +271,7 @@ func (res *DriveResult) Step(st *store.Store, chatID, turnID string, persist boo
 // be nil (a caller with no store to persist against, e.g. a test double) -
 // persistence/publish are skipped, but plan/pause/usage tracking still runs.
 func Drive(turnID string, st *store.Store, pub *Publisher, run iter.Seq2[stream.SSEEvent, error], onErr func(error)) (res DriveResult) {
-	// A recovered node-yield panic still poisons range-over-func state (#1016):
+	// A recovered node-yield panic still poisons range-over-func state :
 	// the next yield, or this loop's own exit, re-panics per Go's rangefunc
 	// contract. REST has chi's Recoverer; extension/boot drive goroutines don't.
 	defer func() {

@@ -125,7 +125,7 @@ func (h *Handler) revisionsForArtifact(r *http.Request, chatID, name string) ([]
 }
 
 // ListArtifactRevisions lists one artifact id's revisions, newest first,
-// each with lineage - the revision picker's data source (#1094).
+// each with lineage - the revision picker's data source .
 func (h *Handler) ListArtifactRevisions(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, artifactName schema.ArtifactName) {
 	if !h.requireChat(w, r, chatID) {
 		return

@@ -8,7 +8,7 @@ import (
 
 // duplicateOfRe extracts a survivor id from a DELETE op's reason shaped like
 // the consolidation prompts' own convention ("duplicate of <id>") - epic
-// #1255 P5 treats only this shape as a lineage-recording absorption; any
+// P5 treats only this shape as a lineage-recording absorption; any
 // other DELETE reason (e.g. "contradicted by newer info") is a bare
 // invalidation, unchanged from before.
 var duplicateOfRe = regexp.MustCompile(`(?i)duplicate of[:\s]+['"]?([A-Za-z0-9_-]+)['"]?`)
@@ -24,7 +24,7 @@ func parseSurvivorID(reason string) string {
 }
 
 // absorbedByReason is the fixed invalidation_reason an absorbed memory
-// carries (epic #1255 P5) - normalized, not the raw "duplicate of" text the
+// carries (epic P5) - normalized, not the raw "duplicate of" text the
 // consolidator wrote, so lineage always reads the same regardless of the
 // model's exact wording.
 func absorbedByReason(survivorID string) string { return "absorbed by " + survivorID }

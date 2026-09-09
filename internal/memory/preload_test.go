@@ -61,7 +61,7 @@ func TestStoreRecall(t *testing.T) {
 	}
 }
 
-// TestRecallWithHits_PopulatesScore covers the #1257 review finding: a
+// TestRecallWithHits_PopulatesScore covers the review finding: a
 // Delivered hit must carry the real cosine score, not the zero value every
 // memory.recall ledger entry silently recorded before recall() threaded its
 // scored points back out.
@@ -87,7 +87,7 @@ func TestRecallWithHits_PopulatesScore(t *testing.T) {
 	}
 }
 
-// TestCapForInjection_TruncatesAndReports covers epic #1255 P2's byte-budget
+// TestCapForInjection_TruncatesAndReports covers epic P2's byte-budget
 // requirement: once cumulative Content bytes exceed budget, later hits are
 // dropped and truncated is reported - not silently swallowed.
 func TestCapForInjection_TruncatesAndReports(t *testing.T) {

@@ -86,7 +86,7 @@ func (g *repeatGuard) Name() string        { return g.inner.Name() }
 func (g *repeatGuard) Description() string { return g.inner.Description() }
 func (g *repeatGuard) IsLongRunning() bool { return g.inner.IsLongRunning() }
 
-// SetLedgerCoords: pass-through wrapper, forward to inner (#1052).
+// SetLedgerCoords: pass-through wrapper, forward to inner .
 func (g *repeatGuard) SetLedgerCoords(c ledger.Coords) {
 	if cs, ok := g.inner.(ledger.CoordSetter); ok {
 		cs.SetLedgerCoords(c)

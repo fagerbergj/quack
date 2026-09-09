@@ -21,7 +21,7 @@ func marshalEnvelope(env verdictEnvelope) string {
 }
 
 // marshalNotes renders a judge_round record's notes for the revise prompt
-// (#1092) - same fallback-on-error contract as marshalEnvelope.
+// - same fallback-on-error contract as marshalEnvelope.
 func marshalNotes(notes []JudgeNote) string {
 	b, err := json.MarshalIndent(notes, "", "  ")
 	if err != nil {

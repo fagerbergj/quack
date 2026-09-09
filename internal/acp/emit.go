@@ -32,7 +32,7 @@ type teeBuffer struct {
 
 // reset clears the buffer for reuse across a pinned process's next round -
 // acp.go's round() owns one teeBuffer's worth of content per round even
-// when the underlying subprocess now spans several (#1006).
+// when the underlying subprocess now spans several .
 func (t *teeBuffer) reset() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -47,7 +47,7 @@ func (t *teeBuffer) Write(p []byte) (int, error) {
 		if room < len(p) {
 			p = p[:room]
 		}
-		t.buf.Write(p) //nolint:errcheck // bytes.Buffer.Write never errors
+		t.buf.Write(p) //nolint:errcheck// bytes.Buffer.Write never errors
 	}
 	// ALWAYS report the full original write consumed: this Writer is paired
 	// with the real transport via io.MultiWriter (stdin), which treats any

@@ -1,6 +1,6 @@
 // Judge votes on recalled memories: the worker's received set is rendered
 // for the judge (mirrors findings.go's per-finding verification), and a
-// gate-passed round's votes are applied to the memory store (epic #1255 P1).
+// gate-passed round's votes are applied to the memory store (epic P1).
 package vetting
 
 import (
@@ -44,7 +44,7 @@ func receivedMemoriesSection(received []memory.Delivered) string {
 
 // planJudgeMemoryHeader: unlike judgeMemoriesInstructions, these are NOT
 // voted on - the plan judge scores plan shape, not delivered work, so there
-// is nothing yet to check a memory against (epic #1255 P2).
+// is nothing yet to check a memory against (epic P2).
 const planJudgeMemoryHeader = "PROJECT MEMORY - background notes about this repo/task family, for context only. Do not vote on these; there is no submit_plan_verdict field for them.\n\n"
 
 // planMemorySection renders top-k memories for the plan judge's prompt -
@@ -63,7 +63,7 @@ func planMemorySection(hits []memory.Delivered) string {
 }
 
 // memoryIDs extracts ids from a received set, for the round-scoped tool
-// description, force-close instruction, and nudge text (#1259).
+// description, force-close instruction, and nudge text .
 func memoryIDs(received []memory.Delivered) []string {
 	ids := make([]string, len(received))
 	for i, m := range received {
@@ -73,7 +73,7 @@ func memoryIDs(received []memory.Delivered) []string {
 }
 
 // missingMemoryVotes reports a round that owed votes (non-empty received
-// set) but whose verdict left at least one of them unvoted (#1259). A
+// set) but whose verdict left at least one of them unvoted . A
 // partial vote (e.g. 1 of 5) used to read as "not missing" since only
 // len(v.Memories)==0 was checked - the rest silently never got a vote
 // recorded (applyMemoryVotesOnPass only applies ids present in v.Memories).
@@ -93,7 +93,7 @@ func missingMemoryVotes(receivedIDs []string, v verdict) bool {
 	return false
 }
 
-// judgeMemoriesNudgeText: one-shot in-session nudge (#1236 pattern) for a
+// judgeMemoriesNudgeText: one-shot in-session nudge for a
 // verdict that reached submit_verdict/text-JSON but voted on nothing.
 func judgeMemoriesNudgeText(receivedIDs []string) string {
 	return fmt.Sprintf("You did not vote on the recalled memories. Vote on memories %s via submit_verdict's `memories` array before finishing.", strings.Join(receivedIDs, ", "))
@@ -101,7 +101,7 @@ func judgeMemoriesNudgeText(receivedIDs []string) string {
 
 // mergeMemoryHits appends new into base, deduping by id (first occurrence
 // wins) so a memory recalled by both prefill and a recall_memory tool call
-// is voted on once, not twice (epic #1255 P2 adversarial review finding).
+// is voted on once, not twice (epic P2 adversarial review finding).
 func mergeMemoryHits(base, add []memory.Delivered) []memory.Delivered {
 	if len(add) == 0 {
 		return base
@@ -121,7 +121,7 @@ func mergeMemoryHits(base, add []memory.Delivered) []memory.Delivered {
 }
 
 // recallLedgerEntry appends a best-effort memory.recall ledger entry for one
-// injection (design decision #1255 P1: the ledger is the source of truth for
+// injection (design decision P1: the ledger is the source of truth for
 // what a chat retrieved). Best-effort, unlike memory.vote below: it records
 // a delivery that already happened, and nothing is projected from it in the
 // hot path (recalls/last_recalled_at are bumped directly by the caller,
@@ -152,7 +152,7 @@ func recallLedgerEntry(ctx context.Context, cfg Config, nodeID string, round int
 
 // applyMemoryVotesOnPass applies the round's votes to the memory store -
 // called only after the gate passes (failed rounds record nothing, per
-// #1255 P1). received scopes which ids are even eligible: a vote for an id
+// P1). received scopes which ids are even eligible: a vote for an id
 // the worker was never given is dropped rather than trusted blindly.
 //
 // memory.vote is fail-closed, same discipline as artifact.revision: the

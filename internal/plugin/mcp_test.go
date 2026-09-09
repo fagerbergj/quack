@@ -64,13 +64,13 @@ func TestLoadMCP_BadEntrySkippedOthersKept(t *testing.T) {
 	p := resolveOne(t, mcpRoot(t, `{
 		"$schema":"`+mcpSchemaID+`",
 		"mcpServers":{
-			"good":{"type":"stdio","command":"validator"},
-			"shellish":{"type":"stdio","command":"sh -c evil"},
-			"absolute":{"type":"stdio","command":"/usr/bin/evil"},
-			"reserved":{"type":"stdio","command":"v","env":{"PLUGIN_ROOT":"/etc"}},
-			"mixed":{"type":"stdio","command":"v","url":"https://x.example"},
-			"unknown":{"type":"carrier-pigeon","command":"v"},
-			"remote":{"type":"streamable-http","url":"https://x.example/mcp"}
+ "good":{"type":"stdio","command":"validator"},
+ "shellish":{"type":"stdio","command":"sh -c evil"},
+ "absolute":{"type":"stdio","command":"/usr/bin/evil"},
+ "reserved":{"type":"stdio","command":"v","env":{"PLUGIN_ROOT":"/etc"}},
+ "mixed":{"type":"stdio","command":"v","url":"https://x.example"},
+ "unknown":{"type":"carrier-pigeon","command":"v"},
+ "remote":{"type":"streamable-http","url":"https://x.example/mcp"}
 		}
 	}`))
 	if len(p.MCPServers) != 1 {

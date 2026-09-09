@@ -159,7 +159,7 @@ func TestListAndDeleteMemory_RoundTrip(t *testing.T) {
 	if s := got.Memories[0].Status; s == nil || *s != schema.MemoryStatusUnverified {
 		t.Fatalf("status before delete = %v, want unverified", s)
 	}
-	// Epic #1255 P1: a fresh memory carries the new vote fields at their zero
+	// Epic P1: a fresh memory carries the new vote fields at their zero
 	// value/default tier, not omitted or nil.
 	m0 := got.Memories[0]
 	if m0.Tier == nil || *m0.Tier != schema.MemoryTierUnverified {
@@ -342,7 +342,7 @@ func TestListMemories_MergesAndOrdersAcrossBothStores(t *testing.T) {
 	}
 }
 
-// TestListMemories_SortSpansBothStores (#1266 review): `sort` must order the
+// TestListMemories_SortSpansBothStores : `sort` must order the
 // MERGED set from both configured stores AND survive paging, not just
 // re-sort within whichever store happened to be listed first or only get
 // checked on an unpaged page 0. Timestamps are pinned via memory.SetClockForTest
@@ -425,7 +425,7 @@ func TestListMemories_InvalidPageToken400(t *testing.T) {
 	}
 }
 
-// TestListMemories_InvalidSort400 (#1266 review): an unrecognized `sort`
+// TestListMemories_InvalidSort400 : an unrecognized `sort`
 // value is a client error, matching this same handler's page_token
 // convention above - never a silent fallback to newest.
 func TestListMemories_InvalidSort400(t *testing.T) {
@@ -582,7 +582,7 @@ func TestDeleteMemory_UnknownID_404WithBothStoresConfigured(t *testing.T) {
 
 // TestGetMemoryStats_WeeklyPrecisionAndScopeSnapshot seeds a ledger vote/recall
 // and a memory_ops mint, then checks the stats endpoint reports them in the
-// current ISO week alongside a live-point scope snapshot (epic #1255 P5).
+// current ISO week alongside a live-point scope snapshot (epic P5).
 func TestGetMemoryStats_WeeklyPrecisionAndScopeSnapshot(t *testing.T) {
 	ctx := context.Background()
 	h := newTestHandler(t)
@@ -642,7 +642,7 @@ func TestGetMemoryStats_WeeklyPrecisionAndScopeSnapshot(t *testing.T) {
 	}
 }
 
-// TestSweepMemories_DedupeDryRun covers the REST wiring for issue #1269's
+// TestSweepMemories_DedupeDryRun covers the REST wiring for 's
 // on-demand dedupe endpoint: {"dedupe":true} reports clusters (fixedEmbedder
 // gives every commit the same vector, so two distinct facts are still a
 // cosine-1 "duplicate" pair) without applying anything.

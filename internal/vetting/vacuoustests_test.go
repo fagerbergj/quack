@@ -31,19 +31,19 @@ const vacuousKotlinTest = "package com.example.app\n\n" +
 	"import org.junit.Test\n" +
 	"import com.google.common.truth.Truth.assertThat\n\n" +
 	"class SettingsScreenTest {\n" +
-	"    @Test\n" +
-	"    fun `toggling BAC notification fires callback`() {\n" +
-	"        var bacCalled = false\n" +
-	"        val cb: (Boolean) -> Unit = { _ -> bacCalled = true }\n" +
-	"        cb(true)\n" +
-	"        assertThat(bacCalled).isTrue()\n" +
-	"    }\n" +
+	" @Test\n" +
+	" fun `toggling BAC notification fires callback`() {\n" +
+	" var bacCalled = false\n" +
+	" val cb: (Boolean) -> Unit = { _ -> bacCalled = true }\n" +
+	" cb(true)\n" +
+	" assertThat(bacCalled).isTrue()\n" +
+	" }\n" +
 	"}\n"
 
 const settingsScreenProd = "package com.example.app\n\n" +
 	"@Composable\n" +
 	"fun SettingsScreen(viewModel: SettingsViewModel) {\n" +
-	"    // renders settings\n" +
+	"// renders settings\n" +
 	"}\n"
 
 func TestVacuousTestsCriterion_FlagsIssue716Example(t *testing.T) {
@@ -68,11 +68,11 @@ func TestVacuousTestsCriterion_PassesLegitKotlinTest(t *testing.T) {
 		"import org.junit.Test\n" +
 		"import com.google.common.truth.Truth.assertThat\n\n" +
 		"class SettingsScreenTest {\n" +
-		"    @Test\n" +
-		"    fun `settings screen renders`() {\n" +
-		"        val screen = SettingsScreen(FakeViewModel())\n" +
-		"        assertThat(screen).isNotNull()\n" +
-		"    }\n" +
+		" @Test\n" +
+		" fun `settings screen renders`() {\n" +
+		" val screen = SettingsScreen(FakeViewModel())\n" +
+		" assertThat(screen).isNotNull()\n" +
+		" }\n" +
 		"}\n"
 	writeAndCommit(t, repo, map[string]string{"SettingsScreenTest.kt": legit})
 
@@ -290,9 +290,9 @@ func TestVacuousTestsCriterion_TypeScript(t *testing.T) {
 
 func TestVacuousTestsCriterion_Python(t *testing.T) {
 	cfg, repo := clonedRepoConfig(t, nil, map[string]string{
-		"mathutil.py": "def add(a, b):\n    return a + b\n",
+		"mathutil.py": "def add(a, b):\n return a + b\n",
 	})
-	legit := "from mathutil import add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n"
+	legit := "from mathutil import add\n\n\ndef test_add():\n assert add(1, 2) == 3\n"
 	writeAndCommit(t, repo, map[string]string{"test_mathutil.py": legit})
 
 	got, ok := vacuousTestsCriterion(cfg)
@@ -306,15 +306,15 @@ func TestVacuousTestsCriterion_Python(t *testing.T) {
 
 func TestVacuousTestsCriterion_PythonVacuous(t *testing.T) {
 	cfg, repo := clonedRepoConfig(t, nil, map[string]string{
-		"mathutil.py": "def add(a, b):\n    return a + b\n",
+		"mathutil.py": "def add(a, b):\n return a + b\n",
 	})
 	vacuous := "def test_callback():\n" +
-		"    called = False\n\n" +
-		"    def cb():\n" +
-		"        nonlocal called\n" +
-		"        called = True\n\n" +
-		"    cb()\n" +
-		"    assert called\n"
+		" called = False\n\n" +
+		" def cb():\n" +
+		" nonlocal called\n" +
+		" called = True\n\n" +
+		" cb()\n" +
+		" assert called\n"
 	writeAndCommit(t, repo, map[string]string{"test_fake.py": vacuous})
 
 	got, ok := vacuousTestsCriterion(cfg)

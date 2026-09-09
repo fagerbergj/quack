@@ -133,7 +133,7 @@ func TestUserIDValidation(t *testing.T) {
 		valid  bool
 	}{
 		{"", false},
-		{"   ", false},
+		{" ", false},
 		{".", false},
 		{"..", false},
 		{"../bob", false},

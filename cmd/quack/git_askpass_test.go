@@ -14,11 +14,11 @@ import (
 
 // TestMain mirrors main()'s dispatch so tests can exercise the REAL
 // self-exec mechanisms rather than calling their logic in-process:
-//   - __sandbox-exec (workspace.RunSandboxExecIfInvoked): the Landlock shim.
-//   - GIT_ASKPASS (isGitAskpassInvocation): symlinks the test binary under the
-//     askpass link name and execs it exactly the way git execs $GIT_ASKPASS -
-//     direct program path, prompt as the single argument, no shell. Catches
-//     an unexecutable GIT_ASKPASS value that an in-process call would miss.
+// - __sandbox-exec (workspace.RunSandboxExecIfInvoked): the Landlock shim.
+// - GIT_ASKPASS (isGitAskpassInvocation): symlinks the test binary under the
+// askpass link name and execs it exactly the way git execs $GIT_ASKPASS -
+// direct program path, prompt as the single argument, no shell. Catches
+// an unexecutable GIT_ASKPASS value that an in-process call would miss.
 func TestMain(m *testing.M) {
 	workspace.RunSandboxExecIfInvoked()
 	if isGitAskpassInvocation() {

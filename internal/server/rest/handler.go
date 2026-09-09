@@ -46,7 +46,7 @@ func (h *Handler) sessionUser(ctx context.Context, chatID string) string {
 }
 
 // titleInstruction is deliberately blunt about the failure mode it guards
-// against (#1124): a model given a genuine question as its only input will,
+// against : a model given a genuine question as its only input will,
 // left to its own judgment, sometimes just ANSWER it instead of titling it -
 // this is the prompt-side half of the fix; sanitizeTitle is the other half.
 const titleInstruction = "Generate a short chat title for the message below - do NOT answer it. " +
@@ -103,7 +103,7 @@ const fallbackTitleWords = 8
 
 // fallbackTitle derives a short title straight from what the user asked,
 // for use when the titler is unavailable/errored/empty - never from the
-// run's own answer (#1124). "" only when message itself has no words.
+// run's own answer . "" only when message itself has no words.
 func fallbackTitle(message string) string {
 	words := strings.Fields(message)
 	if len(words) > fallbackTitleWords {
@@ -623,7 +623,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 // attachmentArtifactKind is the generic blob kind (#1090 §4.3, already
 // registered by internal/vetting/reviewrecord.go) chat attachments are saved
 // under, so the artifacts API lists them with kind/class/lineage set instead
-// of null (#1126).
+// of null .
 const attachmentArtifactKind = "bytes"
 
 // attachmentHintPrefix keeps a user-uploaded attachment's id ("bytes:upload-
@@ -654,7 +654,7 @@ func (h *Handler) saveAttachment(ctx context.Context, userID, chatID, turnID, na
 
 // recoverRun keeps a panicking run from taking the process with it. All three
 // run goroutines outlive the HTTP request, so chi's Recoverer never sees them -
-// the gap that made #1033 fatal. Registered FIRST so it unwinds LAST, covering
+// the gap that made fatal. Registered FIRST so it unwinds LAST, covering
 // panics raised by the cleanup defers themselves.
 func recoverRun(chatID schema.ChatID, turnID string) {
 	if r := recover(); r != nil {
@@ -704,7 +704,7 @@ func (h *Handler) runChat(runCtx context.Context, chatID, turnID, message string
 			// Titler unavailable/errored/empty (nil model, timeout, a
 			// non-compliant response StripThinking left blank) - never leave
 			// the chat titleless forever, and never let a later fallback
-			// reach for the run's ANSWER (#1124): derive a short title from
+			// reach for the run's ANSWER : derive a short title from
 			// what the user actually asked.
 			title = fallbackTitle(message)
 			if title == "" {
@@ -807,7 +807,7 @@ func (h *Handler) loadPlanNode(w http.ResponseWriter, r *http.Request, chatID, n
 	return dp, dn, current, true
 }
 
-// queueInfo explains what a queued chat is waiting on (#1176) - keep it to
+// queueInfo explains what a queued chat is waiting on - keep it to
 // what the admission ledger already knows, no separate holder registry.
 func (h *Handler) queueInfo(status schema.ChatStatus) *string {
 	if status != schema.ChatStatusQueued {
@@ -1247,7 +1247,7 @@ func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, ch
 	// buffer and clears started, so replay is empty and active is false -
 	// there is no reachable warm/done branch past this point.
 	if len(replay) == 0 && !active {
-		// LoadEvents (#1101): the SSE table when it has rows, else - only when
+		// LoadEvents : the SSE table when it has rows, else - only when
 		// a WAL is armed - a fold-derived reconstruction.
 		evs, err := h.eventLog.LoadEvents(r.Context(), chatID, lastSeq)
 		if err != nil {
@@ -1632,7 +1632,7 @@ func (h *Handler) stampRunOutcome(parent context.Context, chatID string) {
 		if err := h.store.StampRunOutcome(ctx, chatID, store.RunStatusPaused, ""); err != nil {
 			slog.Warn("stamp run outcome: paused persist failed", "component", "rest", "chat", chatID, "err", err)
 		}
-		// #1144 P5: this is a turn end too - write it here as well, so the
+		// P5: this is a turn end too - write it here as well, so the
 		// interrupted and normal paths don't silently diverge on it.
 		if err := h.store.WriteCheckpoint(ctx, chatID); err != nil {
 			slog.Warn("checkpoint write failed", "component", "rest", "chat", chatID, "err", err)
@@ -1657,7 +1657,7 @@ func (h *Handler) stampRunOutcome(parent context.Context, chatID string) {
 	if err := h.store.StampRunOutcome(ctx, chatID, string(status), q); err != nil {
 		slog.Warn("stamp run outcome failed", "component", "rest", "chat", chatID, "err", err)
 	}
-	// #1144 P5: best-effort - see Store.WriteCheckpoint's doc.
+	// P5: best-effort - see Store.WriteCheckpoint's doc.
 	if err := h.store.WriteCheckpoint(ctx, chatID); err != nil {
 		slog.Warn("checkpoint write failed", "component", "rest", "chat", chatID, "err", err)
 	}

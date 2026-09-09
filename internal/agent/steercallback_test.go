@@ -23,7 +23,7 @@ func injectedTexts(req *model.LLMRequest) []string {
 	return out
 }
 
-// #1029 review: the drain PEEKS, so the same text stays pending across every
+// review: the drain PEEKS, so the same text stays pending across every
 // model call of a round - hence the dedupe. But keying it on the text alone
 // swallowed a REPEATED steer: a user who sends "STOP", sees nothing, and sends
 // "STOP" again got the second one dropped from the live path. An empty drain

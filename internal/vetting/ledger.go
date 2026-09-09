@@ -114,7 +114,7 @@ func buildWorkspaceSection(act workerActivity) string {
 		sb.WriteString(op.detail)
 		sb.WriteString("\n")
 		if op.sample != "" {
-			sb.WriteString("      content sample: ")
+			sb.WriteString(" content sample: ")
 			sb.WriteString(strings.ReplaceAll(op.sample, "\n", "\\n"))
 			sb.WriteString("\n")
 		}

@@ -61,7 +61,7 @@ func TestLoadBundleErrors(t *testing.T) {
 		"missing card":   {"", "prompt"},
 		"missing prompt": {`{"name":"x"}`, ""},
 		"empty name":     {`{"name":"  "}`, "prompt"},
-		"empty prompt":   {`{"name":"x"}`, "   \n  "},
+		"empty prompt":   {`{"name":"x"}`, " \n  "},
 		"bad json":       {`{not json}`, "prompt"},
 	}
 	for name, c := range cases {
@@ -74,7 +74,7 @@ func TestLoadBundleErrors(t *testing.T) {
 }
 
 // TestLoadBundleHash: stable across two loads of the same files, changes
-// when prompt.md changes (#1096 ledger provenance).
+// when prompt.md changes .
 func TestLoadBundleHash(t *testing.T) {
 	card := `{"name":"x","description":"d"}`
 	dir := writeBundle(t, card, "prompt one")

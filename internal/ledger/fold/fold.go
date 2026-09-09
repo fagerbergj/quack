@@ -1,7 +1,7 @@
 // Package fold projects a chat's ledger.Entry stream into read models (V4
 // §4.9): the artifact revision chain per id, node lifecycle state, and judge
 // rounds. This is the ONE definition of the aborted/later-entry-wins rule -
-// recordstore.lastRevision used to duplicate it inline before #1101.
+// recordstore.lastRevision used to duplicate it inline before.
 package fold
 
 import (
@@ -123,7 +123,7 @@ type Result struct {
 	JudgeRounds []JudgeRound          // seq order
 	LastSeq     int64
 
-	// MemoryRecalls/MemoryVotes (epic #1255 P1): by memory id, folded from
+	// MemoryRecalls/MemoryVotes (epic P1): by memory id, folded from
 	// memory.recall/memory.vote entries. Pure counters - unlike artifacts,
 	// nothing ever retracts a recall or a vote, so they accumulate directly
 	// into Result rather than going through the live/finalize rebuild.
@@ -145,7 +145,7 @@ type MemoryVoteState struct {
 	Downvotes     int
 	LastUpvotedAt time.Time
 	// humanVote is the LAST actor=human entry's effective direction
-	// ("up"/"down"/"" - #1265 review finding 4): a human's vote is a
+	// ("up"/"down"/"" - review finding 4): a human's vote is a
 	// toggle, not a stack of judge-style additive verdicts, so re-applying
 	// it must undo the prior contribution first. Judge entries stay purely
 	// additive and never touch this field.
@@ -153,7 +153,7 @@ type MemoryVoteState struct {
 }
 
 // applyHumanVote folds one actor=human memory.vote entry into s with
-// latest-wins semantics (#1265 review finding 4): a human's vote is a
+// latest-wins semantics : a human's vote is a
 // toggle (up -> none -> down is three entries, one live vote), not a stack
 // of judge-style verdicts. It undoes s.humanVote's prior contribution (if
 // any) before applying vote's, so up -> none -> down leaves exactly one
@@ -191,7 +191,7 @@ func applyHumanVote(s *MemoryVoteState, vote ledger.MemoryVote, at time.Time) {
 // FoldAbsorption redirects every id in r.MemoryVotes/MemoryRecalls that
 // absorbedBy (an absorbed id -> its current survivor id, built from the live
 // store's AbsorbedIDs) names onto its survivor, summing counts and taking
-// the later timestamp - epic #1255 P5: a consolidation merge that happens
+// the later timestamp - epic P5: a consolidation merge that happens
 // AFTER a vote/recall was cast must not orphan that history on an id the
 // store no longer serves. absorbedBy is resolved to its final survivor
 // (chain-safe: A absorbed by B absorbed by C resolves A and B both to C).
@@ -410,7 +410,7 @@ func finalize(res *Result, live map[revKey]ArtifactRevision) *Result {
 	for id, a := range res.Artifacts {
 		sort.Slice(a.Revisions, func(i, j int) bool { return a.Revisions[i].Revision < a.Revisions[j].Revision })
 		for _, r := range a.Revisions {
-			// judge_round has no dedicated entry kind (#1144 P2): the round
+			// judge_round has no dedicated entry kind : the round
 			// IS the artifact write, so JudgeRounds is a view over it, not a
 			// second fold input.
 			if r.Kind == judgeRoundKind {
@@ -465,21 +465,21 @@ func newResult() *Result {
 
 // Fold reads every entry for chatID from fromSeq (in seq-order pages) and
 // folds them into Result. A fromSeq=0 convenience over Apply, the one fold
-// entry point (#1144 P3) - every catch-up (SSE, artifact, node_state) reads
+// entry point - every catch-up (SSE, artifact, node_state) reads
 // from a watermark through Apply instead of its own loop.
 func Fold(ctx context.Context, store ledger.LedgerStore, chatID string, fromSeq int64) (*Result, error) {
 	return Apply(ctx, store, chatID, fromSeq-1)
 }
 
 // Apply folds only the entries newer than from (a projection's watermark),
-// instead of re-folding chatID's whole history (#1144 P3). from=-1 (via
+// instead of re-folding chatID's whole history . from=-1 (via
 // Fold's fromSeq=0) is a fresh fold of the whole chat.
 func Apply(ctx context.Context, store ledger.LedgerStore, chatID string, from int64) (*Result, error) {
 	return ApplySeeded(ctx, store, chatID, nil, from)
 }
 
 // ApplySeeded is Apply, but starting from a previously folded Result (a
-// checkpoint) instead of empty state (#1144 P5). seed nil is exactly Apply.
+// checkpoint) instead of empty state . seed nil is exactly Apply.
 // from is the caller's OWN already-known watermark, not the seed's - pass 0
 // (or -1, Fold's convention) when the seed is the only state you have, e.g.
 // internal/store.Store.WriteCheckpoint. Seeding is keyed off seed's OWN
@@ -489,13 +489,13 @@ func Apply(ctx context.Context, store ledger.LedgerStore, chatID string, from in
 // that reads a checkpoint row written by a concurrent, slightly-behind turn
 // still folds correctly, just re-processes a few more entries than the
 // freshest checkpoint would have needed (see internal/store.Checkpoint's
-// doc for where that row now lives - #1144 P5 review moved it out of the ledger).
+// doc for where that row now lives - P5 review moved it out of the ledger).
 func ApplySeeded(ctx context.Context, store ledger.LedgerStore, chatID string, seed *Result, from int64) (*Result, error) {
 	live := map[revKey]ArtifactRevision{}
 	nodes := map[string]*NodeState{}
 	res := newResult()
 	// Same "seed.LastSeq > from" gate as live/nodes above (not just seed !=
-	// nil, #1257 review): a STALE seed - one the caller's own from already
+	// nil, review): a STALE seed - one the caller's own from already
 	// supersedes - must contribute nothing, memory projections included, or
 	// a stale checkpoint's counts get seeded back in even though the caller
 	// already knows better.
@@ -545,7 +545,7 @@ func seedFold(seed *Result, live map[revKey]ArtifactRevision, nodes map[string]*
 
 // LastRevision returns id's highest materialized revision in chatID's
 // ledger, 0 if none - a diagnostic/recovery helper (recordstore's own save
-// path no longer calls this; #1144 P4 reads the artifact store's real
+// path no longer calls this; P4 reads the artifact store's real
 // latest instead - see recordstore.saveAt's doc).
 func LastRevision(ctx context.Context, store ledger.LedgerStore, chatID, id string) (int, error) {
 	entries, err := readAll(ctx, store, chatID, 0)

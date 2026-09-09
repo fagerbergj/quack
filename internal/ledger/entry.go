@@ -14,7 +14,7 @@ const (
 	// pre-P4 rows correctly.
 	KindArtifactRevisionAborted = "artifact.revision.aborted"
 	// KindDeliveryIntent's completion is a delivery_record artifact.revision,
-	// not a second ledger entry (#1144 P2 - one representation per fact).
+	// not a second ledger entry .
 	// Judge rounds likewise have no dedicated entry kind: they ARE a
 	// judge_round artifact.revision, folded via ArtifactRevision.Kind.
 	KindDeliveryIntent = "delivery.intent"
@@ -22,7 +22,7 @@ const (
 	KindNodeDone       = "node.done"
 	KindNodeFailed     = "node.failed"
 
-	// KindMemoryRecall/KindMemoryVote (epic #1255 P1): best-effort like
+	// KindMemoryRecall/KindMemoryVote (epic P1): best-effort like
 	// node.*, not fail-closed - memory recall/voting must never fail a
 	// node. The ledger is the source of truth for what a chat recalled;
 	// recalls/last_recalled_at on the point are projections folded from
@@ -31,7 +31,7 @@ const (
 	KindMemoryRecall = "memory.recall"
 	KindMemoryVote   = "memory.vote"
 
-	// #1144 P5: the remaining direct-write projections, now covered by
+	// P5: the remaining direct-write projections, now covered by
 	// fail-closed intents like every other WAL-backed write.
 	KindChatCreated = "chat.created"
 	KindTurnCreated = "turn.created"
@@ -78,7 +78,7 @@ func IsObservation(kind string) bool {
 // are the replay stream identity, stamped onto each record by the emitting
 // object (SetLedgerCoords on the traced model/tools/ACP client) - a ctx value
 // set inside a node body never crosses the RunNode scheduling boundary.
-// IdempotencyKey, when set, is unique per chat at the store level (#1144 P4):
+// IdempotencyKey, when set, is unique per chat at the store level :
 // a repeat writes nothing and returns *DuplicateIntentError instead.
 type Entry struct {
 	Seq            int64           `json:"seq"`
@@ -93,7 +93,7 @@ type Entry struct {
 	Payload        json.RawMessage `json:"payload,omitempty"`
 	IdempotencyKey string          `json:"idempotency_key,omitempty"`
 	// SchemaVersion: set by the store on write (caller input ignored, same
-	// as Seq); see EntrySchemaVersion/MigrateEntry (#1144 P5).
+	// as Seq); see EntrySchemaVersion/MigrateEntry .
 	SchemaVersion int `json:"schema_version,omitempty"`
 }
 
@@ -125,7 +125,7 @@ type LLMCallPayload struct {
 	Input              string `json:"input,omitempty"`
 	Output             string `json:"output,omitempty"`
 	Error              string `json:"error,omitempty"`
-	// QuackVersion/BundleHash/CostUSD: provenance added for #1096 - which
+	// QuackVersion/BundleHash/CostUSD: provenance added for - which
 	// build and agent bundle produced this call, and what it cost. CostUSD
 	// is a pointer so an actual $0 call (a priced model with free tokens)
 	// stays distinguishable from "no config.ModelPricing entry" (nil, key
