@@ -220,6 +220,9 @@ func NewWriteKindTool(c *recordstore.Client, nodeID, kind string, spec recordsto
 func NewWriteKindTools(c *recordstore.Client, nodeID string, coords *RoundCoords, hint string) ([]tool.Tool, error) {
 	out := make([]tool.Tool, 0, len(recordstore.Kinds()))
 	for _, spec := range recordstore.Kinds() {
+		if !spec.AgentWritable {
+			continue // gate-owned kinds (judge_round, delivery_record) are never worker tools
+		}
 		t, err := NewWriteKindTool(c, nodeID, spec.Name(), spec, coords, hint)
 		if err != nil {
 			return nil, fmt.Errorf("write_%s: %w", spec.Name(), err)

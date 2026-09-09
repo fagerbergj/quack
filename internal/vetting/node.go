@@ -829,10 +829,10 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			if strings.TrimSpace(revised) == "" {
 				// Revise round ended on a tool call with no trailing text (finalSpec
 				// answer_len 0). That's only a true no-op if the tool call didn't
-				// change what would be delivered (act unchanged, e.g. a stray
-				// search) - a stage_review_comment/edit_artifact call DOES move
-				// act, and the prior verdict never saw it, so it must be judged
-				// before delivery instead of going out un-vetted.
+				// change what would be delivered (act unchanged, e.g. a re-read of
+				// a file) - a search, stage_review_comment or edit_artifact call
+				// DOES move act, and the prior verdict never saw it, so it must be
+				// judged before delivery instead of going out un-vetted.
 				if reflect.DeepEqual(act, actFor(answer)) {
 					log.Info("revise produced no text and no new activity; keeping current verdict", "round", round)
 					break

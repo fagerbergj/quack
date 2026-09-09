@@ -198,8 +198,19 @@ func TestNewWriteKindTools_EveryKindRegistersWithoutError(t *testing.T) {
 		got[tl.Name()] = true
 	}
 	for _, spec := range recordstore.Kinds() {
+		if !spec.AgentWritable {
+			if got["write_"+spec.Name()] {
+				t.Errorf("write_%s is gate-owned and must not be a native worker tool", spec.Name())
+			}
+			continue
+		}
 		if !got["write_"+spec.Name()] {
 			t.Errorf("write_%s was not registered (a bad JSONSchema silently dropped the tool)", spec.Name())
+		}
+	}
+	for _, name := range []string{"write_judge_round", "write_delivery_record"} {
+		if got[name] {
+			t.Errorf("%s offered to a native worker", name)
 		}
 	}
 }
