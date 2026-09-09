@@ -406,6 +406,12 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		}
 	}()
 
+	// A node's pinned ACP process (#1006) is closed on node-finish (vetting
+	// cannot import acp, hence the hook) and again here on shutdown, so it
+	// never outlives its node or the server.
+	vetting.NodeSessionClosed = acp.ClosePinnedSession
+	cleanups = append(cleanups, acp.CloseAllPinnedSessions)
+
 	addr = cfg.Server.Addr
 	if port != 0 {
 		addr = fmt.Sprintf(":%d", port)

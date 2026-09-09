@@ -1,7 +1,7 @@
-// Package acp runs an external coding agent as an ACP subprocess adapted to an
-// ADK agent, one subprocess per worker round.
-// ponytail: process-per-round re-reads context each round - keep the process
-// alive per node if round startup ever matters.
+// Package acp runs an external coding agent as an ACP subprocess adapted to
+// an ADK agent - one subprocess per NODE, pinned across that node's rounds
+// (draft -> judge -> revise -> ...) and torn down when the node finishes,
+// fails a reuse, or is cancelled (see round's pinnedProc/pinned).
 package acp
 
 import (
@@ -254,6 +254,41 @@ type promptDone struct {
 	err  error
 }
 
+// pinnedProc is one node's live ACP subprocess, kept across its rounds
+// (draft -> judge -> revise -> ...): the shim holds pi alive for its own
+// stdio session's life, so a second session/prompt on the SAME connection
+// carries history forward with no re-init and no transcript replay (#1006).
+type pinnedProc struct {
+	h         *procHandle
+	sessID    sdk.SessionId
+	toolNames []string
+}
+
+// pinned: advisorToken -> the node's pinned process - shared across every
+// Agent instance and concurrently running node (the token is already unique
+// per node instance, vetting.AdvisorThreadToken).
+var pinned sync.Map
+
+// ClosePinnedSession kills and forgets token's pinned process, if any -
+// wired to vetting.NodeSessionClosed (server wiring) since acp cannot
+// import vetting the other way around.
+func ClosePinnedSession(token string) {
+	if v, ok := pinned.LoadAndDelete(token); ok {
+		v.(*pinnedProc).h.close(nil)
+	}
+}
+
+// CloseAllPinnedSessions kills every pinned process - belt-and-suspenders
+// for server shutdown against a force-cancelled round whose node-finish
+// hook never got the chance to fire.
+func CloseAllPinnedSessions() {
+	pinned.Range(func(k, v any) bool {
+		v.(*pinnedProc).h.close(nil)
+		pinned.Delete(k)
+		return true
+	})
+}
+
 // round drives one subprocess round. Separated from runPrompt for testability.
 // caps is the node's EFFECTIVE caps (ReadOnly already resolved by the
 // caller) - the one thing that can legitimately differ per round for an
@@ -283,70 +318,111 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 		}
 	}
 
-	spawnCtx, spawnSpan := otelobs.Start(ctx, "acp.spawn", attribute.String(otelobs.GenAIAgentName, a.name))
-	_ = spawnCtx
-	h, err := a.start(ctx, cwd, caps)
-	otelobs.End(spawnSpan, err)
-	if err != nil {
-		return err
+	// Reuse this node's pinned process/session when one is already live -
+	// the common case from round 2 on. Skips spawn, Initialize AND
+	// session/new|load entirely: history already lives in the process.
+	var h *procHandle
+	var sessID sdk.SessionId
+	var toolNames []string
+	fromPinned := false
+	if advisorToken != "" {
+		if v, ok := pinned.Load(advisorToken); ok {
+			pp := v.(*pinnedProc)
+			h, sessID, toolNames = pp.h, pp.sessID, pp.toolNames
+			fromPinned = true
+		}
 	}
-	defer h.close(a.log)
+
+	if !fromPinned {
+		spawnCtx, spawnSpan := otelobs.Start(ctx, "acp.spawn", attribute.String(otelobs.GenAIAgentName, a.name))
+		_ = spawnCtx
+		h, err = a.start(ctx, cwd, caps)
+		otelobs.End(spawnSpan, err)
+		if err != nil {
+			return err
+		}
+	}
+
+	// pinOK, not err==nil, gates reuse: a round the caller stopped consuming
+	// mid-stream also returns a nil err but never got a real PromptResponse,
+	// so its process must not go to the next round with a prompt in flight.
+	var pinOK bool
+	defer func() {
+		if pinOK && advisorToken != "" {
+			pinned.Store(advisorToken, &pinnedProc{h: h, sessID: sessID, toolNames: toolNames})
+			return
+		}
+		if advisorToken != "" {
+			pinned.Delete(advisorToken)
+		}
+		h.close(a.log)
+	}()
+	// Each round gets its own slice of the teed wire - otherwise a pinned
+	// process's buffers would carry every prior round's bytes into this
+	// round's invoke_agent event too, and toward maxTeeBytes per node.
+	h.sent.reset()
+	h.received.reset()
 	defer func() { emitInvokeAgent(ctx, a.name, h.sent, h.received, err) }()
 
-	ictx, cancelInit := context.WithTimeout(ctx, a.opts.StartTimeout)
-	defer cancelInit()
-	handshakeCtx, handshakeSpan := otelobs.Start(ctx, "acp.handshake", attribute.String(otelobs.GenAIAgentName, a.name))
-	_ = handshakeCtx
-	initResp, err := h.conn.Initialize(ictx, sdk.InitializeRequest{
-		ProtocolVersion:    sdk.ProtocolVersionNumber,
-		ClientCapabilities: sdk.ClientCapabilities{},
-	})
-	if err != nil {
-		otelobs.End(handshakeSpan, err)
-		return fmt.Errorf("acp: initialize: %w%s", err, h.stderrTail())
-	}
-	mcpServers := memoryMCPServers(memSecret, initResp.AgentCapabilities)
-	memSession, _ := vetting.LookupMemSession(memSecret)
-	toolNames := mcpToolNames(memSession, len(mcpServers) > 0)
-	a.log.Info("acp negotiated capabilities", "mcp_http", initResp.AgentCapabilities.McpCapabilities.Http,
-		"mcp_sse", initResp.AgentCapabilities.McpCapabilities.Sse, "mcp_acp", initResp.AgentCapabilities.McpCapabilities.Acp,
-		"mcp_surface_offered", len(mcpServers) > 0, "has_mem_secret", memSecret != "", "mcp_tools", toolNames)
-	// Resume the prior round's session when the agent supports it and this
-	// node (judge -> revise -> revise) already has one, so tool-call history
-	// carries forward instead of every round starting cold (#1006).
-	sessID := sdk.SessionId(priorSessionID)
-	resumed := false
-	if priorSessionID != "" && initResp.AgentCapabilities.LoadSession {
-		_, err = h.conn.LoadSession(ictx, sdk.LoadSessionRequest{Cwd: cwd, McpServers: mcpServers, SessionId: sessID})
-		resumed = err == nil
-		if err != nil {
-			a.log.Warn("acp session/load failed, starting a new session", "session", priorSessionID, "err", err)
-		}
-	}
-	if priorSessionID == "" || !initResp.AgentCapabilities.LoadSession || err != nil {
-		var sess sdk.NewSessionResponse
-		sess, err = h.conn.NewSession(ictx, sdk.NewSessionRequest{Cwd: cwd, McpServers: mcpServers})
+	if !fromPinned {
+		ictx, cancelInit := context.WithTimeout(ctx, a.opts.StartTimeout)
+		defer cancelInit()
+		handshakeCtx, handshakeSpan := otelobs.Start(ctx, "acp.handshake", attribute.String(otelobs.GenAIAgentName, a.name))
+		_ = handshakeCtx
+		var initResp sdk.InitializeResponse
+		initResp, err = h.conn.Initialize(ictx, sdk.InitializeRequest{
+			ProtocolVersion:    sdk.ProtocolVersionNumber,
+			ClientCapabilities: sdk.ClientCapabilities{},
+		})
 		if err != nil {
 			otelobs.End(handshakeSpan, err)
-			return fmt.Errorf("acp: session/new: %w%s", err, h.stderrTail())
+			return fmt.Errorf("acp: initialize: %w%s", err, h.stderrTail())
 		}
-		sessID = sess.SessionId
-	}
-	if advisorToken != "" {
-		vetting.SetAdvisorThreadSessionID(advisorToken, string(sessID))
-		if resumed {
-			// A resumed session that then errors out is probably dead server-side -
-			// don't hand the next round a session id that will just fail LoadSession again.
-			defer func() {
-				if err != nil {
-					vetting.SetAdvisorThreadSessionID(advisorToken, "")
-				}
-			}()
+		mcpServers := memoryMCPServers(memSecret, initResp.AgentCapabilities)
+		memSession, _ := vetting.LookupMemSession(memSecret)
+		toolNames = mcpToolNames(memSession, len(mcpServers) > 0)
+		a.log.Info("acp negotiated capabilities", "mcp_http", initResp.AgentCapabilities.McpCapabilities.Http,
+			"mcp_sse", initResp.AgentCapabilities.McpCapabilities.Sse, "mcp_acp", initResp.AgentCapabilities.McpCapabilities.Acp,
+			"mcp_surface_offered", len(mcpServers) > 0, "has_mem_secret", memSecret != "", "mcp_tools", toolNames)
+		// Resume via session/load only ever matters here, on a node's FIRST
+		// round (a live pinned process, above, is now the common path for
+		// every round after it - #1006, perf audit finding 8).
+		sessID = sdk.SessionId(priorSessionID)
+		resumed := false
+		if priorSessionID != "" && initResp.AgentCapabilities.LoadSession {
+			_, err = h.conn.LoadSession(ictx, sdk.LoadSessionRequest{Cwd: cwd, McpServers: mcpServers, SessionId: sessID})
+			resumed = err == nil
+			if err != nil {
+				a.log.Warn("acp session/load failed, starting a new session", "session", priorSessionID, "err", err)
+			}
 		}
+		if priorSessionID == "" || !initResp.AgentCapabilities.LoadSession || err != nil {
+			var sess sdk.NewSessionResponse
+			sess, err = h.conn.NewSession(ictx, sdk.NewSessionRequest{Cwd: cwd, McpServers: mcpServers})
+			if err != nil {
+				otelobs.End(handshakeSpan, err)
+				return fmt.Errorf("acp: session/new: %w%s", err, h.stderrTail())
+			}
+			sessID = sess.SessionId
+		}
+		if advisorToken != "" {
+			vetting.SetAdvisorThreadSessionID(advisorToken, string(sessID))
+			if resumed {
+				// A resumed session that then errors out is probably dead server-side -
+				// don't hand the next round a session id that will just fail LoadSession again.
+				defer func() {
+					if err != nil {
+						vetting.SetAdvisorThreadSessionID(advisorToken, "")
+					}
+				}()
+			}
+		}
+		handshakeSpan.SetAttributes(attribute.String("session_id", string(sessID)))
+		otelobs.End(handshakeSpan, nil)
+		a.log.Info("acp round started", "cwd", cwd, "session", sessID, "resumed", priorSessionID != "" && sessID == sdk.SessionId(priorSessionID))
+	} else {
+		a.log.Info("acp round reusing pinned session", "cwd", cwd, "session", sessID)
 	}
-	handshakeSpan.SetAttributes(attribute.String("session_id", string(sessID)))
-	otelobs.End(handshakeSpan, nil)
-	a.log.Info("acp round started", "cwd", cwd, "session", sessID, "resumed", priorSessionID != "" && sessID == sdk.SessionId(priorSessionID))
 
 	// Live only for this round's duration - nothing to forward into before/after.
 	// CallExtension (an acked request), not NotifyExtension: between the
@@ -455,6 +531,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 			a.log.Info("acp round done", "stop", string(d.resp.StopReason), "answer_len", len(final.parts[0].Text))
 			promptSpan.SetAttributes(attribute.StringSlice(otelobs.GenAIResponseFinishReasons, []string{string(d.resp.StopReason)}))
 			endPrompt(nil)
+			pinOK = true
 			emit(final)
 			return nil
 		case <-ctx.Done():

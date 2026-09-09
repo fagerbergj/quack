@@ -30,6 +30,15 @@ type teeBuffer struct {
 	buf bytes.Buffer
 }
 
+// reset clears the buffer for reuse across a pinned process's next round -
+// acp.go's round() owns one teeBuffer's worth of content per round even
+// when the underlying subprocess now spans several (#1006).
+func (t *teeBuffer) reset() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.buf.Reset()
+}
+
 func (t *teeBuffer) Write(p []byte) (int, error) {
 	n := len(p) // reported below regardless of how much we actually keep
 	t.mu.Lock()
@@ -66,8 +75,8 @@ func (t *teeBuffer) lines() []json.RawMessage {
 }
 
 // emitInvokeAgent records one gen_ai "invoke_agent" ledger event per ACP
-// subprocess round (internal/acp's own per-round process lifecycle - see
-// the package doc), carrying the full teed protocol conversation: sent is
+// round (teeBuffer.reset makes this true even when a pinned subprocess spans
+// several rounds), carrying the full teed protocol conversation: sent is
 // what quack wrote to the subprocess's stdin, received is what it read back
 // from stdout. Coordinates (conversation/node/round) come off ctx - the
 // SAME ledger.Coords the vetting gate stamped before invoking this agent's

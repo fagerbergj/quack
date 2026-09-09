@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -29,6 +31,11 @@ func TestMain(m *testing.M) {
 		runFakeAgent(mode)
 		os.Exit(0)
 	}
+	// Same wiring serve.go does in prod: without it, every test below that
+	// registers an advisor token and completes a round would pin a real
+	// subprocess forever - UnregisterAdvisorThread's deferred cleanup is a
+	// no-op until this hook is set.
+	vetting.NodeSessionClosed = ClosePinnedSession
 	os.Exit(m.Run())
 }
 
@@ -47,6 +54,12 @@ type fakeAgent struct {
 	conn *sdk.AgentSideConnection
 	// steerCh: mode "steer" blocks Prompt on this until steer text arrives.
 	steerCh chan string
+	// rounds: mode "pin" counts Prompt calls THIS process instance has
+	// served - only a pinned/reused process (not a fresh re-exec) can see
+	// this go above 1, so it doubles as the "prior tool-call history is
+	// visible" proof (a real ACP agent would count tool calls; the shape is
+	// the same: state carried in-process across session/prompt calls).
+	rounds int
 }
 
 // HandleExtensionMethod is the agent side of the _quack/steer extension.
@@ -158,6 +171,10 @@ func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
 	case "resume-then-fail":
 		return sdk.PromptResponse{}, errors.New("prompt boom")
+	case "pin":
+		f.rounds++
+		send(sdk.UpdateAgentMessageText(fmt.Sprintf("round:%d session:%s", f.rounds, p.SessionId)))
+		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
 	}
 	send(sdk.UpdateAgentThoughtText("planning"))
 	send(sdk.StartToolCall("t1", "go test ./...",
@@ -315,6 +332,163 @@ func TestRound_PromptErrorAfterResumeClearsStoredSession(t *testing.T) {
 	}
 	if task, _ := vetting.LookupAdvisorThread(token); task.ACPSessionID != "" {
 		t.Errorf("advisor thread session id = %q, want cleared after a resumed session's prompt failed", task.ACPSessionID)
+	}
+}
+
+// TestRound_PinnedProcessReusedAcrossRounds pins #1006/perf-audit-8: a
+// second round for the SAME node must reuse the first round's live process
+// and ACP session - no session/new, no fresh subprocess - and the reused
+// process must carry state forward (the fake's in-process round counter,
+// standing in for a real agent's tool-call history).
+func TestRound_PinnedProcessReusedAcrossRounds(t *testing.T) {
+	a := testAgent(t, "pin")
+	token := "tok-pin"
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{})
+	defer vetting.UnregisterAdvisorThread(token)
+
+	round := func() string {
+		var specs []eventSpec
+		if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", "", "", token, "", func(s eventSpec) bool {
+			specs = append(specs, s)
+			return true
+		}); err != nil {
+			t.Fatalf("round: %v", err)
+		}
+		return specs[len(specs)-1].parts[0].Text
+	}
+
+	first := round()
+	if first != "round:1 session:s1" {
+		t.Fatalf("round 1 = %q, want round:1 session:s1", first)
+	}
+	v, ok := pinned.Load(token)
+	if !ok {
+		t.Fatal("round 1 did not pin a process for the node")
+	}
+	pid1 := v.(*pinnedProc).h.cmd.Process.Pid
+
+	second := round()
+	if second != "round:2 session:s1" {
+		t.Fatalf("round 2 = %q, want round:2 session:s1 (same process, same session, no session/new)", second)
+	}
+	v, ok = pinned.Load(token)
+	if !ok {
+		t.Fatal("round 2 evicted the pinned process instead of keeping it")
+	}
+	if pid2 := v.(*pinnedProc).h.cmd.Process.Pid; pid2 != pid1 {
+		t.Fatalf("round 2 ran under pid %d, want the SAME pid %d as round 1", pid2, pid1)
+	}
+}
+
+// TestRound_AbortKillsPinnedProcess (#1030 x #1006): CancelNode's abort
+// during a round that would otherwise be pinned must still evict and kill
+// the process - a killed process is never handed to the node's next round.
+func TestRound_AbortKillsPinnedProcess(t *testing.T) {
+	jail, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var abort context.CancelFunc
+	registered := make(chan struct{})
+	a, err := New("code-implementer", "external coder", Options{
+		Command: []string{os.Args[0]},
+		Env:     []string{"QUACK_ACP_FAKE=hang"},
+		Home:    t.TempDir(),
+		Jail:    jail,
+		UserID:  "u1",
+		RegisterRoundAbort: func(chatID, nodeID string, cancel context.CancelFunc) {
+			mu.Lock()
+			abort = cancel
+			mu.Unlock()
+			close(registered)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := "tok-abort-pin"
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{})
+	defer vetting.UnregisterAdvisorThread(token)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "loop forever", "chat1", "n1", token, "", func(eventSpec) bool { return true })
+	}()
+	<-registered
+	mu.Lock()
+	cancel := abort
+	mu.Unlock()
+	cancel()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("want an error from the aborted round")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("aborted round never returned")
+	}
+	if _, ok := pinned.Load(token); ok {
+		t.Fatal("an aborted round must not leave its process pinned for the next round")
+	}
+}
+
+// TestRound_FailedReuseFallsBackToFreshProcess pins the fallback #1006
+// needs: once a pinned process dies out from under a node (crash, OOM, a
+// wedge the shim itself can't recover from), the NEXT round for that node
+// must not retry the dead process forever - it must evict it and spawn a
+// fresh one.
+func TestRound_FailedReuseFallsBackToFreshProcess(t *testing.T) {
+	a := testAgent(t, "pin")
+	token := "tok-pin-fallback"
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{})
+	defer vetting.UnregisterAdvisorThread(token)
+
+	roundOnce := func() (string, error) {
+		var specs []eventSpec
+		err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", "", "", token, "", func(s eventSpec) bool {
+			specs = append(specs, s)
+			return true
+		})
+		if err != nil {
+			return "", err
+		}
+		return specs[len(specs)-1].parts[0].Text, nil
+	}
+
+	first, err := roundOnce()
+	if err != nil {
+		t.Fatalf("round 1: %v", err)
+	}
+	if first != "round:1 session:s1" {
+		t.Fatalf("round 1 = %q, want round:1 session:s1", first)
+	}
+
+	// Simulate the pinned process dying between rounds (crash/OOM) - kill it
+	// out from under the registry without going through ClosePinnedSession.
+	v, ok := pinned.Load(token)
+	if !ok {
+		t.Fatal("round 1 did not pin a process")
+	}
+	if err := v.(*pinnedProc).h.cmd.Process.Kill(); err != nil {
+		t.Fatalf("kill pinned process: %v", err)
+	}
+	v.(*pinnedProc).h.cmd.Wait() //nolint:errcheck // just reaping the killed process before the next round
+
+	if _, err := roundOnce(); err == nil {
+		t.Fatal("round 2 against a dead pinned process: want an error, not a silent hang or success")
+	}
+	if _, ok := pinned.Load(token); ok {
+		t.Fatal("round 2's failed reuse must evict the dead process from the registry")
+	}
+
+	third, err := roundOnce()
+	if err != nil {
+		t.Fatalf("round 3 (fresh process fallback): %v", err)
+	}
+	if third != "round:1 session:s1" {
+		t.Fatalf("round 3 = %q, want round:1 session:s1 (a BRAND NEW process, counter reset)", third)
 	}
 }
 
