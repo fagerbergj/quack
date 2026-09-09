@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react'
+import { memo, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
-import rehypeHighlight from 'rehype-highlight'
+import rehypeHighlightSubset from '../lib/rehypeHighlightSubset'
 import 'highlight.js/styles/github-dark.css'
 import type { ComponentPropsWithoutRef } from 'react'
 import type { Element } from 'hast'
@@ -16,7 +16,7 @@ import { Expandable } from './Expandable'
 import { ToolCallView } from './ToolCallView'
 import { CopyablePre } from './CopyablePre'
 import { MermaidDiagram } from './MermaidDiagram'
-import { isTrailingMermaidFenceOpen } from './mermaidSource'
+import { isTrailingMermaidFenceOpen, lastSafeSplitOffset } from './mermaidSource'
 import { StatusDot, type DotStatus } from './StatusDot'
 
 // Answer text is Markdown that may embed a little raw HTML - notably the
@@ -67,30 +67,28 @@ function hastText(node: Element | undefined): string {
   return node.children.map(c => (c.type === 'text' ? c.value : hastText(c as Element))).join('')
 }
 
-// AssistantText renders model text as markdown. rehype-highlight is placed LAST
-// so its hljs classes/spans aren't stripped by rehype-sanitize (the code's
-// `language-*` class survives sanitize, so highlight still detects the language).
+// AssistantDocument is one markdown parse of `text` end to end - what
+// AssistantText used to do unconditionally on every token (audit finding 2:
+// remark/rehype re-parsing + rebuilding the whole document past ~20k chars
+// costs 65+ ms/token and stalls typing, since the Composer shares the commit).
 //
 // A ```mermaid block renders as a diagram once (and only once) its closing
-// fence has arrived. During streaming, the last fence in the document may
-// still be growing token-by-token (CommonMark: an unterminated fence swallows
-// the rest of the document, so at most one can ever be open, and it's always
-// the last one) - trying to parse a partial diagram would flash errors on
-// every token, so that block stays a plain code block until it closes.
+// fence has arrived. During streaming, the last fence in `text` may still be
+// growing token-by-token (CommonMark: an unterminated fence swallows the rest
+// of the document, so at most one can ever be open, and it's always the
+// last one) - trying to parse a partial diagram would flash errors on every
+// token, so that block stays a plain code block until it closes.
 // `node.position.end.offset` (present because remark/rehype retain source
 // positions by default) tells us whether THIS block reaches the literal end
 // of `text`, i.e. whether it's the one that could still be open; comparing it
 // against `isTrailingMermaidFenceOpen(text)` (computed once per text change,
 // not per keystroke) gives a stable answer without depending on render order.
-export function AssistantText({ text }: { text: string }) {
-  // #746 item 16: a stray punctuation backtick earlier in the text can defeat
-  // CommonMark's greedy backtick pairing for every inline code span after it -
-  // fix that before parsing, never inside a fenced block. Offsets below are
-  // derived from THIS fixed string (what's actually handed to ReactMarkdown),
-  // not the original, since escaping shifts everything after it.
-  const fixed = useMemo(() => escapeUnmatchedBackticks(text), [text])
-  const trailingOpen = useMemo(() => isTrailingMermaidFenceOpen(fixed), [fixed])
-  const docEnd = useMemo(() => fixed.replace(/\s+$/, '').length, [fixed])
+// rehypeHighlightSubset runs LAST so its hljs classes/spans aren't stripped
+// by rehype-sanitize (the code's `language-*` class survives sanitize, so
+// highlight still detects the language).
+function AssistantDocument({ text }: { text: string }) {
+  const trailingOpen = useMemo(() => isTrailingMermaidFenceOpen(text), [text])
+  const docEnd = useMemo(() => text.replace(/\s+$/, '').length, [text])
   const components = useMemo(() => ({
     pre: (props: ComponentPropsWithoutRef<'pre'> & { node?: Element }) => {
       const { node, children, ...rest } = props
@@ -110,18 +108,68 @@ export function AssistantText({ text }: { text: string }) {
     },
   }), [trailingOpen, docEnd])
   // Memoize the parsed output itself, not just its props: ReactMarkdown
-  // re-parses on every call regardless of prop equality, and the parent
-  // (a streaming bubble) re-renders far more often than `fixed` changes.
-  const markdown = useMemo(() => (
+  // re-parses on every call regardless of prop equality, and this component's
+  // parent (a streaming bubble, or FrozenAssistantDocument's memo wrapper)
+  // re-renders far more often than `text`/`components` actually change.
+  return useMemo(() => (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
-      rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSchema], rehypeHighlight]}
+      rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSchema], rehypeHighlightSubset]}
       components={components}
-    >{fixed}</ReactMarkdown>
-  ), [fixed, components])
+    >{text}</ReactMarkdown>
+  ), [text, components])
+}
+
+// FrozenAssistantDocument is the settled-prefix half of a streaming split
+// (below): identical string content between renders (JS string equality is
+// value-based) keeps memo's default shallow comparison true, so it renders
+// exactly once per prefix advance rather than once per token.
+const FrozenAssistantDocument = memo(AssistantDocument)
+
+// How much of the tail stays live/unmemoized while streaming. Measured
+// (src/perf/split.bperf.test.tsx, audit finding 2): 17k frozen + 2k live cut
+// the whole-document re-render from 65.6 ms/token to 5.7 ms/token at 19k
+// chars total - most of a long answer's length no longer re-parses per token.
+const LIVE_TAIL_CHARS = 2000
+
+// AssistantText renders model text as markdown. While `streaming`, it splits
+// at the last safe CommonMark block boundary (a blank line outside any open
+// fence - lastSafeSplitOffset, mermaidSource.ts) before the live tail: the
+// settled prefix renders through the memoized FrozenAssistantDocument and only
+// the short tail re-parses per token. Once the stream ends (`streaming`
+// false, the default), the whole text renders through ONE AssistantDocument -
+// a table, footnote, or link reference spanning where the split used to be
+// must resolve as a single document, not two halves.
+export function AssistantText({ text, streaming = false }: { text: string; streaming?: boolean }) {
+  // #746 item 16: a stray punctuation backtick earlier in the text can defeat
+  // CommonMark's greedy backtick pairing for every inline code span after it -
+  // fix that before parsing, never inside a fenced block. Offsets below are
+  // derived from THIS fixed string (what's actually handed to ReactMarkdown),
+  // not the original, since escaping shifts everything after it.
+  const fixed = useMemo(() => escapeUnmatchedBackticks(text), [text])
+  // The frozen boundary only ever advances forward, and only once the live
+  // tail would exceed LIVE_TAIL_CHARS - re-freezing costs O(prefix length)
+  // each time (react-markdown re-parses the whole prefix, not just the new
+  // delta), so advancing every ~2000 chars instead of every paragraph keeps
+  // total streaming cost close to linear in answer length, not quadratic.
+  const frozenCutRef = useRef(0)
+  if (!streaming) {
+    frozenCutRef.current = 0
+  } else if (fixed.length - frozenCutRef.current > LIVE_TAIL_CHARS) {
+    const next = lastSafeSplitOffset(fixed, fixed.length - LIVE_TAIL_CHARS)
+    if (next > frozenCutRef.current) frozenCutRef.current = next
+  }
+  const cut = streaming ? frozenCutRef.current : 0
   return (
     <div className="prose prose-sm dark:prose-invert max-w-[70ch] break-words">
-      {markdown}
+      {cut > 0 ? (
+        <>
+          <FrozenAssistantDocument text={fixed.slice(0, cut)} />
+          <AssistantDocument text={fixed.slice(cut)} />
+        </>
+      ) : (
+        <AssistantDocument text={fixed} />
+      )}
     </div>
   )
 }

@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
-import rehypeHighlight from 'rehype-highlight'
+import rehypeHighlightSubset from '../lib/rehypeHighlightSubset'
 import 'highlight.js/styles/github-dark.css'
 import type { Element } from 'hast'
 import { api, artifactUrl } from '../api'
@@ -1121,7 +1121,7 @@ function ArtifactMarkdown({ text, byLine, activeNote, onSelectNote }: {
     <div className="prose prose-sm dark:prose-invert max-w-none break-words bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-3">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSchema], rehypeHighlight]}
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSchema], rehypeHighlightSubset]}
         components={components}
       >{fixed}</ReactMarkdown>
     </div>
