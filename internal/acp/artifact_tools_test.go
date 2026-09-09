@@ -239,6 +239,46 @@ func TestEditArtifactMCP_DirectApply(t *testing.T) {
 	}
 }
 
+// TestEditArtifactMCP_OldTextNewTextAlias: an ACP worker primed on the MCP
+// filesystem-server's edit_file convention sends oldText/newText instead of
+// this tool's own old/new - both spellings must apply the edit, so a worker
+// guessing the wrong one never burns a redundant round trip (#1278 enumeration).
+func TestEditArtifactMCP_OldTextNewTextAlias(t *testing.T) {
+	ctx := context.Background()
+	secret := mustMemSecret(t)
+	svc := artifact.InMemoryService()
+	vetting.RegisterMemSession(secret, vetting.MemSession{Artifacts: svc, AppName: "quack", UserID: "u1", ChatID: "chat-a", NodeID: "n1"})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	rc := recordstore.New(svc, "quack", "u1", "chat-a")
+	id, rev, err := rc.SaveBlob(ctx, "text", []byte("hello world"), "text/plain", "doc1", recordstore.Lineage{NodeID: "n1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "edit_artifact", Arguments: map[string]any{
+		"id": id, "base_revision": float64(rev),
+		"edits": []map[string]any{{"oldText": "world", "newText": "there"}},
+	}})
+	if err != nil {
+		t.Fatalf("CallTool edit_artifact: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("oldText/newText alias should apply like old/new, got error: %s", toolResultText(t, res))
+	}
+	raw, _, ok, err := rc.Latest(ctx, id)
+	if err != nil || !ok {
+		t.Fatalf("Latest: ok=%v err=%v", ok, err)
+	}
+	if string(raw) != "hello there" {
+		t.Fatalf("content = %q, want %q", raw, "hello there")
+	}
+}
+
 // TestEditArtifactMCP_StaleBaseMerges: base_revision is stale but the Old
 // snippet still matches uniquely against the real latest - merges instead of
 // failing.

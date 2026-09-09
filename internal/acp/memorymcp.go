@@ -170,10 +170,29 @@ type editConflictResult struct {
 	Content  string `json:"content"`
 }
 
-// editArtifactOp is one search/replace pair.
+// editArtifactOp is one search/replace pair. OldText/NewText accept the MCP
+// filesystem-server's edit_file field spelling as an alias for old/new - an
+// ACP worker primed on that reference server's convention (rather than this
+// tool's own schema) retried the same failed edit under both spellings
+// back-to-back before getting it right (#1278 enumeration, PR #1304 round 1),
+// costing a redundant round trip every time regardless of which model drives it.
 type editArtifactOp struct {
-	Old string `json:"old" jsonschema:"exact text to replace; must match exactly once in the target content"`
-	New string `json:"new" jsonschema:"replacement text"`
+	Old     string `json:"old,omitempty" jsonschema:"exact text to replace; must match exactly once in the target content"`
+	New     string `json:"new,omitempty" jsonschema:"replacement text"`
+	OldText string `json:"oldText,omitempty" jsonschema:"alias for old"`
+	NewText string `json:"newText,omitempty" jsonschema:"alias for new"`
+}
+
+// resolve picks old/new, falling back to the oldText/newText alias.
+func (e editArtifactOp) resolve() (old, new string) {
+	old, new = e.Old, e.New
+	if old == "" {
+		old = e.OldText
+	}
+	if new == "" {
+		new = e.NewText
+	}
+	return old, new
 }
 
 // registerEditArtifactTool: optimistic-locking search/replace (#1090 §4.4/§9).
@@ -194,7 +213,8 @@ func registerEditArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vetti
 		}
 		ops := make([]recordstore.EditOp, len(args.Edits))
 		for i, e := range args.Edits {
-			ops[i] = recordstore.EditOp{Old: e.Old, New: e.New}
+			old, new := e.resolve()
+			ops[i] = recordstore.EditOp{Old: old, New: new}
 		}
 		round, turnID, headSHA, trigger := currentRound(sess)
 		lineage := recordstore.Lineage{NodeID: sess.NodeID, Round: round, TurnID: turnID, HeadSHA: headSHA, TriggerAnnotation: trigger, Author: "worker", SavedAt: time.Now().UTC()}
