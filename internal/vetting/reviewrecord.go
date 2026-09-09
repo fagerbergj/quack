@@ -176,6 +176,17 @@ type CodeReviewRecord struct {
 	FindingIDs []string         `json:"finding_ids"`
 	Dismissed  []DismissedEntry `json:"dismissed"`
 	Clean      []string         `json:"clean"`
+	// Rendered: this round's fixed-format overview markdown
+	// (renderReviewOverview, degraded - no Scope/Since-last-review, which
+	// need a git probe/prior delivery record this save site doesn't have),
+	// computed and stored at write time purely so the artifact panel can
+	// render it directly instead of reimplementing the renderer in
+	// TypeScript. Never read back into a delivery - renderReviewFromArtifact
+	// always renders its own, fully-scoped copy at delivery time. May be
+	// absent (a record from before this field existed, or a native
+	// write_code_review call the gate hasn't backfilled) - the panel falls
+	// back to a plain field view when so.
+	Rendered string `json:"rendered,omitempty"`
 	// Summary: pre-migration records only. Never written by this codebase
 	// any more - read-only, rendered under Notes (truncated) so old history
 	// still displays (see renderReviewFromArtifact).
@@ -194,30 +205,17 @@ const (
 	reviewNotesMaxLen      = 200
 )
 
-// midSentenceRe: a sentence terminator followed by more text - used to
-// reject a takeaway with more than one sentence. ponytail: "e.g. " or a
-// decimal mid-sentence also matches, rejecting a takeaway that's arguably
-// still one sentence; tighten with an abbreviation exception list if that
-// ever shows up in practice.
-var midSentenceRe = regexp.MustCompile(`[.!?](\s|$)`)
-
-// isOneSentence: no newline, and no sentence terminator before the final one.
-func isOneSentence(s string) bool {
-	s = strings.TrimSpace(s)
-	if s == "" || strings.Contains(s, "\n") {
-		return s != ""
-	}
-	body := strings.TrimRight(s, ".!?")
-	return !midSentenceRe.MatchString(body)
-}
-
 // CheckCodeReviewCaps enforces the fixed review format's caps on
 // takeaway/verified/notes - shared by stage_review's discrete args
 // (reviewmcp.go) and write_code_review's raw JSON (validateCodeReview) so
 // the two surfaces can never drift on what's allowed. takeaway == "" skips
 // the takeaway checks (the caller decides whether an empty takeaway is
 // itself an error - stage_review requires one, write_code_review's schema
-// does not).
+// does not). Length and newline only - no sentence-count heuristic: a
+// period-based "one sentence" check false-positives on "e.g."/"i.e."/"vs."
+// (the same ambiguity firstSentence in reviewoverview.go has to resolve for
+// rendering) and a rejected takeaway is worse than an occasionally
+// two-clause one.
 func CheckCodeReviewCaps(takeaway string, verified, notes []string) error {
 	if takeaway != "" {
 		if strings.Contains(takeaway, "\n") {
@@ -225,9 +223,6 @@ func CheckCodeReviewCaps(takeaway string, verified, notes []string) error {
 		}
 		if n := len([]rune(takeaway)); n > reviewTakeawayMaxLen {
 			return fmt.Errorf("takeaway: %d characters, max %d", n, reviewTakeawayMaxLen)
-		}
-		if !isOneSentence(takeaway) {
-			return errors.New("takeaway: must be one sentence")
 		}
 	}
 	if err := checkReviewList("verified", verified, reviewVerifiedMaxItems, reviewVerifiedMaxLen, "keep only the checks that matter"); err != nil {
@@ -252,6 +247,46 @@ func checkReviewList(field string, items []string, maxItems, maxLen int, hint st
 		}
 	}
 	return nil
+}
+
+// capRunes trims s to at most max runes, marking a real trim with a
+// trailing "…" kept WITHIN max (never max+1) - so a value this produces can
+// never itself be rejected by CheckCodeReviewCaps' own length check.
+func capRunes(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	if max <= 0 {
+		return ""
+	}
+	return string(r[:max-1]) + "…"
+}
+
+// clampCodeReviewFields defensively caps gate-parsed takeaway/verified/notes
+// (the Recovered/answer-tail path, which never goes through stage_review's
+// tool-boundary validation) to the same limits CheckCodeReviewCaps enforces -
+// truncating rather than rejecting, so a verbose answer tail still saves and
+// delivers this round instead of silently leaving the record on its PRIOR
+// revision when validateCodeReview would otherwise reject the save.
+func clampCodeReviewFields(takeaway string, verified, notes []string) (string, []string, []string) {
+	return capRunes(strings.ReplaceAll(takeaway, "\n", " "), reviewTakeawayMaxLen),
+		clampReviewList(verified, reviewVerifiedMaxItems, reviewVerifiedMaxLen),
+		clampReviewList(notes, reviewNotesMaxItems, reviewNotesMaxLen)
+}
+
+func clampReviewList(items []string, maxItems, maxLen int) []string {
+	if len(items) > maxItems {
+		items = items[:maxItems]
+	}
+	if items == nil {
+		return nil
+	}
+	out := make([]string, len(items))
+	for i, it := range items {
+		out[i] = capRunes(it, maxLen)
+	}
+	return out
 }
 
 // validateCodeReview is kindCodeReview's recordstore.KindSpec.Validate -
@@ -803,6 +838,52 @@ func reviewFields(answer string, staged StagedDelivery) (takeaway string, verifi
 	return strings.TrimSpace(r.Takeaway), r.Verified, r.Notes
 }
 
+// RenderCodeReviewForWrite computes the fixed format's rendered overview
+// markdown for a native write_code_review call, baked into the SAME
+// revision the call already writes (no extra round-trip) - the ADK-native
+// write_<kind> handler (internal/acp/memorymcp.go) calls this on kind ==
+// "code_review" and sets the result as args["rendered"] before
+// SaveStructured, so the artifact panel never sees a tool-authored record
+// without one. args is the raw JSON object the model sent; finding bodies
+// are resolved from the store the same way delivery does.
+func RenderCodeReviewForWrite(ctx context.Context, c *recordstore.Client, args map[string]any) string {
+	verdict, _ := args["verdict"].(string)
+	takeaway, _ := args["takeaway"].(string)
+	var comments []ReviewComment
+	for _, fid := range stringsFromAny(args["finding_ids"]) {
+		fRaw, _, ok, err := c.Latest(ctx, fid)
+		if err != nil || !ok {
+			continue
+		}
+		var f FindingRecord
+		if json.Unmarshal(fRaw, &f) != nil {
+			continue
+		}
+		comments = append(comments, ReviewComment{Path: f.Path, Line: f.LineHint, Body: highlightBody(f)})
+	}
+	return renderReviewOverview(reviewOverviewInput{
+		Verdict: verdict, Takeaway: takeaway,
+		Verified: stringsFromAny(args["verified"]), Notes: stringsFromAny(args["notes"]),
+		Comments: comments,
+	})
+}
+
+// stringsFromAny reads a []string out of a raw-JSON-decoded map[string]any
+// value ([]any of string, or absent/wrong-shaped -> nil).
+func stringsFromAny(v any) []string {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, item := range arr {
+		if s, ok := item.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // codeReviewTakeawayFallback covers the residual markers-only path: a native
 // write_code_review tool call's "takeaway" field is optional, so a
 // spec-compliant call can still leave it empty. Falls back to the findings'
@@ -826,11 +907,7 @@ func codeReviewTakeawayFallback(findings []FindingRecord, verdict string) string
 	if t == "" {
 		t = "No takeaway was provided by the reviewer; verdict " + verdict + "."
 	}
-	t = strings.ReplaceAll(t, "\n", " ")
-	if n := []rune(t); len(n) > reviewTakeawayMaxLen {
-		t = string(n[:reviewTakeawayMaxLen-1]) + "…"
-	}
-	return t
+	return capRunes(strings.ReplaceAll(t, "\n", " "), reviewTakeawayMaxLen)
 }
 
 // backfillCodeReviewTakeaway patches an empty Takeaway on a code_review
@@ -868,6 +945,11 @@ func backfillCodeReviewTakeaway(ctx context.Context, c *recordstore.Client, cfg 
 		}
 	}
 	rec.Takeaway = codeReviewTakeawayFallback(findings, rec.Verdict)
+	comments := make([]ReviewComment, len(findings))
+	for i, f := range findings {
+		comments[i] = ReviewComment{Path: f.Path, Line: f.LineHint, Body: highlightBody(f)}
+	}
+	rec.Rendered = renderReviewOverview(reviewOverviewInput{Verdict: rec.Verdict, Takeaway: rec.Takeaway, Verified: rec.Verified, Notes: rec.Notes, Comments: comments})
 	lineage := recordstore.Lineage{NodeID: nodeID, Round: round, ParentRevision: rev, TriggerAnnotation: st.triggerAnnotation, HeadSHA: cfg.NodeBaseSHA, SavedAt: time.Now().UTC(), Author: "gate", TurnID: turnID}
 	_, rev2, err := c.SaveStructured(ctx, kindCodeReview, rec, SubjectHint(cfg.ChatID), lineage)
 	if err != nil {
@@ -1022,8 +1104,13 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 	for _, d := range dismissedComments {
 		dismissed = append(dismissed, DismissedEntry{Path: d.Path, Line: d.Line, Note: d.Body})
 	}
-	takeaway, verified, notes := reviewFields(answer, staged)
-	reviewRec := CodeReviewRecord{Verdict: event, Takeaway: takeaway, Verified: verified, Notes: notes, FindingIDs: findingIDs, Dismissed: dismissed, Clean: clean}
+	// Clamped rather than validated: the Recovered/answer-tail path never
+	// went through stage_review's tool-boundary CheckCodeReviewCaps, so an
+	// over-cap value here must not make SaveStructured's own validateCodeReview
+	// reject the save and silently leave the record on last round's revision.
+	takeaway, verified, notes := clampCodeReviewFields(reviewFields(answer, staged))
+	rendered := renderReviewOverview(reviewOverviewInput{Verdict: event, Takeaway: takeaway, Verified: verified, Notes: notes, Comments: findings})
+	reviewRec := CodeReviewRecord{Verdict: event, Takeaway: takeaway, Verified: verified, Notes: notes, Rendered: rendered, FindingIDs: findingIDs, Dismissed: dismissed, Clean: clean}
 	lineage := recordstore.Lineage{NodeID: nodeID, Round: round, ParentRevision: st.reviewRev, TriggerAnnotation: st.triggerAnnotation, HeadSHA: cfg.NodeBaseSHA, SavedAt: savedAt, Author: "gate", TurnID: turnID}
 	_, rev, err := c.SaveStructured(ctx, kindCodeReview, reviewRec, SubjectHint(cfg.ChatID), lineage)
 	if err != nil {

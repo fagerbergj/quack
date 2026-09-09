@@ -1252,6 +1252,50 @@ func TestSaveCodeReviewRound_BackfillsEmptyToolWrittenTakeaway(t *testing.T) {
 	}
 }
 
+// TestSaveCodeReviewRound_TwoRoundsClampedTakeawayStillDelivers is the
+// adversarial-review regression on #2: the Recovered/answer-tail path never
+// went through stage_review's CheckCodeReviewCaps, so a second round with a
+// takeaway CheckCodeReviewCaps used to reject (the old multi-sentence
+// heuristic) failed validateCodeReview inside SaveStructured, leaving the
+// record - and the delivery rendered from it - silently stuck on round 1's
+// approve. clampCodeReviewFields must make this round's own SaveStructured
+// call succeed, and the delivery must reflect round 2, not round 1.
+func TestSaveCodeReviewRound_TwoRoundsClampedTakeawayStillDelivers(t *testing.T) {
+	svc := newMetaAwareInMemory()
+	cfg := reviewerCfgWithArtifacts(t, svc, true)
+
+	st := newEpisodicRoundState()
+	round1 := "VERDICT: approve\nTAKEAWAY: Looks fine on the first pass.\nFINDINGS:\nCLEAN:\n"
+	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "t1", 1, round1, StagedDelivery{Kind: "review", Recovered: true}, st)
+
+	round2 := "VERDICT: request_changes\nTAKEAWAY: First sentence about the new bug. Second sentence with more detail.\nFINDINGS:\n- a.go:1: blocking: nil deref on the empty path. Crashes on startup.\n"
+	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "t1", 2, round2, StagedDelivery{Kind: "review", Recovered: true}, st)
+
+	rc := recordClient(cfg)
+	raw, _, ok, err := rc.Latest(context.Background(), codeReviewID(cfg))
+	if err != nil || !ok {
+		t.Fatalf("Latest: ok=%v err=%v", ok, err)
+	}
+	var rec CodeReviewRecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Verdict != "request_changes" {
+		t.Fatalf("verdict = %q, want request_changes - round 2's save must not silently fail and leave round 1's record standing", rec.Verdict)
+	}
+	if !strings.Contains(rec.Takeaway, "First sentence about the new bug") {
+		t.Fatalf("Takeaway = %q, want round 2's takeaway saved (clamped, not rejected)", rec.Takeaway)
+	}
+
+	item, ok := renderReviewFromArtifact(context.Background(), cfg, cfg.NodeID)
+	if !ok {
+		t.Fatal("renderReviewFromArtifact: no record")
+	}
+	if item.Event != "request_changes" {
+		t.Fatalf("delivered event = %q, want request_changes", item.Event)
+	}
+}
+
 // TestSaveDocumentRound_TruncatesOversizedAnswer is the same check for the
 // saveDocumentRound path (reviewer/document-kind nodes), which shares
 // truncateForBlob with saveTextRound.

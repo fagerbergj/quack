@@ -31,9 +31,15 @@ type reviewOverviewInput struct {
 	ScopeKnown   bool
 	HeadSHA      string // full or short sha; "" omits "· head <sha7>"
 	FirstReview  bool
-	PriorHeadSHA string // re-review only; "" omits the "since <sha7>" clause
-	CommitsSince int
-	FileCount    int // 0 omits the "(N files)" parenthetical
+	PriorHeadSHA string // re-review only; "" omits the whole "since <sha7>" clause
+
+	// CommitsSinceKnown gates the "N commits since" clause independently of
+	// PriorHeadSHA - a re-review still names the prior head even when
+	// rev-list couldn't resolve a commit count (force-pushed away), but never
+	// claims "0 commits" when the count is actually unknown.
+	CommitsSinceKnown bool
+	CommitsSince      int
+	FileCount         int // 0 omits the "(N files)" parenthetical
 
 	Takeaway      string
 	Verified      []string
@@ -54,6 +60,13 @@ type reviewOverviewInput struct {
 	Dismissed  []DismissedEntry
 }
 
+// escapeTableCell escapes a Markdown table delimiter so a finding's title,
+// rationale, or path - free text this renderer didn't author - can never
+// break the Highlights row it lands in.
+func escapeTableCell(s string) string {
+	return strings.ReplaceAll(s, "|", "\\|")
+}
+
 // reviewLabelOrder: verdict-line counts and Highlights precedence, always in
 // this order - deterministic output, never a map iteration.
 var reviewLabelOrder = []string{"blocking", "suggestion", "nit", "question"}
@@ -68,9 +81,52 @@ var reviewLabelOrder = []string{"blocking", "suggestion", "nit", "question"}
 // never swallow the bold markers meant for \*{0,2}.
 var commentLabelRe = regexp.MustCompile(`(?i)^\s*[^\pL\pN*]{0,4}\*{0,2}(blocking|suggestion|nit|question)\b[^:]*:\*{0,2}`)
 
+// sentenceAbbrevRe matches a trailing abbreviation (e.g/i.e/vs) right before
+// a candidate sentence-ending period - firstSentence skips the period there
+// rather than treating the abbreviation as the sentence's end.
+var sentenceAbbrevRe = regexp.MustCompile(`(?i)\b(e\.g|i\.e|vs)$`)
+
+// firstSentence extracts the Highlights table's "why" cell: the text up to
+// (not including) the first sentence-ending period, or the whole string if
+// none is found. A period only ends a sentence when it is followed by
+// whitespace or the end of the string (so "cfg.Setup", "router.go:42", and
+// a mid-sentence URL never truncate early - none of those periods are
+// followed by a space), is not inside a backtick span, and doesn't close a
+// known abbreviation (e.g./i.e./vs.). A newline always ends it, matching a
+// finding body's own "one line, one finding" shape.
+func firstSentence(s string) string {
+	inBacktick := false
+	for i, r := range s {
+		switch r {
+		case '`':
+			inBacktick = !inBacktick
+		case '\n':
+			if !inBacktick {
+				return strings.TrimSpace(s[:i])
+			}
+		case '.':
+			if inBacktick {
+				continue
+			}
+			if next := i + 1; next < len(s) {
+				if nr := s[next]; nr != ' ' && nr != '\t' && nr != '\n' {
+					continue
+				}
+			}
+			if sentenceAbbrevRe.MatchString(s[:i]) {
+				continue
+			}
+			return strings.TrimSpace(s[:i])
+		}
+	}
+	return strings.TrimSpace(s)
+}
+
 // commentLabel splits a finding's body into its Conventional-Comments label
 // (lowercase, "" if none matched) and the first sentence after it - the
-// Highlights table's "why", per splitFirstSentence's own rule.
+// Highlights table's "why". Falls back to "" (the caller substitutes the
+// finding's path) when the label leaves nothing behind - a label-only body
+// with no explanation.
 func commentLabel(body string) (label, why string) {
 	line := body
 	rest := ""
@@ -79,16 +135,14 @@ func commentLabel(body string) (label, why string) {
 	}
 	m := commentLabelRe.FindStringSubmatchIndex(line)
 	if m == nil {
-		title, _ := splitFirstSentence(body)
-		return "", title
+		return "", firstSentence(body)
 	}
 	label = strings.ToLower(line[m[2]:m[3]])
 	remainder := strings.TrimSpace(line[m[1]:])
 	if remainder == "" {
 		remainder = strings.TrimSpace(rest)
 	}
-	why, _ = splitFirstSentence(remainder)
-	return label, why
+	return label, firstSentence(remainder)
 }
 
 // countLabels tallies comments by Conventional-Comments label.
@@ -142,19 +196,18 @@ const legacySummaryDisplayCap = 320
 
 // renderReviewOverview produces sections 2-8 of the fixed review format (see
 // this file's doc comment). Never returns an empty string for a non-empty
-// verdict: the verdict line (section 2) always renders.
+// verdict: the verdict line (section 2) always renders. Built as a slice of
+// self-contained blocks joined with a single blank line, rather than ad-hoc
+// "\n\n" concatenation, so an empty section can never leave a stray blank
+// line behind (the bug a prior version had between Verified and Notes).
 func renderReviewOverview(in reviewOverviewInput) string {
-	var sb strings.Builder
+	var sections []string
 
 	// Section 2: verdict line.
 	verdictWord := in.Verdict
 	switch in.Verdict {
-	case "approve":
-		verdictWord = "approve"
 	case "request_changes":
 		verdictWord = "request changes"
-	case "comment":
-		verdictWord = "comment"
 	}
 	parts := []string{"**Verdict: " + verdictWord + "**"}
 	counts := countLabels(in.Comments)
@@ -166,28 +219,32 @@ func renderReviewOverview(in reviewOverviewInput) string {
 	if in.HeadSHA != "" {
 		parts = append(parts, "head "+sha7(in.HeadSHA))
 	}
-	sb.WriteString(strings.Join(parts, " · "))
+	sections = append(sections, strings.Join(parts, " · "))
 
 	// Section 3: scope line.
 	if in.ScopeKnown {
 		var scope string
-		if in.FirstReview {
+		switch {
+		case in.FirstReview:
 			scope = "Scope: first review, whole PR"
-		} else if in.PriorHeadSHA != "" {
+		case in.PriorHeadSHA != "" && in.CommitsSinceKnown:
 			scope = fmt.Sprintf("Scope: re-review, %d %s since %s",
 				in.CommitsSince, pluralize(in.CommitsSince, "commit", "commits"), sha7(in.PriorHeadSHA))
-		} else {
+		default:
+			// Prior head unknown, or rev-list couldn't resolve a commit
+			// count (force-pushed away) - never claim "0 commits since" when
+			// the count is actually unknown.
 			scope = "Scope: re-review"
 		}
 		if in.FileCount > 0 {
 			scope += fmt.Sprintf(" (%d %s)", in.FileCount, pluralize(in.FileCount, "file", "files"))
 		}
-		sb.WriteString("\n\n" + scope)
+		sections = append(sections, scope)
 	}
 
 	// Section 4: takeaway.
 	if t := strings.TrimSpace(in.Takeaway); t != "" {
-		sb.WriteString("\n\n" + t)
+		sections = append(sections, t)
 	}
 
 	// Section 5: since last review (re-review only).
@@ -201,7 +258,7 @@ func renderReviewOverview(in reviewOverviewInput) string {
 			}
 			since += " (" + strings.Join(reasons, "; ") + ")"
 		}
-		sb.WriteString("\n\n" + since)
+		sections = append(sections, since)
 	}
 
 	// Section 6: highlights table - every blocking finding, else the top 2
@@ -223,19 +280,27 @@ func renderReviewOverview(in reviewOverviewInput) string {
 		}
 	}
 	if len(rows) > 0 {
-		sb.WriteString("\n\n### Highlights\n\n| Severity | Where | Why it matters |\n| --- | --- | --- |\n")
+		var b strings.Builder
+		b.WriteString("### Highlights\n\n| Severity | Where | Why it matters |\n| --- | --- | --- |")
 		for _, c := range rows {
 			label, why := commentLabel(c.Body)
-			sb.WriteString(fmt.Sprintf("| %s | %s:%d | %s |\n", label, c.Path, c.Line, why))
+			// A label-only body (no explanation at all) falls back to the
+			// finding's own path rather than an empty cell.
+			if why == "" {
+				why = c.Path
+			}
+			fmt.Fprintf(&b, "\n| %s | %s | %s |", escapeTableCell(label), escapeTableCell(fmt.Sprintf("%s:%d", c.Path, c.Line)), escapeTableCell(why))
 		}
+		sections = append(sections, b.String())
 	}
 
 	// Section 7: verified.
 	if len(in.Verified) > 0 {
-		sb.WriteString("\n\n### Verified\n\n")
-		for _, v := range in.Verified {
-			sb.WriteString("- " + v + "\n")
+		items := make([]string, len(in.Verified))
+		for i, v := range in.Verified {
+			items[i] = "- " + v
 		}
+		sections = append(sections, "### Verified\n\n"+strings.Join(items, "\n"))
 	}
 
 	// Section 8: notes - the only free prose, plus a truncated legacy
@@ -245,13 +310,14 @@ func renderReviewOverview(in reviewOverviewInput) string {
 		notes = append([]string{truncateRunes(ls, legacySummaryDisplayCap)}, notes...)
 	}
 	if len(notes) > 0 {
-		sb.WriteString("\n\n### Notes\n\n")
-		for _, n := range notes {
-			sb.WriteString("- " + n + "\n")
+		items := make([]string, len(notes))
+		for i, n := range notes {
+			items[i] = "- " + n
 		}
+		sections = append(sections, "### Notes\n\n"+strings.Join(items, "\n"))
 	}
 
-	return strings.TrimRight(sb.String(), "\n")
+	return strings.Join(sections, "\n\n")
 }
 
 // reviewScope resolves one review's diff scope against the same base/head

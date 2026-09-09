@@ -35,10 +35,14 @@ func TestCheckCodeReviewCaps(t *testing.T) {
 			t.Fatalf("got %v, want an error naming takeaway and the 240 cap", err)
 		}
 	})
-	t.Run("takeaway multi-sentence", func(t *testing.T) {
-		err := CheckCodeReviewCaps("First sentence. Second sentence.", nil, nil)
-		if err == nil || !strings.Contains(err.Error(), "one sentence") {
-			t.Fatalf("got %v, want a one-sentence error", err)
+	t.Run("multi-sentence and abbreviations are not rejected", func(t *testing.T) {
+		// The period-counting "one sentence" heuristic is gone (it
+		// false-positived on e.g./i.e./vs.) - only length and newlines are
+		// enforced now.
+		for _, tk := range []string{"First sentence. Second sentence.", "Uses e.g. an abbreviation.", "See cfg.Setup for details."} {
+			if err := CheckCodeReviewCaps(tk, nil, nil); err != nil {
+				t.Fatalf("CheckCodeReviewCaps(%q) = %v, want no error", tk, err)
+			}
 		}
 	})
 	t.Run("takeaway with newline", func(t *testing.T) {
@@ -80,12 +84,12 @@ func TestValidateCodeReview(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	bad := CodeReviewRecord{Verdict: "approve", Takeaway: "First. Second."}
+	bad := CodeReviewRecord{Verdict: "approve", Takeaway: strings.Repeat("x", reviewTakeawayMaxLen+1)}
 	raw, err = json.Marshal(bad)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := validateCodeReview(raw); err == nil || !strings.Contains(err.Error(), "one sentence") {
-		t.Fatalf("got %v, want a one-sentence error surfaced through the record validator", err)
+	if err := validateCodeReview(raw); err == nil || !strings.Contains(err.Error(), "takeaway") {
+		t.Fatalf("got %v, want a takeaway-cap error surfaced through the record validator", err)
 	}
 }

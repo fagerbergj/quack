@@ -46,6 +46,25 @@ func artifactRenderedDelivery(ctx context.Context, cfg Config, nodeID string, st
 	return staged, fromStaged
 }
 
+// highlightBody composes a finding's Highlights-table/verdict-count body:
+// its title as-is when the title itself already carries a Conventional-
+// Comments label, otherwise the finding's own Severity field prepended as
+// one - a write_finding-native finding carries its label in Severity, not
+// embedded in Title's text, so without this a blocking finding written that
+// way would show no count and never make the Highlights table.
+func highlightBody(f FindingRecord) string {
+	if label, _ := commentLabel(f.Title); label != "" {
+		return f.Title
+	}
+	sev := strings.ToLower(strings.TrimSpace(f.Severity))
+	for _, l := range reviewLabelOrder {
+		if sev == l {
+			return sev + ": " + f.Title
+		}
+	}
+	return f.Title
+}
+
 // renderReviewFromArtifact loads the latest code_review record (called on
 // every final round, whether it passed or failed - see commitDelivery) and
 // its findings, and renders the same StagedDelivery{Kind: "review", ...}
@@ -100,11 +119,11 @@ func renderReviewFromArtifact(ctx context.Context, cfg Config, nodeID string) (S
 			carriedIDs = append(carriedIDs, fid)
 			comments = append(comments, ReviewComment{Path: f.Path, Line: f.LineHint,
 				Body: fmt.Sprintf("(carried over, unchanged since a previous review - %s) %s: %s", fid, f.Title, f.Rationale)})
-			highlights = append(highlights, ReviewComment{Path: f.Path, Line: f.LineHint, Body: f.Title})
+			highlights = append(highlights, ReviewComment{Path: f.Path, Line: f.LineHint, Body: highlightBody(f)})
 		default:
 			newIDs = append(newIDs, fid)
 			comments = append(comments, ReviewComment{Path: f.Path, Line: f.LineHint, Body: f.Title + ": " + f.Rationale})
-			highlights = append(highlights, ReviewComment{Path: f.Path, Line: f.LineHint, Body: f.Title})
+			highlights = append(highlights, ReviewComment{Path: f.Path, Line: f.LineHint, Body: highlightBody(f)})
 		}
 	}
 
@@ -135,6 +154,7 @@ func renderReviewFromArtifact(ctx context.Context, cfg Config, nodeID string) (S
 		if !firstDelivery {
 			in.PriorHeadSHA = priorHeadSHA
 			if n, ok := scope.commitsSince(priorHeadSHA); ok {
+				in.CommitsSinceKnown = true
 				in.CommitsSince = n
 			}
 		}

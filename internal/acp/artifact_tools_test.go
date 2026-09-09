@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"log/slog"
 	"net/http/httptest"
 	"strings"
@@ -567,6 +568,54 @@ func TestWriteCodeReviewMCP_UsesSessionSubjectHint(t *testing.T) {
 	rc := recordstore.New(svc, "quack", "u1", chatID)
 	if _, _, ok, err := rc.Latest(ctx, wantID); err != nil || !ok {
 		t.Fatalf("code_review %s not found: ok=%v err=%v", wantID, ok, err)
+	}
+}
+
+// TestWriteCodeReviewMCP_BakesInRenderedOverview is suggestion #7 of the
+// adversarial review: a native write_code_review call must save the fixed
+// format's rendered overview alongside the model's fields, in the SAME
+// revision (no second write), so the artifact panel never has to
+// reimplement the renderer - see vetting.RenderCodeReviewForWrite.
+func TestWriteCodeReviewMCP_BakesInRenderedOverview(t *testing.T) {
+	ctx := context.Background()
+	secret := mustMemSecret(t)
+	svc := artifact.InMemoryService()
+	chatID := "ext:github:github-owner-repo-43"
+	vetting.RegisterMemSession(secret, vetting.MemSession{Artifacts: svc, AppName: "quack", UserID: "u1", ChatID: chatID, NodeID: "n1"})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	args := map[string]any{"verdict": "request_changes", "takeaway": "One blocking issue in the parser."}
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "write_code_review", Arguments: args})
+	if err != nil {
+		t.Fatalf("CallTool write_code_review: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("write_code_review returned an error: %s", toolResultText(t, res))
+	}
+	wantID, err := recordstore.IdentityFor("code_review", nil, vetting.SubjectHint(chatID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := recordstore.New(svc, "quack", "u1", chatID)
+	raw, rev, ok, err := rc.Latest(ctx, wantID)
+	if err != nil || !ok {
+		t.Fatalf("code_review %s not found: ok=%v err=%v", wantID, ok, err)
+	}
+	if rev != 1 {
+		t.Fatalf("revision = %d, want 1 - rendered must be baked into the same write, not a second one", rev)
+	}
+	var rec struct {
+		Rendered string `json:"rendered"`
+	}
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rec.Rendered, "One blocking issue in the parser.") || !strings.Contains(rec.Rendered, "**Verdict: request changes**") {
+		t.Fatalf("rendered = %q, want the fixed format's own overview", rec.Rendered)
 	}
 }
 

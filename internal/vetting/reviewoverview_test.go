@@ -26,7 +26,7 @@ func TestRenderReviewOverview_Golden(t *testing.T) {
 			want: "**Verdict: approve** · head abc1234\n\n" +
 				"Scope: first review, whole PR (5 files)\n\n" +
 				"Auth flow change is safe and well tested.\n\n" +
-				"### Verified\n\n- Ran the auth test suite locally\n- Checked the token refresh path\n\n\n" +
+				"### Verified\n\n- Ran the auth test suite locally\n- Checked the token refresh path\n\n" +
 				"### Notes\n\n- Consider adding a changelog entry",
 		},
 		{
@@ -69,13 +69,13 @@ func TestRenderReviewOverview_Golden(t *testing.T) {
 				"Scope: first review, whole PR (2 files)\n\n" +
 				"Mostly style feedback, nothing blocking.\n\n" +
 				"### Highlights\n\n| Severity | Where | Why it matters |\n| --- | --- | --- |\n" +
-				"| suggestion | a.go:1 | use context |\n" +
+				"| suggestion | a.go:1 | use context.Context here |\n" +
 				"| suggestion | b.go:2 | rename to camelCase |",
 		},
 		{
 			name: "rereview_with_resolved_and_dismissed",
 			in: reviewOverviewInput{
-				Verdict: "request_changes", ScopeKnown: true, FirstReview: false, PriorHeadSHA: "bbb2222222222", CommitsSince: 3, FileCount: 4, HeadSHA: "ccc3333333333",
+				Verdict: "request_changes", ScopeKnown: true, FirstReview: false, PriorHeadSHA: "bbb2222222222", CommitsSinceKnown: true, CommitsSince: 3, FileCount: 4, HeadSHA: "ccc3333333333",
 				Takeaway:   "One new blocker since last review.",
 				SinceKnown: true, Resolved: 2, Open: 1,
 				Dismissed: []DismissedEntry{{Path: "x.go", Line: 9, Note: "not a real issue"}},
@@ -87,6 +87,47 @@ func TestRenderReviewOverview_Golden(t *testing.T) {
 				"Since last review: 2 resolved · 1 open · 1 dismissed (x.go:9: not a real issue)\n\n" +
 				"### Highlights\n\n| Severity | Where | Why it matters |\n| --- | --- | --- |\n" +
 				"| blocking | y.go:20 | still broken here |",
+		},
+		{
+			// nit 9: a prior head is known but rev-list couldn't resolve a
+			// commit count (force-pushed away) - the whole "N commits
+			// since <sha7>" clause is omitted, never "0 commits since".
+			name: "rereview_unresolved_commit_count",
+			in: reviewOverviewInput{
+				Verdict: "approve", ScopeKnown: true, FirstReview: false, PriorHeadSHA: "bbb2222222222", CommitsSinceKnown: false, FileCount: 4, HeadSHA: "ccc3333333333",
+				Takeaway: "Looks fine now.",
+			},
+			want: "**Verdict: approve** · head ccc3333\n\n" +
+				"Scope: re-review (4 files)\n\n" +
+				"Looks fine now.",
+		},
+		{
+			// nit 10: a label with no explanation at all falls back to the
+			// finding's own path for Why, rather than an empty cell.
+			name: "label_only_body_falls_back_to_path",
+			in: reviewOverviewInput{
+				Verdict: "request_changes",
+				Comments: []ReviewComment{
+					{Path: "internal/gate.go", Line: 7, Body: "blocking:"},
+				},
+			},
+			want: "**Verdict: request changes** · 1 blocking\n\n" +
+				"### Highlights\n\n| Severity | Where | Why it matters |\n| --- | --- | --- |\n" +
+				"| blocking | internal/gate.go:7 | internal/gate.go |",
+		},
+		{
+			// suggestion 4: a literal "|" in a finding's title/why must not
+			// break the Highlights table it renders into.
+			name: "pipe_in_why_is_escaped",
+			in: reviewOverviewInput{
+				Verdict: "request_changes",
+				Comments: []ReviewComment{
+					{Path: "internal/parse.go", Line: 3, Body: "blocking: the a|b union type is never checked. Crashes on the second variant."},
+				},
+			},
+			want: "**Verdict: request changes** · 1 blocking\n\n" +
+				"### Highlights\n\n| Severity | Where | Why it matters |\n| --- | --- | --- |\n" +
+				"| blocking | internal/parse.go:3 | the a\\|b union type is never checked |",
 		},
 		{
 			name: "legacy_summary_record",
@@ -141,6 +182,20 @@ func TestCommentLabel_Variants(t *testing.T) {
 		{"nit: rename var. Minor clarity.", "nit", "rename var"},
 		{"question: why is this synchronous? Seems avoidable.", "question", "why is this synchronous? Seems avoidable"},
 		{"no label at all here, just prose.", "", "no label at all here, just prose"},
+		// #1: a period only ends a sentence when followed by whitespace -
+		// none of these mid-token periods are, so the sentence runs on.
+		{"blocking: cfg.Setup is read before validation runs. Fix the order.", "blocking", "cfg.Setup is read before validation runs"},
+		{"blocking: see internal/router.go:42 for the bad route. It never matches.", "blocking", "see internal/router.go:42 for the bad route"},
+		{"blocking: the docs link https://example.com/a.b.c is dead. Update it.", "blocking", "the docs link https://example.com/a.b.c is dead"},
+		// Abbreviations don't end the sentence at their own period either.
+		{"suggestion: prefer a typed error, e.g. sentinel errors. Cleaner call sites.", "suggestion", "prefer a typed error, e.g. sentinel errors"},
+		{"suggestion: use a stable id, i.e. the hash, not the index. Survives reorders.", "suggestion", "use a stable id, i.e. the hash, not the index"},
+		{"nit: prefer a slice vs. a map here. Simpler iteration.", "nit", "prefer a slice vs. a map here"},
+		// A period inside a backtick span never ends the sentence.
+		{"blocking: `a.b.c()` returns nil on error. Callers don't check it.", "blocking", "`a.b.c()` returns nil on error"},
+		// A label with nothing after it - the render loop falls back to the
+		// finding's path, but commentLabel itself reports an empty why.
+		{"blocking:", "blocking", ""},
 	}
 	for _, c := range cases {
 		label, why := commentLabel(c.body)
