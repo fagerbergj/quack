@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -136,6 +137,40 @@ func TestRunChatListEmpty(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "No chats yet") {
 		t.Errorf("empty list should guide the user, got %q", out.String())
+	}
+}
+
+// TestRunChatListEmptyJSON covers cli.md audit finding 3: an empty result
+// must encode as `[]`, not `null` - a jq consumer hard-fails on null.
+func TestRunChatListEmptyJSON(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, `{"data":[]}`)
+	}))
+	defer srv.Close()
+	var out bytes.Buffer
+	if err := RunChatList(context.Background(), &out, srv.URL, true, chatListFilters{origin: "all"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out.String()); got != "[]" {
+		t.Errorf("chat list --json on empty = %q, want []", got)
+	}
+}
+
+// TestRunChatListFilteredToEmptyJSON is the same defect via the filter path
+// (chats exist, none pass the filter): kept starts as a nil slice.
+func TestRunChatListFilteredToEmptyJSON(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, `{"data":[{"id":"c1","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","system_prompt":"","status":"idle"}]}`)
+	}))
+	defer srv.Close()
+	var out bytes.Buffer
+	if err := RunChatList(context.Background(), &out, srv.URL, true, chatListFilters{origin: "all", status: "failed"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out.String()); got != "[]" {
+		t.Errorf("chat list --json filtered to empty = %q, want []", got)
 	}
 }
 
@@ -367,8 +402,8 @@ func TestRunChatDelete(t *testing.T) {
 	defer srv.Close()
 
 	// yes=true skips the prompt.
-	var out bytes.Buffer
-	if err := RunChatDelete(context.Background(), &out, strings.NewReader(""), srv.URL, "c1", true); err != nil {
+	var out, errOut bytes.Buffer
+	if err := RunChatDelete(context.Background(), &out, &errOut, strings.NewReader(""), srv.URL, "c1", true); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	if !deleted {
@@ -378,7 +413,8 @@ func TestRunChatDelete(t *testing.T) {
 	// yes=false with a "no" answer must NOT delete.
 	deleted = false
 	out.Reset()
-	if err := RunChatDelete(context.Background(), &out, strings.NewReader("n\n"), srv.URL, "c1", false); err != nil {
+	errOut.Reset()
+	if err := RunChatDelete(context.Background(), &out, &errOut, strings.NewReader("n\n"), srv.URL, "c1", false); err != nil {
 		t.Fatal(err)
 	}
 	if deleted {
@@ -386,6 +422,53 @@ func TestRunChatDelete(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Cancelled") {
 		t.Errorf("declining should say Cancelled, got %q", out.String())
+	}
+}
+
+// TestRunChatDeletePromptOnStderr covers cli.md audit finding 9: the
+// confirmation prompt must land on stderr, not mix into stdout with the
+// command's real output.
+func TestRunChatDeletePromptOnStderr(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	if err := RunChatDelete(context.Background(), &out, &errOut, strings.NewReader("n\n"), srv.URL, "c1", false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "[y/N]") {
+		t.Errorf("prompt leaked onto stdout: %q", out.String())
+	}
+	if !strings.Contains(errOut.String(), "[y/N]") {
+		t.Errorf("prompt missing from stderr: %q", errOut.String())
+	}
+}
+
+// TestRunChatDeleteNonInteractiveErrors covers cli.md audit finding 9: a
+// genuinely empty/closed stdin (a script that forgot -y) must error with a
+// non-zero exit, not silently report success at deleting nothing.
+func TestRunChatDeleteNonInteractiveErrors(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	var deleted bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		deleted = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	err := RunChatDelete(context.Background(), &out, &errOut, strings.NewReader(""), srv.URL, "c1", false)
+	if err == nil {
+		t.Fatal("expected an error on empty/closed stdin without -y")
+	}
+	if !strings.Contains(err.Error(), "-y") {
+		t.Errorf("error %q should point at -y", err.Error())
+	}
+	if deleted {
+		t.Error("must not delete when confirmation could not be obtained")
 	}
 }
 
@@ -413,6 +496,163 @@ func TestRunNodeStop(t *testing.T) {
 	}
 	if gotBody.Status != schema.NodeStatusCancelled {
 		t.Errorf("node stop sent status %q, want %q", gotBody.Status, schema.NodeStatusCancelled)
+	}
+}
+
+// TestRunNodeStopSurfacesServerMessage covers cli.md audit finding 4: a 404
+// on a node verb almost never means the chat is missing - it should surface
+// the server's own reason (e.g. "no plan for this chat"), not a false
+// "chat ... not found".
+func TestRunNodeStopSurfacesServerMessage(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "no plan for this chat"})
+	}))
+	defer srv.Close()
+	var out bytes.Buffer
+	err := RunNodeStop(context.Background(), &out, srv.URL, "c1", "nope")
+	if err == nil {
+		t.Fatal("expected an error on 404")
+	}
+	if got := err.Error(); got != "no plan for this chat" {
+		t.Errorf("node stop 404 error = %q, want the server's own message verbatim", got)
+	}
+}
+
+// TestRunNodeStopGenericNotFound covers the no-server-message fallback: a
+// bare 404 with no body still surfaces something scoped to chat+node, not
+// notFoundAs's chat-only wording.
+func TestRunNodeStopGenericNotFound(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	var out bytes.Buffer
+	err := RunNodeStop(context.Background(), &out, srv.URL, "c1", "nope")
+	if err == nil {
+		t.Fatal("expected an error on 404")
+	}
+	if !strings.Contains(err.Error(), "node") {
+		t.Errorf("node stop 404 fallback = %q, want it to mention the node too", err.Error())
+	}
+}
+
+// TestRunChatListArchivedScope covers cli.md audit finding 5: --archived
+// picks the server's status= query scope (exclude/include/only), the only
+// way from the CLI to reach a chat archived in the web UI.
+func TestRunChatListArchivedScope(t *testing.T) {
+	for _, tc := range []struct {
+		archived string
+		want     []string // expected status= values, in order
+	}{
+		{"", nil},
+		{"exclude", nil},
+		{"include", []string{"active", "archived"}},
+		{"only", []string{"archived"}},
+	} {
+		t.Run(tc.archived, func(t *testing.T) {
+			t.Setenv("QUACK_HOME", t.TempDir())
+			var gotStatuses []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotStatuses = r.URL.Query()["status"]
+				io.WriteString(w, `{"data":[]}`)
+			}))
+			defer srv.Close()
+			var out bytes.Buffer
+			filters := chatListFilters{origin: "all", archived: tc.archived}
+			if err := RunChatList(context.Background(), &out, srv.URL, false, filters); err != nil {
+				t.Fatal(err)
+			}
+			if len(gotStatuses) != len(tc.want) {
+				t.Fatalf("status query = %v, want %v", gotStatuses, tc.want)
+			}
+			for i := range tc.want {
+				if gotStatuses[i] != tc.want[i] {
+					t.Errorf("status query = %v, want %v", gotStatuses, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestRunChatListArchivedInvalid(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	err := RunChatList(context.Background(), io.Discard, "http://unused", false, chatListFilters{archived: "bogus"})
+	if err == nil {
+		t.Fatal("expected an error for an invalid --archived value")
+	}
+}
+
+// TestRunChatRename covers cli.md audit finding 5: `chat rename` PATCHes the
+// title, the only CLI path to the UI's rename action.
+func TestRunChatRename(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	var gotBody schema.UpdateChatBody
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch || r.URL.Path != "/api/v1/chats/c1" {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(schema.ChatSummary{Id: "c1"})
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	if err := RunChatRename(context.Background(), &out, srv.URL, "c1", "New title"); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody.Title == nil || *gotBody.Title != "New title" {
+		t.Errorf("PATCH body title = %v, want \"New title\"", gotBody.Title)
+	}
+	if gotBody.Archived != nil {
+		t.Errorf("PATCH body archived = %v, want nil (rename shouldn't touch it)", gotBody.Archived)
+	}
+	if !strings.Contains(out.String(), "New title") {
+		t.Errorf("output = %q, want it to confirm the new title", out.String())
+	}
+}
+
+// TestRunChatArchive covers cli.md audit finding 5: `chat archive` /
+// `chat unarchive` PATCH the archived flag.
+func TestRunChatArchive(t *testing.T) {
+	for _, archived := range []bool{true, false} {
+		t.Run(fmt.Sprint(archived), func(t *testing.T) {
+			t.Setenv("QUACK_HOME", t.TempDir())
+			var gotBody schema.UpdateChatBody
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPatch || r.URL.Path != "/api/v1/chats/c1" {
+					t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+				}
+				_ = json.NewDecoder(r.Body).Decode(&gotBody)
+				_ = json.NewEncoder(w).Encode(schema.ChatSummary{Id: "c1"})
+			}))
+			defer srv.Close()
+
+			var out bytes.Buffer
+			if err := RunChatArchive(context.Background(), &out, srv.URL, "c1", archived); err != nil {
+				t.Fatal(err)
+			}
+			if gotBody.Archived == nil || *gotBody.Archived != archived {
+				t.Errorf("PATCH body archived = %v, want %v", gotBody.Archived, archived)
+			}
+			if gotBody.Title != nil {
+				t.Errorf("PATCH body title = %v, want nil (archive shouldn't touch it)", gotBody.Title)
+			}
+		})
+	}
+}
+
+func TestRunChatArchiveNotFound(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	err := RunChatArchive(context.Background(), io.Discard, srv.URL, "nope", true)
+	if err == nil || !strings.Contains(err.Error(), "nope not found") {
+		t.Fatalf("err = %v, want a chat-not-found message", err)
 	}
 }
 

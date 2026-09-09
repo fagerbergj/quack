@@ -18,11 +18,12 @@ const (
 	ProbeInfo SandboxProbeStatus = "INFO"
 )
 
-// SandboxProbeResult is one row of `quack sandbox check`'s table.
+// SandboxProbeResult is one row of `quack sandbox check`'s table (or one
+// entry of its --json array).
 type SandboxProbeResult struct {
-	Name     string
-	Status   SandboxProbeStatus
-	Evidence string
+	Name     string             `json:"name"`
+	Status   SandboxProbeStatus `json:"status"`
+	Evidence string             `json:"evidence"`
 }
 
 // SandboxRunner is the seam `check`'s probes run a shell command through -

@@ -13,13 +13,14 @@ import (
 )
 
 // RunMemoryList is `quack memory list`: browse or (with q) search the
-// server's configured memory stores, or raw JSON with --json.
-func RunMemoryList(ctx context.Context, out io.Writer, server, bucket, q string, limit int, includeInvalidated, asJSON bool) error {
+// server's configured memory stores, or raw JSON with --json. limit<=0
+// (the default) auto-pages through the whole listing - see Client.ListMemories.
+func RunMemoryList(ctx context.Context, out io.Writer, server, bucket, q, tier, sort string, limit int, includeInvalidated, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
 	}
-	list, err := c.ListMemories(ctx, bucket, q, limit, includeInvalidated)
+	list, err := c.ListMemories(ctx, bucket, q, tier, sort, limit, includeInvalidated)
 	if err != nil {
 		return err
 	}
@@ -44,20 +45,20 @@ func RunMemoryList(ctx context.Context, out io.Writer, server, bucket, q string,
 
 // RunMemoryShow is `quack memory show <memory-id>`: prints one memory's full
 // detail, including votes/tier/last-recalled (epic #1255 P1 observability).
-// No single-memory GET endpoint exists yet - this pages through
-// include_invalidated=true listings looking for the id, fine at memory's
-// documented scale (hundreds-thousands).
+// A direct per-id GET (server-side: the same store.GetByID DeleteMemory/
+// VoteMemory already use) - O(1) regardless of corpus size, not the old
+// full-store page scan (cli.md audit finding 7).
 func RunMemoryShow(ctx context.Context, out io.Writer, server, id string, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
 	}
-	m, err := findMemory(ctx, c, id)
+	m, err := c.GetMemory(ctx, id)
 	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return fmt.Errorf("memory %s not found", id)
+		}
 		return err
-	}
-	if m == nil {
-		return fmt.Errorf("memory %s not found", id)
 	}
 	if asJSON {
 		return writeJSON(out, m)
@@ -88,30 +89,6 @@ func RunMemoryShow(ctx context.Context, out io.Writer, server, id string, asJSON
 	fmt.Fprintf(out, "content:\n%s\n", m.Content)
 	return nil
 }
-
-// findMemory pages through every bucket's listing (include_invalidated so a
-// forgotten memory is still showable) looking for id.
-func findMemory(ctx context.Context, c *Client, id string) (*schema.Memory, error) {
-	var pageToken string
-	for {
-		list, err := c.ListMemoriesPage(ctx, "", pageToken, memoryShowPageSize, true)
-		if err != nil {
-			return nil, err
-		}
-		for i := range list.Memories {
-			if list.Memories[i].Id == id {
-				return &list.Memories[i], nil
-			}
-		}
-		if list.NextPageToken == nil || *list.NextPageToken == "" {
-			return nil, nil
-		}
-		pageToken = *list.NextPageToken
-	}
-}
-
-// memoryShowPageSize bounds each page findMemory fetches while scanning for one id.
-const memoryShowPageSize = 200
 
 func intOr(p *int) int {
 	if p == nil {

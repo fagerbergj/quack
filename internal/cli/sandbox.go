@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/fagerbergj/quack/internal/acp"
 	"github.com/fagerbergj/quack/internal/config"
@@ -49,7 +50,11 @@ func ResolveSandboxAgent(cfg *config.Config, name string) (string, config.AgentC
 	}
 	ac, ok := cfg.Agents[name]
 	if !ok {
-		return "", config.AgentConfig{}, fmt.Errorf("--agent: %q is not defined in this config's agents:", name)
+		names := slices.Sorted(maps.Keys(cfg.Agents))
+		if len(names) == 0 {
+			return "", config.AgentConfig{}, fmt.Errorf("--agent: %q is not defined in this config's agents: (none configured)", name)
+		}
+		return "", config.AgentConfig{}, fmt.Errorf("--agent: %q is not defined in this config's agents: %s", name, strings.Join(names, ", "))
 	}
 	return name, ac, nil
 }

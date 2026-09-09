@@ -520,7 +520,7 @@ func TestNewClientAttachesBearerToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	if _, err := c.ListChats(context.Background()); err != nil {
+	if _, err := c.ListChats(context.Background(), nil); err != nil {
 		t.Fatalf("ListChats: %v", err)
 	}
 	if gotAuth != "Bearer secret-token" {
@@ -560,7 +560,7 @@ func TestNewClientNoAuthConfiguredAttachesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	if _, err := c.ListChats(context.Background()); err != nil {
+	if _, err := c.ListChats(context.Background(), nil); err != nil {
 		t.Fatalf("ListChats: %v", err)
 	}
 	if gotAuth != "" {

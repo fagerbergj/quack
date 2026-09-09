@@ -63,20 +63,44 @@ func NewClient(ctx context.Context, override string) (*Client, error) {
 // ErrNotFound is returned by client calls when the server responds 404.
 var ErrNotFound = errors.New("not found")
 
+// notFoundErr wraps ErrNotFound with the server's own 404 message (the
+// "error" field on its body) so errors.Is(err, ErrNotFound) still matches
+// (chat-scoped callers via notFoundAs) while a caller that needs the real
+// reason - the node verbs, where a 404 usually means "no plan"/"no such
+// node", not "chat missing" - can recover it via nodeErrAs.
+type notFoundErr struct{ msg string }
+
+func (e *notFoundErr) Error() string   { return e.msg }
+func (e *notFoundErr) Is(t error) bool { return t == ErrNotFound }
+
+// wrapNotFound turns a 404 response body into an error: ErrNotFound itself
+// when the server gave no message, else a notFoundErr carrying it.
+func wrapNotFound(msg string) error {
+	if msg == "" {
+		return ErrNotFound
+	}
+	return &notFoundErr{msg: msg}
+}
+
 // ListChats returns all chats (server orders most-recently-updated first),
-// paging through the server's paginated endpoint at its max page size. The
-// page token is opaque - passed back exactly as the server returned it,
-// never parsed or constructed.
-func (c *Client) ListChats(ctx context.Context) ([]schema.ChatSummary, error) {
+// paging through the server's paginated endpoint at its max page size.
+// statuses repeats as `?status=` (server default: ["active"] when empty) -
+// this is the archived/active scope, unrelated to a chat's own idle/running/
+// needs_input/failed status. The page token is opaque - passed back exactly
+// as the server returned it, never parsed or constructed.
+func (c *Client) ListChats(ctx context.Context, statuses []string) ([]schema.ChatSummary, error) {
 	var all []schema.ChatSummary
 	pageToken := ""
 	for {
-		path := "/api/v1/chats?limit=100"
+		q := url.Values{"limit": {"100"}}
+		for _, s := range statuses {
+			q.Add("status", s)
+		}
 		if pageToken != "" {
-			path += "&page_token=" + url.QueryEscape(pageToken)
+			q.Set("page_token", pageToken)
 		}
 		var out schema.ChatList
-		if err := c.getJSON(ctx, path, &out); err != nil {
+		if err := c.getJSON(ctx, "/api/v1/chats?"+q.Encode(), &out); err != nil {
 			return nil, err
 		}
 		all = append(all, out.Data...)
@@ -85,6 +109,25 @@ func (c *Client) ListChats(ctx context.Context) ([]schema.ChatSummary, error) {
 		}
 		pageToken = *out.NextPageToken
 	}
+}
+
+// UpdateChat renames and/or archives a chat (PATCH .../chats/{id}); a nil
+// field is left unchanged server-side. 404 (unknown chat) surfaces as
+// ErrNotFound.
+func (c *Client) UpdateChat(ctx context.Context, id string, title *string, archived *bool) (schema.ChatSummary, error) {
+	var out schema.ChatSummary
+	body, _ := json.Marshal(schema.UpdateChatBody{Title: title, Archived: archived})
+	status, respBody, err := c.Request(ctx, http.MethodPatch, "/api/v1/chats/"+id, bytes.NewReader(body))
+	if err != nil {
+		return out, err
+	}
+	if status == http.StatusNotFound {
+		return out, wrapNotFound(errBody(bytes.NewReader(respBody)))
+	}
+	if status >= 400 {
+		return out, fmt.Errorf("PATCH .../chats/%s: %s", id, errStatus(status, respBody))
+	}
+	return out, json.Unmarshal(respBody, &out)
 }
 
 // ListRecordings returns every session the replay ledger has an entry for
@@ -128,50 +171,69 @@ func (c *Client) FetchArtifact(ctx context.Context, chatID, artifactName string,
 	return body, nil
 }
 
-// ListMemories browses or (with q) searches the server's configured memory
-// stores. One request, no auto-paging - callers wanting more pass a larger
-// limit or repeat with page_token via `quack api`.
-func (c *Client) ListMemories(ctx context.Context, bucket, q string, limit int, includeInvalidated bool) (schema.MemoryList, error) {
-	var out schema.MemoryList
-	path := "/api/v1/memories?"
-	q2 := url.Values{}
-	if bucket != "" {
-		q2.Set("bucket", bucket)
+// ListMemories browses (or, with q, searches) the server's configured memory
+// stores. limit<=0 auto-pages through the whole listing (mirroring
+// ListChats) - without this, a store past the server's default page size
+// (50) was simply unreachable from the CLI; a positive limit makes exactly
+// one bounded request instead. q switches to search mode, which the server
+// never paginates (a top-K, not a stable page) - limit there just caps that
+// one request.
+func (c *Client) ListMemories(ctx context.Context, bucket, q, tier, sort string, limit int, includeInvalidated bool) (schema.MemoryList, error) {
+	if q != "" || limit > 0 {
+		var out schema.MemoryList
+		err := c.getJSON(ctx, "/api/v1/memories?"+memoryQuery(bucket, q, tier, sort, limit, includeInvalidated, "").Encode(), &out)
+		return out, err
 	}
-	if q != "" {
-		q2.Set("q", q)
+	// Memories starts non-nil: an all-empty result must still encode as `[]`,
+	// not `null` (append onto a nil slice with nothing to append stays nil -
+	// the same defect class as cli.md audit finding 3).
+	all := schema.MemoryList{Memories: []schema.Memory{}}
+	pageToken := ""
+	for {
+		var page schema.MemoryList
+		if err := c.getJSON(ctx, "/api/v1/memories?"+memoryQuery(bucket, "", tier, sort, 0, includeInvalidated, pageToken).Encode(), &page); err != nil {
+			return all, err
+		}
+		all.Memories = append(all.Memories, page.Memories...)
+		all.Total = page.Total
+		if page.NextPageToken == nil || *page.NextPageToken == "" {
+			return all, nil
+		}
+		pageToken = *page.NextPageToken
 	}
-	if limit > 0 {
-		q2.Set("limit", strconv.Itoa(limit))
-	}
-	if includeInvalidated {
-		q2.Set("include_invalidated", "true")
-	}
-	path += q2.Encode()
-	err := c.getJSON(ctx, path, &out)
-	return out, err
 }
 
-// ListMemoriesPage is ListMemories plus page_token, for a caller (RunMemoryShow)
-// that needs to page through a whole bucket rather than one bounded request.
-func (c *Client) ListMemoriesPage(ctx context.Context, bucket, pageToken string, limit int, includeInvalidated bool) (schema.MemoryList, error) {
-	var out schema.MemoryList
-	path := "/api/v1/memories?"
-	q2 := url.Values{}
+func memoryQuery(bucket, q, tier, sort string, limit int, includeInvalidated bool, pageToken string) url.Values {
+	v := url.Values{}
 	if bucket != "" {
-		q2.Set("bucket", bucket)
+		v.Set("bucket", bucket)
 	}
-	if pageToken != "" {
-		q2.Set("page_token", pageToken)
+	if q != "" {
+		v.Set("q", q)
+	}
+	if tier != "" {
+		v.Set("tier", tier)
+	}
+	if sort != "" {
+		v.Set("sort", sort)
 	}
 	if limit > 0 {
-		q2.Set("limit", strconv.Itoa(limit))
+		v.Set("limit", strconv.Itoa(limit))
 	}
 	if includeInvalidated {
-		q2.Set("include_invalidated", "true")
+		v.Set("include_invalidated", "true")
 	}
-	path += q2.Encode()
-	err := c.getJSON(ctx, path, &out)
+	if pageToken != "" {
+		v.Set("page_token", pageToken)
+	}
+	return v
+}
+
+// GetMemory fetches one memory by id directly (GET /api/v1/memories/{id}) -
+// no store-wide scan. 404 (unknown id) surfaces as ErrNotFound.
+func (c *Client) GetMemory(ctx context.Context, id string) (schema.Memory, error) {
+	var out schema.Memory
+	err := c.getJSON(ctx, "/api/v1/memories/"+url.PathEscape(id), &out)
 	return out, err
 }
 
@@ -271,7 +333,7 @@ func (c *Client) QueueNodeMessage(ctx context.Context, chatID, nodeID, text stri
 		return out, err
 	}
 	if status == http.StatusNotFound {
-		return out, ErrNotFound
+		return out, wrapNotFound(errBody(bytes.NewReader(respBody)))
 	}
 	if status >= 400 {
 		return out, fmt.Errorf("POST .../queue: %s", errBody(bytes.NewReader(respBody)))
@@ -307,7 +369,7 @@ func (c *Client) sendBody(ctx context.Context, method, path string, body []byte)
 		return err
 	}
 	if status == http.StatusNotFound {
-		return ErrNotFound
+		return wrapNotFound(errBody(bytes.NewReader(respBody)))
 	}
 	if status >= 400 {
 		if msg := errBody(bytes.NewReader(respBody)); msg != "" {
@@ -344,7 +406,7 @@ func (c *Client) putStatus(ctx context.Context, path string, body any) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return ErrNotFound
+		return wrapNotFound(errBody(resp.Body))
 	}
 	if resp.StatusCode >= 400 {
 		// Surface the server's reason (e.g. a 409 TransitionError names the
@@ -393,14 +455,15 @@ func (c *Client) getJSON(ctx context.Context, path string, out any) error {
 	return json.Unmarshal(body, out)
 }
 
-// send issues a bodiless request and discards the response; 404 → ErrNotFound.
+// send issues a bodiless request and discards the response; 404 → ErrNotFound
+// (wrapping the server's message, if any - see wrapNotFound).
 func (c *Client) send(ctx context.Context, method, path string) error {
 	status, body, err := c.Request(ctx, method, path, nil)
 	if err != nil {
 		return err
 	}
 	if status == http.StatusNotFound {
-		return ErrNotFound
+		return wrapNotFound(errBody(bytes.NewReader(body)))
 	}
 	if status >= 400 {
 		return fmt.Errorf("%s %s: %s", method, path, errStatus(status, body))

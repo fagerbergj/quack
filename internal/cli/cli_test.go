@@ -82,6 +82,25 @@ func TestRegistryAddDuplicate(t *testing.T) {
 	}
 }
 
+// TestRegistryAddServerActivatesOnlyTheFirst covers cli.md audit finding 14:
+// without this, `chat list` right after `server add` silently falls back to
+// the local in-process duck instead of erroring or reaching the new server.
+func TestRegistryAddServerActivatesOnlyTheFirst(t *testing.T) {
+	c := &ClientConfig{Servers: map[string]ServerRef{}}
+	if err := c.AddServer("a", "http://a"); err != nil {
+		t.Fatal(err)
+	}
+	if c.Active != "a" {
+		t.Errorf("first AddServer should activate it, active = %q", c.Active)
+	}
+	if err := c.AddServer("b", "http://b"); err != nil {
+		t.Fatal(err)
+	}
+	if c.Active != "a" {
+		t.Errorf("second AddServer should not steal activation, active = %q", c.Active)
+	}
+}
+
 func TestLoadClientAbsent(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	c, err := LoadClient()
@@ -161,6 +180,69 @@ func TestPrefillFromEnv(t *testing.T) {
 // round-trips through the real config loader. Guards the wizard's output
 // contract (the AGENTS.md spec-driven rule: behavioral drift becomes a failing
 // test, not a production incident).
+// TestLoadInitAnswersFileHeadlessSetup covers cli.md audit finding 2: a
+// non-interactive `quack server init --answers <file>` path that needs no
+// TTY. The loaded answers must produce a config that actually loads.
+func TestLoadInitAnswersFileHeadlessSetup(t *testing.T) {
+	dir := t.TempDir()
+	answersPath := filepath.Join(dir, "answers.yaml")
+	body := "endpoint: http://localhost:11436/v1\n" +
+		"api_key: k\n" +
+		"main_model: qwen3.6-35b\n" +
+		"judge_model: gemma4-26b-a4b\n" +
+		"embed_model: qwen3-embed\n" +
+		"session_kind: sqlite\n" +
+		"memory_kind: sqlite\n" +
+		"search_kind: exa\n" +
+		"fetch_kind: direct\n" +
+		"web_search: true\n" +
+		"web_fetch: true\n"
+	if err := os.WriteFile(answersPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	a, err := LoadInitAnswersFile(answersPath)
+	if err != nil {
+		t.Fatalf("LoadInitAnswersFile: %v", err)
+	}
+	if a.Endpoint != "http://localhost:11436/v1" || a.MainModel != "qwen3.6-35b" {
+		t.Errorf("loaded answers = %+v, want the file's values", a)
+	}
+
+	outPath := filepath.Join(dir, "quack.yaml")
+	t.Setenv("QUACK_LLM_API_KEY", a.APIKey)
+	if err := WriteServerConfig(a, outPath); err != nil {
+		t.Fatalf("WriteServerConfig: %v", err)
+	}
+	if _, err := loadConfigForTest(outPath); err != nil {
+		t.Fatalf("headless-emitted config failed to load: %v", err)
+	}
+}
+
+// TestLoadInitAnswersFileOverridesEnvPrefill: env sets a default, the file
+// overrides it - the file's value must win.
+func TestLoadInitAnswersFileOverridesEnvPrefill(t *testing.T) {
+	t.Setenv("QUACK_ORCH_MODEL", "env-model")
+	answersPath := filepath.Join(t.TempDir(), "answers.yaml")
+	if err := os.WriteFile(answersPath, []byte("main_model: file-model\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a, err := LoadInitAnswersFile(answersPath)
+	if err != nil {
+		t.Fatalf("LoadInitAnswersFile: %v", err)
+	}
+	if a.MainModel != "file-model" {
+		t.Errorf("MainModel = %q, want the file's value to win over env", a.MainModel)
+	}
+}
+
+func TestLoadInitAnswersFileMissing(t *testing.T) {
+	_, err := LoadInitAnswersFile(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err == nil {
+		t.Fatal("expected an error for a missing --answers file")
+	}
+}
+
 func TestEmitServerConfigRoundTrip(t *testing.T) {
 	a := InitAnswers{
 		Endpoint:    "http://localhost:11436/v1",

@@ -46,8 +46,8 @@ func TestRunChatShow(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 	code := RunChatShow(context.Background(), &out, &errOut, srv.URL, "c1", false, false)
-	if code != 0 {
-		t.Fatalf("exit code = %d, want 0 (snapshot mode never fails on its own)", code)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2 (the fixture's status is needs_input)", code)
 	}
 	s := out.String()
 	for _, want := range []string{
@@ -139,8 +139,8 @@ func TestRunChatShowNoGithubLink(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 	code := RunChatShow(context.Background(), &out, &errOut, srv.URL, "c1", false, false)
-	if code != 0 {
-		t.Fatalf("exit code = %d, want 0", code)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2 (the fixture's status is needs_input)", code)
 	}
 	if strings.Contains(out.String(), "github:") {
 		t.Errorf("direct chat should show no github line:\n%s", out.String())
@@ -156,8 +156,8 @@ func TestRunChatShowJSON(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 	code := RunChatShow(context.Background(), &out, &errOut, srv.URL, "c1", true, false)
-	if code != 0 {
-		t.Fatalf("exit code = %d, want 0", code)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2 (the fixture's status is needs_input)", code)
 	}
 	var detail schema.ChatDetail
 	if err := json.Unmarshal(out.Bytes(), &detail); err != nil {
@@ -165,6 +165,38 @@ func TestRunChatShowJSON(t *testing.T) {
 	}
 	if detail.Id != "c1" || detail.Status != schema.ChatStatusNeedsInput {
 		t.Errorf("decoded detail = %+v, want id c1 status needs_input", detail)
+	}
+}
+
+// TestRunChatShowExitCodeContract covers cli.md audit finding 1: the
+// snapshot and --json paths must apply the documented 0/1/2 pause/failure
+// exit-code contract off the chat's status, same as `chat send`/`-p`.
+func TestRunChatShowExitCodeContract(t *testing.T) {
+	for _, tc := range []struct {
+		status string
+		want   int
+	}{
+		{"idle", 0},
+		{"failed", 1},
+		{"needs_input", 2},
+	} {
+		for _, asJSON := range []bool{false, true} {
+			t.Run(tc.status, func(t *testing.T) {
+				t.Setenv("QUACK_HOME", t.TempDir())
+				body := `{"id":"c1","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z",` +
+					`"system_prompt":"","status":"` + tc.status + `","turns":[]}`
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					io.WriteString(w, body)
+				}))
+				defer srv.Close()
+
+				var out, errOut bytes.Buffer
+				code := RunChatShow(context.Background(), &out, &errOut, srv.URL, "c1", asJSON, false)
+				if code != tc.want {
+					t.Errorf("status=%s asJSON=%v: exit code = %d, want %d", tc.status, asJSON, code, tc.want)
+				}
+			})
+		}
 	}
 }
 
