@@ -26,6 +26,9 @@ import (
 // what points written before the bucket model carry (their value being an agent name
 // or a raw user id), and reading them back is exactly what makes the legacy
 // entitlement in Scope.Legacy work without a migration.
+// indexBuildTimeout caps the blocking timestamp-index build at boot.
+const indexBuildTimeout = 5 * time.Minute
+
 const (
 	payloadContent   = "content"
 	payloadScope     = "user_id"
@@ -122,6 +125,10 @@ func (x *qdrantIndex) ensureTimestampIndex(ctx context.Context) error {
 	// race a startup that returned before the index existed. Blocking here
 	// keeps that race out of every caller instead of every list() call.
 	wait := true
+	// Bounded so a huge pre-existing collection cannot hang boot indefinitely;
+	// on timeout boot fails loud like every other memory startup error.
+	ctx, cancel := context.WithTimeout(ctx, indexBuildTimeout)
+	defer cancel()
 	if _, err := x.client.CreateFieldIndex(ctx, &qdrant.CreateFieldIndexCollection{
 		CollectionName: x.coll,
 		FieldName:      payloadTimestamp,
