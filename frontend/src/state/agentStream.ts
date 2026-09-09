@@ -1,7 +1,7 @@
 // Shared event vocabulary and dispatch for the agent SSE stream. Both
-// transports - fetched ReadableStream (chat) and EventSource (job live log) -
-// route events through dispatchAgentEvent so the per-event JSON shape lives
-// in one place.
+// transports - fetched ReadableStream (a chat's initial POST) and EventSource
+// (chatStore's GET reconnect) - route events through dispatchAgentEvent so
+// the per-event JSON shape lives in one place.
 
 interface ConfirmationRequestPayload {
   callId: string
