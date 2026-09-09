@@ -60,9 +60,20 @@ func (h *Handler) ListMemories(w http.ResponseWriter, r *http.Request, params sc
 		return
 	}
 
+	sortBy := memory.SortNewest
+	if params.Sort != nil {
+		if !params.Sort.Valid() {
+			errMsg(w, http.StatusBadRequest, "sort must be one of the documented values")
+			return
+		}
+		sortBy = string(*params.Sort)
+	}
 	offset := 0
 	if params.PageToken != nil && *params.PageToken != "" {
-		off, err := memory.DecodePageToken(*params.PageToken, bucketFilter)
+		// Bound to sortBy too (not just bucketFilter): an offset from one sort
+		// order names a different row under another, so a page_token replayed
+		// against a changed `sort` must 400, not silently return the wrong page.
+		off, err := memory.DecodePageToken(*params.PageToken, bucketFilter, sortBy)
 		if err != nil {
 			httpError(w, http.StatusBadRequest, err)
 			return
@@ -74,14 +85,6 @@ func (h *Handler) ListMemories(w http.ResponseWriter, r *http.Request, params sc
 	if params.Tier != nil {
 		tier = string(*params.Tier)
 	}
-	sortBy := memory.SortNewest
-	if params.Sort != nil {
-		if !params.Sort.Valid() {
-			errMsg(w, http.StatusBadRequest, "sort must be one of the documented values")
-			return
-		}
-		sortBy = string(*params.Sort)
-	}
 	mems, total, err := listMemories(r.Context(), stores, buckets, offset, limit, includeInvalidated, tier, sortBy)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
@@ -89,7 +92,7 @@ func (h *Handler) ListMemories(w http.ResponseWriter, r *http.Request, params sc
 	}
 	out := schema.MemoryList{Memories: memoriesWire(mems), Total: total}
 	if next := offset + len(mems); len(mems) > 0 && next < total {
-		tok := memory.EncodePageToken(bucketFilter, next)
+		tok := memory.EncodePageToken(bucketFilter, sortBy, next)
 		out.NextPageToken = &tok
 	}
 	writeJSON(w, http.StatusOK, out)

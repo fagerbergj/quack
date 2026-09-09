@@ -1005,8 +1005,9 @@ paths:
             `next_page_token`. Treat it as an opaque string: never parse or
             construct one, pass back exactly what was returned. Omit for the
             first page. Ignored when `q` is set (search ranks by score, not a
-            stable page). Only valid against the exact `bucket` filter it was
-            issued for.
+            stable page). Only valid against the exact `bucket` filter and
+            `sort` it was issued for - an offset from one sort order names a
+            different row under another.
           schema:
             type: string
       responses:
@@ -1017,7 +1018,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/MemoryList"
         "400":
-          description: Malformed page_token, or one issued for a different bucket filter
+          description: Malformed page_token, or one issued for a different bucket filter or sort
           content:
             application/json:
               schema:
