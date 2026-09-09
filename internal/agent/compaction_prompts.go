@@ -14,7 +14,7 @@ The conversation history you are given is being REMOVED from the agent's context
 
 Generate a version of the history with only the most verbose parts removed. Include the user's requests, the assistant's responses, ALL TECHNICAL CONTENT, and as much of the original context as possible. Anything a tool call revealed - file contents, symbols, command output, errors - is lost the moment you omit it, and the agent will simply redo the call.
 
-If the prompt includes a <previous-summary> block, treat it as the current summary: preserve still-true details, remove stale ones, and merge in the new facts.
+If this session was already compacted before, the previous summary appears in the history below as an ordinary line starting with "model: ## Goal" (its newlines rendered as literal \n, not real line breaks) - not inside any special tag or block. Treat that line as the current summary: preserve still-true details, remove stale ones, and merge in the new facts.
 
 This summary will only be read by you, so it is OK to make it MUCH LONGER than a normal summary. Do not exclude any information that might be important to continuing the session. Preserve exact file paths, symbols, commands, and error strings.
 
