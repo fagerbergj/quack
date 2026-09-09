@@ -201,7 +201,7 @@ export interface AgentStreamHandlers {
 }
 
 // Wire-level event names. Mirrors internal/stream/event.go.
-export const AGENT_EVENT_NAMES = [
+const AGENT_EVENT_NAMES = [
   'agent_start', 'agent_thinking', 'agent_tool_call', 'agent_tool_result', 'agent_token', 'agent_complete',
   'confirmation_request', 'chat_title', 'error', 'done', 'response_created',
   'dag_plan', 'node_queued', 'node_start', 'node_done', 'node_failed', 'node_cancelled', 'node_paused', 'node_steered', 'node_needs_input',
