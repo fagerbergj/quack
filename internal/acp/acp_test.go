@@ -1,6 +1,7 @@
 package acp
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -33,6 +34,10 @@ func TestMain(m *testing.M) {
 }
 
 func runFakeAgent(mode string) {
+	if mode == "deaf" {
+		runDeafFakeAgent()
+		return
+	}
 	ag := &fakeAgent{mode: mode}
 	if mode == "steer" || mode == "idle-probe" {
 		ag.steerCh = make(chan string, 1)
@@ -40,6 +45,42 @@ func runFakeAgent(mode string) {
 	conn := sdk.NewAgentSideConnection(ag, os.Stdout, os.Stdin)
 	ag.conn = conn
 	<-conn.Done()
+}
+
+// runDeafFakeAgent hand-rolls just the two handshake replies (initialize,
+// session/new) over raw JSON-RPC, then stops issuing Read calls on stdin
+// entirely - the SDK's own AgentSideConnection always keeps a receive
+// goroutine draining regardless of handler behavior, so it cannot simulate a
+// child that has genuinely stopped reading. This reproduces finding 8: the
+// parent's subsequent session/prompt write blocks once the pipe fills.
+func runDeafFakeAgent() {
+	r := bufio.NewReader(os.Stdin)
+	reply := func(id json.RawMessage, result any) {
+		b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
+		_, _ = os.Stdout.Write(append(b, '\n'))
+	}
+	for range 2 { // initialize, session/new
+		line, err := r.ReadBytes('\n')
+		if err != nil {
+			return
+		}
+		var req struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+		}
+		if err := json.Unmarshal(line, &req); err != nil {
+			return
+		}
+		switch req.Method {
+		case "initialize":
+			reply(req.ID, map[string]any{"protocolVersion": sdk.ProtocolVersionNumber, "agentCapabilities": map[string]any{}})
+		case "session/new":
+			reply(req.ID, map[string]any{"sessionId": "s1"})
+		default:
+			return
+		}
+	}
+	select {} // never read stdin again
 }
 
 type fakeAgent struct {
@@ -674,5 +715,48 @@ func TestRunPrompt_RemovesScratchDirAfterRound(t *testing.T) {
 	}
 	if _, statErr := os.Stat(scratch); !os.IsNotExist(statErr) {
 		t.Errorf("scratch dir %q must be removed after the round, stat err = %v", scratch, statErr)
+	}
+}
+
+// TestRound_ReapsChildThatStopsReadingStdin pins finding 8: a child that
+// answers the handshake and then never reads stdin again fills the pipe on a
+// large prompt, wedging the prompt goroutine inside sendMessage's writeMu.
+// The idle watchdog must still end the round within its grace period, and the
+// deferred close must reap the process - not hang forever on the same mutex
+// gracefulCancel's session/cancel also needs.
+func TestRound_ReapsChildThatStopsReadingStdin(t *testing.T) {
+	old := cancelGrace
+	cancelGrace = 300 * time.Millisecond
+	defer func() { cancelGrace = old }()
+
+	jail, err := workspace.NewJail(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := New("code-implementer", "external coder", Options{
+		Command:     []string{os.Args[0]},
+		Env:         []string{"QUACK_ACP_FAKE=deaf"},
+		Home:        t.TempDir(),
+		Jail:        jail,
+		UserID:      "u1",
+		IdleTimeout: 300 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	big := strings.Repeat("x", 512*1024) // > the 64KiB pipe buffer
+	result := make(chan error, 1)
+	go func() {
+		result <- a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, big, "", "", "", "", func(eventSpec) bool { return true })
+	}()
+
+	select {
+	case err := <-result:
+		if err == nil || !strings.Contains(err.Error(), "wedged") {
+			t.Fatalf("want a wedged idle-timeout error, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("round() never returned - a deaf child wedges gracefulCancel on the same writeMu the prompt write holds, so the child is never reaped")
 	}
 }
