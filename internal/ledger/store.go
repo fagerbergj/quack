@@ -65,3 +65,37 @@ type LedgerStore interface {
 	// Delete removes a whole chat's entries (chat hard-delete only).
 	Delete(ctx context.Context, sessionID string) error
 }
+
+// FilteredReader is optionally implemented by a LedgerStore that can push a
+// kind filter to the database (PGStore) instead of decoding every row's
+// payload just to discard most of it - see ReadByKinds.
+type FilteredReader interface {
+	ReadEntriesFiltered(ctx context.Context, chatID string, fromSeq int64, kinds []string) ([]Entry, error)
+}
+
+// ReadByKinds returns chatID's entries with Kind in kinds and Seq >= fromSeq,
+// in seq order (perf audit #1: a reader that only needs a handful of small
+// kinds otherwise pays to detoast every agent.invoke/llm.call/otel payload
+// too). Uses store's own FilteredReader when it has one (PGStore pushes
+// `kind IN (...)` to SQL); MemStore/fakes fall back to an unfiltered
+// ReadEntries plus an in-process filter, so results are identical either way.
+func ReadByKinds(ctx context.Context, store LedgerStore, chatID string, fromSeq int64, kinds []string) ([]Entry, error) {
+	if fr, ok := store.(FilteredReader); ok {
+		return fr.ReadEntriesFiltered(ctx, chatID, fromSeq, kinds)
+	}
+	entries, err := store.ReadEntries(ctx, chatID, fromSeq)
+	if err != nil {
+		return nil, err
+	}
+	want := make(map[string]bool, len(kinds))
+	for _, k := range kinds {
+		want[k] = true
+	}
+	out := make([]Entry, 0, len(entries))
+	for _, e := range entries {
+		if want[e.Kind] {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}

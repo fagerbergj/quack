@@ -1229,7 +1229,10 @@ func (s *Store) SeedProjectionWatermarks(ctx context.Context, ledgerStore ledger
 	seeds := []struct {
 		projection, listChats string
 	}{
-		{"sse", "SELECT DISTINCT chat_id AS chat_id FROM chat_events"},
+		// "sse" reads chats, not chat_events: every chat_events row's
+		// chat_id has a chats row (the FK direction), and chats.id is the
+		// PK - a 496 MB DISTINCT seq scan otherwise (perf audit #8).
+		{"sse", "SELECT id AS chat_id FROM chats"},
 		{"artifact", "SELECT DISTINCT session_id AS chat_id FROM artifacts"},
 		{"node_state", "SELECT DISTINCT dp.chat_id AS chat_id FROM dag_nodes dn JOIN dag_plans dp ON dn.plan_id = dp.id"},
 	}

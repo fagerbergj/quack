@@ -182,6 +182,41 @@ func TestPGStoreReadEntriesReturnsInOrder(t *testing.T) {
 	}
 }
 
+// TestPGStoreReadEntriesFiltered is perf audit #1: a kinds filter must
+// return exactly the matching rows, in seq order, same as ReadEntries then
+// filtering in Go - and ReadByKinds must push it to SQL for a FilteredReader.
+func TestPGStoreReadEntriesFiltered(t *testing.T) {
+	t.Parallel()
+	store := newTestPGStore(t)
+	ctx := context.Background()
+	const chatID = "chat-filtered"
+
+	kinds := []string{KindNodeStarted, KindNodeDone, KindMemoryVote}
+	for i, kind := range []string{KindNodeStarted, KindLLMCall, KindNodeDone, KindAgentInvoke, KindMemoryVote} {
+		if _, err := store.AppendIntent(ctx, Entry{ChatID: chatID, Kind: kind, Key: fmt.Sprintf("k%d", i), Payload: json.RawMessage(`{}`)}); err != nil {
+			t.Fatalf("AppendIntent %d: %v", i, err)
+		}
+	}
+
+	var _ FilteredReader = store // pgstore must satisfy the optional interface ReadByKinds looks for
+	entries, err := ReadByKinds(ctx, store, chatID, 0, kinds)
+	if err != nil {
+		t.Fatalf("ReadByKinds: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("got %d entries, want 3: %+v", len(entries), entries)
+	}
+	want := map[string]bool{KindNodeStarted: true, KindNodeDone: true, KindMemoryVote: true}
+	for i, e := range entries {
+		if !want[e.Kind] {
+			t.Errorf("entries[%d].Kind = %q, not in filter", i, e.Kind)
+		}
+		if i > 0 && entries[i-1].Seq >= e.Seq {
+			t.Errorf("entries not in seq order: %+v", entries)
+		}
+	}
+}
+
 // TestPGStoreAppendIntentValidation is verification case 11's other half:
 // a malformed intent (no chat_id/kind) is rejected without writing anything.
 func TestPGStoreAppendIntentValidation(t *testing.T) {

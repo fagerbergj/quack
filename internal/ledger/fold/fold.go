@@ -428,6 +428,23 @@ func applyEntries(entries []ledger.Entry) *Result {
 	return finalize(res, live)
 }
 
+// ApplyEntries is applyEntries, exported for a caller that already has
+// entries in hand (e.g. cli.RunLedgerRecover, which folds the same read it
+// used to find delivery intents instead of re-reading the chat's ledger).
+func ApplyEntries(entries []ledger.Entry) *Result {
+	return applyEntries(entries)
+}
+
+// RequiredKinds are the only ledger.Entry kinds applyLoop reads - a caller
+// that fetches entries itself (instead of going through Fold/Apply) can
+// project the read to just these and skip the much larger
+// agent.invoke/llm.call/otel payloads.
+var RequiredKinds = []string{
+	ledger.KindArtifactRevision, ledger.KindArtifactRevisionAborted,
+	ledger.KindNodeStarted, ledger.KindNodeDone, ledger.KindNodeFailed,
+	ledger.KindMemoryRecall, ledger.KindMemoryVote,
+}
+
 // newResult allocates every Result map so applyLoop can write into them
 // unconditionally regardless of which entry kinds a chat actually has.
 func newResult() *Result {
