@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"google.golang.org/adk/v2/model"
+	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/inference/openaimodel"
@@ -108,6 +109,20 @@ func (t *tracedModel) GenerateContent(ctx context.Context, req *model.LLMRequest
 	}
 }
 
+// splitPromptTokens splits genai's PromptTokenCount (which already includes
+// any cached tokens) into an input/cached pair. Shared by every usage
+// consumer (the otel metric here, the ledger llm.call payload in emit.go) so
+// the split can't drift between them - a duplicated copy is how the ledger
+// payload lost cached_tokens entirely.
+func splitPromptTokens(u *genai.GenerateContentResponseUsageMetadata) (input, cached int64) {
+	cached = int64(u.CachedContentTokenCount)
+	input = int64(u.PromptTokenCount) - cached
+	if input < 0 {
+		input = 0
+	}
+	return input, cached
+}
+
 // recordUsageMetrics emits gen_ai.client.token.usage (always) and
 // gen_ai.client.cost (only when pricing is configured) from one completed
 // call. genai's PromptTokenCount already includes cached tokens - split the
@@ -127,11 +142,7 @@ func recordUsageMetrics(ctx context.Context, modelName, defaultAgent string, pri
 		agent = defaultAgent
 	}
 	promptTotal := int64(u.PromptTokenCount)
-	cached := int64(u.CachedContentTokenCount)
-	input := promptTotal - cached
-	if input < 0 {
-		input = 0
-	}
+	input, cached := splitPromptTokens(u)
 	output := int64(u.CandidatesTokenCount)
 	reasoning := int64(u.ThoughtsTokenCount)
 	otelobs.RecordTokenUsage(modelName, agent, c.User, c.Source, input, output, reasoning, cached)

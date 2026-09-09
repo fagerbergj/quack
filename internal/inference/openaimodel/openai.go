@@ -257,6 +257,13 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 					CachedContentTokenCount: int32(chunk.Usage.PromptTokensDetails.CachedTokens),
 					ThoughtsTokenCount:      int32(chunk.Usage.CompletionTokensDetails.ReasoningTokens),
 				}
+				// One-shot raw usage trace per call, to confirm on prod whether
+				// the endpoint sends prompt_tokens_details.cached_tokens at all
+				// (a 0 here with prefix caching enabled is a server-side matter).
+				slog.Debug("provider token usage", "component", "inference", "model", o.ModelName,
+					"prompt_tokens", chunk.Usage.PromptTokens, "cached_tokens", chunk.Usage.PromptTokensDetails.CachedTokens,
+					"completion_tokens", chunk.Usage.CompletionTokens, "reasoning_tokens", chunk.Usage.CompletionTokensDetails.ReasoningTokens,
+					"total_tokens", chunk.Usage.TotalTokens)
 			}
 
 			if len(chunk.Choices) == 0 {
@@ -833,6 +840,13 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 			CachedContentTokenCount: int32(resp.Usage.PromptTokensDetails.CachedTokens),
 			ThoughtsTokenCount:      thoughts,
 		}
+		// One-shot raw usage trace per call, to confirm on prod whether the
+		// endpoint sends prompt_tokens_details.cached_tokens at all (a 0 here
+		// with prefix caching enabled is a server-side matter).
+		slog.Debug("provider token usage", "component", "inference", "model", resp.Model,
+			"prompt_tokens", resp.Usage.PromptTokens, "cached_tokens", resp.Usage.PromptTokensDetails.CachedTokens,
+			"completion_tokens", resp.Usage.CompletionTokens, "reasoning_tokens", resp.Usage.CompletionTokensDetails.ReasoningTokens,
+			"total_tokens", resp.Usage.TotalTokens)
 	}
 
 	return &model.LLMResponse{

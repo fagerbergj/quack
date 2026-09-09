@@ -99,9 +99,15 @@ func emitChatEvent(ctx context.Context, name string, req *model.LLMRequest, resp
 		if u := resp.UsageMetadata; u != nil {
 			// Cost accounting per node/round, and the token/finish parity a
 			// swapped-model eval re-run (#606) needs to compare against a
-			// recording - both free once UsageMetadata is populated.
-			if u.PromptTokenCount != 0 {
-				attrs = append(attrs, attribute.Int64(otelobs.GenAIUsageInputTokens, int64(u.PromptTokenCount)))
+			// recording - both free once UsageMetadata is populated. input
+			// excludes cached (splitPromptTokens), matching the otel metric's
+			// convention so a consumer summing input+cached never double-counts.
+			input, cached := splitPromptTokens(u)
+			if input != 0 {
+				attrs = append(attrs, attribute.Int64(otelobs.GenAIUsageInputTokens, input))
+			}
+			if cached != 0 {
+				attrs = append(attrs, attribute.Int64(otelobs.GenAIUsageCachedTokens, cached))
 			}
 			if u.CandidatesTokenCount != 0 {
 				attrs = append(attrs, attribute.Int64(otelobs.GenAIUsageOutputTokens, int64(u.CandidatesTokenCount)))

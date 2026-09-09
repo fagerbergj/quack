@@ -91,6 +91,29 @@ func TestStreaming_TranslatesContentReasoningTools(t *testing.T) {
 	}
 }
 
+// TestStreaming_CachedTokens verifies the streaming adapter carries a vLLM
+// prefix-cache hit (usage.prompt_tokens_details.cached_tokens) through to
+// UsageMetadata.CachedContentTokenCount - the field traced.go's
+// recordUsageMetrics/emitChatEvent split out for the otel metric and the
+// ledger llm.call payload.
+func TestStreaming_CachedTokens(t *testing.T) {
+	srv := sseServer(t,
+		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"hi"}}]}`,
+		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],`+
+			`"usage":{"prompt_tokens":100,"completion_tokens":5,"total_tokens":105,"prompt_tokens_details":{"cached_tokens":40}}}`,
+	)
+	defer srv.Close()
+	m := NewOpenAIModel("m", srv.URL, "k", "")
+
+	_, _, usage := collect(t, m)
+	if usage == nil || usage.CachedContentTokenCount != 40 {
+		t.Errorf("usage = %+v, want CachedContentTokenCount 40", usage)
+	}
+	if usage.PromptTokenCount != 100 {
+		t.Errorf("usage.PromptTokenCount = %d, want 100 (raw total, cache split happens downstream)", usage.PromptTokenCount)
+	}
+}
+
 // TestStreaming_EmptyTurnReasoningOnly reproduces the reasoning-model failure
 // mode that bit us live: the model streams only reasoning_content and hits the
 // length limit, so content (the non-thought text) comes back empty. Per #295,
@@ -476,6 +499,31 @@ func TestGenerate_PromotesReasoningWhenContentEmpty(t *testing.T) {
 	}
 	if answer != "Sources read and synthesized: the answer is 42." {
 		t.Errorf("answer = %q, want reasoning text promoted", answer)
+	}
+}
+
+// TestGenerate_CachedTokens is TestStreaming_CachedTokens' non-streaming
+// counterpart (RunConfig.StreamingMode defaults to "none" for worker rounds).
+func TestGenerate_CachedTokens(t *testing.T) {
+	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop",`+
+		`"message":{"role":"assistant","content":"hi"}}],`+
+		`"usage":{"prompt_tokens":100,"completion_tokens":5,"total_tokens":105,"prompt_tokens_details":{"cached_tokens":40}}}`)
+	defer srv.Close()
+	m := NewOpenAIModel("m", srv.URL, "k", "")
+
+	req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
+	var final *model.LLMResponse
+	for resp, err := range m.GenerateContent(context.Background(), req, false) {
+		if err != nil {
+			t.Fatalf("GenerateContent: %v", err)
+		}
+		final = resp
+	}
+	if final == nil || final.UsageMetadata == nil {
+		t.Fatal("no usage metadata")
+	}
+	if final.UsageMetadata.CachedContentTokenCount != 40 {
+		t.Errorf("usage = %+v, want CachedContentTokenCount 40", final.UsageMetadata)
 	}
 }
 

@@ -46,10 +46,14 @@ func (e chatEntry) toResponse() *model.LLMResponse {
 			resp.Content = &c
 		}
 	}
-	if e.InputTokens != 0 || e.OutputTokens != 0 {
+	if e.InputTokens != 0 || e.OutputTokens != 0 || e.CachedTokens != 0 {
+		// InputTokens already excludes CachedTokens (inference.splitPromptTokens) -
+		// add it back so PromptTokenCount reconstructs the real raw total a live
+		// re-run's genai response would report.
 		resp.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{
-			PromptTokenCount:     int32(e.InputTokens),
-			CandidatesTokenCount: int32(e.OutputTokens),
+			PromptTokenCount:        int32(e.InputTokens + e.CachedTokens),
+			CandidatesTokenCount:    int32(e.OutputTokens),
+			CachedContentTokenCount: int32(e.CachedTokens),
 		}
 	}
 	return resp
