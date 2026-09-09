@@ -1153,7 +1153,7 @@ func buildActivitySection(act workerActivity) string {
 			sb.WriteString(q)
 			sb.WriteString("\"\n")
 		}
-		for u := range act.fetched {
+		for _, u := range slices.Sorted(maps.Keys(act.fetched)) {
 			sb.WriteString("  • web_fetch: ")
 			sb.WriteString(u)
 			sb.WriteString("\n")
