@@ -314,6 +314,10 @@ type runUsage struct {
 	// context occupancy, so the context meter needs this instead.
 	ctxTokens     int32
 	model, finish string
+	// lastAt: wall-clock time this run's most recent event was handled - the
+	// round's real finish, as opposed to closeRun's call time, which can lag
+	// behind it by an intervening judge round (#1290).
+	lastAt time.Time
 }
 
 func newDagStream(traceID, chatID string, agentByID, scopeByID map[string]string, yield func(stream.SSEEvent, error) bool, outputs map[string]string, scoreOf func(string) gateScore, cancelled func(string) bool, userPaused func(string) bool, steerOf func(string, int) string) *dagStream {
@@ -495,6 +499,7 @@ func (s *dagStream) accum(node string, ev *session.Event) {
 	if u == nil {
 		return
 	}
+	u.lastAt = time.Now()
 	if ev.UsageMetadata != nil {
 		u.prompt += ev.UsageMetadata.PromptTokenCount
 		u.completion += ev.UsageMetadata.CandidatesTokenCount
@@ -522,7 +527,11 @@ func (s *dagStream) closeRun(node string) bool {
 		return true
 	}
 	st, rd := stageRound(runID)
-	d := stream.AgentCompleteData{RunID: runID, Stage: st, Round: rd, FinishedAtMs: time.Now().UnixMilli()}
+	finishedAt := time.Now()
+	if u := s.usage[node]; u != nil && !u.lastAt.IsZero() {
+		finishedAt = u.lastAt
+	}
+	d := stream.AgentCompleteData{RunID: runID, Stage: st, Round: rd, FinishedAtMs: finishedAt.UnixMilli()}
 	if u := s.usage[node]; u != nil {
 		d.Model, d.FinishReason = u.model, u.finish
 		d.PromptTokens, d.CompletionTokens, d.ReasoningTokens, d.TotalTokens, d.CachedTokens = u.prompt, u.completion, u.reasoning, u.total, u.cached

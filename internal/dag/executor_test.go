@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
@@ -304,6 +305,61 @@ func TestDagStream_ReviseRoundStage(t *testing.T) {
 	}
 	if s := got[4].Data.(stream.AgentStartData); s.Stage != stream.StageRevise || s.Round != 1 {
 		t.Fatalf("revise agent_start = %+v", s)
+	}
+}
+
+// TestDagStream_WorkerCompleteStampsLastActivityNotJudgeGap (#1290): worker-r0's
+// agent_complete isn't raised until worker-r1 (revise) starts, but its
+// FinishedAtMs must reflect worker-r0's own last event, not the gap a judge
+// round spends between them - else the worker card's duration on replay
+// includes the judge round that ran after it.
+func TestDagStream_WorkerCompleteStampsLastActivityNotJudgeGap(t *testing.T) {
+	const r0 = "quack-dag-p@1/n1@rr/web-researcher@worker-r0"
+	const r1 = "quack-dag-p@1/n1@rr/web-researcher@worker-r1"
+	agentByID := map[string]string{"n1": "web-researcher"}
+
+	var got []stream.SSEEvent
+	ds := newDagStream("", "", agentByID, nil,
+		func(ev stream.SSEEvent, _ error) bool { got = append(got, ev); return true },
+		map[string]string{}, func(string) gateScore { return gateScore{} },
+		func(string) bool { return false }, func(string) bool { return false },
+		func(string, int) string { return "" },
+	)
+	ds.handle(ev(r0, &genai.Part{Text: "draft"}))
+	workerLastActivity := time.Now()
+	time.Sleep(50 * time.Millisecond) // stands in for a real judge round between worker and revise
+	ds.handle(ev(r1, &genai.Part{Text: "revised"}))
+	revised := time.Now()
+	ds.flush()
+
+	var workerComplete stream.AgentCompleteData
+	var reviseStarted stream.AgentStartData
+	for _, e := range got {
+		switch d := e.Data.(type) {
+		case stream.AgentCompleteData:
+			if d.RunID == "worker-r0" {
+				workerComplete = d
+			}
+		case stream.AgentStartData:
+			if d.RunID == "worker-r1" {
+				reviseStarted = d
+			}
+		}
+	}
+	if workerComplete.RunID == "" {
+		t.Fatal("no agent_complete for worker-r0")
+	}
+	if reviseStarted.RunID == "" {
+		t.Fatal("no agent_start for worker-r1")
+	}
+	finished := time.UnixMilli(workerComplete.FinishedAtMs)
+	if finished.After(workerLastActivity.Add(20 * time.Millisecond)) {
+		t.Errorf("worker-r0 FinishedAtMs = %v, want close to its last event at %v (well before the %v judge gap)",
+			finished, workerLastActivity, revised)
+	}
+	if !finished.Before(time.UnixMilli(reviseStarted.StartedAtMs)) {
+		t.Errorf("worker-r0 finished (%v) not before worker-r1 started (%v)",
+			finished, time.UnixMilli(reviseStarted.StartedAtMs))
 	}
 }
 
