@@ -99,3 +99,14 @@ export const NoFacets: Story = {
     await userEvent.click(canvas.getByRole('button', { name: 'Filter chats' }))
   },
 }
+
+// Below `medium` the facet panel is a bottom sheet with 44px rows.
+export const CompactSheet: Story = {
+  render: () => <Controlled facets={FACETS} initial={{ origin: ['github'] }} />,
+  parameters: { renderCheck: { viewports: ['mobile', 'desktop'], play: true } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: 'Filter chats' }))
+    await canvas.findByRole('dialog', { name: 'Filter chats' })
+  },
+}

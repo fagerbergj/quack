@@ -259,14 +259,16 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
   return (
     <div className="flex flex-col h-full">
       <MemoryStatsHeader weeks={statsWeeks} loading={statsLoading} error={statsError} />
-      <div className="p-3 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2">
+      <div className="p-3 border-b border-gray-200 dark:border-gray-700 flex flex-wrap items-center gap-2">
+        {/* Own line below `medium` so the placeholder (the only explanation
+            of memory search) isn't clipped at 390px. */}
         <input
           type="search"
           value={q}
           onChange={e => setQ(e.target.value)}
           placeholder="Search — what would a run recall for this?"
           aria-label="Search memories"
-          className="flex-1 min-w-0 rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
+          className="grow basis-full medium:basis-0 min-w-0 rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
         />
         <label className="flex-shrink-0 flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none whitespace-nowrap">
           <input

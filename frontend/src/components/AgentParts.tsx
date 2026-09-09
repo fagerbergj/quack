@@ -101,6 +101,13 @@ export function AssistantText({ text }: { text: string }) {
       }
       return <CopyablePre {...rest}>{children}</CopyablePre>
     },
+    // A wide table scrolls inside its own box instead of pushing the bubble
+    // past the 70ch measure (or the viewport on a phone).
+    table: (props: ComponentPropsWithoutRef<'table'> & { node?: Element }) => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { node, ...rest } = props
+      return <div className="overflow-x-auto"><table {...rest} /></div>
+    },
   }), [trailingOpen, docEnd])
   // Memoize the parsed output itself, not just its props: ReactMarkdown
   // re-parses on every call regardless of prop equality, and the parent
@@ -113,7 +120,7 @@ export function AssistantText({ text }: { text: string }) {
     >{fixed}</ReactMarkdown>
   ), [fixed, components])
   return (
-    <div className="prose prose-sm dark:prose-invert max-w-none break-words">
+    <div className="prose prose-sm dark:prose-invert max-w-[70ch] break-words">
       {markdown}
     </div>
   )

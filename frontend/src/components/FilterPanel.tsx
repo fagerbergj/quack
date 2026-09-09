@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { Sheet } from './Sheet'
 
 interface FacetOption {
   value: string
@@ -39,13 +40,8 @@ export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanel
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
     document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
-    }
+    return () => document.removeEventListener('mousedown', onDown)
   }, [open])
 
   return (
@@ -72,7 +68,7 @@ export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanel
       </button>
 
       {open && (
-        <div className="absolute z-50 mt-1 left-0 w-56 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg p-2 text-xs">
+        <Sheet anchored aria-label="Filter chats" onClose={() => setOpen(false)} className="medium:absolute medium:left-0 medium:mt-1 medium:w-56 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-2 medium:pb-2 text-sm medium:text-xs">
           <div className="flex items-center justify-between px-1 pb-1.5 mb-1 border-b border-gray-100 dark:border-gray-700">
             <span className="font-semibold text-gray-700 dark:text-gray-200">Filters</span>
             {count > 0 && (
@@ -84,7 +80,7 @@ export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanel
           {facets.length === 0 && (
             <div className="px-1 py-2 text-gray-400 dark:text-gray-500">No filters available</div>
           )}
-          <div className="max-h-80 overflow-y-auto">
+          <div className="medium:max-h-80 medium:overflow-y-auto">
             {facets.map(f => (
               <div key={f.key} className="mb-2 last:mb-0">
                 <div className="px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
@@ -95,7 +91,7 @@ export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanel
                   return (
                     <label
                       key={o.value}
-                      className="flex items-center gap-2 px-1 py-1 rounded cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700"
+                      className="flex items-center gap-2 min-h-[44px] medium:min-h-0 px-1 py-1 rounded cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700"
                     >
                       <input
                         type="checkbox"
@@ -111,7 +107,7 @@ export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanel
               </div>
             ))}
           </div>
-        </div>
+        </Sheet>
       )}
     </div>
   )

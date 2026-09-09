@@ -22,7 +22,8 @@ export function useDrawer(open: boolean, onClose: () => void) {
     function focusable(): HTMLElement[] {
       return Array.from(panel?.querySelectorAll<HTMLElement>('button, a[href], input, [tabindex]:not([tabindex="-1"])') ?? [])
     }
-    focusable()[0]?.focus()
+    // A panel that autofocuses its own input (NodePopup's answer box) keeps it.
+    if (!panel?.contains(document.activeElement)) focusable()[0]?.focus()
 
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') {

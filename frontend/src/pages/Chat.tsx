@@ -607,7 +607,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     <div className="flex h-full overflow-hidden bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white">
       {chatListOpen && (
         <div
-          className="md:hidden fixed inset-0 z-30 bg-black/50"
+          className="medium:hidden fixed inset-0 z-30 bg-black/50"
           onClick={() => setChatListOpen(false)}
           aria-hidden="true"
         />
@@ -640,14 +640,14 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <button
               onClick={() => setChatListOpen(o => !o)}
-              className="md:hidden flex-shrink-0 w-11 h-11 flex items-center justify-center rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+              className="medium:hidden flex-shrink-0 w-11 h-11 flex items-center justify-center rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
               aria-label="Toggle chat list"
             >
               <Icon name="menu" className="w-5 h-5" />
             </button>
-            {/* #1171: the nav drawer's toggle - visible at ALL widths (the ☰
-                above is md:hidden) and with its own glyph, so the chat-list
-                hamburger stays the app's only ☰ (#1175). */}
+            {/* #1171: the nav drawer's toggle - visible at ALL widths (the
+                hamburger above is medium:hidden) and with its own glyph, so
+                the chat-list button stays the app's only hamburger (#1175). */}
             <NavToggle open={navOpen} onToggle={onToggleNav} />
             {/* Title gets priority over everything else in this row (#1136) -
                 min-w-0 lets it actually shrink to its flex-1 share instead of

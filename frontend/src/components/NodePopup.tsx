@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { AssistantText, BubbleHeader } from './AgentParts'
 import { Icon } from './Icon'
+import { Sheet } from './Sheet'
 import { type DagNodeDef } from '../state/agentStream'
 import type { NodeState, QueuedMessage } from '../state/chatStore'
 
@@ -79,18 +80,6 @@ export function NodePopup({
   node, state, onClose,
   onQueueMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditTask, onAnswerQuestion,
 }: Props) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
-  // Return focus to whatever opened the sheet (the node's kebab) on close -
-  // the sheet unmounts, so otherwise a keyboard user lands on <body>.
-  useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null
-    return () => opener?.focus()
-  }, [])
-
   const [inputText, setInputText] = useState('')
   const [editingTask, setEditingTask] = useState(false)
   const [taskText, setTaskText] = useState(node.task)
@@ -120,133 +109,123 @@ export function NodePopup({
   }
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      className="fixed inset-0 z-50 flex items-end medium:items-center justify-center bg-black/40 medium:p-4"
-      onClick={onClose}
-    >
-      <div
-        className="relative w-full max-w-2xl max-h-[90vh] medium:max-h-[85vh] overflow-y-auto rounded-t-2xl medium:rounded-2xl bg-gray-50 dark:bg-gray-900 shadow-xl px-5 pb-[calc(0.75rem+var(--composer-gap))] medium:pb-6 pt-2 space-y-2"
-        onClick={e => e.stopPropagation()}
-      >
-        {/* Close on its own row so it never overlaps the content bubbles. */}
-        <div className="flex justify-end -mb-2">
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="flex h-11 w-11 -me-3 items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-500 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
-          >
-            <Icon name="close" className="w-5 h-5" />
-          </button>
-        </div>
+    <Sheet onClose={onClose} className="relative max-w-2xl medium:max-h-[85vh] medium:rounded-2xl bg-gray-50 dark:bg-gray-900 px-5 medium:pb-6 pt-2 space-y-2">
+      {/* Close on its own row so it never overlaps the content bubbles. */}
+      <div className="flex justify-end -mb-2">
+        <button
+          onClick={onClose}
+          aria-label="Close"
+          className="flex h-11 w-11 -me-3 items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-500 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
+        >
+          <Icon name="close" className="w-5 h-5" />
+        </button>
+      </div>
 
-        {/* Prompt - the same bubble treatment as an assistant turn in chat. */}
-        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
-          <div className="flex items-center justify-between">
-            <BubbleHeader agent={node.agent} />
-            {notStarted && onEditTask && !editingTask && (
-              <button onClick={() => { setTaskText(node.task); setEditingTask(true) }} aria-label="Edit prompt" title="Edit prompt" className="shrink-0 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300">
-                <Icon name="edit" className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-          {editingTask ? (
-            <div className="space-y-2">
-              <textarea
-                autoFocus
-                value={taskText}
-                onChange={e => setTaskText(e.target.value)}
-                rows={6}
-                className="w-full text-xs px-2 py-1.5 rounded border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-              />
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => { onEditTask?.(node.id, taskText); setEditingTask(false) }}
-                  className="text-[11px] font-medium text-indigo-700 dark:text-indigo-400 hover:underline"
-                >
-                  save
-                </button>
-                <button onClick={() => setEditingTask(false)} className="text-[11px] text-gray-400 dark:text-gray-500 hover:underline">cancel</button>
-              </div>
-            </div>
-          ) : (
-            <AssistantText text={node.task} />
+      {/* Prompt - the same bubble treatment as an assistant turn in chat. */}
+      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
+        <div className="flex items-center justify-between">
+          <BubbleHeader agent={node.agent} />
+          {notStarted && onEditTask && !editingTask && (
+            <button onClick={() => { setTaskText(node.task); setEditingTask(true) }} aria-label="Edit prompt" title="Edit prompt" className="shrink-0 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300">
+              <Icon name="edit" className="w-3.5 h-3.5" />
+            </button>
           )}
         </div>
-
-        {/* Pending mid-node question - rendered as its own chat-style bubble,
-            answered (or read-only, if no resume wiring was passed) below. */}
-        {answering && (
-          <div className="bg-white dark:bg-gray-800 border border-blue-300 dark:border-blue-700 border-l-4 rounded-2xl rounded-tl-sm px-5 py-4">
-            <div className="flex items-center gap-1.5 text-xs font-medium text-blue-700 dark:text-blue-300 mb-1">
-              <Icon name="help" className="w-3.5 h-3.5" />
-              <BubbleHeader agent={node.agent} />
-            </div>
-            <AssistantText text={state.question ?? ''} />
-          </div>
-        )}
-
-        {/* Message queue, only while running - plain history, immutable once delivered. */}
-        {running && !answering && queue.length > 0 && (
-          <div>
-            <span className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">
-              Queued messages
-            </span>
-            <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5 mb-2">
-              Delivered into the live round when possible; "parked" ones wait for the node's next turn boundary.
-            </p>
-            <ul className="space-y-1.5">
-              {queue.map(m => (
-                <QueuedMessageRow
-                  key={m.id}
-                  msg={m}
-                  onEdit={onEditQueuedMessage ? (text) => onEditQueuedMessage(node.id, m.id, text) : undefined}
-                  onRemove={onRemoveQueuedMessage ? () => onRemoveQueuedMessage(node.id, m.id) : undefined}
-                />
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {/* One shared input: queues a message on a running node (delivered at
-            its next turn boundary), or answers a needs_input node (resumes
-            it immediately) - same widget, different destination. */}
-        {((running && onQueueMessage) || (answering && onAnswerQuestion)) && (
-          <div className="flex items-center gap-2">
-            <input
-              autoFocus={answering}
-              value={inputText}
-              onChange={e => setInputText(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && inputText.trim()) { e.preventDefault(); submitInput() }
-              }}
-              placeholder={answering ? 'Type your answer…' : 'Queue a message for this node…'}
-              className={`flex-1 min-w-0 text-xs px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 ${
-                answering
-                  ? 'border-blue-300 dark:border-blue-700 focus:ring-blue-400'
-                  : 'border-gray-300 dark:border-gray-600 focus:ring-gray-400'
-              }`}
+        {editingTask ? (
+          <div className="space-y-2">
+            <textarea
+              autoFocus
+              value={taskText}
+              onChange={e => setTaskText(e.target.value)}
+              rows={6}
+              className="w-full text-xs px-2 py-1.5 rounded border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-indigo-400"
             />
-            <button
-              onClick={submitInput}
-              disabled={!inputText.trim()}
-              aria-label={answering ? 'Send answer' : 'Queue message'}
-              title={answering ? 'Send answer' : 'Queue message'}
-              className={`px-3 py-1.5 rounded-lg text-white text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${
-                answering ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-700 hover:bg-gray-600 dark:bg-gray-600 dark:hover:bg-gray-500'
-              }`}
-            >
-              <Icon name="send" className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => { onEditTask?.(node.id, taskText); setEditingTask(false) }}
+                className="text-[11px] font-medium text-indigo-700 dark:text-indigo-400 hover:underline"
+              >
+                save
+              </button>
+              <button onClick={() => setEditingTask(false)} className="text-[11px] text-gray-400 dark:text-gray-500 hover:underline">cancel</button>
+            </div>
           </div>
-        )}
-        {answering && !onAnswerQuestion && (
-          <p className="text-[11px] text-gray-400 dark:text-gray-500 italic">
-            Answering from here isn't wired up yet - reply in the main chat.
-          </p>
+        ) : (
+          <AssistantText text={node.task} />
         )}
       </div>
-    </div>
+
+      {/* Pending mid-node question - rendered as its own chat-style bubble,
+          answered (or read-only, if no resume wiring was passed) below. */}
+      {answering && (
+        <div className="bg-white dark:bg-gray-800 border border-blue-300 dark:border-blue-700 border-l-4 rounded-2xl rounded-tl-sm px-5 py-4">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-blue-700 dark:text-blue-300 mb-1">
+            <Icon name="help" className="w-3.5 h-3.5" />
+            <BubbleHeader agent={node.agent} />
+          </div>
+          <AssistantText text={state.question ?? ''} />
+        </div>
+      )}
+
+      {/* Message queue, only while running - plain history, immutable once delivered. */}
+      {running && !answering && queue.length > 0 && (
+        <div>
+          <span className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">
+            Queued messages
+          </span>
+          <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5 mb-2">
+            Delivered into the live round when possible; "parked" ones wait for the node's next turn boundary.
+          </p>
+          <ul className="space-y-1.5">
+            {queue.map(m => (
+              <QueuedMessageRow
+                key={m.id}
+                msg={m}
+                onEdit={onEditQueuedMessage ? (text) => onEditQueuedMessage(node.id, m.id, text) : undefined}
+                onRemove={onRemoveQueuedMessage ? () => onRemoveQueuedMessage(node.id, m.id) : undefined}
+              />
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* One shared input: queues a message on a running node (delivered at
+          its next turn boundary), or answers a needs_input node (resumes
+          it immediately) - same widget, different destination. */}
+      {((running && onQueueMessage) || (answering && onAnswerQuestion)) && (
+        <div className="flex items-center gap-2">
+          <input
+            autoFocus={answering}
+            value={inputText}
+            onChange={e => setInputText(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && inputText.trim()) { e.preventDefault(); submitInput() }
+            }}
+            placeholder={answering ? 'Type your answer…' : 'Queue a message for this node…'}
+            className={`flex-1 min-w-0 text-xs px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 ${
+              answering
+                ? 'border-blue-300 dark:border-blue-700 focus:ring-blue-400'
+                : 'border-gray-300 dark:border-gray-600 focus:ring-gray-400'
+            }`}
+          />
+          <button
+            onClick={submitInput}
+            disabled={!inputText.trim()}
+            aria-label={answering ? 'Send answer' : 'Queue message'}
+            title={answering ? 'Send answer' : 'Queue message'}
+            className={`px-3 py-1.5 rounded-lg text-white text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${
+              answering ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-700 hover:bg-gray-600 dark:bg-gray-600 dark:hover:bg-gray-500'
+            }`}
+          >
+            <Icon name="send" className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+      {answering && !onAnswerQuestion && (
+        <p className="text-[11px] text-gray-400 dark:text-gray-500 italic">
+          Answering from here isn't wired up yet - reply in the main chat.
+        </p>
+      )}
+    </Sheet>
   )
 }
