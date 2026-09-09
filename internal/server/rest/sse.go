@@ -34,8 +34,9 @@ func newSSEWriter(w http.ResponseWriter) (*sseWriter, bool) {
 }
 
 // sendID writes one event with its per-chat seq as the SSE id, so a reconnecting
-// subscriber resumes from the next event via the Last-Event-ID header. Used by the
-// subscribe endpoint (the POST run's body stream is one-shot and needs no id).
+// subscriber resumes from the next event via the Last-Event-ID header. Used by
+// both the subscribe endpoint and the POST run's body stream (both go through
+// streamHub), so a client that falls back to reconnecting mid-POST can resume too.
 func (s *sseWriter) sendID(seq int64, ev stream.SSEEvent) error {
 	data, err := json.Marshal(ev.Data)
 	if err != nil {

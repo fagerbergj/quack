@@ -26,9 +26,25 @@ func (h *Hub) RegisterRun(chatID, responseID string, cancel context.CancelFunc) 
 	h.runs.Store(chatID, &runHandle{responseID: responseID, cancel: cancel})
 }
 
-// Drops cancel handle after run ends (idempotent).
+// Drops cancel handle after run ends (idempotent). Blind - see EndRun for the
+// guarded version production run-ending paths must use.
 func (h *Hub) UnregisterRun(chatID string) {
 	h.runs.Delete(chatID)
+}
+
+// EndRun retires the run responseID names and closes its topic, guarded by a
+// compare-and-delete: if a newer run already registered its own handle for
+// this chat (a fast retry racing this run's own tail between its cancelRun
+// and this call), that handle and topic are left alone instead of being
+// wiped out from under the successor (#1342 review finding).
+func (h *Hub) EndRun(chatID, responseID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if v, ok := h.runs.Load(chatID); ok && v.(*runHandle).responseID != responseID {
+		return
+	}
+	h.runs.Delete(chatID)
+	h.closeLocked(chatID)
 }
 
 // Unconditional cancel (DELETE-chat path, no response ID).
@@ -160,6 +176,13 @@ func (h *Hub) Active(key string) bool {
 func (h *Hub) Close(key string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.closeLocked(key)
+}
+
+// closeLocked is Close's body for callers that already hold h.mu (EndRun's
+// compare-and-delete needs the run-registry check and the topic close to be
+// one atomic step).
+func (h *Hub) closeLocked(key string) {
 	t := h.topics[key]
 	if t == nil {
 		return

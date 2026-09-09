@@ -207,6 +207,31 @@ func TestHubUnregisterRun(t *testing.T) {
 	}
 }
 
+// TestHubEndRun_StaleResponseIDDoesNotWipeNewerRun pins the #1342 review
+// finding: if a new turn registers its own run handle for a chat after an
+// old run's tail already called cancelRun() but before that old run's
+// EndRun executes, the stale EndRun must not delete the NEW run's handle or
+// close its topic - CancelResponse/DrainActiveRuns/the new stream all still
+// need it live.
+func TestHubEndRun_StaleResponseIDDoesNotWipeNewerRun(t *testing.T) {
+	h := NewHub()
+	h.RegisterRun("c1", "old-run", func() {})
+	h.Publish("c1", 1, SSEEvent{})
+	_, _, cancelSub, _ := h.Subscribe("c1")
+	defer cancelSub()
+
+	h.RegisterRun("c1", "new-run", func() {}) // a fast retry supersedes the old run
+
+	h.EndRun("c1", "old-run") // the old run's own tail, arriving late
+
+	if !h.CancelRun("c1") {
+		t.Error("EndRun(old-run) wiped the new run's cancel handle")
+	}
+	if !h.Active("c1") {
+		t.Error("EndRun(old-run) closed the new run's topic")
+	}
+}
+
 // A GitHub-dispatched run and a REST-started run are both just callers of
 // RegisterRun on the same Hub instance - this pins that the registry is
 // driver-agnostic: whichever goroutine registered a chat's cancel func, the
