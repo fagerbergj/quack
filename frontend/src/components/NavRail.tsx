@@ -27,9 +27,9 @@ export interface NavRailProps {
 // 40px collapsed strip are gone, and with them the navRailCollapsed
 // localStorage key and the collapse/expand toggle). It opens from the
 // NavToggle in each page's header leading slot, and closes on item
-// selection, backdrop tap, the ✕ button, or Esc (focus trap, scroll lock,
+// selection, backdrop tap, the close button, or Esc (focus trap, scroll lock,
 // and focus-return come from useDrawer). The rail's old hamburger glyph
-// (the second ☰ in the app) is deleted with the rest of the rail (#1175).
+// (the second one in the app) is deleted with the rest of the rail (#1175).
 export function NavRail({ route, activeExtension, initialExtensions, open, onClose }: NavRailProps) {
   const [extensions, setExtensions] = useState<ExtensionInfo[]>(initialExtensions ?? [])
 
