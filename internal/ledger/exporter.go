@@ -92,7 +92,15 @@ func EntryFromRecord(r sdklog.Record) (Entry, bool) {
 			Temperature: num("gen_ai.request.temperature"), MaxTokens: int64(num("gen_ai.request.max_tokens")),
 			PromptName: str("gen_ai.prompt.name"), PromptVersion: str("gen_ai.prompt.version"),
 			SystemInstructions: str("gen_ai.system_instructions"), ToolDefinitions: str("gen_ai.tool.definitions"),
-			Input: str("gen_ai.input.messages"), Output: str("gen_ai.output.messages"), Error: str("error.type")}
+			Input: str("gen_ai.input.messages"), Output: str("gen_ai.output.messages"), Error: str("error.type"),
+			QuackVersion: str("quack.version"), BundleHash: str("quack.bundle.hash")}
+		// Present-but-nil vs. present-with-zero: only set CostUSD when the
+		// emitter actually recorded a cost (pricing configured) - a plain
+		// num() lookup can't tell "unpriced" from a genuine $0 call.
+		if _, ok := attrs["gen_ai.usage.cost"]; ok {
+			cost := num("gen_ai.usage.cost")
+			p.CostUSD = &cost
+		}
 		if len(finish) > 0 {
 			p.FinishReason, _ = finish[0].(string)
 		}

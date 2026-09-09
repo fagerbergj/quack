@@ -117,6 +117,14 @@ type LLMCallPayload struct {
 	Input              string  `json:"input,omitempty"`
 	Output             string  `json:"output,omitempty"`
 	Error              string  `json:"error,omitempty"`
+	// QuackVersion/BundleHash/CostUSD: provenance added for #1096 - which
+	// build and agent bundle produced this call, and what it cost. CostUSD
+	// is a pointer so an actual $0 call (a priced model with free tokens)
+	// stays distinguishable from "no config.ModelPricing entry" (nil, key
+	// omitted) - a plain float with omitempty would conflate the two.
+	QuackVersion string   `json:"quack_version,omitempty"`
+	BundleHash   string   `json:"bundle_hash,omitempty"`
+	CostUSD      *float64 `json:"cost_usd,omitempty"`
 }
 
 // ToolCallPayload is a KindToolCall entry's payload (one execute_tool call).

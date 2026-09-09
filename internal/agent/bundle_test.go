@@ -73,6 +73,36 @@ func TestLoadBundleErrors(t *testing.T) {
 	}
 }
 
+// TestLoadBundleHash: stable across two loads of the same files, changes
+// when prompt.md changes (#1096 ledger provenance).
+func TestLoadBundleHash(t *testing.T) {
+	card := `{"name":"x","description":"d"}`
+	dir := writeBundle(t, card, "prompt one")
+	b1, err := LoadBundle(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b2, err := LoadBundle(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b1.Hash == "" {
+		t.Fatal("expected non-empty hash")
+	}
+	if b1.Hash != b2.Hash {
+		t.Errorf("hash not stable across loads: %q vs %q", b1.Hash, b2.Hash)
+	}
+
+	dir2 := writeBundle(t, card, "prompt two")
+	b3, err := LoadBundle(dir2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b3.Hash == b1.Hash {
+		t.Error("hash did not change when prompt.md changed")
+	}
+}
+
 func TestLoadBundleMemory(t *testing.T) {
 	dir := writeBundle(t, `{"name":"x","description":"d"}`, "prompt")
 

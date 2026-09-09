@@ -78,25 +78,29 @@ type Config struct {
 	// "" for none). "review" is written for IsReviewer nodes regardless of
 	// this field - it names only the reMarkable-style extra record (#1006).
 	Artifact           string
-	Memory             *memory.Store   // staged tradecraft on pass
-	CommitMemory       bool            // task-memory participant
-	MemoryRole         string          // role bucket key; empty falls back to repo then user
-	DeliverPromptEvent bool            // true for A2A workers (session events)
-	Checks             []string        // per-node deterministic gate commands
-	DeriveChecks       bool            // derive from repo when Checks empty
-	CheckCommands      []string        // prefix allowlist; empty ⇒ checks disabled
-	CheckSetup         []string        // repo bootstrap commands; run once per clone (checks.go, baseline.go) before checks are derived/run, both in the worker's tree and the base baseline worktree
-	NodeID             string          // workspace scope for checks/clone resolution
-	AdvisorToken       string          // fs tool scope token; empty = no scope
-	Agent              string          // observability only
-	User               string          // observability only; resolved from the ADK session, not caller-set
-	Source             string          // observability only; run origin (extension name or a fixed app value)
-	Task               string          // delivery check; empty = no check
-	Workdir            string          // for Checks; ignored when Checks empty
-	ChatID             string          // per-chat workspace scope
-	Workspace          *workspace.Jail // nil + non-empty Checks fails closed
-	WorkspaceUserID    string
-	WorkspaceCaps      workspace.Caps
+	Memory             *memory.Store // staged tradecraft on pass
+	CommitMemory       bool          // task-memory participant
+	MemoryRole         string        // role bucket key; empty falls back to repo then user
+	DeliverPromptEvent bool          // true for A2A workers (session events)
+	Checks             []string      // per-node deterministic gate commands
+	DeriveChecks       bool          // derive from repo when Checks empty
+	CheckCommands      []string      // prefix allowlist; empty ⇒ checks disabled
+	CheckSetup         []string      // repo bootstrap commands; run once per clone (checks.go, baseline.go) before checks are derived/run, both in the worker's tree and the base baseline worktree
+	NodeID             string        // workspace scope for checks/clone resolution
+	AdvisorToken       string        // fs tool scope token; empty = no scope
+	Agent              string        // observability only
+	// BundleHash: this agent's bundle content hash (agent.Bundle.Hash) -
+	// ledger provenance only (#1096), stamped onto worker ledger.Coords
+	// alongside Agent.
+	BundleHash      string
+	User            string          // observability only; resolved from the ADK session, not caller-set
+	Source          string          // observability only; run origin (extension name or a fixed app value)
+	Task            string          // delivery check; empty = no check
+	Workdir         string          // for Checks; ignored when Checks empty
+	ChatID          string          // per-chat workspace scope
+	Workspace       *workspace.Jail // nil + non-empty Checks fails closed
+	WorkspaceUserID string
+	WorkspaceCaps   workspace.Caps
 	// CheckTimeout overrides WorkspaceCaps.Timeout for gate check commands only
 	// (they run a full test suite, not a single tool call); 0 = use WorkspaceCaps.Timeout.
 	CheckTimeout   time.Duration

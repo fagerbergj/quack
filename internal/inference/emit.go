@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/adk/v2/model"
 
+	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
@@ -23,7 +24,7 @@ const inferenceScope = "quack.inference"
 // GenerateContent doc comment on why "final", not raw stream chunks).
 // Marshal failures degrade a field to omitted, never abort the whole event -
 // recording must never affect the run.
-func emitChatEvent(ctx context.Context, name string, req *model.LLMRequest, resp *model.LLMResponse, callErr error) {
+func emitChatEvent(ctx context.Context, name string, req *model.LLMRequest, resp *model.LLMResponse, callErr error, pricing *config.ModelPricing) {
 	if !otelobs.LoggingEnabled(inferenceScope) {
 		return // nothing listening - skip building a (potentially large) event nobody reads
 	}
@@ -31,6 +32,9 @@ func emitChatEvent(ctx context.Context, name string, req *model.LLMRequest, resp
 		attribute.String(otelobs.GenAIOperationName, otelobs.GenAIOperationChat),
 		attribute.String(otelobs.GenAIProviderName, otelobs.GenAIProviderOpenAI),
 		attribute.String(otelobs.GenAIRequestModel, name),
+	}
+	if Version != "" {
+		attrs = append(attrs, attribute.String(otelobs.QuackVersion, Version))
 	}
 	if v, ok := marshalAttr(req.Contents); ok {
 		attrs = append(attrs, attribute.String(otelobs.GenAIInputMessages, v))
@@ -70,6 +74,9 @@ func emitChatEvent(ctx context.Context, name string, req *model.LLMRequest, resp
 		attrs = append(attrs, attribute.String(otelobs.GenAIAgentName, c.Agent))
 		attrs = append(attrs, attribute.String(otelobs.GenAIPromptName, c.Agent))
 	}
+	if c.BundleHash != "" {
+		attrs = append(attrs, attribute.String(otelobs.QuackBundleHash, c.BundleHash))
+	}
 	if sysHash != "" {
 		attrs = append(attrs, attribute.String(otelobs.GenAIPromptVersion, sysHash))
 	}
@@ -95,6 +102,10 @@ func emitChatEvent(ctx context.Context, name string, req *model.LLMRequest, resp
 			}
 			if u.CandidatesTokenCount != 0 {
 				attrs = append(attrs, attribute.Int64(otelobs.GenAIUsageOutputTokens, int64(u.CandidatesTokenCount)))
+			}
+			if pricing != nil {
+				cost := float64(u.PromptTokenCount)/1e6*pricing.InputPerMTok + float64(u.CandidatesTokenCount+u.ThoughtsTokenCount)/1e6*pricing.OutputPerMTok
+				attrs = append(attrs, attribute.Float64(otelobs.GenAIUsageCost, cost))
 			}
 		}
 	}

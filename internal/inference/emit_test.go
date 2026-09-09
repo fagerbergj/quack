@@ -11,6 +11,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
@@ -144,6 +145,49 @@ func TestTracedModel_EmitsWellFormedChatEvent(t *testing.T) {
 	}
 	if _, ok := attrs["error.type"]; ok {
 		t.Error("error.type present on a successful call")
+	}
+}
+
+// TestTracedModel_EmitsProvenance: #1096 - quack.version, quack.bundle.hash
+// and gen_ai.usage.cost land on the emitted llm.call record.
+func TestTracedModel_EmitsProvenance(t *testing.T) {
+	capExp := &captureExporter{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
+	restore := otelobs.SetLoggerProviderForTesting(lp)
+	defer restore()
+
+	oldVersion := Version
+	Version = "v9.9.9"
+	defer func() { Version = oldVersion }()
+
+	resps := []*model.LLMResponse{{
+		Content:      &genai.Content{Parts: []*genai.Part{{Text: "answer"}}},
+		TurnComplete: true,
+		UsageMetadata: &genai.GenerateContentResponseUsageMetadata{
+			PromptTokenCount:     1_000_000,
+			CandidatesTokenCount: 2_000_000,
+		},
+	}}
+	stub := &stubModel{name: "priced-model", resps: resps}
+	tm := &tracedModel{LLM: stub, name: "priced-model", pricing: &config.ModelPricing{InputPerMTok: 1, OutputPerMTok: 2}}
+
+	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "chat-1", Agent: "worker", BundleHash: "deadbeefcafe0000"})
+	for range tm.GenerateContent(ctx, &model.LLMRequest{}, true) {
+	}
+
+	if len(capExp.records) != 1 {
+		t.Fatalf("got %d records, want 1", len(capExp.records))
+	}
+	attrs := attrsOf(t, capExp.records[0])
+	if got := attrs["quack.version"].AsString(); got != "v9.9.9" {
+		t.Errorf("quack.version = %q, want v9.9.9", got)
+	}
+	if got := attrs["quack.bundle.hash"].AsString(); got != "deadbeefcafe0000" {
+		t.Errorf("quack.bundle.hash = %q, want deadbeefcafe0000", got)
+	}
+	// 1M input @ $1/Mtok + 2M output @ $2/Mtok = $1 + $4 = $5.
+	if got := attrs["gen_ai.usage.cost"].AsFloat64(); got != 5 {
+		t.Errorf("gen_ai.usage.cost = %v, want 5", got)
 	}
 }
 

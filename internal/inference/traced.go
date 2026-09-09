@@ -22,6 +22,11 @@ type usageEmbedder interface {
 	EmbedWithUsage(ctx context.Context, texts []string) ([][]float32, openaimodel.EmbedUsage, error)
 }
 
+// Version is the build stamp (serve.Version), set once at startup - inference
+// can't import serve (serve imports inference), so this mirrors that package
+// var here for the llm.call ledger payload (#1096).
+var Version string
+
 // tracedModel wraps a model.LLM to record quack.model.call.duration.
 // Wrapping here (NewModel) covers every model in the system.
 type tracedModel struct {
@@ -81,7 +86,7 @@ func (t *tracedModel) GenerateContent(ctx context.Context, req *model.LLMRequest
 		var callErr error
 		defer func() {
 			otelobs.RecordModelCallDuration(t.name, time.Since(t0))
-			emitChatEvent(ctx, t.name, req, last, callErr)
+			emitChatEvent(ctx, t.name, req, last, callErr, t.pricing)
 			recordUsageMetrics(ctx, t.name, t.defaultAgent, t.pricing, last)
 			// Outlives ADK's own error handling - see failure.go's doc comment.
 			RecordCallResult(callCoords.ChatID, callCoords.Node, callCoords.Agent, callErr)

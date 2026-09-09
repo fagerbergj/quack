@@ -80,6 +80,12 @@ const (
 	// carries the real GENERATION (model/tokens/cost); renaming this would
 	// double-count both against it.
 	QuackModel = "quack.model"
+
+	// QuackVersion/QuackBundleHash/GenAIUsageCost: llm.call provenance
+	// (#1096) - no semconv equivalent exists for any of these yet.
+	QuackVersion    = "quack.version"
+	QuackBundleHash = "quack.bundle.hash"
+	GenAIUsageCost  = "gen_ai.usage.cost"
 )
 
 // vars, not consts - attribute.Value has no constant form.
