@@ -229,13 +229,17 @@ type artifactRevisionPayload struct {
 // conflict resolves next attempt; this only guards a wedged id (saveAt's doc).
 const maxSaveRetries = 20
 
-// idempotencyKey derives the store-level dedup key for id/data (#1144 P4),
-// replacing the old read-then-compare "identical to latest" check. Also
-// collapses a save matching an EARLIER (not just latest) revision - accepted,
-// since the point is collapsing re-runs, not distinguishing which past rev matched.
-func idempotencyKey(id string, data []byte) string {
+// idempotencyKey derives the store-level dedup key for id/parentRev/data
+// (#1144 P4), replacing the old read-then-compare "identical to latest"
+// check. parentRev is part of the hash so only a retry at the SAME parent
+// collapses; a save whose bytes happen to match an earlier, non-parent
+// revision (a revert) gets its own new revision instead of silently
+// reporting the old one (finding 2).
+func idempotencyKey(id string, parentRev int, data []byte) string {
 	h := sha256.New()
 	h.Write([]byte(id))
+	h.Write([]byte{0})
+	fmt.Fprintf(h, "%d", parentRev)
 	h.Write([]byte{0})
 	h.Write(data)
 	return hex.EncodeToString(h.Sum(nil))
@@ -292,6 +296,15 @@ func (c *Client) save(ctx context.Context, id, kind string, class Class, mime st
 			parentRev = 0
 			if len(versions) > 0 {
 				parentRev = int(versions[0])
+				// Saving exactly what's already at the tip is a genuine
+				// no-op: report it with no new revision and no WAL entry.
+				// Content matching an OLDER, non-latest revision (a revert)
+				// falls through to saveAtOrAdopt and mints its own new one -
+				// idempotencyKey is keyed to parentRev, so only THIS exact
+				// match, at the current tip, collapses (finding 2).
+				if latest, ok, lerr := c.LoadVersion(ctx, id, parentRev); lerr == nil && ok && bytes.Equal(latest, data) {
+					return parentRev, nil
+				}
 			}
 		}
 		rev, err := c.saveAtOrAdopt(ctx, id, kind, class, mime, data, lineage, parentRev, attempt)
@@ -345,7 +358,7 @@ func (c *Client) saveAt(ctx context.Context, id, kind string, class Class, mime 
 	_, err = c.ledgerStore.AppendIntent(ctx, ledger.Entry{
 		ChatID: c.sessionID, TurnID: lineage.TurnID, NodeID: lineage.NodeID,
 		Kind: ledger.KindArtifactRevision, Key: id, At: time.Now().UTC(), Payload: payload,
-		IdempotencyKey: idempotencyKey(id, data),
+		IdempotencyKey: idempotencyKey(id, parentRev, data),
 	})
 	var dup *ledger.DuplicateIntentError
 	if errors.As(err, &dup) {
