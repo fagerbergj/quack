@@ -140,12 +140,18 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 		judgeTools := make([]tool.Tool, 0, len(readTools)+1)
 		judgeTools = append(judgeTools, counted...)
 		judgeTools = append(judgeTools, submit)
+		// judgeTools/behaviour are fixed for this round; only today() moves,
+		// so cache instead of rebuilding the prompt on every model call in
+		// the round's multi-turn agentic loop.
+		prompt := promptbuilder.CacheByDay(func() string {
+			return promptbuilder.Judge(judgeTools, behaviour)
+		})
 		a, err := llmagent.New(llmagent.Config{
 			Name:        "judge",
 			Description: "independent adversarial verifier",
 			Model:       judgeModel,
 			InstructionProvider: func(_ adkagent.ReadonlyContext) (string, error) {
-				return promptbuilder.Judge(judgeTools, behaviour), nil
+				return prompt(), nil
 			},
 			Tools:                 judgeTools,
 			Toolsets:              skillsets,

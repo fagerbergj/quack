@@ -42,15 +42,20 @@ func build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, m
 	if g := strings.TrimSpace(memoryGuidance); g != "" {
 		behaviour = behaviour + "\n\n" + g
 	}
+	// Every Agent() input below is fixed once build() returns except today() -
+	// cache the assembled prompt instead of rebuilding it on every model call.
+	prompt := promptbuilder.CacheByDay(func() string {
+		// "" workspace: native bundles are never a coding agent (those run
+		// as external ACP subprocesses - see internal/serve's ACP branch),
+		// so there is no sandboxed clone/toolchain to state facts about.
+		return promptbuilder.Agent(name, desc, tools, skills, behaviour, grading, "")
+	})
 	cfg := llmagent.Config{
 		Name:        name,
 		Description: desc,
 		Model:       m,
 		InstructionProvider: func(_ adkagent.ReadonlyContext) (string, error) {
-			// "" workspace: native bundles are never a coding agent (those run
-			// as external ACP subprocesses - see internal/serve's ACP branch),
-			// so there is no sandboxed clone/toolchain to state facts about.
-			return promptbuilder.Agent(name, desc, tools, skills, behaviour, grading, ""), nil
+			return prompt(), nil
 		},
 		Tools:    tools,
 		Toolsets: toolsets,
