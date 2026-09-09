@@ -15,34 +15,130 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
+// drainItem is either a real event row or a flush marker (ev is the zero
+// value; done is closed once every item enqueued ahead of it has drained).
+// One channel, one consumer: the marker can only be dequeued after the real
+// events ahead of it in FIFO order have already been included in an earlier
+// (or the same) INSERT batch.
+type drainItem struct {
+	ev   store.ChatEvent
+	done chan struct{}
+}
+
 // EventLog persists SSE events to the store, draining in order off the hot path; full queue drops (durability loss only).
 type EventLog struct {
 	store *store.Store
-	ch    chan store.ChatEvent
+	ch    chan drainItem
 	// ledgerStore: LoadEvents' fold fallback (#1101, see fold.go). nil = no
 	// WAL; LoadEvents then behaves exactly like a direct table read.
 	ledgerStore ledger.LedgerStore
 }
 
 func NewEventLog(s *store.Store) *EventLog {
-	l := &EventLog{store: s, ch: make(chan store.ChatEvent, 4096)}
+	l := &EventLog{store: s, ch: make(chan drainItem, 4096)}
 	go l.run()
 	return l
 }
 
+// drainBatchSize bounds one INSERT's row count; a run streaming faster than
+// the drain can keep up with fills batches to this size instead of falling
+// back to one round trip per event (perf-audit item 2: 139 ev/s -> ~4,480 ev/s measured).
+const drainBatchSize = 200
+
 func (l *EventLog) run() {
-	for ce := range l.ch {
-		if err := l.store.InsertChatEvent(context.Background(), ce); err != nil {
-			slog.Warn("event log: persist failed; dropping", "component", "eventlog", "chat", ce.ChatID, "seq", ce.Seq, "err", err)
-			continue
+	for item, ok := <-l.ch; ok; item, ok = <-l.ch {
+		batch := make([]store.ChatEvent, 0, drainBatchSize)
+		var flushes []chan struct{}
+		collect := func(it drainItem) {
+			if it.done != nil {
+				flushes = append(flushes, it.done)
+				return
+			}
+			batch = append(batch, it.ev)
 		}
-		// Trim to durable replay ceiling on long runs.
-		if ce.Seq > stream.MaxReplay {
-			if err := l.store.TrimChatEvents(context.Background(), ce.ChatID, ce.Seq-stream.MaxReplay); err != nil {
-				slog.Warn("event log: trim failed", "component", "eventlog", "chat", ce.ChatID, "err", err)
+		collect(item)
+	drain:
+		for len(batch) < drainBatchSize {
+			select {
+			case next, ok := <-l.ch:
+				if !ok {
+					break drain
+				}
+				collect(next)
+			default:
+				break drain
 			}
 		}
+		if len(batch) > 0 {
+			persisted := batch
+			if err := l.store.InsertChatEvents(context.Background(), batch); err != nil {
+				// One multi-row INSERT: a single bad row (e.g. a duplicate seq
+				// from a Reset/retry race) fails the whole statement. Retry
+				// row-by-row so that one bad row costs one row, not the batch.
+				slog.Warn("event log: batch insert failed; retrying rows individually", "component", "eventlog", "n", len(batch), "err", err)
+				persisted = persisted[:0]
+				for _, ce := range batch {
+					if err := l.store.InsertChatEvent(context.Background(), ce); err != nil {
+						slog.Warn("event log: persist failed; dropping", "component", "eventlog", "chat", ce.ChatID, "seq", ce.Seq, "err", err)
+						continue
+					}
+					persisted = append(persisted, ce)
+				}
+			}
+			// Trim once per chat per batch, to the max persisted seq seen for that chat here.
+			maxSeq := map[string]int64{}
+			for _, e := range persisted {
+				if e.Seq > maxSeq[e.ChatID] {
+					maxSeq[e.ChatID] = e.Seq
+				}
+			}
+			for chatID, seq := range maxSeq {
+				if seq > stream.MaxReplay {
+					if err := l.store.TrimChatEvents(context.Background(), chatID, seq-stream.MaxReplay); err != nil {
+						slog.Warn("event log: trim failed", "component", "eventlog", "chat", chatID, "err", err)
+					}
+				}
+			}
+		}
+		for _, done := range flushes {
+			close(done)
+		}
 	}
+}
+
+// Flush blocks until every event Append'd before this call was made has
+// been drained (persisted, or dropped-with-warning on a store error - the
+// same at-most-once contract as Append's own full-queue drop). A caller
+// must call this before releasing any in-memory copy of those events (e.g.
+// stream.Hub.Close frees the hub's replay buffer) - see FinishRun, which is
+// the shared, ordered version of that every run-ending path must use.
+//
+// Implemented as a marker sent through the same channel as real events
+// (never a shared counter): a WaitGroup shared by every concurrent
+// Append/Flush across every chat can panic ("Add called concurrently with
+// Wait") the instant its counter returns to zero while another chat is
+// still mid-run - this channel design has no such counter to race.
+func (l *EventLog) Flush() {
+	done := make(chan struct{})
+	l.ch <- drainItem{done: done} // blocking: a dropped flush marker would hang the caller forever instead
+	<-done
+}
+
+// FinishRun is the one correct sequence for ending a run: flush this chat's
+// buffered events to the DB, THEN free the hub's in-memory replay buffer,
+// THEN cancel the run context, THEN drop it from the hub's registry - in
+// that order. Every run-ending goroutine must route through this rather
+// than hand-roll the same four calls: UnregisterRun is what
+// Hub.HasRegisteredRun (and shutdown's DrainActiveRuns poll on it) treats as
+// "safe to consider this run over", so it must not fire until this run's
+// tail is durably persisted - getting that ordering right by hand, spread
+// across five call sites via bare `defer`, is exactly how three of them
+// previously unregistered before flushing.
+func (l *EventLog) FinishRun(hub *stream.Hub, chatID string, cancelRun context.CancelFunc) {
+	l.Flush()
+	hub.Close(chatID)
+	cancelRun()
+	hub.UnregisterRun(chatID)
 }
 
 // Append enqueues an event row (non-blocking; drops if queue is full).
@@ -54,7 +150,7 @@ func (l *EventLog) Append(chatID string, seq int64, ev stream.SSEEvent) {
 	}
 	ce := store.ChatEvent{ChatID: chatID, Seq: seq, Event: js, CreatedAt: time.Now().UTC()}
 	select {
-	case l.ch <- ce:
+	case l.ch <- drainItem{ev: ce}:
 	default:
 		slog.Warn("event log: queue full; dropping event", "component", "eventlog", "chat", chatID, "seq", seq)
 	}

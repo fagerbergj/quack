@@ -62,12 +62,14 @@ func TestHubClose(t *testing.T) {
 		t.Error("expected the buffered Done before close")
 	}
 
+	// Close frees the replay buffer (perf-audit item 4); a finished chat's
+	// replay comes from the durable chat_events table, not the hub.
 	replay, l, _, done := h.Subscribe("c")
 	if !done || l != nil {
 		t.Errorf("late join: done=%v live=%v, want done + nil live", done, l)
 	}
-	if len(replay) != 2 {
-		t.Errorf("late replay = %d events, want 2 (a + done)", len(replay))
+	if len(replay) != 0 {
+		t.Errorf("late replay = %d events, want 0 (buffer freed on Close)", len(replay))
 	}
 }
 

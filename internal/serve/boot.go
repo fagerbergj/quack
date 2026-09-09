@@ -144,14 +144,11 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 	runCtx, cancelRun := context.WithTimeout(context.WithoutCancel(ctx), 24*time.Hour)
 	hub.RegisterRun(chatID, plan.TurnID, cancelRun)
 	_ = st.MarkRunActive(runCtx, chatID, plan.TurnID)
-	defer hub.Close(chatID)
-	defer func() {
-		cancelRun()
-		hub.UnregisterRun(chatID)
-	}()
-
 	eventLog := runlog.NewEventLog(st)
 	eventLog.Reset(runCtx, chatID) // old run's (chat_id, seq) rows would PK-collide with the new publisher
+	// FinishRun flushes then closes then unregisters, in that order - see its doc.
+	defer eventLog.FinishRun(hub, chatID, cancelRun)
+
 	pub := runlog.NewPublisher(hub, eventLog, chatID)
 	pub.Publish(stream.ResponseCreated(plan.TurnID))
 

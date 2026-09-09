@@ -1121,6 +1121,16 @@ func (s *Store) InsertChatEvent(ctx context.Context, ev ChatEvent) error {
 	return s.db.WithContext(ctx).Create(&ev).Error
 }
 
+// InsertChatEvents persists a batch of run events in one multi-row INSERT
+// (perf-audit item 2: single-row inserts capped the drain at ~139 ev/s).
+// No-op for an empty slice.
+func (s *Store) InsertChatEvents(ctx context.Context, evs []ChatEvent) error {
+	if len(evs) == 0 {
+		return nil
+	}
+	return s.db.WithContext(ctx).Create(&evs).Error
+}
+
 // LoadChatEvents returns events with seq > afterSeq (afterSeq=0 for full run).
 func (s *Store) LoadChatEvents(ctx context.Context, chatID string, afterSeq int64) ([]ChatEvent, error) {
 	var evs []ChatEvent
