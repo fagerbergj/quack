@@ -63,4 +63,13 @@ describe('CopyButton', () => {
 
     expect(details.open).toBe(false)
   })
+  it('is a 44px target at compact width', () => {
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    act(() => { root!.render(createElement(CopyButton, { text: 'x' })) })
+    const cls = host.querySelector('button')!.className
+    expect(cls).toContain('min-h-[44px]')
+    expect(cls).toContain('medium:min-h-0')
+  })
 })
