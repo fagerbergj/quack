@@ -196,6 +196,28 @@ func TestRunJudgeAgent_OverBudgetAnswerFitsBudget(t *testing.T) {
 	}
 }
 
+// TestRunJudgeAgent_BuildsPromptOnceForARound is perf audit #13:
+// fitJudgeAnswer used to build the full judge prompt purely to measure its
+// length, discard it, then runJudgeRound built the identical string again.
+// A round with no clamp needed and no retries must build it exactly once.
+func TestRunJudgeAgent_BuildsPromptOnceForARound(t *testing.T) {
+	factory := NewJudgeFactory(recordingJudge{prompt: new(string)}, nil, nil)
+	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
+	cfg := Config{Rubric: "score 0-10"}
+
+	before := judgePromptBuilds.Load()
+	v, err := runJudgeAgent(t.Context(), factory, cfg, q, "the answer", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
+	if err != nil {
+		t.Fatalf("runJudgeAgent: %v", err)
+	}
+	if v.Score != 0.8 {
+		t.Fatalf("verdict score = %v, want 0.8 (a clean, single-attempt round)", v.Score)
+	}
+	if got := judgePromptBuilds.Load() - before; got != 1 {
+		t.Errorf("buildJudgePrompt calls = %d, want 1 (fitJudgeAnswer's prompt must be reused, not rebuilt)", got)
+	}
+}
+
 // TestRunJudgeAgent_SessionIDIsChatIDNotConstant is the Langfuse-attribution
 // regression: ADK's runner.Run takes the session id as its third argument and
 // stamps gen_ai.conversation.id from it (google.golang.org/adk/v2/internal/
@@ -1471,7 +1493,7 @@ func TestRunJudgeAgent_ForcedCloseSkipsSubmitNudge(t *testing.T) {
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 3}
 
-	_, _, err := runJudgeRound(t.Context(), factory, cfg, q, "done.", "", "", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	_, _, err := runJudgeRound(t.Context(), factory, cfg, q, "done.", "", "", "", workerActivity{}, nil, func(*genai.Part) bool { return true })
 	if !errors.Is(err, ErrJudgeNoVerdict) {
 		t.Fatalf("err = %v, want errors.Is(err, ErrJudgeNoVerdict)", err)
 	}
@@ -1529,7 +1551,7 @@ func TestRunJudgeAgent_RepeatTripSkipsSubmitNudge(t *testing.T) {
 	// guard) would make the test fail loud, not pass by accident.
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 1000}
 
-	_, _, err := runJudgeRound(t.Context(), factory, cfg, q, "done.", "", "", workerActivity{}, nil, func(*genai.Part) bool { return true })
+	_, _, err := runJudgeRound(t.Context(), factory, cfg, q, "done.", "", "", "", workerActivity{}, nil, func(*genai.Part) bool { return true })
 	if !errors.Is(err, ErrJudgeNoVerdict) {
 		t.Fatalf("err = %v, want errors.Is(err, ErrJudgeNoVerdict)", err)
 	}
