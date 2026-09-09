@@ -245,8 +245,12 @@ const (
 const orchestratorAuthor = "orchestrator"
 
 // Per-turn content extracted from a session's events.
+// userText/asstText/asstThink are strings.Builder, not string: a turn assembled from
+// streamed events otherwise appends with += for every chunk, copying the whole
+// accumulated text each time - O(n^2) in events per turn (perf audit #4, 197 MB for
+// one 2,000-event turn; strings.Builder measured at 5.6 MB for 50x280).
 type turnGroup struct {
-	userText, asstText, asstThink                                              string
+	userText, asstText, asstThink                                              strings.Builder
 	toolCalls                                                                  []ToolCallRecord
 	promptTokens, completionTokens, reasoningTokens, cachedTokens, totalTokens int32
 }
@@ -272,17 +276,17 @@ func groupSessionEvents(events iter.Seq[*session.Event]) []turnGroup {
 					switch p.FunctionResponse.Name {
 					case choiceToolName:
 						if c, ok := p.FunctionResponse.Response[choiceAnswerKey].(string); ok {
-							cur.userText += c
+							cur.userText.WriteString(c)
 						}
 					case nodeInputCallName:
 						if c, ok := p.FunctionResponse.Response[nodeInputPayloadKey].(string); ok {
-							cur.userText += c
+							cur.userText.WriteString(c)
 						}
 					}
 					continue
 				}
 				if !p.Thought && p.FunctionCall == nil {
-					cur.userText += p.Text
+					cur.userText.WriteString(p.Text)
 				}
 			}
 			continue
@@ -325,9 +329,9 @@ func groupSessionEvents(events iter.Seq[*session.Event]) []turnGroup {
 					}
 				}
 			case p.Thought:
-				cur.asstThink += p.Text
+				cur.asstThink.WriteString(p.Text)
 			default:
-				cur.asstText += p.Text
+				cur.asstText.WriteString(p.Text)
 			}
 		}
 	}
@@ -1578,9 +1582,9 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 			ReasoningTokens: t.ReasoningTokens, TotalTokens: t.TotalTokens, CachedTokens: t.CachedTokens,
 		}
 		if gi := i - offset; gi >= 0 && gi < len(groups) {
-			tc.UserText = groups[gi].userText
-			tc.AsstText = groups[gi].asstText
-			tc.AsstThink = groups[gi].asstThink
+			tc.UserText = groups[gi].userText.String()
+			tc.AsstText = groups[gi].asstText.String()
+			tc.AsstThink = groups[gi].asstThink.String()
 			tc.ToolCalls = groups[gi].toolCalls
 			if tc.PromptTokens == 0 && tc.CompletionTokens == 0 {
 				tc.PromptTokens = groups[gi].promptTokens
