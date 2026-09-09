@@ -147,6 +147,25 @@ func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32
 	return out, nil
 }
 
+// scrollAll pages via plain SQL LIMIT/OFFSET - each page is its own indexed
+// query (no re-scan of prior pages), so unlike qdrant there's no native
+// cursor to thread; a loop over list() is already O(N) total, not O(N^2).
+func (x *sqliteIndex) scrollAll(ctx context.Context, includeInvalidated, withVectors bool, pageSize int, fn func([]scored)) error {
+	for offset := 0; ; offset += pageSize {
+		page, err := x.list(ctx, nil, offset, pageSize, includeInvalidated, "", withVectors)
+		if err != nil {
+			return err
+		}
+		if len(page) == 0 {
+			return nil
+		}
+		fn(page)
+		if len(page) < pageSize {
+			return nil
+		}
+	}
+}
+
 func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string, withVectors bool, sortBy ...string) ([]scored, error) {
 	q := x.db.WithContext(ctx).Where("collection = ?", x.coll)
 	if len(buckets) > 0 {

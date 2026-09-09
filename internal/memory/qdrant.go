@@ -9,9 +9,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/qdrant/go-client/qdrant"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"google.golang.org/adk/v2/model"
 
@@ -83,7 +86,7 @@ func (x *qdrantIndex) ensure(ctx context.Context, probeDim func() (int, error)) 
 		return fmt.Errorf("memory: collection exists %q: %w", x.coll, err)
 	}
 	if exists {
-		return nil
+		return x.ensureTimestampIndex(ctx)
 	}
 	dim, err := probeDim()
 	if err != nil {
@@ -94,6 +97,31 @@ func (x *qdrantIndex) ensure(ctx context.Context, probeDim func() (int, error)) 
 		VectorsConfig:  qdrant.NewVectorsConfig(&qdrant.VectorParams{Size: uint64(dim), Distance: qdrant.Distance_Cosine}),
 	}); err != nil {
 		return fmt.Errorf("memory: create collection %q: %w", x.coll, err)
+	}
+	return x.ensureTimestampIndex(ctx)
+}
+
+// ensureTimestampIndex creates a payload index on `timestamp` if the
+// collection doesn't already have one, idempotently (checked via
+// GetCollectionInfo first so a pre-existing collection - created before this
+// index existed - gets it too, not just brand-new ones). Item 7 of the perf
+// audit: this is what lets list() use Qdrant's native order_by for
+// newest/oldest instead of scrolling the whole collection into Go to sort.
+func (x *qdrantIndex) ensureTimestampIndex(ctx context.Context) error {
+	info, err := x.client.GetCollectionInfo(ctx, x.coll)
+	if err != nil {
+		return fmt.Errorf("memory: collection info %q: %w", x.coll, err)
+	}
+	if _, ok := info.GetPayloadSchema()[payloadTimestamp]; ok {
+		return nil
+	}
+	ft := qdrant.FieldType_FieldTypeDatetime
+	if _, err := x.client.CreateFieldIndex(ctx, &qdrant.CreateFieldIndexCollection{
+		CollectionName: x.coll,
+		FieldName:      payloadTimestamp,
+		FieldType:      &ft,
+	}); err != nil {
+		return fmt.Errorf("memory: create timestamp index %q: %w", x.coll, err)
 	}
 	return nil
 }
@@ -202,17 +230,34 @@ func vectorData(v *qdrant.VectorsOutput) []float32 {
 	return vo.GetDense().GetData()
 }
 
-// list fetches every point matching buckets via Scroll (paginating internally
-// through ScrollAll - Qdrant's cursor has no integer offset), sorts newest
-// first in Go, then slices out the requested page. Fine at memory's documented
-// scale (hundreds-thousands); avoids requiring a payload index on `timestamp`
-// for Qdrant's order_by, which a fresh collection won't have.
+// list serves one page. newest/oldest (the default and the only sorts the
+// memory-list UI's most common paths use) go through listOrdered, which asks
+// Qdrant's own `timestamp` payload index (ensureTimestampIndex) for the
+// order via order_by, so only offset+limit points ever cross the wire.
+// order_by silently DROPS any point missing the ordered field, unlike the Go
+// sort (which puts an empty timestamp last) - real writes always stamp
+// Timestamp (commit.go), but a point that somehow lacks one would vanish
+// from every page, so a cheap Count guard falls back to the full scan
+// whenever one exists. Qdrant has no server-side way to order by vote
+// counts/recalls, so those sorts (and any offset<=0 request, where nothing
+// is saved by going native) still pull every matching point and sort in Go
+// - fine at memory's documented scale (hundreds-thousands).
 func (x *qdrantIndex) list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string, withVectors bool, sortBy ...string) ([]scored, error) {
 	filter := bucketFilter(buckets)
 	if !includeInvalidated {
 		filter = excludeInvalidated(filter)
 	}
 	filter = tierFilter(filter, tier)
+	sortKey := firstSort(sortBy)
+	if limit > 0 && (sortKey == SortNewest || sortKey == SortOldest) {
+		gap, err := x.hasMissingTimestamp(ctx, filter)
+		if err != nil {
+			return nil, err
+		}
+		if !gap {
+			return x.listOrdered(ctx, filter, offset, limit, sortKey, withVectors)
+		}
+	}
 	scroll := &qdrant.ScrollPoints{
 		CollectionName: x.coll,
 		Filter:         filter,
@@ -237,7 +282,7 @@ func (x *qdrantIndex) list(ctx context.Context, buckets []string, offset, limit 
 			all = append(all, pointFromPayload(p.GetId(), p.GetPayload(), 0, vectorData(p.GetVectors())))
 		}
 	}
-	sort.Slice(all, qdrantLess(all, firstSort(sortBy)))
+	sort.Slice(all, qdrantLess(all, sortKey))
 	if offset >= len(all) {
 		return []scored{}, nil
 	}
@@ -246,6 +291,112 @@ func (x *qdrantIndex) list(ctx context.Context, buckets []string, offset, limit 
 		end = offset + limit
 	}
 	return all[offset:end], nil
+}
+
+// datetimeRangeAll spans every date order_by's parser can place - anything
+// NOT in this range (missing, "", or not a parseable RFC3339 string, e.g. a
+// test fixture's placeholder "t") is exactly what order_by silently drops.
+var datetimeRangeAll = &qdrant.DatetimeRange{
+	Gte: timestamppb.New(time.Time{}),
+	Lte: timestamppb.New(time.Date(9998, 1, 1, 0, 0, 0, 0, time.UTC)),
+}
+
+// hasMissingTimestamp reports whether any point matching filter has a
+// `timestamp` order_by can't place (missing, empty, or unparseable) -
+// checked as "fails a Range covering all real dates" rather than matching
+// specific bad values, so it catches every shape of bad data, not just
+// empty string. Clones filter before appending so the caller's copy (about
+// to be reused for the ordered scroll) isn't mutated.
+func (x *qdrantIndex) hasMissingTimestamp(ctx context.Context, filter *qdrant.Filter) (bool, error) {
+	gapFilter, ok := proto.Clone(filter).(*qdrant.Filter)
+	if !ok || gapFilter == nil {
+		gapFilter = &qdrant.Filter{}
+	}
+	gapFilter.MustNot = append(gapFilter.MustNot, qdrant.NewDatetimeRange(payloadTimestamp, datetimeRangeAll))
+	exact := true
+	n, err := x.client.Count(ctx, &qdrant.CountPoints{CollectionName: x.coll, Filter: gapFilter, Exact: &exact})
+	if err != nil {
+		return false, fmt.Errorf("memory: count missing timestamp: %w", err)
+	}
+	return n > 0, nil
+}
+
+// listOrdered fetches exactly offset+limit points (not the whole collection)
+// via one Scroll call using order_by on `timestamp`, then slices off the
+// last `limit`. One call, not a paged walk: order_by's start_from cursor is
+// value-based and ties (two points with the same timestamp) can skip or
+// repeat across separate calls, so stitching pages would need its own
+// tie-break the way qdrantLess's `ID` fallback gives the Go-sort path - a
+// single Scroll has no such boundary to get wrong.
+// ponytail: deep offsets still pull offset+limit points server-side (no true
+// random-access skip); fine at memory's documented scale, revisit if the UI
+// ever pages past low thousands.
+func (x *qdrantIndex) listOrdered(ctx context.Context, filter *qdrant.Filter, offset, limit int, sortBy string, withVectors bool) ([]scored, error) {
+	dir := qdrant.Direction_Desc
+	if sortBy == SortOldest {
+		dir = qdrant.Direction_Asc
+	}
+	need := uint32(offset + limit)
+	scroll := &qdrant.ScrollPoints{
+		CollectionName: x.coll,
+		Filter:         filter,
+		WithPayload:    qdrant.NewWithPayload(true),
+		Limit:          &need,
+		OrderBy:        &qdrant.OrderBy{Key: payloadTimestamp, Direction: &dir},
+	}
+	if withVectors {
+		scroll.WithVectors = qdrant.NewWithVectors(true)
+	}
+	pts, err := x.client.Scroll(ctx, scroll)
+	if err != nil {
+		return nil, fmt.Errorf("memory: scroll ordered: %w", err)
+	}
+	if offset >= len(pts) {
+		return []scored{}, nil
+	}
+	out := make([]scored, 0, len(pts)-offset)
+	for _, p := range pts[offset:] {
+		out = append(out, pointFromPayload(p.GetId(), p.GetPayload(), 0, vectorData(p.GetVectors())))
+	}
+	return out, nil
+}
+
+// scrollAll walks every point matching includeInvalidated across the WHOLE
+// collection in pages of pageSize, calling fn once per page, using one
+// native ScrollAll iterator for the entire walk. Item 7 of the perf audit:
+// the sweep previously called list() per page, and list() re-ran a full
+// ScrollAll from the start every time - O(N^2) in points. One iterator
+// threads Qdrant's own point-ID cursor across calls instead.
+func (x *qdrantIndex) scrollAll(ctx context.Context, includeInvalidated, withVectors bool, pageSize int, fn func([]scored)) error {
+	filter := bucketFilter(nil)
+	if !includeInvalidated {
+		filter = excludeInvalidated(filter)
+	}
+	limit := uint32(pageSize)
+	scroll := &qdrant.ScrollPoints{
+		CollectionName: x.coll,
+		Filter:         filter,
+		WithPayload:    qdrant.NewWithPayload(true),
+		Limit:          &limit,
+	}
+	if withVectors {
+		scroll.WithVectors = qdrant.NewWithVectors(true)
+	}
+	it := x.client.ScrollAll(ctx, scroll)
+	for {
+		pts, err := it.Next()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return fmt.Errorf("memory: scroll: %w", err)
+		}
+		page := make([]scored, 0, len(pts))
+		for _, p := range pts {
+			page = append(page, pointFromPayload(p.GetId(), p.GetPayload(), 0, vectorData(p.GetVectors())))
+		}
+		fn(page)
+	}
 }
 
 func (x *qdrantIndex) count(ctx context.Context, buckets []string, includeInvalidated bool, tier string) (int, error) {

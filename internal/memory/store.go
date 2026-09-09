@@ -42,6 +42,12 @@ type index interface {
 	// for sqlite, in-Go for qdrant which already fetches everything) before
 	// offset/limit slice it, so a sort spans pages correctly.
 	list(ctx context.Context, buckets []string, offset, limit int, includeInvalidated bool, tier string, withVectors bool, sortBy ...string) ([]scored, error)
+	// scrollAll walks every point across ALL buckets in pages of pageSize,
+	// calling fn once per page until exhausted, visiting each point exactly
+	// once - the sweep jobs' access pattern, which doesn't need sorted order.
+	// Unlike calling list() in an offset loop, an implementation can thread a
+	// single native cursor across the whole walk (see qdrantIndex.scrollAll).
+	scrollAll(ctx context.Context, includeInvalidated, withVectors bool, pageSize int, fn func([]scored)) error
 	// count returns how many points match buckets (all buckets if empty), under the
 	// same includeInvalidated/tier filter as list.
 	count(ctx context.Context, buckets []string, includeInvalidated bool, tier string) (int, error)
