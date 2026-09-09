@@ -161,6 +161,39 @@ describe('DagNode compact header', () => {
     expect(name.className).not.toContain('basis-full')
   })
 
+  it('Escape closes the menu and returns focus to the kebab', async () => {
+    const user = userEvent.setup()
+    render(<DagNode node={node} state={running} runs={[]} answer="" isFinal={false} onCancel={() => {}} onPause={() => {}} />)
+    const kebab = screen.getByRole('button', { name: 'Node actions' })
+    await user.click(kebab)
+    await user.tab()
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Pause' }))
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(document.activeElement).toBe(kebab)
+  })
+
+  it('activating an item closes the menu and returns focus to the kebab', async () => {
+    const user = userEvent.setup()
+    const onPause = vi.fn()
+    render(<DagNode node={node} state={running} runs={[]} answer="" isFinal={false} onPause={onPause} />)
+    const kebab = screen.getByRole('button', { name: 'Node actions' })
+    await user.click(kebab)
+    await user.click(screen.getByRole('menuitem', { name: 'Pause' }))
+    expect(onPause).toHaveBeenCalledWith('r1')
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(document.activeElement).toBe(kebab)
+  })
+
+  // The card clips to its rounded corners at rest; while the menu is open it
+  // must not, or a short card cuts the menu off after the first item.
+  it('the card lifts its overflow clip while the menu is open', () => {
+    const { container } = render(<DagNode node={node} state={running} runs={[]} answer="" isFinal={false} onPause={() => {}} />)
+    const card = container.querySelector('.rounded-xl')!
+    expect(card.className).toContain('overflow-hidden')
+    expect(card.className).toContain('has-[[aria-expanded=true]]:overflow-visible')
+  })
+
   it('menu verbs carry an icon and no emoji glyph', async () => {
     const user = userEvent.setup()
     render(<DagNode node={node} state={running} runs={[]} answer="" isFinal={false} onCancel={() => {}} onPause={() => {}} onQueueMessage={() => {}} />)

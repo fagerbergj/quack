@@ -39,11 +39,15 @@ function NodeMenu({
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
+  // The items unmount on close, so without an explicit return a keyboard or
+  // screen-reader user is dropped on <body> (APG menu button pattern).
+  const close = () => { setOpen(false); btnRef.current?.focus() }
 
   useEffect(() => {
     if (!open) return
     const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
     return () => {
@@ -72,6 +76,7 @@ function NodeMenu({
           that overlaps the header's padding via negative margins so the
           row stays one line high. */}
       <button
+        ref={btnRef}
         onClick={() => setOpen(o => !o)}
         aria-label="Node actions"
         aria-haspopup="menu"
@@ -83,46 +88,46 @@ function NodeMenu({
       {open && (
         <div role="menu" className="absolute z-20 right-0 mt-1 w-48 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1 text-xs">
           {running && onPause && (
-            <button role="menuitem" onClick={() => { onPause(nodeId); setOpen(false) }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+            <button role="menuitem" onClick={() => { onPause(nodeId); close() }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700">
               <Icon name="pause" className="w-3.5 h-3.5" /> Pause
             </button>
           )}
           {startable && onResume && (
-            <button role="menuitem" onClick={() => { onResume(nodeId); setOpen(false) }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+            <button role="menuitem" onClick={() => { onResume(nodeId); close() }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700">
               <Icon name="play_arrow" className="w-3.5 h-3.5" /> Start
             </button>
           )}
           {cancellable && onCancel && (
-            <button role="menuitem" onClick={() => { onCancel(nodeId); setOpen(false) }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-red-500 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+            <button role="menuitem" onClick={() => { onCancel(nodeId); close() }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-red-500 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700">
               <Icon name="stop" className="w-3.5 h-3.5" /> Stop
             </button>
           )}
           {hasSecondary && <div className="my-1 border-t border-gray-100 dark:border-gray-700" />}
           {canAnswer && (
-            <button role="menuitem" onClick={() => { onOpenPopup(); setOpen(false) }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-amber-700 dark:text-amber-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+            <button role="menuitem" onClick={() => { onOpenPopup(); close() }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-amber-700 dark:text-amber-400 hover:bg-gray-50 dark:hover:bg-gray-700">
               <Icon name="help" className="w-3.5 h-3.5" /> Answer question…
             </button>
           )}
           {canQueue && (
-            <button role="menuitem" onClick={() => { onOpenPopup(); setOpen(false) }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+            <button role="menuitem" onClick={() => { onOpenPopup(); close() }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
               <Icon name="mail" className="w-3.5 h-3.5" /> Queue a message…
             </button>
           )}
           {canEdit && (
-            <button role="menuitem" onClick={() => { onOpenPopup(); setOpen(false) }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+            <button role="menuitem" onClick={() => { onOpenPopup(); close() }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
               <Icon name="edit" className="w-3.5 h-3.5" /> Edit prompt
             </button>
           )}
           {onOpenArtifacts && (
             <>
               {!terminal && <div className="my-1 border-t border-gray-100 dark:border-gray-700" />}
-              <button role="menuitem" onClick={() => { onOpenArtifacts(); setOpen(false) }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+              <button role="menuitem" onClick={() => { onOpenArtifacts(); close() }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
                 <Icon name="archive" className="w-3.5 h-3.5" /> Artifacts
               </button>
             </>
           )}
           {onOpenMemories && (
-            <button role="menuitem" onClick={() => { onOpenMemories(); setOpen(false) }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+            <button role="menuitem" onClick={() => { onOpenMemories(); close() }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
               <Icon name="memory" className="w-3.5 h-3.5" /> Memories
             </button>
           )}
@@ -555,8 +560,11 @@ export const DagNode = memo(function DagNode({
   const isPaused = state.status === 'paused' || state.status === 'needs_input'
   const pauseLabel = isPaused ? pausedStatusLabel(state.pauseReason) : null
 
+  // overflow-hidden clips the rounded corners, but it also clipped the kebab's
+  // menu to the card height - a short card at the foot of a chat lost every
+  // item past the first - so it lifts while the menu is open.
   return (
-    <div className={`rounded-xl border shadow-sm overflow-hidden ${
+    <div className={`rounded-xl border shadow-sm overflow-hidden has-[[aria-expanded=true]]:overflow-visible ${
       isFinal
         ? 'border-indigo-200 dark:border-indigo-800 bg-white dark:bg-gray-800'
         : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'
