@@ -1242,6 +1242,48 @@ describe('ChatStore.attach - reconnect to a live run', () => {
   })
 })
 
+// Finding 11: switching away from a chat mid-run used to leave it permanently
+// "streaming" - detachStream closed the EventSource but never cleared the
+// flag, so a later attach() (gated on isStreaming) no-op'd forever and
+// submit() refused to send. Reload was the only recovery.
+describe('ChatStore.detachStream - leaving mid-run does not strand the chat (finding 11)', () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+  let store: ChatStore
+  beforeEach(() => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    FakeEventSource.last = null
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    store = new ChatStore()
+  })
+
+  it('clears streaming on detach so a later attach re-subscribes, and the composer re-enables once the server reports done', async () => {
+    store.seed('c', [dagTurn('in_progress')])
+    store.attach('c')
+    const es1 = FakeEventSource.last!
+    expect(store.get('c').live?.streaming).toBe(true)
+
+    store.detachStream('c')
+    expect(es1.closed).toBe(true)
+    expect(store.get('c').live?.streaming).toBe(false)
+
+    // Re-open: attach must not no-op now that streaming correctly reads false.
+    store.attach('c')
+    expect(FakeEventSource.last).not.toBe(es1)
+    expect(store.get('c').live?.streaming).toBe(true)
+
+    // The server reports the re-attached run finished.
+    FakeEventSource.last!.emit('done')
+    expect(store.get('c').live?.streaming).toBe(false)
+
+    // Composer enabled: submit() no longer refuses to send.
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ turns: [] }), { status: 200 })) // archive GET
+    fetchMock.mockResolvedValueOnce(makeStream(''))                                              // POST
+    await store.submit('c', 'follow up')
+    expect(fetchMock).toHaveBeenCalled()
+  })
+})
+
 // Issue #383: a dropped SSE connection must be retried automatically -
 // resuming via Last-Event-ID - instead of tearing the run down and forcing a
 // manual page refresh.

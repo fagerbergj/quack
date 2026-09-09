@@ -677,9 +677,11 @@ export class ChatStore {
   }
 
   // detachStream closes an attached subscribe stream WITHOUT ending the turn - the
-  // run continues server-side. For chat switch / unmount. Re-attach re-subscribes
-  // and the hub replays. ponytail: returning to a still-streaming chat shows its
-  // frozen last state (attach no-ops while streaming) - reload to resume live.
+  // run continues server-side. For chat switch / unmount. Clearing `streaming` (not
+  // calling finishStream/drainQueue - the run hasn't actually ended) lets a return
+  // trip re-enter through the normal seed/attach path, gated on the server's
+  // detail.status, instead of getting stuck: attach() and submit() both no-op while
+  // streaming is true, and nothing else ever flips it back for a detached chat.
   detachStream(chatId: string): void {
     const close = this.eventSources.get(chatId)
     if (close) {
@@ -687,6 +689,10 @@ export class ChatStore {
       this.eventSources.delete(chatId)
     }
     this.cancelReconnect(chatId)
+    const s = this.states.get(chatId)
+    if (s?.live?.streaming) {
+      this.write(chatId, { ...s, live: { ...s.live, streaming: false } })
+    }
   }
 
   // streamHandlers builds the store-updating handler set shared by both transports:
