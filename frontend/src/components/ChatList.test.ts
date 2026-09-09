@@ -393,13 +393,17 @@ describe('ChatRow trash button (archive vs. hard delete)', () => {
     expect(onDelete).not.toHaveBeenCalled()
   })
 
-  it('on an archived row, permanently deletes after confirmation', () => {
+  // Delete is the row's only irreversible action, so it lives in the kebab
+  // (secondary actions) behind a confirm - never a bare one-tap on a touch row.
+  it('on an archived row, permanently deletes from the kebab after confirmation', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const onDelete = vi.fn()
     renderList([], { onDelete, archivedChats: [chat({ id: 'a2', title: 'Archived chat', archived: true })] })
     expandArchived()
 
-    const trash = host!.querySelector('button[aria-label="Delete chat permanently"]')
+    expect(host!.querySelector('button[aria-label="Delete chat permanently"]')).toBeNull() // menu closed
+    click(host!.querySelector('button[aria-label="Row actions"]'))
+    const trash = host!.querySelector('[role="menuitem"][aria-label="Delete chat permanently"]')
     expect(trash).toBeTruthy()
     click(trash)
 
@@ -413,23 +417,23 @@ describe('ChatRow trash button (archive vs. hard delete)', () => {
     renderList([], { onDelete, archivedChats: [chat({ id: 'a3', archived: true })] })
     expandArchived()
 
+    click(host!.querySelector('button[aria-label="Row actions"]'))
     click(host!.querySelector('button[aria-label="Delete chat permanently"]'))
 
     expect(onDelete).not.toHaveBeenCalled()
   })
 
-  it('the aria-label/title differ between an active row and an archived row', () => {
+  it('an active row has a bare Archive control; an archived row has only the kebab', () => {
     renderList([chat({ id: 'a4', title: 'Active' })], {
       archivedChats: [chat({ id: 'a5', title: 'Archived', archived: true })],
     })
     expandArchived()
 
     const archiveBtn = host!.querySelector('button[aria-label="Archive chat"]')
-    const deleteBtn = host!.querySelector('button[aria-label="Delete chat permanently"]')
     expect(archiveBtn).toBeTruthy()
-    expect(deleteBtn).toBeTruthy()
     expect(archiveBtn!.getAttribute('title')).toBe('Archive chat')
-    expect(deleteBtn!.getAttribute('title')).toBe('Delete chat permanently')
+    expect(host!.querySelectorAll('button[aria-label="Row actions"]').length).toBe(1)
+    expect(host!.querySelector('button[aria-label="Delete chat permanently"]')).toBeNull()
   })
 
   it('an archived row exposes Restore through its overflow menu', () => {
@@ -474,20 +478,19 @@ describe('ChatRow trash button (archive vs. hard delete)', () => {
     expect(host!.querySelector('button[aria-label="Unarchive chat"]')).toBeNull()
   })
 
-  // Both sit top-right, out of flow (absolute), and hover-only - a regression here
-  // would either grow the row's height or leave a control visible at rest.
-  it('the overflow trigger uses the vertical-ellipsis glyph and is hover-only, like ×', () => {
+  // Sits top-right, out of flow (absolute), and always visible - touch has
+  // no hover, so a hover-only reveal hid it on every phone. Icons, not glyphs.
+  it('the overflow trigger is an always visible Material icon, out of flow', () => {
     renderList([], { onUnarchive: vi.fn(), archivedChats: [chat({ id: 'a10', archived: true })] })
     expandArchived()
 
     const overflow = host!.querySelector('button[aria-label="Row actions"]')
-    const trash = host!.querySelector('button[aria-label="Delete chat permanently"]')
-    expect(overflow?.textContent).toBe('⋮')
-    expect(overflow?.className).toEqual(expect.stringContaining('opacity-0'))
-    expect(overflow?.className).toEqual(expect.stringContaining('group-hover:opacity-100'))
+    expect(overflow?.querySelector('svg')).not.toBeNull()
+    expect(overflow?.textContent?.trim()).toBe('')
+    expect(overflow?.className).not.toEqual(expect.stringContaining('opacity-0'))
     expect(overflow?.parentElement?.className).toEqual(expect.stringContaining('absolute')) // the wrapper, not the button, is positioned
-    expect(trash?.className).toEqual(expect.stringContaining('opacity-0'))
-    expect(trash?.className).toEqual(expect.stringContaining('group-hover:opacity-100'))
+    click(overflow)
+    for (const item of host!.querySelectorAll('[role="menuitem"]')) expect(item.querySelector('svg')).not.toBeNull()
   })
 })
 
