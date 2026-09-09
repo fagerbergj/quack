@@ -20,7 +20,11 @@ type Bundle struct {
 	// Hash: stable digest over agent-card.json + prompt.md + rubric.yaml (if
 	// present), computed once at load - ledger provenance for "this bundle
 	// produced this output" (#1096). rubric.yaml is optional and read
-	// directly here rather than via vetting (would import-cycle).
+	// directly here rather than via vetting (would import-cycle). memory.md
+	// is deliberately excluded: its content is folded into the resolved
+	// system instruction the model actually sees, already covered by that
+	// call's separate gen_ai.prompt.version content hash - hashing it here
+	// too would just duplicate that signal under a different name.
 	Hash string
 }
 

@@ -669,7 +669,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			// Node: cfg.NodeID (not nodeID) matches the worker recorder's own
 			// key (see RunGatedRefine's entry-clear above) - both must agree
 			// on the same workspace scope for setup/repo-chain plans.
-			judgeCoords := ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: "judge", Round: runID, User: cfg.User, Source: cfg.Source}
+			judgeCoords := ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: "judge", BundleHash: cfg.BundleHash, Round: runID, User: cfg.User, Source: cfg.Source}
 			ledgerCtx := ledger.WithCoords(ctx, judgeCoords)
 			// Same belt-and-suspenders as runWorkerNodeTraced's workerModel stamp.
 			if cs, ok := cfg.JudgeModel.(interface{ SetLedgerCoords(ledger.Coords) }); ok {

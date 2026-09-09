@@ -85,6 +85,43 @@ func TestExporterEmitsTypedEntries(t *testing.T) {
 	}
 }
 
+// TestExporterCostUSD_NilVsZero: #1096 - an unpriced model must not report
+// cost_usd:0 (that reads as "confirmed free"); a priced model with a
+// genuine $0 call must still report the explicit 0, not omit the field.
+func TestExporterCostUSD_NilVsZero(t *testing.T) {
+	store := ledgertest.NewMemStore()
+	emitVia(t, store, // unpriced: no gen_ai.usage.cost attribute at all
+		attribute.String("gen_ai.conversation.id", "chat-cost"),
+		attribute.String("gen_ai.operation.name", "chat"),
+	)
+	emitVia(t, store, // priced, genuinely free
+		attribute.String("gen_ai.conversation.id", "chat-cost"),
+		attribute.String("gen_ai.operation.name", "chat"),
+		attribute.Float64("gen_ai.usage.cost", 0),
+	)
+
+	entries, err := store.ReadEntries(context.Background(), "chat-cost", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("got %d entries, want 2", len(entries))
+	}
+	var unpriced, priced ledger.LLMCallPayload
+	if err := json.Unmarshal(entries[0].Payload, &unpriced); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(entries[1].Payload, &priced); err != nil {
+		t.Fatal(err)
+	}
+	if unpriced.CostUSD != nil {
+		t.Errorf("unpriced call CostUSD = %v, want nil", *unpriced.CostUSD)
+	}
+	if priced.CostUSD == nil || *priced.CostUSD != 0 {
+		t.Errorf("priced $0 call CostUSD = %v, want pointer to 0", priced.CostUSD)
+	}
+}
+
 // TestExporterDropsUnmappedRecords: no conversation id, or an operation no
 // observation kind describes, never reaches the store.
 func TestExporterDropsUnmappedRecords(t *testing.T) {

@@ -274,6 +274,7 @@ func TestRunGatedRefine_StampsJudgeModelWithRoundCoords(t *testing.T) {
 	cfg := Config{
 		JudgeRounds: 1, Threshold: 0.5, Rubric: "score 0-10",
 		ChatID: "chat1", Agent: "web-researcher", Source: "github", JudgeModel: spy,
+		BundleHash: "bundlehash123456",
 	}
 	node, err := newTestGatedNode("gate", worker, stubFixedAnswerModel{}, NewJudgeFactory(spy, nil, nil), cfg)
 	if err != nil {
@@ -304,6 +305,12 @@ func TestRunGatedRefine_StampsJudgeModelWithRoundCoords(t *testing.T) {
 	}
 	if spy.stamped.User != "u" || spy.stamped.Source != "github" {
 		t.Errorf("JudgeModel stamped User/Source = %q/%q, want u/github", spy.stamped.User, spy.stamped.Source)
+	}
+	// #1096: the judge round's llm.call entries must carry the worker's
+	// bundle hash too - a judge round with an empty bundle_hash is exactly
+	// the gap the adversarial review on #1278 flagged.
+	if spy.stamped.BundleHash != "bundlehash123456" {
+		t.Errorf("JudgeModel stamped BundleHash = %q, want %q", spy.stamped.BundleHash, "bundlehash123456")
 	}
 }
 
