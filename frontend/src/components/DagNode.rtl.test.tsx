@@ -150,7 +150,7 @@ describe('DagNode compact header', () => {
     expect(kebab.className).toContain('w-11')
     const header = kebab.parentElement!.parentElement!
     expect(header.lastElementChild).toBe(kebab.parentElement)
-    expect(within(header).getByLabelText('Status: Running')).toBeTruthy()
+    expect(within(header).getByText('running')).toBeTruthy()
     expect(within(header).getByText('Web researcher')).toBeTruthy()
   })
 

@@ -145,13 +145,15 @@ function QueuedBadge({ count }: { count: number }) {
   )
 }
 
-// pausedStatusLabel renders "paused · <why>" for the node header - the three
-// pause_reason values a human can meaningfully tell apart.
-function pausedStatusLabel(reason: NodeState['pauseReason']): string {
+// pausedStatusLabel names a paused-family node's state for the header. A node
+// waiting on the user says so directly; "by you" needs a real pause_reason
+// (a live-streamed pause may not carry one yet), so the fallback is plain.
+export function pausedStatusLabel(status: NodeStatus, reason: NodeState['pauseReason']): string {
+  if (status === 'needs_input' || reason === 'awaiting_input') return 'needs your answer'
   switch (reason) {
-    case 'awaiting_input': return 'paused · awaiting input'
-    case 'shutdown':       return 'paused · shutdown'
-    default:                return 'paused · by you'
+    case 'user':     return 'paused · by you'
+    case 'shutdown': return 'paused · shutdown'
+    default:         return 'paused'
   }
 }
 
@@ -538,7 +540,7 @@ export const DagNode = memo(function DagNode({
   const [memoriesOpen, setMemoriesOpen] = useState(false)
   const pendingQueueCount = (state.queue ?? []).filter(m => !m.delivered).length
   const isPaused = state.status === 'paused' || state.status === 'needs_input'
-  const pauseLabel = isPaused ? pausedStatusLabel(state.pauseReason) : null
+  const pauseLabel = isPaused ? pausedStatusLabel(state.status, state.pauseReason) : undefined
   const canAnswer = (state.status === 'needs_input' || state.pauseReason === 'awaiting_input') && !!onAnswerQuestion
 
   // overflow-hidden clips the rounded corners, but it also clipped the kebab's
@@ -554,13 +556,9 @@ export const DagNode = memo(function DagNode({
           kebab. Below `medium` the secondary metadata group wraps onto its own
           muted line (basis-full + order-last) instead of stacking the row. */}
       <div className="flex flex-wrap medium:flex-nowrap items-center gap-x-2 gap-y-1 px-4 py-3 border-b border-gray-100 dark:border-gray-700">
-        <StatusDot status={state.status} />
         <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 min-w-0 flex-1 truncate" title={agentLabel(node.agent)}>
           {agentLabel(node.agent)}
         </span>
-        {pauseLabel && (
-          <span className="shrink-0 text-[10px] font-medium text-blue-600 dark:text-blue-400">{pauseLabel}</span>
-        )}
         {isAcpAgent(node.agent) && <AcpBadge />}
         <QueuedBadge count={pendingQueueCount} />
         {state.steers && state.steers.length > 0 && (
@@ -571,7 +569,12 @@ export const DagNode = memo(function DagNode({
             ↻ steered{state.steers.length > 1 ? ` ×${state.steers.length}` : ''}
           </span>
         )}
+        {/* The named state leads the metadata group so that below `medium`
+            it wraps onto the muted second line with the model/tokens instead
+            of squeezing the agent name off the first (a needs_input node
+            also carries the Answer button there). */}
         <div className="empty:hidden flex flex-wrap medium:flex-nowrap items-center gap-x-2 gap-y-0.5 basis-full order-last medium:basis-auto medium:order-none">
+          <StatusDot status={state.status} label={pauseLabel} />
           {state.model && (
             <span className="text-[10px] text-gray-400 dark:text-gray-500 font-mono truncate max-w-[120px]" title={state.model}>
               {state.model}

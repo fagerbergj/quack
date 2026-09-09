@@ -3,7 +3,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { DagNode } from './DagNode'
+import { DagNode, pausedStatusLabel } from './DagNode'
 import type { DagNodeDef } from '../state/agentStream'
 import type { NodeState } from '../state/chatStore'
 import type { AgentRun, Activity } from './messageParts'
@@ -345,5 +345,27 @@ describe('DagNode - queued-message badge counts only parked (undelivered) messag
     ])
     expect(out).toContain('</svg> 1</span>') // badge count next to the mail icon
     expect(out).toContain('delivers when the current round ends')
+  })
+})
+
+// Audit #7: a node waiting on the user must never read as "paused · by you",
+// and "by you" needs a real pause_reason.
+describe('pausedStatusLabel', () => {
+  it('names a node waiting on the user, under either spelling', () => {
+    expect(pausedStatusLabel('needs_input', undefined)).toBe('needs your answer')
+    expect(pausedStatusLabel('paused', 'awaiting_input')).toBe('needs your answer')
+  })
+  it('attributes a pause only when the reason says so', () => {
+    expect(pausedStatusLabel('paused', 'user')).toBe('paused · by you')
+    expect(pausedStatusLabel('paused', 'shutdown')).toBe('paused · shutdown')
+    expect(pausedStatusLabel('paused', undefined)).toBe('paused')
+  })
+})
+
+describe('DagNode - state is named, not colour-only (audit #7)', () => {
+  it('shows the state name next to the dot for quiet states too', () => {
+    expect(html({ status: 'queued' }, [], '')).toContain('>queued</span>')
+    expect(html({ status: 'done', startedAt: 0, finishedAt: 1000 }, [], '')).toContain('>done</span>')
+    expect(html({ status: 'needs_input' }, [], '')).toContain('>needs your answer</span>')
   })
 })
