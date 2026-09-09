@@ -76,7 +76,7 @@ The active/queued/in-flight gauges (`quack.runs.active`, `quack.runs.queued`, `q
 
 ## Logs
 
-`internal/otelobs/sloghandler.go` bridges `log/slog` to trace correlation — see [`AGENTS.md`](../../AGENTS.md)'s `QUACK_LOG_LEVEL`/`QUACK_LOG_FORMAT` for the logging side of this. Separately, `internal/otelobs` also runs an OTel *logger* provider (`internal/otelobs/logs.go`) — this is the replay ledger's transport, not `slog`.
+`internal/otelobs/sloghandler.go` bridges `log/slog` to trace correlation — see `QUACK_LOG_LEVEL`/`QUACK_LOG_FORMAT` in [the configuration reference](index.md#key-environment-variables) for the logging side of this. Separately, `internal/otelobs` also runs an OTel *logger* provider (`internal/otelobs/logs.go`) — this is the replay ledger's transport, not `slog`.
 
 `QUACK_PPROF_ADDR` (unset by default) starts a `net/http/pprof` debug listener on that address - a deliberate opt-in, since it's an unauthenticated profiling endpoint.
 
