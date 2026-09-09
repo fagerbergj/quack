@@ -101,6 +101,7 @@ func TestExactlyOnceResumeAcrossBatchBoundary(t *testing.T) {
 	ctx := context.Background()
 	l := NewEventLog(st)
 	chatID := "chat-boundary"
+	mustSeedChat(t, st, chatID)
 
 	// More than one batch's worth, so the drain goroutine must flush at
 	// least twice, with a boundary landing mid-run.
@@ -160,6 +161,7 @@ func TestFinishRunDeliversBufferedTailBeforeUnregister(t *testing.T) {
 	hub := stream.NewHub()
 	l := NewEventLog(st)
 	chatID := "chat-finish-tail"
+	mustSeedChat(t, st, chatID)
 
 	runCtx, cancelRun := context.WithCancel(context.Background())
 	hub.RegisterRun(chatID, "turn-1", cancelRun)
