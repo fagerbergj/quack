@@ -220,6 +220,12 @@ function ContentPopup({ title, text, onClose }: { title: string; text: string; o
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
+  // Return focus to the preview button that opened the sheet on close -
+  // the sheet unmounts, so otherwise a keyboard user lands on <body>.
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null
+    return () => opener?.focus()
+  }, [])
   return (
     <div
       role="dialog"

@@ -18,6 +18,16 @@ describe('NodePopup compact sheet', () => {
     expect(close.className).toContain('w-11')
   })
 
+  it('returns focus to the control that opened it when it closes', () => {
+    const opener = document.createElement('button')
+    document.body.appendChild(opener)
+    opener.focus()
+    const { unmount } = render(<NodePopup node={node} state={{ status: 'done' }} onClose={() => {}} />)
+    unmount()
+    expect(document.activeElement).toBe(opener)
+    opener.remove()
+  })
+
   it('docks to the bottom edge below medium and centers above it', () => {
     render(<NodePopup node={node} state={{ status: 'done' }} onClose={() => {}} />)
     const dialog = screen.getByRole('dialog')

@@ -84,6 +84,12 @@ export function NodePopup({
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
+  // Return focus to whatever opened the sheet (the node's kebab) on close -
+  // the sheet unmounts, so otherwise a keyboard user lands on <body>.
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null
+    return () => opener?.focus()
+  }, [])
 
   const [inputText, setInputText] = useState('')
   const [editingTask, setEditingTask] = useState(false)
