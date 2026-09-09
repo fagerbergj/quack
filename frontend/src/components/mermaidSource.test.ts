@@ -69,4 +69,32 @@ describe('lastSafeSplitOffset', () => {
     expect(idx).toBeGreaterThan(text.indexOf('```go'))
     expect(text.slice(idx).trimStart()).toBe('more prose after')
   })
+
+  // A blank line followed by an indented line is a lazy continuation (a
+  // footnote definition's second paragraph, or an indented code block's
+  // internal blank line) - not a real block boundary. Splitting there hands
+  // the frozen prefix and the live tail to two independent parses that each
+  // lose the shared context (AgentParts.splitBoundary.rtl.test.tsx has the
+  // rendered-HTML regression for this).
+  it("never lands inside a footnote definition's multi-paragraph continuation", () => {
+    const text = 'See note.[^1]\n\n[^1]: First paragraph.\n\n    Second paragraph.\n\nMore text.'
+    const innerBlank = text.indexOf('First paragraph.') + 'First paragraph.'.length
+    const idx = lastSafeSplitOffset(text, innerBlank + 2)
+    expect(idx).toBeLessThanOrEqual(text.indexOf('[^1]:'))
+  })
+
+  it("never lands inside an indented code block's internal blank line", () => {
+    const text = 'intro\n\n    line one\n\n    line two\n\nmore prose'
+    const innerBlank = text.indexOf('line one') + 'line one'.length
+    // No earlier boundary exists besides the very start, so falling back
+    // that far (not splitting inside the block) is the correct, safe answer.
+    const idx = lastSafeSplitOffset(text, innerBlank + 2)
+    expect(idx).toBeLessThanOrEqual(text.indexOf('line one'))
+  })
+
+  it('still splits normally right after an indented block once it is followed by unindented text', () => {
+    const text = 'intro\n\n    code line\n\nmore prose'
+    const idx = lastSafeSplitOffset(text, text.length)
+    expect(text.slice(idx).trimStart()).toBe('more prose')
+  })
 })
