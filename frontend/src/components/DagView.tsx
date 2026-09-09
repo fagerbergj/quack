@@ -59,7 +59,7 @@ interface Props {
 export function DagBubbleHeader({ dag }: { dag: DagTurnState }) {
   const tokens = dagTotalTokens(dag)
   return (
-    <div className="flex items-center gap-2 mb-2 text-[10px] text-gray-400 dark:text-gray-500">
+    <div className="flex items-center gap-2 mb-2 text-[11px] text-gray-500 dark:text-gray-400">
       <span className="font-semibold text-gray-500 dark:text-gray-400">Plan</span>
       <span>· {dag.nodes.length} node{dag.nodes.length === 1 ? '' : 's'}</span>
       {tokens > 0 && <span className="tabular-nums">· {tokens.toLocaleString()} tokens</span>}
@@ -138,18 +138,18 @@ export function DagView({
       <div className="flex justify-end items-center gap-3">
         <button
           onClick={copyDag}
-          className="text-[10px] text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+          className="min-h-[44px] -my-2 inline-flex items-center text-[11px] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
           title="Copy DAG as JSON"
         >
           {copied ? 'copied!' : 'copy json'}
         </button>
         {totalTokens > 0 && (
-          <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
+          <span className="text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">
             {totalTokens.toLocaleString()} tokens
           </span>
         )}
         {dag.startedAt != null && (
-          <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
+          <span className="text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">
             total <LiveTimer startedAt={dag.startedAt} finishedAt={dag.finishedAt} />
           </span>
         )}

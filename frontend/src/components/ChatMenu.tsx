@@ -39,7 +39,7 @@ export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSumma
         aria-haspopup="menu"
         aria-expanded={open}
         title="Chat actions"
-        className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+        className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
       >
         <Icon name="more_horiz" className="w-5 h-5" />
       </button>

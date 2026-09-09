@@ -53,7 +53,7 @@ export function memoryTierBadgeClass(tier: MemoryTier): string {
   switch (tier) {
     case 'reinforced': return 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400'
     case 'invalidated': return 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
-    default: return 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'
+    default: return 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300'
   }
 }
 
@@ -65,7 +65,7 @@ function TierBadge({ memory }: { memory: Memory }) {
   return (
     <span
       title={memory.invalidation_reason ?? memoryTierLabel(memory)}
-      className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${memoryTierBadgeClass(tier)}`}
+      className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium ${memoryTierBadgeClass(tier)}`}
     >
       {memoryTierLabel(memory)}
     </span>
@@ -78,7 +78,7 @@ function TierBadge({ memory }: { memory: Memory }) {
 // showing two chips that both say "unverified".
 function VoteTierBadge({ tier }: { tier: 'unverified' | 'verified' }) {
   return (
-    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400">
+    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400">
       {tier}
     </span>
   )
@@ -90,9 +90,9 @@ function VoteTierBadge({ tier }: { tier: 'unverified' | 'verified' }) {
 // of the hash (#1266): a node id used as provenance can hash to red, which
 // reads as an error rather than "this node wrote it".
 function Pill({ label, seed, neutral }: { label: string; seed: string; neutral?: boolean }) {
-  const cls = neutral ? 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400' : paletteClasses(seed)
+  const cls = neutral ? 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300' : paletteClasses(seed)
   return (
-    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${cls}`}>
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium ${cls}`}>
       {label}
     </span>
   )
@@ -214,22 +214,22 @@ export const MemoryEntry = memo(function MemoryEntry({ memory, onForget, onVote 
           {memory.kind && <Pill label={memory.kind} seed={memory.kind} />}
           <TierBadge memory={memory} />
           {voteTier === 'verified' && <VoteTierBadge tier={voteTier} />}
-          <span title={mintedTimeText} className="text-[11px] text-gray-400 dark:text-gray-500">{mintedTimeRelative}</span>
+          <span title={mintedTimeText} className="text-[11px] text-gray-500 dark:text-gray-400">{mintedTimeRelative}</span>
           {memory.score != null && (
-            <span className="text-[11px] text-gray-400 dark:text-gray-500">score {memory.score.toFixed(2)}</span>
+            <span className="text-[11px] text-gray-500 dark:text-gray-400">score {memory.score.toFixed(2)}</span>
           )}
           {lastUpvoted && (
-            <span className="text-[11px] text-gray-400 dark:text-gray-500">last upvoted {lastUpvoted}</span>
+            <span className="text-[11px] text-gray-500 dark:text-gray-400">last upvoted {lastUpvoted}</span>
           )}
           {(memory.recalls ?? 0) > 0 && (
-            <span className="text-[11px] text-gray-400 dark:text-gray-500">
+            <span className="text-[11px] text-gray-500 dark:text-gray-400">
               recalled {memory.recalls}× {lastRecalled ? `(last ${lastRecalled})` : ''}
             </span>
           )}
           {(memory.absorbed_ids?.length ?? 0) > 0 && (
             <span
               title={`Absorbed: ${memory.absorbed_ids!.join(', ')}`}
-              className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400"
+              className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400"
             >
               merged ×{memory.absorbed_ids!.length}
             </span>
@@ -238,7 +238,7 @@ export const MemoryEntry = memo(function MemoryEntry({ memory, onForget, onVote 
         {memory.status === 'invalidated' && memory.invalidation_reason && (
           <p
             title={memory.invalidation_reason}
-            className="text-[11px] text-gray-400 dark:text-gray-500 mt-1 truncate"
+            className="text-[11px] text-gray-500 dark:text-gray-400 mt-1 truncate"
           >
             {memory.invalidation_reason}
           </p>

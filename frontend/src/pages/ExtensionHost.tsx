@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type ExtensionInfo } from '../api'
-import { useExtName } from '../router'
+import { navigate, useExtName } from '../router'
 import { NavToggle } from '../components/NavToggle'
 
 export interface ExtensionHostProps {
@@ -56,7 +56,7 @@ export default function ExtensionHost({ name: nameOverride, initialExtensions, n
     return (
       <>
         {header}
-        <div className="flex-1 flex items-center justify-center text-sm text-gray-400 dark:text-gray-500">
+        <div className="flex-1 flex items-center justify-center text-sm text-gray-500 dark:text-gray-400">
           Loading…
         </div>
       </>
@@ -69,8 +69,11 @@ export default function ExtensionHost({ name: nameOverride, initialExtensions, n
     return (
       <>
         {header}
-        <div className="flex-1 flex items-center justify-center text-sm text-gray-400 dark:text-gray-500">
+        <div className="flex-1 flex flex-col items-center justify-center gap-4 text-sm text-gray-500 dark:text-gray-400">
           Extension not found
+          <a href="/chat" onClick={e => { e.preventDefault(); navigate('/chat') }} className="min-h-[44px] inline-flex items-center px-4 rounded-lg text-blue-600 dark:text-blue-400 hover:underline">
+            Back to chats
+          </a>
         </div>
       </>
     )

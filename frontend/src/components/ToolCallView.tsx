@@ -56,13 +56,13 @@ function PathHeader({ path, note }: { path: string; note?: ReactNode }) {
   return (
     <div className="flex items-center gap-2 mb-1">
       <code className="font-mono text-[11px] text-gray-700 dark:text-gray-200 break-all">{path}</code>
-      {note != null && <span className="text-[10px] text-gray-400 dark:text-gray-500">{note}</span>}
+      {note != null && <span className="text-[11px] text-gray-500 dark:text-gray-400">{note}</span>}
     </div>
   )
 }
 
 function Label({ children }: { children: ReactNode }) {
-  return <div className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500 mb-0.5">{children}</div>
+  return <div className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-0.5">{children}</div>
 }
 
 // Code is a monospace block on the code surface; long content gets height-locked.
@@ -99,7 +99,7 @@ function lineClass(t: DiffLine['type']): string {
   switch (t) {
     case 'add': return 'px-2 bg-green-50 dark:bg-green-900/30 text-green-800 dark:text-green-300'
     case 'remove': return 'px-2 bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-300'
-    case 'meta': return 'px-2 text-gray-400 dark:text-gray-500'
+    case 'meta': return 'px-2 text-gray-500 dark:text-gray-400'
     default: return 'px-2 text-gray-600 dark:text-gray-300'
   }
 }
@@ -117,12 +117,12 @@ function isFlatRecord(v: unknown): v is Record<string, unknown> {
 // ACP tool call whose args are just `{title: "..."}`.
 function KeyValueBlock({ data }: { data: Record<string, unknown> }) {
   const entries = Object.entries(data).filter(([, v]) => v !== undefined && v !== '')
-  if (entries.length === 0) return <span className="text-[11px] text-gray-400 dark:text-gray-500">(empty)</span>
+  if (entries.length === 0) return <span className="text-[11px] text-gray-500 dark:text-gray-400">(empty)</span>
   return (
     <div className="bg-gray-50 dark:bg-gray-900 rounded p-2 text-[11px] space-y-0.5">
       {entries.map(([k, v]) => (
         <div key={k} className="flex gap-2">
-          <span className="text-gray-400 dark:text-gray-500 shrink-0">{k}</span>
+          <span className="text-gray-500 dark:text-gray-400 shrink-0">{k}</span>
           <span className="text-gray-700 dark:text-gray-200 font-mono break-all">{String(v)}</span>
         </div>
       ))}
@@ -202,7 +202,7 @@ function ReadFileView({ tool }: { tool: ToolCall }) {
       <PathHeader path={path} note={window} />
       {content != null
         ? <Code text={truncated ? content + '\n…(truncated)' : content} cap={200} />
-        : !tool.done && <span className="text-[11px] text-gray-400 dark:text-gray-500">reading…</span>}
+        : !tool.done && <span className="text-[11px] text-gray-500 dark:text-gray-400">reading…</span>}
     </div>
   )
 }
@@ -216,10 +216,10 @@ function RunCommandView({ tool }: { tool: ToolCall }) {
     <div className="space-y-1">
       <div className="flex items-center gap-2">
         <code className="font-mono text-[11px] text-gray-700 dark:text-gray-200 break-all">
-          <span className="text-gray-400 dark:text-gray-500 select-none">$ </span>{command}
+          <span className="text-gray-500 dark:text-gray-400 select-none">$ </span>{command}
         </code>
         {exit != null && (
-          <span className={`text-[10px] font-medium ${exit === 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+          <span className={`text-[11px] font-medium ${exit === 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
             exit {exit}
           </span>
         )}
@@ -257,7 +257,7 @@ function GitDiffView({ tool }: { tool: ToolCall }) {
       {target && <PathHeader path={target} note={truncated ? 'truncated' : undefined} />}
       {diff != null && diff !== ''
         ? <DiffView lines={parseUnifiedDiff(diff)} />
-        : tool.done && <span className="text-[11px] text-gray-400 dark:text-gray-500">no changes</span>}
+        : tool.done && <span className="text-[11px] text-gray-500 dark:text-gray-400">no changes</span>}
     </div>
   )
 }
@@ -275,7 +275,7 @@ function GitLogView({ tool }: { tool: ToolCall }) {
           <li key={i} className="flex gap-2">
             <code className="font-mono text-amber-600 dark:text-amber-400 shrink-0">{(str(c, 'sha') ?? '').slice(0, 7)}</code>
             <span className="text-gray-700 dark:text-gray-200 truncate">{str(c, 'subject')}</span>
-            <span className="ml-auto shrink-0 text-gray-400 dark:text-gray-500">{str(c, 'author')}</span>
+            <span className="ml-auto shrink-0 text-gray-500 dark:text-gray-400">{str(c, 'author')}</span>
           </li>
         ))}
       </ul>
@@ -301,7 +301,7 @@ function ListDirView({ tool }: { tool: ToolCall }) {
         <ul className="bg-gray-50 dark:bg-gray-900 rounded p-2 text-[11px] font-mono">
           {entries.map((e, i) => (
             <li key={i} className="text-gray-700 dark:text-gray-200 truncate">
-              <span className="text-gray-400 dark:text-gray-500 mr-1 inline-flex align-middle">{bool(e, 'dir') ? <Icon name="folder" className="w-3 h-3" /> : ' '}</span>
+              <span className="text-gray-500 dark:text-gray-400 mr-1 inline-flex align-middle">{bool(e, 'dir') ? <Icon name="folder" className="w-3 h-3" /> : ' '}</span>
               {str(e, 'path')}
             </li>
           ))}
@@ -378,7 +378,7 @@ function WebSearchView({ tool }: { tool: ToolCall }) {
             ))}
           </ul>
         </Expandable>
-      ) : !tool.done && <span className="text-[11px] text-gray-400 dark:text-gray-500">searching…</span>}
+      ) : !tool.done && <span className="text-[11px] text-gray-500 dark:text-gray-400">searching…</span>}
     </div>
   )
 }
@@ -395,7 +395,7 @@ function WebFetchView({ tool }: { tool: ToolCall }) {
       <PathHeader path={url} note={note} />
       {text != null
         ? <Code text={text} cap={220} />
-        : !tool.done && <span className="text-[11px] text-gray-400 dark:text-gray-500">fetching…</span>}
+        : !tool.done && <span className="text-[11px] text-gray-500 dark:text-gray-400">fetching…</span>}
     </div>
   )
 }
@@ -434,7 +434,7 @@ function StageMemoryView({ tool }: { tool: ToolCall }) {
     <div className="space-y-1">
       <PathHeader path={[bucket, kind].filter(Boolean).join(' · ') || 'memory'} />
       <div className="text-[11px] text-gray-700 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 rounded p-2 whitespace-pre-wrap">{content}</div>
-      {status && <div className="text-[10px] text-gray-400 dark:text-gray-500 italic">{status}</div>}
+      {status && <div className="text-[11px] text-gray-500 dark:text-gray-400 italic">{status}</div>}
     </div>
   )
 }
@@ -506,7 +506,7 @@ function GetUserChoiceView({ tool }: { tool: ToolCall }) {
           )
         })}
       </ul>
-      {status === 'pending' && <div className="text-[10px] text-amber-600 dark:text-amber-400 italic">awaiting your answer…</div>}
+      {status === 'pending' && <div className="text-[11px] text-amber-600 dark:text-amber-400 italic">awaiting your answer…</div>}
     </div>
   )
 }
@@ -518,7 +518,7 @@ function AskUserView({ tool }: { tool: ToolCall }) {
   return (
     <div className="space-y-1">
       <div className="text-[11px] text-gray-700 dark:text-gray-200 font-medium">{question}</div>
-      {status && <div className="text-[10px] text-gray-400 dark:text-gray-500 italic">{status}</div>}
+      {status && <div className="text-[11px] text-gray-500 dark:text-gray-400 italic">{status}</div>}
     </div>
   )
 }

@@ -146,8 +146,8 @@ describe('origin chip', () => {
     expect(originBadgeClass('open')).toContain('green')
     expect(originBadgeClass('merged')).toContain('purple')
     expect(originBadgeClass('closed')).toContain('red')
-    expect(originBadgeClass('draft')).toBe('bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400')
-    expect(originBadgeClass('some-extension-value')).toBe('bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400')
+    expect(originBadgeClass('draft')).toBe('bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300')
+    expect(originBadgeClass('some-extension-value')).toBe('bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300')
   })
 
   it('applies the open/merged/closed color class to the rendered badge chip', () => {

@@ -59,7 +59,7 @@ export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanel
       >
         <Icon name="filter_alt" className="w-4 h-4" />
         {count > 0 && (
-          <span className="absolute -top-1.5 -right-1.5 min-w-[15px] h-[15px] px-1 rounded-full bg-blue-600 text-white text-[9px] font-semibold flex items-center justify-center">
+          <span className="absolute -top-1.5 -right-1.5 min-w-[15px] h-[15px] px-1 rounded-full bg-blue-600 text-white text-[11px] font-semibold flex items-center justify-center">
             {count}
           </span>
         )}
@@ -70,18 +70,18 @@ export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanel
           <div className="flex items-center justify-between px-1 pb-1.5 mb-1 border-b border-gray-100 dark:border-gray-700">
             <span className="font-semibold text-gray-700 dark:text-gray-200">Filters</span>
             {count > 0 && (
-              <button onClick={onClear} className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline">
+              <button onClick={onClear} className="min-h-[24px] inline-flex items-center text-[11px] text-blue-600 dark:text-blue-400 hover:underline">
                 Clear all
               </button>
             )}
           </div>
           {facets.length === 0 && (
-            <div className="px-1 py-2 text-gray-400 dark:text-gray-500">No filters available</div>
+            <div className="px-1 py-2 text-gray-500 dark:text-gray-400">No filters available</div>
           )}
           <div className="medium:max-h-80 medium:overflow-y-auto">
             {facets.map(f => (
               <div key={f.key} className="mb-2 last:mb-0">
-                <div className="px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                <div className="px-1 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                   {f.label}
                 </div>
                 {f.options.map(o => {
@@ -98,7 +98,7 @@ export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanel
                         className="accent-blue-600"
                       />
                       <span className="flex-1 text-gray-700 dark:text-gray-200 truncate">{o.label}</span>
-                      {o.count != null && <span className="text-gray-400 dark:text-gray-500">{o.count}</span>}
+                      {o.count != null && <span className="text-gray-500 dark:text-gray-400">{o.count}</span>}
                     </label>
                   )
                 })}

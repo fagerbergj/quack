@@ -270,12 +270,12 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
           aria-label="Search memories"
           className="grow basis-full medium:basis-0 min-w-0 rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
         />
-        <label className="flex-shrink-0 flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none whitespace-nowrap">
+        <label className="flex-shrink-0 min-h-[44px] -my-2 flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none whitespace-nowrap">
           <input
             type="checkbox"
             checked={includeInvalidated}
             onChange={e => handleIncludeInvalidatedChange(e.target.checked)}
-            className="accent-blue-600"
+            className="w-5 h-5 accent-blue-600"
           />
           Show invalidated
         </label>
@@ -293,7 +293,7 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
 
       <div className="flex-1 overflow-y-auto overscroll-contain" style={showFooter ? { paddingBottom: footerHeight } : undefined}>
         {loading && (
-          <div className="text-center text-gray-400 dark:text-gray-500 text-sm py-10">Loading…</div>
+          <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-10">Loading…</div>
         )}
         {!loading && error && (
           <div className="m-3 rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">
@@ -301,7 +301,7 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
           </div>
         )}
         {!loading && !error && memories.length === 0 && (
-          <div className="text-center text-gray-400 dark:text-gray-500 text-sm py-10">
+          <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-10">
             {searching ? 'No memories match that search' : bucket ? 'No memories in this bucket yet' : 'No memories yet'}
           </div>
         )}
