@@ -23,6 +23,10 @@ func SetupClone(ctx context.Context, jail *workspace.Jail, userID, chatID, dir, 
 	if err != nil {
 		return "", err
 	}
+	// Before check_setup (which may itself populate node_modules/ - either
+	// way MkdirAll on an existing populated dir is a no-op) and always before
+	// any node's own ReadOnly caps can apply to this tree.
+	workspace.PrecreateBuildDirs(target, caps.BuildDirs)
 	workspace.RunCheckSetup(target, checkSetup, caps)
 	return target, nil
 }

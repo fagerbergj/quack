@@ -31,6 +31,20 @@ It's worth being precise about this, because the two boundaries protect against 
 
 Every `run_command`/check/git child also gets its own `$HOME` (`<root>/<user_id>/.quack-home`) - a sibling of any cloned repo, never the repo's own working directory, so a toolchain's cache writes (npm's `_cacache`, `~/.gitconfig`) never land inside a git working tree where a later commit's `add_all` could sweep them up.
 
+## Writable build dirs on a read-only node (`build_dirs`)
+
+A `read_only` agent (`acp.read_only: true` - a reviewer or explorer, #754) gets its whole working tree mounted read-only under `sandbox: landlock`/`bwrap`, by design: it must not be able to modify the code it's reviewing, at the OS level, not just by prompt convention. Taken literally that also blocks `npm test`, `npm ci`, and `vite build` - anything that writes into `node_modules/`, `dist/`, or a cache dir - so without this, a reviewer that wants to actually run the suite has to copy the whole tree into a writable `TMPDIR` and reinstall dependencies, every review.
+
+```yaml
+workspace:
+  build_dirs: ["node_modules", "dist", "build", ".vite", ".cache", "coverage", "target",
+               "frontend/node_modules", "frontend/dist", "frontend/build", "frontend/.vite", "frontend/.cache", "frontend/coverage", "frontend/target"]
+```
+
+`build_dirs` names work-tree-relative directories that stay writable even on a read-only node - but only the ones the repo under review **already gitignores** (matched by top-level component, so a bare `dist/` line covers `frontend/dist` too). A configured entry the repo does not ignore is skipped entirely: granting write access to a directory `git status` still tracks would let a reviewer's build output show up as an uncommitted change on what's supposed to be an immutable tree. Any *other* top-level directory the repo's own `.gitignore` names verbatim (a plain `name/` line - no glob, no leading path) is granted too, even when it isn't in this list, so a repo with its own build-dir convention works with zero config.
+
+These directories are pre-created empty, before the node's sandbox ruleset is ever applied to its tree (both landlock and bwrap can only grant a path that already exists, and a read-only node can't `mkdir` one itself once RO takes effect) - so a fresh worktree that has never run an install still gets a writable `node_modules/` to install *into*, and the pre-created empty dirs never show up in `git status` either (git doesn't track empty directories, and they're gitignored the moment anything lands in them). Applies to both a review's linked worktree (`tools.SetupWorktree`) and a plan-only node's shared clone (`tools.SetupClone`) - anywhere a node might end up read-only.
+
 ## Per-child resource limits
 
 ```yaml

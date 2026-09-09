@@ -122,8 +122,14 @@ func ResolveSandboxSeat(cfg *config.Config, jail *workspace.Jail, agentName, cwd
 			Procs:          cfg.Workspace.Limits.MaxProcs,
 			FileSizeMB:     cfg.Workspace.Limits.MaxFileSizeMB,
 		},
-		ReadOnly: readOnly,
+		ReadOnly:  readOnly,
+		BuildDirs: cfg.Workspace.BuildDirs,
 	}
+	// Same ordering real provisioning uses (tools.SetupWorktree/SetupClone):
+	// pre-create before the mode above ever confines dir - a fresh cwd (no
+	// .gitignore) or `--cwd .` on a repo that already has these dirs is a
+	// harmless no-op either way.
+	workspace.PrecreateBuildDirs(dir, caps.BuildDirs)
 
 	return SandboxSeat{AgentName: name, ReadOnly: readOnly, Dir: dir, FreshDir: fresh, Caps: caps}, nil
 }

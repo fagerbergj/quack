@@ -24,6 +24,7 @@ func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, pa
 		return "", fmt.Errorf("setup: resolve worktree dir: %w", err)
 	}
 	if worktreeValid(target, parentDir) {
+		workspace.PrecreateBuildDirs(target, caps.BuildDirs)
 		workspace.RunCheckSetup(target, checkSetup, caps)
 		return target, nil
 	}
@@ -38,6 +39,9 @@ func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, pa
 	if _, _, err := runGit(ctx, parentDir, []string{"worktree", "add", "--quiet", "-B", branch, target, "HEAD"}, caps, nil); err != nil {
 		return "", fmt.Errorf("setup: worktree add %q: %w", branch, err)
 	}
+	// Before any sandboxed (possibly read-only) worker starts in target - see
+	// PrecreateBuildDirs.
+	workspace.PrecreateBuildDirs(target, caps.BuildDirs)
 	workspace.RunCheckSetup(target, checkSetup, caps)
 	return target, nil
 }

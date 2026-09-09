@@ -80,6 +80,18 @@ func TestPromptBlockAddressSpaceLimit(t *testing.T) {
 	}
 }
 
+func TestPromptBlockBuildDirsLine(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	got := PromptBlock(Caps{BuildDirs: []string{"node_modules", "frontend/dist"}}, nil)
+	if !strings.Contains(got, "node_modules, frontend/dist") {
+		t.Errorf("got %q, want a line naming the configured build dirs", got)
+	}
+	got = PromptBlock(Caps{}, nil)
+	if strings.Contains(got, "build-output dirs") {
+		t.Errorf("no configured build dirs should render no line, got %q", got)
+	}
+}
+
 // TestPromptBlockToolchainRemovalRemovesLine is the core #663 assertion: a
 // toolchain absent from what's actually resolvable never appears, and
 // removing it (here: a PATH with no `go` on it) removes exactly its line,

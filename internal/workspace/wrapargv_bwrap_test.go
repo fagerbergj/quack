@@ -112,6 +112,37 @@ func TestWrapArgvBwrapMostSpecificGrantWins(t *testing.T) {
 	}
 }
 
+// TestWrapArgvReadOnlyBuildDirsWritableEndToEnd is the ACP-subprocess path's
+// version of this fix (#754 read_only reviewers, e.g. code-reviewer): a
+// build dir the repo already gitignores stays writable through the SAME seam
+// internal/acp wraps its child with, under both sandbox modes ("and bwrap
+// for parity" - WrapArgv's bwrap half shares landlockGrants' rw/ro sets via
+// bwrapWrapArgv, so one grant computation covers both).
+func TestWrapArgvReadOnlyBuildDirsWritableEndToEnd(t *testing.T) {
+	for _, mode := range []SandboxMode{SandboxBwrap, SandboxLandlock} {
+		t.Run(string(mode), func(t *testing.T) {
+			if mode == SandboxBwrap {
+				requireBwrap(t)
+			} else {
+				requireLandlock(t)
+			}
+			dir := buildDirFixture(t)
+			caps := acpCaps(t, mode, dir, true)
+			caps.BuildDirs = []string{"node_modules", "build"}
+			PrecreateBuildDirs(dir, caps.BuildDirs)
+
+			out, code := runWrapArgv(t, dir, []string{"sh", "-c", "echo x > node_modules/f"}, caps)
+			if code != 0 {
+				t.Errorf("write inside a gitignored build dir denied through WrapArgv: exit=%d output=%q", code, out)
+			}
+			out, code = runWrapArgv(t, dir, []string{"sh", "-c", "echo x > main.go"}, caps)
+			if code == 0 {
+				t.Errorf("SANDBOX GAP: WrapArgv let a read_only ACP child overwrite a tracked source file: %q", out)
+			}
+		})
+	}
+}
+
 // TestWrapArgvBwrapShape is the argv-assembly half (no bwrap install needed):
 // bwrap leads, the work tree is bound at its IDENTITY path (never childArgv's
 // SandboxWorkRoot remap - the ACP child trades absolute paths with quack over
