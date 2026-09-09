@@ -82,11 +82,14 @@ const (
 	// double-count both against it.
 	QuackModel = "quack.model"
 
-	// QuackVersion/QuackBundleHash/GenAIUsageCost: llm.call provenance
-	// (#1096) - no semconv equivalent exists for any of these yet.
-	QuackVersion    = "quack.version"
-	QuackBundleHash = "quack.bundle.hash"
-	GenAIUsageCost  = "gen_ai.usage.cost"
+	// QuackVersion/QuackBundleHash/GenAIUsageCost/GenAIUsageCachedTokens:
+	// llm.call provenance (#1096) - no semconv equivalent exists for any of
+	// these yet (cached tokens are a metric-only dimension in v1.41.0, not a
+	// registered log attribute).
+	QuackVersion           = "quack.version"
+	QuackBundleHash        = "quack.bundle.hash"
+	GenAIUsageCost         = "gen_ai.usage.cost"
+	GenAIUsageCachedTokens = "gen_ai.usage.cached_tokens"
 )
 
 // vars, not consts - attribute.Value has no constant form.

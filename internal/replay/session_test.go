@@ -171,6 +171,24 @@ func writeZip(t *testing.T, entries []entry, manifest ledger.Manifest) string {
 
 func t0() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 
+// TestChatEntry_ToResponse_ReconstructsRawPromptFromCachedSplit: the ledger
+// payload's InputTokens excludes CachedTokens (inference.splitPromptTokens) -
+// toResponse must add it back so a replayed UsageMetadata.PromptTokenCount
+// matches what the live call actually reported, not an undercount.
+func TestChatEntry_ToResponse_ReconstructsRawPromptFromCachedSplit(t *testing.T) {
+	ce := chatEntry{LLMCallPayload: ledger.LLMCallPayload{InputTokens: 70, CachedTokens: 30, OutputTokens: 5}}
+	resp := ce.toResponse()
+	if resp.UsageMetadata == nil {
+		t.Fatal("UsageMetadata is nil")
+	}
+	if resp.UsageMetadata.PromptTokenCount != 100 {
+		t.Errorf("PromptTokenCount = %d, want 100 (70 input + 30 cached)", resp.UsageMetadata.PromptTokenCount)
+	}
+	if resp.UsageMetadata.CachedContentTokenCount != 30 {
+		t.Errorf("CachedContentTokenCount = %d, want 30", resp.UsageMetadata.CachedContentTokenCount)
+	}
+}
+
 func TestNextChat_HappyPath(t *testing.T) {
 	path := writeJSONL(t, []entry{
 		chat(t0(), "node-a", "worker", "worker-r0", "worker-model", map[string]any{

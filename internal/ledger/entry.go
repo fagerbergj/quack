@@ -101,15 +101,19 @@ type Entry struct {
 // Input/Output/SystemInstructions/ToolDefinitions are the JSON strings the
 // emitter built, kept verbatim so replay hands back exactly what was seen.
 type LLMCallPayload struct {
-	Provider      string  `json:"provider,omitempty"`
-	RequestModel  string  `json:"request_model"`
-	ResponseModel string  `json:"response_model,omitempty"`
-	ResponseID    string  `json:"response_id,omitempty"`
-	FinishReason  string  `json:"finish_reason,omitempty"`
-	InputTokens   int64   `json:"input_tokens,omitempty"`
-	OutputTokens  int64   `json:"output_tokens,omitempty"`
-	Temperature   float64 `json:"temperature,omitempty"`
-	MaxTokens     int64   `json:"max_tokens,omitempty"`
+	Provider      string `json:"provider,omitempty"`
+	RequestModel  string `json:"request_model"`
+	ResponseModel string `json:"response_model,omitempty"`
+	ResponseID    string `json:"response_id,omitempty"`
+	FinishReason  string `json:"finish_reason,omitempty"`
+	InputTokens   int64  `json:"input_tokens,omitempty"`
+	OutputTokens  int64  `json:"output_tokens,omitempty"`
+	// CachedTokens: prompt tokens served from the provider's cache, already
+	// excluded from InputTokens (see inference.splitPromptTokens) so
+	// InputTokens+CachedTokens never double-counts the raw prompt total.
+	CachedTokens int64   `json:"cached_tokens,omitempty"`
+	Temperature  float64 `json:"temperature,omitempty"`
+	MaxTokens    int64   `json:"max_tokens,omitempty"`
 	// ReasoningEffort is the resolved effort ("low"/"medium"/"high") sent as
 	// gen_ai.request.reasoning_effort - from models.<name>.effort or an
 	// explicit ThinkingConfig (e.g. gates.judge.thinking_level); "" = neither set.

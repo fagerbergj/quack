@@ -34,6 +34,7 @@ func TestExporterEmitsTypedEntries(t *testing.T) {
 		attribute.String("quack.round", "2"),
 		attribute.Slice("gen_ai.response.finish_reasons", attribute.StringValue("stop")),
 		attribute.Int64("gen_ai.usage.input_tokens", 7),
+		attribute.Int64("gen_ai.usage.cached_tokens", 3),
 		attribute.String("gen_ai.input.messages", `[{"authorization":"Bearer secret"}]`),
 	)
 	emitVia(t, store,
@@ -73,7 +74,7 @@ func TestExporterEmitsTypedEntries(t *testing.T) {
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		t.Fatal(err)
 	}
-	if p.RequestModel != "m1" || p.FinishReason != "stop" || p.InputTokens != 7 {
+	if p.RequestModel != "m1" || p.FinishReason != "stop" || p.InputTokens != 7 || p.CachedTokens != 3 {
 		t.Errorf("payload = %+v", p)
 	}
 	if p.Input != `[{"authorization":"[REDACTED]"}]` {

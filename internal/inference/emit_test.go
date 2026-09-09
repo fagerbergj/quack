@@ -191,6 +191,43 @@ func TestTracedModel_EmitsProvenance(t *testing.T) {
 	}
 }
 
+// TestTracedModel_EmitsCachedTokens pins the llm.call payload's cached_tokens
+// field (was silently dropped: emitChatEvent used genai's raw PromptTokenCount
+// for input_tokens and never read CachedContentTokenCount at all). input_tokens
+// must exclude the cached count, matching recordUsageMetrics' otel-metric split
+// (splitPromptTokens), so a consumer summing input+cached never double-counts.
+func TestTracedModel_EmitsCachedTokens(t *testing.T) {
+	capExp := &captureExporter{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
+	restore := otelobs.SetLoggerProviderForTesting(lp)
+	defer restore()
+
+	resps := []*model.LLMResponse{{
+		Content:      &genai.Content{Parts: []*genai.Part{{Text: "answer"}}},
+		TurnComplete: true,
+		UsageMetadata: &genai.GenerateContentResponseUsageMetadata{
+			PromptTokenCount:        100,
+			CachedContentTokenCount: 30,
+			CandidatesTokenCount:    40,
+		},
+	}}
+	stub := &stubModel{name: "m", resps: resps}
+	tm := &tracedModel{LLM: stub, name: "m"}
+	for range tm.GenerateContent(context.Background(), &model.LLMRequest{}, true) {
+	}
+
+	if len(capExp.records) != 1 {
+		t.Fatalf("got %d records, want 1", len(capExp.records))
+	}
+	attrs := attrsOf(t, capExp.records[0])
+	if v := attrs["gen_ai.usage.cached_tokens"].AsInt64(); v != 30 {
+		t.Errorf("gen_ai.usage.cached_tokens = %v, want 30", v)
+	}
+	if v := attrs["gen_ai.usage.input_tokens"].AsInt64(); v != 70 {
+		t.Errorf("gen_ai.usage.input_tokens = %v, want 70 (100 prompt - 30 cached)", v)
+	}
+}
+
 func TestTracedModel_EmitsErrorType(t *testing.T) {
 	capExp := &captureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
