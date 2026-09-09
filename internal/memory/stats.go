@@ -80,9 +80,12 @@ type WeekStats struct {
 	Supported    int
 	Contradicted int
 	NotRelevant  int
-	// Precision = Supported / (Supported+Contradicted+NotRelevant), 0 if no votes.
+	// Precision = Supported / (Supported+Contradicted): of the recalls the judge
+	// ruled on, how often the memory was right. NotRelevant is noise, not a
+	// wrong memory, so it is excluded. 0 if no such votes.
 	Precision float64
-	// SupportShare = Supported / total votes cast that week, 0 if no votes.
+	// SupportShare = Supported / Recalls: how much of what was delivered actually
+	// helped; unvoted and not-relevant recalls count as no help. 0 if no recalls.
 	SupportShare float64
 	Minted       int
 	Invalidated  int
@@ -155,10 +158,11 @@ func ComputeStats(now time.Time, weeks int, votes []VoteEvent, recalls []RecallE
 		}
 	}
 	for i := range out {
-		total := out[i].Supported + out[i].Contradicted + out[i].NotRelevant
-		if total > 0 {
-			out[i].Precision = float64(out[i].Supported) / float64(total)
-			out[i].SupportShare = float64(out[i].Supported) / float64(total)
+		if ruled := out[i].Supported + out[i].Contradicted; ruled > 0 {
+			out[i].Precision = float64(out[i].Supported) / float64(ruled)
+		}
+		if out[i].Recalls > 0 {
+			out[i].SupportShare = float64(out[i].Supported) / float64(out[i].Recalls)
 		}
 	}
 	return out

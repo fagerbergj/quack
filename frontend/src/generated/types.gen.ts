@@ -403,11 +403,11 @@ export type MemoryWeekStats = {
     contradicted: number;
     not_relevant: number;
     /**
-     * supported / (supported+contradicted+not_relevant). 0 if no votes were cast.
+     * supported / (supported+contradicted), not-relevant votes excluded. 0 if no such votes.
      */
     precision: number;
     /**
-     * supported / total votes cast this week. 0 if no votes were cast.
+     * supported / recalls delivered this week; unvoted and not-relevant recalls count as no help. 0 if nothing was recalled.
      */
     support_share: number;
     /**

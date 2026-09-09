@@ -1197,8 +1197,10 @@ paths:
       description: |
         Epic #1255 P5. Computed from the ledger's `memory.recall`/`memory.vote`
         entries and `memory_ops`, no new tables. Per ISO week (UTC): recall
-        precision (`supported / (supported+contradicted+not_relevant)`),
-        support share (`supported / total votes`), vote counts by kind,
+        precision (`supported / (supported+contradicted)`: of the recalls the
+        judge ruled on, how often the memory was right), support share
+        (`supported / recalls`: how much of what was delivered helped; unvoted
+        and not-relevant recalls count as no help), vote counts by kind,
         recalls, and memories minted/invalidated that week. Also returns a
         current snapshot of live/invalidated points per scope bucket. A week
         with no activity still appears, zeroed.
@@ -1761,11 +1763,11 @@ components:
         precision:
           type: number
           format: double
-          description: supported / (supported+contradicted+not_relevant). 0 if no votes were cast.
+          description: supported / (supported+contradicted), not-relevant votes excluded. 0 if no such votes.
         support_share:
           type: number
           format: double
-          description: supported / total votes cast this week. 0 if no votes were cast.
+          description: supported / recalls delivered this week; unvoted and not-relevant recalls count as no help. 0 if nothing was recalled.
         minted:
           type: integer
           description: Memories added this week (memory_ops op=add).

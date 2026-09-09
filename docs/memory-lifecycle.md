@@ -304,9 +304,10 @@ rebuilt chat's projections against the live store.
 **Weekly stats.** `GET /api/v1/memories/stats?weeks=N` and `quack memory
 stats [--weeks N]` report, per ISO week (UTC, Monday-Sunday, computed via
 Go's `time.Time.ISOWeek` on a UTC time): recall precision (`supported /
-(supported+contradicted+not_relevant)`), support share (`supported / total
-votes cast that week` - the same value as precision today, computed
-separately per the epic's own two formulas), vote counts by kind, recalls,
+(supported+contradicted)`: of the recalls the judge ruled on, how often the
+memory was right; not-relevant is noise, not a wrong memory), support share
+(`supported / recalls`: how much of what was delivered helped, with unvoted
+and not-relevant recalls counting as no help), vote counts by kind, recalls,
 and memories minted/invalidated (from `memory_ops`, lineage absorptions
 counted as an invalidation like any other). A week with no activity still
 appears, zeroed, so the memory page's header (a P4 follow-up) can chart a

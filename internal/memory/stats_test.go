@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"math"
 	"testing"
 	"time"
 )
@@ -22,7 +23,7 @@ func TestComputeStats_WeeklyPrecision(t *testing.T) {
 		{MemoryID: "d", Vote: VoteNotRelevant, At: week1Sun},
 		{MemoryID: "e", Vote: VoteSupported, At: week2Mon},
 	}
-	recalls := []RecallEvent{{At: week1Mon}, {At: week1Mon}, {At: week2Mon}}
+	recalls := []RecallEvent{{At: week1Mon}, {At: week1Mon}, {At: week1Sun}, {At: week1Sun}, {At: week2Mon}}
 	ops := []OpEvent{
 		{Op: string(OpAdd), At: week1Mon},
 		{Op: string(OpInvalidate), At: week1Sun},
@@ -43,11 +44,12 @@ func TestComputeStats_WeeklyPrecision(t *testing.T) {
 		t.Fatalf("W02 votes = %+v, want supported=2 contradicted=1 not_relevant=1", w1)
 	}
 	// precision = supported / (supported+contradicted+not_relevant) = 2/4 = 0.5
-	if w1.Precision != 0.5 || w1.SupportShare != 0.5 {
-		t.Fatalf("W02 precision=%v support_share=%v, want 0.5/0.5", w1.Precision, w1.SupportShare)
+	// 2 supported of 3 ruled on (not_relevant excluded); 2 supported of 4 delivered.
+	if math.Abs(w1.Precision-2.0/3.0) > 1e-9 || w1.SupportShare != 0.5 {
+		t.Fatalf("W02 precision=%v support_share=%v, want 0.667/0.5", w1.Precision, w1.SupportShare)
 	}
-	if w1.Recalls != 2 {
-		t.Fatalf("W02 recalls = %d, want 2", w1.Recalls)
+	if w1.Recalls != 4 {
+		t.Fatalf("W02 recalls = %d, want 4", w1.Recalls)
 	}
 	if w1.Minted != 1 || w1.Invalidated != 1 {
 		t.Fatalf("W02 minted=%d invalidated=%d, want 1/1 (the vote op must not count as either)", w1.Minted, w1.Invalidated)

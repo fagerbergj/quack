@@ -7,19 +7,17 @@ export interface MemoryStatsHeaderProps {
 }
 
 // pct formats a 0..1 fraction as a whole-percent string, or a dash when no
-// votes were cast this week (precision/support_share are both 0 then, and 0%
+// ruled-on votes or recalls this week (precision/support_share are 0 then, and 0%
 // would misread as "confirmed bad" rather than "no data yet").
 function pct(week: MemoryWeekStats | undefined): string {
   if (!week) return '—'
-  const total = week.supported + week.contradicted + week.not_relevant
-  if (total === 0) return '—'
+  if (week.supported + week.contradicted === 0) return '—'
   return `${Math.round(week.precision * 100)}%`
 }
 
 function supportSharePct(week: MemoryWeekStats | undefined): string {
   if (!week) return '—'
-  const total = week.supported + week.contradicted + week.not_relevant
-  if (total === 0) return '—'
+  if (week.recalls === 0) return '—'
   return `${Math.round(week.support_share * 100)}%`
 }
 
