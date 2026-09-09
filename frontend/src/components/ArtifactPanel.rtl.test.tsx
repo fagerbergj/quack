@@ -215,10 +215,10 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Plan v2' })).toBeTruthy()
     expect(await screen.findByText('Revision 2 of 2')).toBeTruthy()
 
-    // Both judge rounds are chips, in round order, with the overall 0-1
-    // score shown as-is.
-    expect(await screen.findByRole('button', { name: 'Round 1, failed, score 0.42' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Round 2, passed, score 0.81' })).toBeTruthy()
+    // Both judge rounds are chips, in round order, with the overall
+    // score shown as a percentage (matches the judge card).
+    expect(await screen.findByRole('button', { name: 'Round 1, failed, score 42%' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Round 2, passed, score 81%' })).toBeTruthy()
     expect(screen.getByRole('group', { name: 'Judge rounds' })).toBeTruthy()
 
     // The sheet: bottom-docked below medium, one scrolling region, and no
@@ -274,12 +274,12 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
     await screen.findByRole('heading', { level: 1, name: 'Plan v2' })
 
-    await user.click(screen.getByRole('button', { name: 'Round 1, failed, score 0.42' }))
+    await user.click(screen.getByRole('button', { name: 'Round 1, failed, score 42%' }))
 
     // The cursor jumps to revision 1 and that revision's content renders.
     expect(await screen.findByText('Revision 1 of 2')).toBeTruthy()
     expect(screen.getByRole('heading', { level: 1, name: 'Plan v1' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Round 1, failed, score 0.42' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: 'Round 1, failed, score 42%' }).getAttribute('aria-pressed')).toBe('true')
 
     // The round's note anchors onto the rendered line (snippet match) as
     // its own reachable control; clicking it opens the note readout.
@@ -296,14 +296,14 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     stubPlanFixture()
     render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
     await screen.findByRole('heading', { level: 1, name: 'Plan v2' })
-    await user.click(screen.getByRole('button', { name: 'Round 1, failed, score 0.42' }))
+    await user.click(screen.getByRole('button', { name: 'Round 1, failed, score 42%' }))
     expect(await screen.findByText('Revision 1 of 2')).toBeTruthy()
     expect(await screen.findByRole('button', { name: /Judge note on line/ })).toBeTruthy()
 
     await user.click(screen.getByRole('button', { name: 'Next revision' }))
     expect(await screen.findByText('Revision 2 of 2')).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Judge note on line/ })).toBeNull()
-    expect(screen.getByRole('button', { name: 'Round 1, failed, score 0.42' }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole('button', { name: 'Round 1, failed, score 42%' }).getAttribute('aria-pressed')).toBe('false')
   })
 
   // (a/4) Revision bar ends: prev/next are disabled at the first and last
@@ -428,7 +428,7 @@ describe('ArtifactPanel as a result view (#1178)', () => {
         if (theme === 'dark') document.documentElement.classList.add('dark')
         const { container } = render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
         await screen.findByRole('heading', { level: 1, name: 'Plan v2' })
-        await screen.findByRole('button', { name: 'Round 2, passed, score 0.81' })
+        await screen.findByRole('button', { name: 'Round 2, passed, score 81%' })
 
         const detailsEl = [...container.querySelectorAll('details')].find(d => d.querySelector('summary')?.textContent?.trim() === 'Details') as HTMLDetailsElement
         // Collapsed by default in both themes, and rendered lazily: a
@@ -612,7 +612,7 @@ describe('ArtifactPanel live SSE updates (#1114)', () => {
       scored: [{ artifact_id: 'text:plan', revision: 1 }],
     })
 
-    expect(await screen.findByRole('button', { name: 'Round 1, failed, score 0.42' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: 'Round 1, failed, score 42%' })).toBeTruthy()
   })
 
   it('does not refetch on an artifact_revision for a different node', async () => {

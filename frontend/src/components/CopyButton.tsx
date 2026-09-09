@@ -26,7 +26,7 @@ export function CopyButton({ text, label = 'Copy' }: { text: string; label?: str
       onClick={copy}
       aria-label={copied ? `${label} - copied` : label}
       title={label}
-      className="shrink-0 rounded p-0.5 leading-none text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors"
+      className="shrink-0 rounded p-1.5 leading-none text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors"
     >
       {copied ? (
         <Icon name="check" className="w-3 h-3" />

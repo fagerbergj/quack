@@ -602,7 +602,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
               title="Refresh artifacts"
               className="flex h-11 w-11 items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-500 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
             >
-              ↻
+              <Icon name="refresh" className="w-4 h-4" />
             </button>
             <button
               onClick={() => dialogRef.current?.close()}
@@ -631,7 +631,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
                   key={id}
                   type="button"
                   aria-pressed={active}
-                  aria-label={`Round ${b.round}, ${b.passed == null ? 'no verdict' : b.passed ? 'passed' : 'failed'}${b.score != null ? `, score ${b.score}` : ''}`}
+                  aria-label={`Round ${b.round}, ${b.passed == null ? 'no verdict' : b.passed ? 'passed' : 'failed'}${b.score != null ? `, score ${Math.round(b.score * 100)}%` : ''}`}
                   onClick={() => activateRound(id)}
                   className={`shrink-0 inline-flex items-center gap-1 h-11 medium:h-8 px-3 rounded-full border text-xs transition-colors ${
                     active
@@ -647,7 +647,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
                   {b.score != null && (
                     <>
                       <span aria-hidden="true" className="text-gray-400 dark:text-gray-500">·</span>
-                      <span className="text-gray-600 dark:text-gray-300 tabular-nums">{b.score}</span>
+                      <span className="text-gray-600 dark:text-gray-300 tabular-nums">{Math.round(b.score * 100)}%</span>
                     </>
                   )}
                 </button>
