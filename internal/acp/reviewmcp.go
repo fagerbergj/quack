@@ -46,10 +46,14 @@ type unstageReviewCommentInput struct {
 	ID string `json:"id" jsonschema:"the id of the staged comment to remove, from stage_review_comment or list_review_comments"`
 }
 
-// stageReviewInput is stage_review's input: the overall verdict + summary.
+// stageReviewInput is stage_review's input: the overall verdict plus the
+// fixed review format's model-written fields (verdict/scope/highlights are
+// all generated elsewhere - see reviewrecord.go's CodeReviewRecord doc).
 type stageReviewInput struct {
-	Event string `json:"event" jsonschema:"overall verdict: approve, request_changes, or comment"`
-	Body  string `json:"body" jsonschema:"the review summary posted alongside the verdict"`
+	Event    string   `json:"event" jsonschema:"overall verdict: approve, request_changes, or comment"`
+	Takeaway string   `json:"takeaway" jsonschema:"one sentence, max 240 characters - the fifteen-second takeaway, never a restatement of findings already staged inline"`
+	Verified []string `json:"verified,omitempty" jsonschema:"what you actually checked, max 8 items, each max 160 characters - may start an item with 'not verified:'"`
+	Notes    []string `json:"notes,omitempty" jsonschema:"free prose with no line to anchor to (architecture, praise, follow-ups, unresolved questions), max 8 items, each max 200 characters"`
 }
 
 // defaultListLimit and listExcerptLen bound list_review_comments' response:
@@ -136,13 +140,20 @@ func registerReviewTools(srv *mcp.Server, review *vetting.ReviewStage) {
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolStageReview,
-		Description: "Stage the overall review verdict (approve | request_changes | comment) and summary. Call once, after your inline comments; the gate submits the review after your answer passes.",
+		Description: "Stage the overall review verdict (approve | request_changes | comment), takeaway, verified checks, and notes. Call once, after your inline comments; the gate renders the fixed review format (verdict/scope/highlights are generated, not written) and submits it after your answer passes.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args stageReviewInput) (*mcp.CallToolResult, any, error) {
 		event := strings.ToLower(strings.TrimSpace(args.Event))
 		if event != "approve" && event != "request_changes" && event != "comment" {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "stage_review event must be approve, request_changes, or comment"}}}, nil, nil
 		}
-		if err := review.SetVerdict(event, args.Body); err != nil {
+		takeaway := strings.TrimSpace(args.Takeaway)
+		if takeaway == "" {
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "stage_review takeaway is required: one sentence, max 240 characters"}}}, nil, nil
+		}
+		if err := vetting.CheckCodeReviewCaps(takeaway, args.Verified, args.Notes); err != nil {
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil, nil
+		}
+		if err := review.SetVerdict(event, takeaway, args.Verified, args.Notes); err != nil {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil, nil
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "staged"}}}, nil, nil

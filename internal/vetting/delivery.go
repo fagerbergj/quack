@@ -131,7 +131,7 @@ func reviewCriterion(task string, act workerActivity, isReviewer bool) (criterio
 		"deterministic: your task requires posting a review on the pull request, but the workspace ledger contains "+
 			"no successful `github_submit_review` and no `stage_review` call (%s). Describing your findings in your "+
 			"answer is NOT posting them: record each finding with `github_add_review_comment`, then call "+
-			"`stage_review(event, body)` with your summary and verdict - the gate submits it after your answer passes "+
+			"`stage_review(event, takeaway, verified, notes)` with your verdict - the gate submits it after your answer passes "+
 			"(or call `github_submit_review` yourself, if you have that tool) - then report what you actually did.", drafted)}, true
 }
 

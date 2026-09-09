@@ -123,7 +123,7 @@ func TestMCPToolNamesMatchTheLiveServer(t *testing.T) {
 	}
 
 	call("stage_review_comment", map[string]any{"path": "internal/acp/toolnaming_test.go", "line": 1, "body": "nit: staged via bare name"})
-	call("stage_review", map[string]any{"event": "approve", "body": "staged via bare name"})
+	call("stage_review", map[string]any{"event": "approve", "takeaway": "staged via bare name"})
 	sd, ok := review.Snapshot()
 	if !ok || sd.Event != "approve" || len(sd.Comments) != 1 {
 		t.Fatalf("stage_review/stage_review_comment calls didn't land in the review buffer: ok=%v %+v", ok, sd)

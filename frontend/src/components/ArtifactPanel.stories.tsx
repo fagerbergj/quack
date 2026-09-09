@@ -25,6 +25,31 @@ type Story = StoryObj<typeof ArtifactPanel>
 // artifacts), chat-more (a node with lots of secondary artifacts).
 const findingV1 = JSON.stringify({ path: 'a.go', title: 'missing nil check', rationale: 'x may be nil here', severity: 'high' })
 const findingV2 = JSON.stringify({ path: 'a.go', title: 'missing nil check (fixed)', rationale: 'x may be nil here', severity: 'high' })
+// One fixed review format (internal/vetting/reviewoverview.go): the panel
+// renders `rendered` (server-computed) as markdown rather than reimplement
+// the renderer in TSX - codeReviewNew covers the new fields, codeReviewLegacy
+// a pre-migration record with only `summary` and no `rendered` at all, so
+// the panel falls back to the generic JSON tree (LegacyCodeReview story).
+const codeReviewNew = {
+  verdict: 'request_changes',
+  takeaway: 'Two blocking issues remain in the fallback path.',
+  verified: ['Ran the auth test suite locally'],
+  notes: ['Consider a changelog entry for the new endpoint'],
+  finding_ids: [],
+  dismissed: [],
+  clean: [],
+  rendered: '**Verdict: request changes** · 1 blocking\n\n' +
+    'Two blocking issues remain in the fallback path.\n\n' +
+    '### Verified\n\n- Ran the auth test suite locally\n\n' +
+    '### Notes\n\n- Consider a changelog entry for the new endpoint',
+}
+const codeReviewLegacy = {
+  verdict: 'approve',
+  summary: 'Pre-migration free-text summary: looks fine overall, nothing blocking, a couple of minor style nits worth a follow-up but not gating the merge.',
+  finding_ids: [],
+  dismissed: [],
+  clean: [],
+}
 const reviewMd = '# Review summary\n\nMostly solid, but the apple pie recipe needs a citation.\n\n- item one\n- item two\n\n```go\nfunc f() {}\n```\n'
 const reviewMdV1 = '# Review draft\n\nThe apple pie recipe paragraph has no source at all.\n'
 const reviewJudge = JSON.stringify({
@@ -66,6 +91,18 @@ window.fetch = async (input: RequestInfo | URL) => {
   if (url.includes('/chats/chat-failed/')) {
     return jsonResponse({ data: [] }) // nothing for a failed node
   }
+  if (url.includes('/chats/chat-review-legacy/')) {
+    if (url.endsWith('/artifacts')) {
+      return jsonResponse({
+        data: [{ name: 'code_review:pr:legacy', kind: 'code_review', class: 'structured', latest_revision: 1, lineage: { node_id: 'reviewer-1', author: 'gate' }, revisions: [] }],
+      })
+    }
+    if (url.includes('/artifacts/code_review:pr:legacy')) {
+      if (url.includes('/revisions')) return jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 10, kind: 'code_review', class: 'structured', lineage: { node_id: 'reviewer-1', author: 'gate' } }] })
+      return textResponse(JSON.stringify(codeReviewLegacy))
+    }
+    return jsonResponse({ data: [] })
+  }
   if (url.includes('/chats/chat-more/')) {
     if (url.endsWith('/artifacts')) {
       return jsonResponse({
@@ -93,7 +130,11 @@ window.fetch = async (input: RequestInfo | URL) => {
     }
     if (url.includes('/artifacts/code_review:pr:1')) {
       if (url.includes('/revisions')) return jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 10, kind: 'code_review', class: 'structured', lineage: { node_id: 'writer-1', author: 'dispatch' } }] })
-      return textResponse(JSON.stringify({ verdict: 'approve', comments: [] }))
+      return textResponse(JSON.stringify(codeReviewNew))
+    }
+    if (url.includes('/artifacts/code_review:pr:legacy')) {
+      if (url.includes('/revisions')) return jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 10, kind: 'code_review', class: 'structured', lineage: { node_id: 'reviewer-1', author: 'gate' } }] })
+      return textResponse(JSON.stringify(codeReviewLegacy))
     }
     if (url.includes('/artifacts/pr_body:1')) {
       if (url.includes('/revisions')) return jsonResponse({ data: [{ revision: 1, mime_type: 'text/markdown', size: 10, kind: 'pr_body', class: 'blob', lineage: { node_id: 'writer-1', author: 'worker' } }] })
@@ -276,6 +317,22 @@ export const MoreHeavyNode: Story = {
     nodeAgent: 'Writer',
     nodeTask: 'Write the spec',
     nodeArtifactKind: 'document',
+    onClose: () => {},
+  },
+}
+
+// A pre-migration code_review record: `summary` but no `rendered` field at
+// all (never backfilled - old history, not a fresh save), so the panel
+// falls back to the generic JSON tree rather than rendering nothing. The
+// MoreHeavyNode/WithResult fixtures' own code_review record (codeReviewNew)
+// already covers the new takeaway/verified/notes/rendered shape.
+export const LegacyCodeReview: Story = {
+  args: {
+    chatId: 'chat-review-legacy',
+    nodeId: 'reviewer-1',
+    nodeAgent: 'Code Reviewer',
+    nodeTask: 'Review PR #1170',
+    nodeArtifactKind: 'code_review',
     onClose: () => {},
   },
 }

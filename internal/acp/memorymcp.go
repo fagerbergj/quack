@@ -335,6 +335,12 @@ func registerWriteKindTool(srv *mcp.Server, c *recordstore.Client, sess vetting.
 		if spec.RequiresHint {
 			hint = vetting.SubjectHint(sess.ChatID)
 		}
+		// One renderer: bake the fixed format's rendered markdown into this
+		// same write (no extra revision) so the artifact panel never has to
+		// reimplement it - see RenderCodeReviewForWrite's own doc comment.
+		if kind == "code_review" {
+			args["rendered"] = vetting.RenderCodeReviewForWrite(ctx, c, args)
+		}
 		id, rev, err := c.SaveStructured(ctx, kind, args, hint, lineage)
 		if err != nil {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: writeKindPrefix + kind + ": " + err.Error()}}}, nil, nil

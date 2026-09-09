@@ -69,13 +69,39 @@ func TestCommitDelivery_RendersReviewFromArtifact(t *testing.T) {
 	}
 }
 
+// TestRenderReviewFromArtifact_SeverityFallbackForHighlights is the
+// adversarial-review regression on #3: a write_finding-native finding
+// carries its label in Severity, with a plain Title (no embedded
+// "blocking:" prefix) - without a fallback to Severity, such a finding
+// shows no count on the verdict line and never makes the Highlights table.
+func TestRenderReviewFromArtifact_SeverityFallbackForHighlights(t *testing.T) {
+	cfg := Config{IsReviewer: true, ChatID: "ext:github:owner-repo-46", User: "u1", Artifacts: artifact.InMemoryService()}
+	finding := FindingRecord{Path: "a.go", LineHint: 10, Title: "unchecked error return", Rationale: "err is dropped silently", Severity: "blocking", State: "new"}
+	fid, err := recordstore.IdentityFor(kindFinding, finding, "")
+	if err != nil {
+		t.Fatalf("finding identity: %v", err)
+	}
+	seedCodeReview(t, cfg, "request_changes", "", map[string]FindingRecord{fid: finding})
+
+	item, ok := renderReviewFromArtifact(context.Background(), cfg, "n1")
+	if !ok {
+		t.Fatal("renderReviewFromArtifact: no record")
+	}
+	if !strings.Contains(item.Body, "1 blocking") {
+		t.Fatalf("Body = %q, want the verdict line to count the Severity-labelled finding as blocking", item.Body)
+	}
+	if !strings.Contains(item.Body, "### Highlights") || !strings.Contains(item.Body, "a.go:10") {
+		t.Fatalf("Body = %q, want the Highlights table to include the Severity-labelled finding", item.Body)
+	}
+}
+
 // TestCommitDelivery_SingleReviewerCarriesSummaryEndToEnd is #1198: the
 // actual regression, reproduced through the real write site
 // (saveCodeReviewRound) rather than a pre-seeded record - a single-reviewer
 // node's passed round must deliver its own prose, not markers-only.
 func TestCommitDelivery_SingleReviewerCarriesSummaryEndToEnd(t *testing.T) {
 	cfg := Config{IsReviewer: true, ChatID: "ext:github:owner-repo-45", User: "u1", Artifacts: artifact.InMemoryService(), NodeID: "n1"}
-	answer := "Looks good, one nit below.\n\nVERDICT: approve\nFINDINGS:\nCLEAN:\n"
+	answer := "VERDICT: approve\nTAKEAWAY: Looks good, one nit below.\nFINDINGS:\nCLEAN:\n"
 	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "t1", 1, answer, StagedDelivery{Kind: "review", Recovered: true}, newEpisodicRoundState())
 
 	var got DeliveryContext

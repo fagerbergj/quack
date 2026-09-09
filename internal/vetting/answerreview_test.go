@@ -45,8 +45,8 @@ func TestAugmentFromAnswer_StagesReview(t *testing.T) {
 	if !ok {
 		t.Fatal("review not staged")
 	}
-	if st.Event != "request_changes" || len(st.Comments) != 2 || st.Body != reviewAnswer {
-		t.Fatalf("staged review wrong: event=%q comments=%d", st.Event, len(st.Comments))
+	if st.Event != "request_changes" || len(st.Comments) != 2 || !strings.Contains(st.Body, "Verdict: request changes") {
+		t.Fatalf("staged review wrong: event=%q comments=%d body=%q", st.Event, len(st.Comments), st.Body)
 	}
 	if !st.Recovered {
 		t.Error("a review staged by augmentFromAnswer must be marked Recovered (#688)")

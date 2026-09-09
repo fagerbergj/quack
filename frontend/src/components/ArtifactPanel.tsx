@@ -727,7 +727,11 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
                 <ArtifactLines lines={lines} byLine={byLine} activeNote={activeNote} onSelectNote={setActiveNote} />
               ) : isStructured ? (
                 parsedJson !== undefined ? (
-                  <JsonView data={parsedJson} kind={primary?.kind} />
+                  codeReviewRendered(primary?.kind, parsedJson) !== undefined ? (
+                    <ArtifactMarkdown text={codeReviewRendered(primary?.kind, parsedJson)!} byLine={byLine} activeNote={activeNote} onSelectNote={setActiveNote} />
+                  ) : (
+                    <JsonView data={parsedJson} kind={primary?.kind} />
+                  )
                 ) : (
                   <ArtifactLines lines={lines} byLine={byLine} activeNote={activeNote} onSelectNote={setActiveNote} />
                 )
@@ -919,7 +923,11 @@ function MoreItem({ chatId, artifact, ordinal }: { chatId: string; artifact: Art
             <ArtifactLines lines={lines} byLine={emptyByLine} activeNote={null} onSelectNote={() => {}} />
           ) : isStructured ? (
             parsedJson !== undefined ? (
-              <JsonView data={parsedJson} kind={artifact.kind} />
+              codeReviewRendered(artifact.kind, parsedJson) !== undefined ? (
+                <ArtifactMarkdown text={codeReviewRendered(artifact.kind, parsedJson)!} byLine={emptyByLine} activeNote={null} onSelectNote={() => {}} />
+              ) : (
+                <JsonView data={parsedJson} kind={artifact.kind} />
+              )
             ) : (
               <ArtifactLines lines={lines} byLine={emptyByLine} activeNote={null} onSelectNote={() => {}} />
             )
@@ -1205,6 +1213,19 @@ function judgeRoundSummary(data: unknown) {
       ))}
     </div>
   )
+}
+
+// codeReviewRendered extracts a code_review record's server-rendered
+// overview markdown (internal/vetting/reviewoverview.go writes it as
+// `rendered` at save time) - the ONE renderer for both the GitHub delivery
+// body and this panel, so the frontend never re-implements verdict/
+// highlights/cap formatting. undefined when absent (a record from before
+// this field existed, or a native write_code_review call this round hasn't
+// backfilled yet) - the caller falls back to the generic JSON tree.
+function codeReviewRendered(kind: string | undefined, data: unknown): string | undefined {
+  if (kind !== 'code_review' || data == null || typeof data !== 'object') return undefined
+  const r = (data as { rendered?: unknown }).rendered
+  return typeof r === 'string' && r.trim() !== '' ? r : undefined
 }
 
 // JsonView is the collapsible key/value tree default view for a structured

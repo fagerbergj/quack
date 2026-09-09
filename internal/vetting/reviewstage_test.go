@@ -13,7 +13,7 @@ func TestAugmentFromReviewStage_ToolStagedWins(t *testing.T) {
 	}
 	review := &ReviewStage{}
 	review.AddComment("internal/foo.go", 12, "blocking: nil deref on the empty path")
-	review.SetVerdict("approve", "one nit, nothing blocking")
+	review.SetVerdict("approve", "one nit, nothing blocking", nil, nil)
 	RegisterMemSession(secret, MemSession{Review: review})
 	defer UnregisterMemSession(secret)
 
@@ -32,7 +32,7 @@ func TestAugmentFromReviewStage_ToolStagedWins(t *testing.T) {
 	if !ok {
 		t.Fatal("review not staged from the tool buffer")
 	}
-	if st.Event != "approve" || st.Body != "one nit, nothing blocking" {
+	if st.Event != "approve" || st.Takeaway != "one nit, nothing blocking" {
 		t.Fatalf("answer tail overwrote the tool-staged review: %+v", st)
 	}
 	if len(st.Comments) != 1 || st.Comments[0].Path != "internal/foo.go" || st.Comments[0].Line != 12 {
