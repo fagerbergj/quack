@@ -376,8 +376,8 @@ function NodeAnswer({ answer }: { answer: string }) {
 // "no_verdict" - it ran (read files, spent its turns) but never committed
 // one, which "unavailable" would misreport as an outage.
 function judgeFailureHeading(status?: string): string | null {
-  if (status === 'unavailable') return 'Quality check unavailable'
-  if (status === 'no_verdict') return 'Quality check reached no verdict'
+  if (status === 'unavailable') return 'Judge unavailable'
+  if (status === 'no_verdict') return 'Judge did not reach a verdict'
   return null
 }
 
@@ -387,7 +387,7 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
     return (
       <div className="border-t border-gray-100 dark:border-gray-700 px-4 py-2 bg-yellow-50 dark:bg-yellow-900/15">
         <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-yellow-700 dark:text-yellow-400 uppercase tracking-wide">
-          <Icon name="warning" className="w-3 h-3" /> {failureHeading} · check {run.round}
+          <Icon name="warning" className="w-3 h-3" /> {failureHeading} · round {run.round}
         </span>
         <div className="text-[11px] text-yellow-700 dark:text-yellow-400/90 mt-0.5">
           Answer shown without a quality check - {run.reason}
@@ -400,14 +400,17 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
       <details open={running} className="not-prose">
         <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2">
           <span className="text-[11px] font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wide">
-            Quality check {run.round}
+            Judge · round {run.round}
           </span>
           {/* The pass bar is rendered only when the server sent it (older
-              events carry no envelope), never assumed. */}
+              events carry no envelope), never assumed; the threshold (when
+              sent) lives in the title, not inline. */}
           {run.score != null && (
-            <span className={`inline-flex items-center gap-0.5 text-[11px] font-medium ${run.passed ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+            <span
+              className={`inline-flex items-center gap-0.5 text-[11px] font-medium ${run.passed ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}
+              title={`${run.passed ? 'Passed' : 'Failed'}: ${(run.score * 100).toFixed(0)}%${run.threshold != null ? ` (needs ${(run.threshold * 100).toFixed(0)}%)` : ''}`}
+            >
               <Icon name={run.passed ? 'check' : 'close'} className="w-3 h-3" /> {(run.score * 100).toFixed(0)}%
-              {run.threshold != null && ` (needs ${(run.threshold * 100).toFixed(0)}%)`}
             </span>
           )}
           <RunModel run={run} />
@@ -423,7 +426,7 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
           in a popup, rendered as markdown (0.9.0 feedback). */}
       {run.done && run.feedback && run.feedback !== 'None' && (
         <div className="px-4 pt-0 pb-2">
-          <CollapsedPreview label="Verdict" text={run.feedback} popupTitle={`Quality check ${run.round} verdict`} />
+          <CollapsedPreview label="Verdict" text={run.feedback} popupTitle={`Judge verdict · round ${run.round}`} />
         </div>
       )}
     </div>
