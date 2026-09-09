@@ -15,8 +15,9 @@
     "knip": "knip",
     "check-stories": "node scripts/check-stories.mjs",
     "check-no-emoji": "node scripts/check-no-emoji.mjs",
+    "check-icons": "node scripts/check-icons.mjs",
     "render-check": "vitest run --config vitest.render-check.config.ts",
-    "lint": "eslint . && npm run check-stories && npm run check-no-emoji"
+    "lint": "eslint . && npm run check-stories && npm run check-no-emoji && npm run check-icons"
   },
   "dependencies": {
     "highlight.js": "11.12.0",
