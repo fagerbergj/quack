@@ -74,6 +74,7 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git ca-certificates bubblewrap util-linux make poppler-utils \
       python3 python3-venv python3-pip \
+      gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --uid 65532 --no-create-home --shell /usr/sbin/nologin nonroot
 WORKDIR /
