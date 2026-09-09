@@ -1485,6 +1485,57 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
   })
 })
 
+// Finding 6 (stream audit): the hub now drops (closes) a subscriber whose
+// buffer backs up instead of silently skipping an event mid-stream, so the
+// client must detect the resulting id gap itself - an out-of-order id must
+// never just advance the cursor, or the gap is unrecoverable (the resume
+// cursor only replays events after the id it's given).
+describe('ChatStore - resume from the last contiguous id on an id gap (#audit-6)', () => {
+  let store: ChatStore
+  beforeEach(() => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    FakeEventSource.last = null
+    store = new ChatStore()
+  })
+
+  it('a non-contiguous id reconnects from the last contiguous id, not the jump', () => {
+    vi.useFakeTimers()
+    try {
+      store.seed('c', [dagTurn('in_progress')])
+      store.attach('c')
+      const es1 = FakeEventSource.last!
+      expect(es1.url).toBe('/api/v1/chats/c/stream')
+
+      es1.emit('dag_plan', '{"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}', 1)
+      es1.emit('node_start', '{"node_id":"a","agent":"researcher"}', 2)
+      expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('running')
+
+      // id jumps from 2 to 5 - some events in between never arrived (the hub
+      // dropped this subscriber for falling behind).
+      es1.emit('node_done', '{"node_id":"a"}', 5)
+
+      // The gapped event must not be applied, and the stream must reconnect
+      // (bounded backoff, same as a connection drop) from the last
+      // contiguous id (2), not from the jump.
+      expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('running')
+      expect(es1.closed).toBe(true)
+      expect(FakeEventSource.last).toBe(es1) // no immediate hammer
+      vi.advanceTimersByTime(999)
+      expect(FakeEventSource.last).toBe(es1)
+      vi.advanceTimersByTime(1)
+
+      const es2 = FakeEventSource.last!
+      expect(es2).not.toBe(es1)
+      expect(es2.url).toBe('/api/v1/chats/c/stream?last_event_id=2')
+
+      es2.emit('node_done', '{"node_id":"a"}', 3)
+      expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('done')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 // #1090 perf audit item 4: a fresh attach still replays from 0 - a real page
 // reload starts a new ChatStore with no memory of what this client already
 // applied, so it has no cursor to resume from (a durable per-chat cursor

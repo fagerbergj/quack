@@ -225,3 +225,42 @@ func TestHubCancelRun_ReachesEitherDriver(t *testing.T) {
 		t.Error("CancelRun must reach a GitHub-dispatched run through the same registry")
 	}
 }
+
+// --- slow subscriber (finding 6) --------------------------------------------
+
+// A subscriber whose channel backs up past its buffer must be dropped
+// (channel closed), not silently skipped mid-stream. Skipping loses a
+// contiguous range with no signal to the client, and the resume cursor
+// (last id seen) can never recover it. Dropping ends the connection so the
+// client sees the error and reconnects, replaying the gap off the buffer
+// (or the durable log) from its last contiguous id.
+func TestHubPublishDropsSlowSubscriberInsteadOfSkipping(t *testing.T) {
+	h := NewHub()
+	_, live, cancel, _ := h.Subscribe("c")
+	defer cancel()
+
+	// Fill the subscriber's buffered channel (cap 1024) without draining it.
+	for i := int64(1); i <= 1024; i++ {
+		h.Publish("c", i, ev("a"))
+	}
+	// The channel is now full: this publish must drop the subscriber
+	// (close its channel) instead of silently skipping event 1025.
+	h.Publish("c", 1025, ev("b"))
+
+	var drained int
+	for range live { // ranges until the hub closes it
+		drained++
+	}
+	if drained != 1024 {
+		t.Fatalf("drained %d buffered events before close, want exactly 1024 (event 1025 must not have been delivered)", drained)
+	}
+
+	// The dropped subscriber lost nothing durably - only its live channel
+	// died. A fresh Subscribe replays the whole run, gap included, from the
+	// hub's own buffer (MaxReplay is 10000, well past 1025).
+	replay, _, cancel2, _ := h.Subscribe("c")
+	defer cancel2()
+	if len(replay) != 1025 {
+		t.Fatalf("fresh subscribe replay = %d events, want 1025", len(replay))
+	}
+}

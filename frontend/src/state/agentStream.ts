@@ -201,7 +201,7 @@ export interface AgentStreamHandlers {
 }
 
 // Wire-level event names. Mirrors internal/stream/event.go.
-export const AGENT_EVENT_NAMES = [
+const AGENT_EVENT_NAMES = [
   'agent_start', 'agent_thinking', 'agent_tool_call', 'agent_tool_result', 'agent_token', 'agent_complete',
   'confirmation_request', 'chat_title', 'error', 'done', 'response_created',
   'dag_plan', 'node_queued', 'node_start', 'node_done', 'node_failed', 'node_cancelled', 'node_paused', 'node_steered', 'node_needs_input',
@@ -518,13 +518,18 @@ export async function readAgentStream(
 
 // attachAgentEventSource wires an EventSource (used by the job live log) to
 // the same handler shape readAgentStream consumes. Returns a teardown that
-// closes the EventSource.
+// closes the EventSource. shouldDispatch, if given, gates each event BEFORE
+// it reaches handlers - e.g. chatStore's id-contiguity check (#audit-6):
+// a gap must never be applied, so the gate has to run ahead of dispatch,
+// not as a second independent listener racing it.
 export function attachAgentEventSource(
   es: EventSource,
   handlers: AgentStreamHandlers,
+  shouldDispatch?: (e: MessageEvent) => boolean,
 ): () => void {
   for (const name of AGENT_EVENT_NAMES) {
     es.addEventListener(name, (e) => {
+      if (shouldDispatch && !shouldDispatch(e as MessageEvent)) return
       let parsed: unknown = {}
       const data = (e as MessageEvent).data
       if (typeof data === 'string' && data.length > 0) {

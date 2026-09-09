@@ -132,11 +132,16 @@ func (h *Hub) Publish(key string, seq int64, ev SSEEvent) {
 		t.buf = t.buf[len(t.buf)-MaxReplay:]
 	}
 	for ch := range t.subs {
-		// Non-blocking: a subscriber too slow to keep up drops live events; it can
-		// reconnect and replay the buffer (or the durable log) to catch up.
+		// Non-blocking: a subscriber too slow to keep up is DROPPED, not
+		// skipped past - skipping an event here would silently lose a
+		// contiguous range the resume cursor can never recover (finding 6).
+		// Closing ends the connection so the client sees the drop and
+		// reconnects, replaying from its last contiguous id.
 		select {
 		case ch <- it:
 		default:
+			close(ch)
+			delete(t.subs, ch)
 		}
 	}
 }
@@ -167,10 +172,20 @@ func (h *Hub) Close(key string) {
 	}
 }
 
-// Drops the chat's topic so a new run gets a fresh buffer. Publish does the same lazily; call this to attach subscribers before publishing.
+// Drops the chat's topic so a new run gets a fresh buffer. Publish does the
+// same lazily; call this to attach subscribers before publishing. Closes any
+// live subscribers first - dropping the map entry alone would orphan them
+// with a channel neither fed nor closed (they'd hang until their HTTP
+// connection dies on its own).
 func (h *Hub) Reset(key string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if t := h.topics[key]; t != nil {
+		for ch := range t.subs {
+			close(ch)
+			delete(t.subs, ch)
+		}
+	}
 	delete(h.topics, key)
 }
 
