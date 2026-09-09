@@ -56,11 +56,11 @@ models:
     provider: default
     role: embed
     context_window: 4096
-  # No separate entry for QUACK_ORCH_MODEL: it usually reuses a worker model
-  # above (e.g. qwen3.8-27b), and then shares that model's limits.sessions
-  # with the worker nodes. Pointing it at a genuinely different model? Add its
-  # own entry here too - the orchestrator's model must be registered, and
-  # without its own limits.sessions its turns are unbounded.
+ # No separate entry for QUACK_ORCH_MODEL: it usually reuses a worker model
+ # above (e.g. qwen3.8-27b), and then shares that model's limits.sessions
+ # with the worker nodes. Pointing it at a genuinely different model? Add its
+ # own entry here too - the orchestrator's model must be registered, and
+ # without its own limits.sessions its turns are unbounded.
 
 # Named backend registry (like providers): consumers reference a store by name.
 # `kind` selects the adapter (the portability seam). A vector store also carries
@@ -79,17 +79,17 @@ stores:
     consolidation:
       provider: default
       model: ${QUACK_JUDGE_MODEL}       # reuse the always-warm judge (gemma) for extract/vet/consolidate
-      # schedule: "0 2 * * *"  # standard 5-field cron, local time; never runs at boot
-                               # (issue #961). Unset ⇒ this default; "" disables.
-      # retention_days: 30  # hard-delete invalidated points + memory_ops rows past this age; 0 = forever
-      # forgetting:            # epic #1255 P3; optional - omitted means the built-in defaults below
-      #   rules:
-      #     - when: 'tier == "unverified" && days_since_upvote > 90'
-      #       then: invalidate
-      #     - when: "score <= -2"
-      #       then: invalidate
-      #     - when: 'tier == "verified"'
-      #       then: keep
+ # schedule: "0 2 * * *" # standard 5-field cron, local time; never runs at boot
+ # (issue #961). Unset ⇒ this default; "" disables.
+ # retention_days: 30 # hard-delete invalidated points + memory_ops rows past this age; 0 = forever
+ # forgetting: # epic #1255 P3; optional - omitted means the built-in defaults below
+ # rules:
+ # - when: 'tier == "unverified" && days_since_upvote > 90'
+ # then: invalidate
+ # - when: "score <= -2"
+ # then: invalidate
+ # - when: 'tier == "verified"'
+ # then: keep
     top_k: 5
     min_score: 0.5                # drop recall hits below this cosine similarity (0 disables)
 
@@ -100,31 +100,31 @@ session:
   compaction:
     enabled: ${QUACK_COMPACTION_ENABLED}  # unset ⇒ false
     provider: default
-    # optional fallback only - compaction normally runs on the active run/node's
-    # own worker model (already resident, so it's swap-free by construction).
-    # Used only when there's no active worker model to reuse (e.g. standalone).
+ # optional fallback only - compaction normally runs on the active run/node's
+ # own worker model (already resident, so it's swap-free by construction).
+ # Used only when there's no active worker model to reuse (e.g. standalone).
     model: ${QUACK_COMPACTION_MODEL}      # unset ⇒ no fallback, active model only
-    # token_threshold: 0             # unset ⇒ derive per-agent from context_window
-    # event_retention_size: 0        # unset ⇒ 20 trailing request contents kept verbatim
-    # compaction_interval: 0         # unset ⇒ threshold-only; N ⇒ also compact every N invocations
-    # overlap_size: 0                # unset ⇒ fold whole window each time; N ⇒ carry last N events into the next round
+ # token_threshold: 0 # unset ⇒ derive per-agent from context_window
+ # event_retention_size: 0 # unset ⇒ 20 trailing request contents kept verbatim
+ # compaction_interval: 0 # unset ⇒ threshold-only; N ⇒ also compact every N invocations
+ # overlap_size: 0 # unset ⇒ fold whole window each time; N ⇒ carry last N events into the next round
 
 orchestrator:
-  # plan-work: DAG-authoring playbook; format-markdown: direct-answer replies;
-  # present-coding-plan: plan/comment structure for GitHub-facing replies (#253);
-  # contribute: the issue→plan→agree→implement→review→merge umbrella that hands
-  # off to the others (kept alongside them, not on a worker - the orchestrator
-  # is the only agent that owns the whole loop).
+ # plan-work: DAG-authoring playbook; format-markdown: direct-answer replies;
+ # present-coding-plan: plan/comment structure for GitHub-facing replies (#253);
+ # contribute: the issue→plan→agree→implement→review→merge umbrella that hands
+ # off to the others (kept alongside them, not on a worker - the orchestrator
+ # is the only agent that owns the whole loop).
   skills: [plan-work, format-markdown, present-coding-plan, contribute, mermaid-authoring]
   provider: default
   model: ${QUACK_ORCH_MODEL}            # the thin dispatcher: routes requests to agents
   tools: [commit_memory, recall_memory, load_artifacts]  # commit_memory: user memory; recall_memory: task memory (repo/role/user), on-demand (#1255 P2); load_artifacts: read artifacts saved to this chat's session
-  # End-of-turn memory hook (#262): the orchestrator model won't reliably call
-  # commit_memory itself, so a dedicated memory-agent bundle (agents/memory-agent)
-  # extracts durable preferences from the user's message and commits them
-  # fire-and-forget, after a cheap keyword pre-filter. Requires user memory
-  # (commit_memory above) to be on. Off by default - costs one model call per
-  # qualifying turn.
+ # End-of-turn memory hook (#262): the orchestrator model won't reliably call
+ # commit_memory itself, so a dedicated memory-agent bundle (agents/memory-agent)
+ # extracts durable preferences from the user's message and commits them
+ # fire-and-forget, after a cheap keyword pre-filter. Requires user memory
+ # (commit_memory above) to be on. Off by default - costs one model call per
+ # qualifying turn.
   user_memory_hook:
     enabled: ${QUACK_USER_MEMORY_HOOK_ENABLED}  # unset ⇒ false
     provider: default
@@ -145,7 +145,7 @@ agents:
     judge_rounds: 1             # research converges in one draft; extra rounds burn tokens re-fetching to fix citations. Draft must cite inline (see prompt.md).
     tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, recall_memory, ask_user, ask_advisor,
             ]  # NO repo tools: reading source is code-explorer's job (see its card)  # read-only fs + clone, so research can pull a repo apart
-    # no skills scoped: it has no repo tools to act on research-git-repos with, and no plan/review/code skills apply to it
+ # no skills scoped: it has no repo tools to act on research-git-repos with, and no plan/review/code skills apply to it
   code-implementer:
     bundle: agents/code-implementer   # card + prompt.md (ACP preamble: ponytail discipline, commit-only) + rubric.yaml
     provider: default
@@ -154,11 +154,11 @@ agents:
     model: ${QUACK_CODER_MODEL}       # falls back to QUACK_RESEARCHER_MODEL if unset (internal/config's expandEnv)
     context_window: 65536
     judge_rounds: 1             # 1 while we diagnose the judge: the revise grind (was 8) masked a miscalibrated gate. Raise once the rubric reliably passes a correct implementation.
-    # The worker is an EXTERNAL coding agent over ACP (internal/acp): the pi-acp shim
-    # drives pi from OPENCODE_CONFIG_CONTENT (OpenAI-compatible endpoint, headless
-    # permissions, git push DENIED - delivery stays gate-owned). The gate reads its
-    # commits off the clone itself (vetting.augmentFromRepo); the shim maps the env's
-    # skills.paths onto pi's settings. No quack tools, no memory.
+ # The worker is an EXTERNAL coding agent over ACP (internal/acp): the pi-acp shim
+ # drives pi from OPENCODE_CONFIG_CONTENT (OpenAI-compatible endpoint, headless
+ # permissions, git push DENIED - delivery stays gate-owned). The gate reads its
+ # commits off the clone itself (vetting.augmentFromRepo); the shim maps the env's
+ # skills.paths onto pi's settings. No quack tools, no memory.
     acp:
       command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       mcp_servers:
@@ -171,10 +171,10 @@ agents:
     model: ${QUACK_CODER_MODEL}       # reviews code; reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
     context_window: 65536
     judge_rounds: 1             # 1 round: a review is one-pass, and we're diagnosing the gate
-    # External ACP reviewer, read_only: it runs the change with its own tools but never
-    # commits/pushes; its ANSWER carries the review - the gate parses the structured
-    # VERDICT/FINDINGS tail into a staged review with inline comments
-    # (vetting.augmentFromAnswer) and posts it exactly once, gate-owned.
+ # External ACP reviewer, read_only: it runs the change with its own tools but never
+ # commits/pushes; its ANSWER carries the review - the gate parses the structured
+ # VERDICT/FINDINGS tail into a staged review with inline comments
+ # (vetting.augmentFromAnswer) and posts it exactly once, gate-owned.
     acp:
       command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       read_only: true
@@ -186,9 +186,9 @@ agents:
     model: ${QUACK_CODER_MODEL}       # reads code; reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
     context_window: 65536
     judge_rounds: 2             # exploration is largely one-pass; 2 rounds closes a gate gap
-    # External ACP explorer, read_only: reads the provisioned worktree and, with
-    # allow_clone, shallow-clones third-party repos into $TMPDIR to read those too.
-    # Never commits. Judged by its bundle rubric (exploration quality), not web citations.
+ # External ACP explorer, read_only: reads the provisioned worktree and, with
+ # allow_clone, shallow-clones third-party repos into $TMPDIR to read those too.
+ # Never commits. Judged by its bundle rubric (exploration quality), not web citations.
     acp:
       command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       mcp_servers:
@@ -197,8 +197,8 @@ agents:
       allow_clone: true   # the only agent exempt from the git clone deny; git push stays denied
   synthesizer:
     bundle: agents/synthesizer
-    # pr-authoring: when a run's answer IS a PR body (run-level synthesis of the atomic
-    # commits a chain of code-implementer nodes made), write it like a PR, not a report.
+ # pr-authoring: when a run's answer IS a PR body (run-level synthesis of the atomic
+ # commits a chain of code-implementer nodes made), write it like a PR, not a report.
     skills: [format-markdown, present-coding-plan, pr-authoring, mermaid-authoring]
     provider: default
     model: ${QUACK_RESEARCHER_MODEL}
@@ -232,23 +232,23 @@ tools:
   web_search:
     kind: exa                     # searxng (needs url) | exa. exa used here because searxng is being bot-walled.
     url: ${QUACK_SEARXNG_URL}           # SearXNG JSON API, e.g. http://searxng:8080; unused by kind: exa
-    # exa is keyless via Exa's hosted MCP by default (the no-docker path). With an
-    # api_key it uses Exa's REST API instead (structured JSON, more robust, no
-    # keyless-MCP rate-limiting):
+ # exa is keyless via Exa's hosted MCP by default (the no-docker path). With an
+ # api_key it uses Exa's REST API instead (structured JSON, more robust, no
+ # keyless-MCP rate-limiting):
     auth:
       kind: api_key
       api_key: ${QUACK_EXA_API_KEY}
-    # exa is keyless via Exa's hosted MCP by default (the no-docker path). Add an
-    # api_key to use Exa's REST API instead (structured JSON, more robust):
-    # auth:
-    #   kind: api_key
-    #   api_key: ${QUACK_EXA_API_KEY}
+ # exa is keyless via Exa's hosted MCP by default (the no-docker path). Add an
+ # api_key to use Exa's REST API instead (structured JSON, more robust):
+ # auth:
+ # kind: api_key
+ # api_key: ${QUACK_EXA_API_KEY}
   web_fetch:
     kind: crawl4ai                # direct (plain GET, no service) | crawl4ai (GET + browser render). empty ⇒ direct
     url: ${QUACK_CRAWL4AI_URL}          # required for crawl4ai (e.g. http://crawl4ai:11235); unused by kind: direct
-  # Memory tools (M6) - store-backed; binding one to an agent enables that memory.
-  # recall_memory (#1255 P2) has no entry of its own - it reads the same
-  # store this one configures, just on demand instead of at prefill time.
+ # Memory tools (M6) - store-backed; binding one to an agent enables that memory.
+ # recall_memory has no entry of its own - it reads the same
+ # store this one configures, just on demand instead of at prefill time.
   stage_memory:                   # task memory: researchers stage tradecraft, the gate commits it
     store: default_vector
     collection: task_memory
@@ -258,9 +258,9 @@ tools:
 
 # The trust gate wraps every agent and runs cheapest-first, each stage with its
 # own round budget (a stage with max_rounds:0 is skipped):
-#   1. deterministic_checks - free code checks (citation backing + length) that
-#      drive cheap targeted revisions to drop fabricated citations up front.
-#   2. judge - an independent model scores the answer; the worker revises on fail.
+# 1. deterministic_checks - free code checks (citation backing + length) that
+# drive cheap targeted revisions to drop fabricated citations up front.
+# 2. judge - an independent model scores the answer; the worker revises on fail.
 # Deterministic citation/length scores are always folded into the judge's verdict.
 # The advisor (agents/advisor) is NOT a gate stage - it's a tool (ask_advisor,
 # see agents' tools: lists) the worker calls at its own discretion. It reuses
@@ -278,47 +278,47 @@ gates:
     model: ${QUACK_JUDGE_MODEL}   # empty ⇒ judge disabled
     max_rounds: 1           # expensive model-judge/revise rounds
     threshold: 0.6          # PER-CRITERION pass bar: every rubric criterion must clear it.
-                            # On the rubric's 0-3 scale (3=pass clean, 2=pass with
-                            # issues, 1=deny small issues, 0=deny major issues), 2/3
-                            # normalises to 0.667 - this threshold must sit strictly
-                            # below that so "pass with issues" clears it with margin,
-                            # not exactly on the float boundary. The verdict score is
-                            # the lowest criterion (weakest-link gating, no averaging,
-                            # no caps).
+ # On the rubric's 0-3 scale (3=pass clean, 2=pass with
+ # issues, 1=deny small issues, 0=deny major issues), 2/3
+ # normalises to 0.667 - this threshold must sit strictly
+ # below that so "pass with issues" clears it with margin,
+ # not exactly on the float boundary. The verdict score is
+ # the lowest criterion (weakest-link gating, no averaging,
+ # no caps).
     max_iterations: 6       # safety cap on the judge's model turns per round
     context_window: 65536   # gemma's served slot (llm-swap --parallel 1 ⇒ full 64K/call); budgets the assembled judge prompt so it fits before the call instead of 400ing (#291)
     max_output_tokens: 8192  # cap on the judge/plan-judge round's own reply - a runaway
-                              # generation loop can otherwise decode tens of thousands of tokens on
-                              # a verdict that should be a few hundred (#889). 0 = uncapped.
-    # thinking_level: low    # optional: low/medium/high reasoning_effort on the judge/plan-judge request,
-                              # unset by default - some OpenAI-compatible endpoints 400 on this for a
-                              # non-reasoning model, so it's opt-in, not forced on (#1235).
+ # generation loop can otherwise decode tens of thousands of tokens on
+ # a verdict that should be a few hundred (#889). 0 = uncapped.
+ # thinking_level: low # optional: low/medium/high reasoning_effort on the judge/plan-judge request,
+ # unset by default - some OpenAI-compatible endpoints 400 on this for a
+ # non-reasoning model, so it's opt-in, not forced on .
 
 # DAG execution policy.
 dag:
-  # PER-RUN host-resource ceiling (jail/clone CPU+RAM), each run gets its own
-  # semaphore - NOT the GPU concurrency knob. GPU concurrency is bounded by
-  # models.<m>.limits.{sessions,kv_tokens} and providers.<p>.limits.active
-  # (#1007); raise this only if the host itself can't take more concurrent
-  # clones/checks within a single run.
+ # PER-RUN host-resource ceiling (jail/clone CPU+RAM), each run gets its own
+ # semaphore - NOT the GPU concurrency knob. GPU concurrency is bounded by
+ # models.<m>.limits.{sessions,kv_tokens} and providers.<p>.limits.active
+ # ; raise this only if the host itself can't take more concurrent
+ # clones/checks within a single run.
   max_active_nodes: 32
 
 server:
   addr: ":8080"
-  # topology: how the stores are provided. embedded (sqlite, no containers) and
-  # external (you run Postgres/Qdrant and point the stores above at them) just
-  # run the process - the default. managed makes `quack server` bring up
-  # Postgres + Qdrant via an embedded docker-compose stack (`quack-stores`),
-  # wait for them to be ready, then run; `quack server stop` tears them down
-  # (volumes persist). managed needs host ports 5432 + 6334 free and docker
-  # available. Tool backends (search/fetch) are NOT managed - set them via the
-  # tools below (kind: exa for keyless, kind: direct for fetch).
-  # topology: managed
-  # shutdown_grace_seconds: how long SIGTERM waits for in-flight runs to
-  # finish before force-cancelling them (default 20). Your deploy's own kill
-  # grace (docker-compose stop_grace_period, k8s terminationGracePeriodSeconds)
-  # must be longer than this, or the platform SIGKILLs before quack finishes draining.
-  # shutdown_grace_seconds: 20
+ # topology: how the stores are provided. embedded (sqlite, no containers) and
+ # external (you run Postgres/Qdrant and point the stores above at them) just
+ # run the process - the default. managed makes `quack server` bring up
+ # Postgres + Qdrant via an embedded docker-compose stack (`quack-stores`),
+ # wait for them to be ready, then run; `quack server stop` tears them down
+ # (volumes persist). managed needs host ports 5432 + 6334 free and docker
+ # available. Tool backends (search/fetch) are NOT managed - set them via the
+ # tools below (kind: exa for keyless, kind: direct for fetch).
+ # topology: managed
+ # shutdown_grace_seconds: how long SIGTERM waits for in-flight runs to
+ # finish before force-cancelling them (default 20). Your deploy's own kill
+ # grace (docker-compose stop_grace_period, k8s terminationGracePeriodSeconds)
+ # must be longer than this, or the platform SIGKILLs before quack finishes draining.
+ # shutdown_grace_seconds: 20
 
 # OTel tracing/metrics - emission-only (Tempo/Grafana, the home-server
 # monitoring stack, own trace/metric viewing; quack keeps no local store of
@@ -327,32 +327,32 @@ server:
 observability:
   otel:
     enabled: ${QUACK_OTEL_ENABLED}             # unset ⇒ true
-    # Each exporter names one OTLP destination and the signals sent to it, so a
-    # trace backend and a metrics collector can be different systems. The signal
-    # path (/v1/traces etc) is always appended, so a base URL carrying a path -
-    # Langfuse's /api/public/otel - works like any other.
+ # Each exporter names one OTLP destination and the signals sent to it, so a
+ # trace backend and a metrics collector can be different systems. The signal
+ # path (/v1/traces etc) is always appended, so a base URL carrying a path -
+ # Langfuse's /api/public/otel - works like any other.
     exporters:
       - endpoint: ${QUACK_OTEL_OTLP_ENDPOINT}  # e.g. http://otel-collector:4318
         signals: [traces, metrics]             # add `logs` to ALSO ship slog via OTLP (needs a collector logs pipeline; default is stdout only)
-    #  - endpoint: http://langfuse:3008/api/public/otel
-    #    signals: [traces]                     # Langfuse ingests traces only
+ # - endpoint: http://langfuse:3008/api/public/otel
+ # signals: [traces] # Langfuse ingests traces only
     sample: 1.0                                # trace sample ratio in (0,1]
     environment: ${QUACK_OTEL_ENVIRONMENT}     # unset ⇒ production; deployment.environment.name on every span
-    # capture_content: true # ALSO put user prompts and model responses (plus ACP tool-call args/output) on span attributes (default: off) - ships raw content to the OTLP endpoint
-    # trace_url_template: "https://tracing.example.com/trace/{trace_id}"  # unset ⇒ no deep link rendered in the UI
-  # The ledger: quack's write-ahead log (artifact revisions, deliveries, node
-  # lifecycle) in the same Postgres as the artifacts. `observations` adds the
-  # gen_ai.* model/tool/agent calls and judge scores that `quack ledger export`
-  # and `quack replay` read; it rides the otel logger provider above, so it can
-  # only be on when otel is. The store must be postgres.
+ # capture_content: true # ALSO put user prompts and model responses (plus ACP tool-call args/output) on span attributes (default: off) - ships raw content to the OTLP endpoint
+ # trace_url_template: "https://tracing.example.com/trace/{trace_id}" # unset ⇒ no deep link rendered in the UI
+ # The ledger: quack's write-ahead log (artifact revisions, deliveries, node
+ # lifecycle) in the same Postgres as the artifacts. `observations` adds the
+ # gen_ai.* model/tool/agent calls and judge scores that `quack ledger export`
+ # and `quack replay` read; it rides the otel logger provider above, so it can
+ # only be on when otel is. The store must be postgres.
   recording:
     observations: ${QUACK_RECORDING_ENABLED}  # unset ⇒ follows otel.enabled
     store: default_postgres
-    # retention_days is gone (#1144 P5): the ledger is never GC'd except by
-    # chat hard-delete; checkpoints bound fold cost instead of trimming the log.
-  # Mounts ADK's REST debug console at /debug/adk. DANGER: /run, /run_sse
-  # and /run_live execute any loaded agent WITHOUT the trust gate - protected
-  # only by quack's auth + this flag. MUST stay off in production.
+ # retention_days is gone : the ledger is never GC'd except by
+ # chat hard-delete; checkpoints bound fold cost instead of trimming the log.
+ # Mounts ADK's REST debug console at /debug/adk. DANGER: /run, /run_sse
+ # and /run_live execute any loaded agent WITHOUT the trust gate - protected
+ # only by quack's auth + this flag. MUST stay off in production.
   adk_debug: false
 
 # Backs adkagent.Context.Artifacts() and chat attachment storage. No store:
@@ -361,7 +361,7 @@ observability:
 # a resumed chat re-hydrates. Uncomment to opt in:
 artifacts: {}
 # artifacts:
-#   store: default_postgres
+# store: default_postgres
 
 # Agent Plugins roots (https://agent-plugins.org/), beyond quack's own shipped
 # skills/. A root can contribute skills (<root>/skills, merged into both the
@@ -394,23 +394,23 @@ plugins:
 # that into a structured summary (synthesizer has no memory tools configured,
 # so it only summarizes - it can't commit facts on its own).
 # workflows:
-#   - name: document-ingest
-#     trigger: "Ingest a new document (e.g. a reMarkable export) into the knowledge base"
-#     agents: [image-reader, synthesizer]
-#     shape: "ONE `image-reader` node (transcribes the attached document) → ONE `synthesizer` node (terminal - writes the structured summary)"
-#     nodes:
-#       - id: transcribe
-#         agent: image-reader
-#         task: "Transcribe this document's full content, preserving structure (headings, lists, sketches described in words).\n\n{{ask}}"
-#         artifact: document   # #1006/#1090: episodic record of this stage's output, preloaded on re-ingest
-#       - id: summarize
-#         agent: synthesizer
-#         depends_on: [transcribe]
-#         task: "Write a structured Markdown summary of the transcribed document above: key facts, decisions, and action items.\n\n{{ask}}"
-#         artifact: document
-#   # rmfakecloud documents arrive as application/pdf; the OpenAI backend
-#   # (internal/inference/openaimodel) doesn't decode inline PDF data yet, so
-#   # this shape is the intended wiring, not yet an end-to-end working one.
+# - name: document-ingest
+# trigger: "Ingest a new document (e.g. a reMarkable export) into the knowledge base"
+# agents: [image-reader, synthesizer]
+# shape: "ONE `image-reader` node (transcribes the attached document) → ONE `synthesizer` node (terminal - writes the structured summary)"
+# nodes:
+# - id: transcribe
+# agent: image-reader
+# task: "Transcribe this document's full content, preserving structure (headings, lists, sketches described in words).\n\n{{ask}}"
+# artifact: document # #1006/#1090: episodic record of this stage's output, preloaded on re-ingest
+# - id: summarize
+# agent: synthesizer
+# depends_on: [transcribe]
+# task: "Write a structured Markdown summary of the transcribed document above: key facts, decisions, and action items.\n\n{{ask}}"
+# artifact: document
+# # rmfakecloud documents arrive as application/pdf; the OpenAI backend
+# # (internal/inference/openaimodel) doesn't decode inline PDF data yet, so
+# # this shape is the intended wiring, not yet an end-to-end working one.
 
 # The agents' working disk (filesystem/git tools). One configured root; a
 # per-user jail lives under it (<root>/<user_id>/ - "local" today, the OIDC
@@ -425,160 +425,160 @@ workspace:
   max_results: 200                # grep/glob hits per call
   max_list_entries: 500           # list_dir entries per call
   timeout_seconds: 60
-  # timeout_seconds governs a single run_command tool call; gate check commands
-  # (e.g. a full `go test ./...`) run far longer, so they use check_timeout_seconds instead.
+ # timeout_seconds governs a single run_command tool call; gate check commands
+ # (e.g. a full `go test ./...`) run far longer, so they use check_timeout_seconds instead.
   check_timeout_seconds: 600
 
-  # sandbox: the OS boundary every run_command / gate-check CHILD PROCESS runs
-  # inside. The jail above is a PATH CHECK on the tools - it never constrained a
-  # child process, only its cwd, so before this a child could read ~/.ssh,
-  # ~/.aws, .env, and anything else the server's OS user can read.
-  #   bwrap (default) - bubblewrap namespace: the child's filesystem is a
-  #     read-only system view plus exactly two writable paths (its own working
-  #     directory and its isolated $HOME). Nothing else EXISTS in there. Needs
-  #     no root and no daemon; install it (Debian/Ubuntu: `apt-get install
-  #     bubblewrap`). If it isn't installed/usable, the server REFUSES TO START.
-  #     A coding agent's own shell commands (ledgered as run_command) run in a
-  #     REAL SHELL (/bin/sh -c) in here: pipes, redirects, globs, $(…) and &&
-  #     all work.
-  #   landlock - a self-applied Landlock ruleset (no new namespace): the child
-  #     restricts ITSELF then execs, so it works inside an unprivileged
-  #     container where bwrap can't nest. Requires Linux kernel >= 6.2
-  #     (Landlock ABI >= 3); the server REFUSES TO START otherwise. Paths keep
-  #     their real host names (no fixed /workspace remap - that needs a mount
-  #     namespace).
-  #   none - children run with the server user's full filesystem authority.
-  #     Logs a loud WARN at startup. Only sane when the whole server is already
-  #     confined (a throwaway container/VM) or you trust the agents with that
-  #     account. With no OS boundary, nothing quack controls stands between a
-  #     coding agent's shell commands and that account's full reach.
+ # sandbox: the OS boundary every run_command / gate-check CHILD PROCESS runs
+ # inside. The jail above is a PATH CHECK on the tools - it never constrained a
+ # child process, only its cwd, so before this a child could read ~/.ssh,
+ # ~/.aws, .env, and anything else the server's OS user can read.
+ # bwrap (default) - bubblewrap namespace: the child's filesystem is a
+ # read-only system view plus exactly two writable paths (its own working
+ # directory and its isolated $HOME). Nothing else EXISTS in there. Needs
+ # no root and no daemon; install it (Debian/Ubuntu: `apt-get install
+ # bubblewrap`). If it isn't installed/usable, the server REFUSES TO START.
+ # A coding agent's own shell commands (ledgered as run_command) run in a
+ # REAL SHELL (/bin/sh -c) in here: pipes, redirects, globs, $(…) and &&
+ # all work.
+ # landlock - a self-applied Landlock ruleset (no new namespace): the child
+ # restricts ITSELF then execs, so it works inside an unprivileged
+ # container where bwrap can't nest. Requires Linux kernel >= 6.2
+ # (Landlock ABI >= 3); the server REFUSES TO START otherwise. Paths keep
+ # their real host names (no fixed /workspace remap - that needs a mount
+ # namespace).
+ # none - children run with the server user's full filesystem authority.
+ # Logs a loud WARN at startup. Only sane when the whole server is already
+ # confined (a throwaway container/VM) or you trust the agents with that
+ # account. With no OS boundary, nothing quack controls stands between a
+ # coding agent's shell commands and that account's full reach.
   sandbox: landlock   # bwrap can't nest inside this unprivileged Docker container (nested
-                      # mount-namespace denied); Landlock is a self-restriction, not a
-                      # namespace construction, so it works here and IS an OS-enforced
-                      # boundary (unlike `none`, which relied on the container alone).
+ # mount-namespace denied); Landlock is a self-restriction, not a
+ # namespace construction, so it works here and IS an OS-enforced
+ # boundary (unlike `none`, which relied on the container alone).
 
-  # build_dirs: work-tree-relative build-output dirs that stay WRITABLE on a
-  # read_only node's otherwise-immutable tree (acp.read_only: true, e.g.
-  # code-reviewer, #754) under sandbox: landlock or bwrap - PROVIDED the repo
-  # under review already names the dir (by its top-level component) in its
-  # own .gitignore; an entry this repo does NOT gitignore is never
-  # pre-created or granted, so a reviewer's `npm test`/`vite build` never
-  # pollutes `git status` on what must stay an immutable tree. Pre-created
-  # empty before the sandbox ruleset applies (landlock/bwrap can only grant a
-  # path that already exists), so a fresh worktree that never ran an install
-  # still gets a writable node_modules/ to install INTO. Any top-level dir
-  # the repo's .gitignore names verbatim (a plain "name/" line) is granted
-  # too, even if it isn't in this list - so a repo with its own convention
-  # (a Python .venv/, anything) works with no config change at all.
+ # build_dirs: work-tree-relative build-output dirs that stay WRITABLE on a
+ # read_only node's otherwise-immutable tree (acp.read_only: true, e.g.
+ # code-reviewer, #754) under sandbox: landlock or bwrap - PROVIDED the repo
+ # under review already names the dir (by its top-level component) in its
+ # own .gitignore; an entry this repo does NOT gitignore is never
+ # pre-created or granted, so a reviewer's `npm test`/`vite build` never
+ # pollutes `git status` on what must stay an immutable tree. Pre-created
+ # empty before the sandbox ruleset applies (landlock/bwrap can only grant a
+ # path that already exists), so a fresh worktree that never ran an install
+ # still gets a writable node_modules/ to install INTO. Any top-level dir
+ # the repo's .gitignore names verbatim (a plain "name/" line) is granted
+ # too, even if it isn't in this list - so a repo with its own convention
+ # (a Python .venv/, anything) works with no config change at all.
   build_dirs: ["node_modules", "dist", "build", ".vite", ".cache", "coverage", "target",
                "frontend/node_modules", "frontend/dist", "frontend/build", "frontend/.vite", "frontend/.cache", "frontend/coverage", "frontend/target"]
 
-  # Per-child resource limits (rlimits) for the gate's own one-shot children -
-  # NOT the ACP agent subprocess, which runs with no ceiling (#798: a fixed
-  # FSIZE cannot bound a process whose DB grows across every run).
-  # A runaway build (`npm ci` on a hostile
-  # repo, a test that allocates without bound) must not be able to take the host
-  # down with it. 0 = inherit the server's limit.
+ # Per-child resource limits (rlimits) for the gate's own one-shot children -
+ # NOT the ACP agent subprocess, which runs with no ceiling (#798: a fixed
+ # FSIZE cannot bound a process whose DB grows across every run).
+ # A runaway build (`npm ci` on a hostile
+ # repo, a test that allocates without bound) must not be able to take the host
+ # down with it. 0 = inherit the server's limit.
   limits:
     address_space_mb: 8192   # RLIMIT_AS, PER PROCESS. Do not tighten much: node's V8
-                             # reserves a huge VIRTUAL region at startup, so a small
-                             # limit doesn't slim a build, it stops node running at all.
-                             # A JVM has the same failure mode, but sizes off the HOST's
-                             # real RAM/cores rather than this limit - quack bounds it
-                             # explicitly via JAVA_TOOL_OPTIONS instead (see #647).
+ # reserves a huge VIRTUAL region at startup, so a small
+ # limit doesn't slim a build, it stops node running at all.
+ # A JVM has the same failure mode, but sizes off the HOST's
+ # real RAM/cores rather than this limit - quack bounds it
+ # explicitly via JAVA_TOOL_OPTIONS instead (see #647).
     max_procs: 512           # RLIMIT_NPROC - only applied inside the bwrap user namespace
-                             # (it is counted per-UID system-wide, so outside one it would
-                             # break every fork). --unshare-pid contains fork bombs anyway.
+ # (it is counted per-UID system-wide, so outside one it would
+ # break every fork). --unshare-pid contains fork bombs anyway.
     max_file_size_mb: 1024   # RLIMIT_FSIZE: one command cannot fill the disk.
 
-  # exec_path: extra PATH dirs for run_command/checks/git children - for toolchains
-  # outside the fixed system dirs (nvm, asdf, a $HOME-installed Go SDK). Under
-  # sandbox: bwrap each entry is ALSO bind-mounted READ-ONLY into the child (a
-  # `.../bin` entry brings its sibling lib/, libexec/ and share/ with it - nvm's
-  # `npm` is a symlink into ../lib), so the toolchain exists in there and nothing
-  # else on the host does. Entries are bound VERBATIM: a toolchain that keeps
-  # runtime files elsewhere in its prefix (a Go SDK's GOROOT - src/, pkg/) needs
-  # that directory listed too, or the child fails with "cannot find GOROOT" /
-  # exit 127 "No such file or directory". Anything under /usr is already covered.
-  # exec_path:
-  #   - /home/user/.nvm/versions/node/v22.22.3/bin
-  #   - /home/user/sdk/go1.25.0            # a GOROOT outside /usr: bind the whole SDK
+ # exec_path: extra PATH dirs for run_command/checks/git children - for toolchains
+ # outside the fixed system dirs (nvm, asdf, a $HOME-installed Go SDK). Under
+ # sandbox: bwrap each entry is ALSO bind-mounted READ-ONLY into the child (a
+ # `.../bin` entry brings its sibling lib/, libexec/ and share/ with it - nvm's
+ # `npm` is a symlink into ../lib), so the toolchain exists in there and nothing
+ # else on the host does. Entries are bound VERBATIM: a toolchain that keeps
+ # runtime files elsewhere in its prefix (a Go SDK's GOROOT - src/, pkg/) needs
+ # that directory listed too, or the child fails with "cannot find GOROOT" /
+ # exit 127 "No such file or directory". Anything under /usr is already covered.
+ # exec_path:
+ # - /home/user/.nvm/versions/node/v22.22.3/bin
+ # - /home/user/sdk/go1.25.0 # a GOROOT outside /usr: bind the whole SDK
 
-  # env: extra environment for the SAME children exec_path targets, PLUS the
-  # ACP coding-agent subprocess (the pi-acp shim) - the half exec_path doesn't cover:
-  # a toolchain that must be FOUND, not just be on PATH (JAVA_HOME for
-  # Gradle, ANDROID_HOME/ANDROID_SDK_ROOT for AGP, a GOROOT outside /usr).
-  # Deployment-wide; a matching key in an agent's own `acp: {env: ...}` wins
-  # (docs/configuration/agents.md). PATH and HOME are reserved - a startup
-  # error, not a silent override - since exec_path and the jail's isolated
-  # per-user home already own those. Not a secrets vault: values interpolate
-  # ${VAR} like the rest of this file, but put anything actually sensitive in
-  # a provider/tool's own auth block instead. Under sandbox: bwrap, a
-  # directory an env value points at still needs its own exec_path entry to
-  # be bind-mounted into the child (see exec_path above).
-  # env:
-  #   JAVA_HOME: /home/user/toolchains/jdk-21
-  #   ANDROID_HOME: /home/user/toolchains/android-sdk
-  #   ANDROID_SDK_ROOT: /home/user/toolchains/android-sdk
+ # env: extra environment for the SAME children exec_path targets, PLUS the
+ # ACP coding-agent subprocess (the pi-acp shim) - the half exec_path doesn't cover:
+ # a toolchain that must be FOUND, not just be on PATH (JAVA_HOME for
+ # Gradle, ANDROID_HOME/ANDROID_SDK_ROOT for AGP, a GOROOT outside /usr).
+ # Deployment-wide; a matching key in an agent's own `acp: {env: ...}` wins
+ # (docs/configuration/agents.md). PATH and HOME are reserved - a startup
+ # error, not a silent override - since exec_path and the jail's isolated
+ # per-user home already own those. Not a secrets vault: values interpolate
+ # ${VAR} like the rest of this file, but put anything actually sensitive in
+ # a provider/tool's own auth block instead. Under sandbox: bwrap, a
+ # directory an env value points at still needs its own exec_path entry to
+ # be bind-mounted into the child (see exec_path above).
+ # env:
+ # JAVA_HOME: /home/user/toolchains/jdk-21
+ # ANDROID_HOME: /home/user/toolchains/android-sdk
+ # ANDROID_SDK_ROOT: /home/user/toolchains/android-sdk
 
-  # check_commands: allowed command PREFIXES the planner may complete into a
-  # code-implementer node's `checks` (§4) - the trust gate runs these against
-  # the node's own workdir after each draft, and DERIVES a repo's own build/
-  # vet/test commands from them when the planner set none. Defaults ON (this
-  # list); each derived check is additionally gated on its binary existing on
-  # the host, so a runtime without go/npm (the shipped Docker image has git
-  # only) simply derives nothing instead of failing nodes. An EXPLICIT [] still
-  # disables checks entirely.
+ # check_commands: allowed command PREFIXES the planner may complete into a
+ # code-implementer node's `checks` (§4) - the trust gate runs these against
+ # the node's own workdir after each draft, and DERIVES a repo's own build/
+ # vet/test commands from them when the planner set none. Defaults ON (this
+ # list); each derived check is additionally gated on its binary existing on
+ # the host, so a runtime without go/npm (the shipped Docker image has git
+ # only) simply derives nothing instead of failing nodes. An EXPLICIT [] still
+ # disables checks entirely.
   check_commands: ["go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make"]
-  # `npm run render-check` (#1192) is never derived automatically - it only
-  # runs when a node's own `checks:` names it explicitly. When it does, its
-  # PNGs are handed to the reviewing judge as `bytes:` artifacts (#1211).
+ # `npm run render-check` is never derived automatically - it only
+ # runs when a node's own `checks:` names it explicitly. When it does, its
+ # PNGs are handed to the reviewing judge as `bytes:` artifacts .
 
-  # check_setup: repo bootstrap commands, run once per dir (a shared clone, a
-  # node's linked worktree, or the baseline worktree the gate diffs against)
-  # before that dir is used for anything else. Runs at TWO points sharing one
-  # cache: quack-side at provisioning time (right after the shared clone or a
-  # node's worktree is created, before any sandboxed worker starts in it -
-  # a read-only reviewer/explorer can never bootstrap itself) and again at
-  # gate-check time before checks are derived or run (a no-op if provisioning
-  # already ran it). Without this, a check that only fails for lack of
-  # bootstrapping (not the worker's fault) self-disarms exactly like real repo
-  # debt - which is how quack's own repo lost gating on go test/make build/
-  # make test in a fresh clone (embed.go needs `make plugins`; the mermaid
-  # tests need scripts/node_modules). A failing setup command logs a warning
-  # and leaves that self-disarm to do its job - it never fails a node
-  # directly. Unset (default) = no bootstrap, current behavior. Commented out
-  # below as quack's own example - NOT enabled by default:
-  # check_setup:
-  #   - make plugins
-  #   - npm --prefix scripts ci
+ # check_setup: repo bootstrap commands, run once per dir (a shared clone, a
+ # node's linked worktree, or the baseline worktree the gate diffs against)
+ # before that dir is used for anything else. Runs at TWO points sharing one
+ # cache: quack-side at provisioning time (right after the shared clone or a
+ # node's worktree is created, before any sandboxed worker starts in it -
+ # a read-only reviewer/explorer can never bootstrap itself) and again at
+ # gate-check time before checks are derived or run (a no-op if provisioning
+ # already ran it). Without this, a check that only fails for lack of
+ # bootstrapping (not the worker's fault) self-disarms exactly like real repo
+ # debt - which is how quack's own repo lost gating on go test/make build/
+ # make test in a fresh clone (embed.go needs `make plugins`; the mermaid
+ # tests need scripts/node_modules). A failing setup command logs a warning
+ # and leaves that self-disarm to do its job - it never fails a node
+ # directly. Unset (default) = no bootstrap, current behavior. Commented out
+ # below as quack's own example - NOT enabled by default:
+ # check_setup:
+ # - make plugins
+ # - npm --prefix scripts ci
 
-  # Deployment-level per-host HTTPS git credentials - ONE identity per host (a
-  # PAT), configured like every other secret. Empty (default) = public repos
-  # only. `token` MUST be an ${VAR} env reference (a literal secret here is a
-  # startup error, not a silent leak - see docs/configuration/index.md).
-  # git_credentials:
-  #   - host: github.com
-  #     username: x-access-token       # default; GitHub PATs use this
-  #     token: ${QUACK_GITHUB_TOKEN}
+ # Deployment-level per-host HTTPS git credentials - ONE identity per host (a
+ # PAT), configured like every other secret. Empty (default) = public repos
+ # only. `token` MUST be an ${VAR} env reference (a literal secret here is a
+ # startup error, not a silent leak - see docs/configuration/index.md).
+ # git_credentials:
+ # - host: github.com
+ # username: x-access-token # default; GitHub PATs use this
+ # token: ${QUACK_GITHUB_TOKEN}
 
-  # Guard ladder (§4b): tool name -> none (default, unlisted) | judge |
-  # confirm | judge+confirm. No entries by default since 0.6.0: the code agents
-  # run as external ACP subprocesses (internal/acp), so the write-side
-  # tools the ladder guarded are gone - the walls that remain are the jail on
-  # the surviving read tools, the OS sandbox around gate-check children, and
-  # gate-owned delivery (git push denied inside the subprocess).
-  # guards:
-  #   web_fetch: judge
+ # Guard ladder (§4b): tool name -> none (default, unlisted) | judge |
+ # confirm | judge+confirm. No entries by default since 0.6.0: the code agents
+ # run as external ACP subprocesses (internal/acp), so the write-side
+ # tools the ladder guarded are gone - the walls that remain are the jail on
+ # the surviving read tools, the OS sandbox around gate-check children, and
+ # gate-owned delivery (git push denied inside the subprocess).
+ # guards:
+ # web_fetch: judge
 
-  # gc: the periodic disk reaper - the workspace volume is deliberately
-  # persistent across rebuilds, and nothing else reclaims a chat's clones or
-  # the gate's scratch worktrees once a run finishes. TTL-based (idle time)
-  # for chats/scratch; home_max_mb is quota-based instead, because the ACP
-  # agent's $HOME is shared across every chat and has no idle time of its own
-  # to expire. 0/absent on any field below means "use the default"; there is
-  # no separate "disable just this class" value - set enabled: false to turn
-  # the whole sweep off.
+ # gc: the periodic disk reaper - the workspace volume is deliberately
+ # persistent across rebuilds, and nothing else reclaims a chat's clones or
+ # the gate's scratch worktrees once a run finishes. TTL-based (idle time)
+ # for chats/scratch; home_max_mb is quota-based instead, because the ACP
+ # agent's $HOME is shared across every chat and has no idle time of its own
+ # to expire. 0/absent on any field below means "use the default"; there is
+ # no separate "disable just this class" value - set enabled: false to turn
+ # the whole sweep off.
   gc:
     enabled: true
     chat_ttl_hours: 168      # 7 days; a chat scope idle longer than this is removed (never one with a run in flight)
@@ -599,57 +599,57 @@ workspace:
 # startup error. A present-but-empty block fails to boot, so keep it commented
 # until the env vars are actually set.
 # extensions:
-#   github:
-#     client_id: ${QUACK_GITHUB_APP_CLIENT_ID}
-#     private_key: ${QUACK_GITHUB_APP_PRIVATE_KEY}    # PEM contents via env
-#     # private_key_path: /run/secrets/quack-app.pem  # alternative: a mounted .pem
-#     webhook_secret: ${QUACK_GITHUB_APP_WEBHOOK_SECRET}
-#     mention: "/quack"  # must open a line - a quoted "> /quack …" reply never re-fires it
-#     # allowed_users: GitHub logins permitted to invoke quack via a mention
-#     # comment or a human-applied workflow label (case-insensitive). Empty
-#     # (default) DENIES every human-invoked trigger - auto-review is
-#     # unaffected. Seed it with your own login(s) or quack won't respond.
-#     allowed_users: [fagerbergj]
-#     # triggers: which webhook events fire a run. Default [mention]. Others:
-#     # pr_opened (auto-review on PR open), label (review a PR when labels.review
-#     # is applied), issue_plan (plan an issue when labels.plan is applied),
-#     # issue_implement (implement the plan when labels.implement is applied),
-#     # merge (squash-merge a PR when labels.merge is applied by a human AND
-#     # quack's own latest review is APPROVED - needs pull request write incl. merge),
-#     # ci_fix (labels.fix is a PERSISTENT flag: fixes a PR on ANY CI/CD failure
-#     # while it's present, one attempt per failure, and also engages a PR quack
-#     # itself authored - needs the App subscribed to Workflow run + Pull request
-#     # review events, and Actions/Checks read).
-#     # triggers: [mention, pr_opened, label, issue_plan, issue_implement, merge, ci_fix]
-#     # labels: the repo labels driving the label-based workflow (applying a label
-#     # needs repo write access, so labels double as the permission model).
-#     # labels:
-#     #   plan: "quack:plan"
-#     #   implement: "quack:implement"
-#     #   review: "quack-auto-review"
-#     #   merge: "quack:merge"
-#     #   partial_fix: "quack:partial-fix"  # suppresses the unconditional Closes #N when applied to an issue
-#     #   fix: "quack:fix"          # keep a PR green - CI auto-heal + own-PR review engagement (ci_fix trigger)
+# github:
+# client_id: ${QUACK_GITHUB_APP_CLIENT_ID}
+# private_key: ${QUACK_GITHUB_APP_PRIVATE_KEY} # PEM contents via env
+# # private_key_path: /run/secrets/quack-app.pem # alternative: a mounted .pem
+# webhook_secret: ${QUACK_GITHUB_APP_WEBHOOK_SECRET}
+# mention: "/quack" # must open a line - a quoted "> /quack …" reply never re-fires it
+# # allowed_users: GitHub logins permitted to invoke quack via a mention
+# # comment or a human-applied workflow label (case-insensitive). Empty
+# # (default) DENIES every human-invoked trigger - auto-review is
+# # unaffected. Seed it with your own login(s) or quack won't respond.
+# allowed_users: [fagerbergj]
+# # triggers: which webhook events fire a run. Default [mention]. Others:
+# # pr_opened (auto-review on PR open), label (review a PR when labels.review
+# # is applied), issue_plan (plan an issue when labels.plan is applied),
+# # issue_implement (implement the plan when labels.implement is applied),
+# # merge (squash-merge a PR when labels.merge is applied by a human AND
+# # quack's own latest review is APPROVED - needs pull request write incl. merge),
+# # ci_fix (labels.fix is a PERSISTENT flag: fixes a PR on ANY CI/CD failure
+# # while it's present, one attempt per failure, and also engages a PR quack
+# # itself authored - needs the App subscribed to Workflow run + Pull request
+# # review events, and Actions/Checks read).
+# # triggers: [mention, pr_opened, label, issue_plan, issue_implement, merge, ci_fix]
+# # labels: the repo labels driving the label-based workflow (applying a label
+# # needs repo write access, so labels double as the permission model).
+# # labels:
+# # plan: "quack:plan"
+# # implement: "quack:implement"
+# # review: "quack-auto-review"
+# # merge: "quack:merge"
+# # partial_fix: "quack:partial-fix" # suppresses the unconditional Closes #N when applied to an issue
+# # fix: "quack:fix" # keep a PR green - CI auto-heal + own-PR review engagement (ci_fix trigger)
 #
-#   # extensions.remarkable polls a self-hosted rmfakecloud instance for new/updated
-#   # reMarkable tablet documents and dispatches each one into the bound
-#   # "document-ingest" workflow (see workflows: above). Same ${VAR}-only secret
-#   # rule as github above.
-#   remarkable:
-#     base_url: ${RMFAKECLOUD_URL}
-#     email: ${RMFAKECLOUD_EMAIL}
-#     password: ${RMFAKECLOUD_PASSWORD}
-#     # poll_interval: 1m       # optional Go duration (e.g. "90s"); default 1m
-#     # folder_filter: Inbox    # optional; restricts polling to this folder + subfolders
+# # extensions.remarkable polls a self-hosted rmfakecloud instance for new/updated
+# # reMarkable tablet documents and dispatches each one into the bound
+# # "document-ingest" workflow (see workflows: above). Same ${VAR}-only secret
+# # rule as github above.
+# remarkable:
+# base_url: ${RMFAKECLOUD_URL}
+# email: ${RMFAKECLOUD_EMAIL}
+# password: ${RMFAKECLOUD_PASSWORD}
+# # poll_interval: 1m # optional Go duration (e.g. "90s"); default 1m
+# # folder_filter: Inbox # optional; restricts polling to this folder + subfolders
 #
-#   # extensions.usage serves an in-app token/cost dashboard at /usage/ (authed),
-#   # charting gen_ai.client.* metrics via a narrow GET-only proxy to Prometheus.
-#   # Needs the deployment's Prometheus reachable from the quack container.
-#   usage:
-#     prometheus_url: http://prometheus:9090
-#     # tempo_url: http://tempo:3200   # optional, linked only
-#     # default_range: 24h             # optional Go duration
-#     # max_attempts: 3         # optional; retries per failed document before giving up (0 = unlimited)
+# # extensions.usage serves an in-app token/cost dashboard at /usage/ (authed),
+# # charting gen_ai.client.* metrics via a narrow GET-only proxy to Prometheus.
+# # Needs the deployment's Prometheus reachable from the quack container.
+# usage:
+# prometheus_url: http://prometheus:9090
+# # tempo_url: http://tempo:3200 # optional, linked only
+# # default_range: 24h # optional Go duration
+# # max_attempts: 3 # optional; retries per failed document before giving up (0 = unlimited)
 
 # Inbound request auth (internal/auth), gating the REST + MCP surface (never
 # /health or the SPA). Absent entirely - as here - auth is disabled and every
@@ -659,19 +659,19 @@ workspace:
 # issuer/audience/user) fails to boot, so keep this commented until real
 # values are set.
 # auth:
-#   # oidc verifies a bearer token against an IdP (Authentik, Keycloak, Auth0,
-#   # any OIDC-compliant issuer): fetches <issuer>/.well-known/openid-configuration
-#   # for its jwks_uri at startup (a bad/unreachable issuer is a startup error,
-#   # not a silent open-auth fallback), then verifies signature + iss + aud + exp
-#   # per request. jwks_url overrides discovery - set it only when discovery
-#   # itself is unavailable or network-blocked.
-#   oidc:
-#     issuer: ${QUACK_OIDC_ISSUER}
-#     audience: ${QUACK_OIDC_AUDIENCE}
-#     # jwks_url: ${QUACK_OIDC_JWKS_URL}  # optional: skips discovery when set
-#   # trusted_headers names the headers a forward-auth gateway (e.g. Traefik +
-#   # Authentik) injects after authenticating the request itself; quack trusts
-#   # them as-is rather than re-verifying. groups is optional.
-#   # trusted_headers:
-#   #   user: X-authentik-username
-#   #   groups: X-authentik-groups
+# # oidc verifies a bearer token against an IdP (Authentik, Keycloak, Auth0,
+# # any OIDC-compliant issuer): fetches <issuer>/.well-known/openid-configuration
+# # for its jwks_uri at startup (a bad/unreachable issuer is a startup error,
+# # not a silent open-auth fallback), then verifies signature + iss + aud + exp
+# # per request. jwks_url overrides discovery - set it only when discovery
+# # itself is unavailable or network-blocked.
+# oidc:
+# issuer: ${QUACK_OIDC_ISSUER}
+# audience: ${QUACK_OIDC_AUDIENCE}
+# # jwks_url: ${QUACK_OIDC_JWKS_URL} # optional: skips discovery when set
+# # trusted_headers names the headers a forward-auth gateway (e.g. Traefik +
+# # Authentik) injects after authenticating the request itself; quack trusts
+# # them as-is rather than re-verifying. groups is optional.
+# # trusted_headers:
+# # user: X-authentik-username
+# # groups: X-authentik-groups

@@ -4,8 +4,8 @@
 # and coding agents off - see ../deployment.md and ../../cli.md.
 #
 # Run it:
-#   QUACK_LLM_ENDPOINT=http://localhost:11436/v1 QUACK_ORCH_MODEL=... \
-#     ./quack server run --config docs/configuration/examples/local-cli.yaml
+# QUACK_LLM_ENDPOINT=http://localhost:11436/v1 QUACK_ORCH_MODEL=... \
+# ./quack server run --config docs/configuration/examples/local-cli.yaml
 
 providers:
   default:

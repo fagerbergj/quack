@@ -2,12 +2,12 @@
 # via an embedded docker-compose stack, waits for them, then runs pointed at
 # them. The no-hand-setup full stack (needs docker + host ports 5432/6334 free).
 #
-#   export QUACK_LLM_ENDPOINT="http://your-llm:11436/v1" QUACK_LLM_API_KEY="unused"
-#   export QUACK_ORCH_MODEL="qwen3.6-35b" QUACK_RESEARCHER_MODEL="qwen3.6-35b"
-#   export QUACK_JUDGE_MODEL="gemma4-26b-a4b" QUACK_EMBED_MODEL="qwen3-embed"
-#   ./quack server start --config config/managed.yaml
-#   ./quack server status  --config config/managed.yaml
-#   ./quack server stop    --config config/managed.yaml   # tears down stores too
+# export QUACK_LLM_ENDPOINT="http://your-llm:11436/v1" QUACK_LLM_API_KEY="unused"
+# export QUACK_ORCH_MODEL="qwen3.6-35b" QUACK_RESEARCHER_MODEL="qwen3.6-35b"
+# export QUACK_JUDGE_MODEL="gemma4-26b-a4b" QUACK_EMBED_MODEL="qwen3-embed"
+# ./quack server start --config config/managed.yaml
+# ./quack server status --config config/managed.yaml
+# ./quack server stop --config config/managed.yaml # tears down stores too
 #
 # Tool backends (search/fetch) are NOT managed. This preset uses Exa's keyless
 # hosted MCP for search (no API key, no container) and a direct GET for fetch -
@@ -31,13 +31,13 @@ models:
   ${QUACK_EMBED_MODEL}:
     provider: default
     role: embed
-  # No separate entry for QUACK_ORCH_MODEL: this preset's own usage (above)
-  # sets it equal to QUACK_RESEARCHER_MODEL, so it resolves to the worker
-  # entry already registered. Set it to a genuinely different model? Add its
-  # own entry here too.
+ # No separate entry for QUACK_ORCH_MODEL: this preset's own usage (above)
+ # sets it equal to QUACK_RESEARCHER_MODEL, so it resolves to the worker
+ # entry already registered. Set it to a genuinely different model? Add its
+ # own entry here too.
 
 stores:
-  # The managed stack publishes Postgres on localhost:5432 and Qdrant on :6334.
+ # The managed stack publishes Postgres on localhost:5432 and Qdrant on :6334.
   default_postgres:
     kind: postgres
     url: postgres://quack:quack@localhost:5432/quack?sslmode=disable
@@ -57,7 +57,7 @@ session:
   store: default_postgres
 
 orchestrator:
-  # see config/quack.yaml's orchestrator.skills comment for the routing rationale.
+ # see config/quack.yaml's orchestrator.skills comment for the routing rationale.
   skills: [plan-work, format-markdown, present-coding-plan, contribute]
   provider: default
   model: ${QUACK_ORCH_MODEL}
@@ -74,7 +74,7 @@ agents:
     context_window: 65536
     judge_rounds: 1             # research converges in one draft; extra rounds burn tokens re-fetching to fix citations. Draft must cite inline (see prompt.md).
     tools: [web_search, web_fetch, summarize, current_date, stage_memory, ask_advisor]
-    # no skills scoped: see config/quack.yaml's web-researcher comment
+ # no skills scoped: see config/quack.yaml's web-researcher comment
   code-implementer:
     bundle: agents/code-implementer   # card + prompt.md (ACP preamble) + rubric.yaml
     provider: default
@@ -83,9 +83,9 @@ agents:
     model: ${QUACK_CODER_MODEL}       # falls back to QUACK_RESEARCHER_MODEL if unset
     context_window: 65536
     judge_rounds: 8             # coding needs iterate-until-tests-pass; the judge+revise grind is where quack converges on correct code (tunable)
-    # External ACP coder (internal/acp): the pi-acp shim drives pi from
-    # OPENCODE_CONFIG_CONTENT; git push is denied in the subprocess (delivery is
-    # gate-owned) and the gate reads commits off the clone (augmentFromRepo).
+ # External ACP coder (internal/acp): the pi-acp shim drives pi from
+ # OPENCODE_CONFIG_CONTENT; git push is denied in the subprocess (delivery is
+ # gate-owned) and the gate reads commits off the clone (augmentFromRepo).
     acp:
       command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
   code-reviewer:
@@ -96,8 +96,8 @@ agents:
     model: ${QUACK_CODER_MODEL}       # reuse the coder model (falls back to QUACK_RESEARCHER_MODEL if unset)
     context_window: 65536
     judge_rounds: 2             # a review is largely one-pass; 2 rounds is plenty
-    # External ACP reviewer, read_only: runs the change with its own tools, never
-    # commits; the gate parses its VERDICT/FINDINGS tail into the posted review.
+ # External ACP reviewer, read_only: runs the change with its own tools, never
+ # commits; the gate parses its VERDICT/FINDINGS tail into the posted review.
     acp:
       command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
       read_only: true
@@ -140,7 +140,7 @@ gates:
 
 dag:
   max_active_nodes: 32  # PER-RUN host-resource ceiling only (jail/clone CPU+RAM); GPU concurrency
-                        # is models.<m>.limits + providers.<p>.limits.active (#1007)
+ # is models.<m>.limits + providers.<p>.limits.active 
 
 server:
   addr: ":8080"
@@ -175,28 +175,28 @@ workspace:
 # key, and a webhook_secret. So an operator uncomments it only once those env vars
 # are actually set, rather than shipping a config that fails to boot without them.
 # extensions:
-#   github:
-#     client_id: ${QUACK_GITHUB_APP_CLIENT_ID}
-#     private_key: ${QUACK_GITHUB_APP_PRIVATE_KEY}    # PEM contents via env
-#     # private_key_path: /run/secrets/quack-app.pem  # alternative: a mounted .pem
-#     webhook_secret: ${QUACK_GITHUB_APP_WEBHOOK_SECRET}
-#     mention: "@quack"
-#     # allowed_users: GitHub logins permitted to invoke quack via a mention
-#     # comment or a human-applied workflow label (case-insensitive). Empty
-#     # (default) DENIES every human-invoked trigger - auto-review is
-#     # unaffected. Seed it with your own login(s) or quack won't respond.
-#     allowed_users: [fagerbergj]
-#     # triggers: which webhook events fire a run. Default [mention]. Others:
-#     # pr_opened (auto-review on PR open), label (review a PR when labels.review
-#     # is applied), issue_plan (plan an issue when labels.plan is applied),
-#     # issue_implement (implement the plan when labels.implement is applied),
-#     # merge (squash-merge a PR when labels.merge is applied by a human AND
-#     # quack's own latest review is APPROVED - needs pull request write incl. merge).
-#     # triggers: [mention, pr_opened, label, issue_plan, issue_implement, merge]
-#     # labels: the repo labels driving the label-based workflow (applying a label
-#     # needs repo write access, so labels double as the permission model).
-#     # labels:
-#     #   plan: "quack:plan"
-#     #   implement: "quack:implement"
-#     #   review: "quack-auto-review"
-#     #   merge: "quack:merge"
+# github:
+# client_id: ${QUACK_GITHUB_APP_CLIENT_ID}
+# private_key: ${QUACK_GITHUB_APP_PRIVATE_KEY} # PEM contents via env
+# # private_key_path: /run/secrets/quack-app.pem # alternative: a mounted .pem
+# webhook_secret: ${QUACK_GITHUB_APP_WEBHOOK_SECRET}
+# mention: "@quack"
+# # allowed_users: GitHub logins permitted to invoke quack via a mention
+# # comment or a human-applied workflow label (case-insensitive). Empty
+# # (default) DENIES every human-invoked trigger - auto-review is
+# # unaffected. Seed it with your own login(s) or quack won't respond.
+# allowed_users: [fagerbergj]
+# # triggers: which webhook events fire a run. Default [mention]. Others:
+# # pr_opened (auto-review on PR open), label (review a PR when labels.review
+# # is applied), issue_plan (plan an issue when labels.plan is applied),
+# # issue_implement (implement the plan when labels.implement is applied),
+# # merge (squash-merge a PR when labels.merge is applied by a human AND
+# # quack's own latest review is APPROVED - needs pull request write incl. merge).
+# # triggers: [mention, pr_opened, label, issue_plan, issue_implement, merge]
+# # labels: the repo labels driving the label-based workflow (applying a label
+# # needs repo write access, so labels double as the permission model).
+# # labels:
+# # plan: "quack:plan"
+# # implement: "quack:implement"
+# # review: "quack-auto-review"
+# # merge: "quack:merge"

@@ -1,8 +1,8 @@
 # Local full stack: the Quack app + a self-contained Postgres, plus the keyless
 # search (SearXNG) and render (crawl4ai) backends the web-researcher
 # agent's tools use. One command:
-#   cp .env.example .env   # set QUACK_LLM_ENDPOINT to something reachable from the container
-#   docker compose up --build
+# cp .env.example .env # set QUACK_LLM_ENDPOINT to something reachable from the container
+# docker compose up --build
 services:
   db:
     image: postgres:18
@@ -12,8 +12,8 @@ services:
       POSTGRES_PASSWORD: quack
       POSTGRES_DB: quack
     volumes:
-      # Postgres 18+ wants the mount at /var/lib/postgresql (data lives in a
-      # version subdir), not /var/lib/postgresql/data.
+ # Postgres 18+ wants the mount at /var/lib/postgresql (data lives in a
+ # version subdir), not /var/lib/postgresql/data.
       - quack-pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U quack"]
@@ -23,8 +23,8 @@ services:
     ports:
       - "5432:5432"
 
-  # Keyless metasearch backend for the web_search tool. The mounted settings.yml
-  # enables the JSON API that the tool calls.
+ # Keyless metasearch backend for the web_search tool. The mounted settings.yml
+ # enables the JSON API that the tool calls.
   searxng:
     image: searxng/searxng:latest
     restart: unless-stopped
@@ -35,10 +35,10 @@ services:
     ports:
       - "8080:8080"
 
-  # Keyless crawl4ai render backend for the web_fetch tool's fallback on
-  # JavaScript-heavy / thin pages. POST /md fetches + renders (Playwright) and
-  # returns clean Markdown; auth (JWT) is off by default. Needs shared memory for
-  # the browser pool.
+ # Keyless crawl4ai render backend for the web_fetch tool's fallback on
+ # JavaScript-heavy / thin pages. POST /md fetches + renders (Playwright) and
+ # returns clean Markdown; auth (JWT) is off by default. Needs shared memory for
+ # the browser pool.
   crawl4ai:
     image: unclecode/crawl4ai:latest
     restart: unless-stopped
@@ -46,7 +46,7 @@ services:
     ports:
       - "11235:11235"
 
-  # Vector store for semantic memory (M6). Keyless + internal; gRPC on 6334.
+ # Vector store for semantic memory (M6). Keyless + internal; gRPC on 6334.
   qdrant:
     image: qdrant/qdrant:latest
     restart: unless-stopped
@@ -59,9 +59,9 @@ services:
   app:
     build: .
     restart: unless-stopped
-    # Run the server. Without args the entrypoint (/quack) opens the interactive
-    # chat TUI, which needs a /dev/tty the container has no access to - it would
-    # crash-loop ("could not open a new TTY"). --config is found via QUACK_CONFIG.
+ # Run the server. Without args the entrypoint (/quack) opens the interactive
+ # chat TUI, which needs a /dev/tty the container has no access to - it would
+ # crash-loop ("could not open a new TTY"). --config is found via QUACK_CONFIG.
     command: ["server", "run"]
     depends_on:
       db:
@@ -74,45 +74,45 @@ services:
         condition: service_started
     environment:
       QUACK_DATABASE_URL: postgres://quack:quack@db:5432/quack?sslmode=disable
-      # Logging. debug surfaces hot-path trace (per-embed timing, vetting rounds).
-      # Empty ⇒ the app defaults to info / text.
+ # Logging. debug surfaces hot-path trace (per-embed timing, vetting rounds).
+ # Empty ⇒ the app defaults to info / text.
       QUACK_LOG_LEVEL: ${QUACK_LOG_LEVEL:-}
       QUACK_LOG_FORMAT: ${QUACK_LOG_FORMAT:-}
-      # Reachable from inside the container. Override in .env for your setup;
-      # host.docker.internal points at an LLM server running on the host.
+ # Reachable from inside the container. Override in .env for your setup;
+ # host.docker.internal points at an LLM server running on the host.
       QUACK_LLM_ENDPOINT: ${QUACK_LLM_ENDPOINT:-http://host.docker.internal:11436/v1}
       QUACK_LLM_API_KEY: ${QUACK_LLM_API_KEY:-unused}
       QUACK_ORCH_MODEL: ${QUACK_ORCH_MODEL:-qwen3.6-35b}
       QUACK_RESEARCHER_MODEL: ${QUACK_RESEARCHER_MODEL:-qwen3.6-35b}
-      # Empty default = the app falls back to QUACK_RESEARCHER_MODEL (one warm model).
+ # Empty default = the app falls back to QUACK_RESEARCHER_MODEL (one warm model).
       QUACK_CODER_MODEL: ${QUACK_CODER_MODEL:-}
       QUACK_MEDIA_MODEL: ${QUACK_MEDIA_MODEL:-qwen3-omni-30b}
       QUACK_IMAGE_MODEL: ${QUACK_IMAGE_MODEL:-qwen3-vl-32b}
-      # Independent judge model for the trust gate (empty disables vetting).
+ # Independent judge model for the trust gate (empty disables vetting).
       QUACK_JUDGE_MODEL: ${QUACK_JUDGE_MODEL:-gemma4-26b-a4b}
-      # Context compaction (prune old tool outputs + summarise older turns when a
-      # request would overflow an agent's context_window). The summariser must be
-      # co-resident with the workers to avoid evicting one mid-run; the judge
-      # model (gemma4-26b-a4b) is always warm alongside every worker.
+ # Context compaction (prune old tool outputs + summarise older turns when a
+ # request would overflow an agent's context_window). The summariser must be
+ # co-resident with the workers to avoid evicting one mid-run; the judge
+ # model (gemma4-26b-a4b) is always warm alongside every worker.
       QUACK_COMPACTION_ENABLED: ${QUACK_COMPACTION_ENABLED:-true}
       QUACK_COMPACTION_MODEL: ${QUACK_COMPACTION_MODEL:-gemma4-26b-a4b}
-      # The agent's tool backends. Default to the compose services above;
-      # override to point at existing instances (e.g. on a home server).
+ # The agent's tool backends. Default to the compose services above;
+ # override to point at existing instances (e.g. on a home server).
       QUACK_SEARXNG_URL: ${QUACK_SEARXNG_URL:-http://searxng:8080}
       QUACK_CRAWL4AI_URL: ${QUACK_CRAWL4AI_URL:-http://crawl4ai:11235}
-      # Semantic memory (M6). gRPC address of the qdrant service above; empty
-      # disables memory. The embedding model is served by the LLM endpoint.
+ # Semantic memory (M6). gRPC address of the qdrant service above; empty
+ # disables memory. The embedding model is served by the LLM endpoint.
       QUACK_QDRANT_URL: ${QUACK_QDRANT_URL:-qdrant:6334}
       QUACK_EMBED_MODEL: ${QUACK_EMBED_MODEL:-qwen3-embed}
-      # User memory is enabled by binding commit_memory to the orchestrator in
-      # config/quack.yaml (no env toggle).
-      # Filesystem/git tools' jail (workspace: section in quack.yaml). NOT a
-      # bind mount to the host - a named volume, so it survives `docker compose
-      # up --build` (an image rebuild must never wipe agent-written user code;
-      # we rebuild the image constantly during e2e, so this would bite
-      # immediately). Not yet bound to any agent's tools: list.
+ # User memory is enabled by binding commit_memory to the orchestrator in
+ # config/quack.yaml (no env toggle).
+ # Filesystem/git tools' jail (workspace: section in quack.yaml). NOT a
+ # bind mount to the host - a named volume, so it survives `docker compose
+ # up --build` (an image rebuild must never wipe agent-written user code;
+ # we rebuild the image constantly during e2e, so this would bite
+ # immediately). Not yet bound to any agent's tools: list.
       QUACK_WORKSPACE_ROOT: /workspace
-    # Host 8080 is taken by SearXNG above, so the app is published on 8081.
+ # Host 8080 is taken by SearXNG above, so the app is published on 8081.
     ports:
       - "8081:8080"
     volumes:

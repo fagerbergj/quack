@@ -10,7 +10,7 @@ server:
   image_proxy: true
 
 search:
-  # web_search calls /search?format=json; both formats must be enabled.
+ # web_search calls /search?format=json; both formats must be enabled.
   formats:
     - html
     - json

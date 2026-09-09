@@ -22,7 +22,7 @@ paths:
     get:
       operationId: healthCheck
       summary: Liveness check
-      # Liveness probe; requireAuthExceptHealth always lets it through unauthenticated.
+ # Liveness probe; requireAuthExceptHealth always lets it through unauthenticated.
       security: []
       responses:
         "200":
@@ -1170,7 +1170,7 @@ paths:
       operationId: rescopeMemories
       summary: Move role:* memories into their resolved repo:* bucket
       description: |
-        #1262: worktree-per-node made `RepoKey` return "" for every chat with
+ #1262: worktree-per-node made `RepoKey` return "" for every chat with
         a sibling worktree, so those memories landed in `role:coding`/`role:research`
         instead of `repo:<identity>`. This finds every live role:* memory whose
         provenance chat has a GitHub origin and moves it to that repo's bucket.
@@ -1265,9 +1265,9 @@ components:
 
   schemas:
 
-    # -------------------------------------------------------------------------
-    # Chat
-    # -------------------------------------------------------------------------
+ # -------------------------------------------------------------------------
+ # Chat
+ # -------------------------------------------------------------------------
 
     ChatStatus:
       type: string
@@ -1384,7 +1384,7 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/Turn"
-            # Chat-wide token aggregate, summing every turn and DAG node.
+ # Chat-wide token aggregate, summing every turn and DAG node.
             usage:
               $ref: "#/components/schemas/Usage"
 
@@ -1402,9 +1402,9 @@ components:
             Opaque token - pass as `page_token` to fetch the next page. Absent when
             this page is the last. Treat as an opaque string: never parse it.
 
-    # -------------------------------------------------------------------------
-    # Semantic memory (the M6 explorer - browse what quack believes, and forget)
-    # -------------------------------------------------------------------------
+ # -------------------------------------------------------------------------
+ # Semantic memory (the M6 explorer - browse what quack believes, and forget)
+ # -------------------------------------------------------------------------
 
     Memory:
       type: object
@@ -1803,9 +1803,9 @@ components:
           items:
             $ref: "#/components/schemas/MemoryScopeStats"
 
-    # -------------------------------------------------------------------------
-    # Replay ledger
-    # -------------------------------------------------------------------------
+ # -------------------------------------------------------------------------
+ # Replay ledger
+ # -------------------------------------------------------------------------
 
     RecordingSummary:
       type: object
@@ -1829,9 +1829,9 @@ components:
           items:
             $ref: "#/components/schemas/RecordingSummary"
 
-    # -------------------------------------------------------------------------
-    # Extensions
-    # -------------------------------------------------------------------------
+ # -------------------------------------------------------------------------
+ # Extensions
+ # -------------------------------------------------------------------------
 
     ExtensionInfo:
       type: object
@@ -1861,9 +1861,9 @@ components:
             "https://tracing.example.com/trace/{trace_id}". Absent when
             otel.trace_url_template is unset (no link should be rendered).
 
-    # -------------------------------------------------------------------------
-    # Artifacts (chat-scoped, read-only)
-    # -------------------------------------------------------------------------
+ # -------------------------------------------------------------------------
+ # Artifacts (chat-scoped, read-only)
+ # -------------------------------------------------------------------------
 
     ArtifactLineage:
       type: object
@@ -2108,9 +2108,9 @@ components:
               items:
                 $ref: "#/components/schemas/NodeStatus"
 
-    # -------------------------------------------------------------------------
-    # Turn (one user→assistant exchange, modelled after OpenResponses Response)
-    # -------------------------------------------------------------------------
+ # -------------------------------------------------------------------------
+ # Turn (one user→assistant exchange, modelled after OpenResponses Response)
+ # -------------------------------------------------------------------------
 
     Turn:
       type: object
@@ -2168,10 +2168,10 @@ components:
         total_tokens:
           type: integer
 
-    # -------------------------------------------------------------------------
-    # Output items - discriminated by `type`
-    # Standard: "message". Quack extension: "quack:dag".
-    # -------------------------------------------------------------------------
+ # -------------------------------------------------------------------------
+ # Output items - discriminated by `type`
+ # Standard: "message". Quack extension: "quack:dag".
+ # -------------------------------------------------------------------------
 
     OutputItem:
       oneOf:
@@ -2235,11 +2235,11 @@ components:
         text:
           type: string
 
-    # -------------------------------------------------------------------------
-    # quack:activity output item - the orchestrator's own tool calls, recovered
-    # from session events so chat history (incl. a pending clarification) survives
-    # a reload. Discriminated by type "quack:activity".
-    # -------------------------------------------------------------------------
+ # -------------------------------------------------------------------------
+ # quack:activity output item - the orchestrator's own tool calls, recovered
+ # from session events so chat history (incl. a pending clarification) survives
+ # a reload. Discriminated by type "quack:activity".
+ # -------------------------------------------------------------------------
 
     AgentActivityOutputItem:
       type: object
@@ -2272,9 +2272,9 @@ components:
           type: object
           additionalProperties: true
 
-    # -------------------------------------------------------------------------
-    # quack:dag output item - DAG execution as a first-class output type
-    # -------------------------------------------------------------------------
+ # -------------------------------------------------------------------------
+ # quack:dag output item - DAG execution as a first-class output type
+ # -------------------------------------------------------------------------
 
     DagOutputItem:
       type: object

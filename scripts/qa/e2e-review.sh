@@ -5,9 +5,9 @@
 # `quack api` CLI - see docs/qa-mocks.md.
 #
 # Usage: scripts/qa/e2e-review.sh --secret SECRET [--url URL] [--fixture FILE] [--chat ID]
-#   --chat: if omitted, the script lists chats after sending and asks you
-#   to re-run with the new one - there's no webhook-response chat id to key
-#   off (quack replies 202 before the run is created).
+# --chat: if omitted, the script lists chats after sending and asks you
+# to re-run with the new one - there's no webhook-response chat id to key
+# off (quack replies 202 before the run is created).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
