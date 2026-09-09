@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
-import { cleanup, render as rtlRender, screen } from '@testing-library/react'
+import { cleanup, render as rtlRender, screen, within } from '@testing-library/react'
 import type { ReactElement } from 'react'
 import userEvent from '@testing-library/user-event'
 import { DagNode } from './DagNode'
@@ -133,5 +133,43 @@ describe('DagNode artifact panel props (#1178)', () => {
     await openArtifacts(user)
     expect(await screen.findByText("This node hasn't produced anything yet.")).toBeTruthy()
     expect(screen.queryByText('This node failed before writing its result.')).toBeNull()
+  })
+})
+
+// Mobile QA (390px): the header is one row - dot, name, badges, elapsed,
+// kebab - with the kebab always visible (touch has no hover) and the menu's
+// verbs drawn as Material icons rather than emoji glyphs.
+describe('DagNode compact header', () => {
+  const running = { status: 'running' as const, startedAt: 0 }
+
+  it('kebab is always visible, a 44px target, and pinned to the end of the header row', () => {
+    render(<DagNode node={node} state={running} runs={[]} answer="" isFinal={false} onCancel={() => {}} onPause={() => {}} />)
+    const kebab = screen.getByRole('button', { name: 'Node actions' })
+    expect(kebab.className).not.toContain('opacity-0')
+    expect(kebab.className).toContain('h-11')
+    expect(kebab.className).toContain('w-11')
+    const header = kebab.parentElement!.parentElement!
+    expect(header.lastElementChild).toBe(kebab.parentElement)
+    expect(within(header).getByLabelText('Status: Running')).toBeTruthy()
+    expect(within(header).getByText('Web researcher')).toBeTruthy()
+  })
+
+  it('name truncates on one line instead of taking a full-width row', () => {
+    render(<DagNode node={node} state={running} runs={[]} answer="" isFinal={false} />)
+    const name = screen.getByText('Web researcher')
+    expect(name.className).toContain('truncate')
+    expect(name.className).not.toContain('basis-full')
+  })
+
+  it('menu verbs carry an icon and no emoji glyph', async () => {
+    const user = userEvent.setup()
+    render(<DagNode node={node} state={running} runs={[]} answer="" isFinal={false} onCancel={() => {}} onPause={() => {}} onQueueMessage={() => {}} />)
+    await user.click(screen.getByRole('button', { name: 'Node actions' }))
+    const items = await screen.findAllByRole('menuitem')
+    expect(items.length).toBeGreaterThanOrEqual(3)
+    for (const item of items) {
+      expect(item.querySelector('svg')).not.toBeNull()
+      expect(item.textContent ?? '').not.toMatch(/[\u2300-\u23FF\u25A0-\u25FF\u2B00-\u2BFF]/)
+    }
   })
 })

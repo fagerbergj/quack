@@ -24,7 +24,6 @@ const ALLOWLIST = new Set([
   'components/NavRail.tsx:30',   // comment prose
   'components/NavRail.tsx:32',   // comment prose
   'components/toolFormat.ts:50', // comment prose
-  'components/DagNode.tsx:213',  // comment prose
 ])
 
 function walk(dir, out = []) {

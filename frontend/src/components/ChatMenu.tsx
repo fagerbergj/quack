@@ -45,7 +45,7 @@ export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSumma
         title="Chat actions"
         className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
       >
-        ⋯
+        <Icon name="more_horiz" className="w-5 h-5" />
       </button>
       {open && (
         <div role="menu" className="absolute z-20 right-0 mt-1 w-44 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1 text-xs">
@@ -65,7 +65,7 @@ export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSumma
             title="Download this chat's full recording (every streamed event)"
             className="flex items-center gap-1.5 px-3 py-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
           >
-            <span aria-hidden="true">⬇</span> Download Logs
+            <Icon name="download" className="w-3.5 h-3.5" /> Download Logs
           </a>
           {/* #1173: Light/Dark/System - only in-app way to change theme.
               APG menuitemradio: activating changes the selection but leaves

@@ -7,7 +7,9 @@ import type { AgentRun, Activity } from './messageParts'
 const meta: Meta<typeof DagNode> = {
   title: 'Chat/DagNode',
   component: DagNode,
-  parameters: { layout: 'padded' },
+  // Every node-card story renders at 390px too (render-check): the header
+  // must stay one line and the kebab visible without hover on a phone.
+  parameters: { layout: 'padded', renderCheck: { viewports: ['mobile', 'desktop'] } },
 }
 export default meta
 
