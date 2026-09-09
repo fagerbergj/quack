@@ -48,7 +48,11 @@ func build(b *Bundle, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, m
 		// "" workspace: native bundles are never a coding agent (those run
 		// as external ACP subprocesses - see internal/serve's ACP branch),
 		// so there is no sandboxed clone/toolchain to state facts about.
-		return promptbuilder.Agent(name, desc, tools, skills, behaviour, grading, "")
+		// skills is nil here (not the caller's skills arg): every ADK-native
+		// agent's Toolsets already carries a SkillToolset, whose own
+		// ProcessRequest renders the roster - rendering it here too would
+		// duplicate it in every request (audit finding A4).
+		return promptbuilder.Agent(name, desc, tools, nil, behaviour, grading, "")
 	})
 	cfg := llmagent.Config{
 		Name:        name,

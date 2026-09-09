@@ -329,10 +329,11 @@ func newSubmitVerdictTool(sink *verdict, receivedIDs []string) (tool.Tool, error
 }
 
 // buildJudgePrompt: assembles judge's user message. Order is constitution →
-// rubric → task → question → answer → ledger → changed files → known
-// failures: the stable, round-invariant sections lead and the volatile,
-// per-round evidence (re-derived every round) trails, so the prefix up to
-// and including the answer stays a prompt-cache hit across rounds.
+// rubric → task → question → ledger → changed files → known failures →
+// commit-hygiene evidence → answer: every section that is byte-identical
+// round to round leads, and the one section that changes every round (the
+// answer being judged) trails last, so the whole prefix ahead of it stays a
+// prompt-cache hit across rounds instead of dying at the first volatile byte.
 // judgePromptBuilds counts buildJudgePrompt calls - test-only seam proving
 // fitJudgeAnswer's prompt isn't thrown away and rebuilt by runJudgeRound.
 var judgePromptBuilds atomic.Int64
@@ -357,8 +358,6 @@ func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Con
 	}
 	sb.WriteString("\n\nUser's question:\n")
 	sb.WriteString(contentPlainText(question))
-	sb.WriteString("\n\nAnswer to judge:\n")
-	sb.WriteString(answer)
 	if ws := buildWorkspaceSection(act); ws != "" {
 		sb.WriteString("\n\n")
 		sb.WriteString(ws)
@@ -375,6 +374,8 @@ func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Con
 		sb.WriteString("\n\n")
 		sb.WriteString(ev)
 	}
+	sb.WriteString("\n\nAnswer to judge:\n")
+	sb.WriteString(answer)
 	return sb.String()
 }
 
@@ -1196,6 +1197,11 @@ func boundExcerpt(s string, maxChars int) string {
 // already folds each failing criterion's parsed definition/bands into env before this runs.
 func buildRevisionContent(constitution string, question *genai.Content, answer string, env verdictEnvelope, act workerActivity, citationOnly bool, notes []JudgeNote) *genai.Content {
 	var sb strings.Builder
+	// Stable-first (finding 3): the original question, byte-identical to what the draft
+	// round sent (same boundExcerpt, no header), leads every round so the prefix cache
+	// carries draft -> revise -> revise instead of dying at the volatile verdict.
+	sb.WriteString(boundExcerpt(contentPlainText(question), maxOriginalQuestionChars))
+	sb.WriteString("\n\n")
 	if citationOnly {
 		// The answer's substance passed; only cites_sources failed. This is a
 		// formatting pass, not re-research: the worker already fetched the URLs
@@ -1233,11 +1239,9 @@ func buildRevisionContent(constitution string, question *genai.Content, answer s
 	}
 	if section := buildActivitySection(act); section != "" {
 		sb.WriteString(boundExcerpt(section, maxActivitySectionChars))
-		sb.WriteString("\n")
+		sb.WriteString("\n\n")
 	}
-	sb.WriteString("Original question:\n")
-	sb.WriteString(boundExcerpt(contentPlainText(question), maxOriginalQuestionChars))
-	sb.WriteString("\n\nYour previous answer:\n")
+	sb.WriteString("Your previous answer:\n")
 	sb.WriteString(boundExcerpt(answer, maxPreviousAnswerChars))
 	return &genai.Content{Role: "user", Parts: []*genai.Part{{Text: sb.String()}}}
 }
@@ -1245,6 +1249,9 @@ func buildRevisionContent(constitution string, question *genai.Content, answer s
 // buildFinalizeContent: asks worker to write final answer when round 0 ended without one.
 func buildFinalizeContent(question *genai.Content, act workerActivity) *genai.Content {
 	var sb strings.Builder
+	// Stable-first (finding 3): same reasoning as buildRevisionContent.
+	sb.WriteString(boundExcerpt(contentPlainText(question), maxOriginalQuestionChars))
+	sb.WriteString("\n\n")
 	sb.WriteString("A response of 0 length was received. If you have finished your research, " +
 		"do not call any more tools - just write your complete response again now, using everything " +
 		"you found above. If you are not done with your research, there was likely an error: please " +
@@ -1254,8 +1261,6 @@ func buildFinalizeContent(question *genai.Content, act workerActivity) *genai.Co
 		sb.WriteString(boundExcerpt(section, maxActivitySectionChars))
 		sb.WriteString("\n")
 	}
-	sb.WriteString("Question:\n")
-	sb.WriteString(boundExcerpt(contentPlainText(question), maxOriginalQuestionChars))
 	return &genai.Content{Role: "user", Parts: []*genai.Part{{Text: sb.String()}}}
 }
 
@@ -1265,6 +1270,9 @@ const continuationMarker = "CONTINUE THE TASK - it is not finished."
 // buildContinuationPrompt: tool-bearing continuation directive (do the remaining work, not a write-up).
 func buildContinuationPrompt(task string, act workerActivity, checks []string, readOnly, hasDeliverTarget, isReviewer, existingPR bool) string {
 	var sb strings.Builder
+	// Stable-first (finding 3): same reasoning as buildRevisionContent.
+	sb.WriteString(boundExcerpt(task, maxOriginalQuestionChars))
+	sb.WriteString("\n\n")
 	sb.WriteString(continuationMarker + "\n\n" +
 		"Your last turn produced no answer, or produced an answer for work you have not actually delivered. " +
 		"You are MID-TASK, not done. This is not a request for a summary.\n\n" +
@@ -1290,8 +1298,6 @@ func buildContinuationPrompt(task string, act workerActivity, checks []string, r
 		sb.WriteString(boundExcerpt(section, maxActivitySectionChars))
 		sb.WriteString("\n")
 	}
-	sb.WriteString("Original task:\n")
-	sb.WriteString(boundExcerpt(task, maxOriginalQuestionChars))
 	return sb.String()
 }
 
