@@ -23,7 +23,7 @@ export function UsageSummary({ models, usage }: UsageSummaryProps) {
       {models.map(m => (
         <span
           key={m}
-          className="font-mono px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 truncate max-w-[140px]"
+          className="font-mono px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 dark:text-gray-300 truncate max-w-[140px]"
           title={m}
         >
           {m}

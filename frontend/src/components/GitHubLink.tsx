@@ -8,7 +8,7 @@ export function GitHubLink({ url, repo, className = '' }: { url: string; repo?: 
       rel="noopener noreferrer"
       onClick={e => e.stopPropagation()}
       aria-label={repo ? `Open ${repo} on GitHub` : 'Open on GitHub'}
-      className={`inline-flex items-center min-h-[24px] gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline ${className}`}
+      className={`inline-flex items-center justify-center min-h-[24px] min-w-[24px] gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline ${className}`}
     >
       {repo && <span className="truncate">{repo}</span>}
       <span aria-hidden="true">↗</span>
