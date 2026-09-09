@@ -283,11 +283,11 @@ type dagStream struct {
 	// scopeByID: per-node workspace scope (workspaceNodeID) - the failure
 	// tracker's real key component, distinct from the plan node id for
 	// setup/repo-chain implementer nodes (#1109 re-review finding).
-	scopeByID  map[string]string
-	yield      func(stream.SSEEvent, error) bool
-	outputs    map[string]string
-	scoreOf    func(string) gateScore
-	startedAt  map[string]time.Time
+	scopeByID map[string]string
+	yield     func(stream.SSEEvent, error) bool
+	outputs   map[string]string
+	scoreOf   func(string) gateScore
+	startedAt map[string]time.Time
 	cancelled func(string) bool
 	// pauseReasonOf: "" if not paused. A shutdown-drain pause (PauseShutdown)
 	// doesn't block a delivered node_done the way a live user pause does - see
