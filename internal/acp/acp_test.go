@@ -176,6 +176,13 @@ func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 	case "usage-none":
 		send(sdk.UpdateAgentMessageText("done"))
 		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
+	case "flood":
+		// Streams far more than the SDK's 1024-deep notification queue can
+		// hold while a stalled consumer isn't draining - finding 10.
+		for range 3000 {
+			send(sdk.UpdateAgentMessageText("x"))
+		}
+		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
 	case "steer":
 		// Blocks until the extension delivers a forwarded message mid-round.
 		text := <-f.steerCh
@@ -758,5 +765,29 @@ func TestRound_ReapsChildThatStopsReadingStdin(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("round() never returned - a deaf child wedges gracefulCancel on the same writeMu the prompt write holds, so the child is never reaped")
+	}
+}
+
+// TestRound_SlowConsumerNeverBlocksRound pins finding 10: SessionUpdate must
+// never block the SDK's notification-processing goroutine, or a stalled
+// downstream consumer overflows the SDK's 1024-deep notification queue and
+// tears the whole connection down mid-round.
+func TestRound_SlowConsumerNeverBlocksRound(t *testing.T) {
+	a := testAgent(t, "flood")
+	release := make(chan struct{})
+	time.AfterFunc(1500*time.Millisecond, func() { close(release) })
+	n := 0
+	err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", "", "", "", "", func(s eventSpec) bool {
+		if n == 0 {
+			<-release
+		}
+		n++
+		return true
+	})
+	if err != nil {
+		t.Fatalf("round failed under backpressure: %v (emitted %d of 3000 updates)", err, n)
+	}
+	if n < 3001 {
+		t.Fatalf("relayed only %d specs, want 3000 chunk specs + final", n)
 	}
 }

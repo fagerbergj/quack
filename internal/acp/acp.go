@@ -420,22 +420,18 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 
 	for {
 		select {
-		case u := <-h.updates:
+		case <-h.notify:
 			resetIdle()
-			if !relay(u) {
-				return nil
+			for _, u := range h.drainUpdates() {
+				if !relay(u) {
+					return nil
+				}
 			}
 		case d := <-done:
-			for {
-				select {
-				case u := <-h.updates:
-					if !relay(u) {
-						return nil
-					}
-					continue
-				default:
+			for _, u := range h.drainUpdates() {
+				if !relay(u) {
+					return nil
 				}
-				break
 			}
 			if d.err != nil {
 				endPrompt(d.err)
