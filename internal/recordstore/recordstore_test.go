@@ -397,6 +397,33 @@ func TestEditStaleBaseConflictsWhenIntersecting(t *testing.T) {
 	}
 }
 
+// TestEditRejectsSchemaInvalidResult covers the structured-edit fix: the
+// splice happens before spec.Validate runs, so an edit that produces a
+// schema-invalid record (here, field a emptied out) must still be rejected
+// and must not write a new revision - same as the pre-fix byte-splice path.
+func TestEditRejectsSchemaInvalidResult(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	id, rev1, err := c.SaveStructured(ctx, "test.structured", doc{A: "hello", B: 1}, "main", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = c.Edit(ctx, id, rev1, []EditOp{{Old: "hello", New: ""}}, Lineage{})
+	if err == nil {
+		t.Fatal("Edit producing a schema-invalid record should fail")
+	}
+	var conflict *EditConflict
+	if errors.As(err, &conflict) {
+		t.Fatalf("Edit = %v, want a validation error, not *EditConflict", err)
+	}
+	if !strings.Contains(err.Error(), "fails validation") {
+		t.Fatalf("Edit error = %v, want it to mention validation", err)
+	}
+	if _, _, _, latestRev, _, _ := c.LatestWithMeta(ctx, id); latestRev != rev1 {
+		t.Fatalf("failed edit must not write - latest revision = %d, want %d", latestRev, rev1)
+	}
+}
+
 // TestEditRejectsNegativeBaseRevision covers #1091 adversarial review
 // suggestion #3: base_revision was accepted but never validated.
 func TestEditRejectsNegativeBaseRevision(t *testing.T) {
