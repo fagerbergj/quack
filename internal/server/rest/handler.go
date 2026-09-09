@@ -23,6 +23,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/inference/openaimodel"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
@@ -118,6 +119,10 @@ func (h *Handler) generateTitle(ctx context.Context, chatID, firstMessage string
 	}
 	// ChatID-only Coords so this call is filed under the chat, not "unscoped" (#617).
 	ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: chatID})
+	// Best-effort: this func already logs a WARN and degrades to an empty
+	// title on failure, so the model layer's own boundary log would just
+	// double it (onboarding audit finding 14).
+	ctx = openaimodel.WithBestEffort(ctx)
 	req := &model.LLMRequest{
 		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "/no_think " + firstMessage}}}},
 		Config: &genai.GenerateContentConfig{

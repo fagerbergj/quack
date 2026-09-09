@@ -2,12 +2,15 @@ package rest
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"strings"
 	"testing"
 
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/inference/openaimodel"
 )
 
 // fixedAnswerModel always answers with a fixed piece of text - used here to
@@ -23,6 +26,36 @@ func (m fixedAnswerModel) GenerateContent(_ context.Context, _ *model.LLMRequest
 			FinishReason: genai.FinishReasonStop,
 			TurnComplete: true,
 		}, nil)
+	}
+}
+
+// erroringModel always fails, recording whether the ctx it was called with
+// carried openaimodel.WithBestEffort.
+type erroringModel struct{ sawBestEffort *bool }
+
+func (erroringModel) Name() string { return "erroring" }
+
+func (m erroringModel) GenerateContent(ctx context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	*m.sawBestEffort = openaimodel.IsBestEffort(ctx)
+	return func(yield func(*model.LLMResponse, error) bool) {
+		yield(nil, errors.New("dial tcp: connection refused"))
+	}
+}
+
+// TestGenerateTitle_MarksCtxBestEffort covers onboarding audit finding 14:
+// generateTitle already logs its own degraded outcome (title_test.go's
+// TestRunChat_TitlerFailureFallsBackToShortUserDerivedTitle covers the
+// fallback itself) - this pins that its titler call carries the marker that
+// keeps the model layer's own boundary log from firing at Error too.
+func TestGenerateTitle_MarksCtxBestEffort(t *testing.T) {
+	var sawBestEffort bool
+	h := &Handler{titler: erroringModel{sawBestEffort: &sawBestEffort}}
+	title := h.generateTitle(context.Background(), "chat-1", "hello")
+	if title != "" {
+		t.Errorf("title = %q, want empty on titler error", title)
+	}
+	if !sawBestEffort {
+		t.Error("generateTitle's ctx did not carry openaimodel.WithBestEffort")
 	}
 }
 

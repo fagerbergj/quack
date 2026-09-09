@@ -74,19 +74,42 @@ func reasoningUsage(ctx context.Context, model string, completionTokens, reasoni
 	return candidates, reasoningTokens
 }
 
+// bestEffortKey marks a context via WithBestEffort.
+type bestEffortKey struct{}
+
+// WithBestEffort marks ctx so apiErr logs its failure at Debug instead of
+// Error - for a caller (e.g. chat title generation) that already decides how
+// to degrade and logs its own outcome, so the same failure doesn't produce
+// two log lines at the handling boundary (onboarding audit finding 14).
+func WithBestEffort(ctx context.Context) context.Context {
+	return context.WithValue(ctx, bestEffortKey{}, true)
+}
+
+// IsBestEffort reports whether ctx was marked via WithBestEffort - exported
+// for callers (e.g. a titler stub in a test) to confirm the marker actually
+// reached them, not just for apiErr's own use.
+func IsBestEffort(ctx context.Context) bool {
+	return ctx.Value(bestEffortKey{}) != nil
+}
+
 // apiErr logs an OpenAI-compatible API failure with the model's HTTP status and
 // response body, then returns an enriched error. The log is the load-bearing part:
 // ADK's runner catches a sub-agent's yielded error and can hand the caller empty
 // output with no error (see the adk-swallows-subagent-errors finding), so without
-// a log at THIS boundary a model 400 (e.g. context/tool/format) vanishes silently.
+// a log at THIS boundary a model 400 (e.g. context/tool/format) vanishes silently -
+// unless ctx is WithBestEffort, whose caller already logs its own degraded outcome.
 func (o *OpenAIModel) apiErr(ctx context.Context, op string, err error) error {
+	level := slog.LevelError
+	if IsBestEffort(ctx) {
+		level = slog.LevelDebug
+	}
 	var ae *openai.Error
 	if errors.As(err, &ae) {
-		slog.ErrorContext(ctx, "openai API error", "component", "inference",
+		slog.Log(ctx, level, "openai API error", "component", "inference",
 			"model", o.ModelName, "op", op, "status", ae.StatusCode, "body", ae.Error())
 		return fmt.Errorf("openai %s (%s): status %d: %s", o.ModelName, op, ae.StatusCode, ae.Error())
 	}
-	slog.ErrorContext(ctx, "openai request failed", "component", "inference",
+	slog.Log(ctx, level, "openai request failed", "component", "inference",
 		"model", o.ModelName, "op", op, "err", err)
 	return fmt.Errorf("openai %s (%s): %w", o.ModelName, op, err)
 }
