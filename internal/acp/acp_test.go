@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -377,6 +378,69 @@ func TestRound_PinnedProcessReusedAcrossRounds(t *testing.T) {
 	}
 	if pid2 := v.(*pinnedProc).h.cmd.Process.Pid; pid2 != pid1 {
 		t.Fatalf("round 2 ran under pid %d, want the SAME pid %d as round 1", pid2, pid1)
+	}
+}
+
+// TestClosePinnedSession_KillsProcessAndClearsRegistry pins the node-finish
+// path itself (vetting.UnregisterAdvisorThread -> NodeSessionClosed ->
+// ClosePinnedSession, wired in serve.go): a node that finishes normally after
+// pinning a process must not leave that process running - this is the #1309
+// leak class (a per-node resource with no teardown on the happy path), not
+// just the abort/failure exits the other tests already cover.
+func TestClosePinnedSession_KillsProcessAndClearsRegistry(t *testing.T) {
+	a := testAgent(t, "pin")
+	token := "tok-close-pinned"
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{})
+	defer vetting.UnregisterAdvisorThread(token)
+
+	var specs []eventSpec
+	if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", "", "", token, "", func(s eventSpec) bool {
+		specs = append(specs, s)
+		return true
+	}); err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	v, ok := pinned.Load(token)
+	if !ok {
+		t.Fatal("round did not pin a process")
+	}
+	proc := v.(*pinnedProc).h.cmd.Process
+
+	ClosePinnedSession(token) // simulates node-finish's own call, same as UnregisterAdvisorThread's hook
+
+	if _, ok := pinned.Load(token); ok {
+		t.Fatal("ClosePinnedSession left the process pinned")
+	}
+	// A killed process's Wait already happened inside close(); a second Wait
+	// (or a signal probe) reliably reports "already released"/ESRCH instead
+	// of leaving this test to guess from a timing window.
+	if err := proc.Signal(syscall.Signal(0)); err == nil {
+		t.Fatal("ClosePinnedSession did not kill the subprocess - it still responds to signals")
+	}
+}
+
+// TestUnregisterAdvisorThread_KillsPinnedProcess drives the real end-to-end
+// wiring TestMain sets up (vetting.NodeSessionClosed = ClosePinnedSession, the
+// exact assignment serve.go makes at boot): the ONLY call graph.go's node
+// teardown actually makes is vetting.UnregisterAdvisorThread - if that stops
+// reaching the pinned process for any reason, every node leaks one subprocess
+// on its happy path.
+func TestUnregisterAdvisorThread_KillsPinnedProcess(t *testing.T) {
+	a := testAgent(t, "pin")
+	token := "tok-unregister-kills-pin"
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{})
+
+	if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", "", "", token, "", func(eventSpec) bool { return true }); err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	if _, ok := pinned.Load(token); !ok {
+		t.Fatal("round did not pin a process")
+	}
+
+	vetting.UnregisterAdvisorThread(token) // the ONLY call a finishing node makes (dag/graph.go)
+
+	if _, ok := pinned.Load(token); ok {
+		t.Fatal("node finish (UnregisterAdvisorThread) left the process pinned")
 	}
 }
 

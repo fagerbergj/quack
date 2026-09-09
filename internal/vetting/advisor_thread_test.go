@@ -46,6 +46,40 @@ func TestUnregisterMemSession_SilentWhenConnected(t *testing.T) {
 	}
 }
 
+// TestUnregisterAdvisorThread_FiresNodeSessionClosedHook pins the acp/vetting
+// seam a pinned ACP process's cleanup rides on (#1006 perf): every advisor
+// thread teardown - not just the ones dag/graph.go happens to exercise - must
+// reach NodeSessionClosed with the exact token, or a pinned subprocess for
+// that node leaks forever with nothing left to evict it.
+func TestUnregisterAdvisorThread_FiresNodeSessionClosedHook(t *testing.T) {
+	old := NodeSessionClosed
+	defer func() { NodeSessionClosed = old }()
+
+	var got []string
+	NodeSessionClosed = func(token string) { got = append(got, token) }
+
+	token := "test-token-hook"
+	RegisterAdvisorThread(token, AdvisorTask{})
+	UnregisterAdvisorThread(token)
+
+	if len(got) != 1 || got[0] != token {
+		t.Fatalf("NodeSessionClosed calls = %v, want exactly one call with token %q", got, token)
+	}
+}
+
+// TestUnregisterAdvisorThread_NilHookDoesNotPanic: acp wires NodeSessionClosed
+// at server boot (serve.go); any other caller (an in-process test, `quack api`
+// paths without a server, ...) must not crash for lack of that wiring.
+func TestUnregisterAdvisorThread_NilHookDoesNotPanic(t *testing.T) {
+	old := NodeSessionClosed
+	defer func() { NodeSessionClosed = old }()
+	NodeSessionClosed = nil
+
+	token := "test-token-nil-hook"
+	RegisterAdvisorThread(token, AdvisorTask{})
+	UnregisterAdvisorThread(token) // must not panic
+}
+
 // TestUnregisterMemSession_BackstopDoubleCallDoesNotDoubleWarn pins the
 // dag.buildGateNodes pattern: node.go's own explicit unregister plus a
 // deferred backstop call both target the same secret. The second call must
