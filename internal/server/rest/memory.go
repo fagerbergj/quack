@@ -415,47 +415,40 @@ func (h *Handler) GetMemoryStats(w http.ResponseWriter, r *http.Request, params 
 	writeJSON(w, http.StatusOK, schema.MemoryStats{Weeks: weekStatsWire(weekStats), Scopes: scopeStatsWire(scopes)})
 }
 
-// memoryLedgerEvents scans every chat's ledger (h.ledgerStore.List, then one
-// ReadEntries per chat) for memory.recall/memory.vote entries within the
-// weeks window - the only way to get memory usage across ALL chats, since
-// the ledger is per-chat and there is no cross-chat memory index. nil
-// ledgerStore (recording disabled) yields no events, not an error.
+// memoryLedgerEvents scans every chat's ledger for memory.recall/memory.vote entries
+// within the weeks window - the only way to get memory usage across ALL chats, since the
+// ledger is per-chat and there is no cross-chat memory index. Pushes both the kind and
+// `at >= since` filters into one query via ReadAllByKindsSince instead of List() plus one
+// ReadByKinds per chat plus a Go-side window filter (perf audit #12: 94 queries and
+// 0.8-5.0s per memory-page load on a 465k-entry ledger). nil ledgerStore (recording
+// disabled) yields no events, not an error.
 func memoryLedgerEvents(ctx context.Context, led ledger.LedgerStore, now time.Time, weeks int) ([]memory.VoteEvent, []memory.RecallEvent, error) {
 	if led == nil {
 		return nil, nil, nil
 	}
 	since := now.AddDate(0, 0, -7*weeks)
-	chats, err := led.List(ctx)
+	kinds := []string{ledger.KindMemoryVote, ledger.KindMemoryRecall}
+	entries, err := ledger.ReadAllByKindsSince(ctx, led, kinds, since)
 	if err != nil {
 		return nil, nil, err
 	}
 	var votes []memory.VoteEvent
 	var recalls []memory.RecallEvent
-	kinds := []string{ledger.KindMemoryVote, ledger.KindMemoryRecall}
-	for _, c := range chats {
-		entries, err := ledger.ReadByKinds(ctx, led, c.ID, 0, kinds)
-		if err != nil {
-			return nil, nil, err
-		}
-		for _, e := range entries {
-			if e.At.Before(since) {
+	for _, e := range entries {
+		switch e.Kind {
+		case ledger.KindMemoryVote:
+			var p ledger.MemoryVotePayload
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
 				continue
 			}
-			switch e.Kind {
-			case ledger.KindMemoryVote:
-				var p ledger.MemoryVotePayload
-				if err := json.Unmarshal(e.Payload, &p); err != nil {
-					continue
-				}
-				votes = append(votes, memory.VoteEvent{MemoryID: p.MemoryID, Vote: string(p.Vote), At: e.At})
-			case ledger.KindMemoryRecall:
-				var p ledger.MemoryRecallPayload
-				if err := json.Unmarshal(e.Payload, &p); err != nil {
-					continue
-				}
-				for range p.Entries {
-					recalls = append(recalls, memory.RecallEvent{At: e.At})
-				}
+			votes = append(votes, memory.VoteEvent{MemoryID: p.MemoryID, Vote: string(p.Vote), At: e.At})
+		case ledger.KindMemoryRecall:
+			var p ledger.MemoryRecallPayload
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				continue
+			}
+			for range p.Entries {
+				recalls = append(recalls, memory.RecallEvent{At: e.At})
 			}
 		}
 	}

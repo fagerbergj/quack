@@ -73,6 +73,40 @@ type FilteredReader interface {
 	ReadEntriesFiltered(ctx context.Context, chatID string, fromSeq int64, kinds []string) ([]Entry, error)
 }
 
+// CrossChatFilteredReader is optionally implemented by a LedgerStore that can push both a
+// kind filter and an `at >= since` time filter across every chat in one query (perf audit
+// #12), instead of List() plus one ReadByKinds per chat plus a Go-side time filter.
+type CrossChatFilteredReader interface {
+	ReadEntriesFilteredSince(ctx context.Context, kinds []string, since time.Time) ([]Entry, error)
+}
+
+// ReadAllByKindsSince returns every chat's entries with Kind in kinds and At >= since.
+// Uses store's own CrossChatFilteredReader when it has one (PGStore pushes both filters to
+// SQL); MemStore/fakes fall back to List() plus one ReadByKinds per chat plus an in-process
+// time filter, so results are identical either way.
+func ReadAllByKindsSince(ctx context.Context, store LedgerStore, kinds []string, since time.Time) ([]Entry, error) {
+	if cr, ok := store.(CrossChatFilteredReader); ok {
+		return cr.ReadEntriesFilteredSince(ctx, kinds, since)
+	}
+	chats, err := store.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []Entry
+	for _, c := range chats {
+		entries, err := ReadByKinds(ctx, store, c.ID, 0, kinds)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range entries {
+			if !e.At.Before(since) {
+				out = append(out, e)
+			}
+		}
+	}
+	return out, nil
+}
+
 // ReadByKinds returns chatID's entries with Kind in kinds and Seq >= fromSeq,
 // in seq order (perf audit #1: a reader that only needs a handful of small
 // kinds otherwise pays to detoast every agent.invoke/llm.call/otel payload
