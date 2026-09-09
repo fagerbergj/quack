@@ -294,8 +294,16 @@ func TestRunGatedRefine_JudgeNeverMutatesStagedReview(t *testing.T) {
 	if res.Passed {
 		t.Fatalf("gate result Passed = true, want false (the contradicted finding must sink it)")
 	}
-	if atomic.LoadInt32(&stub.judgeCalls) < 2 {
-		t.Fatalf("judge calls = %d, want at least 2 (fail then re-judge after the revise round)", stub.judgeCalls)
+	// behaviour_verified (no run_command in this stub) fails deterministically
+	// every round, so round 2 - the terminal round, whose feedback no revise
+	// ever consumes - skips the judge model entirely and merges the
+	// deterministic verdict directly: 1 judge call, not 2, even though the
+	// round loop still runs both rounds (res.Rounds below).
+	if got := atomic.LoadInt32(&stub.judgeCalls); got != 1 {
+		t.Fatalf("judge calls = %d, want exactly 1 (round 2's already-failing deterministic criterion should skip the judge)", got)
+	}
+	if res.Rounds != 2 {
+		t.Fatalf("res.Rounds = %d, want 2 (the revise round and the terminal round both ran)", res.Rounds)
 	}
 
 	after := staged()
