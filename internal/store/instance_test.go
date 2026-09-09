@@ -67,6 +67,9 @@ func TestResumePausedDagNodes_ReconcilesOwnPriorIncarnation(t *testing.T) {
 		t.Fatalf("New (first): %v", err)
 	}
 	first.SetInstanceID(id1)
+	if err := first.db.Create(&Chat{ID: "c1"}).Error; err != nil {
+		t.Fatalf("create chat: %v", err)
+	}
 	if err := first.SaveDagPlan(ctx, "c1", "p1", "t1", "{}"); err != nil {
 		t.Fatalf("SaveDagPlan: %v", err)
 	}
@@ -124,6 +127,9 @@ func TestResumePausedDagNodes_ConcurrentServersDontFailEachOther(t *testing.T) {
 		t.Fatalf("New (a): %v", err)
 	}
 	a.SetInstanceID(idA)
+	if err := a.db.Create(&Chat{ID: "c1"}).Error; err != nil {
+		t.Fatalf("create chat: %v", err)
+	}
 	if err := a.SaveDagPlan(ctx, "c1", "p1", "t1", "{}"); err != nil {
 		t.Fatalf("SaveDagPlan: %v", err)
 	}
@@ -160,6 +166,9 @@ func TestResumePausedDagNodes_ReconcilesPreMigrationRows(t *testing.T) {
 	st, err := New("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("New: %v", err)
+	}
+	if err := st.db.Create(&Chat{ID: "c1"}).Error; err != nil {
+		t.Fatalf("create chat: %v", err)
 	}
 	if err := st.SaveDagPlan(ctx, "c1", "p1", "t1", "{}"); err != nil {
 		t.Fatalf("SaveDagPlan: %v", err)
@@ -216,6 +225,9 @@ func TestResumePausedDagNodes_MigratesExistingDatabaseCleanly(t *testing.T) {
 	if _, err := st.GetDagNode(ctx, "p1", "n1"); err != nil {
 		t.Fatalf("reading a migrated legacy row: %v", err)
 	}
+	if err := st.db.Create(&Chat{ID: "c1"}).Error; err != nil {
+		t.Fatalf("create chat: %v", err)
+	}
 	if err := st.SaveDagPlan(ctx, "c1", "p1", "t1", "{}"); err != nil {
 		t.Fatalf("SaveDagPlan: %v", err)
 	}
@@ -239,6 +251,9 @@ func TestResumePausedDagNodes_StaleNodeCeilingCatchesPermanentOrphan(t *testing.
 	st, err := New("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("New: %v", err)
+	}
+	if err := st.db.Create(&Chat{ID: "c1"}).Error; err != nil {
+		t.Fatalf("create chat: %v", err)
 	}
 	if err := st.SaveDagPlan(ctx, "c1", "p1", "t1", "{}"); err != nil {
 		t.Fatalf("SaveDagPlan: %v", err)

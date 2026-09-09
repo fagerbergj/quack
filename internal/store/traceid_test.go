@@ -18,6 +18,9 @@ func TestUpsertDagNode_NodeStartOwnsTraceID(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	ctx := context.Background()
+	if err := st.db.Create(&Chat{ID: "c1"}).Error; err != nil {
+		t.Fatalf("create chat: %v", err)
+	}
 	if err := st.SaveDagPlan(ctx, "c1", "p1", "t1", "{}"); err != nil {
 		t.Fatalf("SaveDagPlan: %v", err)
 	}

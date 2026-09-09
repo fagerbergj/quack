@@ -147,6 +147,9 @@ func TestChatEventLog(t *testing.T) {
 		t.Fatalf("New sqlite: %v", err)
 	}
 	ctx := context.Background()
+	if err := st.db.Create(&Chat{ID: "c"}).Error; err != nil {
+		t.Fatalf("create chat: %v", err)
+	}
 
 	for seq := int64(1); seq <= 4; seq++ {
 		ev := ChatEvent{ChatID: "c", Seq: seq, Event: `{"name":"node_start"}`}
@@ -180,6 +183,9 @@ func TestChatEventLog(t *testing.T) {
 	}
 
 	// Reset clears the chat (a new run starts fresh); another chat is untouched.
+	if err := st.db.Create(&Chat{ID: "other"}).Error; err != nil {
+		t.Fatalf("create chat other: %v", err)
+	}
 	if err := st.InsertChatEvent(ctx, ChatEvent{ChatID: "other", Seq: 1, Event: "{}"}); err != nil {
 		t.Fatalf("InsertChatEvent other: %v", err)
 	}
@@ -584,6 +590,9 @@ func TestGetTurnsWithContent_SurvivesSessionReset(t *testing.T) {
 	}
 	ctx := context.Background()
 	const chatID = "ext:github:c1"
+	if err := st.db.Create(&Chat{ID: chatID}).Error; err != nil {
+		t.Fatalf("create chat: %v", err)
+	}
 
 	// Turn 1: runs normally, with a real session event.
 	if err := st.SaveTurn(ctx, chatID, "t1", "first review"); err != nil {

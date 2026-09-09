@@ -13,6 +13,15 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
+// mustSeedChat upserts a bare chats row - chat_events/dag_plans now FK to
+// chats.id (#1296), so a fold/table-write test needs one before it can insert.
+func mustSeedChat(t *testing.T, st *store.Store, chatID string) {
+	t.Helper()
+	if err := st.SetChatOrigin(context.Background(), chatID, "", ""); err != nil {
+		t.Fatalf("seed chat %s: %v", chatID, err)
+	}
+}
+
 func appendNode(t *testing.T, s ledger.LedgerStore, chatID, nodeID, turn, kind string) int64 {
 	t.Helper()
 	payload, err := json.Marshal(struct {
@@ -37,6 +46,7 @@ func TestLoadEvents_FallsBackToFold(t *testing.T) {
 	st := newTestStore(t)
 	ls := ledgertest.NewMemStore()
 	const chatID = "chat-1"
+	mustSeedChat(t, st, chatID)
 	appendNode(t, ls, chatID, "n1", "t1", ledger.KindNodeStarted)
 	appendNode(t, ls, chatID, "n1", "t1", ledger.KindNodeDone)
 
@@ -67,6 +77,7 @@ func TestLoadEvents_PrefersTable(t *testing.T) {
 	st := newTestStore(t)
 	ls := ledgertest.NewMemStore()
 	const chatID = "chat-1"
+	mustSeedChat(t, st, chatID)
 	appendNode(t, ls, chatID, "n1", "t1", ledger.KindNodeStarted) // ledger disagrees with the table on purpose
 	l := NewEventLog(st).WithLedger(ls)
 
@@ -115,6 +126,7 @@ func TestLoadEvents_CaughtUpClientNeverFolds(t *testing.T) {
 	st := newTestStore(t)
 	ls := ledgertest.NewMemStore()
 	const chatID = "chat-1"
+	mustSeedChat(t, st, chatID)
 	appendNode(t, ls, chatID, "n1", "t1", ledger.KindNodeStarted) // ledger has data; must be ignored
 
 	js, err := MarshalEvent(stream.NodeStart("n1", "worker"))
@@ -149,6 +161,7 @@ func TestLoadEvents_CrashBetweenIntentAndWatermark(t *testing.T) {
 	st := newTestStore(t)
 	ls := ledgertest.NewMemStore()
 	const chatID = "chat-crash"
+	mustSeedChat(t, st, chatID)
 
 	// The "crash": these intents are durably in the ledger, but nothing ever
 	// wrote to chat_events or projection_watermarks for this chat - as if the
