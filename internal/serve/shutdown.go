@@ -33,9 +33,6 @@ type nodePauser interface {
 func DrainActiveRuns(hub *stream.Hub, ex nodePauser, grace time.Duration) {
 	hub.BeginDraining()
 	ids := hub.ActiveChatIDs()
-	if len(ids) == 0 {
-		return
-	}
 	var paused, chats int
 	if ex != nil {
 		for _, chatID := range ids {
@@ -51,41 +48,37 @@ func DrainActiveRuns(hub *stream.Hub, ex nodePauser, grace time.Duration) {
 			}
 		}
 	}
-	slog.Info("paused running nodes for shutdown", "component", "serve",
-		"nodes", paused, "chats", chats, "grace", grace)
+	if len(ids) > 0 {
+		slog.Info("paused running nodes for shutdown", "component", "serve",
+			"nodes", paused, "chats", chats, "grace", grace)
+	}
 
-	waitWhileAnyRegistered(hub, ids, grace)
+	// Re-reads hub.ActiveChatIDs() on every poll rather than iterating the
+	// snapshot above: a dispatch that checked Draining()==false just before
+	// BeginDraining flipped it registers moments later, for a chat this
+	// snapshot never saw - iterating the frozen ids would make that run
+	// permanently invisible to drain instead of merely late.
+	waitWhileAnyRegistered(hub, grace)
 
-	var forced int
-	for _, chatID := range ids {
-		if !hub.HasRegisteredRun(chatID) {
-			continue // reached a boundary on its own within the grace window
-		}
-		forced++
+	remaining := hub.ActiveChatIDs()
+	for _, chatID := range remaining {
 		hub.MarkInterrupted(chatID) // per-chat cut marker: only force-cancelled runs skip their RunEnded tail
 		hub.CancelRun(chatID)
 	}
-	if forced == 0 {
+	if len(remaining) == 0 {
 		return
 	}
 	slog.Warn("cancelled in-flight turns past the shutdown grace window; their nodes stay paused/shutdown and resume at boot",
-		"component", "serve", "count", forced)
-	waitWhileAnyRegistered(hub, ids, settleWindow)
+		"component", "serve", "count", len(remaining))
+	waitWhileAnyRegistered(hub, settleWindow)
 }
 
-// waitWhileAnyRegistered polls until none of ids has a registered run, or
+// waitWhileAnyRegistered polls hub.ActiveChatIDs() until it is empty, or
 // budget elapses.
-func waitWhileAnyRegistered(hub *stream.Hub, ids []string, budget time.Duration) {
+func waitWhileAnyRegistered(hub *stream.Hub, budget time.Duration) {
 	deadline := time.Now().Add(budget)
 	for time.Now().Before(deadline) {
-		none := true
-		for _, id := range ids {
-			if hub.HasRegisteredRun(id) {
-				none = false
-				break
-			}
-		}
-		if none {
+		if len(hub.ActiveChatIDs()) == 0 {
 			return
 		}
 		time.Sleep(drainPollInterval)

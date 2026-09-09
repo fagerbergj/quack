@@ -490,6 +490,14 @@ func (r *runControls) register(chatID, nodeID string) (*nodeControl, string, boo
 // machine. Nil (the default) keeps every control in memory only.
 func (e *Executor) SetNodeStateStore(s NodeStateStore) { e.controls.store = s }
 
+// NodeIsLive reports whether nodeID already has a registered control - i.e. a
+// dispatch is already running it. Used to refuse a second concurrent
+// dispatch of the same node (resuming a paused node while its cooperative
+// pause hasn't landed yet).
+func (e *Executor) NodeIsLive(chatID, nodeID string) bool {
+	return e.controls.get(chatID, nodeID) != nil
+}
+
 // CancelNode stops one running node; rest of DAG continues. Returns false if node isn't running.
 func (e *Executor) CancelNode(chatID, nodeID string) bool {
 	c := e.controls.get(chatID, nodeID)

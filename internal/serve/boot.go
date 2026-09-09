@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/store"
@@ -17,16 +18,23 @@ import (
 const staleResumePlanCeiling = 24 * time.Hour
 
 // resumeGuardArchivedOrStale is boot resume's cheap admissibility check
-// (#1176): an archived chat's paused nodes must never be resumed. A plan
-// older than staleResumePlanCeiling is more likely abandoned than mid-run -
-// unless the node is parked on awaiting_input, which holds no run slot and
-// whose only recovery (a full retry) would re-run the node and lose the
-// pending question, so the ceiling only applies to actual work nodes.
+// (#1176): an archived chat's paused nodes must never be resumed. A human
+// pause (dag.PauseUser) is a deliberate decision boot must not override,
+// regardless of plan age - unlike a shutdown pause, which is the server's own
+// doing and always wants resuming. A plan older than staleResumePlanCeiling
+// is more likely abandoned than mid-run - unless the node is parked on
+// awaiting_input, which holds no run slot and whose only recovery (a full
+// retry) would re-run the node and lose the pending question, so the ceiling
+// only applies to actual work nodes.
 // Split out from the DB reads that feed it so it is unit-testable directly.
-func resumeGuardArchivedOrStale(archived, hasPlan, awaitingInput bool, planCreatedAt time.Time) (bool, string) {
+func resumeGuardArchivedOrStale(archived, hasPlan bool, pauseReason dag.PauseReason, planCreatedAt time.Time) (bool, string) {
 	if archived {
 		return false, "chat archived; not resumed"
 	}
+	if pauseReason == dag.PauseUser {
+		return false, "paused by a user; not resumed"
+	}
+	awaitingInput := pauseReason == dag.PauseAwaitingInput
 	if !awaitingInput && hasPlan && time.Since(planCreatedAt) > staleResumePlanCeiling {
 		return false, "plan older than staleResumePlanCeiling; not resumed"
 	}
@@ -113,17 +121,20 @@ func startResumedNodes(ctx context.Context, nodes []store.ResumableNode, orch *o
 }
 
 // boundedGoRun starts run(id) in its own goroutine for every id, at most
-// maxConcurrent at a time - split out from startResumedNodes so the
-// concurrency cap is testable without a real orchestrator/LLM. Blocks until
-// every run has been dispatched (not until they finish).
+// maxConcurrent running at a time - split out from startResumedNodes so the
+// concurrency cap is testable without a real orchestrator/LLM. Returns as
+// soon as every id has a goroutine dispatched, not once every run has
+// started or finished: the semaphore acquire happens inside the goroutine, so
+// dispatch never blocks the caller (buildFromConfig, ahead of ListenAndServe)
+// on an in-flight run - excess ids just park their goroutine on the acquire.
 func boundedGoRun(ids []string, maxConcurrent int, run func(id string)) {
 	if maxConcurrent < 1 {
 		maxConcurrent = 1
 	}
 	sem := make(chan struct{}, maxConcurrent)
 	for _, id := range ids {
-		sem <- struct{}{}
 		go func(id string) {
+			sem <- struct{}{}
 			defer func() { <-sem }()
 			run(id)
 		}(id)
@@ -165,9 +176,16 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 		})
 	}
 	pub.Publish(stream.Done())
-	runlog.StampTurn(runCtx, st, chatID, plan.TurnID, res)
-	st.StampTerminalOutcome(runCtx, orchestrator.AppName, userID, chatID, func() (string, bool) {
-		return orch.PendingQuestion(runCtx, userID, chatID)
+	// A shutdown force-cancel or a user cancel lands on runCtx too, and this
+	// tail always runs regardless of how the node loop ended - unlike
+	// rest.stampRunOutcome's own WithoutCancel wrap, a cancelled runCtx here
+	// would fail every write below and strand the chat run_status="" with
+	// active_turn_id still set, showing as running forever.
+	tailCtx, cancel := context.WithTimeout(context.WithoutCancel(runCtx), 10*time.Second)
+	defer cancel()
+	runlog.StampTurn(tailCtx, st, chatID, plan.TurnID, res)
+	st.StampTerminalOutcome(tailCtx, orchestrator.AppName, userID, chatID, func() (string, bool) {
+		return orch.PendingQuestion(tailCtx, userID, chatID)
 	})
 }
 

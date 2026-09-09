@@ -142,28 +142,33 @@ func (s *resumeStubLLM) workerPrompts() []string {
 // archived chat is never resumed, a plan older than staleResumePlanCeiling is
 // marked failed rather than re-entered - unless the node is parked on
 // awaiting_input, which holds no run slot and must be left alone even past
-// the ceiling (review: failing it would strand the pending question).
+// the ceiling (review: failing it would strand the pending question). Finding
+// 13: a node a human paused (dag.PauseUser) must never be silently
+// auto-resumed on restart - boot does not get to override that decision -
+// regardless of plan age.
 func TestResumeGuardArchivedOrStale(t *testing.T) {
 	now := time.Now()
 	cases := []struct {
 		name          string
 		archived      bool
 		hasPlan       bool
-		awaitingInput bool
+		pauseReason   dag.PauseReason
 		planAge       time.Duration
 		wantOK        bool
 		wantReasonHas string
 	}{
-		{"fresh non-archived resumes", false, true, false, time.Hour, true, ""},
-		{"archived chat is never resumed even with a fresh plan", true, true, false, time.Minute, false, "archived"},
-		{"stale plan is failed even when not archived", false, true, false, staleResumePlanCeiling + time.Minute, false, "stale"},
-		{"no plan row skips the age check", false, false, false, 0, true, ""},
-		{"awaiting_input node past the ceiling is left as-is", false, true, true, staleResumePlanCeiling + time.Minute, true, ""},
-		{"archived still wins over awaiting_input", true, true, true, staleResumePlanCeiling + time.Minute, false, "archived"},
+		{"fresh non-archived shutdown pause resumes", false, true, dag.PauseShutdown, time.Hour, true, ""},
+		{"archived chat is never resumed even with a fresh plan", true, true, dag.PauseShutdown, time.Minute, false, "archived"},
+		{"stale plan is failed even when not archived", false, true, dag.PauseShutdown, staleResumePlanCeiling + time.Minute, false, "stale"},
+		{"no plan row skips the age check", false, false, dag.PauseShutdown, 0, true, ""},
+		{"awaiting_input node past the ceiling is left as-is", false, true, dag.PauseAwaitingInput, staleResumePlanCeiling + time.Minute, true, ""},
+		{"archived still wins over awaiting_input", true, true, dag.PauseAwaitingInput, staleResumePlanCeiling + time.Minute, false, "archived"},
+		{"a human pause is never auto-resumed, even fresh", false, true, dag.PauseUser, time.Minute, false, "user"},
+		{"archived still wins over a human pause", true, true, dag.PauseUser, time.Minute, false, "archived"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ok, why := resumeGuardArchivedOrStale(tc.archived, tc.hasPlan, tc.awaitingInput, now.Add(-tc.planAge))
+			ok, why := resumeGuardArchivedOrStale(tc.archived, tc.hasPlan, tc.pauseReason, now.Add(-tc.planAge))
 			if ok != tc.wantOK {
 				t.Fatalf("ok = %v, want %v (why=%q)", ok, tc.wantOK, why)
 			}
@@ -177,36 +182,66 @@ func TestResumeGuardArchivedOrStale(t *testing.T) {
 // TestBoundedGoRun_CapsConcurrency pins #1176 review: resumed runs skip the
 // orchestrator's own admission (their old slot died with the process), so
 // startResumedNodes must cap concurrency itself, at max_active_runs, or a
-// restart with many resumable chats hammers the host at once. With limit 1
-// and two ids, the second must not start until the first finishes.
+// restart with many resumable chats hammers the host at once. Dispatch order
+// is not guaranteed (the semaphore acquire lives inside each goroutine, see
+// finding 1), so this only pins the concurrency ceiling: at most `limit`
+// of the 5 ids may be running at once.
 func TestBoundedGoRun_CapsConcurrency(t *testing.T) {
-	release1 := make(chan struct{})
-	var started2 atomic.Bool
-	done := make(chan struct{})
+	const limit = 2
+	ids := []string{"c1", "c2", "c3", "c4", "c5"}
+	release := make(chan struct{})
+	defer close(release)
 
-	go boundedGoRun([]string{"chat-1", "chat-2"}, 1, func(id string) {
-		if id == "chat-1" {
-			<-release1
-			return
+	var running, maxRunning atomic.Int32
+
+	go boundedGoRun(ids, limit, func(string) {
+		n := running.Add(1)
+		for {
+			old := maxRunning.Load()
+			if n <= old || maxRunning.CompareAndSwap(old, n) {
+				break
+			}
 		}
-		started2.Store(true)
+		<-release
+		running.Add(-1)
 	})
 
-	time.Sleep(50 * time.Millisecond)
-	if started2.Load() {
-		t.Fatal("chat-2 started while chat-1 held the only slot")
+	// Give every goroutine a chance to acquire and block on release.
+	time.Sleep(200 * time.Millisecond)
+	if got := maxRunning.Load(); got > limit {
+		t.Fatalf("max concurrently running = %d, want <= %d", got, limit)
 	}
-	close(release1)
+	if got := running.Load(); got != limit {
+		t.Fatalf("currently running = %d, want exactly %d (the rest should be parked on the semaphore)", got, limit)
+	}
+}
+
+// TestBoundedGoRun_DispatchDoesNotBlockOnFullSemaphore pins finding 1: with
+// more resumable chats than max_active_runs, boundedGoRun must dispatch every
+// id and return without waiting for any run to finish - it is called
+// synchronously from buildFromConfig, before srv.ListenAndServe, so blocking
+// here means the HTTP listener never opens. A real driveResume takes minutes
+// to hours, so the semaphore must be acquired inside each goroutine, not
+// before spawning it.
+func TestBoundedGoRun_DispatchDoesNotBlockOnFullSemaphore(t *testing.T) {
+	const maxConcurrent = 6 // prod cfg.Dag.MaxActiveRuns
+	ids := []string{"c1", "c2", "c3", "c4", "c5", "c6", "c7"}
+
+	release := make(chan struct{})
+	defer close(release)
+	returned := make(chan struct{})
+
 	go func() {
-		for !started2.Load() {
-			time.Sleep(time.Millisecond)
-		}
-		close(done)
+		boundedGoRun(ids, maxConcurrent, func(string) {
+			<-release // a real driveResume: minutes to hours
+		})
+		close(returned)
 	}()
+
 	select {
-	case <-done:
+	case <-returned:
 	case <-time.After(2 * time.Second):
-		t.Fatal("chat-2 never started after chat-1 released its slot")
+		t.Fatal("boundedGoRun blocked on the 7th id instead of parking a goroutine for it")
 	}
 }
 
@@ -301,6 +336,76 @@ func TestDriveResume_ReentryRunsPausedNodeOnly(t *testing.T) {
 	}
 	if n1, _ := st.GetDagNode(ctx, plan.ID, "n1"); n1 == nil || n1.Output != "ONE-OUT" {
 		t.Errorf("n1 output changed; the seeded output should have been reused")
+	}
+}
+
+// TestDriveResume_TailSurvivesCancelledRunCtx pins finding 15: driveResume's
+// tail (StampTurn/StampTerminalOutcome/PendingQuestion) must not run on
+// runCtx itself. hub.CancelRun(chatID) is exactly what DrainActiveRuns' force
+// cancel (past the shutdown grace window) or a user cancel does in
+// production - a boot-resumed node re-entering right as the process is
+// asked to shut down again is not exotic. If the tail uses the same
+// (now-dead) context, every write in it fails with "context canceled" and
+// the chat is left run_status="" with active_turn_id still set - a chat the
+// UI shows as running forever.
+func TestDriveResume_TailSurvivesCancelledRunCtx(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	chatID := "chat-boot-resume-cancel"
+	if err := st.SetChatOrigin(ctx, chatID, "u1", ""); err != nil {
+		t.Fatalf("SetChatOrigin: %v", err)
+	}
+	userID := st.SessionUserForChat(ctx, chatID)
+
+	plan := dag.Plan{ID: "plan-cancel", UserMessage: "x", Nodes: []dag.Node{
+		{ID: "n1", AgentName: "blk", Task: "TASK-ONE"},
+	}}
+	planJSON, _ := json.Marshal(plan)
+	if err := st.SaveDagPlan(ctx, chatID, plan.ID, "turn-1", string(planJSON)); err != nil {
+		t.Fatalf("SaveDagPlan: %v", err)
+	}
+	if err := st.UpsertDagNode(ctx, store.DagNode{PlanID: plan.ID, NodeID: "n1", Status: string(dag.StatusPaused), PauseReason: string(dag.PauseShutdown)}); err != nil {
+		t.Fatalf("UpsertDagNode n1: %v", err)
+	}
+	if err := st.SetNodeStatusForChat(ctx, chatID, "n1", string(dag.StatusPaused), string(dag.PauseShutdown), ""); err != nil {
+		t.Fatalf("persist pause: %v", err)
+	}
+
+	stub := &resumeStubLLM{}
+	sessions := session.InMemoryService()
+	ag, err := llmagent.New(llmagent.Config{Name: "blk", Model: stub, Description: "blk", Instruction: "ROLE:blk Answer."})
+	if err != nil {
+		t.Fatalf("agent: %v", err)
+	}
+	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"blk": ag}, nil,
+		vetting.NewJudgeFactory(stub, nil, nil), func(string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	ex.SetNodeStateStore(st)
+	orch := orchestrator.New(sessions, nil, "", nil, ex, nil, nil, nil)
+	if _, err := sessions.Create(ctx, &session.CreateRequest{AppName: orchestrator.AppName, UserID: userID, SessionID: chatID,
+		State: map[string]any{tools.ExecPlanKey: string(planJSON)}}); err != nil {
+		t.Fatalf("session create: %v", err)
+	}
+
+	hub := stream.NewHub()
+	go func() {
+		for !hub.HasRegisteredRun(chatID) {
+			time.Sleep(time.Millisecond)
+		}
+		hub.CancelRun(chatID) // DrainActiveRuns' force-cancel, or a user cancel, mid-resume
+	}()
+
+	driveResume(ctx, chatID, []store.ResumableNode{{ChatID: chatID, PlanID: plan.ID, NodeID: "n1", Reason: dag.PauseShutdown}},
+		orch, st, hub, runlog.NewEventLog(st))
+
+	c, err := st.GetChat(ctx, chatID)
+	if err != nil || c == nil {
+		t.Fatalf("GetChat: %v %v", c, err)
+	}
+	if c.ActiveTurnID != "" {
+		t.Errorf("ActiveTurnID = %q, want cleared - the tail's stamp must survive runCtx being cancelled", c.ActiveTurnID)
 	}
 }
 

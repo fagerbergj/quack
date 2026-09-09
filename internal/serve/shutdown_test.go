@@ -155,6 +155,47 @@ func TestDrainActiveRuns_ForceCancelsPastGrace(t *testing.T) {
 	}
 }
 
+// TestDrainActiveRuns_CatchesRunRegisteredAfterSnapshot pins finding 14:
+// DrainActiveRuns snapshots hub.ActiveChatIDs() once, right after
+// BeginDraining. A run for a chat NOT in that snapshot - registered a moment
+// later, the exact race a dispatch entrypoint that checked Draining() just
+// before it flipped can hit - must still be waited for and eventually
+// force-cancelled, not silently invisible to drain for the rest of the
+// process's life. chat-known starts registered so the wait loop has
+// something to poll on, then unregisters on its own (an unrelated run
+// finishing) - it must not let the loop exit before it notices chat-late.
+func TestDrainActiveRuns_CatchesRunRegisteredAfterSnapshot(t *testing.T) {
+	hub := stream.NewHub()
+	hub.RegisterRun("chat-known", "turn-known", func() {})
+
+	lateCancelled := make(chan struct{})
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		hub.RegisterRun("chat-late", "turn-late", func() { close(lateCancelled) })
+	}()
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		hub.UnregisterRun("chat-known")
+	}()
+	unregistered := make(chan struct{})
+	go func() {
+		<-lateCancelled
+		hub.UnregisterRun("chat-late") // the run's own cleanup, like FinishRun's defer, once cancel lands
+		close(unregistered)
+	}()
+
+	DrainActiveRuns(hub, nil, 300*time.Millisecond)
+
+	select {
+	case <-unregistered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a run registered after the drain snapshot was never force-cancelled")
+	}
+	if hub.HasRegisteredRun("chat-late") {
+		t.Error("late run still registered after drain returned")
+	}
+}
+
 // TestHubDrainingRejectsDispatch is a focused unit check on the flag itself -
 // BeginDraining/Draining - independent of any HTTP wiring.
 func TestHubDrainingRejectsDispatch(t *testing.T) {
