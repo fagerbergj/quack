@@ -19,6 +19,7 @@ import (
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/remoteagent/v2"
+	"google.golang.org/adk/v2/artifact"
 	adkmemory "google.golang.org/adk/v2/memory"
 	"google.golang.org/adk/v2/runner"
 	adka2a "google.golang.org/adk/v2/server/adka2a/v2"
@@ -52,7 +53,12 @@ type A2AServer struct {
 // nativeAgent.ForNode), so a fan-out sibling can never misattribute another
 // node's compaction. sink nil (no active run, or a caller with no hub, e.g.
 // tests) makes this a no-op - Serve itself never touches the hub directly.
-func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service, comp Compaction, nodeID string, sink func(stream.SSEEvent)) (*A2AServer, error) {
+//
+// artifacts is set on the worker's own RunnerConfig - the DAG/orchestrator
+// runners already get one (orchestrator.go, nativegraph.go); leaving a
+// worker's nil made ctx.Artifacts() a silent nil in every worker tool/callback
+// even though the caller has a live service to give it (#A7).
+func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service, artifacts artifact.Service, comp Compaction, nodeID string, sink func(stream.SSEEvent)) (*A2AServer, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("agent %q: a2a listen: %w", ag.Name(), err)
@@ -74,7 +80,7 @@ func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service, c
 		Capabilities:       a2a.AgentCapabilities{Streaming: true},
 	}
 
-	adkComp, err := nativeCompactionConfig(comp)
+	adkComp, err := NativeCompactionConfig(comp)
 	if err != nil {
 		return nil, fmt.Errorf("agent %q: adk compaction: %w", ag.Name(), err)
 	}
@@ -84,6 +90,7 @@ func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service, c
 			Agent:             ag,
 			SessionService:    compactionSessions{Service: sessions, nodeID: nodeID, sink: sink},
 			MemoryService:     mem,
+			ArtifactService:   artifacts,
 			AutoCreateSession: true,
 			Compaction:        adkComp,
 		},
@@ -137,11 +144,11 @@ func maxTranscriptChars(comp Compaction) int {
 	return comp.ContextWindow * charsPerToken
 }
 
-// nativeCompactionConfig builds adk/v2's runner-level compaction.Config from
+// NativeCompactionConfig builds adk/v2's runner-level compaction.Config from
 // comp, or nil when compaction is disabled. It reuses quack's own tuned
 // summarizer prompt (compactionSystemPrompt + summaryTemplate, see
 // compaction_prompts.go) rather than adk's default.
-func nativeCompactionConfig(comp Compaction) (*compaction.Config, error) {
+func NativeCompactionConfig(comp Compaction) (*compaction.Config, error) {
 	if !comp.Enabled {
 		return nil, nil
 	}
@@ -153,6 +160,10 @@ func nativeCompactionConfig(comp Compaction) (*compaction.Config, error) {
 		Model:              comp.Summarizer,
 		PromptTemplate:     prompt,
 		MaxTranscriptChars: maxTranscriptChars(comp),
+		// ADK's 2000-char default (llm_summarizer.go) would cut the rolling
+		// summary itself on the way back in; quack's own prompt asks for full
+		// technical content and can legitimately run tens of KB.
+		MaxToolContentChars: -1,
 	})
 	if err != nil {
 		return nil, err
@@ -186,13 +197,25 @@ func buildSkills(ag adkagent.Agent) []a2a.AgentSkill {
 
 // ClientForNode returns an ADK agent that dispatches to this server over A2A,
 // under an identity unique to nodeKey (works around an ADK remote-session
-// collision bug for concurrent sibling nodes).
-func (s *A2AServer) ClientForNode(nodeKey string) (adkagent.Agent, error) {
-	return s.clientNamed(s.Card.Name + "#" + nodeKey)
+// collision bug for concurrent sibling nodes). contextID seeds the A2A
+// message's ContextID whenever ADK sends one with none, so the worker
+// session this node creates has a deterministic address instead of a
+// server-minted random UUID (#A2 - see WorkerSessionID).
+func (s *A2AServer) ClientForNode(nodeKey, contextID string) (adkagent.Agent, error) {
+	return s.clientNamed(s.Card.Name+"#"+nodeKey, contextID)
 }
 
+// WorkerSessionID is the deterministic ADK session id a node's own A2A
+// worker session is created under - shared by ClientForNode's caller (to
+// derive contextID) and release()'s cleanup (to delete the same row).
+func WorkerSessionID(chatID, nodeID string) string { return chatID + ":" + nodeID }
+
+// WorkerSessionUser is the ADK user id a2a-go (server/adka2a/v2/metadata.go)
+// derives from a message's ContextID for AutoCreateSession sessions.
+func WorkerSessionUser(contextID string) string { return "A2A_USER_" + contextID }
+
 // clientNamed builds a remote agent for this server under the given local name.
-func (s *A2AServer) clientNamed(name string) (adkagent.Agent, error) {
+func (s *A2AServer) clientNamed(name, contextID string) (adkagent.Agent, error) {
 	// otelhttp injects the caller's traceparent header so the per-node A2A
 	// server's handler continues this trace instead of starting a new one (#1046).
 	factory := a2aclient.NewFactory(
@@ -208,7 +231,7 @@ func (s *A2AServer) clientNamed(name string) (adkagent.Agent, error) {
 			if err != nil {
 				return nil, err
 			}
-			return scopedClient{A2AClient: c}, nil
+			return scopedClient{A2AClient: c, contextID: contextID}, nil
 		},
 		GenAIPartConverter:        sanitizeWorkflowPlumbingPart,
 		RemoteTaskCleanupCallback: func(context.Context, *a2a.AgentCard, remoteagent.A2AClient, a2a.TaskInfo, error) {},
@@ -217,15 +240,18 @@ func (s *A2AServer) clientNamed(name string) (adkagent.Agent, error) {
 
 // scopedClient filters sibling node events from outbound A2A messages by
 // invocation + branch, since the part converter sees already-synthetic events.
-type scopedClient struct{ remoteagent.A2AClient }
+type scopedClient struct {
+	remoteagent.A2AClient
+	contextID string
+}
 
 func (c scopedClient) SendMessage(ctx context.Context, req *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
-	scopeMessage(ctx, req)
+	scopeMessage(ctx, req, c.contextID)
 	return c.A2AClient.SendMessage(ctx, req)
 }
 
 func (c scopedClient) SendStreamingMessage(ctx context.Context, req *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
-	scopeMessage(ctx, req)
+	scopeMessage(ctx, req, c.contextID)
 	return c.A2AClient.SendStreamingMessage(ctx, req)
 }
 
@@ -233,18 +259,35 @@ func (c scopedClient) SendStreamingMessage(ctx context.Context, req *a2a.SendMes
 // and clears its task/context IDs when ADK's own resume scan (branch-blind)
 // crossed into a sibling node's event to get them - leaves them alone
 // otherwise, since a HITL resume derives its own IDs a different way.
-func scopeMessage(ctx context.Context, req *a2a.SendMessageRequest) {
+//
+// defaultContextID seeds req.Message.ContextID when it arrives empty -
+// otherwise a2a-go mints a fresh random UUID per message
+// (a2asrv/agentexec.go:createNewExecutionContext) and the worker session it
+// addresses (server/adka2a/v2/metadata.go:toInvocationMeta) is never seen
+// again, so nothing can ever delete it (#A2).
+func scopeMessage(ctx context.Context, req *a2a.SendMessageRequest, defaultContextID string) {
+	if req == nil || req.Message == nil {
+		return
+	}
 	ic, ok := ctx.(adkagent.InvocationContext)
-	if !ok || req == nil || req.Message == nil || ic.Session() == nil {
+	if !ok || ic.Session() == nil {
+		if req.Message.ContextID == "" {
+			req.Message.ContextID = defaultContextID
+		}
 		return
 	}
 	events := ic.Session().Events()
 	start := 0
+	// crossedBranch: the clear below deliberately wants a fresh ADK-minted
+	// context (a HITL resume derives its own IDs a different way), so the
+	// empty-ContextID default below must not refill it in that case.
+	crossedBranch := false
 	for i := events.Len() - 1; i >= 0; i-- {
 		if ev := events.At(i); ev != nil && ev.Author == ic.Agent().Name() {
 			start = i + 1
 			if !eventBelongsToBranch(ic.Branch(), ev) {
 				req.Message.TaskID, req.Message.ContextID = "", ""
+				crossedBranch = true
 			}
 			break
 		}
@@ -271,6 +314,9 @@ func scopeMessage(ctx context.Context, req *a2a.SendMessageRequest) {
 		}
 	}
 	req.Message.Parts = parts
+	if req.Message.ContextID == "" && !crossedBranch {
+		req.Message.ContextID = defaultContextID
+	}
 }
 
 // describeEvent renders a foreign-authored event as user-facing text.

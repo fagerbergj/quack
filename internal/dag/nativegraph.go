@@ -183,7 +183,7 @@ func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userI
 			e.recordGateResult(chatID, nodeID, score, passed, rounds)
 		}, e.admission, e.specFor, e.artifacts, e.walLedger, func(nctx context.Context, node Node, cfg vetting.Config) bool {
 			return e.refreshStaleSetup(nctx, userID, chatID, &plan, node, cfg)
-		}, sink)
+		}, sink, e.sessions)
 	if err != nil {
 		return false, err
 	}

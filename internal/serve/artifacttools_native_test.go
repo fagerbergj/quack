@@ -74,7 +74,7 @@ func TestBuildAgents_NativeNodeGetsArtifactTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ForNode: %v", err)
 	}
-	defer release()
+	defer release(false)
 
 	if setRoundCoords == nil {
 		t.Error("setRoundCoords is nil, want a callback the gate can restamp round/turn/head-sha through")

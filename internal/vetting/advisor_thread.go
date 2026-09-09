@@ -22,6 +22,19 @@ func AdvisorThreadToken(planID, nodeID string) string {
 	return planID + "/" + nodeID
 }
 
+// AdvisorSessionApp/AdvisorSessionUser: the fixed ADK session identity every
+// ask_advisor consult (internal/tools.NewAskAdvisorTool) is stored under -
+// exported so a node's own cleanup (dag.newGatedNode) can delete the same
+// row without duplicating this naming.
+const (
+	AdvisorSessionApp  = "quack-advisor"
+	AdvisorSessionUser = "advisor"
+)
+
+// AdvisorSessionID returns the ADK session id an advisor thread's consults
+// are stored under.
+func AdvisorSessionID(token string) string { return token + ":advisor" }
+
 // AdvisorThreadMarker: trailing marker (last-match rule handles foreign markers).
 func AdvisorThreadMarker(token string) string {
 	return "[[quack:advisor-thread:" + token + "]]"

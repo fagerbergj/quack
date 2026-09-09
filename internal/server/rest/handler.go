@@ -899,6 +899,19 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 		writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusPaused))
 	case dag.StatusRunning:
 		// paused → running: a fresh re-run reusing the plan's stored outputs.
+		// A node parked awaiting_input must go through StartNode instead: its
+		// worker's ADK session (internal/agent.WorkerSessionID) survives the
+		// pause on purpose (#A2) with an unanswered function call at its tail,
+		// and retryNodeAsync's fresh dispatch would land in that SAME session
+		// without ever answering it, corrupting the history it appends to.
+		if current == dag.StatusNeedsInput || (dn != nil && dag.PauseReason(dn.PauseReason) == dag.PauseAwaitingInput) {
+			writeJSON(w, http.StatusConflict, schema.TransitionError{
+				Error:   "node is awaiting an answer; use the start endpoint with the answer instead of retry",
+				Current: wireStatus(current),
+				Allowed: allowedStatuses(current),
+			})
+			return
+		}
 		if h.hub.Draining() {
 			errMsg(w, http.StatusServiceUnavailable, "server is shutting down; try again shortly")
 			return

@@ -115,13 +115,13 @@ func collect(t *testing.T, seq iter.Seq2[*session.Event, error]) (thinking, answ
 // client, and asserts thinking / tool_call / tool_result / token all survive the
 // round-trip (adka2a DataPart metadata ↔ genai parts).
 func TestA2ARoundTripPreservesEventVocabulary(t *testing.T) {
-	srv, err := Serve(newWorker(t), session.InMemoryService(), nil, Compaction{}, "", nil)
+	srv, err := Serve(newWorker(t), session.InMemoryService(), nil, nil, Compaction{}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer srv.Close()
 
-	client, err := srv.ClientForNode("test-node")
+	client, err := srv.ClientForNode("test-node", "test-ctx")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,13 +190,13 @@ func (m transferModel) GenerateContent(_ context.Context, req *model.LLMRequest,
 // orchestrator with the A2A client as a sub-agent transfers to it, and the
 // sub-agent's events surface through the orchestrator's runner.
 func TestOrchestratorTransfersToA2ASubAgent(t *testing.T) {
-	srv, err := Serve(newWorker(t), session.InMemoryService(), nil, Compaction{}, "", nil)
+	srv, err := Serve(newWorker(t), session.InMemoryService(), nil, nil, Compaction{}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer srv.Close()
 
-	client, err := srv.ClientForNode("test-node")
+	client, err := srv.ClientForNode("test-node", "test-ctx")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,17 +316,17 @@ func TestDescribeEvent_KeepsMediaParts(t *testing.T) {
 	}
 }
 
-// TestNativeCompactionConfig covers nativeCompactionConfig's Config build:
+// TestNativeCompactionConfig covers NativeCompactionConfig's Config build:
 // disabled leaves native compaction off; enabled builds one from quack's own
 // prompt, carrying over quack's thresholds.
 func TestNativeCompactionConfig(t *testing.T) {
 	base := Compaction{Enabled: true, Summarizer: workerModel{}, ContextWindow: 65_000, TokenThreshold: 40_000, EventRetentionSize: 20}
 
-	if cfg, err := nativeCompactionConfig(Compaction{}); err != nil || cfg != nil {
+	if cfg, err := NativeCompactionConfig(Compaction{}); err != nil || cfg != nil {
 		t.Fatalf("disabled: got (%v, %v), want (nil, nil)", cfg, err)
 	}
 
-	cfg, err := nativeCompactionConfig(base)
+	cfg, err := NativeCompactionConfig(base)
 	if err != nil {
 		t.Fatalf("enabled: %v", err)
 	}
@@ -336,7 +336,7 @@ func TestNativeCompactionConfig(t *testing.T) {
 
 	noSummarizer := base
 	noSummarizer.Summarizer = nil
-	if _, err := nativeCompactionConfig(noSummarizer); err == nil {
+	if _, err := NativeCompactionConfig(noSummarizer); err == nil {
 		t.Fatal("no summarizer: want an error, got nil")
 	}
 }
@@ -387,7 +387,7 @@ func TestCompactionSessionsObservesRealCompaction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	adkComp, err := nativeCompactionConfig(Compaction{
+	adkComp, err := NativeCompactionConfig(Compaction{
 		Enabled:            true,
 		Summarizer:         summarizerModel{},
 		CompactionInterval: 1,

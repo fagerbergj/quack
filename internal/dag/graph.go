@@ -40,7 +40,11 @@ type nodeScopedWorker interface {
 	// already-built tools' writes carry the round's real lineage (#1123).
 	// sink lets this node's own A2A server re-emit a `compaction` SSE event
 	// (#1185 follow-up) - nil is a valid "no active hub" no-op.
-	ForNode(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string), release func(), err error)
+	// release(paused): paused=false ("done") reaps this node's own worker
+	// session (#A2); paused=true (a HITL park) must leave it so a resumed
+	// dispatch - a brand new ForNode call, but to the SAME deterministic
+	// session id - still finds its prior history.
+	ForNode(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string), release func(paused bool), err error)
 }
 
 // buildGateNodes: one gated node per plan node. source: the run's origin
@@ -50,7 +54,7 @@ type nodeScopedWorker interface {
 // orchestrator's own writes) were saved under, or a node's list/read/edit
 // would silently see nothing.
 func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(string) vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID, userID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int), admission *Admission, specFor func(agentName string) AdmissionSpec, artifacts artifact.Service, walLedger ledger.LedgerStore,
-	refreshSetup func(context.Context, Node, vetting.Config) bool, sink func(stream.SSEEvent)) (map[string]workflow.Node, []adkagent.Agent, error) {
+	refreshSetup func(context.Context, Node, vetting.Config) bool, sink func(stream.SSEEvent), sessions session.Service) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
 	seenAgent := map[string]bool{}
@@ -66,7 +70,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		worker := ag
 		workerModel := models[n.AgentName]
 		var workerTools []tool.Tool
-		var release func()
+		var release func(paused bool)
 		var setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string)
 		if scoped, ok := ag.(nodeScopedWorker); ok {
 			w, m, wt, src, rel, err := scoped.ForNode(plan.ID+":"+n.ID, liveSteerDrain(controls, chatID, n.ID), artifacts, artifactref.AppName, userID, chatID, n.ID, sink)
@@ -88,7 +92,7 @@ func buildGateNodes(plan Plan, agents map[string]adkagent.Agent, models map[stri
 		cfg.Artifacts = artifacts
 		cfg.Ledger = walLedger
 		cfg.RoundCoordsSink = setRoundCoords
-		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec, refreshSetup)
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, mediaAgents, controls, chatID, recordGate, release, admission, spec, refreshSetup, sessions)
 	}
 	return nodesByID, subAgents, nil
 }
@@ -171,12 +175,17 @@ func nodeGateConfig(plan Plan, node Node, worker adkagent.Agent, cfgFor func(str
 }
 
 // newGatedNode: assembles worker prompt, runs trust-gate refine loop.
-func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, worker adkagent.Agent, workerTools []tool.Tool, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int), release func(), admission *Admission, spec AdmissionSpec,
-	refreshSetup func(context.Context, Node, vetting.Config) bool) workflow.Node {
+func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, worker adkagent.Agent, workerTools []tool.Tool, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int), release func(paused bool), admission *Admission, spec AdmissionSpec,
+	refreshSetup func(context.Context, Node, vetting.Config) bool, sessions session.Service) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
 		func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
+			// paused stays false on every path except the HITL-park return
+			// below - it tells release() and the ask_advisor cleanup further
+			// down whether this is the node truly finishing (reap its
+			// sessions) or only parking (a resume needs them intact).
+			paused := false
 			if release != nil {
-				defer release()
+				defer func() { release(paused) }()
 			}
 			if admission != nil {
 				onQueued := func() {}
@@ -263,6 +272,22 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			}
 			vetting.RegisterAdvisorThread(token, task)
 			defer vetting.UnregisterAdvisorThread(token)
+			// Reaps the ask_advisor consult session this node's worker may have
+			// created (internal/tools.NewAskAdvisorTool) - a second orphaned
+			// session class alongside the A2A worker one (#A2), keyed the same
+			// deterministic way so it never outlives the node. Skipped on a
+			// HITL park (paused==true): a resume re-registers this SAME token
+			// and must still find its prior consult history.
+			if sessions != nil {
+				defer func() {
+					if paused {
+						return
+					}
+					_ = sessions.Delete(context.WithoutCancel(ctx), &session.DeleteRequest{
+						AppName: vetting.AdvisorSessionApp, UserID: vetting.AdvisorSessionUser, SessionID: vetting.AdvisorSessionID(token),
+					})
+				}()
+			}
 			prompt = prompt + "\n\n" + vetting.AdvisorThreadMarker(token)
 			atts := plan.Attachments
 			if !mediaAgents[node.AgentName] {
@@ -279,6 +304,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			}
 			if errors.Is(err, vetting.ErrNodePaused) {
 				markGateFailed(ctx, node.ID)
+				paused = true
 				// A HITL park wraps ADK's own sentinel: the engine keys the
 				// park (and the persisted RequestInput a resume reads) off it,
 				// so it must propagate. Every other pause stops here.
