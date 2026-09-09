@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -28,7 +29,13 @@ const refreshTimeout = 60 * time.Second
 func Refresh(manifestPath, script string) []Revision {
 	entries, err := parseManifest(manifestPath)
 	if err != nil {
-		slog.Warn("plugin manifest unreadable; skipping refresh", "component", "plugin", "manifest", manifestPath, "err", err)
+		// A missing manifest is the normal case outside a plugin-using repo
+		// (e.g. any cwd `quack -p` runs from) - Debug, not a Warn every call.
+		level := slog.LevelWarn
+		if os.IsNotExist(err) {
+			level = slog.LevelDebug
+		}
+		slog.Log(context.Background(), level, "plugin manifest unreadable; skipping refresh", "component", "plugin", "manifest", manifestPath, "err", err)
 		return nil
 	}
 
