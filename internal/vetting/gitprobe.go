@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -14,8 +15,25 @@ import (
 // probeAugmentFromRepo: ledger event name for the probe (emitProbeEvent).
 const probeAugmentFromRepo = "augment_from_repo"
 
+// gitProbeCache memoises augmentFromRepo's git reads per (dir, HEAD sha):
+// actFor calls it ~9 times per node run, usually with no git state change
+// between calls. Never evicted - same unbounded-growth ceiling as the
+// existing baselineCache in baseline.go; a jail dir is reused across a
+// node's rounds but not across nodes/chats, so this stays small in practice.
+// ponytail: process-lifetime sync.Map, add a TTL/size cap if it ever shows up in profiling.
+var gitProbeCache sync.Map // key: dir + "\x00" + head → *gitProbeResult, or a nil *gitProbeResult for "nothing committed yet"
+
+// gitProbeResult is the git-derived slice of augmentFromRepo's work, replayed
+// onto a fresh workerActivity on a cache hit instead of re-shelling to git.
+type gitProbeResult struct {
+	branch    string
+	written   []string
+	commitLog string
+	prTitle   string
+	prBody    string
+}
+
 // augmentFromRepo folds the clone's git state into session-derived activity.
-// ponytail: runs a few git subprocesses per activity() call (no caching).
 func augmentFromRepo(ctx context.Context, act *workerActivity, cfg Config) {
 	// Read-only reviewers/explorers don't commit; staging a PR would reset the reviewed branch.
 	if cfg.ReadOnly {
@@ -29,54 +47,88 @@ func augmentFromRepo(ctx context.Context, act *workerActivity, cfg Config) {
 		return
 	}
 
+	caps := checksCaps(cfg)
+	head := gitLine(dir, caps, "rev-parse", "HEAD")
+	if head != "" {
+		if v, ok := gitProbeCache.Load(dir + "\x00" + head); ok {
+			applyGitProbe(act, v.(*gitProbeResult), cfg)
+			return
+		}
+	}
+
 	var result map[string]any
 	var probeErr error
 	defer func() { emitProbeEvent(ctx, probeAugmentFromRepo, nil, result, probeErr) }()
 
-	caps := checksCaps(cfg)
 	base, err := baseCommit(dir, caps)
 	if err != nil {
 		probeErr = err
 		return
 	}
-	head := gitLine(dir, caps, "rev-parse", "HEAD")
 	if head == "" || head == base {
 		result = map[string]any{"committed": false}
+		if head != "" {
+			gitProbeCache.Store(dir+"\x00"+head, (*gitProbeResult)(nil))
+		}
+		return
+	}
+
+	nodeDir := workspace.NodeDir(cfg.NodeID)
+	changed := gitLines(dir, caps, "diff", "--name-only", base, head)
+	gp := &gitProbeResult{}
+	for _, f := range changed {
+		gp.written = append(gp.written, joinWritten(nodeDir, f))
+	}
+	if br := gitLine(dir, caps, "rev-parse", "--abbrev-ref", "HEAD"); br != "" && br != "HEAD" {
+		gp.branch = br
+	}
+	gp.commitLog = fmt.Sprintf(
+		"git_commit(disk probe) → head=%q, files_changed=%d (commits found in the clone itself; the worker commits with its own git)",
+		short(head), len(changed))
+
+	// Delivery handoff for a terminal node with no stage_pr/stage_push call: stage the PR from commits.
+	if cfg.Deliver != nil {
+		gp.prTitle = gitLine(dir, caps, "log", "-1", "--format=%s")
+		body := strings.Join(gitLines(dir, caps, "log", "--reverse", "--format=- %s", base+".."+head), "\n")
+		// Fallback body overridden by stage_pr/stage_push via augmentFromPRStage.
+		gp.prBody = "Commits:\n" + body
+	}
+
+	gitProbeCache.Store(dir+"\x00"+head, gp)
+	applyGitProbe(act, gp, cfg)
+	result = map[string]any{"committed": true, "branch": act.currentBranch, "files_changed": len(changed)}
+}
+
+// applyGitProbe replays a cached (or freshly computed) git probe onto act -
+// the mutation augmentFromRepo used to do inline, shared by the cache-hit and
+// cache-miss paths. gp == nil replays the memoised "nothing committed yet".
+func applyGitProbe(act *workerActivity, gp *gitProbeResult, cfg Config) {
+	if gp == nil {
 		return
 	}
 	act.committed = true
-	if br := gitLine(dir, caps, "rev-parse", "--abbrev-ref", "HEAD"); br != "" && br != "HEAD" {
-		act.currentBranch = br
+	if gp.branch != "" {
+		act.currentBranch = gp.branch
 	}
-	nodeDir := workspace.NodeDir(cfg.NodeID)
-	changed := gitLines(dir, caps, "diff", "--name-only", base, head)
-	for _, f := range changed {
-		rel := joinWritten(nodeDir, f)
+	for _, rel := range gp.written {
 		if !act.paths[rel] {
 			act.paths[rel] = true
 			act.written = append(act.written, rel)
 		}
 	}
-	act.workspace = append(act.workspace, wsOp{tool: "git_commit", detail: fmt.Sprintf(
-		"git_commit(disk probe) → head=%q, files_changed=%d (commits found in the clone itself; the worker commits with its own git)",
-		short(head), len(changed))})
-	result = map[string]any{"committed": true, "branch": act.currentBranch, "files_changed": len(changed)}
+	act.workspace = append(act.workspace, wsOp{tool: "git_commit", detail: gp.commitLog})
 
-	// Delivery handoff for a terminal node with no stage_pr/stage_push call: stage the PR from commits.
 	if cfg.Deliver != nil {
 		if act.stagedDelivery == nil {
 			act.stagedDelivery = map[string]StagedDelivery{}
 		}
 		if _, staged := act.stagedDelivery["pr"]; !staged {
-			title := gitLine(dir, caps, "log", "-1", "--format=%s")
-			body := strings.Join(gitLines(dir, caps, "log", "--reverse", "--format=- %s", base+".."+head), "\n")
 			// Key "pr" (staging slot); Kind "pull_request" (delivery discriminator).
 			act.stagedDelivery["pr"] = StagedDelivery{
 				Kind:   "pull_request",
 				Branch: act.currentBranch,
-				Title:  title,
-				// Fallback body overridden by stage_pr/stage_push via augmentFromPRStage.
-				Body: "Commits:\n" + body,
+				Title:  gp.prTitle,
+				Body:   gp.prBody,
 			}
 		}
 	}
