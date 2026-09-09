@@ -166,7 +166,7 @@ describe('DagNode - judge verdict popup copy button (#426)', () => {
     act(() => { previewButton.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
 
     const copyButton = Array.from(host.querySelectorAll('button'))
-      .find(b => b.getAttribute('aria-label')?.startsWith('Copy quality check'))!
+      .find(b => b.getAttribute('aria-label')?.startsWith('Copy judge verdict'))!
     act(() => { copyButton.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
 
     expect(writeText).toHaveBeenCalledWith(verdict)
@@ -367,5 +367,35 @@ describe('DagNode - state is named, not colour-only (audit #7)', () => {
     expect(html({ status: 'queued' }, [], '')).toContain('>queued</span>')
     expect(html({ status: 'done', startedAt: 0, finishedAt: 1000 }, [], '')).toContain('>done</span>')
     expect(html({ status: 'needs_input' }, [], '')).toContain('>needs your answer</span>')
+  })
+})
+
+// #1334 renamed the judge row to "Quality check n: 52% (needs 70%)"; reverted
+// per owner decision - heading text stays "Judge", threshold moves to a title.
+describe('DagNode - judge round heading and score tooltip', () => {
+  it('heads the round "Judge · round n" and keeps the threshold out of the visible chip', () => {
+    const out = html({ status: 'done', startedAt: 0, finishedAt: 1000 }, [
+      { runId: 'j1', agent: 'judge', stage: 'judge', round: 1, done: true, score: 0.52, passed: false, threshold: 0.7, feedback: '', activity: [] },
+    ], '')
+    expect(out).toContain('Judge · round 1')
+    expect(out).not.toContain('Quality check')
+    expect(out).toContain('52%')
+    expect(out).not.toContain('(needs 70%)</span>') // not rendered inline
+    expect(out).toContain('title="Failed: 52% (needs 70%)"')
+  })
+
+  it('titles a passing chip without a threshold as just "Passed: n%"', () => {
+    const out = html({ status: 'done', startedAt: 0, finishedAt: 1000 }, [
+      { runId: 'j1', agent: 'judge', stage: 'judge', round: 2, done: true, score: 0.82, passed: true, feedback: '', activity: [] },
+    ], '')
+    expect(out).toContain('title="Passed: 82%"')
+  })
+
+  it('names a round that never reached a verdict "Judge · round n" style, not "check n"', () => {
+    const out = html({ status: 'done', startedAt: 0, finishedAt: 1000 }, [
+      { runId: 'j1', agent: 'judge', stage: 'judge', round: 3, done: true, status: 'unavailable', reason: 'timeout', activity: [] },
+    ], '')
+    expect(out).toContain('Judge unavailable · round 3')
+    expect(out).not.toContain('check 3')
   })
 })
