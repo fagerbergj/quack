@@ -57,7 +57,7 @@ func TestCodeImplementerBundle(t *testing.T) {
 	}
 	// Spot-check the rubric carries all three parts of its contract: the
 	// research criteria, the first-class ponytail section, and the
-	// claims-vs-ledger fabrication criterion (live e2e 2026-07-10).
+	// claims-vs-ledger fabrication criterion.
 	// "weakest-link" itself is judge-prompt content now, not rubric content
 	// (#941) - judge.go states the aggregation method once, not per rubric.
 	for _, marker := range []string{"checks_pass", "complexity_proportionate", "module_shape", "coupling",

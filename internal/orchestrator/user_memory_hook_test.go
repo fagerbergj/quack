@@ -24,8 +24,6 @@ import (
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
-// --- pre-filter ---
-
 // TestUserMemoryPreFilter: narrowed to preference-shaped phrases (#1283 audit
 // finding 9) - the old alternation included bare never/always/instead of/
 // don't, which matched 26.1% of a 2,389-paragraph technical-prose corpus
@@ -76,8 +74,6 @@ func TestUserMemoryPreFilter(t *testing.T) {
 		})
 	}
 }
-
-// --- mineUserMemory (agent invocation + parsing) ---
 
 // scriptedModel is a model.LLM that always replies with the same scripted text,
 // for driving a memory-agent stand-in without a real model. usage is nil by
@@ -248,8 +244,6 @@ func TestMineUserMemory_DefaultAgentFillsTokenUsage(t *testing.T) {
 	}
 }
 
-// --- commitUserMemory (scoped write) ---
-
 // fakeEmbedder returns a fixed unit vector for every text, matching internal/memory's
 // own test fixture - any query matches any stored point, so only the scope filter
 // decides what recall sees.
@@ -336,8 +330,6 @@ func TestCommitUserMemoryNoCandidatesIsNoop(t *testing.T) {
 	commitUserMemory(context.Background(), store, "alice", memory.Provenance{}, nil) // must not panic on nil store or empty candidates
 	commitUserMemory(context.Background(), nil, "alice", memory.Provenance{}, []memory.Candidate{{Content: "x"}})
 }
-
-// --- maybeMineUserMemory (gating, async, error-swallowing) ---
 
 // waitFor polls cond until it's true or timeout elapses - standard technique
 // for asserting on a fire-and-forget goroutine's eventual effect.

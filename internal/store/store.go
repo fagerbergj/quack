@@ -983,7 +983,6 @@ func (s *Store) SetChatOrigin(ctx context.Context, id, sessionUser, originJSON s
 	}).Create(c).Error
 }
 
-// GetGithubSnapshot returns the stored snapshot JSON, or ("", false, nil) when none exists.
 func (s *Store) GetGithubSnapshot(ctx context.Context, chatID string) (string, bool, error) {
 	var row GithubSnapshot
 	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error
@@ -996,7 +995,6 @@ func (s *Store) GetGithubSnapshot(ctx context.Context, chatID string) (string, b
 	return row.JSON, true, nil
 }
 
-// SetGithubSnapshot upserts the snapshot JSON for the next resume's diff.
 func (s *Store) SetGithubSnapshot(ctx context.Context, chatID, json string) error {
 	row := &GithubSnapshot{ChatID: chatID, JSON: json, UpdatedAt: time.Now().UTC()}
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
@@ -1005,7 +1003,6 @@ func (s *Store) SetGithubSnapshot(ctx context.Context, chatID, json string) erro
 	}).Create(row).Error
 }
 
-// GetGithubReviewBaseline returns the patch-id list quack last delivered a review at.
 func (s *Store) GetGithubReviewBaseline(ctx context.Context, chatID string) (string, bool, error) {
 	var row GithubReviewBaseline
 	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error
@@ -1018,7 +1015,6 @@ func (s *Store) GetGithubReviewBaseline(ctx context.Context, chatID string) (str
 	return row.PatchIDs, true, nil
 }
 
-// SetGithubReviewBaseline upserts the patch-id list (only when a review is delivered).
 func (s *Store) SetGithubReviewBaseline(ctx context.Context, chatID, patchIDsJSON string) error {
 	row := &GithubReviewBaseline{ChatID: chatID, PatchIDs: patchIDsJSON, UpdatedAt: time.Now().UTC()}
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
@@ -1027,7 +1023,6 @@ func (s *Store) SetGithubReviewBaseline(ctx context.Context, chatID, patchIDsJSO
 	}).Create(row).Error
 }
 
-// GetGithubFixState returns the auto-heal state, or (nil, nil) when none exists.
 func (s *Store) GetGithubFixState(ctx context.Context, chatID string) (*GithubFixState, error) {
 	var row GithubFixState
 	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error
@@ -1040,7 +1035,6 @@ func (s *Store) GetGithubFixState(ctx context.Context, chatID string) (*GithubFi
 	return &row, nil
 }
 
-// SetGithubFixState upserts the auto-heal state (persisted before fix run so crash doesn't refund).
 func (s *Store) SetGithubFixState(ctx context.Context, st GithubFixState) error {
 	st.UpdatedAt = time.Now().UTC()
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
@@ -1049,12 +1043,10 @@ func (s *Store) SetGithubFixState(ctx context.Context, st GithubFixState) error 
 	}).Create(&st).Error
 }
 
-// DeleteGithubFixState re-arms auto-heal (human re-applied the fix label).
 func (s *Store) DeleteGithubFixState(ctx context.Context, chatID string) error {
 	return s.db.WithContext(ctx).Where("chat_id = ?", chatID).Delete(&GithubFixState{}).Error
 }
 
-// GetGithubMergeIntent returns the merge authorization, or (nil, nil) when none.
 func (s *Store) GetGithubMergeIntent(ctx context.Context, chatID string) (*GithubMergeIntent, error) {
 	var row GithubMergeIntent
 	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error
@@ -1067,7 +1059,6 @@ func (s *Store) GetGithubMergeIntent(ctx context.Context, chatID string) (*Githu
 	return &row, nil
 }
 
-// SetGithubMergeIntent upserts the merge authorization (quack:merge label applied).
 func (s *Store) SetGithubMergeIntent(ctx context.Context, chatID, requestedBy string) error {
 	now := time.Now().UTC()
 	row := &GithubMergeIntent{ChatID: chatID, RequestedBy: requestedBy, CreatedAt: now, UpdatedAt: now}
@@ -1077,7 +1068,6 @@ func (s *Store) SetGithubMergeIntent(ctx context.Context, chatID, requestedBy st
 	}).Create(row).Error
 }
 
-// DeleteGithubMergeIntent clears the merge authorization (consumed by merge).
 func (s *Store) DeleteGithubMergeIntent(ctx context.Context, chatID string) error {
 	return s.db.WithContext(ctx).Where("chat_id = ?", chatID).Delete(&GithubMergeIntent{}).Error
 }
@@ -1537,7 +1527,6 @@ func (s *Store) failUnresumable(ctx context.Context, n DagNode, why string) Unre
 	return UnresumableNode{PlanID: n.PlanID, NodeID: n.NodeID, Reason: why}
 }
 
-// GetDagNodes returns all nodes for a plan.
 func (s *Store) GetDagNodes(ctx context.Context, planID string) ([]DagNode, error) {
 	var nodes []DagNode
 	err := s.db.WithContext(ctx).Where("plan_id = ?", planID).Find(&nodes).Error
@@ -1557,7 +1546,6 @@ func (s *Store) GetDagNode(ctx context.Context, planID, nodeID string) (*DagNode
 	return &n, nil
 }
 
-// GetLatestDagPlan returns the most-recent DAG plan for a chat.
 func (s *Store) GetLatestDagPlan(ctx context.Context, chatID string) (*DagPlan, error) {
 	var p DagPlan
 	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Order("created_at DESC").First(&p).Error

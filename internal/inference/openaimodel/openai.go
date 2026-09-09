@@ -281,7 +281,7 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 					CachedContentTokenCount: int32(chunk.Usage.PromptTokensDetails.CachedTokens),
 					ThoughtsTokenCount:      int32(chunk.Usage.CompletionTokensDetails.ReasoningTokens),
 				}
-				// One-shot raw usage trace per call, to confirm on prod whether
+				// Temporary raw usage trace - remove once prod confirms whether
 				// the endpoint sends prompt_tokens_details.cached_tokens at all
 				// (a 0 here with prefix caching enabled is a server-side matter).
 				slog.Debug("provider token usage", "component", "inference", "model", o.ModelName,
@@ -864,7 +864,7 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 			CachedContentTokenCount: int32(resp.Usage.PromptTokensDetails.CachedTokens),
 			ThoughtsTokenCount:      thoughts,
 		}
-		// One-shot raw usage trace per call, to confirm on prod whether the
+		// Temporary raw usage trace - remove once prod confirms whether the
 		// endpoint sends prompt_tokens_details.cached_tokens at all (a 0 here
 		// with prefix caching enabled is a server-side matter).
 		slog.Debug("provider token usage", "component", "inference", "model", resp.Model,

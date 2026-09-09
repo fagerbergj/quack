@@ -187,7 +187,7 @@ func TestBuildBoundStillValidatesStructure(t *testing.T) {
 // TestBuildAppendsMissingSynthesizer: a multi-terminal plan with no synthesizer
 // (the model forgot the fan-in) gets one appended depending on every node -
 // otherwise the native graph build rejects the plan outright ("2 terminal
-// nodes (want 1)") and the whole run fails. Regression: live e2e 2026-07-05.
+// nodes (want 1)") and the whole run fails.
 func TestBuildAppendsMissingSynthesizer(t *testing.T) {
 	p := testPlanner()
 	plan, err := p.Build(context.Background(), []RawNode{
@@ -276,7 +276,6 @@ func TestReviewFanoutBackstopInertWhenJudgePresent(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Checks are OPTIONAL. Regression (live e2e 2026-07-12): PR #180's checkCodeChecks
 // backstop REJECTED any code-implementer node with empty `checks` whenever check
 // commands were configured - but the planner authors the DAG before anything has
@@ -307,13 +306,11 @@ func TestBuildAcceptsImplementerNodeWithChecks(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Plan-rubric judge (judgeRouting) - replaces the old regex routing backstop.
 // A fake vetting.PlanJudge stands in for the LLM so these tests don't need a
 // live model; they prove the WIRING (request/plan reach the judge, its verdict
 // drives accept/reject, and a judge error degrades gracefully) rather than any
 // particular model's judgment.
-// ---------------------------------------------------------------------------
 
 // fakePlanJudge returns a vetting.PlanJudge that records the last request/plan
 // summary it was called with and returns the canned verdict.
@@ -534,9 +531,7 @@ func TestJudgeRoutingRejection_EmitsLedgerEventPerRejection(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // §4: orchestrator-set deterministic gate checks - plan-time validation.
-// ---------------------------------------------------------------------------
 
 func TestBuildAcceptsChecksMatchingConfiguredPrefix(t *testing.T) {
 	p := testPlanner("go build", "go test", "go vet", "npx tsc", "npm test")
@@ -668,9 +663,7 @@ func TestBuildAllowsNodeWithNoChecks(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Setup + Delivery - declared pre/post steps (github-delivery-architecture).
-// ---------------------------------------------------------------------------
 
 func TestBuildStampsSetupAndDeliveryOntoPlan(t *testing.T) {
 	p := testPlanner()

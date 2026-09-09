@@ -14,7 +14,6 @@ const (
 	RoleResearch = "research"
 )
 
-// Bucket kinds.
 const (
 	bucketRepo = "repo"
 	bucketRole = "role"

@@ -12,7 +12,6 @@ import (
 // lifecycle doesn't allow (e.g. done → running).
 var ErrIllegalTransition = errors.New("store: illegal node-status transition")
 
-// planForChat resolves the chat's most recent plan id.
 func (s *Store) planForChat(ctx context.Context, chatID string) (string, error) {
 	p, err := s.GetLatestDagPlan(ctx, chatID)
 	if err != nil {

@@ -440,8 +440,8 @@ func TestNormalizeScaleAllOnesIsRawNotNormalized(t *testing.T) {
 }
 
 // TestFoldDeterministic_RequireRetrievalHardFail: a retrieval agent that did
-// ZERO web_search/web_fetch cannot pass the gate - regression for the live e2e
-// 2026-07-05 hole where a worker wrote a question to the user as its answer
+// ZERO web_search/web_fetch cannot pass the gate - regression for a live e2e
+// hole where a worker wrote a question to the user as its answer
 // text (no tool calls at all), citationScore abstained (nothing to grade), and
 // the judge waved the "answer" through. Weakest-link must be 0, and the
 // feedback must point at BOTH ways out (retrieve, or ask_user).

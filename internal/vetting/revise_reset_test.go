@@ -134,7 +134,7 @@ func runStrayCommitGate(t *testing.T, stub model.LLM, cfg Config) {
 	if err != nil {
 		t.Fatalf("worker: %v", err)
 	}
-	// cfg.NodeBaseSHA mirrors what RunGatedRefine stamps at entry (node.go:206) -
+	// cfg.NodeBaseSHA mirrors what RunGatedRefine stamps at entry -
 	// this test drives RunGatedRefine directly via newTestGatedNode, which does
 	// stamp it, so nothing extra is needed here; kept for documentation.
 	node, err := newTestGatedNode("impl-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)

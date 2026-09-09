@@ -33,9 +33,9 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// ── local stub-model helpers (mirrors dag's own gCall/gText/gSysText/gUserText/
+// local stub-model helpers (mirrors dag's own gCall/gText/gSysText/gUserText/
 // gHasTool - duplicated because those are unexported in `package dag` and this
-// is an external test package) ──────────────────────────────────────────────
+// is an external test package)
 
 func atText(s string) *model.LLMResponse {
 	return &model.LLMResponse{
@@ -162,8 +162,6 @@ func runGraph(t *testing.T, worker adkagent.Agent, judgeModel model.LLM, session
 	}
 	return p, outputs, events
 }
-
-// ── Test 3: memory across gate rounds ───────────────────────────────────────
 
 // draftReviseStub: draft round consults ask_advisor once then writes a draft;
 // the judge fails it once (forcing a revision); the revision round consults
@@ -305,8 +303,6 @@ func TestAskAdvisor_StreamsAsToolCall(t *testing.T) {
 	}
 }
 
-// ── Test 4: memory across HITL pause/resume ─────────────────────────────────
-
 // hitlAdvisorStub: consults ask_advisor once before asking the user a
 // question (pausing the node); after resume, consults ask_advisor AGAIN
 // before answering. gHasTool routes submit_verdict (post-resume judge pass).
@@ -428,8 +424,6 @@ func TestAskAdvisor_MemoryAcrossHITLPauseResume(t *testing.T) {
 	}
 }
 
-// ── A2A repro: production serves workers over A2A ───────────────────────────
-
 // TestAskAdvisor_OverA2A reproduces production: the worker runs as an A2A
 // remote agent, so ask_advisor executes inside the A2A server's OWN session
 // (different AppName, no NodeInfo, no gate-seeded state) - any identity
@@ -440,7 +434,7 @@ func TestAskAdvisor_OverA2A(t *testing.T) {
 	advisor := &recordingAdvisor{}
 	// The REAL database-backed session service (sqlite dialect of the same ADK
 	// service Postgres uses in production) - so this covers the full production
-	// shape: durable DB sessions + the A2A hop. The 2026-07-09 live failure
+	// shape: durable DB sessions + the A2A hop. The live failure
 	// only reproduced with both.
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -506,8 +500,6 @@ func TestAskAdvisor_OverA2A(t *testing.T) {
 		t.Errorf("A2A: revision consult missing the draft round's consultation (no memory across rounds); got:\n%s", advisor.prompts[1])
 	}
 }
-
-// ── concurrency: same agent, two nodes, isolated mentor threads ─────────────
 
 // concConsultStub is one node's worker model: it consults ask_advisor twice
 // (distinct per-node request markers), then answers. One INSTANCE per node -

@@ -18,12 +18,6 @@ import (
 // here BEFORE cobra. Required because git execs $GIT_ASKPASS DIRECTLY as one
 // program path with the prompt as its single argument - no shell splitting,
 // so a "<binary> <subcommand>" value is unexecutable.
-//
-// Git's two-call protocol: username prompts get the configured username,
-// everything else gets the token (tools.GitAskpassAnswer). Both values
-// arrive via env vars quack sets ONLY on the git child process (never the
-// long-lived server), so no secret ever touches disk or the server's own
-// environ.
 func gitAskpassMain(args []string, out io.Writer) {
 	prompt := ""
 	if len(args) > 1 {

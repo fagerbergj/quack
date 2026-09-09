@@ -372,9 +372,9 @@ func TestExecute_PauseNodeStopsBeforeJudge(t *testing.T) {
 }
 
 // TestExecute_CancelNodeReportsDelivery: CancelNode tells the truth about whether
-// it reached a live node - the API's 6x-"200 OK, node kept running" lie (live,
-// 2026-07-13) started with the handler discarding this bool. NodeCancelled is the
-// same fact, queryable by the tool layer.
+// it reached a live node - the API's "200 OK, node kept running" lie started
+// with the handler discarding this bool. NodeCancelled is the same fact,
+// queryable by the tool layer.
 func TestExecute_CancelNodeReportsDelivery(t *testing.T) {
 	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
 	ex, plan := newCoopExecutor(t, stub, 1)

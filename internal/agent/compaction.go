@@ -59,7 +59,7 @@ func usable(contextWindow int) int {
 // AppendEvent): otelhttp's server handler already parented it from the
 // caller's traceparent header, so the span lands under the dispatching
 // round's trace without the ledger.Coords.SpanContext workaround the old
-// in-process callback needed (see dda27aaa's internal/agent/compaction.go).
+// in-process callback needed.
 func emitCompaction(ctx context.Context, sink func(stream.SSEEvent), nodeID string, ev *session.Event) {
 	if sink == nil || ev == nil || ev.Actions.Compaction == nil {
 		return

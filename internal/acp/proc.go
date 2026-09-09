@@ -240,7 +240,6 @@ func (h *procHandle) close(log *slog.Logger) {
 	})
 }
 
-// stderrTail renders the captured stderr tail for error messages ("" if empty).
 func (h *procHandle) stderrTail() string {
 	s := strings.TrimSpace(h.stderr.String())
 	if s == "" {

@@ -8,7 +8,6 @@ import (
 	"google.golang.org/adk/v2/tool/functiontool"
 )
 
-// currentDateArgs is empty - the tool takes no input.
 type currentDateArgs struct{}
 
 // newCurrentDate builds the current_date tool: it returns today's real date so the

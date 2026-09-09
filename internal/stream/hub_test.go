@@ -132,8 +132,6 @@ func TestHubNewRunResets(t *testing.T) {
 	}
 }
 
-// --- run-cancel registry (#468) ----------------------------------------------
-//
 // This is the seam that makes DELETE/stop reach a run regardless of which
 // driver started it: the REST handler and the GitHub webhook extension both
 // register their run's cancel func here (RegisterRun) instead of keeping

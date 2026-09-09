@@ -18,7 +18,6 @@ type PlanCache struct {
 	rejectionReason string
 }
 
-// NewPlanCache returns an empty cache.
 func NewPlanCache() *PlanCache {
 	return &PlanCache{plans: make(map[string]dag.Plan)}
 }

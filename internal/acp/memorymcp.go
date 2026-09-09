@@ -28,7 +28,6 @@ import (
 // Memory/Review/PRStage - see mcpToolNames.
 const toolCheckMermaid = "check_mermaid"
 
-// checkMermaidInput is check_mermaid's input.
 type checkMermaidInput struct {
 	Diagram string `json:"diagram" jsonschema:"one mermaid diagram's source, without the surrounding fence"`
 }
@@ -88,7 +87,6 @@ func currentRound(sess vetting.MemSession) (round int, turnID, headSHA, triggerA
 	return t.Round, t.TurnID, t.HeadSHA, t.TriggerAnnotation
 }
 
-// readArtifactInput is the read_artifact tool's input.
 type readArtifactInput struct {
 	Name     string `json:"name" jsonschema:"artifact filename to read"`
 	Revision int64  `json:"revision,omitempty" jsonschema:"specific revision; omit for the latest"`
@@ -126,7 +124,6 @@ func registerReadArtifactTool(srv *mcp.Server, svc artifact.Service, appName, us
 	})
 }
 
-// listArtifactsInput is the list_artifacts tool's input.
 type listArtifactsInput struct {
 	Kind string `json:"kind,omitempty" jsonschema:"only list artifacts of this registered kind; omit for all kinds"`
 }
@@ -154,7 +151,6 @@ func registerListArtifactsTool(srv *mcp.Server, c *recordstore.Client) {
 	})
 }
 
-// editArtifactInput is the edit_artifact tool's input.
 type editArtifactInput struct {
 	ID           string           `json:"id" jsonschema:"artifact id, from list_artifacts or read_artifact"`
 	BaseRevision int              `json:"base_revision" jsonschema:"the revision you last read; used to detect a concurrent edit"`
@@ -252,7 +248,7 @@ func registerEditArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vetti
 	})
 }
 
-// writeArtifactInput is the write_artifact tool's input - blob kinds only.
+// write_artifact accepts blob kinds only.
 type writeArtifactInput struct {
 	Kind  string `json:"kind" jsonschema:"a registered blob kind - see the tool description for the current list"`
 	Mime  string `json:"mime" jsonschema:"the content's mime type"`
@@ -378,12 +374,10 @@ func registerArtifactWriteTools(srv *mcp.Server, sess vetting.MemSession) {
 	}
 }
 
-// loadMemoryInput is the load_memory tool's input.
 type loadMemoryInput struct {
 	Query string `json:"query" jsonschema:"what to recall (a topic, not a document)"`
 }
 
-// stageMemoryInput is the stage_memory tool's input.
 type stageMemoryInput struct {
 	Content string `json:"content" jsonschema:"one durable, atomic fact worth remembering"`
 	Kind    string `json:"kind,omitempty" jsonschema:"which bucket this belongs to: repo, role, or user (default: repo)"`

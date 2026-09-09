@@ -60,13 +60,11 @@ func clonedRepoConfig(t *testing.T, checks []string, seed map[string]string) (Co
 	}, repo
 }
 
-// The bug (live dogfood 2026-07-27, quack 0.16.0): the baseline worktree was
-// created under the SERVER's os.TempDir(), but the git that populates it runs as
+// The bug: the baseline worktree was created under the SERVER's os.TempDir(), but the git that populates it runs as
 // a sandboxed child whose grants cover the node dir, its $HOME and the sandbox's
-// own tmp - not /tmp. So `git worktree add` died with "could not create leading
-// directories of '/tmp/quack-base-*/wt/.git': Permission denied", failsAtBase
-// reported "does not fail at base", and a Go-only change was gated three rounds
-// running on a frontend build failure it never caused. The baseline dir has to
+// own tmp - not /tmp. So `git worktree add` failed with Permission denied,
+// failsAtBase reported "does not fail at base", and a Go-only change was gated
+// on a frontend build failure it never caused. The baseline dir has to
 // live where the sandbox already lets the child write.
 func TestRunAtBaseUsesTheSandboxTmpDir(t *testing.T) {
 	cfg, repo := clonedRepoConfig(t, []string{"true"}, map[string]string{"a.txt": "x"})

@@ -6,14 +6,9 @@ import (
 	"testing"
 )
 
-// Regression (live e2e 2026-07-13, TC2): a code-implementer node told to "Add a
-// Flappy Bird game … and open it as a pull request … Commit on a branch named
-// exactly add-flappy-bird-quack-v4" cloned the repo, wrote the game, ran the
-// tests - and then STOPPED, ending its answer with a markdown code block showing
-// the contents of the registration file it was supposed to write. It never wrote
-// that file, never committed, never pushed, never opened the PR. The judge PASSED
-// it at 0.7: task_completeness is an LLM judgment and it is flaky. Delivery is
-// mechanically checkable, so it is checked mechanically.
+// Regression: the node stopped short of the PR (nothing committed, pushed, or
+// opened) yet the judge PASSED it at 0.7 - task_completeness is a flaky LLM
+// judgment; delivery is mechanically checkable, so it is checked mechanically.
 
 // prTask is the shape of the live task text.
 const prTask = "Add a Flappy Bird game to https://github.com/fagerbergj/games and open it as a pull request. " +
@@ -256,11 +251,9 @@ func TestWorkIncomplete_NonTerminalChainNodeNotHeldToDelivery(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // The review half of the same mechanism: a non-empty answer (e.g. a status
 // update) with nothing posted used to read as "done" to workIncomplete, so
 // posting a review is checked mechanically too.
-// ---------------------------------------------------------------------------
 
 // reviewTask is the shape of the live task text.
 const reviewTask = "Review pull request #4 on https://github.com/fagerbergj/games (branch add-flappy-bird-openhands). " +
@@ -442,12 +435,10 @@ func TestWorkIncompleteOnAnUnpostedReview(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // behaviour_verified: a code review must EXECUTE the change, not just read
 // it - reading alone once missed a bug a probe on an earlier run had caught.
 // Prompt guidance alone is a coin flip; execution is now a deterministic
 // requirement.
-// ---------------------------------------------------------------------------
 
 func TestBehaviourCriterionFailsOnAReadOnlyReview(t *testing.T) {
 	// Only reads: exactly the run that missed the bug.

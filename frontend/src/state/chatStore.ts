@@ -1157,7 +1157,6 @@ export function textFromTurn(turn: Turn): string {
   return ''
 }
 
-// ── answer-bubble attribution ────────────────────────────────────────────────
 // Every assistant bubble is authored by someone: a DAG turn's answer is really
 // produced by the terminal node's agent, a plain reply by the orchestrator
 // itself. These helpers compute that attribution (agent + model + tokens) for
@@ -1226,7 +1225,6 @@ export function pendingNodeQuestion(dag: DagTurnState): { nodeId: string; agent:
   return undefined
 }
 
-// ── chat header: model chip(s) + session usage ──────────────────────────────
 
 // distinctModels collects the non-empty, deduplicated, sorted model names
 // used across a set of node states - a DAG turn credits models per-node,

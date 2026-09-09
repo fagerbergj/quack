@@ -77,7 +77,6 @@ func Open(ctx context.Context, addr string, embedder inference.Embedder, consoli
 	return newStore(ctx, &qdrantIndex{client: client, coll: collection}, embedder, consolidator, collection, domain, topK, minScore)
 }
 
-// qdrantIndex is the Qdrant-backed implementation of index.
 type qdrantIndex struct {
 	client *qdrant.Client
 	coll   string

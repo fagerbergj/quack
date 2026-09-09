@@ -30,7 +30,6 @@ type URLCache struct {
 	items map[string]cacheEntry
 }
 
-// NewURLCache returns an empty cache.
 func NewURLCache() *URLCache {
 	return &URLCache{items: make(map[string]cacheEntry)}
 }

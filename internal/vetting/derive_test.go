@@ -11,7 +11,7 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// Regression (live e2e 2026-07-12): the planner cannot know a repo's check
+// Regression: the planner cannot know a repo's check
 // commands - it authors the DAG before anything has looked at the repo - so PR
 // #180's "checks are mandatory" backstop forced it to GUESS (`go build` for a
 // JavaScript repo) and rejected 7 plans in a row; zero nodes ever ran. Checks

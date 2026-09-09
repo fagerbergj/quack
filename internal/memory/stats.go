@@ -91,7 +91,6 @@ type WeekStats struct {
 	Invalidated  int
 }
 
-// isoWeekKey formats t (UTC) as its ISO 8601 week.
 func isoWeekKey(t time.Time) string {
 	y, w := t.UTC().ISOWeek()
 	return fmt.Sprintf("%04d-W%02d", y, w)

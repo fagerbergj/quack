@@ -129,7 +129,7 @@ func countGitInvocations(t *testing.T, logFile string) int {
 	return len(strings.Split(strings.TrimRight(string(b), "\n"), "\n"))
 }
 
-// #1283-ish: augmentFromRepo shelled out to git on every actFor() call with
+// augmentFromRepo shelled out to git on every actFor() call with
 // no caching (ponytail note at gitprobe.go). A node's continuation loop calls
 // actFor back-to-back with no git-changing action between the calls, so the
 // second call should replay the first probe's result instead of re-running

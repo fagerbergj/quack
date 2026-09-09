@@ -387,7 +387,7 @@ func TestReviewFanout_ParkedReviewerNotCountedFailedThenResumesIntoDelivery(t *t
 	}
 }
 
-// Review plan with a downstream synthesizer (the PR #965 incident, 03:46Z):
+// Review plan with a downstream synthesizer (the PR #965 incident):
 // two reviewer nodes finish, but the plan's synthesizer node owns the final
 // consolidated review - nothing may go to GitHub until it finishes, and the
 // one delivery must carry the synthesizer's body, worst-of verdict, and the

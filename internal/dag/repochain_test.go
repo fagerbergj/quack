@@ -22,8 +22,6 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// --- unit tests: the two chain-aware helpers directly ---
-
 func TestWorkspaceNodeID(t *testing.T) {
 	setup := &Setup{Repo: "r", BaseRef: "main", WorkBranch: "w"}
 	cases := []struct {
@@ -105,8 +103,6 @@ func TestNonTerminalRepoChainNode(t *testing.T) {
 		t.Error("plan.Setup == nil: want false - each node delivers independently")
 	}
 }
-
-// --- end-to-end: a real depends_on chain run through RunPlanAsGraph ---
 
 // stagePRArgs/stagePRResult/chainStagePRTool give the chain's worker agent a
 // real stage_pr tool so a FunctionCall dispatches to an actual FunctionResponse

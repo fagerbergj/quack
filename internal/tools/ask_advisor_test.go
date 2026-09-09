@@ -28,9 +28,9 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// ── shared stub-model helpers (mirrors internal/dag's gCall/gText/gSysText -
+// shared stub-model helpers (mirrors internal/dag's gCall/gText/gSysText -
 // duplicated here because internal/tools already imports internal/dag, so a
-// dag-package test file can't import tools back without a cycle) ───────────
+// dag-package test file can't import tools back without a cycle)
 
 func atText(s string) *model.LLMResponse {
 	return &model.LLMResponse{
@@ -69,11 +69,11 @@ func atAllText(req *model.LLMRequest) string {
 	return b.String()
 }
 
-// ── harness: a gated dynamic node running a real worker AgentNode (with the
+// harness: a gated dynamic node running a real worker AgentNode (with the
 // real ask_advisor tool attached) inside a minimal one-node graph, mirroring
 // the shape dag.newGatedNode builds in production (gated node → RunNode'd
 // worker): the advisor-thread marker in the prompt + the registered
-// task/rubric are how the tool resolves its thread and seed. ────────────────
+// task/rubric are how the tool resolves its thread and seed.
 
 // runAdvisorHarness runs one turn: a worker (using workerModel) calling into
 // the REAL ask_advisor tool bound to an advisor (using advisorModel) and the
@@ -150,7 +150,7 @@ func runAdvisorHarness(t *testing.T, workerModel, advisorModel model.LLM, sessio
 	return out.String()
 }
 
-// ── Test 1: mentor memory within one draft ──────────────────────────────────
+// Test 1: mentor memory within one draft
 
 // twoConsultWorker calls ask_advisor twice (distinct requests) before writing
 // its final answer - proving the worker CAN consult repeatedly in one draft.
@@ -238,7 +238,7 @@ func TestAskAdvisor_MentorMemoryWithinOneDraft(t *testing.T) {
 	}
 }
 
-// ── Test 2: seeded outcome ──────────────────────────────────────────────────
+// Test 2: seeded outcome
 
 // oneConsultWorker calls ask_advisor exactly once then answers.
 type oneConsultWorker struct {
@@ -352,7 +352,7 @@ func TestAskAdvisor_DefaultAgentFillsTokenUsage(t *testing.T) {
 	}
 }
 
-// ── Test 5: advisor error → empty advice, worker completes normally ────────
+// Test 5: advisor error → empty advice, worker completes normally
 
 // brokenAdvisorSessions wraps a real session.Service but fails every
 // Get/Create scoped to the advisor's own AppName - simulating a broken

@@ -353,7 +353,6 @@ func (s *Store) recall(ctx context.Context, buckets []string, query string) (res
 		entries = append(entries, e)
 		kept = append(kept, p)
 	}
-	// Debug log: buckets, raw matches, top_score, dropped, hits.
 	s.log.Debug("recall", "buckets", buckets,
 		"query", preview(query), "raw", len(pts), "top_score", topScore,
 		"min_score", s.minScore, "dropped", dropped, "hits", len(entries), "memories", previews)

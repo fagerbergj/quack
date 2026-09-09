@@ -37,8 +37,6 @@ type absorbFields struct {
 	AbsorbedIDs                   []string
 }
 
-// absorbDelta is the survivor's new state after folding one absorbed
-// memory in.
 type absorbDelta struct {
 	Upvotes, Downvotes, VoteScore int
 	Tier                          string

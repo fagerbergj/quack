@@ -174,7 +174,6 @@ func nodeGateConfig(plan Plan, node Node, worker adkagent.Agent, cfgFor func(str
 	return cfg
 }
 
-// newGatedNode: assembles worker prompt, runs trust-gate refine loop.
 func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, worker adkagent.Agent, workerTools []tool.Tool, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int), release func(paused bool), admission *Admission, spec AdmissionSpec,
 	refreshSetup func(context.Context, Node, vetting.Config) bool, sessions session.Service) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
@@ -328,7 +327,6 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 		workflow.NodeConfig{})
 }
 
-// synthesizerNodeCount: how many nodes in the plan are synthesizer nodes.
 func synthesizerNodeCount(plan Plan) int {
 	n := 0
 	for _, node := range plan.Nodes {
@@ -339,7 +337,6 @@ func synthesizerNodeCount(plan Plan) int {
 	return n
 }
 
-// reviewerNodeCount: how many nodes in the plan are code-reviewer nodes.
 func reviewerNodeCount(plan Plan) int {
 	n := 0
 	for _, node := range plan.Nodes {
@@ -358,7 +355,6 @@ func markGateFailed(ctx adkagent.Context, nodeID string) {
 	}
 }
 
-// readGateFailed: reads each dependency's gate-fail flag from session state.
 func readGateFailed(ctx adkagent.Context, dependsOn []string) map[string]bool {
 	out := map[string]bool{}
 	st := ctx.State()
@@ -375,7 +371,6 @@ func readGateFailed(ctx adkagent.Context, dependsOn []string) map[string]bool {
 	return out
 }
 
-// upstreamFromInput: converts edge input into upstream map for buildTask.
 func upstreamFromInput(in any, dependsOn []string) map[string]string {
 	upstream := map[string]string{}
 	switch v := in.(type) {

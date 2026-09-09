@@ -38,8 +38,6 @@ func (stubG) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) i
 	}
 }
 
-// --- stub helpers ---
-
 func gHasTool(req *model.LLMRequest, name string) bool {
 	if req.Config == nil {
 		return false

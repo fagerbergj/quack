@@ -299,7 +299,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 	log := slog.With("component", "vetting", "node", nodeID)
 
 	// cfg.NodeID (workspaceNodeID), NOT nodeID - the recorder keys every
-	// generate() call on cfg.NodeID (line ~1212 below), which for an
+	// generate() call on cfg.NodeID, which for an
 	// implementer node in a setup/repo-chain plan is workspace.SharedRepoScope,
 	// not the plan node id nodeID carries (#1109 re-review finding). A node
 	// id is reused across turns/plans on the same chat - drop any unconsumed
@@ -636,7 +636,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 				// Intentional: this round's revise (below, on judge fail) also
 				// stamps Round=round, even though its tool writes are first
 				// referenced by round+1's code_review - "round r judges, on
-				// fail revises" (line 557), so a revision belongs to the
+				// fail revises" (JudgeRounds loop above), so a revision belongs to the
 				// judgment that required it, not the round that later reads it.
 				SetAdvisorThreadRound(advisorToken, round, turnID, cfg.NodeBaseSHA, trigger)
 				if cfg.RoundCoordsSink != nil {
@@ -867,7 +867,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		// A judge-less node (JudgeRounds == 0, e.g. a deterministic-only
 		// reMarkable stage) never entered the round loop above - write its
 		// one round here so it still gets a code_review/document/text record.
-		// Mirrors the round loop's own empty-answer guard (line 658) so an
+		// Mirrors the round loop's empty-answer break guard, so an
 		// empty/whitespace-only answer doesn't produce an empty text revision.
 		if episodicRoundsWritten == 0 && strings.TrimSpace(stripLeadingEnvScaffold(answer)) != "" {
 			saveEpisodicRound(nodeCtx, cfg, nodeID, turnID, 1, answer, act.stagedDelivery["review"], nil)
@@ -878,7 +878,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		commitDelivery(nodeCtx, sink, cfg, nodeID, act, res)
 		// commitDelivery already ran on the full answer (memory, episodic
 		// record, delivery render); only the chat-visible return value
-		// collapses when it just restates what was staged (#1306-ish).
+		// collapses when it just restates what was staged.
 		return dedupeAnswerAgainstStaged(answer, act.stagedDelivery), res, nil
 	}
 }

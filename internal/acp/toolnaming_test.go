@@ -15,7 +15,7 @@ import (
 
 // forbiddenToolCheckWording pins #688: no ACP bundle prompt may still tell an
 // agent to check whether its tools exist (a bash probe can never see an MCP
-// tool - see internal/acp/toolnaming_test.go's package doc history and #630).
+// tool - see #630).
 // The round preamble now asserts the exact offered names as fact
 // (mcpToolNames/mcpToolsBlock, acp.go), so a prompt reasoning about a naming
 // convention or an existence check is instructing the exact failure mode #688

@@ -19,7 +19,6 @@ const render = (tool: ToolCall) => ({
   ),
 })
 
-// ── edit_file: the flagship diff ────────────────────────────────────────────
 
 const oldFn = `func greet(name string) string {
 \treturn "Hello, " + name
@@ -55,7 +54,6 @@ export const EditFileLong: Story = render({
   result: { replacements: 1 },
 })
 
-// ── other tool views ────────────────────────────────────────────────────────
 
 export const WriteFile: Story = render({
   callId: 'c', name: 'write_file', done: true,
@@ -137,7 +135,6 @@ export const Running: Story = render({
   args: { dir: '.', command: 'npm run build' },
 })
 
-// ── the tools added by #404 ─────────────────────────────────────────────────
 
 export const WebSearch: Story = render({
   callId: 'c', name: 'web_search', done: true,

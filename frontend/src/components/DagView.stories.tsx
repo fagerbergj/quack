@@ -12,7 +12,6 @@ export default meta
 
 type Story = StoryObj<typeof DagView>
 
-// ---- run fixtures ----------------------------------------------------------
 
 const climateActivity: Activity[] = [
   { kind: 'thinking', text: 'Searching for Dublin climate data…' },
@@ -66,7 +65,6 @@ function dag(over: {
   }
 }
 
-// ---- stories ---------------------------------------------------------------
 
 export const AllQueued: Story = { args: { dag: dag() } }
 

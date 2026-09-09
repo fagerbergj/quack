@@ -84,8 +84,6 @@ func mustCreateChat(t *testing.T, h *Handler) string {
 	return c.ID
 }
 
-// --- UpdateNodeStatus -------------------------------------------------------
-
 // seedPlan writes a minimal DagPlan (+ optional DagNode) fixture directly to
 // the store, standing in for a completed orchestrator run.
 func seedPlan(t *testing.T, h *Handler, chatID, planID, nodeID string) {
@@ -671,8 +669,6 @@ func TestUpdateNodeStatus_NoPlan404(t *testing.T) {
 	}
 }
 
-// --- UpdateResponseStatus ----------------------------------------------------
-
 func TestUpdateResponseStatus_CancelsActiveRun(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, responseID := "c1", "r1"
@@ -710,8 +706,6 @@ func TestUpdateResponseStatus_WrongResponseID404(t *testing.T) {
 		t.Error("cancel func should not have been invoked for a stale response id")
 	}
 }
-
-// --- DeleteChat --------------------------------------------------------------
 
 // TestDeleteChat_CancelsActiveRun is #468's core regression: DELETE must kill
 // a run still in flight on the chat, not just drop its row while the run
@@ -763,8 +757,6 @@ func TestUpdateResponseStatus_NoActiveRun404(t *testing.T) {
 		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}
 }
-
-// --- response_created is the first event of a run --------------------------
 
 // TestSendChatMessage_ResponseCreatedFirst runs a full (stubbed) turn and
 // checks that response_created is the very first SSE event, carrying the same
@@ -834,8 +826,6 @@ func parseSSEBody(t *testing.T, body string) []sseEvent {
 	}
 	return out
 }
-
-// --- needs_input persistence -------------------------------------------------
 
 // TestNeedsInputPersistsAcrossReload: a HITL pause (node_needs_input) persists
 // the node's DB status as "needs_input", but the wire boundary normalizes

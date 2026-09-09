@@ -890,7 +890,7 @@ func TestGatedWorkerNode_JudgeLessEmptyAnswerWritesNoTextArtifact(t *testing.T) 
 	// non-empty so the earlier "worker still empty" recovery/ErrNodeEmpty
 	// path (node.go, before the judge-less fallback) never fires - only
 	// stripLeadingEnvScaffold sees this as empty, exactly like the round
-	// loop's own guard at line ~658.
+	// loop's own guard.
 	stub := stubFixedAnswerModel{text: "<env>preamble only, no real content</env>"}
 	worker, err := llmagent.New(llmagent.Config{
 		Name: "blank-worker", Model: stub, Description: "worker",
@@ -1036,8 +1036,6 @@ func TestCitationOnlyFailure(t *testing.T) {
 		})
 	}
 }
-
-// --- stub helpers ---
 
 func stubHasTool(req *model.LLMRequest, name string) bool {
 	if req.Config == nil {

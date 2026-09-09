@@ -48,8 +48,6 @@ func (e *exaSearcher) Search(ctx context.Context, query string) ([]SearchResult,
 	return e.searchMCP(ctx, query)
 }
 
-// --- REST (keyed: structured JSON) ---
-
 func (e *exaSearcher) searchREST(ctx context.Context, query string) ([]SearchResult, string, error) {
 	body, err := json.Marshal(map[string]any{
 		"query":      query,
@@ -107,8 +105,6 @@ func parseExaREST(r io.Reader) ([]SearchResult, string, error) {
 	}
 	return out, "", nil
 }
-
-// --- MCP (keyless fallback: text output) ---
 
 func (e *exaSearcher) searchMCP(ctx context.Context, query string) ([]SearchResult, string, error) {
 	// ponytail: connects per call (no pooled session) - fine for an occasionally

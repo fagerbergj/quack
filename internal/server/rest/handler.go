@@ -680,7 +680,6 @@ func (h *Handler) startRun(chatID, turnID, content string, attachments []*genai.
 	_ = h.store.MarkRunActive(runCtx, chatID, turnID)
 	go func() {
 		defer recoverRun(chatID, turnID)
-		// FinishRun flushes then closes then unregisters, in that order - see its doc.
 		defer h.eventLog.FinishRun(h.hub, chatID, cancelRun)
 		h.runChat(runCtx, chatID, turnID, content, attachments)
 	}()
@@ -1160,7 +1159,6 @@ func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message stri
 	_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
 	go func() {
 		defer recoverRun(chatID, dp.TurnID)
-		// FinishRun flushes then closes then unregisters, in that order - see its doc.
 		defer h.eventLog.FinishRun(h.hub, chatID, cancelRun)
 		defer h.stampRunOutcome(runCtx, chatID)
 
@@ -1213,7 +1211,6 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 	_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
 	go func() {
 		defer recoverRun(chatID, dp.TurnID)
-		// FinishRun flushes then closes then unregisters, in that order - see its doc.
 		defer h.eventLog.FinishRun(h.hub, chatID, cancelRun)
 		defer h.stampRunOutcome(runCtx, chatID)
 

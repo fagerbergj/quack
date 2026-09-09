@@ -993,7 +993,7 @@ var markdownLinkRe = regexp.MustCompile(`\[[^\]]*\]\(([^)\s]+)\)`)
 // Local file/code citations (e.g. "<repo>@<path>") are NOT graded here - a
 // worker's own claim to have read a file quotes lines an LLM judge can check
 // against the ledger directly, so a second deterministic pass produced false
-// failures without adding coverage (#see PR removing diskCiteScore).
+// failures without adding coverage.
 // Layers: fetched=1.00, searched=0.75, same host fetched=0.50, same host searched=0.25, neither=0.00.
 // Worker-facing meaning of these tiers lives in citeReasonLegend below - keep the two in sync.
 func citationScore(answer string, act workerActivity) (score float64, details []citationDetail, ok bool) {

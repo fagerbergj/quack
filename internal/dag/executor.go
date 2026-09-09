@@ -229,15 +229,12 @@ func emptyNodeError(chatID, nodeID, agent string) string {
 	return SilentGapError
 }
 
-// gateResultKey: keys gateResults scoped by chat id.
 func gateResultKey(chatID, nodeID string) string { return chatID + "\x00" + nodeID }
 
-// recordGateResult: stores node's gate outcome in-process for node_done.
 func (e *Executor) recordGateResult(chatID, nodeID string, score float64, passed bool, rounds int) {
 	e.gateResults.Store(gateResultKey(chatID, nodeID), gateScore{score: score, passed: passed, rounds: rounds})
 }
 
-// gateScore: reads node's persisted judge result.
 func (e *Executor) gateScore(ctx context.Context, appName, userID, sessionID, nodeID string) gateScore {
 	var g gateScore
 	// In-process first: state write is a delta not yet appended when node_done is assembled.
@@ -353,7 +350,6 @@ func (s *dagStream) emit(ev stream.SSEEvent) bool {
 	return true
 }
 
-// handle: translates one workflow event.
 func (s *dagStream) handle(ev *session.Event) bool {
 	if s.stopped {
 		return false
@@ -471,7 +467,6 @@ func (s *dagStream) handle(ev *session.Event) bool {
 	return true
 }
 
-// part: translates one content part into SSE.
 func (s *dagStream) part(node, runID string, p *genai.Part) bool {
 	if p == nil {
 		return true
@@ -513,7 +508,6 @@ func (s *dagStream) part(node, runID string, p *genai.Part) bool {
 	return true
 }
 
-// accum: folds usage/model/finish into the node's worker run.
 func (s *dagStream) accum(node string, ev *session.Event) {
 	u := s.usage[node]
 	if u == nil {
@@ -575,7 +569,6 @@ func (s *dagStream) closeRun(node string) bool {
 	return s.emit(stream.ScopeToNode(stream.SSEEvent{Name: stream.EventAgentComplete, Data: d}, node))
 }
 
-// flush: closes open worker runs at stream end.
 func (s *dagStream) flush() bool {
 	for node := range s.curRun {
 		if !s.closeRun(node) {
@@ -758,7 +751,6 @@ func matchedContext(items []ContextItem, task string) string {
 	return sb.String()
 }
 
-// siblingIDs: lists plan's other node ids for task scoping.
 func siblingIDs(plan Plan, self string) string {
 	var ids []string
 	for _, n := range plan.Nodes {
@@ -790,7 +782,6 @@ func ensureTerminal(plan Plan, nodeOutputs map[string]string, fallback string) {
 	}
 }
 
-// steerGen: extracts steer generation from run ID's "-sN" suffix.
 func steerGen(runID string) int {
 	i := strings.LastIndex(runID, "-s")
 	if i < 0 || i+2 >= len(runID) {

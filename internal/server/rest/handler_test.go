@@ -431,8 +431,6 @@ func TestBuildTurnPlainReplyKeepsNarration(t *testing.T) {
 	}
 }
 
-// --- UpdateChat (manual rename) ----------------------------------------------
-
 func patchUpdateChat(t *testing.T, h *Handler, chatID string, body schema.UpdateChatBody) *httptest.ResponseRecorder {
 	t.Helper()
 	b, _ := json.Marshal(body)
@@ -687,8 +685,6 @@ func TestUpdateChat_TitleOnlyStillTouchesUpdatedAt(t *testing.T) {
 		t.Errorf("updated_at should have been touched by title change; before=%s after=%s", before.Format(time.RFC3339), saved.UpdatedAt.Format(time.RFC3339))
 	}
 }
-
-// --- UpdateChat archive vs. the run queue ------------------------------------
 
 // blockingModel is a model.LLM whose GenerateContent blocks until unblock is
 // closed or ctx is cancelled - holds the one global run slot open on demand so

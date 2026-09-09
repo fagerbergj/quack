@@ -13,10 +13,9 @@ import (
 // submit_safety_verdict with a fixed verdict - or with plain text (never
 // calling the tool) when submit is false, to prove the no-verdict error path.
 type safetyStub struct {
-	allow  bool
-	reason string
-	submit bool
-	// sawPrompt captures the user prompt for assertions.
+	allow     bool
+	reason    string
+	submit    bool
 	sawPrompt string
 }
 

@@ -74,7 +74,6 @@ type Node struct {
 	Artifact string
 }
 
-// terminalIDs returns IDs of nodes no other node depends on.
 func terminalIDs(nodes []Node) []string {
 	hasSuccessor := map[string]bool{}
 	for _, n := range nodes {

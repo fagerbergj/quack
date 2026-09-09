@@ -157,8 +157,6 @@ export function pausedStatusLabel(status: NodeStatus, reason: NodeState['pauseRe
   }
 }
 
-// (Per-run "spinner" dots were removed - redundant with the node header's
-// pulsing status dot, they read as a stray extra dot in run-card summaries.)
 
 // RunTimer shows a per-run elapsed timer: live while the run is open, frozen on
 // its final duration once complete. Floated right within a card summary.
@@ -270,7 +268,6 @@ function CollapsedPreview({ label, text, popupTitle }: { label: string; text: st
   )
 }
 
-// ── per-run stage cards ──────────────────────────────────────────────────────
 
 // WorkerCard renders the worker stage's activity as ONE continuous feed -
 // including any ask_advisor consults, which show up as ordinary tool calls.
@@ -502,7 +499,6 @@ function RetryControl({ nodeId, onRetry }: {
   )
 }
 
-// ── DagNode ─────────────────────────────────────────────────────────────────
 
 interface Props {
   node: DagNodeDef

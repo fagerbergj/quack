@@ -6,7 +6,6 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// validateRepoChain: rejects plans with unordered writer nodes.
 func validateRepoChain(plan Plan) error {
 	if plan.Setup == nil {
 		return nil
@@ -30,7 +29,6 @@ func validateRepoChain(plan Plan) error {
 	return nil
 }
 
-// ancestors: all nodes that id transitively depends on.
 func ancestors(nodes []Node, id string) map[string]bool {
 	byID := make(map[string]Node, len(nodes))
 	for _, n := range nodes {
@@ -58,12 +56,10 @@ func workspaceNodeID(plan Plan, node Node) string {
 	return node.ID
 }
 
-// readOnlyQualifyingAgent: true for read-only setup-qualifying agents.
 func readOnlyQualifyingAgent(name string) bool {
 	return name == reviewerAgent || name == explorerAgent
 }
 
-// worktreeParentID: shared clone scope for worktree provisioning, or "" if N/A.
 func worktreeParentID(plan Plan, node Node) string {
 	if plan.Setup == nil || !readOnlyQualifyingAgent(node.AgentName) {
 		return ""
@@ -71,7 +67,6 @@ func worktreeParentID(plan Plan, node Node) string {
 	return workspace.SharedRepoScope
 }
 
-// nonTerminalRepoChainNode: true when a writer node is non-terminal in a setup chain.
 func nonTerminalRepoChainNode(plan Plan, node Node) bool {
 	if plan.Setup == nil || node.AgentName != implementerAgent {
 		return false

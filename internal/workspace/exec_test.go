@@ -9,10 +9,6 @@ import (
 	"time"
 )
 
-// ---------------------------------------------------------------------------
-// SplitPipeline
-// ---------------------------------------------------------------------------
-
 func TestSplitPipelineStages(t *testing.T) {
 	stages, err := SplitPipeline("grep -r pattern . | sort | head -50")
 	if err != nil {
@@ -289,10 +285,6 @@ func TestRunArgvOutputCap(t *testing.T) {
 		t.Errorf("Output length %d exceeds the cap plus marker", len(res.Output))
 	}
 }
-
-// ---------------------------------------------------------------------------
-// RunPipeline
-// ---------------------------------------------------------------------------
 
 func TestRunPipelineTwoStageHappyPath(t *testing.T) {
 	res, err := RunPipeline(context.Background(), t.TempDir(),

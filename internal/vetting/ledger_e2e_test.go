@@ -19,7 +19,7 @@ import (
 	"google.golang.org/genai"
 )
 
-// fabricationStub reenacts the live-e2e defect (2026-07-10): the worker reads
+// fabricationStub reenacts a live-e2e defect: the worker reads
 // one file, then ANSWERS claiming a commit it never made and quoting README
 // content it never read. The judge side captures the full prompt it receives,
 // so the test can assert the workspace ledger reached it - the fix under

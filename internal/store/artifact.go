@@ -642,8 +642,6 @@ func (s *gormArtifactService) GetArtifactVersion(ctx context.Context, req *artif
 
 var _ artifact.Service = (*gormArtifactService)(nil)
 
-// --- row backend (sqlite, tests: no large objects available) ---
-
 type rowBlobBackend struct{}
 
 func (rowBlobBackend) migrate(db *gorm.DB) error { return db.AutoMigrate(&ArtifactBlob{}) }
@@ -673,8 +671,6 @@ func (rowBlobBackend) delete(ctx context.Context, db *gorm.DB, a Artifact) error
 	}
 	return db.WithContext(ctx).Delete(&ArtifactBlob{}, *a.RowBlobID).Error
 }
-
-// --- large-object backend (postgres) ---
 
 // loBlobBackend stores payload bytes as Postgres large objects. pgx's
 // LargeObjects API needs a real pgx.Tx, so each op grabs a raw conn via

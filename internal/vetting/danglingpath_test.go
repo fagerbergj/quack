@@ -60,9 +60,6 @@ func TestDanglingDeliverablePathCriterion_NothingWritten(t *testing.T) {
 // findings table - it never claims the file IS the deliverable. Basename
 // substring matching alone flags this because "docker-compose.yml" is a
 // common name the answer legitimately discusses in prose; this must not fire.
-//
-// This reproduces against current main - see PR description for the recorded
-// run (chat github-fagerbergj-home-server-3).
 func TestDanglingDeliverablePathCriterion_DiscussingAnEditedFile(t *testing.T) {
 	act := workerActivity{written: []string{"explore-llm/deepwiki/docker-compose.yml"}}
 	answer := "### 1. Full docker-compose.yml — `llm/docker-compose.yml`\n\n" +

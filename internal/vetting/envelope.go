@@ -183,8 +183,6 @@ func buildEnvelope(v verdict, threshold float64, round int) verdictEnvelope {
 	return env
 }
 
-// ── Rubric specs (#941) ─────────────────────────────────────────────────
-//
 // #941 redirect: the rubric is authored as YAML (rubricyaml.go) - it IS data,
 // so the envelope reads it directly (rubricDocSpecs) rather than parsing it
 // back out of rendered markdown. applyRubricSpecs stays a name->spec lookup
@@ -216,8 +214,6 @@ func applyRubricSpecs(v verdict, specs map[string]criterionSpec) verdict {
 	}
 	return v
 }
-
-// ── Anchor enforcement (#941) ───────────────────────────────────────────
 
 // sanitizeAnchors drops any judge-submitted anchor that fails its gate check
 // (quote not found verbatim in the answer, or path outside the node's clone

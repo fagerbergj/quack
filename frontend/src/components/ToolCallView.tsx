@@ -49,7 +49,6 @@ export function ToolCallView({ tool }: { tool: ToolCall }) {
   }
 }
 
-// ── shared primitives ─────────────────────────────────────────────────────────
 
 // PathHeader is the mono file-path (+ optional trailing note) heading a file view.
 function PathHeader({ path, note }: { path: string; note?: ReactNode }) {
@@ -149,7 +148,6 @@ function ResultJSON({ result }: { result: unknown }) {
   )
 }
 
-// ── per-tool views ─────────────────────────────────────────────────────────────
 
 // EditFileView - the flagship: renders the targeted replacement as a before→after
 // diff (old lines red, new lines green), headed by the file path. `replace_all`
@@ -283,7 +281,6 @@ function GitLogView({ tool }: { tool: ToolCall }) {
   )
 }
 
-// ── unmapped ACP / native tools ─────────────────────────────────────────────────
 
 // ListDirView - the directory's entries (name, dir/file marker, size), capped
 // like the other list views; a `truncated` result note surfaces alongside cwd.

@@ -22,7 +22,6 @@ type cancelGuard struct {
 // cancelledMsg: instruction to stop, not a diagnostic (retry loops defeat cancellation).
 const cancelledMsg = "This node was CANCELLED by the user. Stop calling tools. End your turn now with whatever you have."
 
-// newCancelGuard wraps inner; fails loudly if not runnable.
 func newCancelGuard(inner tool.Tool, cancelled func(chatID, nodeID string) bool) (tool.Tool, error) {
 	rt, ok := inner.(runnableTool)
 	if !ok {
@@ -37,7 +36,6 @@ func (c *cancelGuard) IsLongRunning() bool { return c.inner.IsLongRunning() }
 
 func (c *cancelGuard) Declaration() *genai.FunctionDeclaration { return c.inner.Declaration() }
 
-// SetLedgerCoords: pass-through wrapper, forward to inner (#1052).
 func (c *cancelGuard) SetLedgerCoords(coords ledger.Coords) {
 	if cs, ok := c.inner.(ledger.CoordSetter); ok {
 		cs.SetLedgerCoords(coords)

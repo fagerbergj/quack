@@ -142,7 +142,6 @@ func patchCompletedSiblings(state *workflow.RunState, sess session.Session, invo
 	}
 }
 
-// graphNodeNameFromPath: finds graph-node name in a NodeInfo path.
 func graphNodeNameFromPath(path string, known map[string]bool) string {
 	for _, seg := range strings.Split(path, "/") {
 		if i := strings.IndexByte(seg, '@'); i >= 0 {

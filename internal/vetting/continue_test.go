@@ -18,7 +18,7 @@ import (
 	"google.golang.org/genai"
 )
 
-// The continuation contract (live TC2 failures 2026-07-13): a worker that ends a
+// The continuation contract: a worker that ends a
 // turn with no answer text is almost always MID-TASK - it spent its output budget
 // on reasoning - not done. The gate must CONTINUE it (tools intact, own session)
 // rather than hand a tool-less writer the job of summarizing half-finished work.

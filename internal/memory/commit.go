@@ -180,7 +180,6 @@ type neighbour struct {
 	AbsorbedIDs                   []string
 }
 
-// op is one consolidation decision from the LLM.
 type op struct {
 	Action  string `json:"action"`  // ADD | UPDATE | DELETE | NOOP
 	ID      string `json:"id"`      // existing memory id (UPDATE / DELETE)
