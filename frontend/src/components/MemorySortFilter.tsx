@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { MemoryListSort, MemoryScopeStats } from '../api'
+import { Sheet } from './Sheet'
 
 export type MemorySort = MemoryListSort
 
@@ -45,13 +46,8 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
   useEffect(() => {
     if (!open) return
     const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
     document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
-    }
+    return () => document.removeEventListener('mousedown', onDown)
   }, [open])
 
   return (
@@ -75,10 +71,10 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
       </button>
 
       {open && (
-        <div role="dialog" aria-label="Sort and filter memories" className="absolute z-50 mt-1 right-0 w-56 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg p-2 text-xs">
+        <Sheet anchored aria-label="Sort and filter memories" onClose={() => setOpen(false)} className="medium:absolute medium:right-0 medium:mt-1 medium:w-56 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-2 medium:pb-2 text-sm medium:text-xs">
           <div className="px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">Sort</div>
           {SORT_OPTIONS.map(({ value, label }) => (
-            <label key={value} className="flex items-center gap-2 px-1 py-1 rounded cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700">
+            <label key={value} className="flex items-center gap-2 min-h-[44px] medium:min-h-0 px-1 py-1 rounded cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700">
               <input
                 type="radio"
                 name="memory-sort"
@@ -97,7 +93,7 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
             value={bucket}
             onChange={e => onBucketChange(e.target.value)}
             aria-label="Bucket filter"
-            className="w-full mt-0.5 rounded border border-gray-300 dark:border-gray-600 px-2 py-1 text-xs bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full mt-0.5 min-h-[44px] medium:min-h-0 rounded border border-gray-300 dark:border-gray-600 px-2 py-1 text-xs bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="">All buckets</option>
             {buckets.map(b => <option key={b} value={b}>{b}</option>)}
@@ -109,7 +105,7 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
             value={tier}
             onChange={e => onTierChange(e.target.value as MemoryTierFilter)}
             aria-label="Tier filter"
-            className="w-full mt-0.5 rounded border border-gray-300 dark:border-gray-600 px-2 py-1 text-xs bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full mt-0.5 min-h-[44px] medium:min-h-0 rounded border border-gray-300 dark:border-gray-600 px-2 py-1 text-xs bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="">All tiers</option>
             <option value="unverified">Unverified</option>
@@ -131,7 +127,7 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
               </ul>
             </>
           )}
-        </div>
+        </Sheet>
       )}
     </div>
   )

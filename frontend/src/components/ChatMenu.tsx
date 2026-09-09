@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { UsageSummary, type UsageSummaryProps } from './UsageSummary'
 import { useTheme, type Theme } from '../hooks/useTheme'
 import { Icon } from './Icon'
+import { Sheet } from './Sheet'
 
 const THEME_OPTIONS: { value: Theme; label: string }[] = [
   { value: 'light', label: 'Light' },
@@ -26,13 +27,8 @@ export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSumma
   useEffect(() => {
     if (!open) return
     const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
     document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
-    }
+    return () => document.removeEventListener('mousedown', onDown)
   }, [open])
 
   return (
@@ -48,7 +44,7 @@ export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSumma
         <Icon name="more_horiz" className="w-5 h-5" />
       </button>
       {open && (
-        <div role="menu" className="absolute z-20 right-0 mt-1 w-44 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1 text-xs">
+        <Sheet anchored role="menu" onClose={() => setOpen(false)} className="medium:absolute medium:right-0 medium:mt-1 medium:w-44 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 pt-1 medium:pb-1 text-sm medium:text-xs">
           {/* Shown here always when the header itself hides the inline
               UsageSummary (compact width, `hidden medium:flex` in Chat.tsx) -
               the header stays the source of truth for whether it's shown
@@ -63,7 +59,7 @@ export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSumma
             href={`/api/v1/chats/${chatId}/recording`}
             onClick={() => setOpen(false)}
             title="Download this chat's full recording (every streamed event)"
-            className="flex items-center gap-1.5 px-3 py-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+            className="flex items-center gap-1.5 min-h-[44px] medium:min-h-0 px-3 py-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
           >
             <Icon name="download" className="w-3.5 h-3.5" /> Download Logs
           </a>
@@ -78,13 +74,13 @@ export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSumma
                 role="menuitemradio"
                 aria-checked={theme === opt.value}
                 onClick={() => setTheme(opt.value)}
-                className="flex items-center gap-1.5 w-full px-3 py-1.5 text-left text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+                className="flex items-center gap-1.5 w-full min-h-[44px] medium:min-h-0 px-3 py-1.5 text-left text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
               >
                 <span aria-hidden="true" className="w-3 inline-flex">{theme === opt.value ? <Icon name="check" className="w-3 h-3" /> : ''}</span> {opt.label}
               </button>
             ))}
           </div>
-        </div>
+        </Sheet>
       )}
     </div>
   )

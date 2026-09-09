@@ -78,3 +78,14 @@ export const WithScopes: Story = {
     await canvas.findByText('Live / invalidated')
   },
 }
+
+// Below `medium` the sort/filter dialog is a bottom sheet with 44px rows.
+export const CompactSheet: Story = {
+  render: () => <Controlled buckets={BUCKETS} scopes={[{ scope: 'repo:quack', live: 42, invalidated: 5 }]} />,
+  parameters: { renderCheck: { viewports: ['mobile', 'desktop'], play: true } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: 'Sort and filter memories' }))
+    await canvas.findByRole('dialog')
+  },
+}

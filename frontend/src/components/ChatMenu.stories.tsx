@@ -30,3 +30,14 @@ export const WithUsageOnCompact: Story = {
     expect(canvas.getByText('5,522 tok')).toBeInTheDocument()
   },
 }
+
+// Below `medium` the menu is a bottom sheet with 44px rows, not a dropdown.
+export const CompactSheet: Story = {
+  args: { chatId: 'chat-1', usage: { models: ['gpt-5'], usage: { total_tokens: 5522, input_tokens: 4000, output_tokens: 1522 } } },
+  parameters: { renderCheck: { viewports: ['mobile', 'desktop'], play: true } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: 'Chat actions' }))
+    await canvas.findByRole('menu')
+  },
+}

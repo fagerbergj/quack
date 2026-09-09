@@ -12,6 +12,7 @@ import { type DagNodeDef } from '../state/agentStream'
 import { fmtMs, LiveTimer } from '../utils/timer'
 import { traceUrl } from '../state/clientConfig'
 import { Icon } from './Icon'
+import { Sheet } from './Sheet'
 
 // NodeMenu is the node's ⋮ overflow menu: one click for pause/start/stop (no
 // popup round-trip), with "queue a message…" / "edit prompt" / "answer
@@ -223,50 +224,29 @@ function ContextMeter({ used, limit }: { used: number; limit: number }) {
 // close, and the content in a chat-style bubble via AssistantText so it reads
 // as formatted markdown.
 function ContentPopup({ title, text, onClose }: { title: string; text: string; onClose: () => void }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
-  // Return focus to the preview button that opened the sheet on close -
-  // the sheet unmounts, so otherwise a keyboard user lands on <body>.
-  useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null
-    return () => opener?.focus()
-  }, [])
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      className="fixed inset-0 z-50 flex items-end medium:items-center justify-center bg-black/40 medium:p-4"
-      onClick={onClose}
-    >
-      <div
-        className="relative w-full max-w-2xl max-h-[90vh] medium:max-h-[85vh] overflow-y-auto rounded-t-2xl medium:rounded-2xl bg-gray-50 dark:bg-gray-900 shadow-xl px-5 pb-[calc(0.75rem+var(--composer-gap))] medium:pb-6 pt-2 space-y-2"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex justify-end -mb-2">
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="flex h-11 w-11 -me-3 items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-500 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
-          >
-            <Icon name="close" className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="group/verdict relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
-          <span className="block mb-2 text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">{title}</span>
-          {/* #746 item 7 - hidden until THIS block (not some unrelated
-              ancestor - a NAMED group, since the popup nests inside
-              DagNode's own `.group` card) is hovered/focused, aligned to the
-              block's own px-5/py-4 padding rather than a separate header row. */}
-          <span className="absolute top-4 right-5 opacity-0 group-hover/verdict:opacity-100 group-focus-within/verdict:opacity-100 transition-opacity">
-            <CopyButton text={text} label={`Copy ${title.toLowerCase()}`} />
-          </span>
-          <AssistantText text={text} />
-        </div>
+    <Sheet onClose={onClose} className="relative max-w-2xl medium:max-h-[85vh] medium:rounded-2xl bg-gray-50 dark:bg-gray-900 px-5 medium:pb-6 pt-2 space-y-2">
+      <div className="flex justify-end -mb-2">
+        <button
+          onClick={onClose}
+          aria-label="Close"
+          className="flex h-11 w-11 -me-3 items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-500 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
+        >
+          <Icon name="close" className="w-5 h-5" />
+        </button>
       </div>
-    </div>
+      <div className="group/verdict relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
+        <span className="block mb-2 text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">{title}</span>
+        {/* #746 item 7 - hidden until THIS block (not some unrelated
+            ancestor - a NAMED group, since the popup nests inside
+            DagNode's own `.group` card) is hovered/focused, aligned to the
+            block's own px-5/py-4 padding rather than a separate header row. */}
+        <span className="absolute top-4 right-5 opacity-0 group-hover/verdict:opacity-100 group-focus-within/verdict:opacity-100 transition-opacity">
+          <CopyButton text={text} label={`Copy ${title.toLowerCase()}`} />
+        </span>
+        <AssistantText text={text} />
+      </div>
+    </Sheet>
   )
 }
 

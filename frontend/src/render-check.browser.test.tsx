@@ -106,9 +106,11 @@ describe.each(Object.entries(storyModules))('%s', (path, mod) => {
 
   describe.each(storyNames)('%s', storyName => {
     it.each(THEMES)('%s theme has no visible defects at every opted-in viewport', async theme => {
-      setProjectAnnotations({ ...(previewAnnotations as unknown as Record<string, unknown>), globals: { theme } } as never)
+      // Portable stories read project globals from `initialGlobals`; plain
+      // `globals` never reaches the withTheme decorator, so dark == light.
+      setProjectAnnotations({ ...(previewAnnotations as unknown as Record<string, unknown>), initialGlobals: { theme } } as never)
       const composed = composeStories(mod as never)
-      const StoryComp = composed[storyName] as React.ComponentType & { parameters?: Record<string, unknown> }
+      const StoryComp = composed[storyName] as React.ComponentType & { parameters?: Record<string, unknown>; play?: (ctx: { canvasElement: HTMLElement }) => Promise<void> }
 
       // Viewport opt-in: a story's own `parameters.renderCheck.viewports` (or
       // Storybook's own `parameters.viewport.defaultViewport`, honored as an
@@ -118,7 +120,7 @@ describe.each(Object.entries(storyModules))('%s', (path, mod) => {
       // explicitly yet - most existing stories render at a fixed desktop
       // width with no mobile intent, so checking them at 390px would flag
       // the story's own width choice, not a component defect.
-      const renderCheckParams = StoryComp.parameters?.renderCheck as { viewports?: readonly string[] } | undefined
+      const renderCheckParams = StoryComp.parameters?.renderCheck as { viewports?: readonly string[]; play?: boolean } | undefined
       const storybookViewport = StoryComp.parameters?.viewport as { defaultViewport?: string } | undefined
       const wantsMobile = renderCheckParams?.viewports
         ? renderCheckParams.viewports.includes('mobile')
@@ -151,6 +153,13 @@ describe.each(Object.entries(storyModules))('%s', (path, mod) => {
             </div>,
           )
           await waitForRenderSettled(container)
+          // Menus and sheets only exist once a story's play() opens them.
+          // Opt-in per story: most existing play() functions assume the
+          // Storybook canvas (args spies, MSW) and fail under this harness.
+          if (renderCheckParams?.play && StoryComp.play) {
+            await StoryComp.play({ canvasElement: container })
+            await waitForRenderSettled(container)
+          }
 
           const strayComment = findStrayCommentText(container)
           expect(strayComment, `stray comment-like text node: ${strayComment}`).toBeUndefined()
