@@ -81,9 +81,9 @@ type CrossChatFilteredReader interface {
 }
 
 // ReadAllByKindsSince returns every chat's entries with Kind in kinds and At >= since.
-// Uses store's own CrossChatFilteredReader when it has one (PGStore pushes both filters to
-// SQL); MemStore/fakes fall back to List() plus one ReadByKinds per chat plus an in-process
-// time filter, so results are identical either way.
+// Uses store's own CrossChatFilteredReader when it has one (PGStore and MemStore both
+// do); a store without one (older fakes) falls back to List() plus one ReadByKinds per chat
+// plus an in-process time filter, so results are identical either way.
 func ReadAllByKindsSince(ctx context.Context, store LedgerStore, kinds []string, since time.Time) ([]Entry, error) {
 	if cr, ok := store.(CrossChatFilteredReader); ok {
 		return cr.ReadEntriesFilteredSince(ctx, kinds, since)

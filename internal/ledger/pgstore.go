@@ -22,6 +22,7 @@ var _ LedgerStore = (*PGStore)(nil)
 const (
 	idxParentRevision = "idx_ledger_artifact_parent_revision"
 	idxIdempotency    = "idx_ledger_idempotency_key"
+	idxKindAt         = "idx_ledger_kind_at"
 )
 
 // pgEntry is the GORM row for one ledger Entry; Payload is jsonb. ParentRevision
@@ -80,6 +81,14 @@ func NewPGStore(db *gorm.DB) (*PGStore, error) {
 		`CREATE UNIQUE INDEX IF NOT EXISTS %s ON ledger_entries (chat_id, idempotency_key) WHERE idempotency_key <> ''`,
 		idxIdempotency)).Error; err != nil {
 		return nil, fmt.Errorf("ledger: create idempotency index: %w", err)
+	}
+	// ReadEntriesFilteredSince's cross-chat `kind IN (?) AND at >= ?` was a full
+	// scan (no index touches kind or at). CONCURRENTLY: a 465k-row ledger must
+	// not block writes for the build; it cannot run inside a transaction, and
+	// NewPGStore's db is never one.
+	if err := db.Exec(fmt.Sprintf(
+		`CREATE INDEX CONCURRENTLY IF NOT EXISTS %s ON ledger_entries (kind, at)`, idxKindAt)).Error; err != nil {
+		return nil, fmt.Errorf("ledger: create kind/at index: %w", err)
 	}
 	return &PGStore{db: db}, nil
 }
