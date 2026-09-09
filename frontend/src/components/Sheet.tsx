@@ -29,7 +29,7 @@ export function Sheet({ onClose, anchored, role = 'dialog', className = '', chil
         role={role}
         aria-modal={role === 'dialog' || undefined}
         {...aria}
-        className={`z-50 w-full max-h-[90vh] overflow-y-auto rounded-t-2xl shadow-xl pb-[calc(0.75rem+var(--composer-gap))] ${className}`}
+        className={`z-50 w-full max-h-[90dvh] overflow-y-auto rounded-t-2xl shadow-xl pb-[calc(0.75rem+var(--composer-gap))] ${className}`}
         onClick={e => e.stopPropagation()}
       >
         {children}
