@@ -674,6 +674,48 @@ func TestIdenticalContentSaveSkipsRevisionAndWAL(t *testing.T) {
 	}
 }
 
+// TestRevertGetsNewRevision is the finding-2 fix: idempotencyKey used to hash
+// only (id, data), so a save matching ANY earlier revision - not just the
+// latest - collapsed into a no-op reporting that old revision, silently
+// dropping the write. A→B→A must land as revision 3 with content "A", while a
+// genuine retry at the SAME parent still collapses.
+func TestRevertGetsNewRevision(t *testing.T) {
+	svc := artifact.InMemoryService()
+	fl := newFakeLedger()
+	c := New(svc, "quack", "user1", "chat1").WithLedger(fl)
+	ctx := context.Background()
+
+	id, rev1, err := c.SaveBlob(ctx, "test.blob", []byte("A"), "text/plain", "doc:revert", Lineage{})
+	if err != nil || rev1 != 1 {
+		t.Fatalf("save A: rev=%d err=%v, want rev=1 err=nil", rev1, err)
+	}
+	_, rev2, err := c.SaveBlob(ctx, "test.blob", []byte("B"), "text/plain", "doc:revert", Lineage{})
+	if err != nil || rev2 != 2 {
+		t.Fatalf("save B: rev=%d err=%v, want rev=2 err=nil", rev2, err)
+	}
+	_, rev3, err := c.SaveBlob(ctx, "test.blob", []byte("A"), "text/plain", "doc:revert", Lineage{})
+	if err != nil {
+		t.Fatalf("save A again returned an error: %v", err)
+	}
+	if rev3 != 3 {
+		t.Fatalf("save A again: rev=%d, want rev=3 (a revert must get its own new revision)", rev3)
+	}
+	raw, latestRev, ok, err := c.Latest(ctx, id)
+	if err != nil || !ok || latestRev != 3 || string(raw) != "A" {
+		t.Fatalf("Latest after revert: raw=%q rev=%d ok=%v err=%v, want %q rev=3", raw, latestRev, ok, err, "A")
+	}
+
+	// A genuine retry at the SAME parent (revision 3, content "A") must still
+	// collapse into a no-op, not mint revision 4.
+	_, rev4, err := c.SaveBlob(ctx, "test.blob", []byte("A"), "text/plain", "doc:revert", Lineage{})
+	if err != nil {
+		t.Fatalf("duplicate retry at the same parent returned an error: %v", err)
+	}
+	if rev4 != 3 {
+		t.Fatalf("duplicate retry at the same parent: rev=%d, want rev=3 (still collapses)", rev4)
+	}
+}
+
 // TestConcurrentSaveSameIDWALRevisionsAreSequential is the adversarial-review
 // fix for #1100: N goroutines racing SaveBlob on the SAME id must produce WAL
 // artifact.revision entries numbered exactly 1..N with a strictly increasing
@@ -838,6 +880,11 @@ func TestSaveRetryAfterPartialSave_CompletesOrphanedDuplicate(t *testing.T) {
 // adopt the same orphaned slot first (saveAtOrAdopt) with different bytes.
 // Writer A's same-content retry must get a distinct, named mismatch error,
 // never be handed writer B's content under a false "already recorded".
+// (Adversarial review of #1330: folding parentRev straight into
+// idempotencyKey broke this - A's retry recomputed its key against the NEW
+// tip and silently landed a fresh revision past content it never saw,
+// re-opening the #1237 hole. claimAndSave/revertKey restore this without
+// reintroducing finding 2's revert bug - see TestRevertGetsNewRevision.)
 func TestSaveRetryAfterPartialSave_ForeignAdoptionFailsClosed(t *testing.T) {
 	svc := &failOnceSaveService{Service: artifact.InMemoryService(), failCall: 1}
 	ls := ledgertest.NewMemStore()
