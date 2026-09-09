@@ -177,21 +177,6 @@ func startSDKExtensions(ctx context.Context, exts []builtSDKExtension) error {
 	return nil
 }
 
-// stopSDKExtensions calls Stop on every extension implementing sdk.Stopper.
-// Best-effort: Stop must already be idempotent per the SDK contract, so this
-// runs unconditionally during shutdown even if Start never ran for some.
-func stopSDKExtensions(ctx context.Context, exts []builtSDKExtension) {
-	for _, e := range exts {
-		stopper, ok := e.ext.(extsdk.Stopper)
-		if !ok {
-			continue
-		}
-		if err := stopper.Stop(ctx); err != nil {
-			slog.Warn("extension stop failed", "component", "ext."+e.name, "err", err)
-		}
-	}
-}
-
 // sdkExtensionMounts adapts built extensions onto server.Options.SDKExtensions.
 func sdkExtensionMounts(exts []builtSDKExtension) []server.SDKExtensionMount {
 	out := make([]server.SDKExtensionMount, 0, len(exts))
@@ -234,7 +219,7 @@ func sdkExtensionTools(exts []builtSDKExtension) []extTool {
 }
 
 // findGitCredentialSource returns the first built extension implementing
-// sdk.GitCredentialSource, detected the same way Starter/Stopper are - not
+// sdk.GitCredentialSource, detected the same way Starter is - not
 // hardcoded to one extension's name. More than one match logs a warning and
 // keeps the first (deterministic build order, sorted by name); today only
 // the GitHub extension implements this.

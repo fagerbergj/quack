@@ -644,7 +644,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	// The SDK inverse interfaces' first real consumer: whichever compiled,
 	// configured module implements them (github, today) supplies quack's
 	// push credential and delivery target - detected the same way
-	// Starter/Stopper are, not hardcoded to one extension's name.
+	// Starter is, not hardcoded to one extension's name.
 	gitCredSrc, gitCredSrcName := findGitCredentialSource(sdkExts)
 	deliverer, delivererName := findDeliverer(sdkExts)
 	var gitTokenSource tools.GitTokenSource
@@ -681,12 +681,6 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 			slog.Warn("ledger recovery failed; unresolved intents stay unresolved", "component", "startup", "err", err)
 		}
 	}
-
-	cleanups = append(cleanups, func() {
-		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer stopCancel()
-		stopSDKExtensions(stopCtx, sdkExts)
-	})
 
 	var advisorAgent adkagent.Agent
 	if cfg.Gates.JudgeEnabled() {
