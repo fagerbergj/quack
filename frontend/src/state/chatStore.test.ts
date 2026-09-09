@@ -763,6 +763,88 @@ describe('ChatStore - mid-node steering', () => {
   })
 })
 
+// agent_complete/node_done/node_failed/node_cancelled now carry a server-clock
+// finished_at_ms, so a finished run/node's duration comes from two server
+// timestamps - never from Date.now() at whatever moment the client happens to
+// process (or replay) the event.
+describe('ChatStore - server-timestamped durations survive replay', () => {
+  // One node running worker -> judge(reject) -> revise -> judge(pass) -> done,
+  // every agent_start/agent_complete/node_done carrying explicit server
+  // timestamps. runDagOnce replays this SAME event list into a fresh store.
+  function dagSSE(): string {
+    return [
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"r","task":"t","depends_on":[]}],"edges":[],"started_at_ms":1000}',
+      '',
+      'event: node_start',
+      'data: {"node_id":"a","agent":"r","started_at_ms":2000}',
+      '',
+      'event: agent_start',
+      'data: {"node_id":"a","run_id":"worker-r0","agent":"r","stage":"worker","started_at_ms":2000}',
+      '',
+      'event: agent_complete',
+      'data: {"node_id":"a","run_id":"worker-r0","stage":"worker","finished_at_ms":8000}', // 6000ms
+      '',
+      'event: agent_start',
+      'data: {"node_id":"a","run_id":"judge-r1","agent":"judge","stage":"judge","round":1,"started_at_ms":8000}',
+      '',
+      'event: agent_complete',
+      'data: {"node_id":"a","run_id":"judge-r1","stage":"judge","round":1,"passed":false,"finished_at_ms":13000}', // 5000ms
+      '',
+      'event: agent_start',
+      'data: {"node_id":"a","run_id":"worker-r1","agent":"r","stage":"revise","round":1,"started_at_ms":13000}',
+      '',
+      'event: agent_complete',
+      'data: {"node_id":"a","run_id":"worker-r1","stage":"revise","round":1,"finished_at_ms":20000}', // 7000ms
+      '',
+      'event: agent_start',
+      'data: {"node_id":"a","run_id":"judge-r2","agent":"judge","stage":"judge","round":2,"started_at_ms":20000}',
+      '',
+      'event: agent_complete',
+      'data: {"node_id":"a","run_id":"judge-r2","stage":"judge","round":2,"passed":true,"finished_at_ms":25000}', // 5000ms
+      '',
+      'event: node_done',
+      'data: {"node_id":"a","duration_ms":23000,"finished_at_ms":25000}', // 25000 - 2000
+      '',
+    ].join('\n')
+  }
+
+  async function runDagOnce(fetchNowMs: number): Promise<DagTurnState> {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(fetchNowMs)
+    try {
+      const fetchMock = vi.fn().mockResolvedValueOnce(makeStream(dagSSE()))
+      vi.stubGlobal('fetch', fetchMock)
+      const store = new ChatStore()
+      store.seed('c', [])
+      await store.submit('c', 'go')
+      return store.get('c').live!.dag!
+    } finally {
+      nowSpy.mockRestore()
+    }
+  }
+
+  it('replaying the same event list at two different client Date.now() values yields identical run/node durations', async () => {
+    const dagA = await runDagOnce(10_000_000_000) // "live": processed shortly after emission
+    const dagB = await runDagOnce(20_000_000_000) // "replay": processed ~2.8 hours later
+
+    const runsA = dagA.nodeRuns['a'].map(r => ({ runId: r.runId, durationMs: r.durationMs }))
+    const runsB = dagB.nodeRuns['a'].map(r => ({ runId: r.runId, durationMs: r.durationMs }))
+    expect(runsA).toEqual(runsB)
+    expect(runsA.map(r => r.durationMs)).toEqual([6000, 5000, 7000, 5000])
+
+    expect(dagA.nodeStates['a'].serverDurationMs).toBe(23000)
+    expect(dagB.nodeStates['a'].serverDurationMs).toBe(23000)
+    expect(dagA.nodeStates['a'].finishedAt).toBe(dagB.nodeStates['a'].finishedAt)
+    expect(dagA.finishedAt).toBe(dagB.finishedAt)
+  })
+
+  it("a finished node's sub-run durations sum to no more than the node's own duration", async () => {
+    const dag = await runDagOnce(50_000_000_000)
+    const sumOfRuns = dag.nodeRuns['a'].reduce((sum, r) => sum + (r.durationMs ?? 0), 0)
+    expect(sumOfRuns).toBeLessThanOrEqual(dag.nodeStates['a'].serverDurationMs!)
+  })
+})
+
 describe('ChatStore - context meter + compaction', () => {
   let fetchMock: ReturnType<typeof vi.fn>
   let store: ChatStore

@@ -771,6 +771,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			RunID: orchRunID, Stage: stream.StageWorker,
 			Model: model, PromptTokens: promptTokens, CompletionTokens: completionTokens,
 			ReasoningTokens: reasoningTokens, TotalTokens: totalTokens, CachedTokens: cachedTokens, FinishReason: finishReason,
+			FinishedAtMs: time.Now().UnixMilli(),
 		}}, nil)
 
 		if !produced {

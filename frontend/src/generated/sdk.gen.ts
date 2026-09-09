@@ -218,18 +218,21 @@ export const diffArtifactRevisions = <ThrowOnError extends boolean = false>(opti
  * `agent_tool_result` ({"node_id","run_id","call_id","name","result"}) are
  * tool activity; `agent_token` ({"node_id","run_id","text"}) is answer text
  * (the final vetted answer is emitted with an empty `run_id` - it belongs to
- * the node); `agent_complete` ({"node_id","run_id","stage",...}) closes a run
- * with its stage-specific result - judge runs carry `score`/`passed`/
- * `feedback` (or `status`+`reason` when no verdict was produced:
- * `status:"unavailable"` when the judge model itself couldn't be reached,
- * `status:"no_verdict"` when it ran but never committed a verdict), model
- * runs carry `finish_reason` + token usage.
+ * the node); `agent_complete` ({"node_id","run_id","stage","finished_at_ms",...})
+ * closes a run - `finished_at_ms` is the server wall-clock (epoch ms) it
+ * closed, so a client computes this run's duration from two server
+ * timestamps instead of "now" at replay/reconnect time - judge runs carry
+ * `score`/`passed`/`feedback` (or `status`+`reason` when no verdict was
+ * produced: `status:"unavailable"` when the judge model itself couldn't
+ * be reached, `status:"no_verdict"` when it ran but never committed a
+ * verdict), model runs carry `finish_reason` + token usage.
  *
  * DAG events: `dag_plan` ({"plan_id","nodes","edges","trace_id"})
  * signals a quack:dag output item has been added; `node_queued`
  * ({"node_id"}), `node_start` ({"node_id","agent","trace_id"}),
- * `node_done` ({"node_id",...metadata}),
- * `node_failed` ({"node_id","error"}), `node_cancelled` ({"node_id"}), and
+ * `node_done` ({"node_id","finished_at_ms",...metadata}),
+ * `node_failed` ({"node_id","error","finished_at_ms"}), `node_cancelled`
+ * ({"node_id","finished_at_ms"}), and
  * `node_paused` ({"node_id"}) track node lifecycle. `node_steered`
  * ({"node_id","guidance"}) fires when a node's queued message(s) are
  * delivered at its next turn boundary and it re-runs with them folded

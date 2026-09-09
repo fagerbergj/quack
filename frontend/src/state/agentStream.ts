@@ -44,6 +44,11 @@ interface AgentCompletePayload {
   // summed across tool round trips like totalTokens) - the context meter's
   // live "used" reading.
   contextTokens?: number
+  // finishedAtMs is the server wall-clock (epoch ms) the run closed - lets a
+  // replayed/reconnected client compute this run's duration from two server
+  // timestamps instead of "now" at replay time. Absent from an
+  // older-server event; callers fall back to Date.now() then.
+  finishedAtMs?: number
 }
 
 // DagNodeDef is one node in a DAG plan, as received from the server.
@@ -77,6 +82,9 @@ export interface NodeDoneMeta {
   contextTokens?: number
   finishReason?: string
   durationMs?: number
+  // finishedAtMs is the server wall-clock (epoch ms) the node finished - see
+  // AgentCompletePayload.finishedAtMs.
+  finishedAtMs?: number
   judgeRounds?: number
   judgeFinalScore?: number
   judgePassed?: boolean
@@ -165,10 +173,12 @@ export interface AgentStreamHandlers {
   onNodeQueued?: (nodeId: string) => void
   onNodeStart?: (nodeId: string, agent: string, startedAtMs?: number, traceId?: string) => void
   onNodeDone?: (nodeId: string, preview: string, meta: NodeDoneMeta) => void
-  onNodeFailed?: (nodeId: string, error: string) => void
+  // finishedAtMs: see AgentCompletePayload.finishedAtMs.
+  onNodeFailed?: (nodeId: string, error: string, finishedAtMs?: number) => void
   // The node was stopped by the user (PUT node status {"status":"cancelled"}) -
   // rendered neutrally ("stopped"), distinct from a real gate failure.
-  onNodeCancelled?: (nodeId: string) => void
+  // finishedAtMs: see AgentCompletePayload.finishedAtMs.
+  onNodeCancelled?: (nodeId: string, finishedAtMs?: number) => void
   // The node was suspended by the user (PUT node status {"status":"paused"}) -
   // keeps its accumulated work; resumable via {"status":"running"}.
   onNodePaused?: (nodeId: string) => void
@@ -271,6 +281,7 @@ function dispatchAgentEvent(
           model: typeof p.model === 'string' ? p.model : undefined,
           totalTokens: typeof p.total_tokens === 'number' ? p.total_tokens : undefined,
           contextTokens: typeof p.context_tokens === 'number' ? p.context_tokens : undefined,
+          finishedAtMs: typeof p.finished_at_ms === 'number' ? p.finished_at_ms : undefined,
         })
       }
       return true
@@ -327,7 +338,7 @@ function dispatchAgentEvent(
         node_id?: string; output_preview?: string
         model?: string; prompt_tokens?: number; completion_tokens?: number
         reasoning_tokens?: number; total_tokens?: number; cached_tokens?: number; context_tokens?: number
-        finish_reason?: string; duration_ms?: number
+        finish_reason?: string; duration_ms?: number; finished_at_ms?: number
         judge_rounds?: number; judge_final_score?: number; judge_passed?: boolean
       }
       if (typeof p.node_id === 'string') {
@@ -341,6 +352,7 @@ function dispatchAgentEvent(
           contextTokens: p.context_tokens,
           finishReason: p.finish_reason,
           durationMs: p.duration_ms,
+          finishedAtMs: p.finished_at_ms,
           judgeRounds: p.judge_rounds,
           judgeFinalScore: p.judge_final_score,
           judgePassed: p.judge_passed,
@@ -350,15 +362,20 @@ function dispatchAgentEvent(
       return true
     }
     case 'node_failed': {
-      const p = parsed as { node_id?: string; error?: string }
+      const p = parsed as { node_id?: string; error?: string; finished_at_ms?: number }
       if (typeof p.node_id === 'string') {
-        handlers.onNodeFailed?.(p.node_id, typeof p.error === 'string' ? p.error : '')
+        handlers.onNodeFailed?.(p.node_id, typeof p.error === 'string' ? p.error : '',
+          typeof p.finished_at_ms === 'number' ? p.finished_at_ms : undefined)
       }
       return true
     }
-    case 'node_cancelled':
-      if (hasStringField(parsed, 'node_id')) handlers.onNodeCancelled?.(parsed.node_id)
+    case 'node_cancelled': {
+      const p = parsed as { node_id?: string; finished_at_ms?: number }
+      if (typeof p.node_id === 'string') {
+        handlers.onNodeCancelled?.(p.node_id, typeof p.finished_at_ms === 'number' ? p.finished_at_ms : undefined)
+      }
       return true
+    }
     case 'node_paused':
       if (hasStringField(parsed, 'node_id')) handlers.onNodePaused?.(parsed.node_id)
       return true

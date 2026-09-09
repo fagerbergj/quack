@@ -133,6 +133,7 @@ func TestStageSpan_SSEWireFormatUnchanged(t *testing.T) {
 	_, jspan := startStageSpan(context.Background(), sink, cfg, "node-1", "judge", stream.StageJudge, "judge-r1", 1)
 	after := time.Now().UnixMilli()
 	jspan.end(stream.AgentCompleteData{RunID: "judge-r1", Stage: stream.StageJudge, Round: 1, Score: 0.9, Passed: true, Feedback: "solid"}, nil)
+	completeAfter := time.Now().UnixMilli()
 
 	// AgentCompleteData.MarshalJSON re-serializes judge-stage payloads through a
 	// map for the score/passed/feedback omitempty override, so keys sort alphabetically.
@@ -155,7 +156,12 @@ func TestStageSpan_SSEWireFormatUnchanged(t *testing.T) {
 	if string(gotStart) != wantStart {
 		t.Errorf("agent_start JSON = %s, want %s", gotStart, wantStart)
 	}
-	gotComplete, err := json.Marshal(got[1].Data)
+	complete := got[1].Data.(stream.AgentCompleteData)
+	if complete.FinishedAtMs < after || complete.FinishedAtMs > completeAfter {
+		t.Errorf("agent_complete.FinishedAtMs = %d, want within [%d, %d]", complete.FinishedAtMs, after, completeAfter)
+	}
+	complete.FinishedAtMs = 0
+	gotComplete, err := json.Marshal(complete)
 	if err != nil {
 		t.Fatalf("marshal agent_complete: %v", err)
 	}

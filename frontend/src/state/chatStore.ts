@@ -735,7 +735,14 @@ export class ChatStore {
           const st = dag.nodeStates[n.id]?.status
           return st === 'done' || st === 'failed' || st === 'cancelled'
         })
-        if (allDone && !dag.finishedAt) dag.finishedAt = Date.now()
+        // The plan total anchors to the LATEST node finishedAt (already server-
+        // timestamped by the caller below) rather than Date.now(), so a replay
+        // doesn't recompute a bogus total from the replay moment. Falls
+        // back to Date.now() only if no node carried a server timestamp.
+        if (allDone && !dag.finishedAt) {
+          const nodeFinishTimes = Object.values(dag.nodeStates).map(n => n.finishedAt).filter((t): t is number => t != null)
+          dag.finishedAt = nodeFinishTimes.length ? Math.max(...nodeFinishTimes) : Date.now()
+        }
         this.write(chatId, { ...s, live: { ...s.live, dag } })
       }
 
@@ -842,15 +849,19 @@ export class ChatStore {
             score: d.score, passed: d.passed, feedback: d.feedback,
             status: d.status, reason: d.reason, finishReason: d.finishReason, model: d.model, totalTokens: d.totalTokens,
           }
+          // Freeze the run's duration off the server's own clock when it sent one
+          // (finishedAtMs) - only an older server with no such field falls back to
+          // Date.now(), which is wrong on any replay/reconnect.
+          const nowMs = d.finishedAtMs ?? Date.now()
           if (d.nodeId) {
-            updateNodeRuns(d.nodeId, r => completeRun(r, d.runId, completeArgs, Date.now()))
+            updateNodeRuns(d.nodeId, r => completeRun(r, d.runId, completeArgs, nowMs))
             // Context meter tracks only the answer-producing stages - a judge
             // run's own context has nothing to do with the worker's window.
             if (ANSWER_STAGES.has(d.stage) && d.contextTokens != null) {
               updateNodeState(d.nodeId, { contextTokens: d.contextTokens })
             }
           } else {
-            updateTopLevelRuns(r => completeRun(r, d.runId, completeArgs, Date.now()))
+            updateTopLevelRuns(r => completeRun(r, d.runId, completeArgs, nowMs))
           }
         },
         onCompaction: d => updateNodeRuns(d.nodeId, r => appendRunCompaction(r, d.runId, {
@@ -893,10 +904,13 @@ export class ChatStore {
         // shows true elapsed time instead of restarting from the replay moment.
         onNodeStart: (nodeId, _agent, startedAtMs, traceId) => updateNodeState(nodeId, { status: 'running', startedAt: anchorTime(startedAtMs), traceId }),
         onNodeDone: (nodeId, preview, meta: NodeDoneMeta) => {
+          // finishedAtMs is the server's own clock; only an older server with no
+          // such field falls back to Date.now() (wrong on replay/reconnect).
+          const finishedAt = meta.finishedAtMs ?? Date.now()
           // Freeze any run still counting - the node is done, so no run is live.
-          updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
+          updateNodeRuns(nodeId, r => freezeOpenRuns(r, finishedAt))
           updateNodeState(nodeId, {
-            status: 'done', finishedAt: Date.now(), outputPreview: preview,
+            status: 'done', finishedAt, outputPreview: preview,
             model: meta.model,
             promptTokens: meta.promptTokens,
             completionTokens: meta.completionTokens,
@@ -911,16 +925,18 @@ export class ChatStore {
             judgePassed: meta.judgePassed,
           })
         },
-        onNodeFailed: (nodeId, error) => {
-          updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
-          updateNodeState(nodeId, { status: 'failed', finishedAt: Date.now(), error })
+        onNodeFailed: (nodeId, error, finishedAtMs) => {
+          const finishedAt = finishedAtMs ?? Date.now()
+          updateNodeRuns(nodeId, r => freezeOpenRuns(r, finishedAt))
+          updateNodeState(nodeId, { status: 'failed', finishedAt, error })
         },
-        onNodeCancelled: nodeId => {
+        onNodeCancelled: (nodeId, finishedAtMs) => {
           // The node was stopped by the user - rendered neutrally ("stopped"),
           // not as a red failure (node_cancelled is a distinct event now, not
           // inferred from a node_failed error string).
-          updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
-          updateNodeState(nodeId, { status: 'cancelled', finishedAt: Date.now(), error: undefined })
+          const finishedAt = finishedAtMs ?? Date.now()
+          updateNodeRuns(nodeId, r => freezeOpenRuns(r, finishedAt))
+          updateNodeState(nodeId, { status: 'cancelled', finishedAt, error: undefined })
         },
         onNodePaused: nodeId => {
           // The node was suspended - keeps its accumulated work, resumable
