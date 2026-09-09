@@ -542,6 +542,68 @@ func TestBuildDirGrantsRejectsDotDotEscape(t *testing.T) {
 	}
 }
 
+// TestBuildDirGrantsHonoursNegation: a repo that ignores then un-ignores the
+// same name is NOT actually ignoring it - buildDirGrants must not grant RW to
+// a name a later "!name" line took back (#1321 review: granting it would let
+// a malicious .gitignore trick the sandbox into writing over tracked content).
+func TestBuildDirGrantsHonoursNegation(t *testing.T) {
+	dir := t.TempDir()
+	gitignore := "node_modules\n!node_modules\ndist\n"
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(gitignore), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := buildDirGrants(dir, []string{"node_modules", "dist"})
+	gotSet := map[string]bool{}
+	for _, g := range got {
+		gotSet[g] = true
+	}
+	if gotSet["node_modules"] {
+		t.Errorf("buildDirGrants(%v) must not include %q - negated by !node_modules", got, "node_modules")
+	}
+	if !gotSet["dist"] {
+		t.Errorf("buildDirGrants(%v) missing %q", got, "dist")
+	}
+}
+
+// TestBuildDirGrantsSkipsDotGit: ".git" is a real bare gitignore-default name
+// but never a build dir - granting it is pure exposure (linked worktree's
+// gitdir pointer, or a shared clone's whole metadata dir) with no build-output
+// purpose (#1321 review).
+func TestBuildDirGrantsSkipsDotGit(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".git\ndist\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := buildDirGrants(dir, nil)
+	for _, rel := range got {
+		if rel == ".git" {
+			t.Fatalf("buildDirGrants(%v) must never grant %q", got, ".git")
+		}
+	}
+}
+
+// TestBuildDirGrantsRejectsTrackedRegularFile: the symlink guard (Lstat,
+// TestBuildDirGrantsRejectsSymlinkedBuildDir) only covers one escape shape -
+// a repo can also track a plain FILE named like a build dir (gitignore
+// doesn't untrack it), which PrecreateBuildDirs' MkdirAll would then fail on
+// non-fatally while the RW grant still applied to that tracked file (#1321
+// review).
+func TestBuildDirGrantsRejectsTrackedRegularFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("node_modules\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "node_modules"), []byte("tracked"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := buildDirGrants(dir, []string{"node_modules"})
+	for _, rel := range got {
+		if rel == "node_modules" {
+			t.Fatalf("buildDirGrants(%v) must not grant a tracked regular file: %q", got, rel)
+		}
+	}
+}
+
 // TestBuildDirGrantsRejectsEscapingConfiguredEntry: workspace.build_dirs is
 // operator config, not agent input, but a "../../etc"-shaped entry should
 // still be rejected defensively rather than trusted to resolve inside work -

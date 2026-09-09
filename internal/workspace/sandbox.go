@@ -515,8 +515,11 @@ func landlockGrants(dir string, caps Caps) (rw, ro []string) {
 // "frontend/dist") is anchored to that one path and lands in anchored,
 // usable only to match a configured entry by its exact relative path -
 // never as a bonus grant, since it does not name a top-level directory. A
-// glob/negated/blank/comment line is skipped rather than guessed at; this is
-// not a full gitignore matcher.
+// glob/blank/comment line is skipped rather than guessed at; this is not a
+// full gitignore matcher. A "!name" line undoes an earlier exact bare/anchored
+// ignore of that same name (the common re-track case) - anything past that
+// (negating a glob, or a name never ignored to begin with) is still
+// unsupported, same as any other glob line.
 func gitignoreDirPatterns(dir string) (bare, anchored map[string]bool) {
 	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
 	if err != nil {
@@ -525,18 +528,30 @@ func gitignoreDirPatterns(dir string) (bare, anchored map[string]bool) {
 	bare, anchored = map[string]bool{}, map[string]bool{}
 	for _, line := range strings.Split(string(data), "\n") {
 		p := strings.TrimSuffix(strings.TrimSpace(line), "\r")
-		if p == "" || strings.HasPrefix(p, "#") || strings.HasPrefix(p, "!") {
+		if p == "" || strings.HasPrefix(p, "#") {
 			continue
+		}
+		negate := strings.HasPrefix(p, "!")
+		if negate {
+			p = strings.TrimSpace(p[1:])
 		}
 		p = strings.Trim(p, "/")
 		if p == "" || strings.ContainsAny(p, "*?[]") {
 			continue
 		}
+		target := bare
 		if strings.Contains(p, "/") {
-			anchored[p] = true
-		} else {
-			bare[p] = true
+			target = anchored
 		}
+		if negate {
+			// A repo that ignores then un-ignores the same name (e.g.
+			// "node_modules" + "!node_modules") is NOT actually ignoring it -
+			// granting RW here would let a malicious .gitignore trick the
+			// sandbox into writing over tracked content (#1321 review).
+			delete(target, p)
+			continue
+		}
+		target[p] = true
 	}
 	return bare, anchored
 }
@@ -580,7 +595,11 @@ func buildDirGrants(work string, configured []string) []string {
 		// TestBuildDirGrantsRejectsSymlinkedBuildDir. Lstat (not Stat) so the
 		// check itself never follows the link; a missing path is fine (it
 		// gets mkdir'd fresh by PrecreateBuildDirs).
-		if fi, err := os.Lstat(filepath.Join(work, rel)); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		// Same escape via a plain regular file: a repo can track a file
+		// named e.g. "node_modules" (gitignore doesn't untrack it), and
+		// PrecreateBuildDirs' MkdirAll on it fails non-fatally while the
+		// RW grant still applies to that tracked file path (#1321 review).
+		if fi, err := os.Lstat(filepath.Join(work, rel)); err == nil && (fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir()) {
 			return
 		}
 		seen[rel] = true
@@ -598,6 +617,14 @@ func buildDirGrants(work string, configured []string) []string {
 	}
 	sort.Strings(names) // deterministic argv/mkdir order
 	for _, name := range names {
+		// ".git" is a real bare gitignore name (git ignores it by default)
+		// but never a build dir: in a linked worktree it's the gitdir
+		// pointer file, and in a shared clone it's the whole metadata
+		// directory other worktrees link to - granting RW to either is
+		// pure exposure with no build-output purpose (#1321 review).
+		if name == ".git" {
+			continue
+		}
 		add(name)
 	}
 	return out
