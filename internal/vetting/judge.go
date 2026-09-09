@@ -468,13 +468,21 @@ func changedFilesSection(cfg Config, act workerActivity) (string, changedFilesCo
 	}
 }
 
-// reviewVerdictLine: surfaces the staged review verdict as a fact for the judge. "" when nothing staged.
+// reviewVerdictLine: surfaces the staged verdict + summary as facts for the
+// judge. "" when nothing staged. The summary is included so the judge grades
+// the staged record (what's actually delivered) rather than needing the
+// worker to restate it in the chat answer just to be seen - the prompt's
+// contract is a one-line reply after staging, and this is what backs it.
 func reviewVerdictLine(act workerActivity) string {
 	sd, ok := act.stagedDelivery["review"]
 	if !ok || sd.Event == "" {
 		return ""
 	}
-	return "Staged review verdict: " + sd.Event + "\n\n"
+	out := "Staged review verdict: " + sd.Event + "\n\n"
+	if strings.TrimSpace(sd.Body) != "" {
+		out += "Staged review summary:\n" + sd.Body + "\n\n"
+	}
+	return out
 }
 
 // buildChangedFilesSection: re-reads worker's files through same jail so judge scores real source, not self-report.
