@@ -44,6 +44,7 @@ func startStageSpan(spanCtx context.Context, sink func(stream.SSEEvent), cfg Con
 // payload's own omission of them on a judge round that ended without a
 // verdict (Status non-empty - "unavailable" or "no_verdict").
 func (s *stageSpan) end(d stream.AgentCompleteData, err error) {
+	d.FinishedAtMs = time.Now().UnixMilli()
 	emitJudge(s.sink, s.nodeID, stream.SSEEvent{Name: stream.EventAgentComplete, Data: d})
 	if d.Stage == stream.StageJudge && d.Status == "" {
 		s.span.SetAttributes(attribute.Float64(otelobs.GenAIEvaluationScore, d.Score), attribute.Bool("verdict_passed", d.Passed))

@@ -168,6 +168,11 @@ type AgentCompleteData struct {
 
 	Status string `json:"status,omitempty"` // "" ok | "unavailable" (judge unreachable) | "no_verdict" (judge ran, never committed one)
 	Reason string `json:"reason,omitempty"`
+
+	// FinishedAtMs is the server wall-clock (epoch ms) the run closed, stamped once
+	// at emission - so a replayed/reconnected client computes this run's duration
+	// from two server timestamps instead of "now" at replay time.
+	FinishedAtMs int64 `json:"finished_at_ms,omitempty"`
 }
 
 // Forces judge runs to always serialize score/passed/feedback even at zero values. omitempty would drop 0.0/passed=false.
@@ -271,22 +276,31 @@ type NodeDoneData struct {
 	JudgeRounds      int32   `json:"judge_rounds,omitempty"`
 	JudgeFinalScore  float64 `json:"judge_final_score,omitempty"`
 	JudgePassed      bool    `json:"judge_passed,omitempty"`
+	// FinishedAtMs is the server wall-clock (epoch ms) the node finished - see
+	// AgentCompleteData.FinishedAtMs.
+	FinishedAtMs int64 `json:"finished_at_ms,omitempty"`
 }
 
 // `node_failed` event payload.
 type NodeFailedData struct {
 	NodeID string `json:"node_id"`
 	Error  string `json:"error"`
+	// FinishedAtMs is the server wall-clock (epoch ms) the node failed - see
+	// AgentCompleteData.FinishedAtMs.
+	FinishedAtMs int64 `json:"finished_at_ms,omitempty"`
 }
 
 // `node_cancelled` event payload: node stopped by the user, rendered neutrally (not as red failure).
 type NodeCancelledData struct {
 	NodeID string `json:"node_id"`
+	// FinishedAtMs is the server wall-clock (epoch ms) the node was cancelled - see
+	// AgentCompleteData.FinishedAtMs.
+	FinishedAtMs int64 `json:"finished_at_ms,omitempty"`
 }
 
-// NodeCancelled builds a node_cancelled event.
+// NodeCancelled builds a node_cancelled event, stamping FinishedAtMs now (see NodeDone).
 func NodeCancelled(nodeID string) SSEEvent {
-	return SSEEvent{Name: EventNodeCancelled, Data: NodeCancelledData{NodeID: nodeID}}
+	return SSEEvent{Name: EventNodeCancelled, Data: NodeCancelledData{NodeID: nodeID, FinishedAtMs: time.Now().UnixMilli()}}
 }
 
 // `node_steered` event payload: the node's queued messages were delivered at its next turn boundary. A fresh node_start…node_done follows.
@@ -447,9 +461,12 @@ func WithTrace(ev SSEEvent, traceID string) SSEEvent {
 	return ev
 }
 
-// NodeDone builds a node_done event.
+// NodeDone builds a node_done event, stamping FinishedAtMs now - the single
+// choke point both the live executor and the ledger-fold reconstruction
+// (runlog.SynthesizeChatEvents) call through, mirroring NodeStart's StartedAtMs.
 func NodeDone(nodeID string, data NodeDoneData) SSEEvent {
 	data.NodeID = nodeID
+	data.FinishedAtMs = time.Now().UnixMilli()
 	return SSEEvent{Name: EventNodeDone, Data: data}
 }
 
@@ -465,9 +482,9 @@ func NodeNeedsInput(nodeID, interruptID, message string) SSEEvent {
 	return SSEEvent{Name: EventNodeNeedsInput, Data: NodeNeedsInputData{NodeID: nodeID, InterruptID: interruptID, Message: message}}
 }
 
-// NodeFailed builds a node_failed event.
+// NodeFailed builds a node_failed event, stamping FinishedAtMs now (see NodeDone).
 func NodeFailed(nodeID, errMsg string) SSEEvent {
-	return SSEEvent{Name: EventNodeFailed, Data: NodeFailedData{NodeID: nodeID, Error: errMsg}}
+	return SSEEvent{Name: EventNodeFailed, Data: NodeFailedData{NodeID: nodeID, Error: errMsg, FinishedAtMs: time.Now().UnixMilli()}}
 }
 
 // ChatTitle builds a chat_title event.
@@ -595,6 +612,7 @@ func (t *Translator) Event(ev *session.Event) []SSEEvent {
 				Feedback: asString(r["feedback"]), Status: asString(r["status"]), Reason: asString(r["reason"]),
 				Model: t.model, PromptTokens: t.prompt, CompletionTokens: t.completion,
 				ReasoningTokens: t.reasoning, TotalTokens: t.total, CachedTokens: t.cached, FinishReason: t.finish,
+				FinishedAtMs: time.Now().UnixMilli(),
 			}
 			out = append(out, SSEEvent{Name: EventAgentComplete, Data: d})
 			t.curRun, t.curStage, t.curRound, t.curAgent = "", "", 0, ""

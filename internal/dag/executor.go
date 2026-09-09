@@ -522,7 +522,7 @@ func (s *dagStream) closeRun(node string) bool {
 		return true
 	}
 	st, rd := stageRound(runID)
-	d := stream.AgentCompleteData{RunID: runID, Stage: st, Round: rd}
+	d := stream.AgentCompleteData{RunID: runID, Stage: st, Round: rd, FinishedAtMs: time.Now().UnixMilli()}
 	if u := s.usage[node]; u != nil {
 		d.Model, d.FinishReason = u.model, u.finish
 		d.PromptTokens, d.CompletionTokens, d.ReasoningTokens, d.TotalTokens, d.CachedTokens = u.prompt, u.completion, u.reasoning, u.total, u.cached

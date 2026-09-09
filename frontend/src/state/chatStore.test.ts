@@ -737,10 +737,13 @@ describe('ChatStore - mid-node steering', () => {
     expect(run?.startedAt).toBeLessThanOrEqual(after)
   })
 
-  // Clock-skew guard: a server clock ahead of the client must never produce a
-  // start time in the future (which would render as a negative elapsed
-  // duration) - clamp to the client's own now instead.
-  it('clamps a future server started_at_ms (clock skew) to the client now', async () => {
+  // Clock-skew: a server clock ahead of the client stores the RAW server
+  // value, unclamped - clamping it to the client's now (a prior version did
+  // this) is what corrupted a finished run's duration (finished_at_ms -
+  // clamped start) whenever the client trailed the server. The "never show a
+  // negative elapsed" guard lives in fmtMs (floors at 0) instead, so a
+  // still-live timer never renders negative even while raw start > client now.
+  it('stores a future server started_at_ms (clock skew) unclamped', async () => {
     const future = Date.now() + 60_000
     const sse = [
       'event: dag_plan',
@@ -754,12 +757,189 @@ describe('ChatStore - mid-node steering', () => {
       '',
     ].join('\n')
     fetchMock.mockResolvedValueOnce(makeStream(sse))
-    const before = Date.now()
     await store.submit('c', 'go')
-    const after = Date.now()
     const run = store.get('c').live?.dag?.nodeRuns['a']?.find(r => r.runId === 'judge-r1')
-    expect(run?.startedAt).toBeGreaterThanOrEqual(before)
-    expect(run?.startedAt).toBeLessThanOrEqual(after)
+    expect(run?.startedAt).toBe(future)
+  })
+})
+
+// agent_complete/node_done/node_failed/node_cancelled now carry a server-clock
+// finished_at_ms, so a finished run/node's duration comes from two server
+// timestamps - never from Date.now() at whatever moment the client happens to
+// process (or replay) the event.
+describe('ChatStore - server-timestamped durations survive replay', () => {
+  // One node running worker -> judge(reject) -> revise -> judge(pass) -> done,
+  // every agent_start/agent_complete/node_done carrying explicit server
+  // timestamps. runDagOnce replays this SAME event list into a fresh store.
+  function dagSSE(): string {
+    return [
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"r","task":"t","depends_on":[]}],"edges":[],"started_at_ms":1000}',
+      '',
+      'event: node_start',
+      'data: {"node_id":"a","agent":"r","started_at_ms":2000}',
+      '',
+      'event: agent_start',
+      'data: {"node_id":"a","run_id":"worker-r0","agent":"r","stage":"worker","started_at_ms":2000}',
+      '',
+      'event: agent_complete',
+      'data: {"node_id":"a","run_id":"worker-r0","stage":"worker","finished_at_ms":8000}', // 6000ms
+      '',
+      'event: agent_start',
+      'data: {"node_id":"a","run_id":"judge-r1","agent":"judge","stage":"judge","round":1,"started_at_ms":8000}',
+      '',
+      'event: agent_complete',
+      'data: {"node_id":"a","run_id":"judge-r1","stage":"judge","round":1,"passed":false,"finished_at_ms":13000}', // 5000ms
+      '',
+      'event: agent_start',
+      'data: {"node_id":"a","run_id":"worker-r1","agent":"r","stage":"revise","round":1,"started_at_ms":13000}',
+      '',
+      'event: agent_complete',
+      'data: {"node_id":"a","run_id":"worker-r1","stage":"revise","round":1,"finished_at_ms":20000}', // 7000ms
+      '',
+      'event: agent_start',
+      'data: {"node_id":"a","run_id":"judge-r2","agent":"judge","stage":"judge","round":2,"started_at_ms":20000}',
+      '',
+      'event: agent_complete',
+      'data: {"node_id":"a","run_id":"judge-r2","stage":"judge","round":2,"passed":true,"finished_at_ms":25000}', // 5000ms
+      '',
+      'event: node_done',
+      'data: {"node_id":"a","duration_ms":23000,"finished_at_ms":25000}', // 25000 - 2000
+      '',
+    ].join('\n')
+  }
+
+  async function runDagOnce(fetchNowMs: number): Promise<DagTurnState> {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(fetchNowMs)
+    try {
+      const fetchMock = vi.fn().mockResolvedValueOnce(makeStream(dagSSE()))
+      vi.stubGlobal('fetch', fetchMock)
+      const store = new ChatStore()
+      store.seed('c', [])
+      await store.submit('c', 'go')
+      return store.get('c').live!.dag!
+    } finally {
+      nowSpy.mockRestore()
+    }
+  }
+
+  it('replaying the same event list at two different client Date.now() values yields identical run/node durations', async () => {
+    const dagA = await runDagOnce(10_000_000_000) // "live": processed shortly after emission
+    const dagB = await runDagOnce(20_000_000_000) // "replay": processed ~2.8 hours later
+
+    const runsA = dagA.nodeRuns['a'].map(r => ({ runId: r.runId, durationMs: r.durationMs }))
+    const runsB = dagB.nodeRuns['a'].map(r => ({ runId: r.runId, durationMs: r.durationMs }))
+    expect(runsA).toEqual(runsB)
+    expect(runsA.map(r => r.durationMs)).toEqual([6000, 5000, 7000, 5000])
+
+    expect(dagA.nodeStates['a'].serverDurationMs).toBe(23000)
+    expect(dagB.nodeStates['a'].serverDurationMs).toBe(23000)
+    expect(dagA.nodeStates['a'].finishedAt).toBe(dagB.nodeStates['a'].finishedAt)
+    expect(dagA.finishedAt).toBe(dagB.finishedAt)
+  })
+
+  it("a finished node's sub-run durations sum to no more than the node's own duration, each starting no earlier than the previous one finished", async () => {
+    const dag = await runDagOnce(50_000_000_000)
+    const runs = dag.nodeRuns['a']
+    const sumOfRuns = runs.reduce((sum, r) => sum + (r.durationMs ?? 0), 0)
+    expect(sumOfRuns).toBeLessThanOrEqual(dag.nodeStates['a'].serverDurationMs!)
+    for (let i = 1; i < runs.length; i++) {
+      const prevFinish = runs[i - 1].startedAt! + runs[i - 1].durationMs!
+      expect(runs[i].startedAt).toBeGreaterThanOrEqual(prevFinish)
+    }
+  })
+
+  // Regression: anchorTime used to clamp a run/node/plan's stored startedAt to
+  // min(serverMs, Date.now()) - since finished_at_ms is never clamped, a
+  // client clock trailing the server picked up its OWN (earlier) now as the
+  // start, stretching every finished-start subtraction by the skew. Every
+  // dagSSE() timestamp (1000-25000ms) sits well ahead of this mocked "now"
+  // (500ms), so the old clamp fired on every single one of them.
+  it('a client clock trailing the server does not inflate sub-run or plan durations', async () => {
+    const dag = await runDagOnce(500)
+    expect(dag.startedAt).toBe(1000)
+    expect(dag.nodeStates['a'].startedAt).toBe(2000)
+    expect(dag.nodeRuns['a'].map(r => r.durationMs)).toEqual([6000, 5000, 7000, 5000])
+  })
+})
+
+describe('ChatStore - finished_at_ms: remaining lifecycle paths', () => {
+  it('a run still open at replay time (no terminal event yet) gets its duration from server timestamps once it completes live', () => {
+    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+    FakeEventSource.last = null
+    const store = new ChatStore()
+    store.seed('c', [dagTurn('in_progress')])
+    store.attach('c')
+    const es = FakeEventSource.last!
+
+    // The replay/reconnect itself lands long after the run actually started -
+    // this must never leak into the eventual duration.
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(90_000)
+    try {
+      es.emit('dag_plan', '{"plan_id":"p","nodes":[{"id":"a","agent":"r","task":"t","depends_on":[]}],"edges":[],"started_at_ms":1000}')
+      es.emit('node_start', '{"node_id":"a","agent":"r","started_at_ms":2000}')
+      es.emit('agent_start', '{"node_id":"a","run_id":"worker-r0","agent":"r","stage":"worker","started_at_ms":2000}')
+      expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('running')
+
+      // The run then finishes LIVE on this same held-open stream.
+      es.emit('agent_complete', '{"node_id":"a","run_id":"worker-r0","stage":"worker","finished_at_ms":8000}')
+      es.emit('node_done', '{"node_id":"a","finished_at_ms":8000}')
+    } finally {
+      nowSpy.mockRestore()
+    }
+
+    const run = store.get('c').live?.dag?.nodeRuns['a']?.find(r => r.runId === 'worker-r0')
+    expect(run?.durationMs).toBe(6000) // 8000 - 2000, not stretched by the 90_000 replay-processing clock
+    expect(store.get('c').live?.dag?.nodeStates['a'].finishedAt).toBe(8000)
+  })
+
+  async function runOneNode(event: string, data: string, nowMs: number) {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(nowMs)
+    try {
+      const sse = [
+        'event: dag_plan',
+        'data: {"plan_id":"p","nodes":[{"id":"a","agent":"r","task":"t","depends_on":[]}],"edges":[],"started_at_ms":1000}',
+        '',
+        'event: node_start',
+        'data: {"node_id":"a","agent":"r","started_at_ms":2000}',
+        '',
+        `event: ${event}`,
+        `data: ${data}`,
+        '',
+      ].join('\n')
+      const fetchMock = vi.fn().mockResolvedValueOnce(makeStream(sse))
+      vi.stubGlobal('fetch', fetchMock)
+      const store = new ChatStore()
+      store.seed('c', [])
+      await store.submit('c', 'go')
+      return store.get('c').live!.dag!
+    } finally {
+      nowSpy.mockRestore()
+    }
+  }
+
+  it('node_failed carries a server finished_at_ms that survives replay at a different client clock', async () => {
+    const dagA = await runOneNode('node_failed', '{"node_id":"a","error":"boom","finished_at_ms":9000}', 10_000_000_000)
+    const dagB = await runOneNode('node_failed', '{"node_id":"a","error":"boom","finished_at_ms":9000}', 20_000_000_000)
+    expect(dagA.nodeStates['a'].status).toBe('failed')
+    expect(dagA.nodeStates['a'].finishedAt).toBe(9000)
+    expect(dagA.nodeStates['a'].finishedAt).toBe(dagB.nodeStates['a'].finishedAt)
+  })
+
+  it('node_cancelled carries a server finished_at_ms that survives replay at a different client clock', async () => {
+    const dagA = await runOneNode('node_cancelled', '{"node_id":"a","finished_at_ms":9000}', 10_000_000_000)
+    const dagB = await runOneNode('node_cancelled', '{"node_id":"a","finished_at_ms":9000}', 20_000_000_000)
+    expect(dagA.nodeStates['a'].status).toBe('cancelled')
+    expect(dagA.nodeStates['a'].finishedAt).toBe(9000)
+    expect(dagA.nodeStates['a'].finishedAt).toBe(dagB.nodeStates['a'].finishedAt)
+  })
+
+  it('falls back to Date.now() for a node_done from an old server with no finished_at_ms', async () => {
+    const before = Date.now()
+    const dag = await runOneNode('node_done', '{"node_id":"a"}', Date.now())
+    const after = Date.now()
+    expect(dag.nodeStates['a'].finishedAt).toBeGreaterThanOrEqual(before)
+    expect(dag.nodeStates['a'].finishedAt).toBeLessThanOrEqual(after)
   })
 })
 
