@@ -845,7 +845,10 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		delivered = true
 		act.answer = answer
 		commitDelivery(nodeCtx, sink, cfg, nodeID, act, res)
-		return answer, res, nil
+		// commitDelivery already ran on the full answer (memory, episodic
+		// record, delivery render); only the chat-visible return value
+		// collapses when it just restates what was staged (#1306-ish).
+		return dedupeAnswerAgainstStaged(answer, act.stagedDelivery), res, nil
 	}
 }
 

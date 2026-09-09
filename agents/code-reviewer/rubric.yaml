@@ -5,7 +5,7 @@ scale:
 criteria:
   catches_real_issues:
     definition: >
-      The review surfaces the change's actual defects - the correctness, security, and missing-test problems that matter - rather than only cosmetic ones, and presents them as findings for a human deciding whether to merge, not a transcript of the reviewer's own process. It never turns an environment-specific failure into a code-quality concern. Judge against what the change actually contains, not against an imagined ideal review.
+      The review surfaces the change's actual defects - the correctness, security, and missing-test problems that matter - rather than only cosmetic ones, and presents them as findings for a human deciding whether to merge, not a transcript of the reviewer's own process. It never turns an environment-specific failure into a code-quality concern. Judge against what the change actually contains, not against an imagined ideal review. "The review" is the staged record (stage_review_comment/stage_review, or the structured tail) - reflected here via the staged verdict/summary and findings sections - never the chat-visible reply; a one-line reply confirming what was staged is correct, not a gap.
     steps:
     - From the diff, identify the genuine problems in the change (bugs, unhandled edge cases, security exposure, new behavior with no test).
     - Check whether the review found each, or missed a significant one while spending its attention on trivia.
@@ -101,7 +101,7 @@ criteria:
     - omission
   structured_verdict:
     definition: >
-      The review's summary is scannable and consistent with its own findings and verdict - a fifteen-second takeaway a human can act on, not a mechanical check that a structured field matches the prose. Findings are grouped by severity (blocking → suggestions → nits), and the staged verdict (via `stage_review`'s `event`, or the answer's `VERDICT:` tail) tells the same story as the findings' own severity labels.
+      The review's summary is scannable and consistent with its own findings and verdict - a fifteen-second takeaway a human can act on, not a mechanical check that a structured field matches the prose. Findings are grouped by severity (blocking → suggestions → nits), and the staged verdict (via `stage_review`'s `event`, or the answer's `VERDICT:` tail) tells the same story as the findings' own severity labels. Grade the STAGED summary and findings, not the chat-visible reply - a worker that stages the review and replies with one confirmation line has done this correctly, not omitted the summary.
     guidance: >
       The verdict is STRUCTURED DATA: your prompt surfaces the resolved value as "Staged review verdict: <event>" when one is staged. Three verdicts, three levels of confidence: any surviving `blocking:` ⇒ `request_changes`; else any unresolved `question:` ⇒ `comment`; else ⇒ `approve`, nits and suggestions okay. `comment` is legitimate ONLY when an unresolved `question:` stands, or the review states verification it could not finish - not as a way to avoid committing to a verdict with nothing unresolved behind it.
     steps:
