@@ -12,9 +12,8 @@ import (
 // InitAnswers is the collected wizard output for `quack server init` (and the
 // local branch of `quack init`). The wizard (internal/wizard) populates this;
 // EmitServerConfig turns it into a quack.yaml. Kept here, not in the wizard
-// package, so it's testable without constructing a Huh form. The yaml tags
-// are what `quack server init --answers <file>` unmarshals into for a
-// headless setup - same field set, no separate schema to keep in sync.
+// package, so it's testable without constructing a Huh form.
+// The yaml tags are also what `server init --answers <file>` unmarshals into.
 type InitAnswers struct {
 	Endpoint string `yaml:"endpoint"` // LLM endpoint (OpenAI-compatible base URL)
 	APIKey   string `yaml:"api_key"`  // typed; emitted as ${QUACK_LLM_API_KEY} (the export is printed)
@@ -46,10 +45,8 @@ type InitAnswers struct {
 	Sandbox    string `yaml:"sandbox"`     // workspace.sandbox: bwrap | none (blank ⇒ bwrap, the server default)
 }
 
-// LoadInitAnswersFile reads a --answers YAML file for a headless `quack
-// server init`: PrefillFromEnv first (same env defaults the interactive
-// wizard starts from), then the file's values on top, so an --answers file
-// only has to name what actually differs from the environment.
+// LoadInitAnswersFile applies env prefill first, then the file's values on
+// top - an --answers file only has to name what differs from the environment.
 func LoadInitAnswersFile(path string) (InitAnswers, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -63,10 +60,8 @@ func LoadInitAnswersFile(path string) (InitAnswers, error) {
 	return a, nil
 }
 
-// WriteServerConfig renders a and writes it to outPath (creating parent dirs
-// as needed), then prints the "✓ Wrote ..." confirmation plus any env-export
-// lines the config depends on - the shared tail for both the interactive
-// wizard and a headless `--answers` init.
+// WriteServerConfig writes a to outPath and prints the confirmation + env
+// exports - the shared tail for both the wizard and a headless --answers init.
 func WriteServerConfig(a InitAnswers, outPath string) error {
 	if dir := filepath.Dir(outPath); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {

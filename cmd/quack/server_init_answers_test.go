@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// TestRunServerInitAnswersWritesConfig covers cli.md audit finding 2:
-// `quack server init --answers <file>` needs no TTY, dispatching straight
-// into cli.LoadInitAnswersFile + cli.WriteServerConfig.
 func TestRunServerInitAnswersWritesConfig(t *testing.T) {
 	dir := t.TempDir()
 	answersPath := filepath.Join(dir, "answers.yaml")
@@ -33,9 +30,7 @@ func TestRunServerInitAnswersWritesConfig(t *testing.T) {
 	}
 }
 
-// TestRunServerInitAnswersRefusesToOverwrite covers the headless
-// existing-file guard: no form to ask use/overwrite/elsewhere, so it errors
-// instead of silently overwriting.
+// Headless mode has no form to ask use/overwrite/elsewhere, so it errors.
 func TestRunServerInitAnswersRefusesToOverwrite(t *testing.T) {
 	dir := t.TempDir()
 	outPath := filepath.Join(dir, "quack.yaml")

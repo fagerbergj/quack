@@ -82,9 +82,6 @@ func TestRegistryAddDuplicate(t *testing.T) {
 	}
 }
 
-// TestRegistryAddServerActivatesOnlyTheFirst covers cli.md audit finding 14:
-// without this, `chat list` right after `server add` silently falls back to
-// the local in-process duck instead of erroring or reaching the new server.
 func TestRegistryAddServerActivatesOnlyTheFirst(t *testing.T) {
 	c := &ClientConfig{Servers: map[string]ServerRef{}}
 	if err := c.AddServer("a", "http://a"); err != nil {
@@ -176,13 +173,7 @@ func TestPrefillFromEnv(t *testing.T) {
 	}
 }
 
-// TestEmitServerConfigRoundTrip proves the generated quack.yaml is valid: it
-// round-trips through the real config loader. Guards the wizard's output
-// contract (the AGENTS.md spec-driven rule: behavioral drift becomes a failing
-// test, not a production incident).
-// TestLoadInitAnswersFileHeadlessSetup covers cli.md audit finding 2: a
-// non-interactive `quack server init --answers <file>` path that needs no
-// TTY. The loaded answers must produce a config that actually loads.
+// The loaded answers must produce a config that actually loads.
 func TestLoadInitAnswersFileHeadlessSetup(t *testing.T) {
 	dir := t.TempDir()
 	answersPath := filepath.Join(dir, "answers.yaml")
@@ -243,6 +234,7 @@ func TestLoadInitAnswersFileMissing(t *testing.T) {
 	}
 }
 
+// Proves the generated quack.yaml round-trips through the real config loader.
 func TestEmitServerConfigRoundTrip(t *testing.T) {
 	a := InitAnswers{
 		Endpoint:    "http://localhost:11436/v1",

@@ -8,8 +8,6 @@ import (
 	"github.com/fagerbergj/quack/internal/cli"
 )
 
-// TestServerList_JSON covers cli.md audit finding 12: `server list --json`
-// (previously it printed `* name  url` for a human to parse by hand).
 func TestServerList_JSON(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	rc, err := cli.LoadClient()

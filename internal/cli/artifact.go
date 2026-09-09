@@ -42,11 +42,8 @@ func RunArtifactList(ctx context.Context, out io.Writer, server, chatID string, 
 	return tw.Flush()
 }
 
-// RunArtifactDownload is `quack chat artifact download <chat-id> <name> [--revision N] [-o file|-]`:
-// downloads one revision's bytes to outFile (default: the artifact's own
-// name, sanitised to a bare local filename) and prints the written path;
-// `-o -` streams the bytes to out (stdout) instead, so an artifact can be
-// piped.
+// RunArtifactDownload writes one revision's bytes to outFile (default: the
+// artifact's own name, sanitised); `-o -` streams to out (stdout) instead.
 func RunArtifactDownload(ctx context.Context, out io.Writer, server, chatID, name string, revision int, outFile string) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
@@ -76,10 +73,8 @@ func RunArtifactDownload(ctx context.Context, out io.Writer, server, chatID, nam
 	return nil
 }
 
-// sanitizeArtifactName reduces a server-supplied artifact name to a bare
-// local filename (filepath.Base) so a compromised server - or a
-// prompt-injected agent that picks the artifact name - can't write outside
-// the caller's cwd via a path like "../escaped.txt" (cli.md audit finding 6).
+// sanitizeArtifactName bases a server-supplied name so it can't write
+// outside the caller's cwd (e.g. "../escaped.txt").
 func sanitizeArtifactName(name string) (string, error) {
 	base := filepath.Base(name)
 	if base == "" || base == "." || base == ".." {

@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -77,30 +78,30 @@ func reasoningUsage(ctx context.Context, model string, completionTokens, reasoni
 // bestEffortKey marks a context via WithBestEffort.
 type bestEffortKey struct{}
 
-// WithBestEffort marks ctx so apiErr logs its failure at Debug instead of
-// Error - for a caller (e.g. chat title generation) that already decides how
-// to degrade and logs its own outcome, so the same failure doesn't produce
-// two log lines at the handling boundary (onboarding audit finding 14).
+// WithBestEffort: caller already logs its own degraded outcome, so apiErr
+// logs at Debug instead of Error to avoid a duplicate line.
 func WithBestEffort(ctx context.Context) context.Context {
 	return context.WithValue(ctx, bestEffortKey{}, true)
 }
 
-// IsBestEffort reports whether ctx was marked via WithBestEffort - exported
-// for callers (e.g. a titler stub in a test) to confirm the marker actually
-// reached them, not just for apiErr's own use.
+// IsBestEffort exposes the marker for test verification.
 func IsBestEffort(ctx context.Context) bool {
 	return ctx.Value(bestEffortKey{}) != nil
 }
 
-// apiErr logs an OpenAI-compatible API failure with the model's HTTP status and
-// response body, then returns an enriched error. The log is the load-bearing part:
-// ADK's runner catches a sub-agent's yielded error and can hand the caller empty
-// output with no error (see the adk-swallows-subagent-errors finding), so without
-// a log at THIS boundary a model 400 (e.g. context/tool/format) vanishes silently -
-// unless ctx is WithBestEffort, whose caller already logs its own degraded outcome.
+// inProcess: this whole process is a CLI-driven ephemeral duck (never a real
+// `quack server run`), so its own caller reports every failure already.
+var inProcess atomic.Bool
+
+// SetInProcess marks the process so apiErr logs at Debug, not Error - the
+// CLI already prints the failure to the same terminal.
+func SetInProcess() { inProcess.Store(true) }
+
+// apiErr logs a failure (load-bearing: ADK can swallow it into empty output)
+// and returns an enriched error.
 func (o *OpenAIModel) apiErr(ctx context.Context, op string, err error) error {
 	level := slog.LevelError
-	if IsBestEffort(ctx) {
+	if IsBestEffort(ctx) || inProcess.Load() {
 		level = slog.LevelDebug
 	}
 	var ae *openai.Error

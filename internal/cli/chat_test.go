@@ -140,8 +140,7 @@ func TestRunChatListEmpty(t *testing.T) {
 	}
 }
 
-// TestRunChatListEmptyJSON covers cli.md audit finding 3: an empty result
-// must encode as `[]`, not `null` - a jq consumer hard-fails on null.
+// An empty result must encode as `[]`, not `null` - a jq consumer hard-fails on null.
 func TestRunChatListEmptyJSON(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -425,9 +424,7 @@ func TestRunChatDelete(t *testing.T) {
 	}
 }
 
-// TestRunChatDeletePromptOnStderr covers cli.md audit finding 9: the
-// confirmation prompt must land on stderr, not mix into stdout with the
-// command's real output.
+// The confirmation prompt must land on stderr, not stdout.
 func TestRunChatDeletePromptOnStderr(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -447,9 +444,7 @@ func TestRunChatDeletePromptOnStderr(t *testing.T) {
 	}
 }
 
-// TestRunChatDeleteNonInteractiveErrors covers cli.md audit finding 9: a
-// genuinely empty/closed stdin (a script that forgot -y) must error with a
-// non-zero exit, not silently report success at deleting nothing.
+// An empty/closed stdin (-y forgotten) must error, not report success.
 func TestRunChatDeleteNonInteractiveErrors(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	var deleted bool
@@ -499,10 +494,7 @@ func TestRunNodeStop(t *testing.T) {
 	}
 }
 
-// TestRunNodeStopSurfacesServerMessage covers cli.md audit finding 4: a 404
-// on a node verb almost never means the chat is missing - it should surface
-// the server's own reason (e.g. "no plan for this chat"), not a false
-// "chat ... not found".
+// A node's 404 should surface the server's real reason, not "chat not found".
 func TestRunNodeStopSurfacesServerMessage(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -520,9 +512,7 @@ func TestRunNodeStopSurfacesServerMessage(t *testing.T) {
 	}
 }
 
-// TestRunNodeStopGenericNotFound covers the no-server-message fallback: a
-// bare 404 with no body still surfaces something scoped to chat+node, not
-// notFoundAs's chat-only wording.
+// A bare 404 with no body still mentions the node, not just the chat.
 func TestRunNodeStopGenericNotFound(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -539,9 +529,6 @@ func TestRunNodeStopGenericNotFound(t *testing.T) {
 	}
 }
 
-// TestRunChatListArchivedScope covers cli.md audit finding 5: --archived
-// picks the server's status= query scope (exclude/include/only), the only
-// way from the CLI to reach a chat archived in the web UI.
 func TestRunChatListArchivedScope(t *testing.T) {
 	for _, tc := range []struct {
 		archived string
@@ -585,8 +572,6 @@ func TestRunChatListArchivedInvalid(t *testing.T) {
 	}
 }
 
-// TestRunChatRename covers cli.md audit finding 5: `chat rename` PATCHes the
-// title, the only CLI path to the UI's rename action.
 func TestRunChatRename(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	var gotBody schema.UpdateChatBody
@@ -614,8 +599,6 @@ func TestRunChatRename(t *testing.T) {
 	}
 }
 
-// TestRunChatArchive covers cli.md audit finding 5: `chat archive` /
-// `chat unarchive` PATCH the archived flag.
 func TestRunChatArchive(t *testing.T) {
 	for _, archived := range []bool{true, false} {
 		t.Run(fmt.Sprint(archived), func(t *testing.T) {

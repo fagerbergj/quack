@@ -7,11 +7,6 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 )
 
-// TestLoadRubricFallsBackWhenPathMissing covers cli.md audit finding
-// onboarding#3: quack init emits gates.rubric_path: config/rubric.md, which
-// only resolves on disk inside a checkout - a missing custom path (and an
-// unset one, when the judge is enabled) must fall back to the embedded
-// default rather than hard-failing gate setup.
 func TestLoadRubricFallsBackWhenPathMissing(t *testing.T) {
 	c := config.GatesConfig{RubricPath: "does/not/exist.md"}
 	rendered, _, _, err := loadRubric(c)
@@ -45,10 +40,8 @@ func TestLoadRubricUnsetPathWithJudgeDisabledIsOptional(t *testing.T) {
 }
 
 func TestLoadRubricFileErrorNamesRubricPath(t *testing.T) {
-	// Both the custom path and the embedded default resolve nowhere only if
-	// defaultRubricPath itself is wrong - exercised here via readWithFallback
-	// directly so the error-naming behavior is covered without depending on
-	// the embed actually being broken.
+	// Exercises readWithFallback directly so this doesn't depend on the
+	// embed actually being broken.
 	_, err := readWithFallback("nope.md", "also/nope.md")
 	if err == nil {
 		t.Fatal("expected an error when neither path resolves")

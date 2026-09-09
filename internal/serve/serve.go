@@ -42,6 +42,7 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
+	"github.com/fagerbergj/quack/internal/inference/openaimodel"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
@@ -346,6 +347,7 @@ func InProcess(ctx context.Context, configPath string) (baseURL string, stop fun
 // InProcessFromConfig is InProcess for a caller with a resolved *config.Config in memory.
 func InProcessFromConfig(ctx context.Context, cfg *config.Config) (baseURL string, stop func() error, err error) {
 	setupLoggingTo(os.Stderr, slog.LevelWarn)
+	openaimodel.SetInProcess() // the CLI already reports a model failure; skip the duplicate boundary log
 	handler, cleanup, _, err := buildFromConfig(ctx, cfg, 0, false, nil)
 	if err != nil {
 		return "", nil, err

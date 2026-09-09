@@ -63,11 +63,8 @@ func NewClient(ctx context.Context, override string) (*Client, error) {
 // ErrNotFound is returned by client calls when the server responds 404.
 var ErrNotFound = errors.New("not found")
 
-// notFoundErr wraps ErrNotFound with the server's own 404 message (the
-// "error" field on its body) so errors.Is(err, ErrNotFound) still matches
-// (chat-scoped callers via notFoundAs) while a caller that needs the real
-// reason - the node verbs, where a 404 usually means "no plan"/"no such
-// node", not "chat missing" - can recover it via nodeErrAs.
+// notFoundErr wraps ErrNotFound with the server's own 404 message, so
+// errors.Is still matches while nodeErrAs can recover the real reason.
 type notFoundErr struct{ msg string }
 
 func (e *notFoundErr) Error() string   { return e.msg }
@@ -82,12 +79,8 @@ func wrapNotFound(msg string) error {
 	return &notFoundErr{msg: msg}
 }
 
-// ListChats returns all chats (server orders most-recently-updated first),
-// paging through the server's paginated endpoint at its max page size.
-// statuses repeats as `?status=` (server default: ["active"] when empty) -
-// this is the archived/active scope, unrelated to a chat's own idle/running/
-// needs_input/failed status. The page token is opaque - passed back exactly
-// as the server returned it, never parsed or constructed.
+// ListChats pages through every chat. statuses repeats as `?status=` - the
+// archived/active scope, unrelated to a chat's own idle/running/failed status.
 func (c *Client) ListChats(ctx context.Context, statuses []string) ([]schema.ChatSummary, error) {
 	var all []schema.ChatSummary
 	pageToken := ""
@@ -111,9 +104,7 @@ func (c *Client) ListChats(ctx context.Context, statuses []string) ([]schema.Cha
 	}
 }
 
-// UpdateChat renames and/or archives a chat (PATCH .../chats/{id}); a nil
-// field is left unchanged server-side. 404 (unknown chat) surfaces as
-// ErrNotFound.
+// UpdateChat renames and/or archives a chat; a nil field is left unchanged.
 func (c *Client) UpdateChat(ctx context.Context, id string, title *string, archived *bool) (schema.ChatSummary, error) {
 	var out schema.ChatSummary
 	body, _ := json.Marshal(schema.UpdateChatBody{Title: title, Archived: archived})
@@ -171,22 +162,16 @@ func (c *Client) FetchArtifact(ctx context.Context, chatID, artifactName string,
 	return body, nil
 }
 
-// ListMemories browses (or, with q, searches) the server's configured memory
-// stores. limit<=0 auto-pages through the whole listing (mirroring
-// ListChats) - without this, a store past the server's default page size
-// (50) was simply unreachable from the CLI; a positive limit makes exactly
-// one bounded request instead. q switches to search mode, which the server
-// never paginates (a top-K, not a stable page) - limit there just caps that
-// one request.
+// ListMemories browses or (with q) searches memory. limit<=0 auto-pages the
+// whole listing (like ListChats); q is a bounded top-K search, never paged.
 func (c *Client) ListMemories(ctx context.Context, bucket, q, tier, sort string, limit int, includeInvalidated bool) (schema.MemoryList, error) {
 	if q != "" || limit > 0 {
 		var out schema.MemoryList
 		err := c.getJSON(ctx, "/api/v1/memories?"+memoryQuery(bucket, q, tier, sort, limit, includeInvalidated, "").Encode(), &out)
 		return out, err
 	}
-	// Memories starts non-nil: an all-empty result must still encode as `[]`,
-	// not `null` (append onto a nil slice with nothing to append stays nil -
-	// the same defect class as cli.md audit finding 3).
+	// Starts non-nil: append onto a nil slice with nothing to append stays
+	// nil, which would encode as `null` instead of `[]`.
 	all := schema.MemoryList{Memories: []schema.Memory{}}
 	pageToken := ""
 	for {

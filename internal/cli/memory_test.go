@@ -93,9 +93,7 @@ func TestRunMemoryListJSON(t *testing.T) {
 	}
 }
 
-// TestRunMemoryListAutoPages covers cli.md audit finding 8: with no --limit,
-// the CLI must page through the whole store, not stop at the server's
-// default page (previously ListMemories made exactly one request).
+// With no --limit, the CLI pages through the whole store.
 func TestRunMemoryListAutoPages(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	var calls int
@@ -126,11 +124,8 @@ func TestRunMemoryListAutoPages(t *testing.T) {
 	}
 }
 
-// TestRunMemoryListAutoPageEmptyIsJSONArray covers a regression the
-// auto-paging fix for finding 8 introduced: append onto a nil slice with
-// nothing to append stays nil, so an all-empty store must not encode its
-// --json memories field as null (the same defect class as finding 3, just
-// nested a level deeper than chat list's top-level slice).
+// append onto a nil slice with nothing to append stays nil - an all-empty
+// store must not encode its --json memories field as null.
 func TestRunMemoryListAutoPageEmptyIsJSONArray(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -156,9 +151,7 @@ func TestRunMemoryListAutoPageEmptyIsJSONArray(t *testing.T) {
 	}
 }
 
-// TestRunMemoryListExplicitLimitMakesOneRequest covers the other half of
-// finding 8: a positive --limit still makes exactly one bounded request
-// (auto-paging must not override an explicit limit).
+// An explicit --limit must not be overridden by auto-paging.
 func TestRunMemoryListExplicitLimitMakesOneRequest(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	var calls int
@@ -177,7 +170,6 @@ func TestRunMemoryListExplicitLimitMakesOneRequest(t *testing.T) {
 	}
 }
 
-// TestRunMemoryListTierAndSort covers cli.md audit finding 8's other gap:
 // --tier and --sort must reach the server as query params.
 func TestRunMemoryListTierAndSort(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
@@ -238,9 +230,7 @@ func TestRunMemoryForgetNotFound(t *testing.T) {
 	}
 }
 
-// TestRunMemoryShow covers cli.md audit finding 7: `memory show` is a direct
-// per-id GET (exactly one server call), not a full-store page scan; human
-// output includes the vote/tier/recall fields.
+// A direct per-id GET (exactly one server call), not a full-store page scan.
 func TestRunMemoryShow(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	var calls int

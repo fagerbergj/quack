@@ -85,9 +85,7 @@ func (c *ClientConfig) Save() error {
 }
 
 // AddServer registers name→url, erroring on a duplicate name (use Remove first).
-// Activates it when it's the first server registered - otherwise nothing
-// points at it yet and the next command would silently fall back to the
-// local in-process duck instead of the server the user just added.
+// Activates it when it's the first server registered.
 func (c *ClientConfig) AddServer(name, url string) error {
 	if name == "" {
 		return fmt.Errorf("server name is required")

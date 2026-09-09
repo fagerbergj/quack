@@ -95,10 +95,7 @@ func (h *Handler) ListMemories(w http.ResponseWriter, r *http.Request, params sc
 	writeJSON(w, http.StatusOK, out)
 }
 
-// GetMemory returns one memory by id - a direct per-id lookup (the same
-// findMemoryByID DeleteMemory/VoteMemory already use), not a List scan, so
-// it's correct and O(1) regardless of corpus size. 404 if no configured
-// store has that id.
+// GetMemory is a direct per-id lookup (findMemoryByID), not a List scan.
 func (h *Handler) GetMemory(w http.ResponseWriter, r *http.Request, memoryID schema.MemoryID) {
 	_, m, err := findMemoryByID(r.Context(), h.memStores(), memoryID)
 	if err != nil {

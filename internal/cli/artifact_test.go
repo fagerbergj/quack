@@ -143,9 +143,6 @@ func TestRunArtifactDownloadDefaultFilename(t *testing.T) {
 	}
 }
 
-// TestRunArtifactDownloadSanitizesEscapingName covers cli.md audit finding
-// 6: a server-chosen artifact name that looks like a path (../escaped.txt)
-// must not be used verbatim as the local write path when -o is omitted.
 func TestRunArtifactDownloadSanitizesEscapingName(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

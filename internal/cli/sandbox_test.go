@@ -61,9 +61,7 @@ func TestResolveSandboxAgent(t *testing.T) {
 	}
 }
 
-// TestResolveSandboxAgentErrorListsConfiguredAgents covers cli.md audit
-// finding 10: the error names what's actually configured, not a sentence
-// that trails off after a colon.
+// The error names what's actually configured, not a sentence that trails off.
 func TestResolveSandboxAgentErrorListsConfiguredAgents(t *testing.T) {
 	cfg := testAgentConfig()
 	_, _, err := ResolveSandboxAgent(cfg, "no-such-agent")

@@ -10,11 +10,8 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 )
 
-// readWithFallback resolves path via bundledir (disk in cwd, then embedded);
-// a custom path that resolves nowhere falls back to defaultPath's embedded
-// copy instead of hard-failing - the one place this matters today is a
-// config built outside a repo checkout still pointing at gates.rubric_path's
-// default value.
+// readWithFallback: a path that resolves nowhere falls back to defaultPath's
+// embedded copy instead of hard-failing.
 func readWithFallback(path, defaultPath string) ([]byte, error) {
 	raw, err := bundledir.ReadFile(path)
 	if err == nil || path == defaultPath {
@@ -51,10 +48,8 @@ func FromConfig(c config.GatesConfig) (Config, error) {
 	}, nil
 }
 
-// defaultRubricPath/defaultConstitutionPath are what quack init emits
-// (gates.rubric_path) and what embed.go embeds - the fallback used when the
-// configured path is unset or doesn't resolve, so a config built outside a
-// repo checkout still has a rubric/constitution to load.
+// defaultRubricPath/defaultConstitutionPath match what quack init emits and
+// what embed.go embeds - the fallback target.
 const (
 	defaultRubricPath       = "config/rubric.md"
 	defaultConstitutionPath = "config/constitution.md"
@@ -94,10 +89,7 @@ func loadRubric(c config.GatesConfig) (string, map[string]criterionSpec, map[str
 
 // loadRubricFile loads a rubric from disk: a .yaml path is the structured
 // format (rubricyaml.go); anything else is a raw prose override with no
-// structured specs. A path that doesn't resolve falls back to the shipped
-// default (embedded, so it works outside a checkout too) rather than
-// hard-failing gate setup - quack init emits gates.rubric_path relative to
-// cwd, which only exists on disk inside the repo.
+// structured specs. A path that doesn't resolve falls back to the embedded default.
 func loadRubricFile(path string) (string, map[string]criterionSpec, map[string]string, error) {
 	raw, err := readWithFallback(path, defaultRubricPath)
 	if err != nil {

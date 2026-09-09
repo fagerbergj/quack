@@ -114,9 +114,7 @@ func TestFormatSandboxProbeTable(t *testing.T) {
 	}
 }
 
-// TestSandboxProbeResultJSONShape covers cli.md audit finding 12: `sandbox
-// check --json` (cmd/quack) just json.Marshal's a []SandboxProbeResult - this
-// pins the wire shape a CI consumer would parse.
+// Pins the wire shape a CI consumer would parse.
 func TestSandboxProbeResultJSONShape(t *testing.T) {
 	b, err := json.Marshal([]SandboxProbeResult{{Name: "write $TMPDIR", Status: ProbePass, Evidence: "ok"}})
 	if err != nil {

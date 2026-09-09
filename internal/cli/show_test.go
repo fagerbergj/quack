@@ -168,9 +168,7 @@ func TestRunChatShowJSON(t *testing.T) {
 	}
 }
 
-// TestRunChatShowExitCodeContract covers cli.md audit finding 1: the
-// snapshot and --json paths must apply the documented 0/1/2 pause/failure
-// exit-code contract off the chat's status, same as `chat send`/`-p`.
+// Both paths must apply the 0/1/2 exit-code contract off the chat's status.
 func TestRunChatShowExitCodeContract(t *testing.T) {
 	for _, tc := range []struct {
 		status string

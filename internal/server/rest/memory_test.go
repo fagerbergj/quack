@@ -116,9 +116,7 @@ func TestListMemories_NoStoreConfigured(t *testing.T) {
 	}
 }
 
-// TestGetMemory_ReturnsCommittedMemory covers cli.md audit finding 7's server
-// half: a direct per-id GET returns the same content a list would, without
-// paging.
+// A direct per-id GET returns the same content a list would, without paging.
 func TestGetMemory_ReturnsCommittedMemory(t *testing.T) {
 	ctx := context.Background()
 	h := newTestHandler(t)

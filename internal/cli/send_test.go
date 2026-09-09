@@ -103,9 +103,7 @@ func TestRunChatSendFailed(t *testing.T) {
 	}
 }
 
-// TestRunChatSendFailedDialErrorNamesConfigKey covers onboarding audit
-// finding 14: an endpoint-down failure must name providers.default.endpoint,
-// not just repeat the raw dial error with no fix in sight.
+// An endpoint-down failure must name providers.default.endpoint.
 func TestRunChatSendFailedDialErrorNamesConfigKey(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

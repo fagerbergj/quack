@@ -149,3 +149,24 @@ func TestSanitizeStoreError_NilIsEmpty(t *testing.T) {
 		t.Fatalf("SanitizeStoreError(nil) = %q, want empty", got)
 	}
 }
+
+func TestIsDialFailure(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"connection refused", &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}, true},
+		{"no such host", &net.DNSError{Err: "no such host", Name: "x"}, true},
+		{"wrapped dial error", fmt.Errorf("openai m (generate): %w", &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}), true},
+		{"http status error", errors.New("status 400: bad request"), false},
+		{"nil", nil, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsDialFailure(tc.err); got != tc.want {
+				t.Errorf("IsDialFailure(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}

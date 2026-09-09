@@ -45,9 +45,7 @@ func RunMemoryList(ctx context.Context, out io.Writer, server, bucket, q, tier, 
 
 // RunMemoryShow is `quack memory show <memory-id>`: prints one memory's full
 // detail, including votes/tier/last-recalled (epic #1255 P1 observability).
-// A direct per-id GET (server-side: the same store.GetByID DeleteMemory/
-// VoteMemory already use) - O(1) regardless of corpus size, not the old
-// full-store page scan (cli.md audit finding 7).
+// A direct per-id GET, not a full-store page scan.
 func RunMemoryShow(ctx context.Context, out io.Writer, server, id string, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {

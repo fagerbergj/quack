@@ -139,9 +139,7 @@ func newInitCmd() *cobra.Command {
 	return c
 }
 
-// friendlyTTYErr rewrites huh's raw "could not open a new TTY" error (hit
-// under CI, `< /dev/null`, or any run with no real terminal) into a message
-// that names the actual fix instead of a bare library error.
+// friendlyTTYErr rewrites huh's raw TTY-open error into one naming the fix.
 func friendlyTTYErr(err error) error {
 	if err != nil && strings.Contains(err.Error(), "could not open a new TTY") {
 		return fmt.Errorf("no terminal available for the interactive wizard - pass --answers <file> to `quack server init` for a non-interactive setup")
@@ -321,9 +319,7 @@ func newChatRenameCmd() *cobra.Command {
 	}
 }
 
-// newChatArchiveCmd builds `chat archive` (archived=true) and `chat
-// unarchive` (archived=false) - the only CLI path to a chat archived in the
-// web UI, and the only way to bring one back.
+// newChatArchiveCmd builds both `chat archive` and `chat unarchive`.
 func newChatArchiveCmd(archived bool) *cobra.Command {
 	use, short := "archive <id>", "Archive a chat"
 	if !archived {
@@ -762,10 +758,8 @@ func newServerInitCmd() *cobra.Command {
 	return c
 }
 
-// runServerInitAnswers is `quack server init --answers <file>`: the headless
-// path (no huh form, no TTY needed). Mirrors the wizard's own existing-file
-// guard - errors rather than silently overwriting, since there's no form to
-// ask "use it as-is / overwrite / write elsewhere" in a script.
+// runServerInitAnswers is the headless (no TTY) `server init` path; it
+// errors on an existing file rather than overwriting - no form to ask.
 func runServerInitAnswers(answersPath, outPath string, force bool) error {
 	if !force {
 		if _, err := os.Stat(outPath); err == nil {

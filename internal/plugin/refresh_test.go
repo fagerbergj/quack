@@ -66,10 +66,7 @@ func TestRefreshUnreadableManifestIsNotFatal(t *testing.T) {
 	}
 }
 
-// TestRefreshMissingManifestLogsAtDebug covers cli.md audit finding 15: a
-// missing manifest is the normal case outside a plugin-using repo (every
-// in-process `quack -p` run from an arbitrary cwd), so it must not WARN on
-// every single command.
+// A missing manifest is the normal case outside a plugin-using repo.
 func TestRefreshMissingManifestLogsAtDebug(t *testing.T) {
 	var got slog.Record
 	prev := slog.Default()

@@ -124,10 +124,8 @@ func (f chatListFilters) validate() error {
 	return nil
 }
 
-// serverStatuses maps archived to the server's status= query values. "" and
-// "exclude" pass nil (the server's own default: active only) rather than
-// spelling out ["active"], so a caller that doesn't care keeps working
-// unchanged even if the server's default ever moves.
+// serverStatuses maps archived to status= query values; "" passes nil so a
+// server default change (today "active") doesn't need mirroring here.
 func (f chatListFilters) serverStatuses() []string {
 	switch f.archived {
 	case "include":
@@ -294,9 +292,7 @@ func RunChatRename(ctx context.Context, out io.Writer, server, id, title string)
 	return nil
 }
 
-// RunChatArchive is `quack chat archive <id>` / `quack chat unarchive <id>`:
-// PATCH the chat's archived flag - the only way from the CLI to reach a
-// chat archived in the web UI, and the only way to unarchive one.
+// RunChatArchive backs both `chat archive` and `chat unarchive`.
 func RunChatArchive(ctx context.Context, out io.Writer, server, id string, archived bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
@@ -430,11 +426,8 @@ func RunNodeRetry(ctx context.Context, out io.Writer, server, chatID, nodeID, gu
 	return nil
 }
 
-// RunChatDelete is `quack chat delete <id>`. Deletion is irreversible, so it
-// confirms first unless yes is set. The prompt goes to errOut (stderr) per
-// house rule (prompts/status never share stdout with a command's real
-// output); a genuinely empty/closed stdin - a script that forgot -y - errors
-// instead of silently defaulting to "no" with exit 0.
+// RunChatDelete confirms on errOut (stderr, per house rule); an empty/closed
+// stdin without yes errors rather than silently defaulting to "no".
 func RunChatDelete(ctx context.Context, out, errOut io.Writer, in io.Reader, server, id string, yes bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
@@ -503,12 +496,8 @@ func notFoundAs(err error, id string) error {
 	return err
 }
 
-// nodeErrAs is notFoundAs's counterpart for the node verbs: a 404 there
-// almost never means the chat itself is missing (chat.go's node verbs check
-// a plan/node, not a chat id), so this surfaces the server's own message -
-// carried on the wrapped error by wrapNotFound - instead of asserting a
-// false "chat not found". Only the bare ErrNotFound sentinel (no server
-// message available) falls back to a generic chat-or-node message.
+// nodeErrAs surfaces the server's real 404 message (via wrapNotFound); a
+// node's 404 rarely means the chat itself is missing, unlike notFoundAs.
 func nodeErrAs(err error, chatID string) error {
 	if err == ErrNotFound {
 		return fmt.Errorf("chat %s or node not found", chatID)
@@ -516,10 +505,8 @@ func nodeErrAs(err error, chatID string) error {
 	return err
 }
 
-// writeJSON encodes v, normalising a nil top-level slice to `[]` instead of
-// `null` - every list command (chat list, ledger list, ...) shares this path,
-// so fixing it here (root cause) instead of at each call site's filter logic
-// keeps a jq/scripting consumer from having to special-case an empty result.
+// writeJSON normalises a nil top-level slice to `[]`, not `null`, so every
+// list command sharing this path doesn't force jq to special-case empty.
 func writeJSON(out io.Writer, v any) error {
 	if rv := reflect.ValueOf(v); rv.Kind() == reflect.Slice && rv.IsNil() {
 		v = reflect.MakeSlice(rv.Type(), 0, 0).Interface()
@@ -529,15 +516,12 @@ func writeJSON(out io.Writer, v any) error {
 	return enc.Encode(v)
 }
 
-// errNonInteractive signals confirm() got a genuinely empty/closed stdin (no
-// bytes at all, e.g. `</dev/null`) rather than a real answer - distinct from
-// a blank line a human actually typed, which still defaults to no. The
-// caller decides how to word the resulting error for its own command.
+// errNonInteractive: stdin had no bytes at all, distinct from a blank line
+// a human typed (which still defaults to no).
 var errNonInteractive = errors.New("no interactive stdin to confirm on")
 
-// confirm asks a yes/no question on out and reads a line from in. A blank
-// line (someone just pressed enter) defaults to no; a stdin with nothing on
-// it at all returns errNonInteractive instead of silently defaulting to no.
+// confirm reads a yes/no answer; a blank line defaults to no, an empty
+// stdin returns errNonInteractive instead.
 func confirm(out io.Writer, in io.Reader, prompt string) (bool, error) {
 	fmt.Fprintf(out, "%s [y/N] ", prompt)
 	var answer string

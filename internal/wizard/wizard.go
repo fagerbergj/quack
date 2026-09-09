@@ -29,10 +29,9 @@ var ErrAborted = errors.New("init cancelled")
 // It's `quack server init` (and the local branch of `quack init`): LLM provider
 // → endpoint → /models → model roles → optional features → stores. When outPath
 // already exists (and --force wasn't passed) it asks up front whether to keep,
-// overwrite, or write elsewhere - before any wizard questions. local narrows the
-// stores screens to one confirm (defaults are right for "run quack on this
-// machine"); the caller decides the next-step message, using the returned
-// wrote bool to know whether a config was actually written.
+// overwrite, or write elsewhere - before any wizard questions.
+// local narrows the stores screens to one confirm; wrote tells the caller
+// whether a config was actually written, so it can pick the next-step message.
 func ServerInit(ctx context.Context, outPath string, force, local bool) (wrote bool, err error) {
 	if !force && fileExists(outPath) {
 		switch askExisting(outPath) {
@@ -328,9 +327,7 @@ func modelGroups(a *cli.InitAnswers, models []string, manual bool) []*huh.Group 
 			Title("Judge model").Description("Trust gate - scores every node's output"),
 		huh.NewGroup(specialistSelect("", models, &a.EmbedModel, none)).
 			Title("Embedding model").Description("Semantic memory - None disables it"),
-		// Vision + audio share one screen (each field titled so they're
-		// distinguishable) - a bounded Height keeps two model selects from
-		// overflowing the group when the endpoint's model list is long.
+		// Bounded Height keeps two model selects from overflowing one group.
 		huh.NewGroup(
 			specialistSelect("Vision", models, &a.VisionModel, none),
 			specialistSelect("Audio", models, &a.AudioModel, none),

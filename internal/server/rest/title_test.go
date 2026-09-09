@@ -2,9 +2,11 @@ package rest
 
 import (
 	"context"
-	"errors"
 	"iter"
+	"log/slog"
+	"net"
 	"strings"
+	"syscall"
 	"testing"
 
 	"google.golang.org/adk/v2/model"
@@ -29,8 +31,8 @@ func (m fixedAnswerModel) GenerateContent(_ context.Context, _ *model.LLMRequest
 	}
 }
 
-// erroringModel always fails, recording whether the ctx it was called with
-// carried openaimodel.WithBestEffort.
+// erroringModel always fails with a dial-shaped error, recording whether the
+// ctx it was called with carried openaimodel.WithBestEffort.
 type erroringModel struct{ sawBestEffort *bool }
 
 func (erroringModel) Name() string { return "erroring" }
@@ -38,15 +40,10 @@ func (erroringModel) Name() string { return "erroring" }
 func (m erroringModel) GenerateContent(ctx context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	*m.sawBestEffort = openaimodel.IsBestEffort(ctx)
 	return func(yield func(*model.LLMResponse, error) bool) {
-		yield(nil, errors.New("dial tcp: connection refused"))
+		yield(nil, &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED})
 	}
 }
 
-// TestGenerateTitle_MarksCtxBestEffort covers onboarding audit finding 14:
-// generateTitle already logs its own degraded outcome (title_test.go's
-// TestRunChat_TitlerFailureFallsBackToShortUserDerivedTitle covers the
-// fallback itself) - this pins that its titler call carries the marker that
-// keeps the model layer's own boundary log from firing at Error too.
 func TestGenerateTitle_MarksCtxBestEffort(t *testing.T) {
 	var sawBestEffort bool
 	h := &Handler{titler: erroringModel{sawBestEffort: &sawBestEffort}}
@@ -56,6 +53,22 @@ func TestGenerateTitle_MarksCtxBestEffort(t *testing.T) {
 	}
 	if !sawBestEffort {
 		t.Error("generateTitle's ctx did not carry openaimodel.WithBestEffort")
+	}
+}
+
+// TestGenerateTitle_DialFailureLogsBelowDefaultLevel: a dial failure logs at
+// Debug (invisible at the default Info level), not Warn.
+func TestGenerateTitle_DialFailureLogsBelowDefaultLevel(t *testing.T) {
+	var buf strings.Builder
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+
+	h := &Handler{titler: erroringModel{sawBestEffort: new(bool)}}
+	h.generateTitle(context.Background(), "chat-1", "hello")
+
+	if strings.Contains(buf.String(), "title generation failed") {
+		t.Errorf("dial failure should not log at the default level, got:\n%s", buf.String())
 	}
 }
 
