@@ -19,6 +19,7 @@ import (
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/remoteagent/v2"
+	"google.golang.org/adk/v2/artifact"
 	adkmemory "google.golang.org/adk/v2/memory"
 	"google.golang.org/adk/v2/runner"
 	adka2a "google.golang.org/adk/v2/server/adka2a/v2"
@@ -52,7 +53,12 @@ type A2AServer struct {
 // nativeAgent.ForNode), so a fan-out sibling can never misattribute another
 // node's compaction. sink nil (no active run, or a caller with no hub, e.g.
 // tests) makes this a no-op - Serve itself never touches the hub directly.
-func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service, comp Compaction, nodeID string, sink func(stream.SSEEvent)) (*A2AServer, error) {
+//
+// artifacts is set on the worker's own RunnerConfig - the DAG/orchestrator
+// runners already get one (orchestrator.go, nativegraph.go); leaving a
+// worker's nil made ctx.Artifacts() a silent nil in every worker tool/callback
+// even though the caller has a live service to give it (#A7).
+func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service, artifacts artifact.Service, comp Compaction, nodeID string, sink func(stream.SSEEvent)) (*A2AServer, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("agent %q: a2a listen: %w", ag.Name(), err)
@@ -84,6 +90,7 @@ func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service, c
 			Agent:             ag,
 			SessionService:    compactionSessions{Service: sessions, nodeID: nodeID, sink: sink},
 			MemoryService:     mem,
+			ArtifactService:   artifacts,
 			AutoCreateSession: true,
 			Compaction:        adkComp,
 		},
