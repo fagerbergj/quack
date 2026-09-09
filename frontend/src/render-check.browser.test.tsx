@@ -179,6 +179,10 @@ describe.each(Object.entries(storyModules))('%s', (path, mod) => {
         } finally {
           console.error = originalError
           cleanup()
+          // Mermaid renders into a `d<id>` element it appends to <body>,
+          // outside the RTL container cleanup() removes; on a parse error it
+          // leaves its error SVG there, stacking up in every later screenshot.
+          document.querySelectorAll('body > [id^="dmermaid-"], body > [id^="mermaid-"]').forEach(el => el.remove())
         }
       }
     })
