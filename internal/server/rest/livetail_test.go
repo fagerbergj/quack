@@ -136,6 +136,7 @@ func TestSubscribeIdleSnapshotsAndCloses(t *testing.T) {
 	pub.Publish(stream.NodeStart("n1", "researcher"))
 	pub.Publish(stream.NodeDone("n1", stream.NodeDoneData{}))
 	pub.Publish(stream.Done())
+	h.eventLog.Flush() // Close frees the hub buffer; must wait for the durable write first (see startRun).
 	h.hub.Close(chatID)
 
 	req := httptest.NewRequest("GET", "/api/v1/chats/"+chatID+"/stream", nil)

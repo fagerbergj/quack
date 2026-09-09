@@ -110,10 +110,10 @@ type topic struct {
 
 // NewHub returns an empty hub.
 //
-// ponytail: topics are retained per chat (one bounded buffer each) so a
-// completed run can still be replayed; total memory is chats × MaxReplay. Fine
-// for a single self-hosted instance. Upgrade path if it grows: LRU/TTL eviction
-// of done topics, or a shared event bus when running multiple replicas.
+// ponytail: topic structs (not buffers - Close frees those) are retained per
+// chat forever; a live run's buffer is bounded by MaxReplay. Fine for a
+// single self-hosted instance. Upgrade path if it grows: LRU/TTL eviction of
+// done topics, or a shared event bus when running multiple replicas.
 func NewHub() *Hub { return &Hub{topics: map[string]*topic{}} }
 
 // Appends a sequenced event to the chat's topic and fans it to live subscribers. First publish after done starts a fresh topic.
@@ -149,7 +149,9 @@ func (h *Hub) Active(key string) bool {
 	return t != nil && t.started && !t.done
 }
 
-// Marks the run finished and closes live subscriber channels. Replay buffer is kept until the next run resets it.
+// Marks the run finished, closes live subscriber channels, and frees the
+// replay buffer - the cold path (durable chat_events table) already serves
+// replay for a finished run, so keeping it in memory only leaks (#perf-audit item 4).
 func (h *Hub) Close(key string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -158,6 +160,7 @@ func (h *Hub) Close(key string) {
 		return
 	}
 	t.done = true
+	t.buf = nil
 	for ch := range t.subs {
 		close(ch)
 		delete(t.subs, ch)

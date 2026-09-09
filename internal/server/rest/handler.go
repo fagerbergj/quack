@@ -673,12 +673,8 @@ func (h *Handler) startRun(chatID, turnID, content string, attachments []*genai.
 	_ = h.store.MarkRunActive(runCtx, chatID, turnID)
 	go func() {
 		defer recoverRun(chatID, turnID)
-		// Close done LAST so the run is off the registry by the time viewers see the stream close.
-		defer h.hub.Close(chatID)
-		defer func() {
-			cancelRun()
-			h.hub.UnregisterRun(chatID)
-		}()
+		// FinishRun flushes then closes then unregisters, in that order - see its doc.
+		defer h.eventLog.FinishRun(h.hub, chatID, cancelRun)
 		h.runChat(runCtx, chatID, turnID, content, attachments)
 	}()
 }
@@ -1115,11 +1111,8 @@ func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message stri
 		h.hub.RegisterRun(chatID, dp.TurnID, cancelRun)
 		_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
 		defer recoverRun(chatID, dp.TurnID)
-		defer func() {
-			cancelRun()
-			h.hub.UnregisterRun(chatID)
-		}()
-		defer h.hub.Close(chatID)
+		// FinishRun flushes then closes then unregisters, in that order - see its doc.
+		defer h.eventLog.FinishRun(h.hub, chatID, cancelRun)
 		defer h.stampRunOutcome(runCtx, chatID)
 
 		h.eventLog.Reset(runCtx, chatID)
@@ -1161,11 +1154,8 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 		h.hub.RegisterRun(chatID, dp.TurnID, cancelRun)
 		_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
 		defer recoverRun(chatID, dp.TurnID)
-		defer func() {
-			cancelRun()
-			h.hub.UnregisterRun(chatID)
-		}()
-		defer h.hub.Close(chatID)
+		// FinishRun flushes then closes then unregisters, in that order - see its doc.
+		defer h.eventLog.FinishRun(h.hub, chatID, cancelRun)
 		defer h.stampRunOutcome(runCtx, chatID)
 
 		h.eventLog.Reset(runCtx, chatID)
