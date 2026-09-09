@@ -183,8 +183,17 @@ type editArtifactOp struct {
 	NewText string `json:"newText,omitempty" jsonschema:"alias for new"`
 }
 
-// resolve picks old/new, falling back to the oldText/newText alias.
-func (e editArtifactOp) resolve() (old, new string) {
+// resolve picks old/new, falling back to the oldText/newText alias. Both
+// spellings for the same field is rejected rather than silently preferring
+// one - a worker that sets both almost certainly means only one of them, and
+// picking silently risks applying an edit the caller didn't intend.
+func (e editArtifactOp) resolve() (old, new string, err error) {
+	if e.Old != "" && e.OldText != "" {
+		return "", "", errors.New("edit_artifact: set only one of old/oldText, not both")
+	}
+	if e.New != "" && e.NewText != "" {
+		return "", "", errors.New("edit_artifact: set only one of new/newText, not both")
+	}
 	old, new = e.Old, e.New
 	if old == "" {
 		old = e.OldText
@@ -192,7 +201,7 @@ func (e editArtifactOp) resolve() (old, new string) {
 	if new == "" {
 		new = e.NewText
 	}
-	return old, new
+	return old, new, nil
 }
 
 // registerEditArtifactTool: optimistic-locking search/replace (#1090 §4.4/§9).
@@ -213,7 +222,10 @@ func registerEditArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vetti
 		}
 		ops := make([]recordstore.EditOp, len(args.Edits))
 		for i, e := range args.Edits {
-			old, new := e.resolve()
+			old, new, err := e.resolve()
+			if err != nil {
+				return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil, nil
+			}
 			ops[i] = recordstore.EditOp{Old: old, New: new}
 		}
 		round, turnID, headSHA, trigger := currentRound(sess)

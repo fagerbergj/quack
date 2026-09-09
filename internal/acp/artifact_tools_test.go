@@ -279,6 +279,43 @@ func TestEditArtifactMCP_OldTextNewTextAlias(t *testing.T) {
 	}
 }
 
+// TestEditArtifactMCP_BothSpellingsRejected: old+oldText (or new+newText)
+// both set is ambiguous, not a hint to silently prefer one - a caller that
+// sets both almost certainly means only one, and guessing wrong would apply
+// an edit the caller never intended.
+func TestEditArtifactMCP_BothSpellingsRejected(t *testing.T) {
+	ctx := context.Background()
+	secret := mustMemSecret(t)
+	svc := artifact.InMemoryService()
+	vetting.RegisterMemSession(secret, vetting.MemSession{Artifacts: svc, AppName: "quack", UserID: "u1", ChatID: "chat-a", NodeID: "n1"})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	rc := recordstore.New(svc, "quack", "u1", "chat-a")
+	id, rev, err := rc.SaveBlob(ctx, "text", []byte("hello world"), "text/plain", "doc4", recordstore.Lineage{NodeID: "n1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "edit_artifact", Arguments: map[string]any{
+		"id": id, "base_revision": float64(rev),
+		"edits": []map[string]any{{"old": "world", "oldText": "world", "new": "there"}},
+	}})
+	if err != nil {
+		t.Fatalf("CallTool edit_artifact: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("old+oldText both set should error, got: %s", toolResultText(t, res))
+	}
+	raw, _, ok, err := rc.Latest(ctx, id)
+	if err != nil || !ok || string(raw) != "hello world" {
+		t.Fatalf("content must be untouched after a rejected call: raw=%q ok=%v err=%v", raw, ok, err)
+	}
+}
+
 // TestEditArtifactMCP_StaleBaseMerges: base_revision is stale but the Old
 // snippet still matches uniquely against the real latest - merges instead of
 // failing.
