@@ -971,6 +971,9 @@ func TestWorkspaceDefaults(t *testing.T) {
 	if w.Limits.AddressSpaceMB != 8192 || w.Limits.MaxProcs != 512 || w.Limits.MaxFileSizeMB != 1024 {
 		t.Errorf("Limits = %+v, want {8192 512 1024}", w.Limits)
 	}
+	if len(w.BuildDirs) == 0 {
+		t.Errorf("BuildDirs = %v, want the default build-dir allowlist", w.BuildDirs)
+	}
 }
 
 // TestWorkspaceGCDefaults: an absent workspace.gc: section still gets a

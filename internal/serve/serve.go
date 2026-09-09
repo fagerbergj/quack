@@ -1021,6 +1021,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		Timeout:        time.Duration(cfg.Workspace.TimeoutSeconds) * time.Second,
 		ExtraPath:      cfg.Workspace.ExecPath,
 		Env:            cfg.Workspace.Env,
+		BuildDirs:      cfg.Workspace.BuildDirs,
 		Limits: workspace.Limits{
 			AddressSpaceMB: cfg.Workspace.Limits.AddressSpaceMB,
 			Procs:          cfg.Workspace.Limits.MaxProcs,

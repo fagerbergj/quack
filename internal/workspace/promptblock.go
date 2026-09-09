@@ -33,6 +33,11 @@ func PromptBlock(caps Caps, checkCommands []string) string {
 	if caps.Limits.AddressSpaceMB > 0 {
 		lines = append(lines, fmt.Sprintf("Address space limit: %d MB per process.", caps.Limits.AddressSpaceMB))
 	}
+	if len(caps.BuildDirs) > 0 {
+		lines = append(lines, "If your working directory is read-only, these build-output dirs stay writable "+
+			"when the repo's own .gitignore already ignores them (run installs/builds there directly instead of "+
+			"copying the tree elsewhere): "+strings.Join(caps.BuildDirs, ", ")+".")
+	}
 	return strings.Join(lines, "\n")
 }
 

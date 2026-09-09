@@ -401,6 +401,14 @@ const (
 
 var defaultCheckCommands = []string{"go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make", "gofmt", "npx prettier", "./gradlew"}
 
+// defaultBuildDirs: workspace.build_dirs' default value - work-tree-relative
+// build-output dirs a read-only node's sandbox keeps writable, PROVIDED the
+// repo's own .gitignore already ignores them (workspace.buildDirGrants).
+var defaultBuildDirs = []string{
+	"node_modules", "dist", "build", ".vite", ".cache", "coverage", "target",
+	"frontend/node_modules", "frontend/dist", "frontend/build", "frontend/.vite", "frontend/.cache", "frontend/coverage", "frontend/target",
+}
+
 type WorkspaceConfig struct {
 	Root           string `yaml:"root"`
 	MaxReadKB      int    `yaml:"max_read_kb"`
@@ -418,8 +426,12 @@ type WorkspaceConfig struct {
 	GitCredentials      []GitCredentialConfig `yaml:"git_credentials"`
 	Guards              map[string]string     `yaml:"guards"`
 	Sandbox             string                `yaml:"sandbox"`
-	Limits              WorkspaceLimits       `yaml:"limits"`
-	GC                  WorkspaceGCConfig     `yaml:"gc"`
+	// BuildDirs (see defaultBuildDirs) - RW even on a ReadOnly node's
+	// otherwise-immutable tree, when the repo's own .gitignore already
+	// ignores them.
+	BuildDirs []string          `yaml:"build_dirs"`
+	Limits    WorkspaceLimits   `yaml:"limits"`
+	GC        WorkspaceGCConfig `yaml:"gc"`
 }
 
 type WorkspaceGCConfig struct {
@@ -1374,6 +1386,9 @@ func (w *WorkspaceConfig) applyDefaults() error {
 	}
 	if w.CheckCommands == nil {
 		w.CheckCommands = append([]string{}, defaultCheckCommands...)
+	}
+	if w.BuildDirs == nil {
+		w.BuildDirs = append([]string{}, defaultBuildDirs...)
 	}
 	if w.Sandbox != "bwrap" && w.Sandbox != "landlock" && w.Sandbox != "none" {
 		return fmt.Errorf("config: workspace.sandbox is %q (want bwrap, landlock, or none)", w.Sandbox)

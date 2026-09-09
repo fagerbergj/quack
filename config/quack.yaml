@@ -457,6 +457,22 @@ workspace:
                       # namespace construction, so it works here and IS an OS-enforced
                       # boundary (unlike `none`, which relied on the container alone).
 
+  # build_dirs: work-tree-relative build-output dirs that stay WRITABLE on a
+  # read_only node's otherwise-immutable tree (acp.read_only: true, e.g.
+  # code-reviewer, #754) under sandbox: landlock or bwrap - PROVIDED the repo
+  # under review already names the dir (by its top-level component) in its
+  # own .gitignore; an entry this repo does NOT gitignore is never
+  # pre-created or granted, so a reviewer's `npm test`/`vite build` never
+  # pollutes `git status` on what must stay an immutable tree. Pre-created
+  # empty before the sandbox ruleset applies (landlock/bwrap can only grant a
+  # path that already exists), so a fresh worktree that never ran an install
+  # still gets a writable node_modules/ to install INTO. Any top-level dir
+  # the repo's .gitignore names verbatim (a plain "name/" line) is granted
+  # too, even if it isn't in this list - so a repo with its own convention
+  # (a Python .venv/, anything) works with no config change at all.
+  build_dirs: ["node_modules", "dist", "build", ".vite", ".cache", "coverage", "target",
+               "frontend/node_modules", "frontend/dist", "frontend/build", "frontend/.vite", "frontend/.cache", "frontend/coverage", "frontend/target"]
+
   # Per-child resource limits (rlimits) for the gate's own one-shot children -
   # NOT the ACP agent subprocess, which runs with no ceiling (#798: a fixed
   # FSIZE cannot bound a process whose DB grows across every run).

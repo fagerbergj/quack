@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -146,6 +147,14 @@ func childArgv(dir, bin string, argv []string, caps Caps) []string {
 		bindFlag = "--ro-bind"
 	}
 	args = append(args, bindFlag, work, SandboxWorkRoot)
+	if caps.ReadOnly {
+		// Overlay a writable bind on top of the RO work-tree bind for each
+		// pre-created, gitignored build dir - a later bind on a subpath wins
+		// (see childArgv's own doc comment), so this stays RO everywhere else.
+		for _, rel := range buildDirGrants(work, caps.BuildDirs) {
+			args = append(args, "--bind-try", filepath.Join(work, rel), filepath.Join(SandboxWorkRoot, rel))
+		}
+	}
 	chdir := SandboxWorkRoot
 	if rel, ok := relUnder(work, dir); ok {
 		chdir = filepath.Join(SandboxWorkRoot, rel)
@@ -459,6 +468,12 @@ func landlockGrants(dir string, caps Caps) (rw, ro []string) {
 	}
 	if caps.ReadOnly {
 		ro = append(ro, ownPaths...)
+		// Landlock is additive, not a mount overlay: a RW rule on a subpath
+		// grants write there regardless of the RO rule covering its parent
+		// (#754's read-only tree stays immutable everywhere else).
+		for _, rel := range buildDirGrants(work, caps.BuildDirs) {
+			rw = append(rw, filepath.Join(work, rel))
+		}
 	} else {
 		rw = append(rw, ownPaths...)
 	}
@@ -488,6 +503,119 @@ func landlockGrants(dir string, caps Caps) (rw, ro []string) {
 		}
 	}
 	return rw, ro
+}
+
+// gitignoreDirPatterns parses dir's own .gitignore into the directory-shaped
+// patterns buildDirGrants needs, split by real gitignore matching depth: a
+// line with no embedded "/" (a leading/trailing "/" is stripped first, e.g.
+// "node_modules", "node_modules/", "/node_modules/" all count) matches its
+// name at ANY depth - quack's own .gitignore uses exactly this bare form -
+// so it lands in bare, usable for both a configured entry's base name and
+// the top-level bonus grant. A line with an embedded "/" (e.g.
+// "frontend/dist") is anchored to that one path and lands in anchored,
+// usable only to match a configured entry by its exact relative path -
+// never as a bonus grant, since it does not name a top-level directory. A
+// glob/negated/blank/comment line is skipped rather than guessed at; this is
+// not a full gitignore matcher.
+func gitignoreDirPatterns(dir string) (bare, anchored map[string]bool) {
+	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		return nil, nil
+	}
+	bare, anchored = map[string]bool{}, map[string]bool{}
+	for _, line := range strings.Split(string(data), "\n") {
+		p := strings.TrimSuffix(strings.TrimSpace(line), "\r")
+		if p == "" || strings.HasPrefix(p, "#") || strings.HasPrefix(p, "!") {
+			continue
+		}
+		p = strings.Trim(p, "/")
+		if p == "" || strings.ContainsAny(p, "*?[]") {
+			continue
+		}
+		if strings.Contains(p, "/") {
+			anchored[p] = true
+		} else {
+			bare[p] = true
+		}
+	}
+	return bare, anchored
+}
+
+// buildDirGrants resolves configured (workspace.build_dirs, work-tree-
+// relative, e.g. "frontend/dist") against work's own .gitignore: an entry is
+// granted only when the repo already ignores it - by its base name matching
+// a bare pattern ("dist" matches "frontend/dist" too, same as real gitignore
+// semantics) or its full relative path matching an anchored one. Writing
+// real build output into a directory the repo does NOT ignore would pollute
+// `git status` on what is supposed to be an immutable read-only tree, so an
+// ungitignored configured entry is silently skipped (see
+// docs/configuration/workspace/index.md). Any OTHER top-level directory a
+// bare .gitignore pattern names is granted too, unconditionally - the escape
+// hatch that makes a repo with its own build-dir convention work without any
+// workspace.build_dirs config at all. No .gitignore (or none of it matches)
+// grants nothing.
+func buildDirGrants(work string, configured []string) []string {
+	bare, anchored := gitignoreDirPatterns(work)
+	if len(bare) == 0 && len(anchored) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(rel string) {
+		rel = filepath.Clean(rel)
+		// filepath.IsLocal rejects "..", an absolute path, and anything else
+		// that would walk filepath.Join(work, rel) outside work - required
+		// since the bonus loop below feeds this a bare .gitignore line
+		// VERBATIM, and that file is untrusted content in the repo under
+		// review (e.g. a malicious PR branch), not workspace config.
+		if rel == "." || rel == "" || seen[rel] || !filepath.IsLocal(rel) {
+			return
+		}
+		// A build dir that is ITSELF a symlink (checked out from the repo
+		// under review, or planted by the agent using a prior grant) must
+		// never be granted: landlock resolves the granted path through the
+		// symlink and rw's its target, and bwrap's --bind-try binds the
+		// target's real directory - either way this is a full escape to
+		// wherever the symlink points, proven by
+		// TestBuildDirGrantsRejectsSymlinkedBuildDir. Lstat (not Stat) so the
+		// check itself never follows the link; a missing path is fine (it
+		// gets mkdir'd fresh by PrecreateBuildDirs).
+		if fi, err := os.Lstat(filepath.Join(work, rel)); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			return
+		}
+		seen[rel] = true
+		out = append(out, rel)
+	}
+	for _, d := range configured {
+		rel := filepath.Clean(d)
+		if bare[filepath.Base(rel)] || anchored[filepath.ToSlash(rel)] {
+			add(d)
+		}
+	}
+	names := make([]string, 0, len(bare))
+	for name := range bare {
+		names = append(names, name)
+	}
+	sort.Strings(names) // deterministic argv/mkdir order
+	for _, name := range names {
+		add(name)
+	}
+	return out
+}
+
+// PrecreateBuildDirs makes buildDirs' gitignored entries exist, empty, under
+// dir - a landlock/bwrap RW grant can only cover a path that already exists,
+// and a read-only node can never mkdir them itself once its sandbox applies.
+// Called from tools.SetupClone/SetupWorktree, which always run before any
+// sandboxed worker starts in dir (see their own doc comments) - so this is
+// the one point a still-writable dir tree lets a mkdir land.
+func PrecreateBuildDirs(dir string, buildDirs []string) {
+	for _, rel := range buildDirGrants(dir, buildDirs) {
+		if err := os.MkdirAll(filepath.Join(dir, rel), 0o755); err != nil {
+			slog.Warn("could not pre-create a writable build dir for the read-only sandbox",
+				"component", "workspace", "dir", dir, "rel", rel, "err", err)
+		}
+	}
 }
 
 // landlockSystemDirs mirrors bwrapSystemArgs' read-only system view. Unlike

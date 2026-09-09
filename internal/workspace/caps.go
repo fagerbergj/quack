@@ -26,6 +26,12 @@ type Caps struct {
 	// ReadOnly mounts the node's own work/dir RO instead of RW (#754) - set
 	// from the agent's read_only config, not merely stated in its prompt.
 	ReadOnly bool
+	// BuildDirs (workspace.build_dirs) names work-tree-relative build-output
+	// dirs (e.g. "node_modules", "frontend/dist") that stay writable on a
+	// ReadOnly node PROVIDED the repo's own .gitignore already ignores them
+	// (see buildDirGrants) - lets a read-only reviewer run `npm test`/`vite
+	// build` in place instead of copying the tree to a writable TMPDIR.
+	BuildDirs []string
 }
 
 func DefaultCaps() Caps {
@@ -44,5 +50,5 @@ func (c Caps) IsZero() bool {
 	return c.MaxReadBytes == 0 && c.MaxWriteBytes == 0 && c.MaxResults == 0 &&
 		c.MaxListEntries == 0 && c.Timeout == 0 && c.MaxOutputBytes == 0 &&
 		len(c.ExtraPath) == 0 && len(c.Env) == 0 && c.HomeDir == "" && c.ScratchDir == "" && c.Sandbox == "" && c.Limits == Limits{} &&
-		len(c.ExtraRO) == 0 && !c.ReadOnly
+		len(c.ExtraRO) == 0 && !c.ReadOnly && len(c.BuildDirs) == 0
 }
