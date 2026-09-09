@@ -153,6 +153,10 @@ func nativeCompactionConfig(comp Compaction) (*compaction.Config, error) {
 		Model:              comp.Summarizer,
 		PromptTemplate:     prompt,
 		MaxTranscriptChars: maxTranscriptChars(comp),
+		// ADK's 2000-char default (llm_summarizer.go) would cut the rolling
+		// summary itself on the way back in; quack's own prompt asks for full
+		// technical content and can legitimately run tens of KB.
+		MaxToolContentChars: -1,
 	})
 	if err != nil {
 		return nil, err
