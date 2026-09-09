@@ -166,6 +166,10 @@ export function EditableChatTitle({ title, editable, onRename }: EditableChatTit
   )
 }
 
+// How many of the most recent completed turns mount by default (audit
+// finding 9) - "Show N older messages" raises it by the same amount.
+const RENDERED_TURN_TAIL = 100
+
 // #1171: App.tsx owns the nav drawer's open state and hands it down, so the
 // toggle in the header's leading slot and the NavRail overlay share one
 // source of truth.
@@ -592,6 +596,17 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     return { turn, idx, choiceAnswer, isChoiceAnswer, priorContents, imageAttachments: turnImages[turn.id] }
   }), [state.turns, liveUserText, turnImages])
 
+  // Cap how many completed turns actually mount (audit finding 9: a chat with
+  // hundreds of turns pays 2.9 ms + 28 DOM elements each with no bound - 2,000
+  // turns is 5.9 s to first paint). Built from turnViews (not sliced earlier),
+  // so idx/priorContents/choiceAnswer above still see the FULL history - only
+  // which turns actually mount as a <TurnView> is capped. Resets per chat so
+  // an earlier "show more" doesn't carry over to a freshly opened one.
+  const [visibleTurnCount, setVisibleTurnCount] = useState(RENDERED_TURN_TAIL)
+  useEffect(() => { setVisibleTurnCount(RENDERED_TURN_TAIL) }, [activeChatId])
+  const mountedTurnViews = useMemo(() => turnViews.slice(-visibleTurnCount), [turnViews, visibleTurnCount])
+  const hiddenTurnCount = turnViews.length - mountedTurnViews.length
+
   // The live turn is a clarification answer when the last completed turn asked one.
   const lastTurn = state.turns[state.turns.length - 1]
   const liveIsChoiceAnswer = lastTurn ? pendingChoice(activityFromTurn(lastTurn)) != null : false
@@ -709,7 +724,16 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
             </div>
           )}
 
-          {turnViews.map(({ turn, idx, choiceAnswer, isChoiceAnswer, priorContents, imageAttachments }) => (
+          {hiddenTurnCount > 0 && (
+            <button
+              onClick={() => setVisibleTurnCount(c => c + RENDERED_TURN_TAIL)}
+              className="w-full min-h-[44px] text-xs text-center text-blue-600 dark:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+            >
+              Show {Math.min(hiddenTurnCount, RENDERED_TURN_TAIL)} older messages
+            </button>
+          )}
+
+          {mountedTurnViews.map(({ turn, idx, choiceAnswer, isChoiceAnswer, priorContents, imageAttachments }) => (
             <TurnView
               key={turn.id}
               turn={turn}
