@@ -225,3 +225,23 @@ func TestTurnSpans_MCPCallNeverSpanNamedOther(t *testing.T) {
 		}
 	}
 }
+
+// TestTurnSpans_UnresolvedKindSpanStaysBounded: a genuinely unclassifiable
+// call (no MCP identity, kind "other") must NOT explode the span name into
+// the agent-supplied title - that's an unbounded, arbitrary string, and
+// unlike translate.go's persisted tool NAME, a span name is a cardinality
+// dimension in the tracing backend. The title still rides the tool_title
+// attribute for identification.
+func TestTurnSpans_UnresolvedKindSpanStaysBounded(t *testing.T) {
+	exp := withTestTracer(t)
+	turns := newTurnSpans(context.Background(), "code-reviewer")
+
+	turns.observe(sdk.StartToolCall("t1", "Loaded skill: review-code-a-very-long-dynamic-title-with-an-id-1304",
+		sdk.WithStartKind(sdk.ToolKindOther),
+		sdk.WithStartStatus(sdk.ToolCallStatusCompleted)))
+
+	span := spanByName(t, exp, "quack.acp.tool.other")
+	if got := attrsOf(span)["tool_title"]; got != "Loaded skill: review-code-a-very-long-dynamic-title-with-an-id-1304" {
+		t.Errorf("tool_title = %q, want the human title preserved on the attribute", got)
+	}
+}
