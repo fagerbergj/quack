@@ -117,21 +117,21 @@ export function NodePopup({
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="fixed inset-0 z-50 flex items-end medium:items-center justify-center bg-black/40 medium:p-4"
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl bg-gray-50 dark:bg-gray-900 shadow-xl px-5 pb-6 pt-2 space-y-2"
+        className="relative w-full max-w-2xl max-h-[90vh] medium:max-h-[85vh] overflow-y-auto rounded-t-2xl medium:rounded-2xl bg-gray-50 dark:bg-gray-900 shadow-xl px-5 pb-[calc(0.75rem+var(--composer-gap))] medium:pb-6 pt-2 space-y-2"
         onClick={e => e.stopPropagation()}
       >
         {/* Close on its own row so it never overlaps the content bubbles. */}
-        <div className="flex justify-end -mb-1">
+        <div className="flex justify-end -mb-2">
           <button
             onClick={onClose}
             aria-label="Close"
-            className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-500 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
+            className="flex h-11 w-11 -me-3 items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-500 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
           >
-            <Icon name="close" className="w-4 h-4" />
+            <Icon name="close" className="w-5 h-5" />
           </button>
         </div>
 
