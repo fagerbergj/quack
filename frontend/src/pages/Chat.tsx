@@ -847,7 +847,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
                         liveText && (
                           <>
                             <BubbleHeader agent={answerAttribution?.agent ?? 'orchestrator'} model={answerAttribution?.model} tokens={answerAttribution?.tokens} />
-                            <AssistantText text={liveText} />
+                            <AssistantText text={liveText} streaming={liveActive} />
                           </>
                         )
                       ) : (
@@ -865,7 +865,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
                           )}
                           {/* Running is conveyed by the header's pulsing StatusDot
                               (#416) - no separate spinner dot while text streams in. */}
-                          {liveTopText && <AssistantText text={liveTopText} />}
+                          {liveTopText && <AssistantText text={liveTopText} streaming={liveActive} />}
                         </div>
                       )}
                     </div>
