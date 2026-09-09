@@ -215,6 +215,12 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
   const [copied, setCopied] = useState<string | null>(null)
   const [submittingChoice, setSubmittingChoice] = useState(false)
   const [liveAttachmentPreviews, setLiveAttachmentPreviews] = useState<{url: string; mime: string; name: string}[]>([])
+  // Stable element identity so memo(TriggerMessage) actually skips re-renders;
+  // a fresh <AttachmentPreviews> per render defeats memo even when props are equal.
+  const liveAttachmentsEl = useMemo(
+    () => <AttachmentPreviews previews={liveAttachmentPreviews} />,
+    [liveAttachmentPreviews],
+  )
   const scrollRef = useRef<HTMLDivElement>(null)
   // #1138: turn_id -> image previews, from this chat's own artifact store -
   // lets a persisted turn show a real thumbnail instead of only the
@@ -772,7 +778,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
                 {!isChoiceAnswer && (live.userText || liveAttachmentPreviews.length > 0) && (
                   <TriggerMessage
                     content={live.userText}
-                    attachments={<AttachmentPreviews previews={liveAttachmentPreviews} />}
+                    attachments={liveAttachmentsEl}
                     priorContents={livePriorContents}
                     chatId={activeChatId ?? undefined}
                   />

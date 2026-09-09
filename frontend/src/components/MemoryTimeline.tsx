@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import type { Memory, VoteDirection } from '../api'
 import { MemoryEntry } from './MemoryEntry'
 
@@ -32,7 +33,11 @@ export interface AgeGroup {
 // groupByAge buckets memories (assumed already sorted by the caller) into
 // age bands without breaking up runs of the same band - so old memories stay
 // visibly grouped at the end regardless of the list's overall sort order.
+// Test-only call counter for the useMemo below.
+export const groupByAgeProbe = { count: 0 }
+
 export function groupByAge(memories: Memory[], now = Date.now()): AgeGroup[] {
+  groupByAgeProbe.count++
   const groups: AgeGroup[] = []
   for (const m of memories) {
     const label = bandLabel(m.timestamp, now)
@@ -63,7 +68,12 @@ export interface MemoryTimelineProps {
 // through a flat list - only meaningful when the caller's sort is time-order
 // (see `grouped` above).
 export function MemoryTimeline({ memories, onForget, onVote, now, grouped = true }: MemoryTimelineProps) {
-  const groups = grouped ? groupByAge(memories, now) : [{ label: '', memories }]
+  // groupByAge is O(n) but was rebuilt on every render (any unrelated state
+  // change, e.g. a vote) with no memoization - #1286.
+  const groups = useMemo(
+    () => (grouped ? groupByAge(memories, now) : [{ label: '', memories }]),
+    [grouped, memories, now],
+  )
   return (
     <div className="py-2">
       {groups.map((g, i) => (

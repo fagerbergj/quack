@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useMemo } from 'react'
 import { AssistantText, ActivityList, BubbleHeader } from './AgentParts'
 import { QuestionBubble } from './QuestionBubble'
 import { DagView, DagBubbleHeader } from './DagView'
@@ -61,6 +61,12 @@ export const TurnView = memo(function TurnView({
   // (e.g. a DAG with no text yet, or a plain turn that only held a tool call).
   const hasAnswerContent = dagState ? !!text : (turnActivity.length > 0 || !!text)
   const copyKey = `turn-${turn.id}`
+  // Stable element identity (PR #1300 review nit) so memo(TriggerMessage)
+  // bails on the persisted path too, not just the live one.
+  const attachmentsEl = useMemo(
+    () => (imageAttachments?.length ? <AttachmentPreviews previews={imageAttachments} /> : undefined),
+    [imageAttachments],
+  )
   return (
     <div>
       {/* User message - hidden when it's a clarification answer, or when the
@@ -71,7 +77,7 @@ export const TurnView = memo(function TurnView({
         <TriggerMessage
           content={turn.input.content}
           priorContents={priorContents}
-          attachments={imageAttachments?.length ? <AttachmentPreviews previews={imageAttachments} /> : undefined}
+          attachments={attachmentsEl}
           chatId={chatId}
         />
       )}

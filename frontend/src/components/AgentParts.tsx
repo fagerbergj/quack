@@ -102,13 +102,19 @@ export function AssistantText({ text }: { text: string }) {
       return <CopyablePre {...rest}>{children}</CopyablePre>
     },
   }), [trailingOpen, docEnd])
+  // Memoize the parsed output itself, not just its props: ReactMarkdown
+  // re-parses on every call regardless of prop equality, and the parent
+  // (a streaming bubble) re-renders far more often than `fixed` changes.
+  const markdown = useMemo(() => (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSchema], rehypeHighlight]}
+      components={components}
+    >{fixed}</ReactMarkdown>
+  ), [fixed, components])
   return (
     <div className="prose prose-sm dark:prose-invert max-w-none break-words">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSchema], rehypeHighlight]}
-        components={components}
-      >{fixed}</ReactMarkdown>
+      {markdown}
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { AssistantText } from './AgentParts'
 import { Expandable } from './Expandable'
@@ -19,13 +19,23 @@ import {
 // have to pull in JSX.
 export * from './envelope'
 
+// Test-only render probe (PR #1300 review finding 2): counts every actual
+// invocation of TriggerMessage's function body, so a perf test can pin
+// memo(TriggerMessage) directly instead of inferring it from render timing
+// (unreliable under jsdom - AssistantText's own useMemo chain already
+// prevents most of the markdown re-parse cost the memo used to be gated on).
+export const triggerMessageRenderProbe = { count: 0 }
+
 // TriggerMessage renders the user-turn bubble for a GitHub-triggered chat: the
 // XML-ish envelope (design: .quack/trigger-prompts-v2.md) as collapsible
 // structured sections, permissions/deliverable/ask always visible, everything
 // else collapsed. `content` that doesn't parse as an envelope (a plain typed
 // message, or malformed input) renders exactly as it always has - the plain
 // blue bubble, never a blank message (#667).
-export function TriggerMessage({
+// Content is immutable for the life of a run but Chat.tsx re-renders this
+// on every store notification (one per animation frame); memo + a stable
+// `attachments` element keep re-renders from re-parsing the envelope markdown.
+export const TriggerMessage = memo(function TriggerMessage({
   content,
   attachments,
   priorContents = [],
@@ -41,6 +51,7 @@ export function TriggerMessage({
   // the artifact panel (needs a chat to look the artifact's owning node up in).
   chatId?: string
 }) {
+  triggerMessageRenderProbe.count++
   const blocks = useMemo(() => parseEnvelope(content), [content])
   // The artifact panel opens onto a NODE (resolved from the tapped row's
   // artifact id - see ArtifactsSection.openRow below), with that same
@@ -85,7 +96,7 @@ export function TriggerMessage({
       </div>
     </div>
   )
-}
+})
 
 function EnvelopeBlockView({
   block,
