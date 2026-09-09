@@ -461,6 +461,11 @@ export async function readAgentStream(
   let currentEvent = 'message'
   let sawDone = false
   let lastEventId = 0
+  // pendingId is the `id:` line's value for the event currently being
+  // parsed; it only becomes lastEventId once that event's `data:` line
+  // actually dispatches, so a drop between the two (a real TCP boundary,
+  // not a corner case) can't advance past an event never applied.
+  let pendingId = 0
   while (true) {
     let chunk: ReadableStreamReadResult<Uint8Array>
     try {
@@ -476,7 +481,7 @@ export async function readAgentStream(
     for (const line of lines) {
       if (line.startsWith('id: ')) {
         const id = Number(line.slice(4).trim())
-        if (Number.isFinite(id) && id > lastEventId) lastEventId = id
+        if (Number.isFinite(id)) pendingId = id
         continue
       }
       if (line.startsWith('event: ')) {
@@ -490,6 +495,7 @@ export async function readAgentStream(
       try { parsed = JSON.parse(raw) } catch { continue }
       if (currentEvent === 'done') sawDone = true
       dispatchAgentEvent(currentEvent, parsed, handlers)
+      if (pendingId > lastEventId) lastEventId = pendingId
     }
   }
   return { done: sawDone, lastEventId }

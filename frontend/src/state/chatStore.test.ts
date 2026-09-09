@@ -1215,6 +1215,30 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
     es.emit('done', '{}', 4)
     expect(store.get('c').live?.streaming).toBe(false)
   })
+
+  // A drop can land between an `id:` line and its `data:` line - a real TCP
+  // boundary, not a corner case. Resuming past an id whose event was never
+  // actually dispatched would silently drop that event from the UI.
+  it('a POST stream that drops right after an `id:` line (before its `data:` arrives) does not resume past the undelivered event', async () => {
+    const dropped = [
+      'id: 1',
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}',
+      '',
+      'id: 2',
+      'event: node_start',
+      // dropped here - id 2's `data:` line never arrives.
+    ].join('\n')
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream({ start(ctrl) { ctrl.enqueue(encoder.encode(dropped)); ctrl.close() } })
+    const res = new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(res))
+
+    await store.submit('c', 'go')
+
+    const es = FakeEventSource.last!
+    expect(es.url).toBe('/api/v1/chats/c/stream?last_event_id=1') // not 2 - that event was never applied
+  })
 })
 
 // #1090 perf audit item 4: a fresh attach still replays from 0 - a real page
