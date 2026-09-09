@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/adk/v2/tool"
@@ -123,4 +124,22 @@ func skillLines(skills []*skill.Frontmatter) string {
 
 func today() string {
 	return time.Now().Format("2006-01-02")
+}
+
+// CacheByDay memoizes build's result, rebuilding only when today() has moved
+// on - an agent's InstructionProvider is called once per model request, but
+// every layered() input besides "Today is ..." is fixed at construction.
+func CacheByDay(build func() string) func() string {
+	var mu sync.Mutex
+	var day, cached string
+	return func() string {
+		d := today()
+		mu.Lock()
+		defer mu.Unlock()
+		if d != day {
+			cached = build()
+			day = d
+		}
+		return cached
+	}
 }

@@ -277,6 +277,26 @@ func TestOrchestratorLayers(t *testing.T) {
 	}
 }
 
+// TestCacheByDayBuildsOnce covers perf audit #14: an agent's
+// InstructionProvider is called once per model request, but every prompt
+// input besides today() is fixed - repeat calls on the same day must reuse
+// the first build instead of re-assembling the whole prompt.
+func TestCacheByDayBuildsOnce(t *testing.T) {
+	var builds int
+	cached := promptbuilder.CacheByDay(func() string {
+		builds++
+		return "prompt build " + strings.Repeat("x", builds)
+	})
+	first := cached()
+	second := cached()
+	if builds != 1 {
+		t.Fatalf("build func called %d times, want 1 (same-day calls must reuse the cache)", builds)
+	}
+	if first != second {
+		t.Fatalf("cached() calls returned different strings: %q vs %q", first, second)
+	}
+}
+
 func TestOrchestratorNoSkills(t *testing.T) {
 	out := promptbuilder.Orchestrator("", nil, "do stuff")
 	if strings.Contains(out, "### Skills") {

@@ -13,6 +13,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -139,12 +140,18 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 		judgeTools := make([]tool.Tool, 0, len(readTools)+1)
 		judgeTools = append(judgeTools, counted...)
 		judgeTools = append(judgeTools, submit)
+		// judgeTools/behaviour are fixed for this round; only today() moves,
+		// so cache instead of rebuilding the prompt on every model call in
+		// the round's multi-turn agentic loop.
+		prompt := promptbuilder.CacheByDay(func() string {
+			return promptbuilder.Judge(judgeTools, behaviour)
+		})
 		a, err := llmagent.New(llmagent.Config{
 			Name:        "judge",
 			Description: "independent adversarial verifier",
 			Model:       judgeModel,
 			InstructionProvider: func(_ adkagent.ReadonlyContext) (string, error) {
-				return promptbuilder.Judge(judgeTools, behaviour), nil
+				return prompt(), nil
 			},
 			Tools:                 judgeTools,
 			Toolsets:              skillsets,
@@ -326,7 +333,12 @@ func newSubmitVerdictTool(sink *verdict, receivedIDs []string) (tool.Tool, error
 // failures: the stable, round-invariant sections lead and the volatile,
 // per-round evidence (re-derived every round) trails, so the prefix up to
 // and including the answer stays a prompt-cache hit across rounds.
+// judgePromptBuilds counts buildJudgePrompt calls - test-only seam proving
+// fitJudgeAnswer's prompt isn't thrown away and rebuilt by runJudgeRound.
+var judgePromptBuilds atomic.Int64
+
 func buildJudgePrompt(constitution, rubric, nodeTask string, question *genai.Content, answer, changedFiles string, act workerActivity, knownFailures string) string {
+	judgePromptBuilds.Add(1)
 	var sb strings.Builder
 	if constitution != "" {
 		sb.WriteString("Principles:\n")
@@ -557,13 +569,16 @@ func judgeCharBudget(cfg Config) int {
 	return tokens * judgeCharsPerToken
 }
 
-// fitJudgeAnswer: clamps answer so judge prompt fits budget. shrinkFactor < 1.0 = harder clamp for retry.
-func fitJudgeAnswer(cfg Config, question *genai.Content, answer, changedFiles, knownFailures string, act workerActivity, shrinkFactor float64) string {
+// fitJudgeAnswer clamps answer so judge prompt fits budget, and also returns
+// the full prompt it already built while measuring the fit - runJudgeRound's
+// first call reuses it instead of rebuilding the identical ~244KB string.
+// shrinkFactor < 1.0 = harder clamp for retry.
+func fitJudgeAnswer(cfg Config, question *genai.Content, answer, changedFiles, knownFailures string, act workerActivity, shrinkFactor float64) (string, string) {
 	budget := judgeCharBudget(cfg)
 	full := buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, question, answer, changedFiles, act, knownFailures)
 	over := len(full) - budget
 	if over <= 0 && shrinkFactor >= 1.0 {
-		return answer
+		return answer, full
 	}
 	fixed := len(full) - len(answer) // everything the judge prompt carries besides the answer
 	target := budget - fixed
@@ -574,9 +589,10 @@ func fitJudgeAnswer(cfg Config, question *genai.Content, answer, changedFiles, k
 		target = minJudgeAnswerChars
 	}
 	if target >= len(answer) {
-		return answer
+		return answer, full
 	}
-	return boundExcerpt(answer, target)
+	clamped := boundExcerpt(answer, target)
+	return clamped, buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, question, clamped, changedFiles, act, knownFailures)
 }
 
 // judgeRetryAttempts/judgeRetryBaseDelay: backoff for transient model-endpoint faults.
@@ -609,7 +625,7 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	// still places the whole `known` blob in its volatile trailing section,
 	// not the cacheable prefix - this ordering is readability only.
 	known := receivedMemoriesSection(received) + judgeKnownFailuresSection(det, cfg.Threshold)
-	fitted := fitJudgeAnswer(cfg, question, answer, changedFiles, known, act, 1.0)
+	fitted, fittedPrompt := fitJudgeAnswer(cfg, question, answer, changedFiles, known, act, 1.0)
 	defer func() {
 		if err == nil {
 			v = applyChangedFilesCoverage(v, coverage)
@@ -618,7 +634,9 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 
 	var readc *readCounter
 	for attempt := 1; attempt <= judgeRetryAttempts; attempt++ {
-		v, readc, err = runJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, known, act, received, emit)
+		// question/fitted/changedFiles/known/act are unchanged across attempts,
+		// so the prompt fitJudgeAnswer already built is still exactly right.
+		v, readc, err = runJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, known, fittedPrompt, act, received, emit)
 		if err == nil || ctx.Err() != nil || !isTransientJudgeErr(err) || attempt == judgeRetryAttempts {
 			break
 		}
@@ -644,7 +662,7 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 		slog.Warn("judge round failed with images attached; retrying once without them",
 			"component", "vetting", "agent", cfg.Agent, "chat", cfg.ChatID, "err", err)
 		q = stripInlineData(question)
-		v, readc, err = runJudgeRound(ctx, factory, cfg, q, fitted, changedFiles, known, act, received, emit)
+		v, readc, err = runJudgeRound(ctx, factory, cfg, q, fitted, changedFiles, known, "", act, received, emit)
 	}
 
 	// A round that ran but never reached a verdict (model stutter exhausting the
@@ -654,7 +672,7 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	if errors.Is(err, ErrJudgeNoVerdict) && ctx.Err() == nil {
 		slog.Warn("judge ended without a verdict; retrying the round once with a fresh session",
 			"component", "vetting", "agent", cfg.Agent, "chat", cfg.ChatID)
-		v, readc, err = runJudgeRound(ctx, factory, cfg, q, fitted, changedFiles, known, act, received, emit)
+		v, readc, err = runJudgeRound(ctx, factory, cfg, q, fitted, changedFiles, known, "", act, received, emit)
 		if err == nil {
 			v = finishJudgeRound(ctx, factory, cfg, q, fitted, changedFiles, known, act, received, emit, v, readc)
 		}
@@ -665,12 +683,12 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 		v = finishJudgeRound(ctx, factory, cfg, q, fitted, changedFiles, known, act, received, emit, v, readc)
 		return
 	}
-	retryAnswer := fitJudgeAnswer(cfg, q, fitted, changedFiles, known, act, 0.5)
+	retryAnswer, retryPrompt := fitJudgeAnswer(cfg, q, fitted, changedFiles, known, act, 0.5)
 	if retryAnswer == fitted {
 		v = verdict{} // nothing left to shrink; the retry would repeat the same call
 		return
 	}
-	v, _, err = runJudgeRound(ctx, factory, cfg, q, retryAnswer, changedFiles, known, act, received, emit)
+	v, _, err = runJudgeRound(ctx, factory, cfg, q, retryAnswer, changedFiles, known, retryPrompt, act, received, emit)
 	return
 }
 
@@ -683,7 +701,7 @@ func finishJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, que
 	slog.Warn("judge passed without reading the repo; re-judging once",
 		"component", "vetting", "agent", cfg.Agent, "score", v.Score)
 	v2, readc2, err2 := runJudgeRound(ctx, factory, cfg, question,
-		fitted+"\n\n"+unreadPassFeedback, changedFiles, known, act, received, emit)
+		fitted+"\n\n"+unreadPassFeedback, changedFiles, known, "", act, received, emit)
 	if err2 != nil {
 		slog.Warn("re-judge failed; keeping the unread verdict", "component", "vetting", "err", err2)
 		return v
@@ -757,7 +775,10 @@ func repeatingTailSpan(s string, minUnit, maxUnit int) int {
 }
 
 // runJudgeRound: isolated agentic judge round (own runner + in-memory session). Falls back to text parsing.
-func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer, changedFiles, knownFailures string, act workerActivity, received []memory.Delivered, emit func(*genai.Part) bool) (verdict, *readCounter, error) {
+// prebuilt, when non-"", is the exact prompt fitJudgeAnswer already built for
+// this (question, answer, changedFiles, knownFailures, act) combination -
+// callers pass "" whenever any of those differ from what produced it.
+func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer, changedFiles, knownFailures, prebuilt string, act workerActivity, received []memory.Delivered, emit func(*genai.Part) bool) (verdict, *readCounter, error) {
 	maxIters := cfg.JudgeMaxIterations
 	if maxIters <= 0 {
 		maxIters = defaultJudgeMaxIterations
@@ -788,7 +809,10 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	promptText := buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, question, answer, changedFiles, act, knownFailures)
+	promptText := prebuilt
+	if promptText == "" {
+		promptText = buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, question, answer, changedFiles, act, knownFailures)
+	}
 	// Stamp advisor-thread token so judge resolves fs tools into the worker's node scope.
 	if cfg.AdvisorToken != "" {
 		promptText += "\n\n" + AdvisorThreadMarker(cfg.AdvisorToken)
