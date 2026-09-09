@@ -492,6 +492,16 @@ func (s *Store) SetArtifactService(svc artifact.Service) { s.artifacts = svc }
 // (#1296), in the same order New() migrates them.
 var chatFKTables = []string{"chat_turns", "dag_plans", "chat_events", "projection_watermarks", "ledger_checkpoints"}
 
+// chatFKModels maps each of chatFKTables to the struct sweepOrphanChatRows checks
+// HasConstraint against - every one carries a field named "Chat" for exactly this FK.
+var chatFKModels = map[string]any{
+	"chat_turns":            &ChatTurn{},
+	"dag_plans":             &DagPlan{},
+	"chat_events":           &ChatEvent{},
+	"projection_watermarks": &ProjectionWatermark{},
+	"ledger_checkpoints":    &Checkpoint{},
+}
+
 // sweepOrphanChatRows deletes rows whose chat_id has no matching chats row,
 // before AutoMigrate below adds the ON DELETE CASCADE FK. A pre-existing
 // orphan - a chat hard-deleted by raw SQL before this FK existed - makes the
@@ -499,12 +509,20 @@ var chatFKTables = []string{"chat_turns", "dag_plans", "chat_events", "projectio
 // follows fail outright, and the orphan survives a restart, so that's a
 // crash loop rather than a one-time failure. No-op on a fresh DB (no chats
 // table yet) or once every table is already clean.
+//
+// Once the FK exists it makes new orphans impossible, so every boot after
+// the first paid for a full anti-join scan for nothing (perf audit #11:
+// 400-510ms over 1.35M chat_events, deleting 0 rows) - skip a table the
+// moment its constraint is in place.
 func sweepOrphanChatRows(db *gorm.DB) error {
 	if !db.Migrator().HasTable(&Chat{}) {
 		return nil
 	}
 	for _, table := range chatFKTables {
 		if !db.Migrator().HasTable(table) {
+			continue
+		}
+		if db.Migrator().HasConstraint(chatFKModels[table], "Chat") {
 			continue
 		}
 		res := db.Exec(fmt.Sprintf("DELETE FROM %s WHERE chat_id NOT IN (SELECT id FROM chats)", table))
