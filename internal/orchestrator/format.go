@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -17,13 +18,40 @@ import (
 	"github.com/fagerbergj/quack/internal/tools"
 )
 
-// needsFormatPass: true when raw specialist output needs a format pass (no synthesizer, no GitHub delivery).
-func needsFormatPass(plan dag.Plan) bool {
+// formatPassLengthCeiling: an answer at or above this size skips the
+// already-structured short-circuit below and always gets the format pass -
+// a big answer is exactly where a second model pass is most likely to
+// actually reorganize something, not just echo the input back (#1283 finding 14).
+const formatPassLengthCeiling = 4000
+
+// listItemPattern: a Markdown bullet or ordered-list item at line start.
+var listItemPattern = regexp.MustCompile(`(?m)^\s*(?:[-*+]|\d+[.)])\s+\S`)
+
+// alreadyStructured reports whether answer already reads as organized output:
+// a Markdown heading, or two-plus list items - the two shapes the format
+// pass's own instruction says to add ("Organize with Markdown headings/lists").
+func alreadyStructured(answer string) bool {
+	if strings.Contains(answer, "\n#") || strings.HasPrefix(answer, "#") {
+		return true
+	}
+	return len(listItemPattern.FindAllStringIndex(answer, 2)) >= 2
+}
+
+// needsFormatPass: true when raw specialist output needs a format pass (no
+// synthesizer, no GitHub delivery, and not already short + structured -
+// #1283 finding 14: the pass is a near-identity transform on that input).
+func needsFormatPass(plan dag.Plan, answer string) bool {
 	if plan.Delivery != nil {
 		return false
 	}
 	term := terminalNode(plan.Nodes)
-	return term != nil && term.AgentName != "synthesizer"
+	if term == nil || term.AgentName == "synthesizer" {
+		return false
+	}
+	if len(answer) < formatPassLengthCeiling && alreadyStructured(answer) {
+		return false
+	}
+	return true
 }
 
 // terminalNode returns the terminal node (nil if empty). Replicates dag.terminalIDs' walk for AgentName.
@@ -106,7 +134,7 @@ func formatAnswer(ctx context.Context, m model.LLM, message, answer, chatID stri
 // finalizeAnswer: single place every delivery path formats node outputs for the user.
 func (o *Orchestrator) finalizeAnswer(ctx context.Context, plan dag.Plan, nodeOutputs map[string]string, chatID string) string {
 	answer := tools.TerminalOutput(plan, nodeOutputs)
-	if !needsFormatPass(plan) {
+	if !needsFormatPass(plan, answer) {
 		return answer
 	}
 	return formatAnswer(ctx, o.model, plan.UserMessage, answer, chatID)
