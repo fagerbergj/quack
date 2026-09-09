@@ -101,6 +101,7 @@ func (f *fakeLedger) ReadEntries(_ context.Context, chatID string, fromSeq int64
 type doc struct {
 	A string `json:"a"`
 	B int    `json:"b"`
+	C string `json:"c,omitempty"` // second string field, for tests needing two independent leaves to edit
 }
 
 // hintIdentity: instance = hint verbatim - stands in for a subject-identity
@@ -110,7 +111,7 @@ func hintIdentity(_ []byte, hint string) (string, error) { return hint, nil }
 func init() {
 	Register("test.structured", KindSpec{
 		Class:      Structured,
-		JSONSchema: `{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"integer"}}}`,
+		JSONSchema: `{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"integer"},"c":{"type":"string"}}}`,
 		Validate: func(raw json.RawMessage) error {
 			var d doc
 			if err := json.Unmarshal(raw, &d); err != nil {
@@ -124,6 +125,15 @@ func init() {
 		Identity: hintIdentity,
 	})
 	Register("test.blob", KindSpec{Class: Blob, Identity: hintIdentity})
+	// Registered here, not inside TestContentHashIgnoresHint, so init() (which
+	// runs once per process) guards it against -count>1 re-running the test
+	// body and panicking on a duplicate Register call.
+	Register("test.hashed", KindSpec{
+		Class: Blob,
+		Identity: func(content []byte, _ string) (string, error) {
+			return string(content), nil // trivial "hash" for the test
+		},
+	})
 }
 
 func newTestClient(t *testing.T) *Client {
@@ -292,12 +302,6 @@ func TestEveryRevisionKept(t *testing.T) {
 // TestSameContentDifferentHintSameID: a content-hashed kind's identity
 // ignores hint, matching the finding requirement (same finding, any node).
 func TestContentHashIgnoresHint(t *testing.T) {
-	Register("test.hashed", KindSpec{
-		Class: Blob,
-		Identity: func(content []byte, _ string) (string, error) {
-			return string(content), nil // trivial "hash" for the test
-		},
-	})
 	ctx := context.Background()
 	c := newTestClient(t)
 	id1, _, err := c.SaveBlob(ctx, "test.hashed", []byte("same"), "text/plain", "node-a", Lineage{})
@@ -321,7 +325,9 @@ func TestEditDirectApply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rev2, merged, err := c.Edit(ctx, id, rev1, []EditOp{{Old: `"a":"hello"`, New: `"a":"world"`}}, Lineage{})
+	// Old/New are plain decoded text, not raw JSON syntax - the edit targets
+	// field a's value, found by decoding the document, not by matching `"a":"..."`.
+	rev2, merged, err := c.Edit(ctx, id, rev1, []EditOp{{Old: "hello", New: "world"}}, Lineage{})
 	if err != nil {
 		t.Fatalf("Edit: %v", err)
 	}
@@ -340,18 +346,18 @@ func TestEditDirectApply(t *testing.T) {
 func TestEditStaleBaseMergesWhenUnique(t *testing.T) {
 	ctx := context.Background()
 	c := newTestClient(t)
-	id, rev1, err := c.SaveStructured(ctx, "test.structured", doc{A: "hello", B: 1}, "main", Lineage{})
+	id, rev1, err := c.SaveStructured(ctx, "test.structured", doc{A: "hello", B: 1, C: "seed"}, "main", Lineage{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A concurrent editor bumps B while this caller still thinks rev1 is latest.
-	rev2, _, err := c.Edit(ctx, id, rev1, []EditOp{{Old: `"b":1`, New: `"b":2`}}, Lineage{})
+	// A concurrent editor edits field c while this caller still thinks rev1 is latest.
+	rev2, _, err := c.Edit(ctx, id, rev1, []EditOp{{Old: "seed", New: "changed"}}, Lineage{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// This caller's base_revision (rev1) is now stale, but its edit targets
 	// a region the concurrent edit never touched - must still succeed.
-	rev3, merged, err := c.Edit(ctx, id, rev1, []EditOp{{Old: `"a":"hello"`, New: `"a":"world"`}}, Lineage{})
+	rev3, merged, err := c.Edit(ctx, id, rev1, []EditOp{{Old: "hello", New: "world"}}, Lineage{})
 	if err != nil {
 		t.Fatalf("Edit with stale base should merge, got: %v", err)
 	}
@@ -359,7 +365,7 @@ func TestEditStaleBaseMergesWhenUnique(t *testing.T) {
 		t.Fatalf("revision = %d, want %d", rev3, rev2+1)
 	}
 	var d doc
-	if err := json.Unmarshal(merged, &d); err != nil || d.A != "world" || d.B != 2 {
+	if err := json.Unmarshal(merged, &d); err != nil || d.A != "world" || d.C != "changed" {
 		t.Fatalf("merged = %s (want both edits applied), err=%v", merged, err)
 	}
 }
@@ -375,10 +381,10 @@ func TestEditStaleBaseConflictsWhenIntersecting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := c.Edit(ctx, id, rev1, []EditOp{{Old: `"a":"hello"`, New: `"a":"changed"`}}, Lineage{}); err != nil {
+	if _, _, err := c.Edit(ctx, id, rev1, []EditOp{{Old: "hello", New: "changed"}}, Lineage{}); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = c.Edit(ctx, id, rev1, []EditOp{{Old: `"a":"hello"`, New: `"a":"conflicting"`}}, Lineage{})
+	_, _, err = c.Edit(ctx, id, rev1, []EditOp{{Old: "hello", New: "conflicting"}}, Lineage{})
 	var conflict *EditConflict
 	if !errors.As(err, &conflict) {
 		t.Fatalf("Edit = %v, want *EditConflict", err)
@@ -400,7 +406,7 @@ func TestEditRejectsNegativeBaseRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := c.Edit(ctx, id, -1, []EditOp{{Old: `"a":"hello"`, New: `"a":"world"`}}, Lineage{}); err == nil {
+	if _, _, err := c.Edit(ctx, id, -1, []EditOp{{Old: "hello", New: "world"}}, Lineage{}); err == nil {
 		t.Fatal("Edit with base_revision -1 should fail")
 	}
 }
@@ -416,7 +422,7 @@ func TestEditRejectsBaseRevisionAboveLatest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := c.Edit(ctx, id, rev+5, []EditOp{{Old: `"a":"hello"`, New: `"a":"world"`}}, Lineage{}); err == nil {
+	if _, _, err := c.Edit(ctx, id, rev+5, []EditOp{{Old: "hello", New: "world"}}, Lineage{}); err == nil {
 		t.Fatal("Edit with base_revision above latest should fail")
 	}
 	if _, _, _, latestRev, _, _ := c.LatestWithMeta(ctx, id); latestRev != rev {
@@ -434,16 +440,16 @@ func TestEditRecordsBaseRevisionInLineage(t *testing.T) {
 	// implements metaSaver/metaLoader (InMemoryService, used by newTestClient,
 	// doesn't) - mirror internal/vetting's metaAwareInMemory test double.
 	c := New(newMetaAwareInMemory(), "quack", "user1", "chat1")
-	id, rev1, err := c.SaveStructured(ctx, "test.structured", doc{A: "hello", B: 1}, "main", Lineage{})
+	id, rev1, err := c.SaveStructured(ctx, "test.structured", doc{A: "hello", B: 1, C: "seed"}, "main", Lineage{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	rev2, _, err := c.Edit(ctx, id, rev1, []EditOp{{Old: `"b":1`, New: `"b":2`}}, Lineage{})
+	rev2, _, err := c.Edit(ctx, id, rev1, []EditOp{{Old: "seed", New: "changed"}}, Lineage{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Stale base (rev1) merges against the real latest (rev2).
-	if _, _, err := c.Edit(ctx, id, rev1, []EditOp{{Old: `"a":"hello"`, New: `"a":"world"`}}, Lineage{}); err != nil {
+	if _, _, err := c.Edit(ctx, id, rev1, []EditOp{{Old: "hello", New: "world"}}, Lineage{}); err != nil {
 		t.Fatalf("Edit with stale base should merge, got: %v", err)
 	}
 	_, _, lineage, _, ok, err := c.LatestWithMeta(ctx, id)
@@ -954,7 +960,7 @@ func TestGateSaveEditWALConcurrentSingleLock(t *testing.T) {
 			// concurrent gate save) is an acceptable outcome under this race -
 			// the invariant under test is chain integrity, not that every
 			// edit lands.
-			_, _, _ = c.Edit(ctx, id, 1, []EditOp{{Old: `"a":"seed"`, New: `"a":"edited"`}}, Lineage{})
+			_, _, _ = c.Edit(ctx, id, 1, []EditOp{{Old: "seed", New: "edited"}}, Lineage{})
 		}()
 	}
 	close(start)
