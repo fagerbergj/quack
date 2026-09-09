@@ -269,14 +269,16 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
             onKeyDown={handleKeyDown}
             disabled={disabled}
           />
+          {/* Red fill: while a run is live, stopping it is the primary action
+              (audit #6) - Send/Queue is the secondary one. */}
           {streaming && (
             <button
               type="button"
               onClick={onStop}
               aria-label="Stop"
               className={compact
-                ? 'h-11 w-11 flex-shrink-0 flex items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors'
-                : 'h-11 w-11 flex-shrink-0 flex items-center justify-center rounded-xl bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors'}
+                ? 'h-11 w-11 flex-shrink-0 flex items-center justify-center rounded-full bg-red-600 text-white hover:bg-red-700 transition-colors'
+                : 'h-11 w-11 flex-shrink-0 flex items-center justify-center rounded-xl bg-red-600 text-white hover:bg-red-700 transition-colors'}
             >
               <StopIcon />
             </button>

@@ -17,6 +17,9 @@ import { TriggerMessage } from '../components/TriggerEnvelope'
 import { ChatMenu } from '../components/ChatMenu'
 import { NavToggle } from '../components/NavToggle'
 import { Icon } from '../components/Icon'
+import { StatusDot } from '../components/StatusDot'
+import { LiveTimer } from '../utils/timer'
+import type { ChatStatus } from '../generated'
 import { imageAttachmentsByTurn } from '../lib/turnAttachments'
 
 // liveDagFinalText extracts the answer from the terminal node's accumulated answer.
@@ -169,6 +172,18 @@ export function EditableChatTitle({ title, editable, onRename }: EditableChatTit
 // How many of the most recent completed turns mount by default (audit
 // finding 9) - "Show N older messages" raises it by the same amount.
 const RENDERED_TURN_TAIL = 100
+
+// ChatHeaderStatus is the header's "something is running" readout - the chat
+// list's StatusDot plus a live elapsed timer - so a live DAG is visible
+// without scrolling to the node cards (audit #6).
+export function ChatHeaderStatus({ status, startedAt }: { status: ChatStatus; startedAt?: number }) {
+  return (
+    <span className="flex-shrink-0 inline-flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+      <StatusDot status={status} variant="chat" />
+      {startedAt != null && <span className="tabular-nums"><LiveTimer startedAt={startedAt} /></span>}
+    </span>
+  )
+}
 
 // #1171: App.tsx owns the nav drawer's open state and hands it down, so the
 // toggle in the header's leading slot and the NavRail overlay share one
@@ -683,6 +698,14 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
                 </span>
               )}
               {githubLink && <GitHubLink url={githubLink.url} repo={githubLink.repo} className="flex-shrink-0" />}
+              {liveActive && (
+                <ChatHeaderStatus
+                  // The sidebar poll can lag the stream: an 'idle' summary while
+                  // the turn streams still means running.
+                  status={activeChat?.status && activeChat.status !== 'idle' ? activeChat.status : 'running'}
+                  startedAt={live?.dag?.startedAt ?? live?.runs[0]?.startedAt}
+                />
+              )}
             </div>
           </div>
           <div className="flex items-center gap-3 flex-shrink-0">

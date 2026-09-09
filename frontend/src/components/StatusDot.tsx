@@ -44,6 +44,7 @@ export function StatusDot({ status, className = '', variant = 'node' }: {
   const pulse = status === 'running' ? 'animate-pulse' : ''
   return (
     <span
+      role="img"
       title={label}
       aria-label={`Status: ${label}`}
       className={`flex-shrink-0 inline-block w-1.5 h-1.5 rounded-full ${color} ${pulse} ${className}`}

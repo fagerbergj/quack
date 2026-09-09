@@ -15,11 +15,11 @@ import { Icon } from './Icon'
 import { Sheet } from './Sheet'
 
 // NodeMenu is the node's ⋮ overflow menu: one click for pause/start/stop (no
-// popup round-trip), with "queue a message…" / "edit prompt" / "answer
-// question…" opening the popup only when they need its input/editor. Hidden
-// entirely on a terminal node (done/failed/cancelled) - nothing left to do.
+// popup round-trip), with "queue a message…" / "edit prompt" opening the
+// popup only when they need its input/editor. Hidden entirely on a terminal
+// node (done/failed/cancelled) - nothing left to do.
 function NodeMenu({
-  nodeId, status, onCancel, onPause, onResume, canQueue, canEdit, canAnswer, onOpenPopup, onOpenArtifacts, onOpenMemories,
+  nodeId, status, onCancel, onPause, onResume, canQueue, canEdit, onOpenPopup, onOpenArtifacts, onOpenMemories,
 }: {
   nodeId: string
   status: NodeStatus
@@ -28,7 +28,6 @@ function NodeMenu({
   onResume?: (nodeId: string) => void
   canQueue: boolean
   canEdit: boolean
-  canAnswer: boolean
   onOpenPopup: () => void
   // Present only for a real chat (gates the Artifacts item) - see DagNode's
   // own chatId doc. A terminal node still needs this menu for its outputs,
@@ -69,7 +68,7 @@ function NodeMenu({
   const paused = status === 'paused' || status === 'needs_input'
   const startable = !terminal && (paused || status === 'queued')
   const cancellable = !terminal && (running || startable)
-  const hasSecondary = !terminal && (canAnswer || canQueue || canEdit)
+  const hasSecondary = !terminal && (canQueue || canEdit)
 
   return (
     <div ref={ref} className="relative shrink-0">
@@ -104,11 +103,6 @@ function NodeMenu({
             </button>
           )}
           {hasSecondary && <div className="my-1 border-t border-gray-100 dark:border-gray-700" />}
-          {canAnswer && (
-            <button role="menuitem" onClick={() => { onOpenPopup(); close() }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-amber-700 dark:text-amber-400 hover:bg-gray-50 dark:hover:bg-gray-700">
-              <Icon name="help" className="w-3.5 h-3.5" /> Answer question…
-            </button>
-          )}
           {canQueue && (
             <button role="menuitem" onClick={() => { onOpenPopup(); close() }} className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
               <Icon name="mail" className="w-3.5 h-3.5" /> Queue a message…
@@ -545,6 +539,7 @@ export const DagNode = memo(function DagNode({
   const pendingQueueCount = (state.queue ?? []).filter(m => !m.delivered).length
   const isPaused = state.status === 'paused' || state.status === 'needs_input'
   const pauseLabel = isPaused ? pausedStatusLabel(state.pauseReason) : null
+  const canAnswer = (state.status === 'needs_input' || state.pauseReason === 'awaiting_input') && !!onAnswerQuestion
 
   // overflow-hidden clips the rounded corners, but it also clipped the kebab's
   // menu to the card height - a short card at the foot of a chat lost every
@@ -625,6 +620,17 @@ export const DagNode = memo(function DagNode({
             <LiveTimer startedAt={state.startedAt} finishedAt={state.finishedAt} />
           </span>
         ) : null}
+        {/* A node blocked on the user is the one state where the fix is the
+            primary action, so it is a filled button, not a kebab item. */}
+        {canAnswer && (
+          <button
+            type="button"
+            onClick={() => setPopupOpen(true)}
+            className="shrink-0 h-11 -my-3 px-3 inline-flex items-center gap-1 rounded-lg bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 transition-colors"
+          >
+            <Icon name="help" className="w-3.5 h-3.5" /> Answer
+          </button>
+        )}
         <NodeMenu
           nodeId={node.id}
           status={state.status}
@@ -633,7 +639,6 @@ export const DagNode = memo(function DagNode({
           onResume={onResume}
           canQueue={running && !!onQueueMessage}
           canEdit={notStarted && !!onEditTask}
-          canAnswer={(state.status === 'needs_input' || state.pauseReason === 'awaiting_input') && !!onAnswerQuestion}
           onOpenPopup={() => setPopupOpen(true)}
           onOpenArtifacts={chatId ? () => setArtifactsOpen(true) : undefined}
           onOpenMemories={chatId ? () => setMemoriesOpen(true) : undefined}
