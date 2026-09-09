@@ -119,13 +119,13 @@ export const TurnView = memo(function TurnView({
             <div className="flex items-center gap-3 mt-1.5 px-1">
               <button
                 onClick={() => onCopy(copyKey, text)}
-                className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
               >
                 {isCopied ? 'Copied!' : 'Copy'}
               </button>
               <button
                 onClick={() => onDownload(text, idx)}
-                className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
               >
                 Download
               </button>

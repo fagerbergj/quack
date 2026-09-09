@@ -76,12 +76,12 @@ export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanel
             )}
           </div>
           {facets.length === 0 && (
-            <div className="px-1 py-2 text-gray-400 dark:text-gray-500">No filters available</div>
+            <div className="px-1 py-2 text-gray-500 dark:text-gray-400">No filters available</div>
           )}
           <div className="medium:max-h-80 medium:overflow-y-auto">
             {facets.map(f => (
               <div key={f.key} className="mb-2 last:mb-0">
-                <div className="px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                <div className="px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                   {f.label}
                 </div>
                 {f.options.map(o => {
@@ -98,7 +98,7 @@ export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanel
                         className="accent-blue-600"
                       />
                       <span className="flex-1 text-gray-700 dark:text-gray-200 truncate">{o.label}</span>
-                      {o.count != null && <span className="text-gray-400 dark:text-gray-500">{o.count}</span>}
+                      {o.count != null && <span className="text-gray-500 dark:text-gray-400">{o.count}</span>}
                     </label>
                   )
                 })}

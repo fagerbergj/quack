@@ -600,14 +600,14 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
               onClick={refresh}
               aria-label="Refresh artifacts"
               title="Refresh artifacts"
-              className="flex h-11 w-11 items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-500 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
+              className="flex h-11 w-11 items-center justify-center rounded-lg text-gray-500 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
             >
               <Icon name="refresh" className="w-4 h-4" />
             </button>
             <button
               onClick={() => dialogRef.current?.close()}
               aria-label="Close"
-              className="flex h-11 w-11 items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-500 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
+              className="flex h-11 w-11 items-center justify-center rounded-lg text-gray-500 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
             >
               <Icon name="close" className="w-4 h-4" />
             </button>
@@ -640,13 +640,13 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
                   }`}
                 >
                   <span className="font-medium text-gray-700 dark:text-gray-200">Round {b.round}</span>
-                  <span aria-hidden="true" className="text-gray-400 dark:text-gray-500">·</span>
+                  <span aria-hidden="true" className="text-gray-500 dark:text-gray-400">·</span>
                   <span className={b.passed == null ? 'text-gray-500 dark:text-gray-400' : b.passed ? 'text-green-700 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>
                     {b.passed == null ? 'no verdict' : b.passed ? 'passed' : 'failed'}
                   </span>
                   {b.score != null && (
                     <>
-                      <span aria-hidden="true" className="text-gray-400 dark:text-gray-500">·</span>
+                      <span aria-hidden="true" className="text-gray-500 dark:text-gray-400">·</span>
                       <span className="text-gray-600 dark:text-gray-300 tabular-nums">{Math.round(b.score * 100)}%</span>
                     </>
                   )}
@@ -669,7 +669,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
                   <p className="text-xs text-red-600 dark:text-red-400 break-words">{nodeError}</p>
                 </>
               ) : (
-                <p className="text-sm text-gray-400 dark:text-gray-500">This node hasn't produced anything yet.</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">This node hasn't produced anything yet.</p>
               )}
             </div>
           ) : (
@@ -705,7 +705,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
                     Diff
                   </button>
                   {diffDisabledReason != null && (
-                    <span className="text-gray-400 dark:text-gray-500">{diffDisabledReason}</span>
+                    <span className="text-gray-500 dark:text-gray-400">{diffDisabledReason}</span>
                   )}
                   <button
                     onClick={() => setRawView(r => !r)}
@@ -722,7 +722,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
               {diffActive && diffText != null ? (
                 <DiffView text={diffText} />
               ) : displayText == null ? (
-                <p className="text-xs text-gray-400 dark:text-gray-500">Loading…</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">Loading…</p>
               ) : rawView && !diffActive ? (
                 <ArtifactLines lines={lines} byLine={byLine} activeNote={activeNote} onSelectNote={setActiveNote} />
               ) : isStructured ? (
@@ -744,7 +744,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
 
               {unanchored.length > 0 && (
                 <div>
-                  <span className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">
+                  <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
                     Unanchored notes
                   </span>
                   <ul className="mt-1 space-y-1">
@@ -914,7 +914,7 @@ function MoreItem({ chatId, artifact, ordinal }: { chatId: string; artifact: Art
             {displayText != null && <CopyButton text={displayText} label="Copy artifact text" />}
           </div>
           {content == null ? (
-            <p className="text-xs text-gray-400 dark:text-gray-500">Loading…</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">Loading…</p>
           ) : rawView ? (
             <ArtifactLines lines={lines} byLine={emptyByLine} activeNote={null} onSelectNote={() => {}} />
           ) : isStructured ? (
@@ -1132,7 +1132,7 @@ function ArtifactMarkdown({ text, byLine, activeNote, onSelectNote }: {
 // DiffView/JudgeCard already use elsewhere in this file/AgentParts, so a
 // number/string/boolean reads the same way across the app, not just here.
 function typedValue(v: unknown) {
-  if (v === null) return <span className="text-gray-400 dark:text-gray-500 italic">null</span>
+  if (v === null) return <span className="text-gray-500 dark:text-gray-400 italic">null</span>
   if (typeof v === 'string') return <span className="text-green-700 dark:text-green-400 break-words">"{v}"</span>
   if (typeof v === 'number') return <span className="text-blue-600 dark:text-blue-400">{v}</span>
   if (typeof v === 'boolean') return <span className="text-purple-600 dark:text-purple-400">{String(v)}</span>
@@ -1147,7 +1147,7 @@ function JsonNode({ k, v }: { k?: string; v: unknown }) {
   if (!isContainer) {
     return (
       <div className="py-0.5 text-xs">
-        {k != null && <span className="text-gray-400 dark:text-gray-500">{k}: </span>}
+        {k != null && <span className="text-gray-500 dark:text-gray-400">{k}: </span>}
         {typedValue(v)}
       </div>
     )
@@ -1159,13 +1159,13 @@ function JsonNode({ k, v }: { k?: string; v: unknown }) {
   return (
     <details open className="text-xs">
       <summary className="cursor-pointer select-none py-0.5">
-        {k != null && <span className="text-gray-400 dark:text-gray-500">{k}: </span>}
+        {k != null && <span className="text-gray-500 dark:text-gray-400">{k}: </span>}
         <span className="text-gray-500 dark:text-gray-400">
           {isArray ? `Array(${entries.length})` : `Object{${entries.length}}`}
         </span>
       </summary>
       <div className="ml-3 pl-2 border-l border-gray-200 dark:border-gray-700">
-        {entries.length === 0 && <div className="py-0.5 text-gray-400 dark:text-gray-500 italic">empty</div>}
+        {entries.length === 0 && <div className="py-0.5 text-gray-500 dark:text-gray-400 italic">empty</div>}
         {entries.map(([ck, cv]) => <JsonNode key={ck} k={ck} v={cv} />)}
       </div>
     </details>
@@ -1250,7 +1250,7 @@ function fmtAbsoluteShort(iso: string): string {
 function MetaRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="py-0.5 text-xs flex gap-1">
-      <span className="text-gray-400 dark:text-gray-500 shrink-0">{label}:</span>
+      <span className="text-gray-500 dark:text-gray-400 shrink-0">{label}:</span>
       <span className="text-gray-800 dark:text-gray-100 break-words min-w-0">{children}</span>
     </div>
   )

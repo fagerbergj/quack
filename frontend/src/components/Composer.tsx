@@ -156,7 +156,7 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
                     <div className="bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
                       {item.text}
                     </div>
-                    <div className="flex items-center justify-end gap-2 mt-0.5 pr-1 text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                    <div className="flex items-center justify-end gap-2 mt-0.5 pr-1 text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-400">
                       <span>queued</span>
                       {onRemoveQueued && (
                         <button
@@ -185,7 +185,7 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
                   <div className="bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
                     {item.text}
                   </div>
-                  <div className="flex items-center justify-end gap-2 mt-0.5 pr-1 text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                  <div className="flex items-center justify-end gap-2 mt-0.5 pr-1 text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-400">
                     <span>queued</span>
                     {onRemoveQueued && (
                       <button

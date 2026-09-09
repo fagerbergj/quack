@@ -81,7 +81,7 @@ function NodeMenu({
         aria-label="Node actions"
         aria-haspopup="menu"
         aria-expanded={open}
-        className="w-11 h-11 -my-3 -me-3 flex items-center justify-center rounded-lg text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+        className="w-11 h-11 -my-3 -me-3 flex items-center justify-center rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
       >
         <Icon name="more_vert" className="w-5 h-5" />
       </button>
@@ -165,11 +165,11 @@ export function pausedStatusLabel(status: NodeStatus, reason: NodeState['pauseRe
 function RunTimer({ run }: { run: AgentRun }) {
   if (run.done) {
     return run.durationMs != null
-      ? <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums ml-auto">{fmtMs(run.durationMs)}</span>
+      ? <span className="text-[10px] text-gray-500 dark:text-gray-400 tabular-nums ml-auto">{fmtMs(run.durationMs)}</span>
       : null
   }
   return run.startedAt != null
-    ? <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums ml-auto"><LiveTimer startedAt={run.startedAt} /></span>
+    ? <span className="text-[10px] text-gray-500 dark:text-gray-400 tabular-nums ml-auto"><LiveTimer startedAt={run.startedAt} /></span>
     : null
 }
 
@@ -177,7 +177,7 @@ function RunTimer({ run }: { run: AgentRun }) {
 function RunModel({ run }: { run: AgentRun }) {
   if (!run.model) return null
   return (
-    <span className="text-[10px] text-gray-400 dark:text-gray-500 font-mono truncate max-w-[100px]" title={run.model}>
+    <span className="text-[10px] text-gray-500 dark:text-gray-400 font-mono truncate max-w-[100px]" title={run.model}>
       {run.model}
     </span>
   )
@@ -198,7 +198,7 @@ function ContextMeter({ used, limit }: { used: number; limit: number }) {
     : 'bg-gray-400 dark:bg-gray-500'
   const textColor = pct >= CONTEXT_DANGER_PCT ? 'text-red-600 dark:text-red-400'
     : pct >= CONTEXT_WARN_PCT ? 'text-amber-600 dark:text-amber-400'
-    : 'text-gray-400 dark:text-gray-500'
+    : 'text-gray-500 dark:text-gray-400'
   return (
     <span
       className="flex items-center gap-1"
@@ -226,13 +226,13 @@ function ContentPopup({ title, text, onClose }: { title: string; text: string; o
         <button
           onClick={onClose}
           aria-label="Close"
-          className="flex h-11 w-11 -me-3 items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-500 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
+          className="flex h-11 w-11 -me-3 items-center justify-center rounded-lg text-gray-500 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
         >
           <Icon name="close" className="w-5 h-5" />
         </button>
       </div>
       <div className="group/verdict relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
-        <span className="block mb-2 text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">{title}</span>
+        <span className="block mb-2 text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">{title}</span>
         {/* #746 item 7 - hidden until THIS block (not some unrelated
             ancestor - a NAMED group, since the popup nests inside
             DagNode's own `.group` card) is hovered/focused, aligned to the
@@ -260,10 +260,10 @@ function CollapsedPreview({ label, text, popupTitle }: { label: string; text: st
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="w-full flex items-center gap-1.5 py-0.5 text-[11px] text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-left"
+        className="w-full flex items-center gap-1.5 py-0.5 text-[11px] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-left"
       >
         <span className="italic shrink-0">{label}</span>
-        <span className="truncate text-gray-300 dark:text-gray-600">{previewLine(text)}</span>
+        <span className="truncate text-gray-500 dark:text-gray-400">{previewLine(text)}</span>
       </button>
       {open && <ContentPopup title={popupTitle} text={text} onClose={() => setOpen(false)} />}
     </>
@@ -292,7 +292,7 @@ const WorkerCard = memo(function WorkerCard({ runs, running }: { runs: AgentRun[
   const activity: Activity[] = runs.length === 1 ? runs[0].activity : runs.flatMap(r => r.activity)
   const empty = activity.length === 0
   if (empty) {
-    return running ? <div className="px-4 py-3 text-xs text-gray-400 dark:text-gray-500">starting…</div> : null
+    return running ? <div className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">starting…</div> : null
   }
   const model = [...runs].reverse().find(r => r.model)?.model
   const startedAt = runs.find(r => r.startedAt != null)?.startedAt
@@ -310,7 +310,7 @@ const WorkerCard = memo(function WorkerCard({ runs, running }: { runs: AgentRun[
               header's pulsing status dot + the timer - no separate spinner
               dot here. */}
           {toolCount > 0 && (
-            <span className="text-xs text-gray-400 dark:text-gray-500">
+            <span className="text-xs text-gray-500 dark:text-gray-400">
               {`${toolCount} tool call${toolCount === 1 ? '' : 's'}`}
             </span>
           )}
@@ -361,10 +361,10 @@ function NodeAnswer({ answer }: { answer: string }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="w-full flex items-center gap-1.5 px-4 py-2 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 border-t border-gray-100 dark:border-gray-700 text-left"
+        className="w-full flex items-center gap-1.5 px-4 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 border-t border-gray-100 dark:border-gray-700 text-left"
       >
         <span className="shrink-0">answer</span>
-        <span className="truncate text-gray-300 dark:text-gray-600">{previewLine(answer, 100)}</span>
+        <span className="truncate text-gray-500 dark:text-gray-400">{previewLine(answer, 100)}</span>
       </button>
       {open && <ContentPopup title="Answer" text={answer} onClose={() => setOpen(false)} />}
     </>
@@ -481,7 +481,7 @@ function RetryControl({ nodeId, onRetry }: {
           className="flex-1 min-w-0 text-xs px-2 py-1 rounded border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-indigo-400"
         />
         <button onClick={send} className="text-[11px] font-medium text-indigo-700 dark:text-indigo-400 hover:underline">retry</button>
-        <button onClick={() => { setGuiding(false); setText('') }} className="text-[11px] text-gray-400 dark:text-gray-500 hover:underline">cancel</button>
+        <button onClick={() => { setGuiding(false); setText('') }} className="text-[11px] text-gray-500 dark:text-gray-400 hover:underline">cancel</button>
       </div>
     )
   }
@@ -579,7 +579,7 @@ export const DagNode = memo(function DagNode({
         <div className="empty:hidden flex flex-wrap medium:flex-nowrap items-center gap-x-2 gap-y-0.5 basis-full order-last medium:basis-auto medium:order-none">
           <StatusDot status={state.status} label={pauseLabel} />
           {state.model && (
-            <span className="text-[10px] text-gray-400 dark:text-gray-500 font-mono truncate max-w-[120px]" title={state.model}>
+            <span className="text-[10px] text-gray-500 dark:text-gray-400 font-mono truncate max-w-[120px]" title={state.model}>
               {state.model}
             </span>
           )}
@@ -597,7 +597,7 @@ export const DagNode = memo(function DagNode({
             </span>
           )}
           {state.totalTokens != null && state.totalTokens > 0 && (
-            <span className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
+            <span className="text-[10px] text-gray-500 dark:text-gray-400 tabular-nums">
               {state.totalTokens.toLocaleString()} tokens
               {state.cachedTokens != null && state.cachedTokens > 0 && (
                 <span title={`${state.cachedTokens.toLocaleString()} tokens served from cache`}> ({state.cachedTokens.toLocaleString()} cached)</span>
@@ -609,7 +609,7 @@ export const DagNode = memo(function DagNode({
               href={traceUrl(state.traceId)}
               target="_blank"
               rel="noreferrer"
-              className="text-[10px] text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 underline"
+              className="text-[10px] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 underline"
               title="Open this run's trace in the tracing backend (whole run, not just this node)"
             >
               run trace
@@ -620,9 +620,9 @@ export const DagNode = memo(function DagNode({
         {/* A finished node shows the server-measured duration (reconnect-proof);
             a running one ticks live from the server start time. */}
         {(state.finishedAt != null && state.serverDurationMs != null) ? (
-          <span className="shrink-0 text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">{fmtMs(state.serverDurationMs)}</span>
+          <span className="shrink-0 text-[10px] text-gray-500 dark:text-gray-400 tabular-nums">{fmtMs(state.serverDurationMs)}</span>
         ) : state.startedAt != null ? (
-          <span className="shrink-0 text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
+          <span className="shrink-0 text-[10px] text-gray-500 dark:text-gray-400 tabular-nums">
             <LiveTimer startedAt={state.startedAt} finishedAt={state.finishedAt} />
           </span>
         ) : null}

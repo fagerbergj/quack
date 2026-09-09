@@ -155,7 +155,7 @@ function CollapsibleSection({ summary, children }: { summary: ReactNode; childre
 // parse the way this section expects (bad JSON, missing child tags, an
 // unknown tag) - the raw text, never dropped.
 function RawFallback({ text }: { text: string }) {
-  if (!text) return <span className="text-[11px] text-gray-400 dark:text-gray-500 italic">(empty)</span>
+  if (!text) return <span className="text-[11px] text-gray-500 dark:text-gray-400 italic">(empty)</span>
   return (
     <Expandable maxHeight={240} fade="from-gray-50 dark:from-gray-900">
       <pre className="bg-gray-50 dark:bg-gray-900 rounded p-2 overflow-x-auto whitespace-pre-wrap font-mono text-[11px] text-gray-700 dark:text-gray-200">{text}</pre>
@@ -177,7 +177,7 @@ function AskSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'ask' }> 
   return (
     <div>
       <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">
-        {block.number && <span className="text-gray-400 dark:text-gray-500 font-normal mr-1">#{block.number}</span>}
+        {block.number && <span className="text-gray-500 dark:text-gray-400 font-normal mr-1">#{block.number}</span>}
         {block.title || '(untitled)'}
       </h3>
       {block.description && (
@@ -241,7 +241,7 @@ function CommentsSection({ block, priorContents }: { block: Extract<EnvelopeBloc
                     key={c.id ?? i}
                     className={`border-l-2 pl-3 ${c.quackStatus === 'deleted' ? 'border-red-300 dark:border-red-800' : 'border-gray-200 dark:border-gray-700'}`}
                   >
-                    <div className="flex items-center gap-2 text-[11px] text-gray-400 dark:text-gray-500 mb-0.5">
+                    <div className="flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400 mb-0.5">
                       {c.author && <span className="font-medium text-gray-600 dark:text-gray-300">{c.author}</span>}
                       {c.createdAt && <span>{formatTimestamp(c.createdAt)}</span>}
                       {c.quackStatus && c.quackStatus !== 'new' && <StatusBadge status={c.quackStatus} />}
@@ -253,7 +253,7 @@ function CommentsSection({ block, priorContents }: { block: Extract<EnvelopeBloc
                 ))}
               </ul>
             </Expandable>
-          ) : <span className="text-[11px] text-gray-400 dark:text-gray-500 italic">no comments</span>}
+          ) : <span className="text-[11px] text-gray-500 dark:text-gray-400 italic">no comments</span>}
         </>
       ) : <RawFallback text={block.raw} />}
     </CollapsibleSection>
@@ -306,7 +306,7 @@ function ChecksSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'check
                   <span className={`truncate ${failing ? 'text-red-500 dark:text-red-400' : 'text-gray-700 dark:text-gray-200'}`}>
                     {c.name}
                   </span>
-                  <span className={`ml-auto shrink-0 ${failing ? 'text-red-500 dark:text-red-400 font-semibold' : 'text-gray-400 dark:text-gray-500'}`}>
+                  <span className={`ml-auto shrink-0 ${failing ? 'text-red-500 dark:text-red-400 font-semibold' : 'text-gray-500 dark:text-gray-400'}`}>
                     {c.status}{c.conclusion ? ` ${c.conclusion}` : ''}
                   </span>
                 </li>
@@ -350,7 +350,7 @@ function EventSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'event'
         <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1.5 mb-2 not-prose">
           {fields.map(([k, v]) => (
             <div key={k} className="min-w-0">
-              <dt className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500">{k}</dt>
+              <dt className="text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-400">{k}</dt>
               <dd className="text-[11px] font-mono text-gray-700 dark:text-gray-200 truncate" title={v}>{v}</dd>
             </div>
           ))}
@@ -370,13 +370,13 @@ function ContextSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'cont
   return (
     <CollapsibleSection summary={`${n} file${n === 1 ? '' : 's'}`}>
       {n === 0 ? (
-        <span className="text-[11px] text-gray-400 dark:text-gray-500 italic">no context files</span>
+        <span className="text-[11px] text-gray-500 dark:text-gray-400 italic">no context files</span>
       ) : (
         <ul className="space-y-0.5 text-[11px] font-mono">
           {block.files.map((f, i) => (
             <li key={i} className="flex gap-2">
               <span className="text-gray-700 dark:text-gray-200 shrink-0">{f.name}</span>
-              <span className="text-gray-400 dark:text-gray-500 truncate">{f.endpoint}</span>
+              <span className="text-gray-500 dark:text-gray-400 truncate">{f.endpoint}</span>
             </li>
           ))}
         </ul>
@@ -398,7 +398,7 @@ const ARTIFACT_ICON_PATHS: Record<string, string> = {
 function ArtifactIcon({ kindPrefix }: { kindPrefix: string }) {
   const path = ARTIFACT_ICON_PATHS[kindPrefix] ?? ARTIFACT_ICON_PATHS.bytes
   return (
-    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true" className="shrink-0 text-gray-400 dark:text-gray-500">
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true" className="shrink-0 text-gray-500 dark:text-gray-400">
       <path d={path} />
     </svg>
   )
@@ -465,9 +465,9 @@ function ArtifactsSection({
                 <ArtifactIcon kindPrefix={row.kindPrefix} />
                 <span className="flex-1 min-w-0 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
                   <span className="font-mono text-gray-700 dark:text-gray-200 break-all">{row.name}</span>
-                  {row.revision != null && <span className="text-gray-400 dark:text-gray-500">rev {row.revision}</span>}
+                  {row.revision != null && <span className="text-gray-500 dark:text-gray-400">rev {row.revision}</span>}
                   {row.status && <ArtifactStatusChip status={row.status} />}
-                  <span className="text-gray-400 dark:text-gray-500 break-words basis-full sm:basis-auto">{row.summary}</span>
+                  <span className="text-gray-500 dark:text-gray-400 break-words basis-full sm:basis-auto">{row.summary}</span>
                 </span>
               </button>
             </li>

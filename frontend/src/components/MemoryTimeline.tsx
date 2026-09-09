@@ -79,7 +79,7 @@ export function MemoryTimeline({ memories, onForget, onVote, now, grouped = true
       {groups.map((g, i) => (
         <div key={g.label ? `${g.label}-${g.memories[0]?.id}` : `flat-${i}`}>
           {g.label && (
-            <div className="pl-3 medium:pl-[4.75rem] pr-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+            <div className="pl-3 medium:pl-[4.75rem] pr-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
               {g.label}
             </div>
           )}
@@ -88,7 +88,7 @@ export function MemoryTimeline({ memories, onForget, onVote, now, grouped = true
               {/* Date gutter collapses below `medium` (#1266): the row's own
                   relative-time chip already carries this, so the gutter is
                   pure redundant width at 390px, not an information loss. */}
-              <div className="hidden medium:block w-14 shrink-0 pt-3 pl-3 text-right text-[11px] text-gray-400 dark:text-gray-500 tabular-nums">
+              <div className="hidden medium:block w-14 shrink-0 pt-3 pl-3 text-right text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">
                 {shortDate(m.timestamp)}
               </div>
               <div className="hidden medium:flex relative shrink-0 w-4 justify-center">

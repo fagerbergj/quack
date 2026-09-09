@@ -214,15 +214,15 @@ export const MemoryEntry = memo(function MemoryEntry({ memory, onForget, onVote 
           {memory.kind && <Pill label={memory.kind} seed={memory.kind} />}
           <TierBadge memory={memory} />
           {voteTier === 'verified' && <VoteTierBadge tier={voteTier} />}
-          <span title={mintedTimeText} className="text-[11px] text-gray-400 dark:text-gray-500">{mintedTimeRelative}</span>
+          <span title={mintedTimeText} className="text-[11px] text-gray-500 dark:text-gray-400">{mintedTimeRelative}</span>
           {memory.score != null && (
-            <span className="text-[11px] text-gray-400 dark:text-gray-500">score {memory.score.toFixed(2)}</span>
+            <span className="text-[11px] text-gray-500 dark:text-gray-400">score {memory.score.toFixed(2)}</span>
           )}
           {lastUpvoted && (
-            <span className="text-[11px] text-gray-400 dark:text-gray-500">last upvoted {lastUpvoted}</span>
+            <span className="text-[11px] text-gray-500 dark:text-gray-400">last upvoted {lastUpvoted}</span>
           )}
           {(memory.recalls ?? 0) > 0 && (
-            <span className="text-[11px] text-gray-400 dark:text-gray-500">
+            <span className="text-[11px] text-gray-500 dark:text-gray-400">
               recalled {memory.recalls}× {lastRecalled ? `(last ${lastRecalled})` : ''}
             </span>
           )}
@@ -238,7 +238,7 @@ export const MemoryEntry = memo(function MemoryEntry({ memory, onForget, onVote 
         {memory.status === 'invalidated' && memory.invalidation_reason && (
           <p
             title={memory.invalidation_reason}
-            className="text-[11px] text-gray-400 dark:text-gray-500 mt-1 truncate"
+            className="text-[11px] text-gray-500 dark:text-gray-400 mt-1 truncate"
           >
             {memory.invalidation_reason}
           </p>

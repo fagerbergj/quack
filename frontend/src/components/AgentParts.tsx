@@ -183,7 +183,7 @@ export function AssistantText({ text, streaming = false }: { text: string; strea
 // turns and DAG-terminal-node attribution, which have no live status to show.
 export function BubbleHeader({ agent, model, tokens, status }: { agent: string; model?: string; tokens?: number; status?: DotStatus }) {
   return (
-    <div className="flex items-center gap-2 mb-2 text-[10px] text-gray-400 dark:text-gray-500">
+    <div className="flex items-center gap-2 mb-2 text-[10px] text-gray-500 dark:text-gray-400">
       {status && <StatusDot status={status} />}
       <span className="font-semibold text-gray-500 dark:text-gray-400">{agentLabel(agent)}</span>
       {model && (
@@ -208,7 +208,7 @@ export function ActivityList({ activity }: { activity: Activity[] }) {
       {hidden > 0 && (
         <button
           onClick={() => setShowAll(s => !s)}
-          className="my-1 text-[11px] text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+          className="my-1 text-[11px] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
         >
           {showAll ? '▾ show less' : `⋯ ${hidden} earlier`}
         </button>
@@ -235,7 +235,7 @@ export function LiveStatusLine({ activity }: { activity: Activity[] }) {
   // One line, not one per fact: on a phone the card's running state is this
   // line plus the header, so the tool action truncates rather than stacking.
   return (
-    <div className="flex items-center gap-1.5 min-w-0 py-0.5 text-[11px] text-gray-400 dark:text-gray-500 not-prose">
+    <div className="flex items-center gap-1.5 min-w-0 py-0.5 text-[11px] text-gray-500 dark:text-gray-400 not-prose">
       <Dots variant="compact" size="w-1 h-1" />
       {thinking && <span className="italic shrink-0">thinking</span>}
       {compacted && <span className="italic shrink-0">compacted</span>}
@@ -270,10 +270,10 @@ function ThoughtIcon() {
 function ThinkBlock({ text }: { text: string }) {
   return (
     <details className="group my-0.5 not-prose">
-      <summary className="cursor-pointer select-none flex items-center gap-1.5 py-0.5 text-[11px] text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300">
+      <summary className="cursor-pointer select-none flex items-center gap-1.5 py-0.5 text-[11px] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
         <ThoughtIcon />
         <span className="italic shrink-0">Thought</span>
-        <span className="truncate text-gray-300 dark:text-gray-600 group-open:hidden">{previewLine(text)}</span>
+        <span className="truncate text-gray-500 dark:text-gray-400 group-open:hidden">{previewLine(text)}</span>
       </summary>
       <div className="ml-[7px] pl-2.5 pr-2 py-1 border-l border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400">
         <Expandable maxHeight={200} fade="from-white dark:from-gray-800">
@@ -293,7 +293,7 @@ function CompactionBlock({ summaryInputTokens, summaryOutputTokens }: { summaryI
   const hasTokens = !!summaryInputTokens || !!summaryOutputTokens
   return (
     <div
-      className="flex items-center gap-1.5 my-0.5 py-0.5 text-[11px] text-gray-400 dark:text-gray-500 not-prose"
+      className="flex items-center gap-1.5 my-0.5 py-0.5 text-[11px] text-gray-500 dark:text-gray-400 not-prose"
       aria-label={hasTokens ? `Context compacted, summarizer spent ${summaryInputTokens ?? 0} in / ${summaryOutputTokens ?? 0} out tokens` : 'Context compacted'}
     >
       <span aria-hidden>↯</span>

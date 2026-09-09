@@ -23,7 +23,7 @@ const VOTE_ICON: Record<string, IconName> = {
 const VOTE_COLOR: Record<string, string> = {
   supported: 'text-green-600 dark:text-green-400',
   contradicted: 'text-red-600 dark:text-red-400',
-  not_relevant: 'text-gray-400 dark:text-gray-500',
+  not_relevant: 'text-gray-500 dark:text-gray-400',
 }
 
 function JudgeVoteIcon({ vote, reason }: { vote: string; reason?: string }) {
@@ -70,7 +70,7 @@ function NodeMemoryRow({ memory, onVote }: { memory: NodeMemory; onVote: (id: st
             </span>
           )}
           {memory.score != null && (
-            <span className="text-[11px] text-gray-400 dark:text-gray-500">score {memory.score.toFixed(2)}</span>
+            <span className="text-[11px] text-gray-500 dark:text-gray-400">score {memory.score.toFixed(2)}</span>
           )}
           {memory.vote && <JudgeVoteIcon vote={memory.vote} reason={memory.reason} />}
         </div>
@@ -144,14 +144,14 @@ export function NodeMemoriesPanel({ chatId, nodeId, judgeRounds, onClose }: Node
           </button>
         </div>
         <div className="flex-1 overflow-y-auto">
-          {loading && <div className="text-center text-gray-400 dark:text-gray-500 text-sm py-10">Loading…</div>}
+          {loading && <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-10">Loading…</div>}
           {!loading && error && (
             <div className="m-3 rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">
               {error}
             </div>
           )}
           {!loading && !error && memories.length === 0 && (
-            <div className="text-center text-gray-400 dark:text-gray-500 text-sm py-10">This node received no memories</div>
+            <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-10">This node received no memories</div>
           )}
           {!loading && !error && memories.map(m => <NodeMemoryRow key={m.id} memory={m} onVote={handleVote} />)}
         </div>

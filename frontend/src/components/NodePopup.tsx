@@ -38,7 +38,7 @@ function QueuedMessageRow({ msg, onEdit, onRemove }: {
   const [text, setText] = useState(msg.text)
   if (msg.delivered) {
     return (
-      <li className="text-xs text-gray-400 dark:text-gray-500 line-through decoration-gray-300 dark:decoration-gray-600">
+      <li className="text-xs text-gray-500 dark:text-gray-400 line-through decoration-gray-300 dark:decoration-gray-600">
         {msg.text}
       </li>
     )
@@ -57,7 +57,7 @@ function QueuedMessageRow({ msg, onEdit, onRemove }: {
           className="flex-1 min-w-0 text-xs px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-gray-400"
         />
         <button onClick={() => { onEdit?.(text); setEditing(false) }} className="text-[11px] font-medium text-gray-600 dark:text-gray-300 hover:underline">save</button>
-        <button onClick={() => { setText(msg.text); setEditing(false) }} className="text-[11px] text-gray-400 dark:text-gray-500 hover:underline">cancel</button>
+        <button onClick={() => { setText(msg.text); setEditing(false) }} className="text-[11px] text-gray-500 dark:text-gray-400 hover:underline">cancel</button>
       </li>
     )
   }
@@ -70,8 +70,8 @@ function QueuedMessageRow({ msg, onEdit, onRemove }: {
       >
         parked
       </span>
-      {onEdit && <button onClick={() => setEditing(true)} aria-label="Edit" title="Edit" className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"><Icon name="edit" className="w-3.5 h-3.5" /></button>}
-      {onRemove && <button onClick={onRemove} aria-label="Remove" title="Remove" className="text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400"><Icon name="close" className="w-3.5 h-3.5" /></button>}
+      {onEdit && <button onClick={() => setEditing(true)} aria-label="Edit" title="Edit" className="text-gray-500 hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300"><Icon name="edit" className="w-3.5 h-3.5" /></button>}
+      {onRemove && <button onClick={onRemove} aria-label="Remove" title="Remove" className="text-gray-500 hover:text-red-500 dark:text-gray-400 dark:hover:text-red-400"><Icon name="close" className="w-3.5 h-3.5" /></button>}
     </li>
   )
 }
@@ -115,7 +115,7 @@ export function NodePopup({
         <button
           onClick={onClose}
           aria-label="Close"
-          className="flex h-11 w-11 -me-3 items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-500 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
+          className="flex h-11 w-11 -me-3 items-center justify-center rounded-lg text-gray-500 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
         >
           <Icon name="close" className="w-5 h-5" />
         </button>
@@ -126,7 +126,7 @@ export function NodePopup({
         <div className="flex items-center justify-between">
           <BubbleHeader agent={node.agent} />
           {notStarted && onEditTask && !editingTask && (
-            <button onClick={() => { setTaskText(node.task); setEditingTask(true) }} aria-label="Edit prompt" title="Edit prompt" className="shrink-0 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300">
+            <button onClick={() => { setTaskText(node.task); setEditingTask(true) }} aria-label="Edit prompt" title="Edit prompt" className="shrink-0 text-gray-500 hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300">
               <Icon name="edit" className="w-3.5 h-3.5" />
             </button>
           )}
@@ -147,7 +147,7 @@ export function NodePopup({
               >
                 save
               </button>
-              <button onClick={() => setEditingTask(false)} className="text-[11px] text-gray-400 dark:text-gray-500 hover:underline">cancel</button>
+              <button onClick={() => setEditingTask(false)} className="text-[11px] text-gray-500 dark:text-gray-400 hover:underline">cancel</button>
             </div>
           </div>
         ) : (
@@ -170,10 +170,10 @@ export function NodePopup({
       {/* Message queue, only while running - plain history, immutable once delivered. */}
       {running && !answering && queue.length > 0 && (
         <div>
-          <span className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">
+          <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
             Queued messages
           </span>
-          <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5 mb-2">
+          <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 mb-2">
             Delivered into the live round when possible; "parked" ones wait for the node's next turn boundary.
           </p>
           <ul className="space-y-1.5">
@@ -222,7 +222,7 @@ export function NodePopup({
         </div>
       )}
       {answering && !onAnswerQuestion && (
-        <p className="text-[11px] text-gray-400 dark:text-gray-500 italic">
+        <p className="text-[11px] text-gray-500 dark:text-gray-400 italic">
           Answering from here isn't wired up yet - reply in the main chat.
         </p>
       )}

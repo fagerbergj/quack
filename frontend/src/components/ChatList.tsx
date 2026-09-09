@@ -250,7 +250,7 @@ function ChatRow({
           </>
         )}
       </div>
-      <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{relativeDate(s.updated_at)}</span>
+      <span className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{relativeDate(s.updated_at)}</span>
       {/* Every row's one action point (#1319 - archive/delete both live here,
           two clicks instead of a bare one-tap control). Absolutely positioned
           in the top-right corner, NOT in flow, so it never grows the row's
@@ -413,10 +413,10 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
       </div>
       <div className="flex-1 overflow-y-auto overscroll-contain chat-list-scroll">
         {(runningQueued.length === 0 && active.length === 0 && archived.length === 0) && chats.length === 0 && (
-          <div className="text-xs text-gray-400 dark:text-gray-500 text-center py-6 px-3">No conversations yet</div>
+          <div className="text-xs text-gray-500 dark:text-gray-400 text-center py-6 px-3">No conversations yet</div>
         )}
         {(runningQueued.length === 0 && active.length === 0 && archived.length === 0) && chats.length > 0 && (
-          <div className="text-xs text-gray-400 dark:text-gray-500 text-center py-6 px-3">No matches</div>
+          <div className="text-xs text-gray-500 dark:text-gray-400 text-center py-6 px-3">No matches</div>
         )}
 
         {/* Active groups: running/queued then idle — empty groups render nothing */}
@@ -442,7 +442,7 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
           {archivedExpanded && (
             <>
               {archived.length === 0 && (
-                <div className="text-xs text-gray-400 dark:text-gray-500 text-center py-3 px-3">No archived chats</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400 text-center py-3 px-3">No archived chats</div>
               )}
               {archived.map(s => (
                 <ChatRow key={s.id} s={s} activeChatId={activeChatId} onSelect={onSelect} onDelete={onDelete} onUnarchive={onUnarchive} archived />

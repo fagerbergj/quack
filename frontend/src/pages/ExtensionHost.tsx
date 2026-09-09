@@ -56,7 +56,7 @@ export default function ExtensionHost({ name: nameOverride, initialExtensions, n
     return (
       <>
         {header}
-        <div className="flex-1 flex items-center justify-center text-sm text-gray-400 dark:text-gray-500">
+        <div className="flex-1 flex items-center justify-center text-sm text-gray-500 dark:text-gray-400">
           Loading…
         </div>
       </>
@@ -69,7 +69,7 @@ export default function ExtensionHost({ name: nameOverride, initialExtensions, n
     return (
       <>
         {header}
-        <div className="flex-1 flex items-center justify-center text-sm text-gray-400 dark:text-gray-500">
+        <div className="flex-1 flex items-center justify-center text-sm text-gray-500 dark:text-gray-400">
           Extension not found
         </div>
       </>
