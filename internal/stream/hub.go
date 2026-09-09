@@ -167,10 +167,20 @@ func (h *Hub) Close(key string) {
 	}
 }
 
-// Drops the chat's topic so a new run gets a fresh buffer. Publish does the same lazily; call this to attach subscribers before publishing.
+// Drops the chat's topic so a new run gets a fresh buffer. Publish does the
+// same lazily; call this to attach subscribers before publishing. Closes any
+// live subscribers first - dropping the map entry alone would orphan them
+// with a channel neither fed nor closed (they'd hang until their HTTP
+// connection dies on its own).
 func (h *Hub) Reset(key string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if t := h.topics[key]; t != nil {
+		for ch := range t.subs {
+			close(ch)
+			delete(t.subs, ch)
+		}
+	}
 	delete(h.topics, key)
 }
 

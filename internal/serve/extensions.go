@@ -485,6 +485,13 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 			attachments = append(attachments, ref)
 		}
 
+		// Reset synchronously, before Dispatch returns (the caller's ack), so
+		// a subscriber landing in the run's start window never reads the
+		// previous dispatch's (possibly terminal) events off the hub or the
+		// durable log (#audit-5).
+		hub.Reset(chatID)
+		eventLog.Reset(runCtx, chatID)
+
 		// A bound shape (Nodes non-empty) skips the planner LLM call entirely:
 		// build the Plan now, synchronously, so a malformed binding is a hard
 		// dispatch error - never a silent fallback to the unshaped hint path.
@@ -958,7 +965,6 @@ func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrato
 	}
 	hub.RegisterRun(chatID, turnID, cancelRun)
 	_ = st.MarkRunActive(runCtx, chatID, turnID)
-	eventLog.Reset(runCtx, chatID)
 	// FinishRun flushes then closes then unregisters, in that order - see its doc.
 	defer eventLog.FinishRun(hub, chatID, cancelRun)
 

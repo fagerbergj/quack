@@ -115,6 +115,14 @@ func startResumedNodes(ctx context.Context, nodes []store.ResumableNode, orch *o
 		}
 		byChat[n.ChatID] = append(byChat[n.ChatID], n)
 	}
+	// Reset synchronously, before any resume's goroutine is dispatched, so a
+	// subscriber that reaches the API before its own resume's first publish
+	// never reads the previous run's (possibly terminal) events off the hub
+	// or the durable log (#audit-5).
+	for _, chatID := range order {
+		hub.Reset(chatID)
+		eventLog.Reset(ctx, chatID)
+	}
 	boundedGoRun(order, maxConcurrent, func(chatID string) {
 		driveResume(ctx, chatID, byChat[chatID], orch, st, hub, eventLog)
 	})
@@ -155,7 +163,8 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 	runCtx, cancelRun := context.WithTimeout(context.WithoutCancel(ctx), 24*time.Hour)
 	hub.RegisterRun(chatID, plan.TurnID, cancelRun)
 	_ = st.MarkRunActive(runCtx, chatID, plan.TurnID)
-	eventLog.Reset(runCtx, chatID) // old run's (chat_id, seq) rows would PK-collide with the new publisher
+	// Reset already ran synchronously in startResumedNodes, before this
+	// goroutine was dispatched - not here, or a subscriber could race it.
 	// FinishRun flushes then closes then unregisters, in that order - see its doc.
 	defer eventLog.FinishRun(hub, chatID, cancelRun)
 

@@ -1120,17 +1120,22 @@ func allowedStatuses(from dag.NodeStatus) []schema.NodeStatus {
 // Returns whether it dispatched. false means a run is already dispatched for
 // this chat or this node is already live (a pause is cooperative: the
 // persisted row can say "paused" while the first run is still executing) -
-// the caller must 409 rather than double-dispatch. RegisterRun happens here,
-// synchronously, before returning - like startRun, "so cancel can never miss
-// the run": registering inside the spawned goroutine left a window where a
-// shutdown drain's hub.ActiveChatIDs() snapshot, taken right after this
-// function returns, could run before the goroutine reached RegisterRun and
-// silently never wait for or cancel this dispatch.
+// the caller must 409 rather than double-dispatch. Reset, RegisterRun and
+// MarkRunActive all happen here, synchronously, before returning - like
+// startRun, "so cancel can never miss the run": registering inside the
+// spawned goroutine left a window where a shutdown drain's
+// hub.ActiveChatIDs() snapshot, taken right after this function returns,
+// could run before the goroutine reached RegisterRun and silently never wait
+// for or cancel this dispatch. Reset runs before RegisterRun so a subscriber
+// landing in the start window never reads the previous run's (possibly
+// terminal) events off the hub or the durable log (#audit-5).
 func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message string) bool {
 	if h.hub.HasRegisteredRun(chatID) || h.orch.NodeIsLive(chatID, nodeID) {
 		return false
 	}
 	runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
+	h.hub.Reset(chatID)
+	h.eventLog.Reset(runCtx, chatID)
 	h.hub.RegisterRun(chatID, dp.TurnID, cancelRun)
 	_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
 	go func() {
@@ -1139,7 +1144,6 @@ func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message stri
 		defer h.eventLog.FinishRun(h.hub, chatID, cancelRun)
 		defer h.stampRunOutcome(runCtx, chatID)
 
-		h.eventLog.Reset(runCtx, chatID)
 		publish := runlog.NewPublisher(h.hub, h.eventLog, chatID).Publish
 		publish(stream.ResponseCreated(dp.TurnID))
 
@@ -1180,6 +1184,11 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 		}
 	}
 	runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
+	// Reset before RegisterRun so a subscriber landing in the start window
+	// never reads the previous run's (possibly terminal) events off the hub
+	// or the durable log (#audit-5).
+	h.hub.Reset(chatID)
+	h.eventLog.Reset(runCtx, chatID)
 	h.hub.RegisterRun(chatID, dp.TurnID, cancelRun)
 	_ = h.store.MarkRunActive(runCtx, chatID, dp.TurnID)
 	go func() {
@@ -1188,7 +1197,6 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 		defer h.eventLog.FinishRun(h.hub, chatID, cancelRun)
 		defer h.stampRunOutcome(runCtx, chatID)
 
-		h.eventLog.Reset(runCtx, chatID)
 		publish := runlog.NewPublisher(h.hub, h.eventLog, chatID).Publish
 		publish(stream.ResponseCreated(dp.TurnID))
 
