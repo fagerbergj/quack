@@ -153,11 +153,9 @@ export const FilteredToRepo: Story = {
   },
 }
 
-// Expands the collapsed Archived section: each row gets a "⋮" overflow trigger
-// (Restore lives inside it) top-right, next to the same × as active rows - both
-// are hover-only and absolutely positioned, so the row height matches an active
-// row's exactly. Hover a row here to reveal them; × swaps its label to "Delete
-// chat permanently" since it now hard-deletes instead of archiving.
+// Expands the collapsed Archived section: each row gets one always-visible
+// kebab top-right (Restore and permanent Delete live inside it), absolutely
+// positioned so the row height matches an active row's exactly.
 export const WithArchivedChats: Story = {
   args: {
     chats: [chat('active-1', 'Current project notes')],

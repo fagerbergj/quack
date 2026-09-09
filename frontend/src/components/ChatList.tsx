@@ -96,9 +96,9 @@ export interface ChatListProps {
   onExpandArchived?: () => void
 }
 
-// ChatRow renders a single chat row. The × is a two-stage trash: on an active
-// row it archives, on an archived row it hard-deletes; `archived` also gates
-// the Restore control. Reusable by both the active groups and the archived section.
+// ChatRow renders a single chat row. An active row has one direct control
+// (archive - reversible); an archived row's Restore and permanent Delete live
+// in its kebab. Reusable by both the active groups and the archived section.
 function ChatRow({
   s,
   activeChatId,
@@ -131,17 +131,13 @@ function ChatRow({
     return () => document.removeEventListener('mousedown', onDocMouseDown)
   }, [menuOpen])
 
-  // The trash button is two-stage: archive first (reversible), hard-delete second.
   // Only the irreversible path needs a confirm.
-  function handleTrashClick(e: React.MouseEvent) {
+  function handleDelete(e: React.MouseEvent) {
     e.stopPropagation()
-    if (archived) {
-      if (window.confirm(`Permanently delete "${s.title || 'New chat'}"? This can't be undone.`)) {
-        onDelete(s.id, e)
-      }
-      return
+    setMenuOpen(false)
+    if (window.confirm(`Permanently delete "${s.title || 'New chat'}"? This can't be undone.`)) {
+      onDelete(s.id, e)
     }
-    onArchive?.(s.id)
   }
 
   return (
@@ -149,7 +145,7 @@ function ChatRow({
       className={`group relative flex flex-col px-3 py-2.5 cursor-pointer border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${activeChatId === s.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''}`}
       onClick={() => onSelect(s.id)}
     >
-      <span title={s.title || 'New chat'} className={`flex items-center ${archived ? 'pr-[88px]' : 'pr-11'}`}>
+      <span title={s.title || 'New chat'} className="flex items-center pr-11">
         <StatusDot status={s.status} className="mr-1.5" variant="chat" />
         <span className={`text-sm truncate block ${activeChatId === s.id ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-100'}`}>
           {s.title || 'New chat'}
@@ -228,14 +224,14 @@ function ChatRow({
         )}
       </div>
       <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{relativeDate(s.updated_at)}</span>
-      {/* Archived rows get an overflow menu for Restore - the only way back once a
-          chat has left the active list. Absolutely positioned in the top-right
-          corner alongside the archive/delete button, NOT in flow, so it never
-          grows the row's height. Always visible: touch has no hover to reveal it. */}
-      {archived && onUnarchive && (
+      {/* Archived rows get one kebab holding Restore and permanent Delete - both
+          secondary, so neither sits bare on the row. Absolutely positioned in the
+          top-right corner, NOT in flow, so it never grows the row's height.
+          Always visible: touch has no hover to reveal it. */}
+      {archived && (
         <div
           ref={menuRef}
-          className="absolute right-11 top-0"
+          className="absolute right-0 top-0"
           onBlur={e => {
             if (!menuRef.current?.contains(e.relatedTarget as Node)) setMenuOpen(false)
           }}
@@ -255,27 +251,40 @@ function ChatRow({
               role="menu"
               className="absolute right-0 top-full mt-1 z-10 min-w-[8rem] rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1"
             >
+              {onUnarchive && (
+                <button
+                  role="menuitem"
+                  onClick={e => { e.stopPropagation(); setMenuOpen(false); onUnarchive(s.id) }}
+                  aria-label="Unarchive chat"
+                  title="Unarchive chat"
+                  className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-blue-50 dark:hover:bg-blue-900/40 hover:text-blue-700 dark:hover:text-blue-400 transition-colors"
+                >
+                  <Icon name="history" className="w-3.5 h-3.5" /> Restore
+                </button>
+              )}
               <button
                 role="menuitem"
-                onClick={e => { e.stopPropagation(); setMenuOpen(false); onUnarchive(s.id) }}
-                aria-label="Unarchive chat"
-                title="Unarchive chat"
-                className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-blue-50 dark:hover:bg-blue-900/40 hover:text-blue-700 dark:hover:text-blue-400 transition-colors"
+                onClick={handleDelete}
+                aria-label="Delete chat permanently"
+                title="Delete chat permanently"
+                className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 text-xs font-medium text-red-500 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
               >
-                <Icon name="history" className="w-3.5 h-3.5" /> Restore
+                <Icon name="delete" className="w-3.5 h-3.5" /> Delete
               </button>
             </div>
           )}
         </div>
       )}
-      <button
-        onClick={handleTrashClick}
-        aria-label={archived ? 'Delete chat permanently' : 'Archive chat'}
-        title={archived ? 'Delete chat permanently' : 'Archive chat'}
-        className="absolute right-0 top-0 min-w-[44px] min-h-[44px] flex items-center justify-center text-gray-400 hover:text-red-500 transition-colors rounded"
-      >
-        <Icon name={archived ? 'delete' : 'archive'} className="w-4 h-4" />
-      </button>
+      {!archived && (
+        <button
+          onClick={e => { e.stopPropagation(); onArchive?.(s.id) }}
+          aria-label="Archive chat"
+          title="Archive chat"
+          className="absolute right-0 top-0 min-w-[44px] min-h-[44px] flex items-center justify-center text-gray-400 hover:text-red-500 transition-colors rounded"
+        >
+          <Icon name="archive" className="w-4 h-4" />
+        </button>
+      )}
     </div>
   )
 }
