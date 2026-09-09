@@ -77,14 +77,16 @@ func init() {
 		Validate:   validateJSONObject[CodeReviewRecord],
 		// Instance = the hint verbatim: the subject's external identity
 		// (e.g. "pr:123"), the same value regardless of round or node.
-		Identity:     func(_ []byte, hint string) (string, error) { return requireHint(hint) },
-		RequiresHint: true,
+		Identity:      func(_ []byte, hint string) (string, error) { return requireHint(hint) },
+		RequiresHint:  true,
+		AgentWritable: true,
 	})
 	recordstore.Register(kindFinding, recordstore.KindSpec{
-		Class:      recordstore.Structured,
-		JSONSchema: findingJSONSchema,
-		Validate:   validateFinding,
-		Identity:   findingIdentity,
+		Class:         recordstore.Structured,
+		JSONSchema:    findingJSONSchema,
+		Validate:      validateFinding,
+		Identity:      findingIdentity,
+		AgentWritable: true,
 	})
 	recordstore.Register(kindDocument, recordstore.KindSpec{
 		Class:        recordstore.Blob,
@@ -100,12 +102,9 @@ func init() {
 	recordstore.Register(kindBytes, recordstore.KindSpec{Class: recordstore.Blob, Identity: contentOrHintIdentity})
 	recordstore.Register(kindJudgeRound, recordstore.KindSpec{
 		Class: recordstore.Structured,
-		// Gate-written only (buildJudgeRoundRecord/saveJudgeRoundRecord) - no
-		// worker ever calls write_judge_round, so the schema stays a permissive
-		// object rather than mirroring JudgeRoundRecord's full shape field for
-		// field. It still needs one so the generic write_<kind> tool generator
-		// (#1091) doesn't silently skip registering it (every registered
-		// Structured kind is expected to expose a write_<kind> tool).
+		// Gate-written only (buildJudgeRoundRecord/saveJudgeRoundRecord) -
+		// AgentWritable stays false so no write_judge_round tool reaches a
+		// worker. Schema stays a permissive object (Register requires one).
 		JSONSchema: `{"type":"object"}`,
 		Validate:   validateJSONObject[JudgeRoundRecord],
 		// Instance = hint verbatim ("<turn_id>-<node_id>-<round>", #1092 design

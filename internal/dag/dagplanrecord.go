@@ -44,7 +44,8 @@ func init() {
 		// Single instance per chat: the chat is already the store's scoping
 		// dimension (session=chatID), so every accepted plan in a chat is one
 		// id's revision history, not a per-plan-id fan-out.
-		Identity: func(_ []byte, _ string) (string, error) { return "main", nil },
+		Identity:      func(_ []byte, _ string) (string, error) { return "main", nil },
+		AgentWritable: true,
 	})
 }
 

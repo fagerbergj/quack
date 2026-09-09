@@ -75,17 +75,20 @@ func excerpt(s string, n int) string {
 func registerReviewTools(srv *mcp.Server, review *vetting.ReviewStage) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolStageReviewComment,
-		Description: "Stage one inline, line-anchored review comment on the pull request under review. Call once per finding; the gate posts them after your answer passes. Returns the id of the staged comment, for later retraction via unstage_review_comment.",
+		Description: "Stage one inline, line-anchored review comment on the pull request under review. Call once per finding; the gate posts them after your answer passes. Returns the id of the staged comment, for later retraction via unstage_review_comment. Duplicates (same path, line, and body) are rejected with the existing id, not double-staged.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args stageReviewCommentInput) (*mcp.CallToolResult, any, error) {
 		if strings.TrimSpace(args.Path) == "" || args.Line <= 0 || strings.TrimSpace(args.Body) == "" {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "stage_review_comment needs a path, a positive line, and a non-empty body"}}}, nil, nil
 		}
-		id := review.AddComment(strings.TrimSpace(args.Path), args.Line, strings.TrimSpace(args.Body))
+		id, dup := review.AddComment(strings.TrimSpace(args.Path), args.Line, strings.TrimSpace(args.Body))
+		if dup {
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("duplicate of %s; not staged", id)}}}, nil, nil
+		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("staged as id %s", id)}}}, nil, nil
 	})
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolListReviewComments,
-		Description: "List comments staged so far, in stage order, paginated (default 50 per page). Each entry has an id, path, line, and a short excerpt of the body. Call this before staging a new finding to check you haven't already recorded it; retract a duplicate with unstage_review_comment(id).",
+		Description: "List comments staged so far, in stage order, paginated (default 50 per page). Each entry has an id, path, line, and a short excerpt of the body.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args listReviewCommentsInput) (*mcp.CallToolResult, any, error) {
 		limit := args.Limit
 		if limit <= 0 {

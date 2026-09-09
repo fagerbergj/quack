@@ -68,7 +68,7 @@ func TestReviewStage_SnapshotVerdictless(t *testing.T) {
 // reports ok=false so the caller can surface an explicit error.
 func TestReviewStage_RemoveComment(t *testing.T) {
 	review := &ReviewStage{}
-	id1 := review.AddComment("a.go", 3, "nit: rename x")
+	id1, _ := review.AddComment("a.go", 3, "nit: rename x")
 	review.AddComment("a.go", 3, "blocking: unrelated finding, same line")
 	review.AddComment("b.go", 9, "suggestion: extract helper")
 
@@ -121,7 +121,7 @@ func TestReviewStage_RemoveComment(t *testing.T) {
 // resolve to a different comment.
 func TestReviewStage_IDsMonotonicPerLocation(t *testing.T) {
 	review := &ReviewStage{}
-	id1 := review.AddComment("a.go", 3, "first finding at this line")
+	id1, _ := review.AddComment("a.go", 3, "first finding at this line")
 	if id1 != "a.go:3#1" {
 		t.Fatalf("first id = %q, want \"a.go:3#1\"", id1)
 	}
@@ -129,7 +129,7 @@ func TestReviewStage_IDsMonotonicPerLocation(t *testing.T) {
 		t.Fatalf("removing %q should succeed", id1)
 	}
 
-	id2 := review.AddComment("a.go", 3, "second, different finding at the same line")
+	id2, _ := review.AddComment("a.go", 3, "second, different finding at the same line")
 	if id2 != "a.go:3#2" {
 		t.Fatalf("re-staged id = %q, want \"a.go:3#2\" (monotonic, not reused)", id2)
 	}
@@ -144,5 +144,37 @@ func TestReviewStage_IDsMonotonicPerLocation(t *testing.T) {
 	sd, ok := review.Snapshot()
 	if !ok || len(sd.Comments) != 1 || sd.Comments[0].Body != "second, different finding at the same line" {
 		t.Fatalf("expected only the re-staged comment to remain: %+v", sd.Comments)
+	}
+}
+
+// TestReviewStage_AddCommentDedupes proves staging the identical
+// path/line/body twice yields one comment: the second call reports the
+// duplicate flag and hands back the first call's id instead of minting a
+// second copy that would double-post on delivery.
+func TestReviewStage_AddCommentDedupes(t *testing.T) {
+	review := &ReviewStage{}
+	id1, dup1 := review.AddComment("a.go", 3, "blocking: nil deref")
+	if dup1 {
+		t.Fatal("first staging of a finding must not report a duplicate")
+	}
+	id2, dup2 := review.AddComment("a.go", 3, "blocking: nil deref")
+	if !dup2 {
+		t.Fatal("re-staging the same path/line/body must report a duplicate")
+	}
+	if id2 != id1 {
+		t.Fatalf("duplicate id = %q, want the existing id %q", id2, id1)
+	}
+	sd, ok := review.Snapshot()
+	if !ok || len(sd.Comments) != 1 {
+		t.Fatalf("want exactly 1 staged comment after a duplicate call, got %+v", sd.Comments)
+	}
+
+	// A different body at the same line is a distinct finding, not a duplicate.
+	id3, dup3 := review.AddComment("a.go", 3, "nit: rename")
+	if dup3 {
+		t.Fatal("a different body at the same path/line must not be treated as a duplicate")
+	}
+	if id3 == id1 {
+		t.Fatal("a distinct finding must get its own id")
 	}
 }

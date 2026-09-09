@@ -84,6 +84,10 @@ type KindSpec struct {
 	// passing a hint unconditionally and corrupting a hint-optional kind's
 	// content-hash identity (#1108 finding 2).
 	RequiresHint bool
+	// AgentWritable gates the generic write_<kind> MCP/ADK tool generators
+	// (#1091) - false for a gate-only kind (judge_round, delivery_record) so
+	// a worker can't forge a verdict/delivery record into the gate's WAL.
+	AgentWritable bool
 
 	name string // set only by Kinds(); not part of the registered spec
 }

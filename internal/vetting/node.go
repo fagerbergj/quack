@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -685,11 +686,29 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			if skip != "" {
 				checksSkipReason = skip
 			}
-			// Render-check screenshot evidence (#1211): only attached when this
-			// node's own rubric scores them; judge-only, never touches the
-			// worker's own question/revision content.
-			shots := renderScreenshotEvidence(judgeCtx, cfg, nodeID, skip == "", act)
-			v, jerr := runJudgeAgent(ledgerCtx, judge, cfg, attachScreenshots(question, shots), answer, act, det, receivedMemories, judgePartEmitter(sink, nodeID, runID))
+			// Terminal round only (no revise ever reads its feedback): a
+			// deterministic criterion already below threshold decides the round
+			// by weakest-link regardless of the judge, so skip that call.
+			detFailedTerminal := false
+			if round > cfg.JudgeRounds {
+				for _, c := range det {
+					if c.Score < cfg.Threshold {
+						detFailedTerminal = true
+						break
+					}
+				}
+			}
+			var v verdict
+			var jerr error
+			if detFailedTerminal {
+				log.Info("terminal round has a failing deterministic criterion; skipping the judge", "round", round)
+			} else {
+				// Render-check screenshot evidence (#1211): only attached when this
+				// node's own rubric scores them; judge-only, never touches the
+				// worker's own question/revision content.
+				shots := renderScreenshotEvidence(judgeCtx, cfg, nodeID, skip == "", act)
+				v, jerr = runJudgeAgent(ledgerCtx, judge, cfg, attachScreenshots(question, shots), answer, act, det, receivedMemories, judgePartEmitter(sink, nodeID, runID))
+			}
 			if jerr != nil {
 				// Judge failure means answer goes out unvetted - loud ERROR, not Warn.
 				log.Error("judge failed; surfacing answer unvetted", "round", round, "err", jerr)
@@ -807,9 +826,21 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 			if paused, ierr := pauseIfWorkerRaisedHITL(ctx, nodeID, ctrl, emit, log); paused {
 				return "", GateResult{}, ierr // ErrNodePaused (wrapping ADK's park sentinel)
 			}
-			if strings.TrimSpace(revised) != "" {
-				answer = revised
+			if strings.TrimSpace(revised) == "" {
+				// Revise round ended on a tool call with no trailing text (finalSpec
+				// answer_len 0). That's only a true no-op if the tool call didn't
+				// change what would be delivered (act unchanged, e.g. a re-read of
+				// a file) - a search, stage_review_comment or edit_artifact call
+				// DOES move act, and the prior verdict never saw it, so it must be
+				// judged before delivery instead of going out un-vetted.
+				if reflect.DeepEqual(act, actFor(answer)) {
+					log.Info("revise produced no text and no new activity; keeping current verdict", "round", round)
+					break
+				}
+				log.Info("revise produced no text but staged new activity; re-judging unchanged answer against it", "round", round)
+				continue
 			}
+			answer = revised
 		}
 		if queuedText != "" {
 			log.Info("node has a queued message; re-running with it", "node", nodeID)
