@@ -124,21 +124,16 @@ func (l *EventLog) Flush() {
 	<-done
 }
 
-// FinishRun is the one correct sequence for ending a run: flush this chat's
-// buffered events to the DB, THEN free the hub's in-memory replay buffer,
-// THEN cancel the run context, THEN drop it from the hub's registry - in
-// that order. Every run-ending goroutine must route through this rather
-// than hand-roll the same four calls: UnregisterRun is what
-// Hub.HasRegisteredRun (and shutdown's DrainActiveRuns poll on it) treats as
-// "safe to consider this run over", so it must not fire until this run's
-// tail is durably persisted - getting that ordering right by hand, spread
-// across five call sites via bare `defer`, is exactly how three of them
-// previously unregistered before flushing.
+// FinishRun is the one correct sequence for ending a run: flush, THEN
+// cancel+unregister, THEN close the hub (which lets a client's stream
+// return) - Close must come last, or a cancel racing the client's "stream
+// ended" signal can still find the run registered and wrongly succeed
+// (see TestSendChatMessage_ResponseCreatedFirst).
 func (l *EventLog) FinishRun(hub *stream.Hub, chatID string, cancelRun context.CancelFunc) {
 	l.Flush()
-	hub.Close(chatID)
 	cancelRun()
 	hub.UnregisterRun(chatID)
+	hub.Close(chatID)
 }
 
 // Append enqueues an event row (non-blocking; drops if queue is full).
