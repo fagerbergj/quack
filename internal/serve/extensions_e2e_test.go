@@ -36,6 +36,7 @@ import (
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/orchestrator"
+	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/server"
 	"github.com/fagerbergj/quack/internal/server/rest"
@@ -159,7 +160,7 @@ func TestSDKExtensionDispatchLoop(t *testing.T) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  greeting: e2e\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -249,7 +250,7 @@ func TestSDKExtensionDispatchKeepsStableUserAcrossRedispatch(t *testing.T) {
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 	var extHolder atomic.Pointer[extsdk.Extension]
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, nil, artifacts)
 
 	const localID = "redispatch-user"
 	chatID := "ext:noop:" + localID
@@ -319,7 +320,7 @@ func TestSDKExtensionInputArtifactWrittenBeforeFirstDispatchIsVisibleToRun(t *te
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 	var extHolder atomic.Pointer[extsdk.Extension]
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, nil, artifacts)
 	write := writeExtInputArtifact(st, artifacts)
 
 	const localID = "pre-dispatch-write"
@@ -368,7 +369,7 @@ func TestSDKExtensionUnconfiguredExtensionRegistersNoRoutes(t *testing.T) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := &config.Config{Workspace: config.WorkspaceConfig{Root: t.TempDir()}}
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -398,7 +399,7 @@ func TestSDKExtensionUnknownNameFailsStartup(t *testing.T) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "bogus-extension:\n  key: value\n")
-	_, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil)
+	_, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected an error for an unconfigured/uncompiled extension name")
 	}
@@ -416,7 +417,7 @@ func TestSDKExtensionDisabledStaysDormant(t *testing.T) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  enabled: false\n  greeting: e2e\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -449,7 +450,7 @@ func TestSDKExtensionDataDirOverrideUsed(t *testing.T) {
 	workspaceRoot := t.TempDir()
 	customDataDir := filepath.Join(t.TempDir(), "custom-noop-data")
 	cfg := noopModulesConfig(t, workspaceRoot, "noop:\n  data_dir: "+customDataDir+"\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -475,7 +476,7 @@ func TestSDKExtensionReservedKeysToleratedByExtensionConfig(t *testing.T) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  enabled: true\n  data_dir: \"\"\n  greeting: still works\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -504,7 +505,7 @@ func TestSDKExtensionReservedNameCollisionFailsStartup(t *testing.T) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "chat:\n  key: value\n")
-	_, err := buildSDKExtensions(cfg, st, hub, &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil)
+	_, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected an error for an extension name colliding with a reserved route")
 	}
@@ -529,7 +530,7 @@ func TestSDKExtensionRedispatchSameChatIDAppendsTurn(t *testing.T) {
 	orchRef.Store(orch)
 
 	var extHolder atomic.Pointer[extsdk.Extension]
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, nil, artifacts)
 
 	const localID = "redispatch-fixture"
 	const chatID = "ext:noop:" + localID
@@ -662,7 +663,7 @@ func TestSDKExtensionRedispatchAfterBoundPlanKeepsAskOnBothTurns(t *testing.T) {
 		Name:  "quack-review",
 		Nodes: []config.WorkflowNode{{ID: "n1", Agent: "worker", Task: "review: {{ask}}"}},
 	}}
-	dispatch := newExtDispatch("github", &orchRef, st, hub, &extHolder, shapes, artifacts)
+	dispatch := newExtDispatch("github", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, shapes, artifacts)
 
 	const localID = "bound-then-unshaped-fixture"
 	const chatID = "ext:github:" + localID
@@ -734,7 +735,7 @@ func TestSDKExtensionDispatchEmptyMessageErrors(t *testing.T) {
 	orchRef.Store(orch)
 
 	var extHolder atomic.Pointer[extsdk.Extension]
-	dispatch := newExtDispatch("github", &orchRef, st, hub, &extHolder, nil, artifacts)
+	dispatch := newExtDispatch("github", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, nil, artifacts)
 
 	const localID = "empty-message-fixture"
 	req := extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID}, Ask: extsdk.Ask{Message: "  "}}
@@ -752,7 +753,7 @@ func TestSDKExtensionUnknownWorkflowErrorsCreatesNoChat(t *testing.T) {
 
 	var extHolder atomic.Pointer[extsdk.Extension]
 	shapes := []workflowcatalog.Shape{{Name: "document-ingest"}}
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, shapes, artifacts)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, shapes, artifacts)
 
 	const localID = "unknown-workflow-fixture"
 	const chatID = "ext:noop:" + localID
@@ -786,7 +787,7 @@ func TestSDKExtensionDispatchRejectsWhileDraining(t *testing.T) {
 	orchRef.Store(orch)
 
 	var extHolder atomic.Pointer[extsdk.Extension]
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, nil)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, nil, nil)
 
 	hub.BeginDraining()
 	req := extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: "draining-fixture"}, Ask: extsdk.Ask{Message: "hello"}}
@@ -815,7 +816,7 @@ func TestSDKExtensionDispatchPreservesTraceContinuity(t *testing.T) {
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 	var extHolder atomic.Pointer[extsdk.Extension]
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, nil, artifacts)
 
 	ctx, inboundSpan := tp.Tracer("quack-ext-test").Start(context.Background(), "inbound")
 	wantTraceID := inboundSpan.SpanContext().TraceID()
@@ -989,7 +990,7 @@ func TestSDKExtensionDispatch_AttachmentHydratesAndPersistsReferenceOnly(t *test
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 	var extHolder atomic.Pointer[extsdk.Extension]
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, nil, artifacts)
 
 	const localID = "attachment-fixture"
 	const chatID = "ext:noop:" + localID
@@ -1112,7 +1113,7 @@ func TestSDKExtensionDispatch_BoundWorkflowSkipsPlannerLLM(t *testing.T) {
 			{ID: "n1", Agent: "worker", Task: "process: {{ask}}"},
 		},
 	}}
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, shapes, artifacts)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, shapes, artifacts)
 
 	const localID = "bound-fixture"
 	const chatID = "ext:noop:" + localID
@@ -1206,7 +1207,7 @@ func TestSDKExtensionDispatch_UnshapedWorkflowFoldsHintIntoMessage(t *testing.T)
 
 	// No Nodes: this shape stays a planner hint, never a binding.
 	shapes := []workflowcatalog.Shape{{Name: "unshaped-hint", Trigger: "t", DAGShape: "s"}}
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, shapes, artifacts)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, shapes, artifacts)
 
 	const localID = "unshaped-fixture"
 	const chatID = "ext:noop:" + localID
@@ -1235,7 +1236,7 @@ func TestSDKExtensionUpdateChatOriginRefreshesBadge(t *testing.T) {
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 	var extHolder atomic.Pointer[extsdk.Extension]
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, nil, artifacts)
 	updateOrigin := newExtUpdateChatOrigin("noop", st, nil, nil, nil)
 
 	const localID = "badge-fixture"

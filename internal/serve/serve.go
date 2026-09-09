@@ -50,6 +50,7 @@ import (
 	"github.com/fagerbergj/quack/internal/promptbuilder"
 	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/replay"
+	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/server"
 	"github.com/fagerbergj/quack/internal/server/adkdebug"
 	mcpserver "github.com/fagerbergj/quack/internal/server/mcp"
@@ -626,10 +627,17 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		}
 	}
 
+	// One EventLog shared by boot resume and every SDK-extension dispatch:
+	// each used to build its own via runlog.NewEventLog per run, leaking that
+	// run's drain goroutine forever (EventLog has no Close). REST keeps its
+	// own separate instance (rest.NewHandler) - a slow boot-resume backlog on
+	// this one must never delay a live REST run's own event drain.
+	bootEventLog := runlog.NewEventLog(st)
+
 	// Built after taskStore/userStore so UpdateChatOrigin's memory-outcome
 	// mapping (design doc §4(b)/§5) can close over the concrete stores
 	// instead of a lazily-resolved ref.
-	sdkExts, err := buildSDKExtensions(cfg, st, runHub, &orchRef, artifacts, jail, &judgeModelRef, taskStore, userStore, ledgerStore)
+	sdkExts, err := buildSDKExtensions(cfg, st, runHub, bootEventLog, &orchRef, artifacts, jail, &judgeModelRef, taskStore, userStore, ledgerStore)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -836,7 +844,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	// After the orchestrator exists: re-enter each resumed node's graph. The
 	// store-side reconcile already ran at boot, so a crash here leaves the
 	// nodes paused and the next boot picks them up again.
-	startResumedNodes(ctx, resumeNodes, orch, st, runHub, cfg.Dag.MaxActiveRuns)
+	startResumedNodes(ctx, resumeNodes, orch, st, runHub, bootEventLog, cfg.Dag.MaxActiveRuns)
 	for _, start := range startSweeps {
 		start()
 	}

@@ -98,7 +98,7 @@ func removeStaleCloneDir(jail *workspace.Jail, chatID string) {
 // orchestrator's own run admission (their slot died with the old process, see
 // RetryNodeResumed), so nothing else caps a restart with many resumable
 // chats from hammering the host at once; the rest just wait their turn here.
-func startResumedNodes(ctx context.Context, nodes []store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, maxConcurrent int) {
+func startResumedNodes(ctx context.Context, nodes []store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, maxConcurrent int) {
 	byChat := map[string][]store.ResumableNode{}
 	var order []string
 	for _, n := range nodes {
@@ -108,7 +108,7 @@ func startResumedNodes(ctx context.Context, nodes []store.ResumableNode, orch *o
 		byChat[n.ChatID] = append(byChat[n.ChatID], n)
 	}
 	boundedGoRun(order, maxConcurrent, func(chatID string) {
-		driveResume(ctx, chatID, byChat[chatID], orch, st, hub)
+		driveResume(ctx, chatID, byChat[chatID], orch, st, hub, eventLog)
 	})
 }
 
@@ -134,7 +134,7 @@ func boundedGoRun(ids []string, maxConcurrent int, run func(id string)) {
 // the same scoped subset path as a REST retry (RetryNode → runDAGSubset:
 // node + descendants, siblings seeded from their stored outputs) - a fresh
 // full-plan run would re-execute done nodes.
-func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub) {
+func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog) {
 	plan, err := st.GetLatestDagPlan(ctx, chatID)
 	if err != nil || plan == nil {
 		slog.Warn("resume: plan lookup failed", "component", "startup", "chat", chatID, "err", err)
@@ -144,7 +144,6 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 	runCtx, cancelRun := context.WithTimeout(context.WithoutCancel(ctx), 24*time.Hour)
 	hub.RegisterRun(chatID, plan.TurnID, cancelRun)
 	_ = st.MarkRunActive(runCtx, chatID, plan.TurnID)
-	eventLog := runlog.NewEventLog(st)
 	eventLog.Reset(runCtx, chatID) // old run's (chat_id, seq) rows would PK-collide with the new publisher
 	// FinishRun flushes then closes then unregisters, in that order - see its doc.
 	defer eventLog.FinishRun(hub, chatID, cancelRun)

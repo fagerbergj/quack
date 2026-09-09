@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"google.golang.org/adk/v2/tool"
 
+	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
 )
@@ -62,7 +63,7 @@ func TestDriveExtensionRunEvents_InterruptedSkipsRunEnded(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		driveExtensionRunEvents(context.Background(), "noop", nil, st, hub, &extHolder, "ext", chatID, "turn-1", 0, run)
+		driveExtensionRunEvents(context.Background(), "noop", nil, st, hub, runlog.NewEventLog(st), &extHolder, "ext", chatID, "turn-1", 0, run)
 		close(done)
 	}()
 

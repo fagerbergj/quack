@@ -22,6 +22,7 @@ import (
 	"github.com/fagerbergj/quack/internal/ledgertest"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
+	"github.com/fagerbergj/quack/internal/runlog"
 )
 
 // fixedEmbedder returns the same unit vector for every text - enough to
@@ -192,7 +193,7 @@ func TestUpdateChatOriginOpenToClosedInvalidatesBothStores(t *testing.T) {
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 	var extHolder atomic.Pointer[extsdk.Extension]
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, nil, artifacts)
 
 	taskMem, _ := newMemStoreForTest(t, "task")
 	userMem, _ := newMemStoreForTest(t, "user")
@@ -251,7 +252,7 @@ func TestUpdateChatOriginOpenToMergedReinforces(t *testing.T) {
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 	var extHolder atomic.Pointer[extsdk.Extension]
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, nil, artifacts)
 
 	taskMem, _ := newMemStoreForTest(t, "task")
 	lgr := newLedgerStoreForTest()
@@ -307,7 +308,7 @@ func TestUpdateChatOriginRepeatedClosedAppliesNothing(t *testing.T) {
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 	var extHolder atomic.Pointer[extsdk.Extension]
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, nil, artifacts)
 
 	taskMem, _ := newMemStoreForTest(t, "task")
 	lgr := newLedgerStoreForTest()
@@ -350,7 +351,7 @@ func TestUpdateChatOriginStatelessOriginAppliesNothing(t *testing.T) {
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 	var extHolder atomic.Pointer[extsdk.Extension]
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, nil, artifacts)
 
 	taskMem, _ := newMemStoreForTest(t, "task")
 	lgr := newLedgerStoreForTest()
@@ -393,7 +394,7 @@ func TestUpdateChatOriginFollowsStateNotBadge(t *testing.T) {
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 	var extHolder atomic.Pointer[extsdk.Extension]
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, nil, artifacts)
 
 	taskMem, _ := newMemStoreForTest(t, "task")
 	ops := &fakeOpsLog{}
@@ -436,7 +437,7 @@ func TestUpdateChatOriginSucceedsDespiteMemoryStoreFailure(t *testing.T) {
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 	var extHolder atomic.Pointer[extsdk.Extension]
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, nil, artifacts)
 
 	taskMem, taskPath := newMemStoreForTest(t, "task")
 	lgr := newLedgerStoreForTest()
@@ -477,7 +478,7 @@ func TestUpdateChatOriginReinforcesRecalledNotMinted(t *testing.T) {
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	orchRef.Store(orch)
 	var extHolder atomic.Pointer[extsdk.Extension]
-	dispatch := newExtDispatch("noop", &orchRef, st, hub, &extHolder, nil, artifacts)
+	dispatch := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, nil, artifacts)
 
 	taskMem, _ := newMemStoreForTest(t, "task")
 	lgr := newLedgerStoreForTest()

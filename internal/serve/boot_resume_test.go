@@ -20,6 +20,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/orchestrator"
+	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
@@ -270,7 +271,7 @@ func TestDriveResume_ReentryRunsPausedNodeOnly(t *testing.T) {
 	_ = resp
 
 	driveResume(ctx, chatID, []store.ResumableNode{{ChatID: chatID, PlanID: plan.ID, NodeID: "n2", Reason: dag.PauseShutdown}},
-		orch, st, stream.NewHub())
+		orch, st, stream.NewHub(), runlog.NewEventLog(st))
 
 	prompts := stub.workerPrompts()
 	ran := func(task string) bool {
@@ -372,7 +373,7 @@ func TestDriveResume_ReachesWorkerInOriginalScope(t *testing.T) {
 	}
 
 	driveResume(ctx, chatID, []store.ResumableNode{{ChatID: chatID, PlanID: plan.ID, NodeID: "n1", Reason: dag.PauseShutdown}},
-		orch, st, stream.NewHub())
+		orch, st, stream.NewHub(), runlog.NewEventLog(st))
 
 	n1, err := st.GetDagNode(ctx, plan.ID, "n1")
 	if err != nil || n1 == nil {
