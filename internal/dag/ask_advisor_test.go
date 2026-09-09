@@ -458,12 +458,12 @@ func TestAskAdvisor_OverA2A(t *testing.T) {
 	// Serve the worker over REAL loopback A2A with the SAME shared session
 	// service production uses for everything (internal/serve passes st.Sessions
 	// to agent.Serve, the executor, and tools.Deps.Sessions alike).
-	srv, err := quackagent.Serve(worker, sessions, nil, quackagent.Compaction{}, "", nil)
+	srv, err := quackagent.Serve(worker, sessions, nil, nil, quackagent.Compaction{}, "", nil)
 	if err != nil {
 		t.Fatalf("a2a serve: %v", err)
 	}
 	defer srv.Close()
-	client, err := srv.ClientForNode("test-node")
+	client, err := srv.ClientForNode("test-node", "test-ctx")
 	if err != nil {
 		t.Fatalf("a2a client: %v", err)
 	}

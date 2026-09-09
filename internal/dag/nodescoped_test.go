@@ -101,7 +101,7 @@ type nodeScopedStub struct {
 	cachedT []tool.Tool
 }
 
-func (s *nodeScopedStub) ForNode(nodeKey string, _ func() string, _ artifact.Service, _, _, _, _ string, _ func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(int, string, string, string), func(), error) {
+func (s *nodeScopedStub) ForNode(nodeKey string, _ func() string, _ artifact.Service, _, _, _, _ string, _ func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(int, string, string, string), func(bool), error) {
 	s.mu.Lock()
 	s.calls++
 	m, builtins := s.cachedM, s.cachedT
@@ -135,7 +135,7 @@ func (s *nodeScopedStub) ForNode(nodeKey string, _ func() string, _ artifact.Ser
 	s.mu.Lock()
 	s.built = append(s.built, fmt.Sprintf("%s:%p", nodeKey, m))
 	s.mu.Unlock()
-	return worker, m, builtins, nil, func() {}, nil
+	return worker, m, builtins, nil, func(bool) {}, nil
 }
 
 // runTwoConcurrentNodes drives a 2-node, no-dependency plan (both nodes named

@@ -84,12 +84,12 @@ func TestNodeOverA2A_ResumesItsOwnRemoteSessionAcrossRounds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("worker agent: %v", err)
 	}
-	srv, err := quackagent.Serve(worker, sessions, nil, quackagent.Compaction{}, "", nil)
+	srv, err := quackagent.Serve(worker, sessions, nil, nil, quackagent.Compaction{}, "", nil)
 	if err != nil {
 		t.Fatalf("a2a serve: %v", err)
 	}
 	t.Cleanup(func() { _ = srv.Close() })
-	client, err := srv.ClientForNode("test-node")
+	client, err := srv.ClientForNode("test-node", "test-ctx")
 	if err != nil {
 		t.Fatalf("a2a client: %v", err)
 	}

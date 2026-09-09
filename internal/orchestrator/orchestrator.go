@@ -24,6 +24,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/runner"
 	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/session/compaction"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/loadartifactstool"
 	"google.golang.org/adk/v2/workflow"
@@ -70,6 +71,31 @@ type Orchestrator struct {
 	runDeadline time.Duration
 	runAdmit    *dag.Admission
 	queuedChats sync.Map
+	// nodeSessions best-effort reaps a chat's per-DAG-node ADK sessions
+	// (deterministic "<chatID>:<nodeID>" ids - see internal/agent.WorkerSessionID)
+	// alongside the chat-level one ResetSession already deletes. nil (e.g.
+	// tests) skips it - see SetNodeSessionReaper.
+	nodeSessions func(ctx context.Context, chatID string) error
+	// compaction: built once from config (see SetCompaction) and reused on
+	// every turn's runner.Config - nil leaves the chat session uncompacted,
+	// same as before #A3.
+	compaction *compaction.Config
+}
+
+// SetCompaction wires adk/v2's native runner-level compaction (built via
+// internal/agent.NativeCompactionConfig, the same helper a worker node's own
+// A2AServer uses - internal/agent.Serve) onto the orchestrator's own runner,
+// so the chat session that persists across every turn compacts too, not
+// only the ephemeral per-node ones (#A3). nil is a valid "disabled" value.
+func (o *Orchestrator) SetCompaction(cfg *compaction.Config) { o.compaction = cfg }
+
+// SetNodeSessionReaper wires the store-layer sweep (store.ReapNodeSessions)
+// ResetSession uses to also delete a chat's per-node worker sessions -
+// store owns the raw SQL because sessions/events are only addressable that
+// way by chat id (session.Service has no pattern-delete), and orchestrator
+// must not import store (serve already imports both; see New's callers).
+func (o *Orchestrator) SetNodeSessionReaper(fn func(ctx context.Context, chatID string) error) {
+	o.nodeSessions = fn
 }
 
 // SetArtifacts wires an artifact.Service into the orchestrator's own runner
@@ -704,6 +730,9 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			MemoryService:     memSvc,
 			ArtifactService:   artifacts,
 			AutoCreateSession: true,
+			// The long-lived chat session, unlike a node's - it otherwise
+			// grows unbounded across every turn (#A3).
+			Compaction: o.compaction,
 		})
 		if err != nil {
 			yield(stream.Errorf("orchestrator: runner: "+err.Error()), nil)
@@ -1024,7 +1053,18 @@ func (o *Orchestrator) startNodeRun(ctx context.Context, userID, sessionID, mess
 
 // ResetSession deletes session history so the next Run starts fresh.
 func (o *Orchestrator) ResetSession(ctx context.Context, userID, sessionID string) error {
-	return o.sessions.Delete(ctx, &session.DeleteRequest{AppName: AppName, UserID: userID, SessionID: sessionID})
+	if err := o.sessions.Delete(ctx, &session.DeleteRequest{AppName: AppName, UserID: userID, SessionID: sessionID}); err != nil {
+		return err
+	}
+	if o.nodeSessions != nil {
+		// sessionID == chatID at AppName (see Run's callers) - best-effort:
+		// a reset must still succeed even if the node sweep can't run.
+		if err := o.nodeSessions(ctx, sessionID); err != nil {
+			slog.Warn("session reset but its per-node worker sessions could not be reaped",
+				"component", "orchestrator", "chat", sessionID, "err", err)
+		}
+	}
+	return nil
 }
 
 // PriorEvents reads a chat's persisted session events (nil if missing).

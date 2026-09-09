@@ -20,12 +20,6 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// advisorAppName: separate namespace so advisor sessions never collide with chat sessions.
-const advisorAppName = "quack-advisor"
-
-// advisorUserID: fixed user for all advisor sessions, sidestepping A2A user-ID discontinuity.
-const advisorUserID = "advisor"
-
 // askAdvisorDescription: the relationship contract.
 const askAdvisorDescription = "Consult your advisor: a mentor who already knows this task's goal " +
 	"and its acceptance rubric, and is always available to help you reach it - without doing the work for " +
@@ -154,16 +148,16 @@ func consultAdvisor(ctx context.Context, advisor adkagent.Agent, sessions sessio
 
 // consultOnce: single consult attempt - check/seed the thread, run the advisor in an isolated runner.
 func consultOnce(ctx context.Context, advisor adkagent.Agent, sessions session.Service, token, seed, request string) (string, error) {
-	sessID := token + ":advisor"
+	sessID := vetting.AdvisorSessionID(token)
 
 	// Thread already exists - don't reseed.
 	seedThis := seed
-	if _, err := sessions.Get(ctx, &session.GetRequest{AppName: advisorAppName, UserID: advisorUserID, SessionID: sessID}); err == nil {
+	if _, err := sessions.Get(ctx, &session.GetRequest{AppName: vetting.AdvisorSessionApp, UserID: vetting.AdvisorSessionUser, SessionID: sessID}); err == nil {
 		seedThis = ""
 	}
 
 	r, err := runner.New(runner.Config{
-		AppName: advisorAppName, Agent: advisor, SessionService: sessions, AutoCreateSession: true,
+		AppName: vetting.AdvisorSessionApp, Agent: advisor, SessionService: sessions, AutoCreateSession: true,
 	})
 	if err != nil {
 		return "", fmt.Errorf("tools: advisor runner: %w", err)
@@ -176,7 +170,7 @@ func consultOnce(ctx context.Context, advisor adkagent.Agent, sessions session.S
 	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: prompt}}}
 
 	var out strings.Builder
-	for ev, rerr := range r.Run(ctx, advisorUserID, sessID, content, adkagent.RunConfig{}) {
+	for ev, rerr := range r.Run(ctx, vetting.AdvisorSessionUser, sessID, content, adkagent.RunConfig{}) {
 		if rerr != nil {
 			return "", rerr
 		}

@@ -13,6 +13,7 @@ import (
 	"google.golang.org/adk/v2/session"
 
 	"github.com/fagerbergj/quack/internal/store"
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // TestConsultAdvisor_ConcurrentSameThreadDBService pins a real bug: ADK runs
@@ -57,7 +58,7 @@ func TestConsultAdvisor_ConcurrentSameThreadDBService(t *testing.T) {
 
 	// Every request must be in the single advisor session's history.
 	resp, err := st.Sessions.Get(context.Background(), &session.GetRequest{
-		AppName: advisorAppName, UserID: advisorUserID, SessionID: token + ":advisor",
+		AppName: vetting.AdvisorSessionApp, UserID: vetting.AdvisorSessionUser, SessionID: vetting.AdvisorSessionID(token),
 	})
 	if err != nil {
 		t.Fatalf("get advisor session: %v", err)

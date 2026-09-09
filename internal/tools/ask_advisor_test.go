@@ -365,14 +365,14 @@ type brokenAdvisorSessions struct {
 }
 
 func (b brokenAdvisorSessions) Get(ctx context.Context, req *session.GetRequest) (*session.GetResponse, error) {
-	if req.AppName == advisorAppName {
+	if req.AppName == vetting.AdvisorSessionApp {
 		return nil, errors.New("boom: advisor store unavailable")
 	}
 	return b.Service.Get(ctx, req)
 }
 
 func (b brokenAdvisorSessions) Create(ctx context.Context, req *session.CreateRequest) (*session.CreateResponse, error) {
-	if req.AppName == advisorAppName {
+	if req.AppName == vetting.AdvisorSessionApp {
 		return nil, errors.New("boom: advisor store unavailable")
 	}
 	return b.Service.Create(ctx, req)

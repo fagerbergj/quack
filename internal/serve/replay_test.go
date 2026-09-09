@@ -100,7 +100,7 @@ func TestBuildAgents_ReplayProvider_NativeAgentToolsAreStubs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ForNode: %v", err)
 	}
-	defer release()
+	defer release(false)
 
 	if len(tools) != 1 {
 		t.Fatalf("built %d tools, want 1 (current_date)", len(tools))

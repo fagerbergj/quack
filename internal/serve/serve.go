@@ -828,6 +828,29 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	// (#1095/#1118) must not depend on load_artifacts being in orchestrator.tools -
 	// a prod config without it silently dropped every plan record (#1122).
 	orch.SetArtifacts(artifacts)
+	orch.SetNodeSessionReaper(st.ReapNodeSessions)
+	// Same source of truth as buildAgents' per-node compactionFor
+	// (cfg.Session.Compaction) - built once here for the orchestrator's own
+	// long-lived chat session, which buildAgents never sees (#A3).
+	if orchCompCfg := cfg.Session.Compaction; orchCompCfg.Enabled {
+		if cfg.Orchestrator.ContextWindow <= 0 {
+			slog.Warn("context compaction enabled but orchestrator.context_window is unset; not compacting the chat session", "component", "startup")
+		} else {
+			orchComp, cerr := agent.NativeCompactionConfig(agent.Compaction{
+				Summarizer:         llm,
+				ContextWindow:      cfg.Orchestrator.ContextWindow,
+				Enabled:            true,
+				TokenThreshold:     orchCompCfg.TokenThreshold,
+				EventRetentionSize: orchCompCfg.EventRetentionSize,
+				CompactionInterval: orchCompCfg.CompactionInterval,
+				OverlapSize:        orchCompCfg.OverlapSize,
+			})
+			if cerr != nil {
+				return nil, nil, "", fmt.Errorf("compaction: orchestrator: %w", cerr)
+			}
+			orch.SetCompaction(orchComp)
+		}
+	}
 	if ledgerStore != nil {
 		orch.SetLedger(ledgerStore)
 	}
@@ -1376,7 +1399,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 		}
 		clientMap[name] = nativeAgent{
 			Agent: protoAgent,
-			build: func(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(), error) {
+			build: func(nodeKey string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(paused bool), error) {
 				var extraTools []tool.Tool
 				var setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string)
 				if artifacts != nil {
@@ -1400,16 +1423,22 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				if err != nil {
 					return nil, nil, nil, nil, nil, err
 				}
-				srv, err := agent.Serve(wag, sessions, memSvc, compactionFor(ac, wm), nodeID, sink)
+				srv, err := agent.Serve(wag, sessions, memSvc, artifacts, compactionFor(ac, wm), nodeID, sink)
 				if err != nil {
 					return nil, nil, nil, nil, nil, fmt.Errorf("a2a serve: %w", err)
 				}
-				client, err := srv.ClientForNode(nodeKey)
+				workerContextID := agent.WorkerSessionID(chatID, nodeID)
+				client, err := srv.ClientForNode(nodeKey, workerContextID)
 				if err != nil {
 					_ = srv.Close()
 					return nil, nil, nil, nil, nil, fmt.Errorf("a2a client: %w", err)
 				}
-				return client, wm, builtins, setRoundCoords, nodeServers.track(srv), nil
+				// track's release also reaps the deterministic worker session
+				// this node's first dispatch creates (agent.scopeMessage) -
+				// otherwise every node execution leaks a Postgres
+				// sessions/events row forever (#A2).
+				release := nodeServers.track(srv, sessions, wag.Name(), agent.WorkerSessionUser(workerContextID), workerContextID)
+				return client, wm, builtins, setRoundCoords, release, nil
 			},
 		}
 		agentTools := ac.Tools

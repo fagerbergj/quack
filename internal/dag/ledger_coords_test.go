@@ -69,8 +69,8 @@ type lcScopedAgent struct {
 	tools []tool.Tool
 }
 
-func (a lcScopedAgent) ForNode(string, func() string, artifact.Service, string, string, string, string, func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(int, string, string, string), func(), error) {
-	return a.Agent, a.model, a.tools, nil, func() {}, nil
+func (a lcScopedAgent) ForNode(string, func() string, artifact.Service, string, string, string, string, func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(int, string, string, string), func(bool), error) {
+	return a.Agent, a.model, a.tools, nil, func(bool) {}, nil
 }
 
 // ledgerCoordsStub calls current_date once, answers, and passes the judge
