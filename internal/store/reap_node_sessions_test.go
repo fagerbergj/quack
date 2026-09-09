@@ -74,3 +74,42 @@ func TestDeleteChat_ReapsPerNodeWorkerSessions(t *testing.T) {
 		t.Errorf("unrelated chat's session was reaped by this chat's DeleteChat: %v (session=%v)", err, other)
 	}
 }
+
+// TestReapNodeSessions_UnderscoreDoesNotWidenMatch is a regression test for
+// the ADK audit's A2 finding: ReapNodeSessions built its LIKE pattern from
+// the raw chat id, and SQL LIKE treats a bare "_" as "match any one
+// character" - a chat id containing a literal underscore (plausible: GitHub
+// repo names allow them, e.g. "ext:github:owner/my_repo#42") could sweep a
+// different chat's still-live worker session that merely differs by one
+// character at that position. likeEscape backslash-escapes the wildcard
+// before it reaches the query.
+func TestReapNodeSessions_UnderscoreDoesNotWidenMatch(t *testing.T) {
+	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("New sqlite: %v", err)
+	}
+	ctx := context.Background()
+
+	const target = "chat_1" // literal underscore
+	const collider = "chatX1" // "_" in target's LIKE pattern would also match this
+	for _, id := range []string{target, collider} {
+		resp, err := st.Sessions.Create(ctx, &session.CreateRequest{AppName: "code-implementer", UserID: "A2A_USER_" + id + ":n1", SessionID: id + ":n1"})
+		if err != nil {
+			t.Fatalf("session Create %q: %v", id, err)
+		}
+		if err := st.Sessions.AppendEvent(ctx, resp.Session, session.NewEvent(ctx, "test")); err != nil {
+			t.Fatalf("AppendEvent %q: %v", id, err)
+		}
+	}
+
+	if err := st.ReapNodeSessions(ctx, target); err != nil {
+		t.Fatalf("ReapNodeSessions: %v", err)
+	}
+
+	if resp, err := st.Sessions.Get(ctx, &session.GetRequest{AppName: "code-implementer", UserID: "A2A_USER_" + target + ":n1", SessionID: target + ":n1"}); err == nil && resp != nil && resp.Session != nil {
+		t.Errorf("target chat %q session still present after its own ReapNodeSessions", target)
+	}
+	if resp, err := st.Sessions.Get(ctx, &session.GetRequest{AppName: "code-implementer", UserID: "A2A_USER_" + collider + ":n1", SessionID: collider + ":n1"}); err != nil || resp == nil || resp.Session == nil {
+		t.Errorf("unrelated chat %q session reaped by %q's ReapNodeSessions (LIKE wildcard escaped?): %v", collider, target, err)
+	}
+}

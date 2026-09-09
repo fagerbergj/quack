@@ -448,6 +448,51 @@ func TestGroupSessionEvents(t *testing.T) {
 	}
 }
 
+// compactionEvent mirrors what ADK's compactor actually persists (adk/v2
+// internal/compactioninternal summary_event.go newSummaryEvent): Author
+// "user" (a summary is injected context, re-authored "model" only when
+// materialized into a prompt) but no top-level Content - the summary prose
+// lives solely under Actions.Compaction.CompactedContent. groupSessionEvents'
+// `ev.Content == nil` guard must skip it rather than reading Author=="user"
+// as a new turn boundary (#A3: the orchestrator's chat session can now carry
+// one of these once compaction is enabled).
+func compactionEvent() *session.Event {
+	ev := session.NewEvent(context.Background(), "test")
+	ev.Author = "user"
+	ev.Actions.Compaction = &session.EventCompaction{
+		CompactedContent: &genai.Content{Role: "model", Parts: []*genai.Part{{Text: "earlier turns summarized…"}}},
+	}
+	return ev
+}
+
+// TestGroupSessionEvents_CompactionEventDoesNotSplitATurn is a regression
+// test for the ADK audit's A3 finding: a compaction summary event has no
+// top-level Content (see compactionEvent), so it must not register as a
+// bogus Author=="user" turn boundary - that would desync groupSessionEvents'
+// output length from ListTurns' row count and shift every later turn's
+// content onto the wrong ChatTurn in GetTurnsWithContent's offset alignment.
+func TestGroupSessionEvents_CompactionEventDoesNotSplitATurn(t *testing.T) {
+	events := []*session.Event{
+		userEvent("turn one"),
+		asstEvent(&genai.Part{Text: "reply one"}),
+		compactionEvent(),
+		userEvent("turn two"),
+		asstEvent(&genai.Part{Text: "reply two"}),
+	}
+
+	groups := groupSessionEvents(slices.Values(events))
+
+	if len(groups) != 2 {
+		t.Fatalf("got %d groups, want 2 (the compaction event must not start a third)", len(groups))
+	}
+	if groups[0].userText != "turn one" || groups[0].asstText != "reply one" {
+		t.Errorf("turn 0 = %+v", groups[0])
+	}
+	if groups[1].userText != "turn two" || groups[1].asstText != "reply two" {
+		t.Errorf("turn 1 = %+v", groups[1])
+	}
+}
+
 // nodeEvent is a gate-internal event (a worker draft, an advisor consult, a
 // revision) - tagged with NodeInfo, unlike the orchestrator's own top-level
 // events (asstEvent, persistAnswer). Never the user-facing message.

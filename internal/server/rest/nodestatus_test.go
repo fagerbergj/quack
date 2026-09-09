@@ -321,6 +321,39 @@ func TestStartNode_AwaitingInputRegistersRunSynchronously(t *testing.T) {
 	}
 }
 
+// TestUpdateNodeStatus_AwaitingInputRetryRejected: needs_input -> running
+// via the generic status endpoint must be refused, not routed into
+// retryNodeAsync - the node's worker A2A session survives an awaiting_input
+// pause on purpose (#A2) with an unanswered function call at its tail, and a
+// bare retry dispatch would land in that same deterministic session without
+// ever answering it. Only StartNode (with an answer) may resume it.
+func TestUpdateNodeStatus_AwaitingInputRetryRejected(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID, nodeID := "c1", "p1", "n1"
+	seedPlan(t, h, chatID, planID, nodeID)
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "needs_input", PendingQuestion: "which region?"}); err != nil {
+		t.Fatalf("seed parked node: %v", err)
+	}
+
+	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusRunning})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (awaiting_input must resume via start, not retry); body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Also reject a "paused" status row whose pause_reason is awaiting_input
+	// (the two on-disk spellings dagNodeState/UpdateNodeStatus both accept).
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "paused"}); err != nil {
+		t.Fatalf("reseed paused node: %v", err)
+	}
+	if err := h.store.SetNodeStatusForChat(context.Background(), chatID, nodeID, "", string(dag.PauseAwaitingInput), "which region?"); err != nil {
+		t.Fatalf("stamp awaiting_input pause reason: %v", err)
+	}
+	rec = putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusRunning})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (paused/awaiting_input must resume via start, not retry); body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 // TestUpdateNodeStatus_RunningSelfLoopIllegal: the old steer-via-status
 // (running → running) no longer exists - steering is queueing a message
 // (POST .../queue), which doesn't transition the node's status at all.

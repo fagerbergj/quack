@@ -80,6 +80,13 @@ func TestRunPlanAsGraph_FreshRunResetsStaleReviewFanout(t *testing.T) {
 // Finish again) gets silently dropped from the merge.
 func TestRunPlanAsGraph_ResumeDoesNotResetReviewFanout(t *testing.T) {
 	planID := "plan-resume-" + t.Name()
+	// This test drives Finish directly rather than through the delivery path
+	// that normally calls forget() (deliverMergedReview) or the fresh-run
+	// reset buildGateNodes applies - so once it delivers, the package-level
+	// registry (vetting.reviewFanouts) keeps this exact planID's now-delivered
+	// instance forever, and go test -count>1 reruns this func with the same
+	// t.Name() and so the same planID, colliding with itself.
+	t.Cleanup(func() { vetting.ResetReviewFanout(planID) })
 	fanout := vetting.GetReviewFanout(planID, 2)
 	fanout.Finish("r-done", vetting.StagedDelivery{Kind: "review", Event: "approve", Body: "peer already staged"}, true, false)
 

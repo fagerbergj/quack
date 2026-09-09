@@ -921,7 +921,17 @@ func (s *Store) DeleteChat(ctx context.Context, id string) error {
 // AdvisorSessionID keys those "<planID>/<nodeID>:advisor" - not chatID
 // prefixed); those are reaped at node-done by internal/dag.newGatedNode.
 func (s *Store) ReapNodeSessions(ctx context.Context, chatID string) error {
-	return s.db.WithContext(ctx).Exec("DELETE FROM sessions WHERE id = ? OR id LIKE ?", chatID, chatID+":%").Error
+	return s.db.WithContext(ctx).Exec("DELETE FROM sessions WHERE id = ? OR id LIKE ? ESCAPE '\\'",
+		chatID, likeEscape(chatID)+":%").Error
+}
+
+// likeEscape backslash-escapes a LIKE pattern's own wildcards (%, _) so a
+// value used as a literal prefix - a chat id, which can legitimately contain
+// either character (e.g. a GitHub repo name with an underscore) - can't
+// widen the match to another chat's rows. Pair with `ESCAPE '\'` in the query.
+func likeEscape(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return r.Replace(s)
 }
 
 // deleteChatArtifacts best-effort cascades chat deletion into the artifact
