@@ -92,7 +92,8 @@ func EntryFromRecord(r sdklog.Record) (Entry, bool) {
 			Temperature: num("gen_ai.request.temperature"), MaxTokens: int64(num("gen_ai.request.max_tokens")),
 			PromptName: str("gen_ai.prompt.name"), PromptVersion: str("gen_ai.prompt.version"),
 			SystemInstructions: str("gen_ai.system_instructions"), ToolDefinitions: str("gen_ai.tool.definitions"),
-			Input: str("gen_ai.input.messages"), Output: str("gen_ai.output.messages"), Error: str("error.type")}
+			Input: str("gen_ai.input.messages"), Output: str("gen_ai.output.messages"), Error: str("error.type"),
+			QuackVersion: str("quack.version"), BundleHash: str("quack.bundle.hash"), CostUSD: num("gen_ai.usage.cost")}
 		if len(finish) > 0 {
 			p.FinishReason, _ = finish[0].(string)
 		}

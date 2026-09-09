@@ -416,6 +416,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	}
 
 	ledgerStore := LedgerStoreFromConfig(cfg)
+	inference.Version = Version // llm.call ledger provenance (#1096)
 	otelProviders, otelShutdown, err := otelobs.Init(ctx, cfg.Observability, ledgerStore, Version)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("otel init failed: %w", err)
@@ -1192,6 +1193,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 				if err != nil {
 					return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "rubric: %v", err)
 				}
+				agentGateCfg.BundleHash = bundle.Hash
 				gateCfgs[name] = agentGateCfg
 				grading = promptbuilder.GradingFacts(agentGateCfg.Threshold, agentGateCfg.JudgeRounds, agentGateCfg.ReadOnly, agentGateCfg.RequireRetrieval)
 			}
@@ -1303,6 +1305,7 @@ func buildAgents(cfg *config.Config, sessions session.Service, skillTS *skilltoo
 			if err != nil {
 				return nil, nil, nodeServers, nil, nil, nil, nil, fmtErr(name, "rubric: %v", err)
 			}
+			agentGateCfg.BundleHash = bundle.Hash
 			gateCfgs[name] = agentGateCfg
 			grading = promptbuilder.GradingFacts(agentGateCfg.Threshold, agentGateCfg.JudgeRounds, agentGateCfg.ReadOnly, agentGateCfg.RequireRetrieval)
 		}

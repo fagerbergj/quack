@@ -117,6 +117,12 @@ type LLMCallPayload struct {
 	Input              string  `json:"input,omitempty"`
 	Output             string  `json:"output,omitempty"`
 	Error              string  `json:"error,omitempty"`
+	// QuackVersion/BundleHash/CostUSD: provenance added for #1096 - which
+	// build and agent bundle produced this call, and what it cost (0 when
+	// the model has no config.ModelPricing entry).
+	QuackVersion string  `json:"quack_version,omitempty"`
+	BundleHash   string  `json:"bundle_hash,omitempty"`
+	CostUSD      float64 `json:"cost_usd,omitempty"`
 }
 
 // ToolCallPayload is a KindToolCall entry's payload (one execute_tool call).

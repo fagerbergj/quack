@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +17,11 @@ import (
 type Bundle struct {
 	Card   Card
 	Prompt string
+	// Hash: stable digest over agent-card.json + prompt.md + rubric.yaml (if
+	// present), computed once at load - ledger provenance for "this bundle
+	// produced this output" (#1096). rubric.yaml is optional and read
+	// directly here rather than via vetting (would import-cycle).
+	Hash string
 }
 
 // Card is the agent's identity, parsed from agent-card.json. Skills are
@@ -62,7 +69,18 @@ func LoadBundle(dir string) (*Bundle, error) {
 		return nil, fmt.Errorf("agent bundle %q: %s is empty", dir, promptFile)
 	}
 
-	return &Bundle{Card: card, Prompt: prompt}, nil
+	rubric, err := bundledir.ReadFile(bundledir.PathJoin(dir, "rubric.yaml"))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("agent bundle %q: read rubric.yaml: %w", dir, err)
+	}
+
+	h := sha256.New()
+	h.Write(rawCard)
+	h.Write(rawPrompt)
+	h.Write(rubric)
+	hash := hex.EncodeToString(h.Sum(nil))[:16]
+
+	return &Bundle{Card: card, Prompt: prompt, Hash: hash}, nil
 }
 
 // LoadBundleMemory reads an optional memory.md from the bundle directory.

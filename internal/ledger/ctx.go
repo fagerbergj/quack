@@ -11,6 +11,9 @@ type Coords struct {
 	Node   string
 	Agent  string
 	Round  string
+	// BundleHash: the acting agent's bundle content hash (agent.Bundle.Hash),
+	// stamped alongside Agent - provenance for which prompt version ran.
+	BundleHash string
 	// User: the ADK session identity that owns this run (local user, GitHub
 	// commenter login, etc) - observability attribution only.
 	User string
@@ -53,6 +56,9 @@ func FillBlankCoords(ctx, stamp Coords) Coords {
 	if ctx.Agent == "" {
 		ctx.Agent = stamp.Agent
 	}
+	if ctx.BundleHash == "" {
+		ctx.BundleHash = stamp.BundleHash
+	}
 	if ctx.Round == "" {
 		ctx.Round = stamp.Round
 	}
@@ -73,7 +79,7 @@ func FillBlankCoords(ctx, stamp Coords) Coords {
 // (its TraceState wraps a slice), so this can't be a plain `== Coords{}`.
 func (c Coords) IsZero() bool {
 	return c.ChatID == "" && c.Node == "" && c.Agent == "" && c.Round == "" &&
-		c.User == "" && c.Source == "" && !c.SpanContext.IsValid()
+		c.BundleHash == "" && c.User == "" && c.Source == "" && !c.SpanContext.IsValid()
 }
 
 // CoordSetter lets emission wrappers be re-stamped with fresh coordinates after construction.

@@ -82,6 +82,8 @@ The active/queued/in-flight gauges (`quack.runs.active`, `quack.runs.queued`, `q
 
 The ledger is quack's write-ahead log: one append-only stream of typed entries per chat in Postgres (`ledger_entries`). Intents (artifact revisions, delivery, node lifecycle, judge rounds) are appended before the state change they describe; observations (`llm.call`, `tool.call`, `agent.invoke`, `eval.score`) are appended after the fact from the `gen_ai.*` OTel log records that `inference.NewModel`, `tools.Build`, the ACP subprocess connection and the judge emit. Every entry carries the chat id plus `node_id`/`agent`/`round`, the replay stream identity, stamped by the vetting gate on the emitting object.
 
+An `llm.call` entry's payload also carries provenance beyond the prompt/response themselves (#1096): `quack_version` (the build stamp the server logged at startup), `bundle_hash` (a sha256 digest over the acting agent's `agent-card.json` + `prompt.md` + `rubric.yaml`, computed once at bundle load and stamped onto `ledger.Coords` the same way `agent` is), and `cost_usd` (tokens × `config/quack.yaml`'s per-model price table, 0 when that model has no price entry). `prompt_version` on the same entry is a separate, narrower hash of just the resolved system-instruction bytes for that one call.
+
 ```yaml
 stores:
   default_postgres:
