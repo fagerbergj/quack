@@ -10,7 +10,7 @@ import (
 type Hub struct {
 	mu          sync.Mutex
 	topics      map[string]*topic
-	runs        sync.Map // chatID → *runHandle
+	runs        map[string]*runHandle // chatID → run; under mu (a sync.Map let RegisterRun land between EndRun's Load and Delete, review finding)
 	draining    atomic.Bool
 	interrupted sync.Map // chatID → struct{}, set right before a shutdown force-cancel (see MarkInterrupted)
 }
@@ -23,13 +23,17 @@ type runHandle struct {
 
 // Records active run before goroutine starts (overwrites stale handles).
 func (h *Hub) RegisterRun(chatID, responseID string, cancel context.CancelFunc) {
-	h.runs.Store(chatID, &runHandle{responseID: responseID, cancel: cancel})
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.runs[chatID] = &runHandle{responseID: responseID, cancel: cancel}
 }
 
 // Drops cancel handle after run ends (idempotent). Blind - see EndRun for the
 // guarded version production run-ending paths must use.
 func (h *Hub) UnregisterRun(chatID string) {
-	h.runs.Delete(chatID)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.runs, chatID)
 }
 
 // EndRun retires the run responseID names and closes its topic, guarded by a
@@ -40,37 +44,42 @@ func (h *Hub) UnregisterRun(chatID string) {
 func (h *Hub) EndRun(chatID, responseID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if v, ok := h.runs.Load(chatID); ok && v.(*runHandle).responseID != responseID {
+	if rh, ok := h.runs[chatID]; ok && rh.responseID != responseID {
 		return
 	}
-	h.runs.Delete(chatID)
+	delete(h.runs, chatID)
 	h.closeLocked(chatID)
 }
 
 // Unconditional cancel (DELETE-chat path, no response ID).
 func (h *Hub) CancelRun(chatID string) bool {
-	v, ok := h.runs.Load(chatID)
+	h.mu.Lock()
+	rh, ok := h.runs[chatID]
+	h.mu.Unlock()
 	if !ok {
 		return false
 	}
-	v.(*runHandle).cancel()
+	rh.cancel()
 	return true
 }
 
 // Reports whether chatID has a run registered (queued or executing). Unlike Active, covers runs still waiting to be admitted. Used by workspace GC.
 func (h *Hub) HasRegisteredRun(chatID string) bool {
-	_, ok := h.runs.Load(chatID)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	_, ok := h.runs[chatID]
 	return ok
 }
 
 // ActiveChatIDs snapshots every chat with a run currently registered - the
 // set graceful shutdown needs to drain (internal/serve.DrainActiveRuns).
 func (h *Hub) ActiveChatIDs() []string {
-	var ids []string
-	h.runs.Range(func(k, _ any) bool {
-		ids = append(ids, k.(string))
-		return true
-	})
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ids := make([]string, 0, len(h.runs))
+	for k := range h.runs {
+		ids = append(ids, k)
+	}
 	return ids
 }
 
@@ -96,12 +105,10 @@ func (h *Hub) WasInterrupted(chatID string) bool {
 
 // Cancels chatID's active run only if responseID names it (guards against stale ids).
 func (h *Hub) CancelResponse(chatID, responseID string) bool {
-	v, ok := h.runs.Load(chatID)
-	if !ok {
-		return false
-	}
-	rh := v.(*runHandle)
-	if rh.responseID != responseID {
+	h.mu.Lock()
+	rh, ok := h.runs[chatID]
+	h.mu.Unlock()
+	if !ok || rh.responseID != responseID {
 		return false
 	}
 	rh.cancel()
@@ -130,7 +137,7 @@ type topic struct {
 // chat forever; a live run's buffer is bounded by MaxReplay. Fine for a
 // single self-hosted instance. Upgrade path if it grows: LRU/TTL eviction of
 // done topics, or a shared event bus when running multiple replicas.
-func NewHub() *Hub { return &Hub{topics: map[string]*topic{}} }
+func NewHub() *Hub { return &Hub{topics: map[string]*topic{}, runs: map[string]*runHandle{}} }
 
 // Appends a sequenced event to the chat's topic and fans it to live subscribers. First publish after done starts a fresh topic.
 func (h *Hub) Publish(key string, seq int64, ev SSEEvent) {

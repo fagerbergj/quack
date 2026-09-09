@@ -1,6 +1,8 @@
 package stream
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -287,5 +289,35 @@ func TestHubPublishDropsSlowSubscriberInsteadOfSkipping(t *testing.T) {
 	defer cancel2()
 	if len(replay) != 1025 {
 		t.Fatalf("fresh subscribe replay = %d events, want 1025", len(replay))
+	}
+}
+
+// TestHubRegisterRunRacesEndRun is the harvest review finding: runs used to
+// be a sync.Map with no lock spanning EndRun's Load-check-Delete, so a
+// RegisterRun landing between EndRun's Load and Delete could be wiped by an
+// EndRun meant for the run it just superseded. Putting runs under h.mu closes
+// that window - run with -race and repeated, since a race depends on
+// scheduling, not a single call.
+func TestHubRegisterRunRacesEndRun(t *testing.T) {
+	h := NewHub()
+	for i := range 200 {
+		chatID := fmt.Sprintf("c%d", i)
+		h.RegisterRun(chatID, "old", func() {})
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			h.RegisterRun(chatID, "new", func() {})
+		}()
+		go func() {
+			defer wg.Done()
+			h.EndRun(chatID, "old")
+		}()
+		wg.Wait()
+
+		if !h.HasRegisteredRun(chatID) {
+			t.Fatalf("iteration %d: EndRun(old) wiped the newer RegisterRun racing it", i)
+		}
 	}
 }
