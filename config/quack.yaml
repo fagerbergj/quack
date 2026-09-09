@@ -23,6 +23,8 @@ providers:
 # metric, never a guessed price. effort (low/medium/high, optional, unset by
 # default) sets a default reasoning_effort for every call to that model,
 # unless the call sets its own ThinkingConfig (e.g. gates.judge.thinking_level).
+# #1235: some OpenAI-compatible endpoints 400 on reasoning_effort for a
+# non-reasoning model, so only set effort on a model that accepts it.
 models:
   qwen3.8-27b:                # workhorse: web-researcher/synthesizer, and the coder/reviewer/explorer's model
     provider: default

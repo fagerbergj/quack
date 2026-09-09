@@ -169,15 +169,20 @@ func (o *OpenAIModel) applyDefaultEffort(req *model.LLMRequest) {
 }
 
 // effortThinkingConfig maps models.<name>.effort to genai's enum - the same
-// low/medium/high vocabulary as gates.judge.thinking_level.
+// low/medium/high vocabulary as gates.judge.thinking_level. Config.validate
+// is the gate for "low"/"medium"/"high"/""; an unrecognized value here (this
+// path is unreachable for a validated config) sends no ThinkingConfig rather
+// than silently guessing medium.
 func effortThinkingConfig(effort string) *genai.ThinkingConfig {
 	switch effort {
 	case "low":
 		return &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow}
+	case "medium":
+		return &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelMedium}
 	case "high":
 		return &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh}
 	default:
-		return &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelMedium}
+		return nil
 	}
 }
 

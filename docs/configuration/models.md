@@ -38,6 +38,8 @@ models:
     effort: low               # optional; low/medium/high default reasoning_effort, unless a call sets its own (e.g. gates.judge.thinking_level)
 ```
 
+`effort` (#1235): some OpenAI-compatible endpoints 400 on `reasoning_effort` for a non-reasoning model, so set it only on a model that accepts it - leave it unset otherwise, same caveat as `gates.judge.thinking_level` ([trust-gate.md](trust-gate.md)).
+
 `limits` is entirely optional: absent means unlimited, never a conservative default. A model with no `limits:` gets arbitrary concurrent sessions at full context; a model with `limits` but no `kv_tokens` never participates in admission by context. Both `models.<m>.limits` and `providers.<p>.limits.active` are enforced by `dag.Admission` (#1007) on every gated node, and on the orchestrator's own turns (#1067) - so when `orchestrator.model` reuses a worker model, both draw on that model's one `sessions` pool. `cost` is optional too - a model without it gets token usage but no cost metric, never a guessed price.
 
 ## Per-agent inference

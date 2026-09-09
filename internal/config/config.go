@@ -631,7 +631,9 @@ type ModelConfig struct {
 	// Effort is a reasoning-effort default ("low"/"medium"/"high") mapped to
 	// provider-specific params (OpenAI-compatible reasoning_effort); "" (default)
 	// sends no ThinkingConfig unless the request sets its own (e.g. the judge's
-	// gates.judge.thinking_level, which always takes precedence).
+	// gates.judge.thinking_level, which always takes precedence). #1235 - some
+	// OpenAI-compatible endpoints 400 on reasoning_effort for a non-reasoning
+	// model, so only set this on a model that accepts it.
 	Effort string `yaml:"effort"`
 }
 
