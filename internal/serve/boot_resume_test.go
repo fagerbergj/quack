@@ -142,28 +142,33 @@ func (s *resumeStubLLM) workerPrompts() []string {
 // archived chat is never resumed, a plan older than staleResumePlanCeiling is
 // marked failed rather than re-entered - unless the node is parked on
 // awaiting_input, which holds no run slot and must be left alone even past
-// the ceiling (review: failing it would strand the pending question).
+// the ceiling (review: failing it would strand the pending question). Finding
+// 13: a node a human paused (dag.PauseUser) must never be silently
+// auto-resumed on restart - boot does not get to override that decision -
+// regardless of plan age.
 func TestResumeGuardArchivedOrStale(t *testing.T) {
 	now := time.Now()
 	cases := []struct {
 		name          string
 		archived      bool
 		hasPlan       bool
-		awaitingInput bool
+		pauseReason   dag.PauseReason
 		planAge       time.Duration
 		wantOK        bool
 		wantReasonHas string
 	}{
-		{"fresh non-archived resumes", false, true, false, time.Hour, true, ""},
-		{"archived chat is never resumed even with a fresh plan", true, true, false, time.Minute, false, "archived"},
-		{"stale plan is failed even when not archived", false, true, false, staleResumePlanCeiling + time.Minute, false, "stale"},
-		{"no plan row skips the age check", false, false, false, 0, true, ""},
-		{"awaiting_input node past the ceiling is left as-is", false, true, true, staleResumePlanCeiling + time.Minute, true, ""},
-		{"archived still wins over awaiting_input", true, true, true, staleResumePlanCeiling + time.Minute, false, "archived"},
+		{"fresh non-archived shutdown pause resumes", false, true, dag.PauseShutdown, time.Hour, true, ""},
+		{"archived chat is never resumed even with a fresh plan", true, true, dag.PauseShutdown, time.Minute, false, "archived"},
+		{"stale plan is failed even when not archived", false, true, dag.PauseShutdown, staleResumePlanCeiling + time.Minute, false, "stale"},
+		{"no plan row skips the age check", false, false, dag.PauseShutdown, 0, true, ""},
+		{"awaiting_input node past the ceiling is left as-is", false, true, dag.PauseAwaitingInput, staleResumePlanCeiling + time.Minute, true, ""},
+		{"archived still wins over awaiting_input", true, true, dag.PauseAwaitingInput, staleResumePlanCeiling + time.Minute, false, "archived"},
+		{"a human pause is never auto-resumed, even fresh", false, true, dag.PauseUser, time.Minute, false, "user"},
+		{"archived still wins over a human pause", true, true, dag.PauseUser, time.Minute, false, "archived"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ok, why := resumeGuardArchivedOrStale(tc.archived, tc.hasPlan, tc.awaitingInput, now.Add(-tc.planAge))
+			ok, why := resumeGuardArchivedOrStale(tc.archived, tc.hasPlan, tc.pauseReason, now.Add(-tc.planAge))
 			if ok != tc.wantOK {
 				t.Fatalf("ok = %v, want %v (why=%q)", ok, tc.wantOK, why)
 			}

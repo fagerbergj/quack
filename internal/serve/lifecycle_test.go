@@ -205,6 +205,30 @@ func TestBootLeavesAwaitingInputAlone(t *testing.T) {
 	}
 }
 
+// TestBootRefusesUserPausedNode is finding 13's end-to-end regression: a node
+// a human paused (dag.PauseUser) must not be silently auto-resumed on the
+// next restart the way a shutdown pause is - resumeGuardArchivedOrStale must
+// see the real pause reason store.go passes through and refuse it.
+func TestBootRefusesUserPausedNode(t *testing.T) {
+	st, chatID := threeNodeChat(t)
+	ctx := context.Background()
+	if err := st.SetNodeStatusForChat(ctx, chatID, "n2", string(dag.StatusPaused), string(dag.PauseUser), ""); err != nil {
+		t.Fatalf("persist the user pause: %v", err)
+	}
+
+	start := reconcileNodes(ctx, st, nil, func(chatID, pauseReason string) (bool, string) {
+		return resumeGuardArchivedOrStale(false, true, dag.PauseReason(pauseReason), time.Now())
+	})
+
+	if len(start) != 0 {
+		t.Errorf("started %+v; a node the user paused must never be auto-resumed by boot", start)
+	}
+	n2 := nodeStatus(t, st, "n2")
+	if n2.Status != string(dag.StatusFailed) {
+		t.Errorf("n2 = %q, want failed (refused, not silently resumed)", n2.Status)
+	}
+}
+
 // TestBootFailsUnresumableNode: a node whose workspace is gone is the one
 // remaining path to failed, and the reason lands in `error`.
 func TestBootFailsUnresumableNode(t *testing.T) {

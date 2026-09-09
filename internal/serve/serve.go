@@ -481,8 +481,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 			if p != nil {
 				planCreatedAt = p.CreatedAt
 			}
-			awaitingInput := pauseReason == string(dag.PauseAwaitingInput)
-			if ok, why := resumeGuardArchivedOrStale(c != nil && c.Archived, p != nil, awaitingInput, planCreatedAt); !ok {
+			if ok, why := resumeGuardArchivedOrStale(c != nil && c.Archived, p != nil, dag.PauseReason(pauseReason), planCreatedAt); !ok {
 				return false, why
 			}
 			// A resumable node was provisioned a chat scope dir; if the
