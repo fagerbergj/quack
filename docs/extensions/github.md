@@ -10,7 +10,7 @@ someone applies quack:implement to an approved issue
   → its trust gate vets the diff, then opens a PR (pre-labeled for review)
   → applying quack-auto-review (or opening a PR with pr_opened enabled) triggers a review
   → quack posts one review with inline comments and a verdict
-  → a maintainer applies quack:merge - quack squash-merges only if its own review approved
+  → a maintainer applies quack:merge - quack squash-merges once its own review approves the head and CI is green
 ```
 
 or by mentioning it in a comment:
@@ -31,7 +31,7 @@ or by mentioning it in a comment:
 | `quack:implement` | Implements the approved plan once, commits locally, and opens a PR pre-labeled for review. Add `quack:partial-fix` first if the PR shouldn't auto-close the issue. |
 | `quack:review` (configurable) | Reviews the PR once. Also fires automatically on PR open if the `pr_opened` trigger is enabled. While the label is present, a PR comment consisting of `/review` (from a write/admin author) re-runs the review - GitHub coalesces a fast label remove+add into no webhook, so cycling the label can't. |
 | `quack:fix` | Keeps the PR green: fixes it on **any** CI/CD failure while it carries this label, not only when freshly applied - re-applying it re-arms after a stop and, if CI is already failing, fixes it immediately. One fix attempt per failure (see "CI auto-heal" below). |
-| `quack:merge` | Squash-merges the PR - but only at the intersection of a human applying this label **and** quack's own latest review having approved it. Anything else gets an explanatory comment instead of a merge. |
+| `quack:merge` | A standing authorization: quack squash-merges once its own latest review approves the PR's **current** head and every check on that head has finished. The condition is re-checked on every check, push, and review event, so a PR labeled while CI is still running merges when CI finishes; a push after approval invalidates the approval until a new review lands. Nothing is posted while the PR is not yet mergeable (the label gets a 👀). The outcome - `Merged as <sha>.` or the reason GitHub refused (conflicts, a failing required check) - is appended to quack's own approving review, never as a separate comment. Removing the label withdraws the authorization. |
 
 Every label handler reacts with 👀 the instant it fires, before the run even starts.
 
@@ -98,7 +98,7 @@ Grant nothing else.
 
 ### 3. Subscribe to events
 
-Under **Subscribe to events**, check: **Issue comment**, **Issues**, **Pull request**, **Pull request review** (for `quack:fix`'s CI auto-heal, also check **Workflow run**). Issue comment alone is enough if you only want the `/quack` mention path - the label workflow needs the rest, and the authorship-based engagement on quack's own PRs needs Pull request review.
+Under **Subscribe to events**, check: **Issue comment**, **Issues**, **Pull request**, **Pull request review**, and - for `quack:fix`'s CI auto-heal and for `quack:merge` to merge when CI finishes - **Workflow run**, **Check suite**, and **Check run** (with the **Checks: read** permission). Issue comment alone is enough if you only want the `/quack` mention path - the label workflow needs the rest, and the authorship-based engagement on quack's own PRs needs Pull request review.
 
 ### 4. Generate the private key
 
