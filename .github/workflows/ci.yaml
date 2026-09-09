@@ -39,7 +39,10 @@ jobs:
       - run: go vet ./...
       # One pass, under the race detector: it is a superset of the plain run and the
       # concurrency regression guards (#1016, #1032) pass vacuously without it.
-      - run: go test -race ./...
+      # -timeout bounds the whole run well inside the job's 20-minute ceiling,
+      # so a future hang dumps goroutines (SIGQUIT) instead of the job
+      # silently cancelling with no diagnostic output.
+      - run: go test -race -timeout 12m ./...
 
   go-fmt:
     runs-on: ubuntu-latest
