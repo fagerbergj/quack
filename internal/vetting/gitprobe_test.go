@@ -2,6 +2,7 @@ package vetting
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -93,6 +94,72 @@ func TestAugmentFromRepo_NoCommitsNoChange(t *testing.T) {
 	augmentFromRepo(context.Background(), &act, cfg)
 	if act.committed || len(act.written) != 0 || len(act.stagedDelivery) != 0 {
 		t.Fatalf("clean branch must change nothing: %+v", act)
+	}
+}
+
+// countingGitShim puts a `git` wrapper ahead of the real one on PATH that
+// appends one line per invocation to a log file, then execs the real git -
+// lets the test count actual subprocess invocations instead of just asserting
+// on act's final state.
+func countingGitShim(t *testing.T) (logFile string) {
+	t.Helper()
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not found on PATH")
+	}
+	dir := t.TempDir()
+	logFile = filepath.Join(dir, "invocations.log")
+	script := fmt.Sprintf("#!/bin/sh\necho \"$@\" >> %q\nexec %q \"$@\"\n", logFile, realGit)
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return logFile
+}
+
+func countGitInvocations(t *testing.T, logFile string) int {
+	t.Helper()
+	b, err := os.ReadFile(logFile)
+	if os.IsNotExist(err) {
+		return 0
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(strings.Split(strings.TrimRight(string(b), "\n"), "\n"))
+}
+
+// #1283-ish: augmentFromRepo shelled out to git on every actFor() call with
+// no caching (ponytail note at gitprobe.go). A node's continuation loop calls
+// actFor back-to-back with no git-changing action between the calls, so the
+// second call should replay the first probe's result instead of re-running
+// the diff/log/branch battery against an unchanged HEAD.
+func TestAugmentFromRepo_MemoisesOnUnchangedHead(t *testing.T) {
+	cfg := probeRepo(t, true)
+	logFile := countingGitShim(t)
+
+	act1 := workerActivity{fetched: map[string]struct{}{}, seen: map[string]string{}, paths: map[string]bool{}}
+	augmentFromRepo(context.Background(), &act1, cfg)
+	if !act1.committed {
+		t.Fatal("first (cold) probe should see the commit")
+	}
+	firstCount := countGitInvocations(t, logFile)
+	if firstCount < 2 {
+		t.Fatalf("expected the cold probe to run more than one git command, got %d", firstCount)
+	}
+
+	act2 := workerActivity{fetched: map[string]struct{}{}, seen: map[string]string{}, paths: map[string]bool{}}
+	augmentFromRepo(context.Background(), &act2, cfg)
+	added := countGitInvocations(t, logFile) - firstCount
+
+	if added != 1 {
+		t.Errorf("second probe with unchanged HEAD ran %d git commands, want exactly 1 (the HEAD check)", added)
+	}
+	if !act2.committed || act2.currentBranch != act1.currentBranch || len(act2.written) != len(act1.written) {
+		t.Errorf("a cache hit must replay the same result: act1=%+v act2=%+v", act1, act2)
+	}
+	if pr1, pr2 := act1.stagedDelivery["pr"], act2.stagedDelivery["pr"]; pr1.Title != pr2.Title || pr1.Branch != pr2.Branch || pr1.Body != pr2.Body {
+		t.Errorf("cached staged PR must match the original: %+v vs %+v", pr1, pr2)
 	}
 }
 

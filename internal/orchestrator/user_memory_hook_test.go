@@ -26,15 +26,44 @@ import (
 
 // --- pre-filter ---
 
+// TestUserMemoryPreFilter: narrowed to preference-shaped phrases (#1283 audit
+// finding 9) - the old alternation included bare never/always/instead of/
+// don't, which matched 26.1% of a 2,389-paragraph technical-prose corpus
+// (this repo's own commit messages); 91% of those hits came from four
+// keywords that never on their own state a durable preference. The narrowed
+// regex measured 0.3% on the same corpus. Ten preference-shaped sentences
+// must still match; ten ordinary technical sentences using bare never/always/
+// instead of/don't must not.
 func TestUserMemoryPreFilter(t *testing.T) {
 	tests := []struct {
 		name    string
 		message string
 		want    bool
 	}{
-		{"stated preference", "I prefer terse answers, keep it short.", true},
-		{"standing rule", "From now on always open a PR instead of pushing a branch.", true},
-		{"proceed vs ask", "Don't ask me before you proceed, just go ahead.", true},
+		// preference-shaped: must match
+		{"from now on", "From now on, always open a PR instead of pushing a branch.", true},
+		{"going forward", "Going forward, please use tabs, not spaces.", true},
+		{"by default", "By default, respond in markdown.", true},
+		{"as a rule", "As a rule, never merge without review.", true},
+		{"remember that", "Remember that I work in Go, not Python.", true},
+		{"for me", "Write the commit message for me.", true},
+		{"i prefer", "I prefer terse answers, keep it short.", true},
+		{"i hate", "I hate verbose explanations.", true},
+		{"please always use", "Please always use tabs, never spaces.", true},
+		{"never ask - audit's own example", "Always use tabs, never ask me about spacing again.", true},
+
+		// ordinary technical prose with bare never/always/instead of/don't: must not match
+		{"bare never - nil check", "This function should never return nil.", false},
+		{"bare always - CI flake", "The build always fails on CI without network access.", false},
+		{"instead of - refactor note", "Use dependency injection instead of a global singleton.", false},
+		{"rather than - refactor note", "Rather than duplicating logic, extract a helper.", false},
+		{"bare never - test gap", "The test never actually exercises the error path.", false},
+		{"bare always - bug report", "This endpoint always returns 200 even on failure.", false},
+		{"bare don't", "Don't retry without backoff.", false},
+		{"bare never - lock bug", "The lock is never released on the error path.", false},
+		{"bare stop", "Stop the server before running migrations.", false},
+		{"bare always - cache note", "The cache is always cold after a restart.", false},
+
 		{"trivial request", "Can you review this code?", false},
 		{"trivial question", "What files changed in the last commit?", false},
 		{"empty message", "", false},
