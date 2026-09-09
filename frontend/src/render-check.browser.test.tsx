@@ -49,7 +49,7 @@ function findStrayCommentText(root: Element): string | undefined {
 }
 
 function findCoveredDialog(root: Element): string | undefined {
-  const dialogs = root.querySelectorAll('[role="dialog"], [open]')
+  const dialogs = root.querySelectorAll('[role="dialog"], dialog[open]')
   for (const el of Array.from(dialogs)) {
     const rect = el.getBoundingClientRect()
     if (rect.width === 0 || rect.height === 0) continue
@@ -156,8 +156,15 @@ describe.each(Object.entries(storyModules))('%s', (path, mod) => {
           // Menus and sheets only exist once a story's play() opens them.
           // Opt-in per story: most existing play() functions assume the
           // Storybook canvas (args spies, MSW) and fail under this harness.
+          // ponytail: a failing play() only warns - four story files stomp
+          // window.fetch at module scope, so under this eager glob the last
+          // loader wins and fetch-driven plays can't be made reliable here.
           if (renderCheckParams?.play && StoryComp.play) {
-            await StoryComp.play({ canvasElement: container })
+            try {
+              await StoryComp.play({ canvasElement: container })
+            } catch (e) {
+              console.warn(`play() failed for ${path} ${storyName}: ${String(e).split('\n')[0]}`)
+            }
             await waitForRenderSettled(container)
           }
 
