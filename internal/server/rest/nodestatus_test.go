@@ -240,6 +240,45 @@ func TestUpdateNodeStatus_ResumePausedNode(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 }
 
+// TestUpdateNodeStatus_ResumeAlreadyLiveConflict409 pins finding 12: a pause
+// is cooperative (the node keeps running until its next gate boundary), so
+// the persisted row can say "paused" while the first run is still live. A
+// second resume request must not dispatch a second concurrent run of the
+// same node - it must 409, the same shape as the other undeliverable-control
+// responses in this file.
+func TestUpdateNodeStatus_ResumeAlreadyLiveConflict409(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID, nodeID := "c1", "p1", "n1"
+	seedPlan(t, h, chatID, planID, nodeID)
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "paused"}); err != nil {
+		t.Fatalf("seed paused node: %v", err)
+	}
+	// Simulate the first resume's dispatch already in flight.
+	h.hub.RegisterRun(chatID, "turn-"+planID, func() {})
+
+	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusRunning})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (a run is already dispatched for this chat); body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestStartNode_ResumeAlreadyLiveConflict409 is the /start endpoint's half of
+// finding 12.
+func TestStartNode_ResumeAlreadyLiveConflict409(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID, nodeID := "c1", "p1", "n1"
+	seedPlan(t, h, chatID, planID, nodeID)
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "paused"}); err != nil {
+		t.Fatalf("seed paused node: %v", err)
+	}
+	h.hub.RegisterRun(chatID, "turn-"+planID, func() {})
+
+	rec := postNodeStart(t, h, chatID, nodeID, schema.NodeStartBody{})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (a run is already dispatched for this chat); body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 // TestUpdateNodeStatus_RunningSelfLoopIllegal: the old steer-via-status
 // (running → running) no longer exists - steering is queueing a message
 // (POST .../queue), which doesn't transition the node's status at all.

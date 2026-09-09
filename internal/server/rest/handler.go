@@ -907,7 +907,10 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 			errMsg(w, http.StatusConflict, "chat is archived; unarchive it before retrying a node")
 			return
 		}
-		h.retryNodeAsync(dp, chatID, nodeID, guidance)
+		if !h.retryNodeAsync(dp, chatID, nodeID, guidance) {
+			errMsg(w, http.StatusConflict, "a run is already in flight for this node; nothing was dispatched")
+			return
+		}
 		writeJSON(w, http.StatusOK, schema.DagNodeState{Status: schema.NodeStatusQueued})
 	case dag.StatusQueued:
 		if h.hub.Draining() {
@@ -918,7 +921,10 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 			errMsg(w, http.StatusConflict, "chat is archived; unarchive it before retrying a node")
 			return
 		}
-		h.retryNodeAsync(dp, chatID, nodeID, guidance)
+		if !h.retryNodeAsync(dp, chatID, nodeID, guidance) {
+			errMsg(w, http.StatusConflict, "a run is already in flight for this node; nothing was dispatched")
+			return
+		}
 		writeJSON(w, http.StatusOK, schema.DagNodeState{Status: schema.NodeStatusQueued})
 	}
 }
@@ -964,10 +970,15 @@ func (h *Handler) StartNode(w http.ResponseWriter, r *http.Request, chatID schem
 	// Only a HITL park re-enters via Orchestrator.StartNode (the answer must
 	// reach ADK's Resume). Any other start is the scoped node+descendants
 	// re-run - a full-plan re-entry would re-execute done siblings (#964).
+	dispatched := false
 	if awaiting {
-		h.startNodeAsync(dp, chatID, nodeID, content)
+		dispatched = h.startNodeAsync(dp, chatID, nodeID, content)
 	} else {
-		h.retryNodeAsync(dp, chatID, nodeID, "")
+		dispatched = h.retryNodeAsync(dp, chatID, nodeID, "")
+	}
+	if !dispatched {
+		errMsg(w, http.StatusConflict, "a run is already in flight for this node; nothing was dispatched")
+		return
 	}
 	writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusRunning))
 }
@@ -1105,7 +1116,14 @@ func allowedStatuses(from dag.NodeStatus) []schema.NodeStatus {
 // from paused, delivering message as the parked question's answer when the
 // node paused awaiting_input. Progress publishes through the same hub as
 // retryNodeAsync.
-func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message string) {
+// startNodeAsync dispatches nodeID and returns whether it did. false means a
+// run is already dispatched for this chat or this node is already live (a
+// pause is cooperative: the persisted row can say "paused" while the first
+// run is still executing) - the caller must 409 rather than double-dispatch.
+func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message string) bool {
+	if h.hub.HasRegisteredRun(chatID) || h.orch.NodeIsLive(chatID, nodeID) {
+		return false
+	}
 	go func() {
 		runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
 		h.hub.RegisterRun(chatID, dp.TurnID, cancelRun)
@@ -1130,6 +1148,7 @@ func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message stri
 		}
 		publish(stream.Done())
 	}()
+	return true
 }
 
 // iterFromStart adapts Orchestrator.StartNode's yield-callback shape to the
@@ -1140,8 +1159,13 @@ func iterFromStart(ctx context.Context, o *orchestrator.Orchestrator, userID, ch
 	}
 }
 
-// Re-runs nodeID and descendants in background, reusing the plan's stored outputs. Progress publishes through the same hub.
-func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance string) {
+// retryNodeAsync re-runs nodeID and descendants in background, reusing the
+// plan's stored outputs, and returns whether it dispatched - see
+// startNodeAsync's doc for why a caller must check this.
+func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance string) bool {
+	if h.hub.HasRegisteredRun(chatID) || h.orch.NodeIsLive(chatID, nodeID) {
+		return false
+	}
 	nodes, _ := h.store.GetDagNodes(context.Background(), dp.ID)
 	seeded := make(map[string]string, len(nodes))
 	for _, n := range nodes {
@@ -1172,6 +1196,7 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 		}
 		publish(stream.Done())
 	}()
+	return true
 }
 
 // Connects a client to a chat's live (or just-completed) run. Reconnect-safe via Last-Event-ID or the durable event log.
