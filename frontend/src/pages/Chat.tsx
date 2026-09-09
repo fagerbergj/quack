@@ -694,7 +694,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
               {isArchived && (
                 <span
                   title="This chat is archived and read-only. Restore it from the Archived section to continue."
-                  className="flex-shrink-0 text-[10px] font-semibold tracking-wide px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400"
+                  className="flex-shrink-0 text-[11px] font-semibold tracking-wide px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300"
                 >
                   Archived
                 </span>
@@ -739,12 +739,19 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
             the clearance instead of getting counted twice. */}
         <div ref={scrollRef} className="absolute inset-0 overflow-y-auto overscroll-contain px-6 pt-6 pb-[calc(7rem+var(--composer-gap))] medium:pb-[calc(8rem+var(--composer-gap))] space-y-6">
           {!activeChatId && (
-            <div className="text-center text-gray-400 dark:text-gray-500 text-sm mt-20">
+            <div className="text-center text-gray-500 dark:text-gray-400 text-sm mt-20 flex flex-col items-center gap-4">
               Select or start a chat
+              <button
+                type="button"
+                onClick={handleNewChat}
+                className="min-h-[44px] px-4 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors font-medium"
+              >
+                New chat
+              </button>
             </div>
           )}
           {activeChatId && state.turns.length === 0 && !live && !state.submitting && (
-            <div className="text-center text-gray-400 dark:text-gray-500 text-sm mt-20">
+            <div className="text-center text-gray-500 dark:text-gray-400 text-sm mt-20">
               Ask a question
             </div>
           )}
@@ -932,13 +939,13 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
                       <div className="flex items-center gap-3 mt-1.5 px-1">
                         <button
                           onClick={() => handleCopy(copyKey, liveText)}
-                          className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                          className="min-h-[44px] -my-2 inline-flex items-center text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                         >
                           {copied === copyKey ? 'Copied!' : 'Copy'}
                         </button>
                         <button
                           onClick={() => handleDownload(liveText, state.turns.length)}
-                          className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                          className="min-h-[44px] -my-2 inline-flex items-center text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                         >
                           Download
                         </button>

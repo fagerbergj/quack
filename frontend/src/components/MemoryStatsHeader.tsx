@@ -29,14 +29,14 @@ function supportSharePct(week: MemoryWeekStats | undefined): string {
 export function MemoryStatsHeader({ weeks, loading, error }: MemoryStatsHeaderProps) {
   if (loading) {
     return (
-      <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 text-xs text-gray-400 dark:text-gray-500">
+      <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400">
         Loading recall stats…
       </div>
     )
   }
   if (error) {
     return (
-      <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 text-xs text-gray-400 dark:text-gray-500">
+      <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400">
         Recall stats unavailable
       </div>
     )
@@ -54,7 +54,7 @@ export function MemoryStatsHeader({ weeks, loading, error }: MemoryStatsHeaderPr
         <span title="Of everything recalled this week, the share that actually helped (unvoted and not-relevant recalls count as no help)">
           Support share <strong className="text-gray-900 dark:text-white">{supportSharePct(thisWeek)}</strong>
         </span>
-        <span className="flex flex-wrap items-center gap-x-2 text-gray-400 dark:text-gray-500">
+        <span className="flex flex-wrap items-center gap-x-2 text-gray-500 dark:text-gray-400">
           {last4.map(w => (
             <span key={w.week} title={w.week}>{pct(w)}</span>
           ))}

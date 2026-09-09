@@ -72,7 +72,7 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
 
       {open && (
         <Sheet anchored aria-label="Sort and filter memories" onClose={() => setOpen(false)} className="medium:absolute medium:right-0 medium:mt-1 medium:w-56 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-2 medium:pb-2 text-sm medium:text-xs">
-          <div className="px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">Sort</div>
+          <div className="px-1 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Sort</div>
           {SORT_OPTIONS.map(({ value, label }) => (
             <label key={value} className="flex items-center gap-2 min-h-[44px] medium:min-h-0 px-1 py-1 rounded cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700">
               <input
@@ -86,7 +86,7 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
             </label>
           ))}
           <div className="mt-2 mb-1 border-t border-gray-100 dark:border-gray-700" />
-          <label className="block px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+          <label className="block px-1 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Bucket
           </label>
           <select
@@ -98,7 +98,7 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
             <option value="">All buckets</option>
             {buckets.map(b => <option key={b} value={b}>{b}</option>)}
           </select>
-          <label className="block px-1 py-0.5 mt-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+          <label className="block px-1 py-0.5 mt-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Tier
           </label>
           <select
@@ -114,14 +114,14 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
           {scopes && scopes.length > 0 && (
             <>
               <div className="mt-2 mb-1 border-t border-gray-100 dark:border-gray-700" />
-              <div className="px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+              <div className="px-1 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                 Live / invalidated
               </div>
               <ul className="max-h-32 overflow-y-auto">
                 {scopes.map(s => (
                   <li key={s.scope} className="flex items-center justify-between gap-2 px-1 py-0.5 text-gray-600 dark:text-gray-300">
                     <span className="truncate">{s.scope}</span>
-                    <span className="flex-shrink-0 tabular-nums text-gray-400 dark:text-gray-500">{s.live} / {s.invalidated}</span>
+                    <span className="flex-shrink-0 tabular-nums text-gray-500 dark:text-gray-400">{s.live} / {s.invalidated}</span>
                   </li>
                 ))}
               </ul>

@@ -101,7 +101,7 @@ export function AttachmentStrip({
           {a.file.type.startsWith('image/') ? (
             <ImageThumbnail src={a.url} alt={a.file.name} className="h-16 w-16" />
           ) : (
-            <div className="h-16 w-24 flex items-center justify-center rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-xs text-gray-500 dark:text-gray-400 px-1 text-center">
+            <div className="h-16 w-24 flex items-center justify-center rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-xs text-gray-500 dark:text-gray-300 px-1 text-center">
               {a.file.name}
             </div>
           )}

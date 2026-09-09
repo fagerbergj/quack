@@ -20,7 +20,7 @@ export function CopyablePre({ children, ...props }: ComponentPropsWithoutRef<'pr
         type="button"
         onClick={copy}
         aria-label="Copy code"
-        className="absolute right-2 top-2 z-10 rounded border border-gray-600 bg-gray-800/80 px-2 py-0.5 text-[11px] text-gray-300 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity hover:bg-gray-700"
+        className="absolute right-2 top-2 z-10 min-h-[44px] min-w-[44px] inline-flex items-center justify-center rounded border border-gray-600 bg-gray-800/80 px-2 text-[11px] text-gray-300 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity hover:bg-gray-700"
       >
         {copied ? 'Copied' : 'Copy'}
       </button>

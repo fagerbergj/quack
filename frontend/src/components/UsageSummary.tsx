@@ -19,11 +19,11 @@ export function UsageSummary({ models, usage }: UsageSummaryProps) {
   const rate = cacheRate(usage)
 
   return (
-    <div className="flex items-center gap-1.5 text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0">
+    <div className="flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400 flex-shrink-0">
       {models.map(m => (
         <span
           key={m}
-          className="font-mono px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 truncate max-w-[140px]"
+          className="font-mono px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 dark:text-gray-300 truncate max-w-[140px]"
           title={m}
         >
           {m}

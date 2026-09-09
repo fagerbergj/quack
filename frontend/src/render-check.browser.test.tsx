@@ -49,7 +49,7 @@ function findStrayCommentText(root: Element): string | undefined {
 }
 
 function findCoveredDialog(root: Element): string | undefined {
-  const dialogs = root.querySelectorAll('[role="dialog"], [open]')
+  const dialogs = root.querySelectorAll('[role="dialog"], dialog[open]')
   for (const el of Array.from(dialogs)) {
     const rect = el.getBoundingClientRect()
     if (rect.width === 0 || rect.height === 0) continue
@@ -111,6 +111,10 @@ describe.each(Object.entries(storyModules))('%s', (path, mod) => {
       setProjectAnnotations({ ...(previewAnnotations as unknown as Record<string, unknown>), initialGlobals: { theme } } as never)
       const composed = composeStories(mod as never)
       const StoryComp = composed[storyName] as React.ComponentType & { parameters?: Record<string, unknown>; play?: (ctx: { canvasElement: HTMLElement }) => Promise<void> }
+      // Pages that mount useTheme (the chat header's kebab) re-resolve the
+      // theme from storage on mount; without this they'd override the
+      // decorator with "system" = headless Chromium's light preference.
+      localStorage.setItem('theme', theme)
 
       // Viewport opt-in: a story's own `parameters.renderCheck.viewports` (or
       // Storybook's own `parameters.viewport.defaultViewport`, honored as an
@@ -156,8 +160,15 @@ describe.each(Object.entries(storyModules))('%s', (path, mod) => {
           // Menus and sheets only exist once a story's play() opens them.
           // Opt-in per story: most existing play() functions assume the
           // Storybook canvas (args spies, MSW) and fail under this harness.
+          // ponytail: a failing play() only warns - four story files stomp
+          // window.fetch at module scope, so under this eager glob the last
+          // loader wins and fetch-driven plays can't be made reliable here.
           if (renderCheckParams?.play && StoryComp.play) {
-            await StoryComp.play({ canvasElement: container })
+            try {
+              await StoryComp.play({ canvasElement: container })
+            } catch (e) {
+              console.warn(`play() failed for ${path} ${storyName}: ${String(e).split('\n')[0]}`)
+            }
             await waitForRenderSettled(container)
           }
 

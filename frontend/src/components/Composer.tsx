@@ -153,10 +153,10 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
               {queue.map(item => (
                 <div key={item.id} className="flex justify-end">
                   <div className="max-w-2xl ml-auto">
-                    <div className="bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
+                    <div className="bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
                       {item.text}
                     </div>
-                    <div className="flex items-center justify-end gap-2 mt-0.5 pr-1 text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                    <div className="flex items-center justify-end gap-2 mt-0.5 pr-1 text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">
                       <span>queued</span>
                       {onRemoveQueued && (
                         <button
@@ -164,7 +164,7 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
                           onClick={() => onRemoveQueued(item.id)}
                           aria-label="Remove queued message"
                           title="Remove"
-                          className="hover:text-red-500 dark:hover:text-red-400 transition-opacity normal-case"
+                          className="min-h-[44px] -my-2 inline-flex items-center hover:text-red-500 dark:hover:text-red-400 transition-opacity normal-case"
                         >
                           remove
                         </button>
@@ -182,10 +182,10 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
               // "queued" hint - not a separate pill design.
               <div key={item.id} className="group flex justify-end">
                 <div className="max-w-2xl ml-auto">
-                  <div className="bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
+                  <div className="bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
                     {item.text}
                   </div>
-                  <div className="flex items-center justify-end gap-2 mt-0.5 pr-1 text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                  <div className="flex items-center justify-end gap-2 mt-0.5 pr-1 text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">
                     <span>queued</span>
                     {onRemoveQueued && (
                       <button

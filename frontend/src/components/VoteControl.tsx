@@ -35,7 +35,7 @@ export function VoteControl({ score, ownVote, onVote, disabled }: VoteControlPro
   }
 
   const activeClass = 'text-blue-600 dark:text-blue-400'
-  const idleClass = 'text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300'
+  const idleClass = 'text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
 
   return (
     <div className="inline-flex items-center gap-0.5" role="group" aria-label="Vote on this memory">
@@ -62,7 +62,7 @@ export function VoteControl({ score, ownVote, onVote, disabled }: VoteControlPro
       >
         <Icon name="arrow_downward" className="w-3.5 h-3.5" />
       </button>
-      {error && <span role="status" className="text-[10px] text-red-500 dark:text-red-400 ml-1">Vote failed</span>}
+      {error && <span role="status" className="text-[11px] text-red-500 dark:text-red-400 ml-1">Vote failed</span>}
     </div>
   )
 }
