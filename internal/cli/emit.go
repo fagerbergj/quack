@@ -2,42 +2,80 @@ package cli
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // InitAnswers is the collected wizard output for `quack server init` (and the
 // local branch of `quack init`). The wizard (internal/wizard) populates this;
 // EmitServerConfig turns it into a quack.yaml. Kept here, not in the wizard
 // package, so it's testable without constructing a Huh form.
+// The yaml tags are also what `server init --answers <file>` unmarshals into.
 type InitAnswers struct {
-	Endpoint string // LLM endpoint (OpenAI-compatible base URL)
-	APIKey   string // typed; emitted as ${QUACK_LLM_API_KEY} (the export is printed)
+	Endpoint string `yaml:"endpoint"` // LLM endpoint (OpenAI-compatible base URL)
+	APIKey   string `yaml:"api_key"`  // typed; emitted as ${QUACK_LLM_API_KEY} (the export is printed)
 
-	MainModel   string // orchestrator + researcher (the common case)
-	JudgeModel  string // blank ⇒ trust gate disabled
-	EmbedModel  string // blank ⇒ semantic memory disabled
-	VisionModel string // blank ⇒ no image-reader agent
-	AudioModel  string // blank ⇒ no media-reader agent
+	MainModel   string `yaml:"main_model"`   // orchestrator + researcher (the common case)
+	JudgeModel  string `yaml:"judge_model"`  // blank ⇒ trust gate disabled
+	EmbedModel  string `yaml:"embed_model"`  // blank ⇒ semantic memory disabled
+	VisionModel string `yaml:"vision_model"` // blank ⇒ no image-reader agent
+	AudioModel  string `yaml:"audio_model"`  // blank ⇒ no media-reader agent
 
 	// Stores - each kind picks the adapter; url is the connection (blank ⇒ the
 	// emitter fills the no-docker default for that kind).
-	SessionKind string // sqlite | postgres
-	SessionURL  string
-	MemoryKind  string // sqlite | qdrant  (blank when EmbedModel empty)
-	MemoryURL   string
-	SearchKind  string // exa | searxng   (blank when web search off)
-	SearchURL   string
-	FetchKind   string // direct | crawl4ai (blank when web fetch off)
-	FetchURL    string
+	SessionKind string `yaml:"session_kind"` // sqlite | postgres
+	SessionURL  string `yaml:"session_url"`
+	MemoryKind  string `yaml:"memory_kind"` // sqlite | qdrant  (blank when EmbedModel empty)
+	MemoryURL   string `yaml:"memory_url"`
+	SearchKind  string `yaml:"search_kind"` // exa | searxng   (blank when web search off)
+	SearchURL   string `yaml:"search_url"`
+	FetchKind   string `yaml:"fetch_kind"` // direct | crawl4ai (blank when web fetch off)
+	FetchURL    string `yaml:"fetch_url"`
 
-	WebSearch bool // optional-feature toggles (drive which stores are emitted)
-	WebFetch  bool
+	WebSearch bool `yaml:"web_search"` // optional-feature toggles (drive which stores are emitted)
+	WebFetch  bool `yaml:"web_fetch"`
 
 	// Coding - emit the coding agents (code-implementer/explorer/reviewer) plus
 	// the workspace section they need (sandbox + run_command/run_code guards).
-	Coding     bool
-	CoderModel string // blank ⇒ reuse MainModel
-	Sandbox    string // workspace.sandbox: bwrap | none (blank ⇒ bwrap, the server default)
+	Coding     bool   `yaml:"coding"`
+	CoderModel string `yaml:"coder_model"` // blank ⇒ reuse MainModel
+	Sandbox    string `yaml:"sandbox"`     // workspace.sandbox: bwrap | none (blank ⇒ bwrap, the server default)
+}
+
+// LoadInitAnswersFile applies env prefill first, then the file's values on
+// top - an --answers file only has to name what differs from the environment.
+func LoadInitAnswersFile(path string) (InitAnswers, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return InitAnswers{}, fmt.Errorf("read --answers %s: %w", path, err)
+	}
+	a := InitAnswers{WebSearch: true, WebFetch: true}
+	PrefillFromEnv(&a)
+	if err := yaml.Unmarshal(raw, &a); err != nil {
+		return InitAnswers{}, fmt.Errorf("parse --answers %s: %w", path, err)
+	}
+	return a, nil
+}
+
+// WriteServerConfig writes a to outPath and prints the confirmation + env
+// exports - the shared tail for both the wizard and a headless --answers init.
+func WriteServerConfig(a InitAnswers, outPath string) error {
+	if dir := filepath.Dir(outPath); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create %s: %w", dir, err)
+		}
+	}
+	if err := os.WriteFile(outPath, []byte(EmitServerConfig(a)), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", outPath, err)
+	}
+	fmt.Printf("\n✓ Wrote %s\n", outPath)
+	for _, line := range EnvExports(a) {
+		fmt.Println(line)
+	}
+	return nil
 }
 
 // EmitServerConfig renders a complete quack.yaml from the answers. Secrets

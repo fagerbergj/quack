@@ -190,7 +190,7 @@ func Report(out, errOut io.Writer, chatID string, r SendResult, asJSON bool) int
 	}
 	switch r.Status {
 	case StatusFailed:
-		fmt.Fprintln(errOut, r.Error)
+		fmt.Fprintln(errOut, r.Error+dialFailureHint(r.Error))
 	case StatusNeedsInput:
 		fmt.Fprintf(out, "question: %s\n", r.Question)
 		fmt.Fprintf(errOut, "answer with: quack chat send %s \"...\"\n", chatID)
@@ -200,6 +200,17 @@ func Report(out, errOut io.Writer, chatID string, r SendResult, asJSON bool) int
 		}
 	}
 	return exitCode(r.Status)
+}
+
+// dialFailureHint returns a " (...)" suffix naming the config key to check,
+// or "" - only text is available here (the SSE "error" event is flattened).
+func dialFailureHint(errText string) string {
+	for _, substr := range []string{"connection refused", "no such host", "i/o timeout", "dial tcp"} {
+		if strings.Contains(errText, substr) {
+			return " (is the model server up? its endpoint is set in providers.default.endpoint)"
+		}
+	}
+	return ""
 }
 
 func exitCode(status string) int {

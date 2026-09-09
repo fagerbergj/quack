@@ -62,3 +62,12 @@ workspace:
 		t.Errorf("expected output to contain %q, got:\n%s", "ok", got)
 	}
 }
+
+// Flag-registration only: running the real probes risks a FAIL calling
+// exitIfNonZero, which would kill the test binary too.
+func TestSandboxCheck_JSONFlagRegistered(t *testing.T) {
+	c := newSandboxCheckCmd()
+	if c.Flags().Lookup("json") == nil {
+		t.Error("sandbox check is missing --json")
+	}
+}

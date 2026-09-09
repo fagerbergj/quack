@@ -31,18 +31,18 @@ func RunChatShow(ctx context.Context, out, errOut io.Writer, server, id string, 
 	}
 	if asJSON {
 		_ = writeJSON(out, detail)
-		return 0
+		return exitCode(string(detail.Status))
 	}
 	printChatSnapshot(out, detail)
 	if !follow {
-		return 0
+		return exitCode(string(detail.Status))
 	}
 	// queued counts too: its run already has a live hub topic (response_created
 	// publishes at admission, before the max_active_runs slot is acquired), same
 	// as the frontend's reconnect-on-refresh check in pages/Chat.tsx.
 	if detail.Status != schema.ChatStatusRunning && detail.Status != schema.ChatStatusQueued {
 		fmt.Fprintln(out, "(nothing running)")
-		return 0
+		return exitCode(string(detail.Status))
 	}
 	st := newStreamState()
 	fs := newFollowState()

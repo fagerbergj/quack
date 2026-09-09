@@ -12,5 +12,8 @@ import "embed"
 // embed fails with "pattern all:.agents/vendor/dotagents/skills: no matching
 // files found" (make build/test do it for you).
 //
-//go:embed all:agents all:skills all:.agents/vendor/dotagents/skills
+// config/rubric.md and config/constitution.md ride along too, for
+// internal/vetting's fallback when gates.rubric_path is unset or missing.
+//
+//go:embed all:agents all:skills all:.agents/vendor/dotagents/skills config/rubric.md config/constitution.md
 var Embedded embed.FS

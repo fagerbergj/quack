@@ -13,7 +13,7 @@ func TestCommandTree(t *testing.T) {
 	root := newRootCmd()
 
 	want := map[string][]string{
-		"chat":   {"new", "send", "show", "list", "delete", "export", "stop", "node"},
+		"chat":   {"new", "send", "show", "list", "delete", "export", "stop", "node", "rename", "archive", "unarchive"},
 		"server": {"run", "init", "use", "add", "list", "remove"},
 		"api":    nil,
 		"ledger": {"list", "export", "show", "rebuild", "recover"},

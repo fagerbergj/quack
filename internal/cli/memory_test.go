@@ -28,7 +28,7 @@ func TestRunMemoryList(t *testing.T) {
 	defer srv.Close()
 
 	var out bytes.Buffer
-	if err := RunMemoryList(context.Background(), &out, srv.URL, "role:coding", "", 10, false, false); err != nil {
+	if err := RunMemoryList(context.Background(), &out, srv.URL, "role:coding", "", "", "", 10, false, false); err != nil {
 		t.Fatalf("RunMemoryList: %v", err)
 	}
 	q, _ := url.ParseQuery(gotQuery)
@@ -57,7 +57,7 @@ func TestRunMemoryListSearchAndIncludeInvalidated(t *testing.T) {
 	defer srv.Close()
 
 	var out bytes.Buffer
-	if err := RunMemoryList(context.Background(), &out, srv.URL, "", "how does deploy work", 0, true, false); err != nil {
+	if err := RunMemoryList(context.Background(), &out, srv.URL, "", "how does deploy work", "", "", 0, true, false); err != nil {
 		t.Fatalf("RunMemoryList: %v", err)
 	}
 	q, _ := url.ParseQuery(gotQuery)
@@ -78,7 +78,7 @@ func TestRunMemoryListJSON(t *testing.T) {
 	defer srv.Close()
 
 	var out bytes.Buffer
-	if err := RunMemoryList(context.Background(), &out, srv.URL, "", "", 0, false, true); err != nil {
+	if err := RunMemoryList(context.Background(), &out, srv.URL, "", "", "", "", 0, false, true); err != nil {
 		t.Fatalf("RunMemoryList: %v", err)
 	}
 	var decoded struct {
@@ -90,6 +90,103 @@ func TestRunMemoryListJSON(t *testing.T) {
 	}
 	if decoded.Total != 1 || len(decoded.Memories) != 1 || decoded.Memories[0].Id != "m1" {
 		t.Errorf("decoded = %+v, want one memory m1", decoded)
+	}
+}
+
+// With no --limit, the CLI pages through the whole store.
+func TestRunMemoryListAutoPages(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("page_token") == "" {
+			io.WriteString(w, `{"memories":[{"id":"m1","bucket":"b","content":"first page","author":"a","kind":"fact","timestamp":"2026-01-02T03:04:00Z"}],"total":2,"next_page_token":"p2"}`)
+			return
+		}
+		if r.URL.Query().Get("page_token") != "p2" {
+			t.Errorf("page_token = %q, want p2", r.URL.Query().Get("page_token"))
+		}
+		io.WriteString(w, `{"memories":[{"id":"m2","bucket":"b","content":"second page","author":"a","kind":"fact","timestamp":"2026-01-02T03:04:00Z"}],"total":2}`)
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	if err := RunMemoryList(context.Background(), &out, srv.URL, "", "", "", "", 0, false, false); err != nil {
+		t.Fatalf("RunMemoryList: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("server calls = %d, want 2 (auto-paged)", calls)
+	}
+	s := out.String()
+	if !strings.Contains(s, "first page") || !strings.Contains(s, "second page") {
+		t.Errorf("output missing a page's memory:\n%s", s)
+	}
+}
+
+// append onto a nil slice with nothing to append stays nil - an all-empty
+// store must not encode its --json memories field as null.
+func TestRunMemoryListAutoPageEmptyIsJSONArray(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, `{"memories":[],"total":0}`)
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	if err := RunMemoryList(context.Background(), &out, srv.URL, "", "", "", "", 0, false, true); err != nil {
+		t.Fatalf("RunMemoryList: %v", err)
+	}
+	var decoded struct {
+		Memories []struct{ Id string } `json:"memories"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
+		t.Fatalf("output not valid JSON: %v\n%s", err, out.String())
+	}
+	if decoded.Memories == nil {
+		t.Error("memories decoded as null (JSON), want []")
+	}
+	if !strings.Contains(out.String(), `"memories": []`) {
+		t.Errorf("output = %s, want the literal memories: [] shape", out.String())
+	}
+}
+
+// An explicit --limit must not be overridden by auto-paging.
+func TestRunMemoryListExplicitLimitMakesOneRequest(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		io.WriteString(w, `{"memories":[{"id":"m1","bucket":"b","content":"c","author":"a","kind":"fact","timestamp":"2026-01-02T03:04:00Z"}],"total":5,"next_page_token":"p2"}`)
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	if err := RunMemoryList(context.Background(), &out, srv.URL, "", "", "", "", 1, false, false); err != nil {
+		t.Fatalf("RunMemoryList: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("server calls = %d, want exactly 1 with an explicit --limit", calls)
+	}
+}
+
+// --tier and --sort must reach the server as query params.
+func TestRunMemoryListTierAndSort(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		io.WriteString(w, `{"memories":[],"total":0}`)
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	if err := RunMemoryList(context.Background(), &out, srv.URL, "", "", "verified", "score", 5, false, false); err != nil {
+		t.Fatalf("RunMemoryList: %v", err)
+	}
+	q, _ := url.ParseQuery(gotQuery)
+	if q.Get("tier") != "verified" || q.Get("sort") != "score" {
+		t.Errorf("query = %q, want tier=verified&sort=score", gotQuery)
 	}
 }
 
@@ -133,24 +230,34 @@ func TestRunMemoryForgetNotFound(t *testing.T) {
 	}
 }
 
-// TestRunMemoryShow covers the happy path: found on the first page, human
-// output includes the vote/tier/recall fields.
+// A direct per-id GET (exactly one server call), not a full-store page scan.
 func TestRunMemoryShow(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
+	var calls int
+	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		gotPath = r.URL.Path
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected method %s", r.Method)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"memories":[
-			{"id":"m1","bucket":"repo:r","content":"a fact worth showing","author":"a","kind":"fact",
+		io.WriteString(w, `{"id":"m1","bucket":"repo:r","content":"a fact worth showing","author":"a","kind":"fact",
 			 "timestamp":"2026-01-02T03:04:00Z","status":"unverified","tier":"verified",
 			 "upvotes":2,"downvotes":1,"vote_score":1,"recalls":3,
-			 "last_upvoted_at":"2026-01-03T00:00:00Z","last_recalled_at":"2026-01-04T00:00:00Z"}
-		],"total":1}`)
+			 "last_upvoted_at":"2026-01-03T00:00:00Z","last_recalled_at":"2026-01-04T00:00:00Z"}`)
 	}))
 	defer srv.Close()
 
 	var out bytes.Buffer
 	if err := RunMemoryShow(context.Background(), &out, srv.URL, "m1", false); err != nil {
 		t.Fatalf("RunMemoryShow: %v", err)
+	}
+	if gotPath != "/api/v1/memories/m1" {
+		t.Errorf("path = %q, want /api/v1/memories/m1", gotPath)
+	}
+	if calls != 1 {
+		t.Errorf("server calls = %d, want exactly 1 (a direct per-id GET, not a page scan)", calls)
 	}
 	s := out.String()
 	for _, want := range []string{"m1", "verified", "+2 / -1", "score 1", "recalls:  3", "a fact worth showing"} {
@@ -160,47 +267,10 @@ func TestRunMemoryShow(t *testing.T) {
 	}
 }
 
-// TestRunMemoryShowPaging covers findMemory's page_token loop: the id lands
-// on the second page, reached via the first response's next_page_token.
-func TestRunMemoryShowPaging(t *testing.T) {
-	t.Setenv("QUACK_HOME", t.TempDir())
-	var calls int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Query().Get("page_token") == "" {
-			io.WriteString(w, `{"memories":[{"id":"other","bucket":"repo:r","content":"c","author":"a","kind":"fact","timestamp":"2026-01-02T03:04:00Z"}],"total":2,"next_page_token":"p2"}`)
-			return
-		}
-		if r.URL.Query().Get("page_token") != "p2" {
-			t.Errorf("page_token = %q, want p2", r.URL.Query().Get("page_token"))
-		}
-		io.WriteString(w, `{"memories":[{"id":"m2","bucket":"repo:r","content":"on page two","author":"a","kind":"fact","timestamp":"2026-01-02T03:04:00Z"}],"total":2}`)
-	}))
-	defer srv.Close()
-
-	var out bytes.Buffer
-	if err := RunMemoryShow(context.Background(), &out, srv.URL, "m2", false); err != nil {
-		t.Fatalf("RunMemoryShow: %v", err)
-	}
-	if !strings.Contains(out.String(), "on page two") {
-		t.Errorf("show output = %q, want the second page's memory", out.String())
-	}
-	if calls != 2 {
-		t.Errorf("server calls = %d, want exactly 2 (one per page)", calls)
-	}
-}
-
-// TestRunMemoryShowNotFound covers termination: no next_page_token ends the
-// scan, and an id never seen across all pages is a not-found error, not an
-// infinite loop.
 func TestRunMemoryShowNotFound(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
-	var calls int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"memories":[{"id":"m1","bucket":"repo:r","content":"c","author":"a","kind":"fact","timestamp":"2026-01-02T03:04:00Z"}],"total":1}`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
 
@@ -208,9 +278,6 @@ func TestRunMemoryShowNotFound(t *testing.T) {
 	err := RunMemoryShow(context.Background(), &out, srv.URL, "does-not-exist", false)
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("err = %v, want a not-found error", err)
-	}
-	if calls != 1 {
-		t.Errorf("server calls = %d, want exactly 1 (no next_page_token, must not loop)", calls)
 	}
 }
 

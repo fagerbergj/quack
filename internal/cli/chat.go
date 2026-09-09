@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -81,21 +82,24 @@ func originFilterKeep(c schema.ChatSummary, filter string) bool {
 	}
 }
 
-// chatListFilters bundles the four `chat list` narrowing flags. Each empty
+// chatListFilters bundles the `chat list` narrowing flags. Each empty
 // field imposes no constraint; validate() rejects unrecognised values before
 // any of them reach the keep-checks below (mirrors frontend/src/lib/chatFilters.ts's
 // matchesFacets: every active facet must match, no ordering dependency).
+// archived is the odd one out: it picks the server's active/archived scope
+// (the status= query param) rather than a client-side keep-check.
 type chatListFilters struct {
-	origin string // "", "all", "github", "direct"
-	status string // "", or a ChatStatus value
-	repo   string // "", or an exact owner/repo match
-	kind   string // "", "issue", "pr"
+	origin   string // "", "all", "github", "direct"
+	status   string // "", or a ChatStatus value
+	repo     string // "", or an exact owner/repo match
+	kind     string // "", "issue", "pr"
+	archived string // "", "exclude", "include", "only"
 }
 
 // NewChatListFilters builds a chatListFilters from the `chat list` flag
-// values (origin filter, status, repo, github ref type).
-func NewChatListFilters(origin, status, repo, kind string) chatListFilters {
-	return chatListFilters{origin: origin, status: status, repo: repo, kind: kind}
+// values (origin filter, status, repo, github ref type, archive scope).
+func NewChatListFilters(origin, status, repo, kind, archived string) chatListFilters {
+	return chatListFilters{origin: origin, status: status, repo: repo, kind: kind, archived: archived}
 }
 
 func (f chatListFilters) validate() error {
@@ -112,7 +116,25 @@ func (f chatListFilters) validate() error {
 	default:
 		return fmt.Errorf("--type must be one of issue, pr (got %q)", f.kind)
 	}
+	switch f.archived {
+	case "", "exclude", "include", "only":
+	default:
+		return fmt.Errorf("--archived must be one of exclude, include, only (got %q)", f.archived)
+	}
 	return nil
+}
+
+// serverStatuses maps archived to status= query values; "" passes nil so a
+// server default change (today "active") doesn't need mirroring here.
+func (f chatListFilters) serverStatuses() []string {
+	switch f.archived {
+	case "include":
+		return []string{"active", "archived"}
+	case "only":
+		return []string{"archived"}
+	default:
+		return nil
+	}
 }
 
 func (f chatListFilters) keep(c schema.ChatSummary) bool {
@@ -152,7 +174,7 @@ func RunChatList(ctx context.Context, out io.Writer, server string, asJSON bool,
 	if err != nil {
 		return err
 	}
-	chats, err := c.ListChats(ctx)
+	chats, err := c.ListChats(ctx, filters.serverStatuses())
 	if err != nil {
 		return err
 	}
@@ -257,6 +279,36 @@ func RunChatStop(ctx context.Context, out io.Writer, server, id string) error {
 	return nil
 }
 
+// RunChatRename is `quack chat rename <id> <title>`: PATCH the chat's title.
+func RunChatRename(ctx context.Context, out io.Writer, server, id, title string) error {
+	c, err := NewClient(ctx, server)
+	if err != nil {
+		return err
+	}
+	if _, err := c.UpdateChat(ctx, id, &title, nil); err != nil {
+		return notFoundAs(err, id)
+	}
+	fmt.Fprintf(out, "Renamed chat %s to %q.\n", id, title)
+	return nil
+}
+
+// RunChatArchive backs both `chat archive` and `chat unarchive`.
+func RunChatArchive(ctx context.Context, out io.Writer, server, id string, archived bool) error {
+	c, err := NewClient(ctx, server)
+	if err != nil {
+		return err
+	}
+	if _, err := c.UpdateChat(ctx, id, nil, &archived); err != nil {
+		return notFoundAs(err, id)
+	}
+	verb := "Archived"
+	if !archived {
+		verb = "Unarchived"
+	}
+	fmt.Fprintf(out, "%s chat %s.\n", verb, id)
+	return nil
+}
+
 // RunNodeStop is `quack chat node stop <chat-id> <node-id>`: cancel one running
 // node; the rest of the run continues. No-op if no such node is active.
 func RunNodeStop(ctx context.Context, out io.Writer, server, chatID, nodeID string) error {
@@ -265,7 +317,7 @@ func RunNodeStop(ctx context.Context, out io.Writer, server, chatID, nodeID stri
 		return err
 	}
 	if err := c.CancelNode(ctx, chatID, nodeID); err != nil {
-		return notFoundAs(err, chatID)
+		return nodeErrAs(err, chatID)
 	}
 	fmt.Fprintf(out, "Stopping node %s (chat %s); an in-flight round is being aborted, the rest of the run continues.\n", nodeID, chatID)
 	return nil
@@ -279,7 +331,7 @@ func RunNodePause(ctx context.Context, out io.Writer, server, chatID, nodeID str
 		return err
 	}
 	if err := c.PauseNode(ctx, chatID, nodeID); err != nil {
-		return notFoundAs(err, chatID)
+		return nodeErrAs(err, chatID)
 	}
 	fmt.Fprintf(out, "Pausing node %s (chat %s) at its next turn boundary - resume it with `quack chat node resume %s %s`.\n", nodeID, chatID, chatID, nodeID)
 	return nil
@@ -294,7 +346,7 @@ func RunNodeResume(ctx context.Context, out io.Writer, server, chatID, nodeID st
 		return err
 	}
 	if err := c.ResumeNode(ctx, chatID, nodeID); err != nil {
-		return notFoundAs(err, chatID)
+		return nodeErrAs(err, chatID)
 	}
 	fmt.Fprintf(out, "Resuming node %s (chat %s) - watch it with `quack chat show %s -f`.\n", nodeID, chatID, chatID)
 	return nil
@@ -310,7 +362,7 @@ func RunNodeQueue(ctx context.Context, out io.Writer, server, chatID, nodeID, me
 	}
 	m, err := c.QueueNodeMessage(ctx, chatID, nodeID, message)
 	if err != nil {
-		return notFoundAs(err, chatID)
+		return nodeErrAs(err, chatID)
 	}
 	fmt.Fprintf(out, "Queued message %s for node %s (chat %s) - delivered at its next turn boundary.\n", m.Id, nodeID, chatID)
 	return nil
@@ -324,7 +376,7 @@ func RunNodeQueueEdit(ctx context.Context, out io.Writer, server, chatID, nodeID
 		return err
 	}
 	if err := c.EditQueuedMessage(ctx, chatID, nodeID, messageID, text); err != nil {
-		return notFoundAs(err, chatID)
+		return nodeErrAs(err, chatID)
 	}
 	fmt.Fprintf(out, "Edited queued message %s for node %s (chat %s).\n", messageID, nodeID, chatID)
 	return nil
@@ -338,7 +390,7 @@ func RunNodeQueueRemove(ctx context.Context, out io.Writer, server, chatID, node
 		return err
 	}
 	if err := c.RemoveQueuedMessage(ctx, chatID, nodeID, messageID); err != nil {
-		return notFoundAs(err, chatID)
+		return nodeErrAs(err, chatID)
 	}
 	fmt.Fprintf(out, "Removed queued message %s for node %s (chat %s).\n", messageID, nodeID, chatID)
 	return nil
@@ -353,7 +405,7 @@ func RunNodeEditTask(ctx context.Context, out io.Writer, server, chatID, nodeID,
 		return err
 	}
 	if err := c.EditNodeTask(ctx, chatID, nodeID, task); err != nil {
-		return notFoundAs(err, chatID)
+		return nodeErrAs(err, chatID)
 	}
 	fmt.Fprintf(out, "Edited node %s's prompt (chat %s).\n", nodeID, chatID)
 	return nil
@@ -368,21 +420,24 @@ func RunNodeRetry(ctx context.Context, out io.Writer, server, chatID, nodeID, gu
 		return err
 	}
 	if err := c.RetryNode(ctx, chatID, nodeID, guidance); err != nil {
-		return notFoundAs(err, chatID)
+		return nodeErrAs(err, chatID)
 	}
 	fmt.Fprintf(out, "Retrying node %s (chat %s) - watch it with `quack chat show %s -f`.\n", nodeID, chatID, chatID)
 	return nil
 }
 
-// RunChatDelete is `quack chat delete <id>`. Deletion is irreversible, so it
-// confirms first unless yes is set (the --yes flag, or a non-interactive stdin).
-func RunChatDelete(ctx context.Context, out io.Writer, in io.Reader, server, id string, yes bool) error {
+// RunChatDelete confirms on errOut (stderr, per house rule); an empty/closed
+// stdin without yes errors rather than silently defaulting to "no".
+func RunChatDelete(ctx context.Context, out, errOut io.Writer, in io.Reader, server, id string, yes bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
 	}
 	if !yes {
-		ok, err := confirm(out, in, fmt.Sprintf("Delete chat %s? This cannot be undone.", id))
+		ok, err := confirm(errOut, in, fmt.Sprintf("Delete chat %s? This cannot be undone.", id))
+		if errors.Is(err, errNonInteractive) {
+			return fmt.Errorf("chat delete needs confirmation - pass -y in a non-interactive shell")
+		}
 		if err != nil {
 			return err
 		}
@@ -441,19 +496,39 @@ func notFoundAs(err error, id string) error {
 	return err
 }
 
+// nodeErrAs surfaces the server's real 404 message (via wrapNotFound); a
+// node's 404 rarely means the chat itself is missing, unlike notFoundAs.
+func nodeErrAs(err error, chatID string) error {
+	if err == ErrNotFound {
+		return fmt.Errorf("chat %s or node not found", chatID)
+	}
+	return err
+}
+
+// writeJSON normalises a nil top-level slice to `[]`, not `null`, so every
+// list command sharing this path doesn't force jq to special-case empty.
 func writeJSON(out io.Writer, v any) error {
+	if rv := reflect.ValueOf(v); rv.Kind() == reflect.Slice && rv.IsNil() {
+		v = reflect.MakeSlice(rv.Type(), 0, 0).Interface()
+	}
 	enc := json.NewEncoder(out)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
 }
 
-// confirm asks a yes/no question on out and reads a line from in. Defaults to no
-// on a blank line or EOF (a closed/empty stdin → safe default, not a hang).
+// errNonInteractive: stdin had no bytes at all, distinct from a blank line
+// a human typed (which still defaults to no).
+var errNonInteractive = errors.New("no interactive stdin to confirm on")
+
+// confirm reads a yes/no answer; a blank line defaults to no, an empty
+// stdin returns errNonInteractive instead.
 func confirm(out io.Writer, in io.Reader, prompt string) (bool, error) {
 	fmt.Fprintf(out, "%s [y/N] ", prompt)
 	var answer string
 	if _, err := fmt.Fscanln(in, &answer); err != nil {
-		// Fscanln errors on a blank line / EOF - treat as "no", not a failure.
+		if errors.Is(err, io.EOF) {
+			return false, errNonInteractive
+		}
 		return false, nil
 	}
 	answer = strings.ToLower(strings.TrimSpace(answer))

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -110,5 +111,18 @@ func TestFormatSandboxProbeTable(t *testing.T) {
 	out := FormatSandboxProbeTable([]SandboxProbeResult{{Name: "x", Status: ProbePass, Evidence: "ok"}})
 	if !strings.Contains(out, "PASS") || !strings.Contains(out, "x") || !strings.Contains(out, "ok") {
 		t.Errorf("table missing expected content: %q", out)
+	}
+}
+
+// Pins the wire shape a CI consumer would parse.
+func TestSandboxProbeResultJSONShape(t *testing.T) {
+	b, err := json.Marshal([]SandboxProbeResult{{Name: "write $TMPDIR", Status: ProbePass, Evidence: "ok"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(b)
+	want := `[{"name":"write $TMPDIR","status":"PASS","evidence":"ok"}]`
+	if got != want {
+		t.Errorf("JSON shape = %s, want %s", got, want)
 	}
 }

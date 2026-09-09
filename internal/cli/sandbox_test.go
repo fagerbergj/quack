@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/config"
@@ -57,6 +58,28 @@ func TestResolveSandboxAgent(t *testing.T) {
 
 	if _, _, err := ResolveSandboxAgent(cfg, "no-such-agent"); err == nil {
 		t.Error("expected error for unknown agent")
+	}
+}
+
+// The error names what's actually configured, not a sentence that trails off.
+func TestResolveSandboxAgentErrorListsConfiguredAgents(t *testing.T) {
+	cfg := testAgentConfig()
+	_, _, err := ResolveSandboxAgent(cfg, "no-such-agent")
+	if err == nil {
+		t.Fatal("expected error for unknown agent")
+	}
+	for _, want := range []string{"code-reviewer", "code-writer"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should list configured agent %q", err.Error(), want)
+		}
+	}
+
+	_, _, err = ResolveSandboxAgent(&config.Config{}, "no-such-agent")
+	if err == nil {
+		t.Fatal("expected error for unknown agent")
+	}
+	if !strings.Contains(err.Error(), "none configured") {
+		t.Errorf("empty-agents error should say so, got %q", err.Error())
 	}
 }
 

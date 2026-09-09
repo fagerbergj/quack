@@ -190,6 +190,17 @@ func dialErrorClass(err error) string {
 	return "connection error"
 }
 
+// IsDialFailure reports whether err is a connection-level failure (refused,
+// timeout, DNS) rather than an HTTP status the server actually answered with.
+func IsDialFailure(err error) bool {
+	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ETIMEDOUT) {
+		return true
+	}
+	var dnsErr *net.DNSError
+	var opErr *net.OpError
+	return errors.As(err, &dnsErr) || errors.As(err, &opErr)
+}
+
 // RecordStoreFailure notes a sanitized store error for chatID, overwriting
 // any prior one - only the most recent failure matters to the give-up path.
 func RecordStoreFailure(chatID string, err error) {

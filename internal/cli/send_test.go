@@ -103,6 +103,44 @@ func TestRunChatSendFailed(t *testing.T) {
 	}
 }
 
+// An endpoint-down failure must name providers.default.endpoint.
+func TestRunChatSendFailedDialErrorNamesConfigKey(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, `event: error`+"\n"+`data: {"error":"openai m (generate): Post \"http://127.0.0.1:1/v1/chat/completions\": dial tcp 127.0.0.1:1: connect: connection refused"}`+"\n\n")
+	}))
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	code := RunChatSend(context.Background(), &out, &errOut, srv.URL, "c1", "hi", nil, false, false)
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(errOut.String(), "providers.default.endpoint") {
+		t.Errorf("stderr = %q, want it to name providers.default.endpoint", errOut.String())
+	}
+}
+
+// TestDialFailureHint pins the substring detection directly: unrelated
+// failures (a 400, a tool error) get no hint appended.
+func TestDialFailureHint(t *testing.T) {
+	for _, tc := range []struct {
+		errText string
+		want    bool
+	}{
+		{"dial tcp 127.0.0.1:1: connect: connection refused", true},
+		{"dial tcp: lookup bogus.invalid: no such host", true},
+		{"context deadline exceeded (Client.Timeout exceeded while awaiting headers)", false},
+		{"status 400: bad request", false},
+	} {
+		got := dialFailureHint(tc.errText) != ""
+		if got != tc.want {
+			t.Errorf("dialFailureHint(%q) hinted=%v, want %v", tc.errText, got, tc.want)
+		}
+	}
+}
+
 // TestRunChatSendCompleted_DiscardsPreamble: narration the orchestrator emits
 // before a top-level tool call ("I'll check the plan...") must not survive
 // into the final printed answer - only text after the last tool call does

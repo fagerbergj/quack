@@ -1,6 +1,8 @@
 package plugin
 
 import (
+	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -63,6 +65,35 @@ func TestRefreshUnreadableManifestIsNotFatal(t *testing.T) {
 		t.Errorf("want nil for an unreadable manifest, got %+v", revs)
 	}
 }
+
+// A missing manifest is the normal case outside a plugin-using repo.
+func TestRefreshMissingManifestLogsAtDebug(t *testing.T) {
+	var got slog.Record
+	prev := slog.Default()
+	defer slog.SetDefault(prev)
+	slog.SetDefault(slog.New(recordingHandler{rec: &got}))
+
+	Refresh(filepath.Join(t.TempDir(), "absent.yaml"), "")
+
+	if got.Message == "" {
+		t.Fatal("expected a log record for the missing manifest")
+	}
+	if got.Level != slog.LevelDebug {
+		t.Errorf("level = %v, want Debug for a merely-absent manifest", got.Level)
+	}
+}
+
+// recordingHandler captures the last record handled, for asserting on log
+// level without pulling in a logging test helper library for one check.
+type recordingHandler struct{ rec *slog.Record }
+
+func (recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h recordingHandler) Handle(_ context.Context, r slog.Record) error {
+	*h.rec = r
+	return nil
+}
+func (h recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h recordingHandler) WithGroup(string) slog.Handler      { return h }
 
 // The real manifest must parse with the same shape scripts/plugins.sh expects.
 func TestRefreshParsesTheRealManifest(t *testing.T) {

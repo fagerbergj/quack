@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"text/tabwriter"
 )
 
@@ -41,16 +42,12 @@ func RunArtifactList(ctx context.Context, out io.Writer, server, chatID string, 
 	return tw.Flush()
 }
 
-// RunArtifactDownload is `quack chat artifact download <chat-id> <name> [--revision N] [-o file]`:
-// downloads one revision's bytes to outFile (default the artifact's own
-// name) and prints the written path.
+// RunArtifactDownload writes one revision's bytes to outFile (default: the
+// artifact's own name, sanitised); `-o -` streams to out (stdout) instead.
 func RunArtifactDownload(ctx context.Context, out io.Writer, server, chatID, name string, revision int, outFile string) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
 		return err
-	}
-	if outFile == "" {
-		outFile = name
 	}
 	body, err := c.FetchArtifact(ctx, chatID, name, revision)
 	if err != nil {
@@ -59,9 +56,29 @@ func RunArtifactDownload(ctx context.Context, out io.Writer, server, chatID, nam
 		}
 		return err
 	}
+	if outFile == "-" {
+		_, err := out.Write(body)
+		return err
+	}
+	if outFile == "" {
+		outFile, err = sanitizeArtifactName(name)
+		if err != nil {
+			return err
+		}
+	}
 	if err := os.WriteFile(outFile, body, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", outFile, err)
 	}
 	fmt.Fprintln(out, outFile)
 	return nil
+}
+
+// sanitizeArtifactName bases a server-supplied name so it can't write
+// outside the caller's cwd (e.g. "../escaped.txt").
+func sanitizeArtifactName(name string) (string, error) {
+	base := filepath.Base(name)
+	if base == "" || base == "." || base == ".." {
+		return "", fmt.Errorf("artifact name %q has no safe local filename - pass -o", name)
+	}
+	return base, nil
 }

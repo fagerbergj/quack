@@ -85,6 +85,7 @@ func (c *ClientConfig) Save() error {
 }
 
 // AddServer registers name→url, erroring on a duplicate name (use Remove first).
+// Activates it when it's the first server registered.
 func (c *ClientConfig) AddServer(name, url string) error {
 	if name == "" {
 		return fmt.Errorf("server name is required")
@@ -95,7 +96,11 @@ func (c *ClientConfig) AddServer(name, url string) error {
 	if _, exists := c.Servers[name]; exists {
 		return fmt.Errorf("server %q already exists (remove it first)", name)
 	}
+	first := len(c.Servers) == 0
 	c.Servers[name] = ServerRef{URL: url}
+	if first {
+		c.Active = name
+	}
 	return nil
 }
 

@@ -34,8 +34,8 @@ func newEvalCmd() *cobra.Command {
 			"recorded-vs-new table is printed. Exit code is 0 whenever the eval\n" +
 			"itself completed - a WORSE score is a result, not a failure.\n\n" +
 			"<chat-id-or-bundle.zip> resolves exactly like `quack replay`'s argument:\n" +
-			"a local bundle file, or a chat id fetched from --server's recording\n" +
-			"endpoint.",
+			"a local bundle file, or a chat id fetched from --from-server's\n" +
+			"recording endpoint.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runEval(cmd, args[0], model, role, sourceServer, asJSON)
@@ -43,7 +43,7 @@ func newEvalCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&model, "model", "", "model name to swap in for --role (required)")
 	c.Flags().StringVar(&role, "role", eval.RoleAll, "which agents to swap: coder, researcher, orch, or all")
-	c.Flags().StringVar(&sourceServer, "server", "", "server to fetch the recording from, when the argument is a chat id (default: active registered server)")
+	c.Flags().StringVar(&sourceServer, "from-server", "", "server to fetch the recording from, when the argument is a chat id (default: active registered server) - distinct from the global --server")
 	asJSONFlag(c, &asJSON)
 	_ = c.MarkFlagRequired("model")
 	return c

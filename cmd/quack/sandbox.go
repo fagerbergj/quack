@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -270,19 +271,21 @@ func (r cmdSandboxRunner) Run(ctx context.Context, script string) (string, int, 
 // non-zero on any FAIL.
 func newSandboxCheckCmd() *cobra.Command {
 	var f sandboxFlags
+	var asJSON bool
 	c := &cobra.Command{
 		Use:   "check",
 		Short: "Run the built-in jail probes; non-zero exit on any FAIL",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSandboxCheck(cmd, f)
+			return runSandboxCheck(cmd, f, asJSON)
 		},
 	}
 	addSandboxFlags(c, &f)
+	asJSONFlag(c, &asJSON)
 	return c
 }
 
-func runSandboxCheck(cmd *cobra.Command, f sandboxFlags) error {
+func runSandboxCheck(cmd *cobra.Command, f sandboxFlags, asJSON bool) error {
 	seat, teardown, err := openSandboxSeat(f)
 	if err != nil {
 		return err
@@ -299,7 +302,13 @@ func runSandboxCheck(cmd *cobra.Command, f sandboxFlags) error {
 
 	runner := cmdSandboxRunner{seat: seat, ac: ac}
 	results := cli.RunSandboxChecks(cmd.Context(), runner, seat.ReadOnly, workspace.EnforcesBoundary(seat.Caps.Sandbox), cfg.Workspace.CheckCommands)
-	fmt.Fprint(cmd.OutOrStdout(), cli.FormatSandboxProbeTable(results))
+	if asJSON {
+		enc := json.NewEncoder(cmd.OutOrStdout())
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(results)
+	} else {
+		fmt.Fprint(cmd.OutOrStdout(), cli.FormatSandboxProbeTable(results))
+	}
 	if cli.AnyFail(results) {
 		teardown() // os.Exit below skips defer; run it before exiting
 		exitIfNonZero(1)

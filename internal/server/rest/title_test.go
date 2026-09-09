@@ -3,11 +3,16 @@ package rest
 import (
 	"context"
 	"iter"
+	"log/slog"
+	"net"
 	"strings"
+	"syscall"
 	"testing"
 
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
+
+	"github.com/fagerbergj/quack/internal/inference/openaimodel"
 )
 
 // fixedAnswerModel always answers with a fixed piece of text - used here to
@@ -23,6 +28,47 @@ func (m fixedAnswerModel) GenerateContent(_ context.Context, _ *model.LLMRequest
 			FinishReason: genai.FinishReasonStop,
 			TurnComplete: true,
 		}, nil)
+	}
+}
+
+// erroringModel always fails with a dial-shaped error, recording whether the
+// ctx it was called with carried openaimodel.WithBestEffort.
+type erroringModel struct{ sawBestEffort *bool }
+
+func (erroringModel) Name() string { return "erroring" }
+
+func (m erroringModel) GenerateContent(ctx context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	*m.sawBestEffort = openaimodel.IsBestEffort(ctx)
+	return func(yield func(*model.LLMResponse, error) bool) {
+		yield(nil, &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED})
+	}
+}
+
+func TestGenerateTitle_MarksCtxBestEffort(t *testing.T) {
+	var sawBestEffort bool
+	h := &Handler{titler: erroringModel{sawBestEffort: &sawBestEffort}}
+	title := h.generateTitle(context.Background(), "chat-1", "hello")
+	if title != "" {
+		t.Errorf("title = %q, want empty on titler error", title)
+	}
+	if !sawBestEffort {
+		t.Error("generateTitle's ctx did not carry openaimodel.WithBestEffort")
+	}
+}
+
+// TestGenerateTitle_DialFailureLogsBelowDefaultLevel: a dial failure logs at
+// Debug (invisible at the default Info level), not Warn.
+func TestGenerateTitle_DialFailureLogsBelowDefaultLevel(t *testing.T) {
+	var buf strings.Builder
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+
+	h := &Handler{titler: erroringModel{sawBestEffort: new(bool)}}
+	h.generateTitle(context.Background(), "chat-1", "hello")
+
+	if strings.Contains(buf.String(), "title generation failed") {
+		t.Errorf("dial failure should not log at the default level, got:\n%s", buf.String())
 	}
 }
 

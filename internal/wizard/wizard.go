@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -31,23 +30,25 @@ var ErrAborted = errors.New("init cancelled")
 // → endpoint → /models → model roles → optional features → stores. When outPath
 // already exists (and --force wasn't passed) it asks up front whether to keep,
 // overwrite, or write elsewhere - before any wizard questions.
-func ServerInit(ctx context.Context, outPath string, force bool) error {
+// local narrows the stores screens to one confirm; wrote tells the caller
+// whether a config was actually written, so it can pick the next-step message.
+func ServerInit(ctx context.Context, outPath string, force, local bool) (wrote bool, err error) {
 	if !force && fileExists(outPath) {
 		switch askExisting(outPath) {
 		case existingUse:
 			fmt.Printf("Using existing %s - no changes.\n", outPath)
-			return nil
+			return false, nil
 		case existingNewPath:
 			p := askPath(outPath)
 			if p == "" {
-				return ErrAborted
+				return false, ErrAborted
 			}
 			outPath = p
 		case existingOverwrite:
 			// fall through: run the wizard and overwrite outPath.
 		default: // cancel or escape
 			fmt.Println("Cancelled - nothing changed.")
-			return ErrAborted
+			return false, ErrAborted
 		}
 	}
 
@@ -61,7 +62,7 @@ func ServerInit(ctx context.Context, outPath string, force bool) error {
 	// before the rest of the wizard can offer it as choices - a natural break,
 	// not a back-nav wall.
 	if err := askProvider(ctx, &a); err != nil {
-		return err
+		return false, err
 	}
 	models, manual := discoverModels(ctx, &a)
 
@@ -72,33 +73,23 @@ func ServerInit(ctx context.Context, outPath string, force bool) error {
 	groups := modelGroups(&a, models, manual)
 	groups = append(groups, featuresGroup(&feats))
 	groups = append(groups, codingGroups(&a, &feats, models)...)
-	groups = append(groups, storeGroups(&a, &feats)...)
+	groups = append(groups, storeGroups(&a, &feats, local)...)
 	groups = append(groups, reviewGroup(&a, &feats, outPath, &ok))
 	if err := runForm(huh.NewForm(groups...)); err != nil {
-		return err
+		return false, err
 	}
 	a.WebSearch = slices.Contains(feats, "search")
 	a.WebFetch = slices.Contains(feats, "fetch")
 	a.Coding = slices.Contains(feats, "coding")
 	if !ok {
 		fmt.Println("Aborted - nothing written.")
-		return nil
+		return false, nil
 	}
 
-	if dir := filepath.Dir(outPath); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("create %s: %w", dir, err)
-		}
+	if err := cli.WriteServerConfig(a, outPath); err != nil {
+		return false, err
 	}
-	if err := os.WriteFile(outPath, []byte(cli.EmitServerConfig(a)), 0o644); err != nil {
-		return fmt.Errorf("write %s: %w", outPath, err)
-	}
-	fmt.Printf("\n✓ Wrote %s\n", outPath)
-	for _, line := range cli.EnvExports(a) {
-		fmt.Println(line)
-	}
-	fmt.Println("\nRun `quack server run` to start.")
-	return nil
+	return true, nil
 }
 
 func fileExists(p string) bool {
@@ -219,7 +210,8 @@ func ClientInit(ctx context.Context, serverInitPath string, force bool) error {
 		// Local registers nothing: with no active server, the CLI runs the duck
 		// in-process (no separate `quack server run`). Writing quack.yaml is the
 		// whole job.
-		if err := ServerInit(ctx, serverInitPath, force); err != nil {
+		wrote, err := ServerInit(ctx, serverInitPath, force, true)
+		if err != nil {
 			if errors.Is(err, ErrAborted) {
 				return nil // user cancelled at the existing-config gate
 			}
@@ -234,7 +226,9 @@ func ClientInit(ctx context.Context, serverInitPath string, force bool) error {
 				_ = c.Save()
 			}
 		}
-		fmt.Println("\nLocal duck ready - run `quack` to chat (it starts in-process).")
+		if wrote {
+			fmt.Println("\nRun `quack -p \"<your question>\"` to chat now (in-process), or `quack server run` for the web UI on http://localhost:8080.")
+		}
 		return nil
 	case "remote":
 		return registerRemote()
@@ -329,14 +323,15 @@ func modelGroups(a *cli.InitAnswers, models []string, manual bool) []*huh.Group 
 	return []*huh.Group{
 		huh.NewGroup(selectOrInput(manual, modelOptions(models), &a.MainModel)).
 			Title("Main model").Description("The model quack reasons and plans with"),
-		huh.NewGroup(specialistSelect(models, &a.JudgeModel, none)).
+		huh.NewGroup(specialistSelect("", models, &a.JudgeModel, none)).
 			Title("Judge model").Description("Trust gate - scores every node's output"),
-		huh.NewGroup(specialistSelect(models, &a.EmbedModel, none)).
+		huh.NewGroup(specialistSelect("", models, &a.EmbedModel, none)).
 			Title("Embedding model").Description("Semantic memory - None disables it"),
-		huh.NewGroup(specialistSelect(models, &a.VisionModel, none)).
-			Title("Vision model").Description("Image-reader - None disables it"),
-		huh.NewGroup(specialistSelect(models, &a.AudioModel, none)).
-			Title("Audio model").Description("Media-reader - None disables it"),
+		// Bounded Height keeps two model selects from overflowing one group.
+		huh.NewGroup(
+			specialistSelect("Vision", models, &a.VisionModel, none),
+			specialistSelect("Audio", models, &a.AudioModel, none),
+		).Title("Attachment models").Description("Image- and audio-reading - None disables either"),
 	}
 }
 
@@ -383,7 +378,7 @@ func codingGroups(a *cli.InitAnswers, feats *[]string, models []string) []*huh.G
 		}
 	}
 	hide := func() bool { return !slices.Contains(*feats, "coding") }
-	model := huh.NewGroup(specialistSelect(models, &a.CoderModel, huh.NewOption("Same as main model", ""))).
+	model := huh.NewGroup(specialistSelect("", models, &a.CoderModel, huh.NewOption("Same as main model", ""))).
 		Title("Coder model").Description("Powers code-implementer/explorer/reviewer").
 		WithHideFunc(hide)
 	sandbox := huh.NewGroup(
@@ -402,7 +397,7 @@ func codingGroups(a *cli.InitAnswers, feats *[]string, models []string) []*huh.G
 // (when their feature is on). The conditional groups carry WithHideFunc so they
 // appear/disappear live as earlier answers change. Emit gates on the same flags,
 // so a hidden group's default value is never written.
-func storeGroups(a *cli.InitAnswers, feats *[]string) []*huh.Group {
+func storeGroups(a *cli.InitAnswers, feats *[]string, local bool) []*huh.Group {
 	session := storeGroup("Session storage", []string{"sqlite", "postgres"}, &a.SessionKind, &a.SessionURL, "sqlite").
 		Description("Where quack keeps its state + tool backends")
 	memory := storeGroup("Memory store", []string{"sqlite", "qdrant"}, &a.MemoryKind, &a.MemoryURL, "sqlite").
@@ -411,7 +406,26 @@ func storeGroups(a *cli.InitAnswers, feats *[]string) []*huh.Group {
 		WithHideFunc(func() bool { return !slices.Contains(*feats, "search") })
 	fetch := storeGroup("Web fetch backend", []string{"direct", "crawl4ai"}, &a.FetchKind, &a.FetchURL, "direct").
 		WithHideFunc(func() bool { return !slices.Contains(*feats, "fetch") })
-	return []*huh.Group{session, memory, search, fetch}
+	if !local {
+		// `quack server init` (the Docker/operator persona) needs the real
+		// backends - Postgres, Qdrant, SearXNG, crawl4ai - so keep every screen.
+		return []*huh.Group{session, memory, search, fetch}
+	}
+	// The local persona's defaults (sqlite, exa, direct) are already right -
+	// one confirm replaces four screens unless the user opts into choosing.
+	useDefaults := true
+	confirm := huh.NewGroup(
+		huh.NewConfirm().
+			Title("Use sqlite for storage and keyless web tools?").
+			Description("No = choose backends (Postgres/Qdrant/SearXNG/crawl4ai)").
+			Value(&useDefaults),
+	).Title("Storage")
+	hideDefaults := func() bool { return useDefaults }
+	session = session.WithHideFunc(hideDefaults)
+	memory = memory.WithHideFunc(func() bool { return useDefaults || a.EmbedModel == "" })
+	search = search.WithHideFunc(func() bool { return useDefaults || !slices.Contains(*feats, "search") })
+	fetch = fetch.WithHideFunc(func() bool { return useDefaults || !slices.Contains(*feats, "fetch") })
+	return []*huh.Group{confirm, session, memory, search, fetch}
 }
 
 // storeGroup builds one group - its title is the store name (the section header),
@@ -465,9 +479,9 @@ func selectOrInput(manual bool, opts []huh.Option[string], val *string) huh.Fiel
 // specialistSelect is a model role pick with a "None - disable" option (so the
 // user can skip judge/memory/vision/audio). Falls back to Input when no models
 // were discovered.
-func specialistSelect(models []string, val *string, none huh.Option[string]) huh.Field {
+func specialistSelect(title string, models []string, val *string, none huh.Option[string]) huh.Field {
 	if len(models) == 0 {
-		return huh.NewInput().Placeholder("blank for none").Value(val)
+		return huh.NewInput().Title(title).Placeholder("blank for none").Value(val)
 	}
 	opts := append([]huh.Option[string]{none}, modelOptions(models)...)
 	// If the prefilled value (from env/heuristic) isn't in the discovered list
@@ -476,7 +490,7 @@ func specialistSelect(models []string, val *string, none huh.Option[string]) huh
 	if *val != "" && !slices.Contains(models, *val) {
 		opts = append(opts, huh.NewOption(*val, *val))
 	}
-	return huh.NewSelect[string]().Options(opts...).Value(val)
+	return huh.NewSelect[string]().Title(title).Height(8).Options(opts...).Value(val)
 }
 
 // suggestModel returns the first model whose name contains any of the keywords

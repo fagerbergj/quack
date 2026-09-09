@@ -143,6 +143,87 @@ func TestRunArtifactDownloadDefaultFilename(t *testing.T) {
 	}
 }
 
+func TestRunArtifactDownloadSanitizesEscapingName(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, "bytes")
+	}))
+	defer srv.Close()
+
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "sub")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(cwd)
+
+	var out bytes.Buffer
+	if err := RunArtifactDownload(context.Background(), &out, srv.URL, "c1", "../escaped.txt", 0, ""); err != nil {
+		t.Fatalf("RunArtifactDownload: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(parent, "escaped.txt")); err == nil {
+		t.Fatal("artifact escaped the working directory - must write inside cwd only")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "escaped.txt")); err != nil {
+		t.Errorf("expected the sanitised basename inside cwd, stat err = %v", err)
+	}
+}
+
+// TestRunArtifactDownloadRejectsUnsafeName covers the name that sanitises to
+// nothing usable (a bare "..").
+func TestRunArtifactDownloadRejectsUnsafeName(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, "bytes")
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	err := RunArtifactDownload(context.Background(), &out, srv.URL, "c1", "..", 0, "")
+	if err == nil {
+		t.Fatal("expected an error for an unsafe artifact name with no -o")
+	}
+}
+
+// TestRunArtifactDownloadStdout covers `-o -`: bytes go to out, not a file
+// named "-", so an artifact can be piped.
+func TestRunArtifactDownloadStdout(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	const bytesWant = "fake-bytes"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, bytesWant)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(cwd)
+
+	var out bytes.Buffer
+	if err := RunArtifactDownload(context.Background(), &out, srv.URL, "c1", "plan.txt", 0, "-"); err != nil {
+		t.Fatalf("RunArtifactDownload: %v", err)
+	}
+	if out.String() != bytesWant {
+		t.Errorf("stdout = %q, want the raw artifact bytes %q", out.String(), bytesWant)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "-")); err == nil {
+		t.Error("must not create a file literally named -")
+	}
+}
+
 func TestRunArtifactDownloadNotFound(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

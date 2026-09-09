@@ -23,6 +23,8 @@ import (
 
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/inference"
+	"github.com/fagerbergj/quack/internal/inference/openaimodel"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
@@ -118,6 +120,7 @@ func (h *Handler) generateTitle(ctx context.Context, chatID, firstMessage string
 	}
 	// ChatID-only Coords so this call is filed under the chat, not "unscoped" (#617).
 	ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: chatID})
+	ctx = openaimodel.WithBestEffort(ctx) // this func already logs its own outcome below
 	req := &model.LLMRequest{
 		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "/no_think " + firstMessage}}}},
 		Config: &genai.GenerateContentConfig{
@@ -128,7 +131,11 @@ func (h *Handler) generateTitle(ctx context.Context, chatID, firstMessage string
 	var candidates, total int32
 	for resp, err := range h.titler.GenerateContent(ctx, req, false) {
 		if err != nil {
-			slog.Warn("title generation failed; using empty title", "component", "title", "err", err)
+			level := slog.LevelWarn
+			if inference.IsDialFailure(err) {
+				level = slog.LevelDebug // the turn's own failure already reports the endpoint being down
+			}
+			slog.Log(ctx, level, "title generation failed; using empty title", "component", "title", "err", err)
 			return ""
 		}
 		if resp.UsageMetadata != nil {

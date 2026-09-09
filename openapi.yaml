@@ -1030,6 +1030,29 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/memories/{memory_id}:
+    get:
+      operationId: getMemory
+      summary: Get one memory by id
+      description: |
+        A direct per-id lookup (the same store.GetByID deleteMemory/voteMemory
+        already use), not a List scan - correct and O(1) regardless of corpus
+        size. Includes an invalidated memory (status: invalidated) rather than
+        404ing, same as include_invalidated=true on the list endpoint.
+      parameters:
+        - $ref: "#/components/parameters/MemoryID"
+      responses:
+        "200":
+          description: The memory
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Memory"
+        "404":
+          description: No such memory
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
       operationId: deleteMemory
       summary: Invalidate one memory
