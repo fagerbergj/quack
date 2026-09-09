@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { AssistantText } from './AgentParts'
 import { Expandable } from './Expandable'
@@ -25,7 +25,10 @@ export * from './envelope'
 // else collapsed. `content` that doesn't parse as an envelope (a plain typed
 // message, or malformed input) renders exactly as it always has - the plain
 // blue bubble, never a blank message (#667).
-export function TriggerMessage({
+// Content is immutable for the life of a run but Chat.tsx re-renders this
+// on every store notification (one per animation frame); memo + a stable
+// `attachments` element keep re-renders from re-parsing the envelope markdown.
+export const TriggerMessage = memo(function TriggerMessage({
   content,
   attachments,
   priorContents = [],
@@ -85,7 +88,7 @@ export function TriggerMessage({
       </div>
     </div>
   )
-}
+})
 
 function EnvelopeBlockView({
   block,

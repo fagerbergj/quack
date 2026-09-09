@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { Memory, VoteDirection } from '../api'
 import { paletteClasses } from '../lib/colorHash'
 import { relativeTime } from '../lib/relativeTime'
@@ -184,14 +184,18 @@ function KebabMenu({ memory, onForget }: { memory: Memory; onForget: (id: string
 // One memory row: vote control, content + bucket/author/kind pills, tier
 // badges (lifecycle status + vote-based tier), last-upvote/last-recall
 // relative times, recall count, and the kebab menu for Forget.
-export function MemoryEntry({ memory, onForget, onVote }: MemoryEntryProps) {
+// memo: a page is 20 rows and a vote only changes one, so without this every
+// row re-renders (and re-formats its dates, #1286) on any sibling's vote.
+export const MemoryEntry = memo(function MemoryEntry({ memory, onForget, onVote }: MemoryEntryProps) {
   const voteTier = memory.tier ?? 'unverified'
   const lastUpvoted = relativeTime(memory.last_upvoted_at)
   const lastRecalled = relativeTime(memory.last_recalled_at)
 
-  const mintedTime = new Date(memory.timestamp)
-  const mintedTimeText = Number.isNaN(mintedTime.getTime()) ? memory.timestamp : mintedTime.toLocaleString()
-  const mintedTimeRelative = relativeTime(memory.timestamp) ?? mintedTimeText
+  const { mintedTimeText, mintedTimeRelative } = useMemo(() => {
+    const mintedTime = new Date(memory.timestamp)
+    const text = Number.isNaN(mintedTime.getTime()) ? memory.timestamp : mintedTime.toLocaleString()
+    return { mintedTimeText: text, mintedTimeRelative: relativeTime(memory.timestamp) ?? text }
+  }, [memory.timestamp])
 
   return (
     <div className="px-3 py-2.5 border-b border-gray-100 dark:border-gray-700 flex items-start gap-2">
@@ -246,4 +250,4 @@ export function MemoryEntry({ memory, onForget, onVote }: MemoryEntryProps) {
       </div>
     </div>
   )
-}
+})

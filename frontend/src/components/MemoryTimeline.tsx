@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import type { Memory, VoteDirection } from '../api'
 import { MemoryEntry } from './MemoryEntry'
 
@@ -63,7 +64,12 @@ export interface MemoryTimelineProps {
 // through a flat list - only meaningful when the caller's sort is time-order
 // (see `grouped` above).
 export function MemoryTimeline({ memories, onForget, onVote, now, grouped = true }: MemoryTimelineProps) {
-  const groups = grouped ? groupByAge(memories, now) : [{ label: '', memories }]
+  // groupByAge is O(n) but was rebuilt on every render (any unrelated state
+  // change, e.g. a vote) with no memoization - #1286.
+  const groups = useMemo(
+    () => (grouped ? groupByAge(memories, now) : [{ label: '', memories }]),
+    [grouped, memories, now],
+  )
   return (
     <div className="py-2">
       {groups.map((g, i) => (

@@ -44,6 +44,10 @@ function applyOptimisticVote(m: Memory, vote: VoteDirection): Memory {
 export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
   const [bucket, setBucket] = useState('')
   const [q, setQ] = useState('')
+  // Debounced 250ms behind `q` (the input's live value, used only for display)
+  // so a fast typist doesn't fire one search request per keystroke (#1285).
+  const [debouncedQ, setDebouncedQ] = useState('')
+  const requestSeq = useRef(0)
   const [sort, setSort] = useState<MemorySort>('newest')
   const [tier, setTier] = useState<MemoryTierFilter>('')
   // Local to the tab (no persisted preference, per design doc §8 step 6) - a
@@ -103,19 +107,37 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
     return () => { cancelled = true }
   }, [initialStats])
 
+  // Debounce: reset paging and adopt the typed query only after 250ms of
+  // no further keystrokes (prototype: 9 requests -> 2 for an 8-char query).
+  // Guarded on q !== debouncedQ so mount (both '') never schedules a no-op
+  // resetPaging - that would still create a new pageTokens array and fire
+  // a redundant, extra initial fetch.
+  useEffect(() => {
+    if (q === debouncedQ) return
+    const t = setTimeout(() => {
+      setDebouncedQ(q)
+      resetPaging()
+    }, 250)
+    return () => clearTimeout(t)
+  }, [q, debouncedQ])
+
   const load = useCallback(async () => {
+    const seq = ++requestSeq.current
     setLoading(true)
     setError(null)
     try {
       const result = await api.listMemories({
         bucket: bucket.trim() || undefined,
-        q: q.trim() || undefined,
+        q: debouncedQ.trim() || undefined,
         limit: PAGE_SIZE,
         page_token: pageTokens[pageIndex],
         include_invalidated: includeInvalidated || undefined,
         tier: tier || undefined,
         sort,
       })
+      // A slower earlier request can resolve after a faster later one; only
+      // the most recently issued request may write to state (#1285 race).
+      if (seq !== requestSeq.current) return
       setMemories(result.memories)
       setTotal(result.total)
       setNextPageToken(result.next_page_token)
@@ -125,22 +147,25 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
         return next
       })
     } catch (e) {
+      if (seq !== requestSeq.current) return
       setError(e instanceof Error ? e.message : 'Failed to load memories')
     } finally {
-      setLoading(false)
+      if (seq === requestSeq.current) setLoading(false)
     }
-  }, [bucket, q, pageIndex, pageTokens, includeInvalidated, tier, sort])
+  }, [bucket, debouncedQ, pageIndex, pageTokens, includeInvalidated, tier, sort])
 
   useEffect(() => {
     if (initialState !== undefined) return // story/test seam: static demo state, no live fetch
     void load()
   }, [load, initialState])
 
-  async function handleForget(id: string) {
+  // Stable identity (empty deps, via functional setState) so memo(MemoryEntry)
+  // (#1286) can actually skip the other 19 rows when one row is voted/forgotten.
+  const handleForget = useCallback(async (id: string) => {
     await api.forgetMemory(id)
     setMemories(prev => prev.filter(m => m.id !== id))
     setTotal(t => Math.max(0, t - 1))
-  }
+  }, [])
 
   // handleVote is optimistic-first (frontend-design convention): the store
   // updates immediately so the arrow highlight/score never lags a click,
@@ -148,17 +173,21 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
   // a page-wide snapshot would also discard any other unrelated change
   // (e.g. another vote's own response landing) that happened while this
   // request was in flight.
-  async function handleVote(id: string, vote: VoteDirection) {
-    const prevRow = memories.find(m => m.id === id)
-    setMemories(cur => cur.map(m => (m.id === id ? applyOptimisticVote(m, vote) : m)))
+  const handleVote = useCallback(async (id: string, vote: VoteDirection) => {
+    let prevRow: Memory | undefined
+    setMemories(cur => cur.map(m => {
+      if (m.id !== id) return m
+      prevRow = m
+      return applyOptimisticVote(m, vote)
+    }))
     try {
       const updated = await api.voteMemory(id, vote)
       setMemories(cur => cur.map(m => (m.id === id ? updated : m)))
     } catch (e) {
-      if (prevRow) setMemories(cur => cur.map(m => (m.id === id ? prevRow : m)))
+      if (prevRow) setMemories(cur => cur.map(m => (m.id === id ? prevRow! : m)))
       throw e
     }
-  }
+  }, [])
 
   function resetPaging() {
     setPageIndex(0)
@@ -229,7 +258,7 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
         <input
           type="search"
           value={q}
-          onChange={e => { setQ(e.target.value); resetPaging() }}
+          onChange={e => setQ(e.target.value)}
           placeholder="Search — what would a run recall for this?"
           aria-label="Search memories"
           className="flex-1 min-w-0 rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
