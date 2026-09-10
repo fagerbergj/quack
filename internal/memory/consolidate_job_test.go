@@ -581,8 +581,13 @@ func TestClusterFingerprint_ContentSensitiveOrderAndMemberInvariant(t *testing.T
 		t.Error("editing a member's content did not change the fingerprint")
 	}
 
-	other := newSQLiteStore(t, "user", countingModel{reply: `{"ops":[]}`, calls: new(int)})
-	if got := other.clusterFingerprint([]scored{a, b}); got == base {
+	otherDomain := newSQLiteStore(t, "user", countingModel{reply: `{"ops":[]}`, calls: new(int)})
+	if got := otherDomain.clusterFingerprint([]scored{a, b}); got == base {
 		t.Error("a different domain (dedupe prompt) did not change the fingerprint")
+	}
+
+	otherModel := newSQLiteStore(t, "task", fakeModel{reply: `{"ops":[]}`})
+	if got := otherModel.clusterFingerprint([]scored{a, b}); got == base {
+		t.Error("a different consolidator model name did not change the fingerprint")
 	}
 }
