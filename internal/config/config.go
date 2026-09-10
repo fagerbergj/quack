@@ -481,6 +481,14 @@ const defaultMaxActiveNodes = 32
 // (clone/jail), which happens before any node reaches the #1007 GPU ledger.
 const defaultMaxActiveRuns = 8
 
+// defaultMaxPlanJudgeRounds/defaultMaxRepeatedPlanRejection mirror
+// tools.PlanCache's own built-in defaults - see that package for why an
+// uncapped plan-judge loop is unsafe.
+const (
+	defaultMaxPlanJudgeRounds       = 5
+	defaultMaxRepeatedPlanRejection = 3
+)
+
 type DagConfig struct {
 	// MaxActiveRuns caps concurrent RUNS server-wide. Not a GPU knob (#1007:
 	// models.<m>.limits.sessions is that, and since #1067 it bounds orchestrator
@@ -809,11 +817,11 @@ type OrchestratorConfig struct {
 	Tools          []string             `yaml:"tools"`
 	Skills         []string             `yaml:"skills"`
 	UserMemoryHook UserMemoryHookConfig `yaml:"user_memory_hook"`
-	// MaxPlanJudgeRounds caps plan-judge rejections in one turn (0 = built-in
-	// default 5) - an uncapped loop ran 56 rounds/347s producing nothing on the QA rig.
+	// MaxPlanJudgeRounds caps plan-judge rejections in one turn before it ends
+	// with the delivered failure instead of retrying (0 = default 5; validate() rejects a negative value).
 	MaxPlanJudgeRounds int `yaml:"max_plan_judge_rounds"`
-	// MaxRepeatedPlanRejection stops the loop once the judge repeats the
-	// identical rejection reason this many times in a row (0 = default 3).
+	// MaxRepeatedPlanRejection stops the loop once the judge repeats a similar
+	// rejection reason this many times in a row (0 = default 3; validate() rejects a negative value).
 	MaxRepeatedPlanRejection int `yaml:"max_repeated_plan_rejection"`
 }
 
@@ -1254,6 +1262,18 @@ func (c *Config) validate() error {
 	}
 	if c.Dag.MaxActiveRuns < 1 {
 		return fmt.Errorf("config: dag.max_active_runs must be >= 1")
+	}
+	if c.Orchestrator.MaxPlanJudgeRounds == 0 {
+		c.Orchestrator.MaxPlanJudgeRounds = defaultMaxPlanJudgeRounds
+	}
+	if c.Orchestrator.MaxPlanJudgeRounds < 1 {
+		return fmt.Errorf("config: orchestrator.max_plan_judge_rounds must be >= 1")
+	}
+	if c.Orchestrator.MaxRepeatedPlanRejection == 0 {
+		c.Orchestrator.MaxRepeatedPlanRejection = defaultMaxRepeatedPlanRejection
+	}
+	if c.Orchestrator.MaxRepeatedPlanRejection < 1 {
+		return fmt.Errorf("config: orchestrator.max_repeated_plan_rejection must be >= 1")
 	}
 	if c.Server.Addr == "" {
 		c.Server.Addr = ":8080"

@@ -73,3 +73,33 @@ func TestPlanCache_SetCaps_IgnoresNonPositiveValues(t *testing.T) {
 		t.Fatal("SetCaps(0, -1) must leave the default caps in place, not disable them")
 	}
 }
+
+// realRigRejectionStreak: 3 consecutive plan-judge rejections captured
+// verbatim from the QA rig's non-convergent run
+// (~/workspace/wt/qa/logs/server.log, entries 17-19) - the judge reworded
+// the identical complaint (a code-implementer node instead of a reviewer)
+// each round, so no two are byte-identical. Exact string equality never
+// caught this as a streak on the real rig; that's the bug this fixes.
+var realRigRejectionStreak = []string{
+	`The user explicitly requested to "actually clone the repo, read the change, and carry out the review" but the proposed plan is a code-implementer node that appends a line to README.md. This does not perform a review; it performs an unrelated modification. The terminal node must be a reviewer or explainer that reads the existing changes and posts findings, not one that modifies files.`,
+	`The request explicitly asks to "carry out the review" or execute tools to actually perform the work, but the proposed plan's terminal node is a code-implementer that modifies README.md. This does not deliver the requested review output; it delivers an unrelated code change. The plan lacks a terminal node that performs the actual code review and produces the review findings as the deliverable.`,
+	`The user explicitly requested a review of changes, but the proposed plan is a code-implementer node that modifies the README.md file instead of reviewing any changes. The plan does not address the user's request to "read the change, and carry out the review".`,
+}
+
+func TestPlanCache_Capped_RigTextStreakFiresByRoundThree(t *testing.T) {
+	if realRigRejectionStreak[0] == realRigRejectionStreak[1] || realRigRejectionStreak[1] == realRigRejectionStreak[2] {
+		t.Fatal("fixture regressed: these must be distinct strings - exact equality is exactly what must NOT be relied on here")
+	}
+
+	c := NewPlanCache()
+	c.SetCaps(100, 3) // round cap high enough it never trips first
+
+	for i, reason := range realRigRejectionStreak {
+		c.RecordRejection(reason)
+		capped, _ := c.Capped()
+		wantCapped := i == len(realRigRejectionStreak)-1
+		if capped != wantCapped {
+			t.Fatalf("round %d: Capped() = %v, want %v - real judge rewordings must count as the same repeated complaint", i+1, capped, wantCapped)
+		}
+	}
+}

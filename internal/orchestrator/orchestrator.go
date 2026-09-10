@@ -184,24 +184,49 @@ func (o *Orchestrator) SetPlanJudgeCap(roundCap, repeatCap int) {
 	o.planJudgeRepeatCap = repeatCap
 }
 
-// capAwareModel skips the real model call once PlanCache.Capped() trips,
-// returning a minimal final response instead - a tool can't end an ADK
-// invocation itself (EndInvocation() is a no-op for tool/callback contexts),
-// so this is what actually stops the loop.
+// planJudgeCapModelName names the synthetic model.LLM capAwareModel routes
+// through inference.TracedModelForTesting once capped, so a short-circuited
+// round still gets a normal llm.call ledger entry, otel duration metric, and
+// RecordCallResult - only the real network call is skipped.
+const planJudgeCapModelName = "plan-judge-cap"
+
+// syntheticPlanCapModel is the fixed empty final response capAwareModel
+// returns once the model's one post-cap grace round is spent - no real
+// backend, so wrapping it in inference.TracedModelForTesting is what gives it ledger/metric coverage.
+type syntheticPlanCapModel struct{}
+
+func (syntheticPlanCapModel) Name() string { return planJudgeCapModelName }
+
+func (syntheticPlanCapModel) GenerateContent(context.Context, *model.LLMRequest, bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		yield(&model.LLMResponse{
+			Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: ""}}},
+			FinishReason: genai.FinishReasonStop,
+			TurnComplete: true,
+		}, nil)
+	}
+}
+
+// capAwareModel lets the model see exactly one more real round once
+// PlanCache.Capped() trips - a genuine pivot to a direct answer (#760) must
+// still be delivered - and only short-circuits with syntheticPlanCapModel if
+// that round calls plan again. A tool can't end an ADK invocation itself
+// (EndInvocation() is a no-op for tool/callback contexts), so this model
+// layer is what actually stops the loop.
 type capAwareModel struct {
 	model.LLM
-	cache *tools.PlanCache
+	cache     *tools.PlanCache
+	graceUsed *bool
+	synthetic model.LLM
 }
 
 func (m capAwareModel) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
 	if capped, _ := m.cache.Capped(); capped {
-		return func(yield func(*model.LLMResponse, error) bool) {
-			yield(&model.LLMResponse{
-				Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: ""}}},
-				FinishReason: genai.FinishReasonStop,
-				TurnComplete: true,
-			}, nil)
+		if !*m.graceUsed {
+			*m.graceUsed = true
+			return m.LLM.GenerateContent(ctx, req, stream)
 		}
+		return m.synthetic.GenerateContent(ctx, req, stream)
 	}
 	return m.LLM.GenerateContent(ctx, req, stream)
 }
@@ -711,10 +736,14 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			toolList = append(toolList, writeKindTools...)
 		}
 
+		graceUsed := false
 		ag, err := llmagent.New(llmagent.Config{
 			Name:        orchestratorName,
 			Description: "Routes requests to the right specialist agents - web research, code implementation, media reading - and answers conversational queries directly.",
-			Model:       capAwareModel{LLM: o.model, cache: planCache},
+			Model: capAwareModel{
+				LLM: o.model, cache: planCache, graceUsed: &graceUsed,
+				synthetic: inference.TracedModelForTesting(syntheticPlanCapModel{}, planJudgeCapModelName),
+			},
 			Instruction: o.sysPrompt,
 			Tools:       toolList,
 			Toolsets:    toolsets,
@@ -813,8 +842,8 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 
 		produced, stop := invoke(content)
 		for attempt := 1; !produced && !stop && attempt <= maxOrchestratorContinues; attempt++ {
-			// capAwareModel already ended the prior invocation once capped -
-			// retrying would just re-hit the same cap (rig-observed 56 rounds/347s with no cap at all).
+			// capAwareModel already spent this turn's grace round once capped -
+			// a continuation would just re-hit the same cap.
 			if capped, _ := planCache.Capped(); capped {
 				break
 			}
@@ -833,24 +862,25 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			FinishedAtMs: time.Now().UnixMilli(),
 		}}, nil)
 
-		// Delivers WHY, not the generic "no plan or answer" notice below -
-		// that's the whole point of a cap over an unbounded loop.
-		if capped, reasons := planCache.Capped(); capped {
-			if _, selected := planCache.Selected(); !selected {
-				if _, hasPending := o.PendingQuestion(ctx, userID, sessionID); !hasPending {
-					count, _ := planCache.Rejections()
-					slog.Error("plan-judge round cap hit without an acceptable plan; delivering the rejection reasons",
-						"component", "orchestrator", "chat", sessionID, "rejections", count, "reasons", reasons)
-					msg := fmt.Sprintf(planJudgeCapNotice, reasons)
-					safeYield(stream.Errorf(msg), nil)
-					o.persistAnswer(ctx, userID, sessionID, msg)
-					safeYield(stream.Done(), nil)
-					return
+		if !produced {
+			// Delivers WHY, not the generic "no plan or answer" notice below -
+			// that's the whole point of a cap over an unbounded loop. Only
+			// reached with capped==true when the grace round (capAwareModel)
+			// also produced no real answer - a genuine pivot is produced==true and skips this entirely.
+			if capped, reasons := planCache.Capped(); capped {
+				if _, selected := planCache.Selected(); !selected {
+					if _, hasPending := o.PendingQuestion(ctx, userID, sessionID); !hasPending {
+						count, _ := planCache.Rejections()
+						slog.Error("plan-judge round cap hit without an acceptable plan; delivering the rejection reasons",
+							"component", "orchestrator", "chat", sessionID, "rejections", count, "reasons", reasons)
+						msg := fmt.Sprintf(planJudgeCapNotice, reasons)
+						safeYield(stream.Errorf(msg), nil)
+						o.persistAnswer(ctx, userID, sessionID, msg)
+						safeYield(stream.Done(), nil)
+						return
+					}
 				}
 			}
-		}
-
-		if !produced {
 			slog.Error("orchestrator produced no plan and no answer; giving up",
 				"component", "orchestrator", "chat", sessionID, "attempts", maxOrchestratorContinues+1)
 			safeYield(stream.Errorf("The orchestrator ended its turn without a plan or an answer, "+
@@ -861,15 +891,20 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		// Planning that EXHAUSTS its rejection budget without an acceptable
 		// plan is a FAILED run, not an answer (#693): the model's own text at
 		// this point may just be narrating the plan judge's internal rejection reason back at the user. A single rejection is normal iteration - the model may correctly pivot to a direct answer instead of retrying (a reply-only deliverable the orchestrator over-eagerly tried to plan for, #760/home-server#3) - so only repeated rejections count as exhaustion; this must never be decided by inspecting the answer text itself. A pending clarifying question is also a legitimate reason to stop without a plan.
-		if _, selected := planCache.Selected(); !selected {
-			if count, reason := planCache.Rejections(); count >= minRejectionsForExhaustion {
-				if _, hasPending := o.PendingQuestion(ctx, userID, sessionID); !hasPending {
-					slog.Error("planning exhausted its rejection budget without an acceptable plan; suppressing the judge's internal rejection text from the reply",
-						"component", "orchestrator", "chat", sessionID, "rejections", count, "reason", reason)
-					safeYield(stream.Errorf(planExhaustedNotice), nil)
-					o.persistAnswer(ctx, userID, sessionID, planExhaustedNotice)
-					safeYield(stream.Done(), nil)
-					return
+		// Skipped once the plan-judge cap tripped: capAwareModel already gave
+		// the model its one grace round, and produced==true here means that
+		// round delivered a real answer - a #760-style pivot - which must reach the user, not be second-guessed by the older, lower-threshold heuristic below.
+		if capped, _ := planCache.Capped(); !capped {
+			if _, selected := planCache.Selected(); !selected {
+				if count, reason := planCache.Rejections(); count >= minRejectionsForExhaustion {
+					if _, hasPending := o.PendingQuestion(ctx, userID, sessionID); !hasPending {
+						slog.Error("planning exhausted its rejection budget without an acceptable plan; suppressing the judge's internal rejection text from the reply",
+							"component", "orchestrator", "chat", sessionID, "rejections", count, "reason", reason)
+						safeYield(stream.Errorf(planExhaustedNotice), nil)
+						o.persistAnswer(ctx, userID, sessionID, planExhaustedNotice)
+						safeYield(stream.Done(), nil)
+						return
+					}
 				}
 			}
 		}

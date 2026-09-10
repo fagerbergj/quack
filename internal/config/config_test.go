@@ -1462,6 +1462,68 @@ gates:
 	}
 }
 
+// orchestratorCapConfig is baseConfig's minimal providers/models/stores/session
+// shape plus an orchestrator block carrying extra - baseConfig's own
+// orchestrator line can't just be appended to (a second top-level key), so
+// these plan-judge-cap tests build the block themselves.
+func orchestratorCapConfig(extra string) string {
+	return `
+providers:
+  default: { kind: openai, endpoint: http://x }
+models:
+  m: { provider: default, role: worker }
+stores:
+  main: { kind: postgres, url: u }
+session: { store: main }
+orchestrator: { provider: default, model: m` + extra + ` }
+`
+}
+
+// TestLoadOrchestratorPlanJudgeCapDefaults proves 0/unset falls back to the
+// built-in defaults (5 rounds, 3 repeated) like dag.max_active_runs does.
+func TestLoadOrchestratorPlanJudgeCapDefaults(t *testing.T) {
+	c, err := Load(writeTemp(t, orchestratorCapConfig("")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Orchestrator.MaxPlanJudgeRounds != 5 {
+		t.Errorf("max_plan_judge_rounds = %d, want the default 5", c.Orchestrator.MaxPlanJudgeRounds)
+	}
+	if c.Orchestrator.MaxRepeatedPlanRejection != 3 {
+		t.Errorf("max_repeated_plan_rejection = %d, want the default 3", c.Orchestrator.MaxRepeatedPlanRejection)
+	}
+}
+
+// TestLoadOrchestratorPlanJudgeCapRoundTrips proves explicit values survive loading unchanged.
+func TestLoadOrchestratorPlanJudgeCapRoundTrips(t *testing.T) {
+	c, err := Load(writeTemp(t, orchestratorCapConfig(", max_plan_judge_rounds: 8, max_repeated_plan_rejection: 4")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Orchestrator.MaxPlanJudgeRounds != 8 {
+		t.Errorf("max_plan_judge_rounds = %d, want 8", c.Orchestrator.MaxPlanJudgeRounds)
+	}
+	if c.Orchestrator.MaxRepeatedPlanRejection != 4 {
+		t.Errorf("max_repeated_plan_rejection = %d, want 4", c.Orchestrator.MaxRepeatedPlanRejection)
+	}
+}
+
+// TestLoadOrchestratorPlanJudgeCapRejectsNegative mirrors dag.max_active_runs's
+// own "0 defaults, negative errors" rule (config.go's validate()).
+func TestLoadOrchestratorPlanJudgeCapRejectsNegative(t *testing.T) {
+	cases := map[string]string{
+		"negative round cap":  ", max_plan_judge_rounds: -1",
+		"negative repeat cap": ", max_repeated_plan_rejection: -1",
+	}
+	for name, extra := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Load(writeTemp(t, orchestratorCapConfig(extra))); err == nil {
+				t.Fatal("want an error for a negative plan-judge cap")
+			}
+		})
+	}
+}
+
 func TestLoadGatesRejectsBadConfig(t *testing.T) {
 	cases := map[string]string{
 		"unknown provider": `

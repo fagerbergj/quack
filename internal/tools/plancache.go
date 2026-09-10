@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"regexp"
 	"strings"
 	"sync"
 
@@ -13,6 +14,41 @@ const (
 	defaultPlanJudgeRoundCap      = 5
 	defaultPlanRejectionRepeatCap = 3
 )
+
+// reasonSimilarityThreshold: the plan judge is free text with no structured
+// criteria to compare (vetting.PlanJudge returns only accept/reason/err), and
+// on the QA rig's real rejections it reworded the same complaint every round
+// rather than repeating verbatim - consecutive real rounds topped out around
+// 0.6 Jaccard, never near a stricter bar, so exact string equality never
+// caught a real streak and this threshold is tuned to that evidence.
+const reasonSimilarityThreshold = 0.4
+
+var reasonTokenRe = regexp.MustCompile(`[a-z0-9]+`)
+
+// similarReason reports whether a and b are the same rejection complaint
+// reworded, via Jaccard similarity over lowercased word tokens.
+func similarReason(a, b string) bool {
+	ta, tb := reasonTokenSet(a), reasonTokenSet(b)
+	if len(ta) == 0 || len(tb) == 0 {
+		return a == b
+	}
+	inter := 0
+	for t := range ta {
+		if tb[t] {
+			inter++
+		}
+	}
+	union := len(ta) + len(tb) - inter
+	return float64(inter)/float64(union) >= reasonSimilarityThreshold
+}
+
+func reasonTokenSet(s string) map[string]bool {
+	out := map[string]bool{}
+	for _, t := range reasonTokenRe.FindAllString(strings.ToLower(s), -1) {
+		out[t] = true
+	}
+	return out
+}
 
 // PlanCache holds plans by ID so execute can reference them losslessly. One
 // instance per orchestrator turn (constructed fresh in Orchestrator.Run) - a
@@ -96,7 +132,7 @@ func (c *PlanCache) RecordRejection(reason string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.rejectionCount++
-	if reason == c.rejectionReason {
+	if similarReason(reason, c.rejectionReason) {
 		c.reasonStreak++
 	} else {
 		c.reasonStreak = 1
