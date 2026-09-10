@@ -293,16 +293,22 @@ func (s *Store) decide(ctx context.Context, staged []Candidate, sourceText strin
 // no separate staged/source text, just the existing memories to dedupe
 // against each other.
 func (s *Store) decideDedupe(ctx context.Context, cluster []neighbour) ([]op, error) {
+	sysPrompt, ok := consolidateDedupePrompts[s.domain]
+	if !ok {
+		sysPrompt = consolidateDedupePrompts["task"]
+	}
+	return s.runConsolidation(ctx, sysPrompt, buildDedupePrompt(cluster))
+}
+
+// buildDedupePrompt: stable header first, variable member lines last, so
+// vLLM's prefix cache covers the header across every cluster in a sweep run.
+func buildDedupePrompt(cluster []neighbour) string {
 	var user strings.Builder
 	user.WriteString("MEMORIES MINTED CLOSE TOGETHER BY THE SAME RUN (dedupe near-identical claims):\n")
 	for _, n := range cluster {
 		fmt.Fprintf(&user, "- id=%s: %s\n", n.ID, n.Content)
 	}
-	sysPrompt, ok := consolidateDedupePrompts[s.domain]
-	if !ok {
-		sysPrompt = consolidateDedupePrompts["task"]
-	}
-	return s.runConsolidation(ctx, sysPrompt, user.String())
+	return user.String()
 }
 
 // runConsolidation is the LLM-calling core shared by decide and decideDedupe:

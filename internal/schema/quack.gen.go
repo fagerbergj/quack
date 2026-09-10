@@ -771,6 +771,9 @@ type ChatSummaryGithubState string
 type ClientConfig struct {
 	// OtelTraceUrlTemplate Raw URL template for a trace deep link, with a literal "{trace_id}" placeholder for the client to substitute - e.g. "https://tracing.example.com/trace/{trace_id}". Absent when otel.trace_url_template is unset (no link should be rendered).
 	OtelTraceUrlTemplate *string `json:"otel_trace_url_template,omitempty"`
+
+	// Version quack's build version (e.g. "0.51.26"), or "dev" for an unstamped build. Always present.
+	Version *string `json:"version,omitempty"`
 }
 
 // ContentPart defines model for ContentPart.

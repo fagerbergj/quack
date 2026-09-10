@@ -471,6 +471,11 @@ export type ExtensionInfo = {
 
 export type ClientConfig = {
     /**
+     * quack's build version (e.g. "0.51.26"), or "dev" for an unstamped build. Always present.
+     *
+     */
+    version?: string;
+    /**
      * Raw URL template for a trace deep link, with a literal "{trace_id}" placeholder for the client to substitute - e.g. "https://tracing.example.com/trace/{trace_id}". Absent when otel.trace_url_template is unset (no link should be rendered).
      *
      */

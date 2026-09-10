@@ -57,7 +57,7 @@ export function StatusDot({ status, className = '', variant = 'node', label }: {
   return (
     <span className={`flex-shrink-0 inline-flex items-center gap-1.5 ${className}`}>
       <span aria-hidden="true" className={`inline-block w-1.5 h-1.5 rounded-full ${color} ${pulse}`} />
-      <span className="text-[10px] font-medium text-gray-500 dark:text-gray-400">{label ?? name.toLowerCase()}</span>
+      <span className="text-[11px] font-medium text-gray-500 dark:text-gray-400">{label ?? name.toLowerCase()}</span>
     </span>
   )
 }
