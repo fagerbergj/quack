@@ -96,6 +96,9 @@ type index interface {
 	// from the point's PRIOR human_vote (so a toggle or a flip never double
 	// counts). Reports whether id existed (and wasn't already invalidated).
 	setHumanVote(ctx context.Context, id, vote string, invalidateThreshold int) (bool, error)
+	// stampConsolidateFP records fp as ids' consolidate fingerprint (payload
+	// only) - the sweep's skip check reads it back next tick.
+	stampConsolidateFP(ctx context.Context, ids []string, fp string) error
 }
 
 // scored is one ranked memory.
@@ -140,6 +143,9 @@ type scored struct {
 	// "" = none) - epic #1255 P4, distinct from Upvotes/Downvotes which mix
 	// judge and human votes together. Toggling re-derives the delta from this.
 	HumanVote string
+	// ConsolidateFP is the burst fingerprint the sweep last judged a pure
+	// no-op for this point ("" if never stamped or cleared by a write).
+	ConsolidateFP string
 	// Vector is populated by query() only (list()/getByID leave it nil) - the
 	// MMR diversity re-rank in recall (issue #1269) needs each hit's own
 	// embedding to compute inter-hit cosine, which the query score alone

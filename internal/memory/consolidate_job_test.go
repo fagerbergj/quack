@@ -238,6 +238,142 @@ func TestConsolidateOnce_SkipsReinforcedAndInvalidatedNeighbours(t *testing.T) {
 	}
 }
 
+// countingModel wraps a fixed reply with a call counter - proves the sweep's
+// skip check by call count instead of by side effects on the store.
+type countingModel struct {
+	reply string
+	calls *int
+}
+
+func (countingModel) Name() string { return "fake-counting-consolidator" }
+
+func (m countingModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	*m.calls++
+	return func(yield func(*model.LLMResponse, error) bool) {
+		yield(&model.LLMResponse{Content: &genai.Content{Parts: []*genai.Part{{Text: m.reply}}}}, nil)
+	}
+}
+
+// TestConsolidateCluster_AllNoopOpsWriteNothing: an all-NOOP reply calls the
+// model but writes nothing - apply() only writes ADD/UPDATE/DELETE.
+func TestConsolidateCluster_AllNoopOpsWriteNothing(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStore(t, "task", fakeModel{reply: `{"ops":[{"action":"NOOP","id":"m1"},{"action":"NOOP","id":"m2"}]}`})
+
+	n, err := s.consolidateCluster(ctx, "repo:r", []scored{
+		{ID: "m1", Content: "fact A", ChatID: "chat-1"},
+		{ID: "m2", Content: "fact B", ChatID: "chat-1"},
+	})
+	if err != nil {
+		t.Fatalf("consolidateCluster: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("writes = %d, want 0 (an all-NOOP reply changes nothing)", n)
+	}
+}
+
+// TestConsolidateOnce_SkipsUnchangedClusterNextSweep: a burst judged a pure
+// no-op is called once, then skipped until membership changes.
+func TestConsolidateOnce_SkipsUnchangedClusterNextSweep(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStore(t, "task", nil)
+
+	seedMemory(t, s, point{ID: "m1", Content: "the frontend uses vite", Scope: "repo:r",
+		Author: "a", Timestamp: "t", ChatID: "chat-1", MintedAt: "2026-08-13T00:00:00Z",
+		Status: string(StatusUnverified), ValidFrom: "t"})
+	seedMemory(t, s, point{ID: "m2", Content: "the backend is written in go", Scope: "repo:r",
+		Author: "a", Timestamp: "t", ChatID: "chat-1", MintedAt: "2026-08-13T00:05:00Z",
+		Status: string(StatusUnverified), ValidFrom: "t"})
+
+	calls := 0
+	s.consolidator = countingModel{reply: `{"ops":[]}`, calls: &calls}
+
+	s.consolidateOnce(ctx) // burst is new: must call
+	if calls != 1 {
+		t.Fatalf("calls after first sweep = %d, want 1", calls)
+	}
+
+	s.consolidateOnce(ctx) // same burst, already judged no-op: must skip
+	if calls != 1 {
+		t.Fatalf("calls after second (unchanged) sweep = %d, want still 1 (skip)", calls)
+	}
+
+	// A new member joins the burst: the fingerprint changes, forcing a call.
+	seedMemory(t, s, point{ID: "m3", Content: "tests run via make test", Scope: "repo:r",
+		Author: "a", Timestamp: "t", ChatID: "chat-1", MintedAt: "2026-08-13T00:07:00Z",
+		Status: string(StatusUnverified), ValidFrom: "t"})
+
+	s.consolidateOnce(ctx)
+	if calls != 2 {
+		t.Fatalf("calls after a new member joined the burst = %d, want 2", calls)
+	}
+}
+
+// TestConsolidateOnce_RecallsWhenMemberContentChanges: clusterFingerprint
+// hashes content, so editing a stamped member's wording (a re-upsert clears
+// its consolidate_fp too) must force a fresh call, not a skip.
+func TestConsolidateOnce_RecallsWhenMemberContentChanges(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStore(t, "task", nil)
+
+	seedMemory(t, s, point{ID: "m1", Content: "the frontend uses vite", Scope: "repo:r",
+		Author: "a", Timestamp: "t", ChatID: "chat-1", MintedAt: "2026-08-13T00:00:00Z",
+		Status: string(StatusUnverified), ValidFrom: "t"})
+	seedMemory(t, s, point{ID: "m2", Content: "the backend is written in go", Scope: "repo:r",
+		Author: "a", Timestamp: "t", ChatID: "chat-1", MintedAt: "2026-08-13T00:05:00Z",
+		Status: string(StatusUnverified), ValidFrom: "t"})
+
+	calls := 0
+	s.consolidator = countingModel{reply: `{"ops":[]}`, calls: &calls}
+
+	s.consolidateOnce(ctx)
+	s.consolidateOnce(ctx) // confirm the skip engages before editing
+	if calls != 1 {
+		t.Fatalf("calls before the edit = %d, want 1", calls)
+	}
+
+	seedMemory(t, s, point{ID: "m1", Content: "the frontend uses vite 6", Scope: "repo:r",
+		Author: "a", Timestamp: "t", ChatID: "chat-1", MintedAt: "2026-08-13T00:00:00Z",
+		Status: string(StatusUnverified), ValidFrom: "t"})
+
+	s.consolidateOnce(ctx)
+	if calls != 2 {
+		t.Fatalf("calls after editing m1's content = %d, want 2", calls)
+	}
+}
+
+// TestConsolidateOnce_StaysSkippedAfterVoteOnlyChange: clusterFingerprint
+// hashes only id+content, so a judge vote (touches upvotes/tier, not
+// content) on an otherwise-unchanged burst must stay skipped, not re-call.
+func TestConsolidateOnce_StaysSkippedAfterVoteOnlyChange(t *testing.T) {
+	ctx := context.Background()
+	s := newSQLiteStore(t, "task", nil)
+
+	seedMemory(t, s, point{ID: "m1", Content: "the frontend uses vite", Scope: "repo:r",
+		Author: "a", Timestamp: "t", ChatID: "chat-1", MintedAt: "2026-08-13T00:00:00Z",
+		Status: string(StatusUnverified), ValidFrom: "t"})
+	seedMemory(t, s, point{ID: "m2", Content: "the backend is written in go", Scope: "repo:r",
+		Author: "a", Timestamp: "t", ChatID: "chat-1", MintedAt: "2026-08-13T00:05:00Z",
+		Status: string(StatusUnverified), ValidFrom: "t"})
+
+	calls := 0
+	s.consolidator = countingModel{reply: `{"ops":[]}`, calls: &calls}
+
+	s.consolidateOnce(ctx)
+	if calls != 1 {
+		t.Fatalf("calls after first sweep = %d, want 1", calls)
+	}
+
+	if _, err := s.ApplyVotes(ctx, []Vote{{MemoryID: "m1", Vote: VoteSupported, Actor: ActorJudge}}, DefaultInvalidateThreshold); err != nil {
+		t.Fatalf("ApplyVotes: %v", err)
+	}
+
+	s.consolidateOnce(ctx)
+	if calls != 1 {
+		t.Fatalf("calls after a vote-only change = %d, want still 1 (skip)", calls)
+	}
+}
+
 // TestRetentionOnce_RemovesExpiredKeepsFreshAndValid covers design doc §6: an
 // invalidated point older than retentionDays is hard-removed, a recently
 // invalidated one survives, and a currently-valid point is never a candidate
